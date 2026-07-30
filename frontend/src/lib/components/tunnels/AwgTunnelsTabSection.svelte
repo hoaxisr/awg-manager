@@ -272,7 +272,7 @@
 			{@const showPing = ctx.showManagedPing(tunnel, connectivity) || pingStatusNote !== null}
 			{@const showConnectivityRow = awgShowConnectivityRow(tunnel.status)}
 				<div class="awg-list-row">
-				<div class="awg-list-cell awg-list-cell-toggle" data-label="Старт">
+				<div class="awg-list-cell awg-list-cell-toggle">
 					<Toggle
 						checked={ctx.isManagedTunnelOn(tunnel)}
 						size="sm"
@@ -282,7 +282,7 @@
 						onchange={() => ctx.handleToggleOnOff(tunnel.id)}
 					/>
 				</div>
-					<div class="awg-list-cell awg-list-cell-name" data-label="Туннель">
+					<div class="awg-list-cell awg-list-cell-name">
 						<div class="tunnel-list-name-stack">
 							<TunnelTitleRow
 								title={tunnel.name}
@@ -311,7 +311,7 @@
 							</TunnelMetaText>
 						</div>
 					</div>
-					<div class="awg-list-cell awg-list-cell-status" data-label="Статус">
+					<div class="awg-list-cell awg-list-cell-status">
 						<div class="awg-list-status-stack">
 							<div class="awg-list-status-line">
 							<StatusDot
@@ -358,7 +358,7 @@
 					{/if}
 					</div>
 					</div>
-					<div class="awg-list-cell" data-label="Endpoint">
+					<div class="awg-list-cell">
 						<div class="awg-list-kv-primary awg-list-mono awg-endpoint-line">
 							<span class="awg-endpoint-value" title={isEndpointShown ? ctx.endpointHost(tunnel.endpoint) : ''}>
 								{#if tunnel.endpoint}
@@ -387,7 +387,7 @@
 						</div>
 						<div class="awg-list-sub">{ctx.managedRouteMeta(tunnel)}</div>
 					</div>
-					<div class="awg-list-cell awg-list-cell-rate" data-label="Трафик">
+					<div class="awg-list-cell awg-list-cell-rate">
 						<TunnelListTrafficCell
 							rxRate={rate.rx}
 							txRate={rate.tx}
@@ -397,7 +397,7 @@
 							title="Открыть детали туннеля"
 						/>
 					</div>
-					<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions" data-label="Действия">
+					<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions">
 						<TunnelListActions
 							editHref="/tunnels/{tunnel.id}"
 							editTitle="Изменить туннель «{tunnel.name}»"
@@ -429,10 +429,10 @@
 					{@const rate = ctx.latestRate(tunnel.id)}
 					{@const spark = ctx.sparklineSeries(tunnel.id)}
 					<div class="awg-list-row">
-						<div class="awg-list-cell awg-list-cell-toggle" data-label="Тип">
+						<div class="awg-list-cell awg-list-cell-toggle">
 							<span class="awg-row-placeholder">SYS</span>
 						</div>
-						<div class="awg-list-cell awg-list-cell-name" data-label="Туннель">
+						<div class="awg-list-cell awg-list-cell-name">
 							<div class="tunnel-list-name-stack">
 								<TunnelTitleRow
 									title={tunnel.description || tunnel.id}
@@ -457,7 +457,7 @@
 								</TunnelMetaText>
 							</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-status" data-label="Статус">
+						<div class="awg-list-cell awg-list-cell-status">
 							<div class="awg-list-status-line">
 								<StatusDot
 									variant={ctx.systemStatusVariant(tunnel)}
@@ -470,7 +470,7 @@
 							</div>
 							<div class="awg-list-sub">{tunnel.peer?.via || 'Маршрут не определён'}</div>
 						</div>
-						<div class="awg-list-cell" data-label="Endpoint">
+						<div class="awg-list-cell">
 						<div class="awg-list-kv-primary awg-list-mono awg-endpoint-line">
 							<span class="awg-endpoint-value" title={isEndpointShown ? ctx.endpointHost(tunnel.peer?.endpoint) : ''}>
 								{#if tunnel.peer?.endpoint}
@@ -499,7 +499,7 @@
 						</div>
 							<div class="awg-list-sub">{tunnel.address || '—'}</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-rate" data-label="Трафик">
+						<div class="awg-list-cell awg-list-cell-rate">
 							<TunnelListTrafficCell
 								rxRate={rate.rx}
 								txRate={rate.tx}
@@ -509,7 +509,7 @@
 								title="Открыть детали туннеля"
 							/>
 						</div>
-						<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions" data-label="Действия">
+						<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions">
 							<TunnelListActions
 								editHref="/system-tunnels/{tunnel.id}"
 								editTitle="Изменить туннель «{tunnel.description || tunnel.id}»"
@@ -549,10 +549,10 @@
 				{#each ctx.sortedFilteredExternalList as tunnel (tunnel.interfaceName)}
 					{@const isEndpointShown = ctx.endpointVisible('external', tunnel.interfaceName)}
 					<div class="awg-list-row">
-						<div class="awg-list-cell awg-list-cell-toggle" data-label="Тип">
+						<div class="awg-list-cell awg-list-cell-toggle">
 							<span class="awg-row-placeholder">ext</span>
 						</div>
-						<div class="awg-list-cell awg-list-cell-name" data-label="Туннель">
+						<div class="awg-list-cell awg-list-cell-name">
 							<div class="awg-list-name-line">
 								<span class="awg-list-name-static">{tunnel.interfaceName}</span>
 								<span class="awg-inline-badge awg-inline-badge--muted">external</span>
@@ -568,7 +568,7 @@
 								#{tunnel.tunnelNumber}
 							</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-status" data-label="Статус">
+						<div class="awg-list-cell awg-list-cell-status">
 							<div class="awg-list-status-line">
 								<StatusDot
 									variant={ctx.externalStatusVariant(tunnel)}
@@ -581,7 +581,7 @@
 							</div>
 							<div class="awg-list-sub">Не управляется AWG Manager</div>
 						</div>
-						<div class="awg-list-cell" data-label="Endpoint">
+						<div class="awg-list-cell">
 							<div class="awg-list-kv-primary awg-list-mono awg-endpoint-line">
 								<span class="awg-endpoint-value" title={isEndpointShown ? ctx.endpointHost(tunnel.endpoint) : ''}>
 									{#if tunnel.endpoint}
@@ -610,16 +610,23 @@
 							</div>
 							<div class="awg-list-sub">WG интерфейс</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-rate" data-label="Трафик">
+						<div class="awg-list-cell awg-list-cell-rate">
 							<div class="awg-list-rate-stack awg-list-mono">
 								<div class="traffic-rate rx">↓ {formatBytes(tunnel.rxBytes)}</div>
 								<TrafficSparkline rxData={[]} txData={[]} responsive height={18} />
 								<div class="traffic-rate tx">↑ {formatBytes(tunnel.txBytes)}</div>
 							</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-actions" data-label="Действия">
-							<Button variant="primary" size="sm" onclick={() => ctx.handleAdoptClick(tunnel.interfaceName)}>
-								Взять под управление
+						<div class="awg-list-cell awg-list-cell-actions">
+							<!-- Короткая надпись: полная не влезала в колонку действий и
+							     вылезала за неё на узких экранах. Смысл — в title. -->
+							<Button
+								variant="primary"
+								size="sm"
+								title="Взять под управление: {tunnel.interfaceName}"
+								onclick={() => ctx.handleAdoptClick(tunnel.interfaceName)}
+							>
+								Взять
 							</Button>
 						</div>
 					</div>

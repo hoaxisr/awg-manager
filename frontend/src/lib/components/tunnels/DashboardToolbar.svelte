@@ -36,6 +36,7 @@
 		onCreateSingboxSingle?: () => void;
 		onCreateSingboxGroup?: () => void;
 		onCreateSingboxSubscription?: () => void;
+		onCreateAwg3?: () => void;
 		createIcon: Snippet;
 		/** Дополнительные действия (экспорт, статус) перед меню создания. */
 		actions?: Snippet;
@@ -63,6 +64,7 @@
 		onCreateSingboxSingle,
 		onCreateSingboxGroup,
 		onCreateSingboxSubscription,
+		onCreateAwg3,
 		createIcon,
 		actions,
 	}: Props = $props();
@@ -159,6 +161,7 @@
 			onSingboxSingle={onCreateSingboxSingle}
 			onSingboxGroup={onCreateSingboxGroup}
 			onSingboxSubscription={onCreateSingboxSubscription}
+			onAwg3={onCreateAwg3}
 			showSingbox={showSingboxCreate}
 			triggerIcon={createIcon}
 		/>

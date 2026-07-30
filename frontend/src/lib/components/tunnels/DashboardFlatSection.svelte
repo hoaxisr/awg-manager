@@ -170,6 +170,7 @@
 				onCreateSingboxSingle={() => ctx.openWizard('single')}
 				onCreateSingboxGroup={() => ctx.openWizard('inline')}
 				onCreateSingboxSubscription={() => ctx.openWizard('url')}
+				onCreateAwg3={ctx.awg3Visible ? ctx.openAwg3Import : undefined}
 				{createIcon}
 			>
 				{#snippet actions()}

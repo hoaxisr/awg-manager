@@ -7,6 +7,7 @@
 		onSingboxSingle?: () => void;
 		onSingboxGroup?: () => void;
 		onSingboxSubscription?: () => void;
+		onAwg3?: () => void;
 		showSingbox?: boolean;
 		triggerIcon: Snippet;
 		triggerLabel?: string;
@@ -17,6 +18,7 @@
 		onSingboxSingle,
 		onSingboxGroup,
 		onSingboxSubscription,
+		onAwg3,
 		showSingbox = true,
 		triggerIcon,
 		triggerLabel = 'Создать',
@@ -88,6 +90,20 @@
 				>
 					<span class="tunnel-create-menu-item-title">Подписка по URL</span>
 					<span class="tunnel-create-menu-item-desc">Автообновляемый список серверов</span>
+				</button>
+			{/if}
+			{#if onAwg3}
+				<button
+					type="button"
+					class="tunnel-create-menu-item"
+					role="menuitem"
+					onclick={() => {
+						close();
+						onAwg3();
+					}}
+				>
+					<span class="tunnel-create-menu-item-title">AWG3 endpoint</span>
+					<span class="tunnel-create-menu-item-desc">JSON-конфиг AWG3-клиента</span>
 				</button>
 			{/if}
 		{/if}

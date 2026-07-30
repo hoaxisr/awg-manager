@@ -493,6 +493,14 @@ button.tunnel-list-traffic-cell:focus-visible {
 	white-space: nowrap;
 }
 
+/* Текстовая кнопка в колонке действий («Взять») обрезается, а не выпирает
+   за ячейку: колонка узкая и на маленьких экранах ей места не хватает. */
+.awg-list-cell-actions > .btn {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 .awg-row-placeholder {
 	display: inline-flex;
 	align-items: center;
@@ -697,6 +705,9 @@ button.tunnel-list-traffic-cell:focus-visible {
 	cursor: pointer;
 	text-align: left;
 	max-width: 100%;
+	/* Бейджи рядом не сжимаются (flex-shrink: 0 ниже), поэтому в узкой ячейке
+	   имя ужималось до нуля и исчезало совсем. Минимум оставляет его читаемым. */
+	min-width: 3.5rem;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1137,6 +1148,18 @@ button.tunnel-list-traffic-cell:focus-visible {
 .singbox-tunnel-table .list-cell-delay,
 .singbox-tunnel-table .list-cell-ping-mini {
 	text-align: center;
+}
+
+/* Ping и действия центрированы и посчитаны по содержимому (спарклайн 78px,
+   три иконки 92px) — ширины колонок заданы без учёта паддингов ячейки, из-за
+   чего на узких экранах срезало третью иконку и край спарклайна. Паддинги в
+   этих колонках не нужны: содержимое и так по центру. */
+.singbox-sub-table td.lc-ping-mini,
+.singbox-sub-table td.lc-actions,
+.singbox-sub-table td.tunnel-list-cell--ping,
+.singbox-tunnel-table td.list-cell-ping-mini,
+.singbox-tunnel-table td.list-cell-actions {
+	padding-inline: 0;
 }
 
 .tunnel-list-cell--name,
