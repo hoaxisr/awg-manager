@@ -14,6 +14,12 @@ func ClassifyAWGVersion(iface *storage.AWGInterface) string {
 	if iface == nil {
 		return "wg"
 	}
+	// AWG 3.0: any awg3 device param (header protection / content padding /
+	// timing range). Checked first — awg3 builds on top of the AWG 1.x/2.0
+	// obfuscation, so its presence outranks H-ranges and signature packets.
+	if hasAnyAWG3Param(iface) {
+		return "awg3"
+	}
 	// AWG 2.0: any H-value is a numeric range "min-max"
 	if isRange(iface.H1) || isRange(iface.H2) || isRange(iface.H3) || isRange(iface.H4) {
 		return "awg2.0"
@@ -45,4 +51,16 @@ func hasAnySignaturePacket(iface *storage.AWGInterface) bool {
 	}
 	return iface.I1 != "" || iface.I2 != "" || iface.I3 != "" ||
 		iface.I4 != "" || iface.I5 != ""
+}
+
+// hasAnyAWG3Param reports whether any AmneziaWG 3.0 device parameter is set
+// (header protection, content padding, or one of the timing ranges).
+func hasAnyAWG3Param(iface *storage.AWGInterface) bool {
+	if iface == nil {
+		return false
+	}
+	return iface.HeaderProtectionKey != "" || iface.ContentPaddingAddition != "" ||
+		iface.RekeyAfterTime != "" || iface.RekeyTimeout != "" ||
+		iface.RejectAfterTime != "" || iface.KeepaliveTimeout != "" ||
+		iface.MaxHandshakeAttempts != ""
 }

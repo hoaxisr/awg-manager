@@ -930,6 +930,52 @@ func TestClassifyAWGVersion_AWG15_TakesPriorityOverAWG10(t *testing.T) {
 	}
 }
 
+func TestClassifyAWGVersion_AWG3_HeaderProtection(t *testing.T) {
+	iface := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{
+			H1: "1", H2: "2", H3: "3", H4: "4",
+			HeaderProtectionKey: "cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=",
+		},
+	}
+	if v := ClassifyAWGVersion(iface); v != "awg3" {
+		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg3")
+	}
+}
+
+func TestClassifyAWGVersion_AWG3_AnyTimerParam(t *testing.T) {
+	// A single awg3 timing param (no header-protection) is still AWG 3.0.
+	iface := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{RekeyAfterTime: "120-150"},
+	}
+	if v := ClassifyAWGVersion(iface); v != "awg3" {
+		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg3")
+	}
+}
+
+func TestClassifyAWGVersion_AWG3_TakesPriorityOverAWG20(t *testing.T) {
+	// awg3 params + AWG 2.0 H-ranges + signature packet → awg3 wins.
+	iface := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{
+			H1: "100-200", H2: "2", H3: "3", H4: "4", I1: "sig",
+			MaxHandshakeAttempts: "5",
+		},
+	}
+	if v := ClassifyAWGVersion(iface); v != "awg3" {
+		t.Errorf("ClassifyAWGVersion = %q, want %q", v, "awg3")
+	}
+}
+
+func TestIsAWGObfuscated_AWG3Only(t *testing.T) {
+	// Header-protection alone (no Jc/S/H/I) must count as obfuscated so
+	// writeAWGParams emits the awg3 block.
+	iface := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{ContentPaddingAddition: "16"},
+	}
+	if !IsAWGObfuscated(iface) {
+		t.Errorf("IsAWGObfuscated = false, want true for awg3-only config")
+	}
+}
+
 // --- isRange tests ---
 
 func TestIsRange(t *testing.T) {
