@@ -98,4 +98,17 @@ describe('deriveRoutingSummary', () => {
     expect(s.defaultLabel).toBe('Office VPN (t2s10)');
     expect(s.tunnels).toEqual(['Office VPN (t2s10)']);
   });
+
+  it('отдаёт теги DNS-серверов обеих веток', () => {
+    const s = deriveRoutingSummary([], 'direct', dnsServers, globals);
+    expect(s.defaultDnsTag).toBe('dns-direct');
+    expect(s.tunnelDnsTag).toBe('dns-tunnel');
+  });
+
+  it('нет сервера под final / нет detour-сервера → теги null', () => {
+    const s = deriveRoutingSummary([], 'direct', [], { final: 'dns-gone', strategy: 'ipv4_only' });
+    expect(s.defaultDnsTag).toBeNull();
+    expect(s.tunnelDnsTag).toBeNull();
+    expect(s.defaultDnsLabel).toBe('системный');
+  });
 });
