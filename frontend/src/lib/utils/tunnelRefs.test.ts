@@ -44,6 +44,20 @@ describe('describeRouterReference', () => {
 		});
 	});
 
+	it('describes a fakeip rule with the 0-based number its table shows', () => {
+		expect(describeRouterReference('[fakeip] route.rules[9]')).toEqual({
+			text: 'FakeIP → Используется в правиле #9',
+			known: true
+		});
+	});
+
+	it('describes a fakeip non-rule location', () => {
+		expect(describeRouterReference('[fakeip] route.final')).toEqual({
+			text: 'FakeIP → Назначен маршрутом по умолчанию',
+			known: true
+		});
+	});
+
 	it('falls back to the raw path for unknown formats', () => {
 		expect(describeRouterReference('something.unexpected[5]')).toEqual({
 			text: 'something.unexpected[5]',

@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { computeRuleSetUsageRefs } from './ruleSetUsageRefs';
 
 describe('computeRuleSetUsageRefs', () => {
-	it('собирает 1-based номера DNS- и route-правил по тегу', () => {
+	it('нумерует DNS-правила с 1, route-правила с 0 — как их таблицы', () => {
 		const dns = [{ rule_set: ['a'] }, { rule_set: ['b', 'a'] }, {}];
 		const route = [{ rule_set: ['a'] }, {}, { rule_set: ['b'] }];
 		const m = computeRuleSetUsageRefs(dns, route);
 
-		expect(m.get('a')).toEqual({ dns: [1, 2], route: [1] });
-		expect(m.get('b')).toEqual({ dns: [2], route: [3] });
+		expect(m.get('a')).toEqual({ dns: [1, 2], route: [0] });
+		expect(m.get('b')).toEqual({ dns: [2], route: [2] });
 	});
 
 	it('игнорирует правила без rule_set', () => {
