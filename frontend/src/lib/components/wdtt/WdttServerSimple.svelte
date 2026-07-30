@@ -22,7 +22,7 @@
 	import type { WdttPanelUserEntry, WdttProcessStatus, WdttServerConfig } from '$lib/types';
 
 	const withIngressLock = createIngressMutationLock();
-	const wdttIface = 'wdtt0';
+	const wdttIface = $derived(server.wgIface?.trim() || 'wdtt0');
 
 	const SERVER_TABS = [
 		{ id: 'main', label: 'Основное' },

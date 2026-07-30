@@ -113,6 +113,17 @@ build_ipk_one() {
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
     chmod +x "$IPK_ROOT/opt/sbin/awg"
 
+    if [[ "$ENTWARE_ARCH" == "aarch64-3.10" ]]; then
+        local WDTT_SERVER="$PROJECT_ROOT/prebuilt/wdtt/wdtt-server-linux-arm64"
+        if [[ -f "$WDTT_SERVER" ]]; then
+            cp "$WDTT_SERVER" "$IPK_ROOT/opt/bin/wdtt-server"
+            chmod +x "$IPK_ROOT/opt/bin/wdtt-server"
+            echo "Bundled wdtt-server from prebuilt/wdtt/ (0.1.6-awgm, -wg-iface)"
+        else
+            echo "WARNING: $WDTT_SERVER not found, IPK will not include wdtt-server"
+        fi
+    fi
+
     local KMOD_VERSION
     KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"

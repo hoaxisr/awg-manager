@@ -249,6 +249,7 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	a.freeturnService.EnsureBundledInstall()
+	a.wdttService.EnsureBundledInstall()
 	a.wdttService.SetLogger(a.loggingService)
 	if a.managedService != nil {
 		a.wdttService.SetAccessManager(&wdttAccessAdapter{
@@ -544,6 +545,16 @@ func (a *app) setupRouter() {
 	subHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
 	a.srv.SetSubscriptionHandler(subHandler)
 	a.srv.AddShutdownHook(subSched.Stop)
+
+	if a.wdttService != nil && a.ndmsCommands != nil {
+		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
+		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
+			store: a.ndmsQueries.Interfaces,
+			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, "wdtt"),
+		})
+		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
+		a.wdttService.SetRouterReconciler(routerSvc)
+	}
 
 }
 

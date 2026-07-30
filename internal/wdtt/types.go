@@ -51,17 +51,22 @@ type ServerConfig struct {
 	BotToken  string `json:"botToken,omitempty"`  // -bot-token, optional Telegram bot
 	Debug     bool   `json:"debug"`
 
-	// Router integration (awg-manager + NDMS for wdtt0):
+	// Router integration (awg-manager + NDMS):
 	NatIface       string   `json:"natIface,omitempty"`       // -nat-if when built-in NAT enabled manually
 	NatMode        string   `json:"natMode"`                  // full | internet-only | none via managed service
 	NatStaticWAN   string   `json:"natStaticWan,omitempty"`   // persisted WAN for internet-only teardown
 	Policy         string   `json:"policy"`                   // NDMS hotspot policy or "none"
 	LanSegments    []string `json:"lanSegments,omitempty"`    // LAN bridge names
-	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wdtt0
+	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface
 
 	// OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
 	// nil / omitted → true (WAN relay works out of the box).
 	OpenFirewall *bool `json:"openFirewall,omitempty"`
+
+	// NdmsIface — NDMS id (OpkgTun90..99) when WDTT зарегистрирован в роутере.
+	NdmsIface string `json:"ndmsIface,omitempty"`
+	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
+	WgIface string `json:"wgIface,omitempty"`
 }
 
 const (

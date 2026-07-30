@@ -9,7 +9,8 @@ import (
 const natReconcileInterval = 15 * time.Second
 
 // StartNATReconciler periodically re-applies entware iptables NAT for running
-// WDTT servers. sing-box router reconcile can flush POSTROUTING/FORWARD rules.
+// WDTT servers on the legacy wdtt0 path. sing-box router reconcile can flush
+// POSTROUTING/FORWARD rules. NDMS OpkgTun servers use NDMS NAT instead.
 func (s *Service) StartNATReconciler(ctx context.Context) {
 	if s == nil {
 		return
@@ -45,26 +46,41 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	// Ни одного живого сервера — снимаем свои правила. Иначе внешний kill,
-	// падение процесса или удаление инстанса оставляли бы MASQUERADE и
-	// FORWARD на несуществующем wdtt0 навсегда: снятие есть только на
-	// штатном пути остановки.
+	legacyIfaces := map[string]bool{}
+	for _, srv := range full.Servers {
+		if srv.Config.usesNDMSOpkgTun() {
+			continue
+		}
+		legacyIfaces[srv.Config.kernelWGIface()] = true
+	}
+	if len(legacyIfaces) == 0 {
+		if !s.anyServerRunning(full) {
+			removeEntwareNAT(ctx, DefaultWdttIface)
+		}
+		return
+	}
 	if !s.anyServerRunning(full) {
-		removeEntwareNAT(ctx, DefaultWdttIface)
+		for iface := range legacyIfaces {
+			removeEntwareNAT(ctx, iface)
+		}
 		return
 	}
 	for _, srv := range full.Servers {
 		if !s.serverProcs.get(srv.ID).Status().Running {
 			continue
 		}
-		iface := DefaultWdttIface
-		mode := normalizeNatMode(srv.Config.NatMode)
+		cfg := srv.Config
+		if cfg.usesNDMSOpkgTun() {
+			continue
+		}
+		iface := cfg.kernelWGIface()
+		mode := normalizeNatMode(cfg.NatMode)
 		if mode == "none" {
 			continue
 		}
 		wanDev := ""
 		if mode == "internet-only" {
-			if wan := strings.TrimSpace(srv.Config.NatStaticWAN); wan != "" && s.accessMgr != nil {
+			if wan := strings.TrimSpace(cfg.NatStaticWAN); wan != "" && s.accessMgr != nil {
 				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
 			}
 		}
@@ -77,7 +93,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен на "+iface)
 			}
 		}
-		segments := srv.Config.LanSegments
+		segments := cfg.LanSegments
 		if segments == nil {
 			segments = []string{}
 		}

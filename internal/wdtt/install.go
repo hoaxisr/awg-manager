@@ -25,7 +25,7 @@ type ArchSpecs struct {
 }
 
 const PinnedClientVersion = "1.0.0-1"
-const PinnedServerVersion = "0.1.5-awgm"
+const PinnedServerVersion = "0.1.6-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
@@ -43,7 +43,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "5f05aa294e47bc14afebd58099f5100b5bd915719cfa68698c170ffcd259ad1f", Size: 12320930,
+			SHA256: "abb92dfdba003b618b7fe4ba080575727c39862f69fa09308817b031babe42fa", Size: 12320930,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
@@ -157,5 +157,42 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if binPath == "" {
 		return fmt.Errorf("путь бинаря не задан")
 	}
+	if binaryPresent(binPath) {
+		return nil
+	}
 	return childproc.Install(ctx, s.downloader, binPath, spec.URL, spec.SHA256, spec.Size)
+}
+
+// EnsureBundledInstall fixes permissions on wdtt binaries shipped in IPK
+// (tar from Windows may record 0644) so binaryPresent succeeds without mirror download.
+func (s *Service) EnsureBundledInstall() {
+	ensureWdttExecutable(s.clientBin)
+	ensureWdttExecutable(s.serverBin)
+	if s.installSpecs == nil {
+		return
+	}
+	if !binaryPresent(s.clientBin) {
+		return
+	}
+	if s.installSpecs.serverSupported() && !binaryPresent(s.serverBin) {
+		return
+	}
+	ver := installVersionLabel(*s.installSpecs)
+	if ver == "" || s.readInstalledVersion() == ver {
+		return
+	}
+	if err := s.writeInstalledVersion(ver); err != nil && s.appLog != nil {
+		s.appLog.Warn("install", "version-file", err.Error())
+	}
+}
+
+func ensureWdttExecutable(path string) {
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return
+	}
+	if st.Mode().Perm()&0111 != 0 {
+		return
+	}
+	_ = os.Chmod(path, st.Mode().Perm()|0755)
 }

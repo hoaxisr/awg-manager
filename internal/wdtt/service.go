@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -35,6 +36,12 @@ type Service struct {
 	listenChecker LocalListenPortChecker
 	accessMgr     AccessManager
 	ifaceChecker  InterfaceChecker
+	ndmsIfaces    *ndmscommand.InterfaceCommands
+	opkgIndices   OpkgTunIndexLister
+	opkgExist     OpkgTunExistChecker
+	routerReconcile RouterReconciler
+	wgIfaceFlagKnown bool
+	wgIfaceFlagOK    bool
 }
 
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
@@ -366,10 +373,12 @@ func (s *Service) Stop() {
 	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
-	// Снимаем NAT после остановки: иначе MASQUERADE и FORWARD на wdtt0
-	// переживали бы рестарт демона и копились на роутере.
 	if hadRunning {
-		removeEntwareNAT(context.Background(), DefaultWdttIface)
+		for _, srv := range full.Servers {
+			cfg := srv.Config
+			removeEntwareNAT(context.Background(), cfg.kernelWGIface())
+			_ = s.teardownServerOpkgTun(context.Background(), cfg)
+		}
 	}
 }
 

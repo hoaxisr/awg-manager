@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // Compile-time guarantee that routerAccessPolicyAdapter satisfies
@@ -244,6 +245,20 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 		names = append(names, i.Name)
 	}
 	return router.UnionOpkgTunIndices(sysNums, names), nil
+}
+
+var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)
+
+type opkgTunExistAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string) bool {
+	if a.store == nil {
+		return false
+	}
+	iface, err := a.store.Get(ctx, ndmsName)
+	return err == nil && iface != nil
 }
 
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun

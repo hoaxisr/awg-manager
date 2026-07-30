@@ -35,6 +35,10 @@ export interface WdttServerConfig {
 	lanSegments?: string[];
 	ingressEnabled?: boolean;
 	natIface?: string;
+	/** Kernel WG dev (opkgtunN); пусто → legacy wdtt0 */
+	wgIface?: string;
+	/** NDMS id (OpkgTun90..99) when registered in router */
+	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
 	openFirewall?: boolean;
 }
