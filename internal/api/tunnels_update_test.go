@@ -64,6 +64,48 @@ func TestMergeInterfaceWhitelist_AppliesAWGParamsFromRequest(t *testing.T) {
 	}
 }
 
+// TestMergeInterfaceWhitelist_AppliesAWG3ParamsFromRequest guards that the
+// AWG 3.0 device params are part of the editable obfuscation block, so an edit
+// applies them from the request. They ride along because the whitelist copies
+// AWGObfuscation wholesale — this test locks that so a future field-by-field
+// refactor can't silently drop them. Read (BuildTunnelResponse) returns the raw
+// storage.Interface, so persisting them is enough to surface them to the UI.
+func TestMergeInterfaceWhitelist_AppliesAWG3ParamsFromRequest(t *testing.T) {
+	existing := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			Address: "10.0.0.1", MTU: 1420, PrivateKey: "secret",
+			AWGObfuscation: storage.AWGObfuscation{
+				H1: "1", H2: "2", H3: "3", H4: "4",
+				HeaderProtectionKey: "oldkey", RekeyAfterTime: "60",
+			},
+		},
+	}
+	req := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			Address: "10.0.0.1", MTU: 1420,
+			AWGObfuscation: storage.AWGObfuscation{
+				H1: "1", H2: "2", H3: "3", H4: "4",
+				HeaderProtectionKey:    "cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=",
+				ContentPaddingAddition: "16",
+				RekeyAfterTime:         "120-150",
+				RekeyTimeout:           "5",
+				RejectAfterTime:        "180",
+				KeepaliveTimeout:       "25",
+				MaxHandshakeAttempts:   "5",
+			},
+		},
+	}
+	mergeInterfaceWhitelist(req, existing)
+
+	got := req.Interface.AWGObfuscation
+	if got.HeaderProtectionKey != "cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=" ||
+		got.ContentPaddingAddition != "16" || got.RekeyAfterTime != "120-150" ||
+		got.RekeyTimeout != "5" || got.RejectAfterTime != "180" ||
+		got.KeepaliveTimeout != "25" || got.MaxHandshakeAttempts != "5" {
+		t.Fatalf("awg3 params not applied from req: %+v", got)
+	}
+}
+
 // TestMergeInterfaceWhitelist_ClearsAWGParamsFromRequest covers the
 // "просто удалить i1" case from issue #131: the user explicitly empties
 // signature packet fields in the edit form. The frontend sends i1=""
