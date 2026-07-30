@@ -21,7 +21,7 @@ describe('SimpleDnsPickerModal', () => {
     render(SimpleDnsPickerModal, {
       props: { server: direct, allowProtocol: true, onclose: vi.fn(), onsaved: vi.fn() },
     });
-    const yandex = screen.getByRole('radio', { name: /Яндекс/ }) as HTMLInputElement;
+    const yandex = screen.getByRole<HTMLInputElement>('radio', { name: /Яндекс/ });
     expect(yandex.checked).toBe(true);
   });
 
@@ -90,7 +90,7 @@ describe('SimpleDnsPickerModal', () => {
       props: { server: direct, allowProtocol: true, onclose: vi.fn(), onsaved: vi.fn() },
     });
     await fireEvent.click(screen.getByRole('radio', { name: /Свой адрес/ }));
-    expect((screen.getByRole('button', { name: 'Сохранить' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Сохранить' }).disabled).toBe(true);
   });
 
   it('переход на UDP с настроенными пинами предупреждает о потере', async () => {
