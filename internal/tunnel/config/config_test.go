@@ -955,6 +955,112 @@ func TestIsRange(t *testing.T) {
 	}
 }
 
+// --- AWG 3.0 (kernel feat/awg3) device params ---
+
+func TestGenerate_WithAWG3Params(t *testing.T) {
+	tunnel := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			PrivateKey: "privkey=",
+			AWGObfuscation: storage.AWGObfuscation{
+				H1: "1", H2: "2", H3: "3", H4: "4",
+				HeaderProtectionKey:    "cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=",
+				ContentPaddingAddition: "16",
+				RekeyAfterTime:         "120-150",
+				RekeyTimeout:           "5",
+				RejectAfterTime:        "180",
+				KeepaliveTimeout:       "25",
+				MaxHandshakeAttempts:   "5",
+			},
+		},
+		Peer: storage.AWGPeer{
+			PublicKey:  "pubkey=",
+			Endpoint:   "server:51820",
+			AllowedIPs: []string{"0.0.0.0/0"},
+		},
+	}
+
+	result := Generate(tunnel)
+
+	assertContains(t, result, "HeaderProtectionKey = cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=")
+	assertContains(t, result, "ContentPaddingAddition = 16")
+	assertContains(t, result, "RekeyAfterTime = 120-150")
+	assertContains(t, result, "RekeyTimeout = 5")
+	assertContains(t, result, "RejectAfterTime = 180")
+	assertContains(t, result, "KeepaliveTimeout = 25")
+	assertContains(t, result, "MaxHandshakeAttempts = 5")
+}
+
+func TestGenerate_OmitsUnsetAWG3Params(t *testing.T) {
+	tunnel := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			PrivateKey: "privkey=",
+			AWGObfuscation: storage.AWGObfuscation{
+				H1: "1", H2: "2", H3: "3", H4: "4",
+				RekeyAfterTime: "120", // only one awg3 param set
+			},
+		},
+		Peer: storage.AWGPeer{PublicKey: "pubkey=", Endpoint: "server:51820", AllowedIPs: []string{"0.0.0.0/0"}},
+	}
+
+	result := Generate(tunnel)
+
+	assertContains(t, result, "RekeyAfterTime = 120")
+	assertNotContains(t, result, "HeaderProtectionKey =")
+	assertNotContains(t, result, "ContentPaddingAddition =")
+	assertNotContains(t, result, "MaxHandshakeAttempts =")
+}
+
+func TestParse_AWG3Params(t *testing.T) {
+	content := `[Interface]
+PrivateKey = privkey=
+Address = 10.0.0.2/32
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+HeaderProtectionKey = cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=
+ContentPaddingAddition = 16
+RekeyAfterTime = 120-150
+RekeyTimeout = 5
+RejectAfterTime = 180
+KeepaliveTimeout = 25
+MaxHandshakeAttempts = 5
+
+[Peer]
+PublicKey = pubkey=
+Endpoint = server:51820
+AllowedIPs = 0.0.0.0/0
+`
+
+	tunnel, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	iface := tunnel.Interface
+	if iface.HeaderProtectionKey != "cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=" {
+		t.Errorf("HeaderProtectionKey = %q", iface.HeaderProtectionKey)
+	}
+	if iface.ContentPaddingAddition != "16" {
+		t.Errorf("ContentPaddingAddition = %q, want 16", iface.ContentPaddingAddition)
+	}
+	if iface.RekeyAfterTime != "120-150" {
+		t.Errorf("RekeyAfterTime = %q, want 120-150", iface.RekeyAfterTime)
+	}
+	if iface.RekeyTimeout != "5" {
+		t.Errorf("RekeyTimeout = %q, want 5", iface.RekeyTimeout)
+	}
+	if iface.RejectAfterTime != "180" {
+		t.Errorf("RejectAfterTime = %q, want 180", iface.RejectAfterTime)
+	}
+	if iface.KeepaliveTimeout != "25" {
+		t.Errorf("KeepaliveTimeout = %q, want 25", iface.KeepaliveTimeout)
+	}
+	if iface.MaxHandshakeAttempts != "5" {
+		t.Errorf("MaxHandshakeAttempts = %q, want 5", iface.MaxHandshakeAttempts)
+	}
+}
+
 // --- Helpers ---
 
 func assertContains(t *testing.T, s, substr string) {
