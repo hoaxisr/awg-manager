@@ -51,7 +51,8 @@
 		].filter((t): t is { label: string; value: string; unit: string } => !!t.value),
 	);
 
-	// Колонка «Таймеры» в таблице режется по ellipsis — полный список в title.
+	// Колонка «Таймеры» в таблице режется по ellipsis — полный список в title
+	// самой ячейки (в карточке чипы видны целиком, дубль там не нужен).
 	const timersText = $derived(timers.map((t) => `${t.label} ${t.value}${t.unit}`).join(' · '));
 
 	const badgeVariant = $derived<BadgeVariant>(
@@ -147,7 +148,7 @@
 
 {#snippet timersMeta()}
 	{#if timers.length > 0}
-		<span class="timers" title="{timersText} — таймеры устройства (настраиваются в RouteBox)">
+		<span class="timers" title="Таймеры устройства (настраиваются в RouteBox)">
 			{#each timers as t (t.label)}
 				<span class="timer"><span class="timer-label">{t.label}</span> {t.value}{t.unit}</span>
 			{/each}
@@ -175,17 +176,17 @@
 		class:fail={cardState === 'fail'}
 		class:unknown={cardState === 'unknown'}
 	>
-		<td class="cell cell-name" data-label="Туннель">
+		<td class="cell cell-name">
 			{#if renaming}
 				{@render renameForm()}
 			{:else}
-				<span class="tag">{tunnel.tag}</span>
+				<span class="tag" title={tunnel.tag}>{tunnel.tag}</span>
 			{/if}
 		</td>
-		<td class="cell cell-host" data-label="Хост">
-			<span class="host">{tunnel.host}</span>
+		<td class="cell cell-host">
+			<span class="host" title={tunnel.host}>{tunnel.host}</span>
 		</td>
-		<td class="cell cell-hp" data-label="Защита">
+		<td class="cell cell-hp">
 			<div class="hp-cell">
 			{#if tunnel.headerProtection}
 				<Badge variant="accent" size="xs">
@@ -196,20 +197,17 @@
 			{/if}
 			</div>
 		</td>
-		<td class="cell cell-timers" data-label="Таймеры">
-			{#if timers.length > 0}
-				{@render timersMeta()}
-			{:else}
-				<span class="muted">—</span>
-			{/if}
+		<td class="cell cell-timers" title={timersText}>
+			{#if timers.length === 0}<span class="muted">—</span>{/if}
+			{@render timersMeta()}
 		</td>
-		<td class="cell cell-delay" data-label="Delay">
+		<td class="cell cell-delay">
 			<div class="delay-cell">
 				{@render delayBadge()}
 				<TunnelDelaySparkBars {history} state={cardState} layout="list" onclick={() => void triggerCheck()} />
 			</div>
 		</td>
-		<td class="cell cell-actions" data-label="Действия">
+		<td class="cell cell-actions">
 			<div class="row-actions">
 				{@render cardActions()}
 			</div>

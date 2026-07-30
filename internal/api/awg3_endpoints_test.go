@@ -276,6 +276,53 @@ func TestAwg3Handler_DeleteConflict(t *testing.T) {
 	}
 }
 
+// fakeRefLister дополнительно реализует OutboundRefLister: ссылки вне обычных
+// правил (route.final, член композита, dns detour, fakeip).
+type fakeRefLister struct {
+	fakeRuleLister
+	locs []string
+}
+
+func (f *fakeRefLister) OutboundReferenceLocations(string) []string { return f.locs }
+
+// Ссылка вне обычных route-правил обязана давать внятный 409 ДО Sync: иначе
+// удаление доезжало до sing-box check и возвращало непрозрачный 500.
+func TestAwg3Handler_DeleteConflictOnNonRuleReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "awg3.json")
+	store := awg3endpoint.NewStore(path)
+	svc := &fakeAwg3Service{}
+	refs := &fakeRefLister{}
+	h := NewAwg3Handler(store, svc, refs, nil)
+
+	body := `{"tag":"amsterdam","config":` + validEndpoint + `}`
+	rec := httptest.NewRecorder()
+	h.Handle(rec, httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(body)))
+	id := decodeAwg3List(t, rec.Body.Bytes())[0].ID
+
+	// Обычных правил нет — ссылка только в route.final.
+	refs.locs = []string{"route.final"}
+	svc.syncCnt = 0
+	del := httptest.NewRecorder()
+	h.Handle(del, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if del.Code != http.StatusConflict {
+		t.Fatalf("DELETE route.final-ref: code=%d body=%s", del.Code, del.Body.String())
+	}
+	if svc.syncCnt != 0 {
+		t.Errorf("Sync must not run on blocked delete, got %d", svc.syncCnt)
+	}
+	if _, ok := store.Get(id); !ok {
+		t.Errorf("record must survive a blocked delete")
+	}
+
+	// Ссылок нет — удаление проходит.
+	refs.locs = nil
+	ok := httptest.NewRecorder()
+	h.Handle(ok, httptest.NewRequest(http.MethodDelete, "/api/awg3-endpoints/"+id, nil))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("DELETE without refs: code=%d body=%s", ok.Code, ok.Body.String())
+	}
+}
+
 // A ListRules failure during delete surfaces as an honest 500, not a false 409.
 func TestAwg3Handler_DeleteListRulesError(t *testing.T) {
 	h, store, svc, rules := newAwg3TestHandler(t)

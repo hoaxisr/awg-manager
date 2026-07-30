@@ -30,6 +30,8 @@ export interface DashboardFlatContext {
 	readonly effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
 	readonly showSingboxListOption: boolean;
 	readonly showSingboxSections: boolean;
+	/** sing-box установлен — без него операции с AWG3 отклоняет бэкенд. */
+	readonly awg3Visible: boolean;
 	readonly exporting: boolean;
 	// FreeTurn доступен только табом — в dashboard-режиме вход через кнопку тулбара (#585).
 	readonly freeturnAvailable: boolean;
@@ -56,6 +58,7 @@ export interface DashboardFlatContext {
 	handleGripPointerDown(index: number, event: PointerEvent): void;
 	handleToggleOnOff(id: string): Promise<void>;
 	markAsServer(id: string): Promise<void>;
+	openAwg3Import(): void;
 	openAwgDiagnostics(id: string, name: string, kind?: 'awg' | 'system'): void;
 	openDetail(id: string): void;
 	openSingboxDetail(tag: string): void;

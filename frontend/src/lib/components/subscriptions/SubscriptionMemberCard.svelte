@@ -57,7 +57,7 @@
 
 {#if layout === 'list'}
 	<div class="mbr-flatten">
-		<div class="c c-delay" data-label="Delay">
+		<div class="c c-delay">
 			<PingButton
 				label={delayText}
 				state={delayState}
@@ -67,11 +67,11 @@
 				onclick={runTest}
 			/>
 		</div>
-		<div class="c c-name" data-label="Сервер">
+		<div class="c c-name">
 			<span class="n1" title={heading}>{heading}</span>
 			<span class="n2 mono" title={member.tag}>{member.server}:{member.port}</span>
 		</div>
-	<div class="c c-badges" data-label="Протокол">
+	<div class="c c-badges">
 		<span class="badge proto">{protocolLabel}</span>
 		{#if member.transport && member.transport !== 'tcp'}
 			<span class="badge transport">{member.transport.toUpperCase()}</span>
@@ -82,7 +82,7 @@
 			<span class="badge tls">TLS</span>
 		{/if}
 	</div>
-		<div class="c c-ping-mini" data-label="Ping">
+		<div class="c c-ping-mini">
 			<div
 				class="spark-mini {delayState}"
 				role="button"
@@ -103,8 +103,8 @@
 				{/if}
 			</div>
 		</div>
-		<div class="c mono c-tag" data-label="Тег">{member.tag}</div>
-		<div class="c c-state" data-label="">
+		<div class="c mono c-tag">{member.tag}</div>
+		<div class="c c-state">
 			{#if active}
 				<span class="state-badge active-badge">активен</span>
 			{:else if switching}

@@ -68,11 +68,19 @@ type awg3Service interface {
 }
 
 // RuleLister exposes just the router rules the rename-conflict check reads.
-// NB: ListRules covers ordinary route rules only — it does NOT see composite
-// selector members, route.final, DownloadDetour references or fakeip rules.
-// Renaming a tag still referenced by one of those is a conscious v1 limitation.
+// NB: ListRules covers ordinary route rules only — composite selector members,
+// route.final, DownloadDetour and fakeip references are seen by OutboundRefLister
+// below (the same router service implements both).
 type RuleLister interface {
 	ListRules(ctx context.Context) ([]router.Rule, error)
+}
+
+// OutboundRefLister перечисляет ВСЕ места конфига, ссылающиеся на тег: члены
+// композитов, route.final, dns detour, download_detour и fakeip-слот. Без него
+// удаление/переименование доезжало до Sync и возвращало непрозрачный 500
+// «sing-box отверг конфиг» вместо внятного 409 с указанием места.
+type OutboundRefLister interface {
+	OutboundReferenceLocations(tag string) []string
 }
 
 // OutboundTagLister exposes every outbound/endpoint tag sing-box already knows
@@ -237,7 +245,7 @@ func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id st
 	}
 	if referenced {
 		response.ErrorWithStatus(w, http.StatusConflict,
-			"тег используется в правилах маршрутизации — сначала удалите правило",
+			"тег используется в конфигурации sing-box (правило, композит, route.final или DNS) — сначала уберите ссылку",
 			"AWG3_TAG_IN_USE")
 		return
 	}
@@ -311,7 +319,7 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 		}
 		if referenced {
 			response.ErrorWithStatus(w, http.StatusConflict,
-				"тег используется в правилах маршрутизации — сначала измените правило",
+				"тег используется в конфигурации sing-box (правило, композит, route.final или DNS) — сначала уберите ссылку",
 				"AWG3_TAG_IN_USE")
 			return
 		}
@@ -353,12 +361,19 @@ func (h *Awg3Handler) takenTags(ctx context.Context) map[string]bool {
 	return taken
 }
 
-// tagReferenced reports whether any ordinary routing rule routes to tag. A
-// ListRules failure is surfaced as an error (not a false 409) so a transient
-// router fault stays debuggable.
+// tagReferenced reports whether any ordinary routing rule routes to tag, ИЛИ
+// тег упомянут в другом месте конфига (композит, route.final, dns detour,
+// download_detour, fakeip) — их видит OutboundRefLister. A ListRules failure is
+// surfaced as an error (not a false 409) so a transient router fault stays
+// debuggable.
 func (h *Awg3Handler) tagReferenced(ctx context.Context, tag string) (bool, error) {
 	if h.rules == nil {
 		return false, nil
+	}
+	if lister, ok := h.rules.(OutboundRefLister); ok {
+		if locs := lister.OutboundReferenceLocations(tag); len(locs) > 0 {
+			return true, nil
+		}
 	}
 	rules, err := h.rules.ListRules(ctx)
 	if err != nil {
