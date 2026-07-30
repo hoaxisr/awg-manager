@@ -92,3 +92,40 @@ describe('editTunnelSchema persistentKeepalive', () => {
         expect(kaErr('22-')).toBeDefined();
     });
 });
+
+// AWG 3.0 timing/padding params are u16_range_t: an int or "min-max" range,
+// each value 0-65535 and hi >= lo. Empty means "unset".
+describe('editTunnelSchema awg3 range params', () => {
+    function fieldErr(field: string, value: string): string | undefined {
+        const res = editTunnelSchema.safeParse({ ...base('vpn.example.com:51820'), [field]: value });
+        if (res.success) return undefined;
+        return res.error.issues.find(i => i.path[0] === field)?.message;
+    }
+
+    const rangeFields = [
+        'contentPaddingAddition', 'rekeyAfterTime', 'rekeyTimeout',
+        'rejectAfterTime', 'keepaliveTimeout', 'maxHandshakeAttempts',
+    ];
+
+    for (const field of rangeFields) {
+        it(`${field}: accepts empty, single int, and min-max range`, () => {
+            expect(fieldErr(field, '')).toBeUndefined();
+            expect(fieldErr(field, '120')).toBeUndefined();
+            expect(fieldErr(field, '120-150')).toBeUndefined();
+            expect(fieldErr(field, '0')).toBeUndefined();
+        });
+
+        it(`${field}: rejects garbage, reversed and out-of-range values`, () => {
+            expect(fieldErr(field, 'abc')).toBeDefined();
+            expect(fieldErr(field, '150-120')).toBeDefined(); // hi < lo
+            expect(fieldErr(field, '70000')).toBeDefined();   // > 65535
+            expect(fieldErr(field, '120-')).toBeDefined();
+            expect(fieldErr(field, '-120')).toBeDefined();
+        });
+    }
+
+    it('headerProtectionKey accepts empty and a base64 key', () => {
+        expect(fieldErr('headerProtectionKey', '')).toBeUndefined();
+        expect(fieldErr('headerProtectionKey', 'cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=')).toBeUndefined();
+    });
+});

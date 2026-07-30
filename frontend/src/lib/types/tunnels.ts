@@ -23,6 +23,14 @@ export interface AWGInterface {
 	i3?: string;
 	i4?: string;
 	i5?: string;
+	// AWG 3.0 device params (kernel mode only).
+	headerProtectionKey?: string;
+	contentPaddingAddition?: string;
+	rekeyAfterTime?: string;
+	rekeyTimeout?: string;
+	rejectAfterTime?: string;
+	keepaliveTimeout?: string;
+	maxHandshakeAttempts?: string;
 }
 
 export interface AWGPeer {
@@ -185,6 +193,15 @@ export interface ASCParamsExtended extends ASCParamsBase {
 	i3: string;
 	i4: string;
 	i5: string;
+	// AWG 3.0 device params (kernel mode only). Optional: only present/edited
+	// when the ASCEditor runs in awg3 mode.
+	headerProtectionKey?: string;
+	contentPaddingAddition?: string;
+	rekeyAfterTime?: string;
+	rekeyTimeout?: string;
+	rejectAfterTime?: string;
+	keepaliveTimeout?: string;
+	maxHandshakeAttempts?: string;
 }
 
 export type ASCParams = ASCParamsBase | ASCParamsExtended;

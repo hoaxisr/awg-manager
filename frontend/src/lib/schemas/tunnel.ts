@@ -16,6 +16,9 @@ function isU16Range(v: string): boolean {
     return true;
 }
 
+const u16RangeField = () =>
+    z.string().default('').refine(isU16Range, { message: 'Укажите число 0-65535 или диапазон min-max' });
+
 // Edit tunnel schema - flat structure matching the edit form
 export const editTunnelSchema = z.object({
     name: z.string()
@@ -73,6 +76,15 @@ export const editTunnelSchema = z.object({
     i3: z.string().default(''),
     i4: z.string().default(''),
     i5: z.string().default(''),
+    // AWG 3.0 device params (kernel mode only). headerProtectionKey is a
+    // base64 key; the rest are u16 int-or-range values.
+    headerProtectionKey: z.string().default(''),
+    contentPaddingAddition: u16RangeField(),
+    rekeyAfterTime: u16RangeField(),
+    rekeyTimeout: u16RangeField(),
+    rejectAfterTime: u16RangeField(),
+    keepaliveTimeout: u16RangeField(),
+    maxHandshakeAttempts: u16RangeField(),
 }).refine(data => {
     const total = calcByteSize(data.i1) + calcByteSize(data.i2) +
         calcByteSize(data.i3) + calcByteSize(data.i4) + calcByteSize(data.i5);
