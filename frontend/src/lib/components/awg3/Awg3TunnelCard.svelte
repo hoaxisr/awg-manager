@@ -51,6 +51,9 @@
 		].filter((t): t is { label: string; value: string; unit: string } => !!t.value),
 	);
 
+	// Колонка «Таймеры» в таблице режется по ellipsis — полный список в title.
+	const timersText = $derived(timers.map((t) => `${t.label} ${t.value}${t.unit}`).join(' · '));
+
 	const badgeVariant = $derived<BadgeVariant>(
 		cardState === 'ok'
 			? 'success'
@@ -144,7 +147,7 @@
 
 {#snippet timersMeta()}
 	{#if timers.length > 0}
-		<span class="timers" title="Таймеры устройства (настраиваются в RouteBox)">
+		<span class="timers" title="{timersText} — таймеры устройства (настраиваются в RouteBox)">
 			{#each timers as t (t.label)}
 				<span class="timer"><span class="timer-label">{t.label}</span> {t.value}{t.unit}</span>
 			{/each}
@@ -191,8 +194,14 @@
 			{:else}
 				<span class="muted">—</span>
 			{/if}
-			{@render timersMeta()}
 			</div>
+		</td>
+		<td class="cell cell-timers" data-label="Таймеры">
+			{#if timers.length > 0}
+				{@render timersMeta()}
+			{:else}
+				<span class="muted">—</span>
+			{/if}
 		</td>
 		<td class="cell cell-delay" data-label="Delay">
 			<div class="delay-cell">
@@ -234,8 +243,8 @@
 								<ShieldCheck size={11} aria-hidden="true" /> HP
 							</Badge>
 						{/if}
-						{@render timersMeta()}
 					</div>
+					{@render timersMeta()}
 				{/if}
 			</div>
 		</div>
@@ -401,6 +410,20 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
+	}
+	/* В таблице таймеры живут одной строкой: перенос раздувал высоту ряда,
+	   а nowrap-чипы вылезали за колонку. Полный список — в title. */
+	.awg3-row .cell-timers {
+		overflow: hidden;
+	}
+	.awg3-row .timers {
+		display: block;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.awg3-row .timer + .timer {
+		margin-left: 8px;
 	}
 
 	.confirm-text { margin: 0; }

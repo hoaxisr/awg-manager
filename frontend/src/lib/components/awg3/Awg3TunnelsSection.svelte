@@ -112,6 +112,7 @@
 				<col class="c-name" />
 				<col class="c-host" />
 				<col class="c-hp" />
+				<col class="c-timers" />
 				<col class="c-delay" />
 				<col class="c-actions" />
 			</colgroup>
@@ -120,6 +121,7 @@
 					<th>Туннель</th>
 					<th>Хост</th>
 					<th>Защита</th>
+					<th>Таймеры</th>
 					<th>Delay</th>
 					<th class="col-actions">Действия</th>
 				</tr>
@@ -130,7 +132,7 @@
 				{/each}
 				{#if searchEmpty}
 					<tr class="tunnel-empty-row">
-						<td colspan="5">Ничего не найдено</td>
+						<td colspan="6">Ничего не найдено</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -212,6 +214,14 @@
 		text-align: right;
 	}
 
+	/* Имя и хост ограничены, свободное место таблицы достаётся таймерам:
+	   пять nowrap-чипов не влезают в узкую колонку и вылезали в соседнюю. */
+	:global(.awg3-tunnel-table) col.c-name {
+		width: 220px;
+	}
+	:global(.awg3-tunnel-table) col.c-host {
+		width: 280px;
+	}
 	:global(.awg3-tunnel-table) col.c-hp {
 		width: 72px;
 	}
