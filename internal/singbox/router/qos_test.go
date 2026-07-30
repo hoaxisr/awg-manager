@@ -317,11 +317,12 @@ func TestBuildQoSRouteRules_CanonicalAndDeterministic(t *testing.T) {
 		{DSCP: 46, Outbound: "vpn-a", Enabled: true, Slot: 0},
 		{DSCP: 26, Outbound: "vpn-b", Enabled: true, Slot: 1},
 	})
-	rules := buildQoSRouteRules(classes)
-	if len(rules) != 2 {
-		t.Fatalf("expected 2 rules, got %+v", rules)
+	rules := buildQoSRouteRules(classes, storage.SingboxRouterSettings{})
+	// +1 for the leading udp_timeout route-options rule (see the builder).
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 rules, got %+v", rules)
 	}
-	q0 := rules[0]
+	q0 := rules[1]
 	if !slices.Equal(q0.Inbound, []string{"tproxy-qos-46", "redirect-qos-46"}) ||
 		q0.Action != "route" || q0.Outbound != "vpn-a" {
 		t.Errorf("qos rule 0 wrong: %+v", q0)
@@ -329,7 +330,7 @@ func TestBuildQoSRouteRules_CanonicalAndDeterministic(t *testing.T) {
 	if q0.AwgmManaged != "" {
 		t.Errorf("qos rule must not carry awgm_managed (sing-box rejects unknown rule fields), got %q", q0.AwgmManaged)
 	}
-	if buildQoSRouteRules(nil) != nil {
+	if buildQoSRouteRules(nil, storage.SingboxRouterSettings{}) != nil {
 		t.Error("no classes must yield nil rules")
 	}
 	// Deterministic marshalling — syncQoSRoutesSlot byte-compares the slot.
@@ -338,13 +339,98 @@ func TestBuildQoSRouteRules_CanonicalAndDeterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
-		again, err := marshalQoSRoutesSlot(buildQoSRouteRules(classes))
+		again, err := marshalQoSRoutesSlot(buildQoSRouteRules(classes, storage.SingboxRouterSettings{}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(first, again) {
 			t.Fatalf("marshal %d differs:\n%s\nvs\n%s", i, first, again)
 		}
+	}
+}
+
+// #554: the system route-options rule lives in 20-router.json, but sing-box
+// merges config.d in filename order — 18-qos-routes.json comes first, so a
+// QoS class's final `route` rule ends evaluation before the timeout rule is
+// ever reached. The slot must carry its own leading copy.
+func TestBuildQoSRouteRules_LeadingUDPTimeoutRule(t *testing.T) {
+	classes := activeQoSClasses([]storage.SingboxQoSClass{
+		{DSCP: 46, Outbound: "vpn-a", Enabled: true, Slot: 0},
+	})
+	rules := buildQoSRouteRules(classes, storage.SingboxRouterSettings{UDPTimeout: "1h0m0s"})
+	if len(rules) != 2 {
+		t.Fatalf("expected timeout rule + 1 class rule, got %+v", rules)
+	}
+	if !isSystemUDPTimeoutRule(rules[0]) || rules[0].UDPTimeout != "1h0m0s" {
+		t.Errorf("rule 0 must be the udp_timeout route-options rule: %+v", rules[0])
+	}
+	// Scoped to the class UDP inbounds — a matcher-less rule would precede the
+	// system hijack-dns rule in the merge and stretch 10s DNS sessions.
+	if !slices.Equal(rules[0].Inbound, []string{"tproxy-qos-46"}) {
+		t.Errorf("timeout rule must match only the class tproxy inbounds: %+v", rules[0].Inbound)
+	}
+	if rules[1].Action != "route" {
+		t.Errorf("class rule must follow the timeout rule: %+v", rules[1])
+	}
+	// Unset timeout falls back to the same default the router slot uses.
+	fallback := buildQoSRouteRules(classes, storage.SingboxRouterSettings{})
+	if fallback[0].UDPTimeout != DefaultUDPTimeout {
+		t.Errorf("unset timeout = %q, want %q", fallback[0].UDPTimeout, DefaultUDPTimeout)
+	}
+	// No classes → no slot at all, timeout notwithstanding (an enabled slot
+	// holding only the timeout rule would duplicate 20-router.json's copy).
+	if buildQoSRouteRules(nil, storage.SingboxRouterSettings{UDPTimeout: "1h0m0s"}) != nil {
+		t.Error("no classes must yield nil rules")
+	}
+}
+
+// The system sniff rule sits in 20-router.json, i.e. behind the class rules in
+// the merge — QoS traffic would never be sniffed and would show up without
+// protocol/domain. The slot carries its own copy, gated on the same toggle.
+func TestBuildQoSRouteRules_SniffRule(t *testing.T) {
+	classes := activeQoSClasses([]storage.SingboxQoSClass{
+		{DSCP: 46, Outbound: "vpn-a", Enabled: true, Slot: 0},
+	})
+	on := buildQoSRouteRules(classes, storage.SingboxRouterSettings{SnifferEnabled: true})
+	if len(on) != 3 {
+		t.Fatalf("expected sniff + timeout + class rule, got %+v", on)
+	}
+	if on[0].Action != "sniff" {
+		t.Fatalf("sniff must come first (before the final route action): %+v", on[0])
+	}
+	// Both class inbounds: TCP hostnames come from the redirect one.
+	if !slices.Equal(on[0].Inbound, []string{"tproxy-qos-46", "redirect-qos-46"}) {
+		t.Errorf("sniff rule inbounds = %v", on[0].Inbound)
+	}
+	off := buildQoSRouteRules(classes, storage.SingboxRouterSettings{})
+	for _, r := range off {
+		if r.Action == "sniff" {
+			t.Fatalf("sniffer off must emit no sniff rule: %+v", off)
+		}
+	}
+}
+
+func TestSyncQoSRoutesSlot_UDPTimeoutChangeRewritesSlot(t *testing.T) {
+	svc, dir := newQoSSlotTestService(t, "vpn-a")
+	ctx := context.Background()
+	classes := activeQoSClasses([]storage.SingboxQoSClass{
+		{DSCP: 46, Outbound: "vpn-a", Enabled: true, Slot: 0},
+	})
+	if _, err := svc.syncQoSRoutesSlot(ctx, classes, storage.SingboxRouterSettings{UDPTimeout: "5m0s"}); err != nil {
+		t.Fatal(err)
+	}
+	// Same classes, new timeout → slot must be rewritten (#554: a changed
+	// setting on a running engine must not stay stale until an on/off cycle).
+	changed, err := svc.syncQoSRoutesSlot(ctx, classes, storage.SingboxRouterSettings{UDPTimeout: "1h0m0s"})
+	if err != nil || !changed {
+		t.Fatalf("timeout change: changed=%v err=%v", changed, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "18-qos-routes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"1h0m0s"`) {
+		t.Errorf("slot must carry the new timeout:\n%s", raw)
 	}
 }
 
@@ -407,7 +493,7 @@ func TestSyncQoSRoutesSlot_EnableDisableLifecycle(t *testing.T) {
 	})
 
 	// First sync: slot written + enabled, changed=true.
-	changed, err := svc.syncQoSRoutesSlot(ctx, classes)
+	changed, err := svc.syncQoSRoutesSlot(ctx, classes, storage.SingboxRouterSettings{})
 	if err != nil || !changed {
 		t.Fatalf("first sync: changed=%v err=%v", changed, err)
 	}
@@ -423,7 +509,7 @@ func TestSyncQoSRoutesSlot_EnableDisableLifecycle(t *testing.T) {
 	}
 
 	// Identical classes → byte-equal slot → changed=false (no reload).
-	changed, err = svc.syncQoSRoutesSlot(ctx, classes)
+	changed, err = svc.syncQoSRoutesSlot(ctx, classes, storage.SingboxRouterSettings{})
 	if err != nil || changed {
 		t.Fatalf("no-op sync must report changed=false, got changed=%v err=%v", changed, err)
 	}
@@ -432,13 +518,13 @@ func TestSyncQoSRoutesSlot_EnableDisableLifecycle(t *testing.T) {
 	changedClasses := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 26, Outbound: "vpn-a", Enabled: true, Slot: 0},
 	})
-	changed, err = svc.syncQoSRoutesSlot(ctx, changedClasses)
+	changed, err = svc.syncQoSRoutesSlot(ctx, changedClasses, storage.SingboxRouterSettings{})
 	if err != nil || !changed {
 		t.Fatalf("diff sync: changed=%v err=%v", changed, err)
 	}
 
 	// No classes → slot cleared (active file parked under disabled/), changed=true.
-	changed, err = svc.syncQoSRoutesSlot(ctx, nil)
+	changed, err = svc.syncQoSRoutesSlot(ctx, nil, storage.SingboxRouterSettings{})
 	if err != nil || !changed {
 		t.Fatalf("disable sync: changed=%v err=%v", changed, err)
 	}
@@ -447,7 +533,7 @@ func TestSyncQoSRoutesSlot_EnableDisableLifecycle(t *testing.T) {
 	}
 
 	// Still disabled + still no classes → no-op.
-	changed, err = svc.syncQoSRoutesSlot(ctx, nil)
+	changed, err = svc.syncQoSRoutesSlot(ctx, nil, storage.SingboxRouterSettings{})
 	if err != nil || changed {
 		t.Fatalf("steady disabled sync must be changed=false, got %v err=%v", changed, err)
 	}
@@ -460,7 +546,7 @@ func TestSyncQoSRoutesSlot_SkipsUnknownOutbounds(t *testing.T) {
 		{DSCP: 46, Outbound: "vpn-known", Enabled: true, Slot: 0},
 		{DSCP: 26, Outbound: "vpn-ghost", Enabled: true, Slot: 1},
 	})
-	if _, err := svc.syncQoSRoutesSlot(ctx, classes); err != nil {
+	if _, err := svc.syncQoSRoutesSlot(ctx, classes, storage.SingboxRouterSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "18-qos-routes.json"))
@@ -480,7 +566,7 @@ func TestSyncQoSRoutesSlot_SkipsUnknownOutbounds(t *testing.T) {
 	ghostOnly := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 26, Outbound: "vpn-ghost", Enabled: true, Slot: 1},
 	})
-	if _, err := svc.syncQoSRoutesSlot(ctx, ghostOnly); err != nil {
+	if _, err := svc.syncQoSRoutesSlot(ctx, ghostOnly, storage.SingboxRouterSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "18-qos-routes.json")); !os.IsNotExist(err) {
@@ -502,7 +588,7 @@ func TestSyncQoSRoutesSlot_ResolvesOutboundsAgainstAppliedNotDraft(t *testing.T)
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 46, Outbound: "vpn-staged", Enabled: true, Slot: 0},
 	})
-	if _, err := svc.syncQoSRoutesSlot(context.Background(), classes); err != nil {
+	if _, err := svc.syncQoSRoutesSlot(context.Background(), classes, storage.SingboxRouterSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "18-qos-routes.json")); !os.IsNotExist(err) {
@@ -1032,7 +1118,7 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Seed a stale slot file for a class that no longer exists.
-	staleRules := buildQoSRouteRules([]qosClass{{DSCP: 10, Outbound: "old", TProxyPort: 51281, RedirectPort: 51301}})
+	staleRules := buildQoSRouteRules([]qosClass{{DSCP: 10, Outbound: "old", TProxyPort: 51281, RedirectPort: 51301}}, storage.SingboxRouterSettings{})
 	staleData, _ := marshalQoSRoutesSlot(staleRules)
 	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotQoSRoutes, staleData); err != nil {
 		t.Fatal(err)
@@ -1143,7 +1229,7 @@ func noopNotInstalledIPTables() *IPTables {
 		runIPTables:    func(_ context.Context, _ ...string) error { return errors.New("chain missing") },
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
-		persistRules:   func(_ string) error { return nil },
+		persistRules:   func(_, _, _ string) error { return nil },
 		persistHook:    func() error { return nil },
 		cleanupHook:    func() {},
 	}

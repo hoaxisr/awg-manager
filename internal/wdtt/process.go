@@ -68,7 +68,13 @@ func (p *process) Start(args []string) error {
 		return fmt.Errorf("wdtt %s: путь к бинарю не задан", p.name)
 	}
 	if !binaryPresent(p.binary) {
-		return fmt.Errorf("бинарь %s не найден — установите wdtt-client", p.binary)
+		role := "wdtt"
+		if strings.Contains(filepath.Base(p.binary), "server") {
+			role = "wdtt-server"
+		} else if strings.Contains(filepath.Base(p.binary), "client") {
+			role = "wdtt-client"
+		}
+		return fmt.Errorf("бинарь %s не найден — установите %s", p.binary, role)
 	}
 	if err := os.MkdirAll(filepath.Dir(p.pidPath), 0755); err != nil {
 		return err

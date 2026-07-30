@@ -71,6 +71,25 @@ type Settings struct {
 	// mode (see FakeIPState). Pointer so it's absent from JSON when never
 	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
 	FakeIP *FakeIPState `json:"fakeip,omitempty"`
+	// DNSChainPreset is backend-managed state of the sing-box 1.14 DNS-chain
+	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
+	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
+	DNSChainPreset *DNSChainPresetState `json:"dnsChainPreset,omitempty"`
+}
+
+// DNSChainPresetState is backend-managed state of the DNS-chain preset
+// (sing-box 1.14 evaluate/match_response chains). Written ONLY via
+// SettingsStore.SetDNSChainPresetState — never by the settings API, so a
+// settings PUT cannot clobber it (mirrors FakeIPState).
+// Mode: "" (no preset) | "resilient" (race direct+proxy) | "antipoison"
+// (re-route poisoned answers through the proxy resolver). DirectServer /
+// ProxyServer are tags of existing DNS servers; PoisonCIDRs is the antipoison
+// ip_cidr list (empty = defaultPoisonCIDRs seed).
+type DNSChainPresetState struct {
+	Mode         string   `json:"mode"`
+	DirectServer string   `json:"directServer,omitempty"`
+	ProxyServer  string   `json:"proxyServer,omitempty"`
+	PoisonCIDRs  []string `json:"poisonCidrs,omitempty"`
 }
 
 // FakeIPState is backend-managed operational state for sing-box fakeip-tun

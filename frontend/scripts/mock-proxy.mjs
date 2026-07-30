@@ -2234,6 +2234,8 @@ function sanitizeMockDnsServerForWrite(server) {
 
 let mockDNSGlobals = { final: 'dns-direct', strategy: 'prefer_ipv4' };
 
+let mockDNSChainPreset = { mode: '', directServer: '', proxyServer: '', poisonCidrs: [] };
+
 let mockDNSServers = [
 	// UI repro: legacy detour on final DNS — human label instead of outbound tag.
 	{
@@ -3063,7 +3065,7 @@ function createInitialMockFreeturn() {
 					obfProfile: 'rtpopus2',
 					obfKey: MOCK_FREETURN_OBF_KEY,
 					streamsPerCred: 4,
-					browser: 'chrome',
+					platform: 'desktop',
 					manualCaptcha: false,
 					dnsMode: 'auto',
 					clientId: '',
@@ -6103,6 +6105,31 @@ const server = http.createServer(async (req, res) => {
 				mockDNSGlobals = {
 					final: payload.final ?? mockDNSGlobals.final,
 					strategy: payload.strategy ?? mockDNSGlobals.strategy,
+				};
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/router/dns/chain-preset') {
+		send(res, 200, { success: true, data: mockDNSChainPreset });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/dns/chain-preset') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = JSON.parse(raw || '{}');
+				mockDNSChainPreset = {
+					mode: payload.mode ?? '',
+					directServer: payload.directServer ?? '',
+					proxyServer: payload.proxyServer ?? '',
+					poisonCidrs: payload.poisonCidrs ?? [],
 				};
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {

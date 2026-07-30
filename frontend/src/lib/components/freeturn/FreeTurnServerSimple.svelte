@@ -1,18 +1,34 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { RefreshCw } from 'lucide-svelte';
-	import { Button, Input, Dropdown } from '$lib/components/ui';
+	import { Button, Input, Dropdown, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import StepPill from '$lib/components/sb-router/StepPill.svelte';
-	import WizardStep from '$lib/components/sb-router/WizardStep.svelte';
+	import { proxyInOpsMode, proxyServerOpsMode } from '$lib/utils/proxyOpsMode';
 	import ServerWgBind from './ServerWgBind.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
-	import LinkParamsSummary from './LinkParamsSummary.svelte';
-	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
+	import FreeturnLinkShare from './FreeturnLinkShare.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
+	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
+	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
+	import ProxyQuickStart from '../proxy-panel/ProxyQuickStart.svelte';
+	import ProxyQuickStartStep from '../proxy-panel/ProxyQuickStartStep.svelte';
+	import ProxyWizardGuide from '../proxy-panel/ProxyWizardGuide.svelte';
+	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
+	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
+	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
 	import { obfOptions } from './options';
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
+	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
+
+	const SERVER_TABS = [
+		{ id: 'main', label: 'Основное' },
+		{ id: 'links', label: 'Раздача' },
+		{ id: 'log', label: 'Журнал' }
+	] as const;
+
+	type ServerTab = (typeof SERVER_TABS)[number]['id'];
 
 	interface Props {
 		server: FreeTurnServerConfig;
@@ -76,6 +92,9 @@
 	let savingAllowlist = $state(false);
 	let linkParams = $state<FreeTurnLinkPayload | null>(null);
 	let allowlistPanel: ServerAllowlist | undefined = $state();
+	let opsTab = $state<ServerTab>('main');
+	let quickActive = $state('wg');
+	let keeneticPeerSelected = $state(false);
 
 	const listenPort = $derived.by(() => {
 		const listen = server.listen?.trim() ?? '';
@@ -86,13 +105,131 @@
 
 	const step1Done = $derived(!!server.connect.trim());
 	const step2Done = $derived(step1Done && !!server.listen.trim());
-	const step3Done = $derived(
-		step2Done && server.obfProfile !== 'none' ? !!server.obfKey?.trim() : step2Done
+	const obfReady = $derived(
+		step2Done && (server.obfProfile !== 'none' ? !!server.obfKey?.trim() : true)
 	);
+	const wgStepDone = $derived(
+		obfReady && (!keeneticPeerSelected || !!genWG.trim())
+	);
+	const linkReady = $derived(obfReady && !!genWG.trim());
 	const canSave = $derived(step1Done && !saving && !starting);
-	const canStart = $derived(step3Done && !saving && !starting);
+	const canStart = $derived(obfReady && !saving && !starting);
 
+	/** Ops после первого запуска (startedAt) или когда ссылка сгенерирована в этой сессии. */
+	const opsMode = $derived(
+		proxyServerOpsMode({
+			running,
+			startedAt: status?.startedAt,
+			enabled: server.enabled,
+			generatedLink
+		})
+	);
+
+	const quickItems = $derived<QuickStartItem[]>([
+		{ id: 'wg', label: 'WireGuard · obf', done: wgStepDone },
+		{ id: 'launch', label: 'Запуск и freeturn://', done: !!generatedLink && running }
+	]);
+
+	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const obfHint = $derived(obfProfileHints[server.obfProfile] ?? '');
+
+	const wgGuideItems = $derived.by((): WizardGuideItem[] => {
+		const peerReady = step1Done;
+		const confReady = !!genWG.trim();
+		const obfProfileOk = server.obfProfile !== 'none';
+		const obfKeyOk = obfProfileOk ? !!server.obfKey?.trim() : true;
+
+		return finalizeGuide([
+			guide('peer', 'Выберите WG-сервер и пира в «Сервер · пир»', { done: peerReady }),
+			...(keeneticPeerSelected
+				? [
+						guide('conf', 'Вставьте WG-конфиг клиента Keenetic в поле «WG-конфиг клиента»', {
+							done: confReady,
+							pending: !peerReady
+						})
+					]
+				: [
+						guide('conf', 'Дождитесь автоподстановки конфига пира — он нужен для freeturn://', {
+							done: confReady,
+							pending: !peerReady
+						})
+					]),
+			guide(
+				'endpoint',
+				`Проверьте порт Endpoint (${defaultClientListenPort}) — это listen клиента FreeTurn (вкладка «Клиент»)`,
+				{ done: peerReady, pending: !peerReady }
+			),
+			...(obfProfileOk
+				? [
+						guide('obf-profile', 'Obf-профиль выбран', { done: true, pending: !peerReady }),
+						guide('obf-key', 'Нажмите «Сгенерировать ключ» или вставьте obf-ключ (64 hex)', {
+							done: obfKeyOk,
+							pending: !peerReady || !confReady
+						})
+					]
+				: [
+						guide(
+							'obf-profile',
+							'Выберите obf-профиль (rtpopus3 …) — «none» только для отладки',
+							{ done: false, pending: !peerReady }
+						)
+					]),
+			guide('firewall', 'При доступе с WAN включите «Открыть порт в firewall» (по желанию)', {
+				done: false,
+				pending: !peerReady
+			}),
+			guide('go', 'Нажмите «Далее: запуск и ссылка»', {
+				done: quickActive === 'launch' || !!generatedLink,
+				pending: !peerReady || !confReady || (obfProfileOk && !obfKeyOk)
+			})
+		]);
+	});
+
+	const launchGuideItems = $derived.by((): WizardGuideItem[] =>
+		finalizeGuide([
+			guide('launch', 'Нажмите «Запустить и получить ссылку» — сохранение, запуск сервера и freeturn://', {
+				done: !!generatedLink && running,
+				pending: !wgStepDone
+			}),
+			guide('wan', 'Укажите WAN IP (кнопка «WAN IP») или оставьте пустым для авто', {
+				done: !!genPeer.trim() || !!generatedLink,
+				pending: !wgStepDone
+			}),
+			guide('copy', 'Скопируйте freeturn:// или откройте QR — передайте на клиент', {
+				done: false,
+				pending: !generatedLink,
+				active: !!generatedLink
+			}),
+			guide('android', 'Android: FreeTurn app → импорт ссылки/QR → добавьте VK Calls (их нет в ссылке)', {
+				done: false,
+				pending: !generatedLink,
+				active: !!generatedLink
+			}),
+			guide('client', 'Роутер: вкладка FreeTurn «Клиент» → «Импорт»', {
+				done: false,
+				pending: !generatedLink,
+				active: !!generatedLink
+			})
+		])
+	);
+
+	$effect(() => {
+		if (opsMode) return;
+		if (!wgStepDone && quickActive !== 'wg') quickActive = 'wg';
+	});
+
+	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
+	$effect(() => {
+		serverInstanceId;
+		// Только на смену инстанса: иначе рестарт сервера (running false→true из
+		// поллинга) утаскивал бы пользователя с других вкладок.
+		untrack(() => {
+			if (opsMode && running) opsTab = 'links';
+		});
+	});
+
+	const mainTabNext = $derived(opsMode && running && opsTab === 'main' && step1Done);
+	const statusSaveLabel = $derived(mainTabNext ? 'Далее' : 'Сохранить');
 
 	function ensureObfKey() {
 		if (server.obfProfile !== 'none' && !server.obfKey?.trim()) {
@@ -138,24 +275,24 @@
 		await onSave(server);
 	}
 
+	async function saveAndGoToLinks() {
+		await saveOnly();
+		if (mainTabNext) opsTab = 'links';
+	}
+
 	async function startOnly() {
 		if (!canStart || running) return;
 		starting = true;
 		try {
+			ensureObfKey();
+			await onSave(server);
 			await onToggle(true);
 		} finally {
 			starting = false;
 		}
 	}
 
-	async function saveAndGenerateLink() {
-		if (!step3Done) return;
-		ensureObfKey();
-		await onSave(server);
-		await generateLinkNow();
-	}
-
-	async function generateLinkNow() {
+	async function generateLinkNow(): Promise<boolean> {
 		let peerParam = genPeer.trim();
 		if (peerParam && !peerParam.includes(':')) {
 			peerParam = `${peerParam}:${listenPort}`;
@@ -167,252 +304,275 @@
 			} catch {
 				linkParams = null;
 			}
+			return true;
 		}
+		return false;
 	}
 
 	async function saveStartAndLink() {
-		if (!canStart) return;
+		if (!canStart || !linkReady) return;
 		starting = true;
 		try {
 			ensureObfKey();
 			await onSave(server);
 			if (!running) await onToggle(true);
-			await generateLinkNow();
+			if (await generateLinkNow()) {
+				quickActive = 'launch';
+				notifications.success('Сервер запущен, ссылка freeturn:// готова');
+			}
 		} finally {
 			starting = false;
 		}
 	}
+
+	function goLaunchStep() {
+		if (!wgStepDone) return;
+		quickActive = 'launch';
+	}
 </script>
 
 <div class="ft-simple-wrap">
-	<p class="ft-simple-lead">
-		Сервер freeturn: WG-пир → автоматический порт → обфускация → ссылка для клиента.
-	</p>
+	<p class="ft-simple-lead">FreeTurn-сервер: WG-пир → obf → ссылка freeturn:// для клиентов.</p>
 
-	<div class="ft-simple-steps">
-		<StepPill n={1} label="WG · пир" active={true} done={step1Done} />
-		<StepPill n={2} label="Порт" active={step1Done} done={step2Done} />
-		<StepPill n={3} label="Obf" active={step2Done} done={step3Done} />
-		<StepPill n={4} label="Ссылка" active={step3Done} done={!!generatedLink} />
-	</div>
-
-	<WizardStep n={1} title="WireGuard: сервер · пир" hint="backend (-connect) заполнится автоматически" active={true}>
-		<ServerWgBind
-			autoApply
-			compact
-			clientListenPort={defaultClientListenPort}
-			onConnect={(addr) => {
-				server.connect = addr;
-			}}
-			onPeerConf={(conf) => {
-				genWG = conf;
-			}}
-		/>
-		{#if server.connect.trim()}
-			<p class="ft-readonly">
-				-connect: <code>{server.connect}</code>
-			</p>
-		{/if}
-	</WizardStep>
-
-	<WizardStep
-		n={2}
-		title="Порт приёма (-listen)"
-		hint="назначается автоматически при создании инстанса"
-		active={step1Done}
-	>
-		<p class="ft-readonly">
-			<code>{server.listen || '0.0.0.0:56000'}</code>
-		</p>
-		<p class="ft-hint">
-			Порт выбирается автоматически (56000, 56001, …) — менять не нужно, если не создаёте
-			несколько серверов freeturn параллельно.
-		</p>
-	</WizardStep>
-
-	<WizardStep n={3} title="Обфускация" hint="маскирует freeturn-трафик от DPI" active={step2Done}>
-		<Dropdown label="Профиль (-obf-profile)" bind:value={server.obfProfile} options={obfOptions} />
-		{#if obfHint}
-			<p class="ft-hint">{obfHint}</p>
-		{/if}
-		<Input
-			label="Ключ (-obf-key)"
-			type="password"
-			bind:value={server.obfKey}
-			placeholder="64 hex-символа"
-		/>
-		<div class="ft-inline-actions">
-			<Button variant="ghost" size="sm" onclick={() => (server.obfKey = randomObfKeyHex())}>
-				Сгенерировать ключ
-			</Button>
-		</div>
-		<p class="ft-hint">
-			Ключ должен совпадать у сервера и клиента — он зашивается в freeturn:// ссылку.
-		</p>
-	</WizardStep>
-
-	<WizardStep n={4} title="Ссылка для клиента" hint="сохраните сервер и сгенерируйте freeturn://" active={step3Done}>
-		<div class="ft-gen-peer-row">
-			<Input
-				label="Peer для клиента (WAN IP:порт)"
-				bind:value={genPeer}
-				placeholder={`пусто — авто · порт :${listenPort}`}
-			/>
-			<Button variant="ghost" size="sm" loading={loadingWanPeer} onclick={fillWanPeer}>WAN IP</Button>
-		</div>
-		<div class="ft-gen-row">
-			<Input label="Провайдер" bind:value={genProvider} placeholder="vk" />
-			<Input label="MTU" type="number" value={String(genMTU)} onchange={(v) => (genMTU = Number(v) || 1376)} />
-			<div class="ft-gen-cid">
-				<Input label="Client ID" bind:value={genClientId} placeholder="hex ID" />
-				<Button variant="ghost" size="sm" onclick={randomClientId} title="Сгенерировать">
-					<RefreshCw size={14} />
-				</Button>
-			</div>
-			<Button
-				variant="secondary"
-				size="sm"
-				loading={savingAllowlist}
-				disabled={!genClientId.trim()}
-				onclick={() => saveClientToAllowlist()}
-			>
-				В список
-			</Button>
-			<Input bind:value={genName} label="Комментарий" placeholder="имя получателя" />
-		</div>
-
-		<div class="ft-simple-actions">
-			<Button variant="secondary" loading={saving} disabled={!canSave} onclick={saveOnly}>Сохранить</Button>
-			{#if !running}
-				<Button variant="secondary" loading={starting} disabled={!canStart} onclick={startOnly}>
-					Запустить
-				</Button>
-			{:else}
-				<Button variant="secondary" onclick={() => onToggle(false)}>Остановить</Button>
-			{/if}
-			<Button variant="primary" loading={starting} disabled={!canStart} onclick={saveStartAndLink}>
-				Сохранить, запустить и получить ссылку
-			</Button>
-			<Button
-				variant="ghost"
-				size="sm"
-				loading={generating}
-				disabled={!step3Done}
-				onclick={saveAndGenerateLink}
-			>
-				Только сгенерировать ссылку
-			</Button>
-		</div>
-
-		{#if generatedLink}
-			<div class="ft-result">
-				<div class="section-label">freeturn:// ({generatedPeer || 'peer'})</div>
-				<div class="ft-link-box">{generatedLink}</div>
-				<Button variant="ghost" size="sm" onclick={() => onCopy(generatedLink)}>Скопировать</Button>
-				<LinkParamsSummary payload={linkParams} peer={generatedPeer} />
-				{#if genClientId.trim() && server.clientsFile}
-					<p class="ft-hint">
-						Если allowlist включён — добавьте Client ID <code>{genClientId}</code> кнопкой «В список».
-					</p>
+	{#if !opsMode}
+		<ProxyQuickStart
+			items={quickItems}
+			activeId={quickActive}
+			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
+			meta={`listen :${listenPort}`}
+			onSelect={(id) => (quickActive = id)}
+		>
+			{#snippet content(stepId)}
+				{#if stepId === 'wg'}
+					<ProxyQuickStartStep
+						title="WireGuard · obf"
+						hint="Backend (-connect) и конфиг пира для ссылки клиента"
+						primaryLabel="Далее: запуск и ссылка"
+						primaryDisabled={!wgStepDone}
+						onPrimary={goLaunchStep}
+					>
+						<ProxyWizardGuide items={wgGuideItems} />
+						<ServerWgBind
+							autoApply
+							compact
+							bind:wgConf={genWG}
+							bind:keeneticSelected={keeneticPeerSelected}
+							clientListenPort={defaultClientListenPort}
+							onConnect={(addr) => {
+								server.connect = addr;
+							}}
+							onPeerConf={(conf) => {
+								genWG = conf;
+							}}
+						/>
+						<Dropdown label="Профиль (-obf-profile)" bind:value={server.obfProfile} options={obfOptions} />
+						{#if obfHint}
+							<p class="ft-hint">{obfHint}</p>
+						{/if}
+						<Input label="Ключ (-obf-key)" type="password" bind:value={server.obfKey} placeholder="64 hex" />
+						<Button variant="ghost" size="sm" onclick={() => (server.obfKey = randomObfKeyHex())}>
+							Сгенерировать ключ
+						</Button>
+						<Toggle
+							label="Открыть порт в firewall"
+							checked={server.openFirewall !== false}
+							onchange={async (v) => {
+								server.openFirewall = v;
+								await onSave(server);
+							}}
+						/>
+					</ProxyQuickStartStep>
+				{:else}
+					<ProxyQuickStartStep
+						title="Запуск и ссылка freeturn://"
+						hint="Порт {server.listen || '0.0.0.0:56000'} назначен автоматически"
+						primaryLabel="Запустить и получить ссылку"
+						primaryDisabled={!linkReady || !canStart}
+						primaryLoading={starting || generating}
+						onPrimary={saveStartAndLink}
+					>
+						{#snippet footer()}
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={!canStart || running}
+								loading={starting}
+								onclick={startOnly}
+							>
+								Только запустить сервер
+							</Button>
+						{/snippet}
+						<ProxyWizardGuide items={launchGuideItems} title="Следующий шаг" />
+						<div class="ft-gen-peer-row">
+							<Input
+								label="Peer для клиента (WAN)"
+								bind:value={genPeer}
+								placeholder={`пусто — авто · :${listenPort}`}
+							/>
+							<Button variant="ghost" size="sm" loading={loadingWanPeer} onclick={fillWanPeer}>WAN IP</Button>
+						</div>
+						{#if generatedLink}
+							<FreeturnLinkShare link={generatedLink} peer={generatedPeer} payload={linkParams} {onCopy} />
+						{:else if !linkReady}
+							<p class="ft-hint ft-hint-warn">
+								{#if keeneticPeerSelected && !genWG.trim()}
+									Вернитесь на шаг 1 и вставьте WG-конфиг клиента Keenetic — без него ссылку не собрать.
+								{:else}
+									Заполните шаг 1: выберите пира и obf-ключ.
+								{/if}
+							</p>
+						{/if}
+					</ProxyQuickStartStep>
 				{/if}
-			</div>
+			{/snippet}
+		</ProxyQuickStart>
+	{:else}
+		<ProxyInstanceStatusBar
+			{running}
+			meta={`listen :${listenPort}`}
+			{saving}
+			{starting}
+			{canSave}
+			{canStart}
+			saveLabel={statusSaveLabel}
+			onSave={mainTabNext ? saveAndGoToLinks : saveOnly}
+			onToggle={onToggle}
+		/>
+		<ProxyPanelTabs tabs={[...SERVER_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ServerTab)} />
+
+		{#if opsTab === 'main'}
+			<section class="ops-section">
+				<ServerWgBind
+					autoApply
+					compact
+					bind:wgConf={genWG}
+					bind:keeneticSelected={keeneticPeerSelected}
+					clientListenPort={defaultClientListenPort}
+					onConnect={(addr) => {
+						server.connect = addr;
+					}}
+					onPeerConf={(conf) => {
+						genWG = conf;
+					}}
+				/>
+				<Dropdown label="Obf profile" bind:value={server.obfProfile} options={obfOptions} />
+				<Input type="password" bind:value={server.obfKey} />
+				<p class="ft-readonly"><code>{server.listen || '0.0.0.0:56000'}</code></p>
+				<Toggle
+					label="Firewall"
+					checked={server.openFirewall !== false}
+					onchange={async (v) => {
+						server.openFirewall = v;
+						await onSave(server);
+					}}
+				/>
+				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
+					{mainTabNext ? 'Далее' : 'Сохранить'}
+				</Button>
+			</section>
+		{:else if opsTab === 'links'}
+			<section class="ops-section">
+				<div class="ft-gen-peer-row">
+					<Input label="Peer (WAN)" bind:value={genPeer} />
+					<Button variant="ghost" size="sm" loading={loadingWanPeer} onclick={fillWanPeer}>WAN IP</Button>
+				</div>
+				<div class="ft-gen-row">
+					<Input label="Provider" bind:value={genProvider} />
+					<Input label="MTU" type="number" value={String(genMTU)} onchange={(v) => (genMTU = Number(v) || 1280)} />
+					<div class="ft-gen-cid">
+						<Input label="Client ID" bind:value={genClientId} />
+						<Button variant="ghost" size="sm" onclick={randomClientId}><RefreshCw size={14} /></Button>
+					</div>
+					<Input bind:value={genName} label="Комментарий" />
+					<Button
+						variant="secondary"
+						loading={savingAllowlist}
+						disabled={!genClientId.trim()}
+						onclick={() => saveClientToAllowlist()}
+					>
+						В список
+					</Button>
+				</div>
+				<div class="ft-simple-actions">
+					<Button variant="primary" loading={generating} disabled={!linkReady} onclick={generateLinkNow}>
+						Сгенерировать ссылку
+					</Button>
+				</div>
+				{#if generatedLink}
+					<FreeturnLinkShare link={generatedLink} peer={generatedPeer} payload={linkParams} {onCopy} />
+				{/if}
+				<ServerAllowlist bind:this={allowlistPanel} {serverInstanceId} {server} />
+			</section>
+		{:else}
+			<section class="ops-section">
+				<ProcessLogBox
+					log={status?.log}
+					bind:debug={server.debug}
+					showDebugToggle
+					{instances}
+					{selectedInstanceId}
+					{onSelectInstance}
+				/>
+			</section>
 		{/if}
-
-		<ServerAllowlist bind:this={allowlistPanel} serverInstanceId={serverInstanceId} {server} />
-	</WizardStep>
-
-	<ProcessLogBox
-		log={status?.log}
-		bind:debug={server.debug}
-		showDebugToggle
-		{instances}
-		{selectedInstanceId}
-		{onSelectInstance}
-	/>
+	{/if}
 </div>
 
 <style>
 	.ft-simple-wrap {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 1rem;
 	}
-
 	.ft-simple-lead {
-		margin: 0 0 0.75rem;
+		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 	}
-
-	.ft-simple-steps {
+	.ops-section {
+		padding: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-bottom: 0.75rem;
+		flex-direction: column;
+		gap: 0.75rem;
 	}
-
-	.ft-simple-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.75rem;
-	}
-
-	.ft-readonly {
-		margin: 0.5rem 0 0;
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-	}
-
 	.ft-hint {
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
-		margin: 0.375rem 0 0;
+		margin: 0;
 	}
-
-	.ft-inline-actions {
-		display: flex;
-		justify-content: flex-end;
-		margin-top: 0.375rem;
+	.ft-hint-warn {
+		padding: 0.5rem 0.625rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--color-warning, #d97706) 40%, var(--color-border));
+		background: color-mix(in srgb, var(--color-warning, #d97706) 8%, var(--color-bg-primary));
 	}
-
+	.ft-readonly {
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+	}
 	.ft-gen-peer-row {
 		display: flex;
 		gap: 0.5rem;
 		align-items: flex-end;
 	}
-
-	.ft-gen-peer-row :global(.field) {
-		flex: 1;
-		min-width: 0;
-	}
-
 	.ft-gen-row {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.625rem;
 		align-items: flex-end;
-		margin-top: 0.625rem;
 	}
-
 	.ft-gen-cid {
 		display: flex;
 		gap: 0.375rem;
 		align-items: flex-end;
 	}
-
-	.ft-result {
-		margin-top: 0.875rem;
-		padding: 0.875rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-tertiary);
-	}
-
-	.ft-link-box {
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		word-break: break-all;
-		margin: 0.375rem 0 0.625rem;
+	.ft-simple-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 	}
 </style>

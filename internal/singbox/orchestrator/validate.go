@@ -431,17 +431,65 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 // Use case: ApplyDraft pre-flights cross-slot consistency before
 // renaming pending → active.
 func (o *Orchestrator) validateDraftLocked(target Slot, draftBytes []byte) ValidationResult {
+	// Виртуальный prune сиблингов (issue #633): реальный Reload перед
+	// валидацией самолечит висячие члены/default селекторов в не-user
+	// слотах (pruneDanglingSelectorRefsLocked), поэтому draft-валидация
+	// обязана судить сиблингов так, как их увидит Reload. Иначе удаление
+	// outbound'а из целевого слота отклоняется из-за дисковой ссылки в
+	// чужом слоте (device-proxy селектор → удаляемая подписка), хотя
+	// Reload прошёл бы: подписка становилась неудаляемой (500 could not
+	// isolate outbound). Диск не трогаем — прунится только копия для
+	// валидации; сам кандидат НЕ прунится (flush подписок лечит свои
+	// висячие ссылки по ошибкам своего слота).
+	known := o.enabledOutboundTagsLocked(map[Slot]bool{target: true})
+	var dc slotConfig
+	if json.Unmarshal(draftBytes, &dc) == nil {
+		for _, ob := range dc.Outbounds {
+			if ob.Tag != "" {
+				known[ob.Tag] = true
+			}
+		}
+		for _, ep := range dc.Endpoints {
+			if ep.Tag != "" {
+				known[ep.Tag] = true
+			}
+		}
+	}
 	return o.validateWithEnabled(
 		func(slot Slot) ([]byte, error) {
 			if slot == target {
 				return draftBytes, nil
 			}
-			return o.readActiveBytes(slot)
+			data, err := o.readActiveBytes(slot)
+			if err != nil || slot == SlotUser {
+				// 90-user.json Reload не прунит — валидируем как есть.
+				return data, err
+			}
+			return pruneDanglingSelectorRefsBytes(data, known), nil
 		},
 		// Цель считается включённой — «валидируем как будто применили»,
 		// в согласии со снапшотом sing-box check в checkMergedLocked.
 		func(slot Slot) bool { return slot == target || o.enabled[slot] },
 	)
+}
+
+// pruneDanglingSelectorRefsBytes returns data with the virtual selector
+// prune applied, or data unchanged when nothing was pruned / it isn't a
+// JSON object. Never mutates the input's on-disk source.
+func pruneDanglingSelectorRefsBytes(data []byte, known map[string]bool) []byte {
+	var root map[string]any
+	if json.Unmarshal(data, &root) != nil {
+		return data
+	}
+	changed, _ := pruneDanglingSelectorRefsInDoc(root, known, "")
+	if !changed {
+		return data
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return data
+	}
+	return out
 }
 
 // slotsList renders slots as a comma-separated string for warning messages.

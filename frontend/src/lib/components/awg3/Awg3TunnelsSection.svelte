@@ -112,6 +112,7 @@
 				<col class="c-name" />
 				<col class="c-host" />
 				<col class="c-hp" />
+				<col class="c-timers" />
 				<col class="c-delay" />
 				<col class="c-actions" />
 			</colgroup>
@@ -120,6 +121,7 @@
 					<th>Туннель</th>
 					<th>Хост</th>
 					<th>Защита</th>
+					<th>Таймеры</th>
 					<th>Delay</th>
 					<th class="col-actions">Действия</th>
 				</tr>
@@ -130,7 +132,7 @@
 				{/each}
 				{#if searchEmpty}
 					<tr class="tunnel-empty-row">
-						<td colspan="5">Ничего не найдено</td>
+						<td colspan="6">Ничего не найдено</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -206,12 +208,25 @@
 		padding: var(--tunnel-list-head-padding-y) var(--tunnel-list-head-padding-x);
 		text-align: left;
 		vertical-align: middle;
+		/* Как в общем правиле для singbox-таблиц: узкая колонка обязана резать
+		   свой заголовок, иначе «ТАЙМЕРЫ» наезжает на «DELAY». */
+		overflow: hidden;
 	}
 
 	:global(.awg3-tunnel-table) thead th.col-actions {
 		text-align: right;
 	}
 
+	/* Имя и хост ограничены долями, свободное место достаётся таймерам: пять
+	   nowrap-чипов не влезали в узкую колонку и вылезали в соседнюю. Доли, а
+	   не пиксели: с фиксированными 220+280 сумма колонок (832px) перерастала
+	   доступную ширину на 761–940px — шапка наезжала, таблица скроллилась. */
+	:global(.awg3-tunnel-table) col.c-name {
+		width: 18%;
+	}
+	:global(.awg3-tunnel-table) col.c-host {
+		width: 24%;
+	}
 	:global(.awg3-tunnel-table) col.c-hp {
 		width: 72px;
 	}
@@ -222,10 +237,14 @@
 		width: var(--tunnel-list-col-actions, 92px);
 	}
 
-	:global(.awg3-tunnel-table td.cell-host) {
+	/* Имя и хост режутся по ellipsis. .tag/.host — inline-боксы, к ним
+	   text-overflow не применяется, поэтому display: block обязателен. */
+	:global(.awg3-tunnel-table td.cell-host),
+	:global(.awg3-tunnel-table td.cell-name) {
 		overflow: hidden;
 	}
-	:global(.awg3-tunnel-table td.cell-host .host) {
+	:global(.awg3-tunnel-table td.cell-host .host),
+	:global(.awg3-tunnel-table td.cell-name .tag) {
 		display: block;
 		white-space: nowrap;
 		overflow: hidden;

@@ -20,7 +20,7 @@
 		showDtls?: boolean;
 		onSelect: (id: string) => void;
 		onToggle: (id: string, on: boolean) => void;
-		onAdd: () => void;
+		onAdd?: () => void;
 		onDelete: (id: string) => void;
 		onRename?: (id: string, name: string) => void;
 	}
@@ -53,6 +53,9 @@
 	}
 
 	function meta(item: InstanceItem): string {
+		if (item.running && item.binaryPresent === false) {
+			return ['устаревший процесс', item.pid ? `PID ${item.pid}` : ''].filter(Boolean).join(' · ');
+		}
 		if (!item.running) return 'остановлен';
 		return ['запущен', formatUptime(item.startedAt), item.pid ? `PID ${item.pid}` : '']
 			.filter(Boolean)
@@ -98,7 +101,7 @@
 					<Toggle
 						checked={!!item.running}
 						onchange={(on) => onToggle(item.id, on)}
-						disabled={item.binaryPresent === false}
+						disabled={item.binaryPresent !== true}
 						controlled
 						size="sm"
 						label=""
@@ -128,7 +131,9 @@
 			</div>
 		{/each}
 	</div>
-	<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{#if onAdd}
+		<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{/if}
 </div>
 
 <style>

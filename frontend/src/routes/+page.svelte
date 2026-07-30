@@ -31,7 +31,7 @@
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
-	import { Awg3TunnelsSection } from '$lib/components/awg3';
+	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
@@ -400,6 +400,10 @@
 
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
 	let awg3List = $derived($awg3Tunnels.data ?? []);
+	let awg3InitialLoading = $derived(
+		$awg3Tunnels.data === null &&
+		($awg3Tunnels.status === 'idle' || $awg3Tunnels.status === 'loading'),
+	);
 	let singboxTunnelsInitialLoading = $derived(
 		$singboxTunnels.data === null &&
 		($singboxTunnels.status === 'idle' || $singboxTunnels.status === 'loading'),
@@ -425,6 +429,14 @@
 	function openWizard(preselect: 'choose' | 'single' | 'inline' | 'url'): void {
 		wizardPreselect = preselect;
 		createModalOpen = true;
+	}
+
+	// Импорт AWG3 в dashboard-режиме: тулбар секции там скрыт, поэтому вход —
+	// пункт меню «Создать», а модалка живёт на странице.
+	let awg3ImportOpen = $state(false);
+
+	function openAwg3Import(): void {
+		awg3ImportOpen = true;
 	}
 
 	let pendingSubscriptionDelete = $state<string | null>(null);
@@ -613,6 +625,13 @@
 	const dashboardSingboxVisible = $derived(
 		showSingboxSections && (singboxStatusLoading || singboxInstalled),
 	);
+	// AWG3-эндпоинты — outbound'ы sing-box: без установленного бинаря импорт,
+	// удаление и переименование отклоняются бэкендом (Sync → sing-box check),
+	// поэтому их не показываем и не предлагаем создать. Гейт один на таб и на
+	// дашборд, иначе туннели видны в табах и пропадают при переключении. Про
+	// usage-level здесь речи нет: sing-box-секции скрыты уже на «Базовом», а
+	// импортированные AWG3-эндпоинты остаются рабочими и там.
+	const awg3Visible = $derived(singboxStatusLoading || singboxInstalled);
 	let dashboardEffectiveView = $derived(
 		!showSingboxListOption && $tunnelDashboardView === 'list' ? 'compact' : $tunnelDashboardView,
 	);
@@ -694,7 +713,7 @@
 			isSectionVisible($usageLevel, 'singboxTunnels')
 				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
 				: null,
-			{ id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length },
+			awg3Visible ? { id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length } : null,
 			isSectionVisible($usageLevel, 'freeturn')
 				? { id: 'freeturn', label: 'FreeTurn' }
 				: null,
@@ -898,11 +917,17 @@
 				.filter(Boolean)
 				.sort()
 				.join(',');
-			if (!sbTags && !subTags) return;
+			// AWG3-эндпоинты в дашборде проверяются тем же nonce: без них набор
+			// «только AWG3» не давал ни одной авто-проверки delay.
+			const awg3Tags = dashboardAwg3Tunnels
+				.map((t) => t.tag)
+				.sort()
+				.join(',');
+			if (!sbTags && !subTags && !awg3Tags) return;
 
 			// Отдельные префиксы групп: набор тегов туннелей и подписок не
 			// должен схлопываться в один ключ при перестановке между группами.
-			const key = `dashboard:${entry}:sb:${sbTags}|sub:${subTags}`;
+			const key = `dashboard:${entry}:sb:${sbTags}|sub:${subTags}|awg3:${awg3Tags}`;
 			if (key === lastDashboardDelayKey) return;
 			lastDashboardDelayKey = key;
 			singboxAutoDelayCheckNonce += 1;
@@ -1204,11 +1229,10 @@
 	let dashboardSubscriptionsCount = $derived(
 		dashboardSubscriptionsActive.length + dashboardSubscriptionsStopped.length,
 	);
-	// AWG3-эндпоинты допускаются в дашборд по тем же воротам, что и sing-box:
-	// это sing-box outbound'ы, без установленного sing-box они мертвы. Фильтр
-	// по поисковому запросу дашборда — как у остальных видов.
+	// Гейт — awg3Visible (см. его объявление), общий с табом AWG3. Фильтр по
+	// поисковому запросу дашборда — как у остальных видов.
 	let dashboardAwg3Tunnels = $derived.by(() => {
-		if (!dashboardSingboxVisible) return [];
+		if (!awg3Visible) return [];
 		const q = dashboardSearchQuery.trim().toLowerCase();
 		if (q === '') return awg3List;
 		return awg3List.filter(
@@ -1272,8 +1296,12 @@
 	// dashboardNothingAtAll) и не должен принимать drag-переупорядочивание:
 	// коммит по неполному списку затёр бы позиции ещё не приехавших ключей.
 	let dashboardSingboxDataPending = $derived(
-		dashboardSingboxVisible &&
-			(singboxStatusLoading || singboxTunnelsInitialLoading || subscriptionsInitialLoading),
+		(dashboardSingboxVisible &&
+			(singboxStatusLoading || singboxTunnelsInitialLoading || subscriptionsInitialLoading)) ||
+			// Без слагаемого AWG3 у пользователя, у которого есть ТОЛЬКО
+			// AWG3-эндпоинты, остальные сторы отвечают пустотой раньше — мигал
+			// онбординг «ничего нет», а ручной порядок включался до данных.
+			(awg3Visible && awg3InitialLoading),
 	);
 	// D7: ручной порядок в сплошном дашборде — общее pointer-drag ядро sb-router
 	// (createReorderDrag). Активен только когда порядок реально редактируемый:
@@ -1351,7 +1379,10 @@
 			? dashboardFlatItems.length
 			: dashboardGroupByTags
 				? dashboardTagGroups.reduce((n, group) => n + group.items.length, 0)
-				: awgFilteredRowsCount + dashboardSingboxTunnels.length + dashboardSubscriptionsCount,
+				: awgFilteredRowsCount +
+					dashboardSingboxTunnels.length +
+					dashboardSubscriptionsCount +
+					dashboardAwg3Tunnels.length,
 	);
 	let dashboardFilterEmpty = $derived(
 		dashboardOn &&
@@ -1441,10 +1472,11 @@
 		if (!dashboardOn) return [];
 		const sb = dashboardSingboxVisible ? singboxTunnelListStats : null;
 		const subs = dashboardSingboxVisible ? singboxSubscriptionsTrafficStats : null;
-		// AWG3 — sing-box endpoint'ы без running/traffic-метрик: учитываем только
-		// их количество в общем счётчике туннелей.
+		// AWG3 — sing-box endpoint'ы без running/traffic-метрик, поэтому в дробь
+		// «активно/всего» они не входят вовсе: попадая только в знаменатель, они
+		// вечно читались как неактивные. Их количество — отдельной подписью.
 		const awg3Count = dashboardAwg3Tunnels.length;
-		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
+		const totalAll = awgSummaryTotal + (sb?.count ?? 0) + (subs?.count ?? 0);
 		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
 		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
@@ -1555,6 +1587,7 @@
 		get effectiveSingboxSubscriptionsRenderMode() { return effectiveSingboxSubscriptionsRenderMode; },
 		get showSingboxListOption() { return showSingboxListOption; },
 		get showSingboxSections() { return showSingboxSections; },
+		get awg3Visible() { return awg3Visible; },
 		get exporting() { return exporting; },
 		get freeturnAvailable() { return freeturnAvailable; },
 		get freeturnOpen() { return dashboardFreeturnOpen; },
@@ -1575,7 +1608,7 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, requestSubscriptionDelete,
+		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).
@@ -1798,6 +1831,16 @@
 {/if}
 
 <TunnelPageModals ctx={pageModalsCtx} />
+
+{#if dashboardOn}
+	<!-- Только в дашборде: в табах импорт открывает секционная модалка, а лишний
+	     экземпляр Modal держит глобальный обработчик Escape. -->
+	<Awg3ImportModal
+		open={awg3ImportOpen}
+		onclose={() => (awg3ImportOpen = false)}
+		onimported={() => void awg3Tunnels.refetch()}
+	/>
+{/if}
 
 {#if showUnsupportedBlock}
 	<div class="unsupported-overlay">

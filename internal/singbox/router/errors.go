@@ -62,6 +62,16 @@ var (
 	// 400 with the detailed Russian message intact.
 	ErrQoSClassesInvalid = errors.New("некорректные классы QoS")
 
+	// ErrDNSChainTagReserved rejects a user DNS rule that claims (or references)
+	// the awgm-dns-* tag namespace owned by the DNS-preset overlay: such a rule
+	// would be wiped by the next ensureDNSChainOverlay. Mapped to 400 by the API.
+	ErrDNSChainTagReserved = errors.New("dns rule: теги awgm-dns-* зарезервированы для DNS-пресета")
+
+	// ErrDNSRuleManaged rejects an update/delete/move of a DNS rule that belongs
+	// to the DNS-preset overlay: the preset owns those rules and re-asserts them
+	// on every write, so a manual edit could never stick. Mapped to 400 by the API.
+	ErrDNSRuleManaged = errors.New("dns rule: правило управляется DNS-пресетом")
+
 	// ErrReservedInboundTag rejects user route rules whose inbound matcher
 	// references the reserved tproxy-qos-*/redirect-qos-* namespace. The
 	// managed QoS rules live in 18-qos-routes.json and merge BEFORE the user

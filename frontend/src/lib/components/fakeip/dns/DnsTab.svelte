@@ -47,7 +47,7 @@
 	} from '$lib/components/routing/singboxRouter';
 	import { ConfirmModal, Badge } from '$lib/components/ui';
 	import { GripVertical, Pencil, Trash2, Lock, Plus } from 'lucide-svelte';
-	import { dnsRuleTarget } from '$lib/components/sb-router/dnsRuleLabel';
+	import { dnsRuleTarget, type DnsRuleTarget } from '$lib/components/sb-router/dnsRuleLabel';
 	import { dnsMatcherParts, dnsMatcherSummary } from '$lib/components/sb-router/dnsMatcherParts';
 	import { computeShadowedDnsRuleIndices } from '$lib/components/sb-router/dnsRuleShadow';
 	import { dnsServerDetourDisplay } from '$lib/components/sb-router/dnsServerDetourDisplay';
@@ -94,6 +94,13 @@
 		if (type === 'local') return 'success';
 		return 'default';
 	}
+	// Тон бейджа цели: evaluate/respond (sing-box 1.14) отличимы от route/block.
+	function targetVariant(kind: DnsRuleTarget['kind']): 'accent' | 'error' | 'info' | 'purple' {
+		if (kind === 'block') return 'error';
+		if (kind === 'evaluate') return 'info';
+		if (kind === 'respond') return 'purple';
+		return 'accent';
+	}
 	function serverAddr(s: SingboxRouterDNSServer): string {
 		if (s.type === 'local') return 'системный resolver';
 		// fakeip-сервер синтезирует адреса в туннель — у него нет upstream-адреса,
@@ -134,6 +141,18 @@
 		},
 	});
 
+	async function moveDnsRule(from: number, to: number): Promise<void> {
+		const snapshot = get(fakeipConfig.dnsRules);
+		fakeipConfig.applyDNSRules(reorder(snapshot, from, to));
+		try {
+			await api.singboxFakeIPMoveDNSRule(from, to);
+			await fakeipConfig.loadAll();
+		} catch (e) {
+			fakeipConfig.applyDNSRules(snapshot);
+			notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
 	const ruleDrag = createReorderDrag({
 		getRowElement: (i) => ruleRowEls[i] ?? null,
 		// +1 виртуальная read-only «final»-строка в самом конце.
@@ -141,18 +160,19 @@
 		getPanelEl: () => rulePanelEl,
 		// «final»-строка (последний индекс) фиксирована: ни схватить, ни уронить под неё.
 		isFixed: (i) => i >= $storeDnsRules.length,
-		onCommit: async (from, to) => {
-			const snapshot = get(fakeipConfig.dnsRules);
-			fakeipConfig.applyDNSRules(reorder(snapshot, from, to));
-			try {
-				await api.singboxFakeIPMoveDNSRule(from, to);
-				await fakeipConfig.loadAll();
-			} catch (e) {
-				fakeipConfig.applyDNSRules(snapshot);
-				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
-			}
-		},
+		onCommit: moveDnsRule,
 	});
+
+	// Клавиатурная альтернатива перетаскиванию: стрелки на грипе двигают правило
+	// на соседнюю позицию (виртуальная «final»-строка недостижима).
+	function handleGripKeydown(i: number, e: KeyboardEvent): void {
+		if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+		if (ruleDrag.busy) return;
+		const to = e.key === 'ArrowUp' ? i - 1 : i + 1;
+		if (to < 0 || to >= $storeDnsRules.length) return;
+		e.preventDefault();
+		void moveDnsRule(i, to);
+	}
 
 	onMount(() => {
 		void fakeipConfig.loadAll();
@@ -342,8 +362,9 @@
 			class="grip"
 			class:is-busy={ruleDrag.busy}
 			aria-label={`Перетащить DNS-правило #${i + 1}`}
-			title="Перетащить для изменения порядка"
+			title="Перетащить для изменения порядка (или стрелки вверх/вниз)"
 			onpointerdown={ruleDrag.busy ? undefined : (e) => ruleDrag.handlePointerDown(i, e)}
+			onkeydown={(e) => handleGripKeydown(i, e)}
 		>
 			<GripVertical size={16} strokeWidth={2} />
 		</button>
@@ -357,7 +378,11 @@
 				: `${dnsMatcherSummary(r)} → ${tgt.label}`}
 		>
 			{#if matchers.length === 0}
-				<Badge variant="accent" size="xs">catch-all · всё остальное</Badge>
+				<Badge variant="accent" size="xs">
+					{r.action === 'evaluate'
+						? 'catch-all · оценивает все запросы'
+						: 'catch-all · всё остальное'}
+				</Badge>
 			{:else}
 				{#each matchers as part, pi (part.key + pi)}
 					<span class="m-part">
@@ -371,12 +396,12 @@
 				<Badge variant="warning" size="xs">перекрыто catch-all выше</Badge>
 			{/if}
 			<span class="r-arrow" aria-hidden="true">→</span>
-			{#if tgt.kind === 'block'}
-				<Badge variant="error" size="sm" mono>{tgt.label}</Badge>
-			{:else if tgt.kind === 'none'}
+			{#if tgt.kind === 'none'}
 				<span class="r-target none">{tgt.label}</span>
 			{:else}
-				<Badge variant="accent" size="sm" mono>{tgt.label}</Badge>
+				<Badge variant={targetVariant(tgt.kind)} size="sm" mono>{tgt.label}</Badge>
+				{#if r.race}<Badge variant="muted" size="xs">race</Badge>{/if}
+				{#if r.speculative}<Badge variant="muted" size="xs">spec</Badge>{/if}
 			{/if}
 		</button>
 		<div class="acts">
@@ -572,6 +597,7 @@
 		servers={$storeDnsServers}
 		availableRuleSets={$storeRuleSets}
 		ruleSetUsage={ruleSetUsageForDnsAdd}
+		rules={$storeDnsRules}
 		onClose={() => (dnsRuleAddOpen = false)}
 		onSave={handleDnsRuleAddSave}
 	/>
@@ -583,6 +609,8 @@
 		servers={$storeDnsServers}
 		availableRuleSets={$storeRuleSets}
 		ruleSetUsage={ruleSetUsageForDnsEdit}
+		rules={$storeDnsRules}
+		ruleIndex={dnsRuleEditIdx ?? undefined}
 		onClose={() => (dnsRuleEditIdx = null)}
 		onSave={handleDnsRuleEditSave}
 	/>

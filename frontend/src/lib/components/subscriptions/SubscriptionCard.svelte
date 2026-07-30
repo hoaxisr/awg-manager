@@ -177,7 +177,7 @@
 			}
 		}}
 	>
-			<td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay" data-label="Delay">
+			<td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay">
 				{#if subscription.lastError}
 					<span class="delay-inline-err mono" title={subscription.lastError}>
 						{subscription.lastError}
@@ -196,7 +196,7 @@
 					<span class="delay-dash">—</span>
 				{/if}
 			</td>
-			<td class="tunnel-list-cell tunnel-list-cell--name lc lc-name" data-label="Подписка">
+			<td class="tunnel-list-cell tunnel-list-cell--name lc lc-name">
 				<div class="tunnel-list-name-stack">
 					<TunnelTitleRow
 						title={subscription.label || subscription.url}
@@ -222,7 +222,7 @@
 					</TunnelMetaText>
 				</div>
 			</td>
-			<td class="tunnel-list-cell tunnel-list-cell--endpoint lc lc-endpoint" data-label="Активный сервер">
+			<td class="tunnel-list-cell tunnel-list-cell--endpoint lc lc-endpoint">
 				{#if !subscription.enabled}
 					<span class="off-label">выкл</span>
 				{:else if resolvedMember}
@@ -240,10 +240,7 @@
 					<span class="delay-dash">—</span>
 				{/if}
 			</td>
-			<td
-				class="tunnel-list-cell tunnel-list-cell--traffic lc lc-traffic"
-				data-label="Трафик"
-			>
+			<td class="tunnel-list-cell tunnel-list-cell--traffic lc lc-traffic">
 				{#if subscription.lastError || !subscription.enabled}
 					<span class="delay-dash">—</span>
 				{:else if resolvedMemberTag}
@@ -259,10 +256,7 @@
 					<span class="delay-dash">—</span>
 				{/if}
 			</td>
-			<td
-				class="tunnel-list-cell tunnel-list-cell--ping lc"
-				data-label="Ping"
-			>
+			<td class="tunnel-list-cell tunnel-list-cell--ping lc">
 				{#if subscription.lastError || !subscription.enabled}
 					<span class="delay-dash">—</span>
 				{:else if resolvedMemberTag}
@@ -276,10 +270,7 @@
 					<span class="delay-dash">—</span>
 				{/if}
 			</td>
-			<td
-				class="tunnel-list-cell tunnel-list-cell--actions lc lc-actions col-actions"
-				data-label=""
-			>
+			<td class="tunnel-list-cell tunnel-list-cell--actions lc lc-actions col-actions">
 				<TunnelListActions
 					onEdit={openSettings}
 					editLabel="Изменить"

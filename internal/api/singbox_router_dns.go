@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -55,6 +56,19 @@ type SingboxDNSRuleDTO struct {
 	QueryType     []string `json:"query_type,omitempty" example:"A"`
 	Server        string   `json:"server,omitempty" example:"cloudflare"`
 	Action        string   `json:"action,omitempty" example:"route"`
+
+	// sing-box 1.14: DNS-механизм evaluate/match_response.
+	Tag string `json:"tag,omitempty" example:"rd"`
+	// MatchResponse — union: true (любой ответ) либо тег правила evaluate ("rd").
+	// Тип в swagger намеренно не объявлен: обе формы union'а легальны.
+	MatchResponse  any      `json:"match_response,omitempty"`
+	IPCIDR         []string `json:"ip_cidr,omitempty" example:"10.0.0.0/8"`
+	ResponseRcode  string   `json:"response_rcode,omitempty" example:"NOERROR"`
+	ResponseAnswer []string `json:"response_answer,omitempty" example:"example.com. IN A 1.2.3.4"`
+	ResponseNS     []string `json:"response_ns,omitempty"`
+	ResponseExtra  []string `json:"response_extra,omitempty"`
+	Race           bool     `json:"race,omitempty" example:"true"`
+	Speculative    bool     `json:"speculative,omitempty" example:"false"`
 }
 
 // SingboxDNSRulesListResponse is the envelope for
@@ -76,6 +90,24 @@ type SingboxDNSGlobalsData struct {
 type SingboxDNSGlobalsResponse struct {
 	Success bool                  `json:"success" example:"true"`
 	Data    SingboxDNSGlobalsData `json:"data"`
+}
+
+// SingboxDNSChainPresetData carries the DNS-chain preset (sing-box 1.14
+// evaluate/match_response chains) exposed by GET/POST
+// /singbox/router/dns/chain-preset. Reused as the request body type.
+// Mode: "" (off) | "resilient" | "antipoison".
+type SingboxDNSChainPresetData struct {
+	Mode         string   `json:"mode" example:"resilient"`
+	DirectServer string   `json:"directServer,omitempty" example:"dns-direct"`
+	ProxyServer  string   `json:"proxyServer,omitempty" example:"dns-tunnel"`
+	PoisonCIDRs  []string `json:"poisonCidrs,omitempty" example:"0.0.0.0/32"`
+}
+
+// SingboxDNSChainPresetResponse is the envelope for
+// GET/POST /singbox/router/dns/chain-preset.
+type SingboxDNSChainPresetResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Data    SingboxDNSChainPresetData `json:"data"`
 }
 
 // ── Request DTOs ─────────────────────────────────────────────────
@@ -487,5 +519,61 @@ func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.log.Info("dns-globals", body.Final, "DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+")")
+	response.Success(w, map[string]bool{"ok": true})
+}
+
+// GetDNSChainPreset returns the DNS-chain preset state.
+//
+//	@Summary		Get singbox-router DNS chain preset
+//	@Description	Returns the DNS-chain preset (sing-box 1.14 evaluate/match_response): `mode` ("" = off, resilient, antipoison), the direct/proxy server tags and the antipoison ip_cidr list.
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SingboxDNSChainPresetResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/dns/chain-preset [get]
+func (h *SingboxRouterHandler) GetDNSChainPreset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	st, err := h.svc.GetDNSChainPreset(r.Context())
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, st)
+}
+
+// PutDNSChainPreset enables, switches or disables the DNS-chain preset.
+//
+//	@Summary		Update singbox-router DNS chain preset
+//	@Description	Enables/switches/disables the DNS-chain preset. `mode: ""` turns it off and removes the managed chain; otherwise the direct/proxy server tags must reference existing DNS servers.
+//	@Tags			singbox-router
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		SingboxDNSChainPresetData	true	"mode + servers + poison cidrs"
+//	@Success		200		{object}	OkResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/router/dns/chain-preset [post]
+func (h *SingboxRouterHandler) PutDNSChainPreset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var body storage.DNSChainPresetState
+	if err := decodeBody(r, &body); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if err := h.svc.SetDNSChainPreset(r.Context(), body); err != nil {
+		h.handleErr(w, "request", err)
+		return
+	}
+	h.log.Info("dns-chain-preset", body.Mode, "DNS chain preset updated (mode: "+body.Mode+")")
 	response.Success(w, map[string]bool{"ok": true})
 }

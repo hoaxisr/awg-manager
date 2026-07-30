@@ -51,6 +51,10 @@
 		].filter((t): t is { label: string; value: string; unit: string } => !!t.value),
 	);
 
+	// Колонка «Таймеры» в таблице режется по ellipsis — полный список в title
+	// самой ячейки (в карточке чипы видны целиком, дубль там не нужен).
+	const timersText = $derived(timers.map((t) => `${t.label} ${t.value}${t.unit}`).join(' · '));
+
 	const badgeVariant = $derived<BadgeVariant>(
 		cardState === 'ok'
 			? 'success'
@@ -172,17 +176,17 @@
 		class:fail={cardState === 'fail'}
 		class:unknown={cardState === 'unknown'}
 	>
-		<td class="cell cell-name" data-label="Туннель">
+		<td class="cell cell-name">
 			{#if renaming}
 				{@render renameForm()}
 			{:else}
-				<span class="tag">{tunnel.tag}</span>
+				<span class="tag" title={tunnel.tag}>{tunnel.tag}</span>
 			{/if}
 		</td>
-		<td class="cell cell-host" data-label="Хост">
-			<span class="host">{tunnel.host}</span>
+		<td class="cell cell-host">
+			<span class="host" title={tunnel.host}>{tunnel.host}</span>
 		</td>
-		<td class="cell cell-hp" data-label="Защита">
+		<td class="cell cell-hp">
 			<div class="hp-cell">
 			{#if tunnel.headerProtection}
 				<Badge variant="accent" size="xs">
@@ -191,16 +195,19 @@
 			{:else}
 				<span class="muted">—</span>
 			{/if}
-			{@render timersMeta()}
 			</div>
 		</td>
-		<td class="cell cell-delay" data-label="Delay">
+		<td class="cell cell-timers" title={timersText}>
+			{#if timers.length === 0}<span class="muted">—</span>{/if}
+			{@render timersMeta()}
+		</td>
+		<td class="cell cell-delay">
 			<div class="delay-cell">
 				{@render delayBadge()}
 				<TunnelDelaySparkBars {history} state={cardState} layout="list" onclick={() => void triggerCheck()} />
 			</div>
 		</td>
-		<td class="cell cell-actions" data-label="Действия">
+		<td class="cell cell-actions">
 			<div class="row-actions">
 				{@render cardActions()}
 			</div>
@@ -234,8 +241,8 @@
 								<ShieldCheck size={11} aria-hidden="true" /> HP
 							</Badge>
 						{/if}
-						{@render timersMeta()}
 					</div>
+					{@render timersMeta()}
 				{/if}
 			</div>
 		</div>
@@ -401,6 +408,20 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
+	}
+	/* В таблице таймеры живут одной строкой: перенос раздувал высоту ряда,
+	   а nowrap-чипы вылезали за колонку. Полный список — в title. */
+	.awg3-row .cell-timers {
+		overflow: hidden;
+	}
+	.awg3-row .timers {
+		display: block;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.awg3-row .timer + .timer {
+		margin-left: 8px;
 	}
 
 	.confirm-text { margin: 0; }

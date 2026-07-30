@@ -252,6 +252,7 @@ type GenerateLinkRequest struct {
 	Name           string `json:"name,omitempty"`
 	N              int    `json:"n,omitempty"`
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`
+	Transport      string `json:"transport,omitempty"`
 	ServerID       string `json:"serverId,omitempty"`
 }
 
@@ -713,21 +714,46 @@ func (h *FreeTurnHandler) generateLinkCore(w http.ResponseWriter, r *http.Reques
 	}
 	mtu := req.MTU
 	if mtu == 0 {
-		mtu = 1376
+		mtu = 1280
+	}
+	n := req.N
+	if n <= 0 {
+		n = 10
+	}
+	spc := req.StreamsPerCred
+	if spc <= 0 {
+		spc = 10
+	}
+	transport := strings.TrimSpace(req.Transport)
+	if transport == "" {
+		transport = "tcp"
+	}
+	wg := strings.TrimSpace(req.WG)
+	if wg != "" {
+		wg = freeturn.StripWGConfMTU(wg)
+	}
+
+	obfProfile := srvCfg.ObfProfile
+	obfKey := srvCfg.ObfKey
+	if obfProfile == "" || obfProfile == "none" {
+		obfProfile = ""
+		obfKey = ""
 	}
 
 	link, err := freeturn.EncodeLink(freeturn.LinkPayload{
 		V:              1,
 		Provider:       provider,
 		Peer:           peer,
-		Obf:            srvCfg.ObfProfile,
-		Key:            srvCfg.ObfKey,
+		Transport:      transport,
+		Mode:           srvCfg.Mode,
+		Obf:            obfProfile,
+		Key:            obfKey,
+		N:              n,
+		StreamsPerCred: spc,
 		MTU:            mtu,
-		WG:             req.WG,
+		WG:             wg,
 		ClientID:       strings.TrimSpace(req.ClientID),
 		Name:           strings.TrimSpace(req.Name),
-		N:              req.N,
-		StreamsPerCred: req.StreamsPerCred,
 	})
 	if err != nil {
 		response.InternalError(w, err.Error())

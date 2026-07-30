@@ -17,8 +17,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -33,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // setupServer registers routing snapshot providers and constructs the HTTP
@@ -246,9 +247,17 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetInstallSpecs(specs)
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.freeturnService.EnsureBundledInstall()
 	a.wdttService.SetLogger(a.loggingService)
-	if spec, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
-		a.wdttService.SetInstallSpec(spec)
+	if a.managedService != nil {
+		a.wdttService.SetAccessManager(&wdttAccessAdapter{
+			svc:    a.managedService,
+			ifaces: a.ndmsCommands.Interfaces,
+		})
+	}
+	a.wdttService.SetInterfaceChecker(wdtt.NewSysNetChecker())
+	if specs, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
+		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
@@ -600,6 +609,15 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
+	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
+	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
+		var out []listenfirewall.PortSpec
+		out = append(out, a.freeturnService.RunningServerListenPorts()...)
+		out = append(out, a.wdttService.RunningServerListenPorts()...)
+		return listenfirewall.MergePortSpecs(out)
+	})
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)

@@ -80,7 +80,7 @@
   }
 
   function ruleActionTarget(cardData: RuleCardData, idx: number): string {
-    const n = String(idx + 1).padStart(2, '0');
+    const n = String(idx).padStart(2, '0');
     return `правило #${n}: ${cardData.title} → ${outboundLabel(cardData)}`;
   }
 

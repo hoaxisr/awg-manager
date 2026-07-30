@@ -86,7 +86,7 @@
 		{ k: 'inline', l: 'inline' },
 	];
 
-	// ── «используется в» (DNS #n · Route #m), 1-based по правилам ─────────
+	// ── «используется в» (DNS #n · Route #m): DNS с 1, route с 0 ─────────
 	const usageRefs = $derived(computeRuleSetUsageRefs($storeDnsRules, $storeRules));
 
 	// Каталог: суммарные счётчики (DNS + route) для различения «добавлено» /

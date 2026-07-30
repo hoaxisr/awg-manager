@@ -9,6 +9,8 @@
 		disabled?: boolean;
 		/** Icon-only buttons (28px); label used for aria-label and title. */
 		variant?: 'text' | 'icon';
+		/** Растянуть на ширину контейнера, кнопки делят её поровну. */
+		fullWidth?: boolean;
 		onchange: (value: T) => void;
 	}
 
@@ -18,6 +20,7 @@
 		ariaLabel,
 		disabled = false,
 		variant = 'text',
+		fullWidth = false,
 		onchange,
 	}: Props = $props();
 
@@ -37,6 +40,7 @@
 <div
 	class="segmented-control"
 	class:segmented-control--icon={isIcon}
+	class:segmented-control--full={fullWidth}
 	role="group"
 	aria-label={ariaLabel}
 >
@@ -118,6 +122,29 @@
 	.segmented-control-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	.segmented-control--full {
+		display: flex;
+		width: 100%;
+		min-width: 0;
+	}
+
+	.segmented-control--full .segmented-control-btn {
+		flex: 1 1 0;
+		min-width: 0;
+		padding-inline: 0.5rem;
+	}
+
+	/* Кнопки-текст: min-width:0 даёт им сжаться уже надписи, а nowrap-текст
+	   иначе наползает на соседа — обрезаем многоточием (см. мобильный блок). */
+	.segmented-control--full:not(.segmented-control--icon) .segmented-control-btn {
+		display: block;
+		line-height: 26px;
+		text-align: center;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	@media (max-width: 640px) {

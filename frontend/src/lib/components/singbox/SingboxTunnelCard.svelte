@@ -187,7 +187,7 @@
 		class:unknown={cardState === 'unknown'}
 		class:stopped={cardState === 'stopped'}
 	>
-		<td class="tunnel-list-cell tunnel-list-cell--delay list-cell list-cell-delay" data-label="Delay">
+		<td class="tunnel-list-cell tunnel-list-cell--delay list-cell list-cell-delay">
 			<TunnelSingboxPingButton
 				layout="list"
 				label={latText}
@@ -196,7 +196,7 @@
 				onclick={triggerCheck}
 			/>
 		</td>
-		<td class="tunnel-list-cell tunnel-list-cell--name list-cell list-cell-name" data-label="Туннель">
+		<td class="tunnel-list-cell tunnel-list-cell--name list-cell list-cell-name">
 			<div class="tunnel-list-name-stack">
 				<TunnelTitleRow
 					title={tunnel.tag}
@@ -214,7 +214,7 @@
 				<TunnelListEndpointLine host={tunnel.server} port={tunnel.port} bind:show={showServer} />
 			</div>
 		</td>
-		<td class="list-cell list-cell-badges" data-label="Протокол">
+		<td class="list-cell list-cell-badges">
 			<div class="badges-inline">
 				<span class="badge b-{tunnel.protocol}">{protocolLabel}</span>
 				{#if tunnel.security === 'reality'}
@@ -225,10 +225,10 @@
 				<span class="badge b-transport">{tunnel.transport.toUpperCase()}</span>
 			</div>
 		</td>
-		<td class="list-cell list-cell-run" data-label="Процесс">
+		<td class="list-cell list-cell-run">
 			<span class="run-pill" class:run-on={tunnel.running === true}>{tunnel.running === true ? 'running' : 'stopped'}</span>
 		</td>
-		<td class="tunnel-list-cell tunnel-list-cell--traffic list-cell list-cell-traffic" data-label="Трафик">
+		<td class="tunnel-list-cell tunnel-list-cell--traffic list-cell list-cell-traffic">
 			<TunnelListTrafficCell
 				rxRate={inlineRxRate}
 				txRate={inlineTxRate}
@@ -238,10 +238,10 @@
 				title="Открыть детальный график"
 			/>
 		</td>
-		<td class="tunnel-list-cell tunnel-list-cell--ping list-cell list-cell-ping-mini" data-label="Ping">
+		<td class="tunnel-list-cell tunnel-list-cell--ping list-cell list-cell-ping-mini">
 			<TunnelDelaySparkBars history={history} state={cardState} layout="list" onclick={triggerCheck} />
 		</td>
-		<td class="tunnel-list-cell tunnel-list-cell--actions list-cell list-cell-actions col-actions" data-label="Действия">
+		<td class="tunnel-list-cell tunnel-list-cell--actions list-cell list-cell-actions col-actions">
 			<TunnelListActions
 				onEdit={edit}
 				editTitle="Изменить туннель «{tunnel.tag}»"

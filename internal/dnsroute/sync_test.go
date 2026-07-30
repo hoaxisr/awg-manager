@@ -6,9 +6,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
-func TestChunkWithFirstBudget(t *testing.T) {
+func TestChunkWithReserve(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		got := chunkWithFirstBudget(nil, 300, 0)
+		got := chunkWithReserve(nil, 300, 0)
 		if got != nil {
 			t.Errorf("expected nil, got %v", got)
 		}
@@ -16,7 +16,7 @@ func TestChunkWithFirstBudget(t *testing.T) {
 
 	t.Run("under limit no reserve", func(t *testing.T) {
 		items := []string{"a", "b"}
-		got := chunkWithFirstBudget(items, 300, 0)
+		got := chunkWithReserve(items, 300, 0)
 		if len(got) != 1 || len(got[0]) != 2 {
 			t.Errorf("expected 1 chunk of 2, got %v", got)
 		}
@@ -24,7 +24,7 @@ func TestChunkWithFirstBudget(t *testing.T) {
 
 	t.Run("exact limit no reserve", func(t *testing.T) {
 		items := make([]string, 300)
-		got := chunkWithFirstBudget(items, 300, 0)
+		got := chunkWithReserve(items, 300, 0)
 		if len(got) != 1 || len(got[0]) != 300 {
 			t.Errorf("expected 1 chunk of 300, got %d chunks", len(got))
 		}
@@ -32,7 +32,7 @@ func TestChunkWithFirstBudget(t *testing.T) {
 
 	t.Run("over limit splits no reserve", func(t *testing.T) {
 		items := make([]string, 500)
-		got := chunkWithFirstBudget(items, 300, 0)
+		got := chunkWithReserve(items, 300, 0)
 		if len(got) != 2 {
 			t.Fatalf("expected 2 chunks, got %d", len(got))
 		}
@@ -41,34 +41,28 @@ func TestChunkWithFirstBudget(t *testing.T) {
 		}
 	})
 
-	t.Run("first chunk shrunk by reserve", func(t *testing.T) {
-		items := make([]string, 400)
-		got := chunkWithFirstBudget(items, 300, 10)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 chunks, got %d", len(got))
+	t.Run("every chunk shrunk by reserve", func(t *testing.T) {
+		items := make([]string, 700)
+		got := chunkWithReserve(items, 300, 10)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 chunks, got %d", len(got))
 		}
-		if len(got[0]) != 290 || len(got[1]) != 110 {
-			t.Errorf("chunk sizes = %d,%d; want 290,110", len(got[0]), len(got[1]))
+		if len(got[0]) != 290 || len(got[1]) != 290 || len(got[2]) != 120 {
+			t.Errorf("chunk sizes = %d,%d,%d; want 290,290,120", len(got[0]), len(got[1]), len(got[2]))
 		}
 	})
 
-	t.Run("reserve exceeds max leaves empty first chunk", func(t *testing.T) {
-		items := make([]string, 100)
-		got := chunkWithFirstBudget(items, 300, 500)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 chunks, got %d", len(got))
-		}
-		if len(got[0]) != 0 {
-			t.Errorf("chunk 0 should be empty, got %d", len(got[0]))
-		}
-		if len(got[1]) != 100 {
-			t.Errorf("chunk 1 size = %d, want 100", len(got[1]))
+	t.Run("reserve exceeds max still makes progress", func(t *testing.T) {
+		items := make([]string, 3)
+		got := chunkWithReserve(items, 300, 500)
+		if len(got) != 3 {
+			t.Fatalf("expected 3 chunks of 1, got %d", len(got))
 		}
 	})
 
 	t.Run("1200 items splits into four groups", func(t *testing.T) {
 		items := make([]string, 1200)
-		got := chunkWithFirstBudget(items, 300, 0)
+		got := chunkWithReserve(items, 300, 0)
 		if len(got) != 4 {
 			t.Fatalf("expected 4 chunks, got %d", len(got))
 		}
@@ -202,11 +196,12 @@ func TestBuildTargetState(t *testing.T) {
 		if len(ts.groups) != 2 {
 			t.Fatalf("expected 2 groups, got %d", len(ts.groups))
 		}
-		if len(ts.groups[0].excludes) != 1 {
-			t.Errorf("group 0 excludes = %d, want 1", len(ts.groups[0].excludes))
-		}
-		if len(ts.groups[1].excludes) != 0 {
-			t.Errorf("group 1 excludes = %d, want 0", len(ts.groups[1].excludes))
+		// NDMS applies an exclude only inside its own object-group, so every
+		// chunk needs the full exclude set.
+		for i, g := range ts.groups {
+			if len(g.excludes) != 1 {
+				t.Errorf("group %d excludes = %d, want 1", i, len(g.excludes))
+			}
 		}
 		if len(ts.routes) != 2 {
 			t.Errorf("expected 2 routes, got %d", len(ts.routes))
@@ -292,26 +287,20 @@ func TestBuildTargetState(t *testing.T) {
 			},
 		}}
 		ts := buildTargetState(data, nil)
-		// 600 items, first chunk budget = 300 - 10 excludes = 290; remainder 310 -> 300 + 10.
+		// 600 items, every chunk budget = 300 - 10 excludes = 290 -> 290 + 290 + 20.
 		if len(ts.groups) != 3 {
 			t.Fatalf("expected 3 groups, got %d: sizes=%d,%d,%d",
 				len(ts.groups),
 				safeLen(ts.groups, 0), safeLen(ts.groups, 1), safeLen(ts.groups, 2))
 		}
-		if len(ts.groups[0].includes) != 290 {
-			t.Errorf("group[0].includes = %d, want 290", len(ts.groups[0].includes))
-		}
-		if len(ts.groups[0].excludes) != 10 {
-			t.Errorf("group[0].excludes = %d, want 10", len(ts.groups[0].excludes))
-		}
-		if len(ts.groups[1].includes) != 300 {
-			t.Errorf("group[1].includes = %d, want 300", len(ts.groups[1].includes))
-		}
-		if len(ts.groups[1].excludes) != 0 {
-			t.Errorf("group[1] must not carry excludes, got %d", len(ts.groups[1].excludes))
-		}
-		if len(ts.groups[2].includes) != 10 {
-			t.Errorf("group[2].includes = %d, want 10", len(ts.groups[2].includes))
+		wantIncludes := []int{290, 290, 20}
+		for i, want := range wantIncludes {
+			if len(ts.groups[i].includes) != want {
+				t.Errorf("group[%d].includes = %d, want %d", i, len(ts.groups[i].includes), want)
+			}
+			if len(ts.groups[i].excludes) != 10 {
+				t.Errorf("group[%d].excludes = %d, want 10", i, len(ts.groups[i].excludes))
+			}
 		}
 	})
 }

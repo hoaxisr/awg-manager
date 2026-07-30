@@ -13,6 +13,8 @@
 		const out: { k: string; v: string }[] = [];
 		if (payload.peer || peer) out.push({ k: 'peer', v: payload.peer || peer });
 		if (payload.provider) out.push({ k: 'provider', v: payload.provider });
+		if (payload.transport) out.push({ k: 'transport', v: payload.transport });
+		if (payload.mode) out.push({ k: 'mode', v: payload.mode });
 		if (payload.obf) out.push({ k: 'obf', v: payload.obf });
 		if (payload.key) out.push({ k: 'key', v: `${payload.key.slice(0, 8)}…` });
 		if (payload.cid) out.push({ k: 'client ID', v: payload.cid });

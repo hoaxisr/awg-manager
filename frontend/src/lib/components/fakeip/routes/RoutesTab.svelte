@@ -302,8 +302,8 @@
 	let deleteBusy = $state(false);
 
 	function ruleSummary(card: RuleCardData | undefined, idx: number): string {
-		if (!card) return `правило #${idx + 1}`;
-		return `правило #${idx + 1}: ${card.title}`;
+		if (!card) return `правило #${idx}`;
+		return `правило #${idx}: ${card.title}`;
 	}
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
@@ -387,7 +387,7 @@
 				type="button"
 				class="grip"
 				class:is-busy={drag.busy || selectMode}
-				aria-label={`Перетащить правило #${i + 1}`}
+				aria-label={`Перетащить правило #${i}`}
 				title="Перетащить для изменения порядка"
 				onpointerdown={drag.busy || selectMode ? undefined : (e) => drag.handlePointerDown(i, e)}
 			>
@@ -401,10 +401,10 @@
 					class="rule-checkbox"
 					checked={selected.has(i)}
 					onchange={() => toggleSelect(i)}
-					aria-label={`Выбрать правило #${i + 1}`}
+					aria-label={`Выбрать правило #${i}`}
 				/>
 			{:else}
-				{i + 1}
+				{i}
 			{/if}
 		</span>
 		<div class="match">
@@ -441,8 +441,8 @@
 					type="button"
 					class="ib"
 					onclick={() => (ruleEditIdx = i)}
-					aria-label={`Редактировать правило #${i + 1}`}
-					title={`Редактировать правило #${i + 1}`}
+					aria-label={`Редактировать правило #${i}`}
+					title={`Редактировать правило #${i}`}
 				>
 					<Pencil size={15} strokeWidth={2} />
 				</button>
@@ -450,8 +450,8 @@
 					type="button"
 					class="ib danger"
 					onclick={() => (deleteIdx = i)}
-					aria-label={`Удалить правило #${i + 1}`}
-					title={`Удалить правило #${i + 1}`}
+					aria-label={`Удалить правило #${i}`}
+					title={`Удалить правило #${i}`}
 				>
 					<Trash2 size={15} strokeWidth={2} />
 				</button>
@@ -534,7 +534,7 @@
 				{/if}
 				<div class="rrow final-row">
 					<span class="grip grip-fixed" aria-hidden="true"></span>
-					<span class="num">{$storeRules.length + 1}</span>
+					<span class="num">{$storeRules.length}</span>
 					<span class="match-final">final</span>
 					<div class="outbound">
 						{#if finalEditing}

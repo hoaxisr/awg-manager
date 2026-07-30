@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestLink_Roundtrip(t *testing.T) {
-	p := LinkPayload{V: 1, Provider: "vk", Peer: "1.2.3.4:56000", Obf: "rtpopus2", Key: "aabb", MTU: 1376, WG: "[Interface]\nPrivateKey = x\n"}
+	p := LinkPayload{V: 1, Provider: "vk", Peer: "1.2.3.4:56000", Obf: "rtpopus2", Key: "aabb", MTU: 1280, WG: "[Interface]\nPrivateKey = x\n"}
 	link, err := EncodeLink(p)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +40,17 @@ func TestLink_Roundtrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, p) {
 		t.Fatalf("roundtrip mismatch:\n got %+v\nwant %+v", got, p)
+	}
+}
+
+func TestStripWGConfMTU(t *testing.T) {
+	conf := "[Interface]\nPrivateKey = x\nMTU = 1376\n[Peer]\nPublicKey = y\n"
+	got := StripWGConfMTU(conf)
+	if strings.Contains(got, "MTU") {
+		t.Fatalf("MTU line must be stripped: %q", got)
+	}
+	if !strings.Contains(got, "PrivateKey") {
+		t.Fatalf("other lines preserved: %q", got)
 	}
 }
 
@@ -68,7 +80,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		Links: "https://vk.ru/call/join/a", Streams: 4, Transport: "tcp",
 		Mode: "udp", Bond: true, TurnHost: "turn.host", TurnPort: 3478,
 		ObfProfile: "rtpopus2", ObfKey: "deadbeef", StreamsPerCred: 2,
-		Browser: "chromium", DNSMode: "doh",
+		Platform:       "mobile", DNSMode: "doh",
 		DNSServers: "1.1.1.1", ClientID: "cid", Sub: "s", Debug: true,
 	}
 	want := []string{
@@ -76,7 +88,7 @@ func TestBuildClientArgs_FullAndZero(t *testing.T) {
 		"-links", "https://vk.ru/call/join/a", "-n", "4", "-transport", "tcp",
 		"-mode", "udp", "-bond", "-turn", "turn.host", "-port", "3478",
 		"-obf-profile", "rtpopus2", "-obf-key", "deadbeef",
-		"-streams-per-cred", "2", "-browser", "chrome",
+		"-streams-per-cred", "2", "-platform", "mobile",
 		"-dns-mode", "doh", "-dns-servers", "1.1.1.1", "-client-id", "cid",
 		"-sub", "s", "-debug",
 	}
@@ -484,6 +496,104 @@ func TestInstallBinaries_HappyPath(t *testing.T) {
 	}
 }
 
+func TestEnsureBundledInstall_RepairsNonExecutableBinaries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("execute bit semantics differ on Windows")
+	}
+	dir := t.TempDir()
+	client := filepath.Join(dir, "freeturn-client")
+	server := filepath.Join(dir, "freeturn-server")
+	for _, p := range []string{client, server} {
+		if err := os.WriteFile(p, []byte("bin"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewService(dir, dir, client, server)
+	s.SetInstallSpecs(EmbeddedBinaries["aarch64-3.10"])
+
+	s.EnsureBundledInstall()
+
+	if !binaryPresent(client) || !binaryPresent(server) {
+		t.Fatal("EnsureBundledInstall must chmod bundled binaries executable")
+	}
+}
+
+func TestEffectiveInstalledVersion_PrefersSHAOverStaleVersionFile(t *testing.T) {
+	clientBody, serverBody := []byte("client-bin"), []byte("server-bin")
+	specs := ArchSpecs{
+		Client: BinarySpec{Version: PinnedVersion, URL: "https://x/client", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
+		Server: BinarySpec{Version: PinnedVersion, URL: "https://x/server", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
+	}
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/client": clientBody, "https://x/server": serverBody}}
+	s := newInstallService(t, dl, specs)
+	if err := s.InstallBinaries(context.Background()); err != nil {
+		t.Fatalf("InstallBinaries: %v", err)
+	}
+	if err := s.writeInstalledVersion("1.8.0-3"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.effectiveInstalledVersion(); got != PinnedVersion {
+		t.Fatalf("want effective %q from SHA, got %q", PinnedVersion, got)
+	}
+	installed, update := s.installStatusFields(PinnedVersion)
+	if installed != PinnedVersion || update {
+		t.Fatalf("stale version file must not trigger update: installed=%q update=%v", installed, update)
+	}
+
+	s.EnsureBundledInstall()
+	if s.readInstalledVersion() != PinnedVersion {
+		t.Fatalf("EnsureBundledInstall must rewrite version file, got %q", s.readInstalledVersion())
+	}
+}
+
+func TestEnsureBundledInstall_WritesVersionWhenBinariesPresent(t *testing.T) {
+	clientBody, serverBody := []byte("client-bin"), []byte("server-bin")
+	specs := ArchSpecs{
+		Client: BinarySpec{Version: PinnedVersion, URL: "https://x/client", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
+		Server: BinarySpec{Version: PinnedVersion, URL: "https://x/server", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
+	}
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/client": clientBody, "https://x/server": serverBody}}
+	s := newInstallService(t, dl, specs)
+	if err := s.InstallBinaries(context.Background()); err != nil {
+		t.Fatalf("InstallBinaries: %v", err)
+	}
+	if err := os.Remove(s.versionPath); err != nil {
+		t.Fatalf("remove version file: %v", err)
+	}
+
+	s.EnsureBundledInstall()
+
+	st := s.Status()
+	if st.InstalledVersion != PinnedVersion {
+		t.Fatalf("want installed version %q, got %q", PinnedVersion, st.InstalledVersion)
+	}
+	if st.UpdateAvailable {
+		t.Fatalf("bundled install must not show update: %+v", st)
+	}
+}
+
+func TestInstallStatusFields_BundledWithoutVersionFile(t *testing.T) {
+	clientBody, serverBody := []byte("client-bin"), []byte("server-bin")
+	specs := ArchSpecs{
+		Client: BinarySpec{Version: PinnedVersion, URL: "https://x/client", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
+		Server: BinarySpec{Version: PinnedVersion, URL: "https://x/server", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
+	}
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/client": clientBody, "https://x/server": serverBody}}
+	s := newInstallService(t, dl, specs)
+	if err := s.InstallBinaries(context.Background()); err != nil {
+		t.Fatalf("InstallBinaries: %v", err)
+	}
+	if err := os.Remove(s.versionPath); err != nil {
+		t.Fatalf("remove version file: %v", err)
+	}
+
+	installed, update := s.installStatusFields(PinnedVersion)
+	if installed != PinnedVersion || update {
+		t.Fatalf("want bundled pin without version file, got installed=%q update=%v", installed, update)
+	}
+}
+
 func TestInstallBinaries_SHA256Mismatch(t *testing.T) {
 	body := []byte("client-bin")
 	specs := ArchSpecs{
@@ -590,7 +700,7 @@ func TestDecodeLink_UpstreamBase64URL(t *testing.T) {
 // Старый неофициальный формат (entware-installer / awg-manager до #530):
 // стандартный алфавит, padding срезан — обязан читаться и дальше.
 func TestDecodeLink_LegacyStdEncoding(t *testing.T) {
-	p := LinkPayload{V: 1, Provider: "vk", Peer: "h:56000", Obf: "rtpopus", Key: "aa", MTU: 1376, WG: "[Interface]\n"}
+	p := LinkPayload{V: 1, Provider: "vk", Peer: "h:56000", Obf: "rtpopus", Key: "aa", MTU: 1280, WG: "[Interface]\n"}
 	raw, _ := json.Marshal(p)
 	legacy := strings.TrimRight(base64.StdEncoding.EncodeToString(raw), "=")
 	got, err := DecodeLink(LinkScheme + legacy)

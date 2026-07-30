@@ -19,13 +19,16 @@ func isProxyRoute(r Rule) bool {
 	return r.ActionIsRoute() && r.Outbound != "" && r.Outbound != "direct"
 }
 
-// loopSafeProxyRule reports whether a proxy route-rule's dst CIDRs are safe to
-// route to the tun. Safe iff the ONLY matchers are ip_cidr and/or rule_set: then
-// any raw-IP packet to a routed CIDR is guaranteed to match this rule and be
-// proxied, so it never falls through to route.final (seeded "direct") and loops
-// back to the tun. Any narrowing matcher (port, source_ip_cidr, domain_suffix,
-// protocol, nested logical, ip_is_private) makes a by-IP packet potentially
-// fall through → loop; such rules contribute no routes.
+// loopSafeProxyRule reports whether a proxy route-rule's SHAPE is safe: the ONLY
+// matchers are ip_cidr and/or rule_set. Any narrowing matcher (port,
+// source_ip_cidr, domain_suffix, protocol, nested logical, ip_is_private) makes a
+// by-IP packet potentially fall through to route.final (seeded "direct") → the
+// kernel re-routes it to the tun via our own CIDR route → loop; such rules
+// contribute no routes.
+// NB: shape alone is not sufficient once a rule combines its own ip_cidr with a
+// rule_set — sing-box 1.14 merges a set into the referencing rule only when the
+// set is "mergeable" (see mergeableRuleSetRule). The merged-matching gate lives
+// in desiredTunCIDRs / remoteTunCIDRs, which need the rule-set bodies.
 // INVARIANT (guarded by TestLoopSafeProxyRule_AllMatchersCovered): if you add a new matcher field to Rule, add it to the exclusion below or the loop-safety hole reopens.
 func loopSafeProxyRule(r Rule) bool {
 	return isProxyRoute(r) &&
@@ -107,6 +110,75 @@ func ruleSetCIDRs(rs RuleSet) []string {
 	return out
 }
 
+// destinationAddressKeys — ключи headless-правила, попадающие в группу
+// destinationAddress sing-box (route/rule/rule_headless.go). Внутри группы
+// условия OR-ятся, между группами — AND. Правило, состоящее ТОЛЬКО из этих
+// ключей, при мерже не добавляет требований сверх destinationAddress: если
+// внешний ip_cidr её уже удовлетворил, объединение групп «done».
+var destinationAddressKeys = map[string]bool{
+	"domain": true, "domain_suffix": true, "domain_keyword": true,
+	"domain_regex": true, "ip_cidr": true,
+}
+
+// mergeableRuleSetRule — зеркало апстримного mergeableRuleIn
+// (route/rule/rule_item_rule_set.go:97, sing-box 1.14.0-beta.1) для исходной
+// (JSON) формы набора. Набор вливается в ссылающееся правило, только если
+// состоит РОВНО из одного default-правила без invert и без вложенного rule_set;
+// возвращает это правило, иначе nil. Не-mergeable набор в beta.1 матчится
+// отдельно и только при выполненных собственных условиях внешнего правила
+// (`outerDone && ruleSet.Match(...)`) — в 1.13 состояние внешнего правила
+// передавалось внутрь набора любой формы, и «мерж» работал всегда.
+// Remote-набор в конфиге несёт пустой Rules → консервативно немержим.
+func mergeableRuleSetRule(rs RuleSet) map[string]any {
+	if len(rs.Rules) != 1 {
+		return nil
+	}
+	m := rs.Rules[0]
+	if t, ok := m["type"].(string); ok && t != "" && t != "default" {
+		return nil
+	}
+	if inv, ok := m["invert"].(bool); ok && inv {
+		return nil
+	}
+	if nested, ok := m["rule_set"]; ok && nested != nil {
+		return nil
+	}
+	return m
+}
+
+// ownIPCIDRLoopSafe reports whether a rule's OWN ip_cidr values still guarantee a
+// match under beta.1 merged matching. Without a rule_set they trivially do. With
+// one, the packet's own-CIDR hit satisfies only the destinationAddress group, so
+// the rule matches only via a set that (a) merges and (b) adds nothing outside
+// that group — matching upstream scenario A/G. rule_set tags are OR-ed, so one
+// such set is enough.
+func ownIPCIDRLoopSafe(r Rule, byTag map[string]RuleSet) bool {
+	if len(r.RuleSet) == 0 {
+		return true
+	}
+	for _, tag := range r.RuleSet {
+		rs, ok := byTag[tag]
+		if !ok {
+			continue
+		}
+		m := mergeableRuleSetRule(rs)
+		if m == nil {
+			continue
+		}
+		destOnly := true
+		for k := range m {
+			if k != "type" && !destinationAddressKeys[k] {
+				destOnly = false
+				break
+			}
+		}
+		if destOnly {
+			return true
+		}
+	}
+	return false
+}
+
 // desiredTunCIDRs returns the deduped, normalized dst ip_cidr values that proxy
 // route-rules select — directly via ip_cidr and via referenced inline/managed-local
 // rule-sets — split into v4 and v6. These get specific NDMS routes to the tun.
@@ -135,14 +207,25 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 		if !loopSafeProxyRule(r) {
 			continue
 		}
-		for _, c := range r.IPCIDR {
-			add(c)
+		if ownIPCIDRLoopSafe(r, byTag) {
+			for _, c := range r.IPCIDR {
+				add(c)
+			}
 		}
 		for _, tag := range r.RuleSet {
-			if rs, ok := byTag[tag]; ok {
-				for _, c := range ruleSetCIDRs(rs) {
-					add(c)
-				}
+			rs, ok := byTag[tag]
+			if !ok {
+				continue
+			}
+			// beta.1: не-mergeable набор матчится самостоятельно и только при
+			// выполненных условиях внешнего правила. Пакет по CIDR набора
+			// собственный ip_cidr правила не удовлетворяет → правило не
+			// совпадёт → route.final=direct → петля (сценарий C).
+			if len(r.IPCIDR) > 0 && mergeableRuleSetRule(rs) == nil {
+				continue
+			}
+			for _, c := range ruleSetCIDRs(rs) {
+				add(c)
 			}
 		}
 	}

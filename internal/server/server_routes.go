@@ -164,6 +164,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.freeturnHandler.SetTunnelsHandler(h.tunnelsHandler)
 
 	h.wdttHandler = api.NewWdttHandler(s.wdttService)
+	if s.ndmsQueries != nil {
+		h.wdttHandler.SetNDMSQueries(s.ndmsQueries)
+	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
 
@@ -403,8 +406,13 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/wdtt/link/decode", h.guarded(h.wdttHandler.DecodeLink))
 	mux.HandleFunc("/api/wdtt/link/import", h.guarded(h.wdttHandler.ImportLink))
 	mux.HandleFunc("/api/wdtt/install", h.guarded(h.wdttHandler.Install))
+	mux.HandleFunc("/api/wdtt/server/config", h.guarded(h.wdttHandler.UpdateServerConfig))
+	mux.HandleFunc("/api/wdtt/server/start", h.guarded(h.wdttHandler.StartServer))
+	mux.HandleFunc("/api/wdtt/server/stop", h.guarded(h.wdttHandler.StopServer))
 	mux.HandleFunc("/api/wdtt/clients/", h.guarded(h.wdttHandler.ServeClients))
 	mux.HandleFunc("/api/wdtt/clients", h.guarded(h.wdttHandler.CreateClient))
+	mux.HandleFunc("/api/wdtt/servers/", h.guarded(h.wdttHandler.ServeServers))
+	mux.HandleFunc("/api/wdtt/servers", h.guarded(h.wdttHandler.CreateServer))
 
 }
 
@@ -494,6 +502,15 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 		// #435). Backed by the WGServers list cache (5m TTL + hook
 		// invalidation), so per-request cost is an in-memory read.
 		s.singboxConnsHandler.SetWGServers(h.serverHandler)
+	}
+	if h.connectionsService != nil {
+		// Те же источники имён для conntrack-соединений (issue #639):
+		// клиенты туннелей приходят без MAC и без этого видны как IP.
+		var managed connections.ManagedServersLister
+		if s.managedServiceImpl != nil {
+			managed = s.managedServiceImpl
+		}
+		h.connectionsService.SetPeerNameSources(h.serverHandler, managed)
 	}
 	mux.HandleFunc("/api/servers", h.guarded(h.serverHandler.List))
 	mux.HandleFunc("/api/servers/all", h.guarded(h.serverHandler.GetAll))
@@ -838,6 +855,13 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 				rh.GetDNSGlobals(w, r)
 			} else {
 				rh.PutDNSGlobals(w, r)
+			}
+		}))
+		mux.HandleFunc("/api/singbox/router/dns/chain-preset", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				rh.GetDNSChainPreset(w, r)
+			} else {
+				rh.PutDNSChainPreset(w, r)
 			}
 		}))
 		mux.HandleFunc("/api/singbox/router/route/final", h.guarded(rh.SetRouteFinal))

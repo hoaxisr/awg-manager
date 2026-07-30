@@ -478,6 +478,19 @@ func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetDNSChainPresetState atomically persists the DNS-chain preset state under
+// the store lock (single-writer pattern; the router service is the only
+// writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.
+func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.DNSChainPreset = st
+	return s.saveUnlocked(s.settings)
+}
+
 // MarkServerInterface adds an interface ID to the server interfaces list.
 func (s *SettingsStore) MarkServerInterface(id string) error {
 	s.mu.Lock()
