@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -246,6 +247,21 @@ func (a *app) startBootSequence() {
 		// allow-ips. Flag-gated, best-effort. Without this the migration
 		// would only fire on a cold router boot (isBoot branch above).
 		a.managedService.MigratePeerAllowIPs(context.Background())
+
+		if backup.ConsumePostRestoreMarker(a.dataDir) {
+			a.bootLog.Info("startup", "",
+				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
+			if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
+				a.bootLog.Warn("post-restore", "", "reconcile linked endpoints: "+err.Error())
+			} else if n > 0 {
+				a.bootLog.Info("post-restore", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+			}
+			a.orch.LoadState(context.Background())
+			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
+			go a.freeturnService.ResumeEnabled()
+			go a.wdttService.ResumeEnabled()
+			return
+		}
 
 		a.bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")

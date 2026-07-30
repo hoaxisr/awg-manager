@@ -599,12 +599,34 @@ func OutboundTypeRequiresFeature(obType string) string {
 // tag) and for unknown types — callers still get an error from
 // `sing-box check` in that case.
 //
-// Prefer this to direct Features-contains checks: callers don't need to
-// remember the exact tag name for every protocol, and unknown protocols
-// are treated as "probably supported" so sing-box itself gets to decide.
+// For the managed amnezia-box pinned fork (the binary awg-manager ships
+// and activates via Installer) we intentionally do NOT block the
+// trusttunnel / mieru / naive opt-out outbounds at the pre-check gate.
+// These three are the only types with a build-tag requirement in our
+// config universe, and we KNOW the pinned fork ships them. The pre-check
+// feature gate has historically caused dozens of false "missing tag"
+// rejections on routers where UPX-strip / .go.buildinfo damage / stale
+// sidecar caches / probe timeouts / installer-not-yet-wired races make
+// the installed Tags: line unreliable.
+//
+// Trusting the downstream sing-box runtime check/apply is always safe:
+//   - if the pinned fork is installed (common case): runtime succeeds,
+//     the tunnel starts — user never notices the pre-check was lenient.
+//   - if a user hand-replaced the binary with an upstream build that
+//     truly lacks trusttunnel/mieru/naive: sing-box check will emit a
+//     clear error message (e.g. "unknown outbound type trusttunnel")
+//     that surfaces through the normal applyConfig error path, and the
+//     user gets a much more actionable failure than "missing tag".
+//
+// So the only effect of the contains-check below is to gate hypothetical
+// FUTURE optional outbounds whose tag we don't yet know about.
 func OutboundSupportedByFeatures(features []string, outboundType string) bool {
 	required := outboundRequiresFeature(outboundType)
 	if required == "" {
+		return true
+	}
+	switch outboundType {
+	case "trusttunnel", "mieru", "naive":
 		return true
 	}
 	for _, f := range features {

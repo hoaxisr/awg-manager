@@ -37,6 +37,7 @@ type WdttService interface {
 	StartServerInstance(id string) error
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	Stop()
 	ListServerPanelUsers(serverID string) (wdtt.PanelUsersStatus, error)
 	AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (wdtt.PanelUsersStatus, error)
 	RemoveServerPanelUser(serverID, password string) (wdtt.PanelUsersStatus, error)

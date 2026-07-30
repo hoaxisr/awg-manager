@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// AccessManager applies NDMS access settings to the wdtt0 interface.
+// AccessManager applies router access settings for the wdtt0 interface.
+// NDMS calls are best-effort (wdtt0 is invisible to NDMS); entware iptables
+// NAT/LAN rules are always applied separately.
 type AccessManager interface {
 	ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error)
 	ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error
@@ -17,6 +19,10 @@ type AccessManager interface {
 	EnsureInterfaceFirewallPermit(ctx context.Context, ifaceName string) error
 	// KernelIfaceName resolves NDMS iface id to kernel dev for iptables -o.
 	KernelIfaceName(ctx context.Context, ndmsName string) string
+	// ResolveLANSegmentCIDRs maps NDMS bridge names to network CIDRs.
+	ResolveLANSegmentCIDRs(ctx context.Context, segmentNames []string) ([]string, error)
+	// DefaultGatewayNDMS returns the NDMS id of the current default-route WAN.
+	DefaultGatewayNDMS(ctx context.Context) (string, error)
 }
 
 // InterfaceChecker waits until wdtt0 appears after wdtt-server start.
@@ -42,58 +48,67 @@ func normalizePolicy(policy string) string {
 }
 
 func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerConfig) error {
-	if s.accessMgr == nil {
-		return nil
-	}
 	iface := DefaultWdttIface
 	mode := normalizeNatMode(cfg.NatMode)
 	prevWAN := strings.TrimSpace(cfg.NatStaticWAN)
-
-	wan, err := s.accessMgr.ApplyNATModeToInterface(ctx, iface, mode, prevWAN)
-	if err != nil {
-		// wdtt0 is invisible to NDMS; RCI NAT/ACL often fail while the server is fine.
-		if s.appLog != nil {
-			s.appLog.Warn("access", id, "NDMS NAT "+mode+" пропущен: "+err.Error())
-		}
-	}
 	newStaticWAN := prevWAN
-	if mode == "internet-only" && wan != "" {
-		newStaticWAN = wan
+
+	if s.accessMgr != nil {
+		wan, err := s.accessMgr.ApplyNATModeToInterface(ctx, iface, mode, prevWAN)
+		if err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("access", id, "NDMS NAT "+mode+" пропущен: "+err.Error())
+			}
+			if mode == "internet-only" && wan == "" {
+				if gw, gwErr := s.accessMgr.DefaultGatewayNDMS(ctx); gwErr == nil && gw != "" {
+					wan = gw
+				}
+			}
+		}
+		if mode == "internet-only" && wan != "" {
+			newStaticWAN = wan
+		} else if mode != "internet-only" {
+			newStaticWAN = ""
+		}
+
+		policy := normalizePolicy(cfg.Policy)
+		if err := s.accessMgr.ApplyPolicyToInterface(ctx, iface, policy); err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("access", id, "policy "+policy+" пропущен (NDMS не знает "+iface+"): "+err.Error())
+			}
+		}
+
+		segments := cfg.LanSegments
+		if segments == nil {
+			segments = []string{}
+		}
+		if err := s.accessMgr.ApplyLANSegmentsToInterface(ctx, iface, DefaultWdttAddress, DefaultWdttMask, segments); err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("access", id, "NDMS LAN ACL пропущен: "+err.Error())
+			}
+		}
+
+		if mode != "none" {
+			if err := s.accessMgr.EnsureInterfaceFirewallPermit(ctx, iface); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("access", id, "firewall permit пропущен (NDMS не знает "+iface+"): "+err.Error())
+				}
+			}
+		}
 	} else if mode != "internet-only" {
 		newStaticWAN = ""
 	}
+
 	if newStaticWAN != prevWAN {
 		_ = s.setServerNatStaticWAN(id, newStaticWAN)
 	}
 
-	policy := normalizePolicy(cfg.Policy)
-	if err := s.accessMgr.ApplyPolicyToInterface(ctx, iface, policy); err != nil {
-		if s.appLog != nil {
-			s.appLog.Warn("access", id, "policy "+policy+" пропущен: "+err.Error())
-		}
+	wanDev := ""
+	if mode == "internet-only" && newStaticWAN != "" && s.accessMgr != nil {
+		wanDev = s.accessMgr.KernelIfaceName(ctx, newStaticWAN)
 	}
 
-	segments := cfg.LanSegments
-	if segments == nil {
-		segments = []string{}
-	}
-	if err := s.accessMgr.ApplyLANSegmentsToInterface(ctx, iface, DefaultWdttAddress, DefaultWdttMask, segments); err != nil {
-		if s.appLog != nil {
-			s.appLog.Warn("access", id, "LAN segments пропущены: "+err.Error())
-		}
-	}
 	if mode != "none" {
-		// wdtt0 is a Linux netdev (wireguard-go), not an NDMS OpkgTun — ACL bind
-		// often fails with "no wdtt0 IP interface found". Best-effort only.
-		if err := s.accessMgr.EnsureInterfaceFirewallPermit(ctx, iface); err != nil {
-			if s.appLog != nil {
-				s.appLog.Warn("access", id, "firewall permit пропущен (NDMS не знает "+iface+"): "+err.Error())
-			}
-		}
-		wanDev := ""
-		if mode == "internet-only" && newStaticWAN != "" {
-			wanDev = s.accessMgr.KernelIfaceName(ctx, newStaticWAN)
-		}
 		if err := applyEntwareNAT(ctx, iface, mode, wanDev); err != nil {
 			return fmt.Errorf("entware NAT %s: %w", mode, err)
 		}
@@ -103,6 +118,17 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	} else {
 		removeEntwareNAT(ctx, iface)
 	}
+
+	segments := cfg.LanSegments
+	if segments == nil {
+		segments = []string{}
+	}
+	if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr); err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("access", id, "LAN iptables: "+err.Error())
+		}
+	}
+
 	return nil
 }
 

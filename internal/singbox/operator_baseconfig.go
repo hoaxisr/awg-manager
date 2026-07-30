@@ -1008,14 +1008,7 @@ func (o *Operator) checkOutboundFeatures() error {
 			if required == "" {
 				continue
 			}
-			has := false
-			for _, f := range features {
-				if f == required {
-					has = true
-					break
-				}
-			}
-			if has {
+			if OutboundSupportedByFeatures(features, typ) {
 				continue
 			}
 			if tag == "" {

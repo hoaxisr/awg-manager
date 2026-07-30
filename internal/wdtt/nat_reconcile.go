@@ -41,9 +41,6 @@ func (s *Service) anyServerRunning(full Config) bool {
 }
 
 func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
-	if s.accessMgr == nil {
-		return
-	}
 	full, err := s.store.Load()
 	if err != nil {
 		return
@@ -67,21 +64,34 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		}
 		wanDev := ""
 		if mode == "internet-only" {
-			if wan := strings.TrimSpace(srv.Config.NatStaticWAN); wan != "" {
+			if wan := strings.TrimSpace(srv.Config.NatStaticWAN); wan != "" && s.accessMgr != nil {
 				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
 			}
 		}
-		if entwareNATPresent(ctx, iface, wanDev) {
-			continue
-		}
-		if err := applyEntwareNAT(ctx, iface, mode, wanDev); err != nil {
-			if s.appLog != nil {
-				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
+		if !entwareNATPresent(ctx, iface, wanDev) {
+			if err := applyEntwareNAT(ctx, iface, mode, wanDev); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен на "+iface)
 			}
-			continue
 		}
-		if s.appLog != nil {
-			s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен на "+iface)
+		segments := srv.Config.LanSegments
+		if segments == nil {
+			segments = []string{}
+		}
+		if len(segments) > 0 && s.accessMgr != nil {
+			cidrs, err := s.accessMgr.ResolveLANSegmentCIDRs(ctx, segments)
+			if err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
+				}
+			} else if !entwareLANPresent(ctx, DefaultWdttAddress+"/24", cidrs) {
+				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr); err != nil && s.appLog != nil {
+					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
+				}
+			}
 		}
 	}
 }

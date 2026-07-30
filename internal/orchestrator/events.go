@@ -18,6 +18,7 @@ const (
 	EventWANDown                          // WAN interface went down
 	EventNDMSHook                         // NDMS iflayerchanged.d hook
 	EventPingCheckFailed                  // Connectivity loss detected
+	EventQuiesce                          // Stop running tunnels without disabling (backup/restore)
 )
 
 // Event is the input to the orchestrator.

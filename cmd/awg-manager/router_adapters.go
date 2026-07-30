@@ -366,3 +366,33 @@ func (a *wdttAccessAdapter) KernelIfaceName(ctx context.Context, ndmsName string
 	}
 	return a.svc.ResolveKernelIfaceName(ctx, ndmsName)
 }
+
+func (a *wdttAccessAdapter) ResolveLANSegmentCIDRs(ctx context.Context, names []string) ([]string, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("managed service not available")
+	}
+	catalog, err := a.svc.ListLANSegments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]string, len(catalog))
+	for _, seg := range catalog {
+		byName[seg.Name] = seg.Subnet
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		cidr, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("LAN-сегмент %q не найден", name)
+		}
+		out = append(out, cidr)
+	}
+	return out, nil
+}
+
+func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, error) {
+	if a.svc == nil {
+		return "", fmt.Errorf("managed service not available")
+	}
+	return a.svc.DefaultGatewayNDMSInterface(ctx)
+}

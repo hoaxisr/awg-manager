@@ -196,6 +196,7 @@ func (s *Service) StopServerInstance(id string) error {
 	// правила заново — снять их было бы уже некому.
 	err = s.serverProcs.get(id).Stop()
 	removeEntwareNAT(context.Background(), DefaultWdttIface)
+	removeEntwareLAN(context.Background(), DefaultWdttIface)
 	removeServerListenFirewall(context.Background(), inst.Config)
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
 		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())

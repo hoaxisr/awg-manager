@@ -12,3 +12,4 @@ export { default as DevelopChannelGateModal } from './DevelopChannelGateModal.sv
 export { default as ExperimentalSettingsCard } from './ExperimentalSettingsCard.svelte';
 export { default as PukhososPatrol } from './PukhososPatrol.svelte';
 export { default as HttpServerCard } from './HttpServerCard.svelte';
+export { default as BackupRestoreCard } from './BackupRestoreCard.svelte';

@@ -41,6 +41,7 @@ type FreeTurnService interface {
 	StartServerInstance(id string) error
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	Stop()
 	ListServerAllowlist(serverID string) (freeturn.AllowlistStatus, error)
 	AddServerAllowlistClient(serverID, clientID, comment string) (freeturn.AddAllowlistResult, error)
 	RemoveServerAllowlistClient(serverID, clientID string) error

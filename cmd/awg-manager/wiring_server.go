@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/frontend"
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
@@ -262,9 +263,12 @@ func (a *app) setupDeviceProxy() {
 	}
 	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
 	// рестарта/ребута linked-AWG-туннель шлёт трафик в мёртвый 127.0.0.1:90xx.
-	// В горутине, чтобы не блокировать boot; логгеры уже выставлены выше.
-	go a.freeturnService.ResumeEnabled()
-	go a.wdttService.ResumeEnabled()
+	// После restore из резервной копии ResumeEnabled откладывается до post-restore
+	// cold boot (см. boot.go), чтобы порты не перемешались.
+	if !backup.HasPostRestoreMarker(a.dataDir) {
+		go a.freeturnService.ResumeEnabled()
+		go a.wdttService.ResumeEnabled()
+	}
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg
@@ -621,6 +625,14 @@ func (a *app) setupShutdown() {
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)
+	a.srv.AddShutdownHook(func() {
+		if !backup.HasPostRestoreMarker(a.dataDir) {
+			return
+		}
+		a.freeturnService.Stop()
+		a.wdttService.Stop()
+		backup.KillOrphanProxyProcesses(filepath.Join(a.dataDir, "run"))
+	})
 	// Intentionally NOT removing kmod proxy slots on restart: the
 	// reconnect path (EventReconnect → ActionRestoreKmod →
 	// KmodManager.RestoreTunnel) adopts each existing slot without

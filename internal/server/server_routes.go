@@ -263,6 +263,16 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// System (protected + boot guarded)
 	mux.HandleFunc("/api/system/info", h.guarded(h.systemHandler.Info))
 	mux.HandleFunc("/api/system/restart", h.guarded(h.systemHandler.RestartDaemon))
+	backupHandler := api.NewBackupHandler(
+		s.settings.DataDir(),
+		s.config.Version,
+		s.QuiesceForBackup,
+		s.ResumeAfterBackup,
+		s.ScheduleRestart,
+		h.appLog,
+	)
+	mux.HandleFunc("/api/system/backup/export", h.guarded(backupHandler.Export))
+	mux.HandleFunc("/api/system/backup/import", h.guarded(backupHandler.Import))
 	mux.HandleFunc("/api/system/wan-interfaces", h.guarded(h.systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", h.guarded(h.systemHandler.AllInterfaces))
 	mux.HandleFunc("/api/system/hydraroute-status", h.guarded(h.systemHandler.HydraRouteStatus))

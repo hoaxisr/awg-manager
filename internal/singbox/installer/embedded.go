@@ -3,8 +3,30 @@ package installer
 
 const RequiredVersion = "1.14.0-beta.1-awgm.3"
 
+// RequiredFeatures is the canonical build-tag set baked into the pinned
+// sing-box release (RequiredVersion above). Used as a safe fallback when
+// `sing-box version` returns an empty Tags: line on some mips/arm64 builds
+// (strip/kill-strip removes the DWARF `.go.buildinfo` section or UPX
+// compress corrupts the embedded feature list). See
+// singbox.Operator.detectVersionAndFeaturesCached fallback path. Keep in
+// sync with whatever tags go -tags=... the hoaxisr/amnezia-box CI runs.
+var RequiredFeatures = []string{
+	"with_acme",
+	"with_ech",
+	"with_gvisor",
+	"with_mieru_outbound",
+	"with_naive_outbound",
+	"with_quic",
+	"with_standard_conntrack",
+	"with_trusttunnel_outbound",
+	"with_utls",
+	"with_wireguard",
+	"with_clash_api",
+	"with_dns_filter",
+}
+
 var EmbeddedBinaries = map[string]BinarySpec{
-	"mipsel-3.4":   {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-mipsel-3.4", SHA256: "026eb2d8a3f627965247ad375ccf02fd792a6ad1d892efcb174c108f2b5a951d", Size: 68413324},
-	"mips-3.4":     {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-mips-3.4", SHA256: "ba2bc716b202ee800f80763f5cc3c9aa4843903a71e12414570276a78c813300", Size: 51183773},
-	"aarch64-3.10": {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-aarch64-3.10", SHA256: "8217a094621b36d5dff5b8170e8118fd01ff679f6d729e3e86de0207656df2b3", Size: 55807832},
+	"mipsel-3.4":   {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-mipsel-3.4", SHA256: "026eb2d8a3f627965247ad375ccf02fd792a6ad1d892efcb174c108f2b5a951d", Size: 68413324, Features: RequiredFeatures},
+	"mips-3.4":     {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-mips-3.4", SHA256: "ba2bc716b202ee800f80763f5cc3c9aa4843903a71e12414570276a78c813300", Size: 51183773, Features: RequiredFeatures},
+	"aarch64-3.10": {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-beta.1-awgm.3/singbox-1.14.0-beta.1-awgm.3-aarch64-3.10", SHA256: "8217a094621b36d5dff5b8170e8118fd01ff679f6d729e3e86de0207656df2b3", Size: 55807832, Features: RequiredFeatures},
 }

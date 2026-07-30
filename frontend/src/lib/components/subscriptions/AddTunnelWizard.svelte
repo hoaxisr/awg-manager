@@ -193,12 +193,12 @@
 		}
 	}
 
-	// «Один сервер» понимает только share-ссылки и mieru JSON; Clash YAML и
-	// sing-box JSON принимает лишь ветка «Группа серверов» (inline-подписка).
-	const IMPORT_FILE_ACCEPT_SINGLE = '.json,.txt';
-	const IMPORT_FILE_DROP_TITLE_SINGLE = 'или перетащите .json / .txt файл сюда';
-	const IMPORT_FILE_ACCEPT = '.json,.txt,.yaml,.yml';
-	const IMPORT_FILE_DROP_TITLE = 'или перетащите .json / .txt / .yaml файл сюда';
+	// «Один сервер» понимает share-ссылки, mieru JSON и TrustTunnel TOML;
+	// Clash YAML и sing-box JSON принимает лишь ветка «Группа серверов».
+	const IMPORT_FILE_ACCEPT_SINGLE = '.json,.txt,.toml';
+	const IMPORT_FILE_DROP_TITLE_SINGLE = 'или перетащите .json / .txt / .toml файл сюда';
+	const IMPORT_FILE_ACCEPT = '.json,.txt,.yaml,.yml,.toml';
+	const IMPORT_FILE_DROP_TITLE = 'или перетащите .json / .txt / .yaml / .toml файл сюда';
 
 	const titleByKind: Record<WizardKind | 'choose', string> = {
 		choose: 'Добавить',
@@ -370,8 +370,9 @@
 				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
 				<code>mieru://</code>, <code>mierus://</code>,
 				<code>naive+http://</code>, <code>naive+https://</code>,
+				<code>trusttunnel://</code>, <code>tt://</code>,
 				а также JSON-конфиг mieru целиком (экспорт панелей, формат
-				<code>mieru apply config</code>).
+				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel (AdGuard).
 				Список через пробел при вставке разбивается на строки автоматически.
 			</p>
 			{#if !singboxInstalled}
@@ -381,7 +382,7 @@
 			{/if}
 			<ShareLinksTextarea
 				bind:value={singleLinks}
-				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP`}
+				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP\ntrusttunnel://user:pass@host:443?sni=...#Moscow`}
 				rows={6}
 				disabled={!singboxInstalled || submitting}
 				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
@@ -466,13 +467,14 @@
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
 					<ShareLinksTextarea
 						bind:value={inlineText}
-						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...`}
+						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...\ntrusttunnel://...\ntt://...`}
 						rows={6}
 						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
 					/>
 					<span class="hint">
-						Поддерживаются share-link'и, Clash YAML, sing-box JSON и
-						JSON-конфиг mieru (экспорт панелей, формат mieru apply config).
+						Поддерживаются share-link'и, Clash YAML, sing-box JSON,
+						JSON-конфиг mieru (экспорт панелей, формат mieru apply config)
+						и TOML-конфиг TrustTunnel (AdGuard).
 						Список ссылок через пробел при вставке разбивается на строки.
 						Авто-обновления нет — список замораживается на момент создания,
 						редактируется во вкладке «Серверы».
