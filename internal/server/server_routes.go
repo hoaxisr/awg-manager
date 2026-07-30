@@ -104,6 +104,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.importHandler.SetSettingsStore(s.settings)
 	h.importHandler.SetPingCheckService(s.pingCheckService)
 	h.importHandler.SetTunnelsHandler(h.tunnelsHandler)
+	h.importHandler.SetFreeTurnService(s.freeturnService)
+	h.importHandler.SetWdttService(s.wdttService)
 	h.wanHandler = api.NewWANHandler(s.tunnelService, h.appLog)
 	h.pingCheckHandler = api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, h.appLog)
 	h.pingCheckHandler.SetEventBus(s.bus)

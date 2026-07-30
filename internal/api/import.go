@@ -17,6 +17,8 @@ type ImportHandler struct {
 	settingsStore  *storage.SettingsStore
 	pingCheck      PingCheckService
 	tunnelsHandler *TunnelsHandler
+	freeturn       FreeTurnService
+	wdtt           WdttService
 	log            *logging.ScopedLogger
 }
 
@@ -42,6 +44,16 @@ func (h *ImportHandler) SetPingCheckService(svc PingCheckService) {
 // SetTunnelsHandler sets the tunnels handler for SSE publishing after import.
 func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 	h.tunnelsHandler = th
+}
+
+// SetFreeTurnService wires FreeTurn for linked-client listen → endpoint sync on import.
+func (h *ImportHandler) SetFreeTurnService(svc FreeTurnService) {
+	h.freeturn = svc
+}
+
+// SetWdttService wires WDTT for linked-client listen → endpoint sync on import.
+func (h *ImportHandler) SetWdttService(svc WdttService) {
+	h.wdtt = svc
 }
 
 // ImportConfRequest is the body for POST /import/conf.
@@ -75,6 +87,8 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "missing config content", "MISSING_CONTENT")
 		return
 	}
+
+	req.Content = h.patchImportContentForLinkedClient(req.Content, req.FreeTurnClientID, req.WdttClientID)
 
 	if existingID := findLinkedTunnelID(h.store, req.FreeTurnClientID, req.WdttClientID); existingID != "" {
 		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name); err != nil {

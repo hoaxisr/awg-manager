@@ -223,6 +223,11 @@ func (a *app) startBootSequence() {
 			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
 			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
 			a.scheduleProxyClientAutostart("cold-boot")
+			if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
+				a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
+			} else if n > 0 {
+				a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+			}
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -272,6 +277,11 @@ func (a *app) startBootSequence() {
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 		a.resumeEnabledProxyClients("daemon-restart")
+		if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
+			a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
+		} else if n > 0 {
+			a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+		}
 	}
 
 }

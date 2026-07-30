@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/backup"
@@ -39,5 +40,10 @@ func (a *app) scheduleProxyClientAutostart(trigger string) {
 		case <-time.After(30 * time.Second):
 		}
 		a.resumeEnabledProxyClients(trigger + "-retry")
+		if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil && a.bootLog != nil {
+			a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
+		} else if n > 0 && a.bootLog != nil {
+			a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s) (%s)", n, trigger))
+		}
 	}()
 }
