@@ -53,7 +53,7 @@
   // протокола, туннельный — всегда UDP.
   let dnsPickerTag = $state<string | null>(null);
   const dnsPickerServer = $derived(
-    dnsPickerTag ? (($dnsServersStore ?? []).find((s) => s.tag === dnsPickerTag) ?? null) : null,
+    dnsPickerTag ? (($dnsServersStore ?? []).find((srv) => srv.tag === dnsPickerTag) ?? null) : null,
   );
   // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
   // иначе — обычные настройки движка (StatusDrawer).
