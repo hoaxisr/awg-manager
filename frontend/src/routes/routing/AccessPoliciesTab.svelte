@@ -14,9 +14,11 @@
         policyDevices: PolicyDevice[];
         policyInterfaces: PolicyGlobalInterface[];
         missing?: boolean;
+        /** Deep-link из настроек sing-box: открыть редактор этой политики (#573). */
+        openPolicy?: string | null;
     }
 
-    let { accessPolicies, policyDevices, policyInterfaces, missing = false }: Props = $props();
+    let { accessPolicies, policyDevices, policyInterfaces, missing = false, openPolicy = null }: Props = $props();
 
     let policyCreateOpen = $state(false);
     let policyCreating = $state(false);
@@ -37,6 +39,19 @@
         if (editingPolicy) {
             editingPolicyData = accessPolicies.find(p => p.name === editingPolicy) ?? null;
         }
+    });
+
+    // Одноразовое открытие по deep-link: политики приезжают из стора, поэтому
+    // ждём появления нужной. Отмечаем имя обработанным, иначе «Назад» из
+    // редактора тут же открывал бы его снова.
+    let appliedOpenPolicy = $state<string | null>(null);
+    $effect(() => {
+        if (!openPolicy || openPolicy === appliedOpenPolicy) return;
+        const target = accessPolicies.find(p => p.name === openPolicy);
+        if (!target) return;
+        appliedOpenPolicy = openPolicy;
+        editingPolicy = target.name;
+        editingPolicyData = target;
     });
 
     async function createPolicy(description: string) {

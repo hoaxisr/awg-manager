@@ -64,6 +64,10 @@
 
     let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
 
+    // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
+    // конкретной политики (#573).
+    let deepLinkPolicy = $derived($page.url.searchParams.get('policy'));
+
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
     let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
     let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
@@ -386,6 +390,7 @@
                 {policyDevices}
                 {policyInterfaces}
                 missing={missing.includes('accessPolicies')}
+                openPolicy={deepLinkPolicy}
             />
     {:else if activeTab === 'clientvpn'}
         <ClientRoutesTab
