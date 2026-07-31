@@ -10,7 +10,7 @@
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
-	import { platformOptions, modeOptions, transportOptions } from './options';
+	import { dnsModeOptions, platformOptions, modeOptions, transportOptions } from './options';
 	import { api } from '$lib/api/client';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
@@ -65,7 +65,11 @@
 	const step1Done = $derived(!!client.peer.trim());
 	const step2Done = $derived(step1Done && !!client.links?.trim());
 	const step3Done = $derived(
-		step2Done && client.streams > 0 && client.streamsPerCred > 0 && !!client.platform
+		step2Done &&
+			client.streams > 0 &&
+			client.streamsPerCred > 0 &&
+			!!client.platform &&
+			!!client.dnsMode
 	);
 	const canSave = $derived((step1Done || step2Done) && !saving && !starting);
 	const canStart = $derived(step3Done && !saving && !starting);
@@ -111,8 +115,8 @@
 				done: client.streams > 0 && client.streamsPerCred > 0,
 				pending: !step2Done
 			}),
-			guide('platform', 'Выберите режим, транспорт и платформу VK-auth (-platform)', {
-				done: !!client.platform,
+			guide('platform', 'Выберите режим, транспорт, платформу VK-auth и DNS mode', {
+				done: !!client.platform && !!client.dnsMode,
 				pending: !step2Done
 			}),
 			guide('next', 'Нажмите «Далее: запуск»', { done: step3Done, pending: !step2Done })
@@ -237,7 +241,15 @@
 						</div>
 						<Dropdown label="Режим (-mode)" bind:value={client.mode} options={modeOptions} />
 						<Dropdown label="Транспорт (-transport)" bind:value={client.transport} options={transportOptions} />
-						<Dropdown label="Платформа (-platform)" bind:value={client.platform} options={platformOptions} />
+						<div class="ft-simple-grid">
+							<Dropdown label="Платформа (-platform)" bind:value={client.platform} options={platformOptions} />
+							<Dropdown label="DNS mode (-dns-mode)" bind:value={client.dnsMode} options={dnsModeOptions} />
+						</div>
+						<Input
+							label="DNS servers (-dns-servers)"
+							bind:value={client.dnsServers}
+							placeholder="77.88.8.8,8.8.8.8 — пусто = встроенные"
+						/>
 					</ProxyQuickStartStep>
 				{:else}
 					<ProxyQuickStartStep
@@ -285,8 +297,25 @@
 				</div>
 				<Dropdown label="Mode" bind:value={client.mode} options={modeOptions} />
 				<Dropdown label="Transport" bind:value={client.transport} options={transportOptions} />
-				<Dropdown label="Platform" bind:value={client.platform} options={platformOptions} />
-				<p class="ft-hint">{linksCount} VK-ссылок · listen <code>{listenMeta}</code></p>
+				<div class="ft-simple-grid">
+					<Dropdown label="Platform" bind:value={client.platform} options={platformOptions} />
+					<Dropdown label="DNS mode" bind:value={client.dnsMode} options={dnsModeOptions} />
+				</div>
+				<Input
+					label="DNS servers"
+					bind:value={client.dnsServers}
+					placeholder="ip[:port],… — пусто = встроенные"
+				/>
+				<p class="ft-hint">
+					{linksCount} VK-ссылок · listen <code>{listenMeta}</code>
+					{#if client.dnsMode === 'plain'}
+						· DNS: UDP/53 (рекомендуется на роутере)
+					{:else if client.dnsMode === 'doh'}
+						· DNS: DoH
+					{:else}
+						· DNS: auto (UDP → DoH при сбое)
+					{/if}
+				</p>
 				<Button variant="secondary" loading={saving} disabled={!canSave} onclick={saveOnly}>Сохранить</Button>
 			</section>
 		{:else}

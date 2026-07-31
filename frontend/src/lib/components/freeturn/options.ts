@@ -22,3 +22,5 @@ export const platformOptions = [
 	{ value: 'desktop', label: 'desktop (роутер / ПК)' },
 	{ value: 'mobile', label: 'mobile' }
 ];
+
+export { dnsModeOptions } from '../proxy-panel/dnsOptions';

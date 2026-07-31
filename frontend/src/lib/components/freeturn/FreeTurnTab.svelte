@@ -108,6 +108,10 @@
 			sub: c.sub ?? '',
 			platform:
 				c.platform === 'mobile' || c.platform === 'desktop' ? c.platform : 'desktop',
+			dnsMode:
+				c.dnsMode === 'plain' || c.dnsMode === 'doh' || c.dnsMode === 'auto'
+					? c.dnsMode
+					: 'auto',
 			streams: c.streams > 0 ? c.streams : 10,
 			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10,
 			debug: !!c.debug
