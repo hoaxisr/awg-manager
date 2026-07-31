@@ -2002,6 +2002,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	keeneticOS: v.optional(v.nullable(v.string())),
 	kernelModuleExists: v.optional(v.nullable(v.boolean())),
 	kernelModuleLoaded: v.optional(v.nullable(v.boolean())),
+	kernelModuleLoadedVersion: v.optional(v.nullable(v.string())),
 	kernelModuleModel: v.optional(v.nullable(v.string())),
 	kernelModuleVersion: v.optional(v.nullable(v.string())),
 	routerDetails: v.optional(v.nullable(v.lazy(() => api_RouterDetails))),
