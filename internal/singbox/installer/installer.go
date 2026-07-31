@@ -32,11 +32,10 @@ const DefaultBinaryPath = "/opt/etc/awg-manager/singbox/sing-box"
 // build via embedded.go so a compromised server cannot serve a tampered
 // binary that awg-manager would still trust.
 type BinarySpec struct {
-	Version  string
-	URL      string
-	SHA256   string
-	Size     int64  // bytes (uncompressed); 0 → disk-gate skipped (backwards-compatible)
-	Features []string // expected build tags (fallback when version probe Tags: is empty)
+	Version string
+	URL     string
+	SHA256  string
+	Size    int64 // bytes (uncompressed); 0 → disk-gate skipped (backwards-compatible)
 }
 
 // Installer downloads, verifies, and activates sing-box binaries.
@@ -139,21 +138,6 @@ func (i *Installer) RequiredSHA256() string { return i.spec.SHA256 }
 // RequiredSize is the expected size of the pinned binary (bytes, uncompressed).
 // Zero means unknown — disk-gate is skipped.
 func (i *Installer) RequiredSize() int64 { return i.spec.Size }
-
-// ExpectedFeatures returns the build tags expected to be present in the
-// pinned sing-box release (see EmbeddedBinaries[].Features). Used by
-// Operator.detectVersionAndFeaturesCached as a fallback when the live
-// binary's `sing-box version` output has an empty Tags: line (UPX
-// stripping / section-damage on mips/arm64 routers). Callers trust this
-// value only when the installed binary's version matches RequiredVersion.
-func (i *Installer) ExpectedFeatures() []string {
-	if i.spec.Features == nil {
-		return nil
-	}
-	out := make([]string, len(i.spec.Features))
-	copy(out, i.spec.Features)
-	return out
-}
 
 // CurrentSHA256 returns the checksum of the installed managed binary,
 // served from the (size, mtime) cache when the file is unchanged.

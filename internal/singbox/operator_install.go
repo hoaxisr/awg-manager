@@ -106,43 +106,6 @@ func detectVersionAndFeatures(ctx context.Context, binary string) (string, []str
 	return parseSingboxVersionOutput(string(out))
 }
 
-// applyFeatureFallback fills an empty Features slice with the features
-// expected from the pinned installer binary when the detected version
-// exactly matches RequiredVersion. This handles the case where UPX-strip
-// or .go.buildinfo corruption make `sing-box version` return an empty
-// Tags: line, which would otherwise cause feature-gates (trusttunnel,
-// mieru, naive) to spuriously reject valid outbounds. Returns the
-// (possibly replaced) features slice, and a boolean indicating whether
-// a fallback replacement actually happened (caller can use this to
-// re-write the on-disk sidecar / memory cache).
-//
-// The check first consults the wired installer (o.inst) so that tests
-// and embedded-binaries builds get authoritative per-arch features. If
-// o.inst == nil (legacy paths, hand-built binaries, non-embedded
-// builds), it falls back to the package-level RequiredVersion /
-// RequiredFeatures constants — this way the feature-gate protection
-// still works on routers where the Operator was constructed before the
-// installer was wired up (race during daemon boot).
-func (o *Operator) applyFeatureFallback(v string, f []string) ([]string, bool) {
-	if v != "" && len(f) == 0 {
-		var requiredVer string
-		var expected []string
-		if o.inst != nil {
-			requiredVer = o.inst.RequiredVersion()
-			expected = o.inst.ExpectedFeatures()
-		} else {
-			requiredVer = installer.RequiredVersion
-			expected = installer.RequiredFeatures
-		}
-		if v == requiredVer && len(expected) > 0 {
-			out := make([]string, len(expected))
-			copy(out, expected)
-			return out, true
-		}
-	}
-	return f, false
-}
-
 // detectVersionAndFeaturesCached returns (version, features) for the
 // managed sing-box binary, layered to avoid repeat subprocess spawns:
 //
@@ -154,18 +117,6 @@ func (o *Operator) applyFeatureFallback(v string, f []string) ([]string, bool) {
 //     fires once per binary-swap event, not per process lifetime.
 //  3. Subprocess `<binary> version` fallback (cold path). Writes the
 //     sidecar so subsequent process starts skip straight to step 2.
-//  4. Installer.ExpectedFeatures fallback when the live probe (or a
-//     stale sidecar / memory cache) returns an empty Tags: list (UPX
-//     strip / .go.buildinfo damage on some mips/arm64 builds) AND the
-//     detected version matches the pinned RequiredVersion. trusttunnel /
-//     mieru / naive feature-gates rely on the Features slice being
-//     non-empty; with fallback they pass the pre-check rather than
-//     spuriously reject as "missing tag X".
-//
-// After every source (memory / sidecar / subprocess) the result is run
-// through applyFeatureFallback. If fallback fires, the sidecar and
-// in-memory cache are re-written with the expanded features so future
-// calls don't re-probe and don't depend on this fallback path.
 //
 // Sidecar mismatch (delete / corrupt JSON / mtime stale) silently falls
 // through to step 3 — self-heals on next call. `upx -d` of the pinned
@@ -181,36 +132,19 @@ func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, 
 	defer o.versionProbeMu.Unlock()
 
 	if o.versionProbeFingerprint == fingerprint && o.versionProbeValue != "" {
-		v := o.versionProbeValue
-		f := append([]string(nil), o.versionProbeFeatures...)
-		if fb, changed := o.applyFeatureFallback(v, f); changed {
-			o.versionProbeFeatures = append([]string(nil), fb...)
-			_ = writeSidecar(o.binary, v, o.versionProbeFeatures)
-			return v, append([]string(nil), fb...)
-		}
-		return v, f
+		return o.versionProbeValue, append([]string(nil), o.versionProbeFeatures...)
 	}
 
 	if meta, ok := readFreshSidecar(o.binary); ok {
-		v := meta.Version
-		f := append([]string(nil), meta.Features...)
-		if fb, changed := o.applyFeatureFallback(v, f); changed {
-			f = fb
-			_ = writeSidecar(o.binary, v, f)
-		}
-		o.versionProbeValue = v
-		o.versionProbeFeatures = append([]string(nil), f...)
+		o.versionProbeValue = meta.Version
+		o.versionProbeFeatures = append([]string(nil), meta.Features...)
 		o.versionProbeFingerprint = fingerprint
-		return v, append([]string(nil), f...)
+		return meta.Version, append([]string(nil), meta.Features...)
 	}
 
 	v, f := detectVersionAndFeatures(ctx, o.binary)
-	if fb, changed := o.applyFeatureFallback(v, f); changed {
-		f = fb
-	}
-
 	if v != "" {
-		_ = writeSidecar(o.binary, v, f)
+		_ = writeSidecar(o.binary, v, f) // best-effort persistence
 	}
 	o.versionProbeValue = v
 	o.versionProbeFeatures = append([]string(nil), f...)
@@ -229,9 +163,6 @@ func (o *Operator) refreshVersionProbeAfterSwap() {
 	defer cancel()
 	fingerprint := binaryFingerprint(o.binary)
 	v, f := detectVersionAndFeatures(ctx, o.binary)
-	if fb, changed := o.applyFeatureFallback(v, f); changed {
-		f = fb
-	}
 	if v != "" {
 		_ = writeSidecar(o.binary, v, f)
 	}
