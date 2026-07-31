@@ -40,6 +40,9 @@ type Loader struct {
 	model      string // e.g. "KN-1010"
 	soc        SoC    // kept for backward compatibility
 	modulePath string
+
+	// Warn reports a condition worth surfacing in the app journal. nil = silent.
+	Warn func(msg string)
 }
 
 // New creates a new kernel module loader.
@@ -327,7 +330,13 @@ func (l *Loader) selectBundledModule() {
 	}
 
 	if found == "" {
-		// No match for this model — clean up bundled dir anyway
+		// No match for this model — clean up bundled dir anyway.
+		// Worth a line in the journal: the models dropped from the shipped set
+		// land here, and without it the router silently keeps whatever module
+		// it already has (or none at all on a fresh install).
+		if l.Warn != nil {
+			l.Warn(fmt.Sprintf("no bundled kernel module for model %s — kernel mode works only if a module is already installed", l.model))
+		}
 		os.RemoveAll(BundledDir)
 		return
 	}
