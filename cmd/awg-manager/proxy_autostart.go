@@ -40,10 +40,22 @@ func (a *app) scheduleProxyClientAutostart(trigger string) {
 		case <-time.After(30 * time.Second):
 		}
 		a.resumeEnabledProxyClients(trigger + "-retry")
-		if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil && a.bootLog != nil {
-			a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
-		} else if n > 0 && a.bootLog != nil {
-			a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s) (%s)", n, trigger))
-		}
 	}()
+}
+
+// reconcileLinkedEndpoints синхронизирует Endpoint linked-туннелей с listen
+// прокси-клиентов. Один вызов на бут: listen назначается при создании клиента,
+// а не при старте процесса, поэтому повторять после автостарта незачем.
+func (a *app) reconcileLinkedEndpoints(scope string) {
+	n, err := backup.ReconcileLinkedEndpoints(a.dataDir, a.awgStore)
+	if a.bootLog == nil {
+		return
+	}
+	if err != nil {
+		a.bootLog.Warn(scope, "", "reconcile linked endpoints: "+err.Error())
+		return
+	}
+	if n > 0 {
+		a.bootLog.Info(scope, "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+	}
 }

@@ -29,7 +29,7 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := storage.NewAWGTunnelStore(tunnelDir)
+	store := storage.NewAWGTunnelStoreWithLockDir(tunnelDir, filepath.Join(root, "locks"))
 	for _, tun := range []storage.AWGTunnel{
 		{ID: "awg-ft", Name: "FT", FreeTurnClientID: "ft1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9003"}},
 		{ID: "awg-wd", Name: "WD", WdttClientID: "wd1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9005"}},
@@ -39,7 +39,7 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 		}
 	}
 
-	n, err := ReconcileLinkedEndpoints(dataDir)
+	n, err := ReconcileLinkedEndpoints(dataDir, store)
 	if err != nil {
 		t.Fatalf("ReconcileLinkedEndpoints: %v", err)
 	}

@@ -25,12 +25,20 @@ func (s *stubAccessManager) ResolveLANSegmentCIDRs(context.Context, []string) ([
 }
 func (s *stubAccessManager) DefaultGatewayNDMS(context.Context) (string, error) { return "", nil }
 
+// ndmsServerConfig — конфиг на NDMS-пути: applyServerAccess отрабатывает
+// целиком через accessMgr и не трогает iptables/ip, которых нет вне роутера.
+func ndmsServerConfig() ServerConfig {
+	cfg := DefaultServerConfig()
+	cfg.NatMode = "full"
+	cfg.NdmsIface = "OpkgTun17"
+	cfg.WgIface = "opkgtun17"
+	return cfg
+}
+
 func TestApplyServerAccessWithoutAccessManager(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
-	cfg := DefaultServerConfig()
-	cfg.NatMode = "full"
-	if err := svc.applyServerAccess(context.Background(), "srv1", cfg); err != nil {
+	if err := svc.applyServerAccess(context.Background(), "srv1", ndmsServerConfig()); err != nil {
 		t.Fatalf("applyServerAccess without accessMgr: %v", err)
 	}
 }
@@ -40,9 +48,7 @@ func TestApplyServerAccessCallsNDMSWhenWired(t *testing.T) {
 	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
 	stub := &stubAccessManager{}
 	svc.SetAccessManager(stub)
-	cfg := DefaultServerConfig()
-	cfg.NatMode = "full"
-	if err := svc.applyServerAccess(context.Background(), "srv1", cfg); err != nil {
+	if err := svc.applyServerAccess(context.Background(), "srv1", ndmsServerConfig()); err != nil {
 		t.Fatalf("applyServerAccess: %v", err)
 	}
 	if stub.natCalls != 1 {

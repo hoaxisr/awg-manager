@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -223,11 +223,7 @@ func (a *app) startBootSequence() {
 			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
 			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
 			a.scheduleProxyClientAutostart("cold-boot")
-			if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
-				a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
-			} else if n > 0 {
-				a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
-			}
+			a.reconcileLinkedEndpoints("startup")
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -260,11 +256,7 @@ func (a *app) startBootSequence() {
 		if backup.ConsumePostRestoreMarker(a.dataDir) {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
-			if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
-				a.bootLog.Warn("post-restore", "", "reconcile linked endpoints: "+err.Error())
-			} else if n > 0 {
-				a.bootLog.Info("post-restore", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
-			}
+			a.reconcileLinkedEndpoints("post-restore")
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
 			a.scheduleProxyClientAutostart("post-restore")
@@ -277,11 +269,7 @@ func (a *app) startBootSequence() {
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 		a.resumeEnabledProxyClients("daemon-restart")
-		if n, err := backup.ReconcileLinkedEndpoints(a.dataDir); err != nil {
-			a.bootLog.Warn("startup", "", "reconcile linked endpoints: "+err.Error())
-		} else if n > 0 {
-			a.bootLog.Info("startup", "", fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
-		}
+		a.reconcileLinkedEndpoints("startup")
 	}
 
 }

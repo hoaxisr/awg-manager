@@ -23,10 +23,15 @@ type wdttConfigFile struct {
 // ReconcileLinkedEndpoints syncs AWG tunnel Peer.Endpoint to the listen port
 // of linked FreeTurn/WDTT clients. Client listen is authoritative — fixes
 // archives where listen-repair shuffled proxy ports but left tunnel endpoints stale.
-func ReconcileLinkedEndpoints(dataDir string) (int, error) {
+// awgStore — уже сконфигурированное хранилище демона (свой lock-dir), а не
+// новый экземпляр: иначе запись шла бы мимо общей блокировки.
+func ReconcileLinkedEndpoints(dataDir string, awgStore *storage.AWGTunnelStore) (int, error) {
 	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 	if dataDir == "" {
 		return 0, fmt.Errorf("data-dir не задан")
+	}
+	if awgStore == nil {
+		return 0, fmt.Errorf("хранилище туннелей не задано")
 	}
 
 	ftClients, err := loadFreeTurnClients(filepath.Join(dataDir, "freeturn.json"))
@@ -41,7 +46,6 @@ func ReconcileLinkedEndpoints(dataDir string) (int, error) {
 		return 0, nil
 	}
 
-	awgStore := storage.NewAWGTunnelStore(filepath.Join(dataDir, "tunnels"))
 	tunnels, err := awgStore.List()
 	if err != nil {
 		return 0, err

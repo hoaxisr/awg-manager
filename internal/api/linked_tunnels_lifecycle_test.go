@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -9,7 +10,7 @@ import (
 
 func TestSyncLinkedAwgTunnelNames(t *testing.T) {
 	dir := t.TempDir()
-	store := storage.NewAWGTunnelStore(dir)
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	tun := &storage.AWGTunnel{
 		ID:               "awgm1",
 		Name:             "Old FT",

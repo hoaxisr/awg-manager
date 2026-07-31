@@ -256,11 +256,14 @@ func (h *HookHandler) handleWANLayerEvent(e events.Event) {
 		}
 	}
 
-	if h.orch == nil {
-		return
-	}
+	// Автостарт FreeTurn/WDTT не зависит от оркестратора — поднимаем до
+	// его гарда, иначе в конфигурации без orch коллбэк не сработает.
 	if up && changed && h.proxyAutostart != nil {
 		go h.proxyAutostart("wan-up")
+	}
+
+	if h.orch == nil {
+		return
 	}
 	action := "up"
 	evType := orchestrator.EventWANUp
