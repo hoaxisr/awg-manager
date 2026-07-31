@@ -17,22 +17,27 @@ timing ranges RekeyAfterTime / RekeyTimeout / RejectAfterTime / KeepaliveTimeout
 / MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. They need
 awg3-capable modules **and** an awg3-capable `awg` tool (see `../bin/README.md`).
 
-Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260731**
+Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260731-02**
 (AWG 3.0 landed on master via PR #192; the `feat/awg3` branch no longer exists).
 The kernel floor is 3.10, so no shipped model regresses.
 
 Build with the Keenetic SDK — `keenetic-sdk/package/kernel/amneziawg/` carries
 the recipe and the patch stack, and `keenetic-sdk/build-all-amneziawg.sh` sweeps
-every model. The stock v3.0 tree does **not** build against 4.9-ndm as is;
-patches 011–016 in that directory cover it:
+every model. The stock tree does **not** build against 4.9-ndm as is; four
+patches in that directory cover it:
 
 | Patch | Why |
 |---|---|
-| 011 | `header_protection.c` uses the kernel 6.15 chacha API — reimplemented on the bundled zinc chacha20 |
+| 011 | `header_protection.c` uses the kernel 6.15 chacha API, reimplemented on the bundled zinc chacha20 |
 | 013 | `awg_has_header_protection` is declared `inline` across translation units, and 4.9 maps `inline` to `always_inline` |
 | 014 | `nla_put_uint()` only exists from kernel 6.6 |
 | 015 | the new blake2s compat block pulls the kernel's `crypto/blake2s.h` into zinc's own translation units |
-| 012, 016 | upstream defects: an inverted RekeyTimeout test that disables handshake rate limiting, and I4/I5 overwriting the I1 junk spec |
+
+The -02 tag also carries three fixes we reported: I4/I5 no longer overwrite the
+I1 junk spec, the inverted RekeyTimeout test is corrected, and a header
+protection key is refused when any Sx is below 12. That last check still lets
+`awg setconf` report success while dropping the key, so our own validation in
+`config.ValidateAWG3` stays.
 
 ## Header protection needs S1–S4 ≥ 12
 
@@ -49,7 +54,7 @@ tunnel comes up dead. `config.ValidateAWG3` enforces this on our side.
 2. Drop the awg3 `awg` tool into `../bin/` (see that README).
 3. Set `ExpectedKmodVersion` in `internal/sys/kmod/download.go` to the module's
    own version string, the one `modinfo` reports and the one that ends up in
-   `/sys/module/amneziawg/version` (`3.0.20260731` for this batch). Any change
+   `/sys/module/amneziawg/version` (`3.0.20260731-02` for this batch). Any change
    to the string makes installed routers re-copy the modules, and keeping it
    equal to the real version means `kernelModuleVersion` and
    `kernelModuleLoadedVersion` in system info agree once the router reboots.
