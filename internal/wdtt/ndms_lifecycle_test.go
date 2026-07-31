@@ -172,3 +172,11 @@ func TestReapSkipsWhileStartInFlight(t *testing.T) {
 		t.Fatalf("reap отработал во время старта: %v", fake.calls)
 	}
 }
+
+func TestWdttPeerCIDRIsNormalizedNetwork(t *testing.T) {
+	// iptables -S печатает сеть, а не адрес с маской: несовпадение делало
+	// entwareLANPresent вечно ложным, и ресинк переписывал правила каждые 15 с.
+	if got := wdttPeerCIDR(); got != "10.66.66.0/24" {
+		t.Fatalf("wdttPeerCIDR() = %q, want 10.66.66.0/24", got)
+	}
+}

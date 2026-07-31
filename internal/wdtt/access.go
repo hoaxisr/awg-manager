@@ -8,7 +8,7 @@ import (
 )
 
 // AccessManager applies router access settings for the WDTT WireGuard interface.
-// With NDMS OpkgTun (OpkgTun90..99) NAT/LAN/policy use the same NDMS path as
+// With NDMS OpkgTun (OpkgTun17..49) NAT/LAN/policy use the same NDMS path as
 // managed WireGuard servers. Legacy wdtt0 falls back to entware iptables.
 type AccessManager interface {
 	ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error)

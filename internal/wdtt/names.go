@@ -12,8 +12,10 @@ func TunnelNameFromClient(inst ClientInstance) string {
 	if !strings.HasSuffix(strings.ToLower(name), suffix) {
 		name += suffix
 	}
-	if len(name) > 60 {
-		name = name[:60]
+	// По рунам, а не по байтам: срез на 60 байтах рвёт кириллицу пополам и
+	// оставляет в имени туннеля битый UTF-8.
+	if r := []rune(name); len(r) > 60 {
+		name = string(r[:60])
 	}
 	return name
 }

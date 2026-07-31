@@ -27,22 +27,22 @@ func (s *stubFreeTurnForImport) CreateClient(freeturn.CreateClientInput) (freetu
 func (s *stubFreeTurnForImport) CreateServer(freeturn.CreateServerInput) (freeturn.ServerInstance, error) {
 	return freeturn.ServerInstance{}, nil
 }
-func (s *stubFreeTurnForImport) DeleteClient(string) error           { return nil }
-func (s *stubFreeTurnForImport) DeleteServer(string) error           { return nil }
-func (s *stubFreeTurnForImport) RenameClient(string, string) error   { return nil }
-func (s *stubFreeTurnForImport) RenameServer(string, string) error   { return nil }
+func (s *stubFreeTurnForImport) DeleteClient(string) error         { return nil }
+func (s *stubFreeTurnForImport) DeleteServer(string) error         { return nil }
+func (s *stubFreeTurnForImport) RenameClient(string, string) error { return nil }
+func (s *stubFreeTurnForImport) RenameServer(string, string) error { return nil }
 func (s *stubFreeTurnForImport) ServerConfigForLink(string) (freeturn.ServerConfig, error) {
 	return freeturn.ServerConfig{}, nil
 }
-func (s *stubFreeTurnForImport) Status() freeturn.Status { return freeturn.Status{} }
-func (s *stubFreeTurnForImport) StartClient() error      { return nil }
-func (s *stubFreeTurnForImport) StopClient() error       { return nil }
-func (s *stubFreeTurnForImport) StartServer() error      { return nil }
-func (s *stubFreeTurnForImport) StopServer() error       { return nil }
-func (s *stubFreeTurnForImport) StartClientInstance(string) error { return nil }
-func (s *stubFreeTurnForImport) StopClientInstance(string) error  { return nil }
-func (s *stubFreeTurnForImport) StartServerInstance(string) error { return nil }
-func (s *stubFreeTurnForImport) StopServerInstance(string) error  { return nil }
+func (s *stubFreeTurnForImport) Status() freeturn.Status               { return freeturn.Status{} }
+func (s *stubFreeTurnForImport) StartClient() error                    { return nil }
+func (s *stubFreeTurnForImport) StopClient() error                     { return nil }
+func (s *stubFreeTurnForImport) StartServer() error                    { return nil }
+func (s *stubFreeTurnForImport) StopServer() error                     { return nil }
+func (s *stubFreeTurnForImport) StartClientInstance(string) error      { return nil }
+func (s *stubFreeTurnForImport) StopClientInstance(string) error       { return nil }
+func (s *stubFreeTurnForImport) StartServerInstance(string) error      { return nil }
+func (s *stubFreeTurnForImport) StopServerInstance(string) error       { return nil }
 func (s *stubFreeTurnForImport) InstallBinaries(context.Context) error { return nil }
 func (s *stubFreeTurnForImport) Stop()                                 {}
 func (s *stubFreeTurnForImport) ListServerAllowlist(string) (freeturn.AllowlistStatus, error) {
@@ -53,7 +53,9 @@ func (s *stubFreeTurnForImport) AddServerAllowlistClient(string, string, string)
 }
 func (s *stubFreeTurnForImport) RemoveServerAllowlistClient(string, string) error { return nil }
 func (s *stubFreeTurnForImport) DisableServerAllowlist(string) error              { return nil }
-func (s *stubFreeTurnForImport) CaptchaStatus() freeturn.CaptchaOverview          { return freeturn.CaptchaOverview{} }
+func (s *stubFreeTurnForImport) CaptchaStatus() freeturn.CaptchaOverview {
+	return freeturn.CaptchaOverview{}
+}
 func (s *stubFreeTurnForImport) CaptchaStatusForClient(string) (freeturn.CaptchaClientStatus, bool) {
 	return freeturn.CaptchaClientStatus{}, false
 }
@@ -64,12 +66,12 @@ type stubWdttForImport struct {
 
 func (s *stubWdttForImport) GetConfig() (wdtt.Config, error) { return s.cfg, nil }
 
-func (s *stubWdttForImport) UpdateClientConfig(wdtt.ClientConfig) error { return nil }
+func (s *stubWdttForImport) UpdateClientConfig(wdtt.ClientConfig) error           { return nil }
 func (s *stubWdttForImport) UpdateClientInstance(string, wdtt.ClientConfig) error { return nil }
 func (s *stubWdttForImport) CreateClient(wdtt.CreateClientInput) (wdtt.ClientInstance, error) {
 	return wdtt.ClientInstance{}, nil
 }
-func (s *stubWdttForImport) DeleteClient(string) error { return nil }
+func (s *stubWdttForImport) DeleteClient(string) error         { return nil }
 func (s *stubWdttForImport) RenameClient(string, string) error { return nil }
 func (s *stubWdttForImport) ImportLink(string, string) (wdtt.ClientInstance, wdtt.ImportPayload, error) {
 	return wdtt.ClientInstance{}, wdtt.ImportPayload{}, nil
@@ -77,9 +79,9 @@ func (s *stubWdttForImport) ImportLink(string, string) (wdtt.ClientInstance, wdt
 func (s *stubWdttForImport) DecodeLink(string) (wdtt.LinkDecodeResult, error) {
 	return wdtt.LinkDecodeResult{}, nil
 }
-func (s *stubWdttForImport) Status() wdtt.Status { return wdtt.Status{} }
-func (s *stubWdttForImport) StartClient() error  { return nil }
-func (s *stubWdttForImport) StopClient() error   { return nil }
+func (s *stubWdttForImport) Status() wdtt.Status              { return wdtt.Status{} }
+func (s *stubWdttForImport) StartClient() error               { return nil }
+func (s *stubWdttForImport) StopClient() error                { return nil }
 func (s *stubWdttForImport) StartClientInstance(string) error { return nil }
 func (s *stubWdttForImport) StopClientInstance(string) error  { return nil }
 func (s *stubWdttForImport) RefreshSubscription(string) (wdtt.ClientInstance, wdtt.ImportPayload, error) {
@@ -92,15 +94,15 @@ func (s *stubWdttForImport) UpdateServerInstance(string, wdtt.ServerConfig) (wdt
 func (s *stubWdttForImport) CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error) {
 	return wdtt.ServerInstance{}, nil
 }
-func (s *stubWdttForImport) DeleteServer(string) error { return nil }
+func (s *stubWdttForImport) DeleteServer(string) error         { return nil }
 func (s *stubWdttForImport) RenameServer(string, string) error { return nil }
 func (s *stubWdttForImport) ServerConfigForLink(string) (wdtt.ServerConfig, error) {
 	return wdtt.ServerConfig{}, nil
 }
-func (s *stubWdttForImport) StartServer() error { return nil }
-func (s *stubWdttForImport) StopServer() error  { return nil }
-func (s *stubWdttForImport) StartServerInstance(string) error { return nil }
-func (s *stubWdttForImport) StopServerInstance(string) error  { return nil }
+func (s *stubWdttForImport) StartServer() error                    { return nil }
+func (s *stubWdttForImport) StopServer() error                     { return nil }
+func (s *stubWdttForImport) StartServerInstance(string) error      { return nil }
+func (s *stubWdttForImport) StopServerInstance(string) error       { return nil }
 func (s *stubWdttForImport) InstallBinaries(context.Context) error { return nil }
 func (s *stubWdttForImport) Stop()                                 {}
 func (s *stubWdttForImport) ListServerPanelUsers(string) (wdtt.PanelUsersStatus, error) {

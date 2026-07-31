@@ -107,7 +107,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				if s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
-			} else if !entwareLANPresent(ctx, DefaultWdttAddress+"/24", cidrs) {
+			} else if !entwareLANPresent(ctx, wdttPeerCIDR(), cidrs) {
 				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr); err != nil && s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}

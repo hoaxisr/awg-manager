@@ -21,7 +21,7 @@ func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, res
 	if err != nil {
 		return err
 	}
-	peerCIDR := DefaultWdttAddress + "/24"
+	peerCIDR := wdttPeerCIDR()
 	for _, lanCIDR := range cidrs {
 		lanCIDR = strings.TrimSpace(lanCIDR)
 		if lanCIDR == "" {

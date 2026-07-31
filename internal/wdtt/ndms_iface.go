@@ -3,6 +3,7 @@ package wdtt
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -54,8 +55,9 @@ func parseOpkgTunIndex(ndmsName string) (int, bool) {
 	if !strings.HasPrefix(ndmsName, "OpkgTun") {
 		return 0, false
 	}
-	var idx int
-	if _, err := fmt.Sscanf(ndmsName, "OpkgTun%d", &idx); err != nil {
+	// Строго: Sscanf принял бы и "OpkgTun17garbage" как 17.
+	idx, err := strconv.Atoi(strings.TrimPrefix(ndmsName, "OpkgTun"))
+	if err != nil || idx < 0 {
 		return 0, false
 	}
 	return idx, true

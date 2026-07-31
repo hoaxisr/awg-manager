@@ -48,7 +48,16 @@ func NewBackupHandler(dataDir, appVersion string, quiesce BackupQuiescer, resume
 }
 
 // Export streams a gzip tar of the awg-manager data directory.
-// GET /api/system/backup/export
+//
+//	@Summary		Export full data-dir backup
+//	@Description	Останавливает дочерние процессы, стримит tar.gz каталога данных и поднимает их обратно.
+//	@Tags			system
+//	@Produce		application/gzip
+//	@Security		CookieAuth
+//	@Success		200	{file}		binary
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/system/backup/export [get]
 func (h *BackupHandler) Export(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -100,7 +109,18 @@ func (h *BackupHandler) Export(w http.ResponseWriter, r *http.Request) {
 }
 
 // Import accepts a backup archive and replaces the data directory, then schedules restart.
-// POST /api/system/backup/import (multipart field "file")
+//
+//	@Summary		Restore full data-dir backup
+//	@Description	Принимает tar.gz из поля file, заменяет каталог данных и планирует перезапуск демона.
+//	@Tags			system
+//	@Accept			mpfd
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			file	formData	file	true	"Архив .tar.gz, снятый экспортом"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/system/backup/import [post]
 func (h *BackupHandler) Import(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

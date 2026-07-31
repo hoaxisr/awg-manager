@@ -73,7 +73,7 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev string) error {
 
 	setupEntwareForward(ctx, wgIface)
 
-	cidr := DefaultWdttAddress + "/24"
+	cidr := wdttPeerCIDR()
 	flushEntwareMasquerade(ctx)
 	if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
 		"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {

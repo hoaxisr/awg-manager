@@ -2,7 +2,11 @@
 // persisting configuration, parsing share links, and tracking lifecycle.
 package wdtt
 
-import "time"
+import (
+	"net"
+	"strconv"
+	"time"
+)
 
 // ClientConfig mirrors flags accepted by the wdtt-client binary.
 type ClientConfig struct {
@@ -63,7 +67,7 @@ type ServerConfig struct {
 	// nil / omitted → true (WAN relay works out of the box).
 	OpenFirewall *bool `json:"openFirewall,omitempty"`
 
-	// NdmsIface — NDMS id (OpkgTun90..99) when WDTT зарегистрирован в роутере.
+	// NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован в роутере.
 	NdmsIface string `json:"ndmsIface,omitempty"`
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
 	WgIface string `json:"wgIface,omitempty"`
@@ -185,4 +189,23 @@ type ImportPayload struct {
 	SubURL   string   `json:"subUrl,omitempty"`
 	DeviceID string   `json:"deviceId,omitempty"`
 	WG       string   `json:"wg,omitempty"` // optional bundled WireGuard client config
+}
+
+// wdttPeerCIDR — сеть пиров в нормализованном виде (10.66.66.0/24).
+// iptables -S печатает именно её, поэтому сравнение вывода с
+// DefaultWdttAddress+"/24" (10.66.66.1/24) не совпадало никогда.
+func wdttPeerCIDR() string {
+	_, n, err := net.ParseCIDR(DefaultWdttAddress + "/" + maskBits(DefaultWdttMask))
+	if err != nil {
+		return DefaultWdttAddress + "/24"
+	}
+	return n.String()
+}
+
+func maskBits(mask string) string {
+	ones, _ := net.IPMask(net.ParseIP(mask).To4()).Size()
+	if ones == 0 {
+		return "24"
+	}
+	return strconv.Itoa(ones)
 }
