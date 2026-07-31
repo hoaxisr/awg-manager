@@ -7,7 +7,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
-	import { Fingerprint, Hash, MoveHorizontal, Shredder } from 'lucide-svelte';
+	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck } from 'lucide-svelte';
 
 	const MAX_SIGNATURE_BYTES = 4096;
 
@@ -19,6 +19,7 @@
 	let {
 		params = $bindable(),
 		extended = undefined,
+		awg3 = false,
 		mtu = 1280,
 		errors = {},
 		hints = AWG_PARAM_HINTS,
@@ -28,6 +29,7 @@
 	}: {
 		params: ASCParams;
 		extended?: boolean;
+		awg3?: boolean;
 		mtu?: number;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
@@ -37,6 +39,16 @@
 	} = $props();
 
 	const showExtended = $derived(extended ?? isExtendedASCParams(params));
+
+	// AWG 3.0 device params (kernel mode only). label = shown name, hint key.
+	const awg3RangeFields: { key: keyof ASCParamsExtended; label: string }[] = [
+		{ key: 'rekeyAfterTime', label: 'RekeyAfterTime' },
+		{ key: 'rekeyTimeout', label: 'RekeyTimeout' },
+		{ key: 'rejectAfterTime', label: 'RejectAfterTime' },
+		{ key: 'keepaliveTimeout', label: 'KeepaliveTimeout' },
+		{ key: 'maxHandshakeAttempts', label: 'MaxHandshakeAttempts' },
+		{ key: 'contentPaddingAddition', label: 'ContentPaddingAddition' },
+	];
 
 	let selectedProtocol = $state<ProtocolKey>('quic_initial');
 	let generateMode = $state<GenerateMode>('protocol');
@@ -314,6 +326,49 @@
 					<span class="size-error">— превышен лимит!</span>
 				{/if}
 			</div>
+		</section>
+	{/if}
+
+	{#if awg3}
+		{@const ext = params as ASCParamsExtended}
+		<section class="card param-section">
+			<SettingsSectionLabel label="AmneziaWG 3.0" icon={ShieldCheck} tone="purple" header />
+			<p class="group-desc">
+				Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
+				<code>min-max</code> в секундах; пусто = значение по умолчанию.
+			</p>
+
+			<div class="form-group">
+				{@render paramLabel('headerProtectionKey', 'HeaderProtectionKey')}
+				<input
+					type="text"
+					id={fieldId('headerProtectionKey')}
+					class="field-input"
+					bind:value={ext.headerProtectionKey}
+					placeholder="base64-ключ шифрования заголовков (необязательно)"
+				/>
+				{#if errors['headerProtectionKey' as keyof ASCParamsExtended]}
+					<p class="field-error">{errors['headerProtectionKey' as keyof ASCParamsExtended]}</p>
+				{/if}
+			</div>
+
+			<div class="inline-row inline-row-2">
+				{#each awg3RangeFields as f}
+					{@render paramLabel(f.key, f.label)}
+					<input
+						type="text"
+						id={fieldId(f.key)}
+						class="field-input"
+						bind:value={ext[f.key]}
+						placeholder="напр. 120 или 120-150"
+					/>
+				{/each}
+			</div>
+			{#each awg3RangeFields as f}
+				{#if errors[f.key]}
+					<p class="field-error">{f.label}: {errors[f.key]}</p>
+				{/if}
+			{/each}
 		</section>
 	{/if}
 </div>

@@ -76,12 +76,46 @@ func New() *Loader {
 
 // modelAlias maps hw_id to the model whose .ko file should be used.
 // This allows models with compatible kernels to share a single .ko file.
+//
+// Модули собираются под каждую модель отдельно, но результат совпадает у целых
+// групп: внутри группы одинаковы .text, .data, .rodata, .modinfo и vermagic, а
+// __versions пуста (CONFIG_MODVERSIONS выключен), то есть привязки к CRC
+// символов конкретного ядра нет. Разница между группами берётся из конфигурации
+// ядра, на которую смотрит патч hwnat: например, KN-1011 из-за неё отделяется от
+// соседей по mt7621. Поэтому в prebuilt/kmod лежит по одному файлу на группу, а
+// остальные модели ссылаются сюда — 46 файлов превращаются в 10, и mipsel-IPK
+// худеет с 5 МБ до 0.7 МБ.
 var modelAlias = map[string]string{
+	// aarch64: mt7981 (+ Hopper DSL и WBR3000UAX без своих файлов)
+	"KN-1012": "KN-3811",
+	"KN-2312": "KN-3811",
+	"KN-3812": "KN-3811",
 	"KN-3611": "KN-3811",
 	"KN-4110": "KN-3811",
-	"ki_rb":   "KN-1710", // Keenetic Extra II (MT7628)
+	// aarch64: mt7622
+	"KN-2710": "KN-1811",
+	// mipsel: mt7621 SMP
+	"KN-1010": "KN-1810",
+	"KN-1910": "KN-1810",
+	"KN-1913": "KN-1810",
+	"KN-2310": "KN-1810",
+	"KN-2311": "KN-1810",
+	"KN-2610": "KN-1810",
+	"KN-2910": "KN-1810",
 	"kng_re":  "KN-1810", // Keenetic Giga III (MT7621ST)
 	"ku_rd":   "KN-1810", // Keenetic Ultra II (MT7621AT)
+	// mipsel: mt7628
+	"KN-1711": "KN-1710",
+	"KN-1713": "KN-1710",
+	"ki_rb":   "KN-1710", // Keenetic Extra II (MT7628)
+	"KN-1410": "KN-1212",
+	// mipsel: en7528
+	"KN-3810": "KN-1912",
+	// mips BE: en7512 и en7516
+	"KN-2110": "KN-2010",
+	"KN-2410": "KN-2112",
+	"KN-2510": "KN-2112",
+	"KN-3610": "KN-2112",
 }
 
 // knownSoCNames is the set of SoC directory names used by old bundled IPKs.
@@ -213,6 +247,18 @@ func (l *Loader) GetLoadError() string {
 // OnDiskVersion returns the version string stored on disk, or "" if unknown.
 func (l *Loader) OnDiskVersion() string {
 	return readVersion()
+}
+
+// LoadedVersion returns the version of the module currently in the kernel, or
+// "" when it is not loaded. Unlike OnDiskVersion — our own bundle marker — this
+// is what the running module reports, which is what decides whether AWG 3.0
+// device params have any effect (they need the 3.x module).
+func (l *Loader) LoadedVersion() string {
+	data, err := os.ReadFile(filepath.Join(SysfsPath, "version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // Unload removes the kernel module using rmmod.

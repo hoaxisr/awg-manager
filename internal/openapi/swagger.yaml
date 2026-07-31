@@ -5540,6 +5540,9 @@ definitions:
       kernelModuleLoaded:
         example: false
         type: boolean
+      kernelModuleLoadedVersion:
+        example: 3.0.20260731
+        type: string
       kernelModuleModel:
         example: MT7981
         type: string
@@ -5763,6 +5766,7 @@ definitions:
         - awg1.0
         - awg1.5
         - awg2.0
+        - awg3
         example: awg2.0
         type: string
       backend:

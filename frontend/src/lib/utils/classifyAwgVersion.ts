@@ -13,10 +13,22 @@ function hasAnySignaturePacket(params: ASCParams): boolean {
 	return !!(ext.i1 || ext.i2 || ext.i3 || ext.i4 || ext.i5);
 }
 
-/** Mirrors backend config.ClassifyAWGVersion — AWG 2.0 → 1.5 → 1.0 → WG. */
+function hasAnyAwg3Param(params: ASCParams): boolean {
+	const ext = params as ASCParamsExtended;
+	return !!(
+		ext.headerProtectionKey || ext.contentPaddingAddition || ext.rekeyAfterTime ||
+		ext.rekeyTimeout || ext.rejectAfterTime || ext.keepaliveTimeout || ext.maxHandshakeAttempts
+	);
+}
+
+/** Mirrors backend config.ClassifyAWGVersion — AWG 3.0 → 2.0 → 1.5 → 1.0 → WG. */
 export function classifyAwgVersionFromAsc(params: ASCParams | null | undefined): AwgValue {
 	if (!params) return 'wg';
 
+	// AWG 3.0 outranks the rest — its device params sit on top of the obfuscation.
+	if (hasAnyAwg3Param(params)) {
+		return 'awg3';
+	}
 	if (isRange(params.h1) || isRange(params.h2) || isRange(params.h3) || isRange(params.h4)) {
 		return 'awg2.0';
 	}

@@ -48,6 +48,21 @@ describe('classifyAwgVersionFromAsc', () => {
 			params: { h1: '111', h2: '222', h3: '10-20', h4: '444' } as ASCParams,
 			want: 'awg2.0',
 		},
+		{
+			name: 'AWG 3.0 — header protection',
+			params: { h1: '1', h2: '2', h3: '3', h4: '4', headerProtectionKey: 'a2V5' } as ASCParams,
+			want: 'awg3',
+		},
+		{
+			name: 'AWG 3.0 — any timer param',
+			params: { rekeyAfterTime: '120-150' } as ASCParams,
+			want: 'awg3',
+		},
+		{
+			name: 'AWG 3.0 takes priority over AWG 2.0',
+			params: { h1: '100-200', h2: '2', h3: '3', h4: '4', i1: 'sig', maxHandshakeAttempts: '5' } as ASCParams,
+			want: 'awg3',
+		},
 	])('$name → $want', ({ params, want }) => {
 		expect(classifyAwgVersionFromAsc(params)).toBe(want);
 	});
