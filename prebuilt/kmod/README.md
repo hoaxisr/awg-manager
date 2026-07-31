@@ -14,26 +14,34 @@ All current modules target Linux **4.9-ndm** (verify with
 
 AWG 3.0 device params (HeaderProtectionKey, ContentPaddingAddition, and the
 timing ranges RekeyAfterTime / RekeyTimeout / RejectAfterTime / KeepaliveTimeout
-/ MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. They only
-take effect with awg3-capable modules **and** an awg3-capable `awg` tool
-(see `../bin/README.md`). The awg-manager side (storage, .conf gen, classify,
-UI) already emits them; the last piece is rebuilding these binaries.
+/ MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. They need
+awg3-capable modules **and** an awg3-capable `awg` tool (see `../bin/README.md`).
 
-Source (pin exact commits — `feat/awg3` is a moving, unmerged branch):
+Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260731**
+(AWG 3.0 landed on master via PR #192; the `feat/awg3` branch no longer exists).
+The kernel floor is 3.10, so no shipped model regresses.
 
-- Module: `amnezia-vpn/amneziawg-linux-kernel-module` branch `feat/awg3`
-  - Verified working at `bb3cd56` (2026-07-30, "feat: implement awg3 timings and
-    content addition"). All 7 params are parsed in `netlink.c wg_set_device()`
-    and consumed in `send.c` / `receive.c` / `timers.c`.
-  - Kernel floor is `Linux >= 3.10` (`compat/compat.h`) — satisfied by 4.9-ndm,
-    so no model regresses.
+Build with the Keenetic SDK — `keenetic-sdk/package/kernel/amneziawg/` carries
+the recipe and the patch stack, and `keenetic-sdk/build-all-amneziawg.sh` sweeps
+every model. The stock v3.0 tree does **not** build against 4.9-ndm as is;
+patches 011–016 in that directory cover it:
 
-Build against the Keenetic SDK (OpenWrt-based, kernel 4.9-ndm):
-https://github.com/keenetic/keenetic-sdk — branch `5.00`, targets
-`en7512 / en7516 / en7528` (MIPS-BE), `mt7621 / mt7628` (MIPS-LE),
-`mt7622 / mt7981 / mt7988` (ARM). Produce one `.ko` per model matching the
-existing filenames here (`amneziawg-KN-XXXX.ko`, aliases in `loader.go`), i.e.
-the same set/arch/vermagic as the files currently committed.
+| Patch | Why |
+|---|---|
+| 011 | `header_protection.c` uses the kernel 6.15 chacha API — reimplemented on the bundled zinc chacha20 |
+| 013 | `awg_has_header_protection` is declared `inline` across translation units, and 4.9 maps `inline` to `always_inline` |
+| 014 | `nla_put_uint()` only exists from kernel 6.6 |
+| 015 | the new blake2s compat block pulls the kernel's `crypto/blake2s.h` into zinc's own translation units |
+| 012, 016 | upstream defects: an inverted RekeyTimeout test that disables handshake rate limiting, and I4/I5 overwriting the I1 junk spec |
+
+## Header protection needs S1–S4 ≥ 12
+
+The module reads the ChaCha20 nonce from the front of the Sx junk padding (S1
+for handshake initiation, S2 for response, S3 for cookie, S4 for transport), so
+shorter padding leaves the two sides with different nonces and every packet is
+dropped. `awg setconf` rejects S < 12 next to a key, but only for values present
+in the same request: a config carrying no S values at all is accepted and the
+tunnel comes up dead. `config.ValidateAWG3` enforces this on our side.
 
 ## Cut-over (do these together, never separately)
 
@@ -44,4 +52,9 @@ the same set/arch/vermagic as the files currently committed.
 
 Do NOT bump the version before the awg3 binaries are in place: the bump forces a
 re-copy, and a version marker ahead of the actual `.ko`/tool set would ship an
-awg3-labelled build whose `awg setconf` rejects the awg3 keys.
+awg3-labelled build whose modules ignore the awg3 keys.
+
+`EnsureModule` does not reload a module that is already in the kernel, so a
+router keeps running the old one until it reboots. Until then the new `awg`
+silently sends awg3 attributes that the old module drops — which is why the UI
+gates the awg3 editor on the *loaded* module version, not on this marker.
