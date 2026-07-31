@@ -133,6 +133,14 @@ export function parseLocalListenPort(listen: string | undefined | null): number 
 	return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
+/** Endpoint port for AWG tunnel linked to a proxy client: saved listen wins over link template. */
+export function linkedTunnelListenPort(
+	clientListen: string | undefined | null,
+	payloadListen?: string | undefined | null
+): number | null {
+	return parseLocalListenPort(clientListen) ?? parseLocalListenPort(payloadListen);
+}
+
 /** Подставляет локальный Endpoint в [Peer] секцию конфига клиента. */
 export function patchWgConfEndpoint(conf: string, localPort: number): string {
 	const host = '127.0.0.1';

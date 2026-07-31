@@ -103,6 +103,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.importHandler.SetSettingsStore(s.settings)
 	h.importHandler.SetPingCheckService(s.pingCheckService)
 	h.importHandler.SetTunnelsHandler(h.tunnelsHandler)
+	h.importHandler.SetFreeTurnService(s.freeturnService)
+	h.importHandler.SetWdttService(s.wdttService)
 	h.wanHandler = api.NewWANHandler(s.tunnelService, h.appLog)
 	h.pingCheckHandler = api.NewPingCheckHandler(s.pingCheckService, s.tunnels, s.nwgOp, h.appLog)
 	h.pingCheckHandler.SetEventBus(s.bus)
@@ -218,6 +220,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 		// still pending.
 		s.tunnelService.SetSelfCreateGate(h.hookHandler)
 	}
+	if s.proxyClientAutostart != nil {
+		h.hookHandler.SetProxyClientAutostart(s.proxyClientAutostart)
+	}
 	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
 	// WAN status (protected) — event ingress is now /api/hook/ndms.
@@ -262,6 +267,16 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// System (protected + boot guarded)
 	mux.HandleFunc("/api/system/info", h.guarded(h.systemHandler.Info))
 	mux.HandleFunc("/api/system/restart", h.guarded(h.systemHandler.RestartDaemon))
+	backupHandler := api.NewBackupHandler(
+		s.settings.DataDir(),
+		s.config.Version,
+		s.QuiesceForBackup,
+		s.ResumeAfterBackup,
+		s.ScheduleRestart,
+		h.appLog,
+	)
+	mux.HandleFunc("/api/system/backup/export", h.guarded(backupHandler.Export))
+	mux.HandleFunc("/api/system/backup/import", h.guarded(backupHandler.Import))
 	mux.HandleFunc("/api/system/wan-interfaces", h.guarded(h.systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", h.guarded(h.systemHandler.AllInterfaces))
 	mux.HandleFunc("/api/system/hydraroute-status", h.guarded(h.systemHandler.HydraRouteStatus))

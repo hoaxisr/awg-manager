@@ -16,10 +16,17 @@ const (
 	RetryBaseWait   = time.Second
 )
 
+// Run executes iptables and surfaces its stderr on failure. Голый err даёт
+// только «exit status 1», по которому нельзя отличить занятый xtables-лок от
+// отсутствующего модуля или отвергнутой ядром спеки — тот же довод, что уже
+// записан у RestoreNoflush ниже.
 func Run(ctx context.Context, args ...string) error {
 	full := append([]string{"-w"}, args...)
-	_, err := exec.Run(ctx, Binary, full...)
-	return err
+	res, err := exec.Run(ctx, Binary, full...)
+	if err != nil {
+		return exec.FormatError(res, err)
+	}
+	return nil
 }
 
 // RunOutput runs iptables and returns its stdout. Used by read-only queries
@@ -31,7 +38,10 @@ func RunOutput(ctx context.Context, args ...string) (string, error) {
 	if res == nil {
 		return "", err
 	}
-	return res.Stdout, err
+	if err != nil {
+		return res.Stdout, exec.FormatError(res, err)
+	}
+	return res.Stdout, nil
 }
 
 func RestoreNoflush(ctx context.Context, input string) error {

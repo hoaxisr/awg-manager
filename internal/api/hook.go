@@ -33,6 +33,9 @@ type HookWANModel interface {
 // tunnel cards without a browser refresh.
 type TunnelHookInvalidator func(ctx context.Context)
 
+// ProxyClientAutostart resumes FreeTurn/WDTT clients with Enabled==true.
+type ProxyClientAutostart func(reason string)
+
 // HookHandler handles NDM hook events.
 type HookHandler struct {
 	svc            TunnelService
@@ -40,6 +43,7 @@ type HookHandler struct {
 	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
 	wanModel       HookWANModel   // may be nil until SetWANModel is called
 	refreshTunnels TunnelHookInvalidator
+	proxyAutostart ProxyClientAutostart
 	log            *logging.ScopedLogger
 	wanLog         *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
@@ -94,6 +98,12 @@ func (h *HookHandler) SetWANModel(m HookWANModel) {
 // NDMS has already torn down (reported bug).
 func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
 	h.refreshTunnels = fn
+}
+
+// SetProxyClientAutostart wires a callback to resume FreeTurn/WDTT clients
+// when WAN comes up (cold boot may have started them before DNS was ready).
+func (h *HookHandler) SetProxyClientAutostart(fn ProxyClientAutostart) {
+	h.proxyAutostart = fn
 }
 
 // HandleNDMS is the unified hook endpoint. The shared forwarder script
@@ -244,6 +254,12 @@ func (h *HookHandler) handleWANLayerEvent(e events.Event) {
 		} else {
 			h.wanLog.Warn("wan-state", kernelName, "WAN interface down")
 		}
+	}
+
+	// Автостарт FreeTurn/WDTT не зависит от оркестратора — поднимаем до
+	// его гарда, иначе в конфигурации без orch коллбэк не сработает.
+	if up && changed && h.proxyAutostart != nil {
+		go h.proxyAutostart("wan-up")
 	}
 
 	if h.orch == nil {

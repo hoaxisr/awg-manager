@@ -2635,9 +2635,11 @@ const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	natIface: v.optional(v.nullable(v.string())),
 	natMode: v.optional(v.nullable(v.string())),
 	natStaticWan: v.optional(v.nullable(v.string())),
+	ndmsIface: v.optional(v.nullable(v.string())),
 	openFirewall: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	policy: v.optional(v.nullable(v.string())),
+	wgIface: v.optional(v.nullable(v.string())),
 	wgPort: v.optional(v.nullable(v.number())),
 });
 
@@ -3072,6 +3074,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
 })]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
+	"POST /system/backup/import": v.lazy(() => api_APIEnvelope),
 	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
 	"POST /system/restart": v.lazy(() => api_APIEnvelope),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),

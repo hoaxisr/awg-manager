@@ -486,6 +486,34 @@ func TestDecide_Stop_RunningKernel(t *testing.T) {
 	}
 }
 
+func TestDecide_Quiesce_StopsRunningWithoutPersist(t *testing.T) {
+	s := newState()
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "kernel", Running: true, Monitoring: true,
+	}
+	s.tunnels["awg1"] = &tunnelState{
+		ID: "awg1", Backend: "nativewg", Running: false,
+	}
+
+	actions := decide(Event{Type: EventQuiesce}, &s)
+
+	if !hasAction(actions, ActionStopMonitoring) {
+		t.Error("expected ActionStopMonitoring")
+	}
+	if !hasAction(actions, ActionStopKernel) {
+		t.Error("expected ActionStopKernel for running tunnel")
+	}
+	if hasAction(actions, ActionStopNativeWG) {
+		t.Error("did not expect ActionStopNativeWG for stopped tunnel")
+	}
+	if hasAction(actions, ActionPersistStopped) {
+		t.Error("quiesce must not persist stopped/enabled=false")
+	}
+	if hasAction(actions, ActionRemoveStaticRoutes) {
+		t.Error("quiesce must not remove routes")
+	}
+}
+
 func TestDecide_Stop_NotRunning_StillFiresActions(t *testing.T) {
 	// Regression: tunnel in NeedsStart (Running=false but NDMS intent up,
 	// e.g. after router reboot when auto-start hasn't fired). User clicks

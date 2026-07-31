@@ -26,15 +26,48 @@ type Service struct {
 	// запроса теряют правки друг друга и могут выдать один listen-порт дважды.
 	mu sync.Mutex
 
-	versionPath   string
-	installSpecs  *ArchSpecs
-	downloader    childproc.Downloader
-	installMu     sync.Mutex
-	installing    bool
-	appLog        *logging.ScopedLogger
-	listenChecker LocalListenPortChecker
-	accessMgr     AccessManager
-	ifaceChecker  InterfaceChecker
+	versionPath     string
+	installSpecs    *ArchSpecs
+	downloader      childproc.Downloader
+	installMu       sync.Mutex
+	installing      bool
+	appLog          *logging.ScopedLogger
+	listenChecker   LocalListenPortChecker
+	accessMgr       AccessManager
+	ifaceChecker    InterfaceChecker
+	ndmsIfaces      NDMSOpkgTunCommands
+	opkgIndices     OpkgTunIndexLister
+	opkgExist       OpkgTunExistChecker
+	opkgScan        func(ctx context.Context, description string) ([]string, error)
+	routerReconcile RouterReconciler
+
+	wgIfaceMu        sync.Mutex
+	wgIfaceFlagKnown bool
+	wgIfaceFlagOK    bool
+
+	// opkgStarts — счётчик стартов серверов в полёте. Между созданием
+	// OpkgTun и запуском процесса reap увидел бы «владельца нет» и снёс
+	// интерфейс из-под старта.
+	opkgStartMu sync.Mutex
+	opkgStarts  int
+}
+
+func (s *Service) beginOpkgStart() {
+	s.opkgStartMu.Lock()
+	s.opkgStarts++
+	s.opkgStartMu.Unlock()
+}
+
+func (s *Service) endOpkgStart() {
+	s.opkgStartMu.Lock()
+	s.opkgStarts--
+	s.opkgStartMu.Unlock()
+}
+
+func (s *Service) opkgStartsInFlight() bool {
+	s.opkgStartMu.Lock()
+	defer s.opkgStartMu.Unlock()
+	return s.opkgStarts > 0
 }
 
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
@@ -357,19 +390,20 @@ func (s *Service) StopClientInstance(id string) error {
 
 func (s *Service) Stop() {
 	full, _ := s.store.Load()
-	hadRunning := false
+	var wasRunning []ServerConfig
 	for _, srv := range full.Servers {
 		if s.serverProcs.get(srv.ID).Status().Running {
-			hadRunning = true
+			wasRunning = append(wasRunning, srv.Config)
 			removeServerListenFirewall(context.Background(), srv.Config)
 		}
 	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
-	// Снимаем NAT после остановки: иначе MASQUERADE и FORWARD на wdtt0
-	// переживали бы рестарт демона и копились на роутере.
-	if hadRunning {
-		removeEntwareNAT(context.Background(), DefaultWdttIface)
+	// Только те, что реально работали: снимать NDMS-интерфейс у сервера,
+	// который в этой сессии не поднимался, — лишние RCI на каждом рестарте.
+	for _, cfg := range wasRunning {
+		removeEntwareNAT(context.Background(), cfg.kernelWGIface())
+		_ = s.teardownServerOpkgTun(context.Background(), cfg)
 	}
 }
 

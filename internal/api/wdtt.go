@@ -37,6 +37,7 @@ type WdttService interface {
 	StartServerInstance(id string) error
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	Stop()
 	ListServerPanelUsers(serverID string) (wdtt.PanelUsersStatus, error)
 	AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (wdtt.PanelUsersStatus, error)
 	RemoveServerPanelUser(serverID, password string) (wdtt.PanelUsersStatus, error)
@@ -385,7 +386,15 @@ func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id
 			response.Error(w, err.Error(), "WDTT_CLIENT_RENAME_FAILED")
 			return
 		}
-		response.Success(w, map[string]string{"message": "renamed"})
+		renamedTunnels, tunnelErrors := h.syncLinkedTunnelNames(r.Context(), id, req.Name)
+		resp := map[string]any{"message": "renamed"}
+		if len(renamedTunnels) > 0 {
+			resp["renamedTunnels"] = renamedTunnels
+		}
+		if len(tunnelErrors) > 0 {
+			resp["tunnelErrors"] = tunnelErrors
+		}
+		response.Success(w, resp)
 	case http.MethodDelete:
 		if err := h.svc.DeleteClient(id); err != nil {
 			response.Error(w, err.Error(), "WDTT_CLIENT_DELETE_FAILED")

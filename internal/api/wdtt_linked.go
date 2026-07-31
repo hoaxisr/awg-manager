@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 func (h *WdttHandler) SetLinkedTunnelCleanup(store *storage.AWGTunnelStore, svc TunnelService) {
@@ -45,6 +46,13 @@ func (h *WdttHandler) wdttClientRunning(clientID string) bool {
 		}
 	}
 	return false
+}
+
+func (h *WdttHandler) syncLinkedTunnelNames(ctx context.Context, clientID, clientName string) ([]string, []string) {
+	newName := wdtt.TunnelNameFromClient(wdtt.ClientInstance{Name: clientName})
+	return syncLinkedAwgTunnelNames(ctx, h.awgStore, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToWdttClient(tun, clientID)
+	}, newName)
 }
 
 func (h *WdttHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID string) (deleted []string, errs []string) {

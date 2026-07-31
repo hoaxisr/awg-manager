@@ -24,6 +24,8 @@ func decide(event Event, state *State) []Action {
 		return decideWANDown(event, state)
 	case EventPingCheckFailed:
 		return decidePingCheckFailed(event, state)
+	case EventQuiesce:
+		return decideQuiesce(state)
 	default:
 		return nil
 	}
@@ -406,6 +408,36 @@ func decideDelete(event Event, state *State) []Action {
 	return actions
 }
 
+// decideQuiesce stops every running tunnel without persisting Enabled=false.
+// Used before full data-dir backup/restore so child processes and config files
+// are quiescent and ports in the archive match on-disk state.
+func decideQuiesce(state *State) []Action {
+	var actions []Action
+	for _, t := range state.tunnels {
+		if !t.Running {
+			continue
+		}
+		actions = appendQuiesceStopActions(actions, t)
+	}
+	return actions
+}
+
+func appendQuiesceStopActions(actions []Action, t *tunnelState) []Action {
+	if t.Monitoring {
+		actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
+	}
+	if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
+		actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
+	}
+	switch t.Backend {
+	case "kernel":
+		actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
+	case "nativewg":
+		actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
+	}
+	return actions
+}
+
 func decideRestart(event Event, state *State) []Action {
 	t := state.tunnels[event.Tunnel]
 	if t == nil {
@@ -416,18 +448,7 @@ func decideRestart(event Event, state *State) []Action {
 
 	// Stop phase (without PersistStopped — restart should not disable)
 	if t.Running {
-		if t.Monitoring {
-			actions = append(actions, Action{Type: ActionStopMonitoring, Tunnel: t.ID})
-		}
-		if t.Backend == "nativewg" && t.PingCheck != nil && t.PingCheck.Enabled {
-			actions = append(actions, Action{Type: ActionRemovePingCheck, Tunnel: t.ID})
-		}
-		switch t.Backend {
-		case "kernel":
-			actions = append(actions, Action{Type: ActionStopKernel, Tunnel: t.ID})
-		case "nativewg":
-			actions = append(actions, Action{Type: ActionStopNativeWG, Tunnel: t.ID})
-		}
+		actions = appendQuiesceStopActions(actions, t)
 		// NOTE: no ActionRemoveStaticRoutes/ClientRoutes — will be re-applied after start
 		// NOTE: no ActionPersistStopped — restart should not toggle Enabled flag
 	}

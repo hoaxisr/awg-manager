@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
@@ -219,6 +220,19 @@ func (a *app) startBootSequence() {
 				a.orch.HandleEvent(a.shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
 
+			// Маркер надо снять и здесь: холодный старт и так поднимается из
+			// восстановленного конфига, а невынутый маркер намертво глушит
+			// автостарт FreeTurn/WDTT (resumeEnabledProxyClients выходит по
+			// HasPostRestoreMarker) на всех последующих загрузках.
+			if backup.ConsumePostRestoreMarker(a.dataDir) {
+				a.bootLog.Info("startup", "", "Post-restore marker consumed on cold boot")
+			}
+
+			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
+			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
+			a.scheduleProxyClientAutostart("cold-boot")
+			a.reconcileLinkedEndpoints("startup")
+
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
 			bgDone.Wait()
@@ -247,11 +261,23 @@ func (a *app) startBootSequence() {
 		// would only fire on a cold router boot (isBoot branch above).
 		a.managedService.MigratePeerAllowIPs(context.Background())
 
+		if backup.ConsumePostRestoreMarker(a.dataDir) {
+			a.bootLog.Info("startup", "",
+				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
+			a.reconcileLinkedEndpoints("post-restore")
+			a.orch.LoadState(context.Background())
+			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
+			a.scheduleProxyClientAutostart("post-restore")
+			return
+		}
+
 		a.bootLog.Info("startup", "",
 			"Daemon restart detected — reconnecting to running tunnels")
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
+		a.resumeEnabledProxyClients("daemon-restart")
+		a.reconcileLinkedEndpoints("startup")
 	}
 
 }

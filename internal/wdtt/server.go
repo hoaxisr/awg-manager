@@ -120,7 +120,10 @@ func (s *Service) DeleteServer(id string) error {
 	saveErr := s.store.Save(full)
 	s.mu.Unlock()
 	_ = s.serverProcs.get(id).Stop()
-	removeEntwareNAT(context.Background(), DefaultWdttIface)
+	kernelIface := inst.Config.kernelWGIface()
+	removeEntwareNAT(context.Background(), kernelIface)
+	removeEntwareLAN(context.Background(), kernelIface)
+	_ = s.teardownServerOpkgTun(context.Background(), inst.Config)
 	removeServerListenFirewall(context.Background(), inst.Config)
 	return saveErr
 }
@@ -156,24 +159,60 @@ func (s *Service) StartServerInstance(id string) error {
 	if strings.TrimSpace(saved.Password) == "" {
 		return errors.New("укажите пароль подключения (-password)")
 	}
-	cfgDir, err := s.serverConfigDir(id, saved)
+	ctx := context.Background()
+	s.beginOpkgStart()
+	defer s.endOpkgStart()
+	cfg, err := s.ensureServerOpkgIndex(ctx, id, saved)
 	if err != nil {
 		return err
 	}
+	if cfg.usesNDMSOpkgTun() {
+		removeEntwareNAT(ctx, DefaultWdttIface)
+		removeEntwareLAN(ctx, DefaultWdttIface)
+		if err := s.prepareNDMSOpkgTun(ctx, cfg); err != nil {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+			return err
+		}
+	}
+	cfgDir, err := s.serverConfigDir(id, cfg)
+	if err != nil {
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
+		return err
+	}
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
 		return fmt.Errorf("config-dir: %w", err)
 	}
-	cfg := saved
 	cfg.ConfigDir = cfgDir
 	if err := s.serverProcs.get(id).Start(buildServerArgs(cfg)); err != nil {
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
 		return err
 	}
-	waitForInterface(s.ifaceChecker, DefaultWdttIface, 8*time.Second)
-	if err := s.applyServerAccess(context.Background(), id, cfg); err != nil {
+	kernelIface := cfg.kernelWGIface()
+	if !waitForInterface(s.ifaceChecker, kernelIface, 8*time.Second) {
 		_ = s.serverProcs.get(id).Stop()
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
+		return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server", kernelIface)
+	}
+	if err := s.activateNDMSOpkgTun(ctx, cfg); err != nil {
+		_ = s.serverProcs.get(id).Stop()
+		_ = s.teardownServerOpkgTun(ctx, cfg)
 		return err
 	}
-	if err := applyServerListenFirewall(context.Background(), cfg); err != nil && s.appLog != nil {
+	if err := s.applyServerAccess(ctx, id, cfg); err != nil {
+		_ = s.serverProcs.get(id).Stop()
+		_ = s.teardownServerOpkgTun(ctx, cfg)
+		return err
+	}
+	if err := applyServerListenFirewall(ctx, cfg); err != nil && s.appLog != nil {
 		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
 	}
 	if err := s.setServerEnabled(id, true); err != nil && s.appLog != nil {
@@ -191,12 +230,16 @@ func (s *Service) StopServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
+	cfg := inst.Config
+	kernelIface := cfg.kernelWGIface()
 	// Останавливаем ДО снятия правил: Stop блокирует до ~3с, и тик
 	// NAT-ресинка, попав в это окно, увидел бы процесс живым и поставил
 	// правила заново — снять их было бы уже некому.
 	err = s.serverProcs.get(id).Stop()
-	removeEntwareNAT(context.Background(), DefaultWdttIface)
+	removeEntwareNAT(context.Background(), kernelIface)
+	removeEntwareLAN(context.Background(), kernelIface)
 	removeServerListenFirewall(context.Background(), inst.Config)
+	_ = s.teardownServerOpkgTun(context.Background(), cfg)
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
 		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
 	}
@@ -290,6 +333,9 @@ func buildServerArgs(c ServerConfig) []string {
 	str("-bot-token", c.BotToken)
 	flag("-no-nat", true)
 	str("-nat-if", c.NatIface)
+	if iface := strings.TrimSpace(c.WgIface); iface != "" && iface != DefaultWdttIface {
+		str("-wg-iface", iface)
+	}
 	flag("-debug", c.Debug)
 	return args
 }

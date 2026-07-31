@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui';
+	import QrZoomImage from '$lib/components/ui/QrZoomImage.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import QRCode from 'qrcode';
@@ -93,8 +94,8 @@
 		</div>
 		{#if showQRQwdtt && qrQwdtt}
 			<div class="wdtt-qr-wrap">
-				<img src={qrQwdtt} alt="QR-код qwdtt://" class="wdtt-qr-image" />
-				<p class="wdtt-qr-hint">Отсканируйте в приложении qwdtt (Android)</p>
+				<QrZoomImage src={qrQwdtt} alt="QR-код qwdtt://" />
+				<p class="wdtt-qr-hint">Отсканируйте в приложении qwdtt (Android). Нажмите QR для увеличения.</p>
 			</div>
 		{/if}
 	</div>
@@ -114,8 +115,8 @@
 		</div>
 		{#if showQRWdtt && qrWdtt}
 			<div class="wdtt-qr-wrap">
-				<img src={qrWdtt} alt="QR-код wdtt://" class="wdtt-qr-image" />
-				<p class="wdtt-qr-hint">Импорт в WDTT «Клиент» на роутере (сканер или камера)</p>
+				<QrZoomImage src={qrWdtt} alt="QR-код wdtt://" />
+				<p class="wdtt-qr-hint">Импорт в WDTT «Клиент» на роутере. Нажмите QR для увеличения.</p>
 			</div>
 		{/if}
 	</div>
@@ -161,12 +162,6 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-primary);
-	}
-
-	.wdtt-qr-image {
-		width: min(100%, 14rem);
-		height: auto;
-		image-rendering: pixelated;
 	}
 
 	.wdtt-qr-hint {

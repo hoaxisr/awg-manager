@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui';
+	import QrZoomImage from '$lib/components/ui/QrZoomImage.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import QRCode from 'qrcode';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
@@ -61,8 +62,8 @@
 	</div>
 	{#if showQR && qrDataUrl}
 		<div class="ft-qr-wrap">
-			<img src={qrDataUrl} alt="QR-код freeturn://" class="ft-qr-image" />
-			<p class="ft-qr-hint">Отсканируйте в приложении FreeTurn (Android)</p>
+			<QrZoomImage src={qrDataUrl} alt="QR-код freeturn://" />
+			<p class="ft-qr-hint">Отсканируйте в приложении FreeTurn (Android). Нажмите QR для увеличения.</p>
 		</div>
 	{/if}
 	<LinkParamsSummary {payload} {peer} />
@@ -99,11 +100,6 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-primary);
-	}
-	.ft-qr-image {
-		width: min(100%, 14rem);
-		height: auto;
-		image-rendering: pixelated;
 	}
 	.ft-qr-hint {
 		margin: 0;
