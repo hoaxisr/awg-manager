@@ -215,6 +215,18 @@ func (l *Loader) OnDiskVersion() string {
 	return readVersion()
 }
 
+// LoadedVersion returns the version of the module currently in the kernel, or
+// "" when it is not loaded. Unlike OnDiskVersion — our own bundle marker — this
+// is what the running module reports, which is what decides whether AWG 3.0
+// device params have any effect (they need the 3.x module).
+func (l *Loader) LoadedVersion() string {
+	data, err := os.ReadFile(filepath.Join(SysfsPath, "version"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // Unload removes the kernel module using rmmod.
 func (l *Loader) Unload(ctx context.Context) error {
 	_, err := exec.Run(ctx, "rmmod", ModuleName)

@@ -5540,6 +5540,9 @@ definitions:
       kernelModuleLoaded:
         example: false
         type: boolean
+      kernelModuleLoadedVersion:
+        example: 3.0.20260731
+        type: string
       kernelModuleModel:
         example: MT7981
         type: string
