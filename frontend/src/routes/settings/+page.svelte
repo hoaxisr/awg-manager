@@ -20,6 +20,7 @@
 		SettingsFooter,
 		UsageLevelCard,
 		HttpServerCard,
+		BackupRestoreCard,
 		DevelopChannelGateModal,
 		ExperimentalSettingsCard,
 		PukhososPatrol,
@@ -1011,6 +1012,10 @@ $effect(() => {
 				{/if}
 				{/if}
 			</main>
+		</div>
+
+		<div class="settings-block" id="settings-backup">
+			<BackupRestoreCard />
 		</div>
 
 		<div class="settings-block" id="settings-actions">

@@ -25,13 +25,13 @@ type ArchSpecs struct {
 }
 
 const PinnedClientVersion = "1.0.0-1"
-const PinnedServerVersion = "0.1.5-awgm"
+const PinnedServerVersion = "0.1.6-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
 
-// serverReleaseBase — patched wdtt-server (-no-nat) for Keenetic/awg-manager.
-// Fallback: бинарь из IPK (/opt/bin/wdtt-server) или prebuilt/wdtt в репозитории.
+// serverReleaseBase — patched wdtt-server (-no-nat, -wg-iface) for Keenetic/awg-manager.
+// Единственный канал доставки: в IPK бинаря нет (12 МБ на одну арку).
 const serverReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + PinnedServerVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch to pinned wdtt assets.
@@ -43,7 +43,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "5f05aa294e47bc14afebd58099f5100b5bd915719cfa68698c170ffcd259ad1f", Size: 12320930,
+			SHA256: "abb92dfdba003b618b7fe4ba080575727c39862f69fa09308817b031babe42fa", Size: 12320930,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет

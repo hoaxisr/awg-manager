@@ -41,6 +41,7 @@ type FreeTurnService interface {
 	StartServerInstance(id string) error
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	Stop()
 	ListServerAllowlist(serverID string) (freeturn.AllowlistStatus, error)
 	AddServerAllowlistClient(serverID, clientID, comment string) (freeturn.AddAllowlistResult, error)
 	RemoveServerAllowlistClient(serverID, clientID string) error
@@ -505,7 +506,15 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_RENAME_FAILED")
 			return
 		}
-		response.Success(w, map[string]string{"message": "renamed"})
+		renamedTunnels, tunnelErrors := h.syncLinkedTunnelNames(r.Context(), id, req.Name)
+		resp := map[string]any{"message": "renamed"}
+		if len(renamedTunnels) > 0 {
+			resp["renamedTunnels"] = renamedTunnels
+		}
+		if len(tunnelErrors) > 0 {
+			resp["tunnelErrors"] = tunnelErrors
+		}
+		response.Success(w, resp)
 	case http.MethodDelete:
 		if err := h.svc.DeleteClient(id); err != nil {
 			response.Error(w, err.Error(), "FREETURN_CLIENT_DELETE_FAILED")

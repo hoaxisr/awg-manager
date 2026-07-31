@@ -6,7 +6,7 @@
 	import { ProcessAlerts, Tabs } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import WdttServerSimple from './WdttServerSimple.svelte';
-	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
@@ -535,13 +535,14 @@
 		try {
 			const c = selectedClient.config;
 			const oldPeer = savedClient?.config.peer ?? '';
+			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
 			if (payload.peer) c.peer = payload.peer;
 			if (payload.password) c.password = payload.password;
 			if (payload.vkHashes?.length) c.vkHashes = payload.vkHashes.join(',');
 			if (payload.workers && payload.workers > 0) c.workers = payload.workers;
 			const subUrl = payload.subUrl || meta?.subUrl;
 			// Подписка задаёт listenPort=9000 для всех стран — порт у каждого клиента свой.
-			if (payload.listen && !subUrl) c.listen = payload.listen;
+			if (payload.listen && !subUrl && listenPort == null) c.listen = payload.listen;
 			if (subUrl) c.sub = subUrl;
 			if (payload.deviceId) c.deviceId = payload.deviceId;
 
@@ -566,16 +567,23 @@
 			const wg = payload.wg?.trim();
 			if (wg) {
 				try {
-					const listenPort = parseLocalListenPort(c.listen) ?? parseLocalListenPort(payload.listen) ?? 9000;
-					const wgForImport = patchWgConfEndpoint(wg, listenPort);
-					const tunnel = await api.importConfig(
-						wgForImport,
-						wdttTunnelName(meta?.clientName || payload.name),
-						undefined,
-						undefined,
-						selectedClientId
-					);
-					msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
+					const portForTunnel =
+						listenPort ?? linkedTunnelListenPort(c.listen, payload.listen);
+					if (portForTunnel == null) {
+						notifications.error(
+							'Профиль импортирован, но не удалось определить listen-порт для AWG-туннеля'
+						);
+					} else {
+						const wgForImport = patchWgConfEndpoint(wg, portForTunnel);
+						const tunnel = await api.importConfig(
+							wgForImport,
+							wdttTunnelName(meta?.clientName || payload.name),
+							undefined,
+							undefined,
+							selectedClientId
+						);
+						msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${portForTunnel})`;
+					}
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель: ' + errText(e));
 				}

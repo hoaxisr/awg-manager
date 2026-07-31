@@ -1,6 +1,10 @@
 package storage
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+)
 
 // Settings represents /opt/etc/awg-manager/settings.json
 type Settings struct {
@@ -436,6 +440,16 @@ type AWGObfuscation struct {
 	I3   string `json:"i3,omitempty"`
 	I4   string `json:"i4,omitempty"`
 	I5   string `json:"i5,omitempty"`
+	// AWG 3.0 device parameters (AmneziaWG kernel module feat/awg3). All kept
+	// as strings: HeaderProtectionKey is a base64 key; the timing/padding
+	// params are int-or-"min-max" ranges (u16_range_t) applied via awg setconf.
+	HeaderProtectionKey    string `json:"headerProtectionKey,omitempty"`
+	ContentPaddingAddition string `json:"contentPaddingAddition,omitempty"`
+	RekeyAfterTime         string `json:"rekeyAfterTime,omitempty"`
+	RekeyTimeout           string `json:"rekeyTimeout,omitempty"`
+	RejectAfterTime        string `json:"rejectAfterTime,omitempty"`
+	KeepaliveTimeout       string `json:"keepaliveTimeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"maxHandshakeAttempts,omitempty"`
 }
 
 // AWGInterface contains AmneziaWG interface configuration.
@@ -449,9 +463,59 @@ type AWGInterface struct {
 
 // AWGPeer contains AmneziaWG peer configuration.
 type AWGPeer struct {
-	PublicKey           string   `json:"publicKey"`
-	PresharedKey        string   `json:"presharedKey,omitempty"`
-	Endpoint            string   `json:"endpoint"`
-	AllowedIPs          []string `json:"allowedIPs"`
-	PersistentKeepalive int      `json:"persistentKeepalive"`
+	PublicKey           string    `json:"publicKey"`
+	PresharedKey        string    `json:"presharedKey,omitempty"`
+	Endpoint            string    `json:"endpoint"`
+	AllowedIPs          []string  `json:"allowedIPs"`
+	PersistentKeepalive Keepalive `json:"persistentKeepalive"`
+}
+
+// Keepalive — значение PersistentKeepalive в секундах. В AWG 3.0 оно стало
+// диапазоном "min-max", из которого пир берёт случайное значение на каждый
+// взвод таймера, поэтому хранить int больше нельзя.
+//
+// Туннели, сохранённые до 3.0, лежат в JSON числом, и одиночное значение
+// пишется обратно числом же: файл не меняет форму, и откат на прошлую версию
+// продолжает его читать. Строка появляется только у настоящего диапазона.
+type Keepalive string
+
+func (k Keepalive) String() string { return string(k) }
+
+// IsZero — значение не задано или явно выключено.
+func (k Keepalive) IsZero() bool { return k == "" || k == "0" }
+
+// IsRange — задан диапазон, а не одиночное значение.
+func (k Keepalive) IsRange() bool { return strings.Contains(string(k), "-") }
+
+// Single возвращает одиночное значение. NativeWG и NDMS принимают только его.
+func (k Keepalive) Single() (int, bool) {
+	n, err := strconv.Atoi(string(k))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func (k *Keepalive) UnmarshalJSON(data []byte) error {
+	var number int
+	if err := json.Unmarshal(data, &number); err == nil {
+		*k = Keepalive(strconv.Itoa(number))
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*k = Keepalive(value)
+	return nil
+}
+
+func (k Keepalive) MarshalJSON() ([]byte, error) {
+	if k.IsZero() {
+		return json.Marshal(0)
+	}
+	if n, ok := k.Single(); ok {
+		return json.Marshal(n)
+	}
+	return json.Marshal(string(k))
 }

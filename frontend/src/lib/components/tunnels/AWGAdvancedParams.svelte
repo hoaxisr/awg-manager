@@ -19,6 +19,13 @@
 		i3: string;
 		i4: string;
 		i5: string;
+		headerProtectionKey?: string;
+		contentPaddingAddition?: string;
+		rekeyAfterTime?: string;
+		rekeyTimeout?: string;
+		rejectAfterTime?: string;
+		keepaliveTimeout?: string;
+		maxHandshakeAttempts?: string;
 		[key: string]: unknown;
 	}
 
@@ -47,17 +54,20 @@
 		errors,
 		hints = undefined,
 		compact = false,
+		awg3 = false,
 	}: {
 		form: AWGFormFields;
 		errors: AWGErrorFields;
 		hints?: Record<string, string>;
 		compact?: boolean;
+		awg3?: boolean;
 	} = $props();
 </script>
 
 <ASCEditor
 	bind:params={form}
 	extended
+	{awg3}
 	mtu={form.mtu}
 	{errors}
 	{hints}

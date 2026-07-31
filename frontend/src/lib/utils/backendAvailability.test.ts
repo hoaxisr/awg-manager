@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nativewgUnavailableHint } from './backendAvailability';
+import { nativewgUnavailableHint, supportsAwg3 } from './backendAvailability';
 
 describe('nativewgUnavailableHint', () => {
 	it('explains the missing WireGuard component', () => {
@@ -14,5 +14,17 @@ describe('nativewgUnavailableHint', () => {
 		expect(nativewgUnavailableHint('')).toBe('');
 		expect(nativewgUnavailableHint(undefined)).toBe('');
 		expect(nativewgUnavailableHint('something-else')).toBe('');
+	});
+});
+
+describe('supportsAwg3', () => {
+	it('accepts the 3.x kernel module', () => {
+		expect(supportsAwg3('3.0.20260731')).toBe(true);
+	});
+
+	it('rejects older modules and a missing one', () => {
+		expect(supportsAwg3('1.0.20251009')).toBe(false);
+		expect(supportsAwg3('')).toBe(false);
+		expect(supportsAwg3(undefined)).toBe(false);
 	});
 });

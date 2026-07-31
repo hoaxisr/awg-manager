@@ -152,6 +152,8 @@ type Server struct {
 
 	bootStatusFn func() bool // returns true if boot still in progress
 
+	proxyClientAutostart api.ProxyClientAutostart
+
 	// Restart lifecycle
 	restartOnce   sync.Once // prevents multiple restart goroutines
 	shutdownHooks []func()  // cleanup functions called before syscall.Exec
@@ -449,6 +451,11 @@ func (s *Server) SetBootStatusFunc(fn func() bool) {
 	s.bootStatusFn = fn
 }
 
+// SetProxyClientAutostart wires WAN-up retry for FreeTurn/WDTT autostart.
+func (s *Server) SetProxyClientAutostart(fn api.ProxyClientAutostart) {
+	s.proxyClientAutostart = fn
+}
+
 // Start starts the HTTP server.
 func (s *Server) Start() error {
 	if addr := strings.TrimSpace(s.config.PprofStandaloneAddr); addr != "" {
@@ -595,6 +602,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 // spaHandler serves static files with SPA fallback to index.html.
 func spaHandler(staticFS fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Незарегистрированная ручка под /api/ — это ошибка маршрутизации, а
+		// не путь SPA. Отдав index.html с кодом 200, мы заставляли клиент
+		// разбирать HTML как JSON, и он показывал «Некорректный ответ сервера
+		// (200)» вместо внятного сообщения.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":true,"message":"эндпоинт не найден","code":"NOT_FOUND"}`))
+			return
+		}
+
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if name == "" {
 			name = "index.html"

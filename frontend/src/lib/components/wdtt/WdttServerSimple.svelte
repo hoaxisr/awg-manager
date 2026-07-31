@@ -22,7 +22,6 @@
 	import type { WdttPanelUserEntry, WdttProcessStatus, WdttServerConfig } from '$lib/types';
 
 	const withIngressLock = createIngressMutationLock();
-	const wdttIface = 'wdtt0';
 
 	const SERVER_TABS = [
 		{ id: 'main', label: 'Основное' },
@@ -80,6 +79,8 @@
 		selectedInstanceId = '',
 		onSelectInstance
 	}: Props = $props();
+
+	const wdttIface = $derived(server.wgIface?.trim() || 'wdtt0');
 
 	let starting = $state(false);
 	let loadingWanPeer = $state(false);

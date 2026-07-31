@@ -15,7 +15,7 @@ import (
 // Default values for tunnel configuration.
 const (
 	DefaultMTU                 = 1280
-	DefaultPersistentKeepalive = 25
+	DefaultPersistentKeepalive = "25"
 )
 
 // Configuration parsing errors.
@@ -68,6 +68,25 @@ func writeAWGParams(b *strings.Builder, iface *storage.AWGInterface) {
 			b.WriteString(fmt.Sprintf("I5 = %s\n", iface.I5))
 		}
 	}
+	writeAWG3Params(b, iface)
+}
+
+// writeAWG3Params emits AWG 3.0 device parameters (kernel module feat/awg3).
+// Each is written only when set, so an AWG 1.x/2.x config stays byte-identical.
+// Key names match the case-insensitive keys accepted by `awg setconf`.
+func writeAWG3Params(b *strings.Builder, iface *storage.AWGInterface) {
+	writeIfSet := func(key, val string) {
+		if val != "" {
+			b.WriteString(fmt.Sprintf("%s = %s\n", key, val))
+		}
+	}
+	writeIfSet("HeaderProtectionKey", iface.HeaderProtectionKey)
+	writeIfSet("ContentPaddingAddition", iface.ContentPaddingAddition)
+	writeIfSet("RekeyAfterTime", iface.RekeyAfterTime)
+	writeIfSet("RekeyTimeout", iface.RekeyTimeout)
+	writeIfSet("RejectAfterTime", iface.RejectAfterTime)
+	writeIfSet("KeepaliveTimeout", iface.KeepaliveTimeout)
+	writeIfSet("MaxHandshakeAttempts", iface.MaxHandshakeAttempts)
 }
 
 // Generate generates WireGuard .conf content from tunnel metadata.
@@ -94,10 +113,10 @@ func Generate(tunnel *storage.AWGTunnel) string {
 	b.WriteString(fmt.Sprintf("Endpoint = %s\n", tunnel.Peer.Endpoint))
 
 	keepalive := tunnel.Peer.PersistentKeepalive
-	if keepalive == 0 {
+	if keepalive.IsZero() {
 		keepalive = DefaultPersistentKeepalive
 	}
-	b.WriteString(fmt.Sprintf("PersistentKeepalive = %d\n", keepalive))
+	b.WriteString(fmt.Sprintf("PersistentKeepalive = %s\n", keepalive))
 
 	return b.String()
 }
@@ -142,10 +161,10 @@ func GenerateForExport(tunnel *storage.AWGTunnel) string {
 	b.WriteString(fmt.Sprintf("Endpoint = %s\n", tunnel.Peer.Endpoint))
 
 	keepalive := tunnel.Peer.PersistentKeepalive
-	if keepalive == 0 {
+	if keepalive.IsZero() {
 		keepalive = DefaultPersistentKeepalive
 	}
-	b.WriteString(fmt.Sprintf("PersistentKeepalive = %d\n", keepalive))
+	b.WriteString(fmt.Sprintf("PersistentKeepalive = %s\n", keepalive))
 
 	return b.String()
 }
@@ -298,7 +317,32 @@ func parseInterfaceField(tunnel *storage.AWGTunnel, key, value string) {
 		iface.I4 = value
 	case "i5":
 		iface.I5 = value
+	case "headerprotectionkey":
+		iface.HeaderProtectionKey = value
+	case "contentpaddingaddition":
+		iface.ContentPaddingAddition = awg3Range(value)
+	case "rekeyaftertime":
+		iface.RekeyAfterTime = awg3Range(value)
+	case "rekeytimeout":
+		iface.RekeyTimeout = awg3Range(value)
+	case "rejectaftertime":
+		iface.RejectAfterTime = awg3Range(value)
+	case "keepalivetimeout":
+		iface.KeepaliveTimeout = awg3Range(value)
+	case "maxhandshakeattempts":
+		iface.MaxHandshakeAttempts = awg3Range(value)
 	}
+}
+
+// awg3Range нормализует значение AWG 3.0 диапазона из .conf. `awg showconf`
+// печатает "0" для каждого незаданного параметра, поэтому импорт такого вывода
+// превращал бы обычный AWG 2.0 туннель в awg3-подобный. Диапазон "0-80" при
+// этом остаётся как есть — нулём считается только одиночный ноль.
+func awg3Range(value string) string {
+	if value == "0" {
+		return ""
+	}
+	return value
 }
 
 func parsePeerField(tunnel *storage.AWGTunnel, key, value string) {
@@ -320,8 +364,8 @@ func parsePeerField(tunnel *storage.AWGTunnel, key, value string) {
 			}
 		}
 	case "persistentkeepalive":
-		if v, err := strconv.Atoi(value); err == nil {
-			peer.PersistentKeepalive = v
+		if ValidateKeepalive(storage.Keepalive(value)) == nil {
+			peer.PersistentKeepalive = storage.Keepalive(value)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import {
   decodeServerPeerValue,
   buildServerPeerDropdownOptions,
   parseLocalListenPort,
+  linkedTunnelListenPort,
   patchWgConfEndpoint,
 } from './serverPeerOptions';
 import type { ServersSnapshot } from '$lib/stores/servers';
@@ -109,6 +110,13 @@ describe('parseLocalListenPort', () => {
     expect(parseLocalListenPort('9002')).toBe(9002);
     expect(parseLocalListenPort('')).toBeNull();
     expect(parseLocalListenPort('bad')).toBeNull();
+  });
+});
+
+describe('linkedTunnelListenPort', () => {
+  it('prefers saved client listen over link template', () => {
+    expect(linkedTunnelListenPort('127.0.0.1:9001', '127.0.0.1:9000')).toBe(9001);
+    expect(linkedTunnelListenPort('', '127.0.0.1:9000')).toBe(9000);
   });
 });
 

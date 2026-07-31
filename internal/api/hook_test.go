@@ -217,6 +217,34 @@ func (f *fakeWANModel) Calls() []fakeWANSetUp {
 	return out
 }
 
+func TestHookHandler_HandleNDMS_IPv4Up_ResumeProxyClients(t *testing.T) {
+	h := newTestHookHandler(&spyDispatcher{})
+	h.SetWANModel(&fakeWANModel{})
+	done := make(chan string, 1)
+	h.SetProxyClientAutostart(func(reason string) {
+		done <- reason
+	})
+
+	body := strings.NewReader("type=iflayerchanged&id=PPPoE0&system_name=ppp0&layer=ipv4&level=running")
+	req := httptest.NewRequest(http.MethodPost, "/api/hook/ndms", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	h.HandleNDMS(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d — body: %s", w.Code, readBody(w))
+	}
+
+	select {
+	case reason := <-done:
+		if reason != "wan-up" {
+			t.Fatalf("proxy autostart reason: want wan-up, got %q", reason)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy autostart callback not invoked on WAN up")
+	}
+}
+
 func TestHookHandler_HandleNDMS_IPv4Up_UpdatesWANModel(t *testing.T) {
 	disp := &spyDispatcher{}
 	h := newTestHookHandler(disp)

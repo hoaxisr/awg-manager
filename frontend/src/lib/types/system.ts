@@ -97,6 +97,8 @@ export interface SystemInfo {
 	kernelModuleLoaded: boolean;
 	kernelModuleModel: string;
 	kernelModuleVersion: string;
+	/** Version reported by the module currently in the kernel, "" if not loaded. */
+	kernelModuleLoadedVersion?: string;
 	isAarch64: boolean;
 	activeBackend: string;
 	routerIP: string;

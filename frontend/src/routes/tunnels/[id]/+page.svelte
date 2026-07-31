@@ -17,6 +17,7 @@
 	import AwgConfigAnalyzer from '$lib/components/diagnostics/AwgConfigAnalyzer.svelte';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
+	import { supportsAwg3 } from '$lib/utils/backendAvailability';
 	import { Network, Route, Router, Server, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
@@ -167,10 +168,17 @@
 		$form.i3 = tunnel.interface.i3 || '';
 		$form.i4 = tunnel.interface.i4 || '';
 		$form.i5 = tunnel.interface.i5 || '';
+		$form.headerProtectionKey = tunnel.interface.headerProtectionKey || '';
+		$form.contentPaddingAddition = tunnel.interface.contentPaddingAddition || '';
+		$form.rekeyAfterTime = tunnel.interface.rekeyAfterTime || '';
+		$form.rekeyTimeout = tunnel.interface.rekeyTimeout || '';
+		$form.rejectAfterTime = tunnel.interface.rejectAfterTime || '';
+		$form.keepaliveTimeout = tunnel.interface.keepaliveTimeout || '';
+		$form.maxHandshakeAttempts = tunnel.interface.maxHandshakeAttempts || '';
 		publicKey = tunnel.peer.publicKey;
 		$form.endpoint = tunnel.peer.endpoint;
 		$form.allowedIPs = tunnel.peer.allowedIPs.join(', ');
-		$form.persistentKeepalive = tunnel.peer.persistentKeepalive || 25;
+		$form.persistentKeepalive = String(tunnel.peer.persistentKeepalive ?? 25);
 	}
 
 	function buildUpdatePayload() {
@@ -188,7 +196,15 @@
 				i2: $form.i2 || undefined,
 				i3: $form.i3 || undefined,
 				i4: $form.i4 || undefined,
-				i5: $form.i5 || undefined
+				i5: $form.i5 || undefined,
+				// AWG 3.0 device params (kernel mode only).
+				headerProtectionKey: $form.headerProtectionKey || undefined,
+				contentPaddingAddition: $form.contentPaddingAddition || undefined,
+				rekeyAfterTime: $form.rekeyAfterTime || undefined,
+				rekeyTimeout: $form.rekeyTimeout || undefined,
+				rejectAfterTime: $form.rejectAfterTime || undefined,
+				keepaliveTimeout: $form.keepaliveTimeout || undefined,
+				maxHandshakeAttempts: $form.maxHandshakeAttempts || undefined
 			},
 			peer: {
 				...tunnel!.peer,
@@ -393,7 +409,7 @@
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
 								<label class="field-label" for="persistentKeepalive">Keepalive</label>
-								<input type="number" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
+								<input type="text" inputmode="text" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
 								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>
@@ -406,6 +422,7 @@
 						bind:form={$form}
 						errors={$errors}
 						{hints}
+						awg3={tunnel?.backend !== 'nativewg' && supportsAwg3(systemInfo?.kernelModuleLoadedVersion)}
 					/>
 				</div>
 

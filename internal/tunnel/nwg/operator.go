@@ -241,8 +241,11 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if hasIPv6AllowedIPs(stored.Peer.AllowedIPs) {
 		peerCfg.AllowedIPv6 = []payloads.AllowedIP{{Address: "::", Mask: "0"}}
 	}
-	if stored.Peer.PersistentKeepalive > 0 {
-		peerCfg.KeepaliveInterval = stored.Peer.PersistentKeepalive
+	// NDMS принимает keepalive числом; диапазон AWG 3.0 сюда попасть не должен
+	// (запрещён валидацией), а если попал — оставляем поле пустым, чтобы не
+	// подсунуть прошивке мусор.
+	if n, ok := stored.Peer.PersistentKeepalive.Single(); ok && n > 0 {
+		peerCfg.KeepaliveInterval = n
 	}
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
@@ -1108,7 +1111,10 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 	}
 
 	ver := config.ClassifyAWGVersion(iface)
-	if ver == "awg1.5" || ver == "awg2.0" {
+	// awg3 is included here so the extended block (S3/S4, I1-I5) still reaches
+	// NDMS. Firmware ASC does not model the awg3-specific device params, so
+	// those are simply not sent — the kernel backend (awg setconf) applies them.
+	if ver == "awg1.5" || ver == "awg2.0" || ver == "awg3" {
 		params := ndms.ASCParamsExtended{
 			ASCParams: ndms.ASCParams{
 				Jc: iface.Jc, Jmin: iface.Jmin, Jmax: iface.Jmax,

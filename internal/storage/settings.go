@@ -41,6 +41,11 @@ func NewSettingsStore(dataDir string) *SettingsStore {
 	}
 }
 
+// DataDir returns the awg-manager data directory (parent of settings.json).
+func (s *SettingsStore) DataDir() string {
+	return filepath.Dir(s.path)
+}
+
 // Load reads settings from disk. Returns default settings if file doesn't exist.
 func (s *SettingsStore) Load() (*Settings, error) {
 	s.mu.Lock()

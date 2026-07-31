@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -38,6 +39,13 @@ func (h *FreeTurnHandler) stopLinkedAwgTunnels(ctx context.Context, clientID str
 	return stopLinkedAwgTunnels(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
 		return tunnelLinkedToFreeTurnClient(tun, clientID)
 	})
+}
+
+func (h *FreeTurnHandler) syncLinkedTunnelNames(ctx context.Context, clientID, clientName string) ([]string, []string) {
+	newName := freeturn.TunnelNameFromClient(freeturn.ClientInstance{Name: clientName})
+	return syncLinkedAwgTunnelNames(ctx, h.awgStore, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToFreeTurnClient(tun, clientID)
+	}, newName)
 }
 
 func (h *FreeTurnHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID string) (deleted []string, errs []string) {

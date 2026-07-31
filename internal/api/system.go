@@ -60,6 +60,7 @@ type SystemInfoData struct {
 	KernelModuleLoaded          bool                          `json:"kernelModuleLoaded" example:"false"`
 	KernelModuleModel           string                        `json:"kernelModuleModel" example:"MT7981"`
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
+	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.0.20260731"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
 	ActiveBackend               string                        `json:"activeBackend" example:"nativewg"`
 	RouterIP                    string                        `json:"routerIP" example:"192.168.1.1"`
@@ -171,6 +172,7 @@ type KmodLoader interface {
 	Model() string
 	SoC() kmod.SoC
 	OnDiskVersion() string
+	LoadedVersion() string
 }
 
 // SystemHandler handles system information endpoints.
@@ -414,13 +416,14 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	// Get kernel module and backend info
 	var kernelModuleExists, kernelModuleLoaded bool
 	var kernelModuleModel string
-	var kernelModuleVersion string
+	var kernelModuleVersion, kernelModuleLoadedVersion string
 	var isAarch64 bool
 	if h.kmodLoader != nil {
 		kernelModuleExists = h.kmodLoader.ModuleExists()
 		kernelModuleLoaded = h.kmodLoader.IsLoaded()
 		kernelModuleModel = h.kmodLoader.Model()
 		kernelModuleVersion = h.kmodLoader.OnDiskVersion()
+		kernelModuleLoadedVersion = h.kmodLoader.LoadedVersion()
 		isAarch64 = h.kmodLoader.SoC().IsAARCH64()
 	}
 	activeBackendType := "kernel"
@@ -431,12 +434,12 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	// Router LAN IP (from br0 interface)
 	routerIP := netif.FirstIPv4(storage.DefaultInterface)
 
-	info := h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, isAarch64, activeBackendType, routerIP)
+	info := h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion, isAarch64, activeBackendType, routerIP)
 
 	response.Success(w, info)
 }
 
-func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
+func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
 	singboxInstalled, singboxVersion := h.getSingboxInfoFast()
 	routerDetails := h.getRouterDetailsCached()
 	clock := routerclock.Get()
@@ -462,6 +465,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"kernelModuleLoaded":          kernelModuleLoaded,
 		"kernelModuleModel":           kernelModuleModel,
 		"kernelModuleVersion":         kernelModuleVersion,
+		"kernelModuleLoadedVersion":   kernelModuleLoadedVersion,
 		"isAarch64":                   isAarch64,
 		"activeBackend":               activeBackendType,
 		"routerIP":                    routerIP,

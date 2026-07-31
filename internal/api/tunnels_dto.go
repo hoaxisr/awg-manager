@@ -25,7 +25,7 @@ type TunnelListItemDTO struct {
 	InterfaceName             string                `json:"interfaceName,omitempty" example:"nwg0"`
 	NdmsName                  string                `json:"ndmsName,omitempty" example:"Wireguard0"`
 	Backend                   string                `json:"backend,omitempty" example:"nativewg" enums:"nativewg,kernel"`
-	AWGVersion                string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0"`
+	AWGVersion                string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0,awg3"`
 	MTU                       int                   `json:"mtu,omitempty" example:"1420"`
 	IspInterface              string                `json:"ispInterface,omitempty" example:"PPPoE0"`
 	IspInterfaceLabel         string                `json:"ispInterfaceLabel,omitempty" example:"WAN"`
@@ -82,7 +82,10 @@ type AWGPeerDTO struct {
 	PublicKey           string   `json:"publicKey" example:"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="`
 	Endpoint            string   `json:"endpoint" example:"vpn.example.com:51820"`
 	AllowedIPs          []string `json:"allowedIPs" example:"0.0.0.0/0"`
-	PersistentKeepalive int      `json:"persistentKeepalive,omitempty" example:"25"`
+	// PersistentKeepalive — секунды. Одиночное значение приходит числом, а
+	// диапазон AWG 3.0 ("min-max") строкой: число сохранено ради tunnels.json,
+	// который в этой форме читают и предыдущие версии.
+	PersistentKeepalive any `json:"persistentKeepalive,omitempty" swaggertype:"object"`
 }
 
 // TunnelStateInfoDTO mirrors frontend TunnelStateInfo.
