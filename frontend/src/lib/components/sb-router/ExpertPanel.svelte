@@ -1375,6 +1375,9 @@
   .wrap {
     max-width: none;
     margin: 0 auto;
+    /* Компактный режим держит колонку контента в 960px при любом вьюпорте —
+       ломать сетку надо по ширине контейнера, а не окна (см. @container ниже). */
+    container-type: inline-size;
   }
   /* Caption внутри SidePanel body — sub-title строкой над контентом */
   .rs-head-actions {
@@ -1471,9 +1474,11 @@
     gap: 14px;
     min-width: 0;
   }
-  @media (max-width: 1023px) {
+  /* 1280px — ниже этого сайдбар (4/12) уже́ шапки панели: заголовок + две
+     кнопки не влезают и наезжают друг на друга. */
+  @container (max-width: 1280px) {
     .main-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
   }
   @media (max-width: 768px) {
