@@ -13,6 +13,7 @@ type fieldKind int
 const (
 	kStr      fieldKind = iota // строка as-is
 	kNum                       // целое → JSON number
+	kRange                     // целое или диапазон "min-max" → JSON string
 	kAddrCIDR                  // список CIDR (split ','), достраиваем /32|/128
 	kIgnore                    // известный ключ, но в endpoint не нужен
 )
@@ -66,7 +67,7 @@ var peerFields = map[string]field{
 	"publickey":           {"public_key", kStr},
 	"presharedkey":        {"preshared_key", kStr},
 	"allowedips":          {"allowed_ips", kAddrCIDR},
-	"persistentkeepalive": {"persistent_keepalive_interval", kNum},
+	"persistentkeepalive": {"persistent_keepalive_interval", kRange},
 	"advancedsecurity":    {"", kIgnore}, // per-peer awg-флаг tools; у sing-box endpoint нет
 	// endpoint обрабатывается отдельно (см. assign)
 }
@@ -161,6 +162,19 @@ func assign(section string, dst map[string]any, key, val string) error {
 			return fmt.Errorf("поле %s ждёт число, получено %q", key, val)
 		}
 		dst[f.json] = n
+	case kRange:
+		n, err := parseRange(val)
+		if err != nil {
+			return fmt.Errorf("поле %s ждёт число или диапазон min-max, получено %q", key, val)
+		}
+		// Одиночное значение остаётся JSON-числом: такой конфиг переварит и
+		// sing-box без поддержки диапазонов. Строку пишем только для диапазона,
+		// который старая сборка всё равно не примет.
+		if n != nil {
+			dst[f.json] = *n
+		} else {
+			dst[f.json] = val
+		}
 	case kAddrCIDR:
 		var out []string
 		for _, part := range strings.Split(val, ",") {
@@ -173,6 +187,31 @@ func assign(section string, dst map[string]any, key, val string) error {
 		dst[f.json] = out
 	}
 	return nil
+}
+
+// parseRange разбирает значение вида u16_range: одиночное число или "min-max".
+// В AWG 3.0 PersistentKeepalive стал диапазоном, из которого устройство берёт
+// случайное значение на каждый взвод таймера, и endpoint sing-box принимает
+// такую строку как есть (option/awg.go, AwgKeepalive) — сужать не нужно.
+// Для одиночного значения возвращает число, для диапазона nil.
+func parseRange(val string) (*int, error) {
+	loStr, hiStr, isRange := strings.Cut(val, "-")
+	lo, err := strconv.ParseUint(strings.TrimSpace(loStr), 10, 16)
+	if err != nil {
+		return nil, err
+	}
+	if !isRange {
+		n := int(lo)
+		return &n, nil
+	}
+	hi, err := strconv.ParseUint(strings.TrimSpace(hiStr), 10, 16)
+	if err != nil {
+		return nil, err
+	}
+	if hi < lo {
+		return nil, fmt.Errorf("верхняя граница меньше нижней")
+	}
+	return nil, nil
 }
 
 // normalizeCIDR достраивает маску, если её нет (sing-box парсит как netip.Prefix,

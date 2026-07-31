@@ -248,3 +248,47 @@ PersistentKeepalive = 25`
 		}]
 	}`)
 }
+
+// AWG 3.0 сделал PersistentKeepalive диапазоном u16_range; endpoint sing-box
+// принимает такую строку как есть, поэтому передаём значение без сужения.
+func TestParseConf_KeepaliveRange(t *testing.T) {
+	base := `[Interface]
+PrivateKey = W6Wz2At9Y2nE9+zxYC35MdqQft7KAzRIwMxZA/tt5fc=
+Address = 10.80.0.2/32
+
+[Peer]
+PublicKey = RzF8ZbIWXag0aMDkw3H459iHlJrwiJKXxWhHZ+ooBWM=
+Endpoint = 88.210.10.213:9443
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = `
+
+	for _, val := range []string{"25", "22-30", "0-80"} {
+		got, err := ParseConf(base + val)
+		if err != nil {
+			t.Fatalf("PersistentKeepalive = %s: %v", val, err)
+		}
+		var parsed struct {
+			Peers []struct {
+				Keepalive any `json:"persistent_keepalive_interval"`
+			} `json:"peers"`
+		}
+		if err := json.Unmarshal(got, &parsed); err != nil {
+			t.Fatalf("невалидный JSON: %v", err)
+		}
+		// Одиночное значение остаётся числом ради старых сборок sing-box,
+		// диапазон уходит строкой.
+		want := any(val)
+		if !strings.Contains(val, "-") {
+			want = float64(25)
+		}
+		if parsed.Peers[0].Keepalive != want {
+			t.Fatalf("PersistentKeepalive = %s: получили %#v, ждали %#v", val, parsed.Peers[0].Keepalive, want)
+		}
+	}
+
+	for _, bad := range []string{"abc", "22-", "30-22", "-5", "70000"} {
+		if _, err := ParseConf(base + bad); err == nil {
+			t.Fatalf("PersistentKeepalive = %s должен отклоняться", bad)
+		}
+	}
+}

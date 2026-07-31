@@ -170,7 +170,7 @@
 		publicKey = tunnel.peer.publicKey;
 		$form.endpoint = tunnel.peer.endpoint;
 		$form.allowedIPs = tunnel.peer.allowedIPs.join(', ');
-		$form.persistentKeepalive = tunnel.peer.persistentKeepalive || 25;
+		$form.persistentKeepalive = String(tunnel.peer.persistentKeepalive ?? 25);
 	}
 
 	function buildUpdatePayload() {
@@ -393,7 +393,7 @@
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
 								<label class="field-label" for="persistentKeepalive">Keepalive</label>
-								<input type="number" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
+								<input type="text" inputmode="text" id="persistentKeepalive" class="field-input" bind:value={$form.persistentKeepalive} />
 								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>

@@ -176,8 +176,11 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		PublicKey: stored.Peer.PublicKey,
 		Endpoint:  rciEndpoint,
 	}
-	if stored.Peer.PersistentKeepalive > 0 {
-		peerCfg.KeepaliveInterval = stored.Peer.PersistentKeepalive
+	// NDMS принимает keepalive числом; диапазон AWG 3.0 сюда попасть не должен
+	// (запрещён валидацией), а если попал — оставляем поле пустым, чтобы не
+	// подсунуть прошивке мусор.
+	if n, ok := stored.Peer.PersistentKeepalive.Single(); ok && n > 0 {
+		peerCfg.KeepaliveInterval = n
 	}
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey

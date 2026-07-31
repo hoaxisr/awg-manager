@@ -30,7 +30,8 @@ export interface AWGPeer {
 	presharedKey?: string;
 	endpoint: string;
 	allowedIPs: string[];
-	persistentKeepalive?: number;
+	/** Секунды: число либо диапазон AWG 3.0 "min-max" строкой. */
+	persistentKeepalive?: number | string;
 }
 
 export interface ConnectivityCheckConfig {

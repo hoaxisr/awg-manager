@@ -259,9 +259,11 @@
 						? peer.allowedips.split(',').map((s) => s.trim()).filter(Boolean)
 						: current.peer.allowedIPs,
 
+				// AWG 3.0 допускает диапазон "min-max", поэтому значение переносим
+				// строкой как есть; формат проверяют схема формы и бэкенд.
 				persistentKeepalive:
-					peer.persistentkeepalive !== undefined && peer.persistentkeepalive !== ''
-						? numOrCurrent(peer.persistentkeepalive, current.peer.persistentKeepalive ?? 25)
+					peer.persistentkeepalive !== undefined && peer.persistentkeepalive.trim() !== ''
+						? peer.persistentkeepalive.trim()
 						: current.peer.persistentKeepalive,
 			},
 		};

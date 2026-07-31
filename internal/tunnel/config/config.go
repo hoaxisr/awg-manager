@@ -15,7 +15,7 @@ import (
 // Default values for tunnel configuration.
 const (
 	DefaultMTU                 = 1280
-	DefaultPersistentKeepalive = 25
+	DefaultPersistentKeepalive = "25"
 )
 
 // Configuration parsing errors.
@@ -94,10 +94,10 @@ func Generate(tunnel *storage.AWGTunnel) string {
 	b.WriteString(fmt.Sprintf("Endpoint = %s\n", tunnel.Peer.Endpoint))
 
 	keepalive := tunnel.Peer.PersistentKeepalive
-	if keepalive == 0 {
+	if keepalive.IsZero() {
 		keepalive = DefaultPersistentKeepalive
 	}
-	b.WriteString(fmt.Sprintf("PersistentKeepalive = %d\n", keepalive))
+	b.WriteString(fmt.Sprintf("PersistentKeepalive = %s\n", keepalive))
 
 	return b.String()
 }
@@ -142,10 +142,10 @@ func GenerateForExport(tunnel *storage.AWGTunnel) string {
 	b.WriteString(fmt.Sprintf("Endpoint = %s\n", tunnel.Peer.Endpoint))
 
 	keepalive := tunnel.Peer.PersistentKeepalive
-	if keepalive == 0 {
+	if keepalive.IsZero() {
 		keepalive = DefaultPersistentKeepalive
 	}
-	b.WriteString(fmt.Sprintf("PersistentKeepalive = %d\n", keepalive))
+	b.WriteString(fmt.Sprintf("PersistentKeepalive = %s\n", keepalive))
 
 	return b.String()
 }
@@ -320,8 +320,8 @@ func parsePeerField(tunnel *storage.AWGTunnel, key, value string) {
 			}
 		}
 	case "persistentkeepalive":
-		if v, err := strconv.Atoi(value); err == nil {
-			peer.PersistentKeepalive = v
+		if ValidateKeepalive(storage.Keepalive(value)) == nil {
+			peer.PersistentKeepalive = storage.Keepalive(value)
 		}
 	}
 }

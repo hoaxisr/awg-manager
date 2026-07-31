@@ -574,8 +574,8 @@ func sanitizeConfig(stored *storage.AWGTunnel) string {
 	}
 	fmt.Fprintf(&sb, "Endpoint = %s\n", stored.Peer.Endpoint)
 	fmt.Fprintf(&sb, "AllowedIPs = %s\n", strings.Join(stored.Peer.AllowedIPs, ", "))
-	if stored.Peer.PersistentKeepalive > 0 {
-		fmt.Fprintf(&sb, "PersistentKeepalive = %d\n", stored.Peer.PersistentKeepalive)
+	if !stored.Peer.PersistentKeepalive.IsZero() {
+		fmt.Fprintf(&sb, "PersistentKeepalive = %s\n", stored.Peer.PersistentKeepalive)
 	}
 	return sb.String()
 }
