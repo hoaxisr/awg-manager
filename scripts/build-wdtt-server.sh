@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PATCH_DIR="$PROJECT_ROOT/contrib/wdtt-server-patch"
-OUT_DIR="$PROJECT_ROOT/prebuilt/wdtt"
+OUT_DIR="$PROJECT_ROOT/build/wdtt"
 TAG="v1.4.62"
 VERSION="$(grep 'const PinnedServerVersion' "$PROJECT_ROOT/internal/wdtt/install.go" | sed -n 's/.*"\([^"]*\)".*/\1/p')"
 WORK="$(mktemp -d)"
@@ -27,3 +27,7 @@ sha256sum "$OUT_DIR/wdtt-server-linux-arm64"
 stat -c '%s bytes' "$OUT_DIR/wdtt-server-linux-arm64" 2>/dev/null || stat -f '%z bytes' "$OUT_DIR/wdtt-server-linux-arm64"
 
 echo "Output: $OUT_DIR/wdtt-server-linux-arm64"
+echo
+echo "Бинарь в IPK не кладётся — доставка только с зеркала. Выложить:"
+echo "  scp \$OUT_DIR/wdtt-server-linux-arm64 awgm-server:/var/www/entware-repo/wt/server/${VERSION}/"
+echo "и вписать SHA256/размер в internal/wdtt/install.go (EmbeddedBinaries)."

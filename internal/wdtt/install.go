@@ -30,8 +30,8 @@ const PinnedServerVersion = "0.1.6-awgm"
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
 
-// serverReleaseBase — patched wdtt-server (-no-nat) for Keenetic/awg-manager.
-// Fallback: бинарь из IPK (/opt/bin/wdtt-server) или prebuilt/wdtt в репозитории.
+// serverReleaseBase — patched wdtt-server (-no-nat, -wg-iface) for Keenetic/awg-manager.
+// Единственный канал доставки: в IPK бинаря нет (12 МБ на одну арку).
 const serverReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + PinnedServerVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch to pinned wdtt assets.
@@ -157,42 +157,5 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 	if binPath == "" {
 		return fmt.Errorf("путь бинаря не задан")
 	}
-	if binaryPresent(binPath) {
-		return nil
-	}
 	return childproc.Install(ctx, s.downloader, binPath, spec.URL, spec.SHA256, spec.Size)
-}
-
-// EnsureBundledInstall fixes permissions on wdtt binaries shipped in IPK
-// (tar from Windows may record 0644) so binaryPresent succeeds without mirror download.
-func (s *Service) EnsureBundledInstall() {
-	ensureWdttExecutable(s.clientBin)
-	ensureWdttExecutable(s.serverBin)
-	if s.installSpecs == nil {
-		return
-	}
-	if !binaryPresent(s.clientBin) {
-		return
-	}
-	if s.installSpecs.serverSupported() && !binaryPresent(s.serverBin) {
-		return
-	}
-	ver := installVersionLabel(*s.installSpecs)
-	if ver == "" || s.readInstalledVersion() == ver {
-		return
-	}
-	if err := s.writeInstalledVersion(ver); err != nil && s.appLog != nil {
-		s.appLog.Warn("install", "version-file", err.Error())
-	}
-}
-
-func ensureWdttExecutable(path string) {
-	st, err := os.Stat(path)
-	if err != nil || st.IsDir() {
-		return
-	}
-	if st.Mode().Perm()&0111 != 0 {
-		return
-	}
-	_ = os.Chmod(path, st.Mode().Perm()|0755)
 }

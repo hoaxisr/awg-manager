@@ -249,7 +249,6 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
 	a.freeturnService.EnsureBundledInstall()
-	a.wdttService.EnsureBundledInstall()
 	a.wdttService.SetLogger(a.loggingService)
 	if a.managedService != nil {
 		a.wdttService.SetAccessManager(&wdttAccessAdapter{

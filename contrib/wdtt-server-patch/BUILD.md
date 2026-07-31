@@ -18,7 +18,7 @@
 ## wg-iface.patch
 
 - **`-wg-iface opkgtun90`** — имя userspace WireGuard-интерфейса (по умолчанию `wdtt0`).
-- Нужен для регистрации WDTT в NDMS как `OpkgTun90..99`: NAT/LAN/policy через `ip nat` и ACL роутера, как у managed WireGuard.
+- Нужен для регистрации WDTT в NDMS как `OpkgTun17..49`: NAT/LAN/policy через `ip nat` и ACL роутера, как у managed WireGuard.
 
 ## Сборка (Entware arm64)
 
