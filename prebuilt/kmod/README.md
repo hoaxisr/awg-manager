@@ -47,8 +47,13 @@ tunnel comes up dead. `config.ValidateAWG3` enforces this on our side.
 
 1. Drop the rebuilt awg3 `.ko` files into this directory (same names).
 2. Drop the awg3 `awg` tool into `../bin/` (see that README).
-3. Bump `ExpectedKmodVersion` in `internal/sys/kmod/download.go` so installed
-   routers re-copy the new modules (loader.go re-installs on version change).
+3. Set `ExpectedKmodVersion` in `internal/sys/kmod/download.go` to the module's
+   own version string, the one `modinfo` reports and the one that ends up in
+   `/sys/module/amneziawg/version` (`3.0.20260731` for this batch). Any change
+   to the string makes installed routers re-copy the modules, and keeping it
+   equal to the real version means `kernelModuleVersion` and
+   `kernelModuleLoadedVersion` in system info agree once the router reboots.
+   While they differ, the disk holds a module the kernel has not loaded yet.
 
 Do NOT bump the version before the awg3 binaries are in place: the bump forces a
 re-copy, and a version marker ahead of the actual `.ko`/tool set would ship an
