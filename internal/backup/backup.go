@@ -28,8 +28,10 @@ type Manifest struct {
 	AppVersion string    `json:"appVersion,omitempty"`
 }
 
-// Export writes a gzip-compressed tar of dataDir to w. Runtime caches are skipped.
-func Export(dataDir, appVersion string, w io.Writer) error {
+// CheckDataDir validates dataDir before an export starts. Отдельно от Export,
+// чтобы HTTP-обработчик мог ответить ошибкой ДО отправки заголовков и уже
+// потом стримить архив, не собирая его целиком в памяти.
+func CheckDataDir(dataDir string) error {
 	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 	if dataDir == "" {
 		return fmt.Errorf("data-dir не задан")
@@ -41,6 +43,15 @@ func Export(dataDir, appVersion string, w io.Writer) error {
 	if !info.IsDir() {
 		return fmt.Errorf("data-dir не каталог")
 	}
+	return nil
+}
+
+// Export writes a gzip-compressed tar of dataDir to w. Runtime caches are skipped.
+func Export(dataDir, appVersion string, w io.Writer) error {
+	if err := CheckDataDir(dataDir); err != nil {
+		return err
+	}
+	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 
 	gz := gzip.NewWriter(w)
 	defer gz.Close()
@@ -152,10 +163,27 @@ func Restore(dataDir string, r io.Reader) error {
 		_ = os.RemoveAll(staging)
 		return fmt.Errorf("не удалось применить резервную копию: %w", err)
 	}
+	prunePreviousRestores(parent, filepath.Base(dataDir), previous)
 	if err := WritePostRestoreMarker(dataDir); err != nil {
 		return fmt.Errorf("не удалось записать маркер post-restore: %w", err)
 	}
 	return nil
+}
+
+// prunePreviousRestores оставляет только последнюю копию `<name>.pre-restore-*`.
+// Без этого каждое восстановление добавляло бы ещё один полный каталог данных
+// на /opt, где места мало и чистить их некому.
+func prunePreviousRestores(parent, name, keep string) {
+	matches, err := filepath.Glob(filepath.Join(parent, name+".pre-restore-*"))
+	if err != nil {
+		return
+	}
+	for _, path := range matches {
+		if path == keep {
+			continue
+		}
+		_ = os.RemoveAll(path)
+	}
 }
 
 func shouldSkip(rel string) bool {
@@ -257,28 +285,9 @@ func extractArchive(r io.Reader, destDir string) error {
 			if err := f.Close(); err != nil {
 				return err
 			}
-		default:
-			if hdr.Typeflag == 0 && hdr.Size >= 0 {
-				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-					return err
-				}
-				total += hdr.Size
-				if total > maxArchiveLen {
-					return fmt.Errorf("архив слишком большой (лимит %d МБ)", maxArchiveLen>>20)
-				}
-				f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode).Perm())
-				if err != nil {
-					return err
-				}
-				if _, err := io.Copy(f, tr); err != nil {
-					f.Close()
-					return err
-				}
-				if err := f.Close(); err != nil {
-					return err
-				}
-			}
 		}
+		// Прочие типы (симлинки, hardlink'и, устройства) пропускаем молча: в
+		// наших архивах их нет, а распаковывать их из чужого файла незачем.
 	}
 	return nil
 }

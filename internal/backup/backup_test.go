@@ -88,3 +88,39 @@ func TestExtractRejectsPathTraversal(t *testing.T) {
 		t.Fatal("expected path traversal error")
 	}
 }
+
+// Каждое восстановление оставляло полный каталог данных на /opt; ротации не
+// было. Держим только последнюю копию.
+func TestRestorePrunesOlderPreRestoreCopies(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(root, "awg-manager.pre-restore-20200101-000000")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.16.3", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("старая копия не удалена: %v", err)
+	}
+	kept, err := filepath.Glob(filepath.Join(root, "awg-manager.pre-restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("ожидали ровно одну копию, получили %v", kept)
+	}
+}

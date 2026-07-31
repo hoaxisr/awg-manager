@@ -220,6 +220,14 @@ func (a *app) startBootSequence() {
 				a.orch.HandleEvent(a.shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
 
+			// Маркер надо снять и здесь: холодный старт и так поднимается из
+			// восстановленного конфига, а невынутый маркер намертво глушит
+			// автостарт FreeTurn/WDTT (resumeEnabledProxyClients выходит по
+			// HasPostRestoreMarker) на всех последующих загрузках.
+			if backup.ConsumePostRestoreMarker(a.dataDir) {
+				a.bootLog.Info("startup", "", "Post-restore marker consumed on cold boot")
+			}
+
 			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
 			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
 			a.scheduleProxyClientAutostart("cold-boot")
