@@ -3073,6 +3073,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
 })]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
+	"POST /system/backup/import": v.lazy(() => api_APIEnvelope),
 	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
 	"POST /system/restart": v.lazy(() => api_APIEnvelope),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
