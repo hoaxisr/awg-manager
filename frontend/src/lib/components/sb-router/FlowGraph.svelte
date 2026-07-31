@@ -10,6 +10,7 @@
   import { systemInfo } from '$lib/stores/system';
   import { openDrawer } from './drawerStore';
   import EngineFatalModal from './EngineFatalModal.svelte';
+  import SimpleDnsPickerModal from './SimpleDnsPickerModal.svelte';
   import { openSourceDrawer } from './sourceDrawerStore';
   import { deriveRoutingSummary, resolveDefaultWanLabel } from './flowData';
   import { liveConnectionsTraffic } from './liveConnectionsStore';
@@ -48,6 +49,12 @@
   // а не просто «включён в настройках». Узел светится только когда работает.
   let engineActive = $derived(engineOn && (s?.active ?? false));
   let engineFatalOpen = $state(false);
+  // Тег DNS-сервера, открытого в пикере. dns-direct правится с выбором
+  // протокола, туннельный — всегда UDP.
+  let dnsPickerTag = $state<string | null>(null);
+  const dnsPickerServer = $derived(
+    dnsPickerTag ? (($dnsServersStore ?? []).find((srv) => srv.tag === dnsPickerTag) ?? null) : null,
+  );
   // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
   // иначе — обычные настройки движка (StatusDrawer).
   const engineFatal = $derived(engineOn && !engineActive && !!s?.lastError);
@@ -107,6 +114,19 @@
   let trafficText = $derived($liveConnectionsTraffic);
 </script>
 
+{#snippet dnsLine(text: string, tag: string | null)}
+  {#if tag}
+    <button
+      type="button"
+      class="dns-btn"
+      title="Изменить выходной DNS"
+      onclick={() => (dnsPickerTag = tag)}
+    >{text}</button>
+  {:else}
+    <div class="dns">{text}</div>
+  {/if}
+{/snippet}
+
 <div class="flow">
   <div class="row">
     <button type="button" class="node source" onclick={openSourceDrawer} aria-label="Настроить источник трафика">
@@ -143,13 +163,12 @@
             <span class="out-hint mut">{' · '}{defaultRuleHint}</span>
           {/if}
         </div>
-        <div class="dns">
-          {#if defaultWanLabel}
-            {defaultWanLabel}{' · '}DNS: {summary.defaultDnsLabel}
-          {:else}
-            DNS: {summary.defaultDnsLabel}
-          {/if}
-        </div>
+        {@render dnsLine(
+          defaultWanLabel
+            ? `${defaultWanLabel} · DNS: ${summary.defaultDnsLabel}`
+            : `DNS: ${summary.defaultDnsLabel}`,
+          summary.defaultDnsTag,
+        )}
       </div>
       {#if hasTunnel}
         <div class="out tun">
@@ -161,13 +180,12 @@
               <span class="out-hint mut">{' · '}{pluralize(summary.tunneledRuleCount, RULE_WORDS)}</span>
             {/if}
           </div>
-          <div class="dns">
-            {#if summary.tunnelDnsLabel}
-              DNS: {summary.tunnelDnsLabel} (через туннель)
-            {:else}
-              DNS: через туннель
-            {/if}
-          </div>
+          {@render dnsLine(
+            summary.tunnelDnsLabel
+              ? `DNS: ${summary.tunnelDnsLabel} (через туннель)`
+              : 'DNS: через туннель',
+            summary.tunnelDnsTag,
+          )}
         </div>
       {/if}
     </div>
@@ -179,6 +197,15 @@
   lastError={s?.lastError ?? ''}
   onclose={() => (engineFatalOpen = false)}
 />
+
+{#if dnsPickerServer}
+  <SimpleDnsPickerModal
+    server={dnsPickerServer}
+    allowProtocol={dnsPickerServer.tag !== summary.tunnelDnsTag}
+    onclose={() => (dnsPickerTag = null)}
+    onsaved={() => (dnsPickerTag = null)}
+  />
+{/if}
 
 <style>
   .flow {
@@ -251,6 +278,26 @@
     font-weight: 600;
   }
   .dns { font-size: 11px; color: var(--text-muted); margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dns-btn {
+    display: block;
+    width: 100%;
+    margin-top: 5px;
+    padding: 5px 0 0;
+    border: 0;
+    border-top: 1px dashed var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 11px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .dns-btn:hover {
+    color: var(--text);
+  }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
   .dot.muted { background: var(--text-muted); }
   .acc { color: var(--accent); font-weight: 600; }

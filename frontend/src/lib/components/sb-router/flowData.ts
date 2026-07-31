@@ -13,6 +13,8 @@ export interface RoutingSummary {
   defaultLabel: string;
   /** DNS для ветки по умолчанию: server final-сервера, иначе «системный». */
   defaultDnsLabel: string;
+  /** Тег сервера под dns.final — для перехода в редактор. null, если сервера нет. */
+  defaultDnsTag: string | null;
   /** Уникальные теги туннельных outbound'ов, используемых правилами (в порядке появления). */
   tunnels: string[];
   /** Кол-во туннелируемых правил. */
@@ -21,7 +23,13 @@ export interface RoutingSummary {
   bypassRuleCount: number;
   /** DNS туннельной ветки: server первого detour-сервера, иначе null. */
   tunnelDnsLabel: string | null;
+  /** Тег первого detour-сервера. null, если такого нет. */
+  tunnelDnsTag: string | null;
 }
+
+// Конвенция тега туннельного DNS-сервера (см. emptyStateActions.ts). Своя
+// константа: импорт между модулями сюда не нужен.
+const DNS_TUNNEL_TAG = 'dns-tunnel';
 
 function isTunneled(r: SingboxRouterRule): boolean {
   return !!r.outbound && r.outbound !== 'direct' && r.action !== 'reject';
@@ -30,12 +38,6 @@ function isTunneled(r: SingboxRouterRule): boolean {
 function isBypassTunnel(r: SingboxRouterRule): boolean {
   if (r.action === 'reject' || isSystemRule(r)) return false;
   return !isTunneled(r);
-}
-
-function dnsLabelByTag(servers: SingboxRouterDNSServer[], tag: string): string | null {
-  const s = servers.find((x) => x.tag === tag);
-  if (!s) return null;
-  return s.server || s.tag;
 }
 
 function outboundLabelByTag(groups: OutboundGroup[] | undefined, tag: string): string {
@@ -90,17 +92,22 @@ export function deriveRoutingSummary(
   }
 
   const defaultLabel = routeFinal && routeFinal !== 'direct' ? outboundLabelByTag(outboundOptions, routeFinal) : 'Напрямую';
-  const defaultDnsLabel = dnsLabelByTag(dnsServers, dnsGlobals.final) ?? 'системный';
+  const finalServer = dnsServers.find((x) => x.tag === dnsGlobals.final);
+  const defaultDnsLabel = finalServer ? finalServer.server || finalServer.tag : 'системный';
 
-  const detourServer = dnsServers.find((s) => !!s.detour);
+  // На легаси-конфигах detour может висеть на dns-direct — тег dns-tunnel
+  // приоритетнее первого сервера с detour.
+  const detourServer = dnsServers.find((s) => s.tag === DNS_TUNNEL_TAG) ?? dnsServers.find((s) => !!s.detour);
   const tunnelDnsLabel = detourServer ? (detourServer.server || detourServer.tag) : null;
 
   return {
     defaultLabel,
     defaultDnsLabel,
+    defaultDnsTag: finalServer?.tag ?? null,
     tunnels: tunnels.map((tag) => outboundLabelByTag(outboundOptions, tag)),
     tunneledRuleCount: tunneled.length,
     bypassRuleCount: bypass.length,
     tunnelDnsLabel,
+    tunnelDnsTag: detourServer?.tag ?? null,
   };
 }

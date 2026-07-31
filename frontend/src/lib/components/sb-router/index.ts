@@ -143,6 +143,7 @@ export { default as MobileBottomBar } from './MobileBottomBar.svelte';
 
 // Engine FATAL indication
 export { default as EngineFatalModal } from './EngineFatalModal.svelte';
+export { default as SimpleDnsPickerModal } from './SimpleDnsPickerModal.svelte';
 
 // Settings Drawer
 export { default as SingboxRouterRedesignPage } from './SingboxRouterRedesignPage.svelte';

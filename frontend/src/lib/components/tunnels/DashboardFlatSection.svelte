@@ -545,6 +545,10 @@
 		justify-content: flex-end;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+		/* Единственный ребёнок .tunnels-toolbar — без роста тулбар жался по
+		   содержимому влево, и справа оставалась пустота (#607). */
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 
 	.toolbar-actions :global(.btn.size-md) {

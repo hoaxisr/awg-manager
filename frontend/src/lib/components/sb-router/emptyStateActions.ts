@@ -1,6 +1,6 @@
 import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
-import type { SingboxRouterDNSServer, SingboxRouterRule, SingboxRouterDNSRule } from '$lib/types';
+import type { SingboxRouterRule, SingboxRouterDNSRule } from '$lib/types';
 import type { CustomMatcherFields } from './addWizardStore';
 import type { TemplateGroup } from './templatesData';
 import type { SubmitResult } from './templatesActions';
@@ -56,14 +56,21 @@ export async function ensureTunnelDnsInfra(tunnelTag: string): Promise<void> {
   if (!tags.has(DNS_DIRECT_TAG)) {
     await api.singboxRouterAddDNSServer({ tag: DNS_DIRECT_TAG, type: 'udp', server: '77.88.8.8' });
   }
-  const tunnelServer: SingboxRouterDNSServer = { tag: DNS_TUNNEL_TAG, type: 'udp', server: '9.9.9.9', detour: tunnelTag };
-  if (tags.has(DNS_TUNNEL_TAG)) {
-    await api.singboxRouterUpdateDNSServer(DNS_TUNNEL_TAG, tunnelServer);
-  } else {
-    await api.singboxRouterAddDNSServer(tunnelServer);
+  // Адрес dns-tunnel мог быть перенастроен пользователем (#560) — трогаем
+  // только detour: он обязан идти за туннелем свежего правила.
+  const tunnelServer = servers.find((s) => s.tag === DNS_TUNNEL_TAG);
+  if (!tunnelServer) {
+    await api.singboxRouterAddDNSServer({ tag: DNS_TUNNEL_TAG, type: 'udp', server: '9.9.9.9', detour: tunnelTag });
+  } else if (tunnelServer.detour !== tunnelTag) {
+    await api.singboxRouterUpdateDNSServer(DNS_TUNNEL_TAG, { ...tunnelServer, detour: tunnelTag });
   }
+  // final перебиваем только когда он пуст или висит на удалённом сервере;
+  // иначе каждое сохранение правила откатывало бы выбор пользователя.
   const globals = await api.singboxRouterGetDNSGlobals();
-  await api.singboxRouterPutDNSGlobals({ final: DNS_DIRECT_TAG, strategy: globals.strategy || 'prefer_ipv4' });
+  const finalAlive = !!globals.final && (tags.has(globals.final) || globals.final === DNS_DIRECT_TAG);
+  if (!finalAlive) {
+    await api.singboxRouterPutDNSGlobals({ final: DNS_DIRECT_TAG, strategy: globals.strategy || 'prefer_ipv4' });
+  }
 }
 
 const DNS_LOCAL_TAG = 'dns-local';
