@@ -13,7 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // routeHandlers держит handlers, разделяемые секциями registerRoutes.
@@ -565,18 +564,20 @@ func (s *Server) registerPolicyRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Devices endpoint uses hotspot RCI — works on both OS4 and OS5
 	mux.HandleFunc("/api/access-policies/devices", h.guarded(h.accessPolicyHandler.ListDevices))
 
-	// Access policies (protected + boot guarded) — OS5 only
-	if osdetect.Is5() {
-		mux.HandleFunc("/api/access-policies", h.guarded(h.accessPolicyHandler.List))
-		mux.HandleFunc("/api/access-policies/create", h.guarded(h.accessPolicyHandler.Create))
-		mux.HandleFunc("/api/access-policies/delete", h.guarded(h.accessPolicyHandler.Delete))
-		mux.HandleFunc("/api/access-policies/description", h.guarded(h.accessPolicyHandler.SetDescription))
-		mux.HandleFunc("/api/access-policies/standalone", h.guarded(h.accessPolicyHandler.SetStandalone))
-		mux.HandleFunc("/api/access-policies/permit", h.guarded(h.accessPolicyHandler.PermitInterface))
-		mux.HandleFunc("/api/access-policies/assign", h.guarded(h.accessPolicyHandler.AssignDevice))
-		mux.HandleFunc("/api/access-policies/interfaces", h.guarded(h.accessPolicyHandler.ListGlobalInterfaces))
-		mux.HandleFunc("/api/access-policies/interface-up", h.guarded(h.accessPolicyHandler.SetInterfaceUp))
-	}
+	// Политики доступа работают на обеих ветках прошивки: `ip policy` есть с
+	// 2.12, `ip policy standalone` с 4.02, а `/show/rc/ip/policy` отдаёт
+	// конфиг и на 4.x. Гейта по версии здесь быть не должно ещё и потому, что
+	// osdetect отдаёт 4.x, пока не заполнен ndmsinfo: маршруты регистрируются
+	// один раз при старте, и медленный NDMS выключал бы вкладку и на 5.x.
+	mux.HandleFunc("/api/access-policies", h.guarded(h.accessPolicyHandler.List))
+	mux.HandleFunc("/api/access-policies/create", h.guarded(h.accessPolicyHandler.Create))
+	mux.HandleFunc("/api/access-policies/delete", h.guarded(h.accessPolicyHandler.Delete))
+	mux.HandleFunc("/api/access-policies/description", h.guarded(h.accessPolicyHandler.SetDescription))
+	mux.HandleFunc("/api/access-policies/standalone", h.guarded(h.accessPolicyHandler.SetStandalone))
+	mux.HandleFunc("/api/access-policies/permit", h.guarded(h.accessPolicyHandler.PermitInterface))
+	mux.HandleFunc("/api/access-policies/assign", h.guarded(h.accessPolicyHandler.AssignDevice))
+	mux.HandleFunc("/api/access-policies/interfaces", h.guarded(h.accessPolicyHandler.ListGlobalInterfaces))
+	mux.HandleFunc("/api/access-policies/interface-up", h.guarded(h.accessPolicyHandler.SetInterfaceUp))
 
 	// Client routes (per-device VPN routing) — works on both OS4 and OS5
 	h.crHandler = api.NewClientRouteHandler(s.clientRouteService)
@@ -591,24 +592,8 @@ func (s *Server) registerPolicyRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/routing/client-routes", h.guarded(h.crHandler.HandleList))
 	// Policy devices endpoint is unconditional (hotspot RCI works on both OSes).
 	mux.HandleFunc("/api/routing/policy-devices", h.guarded(h.accessPolicyHandler.ListDevices))
-	if osdetect.Is5() {
-		mux.HandleFunc("/api/routing/access-policies", h.guarded(h.accessPolicyHandler.List))
-		mux.HandleFunc("/api/routing/policy-interfaces", h.guarded(h.accessPolicyHandler.ListGlobalInterfaces))
-	} else {
-		// OS4: access policies + global-interfaces are NOT available.
-		// Return empty arrays so the polling stores stay in the 'fresh'
-		// state instead of erroring and showing a badge.
-		emptyArr := func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		}
-		mux.HandleFunc("/api/routing/access-policies", h.guarded(emptyArr))
-		mux.HandleFunc("/api/routing/policy-interfaces", h.guarded(emptyArr))
-	}
+	mux.HandleFunc("/api/routing/access-policies", h.guarded(h.accessPolicyHandler.List))
+	mux.HandleFunc("/api/routing/policy-interfaces", h.guarded(h.accessPolicyHandler.ListGlobalInterfaces))
 
 }
 

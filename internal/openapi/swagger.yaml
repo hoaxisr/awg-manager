@@ -7247,7 +7247,8 @@ info:
 paths:
   /access-policies:
     get:
-      description: KeeneticOS 5 only when route is registered.
+      description: 'Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since
+        firmware 2.12.'
       parameters:
       - description: Pass 'true' to bypass NDMS cache
         in: query
@@ -11175,7 +11176,8 @@ paths:
       - device-proxy
   /routing/access-policies:
     get:
-      description: KeeneticOS 5 only when route is registered.
+      description: 'Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since
+        firmware 2.12.'
       parameters:
       - description: Pass 'true' to bypass NDMS cache
         in: query
