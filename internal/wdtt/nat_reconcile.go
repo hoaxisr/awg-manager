@@ -28,6 +28,10 @@ func (s *Service) natReconcileLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.reconcileRunningServersNAT(ctx)
+			// Не на первом (синхронном) проходе: автостарт серверов
+			// отложен на 8 с, до него «процесс не запущен» ещё не
+			// означает сироту.
+			s.reapOrphanOpkgTuns(ctx)
 		}
 	}
 }

@@ -160,6 +160,8 @@ func (s *Service) StartServerInstance(id string) error {
 		return errors.New("укажите пароль подключения (-password)")
 	}
 	ctx := context.Background()
+	s.beginOpkgStart()
+	defer s.endOpkgStart()
 	cfg, err := s.ensureServerOpkgIndex(ctx, id, saved)
 	if err != nil {
 		return err

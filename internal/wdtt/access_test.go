@@ -19,7 +19,7 @@ func (s *stubAccessManager) ApplyLANSegmentsToInterface(context.Context, string,
 	return nil
 }
 func (s *stubAccessManager) EnsureInterfaceFirewallPermit(context.Context, string) error { return nil }
-func (s *stubAccessManager) KernelIfaceName(context.Context, string) string             { return "" }
+func (s *stubAccessManager) KernelIfaceName(context.Context, string) string              { return "" }
 func (s *stubAccessManager) ResolveLANSegmentCIDRs(context.Context, []string) ([]string, error) {
 	return nil, nil
 }
