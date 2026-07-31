@@ -10,6 +10,32 @@ All current modules target Linux **4.9-ndm** (verify with
 `strings amneziawg-KN-XXXX.ko | grep vermagic`). Arch split: MIPS32 LE
 (mt7621 / mt7628), MIPS32 BE (en75xx), ARM aarch64 (mt7622 / mt7981 / mt7988).
 
+## One file per group, not per model
+
+The sweep builds a module for every model, but the results collapse: 28 models
+produce 10 distinct binaries. Within a group `.text`, `.data`, `.rodata`,
+`.modinfo` and vermagic are identical, `__versions` is empty (no
+CONFIG_MODVERSIONS, so no per-kernel symbol CRCs), and the undefined-symbol sets
+match. What separates the groups is kernel configuration the hwnat patch keys
+off, which is why KN-1011 stands apart from its mt7621 neighbours.
+
+So this directory holds one file per group and `modelAlias` in
+`internal/sys/kmod/loader.go` points the rest at it. The mipsel IPK carries
+0.7 MB of modules instead of 5 MB.
+
+Regrouping after a rebuild:
+
+```
+for f in amneziawg-*.ko; do
+  echo "$(readelf -x .text "$f" | sha256sum | cut -c1-8) $(readelf -p .modinfo "$f" | grep -o 'vermagic=.*') $f"
+done | sort
+```
+
+Models that fall outside the built set keep whatever module is already on the
+router: `selectBundledModule` finds no matching file, copies nothing and leaves
+the version marker alone. A fresh install on such a model gets no kernel module
+at all, so kernel mode is unavailable there and only NativeWG remains.
+
 ## AWG 3.0 (awg3) rebuild
 
 AWG 3.0 device params (HeaderProtectionKey, ContentPaddingAddition, and the

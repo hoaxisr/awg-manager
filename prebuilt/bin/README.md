@@ -34,9 +34,11 @@ rejects those keys outright.
 
 Build it with the Keenetic SDK: `keenetic-sdk/package/net/amneziawg-tools`, one
 build per arch (`./configure.sh <MODEL>` then
-`make package/net/amneziawg-tools/compile`). The binary links against the
-firmware's musl loader (`/lib/ld-musl-*.so.1`), which is present on any Keenetic
-running Entware — no static build needed.
+`make package/net/amneziawg-tools/compile`; KN-1810 for mipsel, KN-2010 for mips,
+KN-1812 for aarch64). Drop the `sed` that the package Makefile used to run over
+`src/uapi/linux/linux/wireguard.h`: it renamed the generic netlink family to
+"wireguard", and the tool then talked to the kernel's own module instead of
+`amneziawg`.
 
 Replacing the tool ahead of the modules is safe: it negotiates on the netlink
 family version the kernel reports (2 for the AWG 2.0 modules, 3 for awg3) and
