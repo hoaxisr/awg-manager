@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { calcByteSize } from '$lib/utils/protocols';
 
+// Header protection takes its 12-byte nonce from the front of the Sx junk
+// padding (S1 initiation, S2 response, S3 cookie, S4 transport), so shorter
+// padding leaves the two sides with different nonces and every packet drops.
+export const HEADER_PROTECTION_MIN_PADDING = 12;
+
 // Значение u16_range из AWG 3.0: число или диапазон "min-max", обе границы
 // 0-65535, верхняя не меньше нижней. Пустая строка означает "не задано".
 function isU16Range(v: string): boolean {
@@ -89,7 +94,12 @@ export const editTunnelSchema = z.object({
     const total = calcByteSize(data.i1) + calcByteSize(data.i2) +
         calcByteSize(data.i3) + calcByteSize(data.i4) + calcByteSize(data.i5);
     return total <= 4096;
-}, { message: 'Суммарный размер I1-I5 не должен превышать 4096 байт', path: ['i1'] });
+}, { message: 'Суммарный размер I1-I5 не должен превышать 4096 байт', path: ['i1'] })
+    .refine(data => !data.headerProtectionKey ||
+        [data.s1, data.s2, data.s3, data.s4].every(v => v >= HEADER_PROTECTION_MIN_PADDING), {
+        message: `При заданном HeaderProtectionKey значения S1-S4 должны быть не меньше ${HEADER_PROTECTION_MIN_PADDING} — из этих байт берётся nonce`,
+        path: ['headerProtectionKey'],
+    });
 
 // Infer types from schemas
 export type EditTunnel = z.infer<typeof editTunnelSchema>;

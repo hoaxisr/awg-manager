@@ -124,8 +124,45 @@ describe('editTunnelSchema awg3 range params', () => {
         });
     }
 
-    it('headerProtectionKey accepts empty and a base64 key', () => {
+    it('headerProtectionKey accepts empty; a key needs S1-S4 (see padding suite)', () => {
         expect(fieldErr('headerProtectionKey', '')).toBeUndefined();
-        expect(fieldErr('headerProtectionKey', 'cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=')).toBeUndefined();
+        const withPadding = editTunnelSchema.safeParse({
+            ...base('vpn.example.com:51820'),
+            headerProtectionKey: 'cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=',
+            s1: 16, s2: 16, s3: 16, s4: 16,
+        });
+        expect(withPadding.success).toBe(true);
+    });
+});
+
+describe('editTunnelSchema header protection padding', () => {
+    const key = 'cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=';
+
+    function hpErr(fields: Record<string, unknown>): string | undefined {
+        const res = editTunnelSchema.safeParse({
+            ...base('1.2.3.4:51820'),
+            headerProtectionKey: key,
+            ...fields,
+        });
+        if (res.success) return undefined;
+        return res.error.issues.find(i => i.path[0] === 'headerProtectionKey')?.message;
+    }
+
+    it('accepts S1-S4 at or above the 12-byte nonce', () => {
+        expect(hpErr({ s1: 12, s2: 12, s3: 12, s4: 12 })).toBeUndefined();
+        expect(hpErr({ s1: 87, s2: 118, s3: 36, s4: 23 })).toBeUndefined();
+    });
+
+    it('rejects a key with no S values — the silently dead tunnel', () => {
+        expect(hpErr({})).toBeDefined();
+    });
+
+    it('rejects a single S value below the nonce size', () => {
+        expect(hpErr({ s1: 87, s2: 118, s3: 36, s4: 11 })).toBeDefined();
+    });
+
+    it('leaves S values alone when no key is set', () => {
+        const res = editTunnelSchema.safeParse({ ...base('1.2.3.4:51820'), s1: 0, s2: 0, s3: 0, s4: 0 });
+        expect(res.success).toBe(true);
     });
 });
