@@ -197,7 +197,7 @@ func TestSyncPeer_ResolveFailedUnchangedPeerKeepsGuard(t *testing.T) {
 		// Отравленный кэш: v4-адрес ПРЕЖНЕГО endpoint'а. Фолбэк на него
 		// «подтвердил» бы v4 и снял стража — свежий резолв его игнорирует.
 		ResolvedEndpointIP: "1.2.3.4",
-		Peer:               storage.AWGPeer{PublicKey: "KEY", Endpoint: "vpn.example.com:51820", PersistentKeepalive: 25},
+		Peer:               storage.AWGPeer{PublicKey: "KEY", Endpoint: "vpn.example.com:51820", PersistentKeepalive: "25"},
 	}
 	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)

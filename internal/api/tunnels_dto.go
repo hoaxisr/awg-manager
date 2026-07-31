@@ -82,7 +82,10 @@ type AWGPeerDTO struct {
 	PublicKey           string   `json:"publicKey" example:"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="`
 	Endpoint            string   `json:"endpoint" example:"vpn.example.com:51820"`
 	AllowedIPs          []string `json:"allowedIPs" example:"0.0.0.0/0"`
-	PersistentKeepalive int      `json:"persistentKeepalive,omitempty" example:"25"`
+	// PersistentKeepalive — секунды. Одиночное значение приходит числом, а
+	// диапазон AWG 3.0 ("min-max") строкой: число сохранено ради tunnels.json,
+	// который в этой форме читают и предыдущие версии.
+	PersistentKeepalive any `json:"persistentKeepalive,omitempty" swaggertype:"object"`
 }
 
 // TunnelStateInfoDTO mirrors frontend TunnelStateInfo.

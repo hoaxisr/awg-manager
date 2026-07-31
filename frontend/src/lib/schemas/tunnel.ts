@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { calcByteSize } from '$lib/utils/protocols';
 
+// Значение u16_range из AWG 3.0: число или диапазон "min-max", обе границы
+// 0-65535, верхняя не меньше нижней. Пустая строка означает "не задано".
+function isU16Range(v: string): boolean {
+    if (v === '') return true;
+    const m = v.match(/^(\d{1,5})(?:-(\d{1,5}))?$/);
+    if (!m) return false;
+    const lo = Number(m[1]);
+    if (lo > 65535) return false;
+    if (m[2] !== undefined) {
+        const hi = Number(m[2]);
+        if (hi > 65535 || hi < lo) return false;
+    }
+    return true;
+}
+
 // Edit tunnel schema - flat structure matching the edit form
 export const editTunnelSchema = z.object({
     name: z.string()
@@ -36,7 +51,11 @@ export const editTunnelSchema = z.object({
         return (val.match(/:/g) || []).length <= 1;
     }, { message: 'IPv6 endpoint указывается в квадратных скобках: [2001:db8::1]:51820' }),
     allowedIPs: z.string().min(1, 'AllowedIPs обязателен'),
-    persistentKeepalive: z.coerce.number().int().min(0).max(65535).default(25),
+    // В AWG 3.0 keepalive стал диапазоном "min-max", из которого пир берёт
+    // случайное значение на каждый взвод таймера; NativeWG диапазон не примет,
+    // это проверяет бэкенд.
+    persistentKeepalive: z.coerce.string().default('25')
+        .refine(isU16Range, { message: 'Укажите число 0-65535 или диапазон min-max' }),
     // AWG params
     jc: z.coerce.number().int().min(1).max(128).default(4),
     jmin: z.coerce.number().int().min(0).max(1280).default(40),

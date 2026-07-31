@@ -48,7 +48,7 @@ const api_AWGOutboundTagsResponse: v.GenericSchema = v.looseObject({
 const api_AWGPeerDTO: v.GenericSchema = v.looseObject({
 	allowedIPs: v.optional(v.nullable(v.array(v.string()))),
 	endpoint: v.optional(v.nullable(v.string())),
-	persistentKeepalive: v.optional(v.nullable(v.number())),
+	persistentKeepalive: v.optional(v.nullable(v.unknown())),
 	publicKey: v.optional(v.nullable(v.string())),
 });
 

@@ -116,8 +116,11 @@ definitions:
         example: vpn.example.com:51820
         type: string
       persistentKeepalive:
-        example: 25
-        type: integer
+        description: |-
+          PersistentKeepalive — секунды. Одиночное значение приходит числом, а
+          диапазон AWG 3.0 ("min-max") строкой: число сохранено ради tunnels.json,
+          который в этой форме читают и предыдущие версии.
+        type: object
       publicKey:
         example: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
         type: string

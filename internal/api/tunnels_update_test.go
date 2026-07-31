@@ -150,7 +150,7 @@ func TestMergePeerWhitelist_PreservesAllowedIPsOnPartial(t *testing.T) {
 			PresharedKey:        "psk",
 			Endpoint:            "1.2.3.4:51820",
 			AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 	req := &storage.AWGTunnel{
@@ -159,7 +159,7 @@ func TestMergePeerWhitelist_PreservesAllowedIPsOnPartial(t *testing.T) {
 	mergePeerWhitelist(req, existing)
 
 	if req.Peer.PublicKey != "pubkey" || req.Peer.PresharedKey != "psk" ||
-		req.Peer.Endpoint != "1.2.3.4:51820" || req.Peer.PersistentKeepalive != 25 ||
+		req.Peer.Endpoint != "1.2.3.4:51820" || req.Peer.PersistentKeepalive != "25" ||
 		len(req.Peer.AllowedIPs) != 2 {
 		t.Fatalf("Peer not fully preserved: %+v", req.Peer)
 	}
@@ -174,7 +174,7 @@ func TestMergePeerWhitelist_AppliesAllFiveFields(t *testing.T) {
 			PresharedKey:        "oldpsk",
 			Endpoint:            "1.1.1.1:51820",
 			AllowedIPs:          []string{"10.0.0.0/8"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 	req := &storage.AWGTunnel{
@@ -183,13 +183,13 @@ func TestMergePeerWhitelist_AppliesAllFiveFields(t *testing.T) {
 			PresharedKey:        "newpsk",
 			Endpoint:            "2.2.2.2:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 60,
+			PersistentKeepalive: "60",
 		},
 	}
 	mergePeerWhitelist(req, existing)
 
 	if req.Peer.PublicKey != "newkey" || req.Peer.PresharedKey != "newpsk" ||
-		req.Peer.Endpoint != "2.2.2.2:51820" || req.Peer.PersistentKeepalive != 60 ||
+		req.Peer.Endpoint != "2.2.2.2:51820" || req.Peer.PersistentKeepalive != "60" ||
 		len(req.Peer.AllowedIPs) != 1 || req.Peer.AllowedIPs[0] != "0.0.0.0/0" {
 		t.Fatalf("Peer fields not applied: %+v", req.Peer)
 	}

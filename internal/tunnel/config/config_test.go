@@ -44,8 +44,8 @@ PersistentKeepalive = 30
 	if tunnel.Peer.Endpoint != "vpn.example.com:51820" {
 		t.Errorf("Endpoint = %q, want %q", tunnel.Peer.Endpoint, "vpn.example.com:51820")
 	}
-	if tunnel.Peer.PersistentKeepalive != 30 {
-		t.Errorf("PersistentKeepalive = %d, want %d", tunnel.Peer.PersistentKeepalive, 30)
+	if tunnel.Peer.PersistentKeepalive != "30" {
+		t.Errorf("PersistentKeepalive = %s, want %d", tunnel.Peer.PersistentKeepalive, 30)
 	}
 	if len(tunnel.Peer.AllowedIPs) != 2 {
 		t.Fatalf("AllowedIPs len = %d, want 2", len(tunnel.Peer.AllowedIPs))
@@ -178,7 +178,7 @@ Endpoint = server:51820
 		t.Errorf("MTU = %d, want default %d", tunnel.Interface.MTU, DefaultMTU)
 	}
 	if tunnel.Peer.PersistentKeepalive != DefaultPersistentKeepalive {
-		t.Errorf("PersistentKeepalive = %d, want default %d",
+		t.Errorf("PersistentKeepalive = %s, want default %s",
 			tunnel.Peer.PersistentKeepalive, DefaultPersistentKeepalive)
 	}
 	if len(tunnel.Peer.AllowedIPs) != 2 {
@@ -261,8 +261,8 @@ PERSISTENTKEEPALIVE = 15
 	if tunnel.Interface.MTU != 1420 {
 		t.Errorf("MTU = %d, want 1420", tunnel.Interface.MTU)
 	}
-	if tunnel.Peer.PersistentKeepalive != 15 {
-		t.Errorf("PersistentKeepalive = %d, want 15", tunnel.Peer.PersistentKeepalive)
+	if tunnel.Peer.PersistentKeepalive != "15" {
+		t.Errorf("PersistentKeepalive = %s, want 15", tunnel.Peer.PersistentKeepalive)
 	}
 }
 
@@ -469,7 +469,7 @@ func TestGenerate_BasicConfig(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -504,7 +504,7 @@ func TestGenerate_WithObfuscation(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -540,7 +540,7 @@ func TestGenerate_WithSignaturePackets(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -575,7 +575,7 @@ func TestGenerate_WithSignaturePacketsWithoutI1(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -596,7 +596,7 @@ func TestGenerate_PresharedKey(t *testing.T) {
 			PresharedKey:        "psk=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -613,7 +613,7 @@ func TestGenerate_NoPresharedKey(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -630,7 +630,7 @@ func TestGenerate_DefaultAllowedIPs(t *testing.T) {
 			PublicKey:           "pubkey=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          nil, // empty
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 
@@ -822,7 +822,7 @@ func TestRoundtrip_ParseThenGenerate(t *testing.T) {
 			PresharedKey:        "psk=",
 			Endpoint:            "server:51820",
 			AllowedIPs:          []string{"0.0.0.0/0", "::/0"},
-			PersistentKeepalive: 25,
+			PersistentKeepalive: "25",
 		},
 	}
 

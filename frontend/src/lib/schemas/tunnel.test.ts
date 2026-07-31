@@ -70,3 +70,25 @@ describe('editTunnelSchema endpoint', () => {
         expect(endpointErr('[2001:db8::1]:51820 ')).toBeDefined(); // trailing junk
     });
 });
+
+// AWG 3.0 сделал keepalive диапазоном; форма должна принимать обе формы.
+describe('editTunnelSchema persistentKeepalive', () => {
+    function kaErr(value: string): string | undefined {
+        const res = editTunnelSchema.safeParse({ ...base('1.2.3.4:51820'), persistentKeepalive: value });
+        if (res.success) return undefined;
+        return res.error.issues.find(i => i.path[0] === 'persistentKeepalive')?.message;
+    }
+
+    it('принимает число и диапазон', () => {
+        expect(kaErr('25')).toBeUndefined();
+        expect(kaErr('22-30')).toBeUndefined();
+        expect(kaErr('0')).toBeUndefined();
+    });
+
+    it('отклоняет мусор и перевёрнутый диапазон', () => {
+        expect(kaErr('abc')).toBeDefined();
+        expect(kaErr('30-22')).toBeDefined();
+        expect(kaErr('70000')).toBeDefined();
+        expect(kaErr('22-')).toBeDefined();
+    });
+});
