@@ -595,6 +595,17 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 // spaHandler serves static files with SPA fallback to index.html.
 func spaHandler(staticFS fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Незарегистрированная ручка под /api/ — это ошибка маршрутизации, а
+		// не путь SPA. Отдав index.html с кодом 200, мы заставляли клиент
+		// разбирать HTML как JSON, и он показывал «Некорректный ответ сервера
+		// (200)» вместо внятного сообщения.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":true,"message":"эндпоинт не найден","code":"NOT_FOUND"}`))
+			return
+		}
+
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if name == "" {
 			name = "index.html"
