@@ -320,18 +320,29 @@ func parseInterfaceField(tunnel *storage.AWGTunnel, key, value string) {
 	case "headerprotectionkey":
 		iface.HeaderProtectionKey = value
 	case "contentpaddingaddition":
-		iface.ContentPaddingAddition = value
+		iface.ContentPaddingAddition = awg3Range(value)
 	case "rekeyaftertime":
-		iface.RekeyAfterTime = value
+		iface.RekeyAfterTime = awg3Range(value)
 	case "rekeytimeout":
-		iface.RekeyTimeout = value
+		iface.RekeyTimeout = awg3Range(value)
 	case "rejectaftertime":
-		iface.RejectAfterTime = value
+		iface.RejectAfterTime = awg3Range(value)
 	case "keepalivetimeout":
-		iface.KeepaliveTimeout = value
+		iface.KeepaliveTimeout = awg3Range(value)
 	case "maxhandshakeattempts":
-		iface.MaxHandshakeAttempts = value
+		iface.MaxHandshakeAttempts = awg3Range(value)
 	}
+}
+
+// awg3Range нормализует значение AWG 3.0 диапазона из .conf. `awg showconf`
+// печатает "0" для каждого незаданного параметра, поэтому импорт такого вывода
+// превращал бы обычный AWG 2.0 туннель в awg3-подобный. Диапазон "0-80" при
+// этом остаётся как есть — нулём считается только одиночный ноль.
+func awg3Range(value string) string {
+	if value == "0" {
+		return ""
+	}
+	return value
 }
 
 func parsePeerField(tunnel *storage.AWGTunnel, key, value string) {
