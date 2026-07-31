@@ -103,6 +103,7 @@ func (a *app) setupNDMS() {
 	// Load kernel module if available (before backend detection).
 	// kmod.New() reads model/SoC from ndmsinfo, so it must run after Init above.
 	a.kmodLoader = kmod.New()
+	a.kmodLoader.Warn = func(msg string) { a.bootLog.Warn("kmod", "", msg) }
 
 	// Clean up old SoC-based module directories from previous IPK versions
 	a.kmodLoader.CleanupLegacyModules()
