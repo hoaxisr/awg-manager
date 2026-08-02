@@ -722,6 +722,7 @@ type IPTables struct {
 	runIPTables      runFn
 	runIPTablesOut   runOutFn
 	runIP            runFn
+	runIPOut         runOutFn
 	persistRules     persistRulesFn
 	persistHook      func() error
 	cleanupHook      func()
@@ -738,6 +739,16 @@ func NewIPTables() *IPTables {
 		runIP: func(ctx context.Context, args ...string) error {
 			result, err := sysexec.Run(ctx, "ip", args...)
 			return sysexec.FormatError(result, err)
+		},
+		runIPOut: func(ctx context.Context, args ...string) (string, error) {
+			result, err := sysexec.Run(ctx, "ip", args...)
+			if err != nil {
+				return "", sysexec.FormatError(result, err)
+			}
+			if result == nil {
+				return "", nil
+			}
+			return result.Stdout, nil
 		},
 		persistRules:     writeNetfilterRulesFiles,
 		persistHook:      writeNetfilterHook,

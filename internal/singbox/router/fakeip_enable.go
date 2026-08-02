@@ -386,6 +386,16 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
+	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box»
+	// (issue #678): перехват DNS + весь трафик клиентов в tun. Best-effort —
+	// см. ensureFakeIPIngress; iface/tunDNS уже известны локально, персист
+	// settings.FakeIP на этом шаге ещё не перечитан.
+	s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{
+		TunIface: iface,
+		TunDNS:   tunDNS,
+		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
+	})
+
 	// Best-effort live-DNS confirmation (NOT a gate). sing-box is already up by
 	// carrier and the pool route to the tun now exists, so a single .2→fakeip
 	// query should answer. We run it ONCE (here, not in the poll loop, so no log

@@ -425,7 +425,12 @@
 			<div class="setting-row setting-row-toggle">
 				<div class="setting-copy">
 					<span class="setting-title">Маршрутизация через sing-box</span>
-					<span class="setting-description">Заворачивать интернет-трафик клиентов данного сервера в sing-box.</span>
+					<span class="setting-description">
+						Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его
+						правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля.
+						Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP),
+						при остановленном sing-box они остаются без сети.
+					</span>
 				</div>
 				<div class="setting-control setting-control-toggle">
 					<Toggle
