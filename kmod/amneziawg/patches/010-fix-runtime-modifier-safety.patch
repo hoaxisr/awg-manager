@@ -1,0 +1,135 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] fix: use per-send buffer copy for ispec modifiers + safety checks
+
+Modifiers (<r>, <t>, <c> tags) write directly into spec->pkt on every
+handshake initiation. While this is protected by spec->lock, the in-place
+modification creates shared mutable state between the template setup
+(jp_spec_setup) and the runtime send path.
+
+On MIPS dual-core (MT7621 MIPS1004K), runtime crashes have been observed
+after 20-30 minutes of operation with modifier tags. The same configuration
+with static <b> tags only (mods_size=0, no in-place writes) is stable.
+
+Fix by:
+1. Allocating a temporary buffer per-send for ispecs with modifiers.
+   jp_spec_applymods now writes to this copy instead of spec->pkt, so
+   the template buffer is never modified at runtime. For static-only
+   ispecs (mods_size=0), spec->pkt is sent directly with no overhead.
+2. Adding a bounds check in jp_spec_applymods to guard against corrupted
+   modifier offsets.
+3. Using READ_ONCE for the unlocked pkt_size check to prevent compiler
+   caching of the value across the mutex_lock barrier.
+4. Re-validating spec->pkt and pkt_size after acquiring the lock.
+5. Adding a NULL check for the junk packet buffer kzalloc (upstream bug:
+   kzalloc failure leads to get_random_bytes(NULL, ...) crash).
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+diff --git a/src/junk.c b/src/junk.c
+index b3903a0..d515d5e 100644
+--- a/src/junk.c
++++ b/src/junk.c
+@@ -334,13 +334,23 @@ error:
+     return err;
+ }
+ 
+-void jp_spec_applymods(struct jp_spec* spec, struct wg_peer* peer) {
++void jp_spec_applymods(struct jp_spec* spec, u8* sendbuf, struct wg_peer* peer) {
+     int i;
++    int off;
+     struct jp_modifier* mod;
+ 
+     for (i = 0; i < spec->mods_size; i++) {
+         mod = &spec->mods[i];
+-        if(mod->func)
+-            mod->func(mod->buf, mod->buf_len, peer);
++        if (mod->func) {
++            off = (int)(mod->buf - (char *)spec->pkt);
++            if (unlikely(off < 0 ||
++                         off + mod->buf_len > spec->pkt_size)) {
++                WARN_ONCE(1, "amneziawg: modifier %d out of bounds "
++                          "(off=%d len=%d pkt=%d)\n",
++                          i, off, mod->buf_len, spec->pkt_size);
++                continue;
++            }
++            mod->func((char *)sendbuf + off, mod->buf_len, peer);
++        }
+     }
+ }
+diff --git a/src/junk.h b/src/junk.h
+index 8d3776c..5025d69 100644
+--- a/src/junk.h
++++ b/src/junk.h
+@@ -38,6 +38,6 @@ struct jp_spec
+ 
+ void jp_spec_free(struct jp_spec* spec);
+ int jp_spec_setup(struct jp_spec* spec, const char* desc);
+-void jp_spec_applymods(struct jp_spec* spec, struct wg_peer* peer);
++void jp_spec_applymods(struct jp_spec* spec, u8* sendbuf, struct wg_peer* peer);
+ 
+ #endif
+\ No newline at end of file
+diff --git a/src/send.c b/src/send.c
+index 5cc2e4c..72246b2 100644
+--- a/src/send.c
++++ b/src/send.c
+@@ -50,11 +50,30 @@ static void wg_packet_send_handshake_initiation(struct wg_peer *peer)
+ 	for (i = 0; i < ARRAY_SIZE(wg->ispecs); ++i)
+ 	{
+ 		spec = &wg->ispecs[i];
+-		if (spec->pkt_size > 0) {
++		if (READ_ONCE(spec->pkt_size) > 0) {
+ 			mutex_lock(&spec->lock);
+-			jp_spec_applymods(spec, peer);
+-			wg_socket_send_buffer_to_peer(peer, spec->pkt, spec->pkt_size, 0, 0);
+-			atomic_inc(&peer->jp_packet_counter);
++			if (likely(spec->pkt && spec->pkt_size > 0)) {
++				u8 *sendbuf = spec->pkt;
++				bool need_free = false;
++
++				if (spec->mods_size > 0) {
++					u8 *tmp = kmalloc(spec->pkt_size,
++							  GFP_ATOMIC);
++					if (likely(tmp)) {
++						memcpy(tmp, spec->pkt,
++						       spec->pkt_size);
++						jp_spec_applymods(spec, tmp,
++								  peer);
++						sendbuf = tmp;
++						need_free = true;
++					}
++				}
++				wg_socket_send_buffer_to_peer(peer, sendbuf,
++					spec->pkt_size, 0, 0);
++				if (need_free)
++					kfree(sendbuf);
++				atomic_inc(&peer->jp_packet_counter);
++			}
+ 			mutex_unlock(&spec->lock);
+ 		}
+ 	}
+@@ -67,15 +86,17 @@ static void wg_packet_send_handshake_initiation(struct wg_peer *peer)
+ 		junk_packet_count = wg->jc;
+ 		buffer = kzalloc(wg->jmax, GFP_KERNEL);
+ 
+-		while (junk_packet_count-- > 0) {
+-			junk_packet_size = (u16) get_random_u32_inclusive(wg->jmin, wg->jmax);
++		if (likely(buffer)) {
++			while (junk_packet_count-- > 0) {
++				junk_packet_size = (u16) get_random_u32_inclusive(wg->jmin, wg->jmax);
+ 
+-			get_random_bytes(buffer, junk_packet_size);
+-			get_random_bytes(&ds, 1);
+-			wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0);
++				get_random_bytes(buffer, junk_packet_size);
++				get_random_bytes(&ds, 1);
++				wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0);
++			}
++
++			kfree(buffer);
+ 		}
+-
+-		kfree(buffer);
+ 	}
+ 
+ 	if (wg_noise_handshake_create_initiation(&packet, &peer->handshake,

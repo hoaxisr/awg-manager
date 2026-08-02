@@ -1,0 +1,29 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] main: include zinc.h for crypto init functions on older kernels
+
+On kernels < 5.10 with COMPAT_INIT_CRYPTO defined, main.c calls
+chacha20_mod_init(), poly1305_mod_init(), etc. but these functions
+are declared in crypto/zinc.h which was not included.
+
+This causes build failures:
+  error: implicit declaration of function 'chacha20_mod_init'
+  error: implicit declaration of function 'poly1305_mod_init'
+  ...
+
+Add the missing include to fix compilation on kernel 4.9.x and similar.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+ src/main.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/src/main.c
++++ b/src/main.c
+@@ -5,6 +5,7 @@
+
+ #include "version.h"
+ #include "device.h"
++#include "crypto/zinc.h"
+ #include "noise.h"
+ #include "queueing.h"
+ #include "ratelimiter.h"

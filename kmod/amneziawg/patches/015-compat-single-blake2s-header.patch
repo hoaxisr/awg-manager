@@ -1,0 +1,39 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] compat: keep one blake2s header on zinc kernels
+
+compat.h now includes <crypto/blake2s.h> in every translation unit (the
+kernel 6.19 blake2s rename block). On kernels < 5.10 the module uses
+zinc's blake2s, and a kernel that ships its own crypto/blake2s.h — the
+Keenetic NDM 4.9 one does — then defines enum blake2s_lengths and struct
+blake2s_state a second time, so zinc's own translation units stop
+compiling. The include path cannot fix this: LINUXINCLUDE is searched
+before the module's ccflags.
+
+Take zinc's header there and claim the kernel header's include guard, so
+later <crypto/blake2s.h> includes (messages.h, cookie.c) are no-ops.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+diff --git a/src/compat/compat.h b/src/compat/compat.h
+index 965795a..1107150 100644
+--- a/src/compat/compat.h
++++ b/src/compat/compat.h
+@@ -1434,7 +1434,18 @@ static inline char *nla_strdup(const struct nlattr *nla, gfp_t flags)
+ 
+ /* Kernel 6.19+ renamed blake2s_state to blake2s_ctx and changed blake2s() arg order */
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 19, 0)
++#ifdef COMPAT_CRYPTO_IS_ZINC
++/* The module uses zinc's blake2s on these kernels. Take zinc's header — before
++ * the argument order remap below, so its static inline blake2s() is parsed
++ * first — and claim the kernel header's include guard: a kernel that ships its
++ * own crypto/blake2s.h (Keenetic NDM 4.9 does) would otherwise define enum
++ * blake2s_lengths and struct blake2s_state a second time.
++ */
++#include <zinc/blake2s.h>
++#define _CRYPTO_BLAKE2S_H
++#else
+ #include <crypto/blake2s.h>
++#endif
+ #define blake2s_ctx blake2s_state
+ #define blake2s(key, keylen, in, inlen, out, outlen) \
+ 	blake2s(out, in, key, outlen, inlen, keylen)
