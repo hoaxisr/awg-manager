@@ -77,9 +77,11 @@
 					null)
 			: null
 	);
+	// ?. на массивах: ответ без clients/servers (усечённый статус, мок) иначе
+	// роняет вычисление, и вкладка перестаёт реагировать на переключение.
 	const clientStatus = $derived(
 		status
-			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			? (status.clients?.find((c) => c.id === selectedClientId)?.status ?? status.client)
 			: undefined
 	);
 	const selectedServer = $derived(
@@ -98,13 +100,13 @@
 	);
 	const serverStatus = $derived(
 		status
-			? (status.servers.find((s) => s.id === selectedServerId)?.status ?? status.server)
+			? (status.servers?.find((s) => s.id === selectedServerId)?.status ?? status.server)
 			: undefined
 	);
 
 	const clientBarItems = $derived(
 		(config ? config.clients : []).map((c: WdttClientInstance) => {
-			const st = status?.clients.find((s) => s.id === c.id)?.status ?? status?.client;
+			const st = status?.clients?.find((s) => s.id === c.id)?.status ?? status?.client;
 			return {
 				id: c.id,
 				name: c.name,
@@ -119,7 +121,7 @@
 
 	const serverBarItems = $derived(
 		(config ? config.servers : []).map((s: WdttServerInstance) => {
-			const st = status?.servers.find((x) => x.id === s.id)?.status ?? status?.server;
+			const st = status?.servers?.find((x) => x.id === s.id)?.status ?? status?.server;
 			return {
 				id: s.id,
 				name: s.name,
@@ -200,6 +202,9 @@
 			if (!norm.servers.some((s) => s.id === selectedServerId)) {
 				selectedServerId = norm.servers[0]?.id ?? 'default';
 			}
+			const srv = norm.servers.find((s) => s.id === selectedServerId) ?? norm.servers[0];
+			if (!genPeer) genPeer = srv?.config.linkPeer ?? '';
+			if (!genVKHashes) genVKHashes = srv?.config.linkVkHashes ?? '';
 		} catch (e) {
 			loadError = errText(e);
 			notifications.error('WDTT: ' + loadError);
@@ -219,7 +224,7 @@
 		if (!status || ensuringWg) return;
 		const id = selectedClientId;
 		if (wgEnsureSettled.has(id)) return;
-		const st = status.clients.find((c) => c.id === id)?.status ?? status.client;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
 		if (!wg) return;
@@ -500,6 +505,25 @@
 		}
 	}
 
+	// peer и VK-хеши ссылки живут в конфиге сервера: без них основную ссылку
+	// после перезагрузки страницы пришлось бы собирать по памяти.
+	async function persistLinkParams(peer: string, vkHashes: string[], forClient: boolean) {
+		if (!selectedServer) return;
+		const current = selectedServer.config;
+		// Хеши клиента — его личные: в серверные параметры идут только те,
+		// с которыми собрана ссылка на основном пароле.
+		const hashes = forClient ? (current.linkVkHashes ?? '') : vkHashes.join(',');
+		if ((current.linkPeer ?? '') === peer && (current.linkVkHashes ?? '') === hashes) return;
+		const id = selectedServer.id;
+		const cfg = { ...$state.snapshot(current), linkPeer: peer, linkVkHashes: hashes };
+		try {
+			const result = await api.updateWdttServerInstance(id, cfg);
+			patchServerInConfig(id, normalizeServer(result.config));
+		} catch {
+			// не критично: ссылка уже показана, параметры допишутся при сохранении
+		}
+	}
+
 	async function generateServerLink(
 		peer: string,
 		vkHashes: string[],
@@ -517,6 +541,7 @@
 			generatedLink = result.link;
 			genPeer = result.peer;
 			generatedLinkQwdtt = result.linkQwdtt ?? '';
+			void persistLinkParams(result.peer, vkHashes, !!opts?.password);
 			return result;
 		} catch (e) {
 			notifications.error('Не удалось сгенерировать ссылку: ' + errText(e));

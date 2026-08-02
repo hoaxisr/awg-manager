@@ -41,6 +41,17 @@ export interface WdttServerConfig {
 	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
 	openFirewall?: boolean;
+	/** Клиенты сервера — источник правды, panel.db собирается из них */
+	clients?: WdttServerClient[];
+	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
+	linkPeer?: string;
+	linkVkHashes?: string;
+}
+
+export interface WdttServerClient {
+	password: string;
+	comment?: string;
+	vkHash?: string;
 }
 
 export interface WdttServerInstance {

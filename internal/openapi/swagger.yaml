@@ -7129,6 +7129,15 @@ definitions:
       wgConfig:
         type: string
     type: object
+  wdtt.ServerClient:
+    properties:
+      comment:
+        type: string
+      password:
+        type: string
+      vkHash:
+        type: string
+    type: object
   wdtt.ServerConfig:
     properties:
       adminId:
@@ -7137,6 +7146,13 @@ definitions:
       botToken:
         description: -bot-token, optional Telegram bot
         type: string
+      clients:
+        description: |-
+          Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+          этого списка перед каждым стартом wdtt-server.
+        items:
+          $ref: '#/definitions/wdtt.ServerClient'
+        type: array
       configDir:
         description: -config-dir; empty → dataDir/wdtt/server/{id}
         type: string
@@ -7152,6 +7168,13 @@ definitions:
         items:
           type: string
         type: array
+      linkPeer:
+        description: |-
+          LinkPeer / LinkVKHashes — параметры последней сгенерированной ссылки,
+          чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
+        type: string
+      linkVkHashes:
+        type: string
       listen:
         description: -listen, DTLS (default 0.0.0.0:56002)
         type: string

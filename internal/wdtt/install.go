@@ -25,7 +25,7 @@ type ArchSpecs struct {
 }
 
 const PinnedClientVersion = "1.0.0-1"
-const PinnedServerVersion = "0.1.6-awgm"
+const PinnedServerVersion = "0.1.7-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
@@ -43,7 +43,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "abb92dfdba003b618b7fe4ba080575727c39862f69fa09308817b031babe42fa", Size: 12320930,
+			SHA256: "7b7922b9e60f29300382e37c101ae81dd1aee0e4f6b675c170c11cab8cbf3e89", Size: 12320930,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет

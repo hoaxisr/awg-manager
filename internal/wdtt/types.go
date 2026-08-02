@@ -71,6 +71,22 @@ type ServerConfig struct {
 	NdmsIface string `json:"ndmsIface,omitempty"`
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
 	WgIface string `json:"wgIface,omitempty"`
+
+	// Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+	// этого списка перед каждым стартом wdtt-server.
+	Clients []ServerClient `json:"clients,omitempty"`
+
+	// LinkPeer / LinkVKHashes — параметры последней сгенерированной ссылки,
+	// чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
+	LinkPeer     string `json:"linkPeer,omitempty"`
+	LinkVKHashes string `json:"linkVkHashes,omitempty"`
+}
+
+// ServerClient is one WDTT client identity stored in wdtt.json.
+type ServerClient struct {
+	Password string `json:"password"`
+	Comment  string `json:"comment,omitempty"`
+	VkHash   string `json:"vkHash,omitempty"`
 }
 
 const (
