@@ -173,6 +173,13 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
+	// (3b) Снять ingress-заворот (issue #678) ДО остановки движка и удаления
+	// интерфейса: иначе клиенты ingress-серверов остались бы с default в
+	// мёртвый tun и перехватом DNS на несуществующий адрес. Идемпотентно.
+	if s.deps.IPTables != nil {
+		s.deps.IPTables.RemoveFakeIPIngress(ctx)
+	}
+
 	// (4) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
 	// skip — there is no in-place inbound to strip for fakeip-tun. Best-effort.
 	if s.deps.Orch != nil {

@@ -229,5 +229,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
+	// Ingress-заворот (issue #678): и drift-heal после сброса firewall NDMS, и
+	// применение смены состава ingress-интерфейсов — UpdateSettings завершается
+	// Reconcile'ом, поэтому галка у сервера отрабатывает сразу, а не через тик.
+	s.ensureFakeIPIngress(ctx, s.fakeIPIngressSpecFor(ctx, st, sr))
+
 	return nil
 }
