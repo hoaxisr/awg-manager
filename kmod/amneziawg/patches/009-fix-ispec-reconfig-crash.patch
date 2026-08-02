@@ -1,0 +1,41 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] fix: free ispecs only after the handshake workqueues are drained
+
+wg_destruct() frees the junk packet specs before destroy_workqueue(),
+so a handshake send worker still running on another CPU can dereference
+spec->pkt / spec->mods after they were freed (upstream issue #139).
+
+Move the jp_spec_free() loop below the destroy_workqueue() calls, where
+no worker can be running any more. The remaining fixes from the original
+version of this patch (mutex_init moved to wg_newlink, freeing old
+pkt/mods on re-setup, resetting sizes before the fill loop, freeing desc)
+were taken upstream in v3.0.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+diff --git a/src/device.c b/src/device.c
+index 84d63d8..2fa0008 100644
+--- a/src/device.c
++++ b/src/device.c
+@@ -272,9 +272,6 @@ static void wg_destruct(struct net_device *dev)
+ 	struct wg_device *wg = netdev_priv(dev);
+ 	int i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(wg->ispecs); ++i)
+-		jp_spec_free(&wg->ispecs[i]);
+-
+ 	rtnl_lock();
+ 	list_del(&wg->device_list);
+ 	rtnl_unlock();
+@@ -287,6 +284,11 @@ static void wg_destruct(struct net_device *dev)
+ 	destroy_workqueue(wg->handshake_receive_wq);
+ 	destroy_workqueue(wg->handshake_send_wq);
+ 	destroy_workqueue(wg->packet_crypt_wq);
++	/* Free junk packet specs after all workqueues are drained, so no send
++	 * worker can race with jp_spec_free().
++	 */
++	for (i = 0; i < ARRAY_SIZE(wg->ispecs); ++i)
++		jp_spec_free(&wg->ispecs[i]);
+ 	wg_packet_queue_free(&wg->handshake_queue, true);
+ 	wg_packet_queue_free(&wg->decrypt_queue, false);
+ 	wg_packet_queue_free(&wg->encrypt_queue, false);

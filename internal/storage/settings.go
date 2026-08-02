@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -208,6 +209,13 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		needsSave = true
 	}
 
+	// Self-heal ingress-ref'ы, оставшиеся от удалённых managed-серверов
+	// (#670). Безусловно, как дедуп выше: миграцией не обойтись — ref мог
+	// осироветь и после апгрейда.
+	if pruneOrphanIngressRefs(&settings) {
+		needsSave = true
+	}
+
 	if needsSave {
 		if err := s.saveUnlocked(&settings); err != nil {
 			return nil, err
@@ -301,6 +309,45 @@ func dedupManagedServers(servers []ManagedServer) ([]ManagedServer, int) {
 	return out, removed
 }
 
+// pruneOrphanIngressRefs drops singboxRouter.ingressInterfaces entries of the
+// form "managed:<NDMS-name>" that no longer have a managed server behind them
+// (#670). Reports whether anything changed.
+//
+// Такие ref'ы ставит только тумблер ingress на карточке managed-сервера, так
+// что managed:X без сервера X — всегда мусор от удаления. Router-reconcile
+// раз в 30 секунд дёргал по нему RCI show interface system-name, и NDMS на
+// каждый запрос сыпал в журнал 'unable to find X'. iface:-ref'ы (kernel-имена)
+// не трогаем: они резолвятся локально и по определению не привязаны к
+// managed-серверам.
+func pruneOrphanIngressRefs(settings *Settings) bool {
+	refs := settings.SingboxRouter.IngressInterfaces
+	if len(refs) == 0 {
+		return false
+	}
+	known := make(map[string]struct{}, len(settings.ManagedServers)+1)
+	for _, sv := range settings.ManagedServers {
+		known[sv.InterfaceName] = struct{}{}
+	}
+	if settings.ManagedServer != nil {
+		known[settings.ManagedServer.InterfaceName] = struct{}{}
+	}
+	kept := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		name, isManaged := strings.CutPrefix(ref, "managed:")
+		if isManaged {
+			if _, ok := known[name]; !ok {
+				continue
+			}
+		}
+		kept = append(kept, ref)
+	}
+	if len(kept) == len(refs) {
+		return false
+	}
+	settings.SingboxRouter.IngressInterfaces = kept
+	return true
+}
+
 // GetManagedServers returns a deep copy of all managed servers, ordered
 // by creation time. Empty slice (never nil) when no servers exist.
 func (s *SettingsStore) GetManagedServers() []ManagedServer {
@@ -388,6 +435,9 @@ func (s *SettingsStore) DeleteManagedServer(id string) error {
 	for i, existing := range s.settings.ManagedServers {
 		if existing.InterfaceName == id {
 			s.settings.ManagedServers = append(s.settings.ManagedServers[:i], s.settings.ManagedServers[i+1:]...)
+			// Снять ingress-ref удалённого сервера в той же транзакции —
+			// иначе он висит до перезапуска демона (#670).
+			pruneOrphanIngressRefs(s.settings)
 			return s.saveUnlocked(s.settings)
 		}
 	}

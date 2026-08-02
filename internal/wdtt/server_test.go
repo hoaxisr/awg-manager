@@ -47,3 +47,12 @@ func TestBuildServerArgsNoNAT(t *testing.T) {
 		t.Fatalf("buildServerArgs() = %v, want %v", got, want)
 	}
 }
+
+// wdtt-server (v1.4.62) не знает флага -debug: flag.Parse печатает
+// «flag provided but not defined» и выходит с кодом 2 — сервер не стартует.
+func TestBuildServerArgsNoDebugFlag(t *testing.T) {
+	got := buildServerArgs(ServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001, Debug: true})
+	if slices.Contains(got, "-debug") {
+		t.Fatalf("buildServerArgs() отдал -debug: %v", got)
+	}
+}

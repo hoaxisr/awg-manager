@@ -713,7 +713,7 @@
 			isSectionVisible($usageLevel, 'singboxTunnels')
 				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
 				: null,
-			awg3Visible ? { id: 'awg3', label: 'AWG3 туннели', badge: awg3List.length } : null,
+			awg3Visible ? { id: 'awg3', label: 'WG endpoints', badge: awg3List.length } : null,
 			isSectionVisible($usageLevel, 'freeturn')
 				? { id: 'freeturn', label: 'FreeTurn' }
 				: null,

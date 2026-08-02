@@ -1,0 +1,23 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] compat: always use icmp_ndo_send compat wrappers
+
+Keenetic NDM kernel 4.9-ndm declares icmp_ndo_send() in headers
+but does not export this symbol. Force use of compat inline wrappers
+by adding ISNDM to the condition.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+ src/compat/compat.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/src/compat/compat.h
++++ b/src/compat/compat.h
+@@ -965,7 +965,7 @@ static inline void skb_reset_redirect(st
+ }
+ #endif
+
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 102) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 178) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 223) && LINUX_VERSION_CODE > KERNEL_VERSION(4, 10, 0)) || LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 259) || defined(ISRHEL8) || defined(ISUBUNTU1804)
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 102) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 178) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)) || (LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 223) && LINUX_VERSION_CODE > KERNEL_VERSION(4, 10, 0)) || LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 259) || defined(ISRHEL8) || defined(ISUBUNTU1804) || LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+ #include <linux/icmpv6.h>
+ #include <net/icmp.h>
+ #if IS_ENABLED(CONFIG_NF_NAT)

@@ -1,0 +1,67 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] compat: override random functions for NDM kernel 4.9.320+
+
+Keenetic NDM kernel 4.9 backports random subsystem declarations
+(get_random_u32, wait_for_random_bytes, rng_is_initialized) into
+headers but does not export these symbols from the kernel binary.
+Additionally, the NDM kernel removed struct random_ready_callback
+in favor of register_random_ready_notifier, making the existing
+compat implementations uncompilable.
+
+The WireGuard compat system detects SUBLEVEL=337 (>= 320) and
+skips the compat code, assuming the kernel exports these symbols.
+Furthermore, the kernel's own inline helpers (get_random_int,
+get_random_long, get_random_bytes_wait) call these missing externs
+before the compat macros are defined.
+
+Fix by providing macro overrides that use only get_random_bytes(),
+which is always exported. These macros intercept all call sites
+in the AWG source code, bypassing the kernel's broken inlines.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+ src/compat/compat.h | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+--- a/src/compat/compat.h
++++ b/src/compat/compat.h
+@@ -382,6 +382,39 @@ static inline int get_random_bytes_wait(
+ }
+ #endif
+
++/*
++ * Keenetic NDM kernel 4.9.320+ backports random subsystem declarations
++ * (get_random_u32, wait_for_random_bytes, rng_is_initialized) into headers
++ * but does not export these symbols. The old random_ready_callback API was
++ * also removed, making the standard compat implementations uncompilable.
++ * Override everything using only get_random_bytes() which is always exported.
++ */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 320) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
++#include <linux/random.h>
++#ifdef get_random_u32
++#undef get_random_u32
++#endif
++static inline u32 __ndm_get_random_u32(void)
++{
++	u32 val;
++	get_random_bytes(&val, sizeof(val));
++	return val;
++}
++static inline u64 __ndm_get_random_u64(void)
++{
++	u64 val;
++	get_random_bytes(&val, sizeof(val));
++	return val;
++}
++#define get_random_u32 __ndm_get_random_u32
++#define get_random_u64 __ndm_get_random_u64
++#define get_random_int() ((unsigned int)__ndm_get_random_u32())
++#define get_random_long() ((unsigned long)__ndm_get_random_u32())
++#define wait_for_random_bytes() 0
++#define rng_is_initialized() true
++#define get_random_bytes_wait(buf, nbytes) ({ get_random_bytes(buf, nbytes); 0; })
++#endif
++
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0) && !defined(ISRHEL7)
+ #define system_power_efficient_wq system_unbound_wq
+ #endif

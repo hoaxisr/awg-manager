@@ -1,0 +1,84 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] compat: build AWG 3.0 header protection on zinc chacha20
+
+The chacha compat block delegates to the kernel's chacha_init() and
+chacha20_crypt(), which only exist from ~5.5 on. The Keenetic NDM 4.9
+kernel ships an older crypto/chacha.h (struct chacha_ctx,
+crypto_chacha_init, chacha_block), so header_protection.c does not build.
+
+On kernels < 5.10 the module already carries its own zinc chacha20, so
+implement both helpers on top of it there. The state layout is the plain
+RFC7539 one in both cases (constants, key, 32-bit counter, 96-bit nonce),
+so receive.c can keep rewinding state->x[12] directly.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+diff --git a/src/compat/compat.h b/src/compat/compat.h
+index 86d82d9..965795a 100644
+--- a/src/compat/compat.h
++++ b/src/compat/compat.h
+@@ -1449,6 +1449,12 @@ static inline struct dst_entry *ip6_dst_lookup_flow(struct net *net, const struc
+ #endif
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
++#ifdef COMPAT_CRYPTO_IS_ZINC
++/* Must come first: the old kernel header defines CHACHA20_* as macros, which
++ * would break the identically named enum in zinc's own header.
++ */
++#include <zinc/chacha20.h>
++#endif
+ #include <crypto/chacha.h>
+ #define CHACHA_KEY_WORDS	8
+ #ifndef CHACHA_STATE_WORDS
+@@ -1459,13 +1465,42 @@ struct chacha_state {
+ 	u32 x[CHACHA_STATE_WORDS];
+ };
+ 
++#ifdef COMPAT_CRYPTO_IS_ZINC
++/* Kernels < 5.10 have neither chacha_init() nor chacha20_crypt(), so build
++ * both on the zinc chacha20 the module already carries there.
++ */
++static inline void __compat_chacha_init(struct chacha_state *state,
++					const u32 *key,
++					const u8 *iv)
++{
++	state->x[0] = CHACHA20_CONSTANT_EXPA;
++	state->x[1] = CHACHA20_CONSTANT_ND_3;
++	state->x[2] = CHACHA20_CONSTANT_2_BY;
++	state->x[3] = CHACHA20_CONSTANT_TE_K;
++	memcpy(&state->x[4], key, CHACHA_KEY_SIZE);
++	state->x[12] = get_unaligned_le32(iv + 0);
++	state->x[13] = get_unaligned_le32(iv + 4);
++	state->x[14] = get_unaligned_le32(iv + 8);
++	state->x[15] = get_unaligned_le32(iv + 12);
++}
++
++static inline void __compat_chacha20_crypt(struct chacha_state *state,
++					       u8 *dst, const u8 *src,
++					       unsigned int bytes)
++{
++	struct chacha20_ctx ctx;
++
++	memcpy(ctx.state, state->x, sizeof(ctx.state));
++	chacha20(&ctx, dst, src, bytes, DONT_USE_SIMD);
++	memcpy(state->x, ctx.state, sizeof(ctx.state));
++}
++#else
+ static inline void __compat_chacha_init(struct chacha_state *state,
+ 					const u32 *key,
+ 					const u8 *iv)
+ {
+ 	(chacha_init)(state->x, key, iv);
+ }
+-#define chacha_init(state, key, iv) __compat_chacha_init((state), (key), (iv))
+ 
+ static inline void __compat_chacha20_crypt(struct chacha_state *state,
+ 					       u8 *dst, const u8 *src,
+@@ -1473,6 +1508,8 @@ static inline void __compat_chacha20_crypt(struct chacha_state *state,
+ {
+ 	(chacha20_crypt)(state->x, dst, src, bytes);
+ }
++#endif
++#define chacha_init(state, key, iv) __compat_chacha_init((state), (key), (iv))
+ #define chacha20_crypt(s, d, src, b) __compat_chacha20_crypt((s),(d),(src),(b))
+ 
+ #endif
