@@ -61,6 +61,9 @@ type AwgmCounts = {
 	hydraLoaded?: boolean;
 	deviceProxy?: DeviceProxyConfig | null;
 	deviceProxyRuntime?: DeviceProxyRuntime | null;
+	clientRoutesTotal?: number;
+	clientRoutesEnabled?: number;
+	clientRoutesLoaded?: boolean;
 	dnsRoutesTotal?: number;
 	dnsRoutesEnabled?: number;
 	dnsRoutesLoaded?: boolean;
@@ -236,6 +239,25 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 	}
 
 	if (isRoutingSubTabVisible(level, 'clientRoutes')) {
+		await capture(
+			'clientRoutes',
+			async () => {
+				const res = await fetch('/api/routing/client-routes');
+				if (!res.ok) {
+					throw new Error(`client-routes ${res.status}`);
+				}
+				const body = await res.json();
+				const routes = (body.data ?? []) as { enabled?: boolean }[];
+				counts.clientRoutesTotal = routes.length;
+				counts.clientRoutesEnabled = routes.filter((r) => r.enabled).length;
+				counts.clientRoutesLoaded = true;
+				return true;
+			},
+			false,
+			errors,
+			markPartial,
+		);
+
 		const [cfg, rt] = await Promise.all([
 			capture('deviceProxy.config', () => api.getDeviceProxyConfig(), null as DeviceProxyConfig | null, errors, markPartial),
 			capture('deviceProxy.runtime', () => api.getDeviceProxyRuntime(), null as DeviceProxyRuntime | null, errors, markPartial),
@@ -272,6 +294,9 @@ export async function collectDiagnosticsEnvironmentSnapshot(): Promise<Diagnosti
 				showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 				deviceProxy: counts.deviceProxy ?? null,
 				deviceProxyRuntime: counts.deviceProxyRuntime ?? null,
+				clientRoutesTotal: counts.clientRoutesTotal ?? 0,
+				clientRoutesEnabled: counts.clientRoutesEnabled ?? 0,
+				clientRoutesLoaded: counts.clientRoutesLoaded ?? false,
 				dnsRoutesTotal: counts.dnsRoutesTotal ?? 0,
 				dnsRoutesEnabled: counts.dnsRoutesEnabled ?? 0,
 				dnsRoutesLoaded: counts.dnsRoutesLoaded ?? false,

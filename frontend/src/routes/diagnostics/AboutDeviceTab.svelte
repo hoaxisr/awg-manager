@@ -55,6 +55,9 @@
 		hydraLoaded?: boolean;
 		deviceProxy?: DeviceProxyConfig | null;
 		deviceProxyRuntime?: DeviceProxyRuntime | null;
+		clientRoutesTotal?: number;
+		clientRoutesEnabled?: number;
+		clientRoutesLoaded?: boolean;
 		dnsRoutesTotal?: number;
 		dnsRoutesEnabled?: number;
 		dnsRoutesLoaded?: boolean;
@@ -85,6 +88,9 @@
 			showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 			deviceProxy: c.deviceProxy ?? null,
 			deviceProxyRuntime: c.deviceProxyRuntime ?? null,
+			clientRoutesTotal: c.clientRoutesTotal ?? 0,
+			clientRoutesEnabled: c.clientRoutesEnabled ?? 0,
+			clientRoutesLoaded: c.clientRoutesLoaded ?? false,
 			dnsRoutesTotal: c.dnsRoutesTotal ?? 0,
 			dnsRoutesEnabled: c.dnsRoutesEnabled ?? 0,
 			dnsRoutesLoaded: c.dnsRoutesLoaded ?? false,
@@ -180,6 +186,19 @@
 		}
 
 		if (isRoutingSubTabVisible(level, 'clientRoutes')) {
+			void fetch('/api/routing/client-routes')
+				.then(async (res) => {
+					if (!res.ok) return;
+					const body = await res.json();
+					const routes = (body.data ?? []) as { enabled?: boolean }[];
+					patchAwgmFromStores({
+						clientRoutesTotal: routes.length,
+						clientRoutesEnabled: routes.filter((r) => r.enabled).length,
+						clientRoutesLoaded: true,
+					});
+				})
+				.catch(() => {});
+
 			void Promise.all([
 				api.getDeviceProxyConfig().catch(() => null),
 				api.getDeviceProxyRuntime().catch(() => null),
