@@ -19,6 +19,7 @@ cd "$WORK/wdtt"
 git apply "$PATCH_DIR/no-nat.patch"
 git apply "$PATCH_DIR/panel-db.patch"
 git apply "$PATCH_DIR/wg-iface.patch"
+git apply "$PATCH_DIR/no-wipe.patch"
 
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" \
   -o "$OUT_DIR/wdtt-server-linux-arm64" ./server/cmd
