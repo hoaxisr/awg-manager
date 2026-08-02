@@ -29,6 +29,11 @@ type tunnelState struct {
 	// quiescentUntil: while now < this, a conf=disabled edge for this tunnel
 	// is treated as transient NDMS settling (do not stop). Set on (re)start.
 	quiescentUntil time.Time
+
+	// lastConfRunningAt: when an external conf=running edge was last seen for
+	// this tunnel. settleConfDisabled uses it to tell an NDMS interface restart
+	// (disabled→running bounce) from a real disable. Runtime-only.
+	lastConfRunningAt time.Time
 }
 
 // ndmsName returns the NDMS interface name for this tunnel.
