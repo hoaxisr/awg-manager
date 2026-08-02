@@ -573,8 +573,6 @@
 		<section class="ops-section">
 				<ProcessLogBox
 					log={status?.log}
-					bind:debug={server.debug}
-					showDebugToggle
 					{instances}
 					{selectedInstanceId}
 					{onSelectInstance}
