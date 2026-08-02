@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,10 +53,6 @@ CREATE TABLE IF NOT EXISTS wdtt_devices (
 );
 CREATE TABLE IF NOT EXISTS wdtt_inbound (id INTEGER PRIMARY KEY);
 `
-
-func panelDBPath(configDir string) string {
-	return filepath.Join(strings.TrimSpace(configDir), "panel.db")
-}
 
 func panelDSNWrite(path string) string {
 	return path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(3000)"
@@ -135,10 +130,6 @@ func openPanelDBWrite(configDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	newDB := false
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		newDB = true
-	}
 	db, err := sql.Open("sqlite", panelDSNWrite(path))
 	if err != nil {
 		return nil, err
@@ -148,11 +139,11 @@ func openPanelDBWrite(configDir string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if newDB {
-		if err := ensurePanelSchema(db); err != nil {
-			db.Close()
-			return nil, err
-		}
+	// Схема идемпотентна: гоняем всегда, иначе panel.db, потерявшая таблицы
+	// (обрыв на создании, чужая перезапись), больше никогда не чинится.
+	if err := ensurePanelSchema(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return db, nil
 }
@@ -278,24 +269,96 @@ func randomPanelPassword() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func addPanelUser(configDir, mainPassword, password, comment, vkHash string) (PanelUsersStatus, error) {
+// upsertPanelUser проецирует одного клиента из wdtt.json в panel.db.
+func upsertPanelUser(db *sql.DB, c ServerClient) error {
+	_, err := db.Exec(`INSERT INTO wdtt_users (
+ password, device_id, max_devices, expires_at, down_bytes, up_bytes, total_bytes,
+ max_down_mbps, max_up_mbps, is_deactivated, comment, ports, vk_hash, sub_id, last_seen_at
+ ) VALUES (?,'',1,0,0,0,0,0,0,0,?,'',?,'',0)
+ ON CONFLICT(password) DO UPDATE SET
+ comment=excluded.comment,
+ vk_hash=CASE WHEN excluded.vk_hash != '' THEN excluded.vk_hash ELSE wdtt_users.vk_hash END`,
+		c.Password, strings.TrimSpace(c.Comment), strings.TrimSpace(c.VkHash))
+	return err
+}
+
+// restorePanelUsers пересобирает panel.db из списка клиентов wdtt.json и
+// возвращает строки, которых в этом списке нет (наследие старых версий или
+// правки через телеграм-бота) — их зовущий усыновляет в конфиг.
+func restorePanelUsers(configDir, mainPassword string, clients []ServerClient) ([]ServerClient, error) {
+	mainPassword = strings.TrimSpace(mainPassword)
+	if mainPassword == "" {
+		return nil, fmt.Errorf("пароль сервера не задан")
+	}
+	var extra []ServerClient
+	err := withPanelDBRetry(func() error {
+		extra = nil
+		db, err := openPanelDBWrite(configDir)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+
+		if err := ensureMainPassword(db, mainPassword); err != nil {
+			return err
+		}
+		known := map[string]bool{mainPassword: true}
+		for _, c := range clients {
+			c.Password = strings.TrimSpace(c.Password)
+			if c.Password == "" || c.Password == mainPassword {
+				continue
+			}
+			if err := upsertPanelUser(db, c); err != nil {
+				return err
+			}
+			known[c.Password] = true
+		}
+		if len(known) > 1 {
+			if err := bumpUsersRev(db); err != nil {
+				return err
+			}
+		}
+
+		rows, err := db.Query(`SELECT password, comment, vk_hash FROM wdtt_users`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c ServerClient
+			if err := rows.Scan(&c.Password, &c.Comment, &c.VkHash); err != nil {
+				return err
+			}
+			if !known[c.Password] {
+				extra = append(extra, c)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return extra, nil
+}
+
+func addPanelUser(configDir, mainPassword, password, comment, vkHash string) (ServerClient, error) {
 	password = strings.TrimSpace(password)
 	if password == "" {
 		var err error
 		password, err = randomPanelPassword()
 		if err != nil {
-			return PanelUsersStatus{}, err
+			return ServerClient{}, err
 		}
 	}
 	mainPassword = strings.TrimSpace(mainPassword)
 	if mainPassword == "" {
-		return PanelUsersStatus{}, fmt.Errorf("пароль сервера не задан")
+		return ServerClient{}, fmt.Errorf("пароль сервера не задан")
 	}
 	if password == mainPassword {
-		return PanelUsersStatus{}, fmt.Errorf("используйте основной пароль сервера или сгенерируйте отдельный")
+		return ServerClient{}, fmt.Errorf("используйте основной пароль сервера или сгенерируйте отдельный")
 	}
 
-	var out PanelUsersStatus
+	client := ServerClient{Password: password, Comment: strings.TrimSpace(comment), VkHash: strings.TrimSpace(vkHash)}
 	err := withPanelDBRetry(func() error {
 		db, err := openPanelDBWrite(configDir)
 		if err != nil {
@@ -306,44 +369,30 @@ func addPanelUser(configDir, mainPassword, password, comment, vkHash string) (Pa
 		if err := ensureMainPassword(db, mainPassword); err != nil {
 			return err
 		}
-
-		deact := 0
-		_, err = db.Exec(`INSERT INTO wdtt_users (
- password, device_id, max_devices, expires_at, down_bytes, up_bytes, total_bytes,
- max_down_mbps, max_up_mbps, is_deactivated, comment, ports, vk_hash, sub_id, last_seen_at
- ) VALUES (?,?,1,0,0,0,0,0,0,?,?,'',?,'',0)
- ON CONFLICT(password) DO UPDATE SET
- comment=excluded.comment,
- vk_hash=CASE WHEN excluded.vk_hash != '' THEN excluded.vk_hash ELSE wdtt_users.vk_hash END`,
-			password, "", deact, strings.TrimSpace(comment), strings.TrimSpace(vkHash))
-		if err != nil {
+		if err := upsertPanelUser(db, client); err != nil {
 			return err
 		}
-		if err := bumpUsersRev(db); err != nil {
-			return err
-		}
-		var loadErr error
-		out, loadErr = loadPanelUsers(configDir, mainPassword)
-		return loadErr
+		return bumpUsersRev(db)
 	})
 	if err != nil {
-		return PanelUsersStatus{}, err
+		return ServerClient{}, err
 	}
-	return out, nil
+	return client, nil
 }
 
-func removePanelUser(configDir, mainPassword, password string) (PanelUsersStatus, error) {
+// removePanelUser удаляет клиента из panel.db. Отсутствие строки не ошибка:
+// источник правды — wdtt.json, panel.db могла её потерять.
+func removePanelUser(configDir, mainPassword, password string) error {
 	password = strings.TrimSpace(password)
 	if password == "" {
-		return PanelUsersStatus{}, fmt.Errorf("пароль клиента не задан")
+		return fmt.Errorf("пароль клиента не задан")
 	}
 	mainPassword = strings.TrimSpace(mainPassword)
 	if password == mainPassword {
-		return PanelUsersStatus{}, fmt.Errorf("нельзя удалить основной пароль сервера")
+		return fmt.Errorf("нельзя удалить основной пароль сервера")
 	}
 
-	var out PanelUsersStatus
-	err := withPanelDBRetry(func() error {
+	return withPanelDBRetry(func() error {
 		db, err := openPanelDBWrite(configDir)
 		if err != nil {
 			return err
@@ -374,13 +423,8 @@ func removePanelUser(configDir, mainPassword, password string) (PanelUsersStatus
 		if _, err := tx.Exec(`DELETE FROM wdtt_user_devices WHERE password = ?`, password); err != nil {
 			return err
 		}
-		res, err := tx.Exec(`DELETE FROM wdtt_users WHERE password = ?`, password)
-		if err != nil {
+		if _, err := tx.Exec(`DELETE FROM wdtt_users WHERE password = ?`, password); err != nil {
 			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return fmt.Errorf("клиент не найден")
 		}
 		for _, id := range deviceIDs {
 			if id == "" {
@@ -393,17 +437,8 @@ func removePanelUser(configDir, mainPassword, password string) (PanelUsersStatus
 		if err := bumpUsersRevInTx(tx); err != nil {
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		var loadErr error
-		out, loadErr = loadPanelUsers(configDir, mainPassword)
-		return loadErr
+		return tx.Commit()
 	})
-	if err != nil {
-		return PanelUsersStatus{}, err
-	}
-	return out, nil
 }
 
 func bumpUsersRevInTx(tx *sql.Tx) error {

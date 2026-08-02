@@ -187,6 +187,9 @@ func (s *Service) StartServerInstance(id string) error {
 		}
 		return fmt.Errorf("config-dir: %w", err)
 	}
+	// panel.db собираем из wdtt.json до старта: сервер на старте перечитывает
+	// её в память, а при ошибке чтения затирает своим пустым состоянием.
+	s.restoreServerPanelUsers(id, cfgDir, cfg)
 	cfg.ConfigDir = cfgDir
 	if err := s.serverProcs.get(id).Start(buildServerArgs(cfg)); err != nil {
 		if cfg.usesNDMSOpkgTun() {
@@ -266,11 +269,99 @@ func (s *Service) serverInstance(id string) (ServerInstance, error) {
 	return full.Servers[idx], nil
 }
 
+func panelDBPath(configDir string) string {
+	return filepath.Join(strings.TrimSpace(configDir), "panel.db")
+}
+
 func (s *Service) serverConfigDir(id string, cfg ServerConfig) (string, error) {
 	if dir := strings.TrimSpace(cfg.ConfigDir); dir != "" {
 		return dir, nil
 	}
 	return filepath.Join(s.dataDir, "wdtt", "server", id), nil
+}
+
+// updateServerClients — RMW-хелпер над списком клиентов сервера в wdtt.json.
+// mutate возвращает новый список и признак «есть что сохранять».
+func (s *Service) updateServerClients(id string, mutate func([]ServerClient) ([]ServerClient, bool)) ([]ServerClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return nil, fmt.Errorf("сервер %q не найден", id)
+	}
+	next, changed := mutate(full.Servers[idx].Config.Clients)
+	if !changed {
+		return full.Servers[idx].Config.Clients, nil
+	}
+	full.Servers[idx].Config.Clients = next
+	if err := s.store.Save(full); err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
+// putServerClient adds or updates one client identity in wdtt.json.
+func (s *Service) putServerClient(id string, client ServerClient) error {
+	_, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
+		for i, c := range list {
+			if c.Password == client.Password {
+				list[i] = client
+				return list, true
+			}
+		}
+		return append(list, client), true
+	})
+	return err
+}
+
+// dropServerClient removes one client identity from wdtt.json.
+func (s *Service) dropServerClient(id, password string) error {
+	_, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
+		for i, c := range list {
+			if c.Password == password {
+				return append(list[:i:i], list[i+1:]...), true
+			}
+		}
+		return list, false
+	})
+	return err
+}
+
+// adoptServerClients переносит в wdtt.json клиентов, известных только panel.db
+// (установки до появления списка в конфиге, правки через телеграм-бота).
+func (s *Service) adoptServerClients(id string, extra []ServerClient) []ServerClient {
+	if len(extra) == 0 {
+		return nil
+	}
+	list, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
+		// Идемпотентно: два параллельных списка усыновляют один и тот же
+		// набор строк, дубликат в конфиге был бы виден в UI.
+		known := make(map[string]bool, len(list))
+		for _, c := range list {
+			known[c.Password] = true
+		}
+		changed := false
+		for _, c := range extra {
+			if c.Password == "" || known[c.Password] {
+				continue
+			}
+			known[c.Password] = true
+			list = append(list, c)
+			changed = true
+		}
+		return list, changed
+	})
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("panel", id, "клиенты из panel.db не сохранены в конфиг: "+err.Error())
+		}
+		return nil
+	}
+	return list
 }
 
 func (s *Service) setServerEnabled(id string, enabled bool) error {

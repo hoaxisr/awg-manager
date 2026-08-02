@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-// ListServerPanelUsers returns WDTT client passwords from panel.db for a server instance.
+// ListServerPanelUsers returns the server clients: identities from wdtt.json,
+// enriched with live counters from panel.db. Список не пустеет, даже если
+// panel.db потеряна — это и есть смысл единственного источника правды.
 func (s *Service) ListServerPanelUsers(serverID string) (PanelUsersStatus, error) {
 	inst, err := s.serverInstance(serverID)
 	if err != nil {
@@ -18,10 +20,19 @@ func (s *Service) ListServerPanelUsers(serverID string) (PanelUsersStatus, error
 	if err != nil {
 		return PanelUsersStatus{}, err
 	}
-	return loadPanelUsers(cfgDir, inst.Config.Password)
+	st, loadErr := loadPanelUsers(cfgDir, inst.Config.Password)
+	st.PanelDBPath = panelDBPath(cfgDir)
+	if loadErr != nil && s.appLog != nil {
+		s.appLog.Warn("panel", serverID, "panel.db не прочитана: "+loadErr.Error())
+	}
+	clients := inst.Config.Clients
+	if adopted := s.adoptServerClients(serverID, panelExtras(inst.Config, st.Users)); len(adopted) > 0 {
+		clients = adopted
+	}
+	return mergePanelUsers(inst.Config.Password, clients, st), nil
 }
 
-// AddServerPanelUser registers a separate client password in panel.db.
+// AddServerPanelUser registers a separate client password.
 func (s *Service) AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (PanelUsersStatus, error) {
 	inst, err := s.serverInstance(serverID)
 	if err != nil {
@@ -45,15 +56,18 @@ func (s *Service) AddServerPanelUser(serverID, password, comment, vkHash, mainPa
 	if err != nil {
 		return PanelUsersStatus{}, err
 	}
-	st, err := addPanelUser(cfgDir, main, password, comment, vkHash)
+	client, err := addPanelUser(cfgDir, main, password, comment, vkHash)
 	if err != nil {
-		return st, err
+		return PanelUsersStatus{}, err
+	}
+	if err := s.putServerClient(serverID, client); err != nil {
+		return PanelUsersStatus{}, err
 	}
 	s.notifyServerPanelUsersChanged(serverID)
-	return st, nil
+	return s.ListServerPanelUsers(serverID)
 }
 
-// RemoveServerPanelUser deletes one non-main client password from panel.db.
+// RemoveServerPanelUser deletes one non-main client.
 func (s *Service) RemoveServerPanelUser(serverID, password string) (PanelUsersStatus, error) {
 	inst, err := s.serverInstance(serverID)
 	if err != nil {
@@ -63,12 +77,79 @@ func (s *Service) RemoveServerPanelUser(serverID, password string) (PanelUsersSt
 	if err != nil {
 		return PanelUsersStatus{}, err
 	}
-	st, err := removePanelUser(cfgDir, inst.Config.Password, password)
-	if err != nil {
-		return st, err
+	if err := removePanelUser(cfgDir, inst.Config.Password, password); err != nil {
+		return PanelUsersStatus{}, err
+	}
+	if err := s.dropServerClient(serverID, password); err != nil {
+		return PanelUsersStatus{}, err
 	}
 	s.notifyServerPanelUsersChanged(serverID)
-	return st, nil
+	return s.ListServerPanelUsers(serverID)
+}
+
+// restoreServerPanelUsers projects wdtt.json clients into panel.db before the
+// server starts and adopts rows that only panel.db knows about.
+func (s *Service) restoreServerPanelUsers(serverID, cfgDir string, cfg ServerConfig) {
+	extra, err := restorePanelUsers(cfgDir, cfg.Password, cfg.Clients)
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("panel", serverID, "panel.db не восстановлена из конфига: "+err.Error())
+		}
+		return
+	}
+	s.adoptServerClients(serverID, extra)
+}
+
+// panelExtras returns panel.db rows that wdtt.json does not know yet.
+func panelExtras(cfg ServerConfig, users []PanelUserEntry) []ServerClient {
+	known := map[string]bool{strings.TrimSpace(cfg.Password): true}
+	for _, c := range cfg.Clients {
+		known[c.Password] = true
+	}
+	var extra []ServerClient
+	for _, u := range users {
+		if !known[u.Password] {
+			extra = append(extra, ServerClient{Password: u.Password, Comment: u.Comment, VkHash: u.VkHash})
+		}
+	}
+	return extra
+}
+
+// mergePanelUsers builds the UI list: main password first, then wdtt.json
+// clients, each overlaid with live panel.db counters.
+func mergePanelUsers(mainPassword string, clients []ServerClient, st PanelUsersStatus) PanelUsersStatus {
+	live := make(map[string]PanelUserEntry, len(st.Users))
+	for _, u := range st.Users {
+		live[u.Password] = u
+	}
+	out := PanelUsersStatus{PanelDBPath: st.PanelDBPath, Available: st.Available, Users: []PanelUserEntry{}}
+	add := func(c ServerClient, isMain bool) {
+		e, ok := live[c.Password]
+		if !ok {
+			e = PanelUserEntry{Password: c.Password, Comment: c.Comment, VkHash: c.VkHash}
+		}
+		if e.Comment == "" {
+			e.Comment = c.Comment
+		}
+		if e.VkHash == "" {
+			e.VkHash = c.VkHash
+		}
+		e.IsMain = isMain
+		if isMain && e.Comment == "" {
+			e.Comment = "Основной"
+		}
+		out.Users = append(out.Users, e)
+	}
+	if main := strings.TrimSpace(mainPassword); main != "" {
+		add(ServerClient{Password: main}, true)
+	}
+	for _, c := range clients {
+		if strings.TrimSpace(c.Password) == "" || c.Password == strings.TrimSpace(mainPassword) {
+			continue
+		}
+		add(c, false)
+	}
+	return out
 }
 
 // serverAdminAddr — дефолтный -admin-addr у wdtt-server; мы его не переопределяем.

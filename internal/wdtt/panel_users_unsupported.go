@@ -17,10 +17,12 @@ func loadPanelUsers(configDir, _ string) (PanelUsersStatus, error) {
 	return PanelUsersStatus{Users: []PanelUserEntry{}}, nil
 }
 
-func addPanelUser(_, _, _, _, _ string) (PanelUsersStatus, error) {
-	return PanelUsersStatus{Users: []PanelUserEntry{}}, errPanelUsersUnsupported
+func addPanelUser(_, _, _, _, _ string) (ServerClient, error) {
+	return ServerClient{}, errPanelUsersUnsupported
 }
 
-func removePanelUser(_, _, _ string) (PanelUsersStatus, error) {
-	return PanelUsersStatus{Users: []PanelUserEntry{}}, errPanelUsersUnsupported
+func removePanelUser(_, _, _ string) error { return errPanelUsersUnsupported }
+
+func restorePanelUsers(_, _ string, _ []ServerClient) ([]ServerClient, error) {
+	return nil, errPanelUsersUnsupported
 }
