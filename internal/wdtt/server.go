@@ -318,11 +318,6 @@ func buildServerArgs(c ServerConfig) []string {
 			args = append(args, flag, val)
 		}
 	}
-	flag := func(name string, on bool) {
-		if on {
-			args = append(args, name)
-		}
-	}
 	str("-listen", c.Listen)
 	if c.WgPort > 0 {
 		args = append(args, "-wg-port", strconv.Itoa(c.WgPort))
@@ -331,11 +326,13 @@ func buildServerArgs(c ServerConfig) []string {
 	str("-password", c.Password)
 	str("-admin", c.AdminID)
 	str("-bot-token", c.BotToken)
-	flag("-no-nat", true)
+	args = append(args, "-no-nat")
 	str("-nat-if", c.NatIface)
 	if iface := strings.TrimSpace(c.WgIface); iface != "" && iface != DefaultWdttIface {
 		str("-wg-iface", iface)
 	}
-	flag("-debug", c.Debug)
+	// -debug не передаём: wdtt-server его не знает (flag.Parse → exit 2),
+	// подробного лога у него нет вовсе. Поле Debug оставлено ради совместимости
+	// формата wdtt.json.
 	return args
 }
