@@ -139,6 +139,7 @@
 
 	const users = $derived(status?.users ?? []);
 	const extraUsers = $derived(users.filter((u) => !u.isMain));
+	const panelMissing = $derived(!!status && !status.available);
 </script>
 
 <div class="wdtt-users">
@@ -163,18 +164,27 @@
 			{loadError}
 			<Button variant="secondary" size="sm" onclick={reload}>Повторить</Button>
 		</p>
-	{:else if extraUsers.length === 0}
+	{:else if users.length === 0}
 		<p class="wdtt-empty">
-			Дополнительных клиентов нет — общий пароль сервера подходит всем. Добавьте клиента, если
-			нужен отдельный пароль.
+			Задайте пароль сервера на вкладке «Основное» — он станет основным клиентом, а отдельные
+			пароли можно добавить ниже.
 		</p>
 	{:else}
+		{#if panelMissing}
+			<p class="wdtt-empty wdtt-empty-warn">
+				panel.db сейчас недоступна — показан список из настроек awgm. Он будет записан в
+				panel.db при следующем запуске сервера.
+			</p>
+		{/if}
 		<ul class="wdtt-users-list">
-			{#each extraUsers as entry (entry.password)}
+			{#each users as entry (entry.password)}
 				<li class="wdtt-users-item">
 					<div class="wdtt-users-main">
 						<span class="wdtt-users-name">{entry.comment || '—'}</span>
 						<code class="wdtt-users-pass" title={entry.password}>{shortPass(entry.password)}</code>
+						{#if entry.isMain}
+							<span class="wdtt-users-badge wdtt-users-badge-main">основной</span>
+						{/if}
 						{#if entry.isDeactivated}
 							<span class="wdtt-users-badge">отключён</span>
 						{/if}
@@ -185,21 +195,27 @@
 								Ссылка
 							</Button>
 						{/if}
-						<Button
-							variant="ghost"
-							size="sm"
-							loading={removing === entry.password}
-							disabled={!canManage}
-							onclick={() => removeUser(entry.password)}
-						>
-							Удалить
-						</Button>
+						{#if !entry.isMain}
+							<Button
+								variant="ghost"
+								size="sm"
+								loading={removing === entry.password}
+								disabled={!canManage}
+								onclick={() => removeUser(entry.password)}
+							>
+								Удалить
+							</Button>
+						{/if}
 					</div>
 				</li>
 			{/each}
 		</ul>
 		<p class="wdtt-hint wdtt-users-foot">
-			{pluralize(extraUsers.length, ['клиент', 'клиента', 'клиентов'])} с отдельным паролем
+			{#if extraUsers.length}
+				{pluralize(extraUsers.length, ['клиент', 'клиента', 'клиентов'])} с отдельным паролем
+			{:else}
+				Отдельных паролей нет — основной подходит всем
+			{/if}
 			{#if status?.panelDbPath}
 				· <code>{status.panelDbPath}</code>
 			{/if}
@@ -270,6 +286,13 @@
 		gap: 0.5rem;
 	}
 
+	.wdtt-empty-warn {
+		margin-bottom: 0.5rem;
+		border-style: solid;
+		border-color: var(--color-warning, #b45309);
+		color: var(--color-warning, #b45309);
+	}
+
 	.wdtt-users-list {
 		list-style: none;
 		margin: 0;
@@ -318,6 +341,10 @@
 		padding: 0.125rem 0.375rem;
 		border-radius: 4px;
 		background: var(--color-surface-secondary, rgba(0, 0, 0, 0.04));
+	}
+
+	.wdtt-users-badge-main {
+		color: var(--color-primary, #2563eb);
 	}
 
 	.wdtt-users-actions {

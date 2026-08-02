@@ -317,7 +317,9 @@
 	}
 
 	function generateLinkForUser(user: WdttPanelUserEntry) {
-		linkPassword = user.password;
+		// Пустой linkPassword = «основной пароль сервера» — так подпись под
+		// ссылкой остаётся честной, а бэкенд подставляет тот же пароль.
+		linkPassword = user.isMain ? '' : user.password;
 		if (user.vkHash) genVKHashes = user.vkHash;
 		void generateLinkNow();
 	}

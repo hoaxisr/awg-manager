@@ -2623,14 +2623,23 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	wgConfig: v.optional(v.nullable(v.string())),
 });
 
+const wdtt_ServerClient: v.GenericSchema = v.looseObject({
+	comment: v.optional(v.nullable(v.string())),
+	password: v.optional(v.nullable(v.string())),
+	vkHash: v.optional(v.nullable(v.string())),
+});
+
 const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	adminId: v.optional(v.nullable(v.string())),
 	botToken: v.optional(v.nullable(v.string())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerClient)))),
 	configDir: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	ingressEnabled: v.optional(v.nullable(v.boolean())),
 	lanSegments: v.optional(v.nullable(v.array(v.string()))),
+	linkPeer: v.optional(v.nullable(v.string())),
+	linkVkHashes: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	natIface: v.optional(v.nullable(v.string())),
 	natMode: v.optional(v.nullable(v.string())),

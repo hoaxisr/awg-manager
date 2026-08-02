@@ -200,6 +200,9 @@
 			if (!norm.servers.some((s) => s.id === selectedServerId)) {
 				selectedServerId = norm.servers[0]?.id ?? 'default';
 			}
+			const srv = norm.servers.find((s) => s.id === selectedServerId) ?? norm.servers[0];
+			if (!genPeer) genPeer = srv?.config.linkPeer ?? '';
+			if (!genVKHashes) genVKHashes = srv?.config.linkVkHashes ?? '';
 		} catch (e) {
 			loadError = errText(e);
 			notifications.error('WDTT: ' + loadError);
@@ -500,6 +503,23 @@
 		}
 	}
 
+	// peer и VK-хеши ссылки живут в конфиге сервера: без них основную ссылку
+	// после перезагрузки страницы пришлось бы собирать по памяти.
+	async function persistLinkParams(peer: string, vkHashes: string[]) {
+		if (!selectedServer) return;
+		const hashes = vkHashes.join(',');
+		const current = selectedServer.config;
+		if ((current.linkPeer ?? '') === peer && (current.linkVkHashes ?? '') === hashes) return;
+		const id = selectedServer.id;
+		const cfg = { ...$state.snapshot(current), linkPeer: peer, linkVkHashes: hashes };
+		try {
+			const result = await api.updateWdttServerInstance(id, cfg);
+			patchServerInConfig(id, normalizeServer(result.config));
+		} catch {
+			// не критично: ссылка уже показана, параметры допишутся при сохранении
+		}
+	}
+
 	async function generateServerLink(
 		peer: string,
 		vkHashes: string[],
@@ -517,6 +537,7 @@
 			generatedLink = result.link;
 			genPeer = result.peer;
 			generatedLinkQwdtt = result.linkQwdtt ?? '';
+			void persistLinkParams(result.peer, vkHashes);
 			return result;
 		} catch (e) {
 			notifications.error('Не удалось сгенерировать ссылку: ' + errText(e));
