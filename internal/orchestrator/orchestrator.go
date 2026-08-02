@@ -26,6 +26,11 @@ const expectedHookTTL = 15 * time.Second
 // stop command. See decideNDMSHook + updateState.
 const bootQuiescenceWindow = 20 * time.Second
 
+// confSettleDelay is how long an external conf=disabled edge is held before it
+// is acted on, waiting to see whether NDMS bounces the interface back to
+// conf=running. See settleConfDisabled.
+const confSettleDelay = 5 * time.Second
+
 // PingCheckExecutor is the interface for monitoring operations.
 // Satisfied by *pingcheck.Facade.
 type PingCheckExecutor interface {
@@ -89,6 +94,9 @@ type Orchestrator struct {
 
 	// clock returns current time; injectable for tests. nil → time.Now.
 	clock func() time.Time
+
+	// confSettleDelay overrides the package const; injectable for tests.
+	confSettleDelay time.Duration
 
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
 	// kernel tunnel's NDMS name on its confirmed "running" transition (#328).
@@ -181,6 +189,7 @@ func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
 		fresh.Running = cur.Running
 		fresh.Monitoring = cur.Monitoring
 		fresh.quiescentUntil = cur.quiescentUntil
+		fresh.lastConfRunningAt = cur.lastConfRunningAt
 	}
 	o.state.tunnels[tunnelID] = fresh
 }
@@ -265,6 +274,68 @@ func (o *Orchestrator) consumeExpectedHook(ndmsName, level string) bool {
 	return false
 }
 
+// noteConfRunning records an external conf=running edge so a conf=disabled
+// still settling can recognise it as an NDMS interface restart.
+func (o *Orchestrator) noteConfRunning(ndmsName string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if t := o.state.findByNDMSName(ndmsName); t != nil {
+		t.lastConfRunningAt = o.nowFn()
+	}
+}
+
+// settleConfDisabled reports whether an external conf=disabled edge should be
+// acted on. It returns false when NDMS brings the interface straight back to
+// conf=running — that is NDMS restarting the interface, not the user disabling
+// it in the router web UI.
+//
+// Issue #667: a ping-check profile with `interface restart` (which awg-manager
+// itself configures) makes NDMS bounce the interface conf disabled→running in
+// about two seconds after a few failed probes. decideNDMSHook took the
+// disabled edge as user intent and ran a full stop — interface down, static
+// and client routes torn down — while the conf=running that followed was
+// swallowed because the stop had not finished yet and the tunnel still looked
+// Running. A ten-second connectivity blip became a dead tunnel until the next
+// reconcile pass, ~5 minutes later.
+//
+// Holding the edge for confSettleDelay costs a genuine disable a few seconds
+// of lag and nothing else.
+func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool {
+	o.mu.Lock()
+	t := o.state.findByNDMSName(event.NDMSName)
+	now := o.nowFn()
+	// Unknown or already-stopped tunnel, or still inside the boot-quiescence
+	// window: decide() ignores the edge anyway, so don't sit on it.
+	if t == nil || !t.Running || now.Before(t.quiescentUntil) {
+		o.mu.Unlock()
+		return true
+	}
+	tunnelID := t.ID
+	o.mu.Unlock()
+
+	delay := o.confSettleDelay
+	if delay <= 0 {
+		delay = confSettleDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return false // caller gave up — leave the tunnel alone
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	t = o.state.tunnels[tunnelID]
+	if t == nil || !t.lastConfRunningAt.After(now) {
+		return true
+	}
+	o.appLog.Info("conf-settle", tunnelID,
+		"conf=disabled сменился на conf=running — рестарт интерфейса в NDMS, туннель не останавливаем")
+	return false
+}
+
 // HandleEvent is the single entry point for ALL events.
 // Decides what to do, then executes.
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
@@ -278,6 +349,17 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 			o.appLog.Debug("boot-trace", event.NDMSName,
 				fmt.Sprintf("expected-hook consumed level=%s", event.Level))
 			return nil
+		}
+	}
+
+	if event.Type == EventNDMSHook && event.Layer == "conf" {
+		switch event.Level {
+		case "running":
+			o.noteConfRunning(event.NDMSName)
+		case "disabled":
+			if !o.settleConfDisabled(ctx, event) {
+				return nil
+			}
 		}
 	}
 
