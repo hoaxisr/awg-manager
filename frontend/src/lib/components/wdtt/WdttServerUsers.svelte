@@ -145,7 +145,7 @@
 <div class="wdtt-users">
 	<div class="wdtt-users-head">
 		<div>
-			<div class="section-label">Список клиентов (panel.db)</div>
+			<div class="section-label">Клиенты сервера</div>
 			<p class="wdtt-hint">
 				По умолчанию все подключаются основным паролем сервера. Для отдельного клиента укажите
 				имя и нажмите «Добавить» — пароль сгенерируется сам, или задайте свой. Кнопка «Ссылка»

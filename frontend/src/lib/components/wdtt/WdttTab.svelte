@@ -77,9 +77,11 @@
 					null)
 			: null
 	);
+	// ?. на массивах: ответ без clients/servers (усечённый статус, мок) иначе
+	// роняет вычисление, и вкладка перестаёт реагировать на переключение.
 	const clientStatus = $derived(
 		status
-			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			? (status.clients?.find((c) => c.id === selectedClientId)?.status ?? status.client)
 			: undefined
 	);
 	const selectedServer = $derived(
@@ -98,13 +100,13 @@
 	);
 	const serverStatus = $derived(
 		status
-			? (status.servers.find((s) => s.id === selectedServerId)?.status ?? status.server)
+			? (status.servers?.find((s) => s.id === selectedServerId)?.status ?? status.server)
 			: undefined
 	);
 
 	const clientBarItems = $derived(
 		(config ? config.clients : []).map((c: WdttClientInstance) => {
-			const st = status?.clients.find((s) => s.id === c.id)?.status ?? status?.client;
+			const st = status?.clients?.find((s) => s.id === c.id)?.status ?? status?.client;
 			return {
 				id: c.id,
 				name: c.name,
@@ -119,7 +121,7 @@
 
 	const serverBarItems = $derived(
 		(config ? config.servers : []).map((s: WdttServerInstance) => {
-			const st = status?.servers.find((x) => x.id === s.id)?.status ?? status?.server;
+			const st = status?.servers?.find((x) => x.id === s.id)?.status ?? status?.server;
 			return {
 				id: s.id,
 				name: s.name,
@@ -222,7 +224,7 @@
 		if (!status || ensuringWg) return;
 		const id = selectedClientId;
 		if (wgEnsureSettled.has(id)) return;
-		const st = status.clients.find((c) => c.id === id)?.status ?? status.client;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
 		if (!wg) return;
