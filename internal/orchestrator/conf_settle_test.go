@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -56,6 +57,71 @@ func TestConfDisabled_StaleRunningDoesNotSuppress(t *testing.T) {
 
 	if !o.settleConfDisabled(context.Background(), confHook("disabled")) {
 		t.Fatal("a conf=running that predates the disabled edge must not suppress the stop")
+	}
+}
+
+// Issue #669: the conf=running edge behind an NDMS interface restart can be
+// missed entirely — the hook POST is fire-and-forget, and NDMS may take longer
+// than the settle window to bring the interface back. Ask NDMS itself before
+// tearing the tunnel down.
+func TestConfDisabled_SuppressedWhenNDMSStillHoldsInterfaceEnabled(t *testing.T) {
+	o := settledTunnel()
+	o.confLayerRunning = func(context.Context, string) (bool, error) { return true, nil }
+
+	if o.settleConfDisabled(context.Background(), confHook("disabled")) {
+		t.Fatal("NDMS reports conf=running — the disabled edge was a restart, the stop must be suppressed")
+	}
+}
+
+func TestConfDisabled_StopsWhenNDMSConfirmsDisabled(t *testing.T) {
+	o := settledTunnel()
+	o.confLayerRunning = func(context.Context, string) (bool, error) { return false, nil }
+
+	if !o.settleConfDisabled(context.Background(), confHook("disabled")) {
+		t.Fatal("NDMS confirms the interface is disabled — the stop must proceed")
+	}
+}
+
+// An unreadable NDMS (busy, transport error) must not turn into a suppressed
+// stop: fall back to the edge we were given.
+func TestConfDisabled_StopsWhenNDMSUnreadable(t *testing.T) {
+	o := settledTunnel()
+	o.confLayerRunning = func(context.Context, string) (bool, error) {
+		return false, errors.New("rci timeout")
+	}
+
+	if !o.settleConfDisabled(context.Background(), confHook("disabled")) {
+		t.Fatal("probe error must leave the disabled edge in force")
+	}
+}
+
+// Issue #669: a conf=running arriving while our own stop is still executing
+// used to be swallowed by decide's t.Running guard — and since the stop
+// persists Enabled=false, no later event would ever bring the tunnel back.
+// The running edge must wait for the in-flight sequence to finish.
+func TestConfRunning_WaitsForInFlightStop(t *testing.T) {
+	o := settledTunnel()
+	if err := o.lockTunnel(context.Background(), "awg11"); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = o.HandleEvent(context.Background(), confHook("running"))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("conf=running must not be decided while the tunnel has an operation in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	o.unlockTunnel("awg11")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("conf=running must proceed once the in-flight operation releases the tunnel")
 	}
 }
 

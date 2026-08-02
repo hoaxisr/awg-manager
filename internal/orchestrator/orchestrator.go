@@ -98,6 +98,11 @@ type Orchestrator struct {
 	// confSettleDelay overrides the package const; injectable for tests.
 	confSettleDelay time.Duration
 
+	// confLayerRunning reads the interface's CURRENT conf layer straight from
+	// NDMS (fresh, not from the snapshot cache). Used to second-guess a
+	// conf=disabled edge before acting on it. nil → check skipped.
+	confLayerRunning func(ctx context.Context, ndmsName string) (bool, error)
+
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
 	// kernel tunnel's NDMS name on its confirmed "running" transition (#328).
 	// nil-safe. Production wires an async closure; the orchestrator calls it
@@ -153,6 +158,12 @@ func (o *Orchestrator) SetInterfaceInvalidator(fn func(name string)) { o.ifaceIn
 // NativeWG) reaches confirmed running state. Used to restart HydraRoute Neo
 // so it re-applies CONNMARK rules.
 func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) { o.onTunnelRunning = fn }
+
+// SetConfLayerProbe wires the fresh NDMS read of an interface's conf layer.
+// nil-safe: without it, settleConfDisabled falls back to the hook edges alone.
+func (o *Orchestrator) SetConfLayerProbe(fn func(ctx context.Context, ndmsName string) (bool, error)) {
+	o.confLayerRunning = fn
+}
 
 // SetSupportsASC sets the ASC support flag.
 func (o *Orchestrator) SetSupportsASC(fn func() bool) {
@@ -285,9 +296,9 @@ func (o *Orchestrator) noteConfRunning(ndmsName string) {
 }
 
 // settleConfDisabled reports whether an external conf=disabled edge should be
-// acted on. It returns false when NDMS brings the interface straight back to
-// conf=running — that is NDMS restarting the interface, not the user disabling
-// it in the router web UI.
+// acted on. It returns false when NDMS is merely restarting the interface —
+// either because conf=running follows within confSettleDelay, or because NDMS
+// itself still reports the interface enabled when asked directly.
 //
 // Issue #667: a ping-check profile with `interface restart` (which awg-manager
 // itself configures) makes NDMS bounce the interface conf disabled→running in
@@ -295,8 +306,13 @@ func (o *Orchestrator) noteConfRunning(ndmsName string) {
 // disabled edge as user intent and ran a full stop — interface down, static
 // and client routes torn down — while the conf=running that followed was
 // swallowed because the stop had not finished yet and the tunnel still looked
-// Running. A ten-second connectivity blip became a dead tunnel until the next
-// reconcile pass, ~5 minutes later.
+// Running.
+//
+// Issue #669: that stop is terminal. It ends in ActionPersistStopped
+// (Enabled=false), and nothing in the daemon periodically reconciles tunnels
+// back to their desired state — the only automatic way up is another external
+// conf=running, which cannot come from an interface we just took down. So a
+// single missed edge costs the user the tunnel until they re-enable it by hand.
 //
 // Holding the edge for confSettleDelay costs a genuine disable a few seconds
 // of lag and nothing else.
@@ -326,14 +342,53 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	}
 
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	t = o.state.tunnels[tunnelID]
-	if t == nil || !t.lastConfRunningAt.After(now) {
+	bounced := t != nil && t.lastConfRunningAt.After(now)
+	o.mu.Unlock()
+	if t == nil {
+		return true
+	}
+	if bounced {
+		o.appLog.Info("conf-settle", tunnelID,
+			"conf=disabled сменился на conf=running — рестарт интерфейса в NDMS, туннель не останавливаем")
+		return false
+	}
+
+	// No running edge seen — but the edge may never arrive: hook delivery is
+	// fire-and-forget, and NDMS can take longer than the settle window to
+	// bring the interface back. Ask NDMS what it actually holds (issue #669:
+	// one lost edge left the tunnel stopped and Enabled=false, which nothing
+	// in the daemon ever undoes). An unreadable NDMS leaves the edge in force.
+	if o.confLayerRunning == nil {
+		return true
+	}
+	up, err := o.confLayerRunning(ctx, event.NDMSName)
+	if err != nil || !up {
 		return true
 	}
 	o.appLog.Info("conf-settle", tunnelID,
-		"conf=disabled сменился на conf=running — рестарт интерфейса в NDMS, туннель не останавливаем")
+		"NDMS держит интерфейс включённым — перезапуск в NDMS, туннель не останавливаем")
 	return false
+}
+
+// awaitTunnelIdle blocks until nothing is executing for the tunnel behind
+// ndmsName (or the wait gives up). An external conf=running that lands while
+// our own stop is still running would otherwise be swallowed by decide's
+// t.Running guard — and since that stop persists Enabled=false, no later
+// event brings the tunnel back on its own (issue #669).
+func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) {
+	o.mu.Lock()
+	var tunnelID string
+	if t := o.state.findByNDMSName(ndmsName); t != nil {
+		tunnelID = t.ID
+	}
+	o.mu.Unlock()
+	if tunnelID == "" {
+		return
+	}
+	if err := o.lockTunnel(ctx, tunnelID); err == nil {
+		o.unlockTunnel(tunnelID)
+	}
 }
 
 // HandleEvent is the single entry point for ALL events.
@@ -356,6 +411,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 		switch event.Level {
 		case "running":
 			o.noteConfRunning(event.NDMSName)
+			o.awaitTunnelIdle(ctx, event.NDMSName)
 		case "disabled":
 			if !o.settleConfDisabled(ctx, event) {
 				return nil
