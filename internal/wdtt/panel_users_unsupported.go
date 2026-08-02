@@ -11,7 +11,7 @@ import "fmt"
 
 var errPanelUsersUnsupported = fmt.Errorf("wdtt-server недоступен на этой архитектуре")
 
-func syncPanelMainPassword(string, string) error { return nil }
+func syncPanelMainPassword(string, string, []ServerClient) error { return nil }
 
 func loadPanelUsers(configDir, _ string) (PanelUsersStatus, error) {
 	return PanelUsersStatus{Users: []PanelUserEntry{}}, nil
@@ -23,6 +23,8 @@ func addPanelUser(_, _, _, _, _ string) (ServerClient, error) {
 
 func removePanelUser(_, _, _ string) error { return errPanelUsersUnsupported }
 
+// panel.db на этих арках не существует: восстанавливать нечего и незачем
+// шуметь предупреждением на каждой попытке старта.
 func restorePanelUsers(_, _ string, _ []ServerClient) ([]ServerClient, error) {
-	return nil, errPanelUsersUnsupported
+	return nil, nil
 }

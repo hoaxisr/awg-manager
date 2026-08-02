@@ -108,7 +108,9 @@ func panelExtras(cfg ServerConfig, users []PanelUserEntry) []ServerClient {
 	}
 	var extra []ServerClient
 	for _, u := range users {
-		if !known[u.Password] {
+		// IsMain здесь — мнение самой panel.db: строка прежнего главного
+		// пароля не клиент, её снимает setMainPassword.
+		if !known[u.Password] && !u.IsMain {
 			extra = append(extra, ServerClient{Password: u.Password, Comment: u.Comment, VkHash: u.VkHash})
 		}
 	}
@@ -135,7 +137,9 @@ func mergePanelUsers(mainPassword string, clients []ServerClient, st PanelUsersS
 			e.VkHash = c.VkHash
 		}
 		e.IsMain = isMain
-		if isMain && e.Comment == "" {
+		if isMain {
+			// panel.db зовёт эту строку «ADMIN» — в UI подпись не должна
+			// скакать в зависимости от того, запускался ли уже сервер.
 			e.Comment = "Основной"
 		}
 		out.Users = append(out.Users, e)

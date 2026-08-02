@@ -178,6 +178,115 @@ func TestServicePanelUsersSurviveWipedDB(t *testing.T) {
 	}
 }
 
+// Нечитаемая panel.db (битый файл, а не отсутствующий) не должна опустошать
+// список: он собирается из конфига, ошибка уходит в журнал.
+func TestServicePanelUsersSurviveUnreadableDB(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg := DefaultServerConfig()
+	cfg.Password = "mainpass0000000000000000"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddServerPanelUser(DefaultInstanceID, "", "Иван", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	cfgDir, err := s.serverConfigDir(DefaultInstanceID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "panel.db"), []byte("это не sqlite"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := s.ListServerPanelUsers(DefaultInstanceID)
+	if err != nil {
+		t.Fatalf("список должен отдаваться и при битой базе: %v", err)
+	}
+	if st.Available {
+		t.Fatal("битая panel.db, ожидался available=false")
+	}
+	if len(st.Users) != 2 || !st.Users[0].IsMain || st.Users[1].Comment != "Иван" {
+		t.Fatalf("список из конфига: %+v", st.Users)
+	}
+}
+
+// Форма сервера отдаёт конфиг целиком снапшотом времени загрузки страницы, а
+// клиенты правятся отдельной ручкой: сохранение настроек не должно их терять.
+func TestUpdateServerInstanceKeepsClients(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg := DefaultServerConfig()
+	cfg.Password = "mainpass0000000000000000"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.AddServerPanelUser(DefaultInstanceID, "", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPass := st.Users[1].Password
+
+	stale := cfg // без Clients — ровно то, что лежало в форме до добавления
+	stale.NatMode = "internet-only"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, stale); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inst.Config.Clients) != 1 || inst.Config.Clients[0].Password != clientPass {
+		t.Fatalf("клиенты потеряны при сохранении настроек: %+v", inst.Config.Clients)
+	}
+	if inst.Config.NatMode != "internet-only" {
+		t.Fatalf("остальные поля не применились: %+v", inst.Config)
+	}
+}
+
+// Смена пароля сервера снимает прежний главный пароль, а не превращает его в
+// обычного клиента с бессрочно валидной учёткой.
+func TestPanelMainPasswordRotation(t *testing.T) {
+	dir := t.TempDir()
+	oldMain, newMain := "oldmain00000000", "newmain00000000"
+	if _, err := restorePanelUsers(dir, oldMain, nil); err != nil {
+		t.Fatal(err)
+	}
+	insertPanelRow(t, dir, oldMain, "ADMIN") // так строку кладёт сам wdtt-server
+
+	if err := syncPanelMainPassword(dir, newMain, nil); err != nil {
+		t.Fatal(err)
+	}
+	extra, err := restorePanelUsers(dir, newMain, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(extra) != 0 {
+		t.Fatalf("старый главный пароль усыновлён как клиент: %+v", extra)
+	}
+	st, err := loadPanelUsers(dir, newMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range st.Users {
+		if u.Password == oldMain {
+			t.Fatalf("старый главный пароль остался валидным в panel.db: %+v", st.Users)
+		}
+	}
+}
+
+func insertPanelRow(t *testing.T, dir, password, comment string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", panelDSNWrite(panelDBPath(dir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT OR REPLACE INTO wdtt_users (password, comment) VALUES (?, ?)`, password, comment); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *Service) mustServerConfig(t *testing.T) ServerConfig {
 	t.Helper()
 	inst, err := s.serverInstance(DefaultInstanceID)
@@ -187,8 +296,8 @@ func (s *Service) mustServerConfig(t *testing.T) ServerConfig {
 	return inst.Config
 }
 
-// wipePanelUsers повторяет то, что делает wdtt-server в saveDB() после неудачной
-// загрузки: полная перезапись таблицы пользователей.
+// wipePanelUsers повторяет то, что делал wdtt-server до патча no-wipe: полную
+// перезапись таблицы пользователей после неудачной загрузки panel.db.
 func wipePanelUsers(t *testing.T, dir string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", panelDSNWrite(panelDBPath(dir)))

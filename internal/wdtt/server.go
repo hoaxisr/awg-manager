@@ -38,6 +38,10 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, reserved, 56000, 56100)
 	cfg = normalizeServerConfig(cfg)
 	cfg.WgPort = ensureUniqueWgPort(cfg.WgPort, cfg.Listen, reserved, 56000, 56100)
+	// Клиенты правятся только ручкой /users. Форма сервера присылает конфиг
+	// целиком и держит список снапшотом времени загрузки страницы: иначе
+	// любое сохранение воскрешало бы удалённых и теряло добавленных.
+	cfg.Clients = full.Servers[idx].Config.Clients
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -54,7 +58,7 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// panel.db в уже удаляемый t.TempDir().
 	if pwd := strings.TrimSpace(savedCfg.Password); pwd != "" {
 		if cfgDir, dirErr := s.serverConfigDir(id, savedCfg); dirErr == nil {
-			if err := syncPanelMainPassword(cfgDir, pwd); err != nil && s.appLog != nil {
+			if err := syncPanelMainPassword(cfgDir, pwd, savedCfg.Clients); err != nil && s.appLog != nil {
 				s.appLog.Warn("panel", id, "пароль сервера не записан в panel.db: "+err.Error())
 			}
 		}
