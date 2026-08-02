@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -182,6 +183,16 @@ func (a *app) setupEventWiring() {
 	// a frozen "down" snapshot and policy/WAN/all-interface lists misreport the
 	// tunnel as down (#328). Async — Invalidate does a blocking HTTP.
 	a.orch.SetInterfaceInvalidator(func(name string) { go a.ndmsQueries.Interfaces.Invalidate(name) })
+	// Second-guess an external conf=disabled edge before stopping a tunnel:
+	// FetchSummary goes to NDMS on every call, so it sees the interface as it
+	// is now, not as the last hook left it (#669).
+	a.orch.SetConfLayerProbe(func(ctx context.Context, name string) (bool, error) {
+		details, err := a.ndmsQueries.Interfaces.FetchSummary(ctx, name)
+		if err != nil || details == nil {
+			return false, err
+		}
+		return details.Intent() == ndms.IntentUp, nil
+	})
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
 	// after startup would miss CONNMARK rules without this.
