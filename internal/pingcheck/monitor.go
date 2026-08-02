@@ -132,12 +132,17 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 
 	// 2. Link down — NDMS switches to fallback immediately
 	//    conf: running preserved (user intent intact), link: pending
+	linkDown := true
 	if _, err := exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down"); err != nil {
 		s.logWarn(m.tunnelID, "ip link set down failed: "+err.Error())
+		linkDown = false
 	}
 
-	// 3. Re-apply endpoint if resolved to new IP
-	if newEndpoint != "" && stored != nil {
+	// 3. Re-apply endpoint if resolved to new IP.
+	//    Only when the link went down: on a module older than 3.0.20260731-04
+	//    `awg set` panics the kernel when the interface is gone, and this path
+	//    runs exactly when connectivity is lost (prebuilt/kmod/README.md).
+	if linkDown && newEndpoint != "" && stored != nil {
 		exec.Run(s.ctx, "/opt/sbin/awg", "set", ifaceName,
 			"peer", stored.Peer.PublicKey,
 			"endpoint", newEndpoint)
