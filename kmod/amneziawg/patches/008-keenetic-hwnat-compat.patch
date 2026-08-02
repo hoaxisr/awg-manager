@@ -1,0 +1,93 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] compat: HW NAT / fast NAT offload markers for Keenetic NDM
+
+The NDM kernel offloads flows to the RA hardware NAT engine and the
+software fast-NAT path. Packets entering or leaving the tunnel must be
+taken out of both, or the offload engine keeps forwarding the plaintext
+flow around the tunnel.
+
+Also fall back to skb_dst() instead of skb_valid_dst() for the MTU
+lookup (NDM sets a non-standard dst on offloaded skbs) and account for
+GRO drops, which are common once netfilter is in the path.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+diff --git a/src/device.c b/src/device.c
+index e48c552..84d63d8 100644
+--- a/src/device.c
++++ b/src/device.c
+@@ -27,6 +27,14 @@
+ #include <net/ip_tunnels.h>
+ #include <net/addrconf.h>
+ 
++#if IS_ENABLED(CONFIG_RA_HW_NAT)
++#include <../ndm/hw_nat/ra_nat.h>
++#endif
++
++#if IS_ENABLED(CONFIG_FAST_NAT)
++#include <net/fast_vpn.h>
++#endif
++
+ static LIST_HEAD(device_list);
+ 
+ static int wg_open(struct net_device *dev)
+@@ -179,7 +187,15 @@ static netdev_tx_t wg_xmit(struct sk_buff *skb, struct net_device *dev)
+ 		goto err_peer;
+ 	}
+ 
+-	mtu = skb_valid_dst(skb) ? dst_mtu(skb_dst(skb)) : dev->mtu;
++#if IS_ENABLED(CONFIG_RA_HW_NAT)
++	FOE_AI_UNHIT(skb);
++#endif
++
++#if IS_ENABLED(CONFIG_FAST_NAT)
++	SWNAT_RESET_MARKS(skb);
++#endif
++
++	mtu = skb_dst(skb) ? dst_mtu(skb_dst(skb)) : dev->mtu;
+ 
+ 	__skb_queue_head_init(&packets);
+ 	if (!skb_is_gso(skb)) {
+diff --git a/src/receive.c b/src/receive.c
+index 0a5f514..e0a59d3 100644
+--- a/src/receive.c
++++ b/src/receive.c
+@@ -21,6 +21,14 @@
+ #include <linux/udp.h>
+ #include <net/ip_tunnels.h>
+ 
++#if IS_ENABLED(CONFIG_RA_HW_NAT)
++#include <../ndm/hw_nat/ra_nat.h>
++#endif
++
++#if IS_ENABLED(CONFIG_FAST_NAT)
++#include <net/fast_vpn.h>
++#endif
++
+ /* Must be called with bh disabled. */
+ static void update_rx_stats(struct wg_peer *peer, size_t len)
+ {
+@@ -492,8 +500,21 @@ static void wg_packet_consume_data_done(struct wg_peer *peer,
+ 	if (unlikely(routed_peer != peer))
+ 		goto dishonest_packet_peer;
+ 
+-	napi_gro_receive(&peer->napi, skb);
+-	update_rx_stats(peer, message_data_len(len_before_trim));
++#if IS_ENABLED(CONFIG_RA_HW_NAT)
++	FOE_ALG_SKIP(skb);
++#endif
++
++#if IS_ENABLED(CONFIG_FAST_NAT)
++	SWNAT_RESET_MARKS(skb);
++#endif
++
++	if (unlikely(napi_gro_receive(&peer->napi, skb) == GRO_DROP)) {
++		DEV_STATS_INC(dev, rx_dropped);
++		net_dbg_ratelimited("%s: Packet from peer %llu dropped by GRO/netfilter\n",
++				    dev->name, peer->internal_id);
++	} else {
++		update_rx_stats(peer, message_data_len(len_before_trim));
++	}
+ 	return;
+ 
+ dishonest_packet_peer:

@@ -1,0 +1,32 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] fix: clamp Jmin to Jmax before drawing a junk packet size
+
+Neither the module nor awg-manager validates Jmin against Jmax on the
+kernel path. get_random_u32_inclusive(floor, ceil) computes
+floor + get_random_u32_below(ceil - floor + 1): with floor > ceil the
+range underflows to ~4G and the drawn size can reach 65535, well past
+the jmax-sized buffer; at floor == ceil + 1 the range is 0 and the
+compat helper divides by zero.
+
+Applies on top of patch 010, which already guards the kzalloc() result.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+--- a/src/send.c
++++ b/src/send.c
+@@ -88,7 +88,14 @@
+ 
+ 		if (likely(buffer)) {
+ 			while (junk_packet_count-- > 0) {
+-				junk_packet_size = (u16) get_random_u32_inclusive(wg->jmin, wg->jmax);
++				/* Jmin is not validated against Jmax anywhere on the way
++				 * in: with floor > ceil get_random_u32_inclusive()
++				 * underflows its range (and divides by zero at
++				 * floor == ceil + 1), so the size could run past a
++				 * buffer that is only jmax bytes long.
++				 */
++				junk_packet_size = (u16) get_random_u32_inclusive(
++					min(wg->jmin, wg->jmax), wg->jmax);
+ 
+ 				get_random_bytes(buffer, junk_packet_size);
+ 				get_random_bytes(&ds, 1);
