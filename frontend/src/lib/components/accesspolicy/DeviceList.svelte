@@ -12,22 +12,36 @@
 	let { devices, currentPolicy, onassign }: Props = $props();
 
 	let search = $state('');
+	let showOffline = $state(true);
+
+	function isDeviceOnline(d: PolicyDevice): boolean {
+		return d.active && d.link === 'up';
+	}
 
 	let filtered = $derived.by(() => {
-		const visible = devices.filter((d) => d.policy !== currentPolicy);
+		let visible = devices.filter((d) => d.policy !== currentPolicy);
+		if (!showOffline) {
+			visible = visible.filter(isDeviceOnline);
+		}
 		if (!search.trim()) return visible;
 		const q = search.trim().toLowerCase();
 		return visible.filter(
 			(d) =>
 				d.name.toLowerCase().includes(q) ||
 				d.hostname.toLowerCase().includes(q) ||
-				d.ip.toLowerCase().includes(q)
+				d.ip.toLowerCase().includes(q) ||
+				d.mac.toLowerCase().includes(q)
 		);
 	});
 </script>
 
 <div class="device-list-section">
 	<h4 class="section-title">Все устройства</h4>
+
+	<label class="offline-toggle">
+		<input type="checkbox" bind:checked={showOffline} />
+		<span>Отобразить offline устройства</span>
+	</label>
 
 	<input
 		type="text"
@@ -38,7 +52,7 @@
 
 	<div class="device-scroll">
 		{#each filtered as device}
-			{@const isActive = device.active && device.link === 'up'}
+			{@const isActive = isDeviceOnline(device)}
 			{@const isBusy = device.policy !== '' && device.policy !== currentPolicy}
 			<div
 				class="device-row"
@@ -53,8 +67,10 @@
 				<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 				<div class="device-info">
 					<span class="device-name">{device.name || device.hostname || device.mac}</span>
-					{#if device.ip}
+					{#if device.ip && device.ip !== '0.0.0.0'}
 						<span class="device-ip">{device.ip}</span>
+					{:else}
+						<span class="device-ip">IP адрес отсутствует</span>
 					{/if}
 				</div>
 				{#if isBusy}
@@ -91,6 +107,21 @@
 		font-weight: 600;
 		margin: 0;
 		color: var(--text-primary);
+	}
+
+	.offline-toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.offline-toggle input {
+		accent-color: var(--accent);
+		cursor: pointer;
 	}
 
 	.search-input {

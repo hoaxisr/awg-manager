@@ -1037,9 +1037,28 @@ exit 0
 //
 // WAN IPv4s are read from the default-route interfaces at call time — the
 // trigger IS often a DHCP renew, so baked-in addresses would go stale.
+//
+// The conntrack pass above only reaches flows BORN in the window (they carry a
+// direct WAN NAT). Flows that were ALREADY established and intercepted have no
+// NAT at all — their reply-dst is the LAN client — yet the window hands them to
+// the MTK PPE engine as a plain forward, after which the hardware switches them
+// and they never enter netfilter again: neither restored rules nor `conntrack
+// -D` heal them (issue #684, measured on NC-1812: 8444 conntrack packets against
+// 0 on the matching mangle rules). One write to /proc/sys/net/hwnat/ppe_flush
+// makes every offloaded flow take the slow path once and re-learn. The node is
+// absent on non-MTK platforms, hence the writability guard.
+//
 // Pure (no I/O) so a test can validate the generated shell with `sh -n`.
 func ctCleanScript() string {
 	return fmt.Sprintf(`#!/bin/sh
+# Hardware offload (MTK PPE) flush — issue #684. Runs before the conntrack work
+# and independently of it: the flows it heals carry no NAT, so no conntrack
+# lookup would find them. Only once the TPROXY jump is really back — flushing
+# while it is absent just re-teaches the same flows through the same hole.
+if /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[1]s($| )' \
+  && [ -w /proc/sys/net/hwnat/ppe_flush ] && echo 1 > /proc/sys/net/hwnat/ppe_flush 2>/dev/null; then
+  logger -t awgm-ctclean "flushed PPE offload table after TPROXY restore"
+fi
 CT=/opt/sbin/conntrack
 [ -x "$CT" ] || { logger -t awgm-ctclean "conntrack tool missing — poisoned-flow eviction skipped"; exit 0; }
 wan_ips=""

@@ -1809,6 +1809,24 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 	if strings.Contains(s, "-p tcp") {
 		t.Errorf("ctclean must never evict TCP flows:\n%s", s)
 	}
+	// Issue #684: the PPE flush must be guarded by a live TPROXY jump (flushing
+	// into an absent jump re-teaches the same flows) and by node writability
+	// (non-MTK platforms have no such node), and must sit BEFORE the conntrack
+	// tool check — the flows it heals carry no NAT to look up.
+	flush := strings.Index(s, "ppe_flush")
+	if flush < 0 {
+		t.Fatalf("ctclean missing PPE flush:\n%s", s)
+	}
+	if ct := strings.Index(s, `[ -x "$CT" ]`); ct >= 0 && flush > ct {
+		t.Errorf("PPE flush must run before the conntrack-tool gate:\n%s", s)
+	}
+	guard := s[:flush]
+	if !strings.Contains(guard, "-[jg] "+ChainName) {
+		t.Errorf("PPE flush must be gated on a live TPROXY jump:\n%s", s)
+	}
+	if !strings.Contains(s, "[ -w /proc/sys/net/hwnat/ppe_flush ]") {
+		t.Errorf("PPE flush must be gated on node writability:\n%s", s)
+	}
 }
 
 func TestWriteNetfilterHook_WritesCtCleanScript(t *testing.T) {
