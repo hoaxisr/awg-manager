@@ -210,6 +210,13 @@
     let clientActiveCount = $derived(clientRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
 
+    type TabChildItem = {
+        id: string;
+        label: string;
+        badge?: number | string;
+        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
+    };
+
     type TabItem = {
         id: string;
         label: string;
@@ -217,6 +224,7 @@
         badgeTone?: 'default' | 'success' | 'warning' | 'muted';
         separatorBefore?: boolean;
         muted?: boolean;
+        children?: TabChildItem[];
     };
 
     const TAB_TO_SUBTAB: Record<string, RoutingSubTab> = {
@@ -235,8 +243,35 @@
         return sub ? isRoutingSubTabVisible(lvl, sub) : true;
     }
 
+    function tabLeafIds(tab: TabItem): string[] {
+        return tab.children?.map((c) => c.id) ?? [tab.id];
+    }
+
+    function tabsInclude(items: TabItem[], id: string): boolean {
+        return items.some((it) => tabLeafIds(it).includes(id));
+    }
+
     const singboxRouterStatus = singboxRouterStore.status;
     let singboxRuleCount = $derived($singboxRouterStatus?.ruleCount ?? 0);
+
+    const showSingboxTproxy = $derived(singboxInstalled && tabVisible('singbox'));
+    // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert' level) BUT
+    // stays visible whenever the engine is actually in fakeip-tun mode — that's
+    // the in-use case the auto-select effect lands on, and hiding the chip there
+    // would strand activeTab on a tab with no chip to navigate back from.
+    const showSingboxFakeip = $derived(
+        singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'),
+    );
+    const singboxMenuChildren = $derived(
+        (
+            [
+                showSingboxTproxy
+                    ? { id: 'singbox', label: 'TProxy', badge: singboxRuleCount }
+                    : null,
+                showSingboxFakeip ? { id: 'fakeip', label: 'FakeIP' } : null,
+            ] as (TabChildItem | null)[]
+        ).filter((c): c is TabChildItem => c !== null),
+    );
 
     let tabItems = $derived(
         ([
@@ -247,23 +282,14 @@
             { id: 'ip', label: 'IP-адреса', badge: ipActiveCount },
             { id: 'clientvpn', label: 'VPN для устройств', badge: clientActiveCount },
             { id: 'policy', label: 'Политики доступа', badge: policyCount },
-            // Visual gap separates the NDMS-stack tabs above from the
-            // sing-box / hydraroute stack below. TProxy + FakeIP are the two
-            // mutually-exclusive sing-box routing modes — kept adjacent (no
-            // separator between them) and muted when the OTHER mode is the active
-            // one (XOR), so the dormant mode reads as dormant, not broken.
-            singboxInstalled
-                ? { id: 'singbox', label: 'Sing-box: TProxy', badge: singboxRuleCount, separatorBefore: true,
-                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'fakeip-tun' }
-                : null,
-            // FakeIP is expert-gated (mirrors the 'singbox' tab's 'expert'
-            // level) BUT stays visible whenever the engine is actually in
-            // fakeip-tun mode — that's the in-use case the auto-select effect
-            // lands on, and hiding the chip there would strand activeTab on a
-            // tab with no chip to navigate back from.
-            (singboxInstalled && (tabVisible('singbox') || $singboxSettings?.routingMode === 'fakeip-tun'))
-                ? { id: 'fakeip', label: 'Sing-box: FakeIP', badge: undefined, separatorBefore: false,
-                    muted: !!$singboxRouterStatus?.enabled && $singboxSettings?.routingMode === 'tproxy' }
+            // Sing-box modes as one dropdown chip (same pattern as tunnels page).
+            singboxMenuChildren.length > 0
+                ? {
+                        id: singboxMenuChildren[0].id,
+                        label: 'Sing-box',
+                        separatorBefore: true,
+                        children: singboxMenuChildren,
+                    }
                 : null,
             // HR Neo is a separate routing engine (not sing-box) — divider before it.
             hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
@@ -272,14 +298,14 @@
                 : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
-            .filter((t) => tabVisible(t.id))
+            .filter((t) => (t.children ? true : tabVisible(t.id)))
     );
 
     // If the user deep-linked / had the tab active and sing-box disappeared
     // (uninstall while the page is open), bounce them off.
     $effect(() => {
         if (!$systemInfo.data) return;
-        if (!singboxInstalled && activeTab === 'singbox') {
+        if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip')) {
             activeTab = 'dns';
         }
     });
@@ -300,17 +326,22 @@
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'singbox') &&
-            !items.some((it) => it.id === activeTab)
+            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip') &&
+            !tabsInclude(items, activeTab)
         ) {
             return;
         }
-        if (!hrKnown && (activeTab === 'hrneo' || activeTab === 'geodata') && !items.some((it) => it.id === activeTab)) {
+        if (
+            !hrKnown &&
+            (activeTab === 'hrneo' || activeTab === 'geodata') &&
+            !tabsInclude(items, activeTab)
+        ) {
             return;
         }
 
-        if (!items.some((it) => it.id === activeTab)) {
-            activeTab = items[0].id as typeof activeTab;
+        if (!tabsInclude(items, activeTab)) {
+            const first = items[0];
+            activeTab = (first.children?.[0]?.id ?? first.id) as typeof activeTab;
         }
     });
 

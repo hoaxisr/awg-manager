@@ -31,6 +31,8 @@ export interface TunnelPageModalsContext {
 	referencedTunnelName: string;
 	createModalOpen: boolean;
 	readonly wizardPreselect: 'choose' | 'single' | 'inline' | 'url';
+	openAwg3Import: () => void;
+	readonly awg3Visible: boolean;
 	pendingSubscriptionDelete: string | null;
 	readonly deletingSubscription: boolean;
 	readonly detailId: string | null;

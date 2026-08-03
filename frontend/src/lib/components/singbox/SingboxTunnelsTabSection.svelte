@@ -11,7 +11,7 @@
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import type { SingboxTunnel } from '$lib/types';
 	import type { SubscriptionActiveCardVM, SingboxTunnelListStats } from '$lib/components/subscriptions/subscriptionVMs';
-	import { Globe, LayoutGrid, Link } from 'lucide-svelte';
+	import { Globe, LayoutGrid, Link, Waypoints } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import { showSummary } from '$lib/stores/showSummary';
 
@@ -33,6 +33,7 @@
 		handleSingboxTunnelSortChange: (key: SingboxTunnelSortKey) => void;
 		openSingboxDetail: (tag: string) => void;
 		openWizard: (preselect: 'choose' | 'single' | 'inline' | 'url') => void;
+		openAwg3Import?: () => void;
 	}
 
 	let {
@@ -53,6 +54,7 @@
 		handleSingboxTunnelSortChange,
 		openSingboxDetail,
 		openWizard,
+		openAwg3Import,
 	}: Props = $props();
 </script>
 
@@ -119,6 +121,15 @@
 					Адрес подписки провайдера — список обновляется автоматически.
 				</div>
 			</button>
+			{#if openAwg3Import}
+				<button type="button" class="empty-kind-card" onclick={openAwg3Import}>
+					<Waypoints class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
+					<div class="empty-kind-title">AWG3 Endpoint</div>
+					<div class="empty-kind-desc">
+						JSON AmneziaWG 3 — endpoint внутри sing-box.
+					</div>
+				</button>
+			{/if}
 		</div>
 		<div class="info-card">
 			<h3 class="info-title">О Sing-box</h3>
@@ -308,9 +319,7 @@
 		filter: none;
 	}
 
-	/* Empty-state kind picker — three clickable cards opening the wizard
-	   on the matching step 2. Mirrors the wizard's step-1 visual so the
-	   transition into the modal feels continuous. */
+	/* Empty-state kind picker — mirrors wizard step-1 cards. */
 	.empty-kinds {
 		display: grid;
 		grid-template-columns: 1fr;
@@ -318,9 +327,17 @@
 		margin-top: 0.5rem;
 	}
 
-	@media (min-width: 600px) {
-	.empty-kinds { grid-template-columns: 1fr 1fr 1fr; }
-}
+	@media (min-width: 560px) {
+		.empty-kinds {
+			grid-template-columns: repeat(2, minmax(12rem, 1fr));
+		}
+	}
+
+	@media (min-width: 820px) {
+		.empty-kinds {
+			grid-template-columns: repeat(4, minmax(12rem, 1fr));
+		}
+	}
 
 	.empty-kind-card {
 		display: flex;
