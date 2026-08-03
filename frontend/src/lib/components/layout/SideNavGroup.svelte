@@ -5,30 +5,48 @@
 
 	interface Props {
 		group: NavGroup;
+		/** Раскрыта = в группе текущий маршрут (см. SideNav). */
 		open: boolean;
 		activeId: string | null;
-		onToggle: () => void;
+		/** Куда ведёт клик по заголовку — последний открытый пункт группы. */
+		href: string;
+		onPick: (itemId: string) => void;
 		onNavigate?: () => void;
 	}
 
-	let { group, open, activeId, onToggle, onNavigate }: Props = $props();
+	let { group, open, activeId, href, onPick, onNavigate }: Props = $props();
 	const Icon = $derived(group.icon);
+	const inGroup = $derived(group.items.some((i) => i.id === activeId));
 </script>
 
-<button type="button" class="group-header" aria-expanded={open} onclick={onToggle}>
-	<Icon size={15} aria-hidden="true" />
+<a
+	{href}
+	class="group-header"
+	class:in-group={inGroup}
+	aria-expanded={open}
+	onclick={() => onNavigate?.()}
+>
+	<span class="group-icon"><Icon size={15} aria-hidden="true" /></span>
 	<span class="group-label">{group.label}</span>
 	{#if open}
 		<ChevronDown size={14} aria-hidden="true" />
 	{:else}
 		<ChevronRight size={14} aria-hidden="true" />
 	{/if}
-</button>
+</a>
 
 {#if open}
 	<div class="group-items">
 		{#each group.items as item (item.id)}
-			<SideNavItem {item} active={item.id === activeId} indent {onNavigate} />
+			<SideNavItem
+				{item}
+				active={item.id === activeId}
+				indent
+				onNavigate={() => {
+					onPick(item.id);
+					onNavigate?.();
+				}}
+			/>
 		{/each}
 	</div>
 {/if}
@@ -40,14 +58,13 @@
 		gap: 0.5rem;
 		width: 100%;
 		padding: 0.5rem;
-		border: none;
 		border-radius: var(--radius-sm);
-		background: transparent;
 		font-size: 11px;
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--color-text-muted);
+		text-decoration: none;
 		cursor: pointer;
 		user-select: none;
 		transition: color var(--t-fast) ease;
@@ -55,6 +72,21 @@
 
 	.group-header:hover {
 		color: var(--color-text-secondary);
+		background: var(--color-bg-hover);
+	}
+
+	/* Активен потомок → у предка красится ТОЛЬКО иконка. Фон — признак
+	   конечного пункта, и он должен быть в дереве ровно один. */
+	.group-header.in-group .group-icon {
+		color: var(--color-accent);
+	}
+
+	.group-icon {
+		display: flex;
+		flex: 0 0 15px;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-text-muted);
 	}
 
 	.group-label {

@@ -68,9 +68,12 @@
 	}
 
 	.nav-item.active {
-		background: var(--color-accent-tint);
+		/* Непрозрачная смесь, а не tint: полупрозрачный фон при скролле
+		   просвечивает контент страницы под сайдбаром. */
+		background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-secondary));
 		color: var(--color-accent);
 		font-weight: 500;
+		box-shadow: inset 3px 0 0 var(--color-accent);
 	}
 
 	.nav-item-label {

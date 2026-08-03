@@ -51,7 +51,6 @@
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { IconButton, Modal } from '$lib/components/ui';
 	import { AppShell, BrandLogoMark } from '$lib/components/layout';
-	import { navGroups } from '$lib/stores/navGroups';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
@@ -357,7 +356,6 @@
 		tunnelDashboardManualOrder.init();
 		tunnelDashboardGroupMode.init();
 		tunnelDashboardTags.init();
-		navGroups.init();
 		await auth.checkStatus();
 	});
 

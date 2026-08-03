@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { NAV_TREE, activeItem } from '$lib/data/navigation';
-	import { navGroups } from '$lib/stores/navGroups';
+	import { NAV_TREE, activeItem, type NavGroup } from '$lib/data/navigation';
+	import { menuMemoryKey, readMenuChild, rememberMenuChild } from '$lib/utils/menuMemory';
 	import SideNavGroup from './SideNavGroup.svelte';
 	import SideNavItem from './SideNavItem.svelte';
 	import BrandLogoMark from './BrandLogoMark.svelte';
@@ -22,7 +22,33 @@
 		onNavigate,
 	}: Props = $props();
 
-	const activeId = $derived(activeItem($page.url)?.item.id ?? null);
+	const active = $derived(activeItem($page.url));
+	const activeId = $derived(active?.item.id ?? null);
+	const activeGroupId = $derived(active?.group?.id ?? null);
+
+	function groupChildIds(group: NavGroup): string[] {
+		return group.items.map((i) => i.id);
+	}
+
+	// Реактивное зеркало памяти. Без него href заголовка протухает навсегда:
+	// Svelte 5 оборачивает каждое проп-выражение в derived, а чтение
+	// localStorage реактивных зависимостей не создаёт — значение вычислится
+	// один раз при монтировании и закэшируется. Тот же приём, что в Tabs.
+	let memory = $state<Record<string, string>>({});
+
+	// Куда ведёт клик по заголовку группы: последний открытый в ней пункт,
+	// а при пустой памяти — первый.
+	function rememberedItem(group: NavGroup) {
+		const ids = groupChildIds(group);
+		const remembered = memory[menuMemoryKey(group.label, ids)] ?? readMenuChild(group.label, ids);
+		return group.items.find((i) => i.id === remembered) ?? group.items[0];
+	}
+
+	function handleGroupPick(group: NavGroup, itemId: string) {
+		const ids = groupChildIds(group);
+		memory = { ...memory, [menuMemoryKey(group.label, ids)]: itemId };
+		rememberMenuChild(group.label, ids, itemId);
+	}
 </script>
 
 <div class="sidenav">
@@ -36,9 +62,10 @@
 			{#if entry.kind === 'group'}
 				<SideNavGroup
 					group={entry}
-					open={$navGroups[entry.id]}
+					open={activeGroupId === entry.id}
 					{activeId}
-					onToggle={() => navGroups.toggle(entry.id)}
+					href={rememberedItem(entry).href}
+					onPick={(itemId) => handleGroupPick(entry, itemId)}
 					{onNavigate}
 				/>
 			{:else}
