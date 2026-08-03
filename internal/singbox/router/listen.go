@@ -14,8 +14,9 @@ import (
 )
 
 // Socket states in /proc/net/{tcp,udp} (hex). TCP LISTEN = 0x0A; a bound,
-// unconnected UDP socket = 0x07. sing-box's redirect-in (TCP) and tproxy-in
-// (UDP) inbounds bind 0.0.0.0 in these states.
+// unconnected UDP socket = 0x07. sing-box's redirect-in (TCP, 0.0.0.0) and
+// tproxy-in (UDP, 127.0.0.1) inbounds sit in these states; the check below
+// matches port+state only, so it is bind-address-agnostic.
 //
 // Why state matters: sing-box's accepted TCP connections REUSE the listener's
 // local port (RedirectPort), so /proc/net/tcp carries the LISTEN row plus one
