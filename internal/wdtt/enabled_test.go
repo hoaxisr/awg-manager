@@ -24,11 +24,11 @@ func validClientCfg(peer string) ClientConfig {
 
 func TestService_StartClientSetsEnabled(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 	if err := s.UpdateClientConfig(validClientCfg("127.0.0.1:56000")); err != nil {
 		t.Fatal(err)
 	}
-	sleepSeam(s.procs.get(DefaultInstanceID))
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
 
 	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -46,7 +46,7 @@ func TestService_StartClientSetsEnabled(t *testing.T) {
 
 func TestService_StartClientFailKeepsEnabledFalse(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 	// Дефолтный клиент без Peer/VK/Password → валидация падает до spawn.
 	if err := s.StartClientInstance(DefaultInstanceID); err == nil {
 		t.Fatal("ожидалась ошибка валидации")
@@ -62,7 +62,7 @@ func TestService_StartClientFailKeepsEnabledFalse(t *testing.T) {
 
 func TestService_StopClientClearsEnabled(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 	cfg, err := s.GetConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestService_StopClientClearsEnabled(t *testing.T) {
 
 func TestService_StopExitKeepsEnabled(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 	cfg, err := s.GetConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestService_StopExitKeepsEnabled(t *testing.T) {
 
 func TestService_ResumeEnabledStartsOnlyEnabled(t *testing.T) {
 	dir := t.TempDir()
-	s := NewService(dir, dir, "/bin/sh")
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
 	cfg, err := s.GetConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -117,16 +117,16 @@ func TestService_ResumeEnabledStartsOnlyEnabled(t *testing.T) {
 	if err := s.store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
-	sleepSeam(s.procs.get(DefaultInstanceID))
-	sleepSeam(s.procs.get("b"))
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+	sleepSeam(s.clientProcs.get("b"))
 
 	s.ResumeEnabled()
 	defer s.Stop()
 
-	if running, _ := s.procs.get(DefaultInstanceID).IsRunning(); !running {
+	if running, _ := s.clientProcs.get(DefaultInstanceID).IsRunning(); !running {
 		t.Fatal("Enabled-клиент должен быть запущен ResumeEnabled")
 	}
-	if running, _ := s.procs.get("b").IsRunning(); running {
+	if running, _ := s.clientProcs.get("b").IsRunning(); running {
 		t.Fatal("disabled-клиент не должен запускаться")
 	}
 }

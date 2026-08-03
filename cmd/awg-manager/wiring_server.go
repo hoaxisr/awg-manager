@@ -12,13 +12,14 @@ import (
 
 	"github.com/hoaxisr/awg-manager/frontend"
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -33,6 +34,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // setupServer registers routing snapshot providers and constructs the HTTP
@@ -246,16 +248,22 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetInstallSpecs(specs)
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.freeturnService.EnsureBundledInstall()
 	a.wdttService.SetLogger(a.loggingService)
-	if spec, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
-		a.wdttService.SetInstallSpec(spec)
+	if a.managedService != nil {
+		a.wdttService.SetAccessManager(&wdttAccessAdapter{
+			svc:    a.managedService,
+			ifaces: a.ndmsCommands.Interfaces,
+		})
+	}
+	a.wdttService.SetInterfaceChecker(wdtt.NewSysNetChecker())
+	if specs, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
+		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
-	// Автостарт клиентов, которые пользователь запускал (Enabled), — иначе после
-	// рестарта/ребута linked-AWG-туннель шлёт трафик в мёртвый 127.0.0.1:90xx.
-	// В горутине, чтобы не блокировать boot; логгеры уже выставлены выше.
-	go a.freeturnService.ResumeEnabled()
-	go a.wdttService.ResumeEnabled()
+	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
+	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
+	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg
@@ -532,6 +540,17 @@ func (a *app) setupRouter() {
 	a.srv.SetSubscriptionHandler(subHandler)
 	a.srv.AddShutdownHook(subSched.Stop)
 
+	if a.wdttService != nil && a.ndmsCommands != nil {
+		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
+		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
+			store: a.ndmsQueries.Interfaces,
+			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, "wdtt"),
+		})
+		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
+		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
+		a.wdttService.SetRouterReconciler(routerSvc)
+	}
+
 }
 
 // setupListen wires DNS rewrites, selects the HTTP port, applies the
@@ -600,9 +619,26 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
+	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
+	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
+		var out []listenfirewall.PortSpec
+		out = append(out, a.freeturnService.RunningServerListenPorts()...)
+		out = append(out, a.wdttService.RunningServerListenPorts()...)
+		return listenfirewall.MergePortSpecs(out)
+	})
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)
+	a.srv.AddShutdownHook(func() {
+		if !backup.HasPostRestoreMarker(a.dataDir) {
+			return
+		}
+		a.freeturnService.Stop()
+		a.wdttService.Stop()
+		backup.KillOrphanProxyProcesses(filepath.Join(a.dataDir, "run"))
+	})
 	// Intentionally NOT removing kmod proxy slots on restart: the
 	// reconnect path (EventReconnect → ActionRestoreKmod →
 	// KmodManager.RestoreTunnel) adopts each existing slot without

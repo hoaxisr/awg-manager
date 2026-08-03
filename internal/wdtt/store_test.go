@@ -86,6 +86,35 @@ func assertLoadIsolated(t *testing.T, store *Store) {
 	}
 }
 
+// Вложенный срез клиентов сервера тоже обязан быть изолирован: иначе правка
+// списка мутирует кэш стора до Save и гоняется с читателями.
+func TestStore_LoadIsolatesServerClients(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Servers[0].Config.Clients = []ServerClient{{Password: "p1", Comment: "Иван"}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Servers[0].Config.Clients[0].Comment = "leaked"
+
+	second, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Servers[0].Config.Clients[0].Comment != "Иван" {
+		t.Fatal("мутация клиентов из результата Load протекла в кэш")
+	}
+}
+
 func TestStore_LoadEmptyFileRestoresDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wdtt.json")

@@ -25,7 +25,7 @@ func (s *Store) Load() (Config, error) {
 		// normalizeConfig и мутации хендлеров иначе меняют кэш до Save.
 		cfg := copyConfig(*s.cfg)
 		normalizeConfig(&cfg)
-		if len(cfg.Clients) != len(s.cfg.Clients) {
+		if len(cfg.Clients) != len(s.cfg.Clients) || len(cfg.Servers) != len(s.cfg.Servers) {
 			if err := s.saveLocked(cfg); err != nil {
 				return cfg, err
 			}
@@ -59,6 +59,16 @@ func (s *Store) Load() (Config, error) {
 func copyConfig(cfg Config) Config {
 	if cfg.Clients != nil {
 		cfg.Clients = append([]ClientInstance(nil), cfg.Clients...)
+	}
+	if cfg.Servers != nil {
+		cfg.Servers = append([]ServerInstance(nil), cfg.Servers...)
+		// Вложенный срез клиентов делил бы backing array с кэшем: правка
+		// списка мутировала бы кэш до Save и гонялась бы с читателями.
+		for i := range cfg.Servers {
+			if list := cfg.Servers[i].Config.Clients; list != nil {
+				cfg.Servers[i].Config.Clients = append([]ServerClient(nil), list...)
+			}
+		}
 	}
 	return cfg
 }
@@ -95,5 +105,8 @@ func normalizeConfig(cfg *Config) {
 	}
 	if len(cfg.Clients) == 0 {
 		cfg.Clients = DefaultConfig().Clients
+	}
+	if len(cfg.Servers) == 0 {
+		cfg.Servers = DefaultConfig().Servers
 	}
 }

@@ -84,6 +84,15 @@ type InspectDNSResult struct {
 // First full match wins → that rule's Server. No match → dnsFinal. The
 // resolved server is then looked up by tag to classify + extract the pool.
 //
+// Цепочки sing-box 1.14 ломают «первое совпадение = финал» дважды:
+//   - action=evaluate только резолвит и передаёт ответ дальше, не терминируя
+//     проход; правило без матчеров при этом — catch-all (совпадает со всеми);
+//   - правило с match_response (и ip_cidr/response_*) матчится по DNS-ответу,
+//     которого у статического трейса нет → всегда Matched=false.
+//
+// Оба вида проход продолжают, а про вторые Note предупреждает, что вживую они
+// могут перехватить запрос.
+//
 // singboxBinary may be empty and cache may be nil — matchRuleSet degrades
 // gracefully (see the route inspector docs).
 func InspectDNS(input InspectDNSInput, dnsRules []DNSRule, dnsServers []DNSServer, ruleSets []RuleSet, dnsFinal string, singboxBinary string, cache *ruleSetCache) InspectDNSResult {
@@ -111,11 +120,32 @@ func InspectDNS(input InspectDNSInput, dnsRules []DNSRule, dnsServers []DNSServe
 		env.ruleSetByTag[rs.Tag] = rs
 	}
 
+	// Индексы правил, матчащихся по DNS-ответу — они статически не проверяются,
+	// но вживую могут перехватить запрос раньше найденного нами правила.
+	var responseDependent []int
+
 	for i, rule := range dnsRules {
 		match := evaluateDNSRule(input, parsedIP, rule, env)
 		match.Index = i
+
+		switch {
+		case isResponseDependentDNSRule(rule):
+			match.Matched = false
+			match.Reason = "зависит от DNS-ответа — статически не проверяется"
+			responseDependent = append(responseDependent, i)
+		case rule.Action == "evaluate":
+			// Матчеров нет → catch-all: перезаписываем вердикт «пустое
+			// правило» из evaluateDNSRule.
+			if !dnsRuleHasMatcher(rule) {
+				match.Matched = true
+			}
+			if match.Matched {
+				match.Reason = "evaluate — не терминирует, проход продолжается"
+			}
+		}
+
 		res.Matches = append(res.Matches, match)
-		if !match.Matched {
+		if !match.Matched || rule.Action == "evaluate" {
 			continue
 		}
 		if res.MatchedRule == -1 {
@@ -143,6 +173,23 @@ func InspectDNS(input InspectDNSInput, dnsRules []DNSRule, dnsServers []DNSServe
 			uniq = append(uniq, s)
 		}
 		res.Note = "Не удалось проверить rule_set: " + strings.Join(uniq, "; ")
+	}
+
+	// Response-зависимые правила выше итогового совпадения (а при fallback на
+	// final — все) вживую могут перехватить запрос.
+	var ahead []string
+	for _, idx := range responseDependent {
+		if res.MatchedRule == -1 || idx < res.MatchedRule {
+			ahead = append(ahead, fmt.Sprintf("%d", idx+1))
+		}
+	}
+	if len(ahead) > 0 {
+		note := "статический трейс: правила " + strings.Join(ahead, ", ") + " зависят от ответа и могут перехватить запрос"
+		if res.Note != "" {
+			res.Note += "; " + note
+		} else {
+			res.Note = note
+		}
 	}
 
 	return res
@@ -179,6 +226,19 @@ func classifyDNSServer(res *InspectDNSResult, serverTag string, dnsServers []DNS
 	// Tag not found among declared servers — treat as a real upstream we
 	// cannot inspect further.
 	res.Classification = "real"
+}
+
+// isResponseDependentDNSRule reports whether the rule matches on the DNS
+// *response* (sing-box 1.14). Валидация требует match_response для ip_cidr и
+// response_*, но проверяем все поля — трейс должен быть честен и к правилу,
+// пришедшему мимо неё.
+func isResponseDependentDNSRule(r DNSRule) bool {
+	return r.MatchResponse.IsEnabled() ||
+		len(r.IPCIDR) > 0 ||
+		r.ResponseRcode != "" ||
+		len(r.ResponseAnswer) > 0 ||
+		len(r.ResponseNS) > 0 ||
+		len(r.ResponseExtra) > 0
 }
 
 // evaluateDNSRule returns the per-rule decision for a DNS rule. Empty rule

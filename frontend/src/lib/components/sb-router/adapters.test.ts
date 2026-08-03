@@ -307,6 +307,17 @@ describe('extractMatcherChips', () => {
     expect(chips.map((c) => c.rulesetType)).toEqual(['inline', 'remote', 'dat']);
   });
 
+  it('network udp → protocol chip UDP', () => {
+    const chips = extractMatcherChips({ network: 'udp', rule_set: ['geoip-google'] }, noRulesets);
+    expect(chips).toContainEqual({ kind: 'protocol', label: 'UDP' });
+    expect(chips).toContainEqual({
+      kind: 'ruleset',
+      label: 'geoip-google',
+      rulesetTag: 'geoip-google',
+      rulesetType: undefined,
+    });
+  });
+
   it('protocol → protocol chip', () => {
     const chips = extractMatcherChips({ protocol: 'quic' }, noRulesets);
     expect(chips).toEqual([{ kind: 'protocol', label: 'quic' }]);

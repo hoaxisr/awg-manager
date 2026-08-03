@@ -7,12 +7,14 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // Compile-time guarantee that routerAccessPolicyAdapter satisfies
@@ -245,6 +247,20 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 	return router.UnionOpkgTunIndices(sysNums, names), nil
 }
 
+var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)
+
+type opkgTunExistAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string) bool {
+	if a.store == nil {
+		return false
+	}
+	iface, err := a.store.Get(ctx, ndmsName)
+	return err == nil && iface != nil
+}
+
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the
@@ -323,4 +339,75 @@ func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool
 		})
 	}
 	return out
+}
+
+// wdttAccessAdapter projects managed.Service into wdtt.AccessManager.
+type wdttAccessAdapter struct {
+	svc    *managed.Service
+	ifaces *ndmscommand.InterfaceCommands
+}
+
+func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
+	if a.svc == nil {
+		return "", fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWAN)
+}
+
+func (a *wdttAccessAdapter) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
+	if a.svc == nil {
+		return fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyPolicyToInterface(ctx, ifaceName, policy)
+}
+
+func (a *wdttAccessAdapter) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error {
+	if a.svc == nil {
+		return fmt.Errorf("managed service not available")
+	}
+	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
+}
+
+func (a *wdttAccessAdapter) EnsureInterfaceFirewallPermit(ctx context.Context, ifaceName string) error {
+	if a.ifaces == nil {
+		return nil
+	}
+	return a.ifaces.SetPermitAllACL(ctx, ifaceName)
+}
+
+func (a *wdttAccessAdapter) KernelIfaceName(ctx context.Context, ndmsName string) string {
+	if a.svc == nil {
+		return ndmsName
+	}
+	return a.svc.ResolveKernelIfaceName(ctx, ndmsName)
+}
+
+func (a *wdttAccessAdapter) ResolveLANSegmentCIDRs(ctx context.Context, names []string) ([]string, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("managed service not available")
+	}
+	catalog, err := a.svc.ListLANSegments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]string, len(catalog))
+	for _, seg := range catalog {
+		byName[seg.Name] = seg.Subnet
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		cidr, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("LAN-сегмент %q не найден", name)
+		}
+		out = append(out, cidr)
+	}
+	return out, nil
+}
+
+func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, error) {
+	if a.svc == nil {
+		return "", fmt.Errorf("managed service not available")
+	}
+	return a.svc.DefaultGatewayNDMSInterface(ctx)
 }

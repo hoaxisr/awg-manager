@@ -15,3 +15,4 @@ export { default as DownloadsUpdatesCard } from './DownloadsUpdatesCard.svelte';
 export { default as PingCheckCard } from './PingCheckCard.svelte';
 export { default as AdvancedCard } from './AdvancedCard.svelte';
 export { default as ActionsCard } from './ActionsCard.svelte';
+export { default as BackupRestoreCard } from './BackupRestoreCard.svelte';

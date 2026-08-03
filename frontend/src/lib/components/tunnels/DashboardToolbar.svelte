@@ -30,6 +30,7 @@
 		onCreateSingboxSingle?: () => void;
 		onCreateSingboxGroup?: () => void;
 		onCreateSingboxSubscription?: () => void;
+		onCreateAwg3?: () => void;
 		createIcon: Snippet;
 		/** Дополнительные действия (экспорт, статус) перед меню создания. */
 		actions?: Snippet;
@@ -55,6 +56,7 @@
 		onCreateSingboxSingle,
 		onCreateSingboxGroup,
 		onCreateSingboxSubscription,
+		onCreateAwg3,
 		createIcon,
 		actions,
 	}: Props = $props();
@@ -125,21 +127,24 @@
 		</div>
 	{/if}
 
-	{#if actions}
-		<div class="dashboard-toolbar-actions">
-			{@render actions()}
-		</div>
-	{/if}
+	<div class="dashboard-toolbar-right">
+		{#if actions}
+			<div class="dashboard-toolbar-actions">
+				{@render actions()}
+			</div>
+		{/if}
 
-	<div class="dashboard-toolbar-create">
-		<TunnelCreateMenu
-			onAwg={onCreateAwg}
-			onSingboxSingle={onCreateSingboxSingle}
-			onSingboxGroup={onCreateSingboxGroup}
-			onSingboxSubscription={onCreateSingboxSubscription}
-			showSingbox={showSingboxCreate}
-			triggerIcon={createIcon}
-		/>
+		<div class="dashboard-toolbar-create">
+			<TunnelCreateMenu
+				onAwg={onCreateAwg}
+				onSingboxSingle={onCreateSingboxSingle}
+				onSingboxGroup={onCreateSingboxGroup}
+				onSingboxSubscription={onCreateSingboxSubscription}
+				onAwg3={onCreateAwg3}
+				showSingbox={showSingboxCreate}
+				triggerIcon={createIcon}
+			/>
+		</div>
 	</div>
 </div>
 
@@ -150,6 +155,9 @@
 		gap: 0.5rem;
 		min-width: 0;
 		flex: 1 1 auto;
+		/* В 761–1000px всё в строку не влезает: переносим, а не сжимаем —
+		   иначе подписи сегмент-контролов схлопываются до «Сплошн». */
+		flex-wrap: wrap;
 	}
 
 	.tunnel-toolbar-search {
@@ -220,11 +228,27 @@
 		flex: 0 0 auto;
 	}
 
+	/* Свободное место уходит между фильтрами и действиями: кнопки прижаты к
+	   правому краю (#607). Обёртка нужна, чтобы при переносе строки правая
+	   группа уезжала целиком и оставалась справа. */
+	.dashboard-toolbar-right {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
 	/* Mobile: авторазмещение по order, компактно в ≤4 строки —
 	   row 1: вид + порядок/группировка 50/50; row 2: тег-фильтр + actions
 	   50/50 (одиночный растягивается на всю строку); row 3: search + create
 	   50/50 */
 	@media (max-width: 760px) {
+		/* Грид ниже раскладывает прямых детей по order — обёртка правой группы
+		   растворяется, иначе actions и create схлопнулись бы в одну ячейку. */
+		.dashboard-toolbar-right {
+			display: contents;
+		}
+
 		.dashboard-toolbar {
 			display: grid;
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

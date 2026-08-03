@@ -27,6 +27,8 @@ export interface DashboardFlatContext {
 	readonly effectiveSingboxTunnelsRenderMode: TunnelRenderMode;
 	readonly effectiveSingboxSubscriptionsEffectiveLayout: SingboxLayoutMode;
 	readonly effectiveSingboxSubscriptionsRenderMode: TunnelRenderMode;
+	/** sing-box установлен — без него операции с AWG3 отклоняет бэкенд. */
+	readonly awg3Visible: boolean;
 	readonly exporting: boolean;
 	readonly awgAutoConnectivityNonce: number;
 	readonly singboxAutoDelayCheckNonce: number;
@@ -46,6 +48,7 @@ export interface DashboardFlatContext {
 	handleGripPointerDown(index: number, event: PointerEvent): void;
 	handleToggleOnOff(id: string): Promise<void>;
 	markAsServer(id: string): Promise<void>;
+	openAwg3Import(): void;
 	openAwgDiagnostics(id: string, name: string, kind?: 'awg' | 'system'): void;
 	openDetail(id: string): void;
 	openSingboxDetail(tag: string): void;

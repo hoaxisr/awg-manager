@@ -672,6 +672,17 @@ func (o *Operator) hasCrashSince(t time.Time) bool {
 	return n > 0 && !o.crashes[n-1].at.Before(t)
 }
 
+// QuiesceStop stops the sing-box process without updating the sticky manual-stop
+// flag in settings. Used before full data-dir backup/restore so the archive is
+// taken while sing-box is not writing config.
+func (o *Operator) QuiesceStop(_ context.Context) error {
+	running, _ := o.IsRunning()
+	if !running {
+		return nil
+	}
+	return o.stopProc()
+}
+
 // Control starts/stops/restarts the sing-box daemon. Mirrors the shape of
 // hydraroute.Service.Control so the API handler can dispatch by action
 // name. "start" is a no-op for the process when already running; "stop" is

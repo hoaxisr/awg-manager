@@ -440,14 +440,43 @@ export interface SingboxRouterDNSRule {
 	// modeled so a hand-edited source-scoped rule isn't mistaken for a catch-all.
 	source_ip_cidr?: string[];
 	server?: string;
-	action?: '' | 'route' | 'reject' | 'predefined';
+	action?: '' | 'route' | 'reject' | 'predefined' | 'evaluate' | 'respond';
 	rcode?: string;
 	method?: string;
+	tag?: string;
+	/**
+	 * union sing-box: true (последний анонимный evaluate) | "<tag>".
+	 * false в конфиг не пишем, но hand-edited конфиг его допускает — это
+	 * «выключено» (backend DNSMatchResponse.IsEnabled).
+	 */
+	match_response?: boolean | string;
+	ip_cidr?: string[];
+	response_rcode?: string;
+	response_answer?: string[];
+	response_ns?: string[];
+	response_extra?: string[];
+	race?: boolean;
+	speculative?: boolean;
 }
 
 export interface SingboxRouterDNSGlobals {
 	final: string;
 	strategy: SingboxRouterDNSStrategy;
+}
+
+/** Режим DNS-пресета: '' — выключен. */
+export type SingboxRouterDNSChainMode = '' | 'resilient' | 'antipoison';
+
+/**
+ * Пресет DNS-цепочки (sing-box 1.14 evaluate/match_response). Managed-правила
+ * цепочки собирает бэкенд; пользователь задаёт только режим и серверы.
+ */
+export interface SingboxRouterDNSChainPreset {
+	mode: SingboxRouterDNSChainMode;
+	directServer?: string;
+	proxyServer?: string;
+	/** ip_cidr «отравленных» ответов для antipoison (пусто = серверный сид). */
+	poisonCidrs?: string[];
 }
 
 export interface SingboxRouterDNSRewrite {

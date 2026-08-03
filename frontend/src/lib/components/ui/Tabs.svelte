@@ -4,6 +4,13 @@
     import { page } from '$app/stores';
     import { ChevronDown } from 'lucide-svelte';
 
+    interface TabChild {
+        id: string;
+        label: string;
+        badge?: number | string;
+        badgeTone?: 'default' | 'success' | 'warning' | 'muted';
+    }
+
     interface Tab {
         id: string;
         label: string;
@@ -16,6 +23,10 @@
         // this tab. Used to visually group tabs into clusters (e.g. legacy
         // NDMS-stack tabs vs sing-box stack on /routing).
         separatorBefore?: boolean;
+        // Dropdown group: one chip in the row, children picked from a menu.
+        // `id` is the default child when activating the group. Active when any
+        // child id matches `active`. With a single child, renders as a plain tab.
+        children?: TabChild[];
         // When true, the tab label is rendered extra-subdued (dormant) to signal
         // an inactive mutually-exclusive mode (e.g. the TProxy tab while FakeIP is
         // the active routing mode). Stays clickable; the `active` style overrides.
@@ -46,8 +57,57 @@
     let containerEl: HTMLDivElement | undefined = $state();
     let measureEl: HTMLDivElement | undefined = $state();
     let visibleCount = $state(Infinity);
-    let dropdownOpen = $state(false);
+    let overflowOpen = $state(false);
+    let menuOpenId = $state<string | null>(null);
     let cachedContainerWidth = 0;
+    // Last picked child per menu group — survives leaving to AWG/etc. (and reload).
+    let menuMemory = $state<Record<string, string>>({});
+
+    let anyDropdownOpen = $derived(overflowOpen || menuOpenId !== null);
+
+    const MENU_MEMORY_PREFIX = 'ui.tabs.menuLast:';
+
+    function menuMemoryKey(tab: Tab): string {
+        // Include leaf ids so two "Sing-box" menus (tunnels vs routing) don't clash.
+        return `${tab.label}:${leafIds(tab).slice().sort().join(',')}`;
+    }
+
+    function readStoredMenuChild(tab: Tab): string | null {
+        if (typeof localStorage === 'undefined') return null;
+        try {
+            const raw = localStorage.getItem(MENU_MEMORY_PREFIX + menuMemoryKey(tab));
+            if (raw && leafIds(tab).includes(raw)) return raw;
+        } catch {
+            /* private mode */
+        }
+        return null;
+    }
+
+    function rememberMenuChild(tab: Tab, childId: string) {
+        if (!leafIds(tab).includes(childId)) return;
+        const key = menuMemoryKey(tab);
+        if (menuMemory[key] === childId) return;
+        menuMemory = { ...menuMemory, [key]: childId };
+        if (typeof localStorage === 'undefined') return;
+        try {
+            localStorage.setItem(MENU_MEMORY_PREFIX + key, childId);
+        } catch {
+            /* private mode */
+        }
+    }
+
+    function resolvedMenuChild(tab: Tab): TabChild | undefined {
+        const kids = tab.children;
+        if (!kids?.length) return undefined;
+        const activeHit = kids.find((c) => c.id === active);
+        if (activeHit) return activeHit;
+        const mem = menuMemory[menuMemoryKey(tab)] ?? readStoredMenuChild(tab);
+        if (mem) {
+            const hit = kids.find((c) => c.id === mem);
+            if (hit) return hit;
+        }
+        return kids[0];
+    }
 
     // Gates the outbound URL writer until the inbound effect has had a chance
     // to apply (or rule out) the value from the URL. Conditional tabs whose
@@ -58,6 +118,38 @@
     // overwrite `?tab=policy` with the default tab's empty URL before the
     // conditional tab appears, losing the deep-link value.
     let urlConsumed = $state(false);
+
+    function leafIds(tab: Tab): string[] {
+        if (tab.children && tab.children.length > 0) {
+            return tab.children.map((c) => c.id);
+        }
+        return [tab.id];
+    }
+
+    function findTabForId(id: string): Tab | undefined {
+        return tabs.find((t) => leafIds(t).includes(id));
+    }
+
+    function isTabActive(tab: Tab): boolean {
+        return leafIds(tab).includes(active);
+    }
+
+    function isMenuTab(tab: Tab): boolean {
+        return (tab.children?.length ?? 0) > 1;
+    }
+
+    function activeChild(tab: Tab): TabChild | undefined {
+        return tab.children?.find((c) => c.id === active);
+    }
+
+    // Persist last child while the group is active (incl. URL / programmatic switches).
+    $effect(() => {
+        for (const tab of tabs) {
+            if (!isMenuTab(tab)) continue;
+            const child = activeChild(tab);
+            if (child) rememberMenuChild(tab, child.id);
+        }
+    });
 
     function writeUrl(id: string) {
         if (!urlParam) return;
@@ -95,7 +187,7 @@
         const fromUrl = $page.url.searchParams.get(urlParam);
         if (fromUrl == null) { urlConsumed = true; return; }
         if (fromUrl === untrack(() => active)) { urlConsumed = true; return; }
-        if (!tabs.find((t) => t.id === fromUrl)) return;
+        if (!findTabForId(fromUrl)) return;
         urlConsumed = true;
         onchange(fromUrl);
     });
@@ -112,7 +204,7 @@
 
     let visibleTabs = $derived(tabs.slice(0, visibleCount));
     let overflowTabs = $derived(tabs.slice(visibleCount));
-    let hasOverflowActive = $derived(overflowTabs.some(t => t.id === active));
+    let hasOverflowActive = $derived(overflowTabs.some((t) => isTabActive(t)));
 
     // containerWidth is passed in from ResizeObserver entries (free — no forced
     // layout) and cached so the tabs-change effect can reuse the last known
@@ -161,6 +253,7 @@
         // Re-run when tabs change; reuse cached container width so we don't
         // force a redundant layout read here.
         void tabs.length;
+        void tabs.map((t) => t.label + (t.children?.length ?? 0)).join();
         recalc();
     });
 
@@ -177,22 +270,52 @@
     });
 
     function selectTab(id: string) {
-        dropdownOpen = false;
+        overflowOpen = false;
+        menuOpenId = null;
         onchange(id);
     }
 
-    // Close dropdown on outside click or ESC. Document-level listeners
+    function toggleMenu(tab: Tab) {
+        overflowOpen = false;
+        if (menuOpenId === tab.id) {
+            menuOpenId = null;
+            return;
+        }
+        menuOpenId = tab.id;
+    }
+
+    function onMenuTabClick(tab: Tab) {
+        if (!isMenuTab(tab)) {
+            selectTab(tab.children?.[0]?.id ?? tab.id);
+            return;
+        }
+        // Entering the group: restore last child (else first). Already inside: toggle menu.
+        if (!isTabActive(tab)) {
+            overflowOpen = false;
+            menuOpenId = null;
+            const target = resolvedMenuChild(tab)?.id ?? tab.id;
+            onchange(target);
+            return;
+        }
+        toggleMenu(tab);
+    }
+
+    // Close dropdowns on outside click or ESC. Document-level listeners
     // (vs. a backdrop element) avoid dimming the page and keep the z-stack
     // flat — see app.css z-index scale.
     $effect(() => {
-        if (!dropdownOpen) return;
+        if (!anyDropdownOpen) return;
         function handleOutside(e: MouseEvent) {
             if (!containerEl?.contains(e.target as Node)) {
-                dropdownOpen = false;
+                overflowOpen = false;
+                menuOpenId = null;
             }
         }
         function handleKey(e: KeyboardEvent) {
-            if (e.key === 'Escape') dropdownOpen = false;
+            if (e.key === 'Escape') {
+                overflowOpen = false;
+                menuOpenId = null;
+            }
         }
         document.addEventListener('mousedown', handleOutside);
         document.addEventListener('keydown', handleKey);
@@ -201,42 +324,102 @@
             document.removeEventListener('keydown', handleKey);
         };
     });
-
 </script>
 
-<div class="overflow-tabs" class:has-dropdown={dropdownOpen} bind:this={containerEl}>
-    <!-- Hidden measurement row: renders all tabs offscreen to measure widths -->
+{#snippet badgeSpan(badge: number | string, tone?: TabChild['badgeTone'], activeChip?: boolean)}
+    <span
+        class="tab-badge"
+        class:success={tone === 'success'}
+        class:warning={tone === 'warning'}
+        class:muted={tone === 'muted'}
+        class:on-active={activeChip}
+    >{badge}</span>
+{/snippet}
+
+{#snippet childMenu(tab: Tab, align: 'left' | 'right' = 'left')}
+    <div class="dropdown" class:align-left={align === 'left'} class:align-right={align === 'right'}>
+        {#each tab.children ?? [] as child (child.id)}
+            <button
+                class="dropdown-item"
+                class:active={child.id === active}
+                onclick={() => selectTab(child.id)}
+            >
+                {child.label}
+                {#if child.badge !== undefined}
+                    {@render badgeSpan(child.badge, child.badgeTone)}
+                {/if}
+            </button>
+        {/each}
+    </div>
+{/snippet}
+
+{#snippet tabChip(tab: Tab, interactive: boolean)}
+    {@const menu = isMenuTab(tab)}
+    {@const open = interactive && menuOpenId === tab.id}
+    {@const current = menu ? resolvedMenuChild(tab) : activeChild(tab)}
+    {#if menu}
+        <div class="menu-tab-wrap">
+            <button
+                class="tab menu-tab"
+                class:active={interactive && isTabActive(tab)}
+                class:muted={tab.muted}
+                class:open
+                tabindex={interactive ? undefined : -1}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onclick={interactive ? () => onMenuTabClick(tab) : undefined}
+            >
+                <span class="menu-tab-label">{tab.label}</span>
+                {#if current}
+                    <span class="menu-tab-current">{current.label}</span>
+                {/if}
+                {#if (current?.badge ?? tab.badge) !== undefined}
+                    {@render badgeSpan(
+                        (current?.badge ?? tab.badge)!,
+                        current?.badgeTone ?? tab.badgeTone,
+                        interactive && isTabActive(tab),
+                    )}
+                {/if}
+                <ChevronDown size={14} strokeWidth={2.5} class="menu-chevron" />
+            </button>
+            {#if open}
+                {@render childMenu(tab, 'left')}
+            {/if}
+        </div>
+    {:else}
+        {@const leaf = tab.children?.[0]}
+        <button
+            class="tab"
+            class:active={interactive && isTabActive(tab)}
+            class:muted={tab.muted}
+            tabindex={interactive ? undefined : -1}
+            onclick={interactive ? () => selectTab(leaf?.id ?? tab.id) : undefined}
+        >
+            {leaf?.label ?? tab.label}
+            {#if (leaf?.badge ?? tab.badge) !== undefined}
+                {@render badgeSpan((leaf?.badge ?? tab.badge)!, leaf?.badgeTone ?? tab.badgeTone, interactive && isTabActive(tab))}
+            {/if}
+        </button>
+    {/if}
+{/snippet}
+
+<div class="overflow-tabs" class:has-dropdown={anyDropdownOpen} bind:this={containerEl}>
+    <!-- Hidden measurement row -->
     <div class="measure-row" bind:this={measureEl} aria-hidden="true">
         {#each tabs as tab, i (tab.id)}
             {#if tab.separatorBefore && i > 0}
                 <span class="tab-separator"></span>
             {/if}
-            <button class="tab" tabindex="-1">
-                {tab.label}
-                {#if tab.badge !== undefined}
-                    <span class="tab-badge" class:success={tab.badgeTone === 'success'} class:warning={tab.badgeTone === 'warning'} class:muted={tab.badgeTone === 'muted'}>{tab.badge}</span>
-                {/if}
-            </button>
+            {@render tabChip(tab, false)}
         {/each}
     </div>
 
-    <!-- Visible tabs -->
     <div class="tab-row">
         {#each visibleTabs as tab, i (tab.id)}
             {#if tab.separatorBefore && i > 0}
                 <span class="tab-separator" aria-hidden="true"></span>
             {/if}
-            <button
-                class="tab"
-                class:active={tab.id === active}
-                class:muted={tab.muted}
-                onclick={() => selectTab(tab.id)}
-            >
-                {tab.label}
-                {#if tab.badge !== undefined}
-                    <span class="tab-badge" class:success={tab.badgeTone === 'success'} class:warning={tab.badgeTone === 'warning'} class:muted={tab.badgeTone === 'muted'}>{tab.badge}</span>
-                {/if}
-            </button>
+            {@render tabChip(tab, true)}
         {/each}
 
         {#if overflowTabs.length > 0}
@@ -244,26 +427,47 @@
                 <button
                     class="more-chip"
                     class:has-active={hasOverflowActive}
-                    onclick={() => dropdownOpen = !dropdownOpen}
+                    onclick={() => {
+                        menuOpenId = null;
+                        overflowOpen = !overflowOpen;
+                    }}
                 >
                     +{overflowTabs.length}
                     <ChevronDown size={14} strokeWidth={2.5} style="transition: transform 0.15s;" />
                 </button>
 
-                {#if dropdownOpen}
+                {#if overflowOpen}
                     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-                    <div class="dropdown">
+                    <div class="dropdown align-right">
                         {#each overflowTabs as tab (tab.id)}
-                            <button
-                                class="dropdown-item"
-                                class:active={tab.id === active}
-                                onclick={() => selectTab(tab.id)}
-                            >
-                                {tab.label}
-                                {#if tab.badge !== undefined}
-                                    <span class="tab-badge">{tab.badge}</span>
-                                {/if}
-                            </button>
+                            {#if isMenuTab(tab)}
+                                {#each tab.children ?? [] as child (child.id)}
+                                    <button
+                                        class="dropdown-item"
+                                        class:active={child.id === active}
+                                        onclick={() => selectTab(child.id)}
+                                    >
+                                        {tab.label} · {child.label}
+                                        {#if child.badge !== undefined}
+                                            {@render badgeSpan(child.badge, child.badgeTone)}
+                                        {/if}
+                                    </button>
+                                {/each}
+                            {:else}
+                                {@const leaf = tab.children?.[0]}
+                                <button
+                                    class="dropdown-item"
+                                    class:active={isTabActive(tab)}
+                                    onclick={() => selectTab(leaf?.id ?? tab.id)}
+                                >
+                                    {leaf
+                                        ? `${tab.label} · ${leaf.label}`
+                                        : tab.label}
+                                    {#if (leaf?.badge ?? tab.badge) !== undefined}
+                                        {@render badgeSpan((leaf?.badge ?? tab.badge)!, leaf?.badgeTone ?? tab.badgeTone)}
+                                    {/if}
+                                </button>
+                            {/if}
                         {/each}
                     </div>
                 {/if}
@@ -346,6 +550,34 @@
         opacity: 0.45;
     }
 
+    .menu-tab-wrap {
+        position: relative;
+        display: flex;
+        align-items: stretch;
+    }
+
+    .menu-tab-current {
+        color: var(--text-muted);
+        font-weight: 500;
+        font-size: 0.8125rem;
+        opacity: 0.85;
+    }
+
+    .menu-tab.active .menu-tab-current {
+        color: var(--text-secondary, var(--text-muted));
+        opacity: 1;
+    }
+
+    .menu-tab :global(.menu-chevron) {
+        flex-shrink: 0;
+        opacity: 0.65;
+        transition: transform 0.15s;
+    }
+
+    .menu-tab.open :global(.menu-chevron) {
+        transform: rotate(180deg);
+    }
+
     .tab-badge {
         display: inline-flex;
         align-items: center;
@@ -360,7 +592,8 @@
         font-weight: 600;
     }
 
-    .tab.active .tab-badge {
+    .tab.active .tab-badge,
+    .tab-badge.on-active {
         background: var(--accent);
         color: var(--color-accent-contrast, #fff);
     }
@@ -380,11 +613,15 @@
     }
     /* Active-tab overrides keep contrast on the selected tab. */
     .tab.active .tab-badge.success,
-    .tab.active .tab-badge.warning {
+    .tab.active .tab-badge.warning,
+    .tab-badge.on-active.success,
+    .tab-badge.on-active.warning {
         color: var(--color-success-contrast, #fff);
     }
-    .tab.active .tab-badge.success { background: var(--success); }
-    .tab.active .tab-badge.warning {
+    .tab.active .tab-badge.success,
+    .tab-badge.on-active.success { background: var(--success); }
+    .tab.active .tab-badge.warning,
+    .tab-badge.on-active.warning {
         background: var(--warning);
         color: var(--color-warning-contrast, #fff);
     }
@@ -425,7 +662,6 @@
     .dropdown {
         position: absolute;
         top: calc(100% + 6px);
-        right: 0;
         background: var(--bg-tertiary);
         border: 1px solid var(--border-bright, var(--border));
         border-radius: var(--radius);
@@ -435,11 +671,29 @@
         overflow: hidden;
     }
 
+    .dropdown.align-left {
+        left: 0;
+    }
+
+    .dropdown.align-right {
+        right: 0;
+    }
+
     @media (max-width: 768px) {
         .dropdown {
             max-height: calc(100vh - 200px);
             overflow-y: auto;
         }
+    }
+
+    .dropdown-group-label {
+        padding: 0.5rem 0.875rem 0.25rem;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        opacity: 0.7;
     }
 
     .dropdown-item {

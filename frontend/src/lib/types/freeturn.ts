@@ -18,7 +18,7 @@ export interface FreeTurnClientConfig {
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	streamsPerCred: number;
-	browser: 'chrome' | 'firefox' | 'safari';
+	platform: 'desktop' | 'mobile';
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
 	clientId?: string;
@@ -35,6 +35,8 @@ export interface FreeTurnServerConfig {
 	obfKey?: string;
 	clientsFile?: string;
 	debug: boolean;
+	/** Открыть listen-порт в firewall Keenetic (INPUT). undefined = true */
+	openFirewall?: boolean;
 }
 
 export interface FreeTurnClientInstance {

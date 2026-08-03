@@ -138,7 +138,7 @@ func NewAccessPolicyHandler(svc accesspolicy.Service) *AccessPolicyHandler {
 // GET /api/access-policies
 //
 //	@Summary		List access policies
-//	@Description	KeeneticOS 5 only when route is registered.
+//	@Description	Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since firmware 2.12.
 //	@Tags			access-policy
 //	@Produce		json
 //	@Security		CookieAuth

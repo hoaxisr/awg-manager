@@ -214,7 +214,16 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := config.ValidateKeepaliveForBackend(req.Peer.PersistentKeepalive, req.Backend); err != nil {
+		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
+		return
+	}
+
 	// Validate endpoint resolves
+	if err := config.ValidateAWG3(&req.Interface.AWGObfuscation); err != nil {
+		response.Error(w, err.Error(), "INVALID_AWG3")
+		return
+	}
 	if req.Peer.Endpoint != "" {
 		if _, _, err := netutil.ResolveEndpoint(req.Peer.Endpoint); err != nil {
 			response.Error(w, "endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
@@ -368,6 +377,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	mergeInterfaceWhitelist(&req, existing)
 	mergePeerWhitelist(&req, existing)
+	if err := config.ValidateKeepaliveForBackend(req.Peer.PersistentKeepalive, req.Backend); err != nil {
+		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
+		return
+	}
+	if err := config.ValidateAWG3(&req.Interface.AWGObfuscation); err != nil {
+		response.Error(w, err.Error(), "INVALID_AWG3")
+		return
+	}
 	// Кэш резолва валиден только для endpoint'а, под которым был получен:
 	// перенос через смену endpoint'а подставлял бы DNS-фолбэкам адрес
 	// ПРЕЖНЕГО имени. Сравнение — после mergePeerWhitelist (partial-update

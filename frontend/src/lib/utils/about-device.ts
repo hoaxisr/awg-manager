@@ -73,6 +73,7 @@ export interface AwgmServicesSnapshot {
 	/** null — строка скрыта (ещё грузится). */
 	hydraRoute: string | null;
 	deviceProxy: string;
+	clientRoutes: string;
 	dnsRoutes: string;
 	awgTunnels: string;
 	subscriptions: string;
@@ -350,6 +351,9 @@ export function buildAwgmServicesSnapshot(input: {
 	hydraLoaded?: boolean;
 	deviceProxy: DeviceProxyConfig | null;
 	deviceProxyRuntime: DeviceProxyRuntime | null;
+	clientRoutesTotal: number;
+	clientRoutesEnabled: number;
+	clientRoutesLoaded?: boolean;
 	dnsRoutesTotal: number;
 	dnsRoutesEnabled: number;
 	dnsRoutesLoaded?: boolean;
@@ -409,6 +413,10 @@ export function buildAwgmServicesSnapshot(input: {
 			: 'выкл';
 	}
 
+	const clientRoutes = input.clientRoutesLoaded
+		? `${input.clientRoutesEnabled} вкл / ${input.clientRoutesTotal} всего`
+		: '…';
+
 	const dnsRoutes = input.dnsRoutesLoaded
 		? `${input.dnsRoutesEnabled} вкл / ${input.dnsRoutesTotal} всего`
 		: '…';
@@ -430,6 +438,7 @@ export function buildAwgmServicesSnapshot(input: {
 		singbox,
 		hydraRoute: hydra,
 		deviceProxy,
+		clientRoutes,
 		dnsRoutes,
 		awgTunnels,
 		subscriptions,
@@ -449,7 +458,10 @@ export function awgmServicesRows(s: AwgmServicesSnapshot): AboutInfoRow[] {
 		rows.push({ label: 'HydraRoute Neo', value: s.hydraRoute });
 	}
 	rows.push(
-		{ label: 'VPN для устройств', value: s.deviceProxy },
+		// Прокси (SOCKS5/HTTP) и «VPN для устройств» (client routes) — разные
+		// подсистемы; до #663 прокси показывался под именем вкладки client routes.
+		{ label: 'Прокси для устройств', value: s.deviceProxy },
+		{ label: 'VPN для устройств', value: s.clientRoutes },
 		{ label: 'DNS-маршруты', value: s.dnsRoutes },
 		{ label: 'AWG-туннели', value: s.awgTunnels },
 		{ label: 'SingBox подписки', value: s.subscriptions },

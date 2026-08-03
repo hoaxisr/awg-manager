@@ -3,10 +3,14 @@ package iptables
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 const (
@@ -16,10 +20,95 @@ const (
 	RetryBaseWait   = time.Second
 )
 
+// Run executes iptables and surfaces its stderr on failure. Голый err даёт
+// только «exit status 1», по которому нельзя отличить занятый xtables-лок от
+// отсутствующего модуля или отвергнутой ядром спеки — тот же довод, что уже
+// записан у RestoreNoflush ниже.
 func Run(ctx context.Context, args ...string) error {
+	comment := usesCommentMatch(args)
+	if comment {
+		ensureCommentModuleFn(ctx)
+	}
 	full := append([]string{"-w"}, args...)
-	_, err := exec.Run(ctx, Binary, full...)
-	return err
+	res, err := exec.Run(ctx, Binary, full...)
+	if err != nil {
+		if comment && !commentModuleLoaded() {
+			return fmt.Errorf("%w (модуль ядра xt_comment не загружен)", exec.FormatError(res, err))
+		}
+		return exec.FormatError(res, err)
+	}
+	return nil
+}
+
+// xt_comment грузится лениво здесь, в единственной точке, через которую
+// проходят все наши правила. Причина: на части прошивок (Keenetic/Netcraze
+// OS 5.x EA, NC-1812) NDMS сам `-m comment` нигде не использует, поэтому
+// модуль не подгружается на старте; если ещё и sing-box не установлен —
+// его router-преflight тоже не отрабатывает, и первое же правило с нашим
+// маркером ядро отвергает: «iptables: No chain/target/match by that name»
+// (issue #666; тот же корень, что #130 для sb-router). Место выбрано не у
+// вызывающих — их уже трое (WDTT NAT, WDTT LAN, listen-firewall), и ровно
+// «забыли позвать preflight» и есть баг.
+//
+// Soft-fail: отсутствующий .ko означает либо вкомпилен в ядро, либо реально
+// нет — вердикт в обоих случаях выносит сам iptables, а не мы.
+var (
+	commentMu     sync.Mutex
+	commentLoaded bool
+)
+
+// ensureCommentModuleFn — точка подмены для тестов.
+var ensureCommentModuleFn = ensureCommentModule
+
+func usesCommentMatch(args []string) bool {
+	for i, a := range args {
+		if a == "comment" && i > 0 && args[i-1] == "-m" {
+			return true
+		}
+	}
+	return false
+}
+
+func commentModuleLoaded() bool {
+	commentMu.Lock()
+	defer commentMu.Unlock()
+	return commentLoaded
+}
+
+func ensureCommentModule(ctx context.Context) {
+	commentMu.Lock()
+	defer commentMu.Unlock()
+	if commentLoaded {
+		return
+	}
+	if moduleLoaded("xt_comment") {
+		commentLoaded = true
+		return
+	}
+	kernel := osdetect.KernelRelease()
+	if kernel == "" {
+		return
+	}
+	path := filepath.Join("/lib/modules", kernel, "xt_comment.ko")
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	if _, err := exec.Run(ctx, "insmod", path); err == nil {
+		commentLoaded = true
+	}
+}
+
+func moduleLoaded(name string) bool {
+	data, err := os.ReadFile("/proc/modules")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, name+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // RunOutput runs iptables and returns its stdout. Used by read-only queries
@@ -31,7 +120,10 @@ func RunOutput(ctx context.Context, args ...string) (string, error) {
 	if res == nil {
 		return "", err
 	}
-	return res.Stdout, err
+	if err != nil {
+		return res.Stdout, exec.FormatError(res, err)
+	}
+	return res.Stdout, nil
 }
 
 func RestoreNoflush(ctx context.Context, input string) error {

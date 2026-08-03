@@ -13,6 +13,7 @@
 		'awg1.0': { label: 'AWG 1.0', color: 'var(--hue-blue)', bg: 'color-mix(in srgb, var(--hue-blue) 14%, transparent)' },
 		'awg1.5': { label: 'AWG 1.5', color: 'var(--hue-sky)', bg: 'color-mix(in srgb, var(--hue-sky) 14%, transparent)' },
 		'awg2.0': { label: 'AWG 2.0', color: 'var(--hue-sky)', bg: 'color-mix(in srgb, var(--hue-sky) 14%, transparent)' },
+		'awg3':   { label: 'AWG 3.0', color: 'var(--hue-violet)', bg: 'color-mix(in srgb, var(--hue-violet) 14%, transparent)' },
 		'xray':   { label: 'XRAY',    color: 'var(--hue-violet)', bg: 'color-mix(in srgb, var(--hue-violet) 14%, transparent)' },
 		'vless':  { label: 'VLESS',   color: 'var(--hue-violet)', bg: 'color-mix(in srgb, var(--hue-violet) 14%, transparent)' },
 		'hy2':    { label: 'HY2',     color: 'var(--color-error)', bg: 'var(--color-error-tint)' },

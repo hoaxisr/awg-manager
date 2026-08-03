@@ -204,3 +204,28 @@ func TestSPAHandlerGzip(t *testing.T) {
 		}
 	})
 }
+
+// Неразрешённый путь под /api/ не должен получать index.html: клиент разбирает
+// ответ как JSON, спотыкается на HTML и показывает «Некорректный ответ сервера
+// (200)» вместо внятной ошибки. Именно так выглядела пропавшая ручка политик
+// доступа на KeeneticOS 4.x.
+func TestSPAHandlerDoesNotSwallowAPIPaths(t *testing.T) {
+	handler := spaHandler(fstest.MapFS{
+		"index.html": {Data: []byte("<!doctype html><div id=\"app\"></div>"), Mode: fs.ModePerm},
+	})
+
+	for _, path := range []string{"/api/no-such-endpoint", "/api/access-policies/create"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: код %d, ожидался 404", path, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Errorf("%s: Content-Type %q, ожидался application/json", path, ct)
+		}
+		if strings.Contains(rec.Body.String(), "<!doctype html>") {
+			t.Errorf("%s: отдан index.html вместо JSON", path)
+		}
+	}
+}

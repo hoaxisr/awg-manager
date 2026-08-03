@@ -4,7 +4,7 @@
 	// целиком, главная сохранила только dashboard-потребление стора awg3.
 	import { onMount, onDestroy } from 'svelte';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
-	import { Awg3TunnelsSection } from '$lib/components/awg3';
+	import { Awg3ImportModal, Awg3TunnelsSection } from '$lib/components/awg3';
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import {
 		SINGBOX_LAYOUT_STORAGE_KEY,
@@ -53,6 +53,9 @@
 
 	let searchQuery = $state('');
 
+	// Импорт .conf — единственный владелец Escape держит модалку на странице.
+	let importOpen = $state(false);
+
 	// Авто-проверка delay: на главной она перезапускалась при входе на вкладку,
 	// здесь «вход на поверхность» — само монтирование страницы (lastAutoCheckKey
 	// начинается пустым), поэтому отдельный entry-nonce не нужен.
@@ -82,7 +85,14 @@
 		layout={layoutMode}
 		showGridListToggle={true}
 		{autoDelayCheckNonce}
+		onImport={() => (importOpen = true)}
 		bind:searchQuery
 		bind:layoutMode
 	/>
 </PageContainer>
+
+<Awg3ImportModal
+	open={importOpen}
+	onclose={() => (importOpen = false)}
+	onimported={() => void awg3Tunnels.refetch()}
+/>

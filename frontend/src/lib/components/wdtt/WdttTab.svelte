@@ -4,9 +4,10 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { wdttStatus } from '$lib/stores/wdttStatus';
 	import InstanceBar from '../freeturn/InstanceBar.svelte';
-	import { ProcessAlerts } from '$lib/components/ui';
+	import { ProcessAlerts, Tabs } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
-	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import WdttServerSimple from './WdttServerSimple.svelte';
+	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
@@ -14,9 +15,14 @@
 		WdttClientConfig,
 		WdttClientInstance,
 		WdttConfig,
-		WdttImportPayload
+		WdttImportPayload,
+		WdttServerConfig,
+		WdttServerInstance
 	} from '$lib/types';
 
+	type WdttTabId = 'client' | 'server';
+
+	let wdttTab: WdttTabId = $state('client');
 	let loading = $state(true);
 	let loadError = $state('');
 	let saving = $state(false);
@@ -29,6 +35,25 @@
 	const status = $derived($wdttStatus.data);
 	let savedConfig = $state<WdttConfig | null>(null);
 	let selectedClientId = $state('default');
+	let selectedServerId = $state('default');
+	let genPeer = $state('');
+	let genVKHashes = $state('');
+	let generatedLink = $state('');
+	let generatedLinkQwdtt = $state('');
+	let generating = $state(false);
+
+	// wdtt-server собирается не под все арки роутеров (нет mips/mipsel) — там вкладки нет.
+	// Пока статус не загружен, показываем обе: серверный режим — частый случай.
+	const serverSupported = $derived(status?.serverSupported !== false);
+	const wdttTabs = $derived(
+		serverSupported
+			? [
+					{ id: 'client', label: 'Клиент' },
+					{ id: 'server', label: 'Сервер' }
+				]
+			: [{ id: 'client', label: 'Клиент' }]
+	);
+	const activeTab = $derived<WdttTabId>(serverSupported ? wdttTab : 'client');
 
 	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
@@ -37,6 +62,8 @@
 	let ensuringWg = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
+	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
+	let clientUiEpoch = $state(0);
 
 	const selectedClient = $derived(
 		config
@@ -52,15 +79,36 @@
 					null)
 			: null
 	);
+	// ?. на массивах: ответ без clients/servers (усечённый статус, мок) иначе
+	// роняет вычисление, и вкладка перестаёт реагировать на переключение.
 	const clientStatus = $derived(
 		status
-			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			? (status.clients?.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			: undefined
+	);
+	const selectedServer = $derived(
+		config
+			? (config.servers.find((s: WdttServerInstance) => s.id === selectedServerId) ??
+					config.servers[0] ??
+					null)
+			: null
+	);
+	const savedServer = $derived(
+		savedConfig
+			? (savedConfig.servers.find((s: WdttServerInstance) => s.id === selectedServerId) ??
+					savedConfig.servers[0] ??
+					null)
+			: null
+	);
+	const serverStatus = $derived(
+		status
+			? (status.servers?.find((s) => s.id === selectedServerId)?.status ?? status.server)
 			: undefined
 	);
 
 	const clientBarItems = $derived(
 		(config ? config.clients : []).map((c: WdttClientInstance) => {
-			const st = status?.clients.find((s) => s.id === c.id)?.status ?? status?.client;
+			const st = status?.clients?.find((s) => s.id === c.id)?.status ?? status?.client;
 			return {
 				id: c.id,
 				name: c.name,
@@ -72,6 +120,23 @@
 			};
 		})
 	);
+
+	const serverBarItems = $derived(
+		(config ? config.servers : []).map((s: WdttServerInstance) => {
+			const st = status?.servers?.find((x) => x.id === s.id)?.status ?? status?.server;
+			return {
+				id: s.id,
+				name: s.name,
+				running: st?.running,
+				startedAt: st?.startedAt,
+				pid: st?.pid,
+				dtlsConnections: st?.dtlsConnections,
+				binaryPresent: st?.binaryPresent
+			};
+		})
+	);
+	/** wdtt-server поднимает один общий интерфейс wdtt0 — второй инстанс создать нельзя. */
+	const canAddWdttServer = $derived((config?.servers.length ?? 0) === 0);
 
 	function wdttTunnelName(profileName?: string): string {
 		const base = profileName?.trim() || 'WDTT';
@@ -96,12 +161,33 @@
 		};
 	}
 
+	function normalizeServer(s: WdttServerConfig): WdttServerConfig {
+		return {
+			...s,
+			listen: s.listen || '0.0.0.0:56002',
+			wgPort: s.wgPort > 0 ? s.wgPort : 56001,
+			password: s.password ?? '',
+			configDir: s.configDir ?? '',
+			adminId: s.adminId ?? '',
+			botToken: s.botToken ?? '',
+			natMode: s.natMode || 'full',
+			policy: s.policy || 'none',
+			lanSegments: s.lanSegments ?? [],
+			ingressEnabled: !!s.ingressEnabled,
+			debug: !!s.debug
+		};
+	}
+
 	function normalizeConfig(cfg: WdttConfig): WdttConfig {
 		return {
 			...cfg,
 			clients: (cfg.clients ?? []).map((c) => ({
 				...c,
 				config: normalizeClient(c.config)
+			})),
+			servers: (cfg.servers ?? []).map((s) => ({
+				...s,
+				config: normalizeServer(s.config)
 			}))
 		};
 	}
@@ -115,6 +201,12 @@
 			if (!norm.clients.some((c) => c.id === selectedClientId)) {
 				selectedClientId = norm.clients[0]?.id ?? 'default';
 			}
+			if (!norm.servers.some((s) => s.id === selectedServerId)) {
+				selectedServerId = norm.servers[0]?.id ?? 'default';
+			}
+			const srv = norm.servers.find((s) => s.id === selectedServerId) ?? norm.servers[0];
+			if (!genPeer) genPeer = srv?.config.linkPeer ?? '';
+			if (!genVKHashes) genVKHashes = srv?.config.linkVkHashes ?? '';
 		} catch (e) {
 			loadError = errText(e);
 			notifications.error('WDTT: ' + loadError);
@@ -131,7 +223,7 @@
 		if (!status || ensuringWg) return;
 		const id = selectedClientId;
 		if (wgEnsureSettled.has(id)) return;
-		const st = status.clients.find((c) => c.id === id)?.status ?? status.client;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
 		if (!wg) return;
@@ -287,6 +379,8 @@
 			const result = await api.deleteWdttClient(id);
 			await loadConfig();
 			await loadStatus();
+			clientUiEpoch++;
+			subscriptionTick = 0;
 			let msg = 'Клиент удалён';
 			const n = result.deletedTunnels?.length ?? 0;
 			if (n > 0) msg += `, AWG-туннелей удалено: ${n}`;
@@ -313,31 +407,166 @@
 		installing = true;
 		try {
 			await api.installWdttClient();
-			notifications.success('wdtt-client установлен');
+			notifications.success('wdtt-client и wdtt-server установлены');
 		} catch (e) {
-			notifications.error('Не удалось установить wdtt-client: ' + errText(e));
+			notifications.error('Не удалось установить wdtt: ' + errText(e));
 		} finally {
 			installing = false;
 			await loadStatus();
 		}
 	}
 
+	function patchServerInConfig(id: string, cfg: WdttServerConfig) {
+		if (!config || !savedConfig) return;
+		const idx = config.servers.findIndex((s) => s.id === id);
+		const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+		if (idx >= 0) config.servers[idx].config = structuredClone(cfg);
+		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
+	}
+
+	async function saveServerConfig(cfg: WdttServerConfig) {
+		if (!selectedServer) return;
+		saving = true;
+		try {
+			const sent = $state.snapshot(cfg);
+			const id = selectedServer.id;
+			const result = await api.updateWdttServerInstance(id, cfg);
+			const norm = normalizeServer(result.config);
+			if (config && savedConfig) {
+				const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+				if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(norm);
+				const idx = config.servers.findIndex((s) => s.id === id);
+				if (idx >= 0 && JSON.stringify($state.snapshot(config.servers[idx].config)) === JSON.stringify(sent)) {
+					config.servers[idx].config = structuredClone(norm);
+				}
+			}
+			notifications.success('Настройки WDTT-сервера сохранены');
+		} catch (e) {
+			notifications.error('Не удалось сохранить: ' + errText(e));
+			throw e;
+		} finally {
+			saving = false;
+		}
+	}
+
+	function revertServer() {
+		if (!config || !savedServer) return;
+		patchServerInConfig(selectedServerId, $state.snapshot(savedServer.config));
+	}
+
+	async function toggleServerInstance(id: string, on: boolean) {
+		try {
+			if (on) {
+				await api.startWdttServerInstance(id);
+				notifications.success('WDTT сервер запущен');
+			} else {
+				await api.stopWdttServerInstance(id);
+				notifications.success('WDTT сервер остановлен');
+			}
+		} catch (e) {
+			notifications.error(errText(e) || 'Не удалось переключить сервер');
+		} finally {
+			await loadStatus();
+		}
+	}
+
+	async function deleteServer(id: string) {
+		const inst = config?.servers.find((s) => s.id === id);
+		const name = inst?.name ?? id;
+		if (!confirm(`Удалить сервер «${name}»?`)) return;
+		try {
+			await api.deleteWdttServer(id);
+			await loadConfig();
+			await loadStatus();
+			notifications.success('Сервер удалён');
+		} catch (e) {
+			notifications.error('Не удалось удалить: ' + errText(e));
+		}
+	}
+
+	async function addServer() {
+		try {
+			const inst = await api.createWdttServer();
+			await loadConfig();
+			selectedServerId = inst.id;
+			notifications.success(`Сервер «${inst.name}» создан`);
+		} catch (e) {
+			notifications.error('Не удалось создать сервер: ' + errText(e));
+		}
+	}
+
+	async function renameServer(id: string, name: string) {
+		try {
+			await api.renameWdttServer(id, name);
+			await loadConfig();
+		} catch (e) {
+			notifications.error('Не удалось переименовать: ' + errText(e));
+		}
+	}
+
+	// peer и VK-хеши ссылки живут в конфиге сервера: без них основную ссылку
+	// после перезагрузки страницы пришлось бы собирать по памяти.
+	async function persistLinkParams(peer: string, vkHashes: string[], forClient: boolean) {
+		if (!selectedServer) return;
+		const current = selectedServer.config;
+		// Хеши клиента — его личные: в серверные параметры идут только те,
+		// с которыми собрана ссылка на основном пароле.
+		const hashes = forClient ? (current.linkVkHashes ?? '') : vkHashes.join(',');
+		if ((current.linkPeer ?? '') === peer && (current.linkVkHashes ?? '') === hashes) return;
+		const id = selectedServer.id;
+		const cfg = { ...$state.snapshot(current), linkPeer: peer, linkVkHashes: hashes };
+		try {
+			const result = await api.updateWdttServerInstance(id, cfg);
+			patchServerInConfig(id, normalizeServer(result.config));
+		} catch {
+			// не критично: ссылка уже показана, параметры допишутся при сохранении
+		}
+	}
+
+	async function generateServerLink(
+		peer: string,
+		vkHashes: string[],
+		opts?: { password?: string; name?: string }
+	) {
+		if (!selectedServer) return null;
+		generating = true;
+		try {
+			const result = await api.generateWdttServerLink(selectedServer.id, {
+				peer: peer || undefined,
+				vkHashes: vkHashes.length ? vkHashes : undefined,
+				name: opts?.name ?? selectedServer.name,
+				password: opts?.password
+			});
+			generatedLink = result.link;
+			genPeer = result.peer;
+			generatedLinkQwdtt = result.linkQwdtt ?? '';
+			void persistLinkParams(result.peer, vkHashes, !!opts?.password);
+			return result;
+		} catch (e) {
+			notifications.error('Не удалось сгенерировать ссылку: ' + errText(e));
+			return null;
+		} finally {
+			generating = false;
+		}
+	}
+
 	async function applyImportPayload(
 		payload: WdttImportPayload,
-		meta?: { subUrl?: string; clientName?: string }
+		meta?: { subUrl?: string; clientName?: string; andStart?: boolean }
 	) {
 		if (!selectedClient || !config) return;
 		importing = true;
 		try {
 			const c = selectedClient.config;
 			const oldPeer = savedClient?.config.peer ?? '';
+			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
 			if (payload.peer) c.peer = payload.peer;
 			if (payload.password) c.password = payload.password;
 			if (payload.vkHashes?.length) c.vkHashes = payload.vkHashes.join(',');
 			if (payload.workers && payload.workers > 0) c.workers = payload.workers;
 			const subUrl = payload.subUrl || meta?.subUrl;
 			// Подписка задаёт listenPort=9000 для всех стран — порт у каждого клиента свой.
-			if (payload.listen && !subUrl) c.listen = payload.listen;
+			if (payload.listen && !subUrl && listenPort == null) c.listen = payload.listen;
 			if (subUrl) c.sub = subUrl;
 			if (payload.deviceId) c.deviceId = payload.deviceId;
 
@@ -346,7 +575,12 @@
 				await api.renameWdttClient(selectedClientId, clientName);
 			}
 
-			if (payload.peer && !peersEqual(oldPeer, payload.peer) && clientStatus?.running) {
+			if (
+				payload.peer &&
+				!peersEqual(oldPeer, payload.peer) &&
+				clientStatus?.running &&
+				!meta?.andStart
+			) {
 				await api.stopWdttClientInstance(selectedClientId);
 				await loadStatus();
 			}
@@ -357,16 +591,23 @@
 			const wg = payload.wg?.trim();
 			if (wg) {
 				try {
-					const listenPort = parseLocalListenPort(c.listen) ?? parseLocalListenPort(payload.listen) ?? 9000;
-					const wgForImport = patchWgConfEndpoint(wg, listenPort);
-					const tunnel = await api.importConfig(
-						wgForImport,
-						wdttTunnelName(meta?.clientName || payload.name),
-						undefined,
-						undefined,
-						selectedClientId
-					);
-					msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
+					const portForTunnel =
+						listenPort ?? linkedTunnelListenPort(c.listen, payload.listen);
+					if (portForTunnel == null) {
+						notifications.error(
+							'Профиль импортирован, но не удалось определить listen-порт для AWG-туннеля'
+						);
+					} else {
+						const wgForImport = patchWgConfEndpoint(wg, portForTunnel);
+						const tunnel = await api.importConfig(
+							wgForImport,
+							wdttTunnelName(meta?.clientName || payload.name),
+							undefined,
+							undefined,
+							selectedClientId
+						);
+						msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${portForTunnel})`;
+					}
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель: ' + errText(e));
 				}
@@ -414,24 +655,33 @@
 	</div>
 {:else if config}
 	<ProcessAlerts
-		status={clientStatus}
+		status={activeTab === 'client' ? clientStatus : serverStatus}
 		installAvailable={status?.installAvailable ?? false}
 		installVersion={status?.installVersion}
 		installedVersion={status?.installedVersion}
 		updateAvailable={status?.updateAvailable ?? false}
 		installing={installing || (status?.installing ?? false)}
 		onInstall={install}
-		productName="wdtt-client"
-		notFoundHint="установите wdtt-client из IPK или prebuilt."
+		productName="wdtt"
+		notFoundHint="нажмите «Установить» — бинари скачаются с зеркала."
 	>
 		{#snippet manualInstall(binary)}
 			<span>
-				Бинарь <code>{binary}</code> не найден. Соберите
-				<code>scripts/build-wdtt-client.sh</code> для вашей архитектуры.
+				Бинарь <code>{binary}</code> не найден. Кнопка «Установить» скачает
+				{serverSupported ? 'клиент и сервер' : 'клиент'} с зеркала.
 			</span>
 		{/snippet}
 	</ProcessAlerts>
 
+	<Tabs
+		tabs={wdttTabs}
+		active={activeTab}
+		onchange={(id) => {
+			wdttTab = id as WdttTabId;
+		}}
+	/>
+
+	{#if activeTab === 'client'}
 	<InstanceBar
 		items={clientBarItems}
 		selectedId={selectedClientId}
@@ -446,7 +696,7 @@
 	/>
 
 	{#if selectedClient}
-		{#key selectedClientId}
+		{#key `${selectedClientId}:${clientUiEpoch}`}
 			<WdttClientSimple
 				client={selectedClient.config}
 				running={clientStatus?.running ?? false}
@@ -473,6 +723,47 @@
 		{/key}
 	{:else}
 		<p class="wdtt-empty-hint">Нет выбранного клиента. Нажмите «+ Добавить», чтобы создать новый.</p>
+	{/if}
+	{:else}
+	<InstanceBar
+		items={serverBarItems}
+		selectedId={selectedServerId}
+		showDtls={false}
+		onSelect={(id) => {
+			selectedServerId = id;
+		}}
+		onToggle={toggleServerInstance}
+		onAdd={canAddWdttServer ? addServer : undefined}
+		onDelete={deleteServer}
+		onRename={renameServer}
+	/>
+
+	{#if selectedServer}
+		{#key selectedServerId}
+			<WdttServerSimple
+				server={selectedServer.config}
+				running={serverStatus?.running ?? false}
+				status={serverStatus}
+				{saving}
+				{generating}
+				serverInstanceId={selectedServerId}
+				{generatedLink}
+				generatedLinkQwdtt={generatedLinkQwdtt}
+				bind:genPeer
+				bind:genVKHashes
+				instances={serverBarItems}
+				selectedInstanceId={selectedServerId}
+				onSelectInstance={(id) => {
+					selectedServerId = id;
+				}}
+				onSave={saveServerConfig}
+				onToggle={(on) => toggleServerInstance(selectedServerId, on)}
+				onGenerate={generateServerLink}
+			/>
+		{/key}
+	{:else}
+		<p class="wdtt-empty-hint">Нет выбранного сервера.</p>
+	{/if}
 	{/if}
 {/if}
 

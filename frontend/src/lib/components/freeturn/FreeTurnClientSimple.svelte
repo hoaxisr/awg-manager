@@ -1,13 +1,27 @@
 <script lang="ts">
 	import { Button, Input, Dropdown } from '$lib/components/ui';
-	import StepPill from '$lib/components/sb-router/StepPill.svelte';
-	import WizardStep from '$lib/components/sb-router/WizardStep.svelte';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
-	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
-	import { browserOptions, modeOptions, transportOptions } from './options';
+	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
+	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
+	import ProxyQuickStart from '../proxy-panel/ProxyQuickStart.svelte';
+	import ProxyQuickStartStep from '../proxy-panel/ProxyQuickStartStep.svelte';
+	import ProxyWizardGuide from '../proxy-panel/ProxyWizardGuide.svelte';
+	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
+	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
+	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
+	import { dnsModeOptions, platformOptions, modeOptions, transportOptions } from './options';
 	import { api } from '$lib/api/client';
+	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
+	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
+
+	const CLIENT_TABS = [
+		{ id: 'setup', label: 'Настройка' },
+		{ id: 'log', label: 'Журнал' }
+	] as const;
+
+	type ClientTab = (typeof CLIENT_TABS)[number]['id'];
 
 	interface Props {
 		client: FreeTurnClientConfig;
@@ -41,6 +55,8 @@
 	let importing = $state(false);
 	let starting = $state(false);
 	let linkParams = $state<FreeTurnLinkPayload | null>(null);
+	let opsTab = $state<ClientTab>('setup');
+	let quickActive = $state('import');
 
 	const linksCount = $derived(
 		client.links ? client.links.split(',').filter((s) => s.trim()).length : 0
@@ -49,10 +65,77 @@
 	const step1Done = $derived(!!client.peer.trim());
 	const step2Done = $derived(step1Done && !!client.links?.trim());
 	const step3Done = $derived(
-		step2Done && client.streams > 0 && client.streamsPerCred > 0 && !!client.browser
+		step2Done &&
+			client.streams > 0 &&
+			client.streamsPerCred > 0 &&
+			!!client.platform &&
+			!!client.dnsMode
 	);
 	const canSave = $derived((step1Done || step2Done) && !saving && !starting);
 	const canStart = $derived(step3Done && !saving && !starting);
+
+	const opsMode = $derived(
+		proxyInOpsMode({
+			running,
+			startedAt: status?.startedAt,
+			enabled: client.enabled
+		})
+	);
+
+	const quickItems = $derived<QuickStartItem[]>([
+		{ id: 'import', label: 'freeturn:// с сервера', done: step1Done },
+		{ id: 'links', label: 'VK Calls (-links)', done: step2Done },
+		{ id: 'streams', label: 'Потоки и браузер', done: step3Done },
+		{ id: 'start', label: 'Запуск клиента', done: running }
+	]);
+
+	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
+	const listenMeta = $derived(client.listen?.trim() || '127.0.0.1:9000');
+
+	const importGuideItems = $derived.by(() =>
+		finalizeGuide([
+			guide('paste', 'Вставьте freeturn:// с сервера в поле ниже', { done: !!importLink.trim() || step1Done }),
+			guide('import', 'Нажмите «Импорт» — заполнятся peer и параметры', { done: step1Done, pending: !importLink.trim() && !step1Done })
+		])
+	);
+
+	const linksGuideItems = $derived.by(() =>
+		finalizeGuide([
+			guide('vk', 'Вставьте VK Calls ссылки (https://vk.com/call/join/…) — по одной на строку', {
+				done: step2Done,
+				pending: !step1Done
+			}),
+			guide('next', 'Нажмите «Далее: потоки»', { done: step2Done, pending: !step1Done })
+		])
+	);
+
+	const streamsGuideItems = $derived.by(() =>
+		finalizeGuide([
+			guide('streams', 'Укажите число потоков (-n) и на кред (-streams-per-cred)', {
+				done: client.streams > 0 && client.streamsPerCred > 0,
+				pending: !step2Done
+			}),
+			guide('platform', 'Выберите режим, транспорт, платформу VK-auth и DNS mode', {
+				done: !!client.platform && !!client.dnsMode,
+				pending: !step2Done
+			}),
+			guide('next', 'Нажмите «Далее: запуск»', { done: step3Done, pending: !step2Done })
+		])
+	);
+
+	const startGuideItems = $derived.by(() =>
+		finalizeGuide([
+			guide('start', 'Нажмите «Сохранить и запустить» — клиент подключится к серверу', {
+				done: running,
+				pending: !step3Done
+			})
+		])
+	);
+
+	$effect(() => {
+		if (opsMode) return;
+		if (!step1Done && quickActive !== 'import') quickActive = 'import';
+	});
 
 	async function applyImport() {
 		const link = importLink.trim();
@@ -66,6 +149,9 @@
 				linkParams = null;
 			}
 			importLink = '';
+			if (client.peer.trim()) {
+				quickActive = 'links';
+			}
 		} finally {
 			importing = false;
 		}
@@ -74,16 +160,6 @@
 	async function saveOnly() {
 		if (!canSave) return;
 		await onSave(client);
-	}
-
-	async function startOnly() {
-		if (!canStart || running) return;
-		starting = true;
-		try {
-			await onToggle(true);
-		} finally {
-			starting = false;
-		}
 	}
 
 	async function saveAndStart() {
@@ -99,169 +175,190 @@
 </script>
 
 <div class="ft-simple-wrap">
-	<p class="ft-simple-lead">
-		Импорт freeturn:// → VK-ссылки → потоки и браузер → запуск клиента.
-	</p>
+	<p class="ft-simple-lead">FreeTurn-клиент: freeturn:// → VK-ссылки → потоки → запуск.</p>
 
-	<div class="ft-simple-steps">
-		<StepPill n={1} label="freeturn://" active={true} done={step1Done} />
-		<StepPill n={2} label="VK-ссылки" active={step1Done} done={step2Done} />
-		<StepPill n={3} label="Потоки" active={step2Done} done={step3Done} />
-		<StepPill n={4} label="Запуск" active={step3Done} done={running} />
-	</div>
-
-	<WizardStep n={1} title="Ссылка freeturn://" hint="с сервера freeturn на VPS" active={true}>
-		<p class="ft-hint">
-			Вставьте ссылку — заполнятся peer, obf, ключ и другие параметры клиента.
-		</p>
-		<div class="ft-import-row">
-			<Input bind:value={importLink} placeholder="freeturn://…" />
-			<Button variant="primary" size="sm" loading={importing} disabled={!importLink.trim()} onclick={applyImport}>
-				Импорт
-			</Button>
-		</div>
-		{#if client.peer.trim()}
-			<p class="ft-readonly">peer: <code>{client.peer}</code></p>
-		{/if}
-		<LinkParamsSummary payload={linkParams} peer={client.peer} />
-	</WizardStep>
-
-	<WizardStep
-		n={2}
-		title="Ссылки VK Calls (-links)"
-		hint="через запятую, каждая — отдельный пул кредов"
-		active={step1Done}
-	>
-		<textarea
-			class="ft-simple-textarea"
-			bind:value={client.links}
-			placeholder="https://vk.com/call/join/…"
-			rows="4"
-		></textarea>
-		{#if linksCount > 0}
-			<p class="ft-hint">
-				{linksCount} {linksCount === 1 ? 'ссылка' : linksCount < 5 ? 'ссылки' : 'ссылок'} —
-				столько же независимых пулов TURN-кредов.
-			</p>
-		{/if}
-	</WizardStep>
-
-	<WizardStep
-		n={3}
-		title="Потоки и браузер"
-		hint="-n, -streams-per-cred, -mode, -transport, -browser"
-		active={step2Done}
-	>
-		<div class="ft-simple-grid">
-			<Input
-				label="Потоков TURN (-n)"
-				type="number"
-				value={String(client.streams)}
-				onchange={(v) => (client.streams = Math.max(1, Number(v) || 0))}
-			/>
-			<Input
-				label="Потоков на кред (-streams-per-cred)"
-				type="number"
-				value={String(client.streamsPerCred)}
-				onchange={(v) => (client.streamsPerCred = Math.max(1, Number(v) || 0))}
-			/>
-		</div>
-		<p class="ft-hint">
-			Суммарно до {linksCount * client.streamsPerCred || client.streamsPerCred} потоков на все
-			ссылки (×{linksCount || 1} кред{linksCount === 1 ? '' : 'а'}). Каждый поток может
-			потребовать отдельную VK-капчу.
-		</p>
-
-		<div class="ft-simple-grid">
-			<Dropdown label="Режим (-mode)" bind:value={client.mode} options={modeOptions} />
-			<Dropdown
-				label="Транспорт до TURN (-transport)"
-				bind:value={client.transport}
-				options={transportOptions}
-			/>
-		</div>
-		<p class="ft-hint">
-			<code>-mode</code> — режим туннеля (udp/tcp). <code>-transport</code> — протокол до TURN-relay.
-		</p>
-
-		<Dropdown
-			label="Браузер для авто-капчи (-browser)"
-			bind:value={client.browser}
-			options={browserOptions}
+	{#if !opsMode}
+		<ProxyQuickStart
+			items={quickItems}
+			activeId={quickActive}
+			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
+			meta={`listen ${listenMeta}`}
+			onSelect={(id) => (quickActive = id)}
+		>
+			{#snippet content(stepId)}
+				{#if stepId === 'import'}
+					<ProxyQuickStartStep
+						title="Ссылка freeturn://"
+						hint="Скопируйте с сервера (шаг «Запуск и freeturn://»)"
+						primaryLabel="Далее: VK Calls"
+						primaryDisabled={!step1Done}
+						onPrimary={() => { quickActive = 'links'; }}
+					>
+						<ProxyWizardGuide items={importGuideItems} />
+						<div class="ft-import-row">
+							<Input bind:value={importLink} placeholder="freeturn://…" />
+							<Button variant="primary" size="sm" loading={importing} disabled={!importLink.trim()} onclick={applyImport}>
+								Импорт
+							</Button>
+						</div>
+						{#if client.peer.trim()}
+							<p class="ft-readonly">peer: <code>{client.peer}</code></p>
+						{/if}
+						<LinkParamsSummary payload={linkParams} peer={client.peer} />
+					</ProxyQuickStartStep>
+				{:else if stepId === 'links'}
+					<ProxyQuickStartStep
+						title="VK Calls (-links)"
+						hint="Маскировка трафика через VK"
+						primaryLabel="Далее: потоки"
+						primaryDisabled={!step2Done}
+						onPrimary={() => { quickActive = 'streams'; }}
+					>
+						<ProxyWizardGuide items={linksGuideItems} />
+						<textarea class="ft-simple-textarea" bind:value={client.links} placeholder="https://vk.com/call/join/…" rows="4"></textarea>
+					</ProxyQuickStartStep>
+				{:else if stepId === 'streams'}
+					<ProxyQuickStartStep
+						title="Потоки и браузер"
+						primaryLabel="Далее: запуск"
+						primaryDisabled={!step3Done}
+						onPrimary={() => { quickActive = 'start'; }}
+					>
+						<ProxyWizardGuide items={streamsGuideItems} />
+						<div class="ft-simple-grid">
+							<Input
+								label="Потоков (-n)"
+								type="number"
+								value={String(client.streams)}
+								onchange={(v) => (client.streams = Math.max(1, Number(v) || 0))}
+							/>
+							<Input
+								label="На кред (-streams-per-cred)"
+								type="number"
+								value={String(client.streamsPerCred)}
+								onchange={(v) => (client.streamsPerCred = Math.max(1, Number(v) || 0))}
+							/>
+						</div>
+						<Dropdown label="Режим (-mode)" bind:value={client.mode} options={modeOptions} />
+						<Dropdown label="Транспорт (-transport)" bind:value={client.transport} options={transportOptions} />
+						<div class="ft-simple-grid">
+							<Dropdown label="Платформа (-platform)" bind:value={client.platform} options={platformOptions} />
+							<Dropdown label="DNS mode (-dns-mode)" bind:value={client.dnsMode} options={dnsModeOptions} />
+						</div>
+						<Input
+							label="DNS servers (-dns-servers)"
+							bind:value={client.dnsServers}
+							placeholder="77.88.8.8,8.8.8.8 — пусто = встроенные"
+						/>
+					</ProxyQuickStartStep>
+				{:else}
+					<ProxyQuickStartStep
+						title="Запуск"
+						primaryLabel={running ? 'Работает' : 'Сохранить и запустить'}
+						primaryDisabled={!canStart || running}
+						primaryLoading={starting}
+						onPrimary={saveAndStart}
+					>
+						<ProxyWizardGuide items={startGuideItems} />
+					</ProxyQuickStartStep>
+				{/if}
+			{/snippet}
+		</ProxyQuickStart>
+	{:else}
+		<ProxyInstanceStatusBar
+			{running}
+			meta={`listen ${listenMeta}`}
+			{saving}
+			{starting}
+			{canSave}
+			{canStart}
+			onSave={saveOnly}
+			onToggle={onToggle}
 		/>
-		<p class="ft-hint">
-			TLS/UA-персона для авто-решателя VK Smart Captcha (-browser).
-		</p>
+		<ProxyPanelTabs tabs={[...CLIENT_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
-		<p class="ft-readonly">
-			listen: <code>{client.listen || '127.0.0.1:9000'}</code> (назначается автоматически; учитываются порты AWG-плиток)
-		</p>
-	</WizardStep>
-
-	<WizardStep n={4} title="Запустить клиент" hint="сохранение и включение инстанса" active={step3Done}>
-		<div class="ft-simple-actions">
-			<Button variant="secondary" loading={saving} disabled={!canSave} onclick={saveOnly}>Сохранить</Button>
-			{#if !running}
-				<Button variant="secondary" loading={starting} disabled={!canStart} onclick={startOnly}>
-					Запустить
-				</Button>
-				<Button variant="primary" loading={starting} disabled={!canStart} onclick={saveAndStart}>
-					Сохранить и запустить
-				</Button>
-			{:else}
-				<Button variant="secondary" onclick={() => onToggle(false)}>Остановить</Button>
-				<Button variant="primary" loading={saving} disabled={!canSave} onclick={saveOnly}>
-					Сохранить настройки
-				</Button>
-			{/if}
-		</div>
-	</WizardStep>
-
-	<ProcessLogBox
-		log={status?.log}
-		{routerClock}
-		bind:debug={client.debug}
-		showDebugToggle
-		{instances}
-		{selectedInstanceId}
-		{onSelectInstance}
-	/>
+		{#if opsTab === 'setup'}
+			<section class="ops-section">
+				<p class="ft-readonly">peer: <code>{client.peer}</code></p>
+				<textarea class="ft-simple-textarea" bind:value={client.links} rows="3"></textarea>
+				<div class="ft-simple-grid">
+					<Input
+						type="number"
+						label="Потоков"
+						value={String(client.streams)}
+						onchange={(v) => (client.streams = Math.max(1, Number(v) || 0))}
+					/>
+					<Input
+						type="number"
+						label="На кред"
+						value={String(client.streamsPerCred)}
+						onchange={(v) => (client.streamsPerCred = Math.max(1, Number(v) || 0))}
+					/>
+				</div>
+				<Dropdown label="Mode" bind:value={client.mode} options={modeOptions} />
+				<Dropdown label="Transport" bind:value={client.transport} options={transportOptions} />
+				<div class="ft-simple-grid">
+					<Dropdown label="Platform" bind:value={client.platform} options={platformOptions} />
+					<Dropdown label="DNS mode" bind:value={client.dnsMode} options={dnsModeOptions} />
+				</div>
+				<Input
+					label="DNS servers"
+					bind:value={client.dnsServers}
+					placeholder="ip[:port],… — пусто = встроенные"
+				/>
+				<p class="ft-hint">
+					{linksCount} VK-ссылок · listen <code>{listenMeta}</code>
+					{#if client.dnsMode === 'plain'}
+						· DNS: UDP/53 (рекомендуется на роутере)
+					{:else if client.dnsMode === 'doh'}
+						· DNS: DoH
+					{:else}
+						· DNS: auto (UDP → DoH при сбое)
+					{/if}
+				</p>
+				<Button variant="secondary" loading={saving} disabled={!canSave} onclick={saveOnly}>Сохранить</Button>
+			</section>
+		{:else}
+			<section class="ops-section">
+				<ProcessLogBox
+					log={status?.log}
+					{routerClock}
+					bind:debug={client.debug}
+					showDebugToggle
+					{instances}
+					{selectedInstanceId}
+					{onSelectInstance}
+				/>
+			</section>
+		{/if}
+	{/if}
 </div>
 
 <style>
 	.ft-simple-wrap {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
+		gap: 1rem;
 	}
-
 	.ft-simple-lead {
-		margin: 0 0 0.75rem;
+		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 	}
-
-	.ft-simple-steps {
+	.ops-section {
+		padding: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-secondary);
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-bottom: 0.75rem;
+		flex-direction: column;
+		gap: 0.75rem;
 	}
-
 	.ft-import-row {
 		display: grid;
 		grid-template-columns: 1fr auto;
 		gap: 0.5rem;
-		margin-top: 0.5rem;
 	}
-
-	.ft-simple-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-		gap: 0.625rem;
-		margin-top: 0.5rem;
-	}
-
 	.ft-simple-textarea {
 		width: 100%;
 		font-family: var(--font-mono);
@@ -272,23 +369,19 @@
 		background: var(--color-bg-primary);
 		resize: vertical;
 	}
-
+	.ft-simple-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+		gap: 0.625rem;
+	}
 	.ft-readonly {
-		margin: 0.625rem 0 0;
+		margin: 0;
 		font-family: var(--font-mono);
 		font-size: 0.8125rem;
 	}
-
 	.ft-hint {
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
-		margin: 0.375rem 0 0;
-	}
-
-	.ft-simple-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.75rem;
+		margin: 0;
 	}
 </style>

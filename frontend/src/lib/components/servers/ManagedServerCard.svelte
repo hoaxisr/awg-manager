@@ -7,6 +7,7 @@
 	import { formatBytes } from '$lib/utils/format';
 	import { EarthLock, Plus, RefreshCw, Settings, Trash2 } from 'lucide-svelte';
 	import { Toggle, Button, SegmentedControl, ChipMultiSelect, VersionBadge, Stat, StatStrip } from '$lib/components/ui';
+	import { showSummary } from '$lib/stores/showSummary';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import {
 		EditManagedServerModal,
@@ -370,12 +371,14 @@
 		</div>
 	</div>
 
+	{#if $showSummary}
 	<StatStrip>
 		<Stat value={stats ? formatBytes(totalRx) : '—'} label="RX" />
 		<Stat value={stats ? formatBytes(totalTx) : '—'} label="TX" />
 		<Stat value={`${onlineCount} / ${(server.peers ?? []).length}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
 		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
 	</StatStrip>
+	{/if}
 
 	<!-- Settings -->
 	<ServerSettingsPanel persistKey="awgm:servers:settingsCollapsed">
@@ -403,6 +406,7 @@
 					options={natModeOptions}
 					ariaLabel="Режим NAT"
 					disabled={togglingNAT}
+					fullWidth
 					onchange={handleSetNATMode}
 				/>
 			</div>
@@ -421,7 +425,12 @@
 		<div class="setting-row setting-row-toggle">
 			<div class="setting-copy">
 				<span class="setting-title">Маршрутизация через sing-box</span>
-				<span class="setting-description">Заворачивать интернет-трафик клиентов данного сервера в sing-box.</span>
+				<span class="setting-description">
+					Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его правилами;
+					в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля. Следствия в FakeIP:
+					выше нагрузка на процессор, у клиентов не работает ping (ICMP), при остановленном sing-box
+					они остаются без сети.
+				</span>
 			</div>
 			<div class="setting-control setting-control-toggle">
 				<Toggle checked={ingressEnabled} onchange={handleToggleIngress} disabled={togglingIngress} spinner="before" />

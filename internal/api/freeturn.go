@@ -41,6 +41,7 @@ type FreeTurnService interface {
 	StartServerInstance(id string) error
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
+	Stop()
 	ListServerAllowlist(serverID string) (freeturn.AllowlistStatus, error)
 	AddServerAllowlistClient(serverID, clientID, comment string) (freeturn.AddAllowlistResult, error)
 	RemoveServerAllowlistClient(serverID, clientID string) error
@@ -252,6 +253,7 @@ type GenerateLinkRequest struct {
 	Name           string `json:"name,omitempty"`
 	N              int    `json:"n,omitempty"`
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`
+	Transport      string `json:"transport,omitempty"`
 	ServerID       string `json:"serverId,omitempty"`
 }
 
@@ -504,7 +506,15 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_RENAME_FAILED")
 			return
 		}
-		response.Success(w, map[string]string{"message": "renamed"})
+		renamedTunnels, tunnelErrors := h.syncLinkedTunnelNames(r.Context(), id, req.Name)
+		resp := map[string]any{"message": "renamed"}
+		if len(renamedTunnels) > 0 {
+			resp["renamedTunnels"] = renamedTunnels
+		}
+		if len(tunnelErrors) > 0 {
+			resp["tunnelErrors"] = tunnelErrors
+		}
+		response.Success(w, resp)
 	case http.MethodDelete:
 		if err := h.svc.DeleteClient(id); err != nil {
 			response.Error(w, err.Error(), "FREETURN_CLIENT_DELETE_FAILED")
@@ -713,21 +723,46 @@ func (h *FreeTurnHandler) generateLinkCore(w http.ResponseWriter, r *http.Reques
 	}
 	mtu := req.MTU
 	if mtu == 0 {
-		mtu = 1376
+		mtu = 1280
+	}
+	n := req.N
+	if n <= 0 {
+		n = 10
+	}
+	spc := req.StreamsPerCred
+	if spc <= 0 {
+		spc = 10
+	}
+	transport := strings.TrimSpace(req.Transport)
+	if transport == "" {
+		transport = "tcp"
+	}
+	wg := strings.TrimSpace(req.WG)
+	if wg != "" {
+		wg = freeturn.StripWGConfMTU(wg)
+	}
+
+	obfProfile := srvCfg.ObfProfile
+	obfKey := srvCfg.ObfKey
+	if obfProfile == "" || obfProfile == "none" {
+		obfProfile = ""
+		obfKey = ""
 	}
 
 	link, err := freeturn.EncodeLink(freeturn.LinkPayload{
 		V:              1,
 		Provider:       provider,
 		Peer:           peer,
-		Obf:            srvCfg.ObfProfile,
-		Key:            srvCfg.ObfKey,
+		Transport:      transport,
+		Mode:           srvCfg.Mode,
+		Obf:            obfProfile,
+		Key:            obfKey,
+		N:              n,
+		StreamsPerCred: spc,
 		MTU:            mtu,
-		WG:             req.WG,
+		WG:             wg,
 		ClientID:       strings.TrimSpace(req.ClientID),
 		Name:           strings.TrimSpace(req.Name),
-		N:              req.N,
-		StreamsPerCred: req.StreamsPerCred,
 	})
 	if err != nil {
 		response.InternalError(w, err.Error())

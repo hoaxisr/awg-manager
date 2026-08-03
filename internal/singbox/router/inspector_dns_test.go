@@ -275,6 +275,54 @@ func TestInspectDNS_RuleSetMatch(t *testing.T) {
 	}
 }
 
+// Цепочка sing-box 1.14: matcher-less evaluate — catch-all, но не терминирует;
+// правило с match_response статически неразрешимо; выигрывает первое статически
+// совпавшее терминальное правило, а Note предупреждает о возможном перехвате.
+func TestInspectDNSEvaluateChain(t *testing.T) {
+	rules := []DNSRule{
+		{Action: "evaluate", Server: "local", Tag: "rd"},
+		{MatchResponse: &DNSMatchResponse{Enabled: true, Tag: "rd"}, ResponseRcode: "NOERROR", Action: "respond"},
+		{Domain: []string{"x.com"}, Server: "fakeip"},
+	}
+
+	res := InspectDNS(InspectDNSInput{Domain: "x.com"}, rules, dnsTestServers(), nil, "google", "", nil)
+
+	if res.MatchedRule != 2 {
+		t.Fatalf("MatchedRule = %d, want 2 (evaluate и response-зависимое не терминируют)", res.MatchedRule)
+	}
+	if res.Server != "fakeip" {
+		t.Errorf("Server = %q, want fakeip", res.Server)
+	}
+	if !res.Matches[0].Matched || !strings.Contains(res.Matches[0].Reason, "evaluate") {
+		t.Errorf("evaluate должен быть Matched=true с reason о продолжении: %+v", res.Matches[0])
+	}
+	if res.Matches[0].Server != "local" {
+		t.Errorf("Matches[0].Server = %q, want local", res.Matches[0].Server)
+	}
+	if res.Matches[1].Matched {
+		t.Errorf("response-зависимое правило не должно матчиться статически: %+v", res.Matches[1])
+	}
+	if !strings.Contains(res.Matches[1].Reason, "зависит от DNS-ответа") {
+		t.Errorf("Matches[1].Reason = %q, want про зависимость от ответа", res.Matches[1].Reason)
+	}
+	if !strings.Contains(res.Note, "зависят от ответа") {
+		t.Errorf("Note должен предупреждать о перехвате: %q", res.Note)
+	}
+
+	// Ни одно статическое правило не совпало → final, но предупреждение
+	// про response-зависимое правило остаётся.
+	fallback := InspectDNS(InspectDNSInput{Domain: "other.com"}, rules, dnsTestServers(), nil, "google", "", nil)
+	if fallback.MatchedRule != -1 {
+		t.Fatalf("fallback MatchedRule = %d, want -1", fallback.MatchedRule)
+	}
+	if fallback.Server != "google" {
+		t.Errorf("fallback Server = %q, want google", fallback.Server)
+	}
+	if !strings.Contains(fallback.Note, "зависят от ответа") {
+		t.Errorf("fallback Note = %q, want предупреждение о перехвате", fallback.Note)
+	}
+}
+
 func TestInspectDNS_RuleSetUndefined_Note(t *testing.T) {
 	rules := []DNSRule{
 		{RuleSet: []string{"geosite-x"}, Server: "fakeip"},

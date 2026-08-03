@@ -288,7 +288,7 @@ const MOCK_AWG_TUNNELS = [
 		rxBytes: 142_320_120,
 		txBytes: 38_442_331,
 		lastHandshake: new Date(Date.now() - 45_000).toISOString(),
-		awgVersion: 'awg2.0',
+		awgVersion: 'awg3',
 		mtu: 1420,
 		startedAt: new Date(Date.now() - 3_600_000).toISOString(),
 		backend: 'kernel',
@@ -1130,12 +1130,44 @@ function buildPingCheckLogs() {
 
 // Full AWGTunnel for getTunnel(id) — fixture merged with a complete pingCheck
 // config so the card config-line («ICMP → 8.8.8.8 · 30с · порог 3») renders.
+// buildTunnelInterface gives the edit form a full [Interface] block. Kernel
+// tunnels also get the AWG 3.0 device params so the awg3 editor section shows
+// populated; NativeWG tunnels omit them (the UI hides that section for them).
+function buildTunnelInterface(base) {
+	const iface = {
+		privateKey: '',
+		address: base.address ?? '10.0.0.2/32',
+		mtu: base.mtu ?? 1420,
+		dns: base.dns ?? '',
+		...mockFilledASC(),
+	};
+	if (base.backend !== 'nativewg') {
+		iface.headerProtectionKey = 'cGxhY2Vob2xkZXJrZXlwbGFjZWhvbGRlcmtleTEyMzQ=';
+		iface.contentPaddingAddition = '16';
+		iface.rekeyAfterTime = '120-150';
+		iface.rekeyTimeout = '5';
+		iface.rejectAfterTime = '180';
+		iface.keepaliveTimeout = '25';
+		iface.maxHandshakeAttempts = '5';
+	}
+	return iface;
+}
+
 function buildSingleTunnel(id) {
 	const base = MOCK_AWG_TUNNELS.find((t) => t.id === id);
 	if (!base) return null;
 	const p = MOCK_PINGCHECK_PROFILES[id];
 	return {
 		...base,
+		awgVersion: base.backend !== 'nativewg' ? 'awg3' : base.awgVersion,
+		interface: buildTunnelInterface(base),
+		peer: {
+			publicKey: mockPubkey(1),
+			presharedKey: '',
+			endpoint: base.endpoint ?? 'server:51820',
+			allowedIPs: ['0.0.0.0/0', '::/0'],
+			persistentKeepalive: 25,
+		},
 		pingCheck: {
 			enabled: true,
 			method: p?.method ?? 'icmp',
@@ -2234,6 +2266,8 @@ function sanitizeMockDnsServerForWrite(server) {
 
 let mockDNSGlobals = { final: 'dns-direct', strategy: 'prefer_ipv4' };
 
+let mockDNSChainPreset = { mode: '', directServer: '', proxyServer: '', poisonCidrs: [] };
+
 let mockDNSServers = [
 	// UI repro: legacy detour on final DNS — human label instead of outbound tag.
 	{
@@ -3063,7 +3097,7 @@ function createInitialMockFreeturn() {
 					obfProfile: 'rtpopus2',
 					obfKey: MOCK_FREETURN_OBF_KEY,
 					streamsPerCred: 4,
-					browser: 'chrome',
+					platform: 'desktop',
 					manualCaptcha: false,
 					dnsMode: 'auto',
 					clientId: '',
@@ -6103,6 +6137,31 @@ const server = http.createServer(async (req, res) => {
 				mockDNSGlobals = {
 					final: payload.final ?? mockDNSGlobals.final,
 					strategy: payload.strategy ?? mockDNSGlobals.strategy,
+				};
+				send(res, 200, { success: true, data: { ok: true } });
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+			}
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/router/dns/chain-preset') {
+		send(res, 200, { success: true, data: mockDNSChainPreset });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/dns/chain-preset') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			try {
+				const payload = JSON.parse(raw || '{}');
+				mockDNSChainPreset = {
+					mode: payload.mode ?? '',
+					directServer: payload.directServer ?? '',
+					proxyServer: payload.proxyServer ?? '',
+					poisonCidrs: payload.poisonCidrs ?? [],
 				};
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {

@@ -226,7 +226,7 @@
         role="button"
         tabindex="0"
     >
-            <td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay" data-label="Delay">
+            <td class="tunnel-list-cell tunnel-list-cell--delay lc lc-delay">
                 {#if subscription.lastError}
                     <span class="delay-inline-err mono" title={subscription.lastError}>
                         {subscription.lastError}
@@ -244,7 +244,7 @@
                     />
                 {/if}
             </td>
-            <td class="tunnel-list-cell tunnel-list-cell--name lc lc-name" data-label="Подписка">
+            <td class="tunnel-list-cell tunnel-list-cell--name lc lc-name">
                 <div class="tunnel-list-name-stack">
                     <TunnelTitleRow
                         title={subscription.label}
@@ -267,7 +267,7 @@
                     </TunnelMetaText>
                 </div>
             </td>
-            <td class="tunnel-list-cell tunnel-list-cell--endpoint lc lc-endpoint" data-label="Активный сервер" title={activeEndpointTitle}>
+            <td class="tunnel-list-cell tunnel-list-cell--endpoint lc lc-endpoint" title={activeEndpointTitle}>
                 <div class="lc-endpoint-stack">
                     {#if listActiveServerName}
                         <span class="lc-endpoint-name" title={listActiveServerName}>{listActiveServerName}</span>
@@ -281,7 +281,7 @@
             </td>
             <td
                 class="tunnel-list-cell tunnel-list-cell--traffic lc lc-traffic"
-                data-label="Трафик"
+               
             >
                 {#if subscription.lastError}
                     <span class="delay-dash">—</span>
@@ -298,7 +298,7 @@
             </td>
             <td
                 class="tunnel-list-cell tunnel-list-cell--ping lc"
-                data-label="Ping"
+               
             >
                 {#if subscription.lastError}
                     <span class="delay-dash">—</span>
@@ -314,7 +314,7 @@
             </td>
             <td
                 class="tunnel-list-cell tunnel-list-cell--actions lc lc-actions col-actions"
-                data-label=""
+               
             >
                 <TunnelListActions
                     onEdit={openSettings}

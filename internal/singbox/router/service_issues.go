@@ -116,6 +116,7 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 		}
 	}
 	issues = append(issues, computeDNSDialIssues(cfg)...)
+	issues = append(issues, computeDNSChainIssues(cfg)...)
 	return issues
 }
 

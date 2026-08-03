@@ -14,6 +14,7 @@
 	import { goto } from '$app/navigation';
 	import { tunnelDashboardView } from '$lib/stores/tunnelDashboardMode';
 	import DashboardSummary from '$lib/components/tunnels/DashboardSummary.svelte';
+	import { showSummary } from '$lib/stores/showSummary';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
 	import { Awg3TunnelCard } from '$lib/components/awg3';
@@ -163,6 +164,7 @@
 				onCreateSingboxSingle={() => ctx.openWizard('single')}
 				onCreateSingboxGroup={() => ctx.openWizard('inline')}
 				onCreateSingboxSubscription={() => ctx.openWizard('url')}
+				onCreateAwg3={ctx.awg3Visible ? ctx.openAwg3Import : undefined}
 				{createIcon}
 			>
 				{#snippet actions()}
@@ -174,7 +176,9 @@
 			</DashboardToolbar>
 		</div>
 	</div>
-	<DashboardSummary stats={ctx.dashboardSummaryStats} />
+	{#if $showSummary}
+		<DashboardSummary stats={ctx.dashboardSummaryStats} />
+	{/if}
 </div>
 {#if ctx.dashboardFlatCardMode}
 	<div
@@ -519,6 +523,10 @@
 		justify-content: flex-end;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+		/* Единственный ребёнок .tunnels-toolbar — без роста тулбар жался по
+		   содержимому влево, и справа оставалась пустота (#607). */
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 
 	.toolbar-actions :global(.btn.size-md) {

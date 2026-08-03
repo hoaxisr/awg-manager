@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { IconButton, Button } from '$lib/components/ui';
+	import { Button } from '$lib/components/ui';
 	import { Bell } from 'lucide-svelte';
 	import SideDrawer from '$lib/components/ui/SideDrawer.svelte';
 	import {
 		notificationCenter,
 		unreadCount,
+		unreadSeverity,
 		dayBucket,
 		type CenterEntry,
 		type DayBucket,
@@ -34,6 +35,11 @@
 		return buckets;
 	});
 
+	const badgeLabel = $derived($unreadCount > 99 ? '99+' : String($unreadCount));
+	const bellAria = $derived(
+		$unreadCount > 0 ? `Уведомления, непрочитанных: ${$unreadCount}` : 'Уведомления',
+	);
+
 	function clock(ts: number): string {
 		return formatTime(new Date(ts).toISOString());
 	}
@@ -55,14 +61,23 @@
 </script>
 
 {#if authenticated}
-	<span class="notif-bell">
-		<IconButton ariaLabel="Уведомления" onclick={() => (open = true)}>
+	<button
+		type="button"
+		class="notif-trigger"
+		class:has-unread={$unreadCount > 0}
+		class:is-error={$unreadSeverity === 'error'}
+		class:is-warning={$unreadSeverity === 'warning'}
+		aria-label={bellAria}
+		onclick={() => (open = true)}
+	>
+		<span class="notif-chip">
 			<Bell size={16} aria-hidden="true" />
-		</IconButton>
-		{#if $unreadCount > 0}
-			<span class="notif-badge" aria-hidden="true">{$unreadCount}</span>
-		{/if}
-	</span>
+			{#if $unreadCount > 0}
+				<span class="notif-count" aria-hidden="true">{badgeLabel}</span>
+				<span class="notif-pip" aria-hidden="true"></span>
+			{/if}
+		</span>
+	</button>
 
 	<SideDrawer {open} onClose={() => (open = false)} title="Уведомления">
 		{#if $notificationCenter.length === 0}
@@ -80,25 +95,32 @@
 			{#each ORDER as key (key)}
 				{#if groups[key].length > 0}
 					<div class="notif-group">{GROUP_LABELS[key]}</div>
-					{#each groups[key] as e (e.id)}
-						<div class="notif-row" class:unread={!e.read} class:is-error={e.type === 'error'}>
-							<button type="button" class="notif-main" onclick={() => onRowActivate(e)}>
-								<span class="notif-dot" class:hidden={e.read}></span>
-								<span class="notif-body">
-									<span class="notif-msg">{e.message}</span>
-									<span class="notif-meta">{meta(e)}</span>
-								</span>
-							</button>
-							<button
-								type="button"
-								class="notif-remove"
-								aria-label="Удалить уведомление"
-								onclick={() => notificationCenter.remove(e.id)}
+					<div class="notif-list">
+						{#each groups[key] as e (e.id)}
+							<div
+								class="notif-row"
+								class:unread={!e.read}
+								class:is-error={e.type === 'error'}
+								class:is-warning={e.type === 'warning'}
 							>
-								×
-							</button>
-						</div>
-					{/each}
+								<button type="button" class="notif-main" onclick={() => onRowActivate(e)}>
+									<span class="notif-dot" class:hidden={e.read}></span>
+									<span class="notif-body">
+										<span class="notif-msg">{e.message}</span>
+										<span class="notif-meta">{meta(e)}</span>
+									</span>
+								</button>
+								<button
+									type="button"
+									class="notif-remove"
+									aria-label="Удалить уведомление"
+									onclick={() => notificationCenter.remove(e.id)}
+								>
+									×
+								</button>
+							</div>
+						{/each}
+					</div>
 				{/if}
 			{/each}
 		{/if}
@@ -113,27 +135,96 @@
 {/if}
 
 <style>
-	.notif-bell {
-		position: relative;
+	.notif-trigger {
 		display: inline-flex;
+		align-items: center;
+		padding: 0;
+		margin: 0;
+		background: transparent;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font: inherit;
 	}
 
-	.notif-badge {
-		position: absolute;
-		top: -4px;
-		right: -4px;
-		min-width: 16px;
-		height: 16px;
-		padding: 0 4px;
+	.notif-trigger:focus-visible .notif-chip {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+
+	.notif-chip {
+		position: relative;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 10px;
+		gap: 0.3rem;
+		min-width: 28px;
+		height: 28px;
+		padding: 0 0.35rem;
+		box-sizing: border-box;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: inherit;
+		transition:
+			background var(--t-fast) ease,
+			color var(--t-fast) ease,
+			border-color var(--t-fast) ease;
+	}
+
+	.notif-trigger:not(.has-unread) .notif-chip {
+		padding: 0;
+		width: 28px;
+	}
+
+	.notif-trigger:hover .notif-chip {
+		background: var(--color-bg-hover);
+		color: var(--color-accent);
+	}
+
+	.notif-trigger.has-unread.is-error .notif-chip {
+		background: var(--color-error-tint);
+		border-color: var(--color-error-border);
+		color: var(--color-error);
+		padding-inline: 0.45rem 0.55rem;
+	}
+
+	.notif-trigger.has-unread.is-error:hover .notif-chip {
+		background: color-mix(in srgb, var(--color-error) 28%, transparent);
+		color: var(--color-error);
+	}
+
+	.notif-trigger.has-unread.is-warning .notif-chip {
+		background: var(--color-warning-tint);
+		border-color: var(--color-warning-border);
+		color: var(--color-warning);
+		padding-inline: 0.45rem 0.55rem;
+	}
+
+	.notif-trigger.has-unread.is-warning:hover .notif-chip {
+		background: color-mix(in srgb, var(--color-warning) 28%, transparent);
+		color: var(--color-warning);
+	}
+
+	.notif-count {
+		font-size: 12px;
 		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: -0.02em;
 		line-height: 1;
-		color: var(--color-error-contrast, #fff);
-		background: var(--color-error);
+		color: currentColor;
+	}
+
+	/* Empty ring sitting on the chip's top-right border corner */
+	.notif-pip {
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		width: 8px;
+		height: 8px;
+		box-sizing: border-box;
 		border-radius: 999px;
+		background: var(--color-bg-secondary);
+		border: 1.5px solid currentColor;
 		pointer-events: none;
 	}
 
@@ -146,11 +237,20 @@
 
 	.notif-toolbar {
 		display: flex;
+		align-items: center;
 		justify-content: flex-end;
-		gap: 0.5rem;
-		padding: 0 0 0.5rem;
+		gap: 0.25rem;
+		/* body padding 1rem — тянем к хедеру; сверху/снизу до полоски одинаково */
+		margin: -1rem 0 0.375rem;
+		padding: 0.375rem 0;
 		border-bottom: 1px solid var(--color-border);
-		margin-bottom: 0.5rem;
+	}
+
+	.notif-toolbar :global(.btn) {
+		height: 1.75rem;
+		min-height: 1.75rem;
+		max-height: 1.75rem;
+		padding-inline: 0.5rem;
 	}
 
 	.notif-group {
@@ -158,7 +258,13 @@
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 		color: var(--color-text-muted);
-		padding: 0.5rem 0.25rem 0.25rem;
+		padding: 0.625rem 0.25rem 0.375rem;
+	}
+
+	.notif-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
 	}
 
 	.notif-row {
@@ -166,10 +272,22 @@
 		align-items: stretch;
 		gap: 0.25rem;
 		border-radius: var(--radius-sm);
+		border: 1px solid transparent;
 	}
 
-	.notif-row.unread {
-		background: var(--color-bg-tertiary);
+	.notif-row:not(.unread) {
+		border-color: color-mix(in srgb, var(--color-border) 65%, transparent);
+		opacity: 0.62;
+	}
+
+	.notif-row.unread.is-error {
+		background: var(--color-error-tint);
+		border-color: var(--color-error-border);
+	}
+
+	.notif-row.unread.is-warning {
+		background: var(--color-warning-tint);
+		border-color: var(--color-warning-border);
 	}
 
 	.notif-main {
@@ -194,6 +312,14 @@
 		background: var(--color-accent);
 	}
 
+	.notif-row.is-error .notif-dot {
+		background: var(--color-error);
+	}
+
+	.notif-row.is-warning .notif-dot {
+		background: var(--color-warning);
+	}
+
 	.notif-dot.hidden {
 		visibility: hidden;
 	}
@@ -212,6 +338,10 @@
 
 	.notif-row.is-error .notif-msg {
 		color: var(--color-error);
+	}
+
+	.notif-row.is-warning .notif-msg {
+		color: var(--color-warning);
 	}
 
 	.notif-meta {

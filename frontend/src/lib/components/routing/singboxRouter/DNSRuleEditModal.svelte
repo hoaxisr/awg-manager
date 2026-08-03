@@ -23,10 +23,34 @@
 		 * — all sets render as unused.
 		 */
 		ruleSetUsage?: Map<string, number>;
+		/** Весь список DNS-правил — источник кандидатов для match_response. */
+		rules?: SingboxRouterDNSRule[];
+		/** Позиция правила в списке; undefined при добавлении (конец списка). */
+		ruleIndex?: number;
 		onClose: () => void;
 		onSave: (rule: SingboxRouterDNSRule) => Promise<void> | void;
 	}
-	let { rule, servers, availableRuleSets, ruleSetUsage, onClose, onSave }: Props = $props();
+	let {
+		rule,
+		servers,
+		availableRuleSets,
+		ruleSetUsage,
+		rules,
+		ruleIndex,
+		onClose,
+		onSave,
+	}: Props = $props();
+
+	type ActionKind = 'route' | 'block' | 'evaluate' | 'respond';
+
+	// Сентинел «последний анонимный evaluate» (wire-форма match_response: true).
+	// \0 не может встретиться в теге, набранном пользователем.
+	const MR_ANON = '\u0000anon';
+
+	/** match_response включён: false — форма «выключено» из hand-edited конфига. */
+	function matchResponseOn(mr: boolean | string | undefined): boolean {
+		return mr !== undefined && mr !== false;
+	}
 
 	function normalizeTags(tags: string[]): string[] {
 		return [...new Set(tags.map((s) => s.trim()).filter(Boolean))];
@@ -61,13 +85,14 @@
 	// svelte-ignore state_referenced_locally
 	let queryTypeStr = $state((rule?.query_type ?? []).join(', '));
 
-	function initAction(r?: SingboxRouterDNSRule): 'route' | 'block' {
+	function initAction(r?: SingboxRouterDNSRule): ActionKind {
+		if (r?.action === 'evaluate' || r?.action === 'respond') return r.action;
 		if (r?.action === 'reject' || r?.action === 'predefined') return 'block';
 		return 'route';
 	}
 	// A rule with NO matchers matches every query = catch-all («всё остальное»).
-	// We surface the simplified «catch-all» mode only for the route-to-server
-	// shape; a matcher-less block is unusual and stays in the full editor.
+	// We surface the simplified «catch-all» mode for route/evaluate/respond;
+	// a matcher-less block is unusual and stays in the full editor.
 	function isMatcherless(r?: SingboxRouterDNSRule): boolean {
 		if (!r) return false;
 		return !(
@@ -80,26 +105,53 @@
 			// source_ip_cidr is a matcher too (backend dnsRuleHasMatcher counts it);
 			// a source-scoped rule must not open in catch-all mode, which would drop
 			// the field on save (bug #445 review).
-			(r.source_ip_cidr?.length ?? 0) > 0
+			(r.source_ip_cidr?.length ?? 0) > 0 ||
+			// match_response/ip_cidr — матчеры ответа (sing-box 1.14, backend
+			// dnsRuleHasMatcher): правило с ними не catch-all, иначе поля теряются.
+			matchResponseOn(r.match_response) ||
+			(r.ip_cidr?.length ?? 0) > 0
 		);
 	}
 	function initMode(r?: SingboxRouterDNSRule): 'matchers' | 'catchall' {
-		return r && isMatcherless(r) && initAction(r) === 'route' ? 'catchall' : 'matchers';
+		return r && isMatcherless(r) && initAction(r) !== 'block' ? 'catchall' : 'matchers';
 	}
 	function initBlockMethod(r?: SingboxRouterDNSRule): 'nxdomain' | 'refused' | 'drop' {
 		if (r?.action === 'predefined') return 'nxdomain';
 		if (r?.action === 'reject' && r?.method === 'drop') return 'drop';
 		return 'refused';
 	}
+	function initMatchResponse(r?: SingboxRouterDNSRule): string {
+		const mr = r?.match_response;
+		if (mr === undefined || mr === false) return '';
+		return mr === true ? MR_ANON : mr;
+	}
 	// svelte-ignore state_referenced_locally
 	let mode = $state<'matchers' | 'catchall'>(initMode(rule));
 	const catchAll = $derived(mode === 'catchall');
 	// svelte-ignore state_referenced_locally
-	let action = $state<'route' | 'block'>(initAction(rule));
+	let action = $state<ActionKind>(initAction(rule));
 	// svelte-ignore state_referenced_locally
 	let blockMethod = $state<'nxdomain' | 'refused' | 'drop'>(initBlockMethod(rule));
 	// svelte-ignore state_referenced_locally
 	let server = $state(rule?.server ?? '');
+	// svelte-ignore state_referenced_locally
+	let tag = $state(rule?.tag ?? '');
+	// svelte-ignore state_referenced_locally
+	let speculative = $state(rule?.speculative ?? false);
+	// svelte-ignore state_referenced_locally
+	let race = $state(rule?.race ?? false);
+	// svelte-ignore state_referenced_locally
+	let matchResponse = $state(initMatchResponse(rule));
+	// svelte-ignore state_referenced_locally
+	let responseRcode = $state(rule?.response_rcode ?? '');
+	// svelte-ignore state_referenced_locally
+	let ipCidrStr = $state((rule?.ip_cidr ?? []).join('\n'));
+	// svelte-ignore state_referenced_locally
+	let responseAnswerStr = $state((rule?.response_answer ?? []).join('\n'));
+	// svelte-ignore state_referenced_locally
+	let responseNsStr = $state((rule?.response_ns ?? []).join('\n'));
+	// svelte-ignore state_referenced_locally
+	let responseExtraStr = $state((rule?.response_extra ?? []).join('\n'));
 
 	const blockMethodOptions = [
 		{ value: 'nxdomain', label: 'NXDOMAIN (нет такого домена)' },
@@ -107,15 +159,64 @@
 		{ value: 'drop', label: 'Drop (без ответа)' },
 	];
 
-	const actionOptions: SegmentedOption<'route' | 'block'>[] = [
-		{ value: 'route', label: 'Резолвить' },
-		{ value: 'block', label: 'Заблокировать' },
+	const RCODES = [
+		'NOERROR', 'FORMERR', 'SERVFAIL', 'NXDOMAIN', 'NOTIMP', 'REFUSED', 'YXDOMAIN',
+		'YXRRSET', 'NXRRSET', 'NOTAUTH', 'NOTZONE', 'BADSIG', 'BADKEY', 'BADTIME',
+		'BADMODE', 'BADNAME', 'BADALG', 'BADTRUNC', 'BADCOOKIE',
 	];
+	const rcodeOptions: DropdownOption[] = [
+		{ value: '', label: '— не задан —' },
+		...RCODES.map((c) => ({ value: c, label: c })),
+	];
+
+	const actionOptions: SegmentedOption<ActionKind>[] = [
+		{ value: 'route', label: 'Маршрут' },
+		{ value: 'block', label: 'Блокировка' },
+		{ value: 'evaluate', label: 'Evaluate' },
+		{ value: 'respond', label: 'Respond' },
+	];
+	// Правило без условий блокирует/отвечает на ВСЁ — block в catch-all не даём.
+	const catchAllActionOptions = actionOptions.filter((o) => o.value !== 'block');
 
 	const modeOptions: SegmentedOption<'matchers' | 'catchall'>[] = [
 		{ value: 'matchers', label: 'По условиям' },
 		{ value: 'catchall', label: 'Catch-all (всё остальное)' },
 	];
+
+	function setMode(next: 'matchers' | 'catchall'): void {
+		mode = next;
+		if (next === 'catchall' && action === 'block') action = 'route';
+	}
+
+	// Кандидаты match_response — только evaluate-правила ВЫШЕ редактируемого:
+	// зеркалит backend firstDNSChainViolation, иначе гарантированный 4xx.
+	const rulesAbove = $derived((rules ?? []).slice(0, ruleIndex ?? (rules ?? []).length));
+	const matchResponseOptions = $derived.by<DropdownOption[]>(() => {
+		const opts: DropdownOption[] = [{ value: '', label: 'выкл' }];
+		if (rulesAbove.some((r) => r.action === 'evaluate' && !r.tag)) {
+			opts.push({ value: MR_ANON, label: 'последний анонимный evaluate' });
+		}
+		for (const t of new Set(
+			rulesAbove.filter((r) => r.action === 'evaluate' && r.tag).map((r) => r.tag as string),
+		)) {
+			opts.push({ value: t, label: t });
+		}
+		// Значение из hand-edited конфига вне кандидатов: показываем как есть,
+		// иначе дропдаун выглядит пустым при выставленном поле.
+		if (matchResponse && !opts.some((o) => o.value === matchResponse)) {
+			opts.push({
+				value: matchResponse,
+				label: matchResponse === MR_ANON ? 'последний анонимный evaluate' : matchResponse,
+			});
+		}
+		return opts;
+	});
+	// Кроме «выкл» вариантов нет — привязывать ответ не к чему.
+	const noEvaluateAbove = $derived(matchResponseOptions.length === 1);
+	// Секция «По DNS-ответу» доступна только в режиме matchers.
+	const responseOn = $derived(!catchAll && matchResponse !== '');
+	const speculativeOn = $derived(speculative && (action === 'route' || action === 'evaluate'));
+	const raceOn = $derived(race && responseOn && action !== 'evaluate');
 
 	let busy = $state(false);
 	let error = $state('');
@@ -127,10 +228,19 @@
 	let initialDomainKeywordStr = $state('');
 	let initialDomainRegexStr = $state('');
 	let initialQueryTypeStr = $state('');
-	let initialAction: 'route' | 'block' = $state('route');
+	let initialAction: ActionKind = $state('route');
 	let initialBlockMethod: 'nxdomain' | 'refused' | 'drop' = $state('refused');
 	let initialServer = $state('');
 	let initialMode: 'matchers' | 'catchall' = $state('matchers');
+	let initialTag = $state('');
+	let initialSpeculative = $state(false);
+	let initialRace = $state(false);
+	let initialMatchResponse = $state('');
+	let initialResponseRcode = $state('');
+	let initialIpCidrStr = $state('');
+	let initialResponseAnswerStr = $state('');
+	let initialResponseNsStr = $state('');
+	let initialResponseExtraStr = $state('');
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
@@ -145,6 +255,15 @@
 			initialBlockMethod = initBlockMethod(rule);
 			initialServer = rule.server ?? '';
 			initialMode = initMode(rule);
+			initialTag = rule.tag ?? '';
+			initialSpeculative = rule.speculative ?? false;
+			initialRace = rule.race ?? false;
+			initialMatchResponse = initMatchResponse(rule);
+			initialResponseRcode = rule.response_rcode ?? '';
+			initialIpCidrStr = (rule.ip_cidr ?? []).join('\n');
+			initialResponseAnswerStr = (rule.response_answer ?? []).join('\n');
+			initialResponseNsStr = (rule.response_ns ?? []).join('\n');
+			initialResponseExtraStr = (rule.response_extra ?? []).join('\n');
 		} else {
 			initialRuleSetTagsSnapshot = [];
 			initialDomainSuffixStr = '';
@@ -156,6 +275,15 @@
 			initialBlockMethod = 'refused';
 			initialServer = '';
 			initialMode = 'matchers';
+			initialTag = '';
+			initialSpeculative = false;
+			initialRace = false;
+			initialMatchResponse = '';
+			initialResponseRcode = '';
+			initialIpCidrStr = '';
+			initialResponseAnswerStr = '';
+			initialResponseNsStr = '';
+			initialResponseExtraStr = '';
 		}
 	});
 
@@ -170,7 +298,16 @@
 			action !== initialAction ||
 			blockMethod !== initialBlockMethod ||
 			server !== initialServer ||
-			mode !== initialMode
+			mode !== initialMode ||
+			tag !== initialTag ||
+			speculative !== initialSpeculative ||
+			race !== initialRace ||
+			matchResponse !== initialMatchResponse ||
+			responseRcode !== initialResponseRcode ||
+			ipCidrStr !== initialIpCidrStr ||
+			responseAnswerStr !== initialResponseAnswerStr ||
+			responseNsStr !== initialResponseNsStr ||
+			responseExtraStr !== initialResponseExtraStr
 		);
 	});
 
@@ -185,13 +322,21 @@
 			const domain_regex = domainRegexStr.split('\n').map((s) => s.trim()).filter(Boolean);
 			const query_type = queryTypeStr.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 
+			const ip_cidr = ipCidrStr.split('\n').map((s) => s.trim()).filter(Boolean);
+			const response_answer = responseAnswerStr.split('\n').map((s) => s.trim()).filter(Boolean);
+			const response_ns = responseNsStr.split('\n').map((s) => s.trim()).filter(Boolean);
+			const response_extra = responseExtraStr.split('\n').map((s) => s.trim()).filter(Boolean);
+
 			const hasMatcher =
 				rule_set.length > 0 ||
 				domain_suffix.length > 0 ||
 				domain.length > 0 ||
 				domain_keyword.length > 0 ||
 				domain_regex.length > 0 ||
-				query_type.length > 0;
+				query_type.length > 0 ||
+				// match_response — полноценный матчер (backend dnsRuleHasMatcher):
+				// respond с одним match_response обязан проходить гейт.
+				responseOn;
 			// Catch-all mode intentionally ships ZERO matchers (matches everything);
 			// otherwise at least one matcher is required.
 			if (!catchAll && !hasMatcher) {
@@ -213,10 +358,26 @@
 						query_type: query_type.length ? query_type : undefined,
 					};
 
-			if (catchAll || action === 'route') {
+			// Поля ответа sing-box 1.14 живут только вместе с match_response
+			// (иначе backend отвергает правило).
+			if (responseOn) {
+				built.match_response = matchResponse === MR_ANON ? true : matchResponse;
+				if (ip_cidr.length) built.ip_cidr = ip_cidr;
+				if (responseRcode) built.response_rcode = responseRcode;
+				if (response_answer.length) built.response_answer = response_answer;
+				if (response_ns.length) built.response_ns = response_ns;
+				if (response_extra.length) built.response_extra = response_extra;
+				if (raceOn) built.race = true;
+			}
+
+			if (action === 'route' || action === 'evaluate') {
 				if (!server) { error = 'Выберите DNS сервер'; busy = false; return; }
-				built.action = 'route';
+				built.action = action;
 				built.server = server;
+				if (action === 'evaluate' && tag.trim()) built.tag = tag.trim();
+				if (speculativeOn) built.speculative = true;
+			} else if (action === 'respond') {
+				built.action = 'respond';
 			} else if (blockMethod === 'nxdomain') {
 				built.action = 'predefined';
 				built.rcode = 'NXDOMAIN';
@@ -228,6 +389,12 @@
 				built.method = 'default';
 			}
 
+			if (built.race && built.speculative) {
+				error = 'race и speculative несовместимы';
+				busy = false;
+				return;
+			}
+
 			await onSave(built);
 		} catch (e) {
 			error = (e as Error).message;
@@ -236,6 +403,30 @@
 		}
 	}
 </script>
+
+{#snippet actionFields(serverLabel: string)}
+	{#if action === 'route' || action === 'evaluate'}
+		<label class="field">
+			<div class="lbl">{serverLabel}</div>
+			<Dropdown bind:value={server} options={serverOptions} fullWidth />
+		</label>
+		{#if action === 'evaluate'}
+			<label class="field">
+				<div class="lbl">Тег ответа</div>
+				<input bind:value={tag} placeholder="rd" />
+			</label>
+		{/if}
+		<label class="toggle">
+			<input type="checkbox" bind:checked={speculative} />
+			<span>Спекулятивный запрос</span>
+		</label>
+	{:else if action === 'block'}
+		<label class="field">
+			<div class="lbl">Метод блокировки</div>
+			<Dropdown bind:value={blockMethod} options={blockMethodOptions} fullWidth />
+		</label>
+	{/if}
+{/snippet}
 
 <SingboxSettingsModal
 	title={rule ? 'Редактировать DNS правило' : 'Новое DNS правило'}
@@ -249,7 +440,7 @@
 			value={mode}
 			options={modeOptions}
 			ariaLabel="Тип DNS правила"
-			onchange={(next) => (mode = next)}
+			onchange={(next) => setMode(next)}
 		/>
 
 		{#if catchAll}
@@ -257,10 +448,16 @@
 				Правило без условий совпадает со <b>всеми</b> запросами. Любые правила
 				<b>ниже</b> него в списке игнорируются — держите его последним.
 			</div>
-			<label class="field">
-				<div class="lbl">DNS сервер (для всех запросов)</div>
-				<Dropdown bind:value={server} options={serverOptions} fullWidth />
-			</label>
+			<div class="action-section">
+				<div class="section-label">Действие</div>
+				<SegmentedControl
+					value={action}
+					options={catchAllActionOptions}
+					ariaLabel="Действие DNS правила"
+					onchange={(next) => (action = next)}
+				/>
+				{@render actionFields('DNS сервер (для всех запросов)')}
+			</div>
 			<div class="hint">
 				Для простого запасного сервера обычно достаточно «Final-сервера» в «DNS по умолчанию».
 				Если задать и его, и catch-all правило — правило важнее (проверяется раньше final).
@@ -316,18 +513,56 @@
 					onchange={(next) => (action = next)}
 				/>
 
-				{#if action === 'route'}
-					<label class="field">
-						<div class="lbl">DNS сервер</div>
-						<Dropdown bind:value={server} options={serverOptions} fullWidth />
-					</label>
-				{:else}
-					<label class="field">
-						<div class="lbl">Метод блокировки</div>
-						<Dropdown bind:value={blockMethod} options={blockMethodOptions} fullWidth />
-					</label>
-				{/if}
+				{@render actionFields('DNS сервер')}
 			</div>
+
+			<section class="form-section form-section-divided">
+				<div class="section-label">По DNS-ответу</div>
+				<label class="field">
+					<div class="lbl">Ответ evaluate</div>
+					<Dropdown bind:value={matchResponse} options={matchResponseOptions} fullWidth />
+				</label>
+				{#if noEvaluateAbove}
+					<div class="hint">
+						Нет evaluate-правил выше — сначала создайте правило с действием Evaluate
+					</div>
+				{/if}
+
+				{#if responseOn}
+					<label class="field">
+						<div class="lbl">Rcode</div>
+						<Dropdown bind:value={responseRcode} options={rcodeOptions} fullWidth />
+					</label>
+
+					<label class="field">
+						<div class="lbl">IP ответа (CIDR, по строке)</div>
+						<textarea bind:value={ipCidrStr} rows="2" placeholder="10.0.0.0/8"></textarea>
+					</label>
+
+					<details>
+						<summary>RR-записи</summary>
+						<label class="field">
+							<div class="lbl">Answer (по строке)</div>
+							<textarea bind:value={responseAnswerStr} rows="2"></textarea>
+						</label>
+						<label class="field">
+							<div class="lbl">NS (по строке)</div>
+							<textarea bind:value={responseNsStr} rows="2"></textarea>
+						</label>
+						<label class="field">
+							<div class="lbl">Extra (по строке)</div>
+							<textarea bind:value={responseExtraStr} rows="2"></textarea>
+						</label>
+					</details>
+
+					{#if action !== 'evaluate'}
+						<label class="toggle">
+							<input type="checkbox" bind:checked={race} />
+							<span>Race</span>
+						</label>
+					{/if}
+				{/if}
+			</section>
 		{/if}
 
 		{#if error}<div class="error">{error}</div>{/if}
@@ -340,3 +575,20 @@
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>
+
+<style>
+	/* Спойлер RR-записей: рамка/паддинг/типографика как у полей формы. */
+	details {
+		display: grid;
+		gap: 0.65rem;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 0.4rem 0.6rem;
+	}
+	summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--text-primary, var(--text));
+	}
+</style>

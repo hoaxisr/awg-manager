@@ -33,9 +33,11 @@
 		'@2*****6@g*******m', '@S A', '@Ig**M**v***v', '@A Tu', '@metalnakls',
 		'@LazIv', '@AverTV', '@xxxaaach', '@defylives', '@AndreyPristup',
 		'@Lethal F',
-		'@Stein_123', '@Tanovitsky',
+		'@Stein_123', '@Tanovitsky','@Maks Leto',
 		'@Fable 5 (Claude Code)', '@easy_climber', '@Trikruti', '@D_Fedulov', '@VerxSr',
 		'@siniekiti420', '@Матвей Д****н', '@Алексей Д*****в', '@Иван В********ч',
+		'@sokol2007', '@diodonne', '@prapor24', '@Dimasyaus', '@byrek92', '@Stanislav_Oleynikov',
+		'@lapin18151', '@Yurrel', '@viint', '@desel7', '@John Doe'
 	];
 
 	let open = $state(false);
@@ -92,7 +94,7 @@
 		<div class="card credits-card">
 			<div class="credits-content">
 				{#each credits as nick}
-					<span class="credits-nick" class:gold={nick === '@dna_pvt' || nick === '@amatol'} class:bronze={nick === '@tiffolk' || nick === '@defylives' || nick === '@easy_climber'} class:green={nick === '@Fable 5 (Claude Code)'}>{nick}</span>
+					<span class="credits-nick" class:gold={nick === '@dna_pvt' || nick === '@amatol'} class:bronze={nick === '@tiffolk' || nick === '@defylives' || nick === '@easy_climber' || nick === '@Maks Leto'} class:green={nick === '@Fable 5 (Claude Code)'}>{nick}</span>
 				{/each}
 			</div>
 		</div>

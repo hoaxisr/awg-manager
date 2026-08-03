@@ -43,12 +43,10 @@ func validateUniqueListens(listens []string, selfIdx int, selfAddr string) error
 	return nil
 }
 
-// ensureUniqueListenAddr returns addr unchanged if unique among listens[selfIdx],
-// otherwise the next free loopback port in [portMin, portMax).
+// ensureUniqueListenAddr returns addr when its port is free among listens[selfIdx]
+// and reserved (AWG tunnel endpoints, sibling proxy clients); otherwise the next
+// free loopback port in [portMin, portMax).
 func ensureUniqueListenAddr(listens []string, selfIdx int, addr string, reserved map[int]bool, portMin, portMax int) string {
-	if err := validateUniqueListens(listens, selfIdx, addr); err == nil {
-		return addr
-	}
 	used := map[int]bool{}
 	for i, a := range listens {
 		if i == selfIdx {
@@ -62,6 +60,9 @@ func ensureUniqueListenAddr(listens []string, selfIdx int, addr string, reserved
 		if v {
 			used[port] = true
 		}
+	}
+	if selfPort, err := listenPort(addr); err == nil && !used[selfPort] {
+		return addr
 	}
 	host := "127.0.0.1"
 	if h, _, err := net.SplitHostPort(addr); err == nil && strings.TrimSpace(h) != "" {
@@ -112,6 +113,100 @@ func findClientIndex(clients []ClientInstance, id string) int {
 	return -1
 }
 
+func findServerIndex(servers []ServerInstance, id string) int {
+	for i, s := range servers {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func ensureUniqueServerListenAddr(listens []string, selfIdx int, addr string, reserved map[int]bool, portMin, portMax int) string {
+	used := map[int]bool{}
+	for i, a := range listens {
+		if i == selfIdx {
+			continue
+		}
+		if port, err := listenPort(a); err == nil {
+			used[port] = true
+		}
+	}
+	for port, v := range reserved {
+		if v {
+			used[port] = true
+		}
+	}
+	if selfPort, err := listenPort(addr); err == nil && !used[selfPort] {
+		return addr
+	}
+	host := "0.0.0.0"
+	if h, _, err := net.SplitHostPort(addr); err == nil && strings.TrimSpace(h) != "" {
+		host = h
+	}
+	for port := portMin; port < portMax; port++ {
+		if !used[port] {
+			return fmt.Sprintf("%s:%d", host, port)
+		}
+	}
+	return fmt.Sprintf("%s:%d", host, portMin)
+}
+
+func ensureUniqueWgPort(wgPort int, listenAddr string, reserved map[int]bool, portMin, portMax int) int {
+	if wgPort <= 0 {
+		wgPort = DefaultServerConfig().WgPort
+	}
+	used := map[int]bool{}
+	for port, v := range reserved {
+		if v {
+			used[port] = true
+		}
+	}
+	if lp, err := listenPort(listenAddr); err == nil {
+		used[lp] = true
+	}
+	if !used[wgPort] {
+		return wgPort
+	}
+	for port := portMin; port < portMax; port++ {
+		if !used[port] {
+			return port
+		}
+	}
+	return wgPort
+}
+
+func serverListenAddresses(servers []ServerInstance) []string {
+	out := make([]string, len(servers))
+	for i, s := range servers {
+		out[i] = s.Config.Listen
+	}
+	return out
+}
+
+func nextServerListen(servers []ServerInstance, reserved map[int]bool) string {
+	used := map[int]bool{}
+	for _, s := range servers {
+		if port, err := listenPort(s.Config.Listen); err == nil {
+			used[port] = true
+		}
+		if s.Config.WgPort > 0 {
+			used[s.Config.WgPort] = true
+		}
+	}
+	for port, v := range reserved {
+		if v {
+			used[port] = true
+		}
+	}
+	for port := 56000; port < 56100; port++ {
+		if !used[port] {
+			return fmt.Sprintf("0.0.0.0:%d", port)
+		}
+	}
+	return "0.0.0.0:56000"
+}
+
 // LocalListenPort parses host:port and returns port when host is loopback.
 func LocalListenPort(addr string) (int, bool) {
 	addr = strings.TrimSpace(addr)
@@ -131,5 +226,5 @@ func LocalListenPort(addr string) (int, bool) {
 }
 
 type LocalListenPortChecker interface {
-	OccupiedLocalListenPorts() (map[int]bool, error)
+	OccupiedLocalListenPorts(excludeWdttClientID, excludeFreeTurnClientID string) (map[int]bool, error)
 }

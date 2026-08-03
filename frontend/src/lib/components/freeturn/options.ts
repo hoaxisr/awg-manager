@@ -17,9 +17,10 @@ export const obfOptions = [
 	{ value: 'rtpopus3', label: 'rtpopus3' }
 ];
 
-/** TLS/UA-персона freeturn для VK Smart Captcha (-browser). */
-export const browserOptions = [
-	{ value: 'chrome', label: 'Chrome' },
-	{ value: 'firefox', label: 'Firefox' },
-	{ value: 'safari', label: 'Safari' }
+/** VK-auth persona class for freeturn (-platform). */
+export const platformOptions = [
+	{ value: 'desktop', label: 'desktop (роутер / ПК)' },
+	{ value: 'mobile', label: 'mobile' }
 ];
+
+export { dnsModeOptions } from '../proxy-panel/dnsOptions';

@@ -23,6 +23,14 @@ export interface AWGInterface {
 	i3?: string;
 	i4?: string;
 	i5?: string;
+	// AWG 3.0 device params (kernel mode only).
+	headerProtectionKey?: string;
+	contentPaddingAddition?: string;
+	rekeyAfterTime?: string;
+	rekeyTimeout?: string;
+	rejectAfterTime?: string;
+	keepaliveTimeout?: string;
+	maxHandshakeAttempts?: string;
 }
 
 export interface AWGPeer {
@@ -30,7 +38,8 @@ export interface AWGPeer {
 	presharedKey?: string;
 	endpoint: string;
 	allowedIPs: string[];
-	persistentKeepalive?: number;
+	/** Секунды: число либо диапазон AWG 3.0 "min-max" строкой. */
+	persistentKeepalive?: number | string;
 }
 
 export interface ConnectivityCheckConfig {
@@ -107,7 +116,7 @@ export interface TunnelListItem {
 	rxBytes?: number;
 	txBytes?: number;
 	lastHandshake?: string;
-	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0';
+	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3';
 	mtu?: number;
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';
@@ -184,6 +193,15 @@ export interface ASCParamsExtended extends ASCParamsBase {
 	i3: string;
 	i4: string;
 	i5: string;
+	// AWG 3.0 device params (kernel mode only). Optional: only present/edited
+	// when the ASCEditor runs in awg3 mode.
+	headerProtectionKey?: string;
+	contentPaddingAddition?: string;
+	rekeyAfterTime?: string;
+	rekeyTimeout?: string;
+	rejectAfterTime?: string;
+	keepaliveTimeout?: string;
+	maxHandshakeAttempts?: string;
 }
 
 export type ASCParams = ASCParamsBase | ASCParamsExtended;

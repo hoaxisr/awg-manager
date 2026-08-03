@@ -17,6 +17,8 @@ type ImportHandler struct {
 	settingsStore  *storage.SettingsStore
 	pingCheck      PingCheckService
 	tunnelsHandler *TunnelsHandler
+	freeturn       FreeTurnService
+	wdtt           WdttService
 	log            *logging.ScopedLogger
 }
 
@@ -42,6 +44,16 @@ func (h *ImportHandler) SetPingCheckService(svc PingCheckService) {
 // SetTunnelsHandler sets the tunnels handler for SSE publishing after import.
 func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 	h.tunnelsHandler = th
+}
+
+// SetFreeTurnService wires FreeTurn for linked-client listen → endpoint sync on import.
+func (h *ImportHandler) SetFreeTurnService(svc FreeTurnService) {
+	h.freeturn = svc
+}
+
+// SetWdttService wires WDTT for linked-client listen → endpoint sync on import.
+func (h *ImportHandler) SetWdttService(svc WdttService) {
+	h.wdtt = svc
 }
 
 // ImportConfRequest is the body for POST /import/conf.
@@ -73,6 +85,32 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 
 	if req.Content == "" {
 		response.Error(w, "missing config content", "MISSING_CONTENT")
+		return
+	}
+
+	req.Content = h.patchImportContentForLinkedClient(req.Content, req.FreeTurnClientID, req.WdttClientID)
+
+	if existingID := findLinkedTunnelID(h.store, req.FreeTurnClientID, req.WdttClientID); existingID != "" {
+		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name); err != nil {
+			h.log.Warn("import", req.Name, "Failed to replace linked tunnel: "+err.Error())
+			response.Error(w, err.Error(), "IMPORT_FAILED")
+			return
+		}
+		h.log.Info("import", req.Name, "Linked tunnel config replaced")
+		var quiescent time.Time
+		if h.tunnelsHandler != nil {
+			h.tunnelsHandler.publishTunnelList(r.Context())
+			quiescent = h.tunnelsHandler.quiescentFor(existingID)
+		}
+		resp, err := BuildTunnelResponse(r, h.svc, h.store, existingID, quiescent)
+		if err != nil {
+			response.Error(w, err.Error(), "IMPORT_FAILED")
+			return
+		}
+		if warnings := h.svc.CheckAddressConflicts(r.Context(), existingID); len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+		response.Success(w, resp)
 		return
 	}
 
@@ -129,4 +167,28 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		resp["warnings"] = warnings
 	}
 	response.Success(w, resp)
+}
+
+func findLinkedTunnelID(store *storage.AWGTunnelStore, freeTurnClientID, wdttClientID string) string {
+	if store == nil {
+		return ""
+	}
+	ftID := strings.TrimSpace(freeTurnClientID)
+	wdID := strings.TrimSpace(wdttClientID)
+	if ftID == "" && wdID == "" {
+		return ""
+	}
+	tunnels, err := store.List()
+	if err != nil {
+		return ""
+	}
+	for _, tun := range tunnels {
+		if ftID != "" && strings.TrimSpace(tun.FreeTurnClientID) == ftID {
+			return tun.ID
+		}
+		if wdID != "" && strings.TrimSpace(tun.WdttClientID) == wdID {
+			return tun.ID
+		}
+	}
+	return ""
 }

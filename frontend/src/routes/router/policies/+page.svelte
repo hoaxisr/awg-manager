@@ -2,9 +2,9 @@
     // Страница «Роутер · Политики доступа» — бывшая вкладка
     // /routing?tab=policy (навигация v3).
     import { onMount, onDestroy } from 'svelte';
+    import { page } from '$app/stores';
     import { routing, subscribeRouting } from '$lib/stores/routing';
-    import { systemInfo } from '$lib/stores/system';
-    import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
+    import { PageContainer, PageHeader } from '$lib/components/layout';
     import { AccessPoliciesTab, RoutingRefreshButton } from '$lib/components/routing';
 
     let unsubRouting: (() => void) | null = null;
@@ -15,8 +15,9 @@
         unsubRouting?.();
     });
 
-    let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
-    let systemKnown = $derived($systemInfo.lastFetchedAt > 0 || $systemInfo.status === 'error');
+    // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
+    // конкретной политики (#573).
+    let deepLinkPolicy = $derived($page.url.searchParams.get('policy'));
 </script>
 
 <svelte:head>
@@ -30,18 +31,11 @@
         {/snippet}
     </PageHeader>
 
-    {#if systemKnown && !isOS5}
-        <!-- Политики доступа NDMS — только OS5; на OS4 вкладки не было. -->
-        <EmptyState
-            title="Раздел доступен на Keenetic OS 5"
-            description="Политики доступа NDMS требуют прошивки OS 5."
-        />
-    {:else}
-        <AccessPoliciesTab
-            accessPolicies={$routing.accessPolicies}
-            policyDevices={$routing.policyDevices}
-            policyInterfaces={$routing.policyInterfaces}
-            missing={$routing.missing.includes('accessPolicies')}
-        />
-    {/if}
+    <AccessPoliciesTab
+        accessPolicies={$routing.accessPolicies}
+        policyDevices={$routing.policyDevices}
+        policyInterfaces={$routing.policyInterfaces}
+        missing={$routing.missing.includes('accessPolicies')}
+        openPolicy={deepLinkPolicy}
+    />
 </PageContainer>

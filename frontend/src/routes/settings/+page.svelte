@@ -18,6 +18,7 @@
 		PukhososPatrol,
 		SettingsSectionLabel,
 		AccessCard,
+		BackupRestoreCard,
 		DownloadsUpdatesCard,
 		PingCheckCard,
 		AdvancedCard,
@@ -241,6 +242,7 @@ onMount(() => {
 		<div class="settings-layout">
 		<div class="settings-grid">
 			<aside class="settings-left">
+				<div class="settings-left-sticky">
 				<SystemInfoGrid
 					{systemInfo}
 					onrefresh={refreshSystemInfo}
@@ -269,6 +271,7 @@ onMount(() => {
 					oninstallSingbox={installSingbox}
 					onupdateSingbox={updateSingbox}
 				/>
+				</div>
 			</aside>
 
 			<main class="settings-right">
@@ -306,6 +309,10 @@ onMount(() => {
 			<PingCheckCard bind:settings bind:saving />
 
 			<AdvancedCard bind:settings bind:saving {highlightFeedbackFab} />
+
+				<div class="settings-block" id="settings-backup">
+					<BackupRestoreCard />
+				</div>
 			</main>
 		</div>
 
@@ -332,7 +339,7 @@ onMount(() => {
 		display: grid;
 		grid-template-columns: 360px 1fr;
 		gap: var(--settings-gap);
-		align-items: start;
+		align-items: stretch;
 	}
 
 	.settings-left,
@@ -340,12 +347,19 @@ onMount(() => {
 		display: flex;
 		flex-direction: column;
 		gap: var(--settings-gap);
+		min-width: 0;
 	}
 
-	.settings-left {
+	/* Родитель тянется гридом, sticky живёт на внутреннем блоке: сайдбар
+	   держится всю правую колонку и уезжает вместе с гридом (Действия и
+	   подвал ниже). Вложенного скролла нет. */
+	.settings-left-sticky {
+		display: flex;
+		flex-direction: column;
+		gap: var(--settings-gap);
 		position: sticky;
-		top: 1rem;
-		align-self: start;
+		top: calc(56px + 0.75rem);
+		width: 100%;
 	}
 
 	.settings-footer-patrol-host {
@@ -357,7 +371,7 @@ onMount(() => {
 		.settings-grid {
 			grid-template-columns: 1fr;
 		}
-		.settings-left {
+		.settings-left-sticky {
 			position: static;
 		}
 	}

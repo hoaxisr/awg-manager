@@ -16,7 +16,7 @@
 	import InstanceBar from './InstanceBar.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
-	import { parseLocalListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 
@@ -41,7 +41,7 @@
 
 	let genProvider = $state('vk');
 	let genPeer = $state('');
-	let genMTU = $state(1376);
+	let genMTU = $state(1280);
 	let genWG = $state('');
 	let genClientId = $state('');
 	let genName = $state('');
@@ -108,12 +108,12 @@
 			dnsServers: c.dnsServers ?? '',
 			clientId: c.clientId ?? '',
 			sub: c.sub ?? '',
-			browser:
-				(c.browser as string) === 'chromium'
-					? 'chrome'
-					: c.browser === 'safari' || c.browser === 'firefox'
-						? c.browser
-						: 'chrome',
+			platform:
+				c.platform === 'mobile' || c.platform === 'desktop' ? c.platform : 'desktop',
+			dnsMode:
+				c.dnsMode === 'plain' || c.dnsMode === 'doh' || c.dnsMode === 'auto'
+					? c.dnsMode
+					: 'auto',
 			streams: c.streams > 0 ? c.streams : 10,
 			streamsPerCred: c.streamsPerCred > 0 ? c.streamsPerCred : 10,
 			debug: !!c.debug
@@ -369,6 +369,7 @@
 		try {
 			const payload = await api.decodeFreeTurnLink(link.trim());
 			const c = selectedClient.config;
+			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
 			c.peer = payload.peer ?? c.peer;
 			c.provider = payload.provider || c.provider;
 			if (payload.obf) {
@@ -381,6 +382,10 @@
 			if (payload.transport) c.transport = payload.transport as typeof c.transport;
 			if (payload.mode) c.mode = payload.mode as typeof c.mode;
 			if (typeof payload.bond === 'boolean') c.bond = payload.bond;
+			if (payload.listen && listenPort == null) c.listen = payload.listen;
+			if (payload.dns === 'plain' || payload.dns === 'doh' || payload.dns === 'auto') {
+				c.dnsMode = payload.dns;
+			}
 			const wg = payload.wg?.trim() ? payload.wg : null;
 
 			let msg = 'Ссылка распознана, поля заполнены — не забудьте сохранить';
@@ -389,22 +394,27 @@
 			}
 			if (wg) {
 				try {
-					const listenPort =
-						parseLocalListenPort(c.listen) ??
-						parseLocalListenPort(payload.listen) ??
-						9000;
-					const wgForImport = patchWgConfEndpoint(wg, listenPort);
-					const tunnel = await api.importConfig(
-						wgForImport,
-						freeturnTunnelName(selectedClient.name),
-						undefined,
-						selectedClientId
-					);
-					msg += `. Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${listenPort})`;
+					const portForTunnel =
+						listenPort ?? linkedTunnelListenPort(c.listen, payload.listen);
+					if (portForTunnel == null) {
+						notifications.error(
+							'Поля заполнены, но не удалось определить listen-порт клиента для AWG-туннеля'
+						);
+					} else {
+						const wgForImport = patchWgConfEndpoint(wg, portForTunnel);
+						const tunnel = await api.importConfig(
+							wgForImport,
+							freeturnTunnelName(selectedClient.name),
+							undefined,
+							selectedClientId
+						);
+						msg += `. Туннель «${tunnel.name}» (Endpoint 127.0.0.1:${portForTunnel})`;
+					}
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель из конфига: ' + errText(e));
 				}
 			}
+			await saveClientConfig(c);
 			notifications.success(msg);
 		} catch (e) {
 			notifications.error('Не удалось разобрать ссылку: ' + errText(e));
@@ -508,7 +518,7 @@
 		onInstall={install}
 		productName="freeturn"
 		installSuffix=" (клиент + сервер)"
-		notFoundHint="awg-manager не поставляет freeturn в своём пакете."
+		notFoundHint="нажмите «Установить» — клиент и сервер скачаются с зеркала."
 	>
 		{#snippet manualInstall(binary)}
 			<span>

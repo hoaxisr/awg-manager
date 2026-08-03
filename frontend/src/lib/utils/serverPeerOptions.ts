@@ -88,10 +88,12 @@ export function buildRunningServerPeerDropdownOptions(
 		if (s.status !== 'up') continue;
 		const group = `Системный WG · ${s.description || s.interfaceName}`;
 		for (const p of s.peers ?? []) {
-			if (p.confAvailable !== true) continue;
+			const keeneticOnly = p.confAvailable !== true;
 			opts.push({
 				value: encodeServerPeerValue('system', s.id, p.publicKey),
-				label: peerLabel(p.publicKey, p.description),
+				label: keeneticOnly
+					? `${peerLabel(p.publicKey, p.description)} · Keenetic OS`
+					: peerLabel(p.publicKey, p.description),
 				group,
 			});
 		}
@@ -129,6 +131,14 @@ export function parseLocalListenPort(listen: string | undefined | null): number 
 	}
 	const port = Number(raw);
 	return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+/** Endpoint port for AWG tunnel linked to a proxy client: saved listen wins over link template. */
+export function linkedTunnelListenPort(
+	clientListen: string | undefined | null,
+	payloadListen?: string | undefined | null
+): number | null {
+	return parseLocalListenPort(clientListen) ?? parseLocalListenPort(payloadListen);
 }
 
 /** Подставляет локальный Endpoint в [Peer] секцию конфига клиента. */

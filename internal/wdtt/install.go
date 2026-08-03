@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
-	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
 type BinarySpec struct {
@@ -19,38 +18,68 @@ type BinarySpec struct {
 	Size    int64 // bytes; download hard-cap = Size + slack
 }
 
-const PinnedVersion = "1.0.0-1"
+// ArchSpecs pairs the client+server binaries for one router architecture.
+type ArchSpecs struct {
+	Client BinarySpec
+	Server BinarySpec
+}
 
-// releaseBase — прод-доставка с зеркала (паритет с
-// internal/freeturn/install.go и internal/singbox/installer/embedded.go —
-// GitHub из RU у части пользователей недоступен, репо приватный).
-// Канонический источник сборки: https://github.com/hoaxisr/wdtt-client
-// релиз v1.0.0-1.
-const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedVersion + "/"
+const PinnedClientVersion = "1.0.0-1"
+const PinnedServerVersion = "0.1.7-awgm"
 
-// EmbeddedBinaries maps the awg-manager build arch (detectArch(): e.g.
-// "mipsel-3.4") to the pinned wdtt client asset. У wdtt только client
-// (server-бинаря нет). SHA256/Size — из checksums.txt релиза
-// hoaxisr/wdtt-client v1.0.0-1.
-var EmbeddedBinaries = map[string]BinarySpec{
+// releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
+const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
+
+// serverReleaseBase — patched wdtt-server (-no-nat, -wg-iface) for Keenetic/awg-manager.
+// Единственный канал доставки: в IPK бинаря нет (12 МБ на одну арку).
+const serverReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + PinnedServerVersion + "/"
+
+// EmbeddedBinaries maps the awg-manager build arch to pinned wdtt assets.
+var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-arm64",
-		SHA256: "47e72c6491d61cb0ba30aa522b444ca30e2851f9d77361a2520cb92601e6972b", Size: 11337890,
+		Client: BinarySpec{
+			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
+			SHA256: "47e72c6491d61cb0ba30aa522b444ca30e2851f9d77361a2520cb92601e6972b", Size: 11337890,
+		},
+		Server: BinarySpec{
+			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
+			SHA256: "7b7922b9e60f29300382e37c101ae81dd1aee0e4f6b675c170c11cab8cbf3e89", Size: 12320930,
+		},
 	},
+	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
+	// modernc.org/sqlite → modernc.org/libc, где нет этих архитектур,
+	// поэтому wdtt-server под них не собирается (contrib/wdtt-server-patch/BUILD.md).
 	"mipsel-3.4": {
-		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-		SHA256: "7cd2c6b0dfee1bbfb64dba415d8c20318a05dccb8babc59d18d77d843c7163f7", Size: 13172929,
+		Client: BinarySpec{
+			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
+			SHA256: "7cd2c6b0dfee1bbfb64dba415d8c20318a05dccb8babc59d18d77d843c7163f7", Size: 13172929,
+		},
 	},
 	"mips-3.4": {
-		Version: PinnedVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-		SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
+		Client: BinarySpec{
+			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
+			SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
+		},
 	},
 }
 
+// serverSupported — есть ли для этой арки собираемый wdtt-server.
+func (s *ArchSpecs) serverSupported() bool { return s != nil && s.Server.URL != "" }
+
 type installedVersionRecord struct {
 	Version     string    `json:"version"`
+	ClientVer   string    `json:"clientVersion,omitempty"`
+	ServerVer   string    `json:"serverVersion,omitempty"`
 	InstalledAt time.Time `json:"installedAt"`
 	ClientPath  string    `json:"clientPath"`
+	ServerPath  string    `json:"serverPath,omitempty"`
+}
+
+func installVersionLabel(specs ArchSpecs) string {
+	if !specs.serverSupported() {
+		return specs.Client.Version
+	}
+	return specs.Client.Version + "+server-" + specs.Server.Version
 }
 
 func (s *Service) readInstalledVersion() string {
@@ -65,7 +94,13 @@ func (s *Service) readInstalledVersion() string {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return ""
 	}
-	return rec.Version
+	if rec.Version != "" {
+		return rec.Version
+	}
+	if rec.ClientVer != "" && rec.ServerVer != "" {
+		return rec.ClientVer + "+server-" + rec.ServerVer
+	}
+	return rec.ClientVer
 }
 
 func (s *Service) writeInstalledVersion(version string) error {
@@ -74,8 +109,15 @@ func (s *Service) writeInstalledVersion(version string) error {
 	}
 	rec := installedVersionRecord{
 		Version:     version,
+		ClientVer:   PinnedClientVersion,
+		ServerVer:   PinnedServerVersion,
 		InstalledAt: time.Now().UTC(),
 		ClientPath:  s.clientBin,
+		ServerPath:  s.serverBin,
+	}
+	if s.installSpecs != nil {
+		rec.ClientVer = s.installSpecs.Client.Version
+		rec.ServerVer = s.installSpecs.Server.Version
 	}
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
@@ -99,10 +141,13 @@ func (s *Service) installStatusFields(installVersion string) (installedVersion s
 	if !binaryPresent(s.clientBin) {
 		return installedVersion, true
 	}
+	if s.installSpecs.serverSupported() && !binaryPresent(s.serverBin) {
+		return installedVersion, true
+	}
 	if installedVersion == "" {
 		return installedVersion, true
 	}
-	if semver.Compare(installedVersion, installVersion) < 0 {
+	if installedVersion != installVersion {
 		return installedVersion, true
 	}
 	return installedVersion, false

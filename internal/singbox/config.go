@@ -568,6 +568,53 @@ func detectFingerprint(ob map[string]any) string {
 	return strOr(utls["fingerprint"], "")
 }
 
+// outboundRequiresFeature maps a sing-box outbound "type" value to the
+// build-tag name that a sing-box binary must declare in its `Tags:` line
+// (from `sing-box version`) for that outbound type to be available at
+// runtime. Empty string means no feature-tag is required (the type is
+// compiled into the core binary unconditionally).
+//
+// Список закрыт намеренно: имя тега нельзя выводить из соглашения
+// `with_<type>_outbound`. В нашем форке (include/registry.go, файл без
+// build-тегов) mieru регистрируется безусловно, тега with_mieru_outbound
+// не существует — и вывод такого тега из соглашения отбраковывал бы
+// рабочие mieru-подключения. Здесь только теги, подтверждённые файлом
+// include/<type>_outbound.go в исходниках sing-box.
+func outboundRequiresFeature(obType string) string {
+	if obType == "naive" {
+		return "with_naive_outbound"
+	}
+	return ""
+}
+
+// OutboundTypeRequiresFeature exposes outboundRequiresFeature for
+// cross-package callers (Operator, orchestrator, subscription layer).
+func OutboundTypeRequiresFeature(obType string) string {
+	return outboundRequiresFeature(obType)
+}
+
+// OutboundSupportedByFeatures returns true when the given sing-box build
+// tags (Features slice from InstallStatus) include the optional build tag
+// required for outboundType. Returns true for built-in types (no required
+// tag) and for unknown types — callers still get an error from
+// `sing-box check` in that case.
+//
+// Prefer this to direct Features-contains checks: callers don't need to
+// remember the exact tag name for every protocol, and unknown protocols
+// are treated as "probably supported" so sing-box itself gets to decide.
+func OutboundSupportedByFeatures(features []string, outboundType string) bool {
+	required := outboundRequiresFeature(outboundType)
+	if required == "" {
+		return true
+	}
+	for _, f := range features {
+		if f == required {
+			return true
+		}
+	}
+	return false
+}
+
 // DeviceProxySpec is the externally-supplied description of the
 // user-facing proxy. Each EnsureDeviceProxy call recomputes the
 // inbound + selector outbound from this spec. AWG-direct outbounds

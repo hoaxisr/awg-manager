@@ -123,6 +123,9 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 		byTag[rs.Tag] = rs
 	}
 	want := map[string]RuleSet{}
+	// standalone — на набор ссылается правило БЕЗ собственного ip_cidr. Только
+	// тогда его CIDR безопасны независимо от мержимости набора (см. ниже).
+	standalone := map[string]bool{}
 	for _, r := range cfg.Route.Rules {
 		if !loopSafeProxyRule(r) {
 			continue
@@ -130,6 +133,9 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 		for _, tag := range r.RuleSet {
 			if rs, ok := byTag[tag]; ok && rs.Type == "remote" && rs.URL != "" {
 				want[tag] = rs
+				if len(r.IPCIDR) == 0 {
+					standalone[tag] = true
+				}
 			}
 		}
 	}
@@ -165,6 +171,14 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 		var src inlineRuleSetSource
 		if e := json.Unmarshal(raw, &src); e != nil {
 			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "parse: "+e.Error())
+			continue
+		}
+		// Тот же beta.1-гейт merged matching, что в desiredTunCIDRs, но по
+		// фактическому содержимому скачанного набора (в конфиге Rules пуст).
+		// Если на набор ссылаются ТОЛЬКО правила с собственным ip_cidr, его
+		// CIDR безопасны лишь когда набор mergeable — иначе внешнее правило по
+		// такому пакету не совпадёт и он уйдёт в route.final=direct → петля.
+		if !standalone[rs.Tag] && mergeableRuleSetRule(RuleSet{Rules: src.Rules}) == nil {
 			continue
 		}
 		for _, c := range ruleSetCIDRs(RuleSet{Rules: src.Rules}) {

@@ -221,3 +221,85 @@ func TestComputeIssues_IncludesDNSDialIssues(t *testing.T) {
 		t.Fatal("computeIssues must include dns-domain-resolver warnings")
 	}
 }
+
+func TestComputeDNSChainIssues(t *testing.T) {
+	mk := func(rules ...DNSRule) *RouterConfig {
+		cfg := &RouterConfig{}
+		cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+		cfg.DNS.Rules = rules
+		return cfg
+	}
+	evalRD := DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "rd"}
+	mrRD := &DNSMatchResponse{Enabled: true, Tag: "rd"}
+	respondRD := DNSRule{MatchResponse: mrRD, ResponseRcode: "NOERROR", Action: "respond"}
+
+	t.Run("здоровая цепочка — без issues", func(t *testing.T) {
+		cfg := mk(evalRD, respondRD)
+		if got := computeDNSChainIssues(cfg); len(got) != 0 {
+			t.Fatalf("unexpected issues: %+v", got)
+		}
+	})
+	t.Run("evaluate с тегом без потребителя НИЖЕ", func(t *testing.T) {
+		cfg := mk(evalRD)
+		got := computeDNSChainIssues(cfg)
+		if len(got) != 1 || got[0].RuleIndex != 0 || got[0].Kind != "dns-chain" || got[0].Tag != "rd" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("потребитель ВЫШЕ не гасит warning (позиционность)", func(t *testing.T) {
+		// respondRD стоит выше — цепочка битая (это ловит validateDNSChain),
+		// но issues считаются независимо: evaluate ниже остаётся без потребителя.
+		cfg := mk(respondRD, evalRD)
+		got := computeDNSChainIssues(cfg)
+		if len(got) != 1 || got[0].RuleIndex != 1 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("анонимный match_response не потребляет тегированный evaluate", func(t *testing.T) {
+		// Фикстура b1 на бинаре beta.1: WARN «evaluate tag is never referenced: rd».
+		cfg := mk(
+			evalRD,
+			DNSRule{Action: "evaluate", Server: "dns-direct"},
+			DNSRule{MatchResponse: &DNSMatchResponse{Enabled: true}, ResponseRcode: "NOERROR", Action: "respond"},
+		)
+		got := computeDNSChainIssues(cfg)
+		if len(got) != 1 || got[0].RuleIndex != 0 || got[0].Tag != "rd" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("speculative без race выше", func(t *testing.T) {
+		cfg := mk(DNSRule{Domain: []string{"x.com"}, Server: "dns-direct", Speculative: true})
+		got := computeDNSChainIssues(cfg)
+		if len(got) != 1 || got[0].RuleIndex != 0 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("speculative с race выше — без warning", func(t *testing.T) {
+		cfg := mk(
+			DNSRule{Action: "evaluate", Server: "dns-direct", Tag: "rd"},
+			DNSRule{MatchResponse: mrRD, ResponseRcode: "NOERROR", Race: true, Action: "respond"},
+			DNSRule{Domain: []string{"x.com"}, Server: "dns-direct", Speculative: true},
+		)
+		for _, is := range computeDNSChainIssues(cfg) {
+			if is.RuleIndex == 2 {
+				t.Fatalf("speculative после race не должен давать warning: %+v", is)
+			}
+		}
+	})
+}
+
+func TestComputeIssues_IncludesDNSChainIssues(t *testing.T) {
+	svc := &ServiceImpl{deps: Deps{}}
+	cfg := NewEmptyConfig()
+	cfg.DNS.Servers = []DNSServer{{Tag: "dns-direct", Type: "udp", Server: "1.1.1.1"}}
+	cfg.DNS.Rules = []DNSRule{{Action: "evaluate", Server: "dns-direct", Tag: "rd"}}
+	found := false
+	for _, is := range svc.computeIssues(cfg) {
+		if is.Kind == "dns-chain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("computeIssues must include dns-chain warnings")
+	}
+}

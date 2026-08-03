@@ -69,6 +69,13 @@
 	);
 	// svelte-ignore state_referenced_locally
 	let portStr = $state((rule?.port ?? []).join(', '));
+	// L4 matcher: empty = any (omit from JSON). Expert-only; simple mode treats
+	// network as a complex field and won't open this editor for such rules.
+	type NetworkFilter = '' | 'tcp' | 'udp';
+	// svelte-ignore state_referenced_locally
+	let network = $state<NetworkFilter>(
+		rule?.network === 'tcp' || rule?.network === 'udp' ? rule.network : '',
+	);
 
 	// svelte-ignore state_referenced_locally
 	let action: 'route' | 'reject' = $state((rule?.action === 'reject' ? 'reject' : 'route'));
@@ -80,6 +87,12 @@
 		{ value: 'reject', label: 'Заблокировать' },
 	];
 
+	const networkOptions: SegmentedOption<NetworkFilter>[] = [
+		{ value: '', label: 'Любой' },
+		{ value: 'tcp', label: 'TCP' },
+		{ value: 'udp', label: 'UDP' },
+	];
+
 	let busy = $state(false);
 	let error = $state('');
 
@@ -89,6 +102,7 @@
 	let initialSourceIpCidrStr = $state('');
 	let initialRuleSetTagsSnapshot = $state<string[]>([]);
 	let initialPortStr = $state('');
+	let initialNetwork: NetworkFilter = $state('');
 	let initialAction: 'route' | 'reject' = $state('route');
 	let initialOutbound = $state('');
 
@@ -100,6 +114,7 @@
 			initialSourceIpCidrStr = (rule.source_ip_cidr ?? []).join('\n');
 			initialRuleSetTagsSnapshot = [...(rule.rule_set ?? [])];
 			initialPortStr = (rule.port ?? []).join(', ');
+			initialNetwork = rule.network === 'tcp' || rule.network === 'udp' ? rule.network : '';
 			initialAction = rule.action === 'reject' ? 'reject' : 'route';
 			initialOutbound = rule.outbound ?? '';
 		} else {
@@ -108,6 +123,7 @@
 			initialSourceIpCidrStr = '';
 			initialRuleSetTagsSnapshot = [...(initialRuleSetTags ?? [])];
 			initialPortStr = '';
+			initialNetwork = '';
 			initialAction = 'route';
 			initialOutbound = '';
 		}
@@ -120,6 +136,7 @@
 			sourceIpCidrStr !== initialSourceIpCidrStr ||
 			[...ruleSetTags].join(',') !== [...initialRuleSetTagsSnapshot].join(',') ||
 			portStr !== initialPortStr ||
+			network !== initialNetwork ||
 			action !== initialAction ||
 			outbound !== initialOutbound
 		);
@@ -178,6 +195,7 @@
 					source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,
 					rule_set: rule_set.length ? rule_set : undefined,
 					port: port.length ? port : undefined,
+					network: network || undefined,
 					action,
 					outbound: action === 'route' ? outbound : undefined,
 				};
@@ -261,6 +279,19 @@
 					Необязательно. Дополнительно ограничивает правило конкретными портами.
 				</div>
 			</label>
+
+			<div class="field">
+				<div class="lbl">Сеть (L4)</div>
+				<SegmentedControl
+					value={network}
+					options={networkOptions}
+					ariaLabel="Протокол сети TCP или UDP"
+					onchange={(next) => (network = next)}
+				/>
+				<div class="hint">
+					Ограничить правило только TCP или только UDP. «Любой» — без фильтра (как раньше).
+				</div>
+			</div>
 
 			<div class="action-section">
 				<div class="section-label">Действие</div>

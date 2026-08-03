@@ -170,3 +170,14 @@ export const notificationCenter = createNotificationCenterStore();
 export const unreadCount = derived(notificationCenter, ($n) =>
   $n.filter((e) => !e.read).length,
 );
+
+/** Highest unread severity for the bell badge: error > warning > null. */
+export const unreadSeverity = derived(notificationCenter, ($n): CenterType | null => {
+  let hasWarning = false;
+  for (const e of $n) {
+    if (e.read) continue;
+    if (e.type === 'error') return 'error';
+    hasWarning = true;
+  }
+  return hasWarning ? 'warning' : null;
+});

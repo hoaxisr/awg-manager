@@ -169,7 +169,7 @@
 				onclick={() => selectedBackend = 'kernel'}
 			>
 				<span class="backend-name">Kernel</span>
-				<span class="backend-desc">Без интеграции в роутер, для сторонних проектов</span>
+				<span class="backend-desc">Через OpkgTun и модуль ядра, с поддержкой AWG 3.0</span>
 			</button>
 		</div>
 		{#if nativewgHint}

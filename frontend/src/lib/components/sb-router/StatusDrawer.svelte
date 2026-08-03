@@ -179,7 +179,7 @@
   }
 
   const UDP_TIMEOUT_OPTIONS = [
-    { value: '', label: 'По умолчанию (3 мин)' },
+    { value: '', label: 'По умолчанию (5 мин)' },
     { value: '5m0s', label: '5 минут' },
     { value: '10m0s', label: '10 минут' },
     { value: '15m0s', label: '15 минут' },

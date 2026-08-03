@@ -3,6 +3,7 @@
 	// (routes/+page.svelte, навигация v3): срез состояния вкладки переехал сюда
 	// целиком, главная сохранила только dashboard-потребление sing-box сторов.
 	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { TrafficChartModal } from '$lib/components/ui';
@@ -190,6 +191,7 @@
 		handleSingboxTunnelSortChange={handleSortChange}
 		openSingboxDetail={openDetail}
 		{openWizard}
+		openAwg3Import={() => goto('/sb/awg3')}
 	/>
 </PageContainer>
 

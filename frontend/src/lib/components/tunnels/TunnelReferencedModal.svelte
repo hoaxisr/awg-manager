@@ -27,7 +27,7 @@
 				<li>
 					Используется в правилах sing-box router:
 					<span class="rule-indices">
-						{details.routerRules.map((i) => `#${i + 1}`).join(', ')}
+						{details.routerRules.map((i) => `#${i}`).join(', ')}
 					</span>
 				</li>
 			{/if}

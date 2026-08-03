@@ -10,7 +10,7 @@
 		type SubscriptionMode,
 		type SubscriptionPreviewMember,
 	} from '$lib/types';
-	import { Check, LayoutGrid, Link, Globe } from 'lucide-svelte';
+	import { Check, LayoutGrid, Link, Globe, Waypoints } from 'lucide-svelte';
 	import HeadersTextarea from './HeadersTextarea.svelte';
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
@@ -27,14 +27,16 @@
 	interface Props {
 		open: boolean;
 		/** Preselect a step-2 form. When unset (or 'choose') the wizard
-		 * opens on step 1 (the three cards). Callers from contextual
+		 * opens on step 1 (kind cards). Callers from contextual
 		 * "+ Add" buttons usually pass a preselect; emptystate cards
 		 * can also pass a preselect to skip step 1. */
 		preselect?: WizardKind | 'choose';
 		onclose?: () => void;
+		/** Fourth choose-card: close wizard and open AWG3 import modal. */
+		onAwg3?: () => void;
 	}
 
-	let { open = $bindable(false), preselect = 'choose', onclose }: Props = $props();
+	let { open = $bindable(false), preselect = 'choose', onclose, onAwg3 }: Props = $props();
 
 	let kind = $state<WizardKind | 'choose'>('choose');
 	let submitting = $state(false);
@@ -136,6 +138,13 @@
 		onclose?.();
 	}
 
+	function pickAwg3(): void {
+		if (submitting || !onAwg3) return;
+		open = false;
+		reset();
+		onAwg3();
+	}
+
 	function backToChoose(): void {
 		if (submitting) return;
 		kind = 'choose';
@@ -193,12 +202,12 @@
 		}
 	}
 
-	// «Один сервер» понимает только share-ссылки и mieru JSON; Clash YAML и
-	// sing-box JSON принимает лишь ветка «Группа серверов» (inline-подписка).
-	const IMPORT_FILE_ACCEPT_SINGLE = '.json,.txt';
-	const IMPORT_FILE_DROP_TITLE_SINGLE = 'или перетащите .json / .txt файл сюда';
-	const IMPORT_FILE_ACCEPT = '.json,.txt,.yaml,.yml';
-	const IMPORT_FILE_DROP_TITLE = 'или перетащите .json / .txt / .yaml файл сюда';
+	// «Один сервер» понимает share-ссылки, mieru JSON и TrustTunnel TOML;
+	// Clash YAML и sing-box JSON принимает лишь ветка «Группа серверов».
+	const IMPORT_FILE_ACCEPT_SINGLE = '.json,.txt,.toml';
+	const IMPORT_FILE_DROP_TITLE_SINGLE = 'или перетащите .json / .txt / .toml файл сюда';
+	const IMPORT_FILE_ACCEPT = '.json,.txt,.yaml,.yml,.toml';
+	const IMPORT_FILE_DROP_TITLE = 'или перетащите .json / .txt / .yaml / .toml файл сюда';
 
 	const titleByKind: Record<WizardKind | 'choose', string> = {
 		choose: 'Добавить',
@@ -327,7 +336,13 @@
 	}
 </script>
 
-<Modal {open} title={titleByKind[kind]} size="lg" onclose={close} hasUnsavedChanges={() => isDirty}>
+<Modal
+	{open}
+	title={titleByKind[kind]}
+	size={kind === 'choose' ? 'wide' : 'lg'}
+	onclose={close}
+	hasUnsavedChanges={() => isDirty}
+>
 	{#if kind === 'choose'}
 		<p class="lead">Что добавить?</p>
 		<div class="kind-grid">
@@ -355,6 +370,16 @@
 					автоматически по расписанию.
 				</div>
 			</button>
+			{#if onAwg3}
+				<button type="button" class="kind-card" onclick={pickAwg3}>
+					<Waypoints size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
+					<div class="kind-title">AWG3 Endpoint</div>
+					<div class="kind-desc">
+						JSON-конфиг AmneziaWG 3 — endpoint внутри sing-box,
+						не отдельный kernel-туннель.
+					</div>
+				</button>
+			{/if}
 		</div>
 	{:else if kind === 'single'}
 		<form
@@ -370,8 +395,9 @@
 				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
 				<code>mieru://</code>, <code>mierus://</code>,
 				<code>naive+http://</code>, <code>naive+https://</code>,
+				<code>trusttunnel://</code>, <code>tt://</code>,
 				а также JSON-конфиг mieru целиком (экспорт панелей, формат
-				<code>mieru apply config</code>).
+				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel (AdGuard).
 				Список через пробел при вставке разбивается на строки автоматически.
 			</p>
 			{#if !singboxInstalled}
@@ -381,7 +407,7 @@
 			{/if}
 			<ShareLinksTextarea
 				bind:value={singleLinks}
-				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP`}
+				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP\ntrusttunnel://user:pass@host:443?sni=...#Moscow`}
 				rows={6}
 				disabled={!singboxInstalled || submitting}
 				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
@@ -466,13 +492,14 @@
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
 					<ShareLinksTextarea
 						bind:value={inlineText}
-						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...`}
+						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...\ntrusttunnel://...\ntt://...`}
 						rows={6}
 						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
 					/>
 					<span class="hint">
-						Поддерживаются share-link'и, Clash YAML, sing-box JSON и
-						JSON-конфиг mieru (экспорт панелей, формат mieru apply config).
+						Поддерживаются share-link'и, Clash YAML, sing-box JSON,
+						JSON-конфиг mieru (экспорт панелей, формат mieru apply config)
+						и TOML-конфиг TrustTunnel (AdGuard).
 						Список ссылок через пробел при вставке разбивается на строки.
 						Авто-обновления нет — список замораживается на момент создания,
 						редактируется во вкладке «Серверы».
@@ -623,8 +650,15 @@
 		grid-template-columns: 1fr;
 		gap: 0.6rem;
 	}
-	@media (min-width: 600px) {
-		.kind-grid { grid-template-columns: 1fr 1fr 1fr; }
+	@media (min-width: 560px) {
+		.kind-grid {
+			grid-template-columns: repeat(2, minmax(12rem, 1fr));
+		}
+	}
+	@media (min-width: 820px) {
+		.kind-grid {
+			grid-template-columns: repeat(4, minmax(12rem, 1fr));
+		}
 	}
 	.kind-card {
 		display: flex;

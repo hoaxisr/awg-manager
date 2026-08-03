@@ -9,14 +9,30 @@
     n: number;
     title: string;
     hint?: string;
-    active: boolean;
+    /** Заблокирован (будущий шаг или свёрнут после завершения wizard). */
+    locked?: boolean;
+    /** Подсветка текущего шага. */
+    highlighted?: boolean;
+    /** @deprecated sb-router: эквивалент highlighted + locked=!active */
+    active?: boolean;
     children: Snippet;
   }
 
-  let { n, title, hint, active, children }: Props = $props();
+  let {
+    n,
+    title,
+    hint,
+    locked,
+    highlighted,
+    active,
+    children
+  }: Props = $props();
+
+  const isLocked = $derived(locked ?? (active !== undefined ? !active : false));
+  const isHighlighted = $derived(highlighted ?? active ?? false);
 </script>
 
-<section class="step" class:active>
+<section class="step" class:highlighted={isHighlighted} class:locked={isLocked}>
   <header class="head">
     <div class="circle">{n}</div>
     <h2 class="title">{title}</h2>
@@ -37,8 +53,20 @@
     border-radius: var(--radius);
     margin-bottom: 16px;
     opacity: 0.92;
+    transition:
+      opacity 0.2s ease,
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
   }
-  .step.active {
+  .step.locked {
+    opacity: 0.52;
+    pointer-events: none;
+    user-select: none;
+  }
+  .step.locked .body {
+    filter: grayscale(0.15);
+  }
+  .step.highlighted {
     border-color: var(--accent-line);
     opacity: 1;
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
@@ -62,15 +90,21 @@
     font-weight: 700;
     font-size: 12px;
   }
-  .step.active .circle {
+  .step.highlighted .circle {
     background: var(--accent);
     color: var(--color-accent-contrast, #fff);
+  }
+  .step.locked .circle {
+    opacity: 0.75;
   }
   .title {
     margin: 0;
     font-size: 15px;
     font-weight: 600;
     color: var(--text-primary);
+  }
+  .step.locked .title {
+    color: var(--text-secondary);
   }
   .hint {
     font-size: 11.5px;

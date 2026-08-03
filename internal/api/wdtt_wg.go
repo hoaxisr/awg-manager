@@ -126,6 +126,11 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 			stored.Name = wantName
 			changed = true
 		}
+		wantEndpoint := fmt.Sprintf("127.0.0.1:%d", port)
+		if strings.TrimSpace(stored.Peer.Endpoint) != wantEndpoint {
+			stored.Peer.Endpoint = wantEndpoint
+			changed = true
+		}
 		if changed {
 			if err := h.awgStore.Save(stored); err != nil {
 				response.InternalError(w, err.Error())

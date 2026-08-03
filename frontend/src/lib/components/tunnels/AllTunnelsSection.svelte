@@ -77,12 +77,14 @@
 		singboxStatusLoading: boolean;
 		singboxTunnelsInitialLoading: boolean;
 		subscriptionsInitialLoading: boolean;
+		awg3InitialLoading: boolean;
 		loading: boolean;
 		tunnelActions: ReturnType<typeof createAwgTunnelActions>;
 		openDetail: (id: string) => void;
 		openSingboxDetail: (tag: string) => void;
 		openAwgDiagnostics: (id: string, name: string, kind?: 'awg' | 'system') => void;
 		openWizard: (preselect: 'choose' | 'single' | 'inline' | 'url') => void;
+		openAwg3Import: () => void;
 		handleAdoptClick: (interfaceName: string) => void;
 		requestSubscriptionDelete: (id: string) => void;
 	}
@@ -101,12 +103,14 @@
 		singboxStatusLoading,
 		singboxTunnelsInitialLoading,
 		subscriptionsInitialLoading,
+		awg3InitialLoading,
 		loading,
 		tunnelActions,
 		openDetail,
 		openSingboxDetail,
 		openAwgDiagnostics,
 		openWizard,
+		openAwg3Import,
 		handleAdoptClick,
 		requestSubscriptionDelete,
 	}: Props = $props();
@@ -307,7 +311,13 @@
 	// коммит по неполному списку затёр бы позиции ещё не приехавших ключей.
 	let dashboardSingboxDataPending = $derived(
 		dashboardSingboxVisible &&
-			(singboxStatusLoading || singboxTunnelsInitialLoading || subscriptionsInitialLoading),
+			// Без слагаемого AWG3 у пользователя, у которого есть ТОЛЬКО
+			// AWG3-эндпоинты, остальные сторы отвечают пустотой раньше — мигал
+			// онбординг «ничего нет», а ручной порядок включался до данных.
+			(singboxStatusLoading ||
+				singboxTunnelsInitialLoading ||
+				subscriptionsInitialLoading ||
+				awg3InitialLoading),
 	);
 	// D7: ручной порядок в сплошном дашборде — общее pointer-drag ядро sb-router
 	// (createReorderDrag). Активен только когда порядок реально редактируемый:
@@ -447,11 +457,17 @@
 			.filter(Boolean)
 			.sort()
 			.join(',');
-		if (!sbTags && !subTags) return;
+		// AWG3-эндпоинты проверяются тем же nonce: без них набор «только AWG3»
+		// не давал ни одной авто-проверки delay.
+		const awg3Tags = dashboardAwg3Tunnels
+			.map((t) => t.tag)
+			.sort()
+			.join(',');
+		if (!sbTags && !subTags && !awg3Tags) return;
 
 		// Отдельные префиксы групп: набор тегов туннелей и подписок не должен
 		// схлопываться в один ключ при перестановке между группами.
-		const key = `sb:${sbTags}|sub:${subTags}`;
+		const key = `sb:${sbTags}|sub:${subTags}|awg3:${awg3Tags}`;
 		if (key === lastDelayKey) return;
 		lastDelayKey = key;
 		singboxAutoDelayCheckNonce += 1;
@@ -462,10 +478,11 @@
 	let dashboardSummaryStats = $derived.by(() => {
 		const sb = dashboardSingboxVisible ? singboxTunnelListStats : null;
 		const subs = dashboardSingboxVisible ? singboxSubscriptionsTrafficStats : null;
-		// AWG3 — sing-box endpoint'ы без running/traffic-метрик: учитываем только
-		// их количество в общем счётчике туннелей.
+		// AWG3 — sing-box endpoint'ы без running/traffic-метрик, поэтому в дробь
+		// «активно/всего» они не входят вовсе: попадая только в знаменатель, они
+		// вечно читались как неактивные. Их количество — отдельной подписью.
 		const awg3Count = dashboardAwg3Tunnels.length;
-		const totalAll = awgSummary.total + (sb?.count ?? 0) + (subs?.count ?? 0) + awg3Count;
+		const totalAll = awgSummary.total + (sb?.count ?? 0) + (subs?.count ?? 0);
 		const totalActive = awgSummary.active + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
 		const kinds = [`AWG ${awgSummary.active}/${awgSummary.total}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
@@ -522,6 +539,7 @@
 		get effectiveSingboxTunnelsRenderMode() { return dashboardSingboxRenderMode; },
 		get effectiveSingboxSubscriptionsEffectiveLayout() { return dashboardSingboxLayoutMode; },
 		get effectiveSingboxSubscriptionsRenderMode() { return dashboardSingboxRenderMode; },
+		get awg3Visible() { return dashboardSingboxVisible; },
 		get exporting() { return tunnelActions.exporting; },
 		get awgAutoConnectivityNonce() { return awgAutoConnectivity.nonce; },
 		get singboxAutoDelayCheckNonce() { return singboxAutoDelayCheckNonce; },
@@ -544,6 +562,7 @@
 		openDetail: (id) => openDetail(id),
 		openSingboxDetail: (tag) => openSingboxDetail(tag),
 		openWizard: (preselect) => openWizard(preselect),
+		openAwg3Import: () => openAwg3Import(),
 		requestSubscriptionDelete: (id) => requestSubscriptionDelete(id),
 		handleExportAll: () => tunnelActions.handleExportAll(),
 		handleToggleOnOff: (id) => tunnelActions.handleToggleOnOff(id),

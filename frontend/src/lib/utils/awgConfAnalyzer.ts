@@ -268,7 +268,32 @@ export function parseAWG(raw: string): AwgParsed {
 	return { iface, peer };
 }
 
+const AWG3_KEYS = [
+	'headerprotectionkey', 'contentpaddingaddition', 'rekeyaftertime',
+	'rekeytimeout', 'rejectaftertime', 'keepalivetimeout', 'maxhandshakeattempts',
+] as const;
+
+function hasAnyAwg3Param(iface: AwgIface): boolean {
+	return AWG3_KEYS.some((k) => getStr(iface, k) !== '');
+}
+
 export function detectVersion(iface: AwgIface): AwgVersionInfo {
+	// AWG 3.0 outranks everything — its device params sit on top of AWG 1.x/2.0
+	// obfuscation. Checked first so a header-protection-only config isn't read as
+	// "no obfuscation" (its Jc/S/H may still be defaults).
+	if (hasAnyAwg3Param(iface)) {
+		const hp = getStr(iface, 'headerprotectionkey') !== '';
+		const proto = protocolFromI1(iface);
+		return {
+			ver: 'AWG 3.0',
+			desc: hp
+				? 'AmneziaWG 3.0 — шифрование заголовка (HeaderProtectionKey, ChaCha20) прячет саму сигнатуру WireGuard-заголовка от DPI, поверх обфускации AWG.'
+				: 'AmneziaWG 3.0 — настраиваемые таймеры (rekey/reject/keepalive) и/или padding поверх обфускации AWG.',
+			obfLevel: hp ? 'Header Protection (ChaCha20)' : cpsObfLevelLabel(iface),
+			protocol: proto && proto !== 'Unknown' ? proto : null,
+		};
+	}
+
 	const hasJc = hasKey(iface, 'jc');
 	const hasS1 = hasKey(iface, 's1');
 	const i1Present = !!getStr(iface, 'i1');
@@ -359,6 +384,9 @@ export function mtuCeilingForProfile(version: AwgVersionInfo): number {
 	switch (version.ver) {
 		case 'WireGuard':
 			return 1420;
+		case 'AWG 3.0':
+			// Header protection + content padding add overhead → slightly lower.
+			return 1300;
 		case 'AWG 2.0':
 			return 1320;
 		case 'AWG 1.5':
@@ -437,6 +465,12 @@ export function buildUpgradeHints(iface: AwgIface, version: AwgVersionInfo): str
 	if (version.ver === 'AWG 2.0' && !i1) {
 		hints.push(
 			'Опционально: добавьте I1 с QUIC/TLS/DNS — первый пакет будет похож на обычный протокол.',
+		);
+	}
+
+	if (version.ver === 'AWG 2.0') {
+		hints.push(
+			'Для AWG 3.0 (только kernel-режим): включите HeaderProtectionKey — шифрование WG-заголовка прячет саму сигнатуру пакета от DPI.',
 		);
 	}
 
@@ -1006,7 +1040,9 @@ export function calcScores(checks: AwgCheck[], iface: AwgIface, version: AwgVers
 	const total = mp > 0 ? Math.round((tp / mp) * 100) : 0;
 
 	let dpi = 95;
-	if (version.ver.includes('2.0')) dpi -= 55;
+	// Header protection encrypts the WG header itself → strongest DPI evasion.
+	if (version.ver.includes('3.0')) dpi -= 70;
+	else if (version.ver.includes('2.0')) dpi -= 55;
 	else if (version.ver.includes('1.5')) dpi -= 40;
 	else if (version.ver.includes('1.0')) dpi -= 25;
 	const Jc = getInt(iface, 'jc', 0) ?? 0;
@@ -1068,6 +1104,10 @@ export function buildFixes(checks: AwgCheck[], iface: AwgIface, peer: AwgIface, 
 
 	if (version.ver === 'AWG 1.5') {
 		fixes.push('Для максимальной обфускации используйте AWG 2.0 (добавьте параметры S3 и S4).');
+	}
+
+	if (version.ver === 'AWG 2.0') {
+		fixes.push('В kernel-режиме включите AWG 3.0: HeaderProtectionKey шифрует WG-заголовок и скрывает сигнатуру пакета от DPI.');
 	}
 
 	if (H1 === 1 && H2 === 2 && H3 === 3 && H4 === 4) {

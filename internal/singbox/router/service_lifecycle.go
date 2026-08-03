@@ -166,6 +166,12 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		return nil // active mode owns the iface; Enable/Reconcile manage it
 	}
 
+	// Safety net для ingress-заворота (issue #678): краш демона при живом
+	// fakeip оставил бы DNAT DNS на адрес исчезнувшего tun — у клиентов
+	// ingress-серверов DNS был бы наглухо сломан. Снимаем в НЕ-fakeip режиме;
+	// EnsureFakeIPIngress с пустым spec трогает правила только если они есть.
+	s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
+
 	// Safety net for the disable drain (Fix 1): the async drain goroutine that
 	// removes the v4 reject route does NOT survive a daemon restart (no
 	// persisted pending-drain). So in NON-fakeip mode best-effort remove a
@@ -515,7 +521,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// Managed QoS route rules → 18-qos-routes.json. Runs AFTER the router
 	// slot write so outbound resolution sees the applied config; the
 	// orchestratorApplyNow below covers both slots in one reload.
-	if _, err := s.syncQoSRoutesSlot(ctx, qosClasses); err != nil {
+	if _, err := s.syncQoSRoutesSlot(ctx, qosClasses, sr); err != nil {
 		return fmt.Errorf("sync qos routes slot: %w", err)
 	}
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) должны

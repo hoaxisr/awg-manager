@@ -12,14 +12,23 @@ export interface RouterReference {
 	known: boolean;
 }
 
-const PATTERNS: Array<{ re: RegExp; label: (name: string) => string }> = [
+const PATTERNS: Array<{ re: RegExp; label: (captured: string) => string }> = [
 	{ re: /^outbounds\[\d+="(.*)"\]\.outbounds\[\d+\]$/, label: (n) => `Входит в группу маршрутов «${n}»` },
 	{ re: /^outbounds\[\d+="(.*)"\]\.default$/, label: (n) => `Выбран по умолчанию в группе «${n}»` },
 	{ re: /^dns\.servers\[\d+="(.*)"\]\.detour$/, label: (n) => `Используется DNS-сервером «${n}»` },
-	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => `Через него скачивается список «${n}»` }
+	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => `Через него скачивается список «${n}»` },
+	// Приходит только от fakeip-слота: router-слот отдаёт свои правила
+	// отдельным списком индексов (RouterRules). Номер 0-based, как в таблице.
+	{ re: /^route\.rules\[(\d+)\]$/, label: (n) => `Используется в правиле #${n}` }
 ];
 
+const FAKEIP_PREFIX = '[fakeip] ';
+
 export function describeRouterReference(loc: string): RouterReference {
+	if (loc.startsWith(FAKEIP_PREFIX)) {
+		const ref = describeRouterReference(loc.slice(FAKEIP_PREFIX.length));
+		return { text: `FakeIP → ${ref.text}`, known: ref.known };
+	}
 	if (loc === 'route.final') {
 		return { text: 'Назначен маршрутом по умолчанию', known: true };
 	}

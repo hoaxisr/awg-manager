@@ -538,3 +538,164 @@ func TestReconcileFakeIPTun_V6CIDRGatedOnPresenceProbe(t *testing.T) {
 		t.Errorf("v6 CIDR route must NOT be re-added when v6 route present; calls=%v", h.log.calls)
 	}
 }
+
+// TestDesiredTunCIDRs_MergedMatchingBeta1 фиксирует петлебезопасность в
+// семантике merged matching sing-box 1.14.0-beta.1 (route/rule/rule_item_rule_set.go,
+// mergeableRuleIn): набор вливается в ссылающееся правило ТОЛЬКО если состоит
+// ровно из одного default-правила без invert и без вложенного rule_set. Не-
+// mergeable набор матчится отдельно и лишь при outerDone — то есть когда
+// собственные условия внешнего правила уже выполнены.
+//
+// Ожидания сверены с апстримом на дереве тега 1.14.0-beta.1 (сценарии A-I,
+// route/rule/awgm_audit_scratch_test.go + awgm_fix_oracle_test.go):
+//
+//	A ip_cidr + mergeable(domain)          пакет в ip_cidr правила  → true
+//	B ip_cidr + НЕ-mergeable(2 правила)    пакет в ip_cidr правила  → false
+//	C ip_cidr + НЕ-mergeable               пакет в CIDR набора      → false
+//	D только rule_set + НЕ-mergeable       пакет в CIDR набора      → true
+//	F ip_cidr + mergeable(port)            пакет в ip_cidr правила  → false
+//	G ip_cidr + [НЕ-mergeable, mergeable]  пакет в ip_cidr правила  → true
+//	H ip_cidr + mergeable(ip_cidr)         пакет в CIDR набора      → true
+func TestDesiredTunCIDRs_MergedMatchingBeta1(t *testing.T) {
+	tests := []struct {
+		name     string
+		rules    []Rule
+		ruleSets []RuleSet
+		wantV4   []string
+	}{
+		{
+			// Сценарий B/C — регрессия петли. Набор из двух правил не mergeable:
+			// пакет ни по собственному ip_cidr правила, ни по CIDR набора его не
+			// матчит → route.final=direct → ядро вернёт пакет в tun → петля.
+			name: "ip_cidr + НЕ-mergeable набор → маршрутов нет",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"mixed"}}},
+			ruleSets: []RuleSet{{Tag: "mixed", Type: "inline", Rules: []map[string]any{
+				{"domain_suffix": []any{"example.com"}},
+				{"ip_cidr": []any{"198.51.100.0/24"}},
+			}}},
+			wantV4: nil,
+		},
+		{
+			// Сценарий A/H — набор mergeable, поведение как раньше: обе стороны
+			// живут в группе destinationAddress и OR-ятся при мерже.
+			name: "ip_cidr + mergeable набор → маршруты как раньше",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"single"}}},
+			ruleSets: []RuleSet{{Tag: "single", Type: "inline", Rules: []map[string]any{
+				{"ip_cidr": []any{"198.51.100.0/24"}},
+			}}},
+			wantV4: []string{"203.0.113.0/24", "198.51.100.0/24"},
+		},
+		{
+			// Сценарий A: mergeable доменный набор ничего не добавляет к группе,
+			// уже удовлетворённой внешним ip_cidr → собственный CIDR безопасен.
+			name: "ip_cidr + mergeable доменный набор → собственный CIDR остаётся",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"dom"}}},
+			ruleSets: []RuleSet{{Tag: "dom", Type: "inline", Rules: []map[string]any{
+				{"domain_suffix": []any{"example.com"}},
+			}}},
+			wantV4: []string{"203.0.113.0/24"},
+		},
+		{
+			// Сценарий F: набор mergeable, но его условие лежит в ДРУГОЙ группе
+			// (destinationPort) — объединение групп требует ещё и совпадения порта,
+			// чего для произвольного пакета по IP гарантировать нельзя.
+			name: "ip_cidr + mergeable набор с port → маршрутов нет",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"p"}}},
+			ruleSets: []RuleSet{{Tag: "p", Type: "inline", Rules: []map[string]any{
+				{"port": []any{float64(80)}},
+			}}},
+			wantV4: nil,
+		},
+		{
+			// Сценарий G: OR между тегами — одного mergeable-набора из группы
+			// destinationAddress достаточно, чтобы собственный ip_cidr совпал.
+			name: "ip_cidr + [НЕ-mergeable, mergeable] → собственный CIDR остаётся",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"mixed", "dom"}}},
+			ruleSets: []RuleSet{
+				{Tag: "mixed", Type: "inline", Rules: []map[string]any{
+					{"domain_suffix": []any{"example.com"}},
+					{"ip_cidr": []any{"198.51.100.0/24"}},
+				}},
+				{Tag: "dom", Type: "inline", Rules: []map[string]any{
+					{"domain_suffix": []any{"example.net"}},
+				}},
+			},
+			// CIDR из НЕ-mergeable набора всё равно не берём (сценарий C).
+			wantV4: []string{"203.0.113.0/24"},
+		},
+		{
+			// Сценарий D — зона 1 НЕ затронута: у правила нет собственных условий,
+			// outerDone=true, набор матчится самостоятельно.
+			name:  "только rule_set + НЕ-mergeable набор → CIDR набора как раньше",
+			rules: []Rule{{Action: "route", Outbound: "proxy", RuleSet: []string{"mixed"}}},
+			ruleSets: []RuleSet{{Tag: "mixed", Type: "inline", Rules: []map[string]any{
+				{"domain_suffix": []any{"example.com"}},
+				{"ip_cidr": []any{"198.51.100.0/24"}},
+			}}},
+			wantV4: []string{"198.51.100.0/24"},
+		},
+		{
+			// Тот же набор, на который ссылаются ДВА правила: одно standalone
+			// (гарантирует совпадение), другое со своим ip_cidr. CIDR набора берём.
+			name: "НЕ-mergeable набор со standalone-ссылкой → CIDR набора остаётся",
+			rules: []Rule{
+				{Action: "route", Outbound: "proxy", IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"mixed"}},
+				{Action: "route", Outbound: "proxy", RuleSet: []string{"mixed"}},
+			},
+			ruleSets: []RuleSet{{Tag: "mixed", Type: "inline", Rules: []map[string]any{
+				{"domain_suffix": []any{"example.com"}},
+				{"ip_cidr": []any{"198.51.100.0/24"}},
+			}}},
+			wantV4: []string{"198.51.100.0/24"},
+		},
+		{
+			// invert и вложенный rule_set внутри единственного правила отменяют
+			// мерж в апстриме (mergeableRuleIn) — зеркалим.
+			name: "ip_cidr + набор из одного inverted правила → маршрутов нет",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"inv"}}},
+			ruleSets: []RuleSet{{Tag: "inv", Type: "inline", Rules: []map[string]any{
+				{"domain_suffix": []any{"example.com"}, "invert": true},
+			}}},
+			wantV4: nil,
+		},
+		{
+			name: "ip_cidr + набор с вложенным rule_set → маршрутов нет",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"nested"}}},
+			ruleSets: []RuleSet{{Tag: "nested", Type: "inline", Rules: []map[string]any{
+				{"rule_set": []any{"other"}},
+			}}},
+			wantV4: nil,
+		},
+		{
+			// Remote-набор: в конфиге Rules пуст, мержимость неизвестна →
+			// консервативно считаем немержимым, собственный ip_cidr не роутим.
+			name: "ip_cidr + remote-набор (содержимое неизвестно) → маршрутов нет",
+			rules: []Rule{{Action: "route", Outbound: "proxy",
+				IPCIDR: []string{"203.0.113.0/24"}, RuleSet: []string{"r"}}},
+			ruleSets: []RuleSet{{Tag: "r", Type: "remote", URL: "https://example/r.srs"}},
+			wantV4:   nil,
+		},
+		{
+			// Правило без rule_set — прежнее поведение, гейт не срабатывает.
+			name:   "чистый ip_cidr без rule_set → маршрут как раньше",
+			rules:  []Rule{{Action: "route", Outbound: "proxy", IPCIDR: []string{"203.0.113.0/24"}}},
+			wantV4: []string{"203.0.113.0/24"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RouterConfig{Route: Route{Rules: tt.rules, RuleSet: tt.ruleSets}}
+			gotV4, _ := desiredTunCIDRs(cfg)
+			if !reflect.DeepEqual(gotV4, tt.wantV4) {
+				t.Errorf("v4 = %v, want %v", gotV4, tt.wantV4)
+			}
+		})
+	}
+}

@@ -585,6 +585,50 @@ export class SystemClient extends TunnelsClient {
 		return this.request<MonitoringSnapshot>(path);
 	}
 
+	async exportFullBackup(): Promise<Blob> {
+		const res = await fetch(`${this.baseUrl}/system/backup/export`, {
+			credentials: 'same-origin',
+			signal: this.abortController.signal
+		});
+		if (res.status === 401) {
+			this.onUnauthorized?.();
+			throw new Error('Сессия истекла');
+		}
+		const contentType = res.headers.get('content-type') || '';
+		if (!res.ok) {
+			if (contentType.includes('application/json')) {
+				const body = (await res.json()) as { message?: string };
+				throw new Error(body.message || `Ошибка экспорта (${res.status})`);
+			}
+			throw new Error(`Ошибка экспорта (${res.status})`);
+		}
+		return res.blob();
+	}
+
+	async importFullBackup(file: File): Promise<{ message: string }> {
+		const form = new FormData();
+		form.append('file', file);
+		const res = await fetch(`${this.baseUrl}/system/backup/import`, {
+			method: 'POST',
+			credentials: 'same-origin',
+			body: form,
+			signal: this.abortController.signal
+		});
+		if (res.status === 401) {
+			this.onUnauthorized?.();
+			throw new Error('Сессия истекла');
+		}
+		const contentType = res.headers.get('content-type') || '';
+		if (!contentType.includes('application/json')) {
+			throw new Error(`Неожиданный ответ сервера (${res.status})`);
+		}
+		const body = (await res.json()) as { success?: boolean; message?: string; data?: { message?: string } };
+		if (!res.ok || body.success === false) {
+			throw new Error(body.message || 'Не удалось восстановить резервную копию');
+		}
+		return { message: body.data?.message || body.message || 'OK' };
+	}
+
 	// #endregion
 
 

@@ -48,7 +48,7 @@ const api_AWGOutboundTagsResponse: v.GenericSchema = v.looseObject({
 const api_AWGPeerDTO: v.GenericSchema = v.looseObject({
 	allowedIPs: v.optional(v.nullable(v.array(v.string()))),
 	endpoint: v.optional(v.nullable(v.string())),
-	persistentKeepalive: v.optional(v.nullable(v.number())),
+	persistentKeepalive: v.optional(v.nullable(v.unknown())),
 	publicKey: v.optional(v.nullable(v.string())),
 });
 
@@ -1324,6 +1324,18 @@ const api_SingboxDNSCertificateDTO: v.GenericSchema = v.looseObject({
 	subject: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxDNSChainPresetData: v.GenericSchema = v.looseObject({
+	directServer: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	poisonCidrs: v.optional(v.nullable(v.array(v.string()))),
+	proxyServer: v.optional(v.nullable(v.string())),
+});
+
+const api_SingboxDNSChainPresetResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxDNSChainPresetData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
 	alpn: v.optional(v.nullable(v.array(v.string()))),
 	certificate_public_key_sha256: v.optional(v.nullable(v.array(v.string()))),
@@ -1369,9 +1381,18 @@ const api_SingboxDNSRuleDTO: v.GenericSchema = v.looseObject({
 	domain: v.optional(v.nullable(v.array(v.string()))),
 	domain_keyword: v.optional(v.nullable(v.array(v.string()))),
 	domain_suffix: v.optional(v.nullable(v.array(v.string()))),
+	ip_cidr: v.optional(v.nullable(v.array(v.string()))),
+	match_response: v.optional(v.nullable(v.unknown())),
 	query_type: v.optional(v.nullable(v.array(v.string()))),
+	race: v.optional(v.nullable(v.boolean())),
+	response_answer: v.optional(v.nullable(v.array(v.string()))),
+	response_extra: v.optional(v.nullable(v.array(v.string()))),
+	response_ns: v.optional(v.nullable(v.array(v.string()))),
+	response_rcode: v.optional(v.nullable(v.string())),
 	rule_set: v.optional(v.nullable(v.array(v.string()))),
 	server: v.optional(v.nullable(v.string())),
+	speculative: v.optional(v.nullable(v.boolean())),
+	tag: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxDNSRulesListResponse: v.GenericSchema = v.looseObject({
@@ -1981,6 +2002,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	keeneticOS: v.optional(v.nullable(v.string())),
 	kernelModuleExists: v.optional(v.nullable(v.boolean())),
 	kernelModuleLoaded: v.optional(v.nullable(v.boolean())),
+	kernelModuleLoadedVersion: v.optional(v.nullable(v.string())),
 	kernelModuleModel: v.optional(v.nullable(v.string())),
 	kernelModuleVersion: v.optional(v.nullable(v.string())),
 	routerDetails: v.optional(v.nullable(v.lazy(() => api_RouterDetails))),
@@ -2393,7 +2415,6 @@ const freeturn_CaptchaOverview: v.GenericSchema = v.looseObject({
 
 const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	bond: v.optional(v.nullable(v.boolean())),
-	browser: v.optional(v.nullable(v.string())),
 	clientId: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	dnsMode: v.optional(v.nullable(v.string())),
@@ -2405,6 +2426,7 @@ const freeturn_ClientConfig: v.GenericSchema = v.looseObject({
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+	platform: v.optional(v.nullable(v.string())),
 	provider: v.optional(v.nullable(v.string())),
 	streams: v.optional(v.nullable(v.number())),
 	streamsPerCred: v.optional(v.nullable(v.number())),
@@ -2475,6 +2497,7 @@ const freeturn_ServerConfig: v.GenericSchema = v.looseObject({
 	mode: v.optional(v.nullable(v.string())),
 	obfKey: v.optional(v.nullable(v.string())),
 	obfProfile: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
 });
 
 const freeturn_ServerInstance: v.GenericSchema = v.looseObject({
@@ -2561,6 +2584,7 @@ const wdtt_ClientInstance: v.GenericSchema = v.looseObject({
 
 const wdtt_Config: v.GenericSchema = v.looseObject({
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ClientInstance)))),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerInstance)))),
 	version: v.optional(v.nullable(v.number())),
 });
 
@@ -2599,6 +2623,41 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	wgConfig: v.optional(v.nullable(v.string())),
 });
 
+const wdtt_ServerClient: v.GenericSchema = v.looseObject({
+	comment: v.optional(v.nullable(v.string())),
+	password: v.optional(v.nullable(v.string())),
+	vkHash: v.optional(v.nullable(v.string())),
+});
+
+const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
+	adminId: v.optional(v.nullable(v.string())),
+	botToken: v.optional(v.nullable(v.string())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerClient)))),
+	configDir: v.optional(v.nullable(v.string())),
+	debug: v.optional(v.nullable(v.boolean())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	ingressEnabled: v.optional(v.nullable(v.boolean())),
+	lanSegments: v.optional(v.nullable(v.array(v.string()))),
+	linkPeer: v.optional(v.nullable(v.string())),
+	linkVkHashes: v.optional(v.nullable(v.string())),
+	listen: v.optional(v.nullable(v.string())),
+	natIface: v.optional(v.nullable(v.string())),
+	natMode: v.optional(v.nullable(v.string())),
+	natStaticWan: v.optional(v.nullable(v.string())),
+	ndmsIface: v.optional(v.nullable(v.string())),
+	openFirewall: v.optional(v.nullable(v.boolean())),
+	password: v.optional(v.nullable(v.string())),
+	policy: v.optional(v.nullable(v.string())),
+	wgIface: v.optional(v.nullable(v.string())),
+	wgPort: v.optional(v.nullable(v.number())),
+});
+
+const wdtt_ServerInstance: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.lazy(() => wdtt_ServerConfig))),
+	id: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const wdtt_Status: v.GenericSchema = v.looseObject({
 	client: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
 	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
@@ -2607,6 +2666,9 @@ const wdtt_Status: v.GenericSchema = v.looseObject({
 	installedVersion: v.optional(v.nullable(v.string())),
 	installing: v.optional(v.nullable(v.boolean())),
 	routerClock: v.optional(v.nullable(v.string())),
+	server: v.optional(v.nullable(v.lazy(() => wdtt_ProcessStatus))),
+	serverSupported: v.optional(v.nullable(v.boolean())),
+	servers: v.optional(v.nullable(v.array(v.lazy(() => wdtt_InstanceStatus)))),
 	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2643,6 +2705,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"DELETE /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
+	"DELETE /wdtt/servers/{id}/users/{password}": v.lazy(() => api_APIEnvelope),
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
@@ -2739,6 +2803,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxInboundsResponse))),
 })]),
 	"GET /singbox/router/bindable-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
+	"GET /singbox/router/dns/chain-preset": v.lazy(() => api_SingboxDNSChainPresetResponse),
 	"GET /singbox/router/dns/globals": v.lazy(() => api_SingboxDNSGlobalsResponse),
 	"GET /singbox/router/dns/rewrites/list": v.lazy(() => api_SingboxDNSRewritesListResponse),
 	"GET /singbox/router/dns/rules/list": v.lazy(() => api_SingboxDNSRulesListResponse),
@@ -2805,12 +2870,14 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /tunnels/traffic": v.lazy(() => api_TunnelTrafficResponse),
 	"GET /wan/status": v.lazy(() => api_WANStatusEnvelope),
 	"GET /wdtt/config": v.lazy(() => api_WdttConfigResponse),
+	"GET /wdtt/servers/{id}/users": v.lazy(() => api_APIEnvelope),
 	"GET /wdtt/status": v.lazy(() => api_WdttStatusResponse),
 	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"PATCH /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"PATCH /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"PATCH /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"POST /access-policies/assign": v.lazy(() => api_OkResponse),
 	"POST /access-policies/create": v.lazy(() => api_AccessPolicyResponse),
 	"POST /access-policies/description": v.lazy(() => api_OkResponse),
@@ -2933,6 +3000,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/install": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/ndms-proxy": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
+	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/add": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/delete": v.lazy(() => api_OkResponse),
@@ -3015,6 +3083,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
 })]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
+	"POST /system/backup/import": v.lazy(() => api_APIEnvelope),
 	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
 	"POST /system/restart": v.lazy(() => api_APIEnvelope),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
@@ -3041,6 +3110,14 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /wdtt/install": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/link/decode": v.lazy(() => api_WdttDecodeLinkResponse),
 	"POST /wdtt/link/import": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/config": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/start": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/server/stop": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/link": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/start": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/stop": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/users": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/client/config": v.lazy(() => api_FreeTurnConfigResponse),
 	"PUT /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PUT /freeturn/server/config": v.lazy(() => api_FreeTurnConfigResponse),
@@ -3061,4 +3138,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PUT /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"PUT /wdtt/client/config": v.lazy(() => api_APIEnvelope),
 	"PUT /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
+	"PUT /wdtt/server/config": v.lazy(() => api_APIEnvelope),
+	"PUT /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
 };

@@ -19,6 +19,7 @@
 	import type { TunnelPageModalsContext } from '$lib/components/tunnels/tunnelPageModalsContext';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
+	import { Awg3ImportModal } from '$lib/components/awg3';
 	import { feedTraffic } from '$lib/stores/traffic';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { subscriptionLiveActives } from '$lib/stores/subscriptionLiveActives';
@@ -105,6 +106,19 @@
 	);
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
 	let awg3List = $derived($awg3Tunnels.data ?? []);
+	let awg3InitialLoading = $derived(
+		$awg3Tunnels.data === null &&
+		($awg3Tunnels.status === 'idle' || $awg3Tunnels.status === 'loading'),
+	);
+	// AWG3-эндпоинты — outbound'ы sing-box: без установленного бинаря импорт,
+	// удаление и переименование отклоняются бэкендом, поэтому их не показываем
+	// и не предлагаем создать.
+	const awg3Visible = $derived(singboxStatusLoading || singboxInstalled);
+	let awg3ImportOpen = $state(false);
+
+	function openAwg3Import(): void {
+		awg3ImportOpen = true;
+	}
 	let singboxTunnelsInitialLoading = $derived(
 		$singboxTunnels.data === null &&
 		($singboxTunnels.status === 'idle' || $singboxTunnels.status === 'loading'),
@@ -303,6 +317,8 @@
 		get createModalOpen() { return createModalOpen; },
 		set createModalOpen(v) { createModalOpen = v; },
 		get wizardPreselect() { return wizardPreselect; },
+		openAwg3Import,
+		get awg3Visible() { return awg3Visible; },
 		get pendingSubscriptionDelete() { return pendingSubscriptionDelete; },
 		set pendingSubscriptionDelete(v) { pendingSubscriptionDelete = v; },
 		get deletingSubscription() { return deletingSubscription; },
@@ -345,12 +361,14 @@
 			{singboxStatusLoading}
 			{singboxTunnelsInitialLoading}
 			{subscriptionsInitialLoading}
+			{awg3InitialLoading}
 			{loading}
 			{tunnelActions}
 			{openDetail}
 			{openSingboxDetail}
 			{openAwgDiagnostics}
 			{openWizard}
+			{openAwg3Import}
 			{handleAdoptClick}
 			{requestSubscriptionDelete}
 		/>
@@ -358,5 +376,14 @@
 </PageContainer>
 
 <TunnelPageModals ctx={pageModalsCtx} />
+
+{#if awg3Visible}
+	<!-- Импорт AWG3: из меню «Создать» и empty-state дашборда. -->
+	<Awg3ImportModal
+		open={awg3ImportOpen}
+		onclose={() => (awg3ImportOpen = false)}
+		onimported={() => void awg3Tunnels.refetch()}
+	/>
+{/if}
 
 <KernelModuleOverlay />

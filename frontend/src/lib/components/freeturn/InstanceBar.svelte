@@ -20,7 +20,7 @@
 		showDtls?: boolean;
 		onSelect: (id: string) => void;
 		onToggle: (id: string, on: boolean) => void;
-		onAdd: () => void;
+		onAdd?: () => void;
 		onDelete: (id: string) => void;
 		onRename?: (id: string, name: string) => void;
 	}
@@ -39,11 +39,13 @@
 
 	let renamingId = $state<string | null>(null);
 	let renameDraft = $state('');
+	let renameInput = $state<HTMLInputElement | undefined>();
 
 	function startRename(item: InstanceItem) {
 		if (!onRename) return;
 		renamingId = item.id;
 		renameDraft = item.name;
+		queueMicrotask(() => renameInput?.focus());
 	}
 
 	function commitRename(id: string) {
@@ -52,7 +54,19 @@
 		renamingId = null;
 	}
 
+	function toggleRename(item: InstanceItem) {
+		if (!onRename) return;
+		if (renamingId === item.id) {
+			commitRename(item.id);
+			return;
+		}
+		startRename(item);
+	}
+
 	function meta(item: InstanceItem): string {
+		if (item.running && item.binaryPresent === false) {
+			return ['устаревший процесс', item.pid ? `PID ${item.pid}` : ''].filter(Boolean).join(' · ');
+		}
 		if (!item.running) return 'остановлен';
 		return ['запущен', formatUptime(item.startedAt), item.pid ? `PID ${item.pid}` : '']
 			.filter(Boolean)
@@ -76,6 +90,7 @@
 
 				{#if renamingId === item.id}
 					<input
+						bind:this={renameInput}
 						class="ft-rename-input"
 						bind:value={renameDraft}
 						onkeydown={(e) => {
@@ -98,7 +113,7 @@
 					<Toggle
 						checked={!!item.running}
 						onchange={(on) => onToggle(item.id, on)}
-						disabled={item.binaryPresent === false}
+						disabled={item.binaryPresent !== true}
 						controlled
 						size="sm"
 						label=""
@@ -108,8 +123,12 @@
 						<button
 							type="button"
 							class="ft-chip-action"
-							title="Переименовать"
-							onclick={() => startRename(item)}
+							class:active={renamingId === item.id}
+							title={renamingId === item.id ? 'Сохранить имя' : 'Переименовать'}
+							onmousedown={(e) => {
+								if (renamingId === item.id) e.preventDefault();
+							}}
+							onclick={() => toggleRename(item)}
 						>
 							<Pencil size={14} />
 						</button>
@@ -128,7 +147,9 @@
 			</div>
 		{/each}
 	</div>
-	<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{#if onAdd}
+		<Button variant="secondary" size="sm" onclick={onAdd}>+ Добавить</Button>
+	{/if}
 </div>
 
 <style>
@@ -238,6 +259,16 @@
 		padding: 0.125rem 0.375rem;
 		font-size: 0.875rem;
 		line-height: 1;
+	}
+
+	.ft-chip-action:hover {
+		color: var(--color-text-primary);
+	}
+
+	.ft-chip-action.active {
+		color: var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+		border-radius: var(--radius-sm);
 	}
 
 	.ft-chip-action.danger:hover {

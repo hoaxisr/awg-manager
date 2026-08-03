@@ -238,7 +238,29 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	// committed (NDMS path) or written to config (port-only path).
 	reserved := make(map[int]bool)
 	var addedTags []string
+	// Pre-gate by sing-box build features BEFORE we mutate cfg or allocate
+	// NDMS proxy slots. Outbounds that require a missing sing-box build tag
+	// (e.g. naive needs with_naive_outbound) are rejected with a
+	// user-visible BatchError: adding them would just fail later at the
+	// applyConfig → preflightConfigDir step, but stopping early here keeps
+	// the rest of the batch intact and avoids partial side-effects.
+	//
+	// Пустой список = проба не удалась (бинарь ещё не установлен), а не
+	// «фич нет»: гейт в этом случае пропускает всё, решение остаётся за
+	// самим sing-box.
+	features := o.singboxFeaturesCached()
 	for _, p := range batchResult.Outbounds {
+		if len(features) > 0 && !OutboundSupportedByFeatures(features, p.Protocol) {
+			required := OutboundTypeRequiresFeature(p.Protocol)
+			if required == "" {
+				required = "<unknown required tag>"
+			}
+			parseErrs = append(parseErrs, BatchError{
+				Input: p.Label,
+				Err:   fmt.Errorf("%s: missing sing-box build tag %q, update sing-box to a version supporting %s", p.Protocol, required, p.Protocol),
+			})
+			continue
+		}
 		// Idempotency: пропускаем если такой же outbound уже есть в config.
 		var obParsed map[string]any
 		if err := json.Unmarshal(p.Outbound, &obParsed); err == nil {

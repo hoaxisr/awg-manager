@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	CurrentSchemaVersion        = 32
+	CurrentSchemaVersion        = 33
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -39,6 +40,11 @@ func NewSettingsStore(dataDir string) *SettingsStore {
 	return &SettingsStore{
 		path: filepath.Join(dataDir, "settings.json"),
 	}
+}
+
+// DataDir returns the awg-manager data directory (parent of settings.json).
+func (s *SettingsStore) DataDir() string {
+	return filepath.Dir(s.path)
 }
 
 // Load reads settings from disk. Returns default settings if file doesn't exist.
@@ -182,6 +188,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 32 {
 			s.migrateToV32(&settings)
 		}
+		if settings.SchemaVersion < 33 {
+			s.migrateToV33(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -200,6 +209,13 @@ func (s *SettingsStore) Load() (*Settings, error) {
 	// Heal here so the effective and persisted values converge.
 	if settings.SessionTtlHours < MinSessionTTLHours || settings.SessionTtlHours > MaxSessionTTLHours {
 		settings.SessionTtlHours = DefaultSessionTTLHours
+		needsSave = true
+	}
+
+	// Self-heal ingress-ref'ы, оставшиеся от удалённых managed-серверов
+	// (#670). Безусловно, как дедуп выше: миграцией не обойтись — ref мог
+	// осироветь и после апгрейда.
+	if pruneOrphanIngressRefs(&settings) {
 		needsSave = true
 	}
 
@@ -260,6 +276,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
+			// KeenDNS/CrazeDNS cloud IP must bypass TPROXY by default (#490):
+			// otherwise LAN-only *.keenetic.pro / *.netcraze.* open as
+			// unavailable or hit the router web UI.
+			BypassPresets: []string{"keendns"},
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -294,6 +314,45 @@ func dedupManagedServers(servers []ManagedServer) ([]ManagedServer, int) {
 		return servers, 0
 	}
 	return out, removed
+}
+
+// pruneOrphanIngressRefs drops singboxRouter.ingressInterfaces entries of the
+// form "managed:<NDMS-name>" that no longer have a managed server behind them
+// (#670). Reports whether anything changed.
+//
+// Такие ref'ы ставит только тумблер ingress на карточке managed-сервера, так
+// что managed:X без сервера X — всегда мусор от удаления. Router-reconcile
+// раз в 30 секунд дёргал по нему RCI show interface system-name, и NDMS на
+// каждый запрос сыпал в журнал 'unable to find X'. iface:-ref'ы (kernel-имена)
+// не трогаем: они резолвятся локально и по определению не привязаны к
+// managed-серверам.
+func pruneOrphanIngressRefs(settings *Settings) bool {
+	refs := settings.SingboxRouter.IngressInterfaces
+	if len(refs) == 0 {
+		return false
+	}
+	known := make(map[string]struct{}, len(settings.ManagedServers)+1)
+	for _, sv := range settings.ManagedServers {
+		known[sv.InterfaceName] = struct{}{}
+	}
+	if settings.ManagedServer != nil {
+		known[settings.ManagedServer.InterfaceName] = struct{}{}
+	}
+	kept := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		name, isManaged := strings.CutPrefix(ref, "managed:")
+		if isManaged {
+			if _, ok := known[name]; !ok {
+				continue
+			}
+		}
+		kept = append(kept, ref)
+	}
+	if len(kept) == len(refs) {
+		return false
+	}
+	settings.SingboxRouter.IngressInterfaces = kept
+	return true
 }
 
 // GetManagedServers returns a deep copy of all managed servers, ordered
@@ -383,6 +442,9 @@ func (s *SettingsStore) DeleteManagedServer(id string) error {
 	for i, existing := range s.settings.ManagedServers {
 		if existing.InterfaceName == id {
 			s.settings.ManagedServers = append(s.settings.ManagedServers[:i], s.settings.ManagedServers[i+1:]...)
+			// Снять ingress-ref удалённого сервера в той же транзакции —
+			// иначе он висит до перезапуска демона (#670).
+			pruneOrphanIngressRefs(s.settings)
 			return s.saveUnlocked(s.settings)
 		}
 	}
@@ -475,6 +537,19 @@ func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
 		return fmt.Errorf("settings not loaded")
 	}
 	s.settings.FakeIP = st
+	return s.saveUnlocked(s.settings)
+}
+
+// SetDNSChainPresetState atomically persists the DNS-chain preset state under
+// the store lock (single-writer pattern; the router service is the only
+// writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.
+func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.DNSChainPreset = st
 	return s.saveUnlocked(s.settings)
 }
 

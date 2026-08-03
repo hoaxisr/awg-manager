@@ -116,8 +116,11 @@ definitions:
         example: vpn.example.com:51820
         type: string
       persistentKeepalive:
-        example: 25
-        type: integer
+        description: |-
+          PersistentKeepalive — секунды. Одиночное значение приходит числом, а
+          диапазон AWG 3.0 ("min-max") строкой: число сохранено ради tunnels.json,
+          который в этой форме читают и предыдущие версии.
+        type: object
       publicKey:
         example: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
         type: string
@@ -1511,6 +1514,8 @@ definitions:
         type: string
       streamsPerCred:
         type: integer
+      transport:
+        type: string
       wg:
         type: string
     type: object
@@ -3477,6 +3482,32 @@ definitions:
       subject:
         type: string
     type: object
+  api.SingboxDNSChainPresetData:
+    properties:
+      directServer:
+        example: dns-direct
+        type: string
+      mode:
+        example: resilient
+        type: string
+      poisonCidrs:
+        example:
+        - 0.0.0.0/32
+        items:
+          type: string
+        type: array
+      proxyServer:
+        example: dns-tunnel
+        type: string
+    type: object
+  api.SingboxDNSChainPresetResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxDNSChainPresetData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SingboxDNSClientTLSOptionsDTO:
     properties:
       alpn:
@@ -3608,12 +3639,42 @@ definitions:
         items:
           type: string
         type: array
+      ip_cidr:
+        example:
+        - 10.0.0.0/8
+        items:
+          type: string
+        type: array
+      match_response:
+        description: |-
+          MatchResponse — union: true (любой ответ) либо тег правила evaluate ("rd").
+          Тип в swagger намеренно не объявлен: обе формы union'а легальны.
       query_type:
         example:
         - A
         items:
           type: string
         type: array
+      race:
+        example: true
+        type: boolean
+      response_answer:
+        example:
+        - example.com. IN A 1.2.3.4
+        items:
+          type: string
+        type: array
+      response_extra:
+        items:
+          type: string
+        type: array
+      response_ns:
+        items:
+          type: string
+        type: array
+      response_rcode:
+        example: NOERROR
+        type: string
       rule_set:
         example:
         - geosite-cn
@@ -3622,6 +3683,13 @@ definitions:
         type: array
       server:
         example: cloudflare
+        type: string
+      speculative:
+        example: false
+        type: boolean
+      tag:
+        description: 'sing-box 1.14: DNS-механизм evaluate/match_response.'
+        example: rd
         type: string
     type: object
   api.SingboxDNSRuleDeleteRequest:
@@ -5472,6 +5540,9 @@ definitions:
       kernelModuleLoaded:
         example: false
         type: boolean
+      kernelModuleLoadedVersion:
+        example: 3.0.20260731
+        type: string
       kernelModuleModel:
         example: MT7981
         type: string
@@ -5695,6 +5766,7 @@ definitions:
         - awg1.0
         - awg1.5
         - awg2.0
+        - awg3
         example: awg2.0
         type: string
       backend:
@@ -6248,6 +6320,20 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.WdttGenerateLinkRequest:
+    properties:
+      name:
+        type: string
+      password:
+        description: per-client password from panel.db; empty → server password
+        type: string
+      peer:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+    type: object
   api.WdttImportRequest:
     properties:
       link:
@@ -6379,6 +6465,17 @@ definitions:
     properties:
       enabled:
         type: boolean
+    type: object
+  api.wdttPanelUserAddRequest:
+    properties:
+      comment:
+        type: string
+      mainPassword:
+        type: string
+      password:
+        type: string
+      vkHash:
+        type: string
     type: object
   diagnostics.DNSProxy:
     properties:
@@ -6540,13 +6637,6 @@ definitions:
       bond:
         description: -bond, only meaningful with mode=tcp
         type: boolean
-      browser:
-        description: -browser, provider=vk only
-        enum:
-        - chrome
-        - firefox
-        - safari
-        type: string
       clientId:
         description: -client-id, auto-generated if empty
         type: string
@@ -6578,6 +6668,12 @@ definitions:
         type: string
       peer:
         description: '-peer, required: VPS server addr host:port'
+        type: string
+      platform:
+        description: -platform, provider=vk only (persona class)
+        enum:
+        - desktop
+        - mobile
         type: string
       provider:
         description: -provider, default "vk"
@@ -6761,6 +6857,11 @@ definitions:
       obfProfile:
         description: -obf-profile, none|rtpopus|rtpopus2|rtpopus3
         type: string
+      openFirewall:
+        description: |-
+          OpenFirewall opens the server listen port in Keenetic INPUT (iptables).
+          nil / omitted → true (WAN relay works out of the box).
+        type: boolean
     type: object
   freeturn.ServerInstance:
     properties:
@@ -6946,6 +7047,10 @@ definitions:
         items:
           $ref: '#/definitions/wdtt.ClientInstance'
         type: array
+      servers:
+        items:
+          $ref: '#/definitions/wdtt.ServerInstance'
+        type: array
       version:
         type: integer
     type: object
@@ -6953,6 +7058,13 @@ definitions:
     properties:
       config:
         $ref: '#/definitions/wdtt.ClientConfig'
+      name:
+        type: string
+    type: object
+  wdtt.CreateServerInput:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ServerConfig'
       name:
         type: string
     type: object
@@ -7017,6 +7129,95 @@ definitions:
       wgConfig:
         type: string
     type: object
+  wdtt.ServerClient:
+    properties:
+      comment:
+        type: string
+      password:
+        type: string
+      vkHash:
+        type: string
+    type: object
+  wdtt.ServerConfig:
+    properties:
+      adminId:
+        description: -admin, optional Telegram user id
+        type: string
+      botToken:
+        description: -bot-token, optional Telegram bot
+        type: string
+      clients:
+        description: |-
+          Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+          этого списка перед каждым стартом wdtt-server.
+        items:
+          $ref: '#/definitions/wdtt.ServerClient'
+        type: array
+      configDir:
+        description: -config-dir; empty → dataDir/wdtt/server/{id}
+        type: string
+      debug:
+        type: boolean
+      enabled:
+        type: boolean
+      ingressEnabled:
+        description: sing-box ingress for iface:wgIface
+        type: boolean
+      lanSegments:
+        description: LAN bridge names
+        items:
+          type: string
+        type: array
+      linkPeer:
+        description: |-
+          LinkPeer / LinkVKHashes — параметры последней сгенерированной ссылки,
+          чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
+        type: string
+      linkVkHashes:
+        type: string
+      listen:
+        description: -listen, DTLS (default 0.0.0.0:56002)
+        type: string
+      natIface:
+        description: 'Router integration (awg-manager + NDMS):'
+        type: string
+      natMode:
+        description: full | internet-only | none via managed service
+        type: string
+      natStaticWan:
+        description: persisted WAN for internet-only teardown
+        type: string
+      ndmsIface:
+        description: NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован
+          в роутере.
+        type: string
+      openFirewall:
+        description: |-
+          OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
+          nil / omitted → true (WAN relay works out of the box).
+        type: boolean
+      password:
+        description: -password, WRAP key derivation
+        type: string
+      policy:
+        description: NDMS hotspot policy or "none"
+        type: string
+      wgIface:
+        description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
+        type: string
+      wgPort:
+        description: -wg-port, internal WG (default 56001)
+        type: integer
+    type: object
+  wdtt.ServerInstance:
+    properties:
+      config:
+        $ref: '#/definitions/wdtt.ServerConfig'
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   wdtt.Status:
     properties:
       client:
@@ -7035,6 +7236,17 @@ definitions:
         type: boolean
       routerClock:
         type: string
+      server:
+        $ref: '#/definitions/wdtt.ProcessStatus'
+      serverSupported:
+        description: |-
+          ServerSupported — собирается ли wdtt-server под эту архитектуру.
+          На mips/mipsel его нет (см. internal/wdtt/install.go), UI прячет вкладку «Сервер».
+        type: boolean
+      servers:
+        items:
+          $ref: '#/definitions/wdtt.InstanceStatus'
+        type: array
       updateAvailable:
         type: boolean
     type: object
@@ -7065,7 +7277,8 @@ info:
 paths:
   /access-policies:
     get:
-      description: KeeneticOS 5 only when route is registered.
+      description: 'Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since
+        firmware 2.12.'
       parameters:
       - description: Pass 'true' to bypass NDMS cache
         in: query
@@ -10993,7 +11206,8 @@ paths:
       - device-proxy
   /routing/access-policies:
     get:
-      description: KeeneticOS 5 only when route is registered.
+      description: 'Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since
+        firmware 2.12.'
       parameters:
       - description: Pass 'true' to bypass NDMS cache
         in: query
@@ -13377,6 +13591,68 @@ paths:
       security:
       - CookieAuth: []
       summary: Disable singbox-router
+      tags:
+      - singbox-router
+  /singbox/router/dns/chain-preset:
+    get:
+      description: 'Returns the DNS-chain preset (sing-box 1.14 evaluate/match_response):
+        `mode` ("" = off, resilient, antipoison), the direct/proxy server tags and
+        the antipoison ip_cidr list.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxDNSChainPresetResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Get singbox-router DNS chain preset
+      tags:
+      - singbox-router
+    post:
+      consumes:
+      - application/json
+      description: 'Enables/switches/disables the DNS-chain preset. `mode: ""` turns
+        it off and removes the managed chain; otherwise the direct/proxy server tags
+        must reference existing DNS servers.'
+      parameters:
+      - description: mode + servers + poison cidrs
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxDNSChainPresetData'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Update singbox-router DNS chain preset
       tags:
       - singbox-router
   /singbox/router/dns/globals:
@@ -16816,6 +17092,62 @@ paths:
       summary: All interfaces
       tags:
       - system
+  /system/backup/export:
+    get:
+      description: Останавливает дочерние процессы, стримит tar.gz каталога данных
+        и поднимает их обратно.
+      produces:
+      - application/gzip
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Export full data-dir backup
+      tags:
+      - system
+  /system/backup/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Принимает tar.gz из поля file, заменяет каталог данных и планирует
+        перезапуск демона.
+      parameters:
+      - description: Архив .tar.gz, снятый экспортом
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Restore full data-dir backup
+      tags:
+      - system
   /system/hydraroute-control:
     post:
       consumes:
@@ -17964,6 +18296,358 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Import a wdtt:// / qwdtt:// / subscription link into the default client
+      tags:
+      - wdtt
+  /wdtt/server/config:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdtt.ServerConfig'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update the default WDTT server config (legacy single-instance route)
+      tags:
+      - wdtt
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server config
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdtt.ServerConfig'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update the default WDTT server config (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/server/start:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start the default WDTT server (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/server/stop:
+    post:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop the default WDTT server (legacy single-instance route)
+      tags:
+      - wdtt
+  /wdtt/servers:
+    post:
+      consumes:
+      - application/json
+      description: wdtt-server owns the shared wdtt0 interface, so a second instance
+        is rejected.
+      parameters:
+      - description: Server instance
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/wdtt.CreateServerInput'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Create a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Update config, rename or delete a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/link:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Link options
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.WdttGenerateLinkRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Generate a wdtt:// / qwdtt:// share link for a server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/start:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Start a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/stop:
+    post:
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Stop a WDTT server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/users:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
+      tags:
+      - wdtt
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/users/{password}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client password to delete
+        in: path
+        name: password
+        type: string
+      - description: New client password
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: List, add or delete WDTT client passwords stored in panel.db
       tags:
       - wdtt
   /wdtt/status:

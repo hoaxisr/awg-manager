@@ -57,6 +57,45 @@ func normalizeSingboxLogLevel(v string) string {
 	return "info"
 }
 
+// hasFeature reports whether the installed sing-box binary declares the
+// given build tag in its `sing-box version` output. Empty features means
+// probe failed — treat it conservatively as "feature NOT present" so we
+// don't gate soft-fail and leave it for sing-box check.
+func (o *Operator) hasFeature(feature string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	_, features := o.detectVersionAndFeaturesCached(ctx)
+	for _, f := range features {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}
+
+// supportsOutbound reports whether the installed sing-box binary supports
+// the given outbound type. Returns true for core types (no feature tag
+// required) and unknown types — sing-box check still catches unknown
+// type strings.
+func (o *Operator) supportsOutbound(obType string) bool {
+	return OutboundSupportedByFeatures(o.singboxFeaturesCached(), obType)
+}
+
+// SingboxFeatures returns the latest cached list of build tags from the
+// installed sing-box binary's `sing-box version` output. Safe for hot
+// callers (e.g. flush() Pass 1 of the subscription adapter): the probe
+// is cached under a mtime+size fingerprint — stat-only check costs ~10µs
+// on a router, no subprocess spawning unless the binary actually changed
+// on disk. Empty slice means probe failed or no binary installed.
+func (o *Operator) SingboxFeatures() []string { return o.singboxFeaturesCached() }
+
+func (o *Operator) singboxFeaturesCached() []string {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	_, f := o.detectVersionAndFeaturesCached(ctx)
+	return f
+}
+
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
 	log        *slog.Logger

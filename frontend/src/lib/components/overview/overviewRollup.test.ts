@@ -86,7 +86,9 @@ describe('computeRollup', () => {
 			},
 			wdtt: {
 				clients: [{ id: 'default', name: 'c', status: { running: false, lastError: 'boom', binary: '', binaryPresent: true } }],
+				servers: [],
 				client: { running: false, binary: '', binaryPresent: true },
+				server: { running: false, binary: '', binaryPresent: true },
 				installAvailable: false,
 				updateAvailable: false,
 				installing: false,

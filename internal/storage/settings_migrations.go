@@ -339,6 +339,24 @@ func (s *SettingsStore) migrateToV32(settings *Settings) {
 	settings.SchemaVersion = 32
 }
 
+// migrateToV33 enables the keendns bypass preset by default (#490). Existing
+// installs that never opted in left *.keenetic.pro / *.netcraze.* traffic
+// TPROXY'd into the tunnel. Append only when missing so a user who already
+// selected keendns (alone or with other presets) is left intact.
+func (s *SettingsStore) migrateToV33(settings *Settings) {
+	has := false
+	for _, name := range settings.SingboxRouter.BypassPresets {
+		if name == "keendns" {
+			has = true
+			break
+		}
+	}
+	if !has {
+		settings.SingboxRouter.BypassPresets = append(settings.SingboxRouter.BypassPresets, "keendns")
+	}
+	settings.SchemaVersion = 33
+}
+
 // migrateManagedServers moves a legacy singular managedServer into the
 // new ManagedServers slice. Idempotent. Caller holds s.mu.
 func (s *SettingsStore) migrateManagedServers() {

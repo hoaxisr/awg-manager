@@ -25,13 +25,18 @@
   import { formatBytes, formatByteRate } from '$lib/utils/format';
   import { notifications } from '$lib/stores/notifications';
   import { api } from '$lib/api/client';
-  import { computeRuleSetUsage, DNSGlobalsEditModal } from '$lib/components/routing/singboxRouter';
+  import {
+    computeRuleSetUsage,
+    DNSChainPresetCard,
+    DNSGlobalsEditModal,
+  } from '$lib/components/routing/singboxRouter';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import type {
     CatalogPreset,
     SingboxRouterRule,
     SingboxRouterRuleSet,
     SingboxRouterOutbound,
+    SingboxRouterDNSChainPreset,
     SingboxRouterDNSServer,
     SingboxRouterDNSRule,
     SingboxRouterDNSStrategy,
@@ -59,6 +64,7 @@
   import InboundsMirror from './InboundsMirror.svelte';
   import { expertPanelCollapse } from './expertPanelCollapseStore';
   import InboundSettingsDrawer from './InboundSettingsDrawer.svelte';
+  import { ensureLanNamesRule, isLanNamesRule, removeLanNamesRule } from './emptyStateActions';
   import EngineFatalModal from './EngineFatalModal.svelte';
 
   import RuleEditModal from '$lib/components/routing/singboxRouter/RuleEditModal.svelte';
@@ -68,7 +74,7 @@
   import DNSRuleEditModal from '$lib/components/routing/singboxRouter/DNSRuleEditModal.svelte';
   import { DNSRewritesList } from '$lib/components/routing/singboxRouter';
   import { ConfirmModal, Dropdown, Button, type DropdownOption } from '$lib/components/ui';
-  import { LayoutGrid, Library } from 'lucide-svelte';
+  import { Check, LayoutGrid, Library } from 'lucide-svelte';
   import { browser } from '$app/environment';
 
   // Store subscriptions
@@ -313,8 +319,28 @@
     };
   }
 
+  // DNS-пресет цепочки хранится в настройках, а не в конфиге роутера, — грузим
+  // отдельно от store.loadAll. Ошибка (старый бэкенд/мок) оставляет «Выкл».
+  let dnsChainPreset = $state<SingboxRouterDNSChainPreset>({ mode: '' });
+
+  async function loadDnsChainPreset(): Promise<void> {
+    try {
+      dnsChainPreset = await api.singboxRouterGetDNSChainPreset();
+    } catch {
+      /* пресет недоступен — карточка остаётся выключенной */
+    }
+  }
+
+  // Ошибку намеренно не глушим: её показывает сама карточка.
+  async function handleDnsChainPresetApply(preset: SingboxRouterDNSChainPreset) {
+    await api.singboxRouterSetDNSChainPreset(preset);
+    await loadDnsChainPreset();
+    await singboxRouterStore.loadAll();
+  }
+
   onMount(() => {
     void singboxRouterStore.loadAll();
+    void loadDnsChainPreset();
     void loadActiveProxyCount();
     void loadAllInbounds();
   });
@@ -866,6 +892,50 @@
     await singboxRouterStore.loadAll();
   }
 
+  let lanNamesBusy = $state(false);
+  const lanNamesOn = $derived($storeDnsRules.some(isLanNamesRule));
+
+  async function toggleLanNamesRule() {
+    const on = lanNamesOn;
+    lanNamesBusy = true;
+    try {
+      let msg: string;
+      if (on) {
+        await removeLanNamesRule();
+        msg = 'Правило LAN-имён удалено';
+      } else {
+        msg =
+          (await ensureLanNamesRule()) === 'created'
+            ? 'Правило LAN-имён создано'
+            : 'Правило LAN-имён уже настроено';
+      }
+      await singboxRouterStore.loadAll();
+      notifications.success(msg);
+    } catch (e) {
+      notifications.error(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      lanNamesBusy = false;
+    }
+  }
+
+  // Перестановка DNS-правила перетаскиванием: оптимистика в стор, при ошибке
+  // бэкенда (например move ломает цепочку evaluate/match_response) — откат
+  // снапшота + тост, как в fakeip/DnsTab.
+  async function handleMoveDnsRule(from: number, to: number) {
+    const snapshot = get(singboxRouterStore.dnsRules);
+    const next = snapshot.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    singboxRouterStore.applyDNSRules(next);
+    try {
+      await api.singboxRouterMoveDNSRule(from, to);
+      await singboxRouterStore.loadAll();
+    } catch (e) {
+      singboxRouterStore.applyDNSRules(snapshot);
+      notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   async function handleDnsGlobalsSave(globals: { final: string; strategy: SingboxRouterDNSStrategy }) {
     await api.singboxRouterPutDNSGlobals(globals);
     dnsGlobalsModalOpen = false;
@@ -1041,10 +1111,25 @@
         section="dnsServers"
         title="DNS-серверы"
         count={String($storeDnsServers.length)}
-        actionLabel="+ Сервер"
-        actionVariant="filled"
-        onAction={() => (dnsServerAddOpen = true)}
       >
+        {#snippet actions()}
+          {#snippet lanNamesCheck()}
+            <Check size={14} aria-hidden="true" />
+          {/snippet}
+          <Button
+            variant={lanNamesOn ? 'secondary' : 'ghost'}
+            size="sm"
+            disabled={lanNamesBusy}
+            iconBefore={lanNamesOn ? lanNamesCheck : undefined}
+            title={lanNamesOn
+              ? 'Правило активно — нажмите, чтобы удалить'
+              : 'Создать правило: имена без точек резолвит локальный DNS'}
+            onclick={toggleLanNamesRule}
+          >
+            LAN-имена → локальный DNS
+          </Button>
+          <Button variant="primary" size="sm" onclick={() => (dnsServerAddOpen = true)}>+ Сервер</Button>
+        {/snippet}
         <button
           type="button"
           class="globals-summary"
@@ -1059,6 +1144,14 @@
           </div>
           <span class="globals-summary-action">Настроить</span>
         </button>
+        <DNSChainPresetCard
+          servers={$storeDnsServers}
+          rules={$storeDnsRules}
+          preset={dnsChainPreset}
+          finalServer={$storeDnsGlobals.final}
+          fakeipMode={$storeSettings?.routingMode === 'fakeip-tun'}
+          onApply={handleDnsChainPresetApply}
+        />
         <DnsServersCompact
           servers={$storeDnsServers}
           rules={$storeDnsRules}
@@ -1072,6 +1165,7 @@
           onDeleteServer={handleDeleteDnsServer}
           onEditRule={(idx) => (dnsRuleEditIdx = idx)}
           onDeleteRule={handleDeleteDNSRule}
+          onMoveRule={handleMoveDnsRule}
           onAddRule={() => (dnsRuleAddOpen = true)}
         />
       </SidePanel>
@@ -1223,6 +1317,7 @@
     servers={$storeDnsServers}
     availableRuleSets={sortedRuleSets}
     ruleSetUsage={ruleSetUsageForDnsAdd}
+    rules={$storeDnsRules}
     onClose={() => (dnsRuleAddOpen = false)}
     onSave={handleDnsRuleAddSave}
   />
@@ -1235,6 +1330,8 @@
     servers={$storeDnsServers}
     availableRuleSets={sortedRuleSets}
     ruleSetUsage={ruleSetUsageForDnsEdit}
+    rules={$storeDnsRules}
+    ruleIndex={dnsRuleEditIdx ?? undefined}
     onClose={() => (dnsRuleEditIdx = null)}
     onSave={handleDnsRuleEditSave}
   />
@@ -1278,6 +1375,9 @@
   .wrap {
     max-width: none;
     margin: 0 auto;
+    /* Компактный режим держит колонку контента в 960px при любом вьюпорте —
+       ломать сетку надо по ширине контейнера, а не окна (см. @container ниже). */
+    container-type: inline-size;
   }
   /* Caption внутри SidePanel body — sub-title строкой над контентом */
   .rs-head-actions {
@@ -1374,9 +1474,11 @@
     gap: 14px;
     min-width: 0;
   }
-  @media (max-width: 1023px) {
+  /* 1280px — ниже этого сайдбар (4/12) уже́ шапки панели: заголовок + две
+     кнопки не влезают и наезжают друг на друга. */
+  @container (max-width: 1280px) {
     .main-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
   }
   @media (max-width: 768px) {

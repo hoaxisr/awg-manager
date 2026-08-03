@@ -163,3 +163,49 @@ func dnsResolverCycle(cfg *RouterConfig, start, defaultResolver string) []string
 	}
 	return nil
 }
+
+// computeDNSChainIssues — предупреждения, которые sing-box тоже считает
+// warning'ами (exit 0): evaluate, чей ответ никто ниже не использует, и
+// speculative без race-правила выше. Жёсткие порядковые нарушения — не здесь
+// (validateDNSChain).
+//
+// Потребление тега — только по тегу: прогон релизного бинаря 1.14.0-beta.1 на
+// фикстуре b1 (тегированный evaluate «rd» + анонимный evaluate + анонимный
+// match_response ниже) даёт exit 0 с WARN «evaluate tag is never referenced:
+// rd» — анонимный match_response читает последний анонимный ответ и тегированный
+// evaluate не потребляет. Контроль c1 (match_response «rd») — exit 0 без WARN.
+func computeDNSChainIssues(cfg *RouterConfig) []Issue {
+	if cfg == nil {
+		return nil
+	}
+	var issues []Issue
+	rules := cfg.DNS.Rules
+	// потребители тега ниже позиции i
+	consumedBelow := func(tag string, from int) bool {
+		for j := from + 1; j < len(rules); j++ {
+			if mr := rules[j].MatchResponse; mr.IsEnabled() && mr.Tag == tag {
+				return true
+			}
+		}
+		return false
+	}
+	raceAbove := false
+	for i, r := range rules {
+		if r.Action == "evaluate" && r.Tag != "" && !consumedBelow(r.Tag, i) {
+			issues = append(issues, Issue{
+				Severity: "warning", Kind: "dns-chain", RuleIndex: i, Tag: r.Tag,
+				Message: fmt.Sprintf("evaluate %q: ответ никто ниже не использует", r.Tag),
+			})
+		}
+		if r.Speculative && !raceAbove {
+			issues = append(issues, Issue{
+				Severity: "warning", Kind: "dns-chain", RuleIndex: i,
+				Message: "speculative без race-правила выше не даёт эффекта",
+			})
+		}
+		if r.Race {
+			raceAbove = true
+		}
+	}
+	return issues
+}

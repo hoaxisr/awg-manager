@@ -197,8 +197,10 @@
 								<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 								<div class="device-info">
 									<span class="device-name">{device.name || device.hostname || device.mac}</span>
-									{#if device.ip}
+									{#if device.ip && device.ip !== '0.0.0.0'}
 										<span class="device-ip">{device.ip}</span>
+									{:else}
+										<span class="device-ip">IP адрес отсутствует</span>
 									{/if}
 								</div>
 								<button
@@ -238,8 +240,10 @@
 									<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 									<div class="device-info">
 										<span class="device-name">{device.name || device.hostname || device.mac}</span>
-										{#if device.ip}
+										{#if device.ip && device.ip !== '0.0.0.0'}
 											<span class="device-ip">{device.ip}</span>
+										{:else}
+											<span class="device-ip">IP адрес отсутствует</span>
 										{/if}
 									</div>
 									<button

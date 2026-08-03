@@ -181,6 +181,13 @@
 			i.i3 ? `I3 = ${i.i3}` : '',
 			i.i4 ? `I4 = ${i.i4}` : '',
 			i.i5 ? `I5 = ${i.i5}` : '',
+			i.headerProtectionKey ? `HeaderProtectionKey = ${i.headerProtectionKey}` : '',
+			i.contentPaddingAddition ? `ContentPaddingAddition = ${i.contentPaddingAddition}` : '',
+			i.rekeyAfterTime ? `RekeyAfterTime = ${i.rekeyAfterTime}` : '',
+			i.rekeyTimeout ? `RekeyTimeout = ${i.rekeyTimeout}` : '',
+			i.rejectAfterTime ? `RejectAfterTime = ${i.rejectAfterTime}` : '',
+			i.keepaliveTimeout ? `KeepaliveTimeout = ${i.keepaliveTimeout}` : '',
+			i.maxHandshakeAttempts ? `MaxHandshakeAttempts = ${i.maxHandshakeAttempts}` : '',
 			'',
 			'[Peer]',
 			p.publicKey ? `PublicKey = ${p.publicKey}` : '',
@@ -246,6 +253,15 @@
 				i3: optionalStrOrCurrent(iface.i3, current.interface.i3),
 				i4: optionalStrOrCurrent(iface.i4, current.interface.i4),
 				i5: optionalStrOrCurrent(iface.i5, current.interface.i5),
+
+				// AWG 3.0 device params (parseAWG lowercases the keys).
+				headerProtectionKey: optionalStrOrCurrent(iface.headerprotectionkey, current.interface.headerProtectionKey),
+				contentPaddingAddition: optionalStrOrCurrent(iface.contentpaddingaddition, current.interface.contentPaddingAddition),
+				rekeyAfterTime: optionalStrOrCurrent(iface.rekeyaftertime, current.interface.rekeyAfterTime),
+				rekeyTimeout: optionalStrOrCurrent(iface.rekeytimeout, current.interface.rekeyTimeout),
+				rejectAfterTime: optionalStrOrCurrent(iface.rejectaftertime, current.interface.rejectAfterTime),
+				keepaliveTimeout: optionalStrOrCurrent(iface.keepalivetimeout, current.interface.keepaliveTimeout),
+				maxHandshakeAttempts: optionalStrOrCurrent(iface.maxhandshakeattempts, current.interface.maxHandshakeAttempts),
 			},
 			peer: {
 				...current.peer,
@@ -259,9 +275,11 @@
 						? peer.allowedips.split(',').map((s) => s.trim()).filter(Boolean)
 						: current.peer.allowedIPs,
 
+				// AWG 3.0 допускает диапазон "min-max", поэтому значение переносим
+				// строкой как есть; формат проверяют схема формы и бэкенд.
 				persistentKeepalive:
-					peer.persistentkeepalive !== undefined && peer.persistentkeepalive !== ''
-						? numOrCurrent(peer.persistentkeepalive, current.peer.persistentKeepalive ?? 25)
+					peer.persistentkeepalive !== undefined && peer.persistentkeepalive.trim() !== ''
+						? peer.persistentkeepalive.trim()
 						: current.peer.persistentKeepalive,
 			},
 		};

@@ -3,10 +3,10 @@ package api
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -132,7 +132,7 @@ func (h *SingboxConnectionsHandler) addWGServerPeers(ctx context.Context, out ma
 			// Первая host-запись (/32|/128): у site-to-site пиров впереди
 			// могут стоять маршрутизируемые подсети или 0.0.0.0/0.
 			for _, entry := range p.AllowedIPs {
-				if ip := peerHostIP(entry); ip != "" {
+				if ip := connections.PeerHostIP(entry); ip != "" {
 					out[ip] = p.Description
 					break
 				}
@@ -152,31 +152,9 @@ func (h *SingboxConnectionsHandler) addManagedPeers(out map[string]string) {
 			if p.Description == "" {
 				continue
 			}
-			if ip := peerHostIP(p.TunnelIP); ip != "" {
+			if ip := connections.PeerHostIP(p.TunnelIP); ip != "" {
 				out[ip] = p.Description
 			}
 		}
 	}
-}
-
-// peerHostIP normalizes a single-host peer address ("10.0.0.2/32",
-// "fd00::2/128" or bare "10.0.0.2") to the lowercased bare-IP map key the
-// frontend looks up by. Returns "" for anything that is not a single host
-// (e.g. "10.0.0.0/24") or not a valid IP.
-func peerHostIP(entry string) string {
-	entry = strings.TrimSpace(entry)
-	host := entry
-	if i := strings.IndexByte(entry, '/'); i >= 0 {
-		if m := entry[i+1:]; m != "32" && m != "128" {
-			return ""
-		}
-		host = entry[:i]
-	}
-	parsed := net.ParseIP(host)
-	if parsed == nil {
-		return ""
-	}
-	// Каноническая форма: user-typed IPv6 ("fd00:0:0::2") должен совпасть
-	// со source IP из Clash API ("fd00::2").
-	return strings.ToLower(parsed.String())
 }
