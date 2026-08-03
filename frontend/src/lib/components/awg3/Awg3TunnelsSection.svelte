@@ -94,7 +94,7 @@
 {#if tunnels.length === 0}
 	<EmptyState
 		title="Нет endpoint'ов"
-		description="Импортируй JSON-конфиг клиента AmneziaWG 3 — он станет endpoint'ом sing-box."
+		description="Импортируйте JSON-конфиг клиента AmneziaWG 3 — он станет endpoint'ом sing-box."
 		icon={emptyIcon}
 		action={emptyAction}
 	/>

@@ -362,10 +362,6 @@ html[data-layout-compact='true'] {
   --layout-gutter-y-bottom: 1.5rem;
 }
 
-html[data-layout-compact='true'] .page-container {
-  max-width: 100% !important;
-}
-
 @media (max-width: 640px) {
   :root {
     --layout-gutter-x: 0.75rem;
