@@ -192,6 +192,34 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 // method-signature drift at this declaration line.
 var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
 
+// Compile-time satisfaction for the directly-wired policy-tun deps: все три
+// реализуют router-интерфейсы структурно, без адаптера.
+var (
+	_ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
+	_ router.SegmentNATProvider   = (*ndmscommand.NATCommands)(nil)
+	_ router.RunningConfigReader  = (*ndmsquery.RunningConfigStore)(nil)
+	// WAN-цель static-NAT в source-preserve — интерфейс дефолтного маршрута.
+	_ router.DefaultGatewayResolver = (*ndmsquery.RouteStore)(nil)
+)
+
+var _ router.NATStateReader = (*routerNATStateAdapter)(nil)
+
+// routerNATStateAdapter сводит два независимых стора (/show/rc/ip/nat и
+// /show/rc/ip/static) в один router-контракт: имена List разводятся, чтобы
+// одна структура могла отдать оба списка.
+type routerNATStateAdapter struct {
+	nat    *ndmsquery.NATStore
+	static *ndmsquery.StaticNATStore
+}
+
+func (a *routerNATStateAdapter) ListNAT(ctx context.Context) ([]ndmsquery.NATEntry, error) {
+	return a.nat.List(ctx)
+}
+
+func (a *routerNATStateAdapter) ListStaticNAT(ctx context.Context) ([]ndmsquery.StaticNATEntry, error) {
+	return a.static.List(ctx)
+}
+
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
 // routerStaticRouteAdapter translates router.StaticRouteSpec (router-local

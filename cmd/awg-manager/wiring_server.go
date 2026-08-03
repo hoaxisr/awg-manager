@@ -339,7 +339,13 @@ func (a *app) setupRouter() {
 			store: a.ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
 		},
-		OpkgTunScan: opkgTunScanner(a.ndmsQueries.Interfaces),
+		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		RunningConfig: a.ndmsQueries.RunningConfig,
+		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		// *RouteStore satisfies DefaultGatewayResolver directly.
+		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {
 			p := router.DefaultFakeIPTunParams()
 			p.CachePath = singbox.DefaultCacheDBPath()

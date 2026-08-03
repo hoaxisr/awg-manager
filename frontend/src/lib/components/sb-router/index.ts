@@ -22,6 +22,7 @@ export { default as StatusDrawer } from './StatusDrawer.svelte';
 export { drawerOpen, openDrawer, closeDrawer, toggleDrawer } from './drawerStore';
 export { default as DepRow } from './DepRow.svelte';
 export { default as IssueRow } from './IssueRow.svelte';
+export { default as PolicyTunCard } from './PolicyTunCard.svelte';
 export type { DepTone, DepEntry, IssueTone, IssueEntry } from './drawerData';
 export { deriveDeps, deriveIssues } from './drawerData';
 

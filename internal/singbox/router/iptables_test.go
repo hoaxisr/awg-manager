@@ -89,7 +89,7 @@ func newFakeExec() *fakeExec {
 // The netfilter.d hook runs on the live router on every NDMS reload — a
 // syntax error would break on each reload. Validate the generated shell.
 func TestNetfilterHookScript_ValidShell(t *testing.T) {
-	script := netfilterHookScript()
+	script := netfilterHookScript(true)
 
 	cmd := exec.Command("sh", "-n")
 	cmd.Stdin = strings.NewReader(script)
@@ -422,7 +422,7 @@ func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, err := os.ReadFile(netfilterHookPath)
@@ -448,7 +448,7 @@ func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, err := os.ReadFile(netfilterHookPath)
@@ -480,7 +480,7 @@ func TestWriteNetfilterHookHasScrub(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, _ := os.ReadFile(netfilterHookPath)
@@ -563,7 +563,7 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 		runIPTables:    rec.runIPTables,
 		runIP:          rec.runIP,
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
@@ -1247,7 +1247,7 @@ func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(dir, "awgm-ctclean.sh")
 	defer func() { netfilterHookPath, netfilterCtCleanPath = old, oldCt }()
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, _ := os.ReadFile(netfilterHookPath)
@@ -1557,7 +1557,7 @@ func TestBuildRestoreInput_NoQoSClasses_NoDscpRules(t *testing.T) {
 }
 
 func TestWriteNetfilterHookPreloadsXtDscp(t *testing.T) {
-	body := netfilterHookScript()
+	body := netfilterHookScript(true)
 	if !strings.Contains(body, "xt_dscp") {
 		t.Errorf("hook preload loop missing xt_dscp:\n%s", body)
 	}
@@ -1770,7 +1770,7 @@ func TestBuildRestoreInput_SplitPerTable(t *testing.T) {
 // not tear down the working nat chain and vice versa. The full rebuild stays
 // as fallback for the upgrade window when per-table files don't exist yet.
 func TestNetfilterHookScript_PerTableFastHeal(t *testing.T) {
-	s := netfilterHookScript()
+	s := netfilterHookScript(true)
 	for _, w := range []string{
 		netfilterMangleRulesPath,
 		netfilterNatRulesPath,
@@ -1836,7 +1836,7 @@ func TestWriteNetfilterHook_WritesCtCleanScript(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = origHook, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	fi, err := os.Stat(netfilterCtCleanPath)
@@ -1867,7 +1867,7 @@ func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
 			persisted = [3]string{combined, mangle, nat}
 			return nil
 		},
-		persistHook: func() error { return nil },
+		persistHook: func(bool) error { return nil },
 		runCtClean:  func(_ context.Context) { order = append(order, "ctclean") },
 	}
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
@@ -1982,7 +1982,7 @@ exit 0
 			os.WriteFile(filepath.Join(bin, "pidof"), []byte("#!/bin/sh\nexit 0\n"), 0755) // sing-box alive
 			os.WriteFile(filepath.Join(bin, "logger"), []byte("#!/bin/sh\nexit 0\n"), 0755)
 
-			script := strings.ReplaceAll(netfilterHookScript(), "/opt/sbin/", bin+"/")
+			script := strings.ReplaceAll(netfilterHookScript(true), "/opt/sbin/", bin+"/")
 			cmd := exec.Command("sh", "-c", script)
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "type=iptables", "table=mangle")
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -2012,5 +2012,54 @@ exit 0
 				t.Errorf("ctclean invoked = %v, want %v\nlog:\n%s", ctCleanSeen, tc.wantCtClean, data)
 			}
 		})
+	}
+}
+
+// Режим policy-tun (DSCPOnly): netfilter нужен ТОЛЬКО для QoS-DSCP-классов —
+// основной трафик уходит NDMS-политикой в tun. Ни catch-all, ни перехвата DNS
+// на основные порты быть не должно: этих инбаундов в режиме просто нет.
+func TestBuildRestoreInput_DSCPOnly(t *testing.T) {
+	spec := RestoreInputSpec{
+		DSCPOnly: true, MatchAll: true,
+		WANIPs:      []string{"1.2.3.4/32"},
+		BypassCIDRs: []string{"203.0.113.0/24"},
+		QoSClasses:  []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51301}},
+	}
+	mangle := buildMangleRestoreInput(spec)
+	nat := buildNatRestoreInput(spec)
+	// НЕТ catch-all и НЕТ перехвата DNS на основной порт
+	for _, banned := range []string{
+		"-p udp -j TPROXY --on-port 51271",
+		"--dport 53 -j TPROXY",
+		"-p tcp -j REDIRECT --to-ports 51272",
+		"--dport 53 -j REDIRECT",
+	} {
+		if strings.Contains(mangle+nat, banned) {
+			t.Errorf("dscp-only must not contain %q", banned)
+		}
+	}
+	// DNS вообще не входит в QoS-диспатчинг: ранний RETURN в обеих цепочках
+	if !strings.Contains(mangle, "-A "+ChainName+" -p udp --dport 53 -j RETURN") {
+		t.Error("mangle: no dns return")
+	}
+	if !strings.Contains(nat, "-A "+RedirectChain+" -p tcp --dport 53 -j RETURN") {
+		t.Error("nat: no dns return")
+	}
+	// DSCP-правила и bypass на месте, jump MatchAll
+	if !strings.Contains(mangle, "-m dscp --dscp 34 -j TPROXY --on-port 51281") {
+		t.Error("mangle: no dscp rule")
+	}
+	if !strings.Contains(nat, "-m dscp --dscp 34 -j REDIRECT --to-ports 51301") {
+		t.Error("nat: no dscp rule")
+	}
+	if !strings.Contains(mangle, "-d 10.0.0.0/8 -j RETURN") || !strings.Contains(mangle, "-d 1.2.3.4/32 -j RETURN") {
+		t.Error("mangle: builtin bypass/WANIP missing")
+	}
+	if !strings.Contains(mangle, "-A PREROUTING -m conntrack ! --ctstate INVALID -j "+ChainName) {
+		t.Error("mangle: no MatchAll jump")
+	}
+	// пользовательский bypass раньше dscp
+	if strings.Index(mangle, "203.0.113.0/24") > strings.Index(mangle, "--dscp 34") {
+		t.Error("user bypass after dscp")
 	}
 }

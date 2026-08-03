@@ -345,6 +345,79 @@ func TestEnsureFakeIPIngress_ExistingIPRuleIsNotAnError(t *testing.T) {
 	}
 }
 
+// testIngressSpecNoDNAT — спек режима policy-tun: перехвата DNS нет (DNS
+// клиентов решает NDMS-политика, а не наш DNAT), поэтому TunDNS пуст.
+func testIngressSpecNoDNAT(ifaces ...string) FakeIPIngressSpec {
+	return FakeIPIngressSpec{TunIface: "opkgtun0", NoDNAT: true, Ifaces: ifaces}
+}
+
+func TestFakeIPIngressSpec_NoDNATActiveWithoutTunDNS(t *testing.T) {
+	if !testIngressSpecNoDNAT("nwg3").active() {
+		t.Error("NoDNAT-спек без TunDNS прочитан как неактивный")
+	}
+	// Остальные обязательные поля от NoDNAT не освобождаются.
+	if testIngressSpecNoDNAT().active() {
+		t.Error("спек без ingress-интерфейсов прочитан как активный")
+	}
+	if (FakeIPIngressSpec{NoDNAT: true, Ifaces: []string{"nwg3"}}).active() {
+		t.Error("спек без TunIface прочитан как активный")
+	}
+	// Путь fakeip не меняется: без TunDNS заворота нет.
+	if (FakeIPIngressSpec{TunIface: "opkgtun0", Ifaces: []string{"nwg3"}}).active() {
+		t.Error("fakeip-спек без TunDNS прочитан как активный")
+	}
+}
+
+func TestFakeIPIngressNATDrift_NoDNAT(t *testing.T) {
+	// Отсутствие DNAT-правил — норма для policy-tun, а не дрейф: иначе ingress
+	// пересобирался бы каждый тик.
+	if fakeIPIngressNATDrift("-P PREROUTING ACCEPT\n", testIngressSpecNoDNAT("nwg3")) {
+		t.Error("отсутствие DNAT прочитано как дрейф при NoDNAT")
+	}
+}
+
+func TestEnsureFakeIPIngress_NoDNATInstallsRoutesOnly(t *testing.T) {
+	rec := &ingressRecorder{natDump: "-P PREROUTING ACCEPT\n", ruleDump: ruleDumpFor()}
+	if err := rec.tables().EnsureFakeIPIngress(context.Background(), testIngressSpecNoDNAT("nwg3")); err != nil {
+		t.Fatalf("EnsureFakeIPIngress() error = %v", err)
+	}
+	for _, call := range rec.ipt {
+		if hasArg(call, "DNAT") {
+			t.Errorf("в режиме NoDNAT поставлено DNAT-правило: %v", call)
+		}
+	}
+	if len(rec.ipt) != 0 {
+		t.Errorf("в режиме NoDNAT netfilter не трогается, получено: %v", rec.ipt)
+	}
+	if n := rec.ipCalls("rule", "add", "iif", "nwg3", "table", fakeIPIngressTableStr()); n != 1 {
+		t.Errorf("iif-правило не добавлено: %v", rec.ip)
+	}
+	if n := rec.ipCalls("route", "add", "default", "dev", "opkgtun0", "table", fakeIPIngressTableStr()); n != 1 {
+		t.Errorf("default-маршрут в tun не добавлен: %v", rec.ip)
+	}
+	for _, cidr := range fakeIPIngressThrowCIDRs {
+		if n := rec.ipCalls("route", "add", "throw", cidr, "table", fakeIPIngressTableStr()); n != 1 {
+			t.Errorf("throw-исключение %s не добавлено: %v", cidr, rec.ip)
+		}
+	}
+}
+
+func TestEnsureFakeIPIngress_NoDNATSteadyStateDoesNotMutate(t *testing.T) {
+	// Установившееся состояние policy-tun: наших DNAT-правил в nat нет вовсе,
+	// зато есть чужое правило NDMS — ни одной мутации быть не должно.
+	rec := &ingressRecorder{
+		natDump:   "-P PREROUTING ACCEPT\n-A PREROUTING -i br0 -p udp -m udp --dport 53 -j REDIRECT --to-ports 40500\n",
+		ruleDump:  ruleDumpFor("nwg3"),
+		routeDump: routeDumpFor("opkgtun0"),
+	}
+	if err := rec.tables().EnsureFakeIPIngress(context.Background(), testIngressSpecNoDNAT("nwg3")); err != nil {
+		t.Fatalf("EnsureFakeIPIngress() error = %v", err)
+	}
+	if len(rec.ipt) != 0 || len(rec.ip) != 0 {
+		t.Errorf("в установившемся состоянии есть мутации: iptables=%v ip=%v", rec.ipt, rec.ip)
+	}
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

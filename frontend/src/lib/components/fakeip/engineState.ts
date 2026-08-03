@@ -15,7 +15,7 @@
 export type FakeIPEngineState = 'not-fakeip' | 'stopped' | 'clash-down' | 'live';
 
 export function deriveFakeIPEngineState(input: {
-	routingMode: 'tproxy' | 'fakeip-tun' | undefined;
+	routingMode: 'tproxy' | 'fakeip-tun' | 'policy-tun' | undefined;
 	enabled: boolean;
 	running: boolean;
 	clashReachable: boolean;

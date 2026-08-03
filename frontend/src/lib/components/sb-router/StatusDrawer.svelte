@@ -23,6 +23,8 @@
   import TrafficSourceSettings from './TrafficSourceSettings.svelte';
   import SelectiveIpsetSnapshot from './SelectiveIpsetSnapshot.svelte';
   import QosSettingsCard from './QosSettingsCard.svelte';
+  import PolicyTunCard from './PolicyTunCard.svelte';
+  import OutboundOption from './OutboundOption.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
@@ -46,19 +48,44 @@
   let sysInfo = $derived($systemInfo.data);
 
   let deps = $derived(deriveDeps(s));
-  let issues = $derived(deriveIssues(s));
-  let issueCount = $derived(issues.length);
   let engineEnabled = $derived(s?.enabled ?? false);
   // Реальная работа перехвата (цепочки + PREROUTING-jump'ы), не просто
   // persisted-тумблер. Заголовок различает «включён, но не работает».
   let engineActive = $derived(engineEnabled && (s?.active ?? false));
 
   // Тумблер/кнопка управляют режимом через общий modeSwitch (детерминированно
-  // tproxy↔off), а не enable/disable «текущего» режима. checked — mode-aware:
-  // «вкл» только когда routingMode==='tproxy' (а не голый enabled).
+  // <выбранный режим>↔off), а не enable/disable «текущего» режима. checked —
+  // mode-aware: «вкл» только когда активен один из режимов этого дровера
+  // (а не голый enabled) — FakeIP живёт на своей вкладке.
   const settings = singboxRouterStore.settings;
-  let tproxyOn = $derived((s?.enabled ?? false) && ($settings?.routingMode === 'tproxy'));
   const switchBusy = $derived(modeSwitchBusy($modeSwitch));
+
+  // Режимы захвата, которыми управляет этот дровер.
+  type CaptureMode = 'tproxy' | 'policy-tun';
+  let activeMode = $derived.by<CaptureMode | null>(() => {
+    if (!(s?.enabled ?? false)) return null;
+    const m = $settings?.routingMode;
+    return m === 'tproxy' || m === 'policy-tun' ? m : null;
+  });
+  let captureOn = $derived(activeMode !== null);
+  // Выбор пользователя в этой сессии — что включит тумблер, пока движок
+  // выключен. Пусто → persisted routingMode (легаси/пустой = tproxy).
+  let pickedMode = $state<CaptureMode | null>(null);
+  let targetMode = $derived<CaptureMode>(
+    activeMode ?? pickedMode ?? ($settings?.routingMode === 'policy-tun' ? 'policy-tun' : 'tproxy'),
+  );
+  let policyTunMode = $derived(targetMode === 'policy-tun');
+
+  // policy-tun-unbound показывает карточка режима (там же ссылка на политики) —
+  // в общем списке замечаний он был бы вторым экземпляром той же строки.
+  let issues = $derived(
+    deriveIssues(
+      policyTunMode && s
+        ? { ...s, issues: (s.issues ?? []).filter((i) => i.kind !== 'policy-tun-unbound') }
+        : s,
+    ),
+  );
+  let issueCount = $derived(issues.length);
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
@@ -105,10 +132,10 @@
 
   // ── Ресурсы: живая память (SSE singbox:memory, Go-рантайм по Clash API) и
   // агрегатный трафик (кумулятивные totals Clash, singbox:traffic-totals).
-  // Секция видна только при работающем TProxy-перехвате: в режиме FakeIP или
-  // после остановки движка SSE замолкает и сторы держат протухшие числа
-  // (окно до ближайшего тика watchdog'а ~30 с — принятая задержка статуса).
-  let resourcesVisible = $derived(engineActive && $settings?.routingMode === 'tproxy');
+  // Секция видна только при работающем режиме этого дровера (tproxy/policy-tun):
+  // в режиме FakeIP или после остановки движка SSE замолкает и сторы держат
+  // протухшие числа (окно до ближайшего тика watchdog'а ~30 с — принятая задержка).
+  let resourcesVisible = $derived(engineActive && activeMode !== null);
   let liveStats = $derived($singboxTrafficLive);
   let memoryLabel = $derived($singboxMemory > 0 ? formatBytes($singboxMemory) : '—');
   let rateLabel = $derived(
@@ -132,10 +159,17 @@
 
   // ── Engine control ──
   function toggleEngine(turnOn: boolean) {
-    modeSwitch.request(turnOn ? 'tproxy' : 'off');
+    modeSwitch.request(turnOn ? targetMode : 'off');
   }
   function handleToggleClick(_e: MouseEvent) {
-    toggleEngine(!tproxyOn);
+    toggleEngine(!captureOn);
+  }
+  // Выбор режима: при выключенном движке только запоминаем цель тумблера,
+  // при включённом — сразу просим переключение (общий confirm + прогресс).
+  function selectMode(m: CaptureMode) {
+    if (switchBusy || m === targetMode) return;
+    pickedMode = m;
+    if (activeMode !== null) modeSwitch.request(m);
   }
   async function restartEngine(_e: MouseEvent) {
     try {
@@ -280,7 +314,7 @@
       <div class="sec-cap">Состояние</div>
       <div class="engine-status" class:state-off={engineState === 'off'} class:state-warn={engineState === 'warn'} class:state-on={engineState === 'on'}>
         <div class="engine-main">
-          <Toggle checked={tproxyOn} controlled loading={switchBusy} onchange={toggleEngine} />
+          <Toggle checked={captureOn} controlled loading={switchBusy} onchange={toggleEngine} />
           <div class="engine-text">
             <div class="engine-head">
               <StatusDot variant={engineDotVariant} size="sm" />
@@ -294,6 +328,25 @@
           <span class="engine-version">{sbVersionLabel}</span>
         </div>
       </div>
+
+      <div class="sec-cap">Режим захвата</div>
+      <div class="card-grid">
+        <OutboundOption
+          label="TPROXY-правила"
+          sub="перехват iptables на роутере"
+          tone="accent"
+          selected={targetMode === 'tproxy'}
+          onclick={() => selectMode('tproxy')}
+        />
+        <OutboundOption
+          label="Политики + tun"
+          sub="захват трафика через политику доступа Keenetic, без TPROXY-правил"
+          tone="accent"
+          selected={targetMode === 'policy-tun'}
+          onclick={() => selectMode('policy-tun')}
+        />
+      </div>
+      <p class="hint">Режим FakeIP включается на своей вкладке «Sing-box → FakeIP».</p>
 
       {#if showCrashInfo}
         <div class="crash-info">
@@ -357,14 +410,24 @@
       </section>
     {/if}
 
+    <!-- Карточка режима «Политики + tun»: статус интерфейса + source-preserve.
+         Видна и новичку — это состояние режима, а не эксперт-настройка. -->
+    {#if policyTunMode && cfg}
+      <PolicyTunCard {cfg} status={s} onPatch={(patch) => applyPatch(patch)} />
+    {/if}
+
     {#if isExpert && cfg}
-      <TrafficSourceSettings
-        {cfg}
-        deviceCount={s?.deviceCount ?? 0}
-        policyExists={s?.policyExists !== false}
-        variant="expert"
-        onPatch={(patch) => void applyPatch(patch)}
-      />
+      <!-- Источник трафика (deviceMode/policy) — только TPROXY: в policy-tun
+           захват задаётся привязкой интерфейса к политике доступа NDMS. -->
+      {#if !policyTunMode}
+        <TrafficSourceSettings
+          {cfg}
+          deviceCount={s?.deviceCount ?? 0}
+          policyExists={s?.policyExists !== false}
+          variant="expert"
+          onPatch={(patch) => void applyPatch(patch)}
+        />
+      {/if}
 
       <!-- WAN-интерфейс -->
       <section class="sec">
@@ -413,7 +476,9 @@
         <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
       </section>
 
-      <!-- Селективный перехват -->
+      <!-- Селективный перехват: ipset-обход существует только у TPROXY-перехвата;
+           в policy-tun трафик заводит политика доступа, обходить нечего. -->
+      {#if !policyTunMode}
       <section class="sec">
         <div class="sec-cap">Селективный перехват</div>
 
@@ -505,6 +570,7 @@
           </p>
         {/if}
       </section>
+      {/if}
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка
            сериализует свои PUT-ы и ресинкается со стором после дренажа очереди. -->
@@ -544,8 +610,8 @@
   {#snippet footer()}
     <div class="footer-actions">
       <div class="footer-btns">
-        <Button variant={tproxyOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
-          {tproxyOn ? 'Выключить' : 'Включить'}
+        <Button variant={captureOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
+          {captureOn ? 'Выключить' : 'Включить'}
         </Button>
         <Button variant="ghost" size="sm" fullWidth onclick={restartEngine}>Перезапустить</Button>
       </div>
@@ -643,6 +709,9 @@
     font-size: 11px;
     color: var(--text-secondary);
   }
+
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 480px) { .card-grid { grid-template-columns: 1fr; } }
 
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field-row {

@@ -145,8 +145,8 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 	if sr.RoutingMode == "" {
 		sr.RoutingMode = "tproxy"
 	}
-	if sr.RoutingMode != "tproxy" && sr.RoutingMode != "fakeip-tun" {
-		return sr, fmt.Errorf("invalid routingMode %q (want tproxy|fakeip-tun)", sr.RoutingMode)
+	if sr.RoutingMode != "tproxy" && sr.RoutingMode != "fakeip-tun" && sr.RoutingMode != "policy-tun" {
+		return sr, fmt.Errorf("invalid routingMode %q (want tproxy|fakeip-tun|policy-tun)", sr.RoutingMode)
 	}
 	if sr.WANAutoDetect && sr.WANInterface != "" {
 		return sr, fmt.Errorf("wanAutoDetect=true requires wanInterface to be empty (got %q)", sr.WANInterface)
@@ -175,6 +175,16 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 		if _, err := time.ParseDuration(sr.UDPTimeout); err != nil {
 			return sr, fmt.Errorf("udpTimeout: invalid duration %q: %w", sr.UDPTimeout, err)
 		}
+	}
+	// source-preserve без списка сегментов — включённая опция, которая ничего не
+	// делает; пустой список при выключенной опции чистим, чтобы персист не тянул
+	// протухший выбор до следующего включения.
+	if sr.PolicyTunSourcePreserve {
+		if len(sr.PolicyTunNATSegments) == 0 {
+			return sr, fmt.Errorf("policyTunSourcePreserve=true requires a non-empty policyTunNatSegments list")
+		}
+	} else {
+		sr.PolicyTunNATSegments = nil
 	}
 	if err := validateQoSClasses(sr.QoSClasses); err != nil {
 		return sr, err

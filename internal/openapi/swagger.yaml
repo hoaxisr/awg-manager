@@ -4191,7 +4191,39 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
+        type: string
+    type: object
+  api.SingboxRouterNATPreviewData:
+    properties:
+      segments:
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
+        type: array
+    type: object
+  api.SingboxRouterNATPreviewResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterNATPreviewData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterNATSegmentDTO:
+    properties:
+      mode:
+        enum:
+        - dynamic
+        - static
+        - none
+        example: dynamic
+        type: string
+      name:
+        example: Home
+        type: string
+      staticWan:
+        example: PPPoE0
         type: string
     type: object
   api.SingboxRouterOutboundDTO:
@@ -4675,13 +4707,31 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunNatSegments:
+        description: |-
+          PolicyTunNATSegments — выбранные пользователем сегменты для
+          source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
+          Обнуляется бэкендом при policyTunSourcePreserve=false.
+        example:
+        - Home
+        items:
+          type: string
+        type: array
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve переводит выбранные сегменты на static-NAT в WAN,
+          чтобы sing-box видел реальные адреса клиентов, а не маскарад в tun.
+          Требует непустого policyTunNatSegments (иначе 400).
+        example: true
+        type: boolean
       qosClasses:
         description: |-
           QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
           outbounds. At most 8 classes; DSCP must be 0-63 and unique across
           classes; outbound is required; name is limited to 32 characters.
-          Only effective when routingMode is "tproxy" and xt_dscp is available
-          (see status.xtDscpAvailable). Empty = feature off.
+          Only effective when routingMode is "tproxy" or "policy-tun" (DSCP-only
+          hybrid) and xt_dscp is available (see status.xtDscpAvailable).
+          Empty = feature off.
         items:
           $ref: '#/definitions/api.SingboxRouterQoSClassDTO'
         type: array
@@ -4689,6 +4739,7 @@ definitions:
         enum:
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       snifferEnabled:
@@ -4794,6 +4845,24 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunIface:
+        description: |-
+          PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+          интерфейса. Заполнены при Enabled+Provisioned (ДО того как режим стал
+          active): по NDMS-имени пользователь разрешает интерфейс в политике
+          доступа. Пусто вне policy-tun и при выключенном движке.
+        example: opkgtun0
+        type: string
+      policyTunNdmsName:
+        example: OpkgTun0
+        type: string
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve — применённый режим NAT сегментов (static-NAT
+          вместо маскарада). Указатель: отсутствует = «неприменимо» (не policy-tun
+          или движок выключен), false = «применимо и выключено».
+        example: true
+        type: boolean
       restartSuppressedUntil:
         description: |-
           RestartSuppressedUntil — RFC3339-время окончания паузы авто-перезапуска
@@ -4841,6 +4910,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       from:
@@ -4848,6 +4918,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       step:
@@ -4857,6 +4928,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       transitionId:
@@ -14458,7 +14530,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun):
+      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun):
         tears down the old mode then brings up the new one, with directional fail-closed
         rollback. Per-step progress is published as "singbox-router:transition" events
         on the existing GET /events SSE stream (see SingboxRouterTransitionData).
@@ -14766,6 +14838,33 @@ paths:
       security:
       - CookieAuth: []
       summary: Unbind device from singbox-router policy
+      tags:
+      - singbox-router
+  /singbox/router/policy-tun/nat-preview:
+    get:
+      description: Returns router segments with their current NAT mode (dynamic `ip
+        nat` / static `ip static <seg> <wan>` / none) — the editable "what will change"
+        preview behind the policy-tun source-preserve toggle. Port-forwarding `ip
+        static` entries (no to-interface) and the manager's own OpkgTun interfaces
+        are excluded.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterNATPreviewResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Preview policy-tun source-preserve segments
       tags:
       - singbox-router
   /singbox/router/presets/apply:
