@@ -58,7 +58,7 @@
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
-	import { AppHeader } from '$lib/components/layout';
+	import { AppHeader, AppSidebar } from '$lib/components/layout';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
@@ -434,9 +434,14 @@
 	{#if !$isAuthenticated && $page.url.pathname !== '/terms'}
 		<LoginForm />
 	{:else}
-		<main class="main">
-			{@render children()}
-		</main>
+		<div class="app-body">
+			{#if $isAuthenticated}
+				<AppSidebar bind:mobileOpen={mobileMenuOpen} />
+			{/if}
+			<main class="main">
+				{@render children()}
+			</main>
+		</div>
 
 		<div class="toast-container">
 			{#if $notifications.length > 1}
@@ -539,11 +544,22 @@
 		to { transform: rotate(360deg); }
 	}
 
+	.app-body {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		width: 100%;
+		overflow: hidden;
+	}
+
 	.main {
 		flex: 1;
+		min-width: 0;
 		width: 100%;
 		display: flex;
 		flex-direction: column;
+		overflow-x: hidden;
+		overflow-y: auto;
 	}
 
 	/* v2.8.2: колонка контента 960px, боковые поля 1rem (компактная ширина). */

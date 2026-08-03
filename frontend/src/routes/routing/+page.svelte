@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, untrack } from 'svelte';
     import { get } from 'svelte/store';
     import { goto } from '$app/navigation';
     import { browser } from '$app/environment';
@@ -19,7 +19,8 @@
     import { notifications } from '$lib/stores/notifications';
     import { PageContainer, PageHeader } from '$lib/components/layout';
     import { Search } from 'lucide-svelte';
-    import { Tabs, Button, Modal } from '$lib/components/ui';
+    import { Button, Modal } from '$lib/components/ui';
+    import { writeTabParam } from '$lib/utils/tabUrlSync';
     import { RoutingSearch } from '$lib/components/routing';
     import DnsRoutesTab from './DnsRoutesTab.svelte';
     import IpRoutesTab from './IpRoutesTab.svelte';
@@ -63,6 +64,7 @@
     });
 
     let activeTab = $state<'hrneo' | 'geodata' | 'dns' | 'ip' | 'policy' | 'clientvpn' | 'singbox' | 'fakeip'>('dns');
+    let tabUrlConsumed = $state(false);
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
@@ -345,6 +347,26 @@
         }
     });
 
+    $effect(() => {
+        const fromUrl = $page.url.searchParams.get('tab');
+        if (fromUrl == null) {
+            tabUrlConsumed = true;
+            return;
+        }
+        if (fromUrl === untrack(() => activeTab)) {
+            tabUrlConsumed = true;
+            return;
+        }
+        if (!tabsInclude(tabItems, fromUrl)) return;
+        tabUrlConsumed = true;
+        activeTab = fromUrl as typeof activeTab;
+    });
+
+    $effect(() => {
+        if (!tabUrlConsumed) return;
+        writeTabParam(activeTab, { defaultTab: 'dns' });
+    });
+
 </script>
 
 <svelte:head>
@@ -379,14 +401,6 @@
             </Button>
         {/snippet}
     </PageHeader>
-
-    <Tabs
-        tabs={tabItems}
-        active={activeTab}
-        onchange={(id) => requestTab(id)}
-        urlParam="tab"
-        defaultTab="dns"
-    />
 
     {#if activeTab === 'hrneo'}
         <HrNeoTab

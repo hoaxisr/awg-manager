@@ -21,7 +21,6 @@
 	import {
 		TrafficSparkline,
 		Badge,
-		Tabs,
 		Toggle,
 		StatusDot,
 		Stat,
@@ -43,6 +42,7 @@
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
+	import { writeTabParam } from '$lib/utils/tabUrlSync';
 	import type { DashboardFlatContext } from '$lib/components/tunnels/dashboardFlatContext';
 	import type { TunnelPageModalsContext } from '$lib/components/tunnels/tunnelPageModalsContext';
 	import {
@@ -553,6 +553,7 @@
 
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
+	let tabUrlConsumed = $state(false);
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
@@ -776,6 +777,31 @@
 		if (!tunnelTabs.some((t) => tunnelTabLeafIds(t).includes(activeTab))) {
 			activeTab = 'awg';
 		}
+	});
+
+	// ?tab= sync (replaces Tabs urlParam when horizontal chips are in the sidebar).
+	$effect(() => {
+		if (dashboardOn) {
+			tabUrlConsumed = true;
+			return;
+		}
+		const fromUrl = $page.url.searchParams.get('tab');
+		if (fromUrl == null) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (fromUrl === untrack(() => activeTab)) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (!tunnelTabs.some((t) => tunnelTabLeafIds(t).includes(fromUrl))) return;
+		tabUrlConsumed = true;
+		activeTab = fromUrl as TunnelTab;
+	});
+
+	$effect(() => {
+		if (dashboardOn || !tabUrlConsumed) return;
+		writeTabParam(activeTab, { defaultTab: 'awg' });
 	});
 
 	onMount(() => {
@@ -1710,10 +1736,6 @@
 	<WelcomeBanner />
 	{#if loading}
 		<div aria-hidden="true">
-			{#if !dashboardOn}
-				<!-- полоса на месте Tabs -->
-				<div class="skeleton" style="height: 2rem; width: 260px; margin-bottom: 14px;"></div>
-			{/if}
 			{#if !dashboardOn && awgViewMode === 'list' && !isAwgMobile}
 				<!-- desktop-таблица: строки-полоски (mobile list рендерится карточками — ветка ниже) -->
 				<div class="skel-table">
@@ -1745,14 +1767,6 @@
 	{:else}
 		{#if dashboardOn}
 			<DashboardFlatSection ctx={dashboardFlatCtx} />
-		{:else}
-			<Tabs
-				tabs={tunnelTabs}
-				active={activeTab}
-				onchange={(id) => (activeTab = id as TunnelTab)}
-				urlParam="tab"
-				defaultTab="awg"
-			/>
 		{/if}
 
 		{#if dashboardTypeSections && awgFilteredRowsCount > 0}
