@@ -732,12 +732,25 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 // problem: conntrack records the DNAT for SYN, established packets
 // are auto-translated.
 //
-// Both inbounds bind to 0.0.0.0 because iptables REDIRECT rewrites
-// the packet destination to the *primary IP of the inbound interface*
-// (e.g. 10.10.10.1 on br0), NOT to 127.0.0.1. A listener on 127.0.0.1
-// would never see redirected packets — kernel emits RST. SKeen uses
-// "::" for the same reason.
-const inboundListen = "0.0.0.0"
+// The two inbounds bind to DIFFERENT addresses (issue #689):
+//
+// tproxy-in → 127.0.0.1. The TPROXY target diverts packets to the
+// socket bound at --on-ip 127.0.0.1 (iptables.go), so a loopback
+// listener receives every diverted packet. A 0.0.0.0 bind additionally
+// accepted *normally delivered* UDP — any datagram addressed to a
+// router IP on TPROXYPort landed on the wildcard socket, sing-box
+// relayed it to its "destination" (the router itself) via direct, and
+// the relay re-entered the same socket: a self-sustaining flow loop
+// (thousands of UDP flows, CPU pegged in softirq).
+//
+// redirect-in → 0.0.0.0. NAT REDIRECT rewrites the packet destination
+// to the *primary IP of the inbound interface* (e.g. 10.10.10.1 on
+// br0), NOT to 127.0.0.1. A listener on 127.0.0.1 would never see
+// redirected packets — kernel emits RST (96a61c77).
+const (
+	tproxyListen   = "127.0.0.1"
+	redirectListen = "0.0.0.0"
+)
 
 // DefaultUDPTimeout is the fallback UDP session timeout when the user has not
 // configured a custom value. It matches sing-box's built-in C.UDPTimeout (5m):
@@ -783,16 +796,16 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 			if in[i].RoutingMark != 0 {
 				in[i].RoutingMark = 0
 			}
-			if in[i].Listen != inboundListen {
-				in[i].Listen = inboundListen
+			if in[i].Listen != tproxyListen {
+				in[i].Listen = tproxyListen
 			}
 		case "redirect-in":
 			hasRedirect = true
 			if !in[i].TCPFastOpen {
 				in[i].TCPFastOpen = true
 			}
-			if in[i].Listen != inboundListen {
-				in[i].Listen = inboundListen
+			if in[i].Listen != redirectListen {
+				in[i].Listen = redirectListen
 			}
 		}
 	}
@@ -801,7 +814,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 		out = append([]Inbound{{
 			Type:        "tproxy",
 			Tag:         "tproxy-in",
-			Listen:      inboundListen,
+			Listen:      tproxyListen,
 			ListenPort:  TPROXYPort,
 			Network:     "udp",
 			UDPFragment: true,
@@ -812,7 +825,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 		out = append([]Inbound{{
 			Type:        "redirect",
 			Tag:         "redirect-in",
-			Listen:      inboundListen,
+			Listen:      redirectListen,
 			ListenPort:  RedirectPort,
 			TCPFastOpen: true,
 		}}, out...)
