@@ -1,36 +1,28 @@
 <script lang="ts">
+	// «Диагностика» — разовые проверки. Оперативные поверхности (Журнал,
+	// Мониторинг, Соединения) вынесены отдельными пунктами сайдбара, здесь
+	// остаётся то, что открывают по случаю.
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { TunnelListItem, SingboxTunnel, Subscription } from '$lib/types';
 	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
-	import { LogsTerminal } from '$lib/components/diagnostics';
-	import ConnectionsTab from './ConnectionsTab.svelte';
 	import ChecksTab from './ChecksTab.svelte';
-	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
 	import AboutDeviceTab from './AboutDeviceTab.svelte';
+	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
 	import DnsInfoTab from './DnsInfoTab.svelte';
-	import { MonitoringTab } from '$lib/components/pingcheck';
 
-	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns';
+	type ActiveTab = 'checks' | 'about' | 'awgConfig' | 'dns';
 
-	function initialDiagnosticsTab(): ActiveTab {
+	function initialTab(): ActiveTab {
 		const tab = $page.url.searchParams.get('tab');
-
-		if (tab === 'monitoring') return 'monitoring';
-		if (tab === 'connections') return 'connections';
-		if (tab === 'checks') return 'checks';
 		if (tab === 'about') return 'about';
 		if (tab === 'awgConfig') return 'awgConfig';
 		if (tab === 'dns') return 'dns';
-
-		// legacy aliases, чтобы первый render тоже сразу попадал в checks
-		if (tab === 'tests' || tab === 'dnscheck') return 'checks';
-
-		return 'logs';
+		return 'checks';
 	}
 
 	function singboxKind(protocol: string, security?: string): string {
@@ -41,22 +33,18 @@
 		return protocol;
 	}
 
-	let activeTab = $state<ActiveTab>(initialDiagnosticsTab());
+	let activeTab = $state<ActiveTab>(initialTab());
 	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
 
-	const diagnosticsTabs: { id: ActiveTab; label: string }[] = [
-		{ id: 'logs', label: 'Журнал' },
-		{ id: 'monitoring', label: 'Мониторинг' },
-		{ id: 'connections', label: 'Соединения' },
+	const tabs: { id: ActiveTab; label: string }[] = [
 		{ id: 'checks', label: 'Проверки' },
 		{ id: 'about', label: 'Окружение' },
 		{ id: 'awgConfig', label: 'Конфиг AWG' },
 		{ id: 'dns', label: 'Сведения о DNS' },
 	];
 
-	// Legacy URL sanitizer — rewrite ?tab=tests / ?tab=dnscheck (which used
-	// to render the health rail inside the logs tab) to ?tab=checks BEFORE
-	// the Tabs primitive reads the URL. Runs synchronously at init.
+	// Санитайзер старых значений: ?tab=tests / ?tab=dnscheck переписываем в
+	// checks ДО того, как примитив Tabs прочитает URL.
 	{
 		const sp = new URLSearchParams($page.url.search);
 		const t = sp.get('tab');
@@ -68,12 +56,12 @@
 	}
 
 	onMount(async () => {
-		// Combine three target sources for the diagnostics rail:
-		//   1. AWG/managed tunnels (snap.tunnels) — system NativeWG and external
-		//      adopted tunnels are excluded; diagnostics must not run against them.
-		//   2. Sing-box tunnels (one row per outbound).
-		//   3. Active+enabled subscription members (sing-box prefixed).
-		// Failures in optional sources degrade silently to empty list.
+		// Три источника целей для рейла проверок:
+		//   1. AWG/managed туннели (системные NativeWG и внешние исключены —
+		//      диагностику по ним гонять нельзя);
+		//   2. sing-box туннели (строка на outbound);
+		//   3. активные члены включённых подписок (с префиксом singbox).
+		// Отказ необязательных источников молча вырождается в пустой список.
 		try {
 			const [snap, singboxTunnels, subscriptions] = await Promise.all([
 				api.getTunnelsAll(),
@@ -106,18 +94,17 @@
 				const m = (sub.members ?? []).find((member) => member.tag === activeTag);
 				subscriptionMembers.push({
 					id: `singbox:${activeTag}`,
-					// Prefer subscription label so the user sees the subscription
-					// name rather than a raw outbound tag.
+					// Имя подписки понятнее сырого тега outbound'а.
 					name: sub.label || m?.label || activeTag,
 					kind: m?.protocol ? singboxKind(m.protocol) : undefined,
-					// Members are checked through the sing-box process,
-					// so default to 'running' for rail visibility.
+					// Члены проверяются через процесс sing-box — для видимости
+					// в рейле считаем их запущенными.
 					status: 'running',
 				});
 			}
 
-			// Subscription members come before raw sing-box tunnels so their
-			// friendly names win the dedup map when the ids collide.
+			// Члены подписок идут перед сырыми туннелями sing-box, чтобы при
+			// совпадении id в дедуп-карте побеждало понятное имя.
 			const uniq = new Map<string, DiagnosticsTargetSeed>();
 			for (const t of [...awg, ...subscriptionMembers, ...singbox]) {
 				if (!uniq.has(t.id)) uniq.set(t.id, t);
@@ -129,13 +116,13 @@
 	});
 
 	const pageTitle = $derived(
-		activeTab === 'connections' ? 'Соединения · Инструменты' :
-		activeTab === 'checks' ? 'Проверки · Инструменты' :
-		activeTab === 'about' ? 'Окружение · Инструменты' :
-		activeTab === 'awgConfig' ? 'Конфиг AWG · Инструменты' :
-		activeTab === 'dns' ? 'Сведения о DNS · Инструменты' :
-		activeTab === 'monitoring' ? 'Мониторинг · Инструменты' :
-		'Журнал · Инструменты',
+		activeTab === 'about'
+			? 'Окружение · Диагностика'
+			: activeTab === 'awgConfig'
+				? 'Конфиг AWG · Диагностика'
+				: activeTab === 'dns'
+					? 'Сведения о DNS · Диагностика'
+					: 'Проверки · Диагностика',
 	);
 </script>
 
@@ -144,25 +131,17 @@
 </svelte:head>
 
 <PageContainer>
-	<PageHeader title="Инструменты" />
+	<PageHeader title="Диагностика" />
 
 	<Tabs
-		tabs={diagnosticsTabs}
+		{tabs}
 		active={activeTab}
 		onchange={(id) => (activeTab = id as ActiveTab)}
 		urlParam="tab"
-		defaultTab="logs"
+		defaultTab="checks"
 	/>
 
-	{#if activeTab === 'logs'}
-		<!-- Журнал — только действия приложения; логи sing-box смотрятся на своих
-		     вкладках (Sing-box: TProxy → «Логи», Sing-box: FakeIP → «Журнал»). -->
-		<LogsTerminal lockBucket="app" />
-	{:else if activeTab === 'monitoring'}
-		<MonitoringTab />
-	{:else if activeTab === 'connections'}
-		<ConnectionsTab />
-	{:else if activeTab === 'checks'}
+	{#if activeTab === 'checks'}
 		<ChecksTab {tunnels} />
 	{:else if activeTab === 'about'}
 		<AboutDeviceTab />

@@ -212,7 +212,7 @@
 	function buildIncidentIssueBody(): string {
 		const pagePath = typeof window !== 'undefined'
 			? `${window.location.pathname}${window.location.search}${window.location.hash}`
-			: '/tools';
+			: '/diagnostics';
 		return [
 			'## Что произошло',
 			'',

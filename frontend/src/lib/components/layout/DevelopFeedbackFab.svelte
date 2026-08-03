@@ -22,7 +22,7 @@
 	function handleIncident() {
 		closeModal();
 		requestDevelopFeedbackIncident();
-		void goto('/tools?tab=checks');
+		void goto('/diagnostics?tab=checks');
 	}
 
 	function goToFeedbackSetting(e: MouseEvent) {

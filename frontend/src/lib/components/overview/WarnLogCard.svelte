@@ -37,7 +37,7 @@
 <div class="log">
 	<div class="head">
 		<span class="title">Журнал · WARN / ERROR</span>
-		<a class="link" href="/tools?tab=logs">весь журнал →</a>
+		<a class="link" href="/logs">весь журнал →</a>
 	</div>
 
 	{#if loading && entries.length === 0}
