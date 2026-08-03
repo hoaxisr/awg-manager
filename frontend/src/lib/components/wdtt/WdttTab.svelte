@@ -155,6 +155,7 @@
 			captchaMode: c.captchaMode || 'rjs',
 			deviceId: c.deviceId ?? '',
 			sub: c.sub ?? '',
+			connMode: c.connMode === 'raw' ? 'raw' : 'wg',
 			debug: !!c.debug
 		};
 	}
@@ -172,6 +173,7 @@
 			policy: s.policy || 'none',
 			lanSegments: s.lanSegments ?? [],
 			ingressEnabled: !!s.ingressEnabled,
+			relayMode: s.relayMode === 'raw' ? 'raw' : 'wg',
 			debug: !!s.debug
 		};
 	}
@@ -224,6 +226,8 @@
 		if (!status || ensuringWg) return;
 		const id = selectedClientId;
 		if (wgEnsureSettled.has(id)) return;
+		const clientCfg = config?.clients.find((c) => c.id === id)?.config;
+		if (clientCfg?.connMode === 'raw') return;
 		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
@@ -570,6 +574,9 @@
 			if (payload.listen && !subUrl && listenPort == null) c.listen = payload.listen;
 			if (subUrl) c.sub = subUrl;
 			if (payload.deviceId) c.deviceId = payload.deviceId;
+			if (payload.connMode === 'raw' || payload.connMode === 'wg') {
+				c.connMode = payload.connMode;
+			}
 
 			const clientName = meta?.clientName?.trim();
 			if (clientName && clientName !== selectedClient.name) {
@@ -590,7 +597,8 @@
 			if (subUrl) msg += ' (URL подписки сохранён)';
 
 			const wg = payload.wg?.trim();
-			if (wg) {
+			const useWgTunnel = (c.connMode ?? 'wg') !== 'raw';
+			if (wg && useWgTunnel) {
 				try {
 					const portForTunnel =
 						listenPort ?? linkedTunnelListenPort(c.listen, payload.listen);

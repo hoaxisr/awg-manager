@@ -488,6 +488,7 @@ func normalizeClientConfig(cfg ClientConfig) ClientConfig {
 	if cfg.VKAuthMode == "" {
 		cfg.VKAuthMode = DefaultClientConfig().VKAuthMode
 	}
+	cfg.ConnMode = normalizeConnMode(cfg.ConnMode)
 	return cfg
 }
 
@@ -510,6 +511,9 @@ func buildClientArgs(c ClientConfig) []string {
 	str("-device-id", c.DeviceID)
 	str("-captcha-mode", normalizeCaptchaMode(c.CaptchaMode))
 	str("-vk-auth-mode", c.VKAuthMode)
+	if mode := normalizeConnMode(c.ConnMode); mode == ConnModeRaw {
+		args = append(args, "-mode", mode)
+	}
 	return args
 }
 

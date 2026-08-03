@@ -400,6 +400,22 @@
 								await onSave(server);
 							}}
 						/>
+						<SegmentedControl
+							ariaLabel="Режим relay сервера"
+							value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
+							options={[
+								{ value: 'wg', label: 'WG' },
+								{ value: 'raw', label: 'Raw' }
+							]}
+							onchange={(v) => (server.relayMode = v)}
+						/>
+						<p class="wdtt-hint">
+							{#if (server.relayMode ?? 'wg') === 'raw'}
+								Raw — без WireGuard на сервере (qWDTT 1.4+). После смены режима перезапустите сервер.
+							{:else}
+								WG — совместимость с прежними клиентами и AWG-туннелем на роутере.
+							{/if}
+						</p>
 					</ProxyQuickStartStep>
 				{:else if stepId === 'link'}
 					<ProxyQuickStartStep
@@ -471,8 +487,20 @@
 						<Button variant="secondary" size="sm" onclick={randomPassword}>Сгенерировать</Button>
 					</div>
 				</label>
+				<SegmentedControl
+					ariaLabel="Режим relay сервера"
+					value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
+					options={[
+						{ value: 'wg', label: 'WG' },
+						{ value: 'raw', label: 'Raw' }
+					]}
+					onchange={(v) => (server.relayMode = v)}
+				/>
 				<p class="wdtt-readonly">
-					DTLS: <code>{server.listen || '0.0.0.0:56002'}</code> · WG: <code>{server.wgPort || 56001}</code>
+					DTLS: <code>{server.listen || '0.0.0.0:56002'}</code>
+					{#if (server.relayMode ?? 'wg') !== 'raw'}
+						· WG: <code>{server.wgPort || 56001}</code>
+					{/if}
 				</p>
 				<Toggle
 					label="Открыть DTLS-порт в firewall"

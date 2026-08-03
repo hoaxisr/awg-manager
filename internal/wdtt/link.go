@@ -302,6 +302,7 @@ func parseQwdttURI(link string) (ImportPayload, error) {
 		Listen:   listen,
 		DeviceID: firstQuery(q, "deviceId", "device-id", "did"),
 		SubURL:   normalizeSubURL(firstQuery(q, "sub", "subUrl", "sub_url")),
+		ConnMode: firstQuery(q, "mode", "connMode", "relayMode"),
 	}, nil
 }
 
@@ -358,6 +359,7 @@ func mapJSONProfile(raw map[string]interface{}) (ImportPayload, error) {
 		DeviceID: firstStr(raw, "deviceId", "device_id", "did"),
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
 		WG:       firstStr(raw, "wg", "conf", "config"),
+		ConnMode: firstStr(raw, "mode", "connMode", "relayMode"),
 	}, nil
 }
 
@@ -636,6 +638,9 @@ func ApplyImport(cfg ClientConfig, p ImportPayload) ClientConfig {
 	}
 	if p.DeviceID != "" {
 		cfg.DeviceID = p.DeviceID
+	}
+	if p.ConnMode != "" {
+		cfg.ConnMode = normalizeConnMode(p.ConnMode)
 	}
 	// Enabled = «пользователь запустил»; импорт сам по себе не запуск, поэтому
 	// флаг здесь не трогаем (иначе автостарт на бооте поднял бы неготовый клиент).
