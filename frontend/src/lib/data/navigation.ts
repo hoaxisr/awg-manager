@@ -5,7 +5,10 @@ import {
 	Waypoints,
 	Globe,
 	Activity,
-	Wrench,
+	ScrollText,
+	Gauge,
+	Network,
+	Stethoscope,
 	Settings,
 } from 'lucide-svelte';
 
@@ -101,9 +104,10 @@ export const NAV_TREE: NavEntry[] = [
 			},
 			{
 				// Принцип IA: все sing-box inbound/outbound/endpoint — подпункты
-				// группы Sing-box. AWG3 — endpoint sing-box, поэтому здесь.
+				// группы Sing-box. Маршрут остаётся /sb/awg3: у пользователей
+				// есть закладки, переименование затрагивает только надпись.
 				id: 'sb-awg3',
-				label: 'AWG3',
+				label: 'Endpoints',
 				href: '/sb/awg3',
 				match: (url) => isPath(url, '/sb/awg3'),
 			},
@@ -190,11 +194,38 @@ export const NAV_TREE: NavEntry[] = [
 	},
 	{
 		kind: 'link',
-		id: 'tools',
-		label: 'Инструменты',
-		icon: Wrench,
-		href: '/tools',
-		match: (url) => isPath(url, '/tools'),
+		id: 'logs',
+		label: 'Журнал',
+		icon: ScrollText,
+		href: '/logs',
+		match: (url) => isPath(url, '/logs'),
+	},
+	{
+		kind: 'link',
+		id: 'monitoring',
+		label: 'Мониторинг',
+		icon: Gauge,
+		href: '/monitoring',
+		match: (url) => isPath(url, '/monitoring'),
+	},
+	{
+		// Соединения роутера (conntrack). Соединения движка sing-box — своя
+		// сущность и живут в группе Sing-box.
+		kind: 'link',
+		id: 'connections',
+		label: 'Соединения',
+		icon: Network,
+		href: '/connections',
+		match: (url) => isPath(url, '/connections'),
+	},
+	{
+		kind: 'link',
+		id: 'diagnostics',
+		label: 'Диагностика',
+		icon: Stethoscope,
+		href: '/diagnostics',
+		// ?tab= выбирает вкладку внутри страницы, на подсветку не влияет.
+		match: (url) => isPath(url, '/diagnostics'),
 	},
 	{
 		kind: 'link',

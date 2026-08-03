@@ -103,11 +103,31 @@ describe('activeItem', () => {
 	it('гео-данные на своём маршруте', () => {
 		expect(activeItem(u('/sb/geodata'))?.item.id).toBe('sb-geodata');
 	});
-	it('серверы и инструменты', () => {
+	it('серверы, журнал и настройки', () => {
 		expect(activeItem(u('/awg/servers'))?.item.id).toBe('awg-servers');
 		expect(activeItem(u('/awg/servers/managed-asc?id=x'))?.item.id).toBe('awg-servers');
-		expect(activeItem(u('/tools?tab=logs'))?.item.id).toBe('tools');
+		expect(activeItem(u('/logs'))?.item.id).toBe('logs');
 		expect(activeItem(u('/settings'))?.item.id).toBe('settings');
+	});
+	it('оперативные поверхности — пункты верхнего уровня', () => {
+		expect(activeItem(u('/logs'))?.item.id).toBe('logs');
+		expect(activeItem(u('/monitoring'))?.item.id).toBe('monitoring');
+		expect(activeItem(u('/connections'))?.item.id).toBe('connections');
+		expect(activeItem(u('/diagnostics'))?.item.id).toBe('diagnostics');
+	});
+	it('вкладки диагностики не меняют подсветку раздела', () => {
+		expect(activeItem(u('/diagnostics?tab=about'))?.item.id).toBe('diagnostics');
+		expect(activeItem(u('/diagnostics?tab=dns'))?.item.id).toBe('diagnostics');
+	});
+	it('раздела «Инструменты» в дереве больше нет', () => {
+		const ids = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items.map((i) => i.id) : [e.id]));
+		expect(ids).not.toContain('tools');
+		expect(activeItem(u('/tools'))).toBeNull();
+	});
+	it('AWG3-раздел называется Endpoints', () => {
+		const sb = NAV_TREE.find((e) => e.kind === 'group' && e.id === 'sb');
+		const item = sb?.kind === 'group' ? sb.items.find((i) => i.id === 'sb-awg3') : undefined;
+		expect(item?.label).toBe('Endpoints');
 	});
 	it('неизвестный путь → null', () => {
 		expect(activeItem(u('/nope'))).toBeNull();
