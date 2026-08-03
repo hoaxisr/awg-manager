@@ -239,6 +239,9 @@ export function extractMatcherChips(
       rulesetType: resolved ? rulesetTypes.get(resolved.tag) : rulesetTypes.get(rs),
     });
   }
+  if (rule.network === 'tcp' || rule.network === 'udp') {
+    chips.push({ kind: 'protocol', label: rule.network.toUpperCase() });
+  }
   if (rule.protocol) {
     chips.push({ kind: 'protocol', label: rule.protocol });
   }
