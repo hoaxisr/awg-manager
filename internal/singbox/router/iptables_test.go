@@ -1710,36 +1710,21 @@ func TestIsXtDscpAvailable_PositiveResultCachedForever(t *testing.T) {
 	}
 }
 
-// Issue #490: keendns-пресет (destination-IP) должен долетать до всех трёх
-// цепочек ранним `-d <ip> -j RETURN` — ДО DNS-перехвата в mangle и до
-// catch-all в nat, ровно как ручные bypassExtraSubnets.
-func TestBuildRestoreInput_KeenDNSPresetCIDR(t *testing.T) {
+// Issue #490 (updated): keendns is no longer an iptables CIDR preset —
+// it drives managed DNS rewrites. resolveBypassCIDRs must not emit the
+// shared cloud IP (would hijack every foreign *.netcraze.pro on LAN).
+func TestBuildRestoreInput_KeenDNSPresetNoCIDR(t *testing.T) {
 	cidrs, err := resolveBypassCIDRs([]string{"keendns"}, "")
 	if err != nil {
 		t.Fatalf("resolveBypassCIDRs: %v", err)
 	}
+	if len(cidrs) != 0 {
+		t.Fatalf("keendns must not contribute BypassCIDRs, got %v", cidrs)
+	}
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", BypassCIDRs: cidrs}
-
 	out := buildRestoreInput(spec)
-	ret := "-d 78.47.125.180/32 -j RETURN"
-	tproxyRet := "-A " + ChainName + " " + ret
-	redirectRet := "-A " + RedirectChain + " " + ret
-	if !strings.Contains(out, tproxyRet) {
-		t.Errorf("TPROXY chain missing keendns bypass: %s", out)
-	}
-	if !strings.Contains(out, redirectRet) {
-		t.Errorf("REDIRECT chain missing keendns bypass: %s", out)
-	}
-	// RETURN стоит раньше DNS-перехвата — иначе DNS к роутеру на этом IP
-	// всё равно уходил бы в sing-box.
-	dnsIntercept := strings.Index(out, "--dport 53 -j TPROXY")
-	if bypassIdx := strings.Index(out, tproxyRet); dnsIntercept >= 0 && bypassIdx > dnsIntercept {
-		t.Errorf("keendns bypass must precede DNS intercept: bypass@%d, dns@%d", bypassIdx, dnsIntercept)
-	}
-
-	bh := buildBlackholeRestoreInput(spec)
-	if !strings.Contains(bh, "-A "+BlackholeChain+" "+ret) {
-		t.Errorf("blackhole chain missing keendns bypass: %s", bh)
+	if strings.Contains(out, "78.47.125.180") {
+		t.Errorf("iptables must not hardcode KeenDNS cloud IP from keendns preset:\n%s", out)
 	}
 }
 

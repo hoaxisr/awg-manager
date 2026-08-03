@@ -3579,6 +3579,9 @@ definitions:
         items:
           type: string
         type: array
+      managed:
+        example: keendns
+        type: string
       pattern:
         example: finland10*.discord.media
         type: string
@@ -4613,9 +4616,9 @@ definitions:
         type: string
       bypassPresets:
         description: |-
-          BypassPresets lists active named port-bypass presets.
+          BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). Default includes "keendns".
+          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
         example:
         - keendns
         items:

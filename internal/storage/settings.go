@@ -276,9 +276,8 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
-			// KeenDNS/CrazeDNS cloud IP must bypass TPROXY by default (#490):
-			// otherwise LAN-only *.keenetic.pro / *.netcraze.* open as
-			// unavailable or hit the router web UI.
+			// KeenDNS/CrazeDNS: managed DNS rewrite of own FQDN → LAN
+			// (not iptables /32 for the shared cloud IP).
 			BypassPresets: []string{"keendns"},
 		},
 		CreateNDMSProxyForSingbox: true,

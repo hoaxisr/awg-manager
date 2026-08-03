@@ -70,6 +70,11 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err := s.reapplyFakeIPOverlay(ctx, settings); err != nil {
 		return err
 	}
+	// Пресет keendns применяем здесь, а не только внутри Reconcile: тот
+	// пропускает тик целиком, если transitionMu занят сменой режима, и
+	// снятие пресета молча не доехало бы. Повторный вызов из Reconcile —
+	// no-op (набор уже совпадает).
+	s.syncKeenDNSRewrites(ctx, normalized)
 	return s.Reconcile(ctx)
 }
 

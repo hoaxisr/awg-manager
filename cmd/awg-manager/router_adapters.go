@@ -12,15 +12,21 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-// Compile-time guarantee that routerAccessPolicyAdapter satisfies
-// router.AccessPolicyProvider — catches interface drift at the
-// declaration line instead of at the wiring callsite in main.go.
-var _ router.AccessPolicyProvider = (*routerAccessPolicyAdapter)(nil)
+// Compile-time guarantees that the adapters satisfy their router-side
+// interfaces — catches interface drift at the declaration line instead
+// of at the wiring callsite in main.go.
+var (
+	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
+	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
+	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+)
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
 // into router.AccessPolicyProvider. main.go owns this projection so
@@ -410,4 +416,30 @@ func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, err
 		return "", fmt.Errorf("managed service not available")
 	}
 	return a.svc.DefaultGatewayNDMSInterface(ctx)
+}
+
+// keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
+type keenDNSDomainAdapter struct {
+	store *ndmsquery.KeenDNSStore
+}
+
+func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	info, err := a.store.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if info == nil || !info.Enabled {
+		return "", nil
+	}
+	return info.Domain, nil
+}
+
+// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
+type keenDNSLANAdapter struct{}
+
+func (keenDNSLANAdapter) LANIPv4() string {
+	return netif.FirstIPv4(storage.DefaultInterface)
 }

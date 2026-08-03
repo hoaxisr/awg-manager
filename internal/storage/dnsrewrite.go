@@ -120,3 +120,36 @@ func (s *DNSRewriteStore) Move(from, to int) error {
 	d.Rewrites = append(d.Rewrites[:to], append([]dnsrewrite.DNSRewrite{r}, d.Rewrites[to:]...)...)
 	return s.saveUnlocked(d)
 }
+
+// ReplaceManaged swaps every rewrite with Managed==id for items (may be
+// empty = drop managed entries only). Non-managed rewrites are preserved
+// in order. Each item is stamped with Managed=id.
+//
+// Managed-записи живут В ХВОСТЕ: их появление и снятие фоновым sync'ом не
+// должно сдвигать индексы пользовательских записей — Update/Delete в API
+// адресуют именно индексом. Приоритет над пользовательскими паттернами
+// обеспечивает не порядок хранения, а порядок компиляции слота (см. flush).
+func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrite) error {
+	if id == "" {
+		return fmt.Errorf("ReplaceManaged: empty managed id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	out := make([]dnsrewrite.DNSRewrite, 0, len(d.Rewrites)+len(items))
+	for _, r := range d.Rewrites {
+		if r.Managed == id {
+			continue
+		}
+		out = append(out, r)
+	}
+	for _, r := range items {
+		r.Managed = id
+		out = append(out, r)
+	}
+	d.Rewrites = out
+	return s.saveUnlocked(d)
+}

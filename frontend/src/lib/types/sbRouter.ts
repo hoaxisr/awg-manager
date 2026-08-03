@@ -482,6 +482,8 @@ export interface SingboxRouterDNSChainPreset {
 export interface SingboxRouterDNSRewrite {
 	pattern: string;
 	ips: string[];
+	/** Non-empty when owned by a preset (e.g. keendns). */
+	managed?: string;
 }
 
 // #endregion
