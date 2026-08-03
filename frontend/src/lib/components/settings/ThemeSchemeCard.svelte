@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Button, SegmentedControl, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
-	import { compactLayout } from '$lib/stores/compactLayout';
 	import {
 		settingsSectionIconMode,
 		SETTINGS_SECTION_ICON_MODE_LABELS,
@@ -9,6 +8,12 @@
 	} from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
 	import { showSummary } from '$lib/stores/showSummary';
+	import {
+		layoutMode,
+		LAYOUT_MODE_LABELS,
+		resolveLayoutMode,
+		type LayoutMode,
+	} from '$lib/stores/layoutMode';
 	import { tunnelDashboardMode } from '$lib/stores/tunnelDashboardMode';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isTunnelDashboardAvailable } from '$lib/types/usageLevel';
@@ -40,10 +45,15 @@
 		{ value: 'vivid', label: SETTINGS_SECTION_ICON_MODE_LABELS.vivid },
 	];
 
+	const LAYOUT_MODE_OPTIONS: Array<{ value: LayoutMode; label: string }> = [
+		{ value: 'sidebar', label: LAYOUT_MODE_LABELS.sidebar },
+		{ value: 'classic', label: LAYOUT_MODE_LABELS.classic },
+		{ value: 'compact', label: LAYOUT_MODE_LABELS.compact },
+	];
+
 	let expanded = $state(false);
-	const compactForced = $derived($usageLevel === 'basic');
 	const dashboardRowVisible = $derived(isTunnelDashboardAvailable($usageLevel));
-	const compactChecked = $derived(compactForced || $compactLayout);
+	const effectiveLayoutMode = $derived(resolveLayoutMode($usageLevel, $layoutMode));
 
 	const currentThemeLabel = $derived.by(() => {
 		if ($theme.preset !== 'custom') {
@@ -215,21 +225,18 @@
 			onchange={(mode) => settingsSectionIconMode.setMode(mode)}
 		/>
 	</div>
-	<div class="setting-row compact-layout-row">
+	<div class="setting-row layout-mode-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Компактный режим</span>
+			<span class="font-medium">Панель навигации</span>
 			<span class="setting-description">
-				{#if compactForced}
-					В базовом режиме всегда включена: колонка 960px и меньшие боковые отступы.
-				{:else}
-					Сужает интерфейс с краев, как в версии 2.8.2, фокусируя внимание на центре экрана (автоматически включается в базовом режиме).
-				{/if}
+				Сайдбар - панель слева в стиле Keenetic. Компактный - как классический, только слегка сжат с краев, как в версии 2.8.2.
 			</span>
 		</div>
-		<Toggle
-			checked={compactChecked}
-			disabled={compactForced}
-			onchange={(enabled) => compactLayout.setEnabled(enabled)}
+		<SegmentedControl
+			value={effectiveLayoutMode}
+			options={LAYOUT_MODE_OPTIONS}
+			ariaLabel="Режим интерфейса"
+			onchange={(mode) => layoutMode.setMode(mode)}
 		/>
 	</div>
 	{#if dashboardRowVisible}
@@ -274,7 +281,17 @@
 </div>
 
 <style>
-	.compact-layout-row,
+	.layout-mode-row,
+	.icon-mode-row {
+		flex-wrap: nowrap;
+		align-items: center;
+	}
+
+	.layout-mode-row :global(.segmented-control),
+	.icon-mode-row :global(.segmented-control) {
+		flex-shrink: 0;
+	}
+
 	.dashboard-mode-row,
 	.summary-row,
 	.letter-icons-row {
@@ -282,7 +299,11 @@
 	}
 
 	@media (max-width: 640px) {
-		.compact-layout-row,
+		.layout-mode-row,
+		.icon-mode-row {
+			flex-wrap: wrap;
+		}
+
 		.dashboard-mode-row,
 		.summary-row,
 		.letter-icons-row {
@@ -292,7 +313,6 @@
 			gap: 0.75rem;
 		}
 
-		.compact-layout-row > *:first-child,
 		.dashboard-mode-row > *:first-child,
 		.summary-row > *:first-child,
 		.letter-icons-row > *:first-child {

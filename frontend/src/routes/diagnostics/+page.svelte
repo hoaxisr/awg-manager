@@ -6,9 +6,11 @@
 	import type { TunnelListItem, SingboxTunnel, Subscription } from '$lib/types';
 	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
+	import { Tabs } from '$lib/components/ui';
 	import { readTabParam, writeTabParam } from '$lib/utils/tabUrlSync';
 	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { settings, usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import ConnectionsTab from './ConnectionsTab.svelte';
 	import ChecksTab from './ChecksTab.svelte';
 	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
@@ -193,6 +195,14 @@
 
 <PageContainer width="full">
 	<PageHeader title="Инструменты" />
+
+	{#if !isSidebarNavActive($usageLevel, $layoutMode)}
+		<Tabs
+			tabs={diagnosticsTabs}
+			active={activeTab}
+			onchange={(id) => (activeTab = id as ActiveTab)}
+		/>
+	{/if}
 
 	{#if activeTab === 'logs'}
 		<!-- Журнал — только действия приложения; логи sing-box смотрятся на своих

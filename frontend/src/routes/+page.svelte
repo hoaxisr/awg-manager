@@ -27,12 +27,14 @@
 		StatStrip,
 		LayoutViewToggle,
 		TableSortHeader,
+		Tabs,
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
@@ -1767,6 +1769,12 @@
 	{:else}
 		{#if dashboardOn}
 			<DashboardFlatSection ctx={dashboardFlatCtx} />
+		{:else if !isSidebarNavActive($usageLevel, $layoutMode)}
+			<Tabs
+				tabs={tunnelTabs}
+				active={activeTab}
+				onchange={(id) => (activeTab = id as TunnelTab)}
+			/>
 		{/if}
 
 		{#if dashboardTypeSections && awgFilteredRowsCount > 0}

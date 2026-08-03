@@ -5,7 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
-	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
+	import { layoutMode, isCompactLayoutActive, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import {
 		tunnelDashboardLayout,
 		tunnelDashboardMode,
@@ -345,7 +345,7 @@
 	// Sync usage level and compact layout to <html> for gutter tokens.
 	$effect(() => {
 		document.documentElement.setAttribute('data-usage-level', $usageLevel);
-		const compact = isCompactLayoutActive($usageLevel, $compactLayout);
+		const compact = isCompactLayoutActive($usageLevel, $layoutMode);
 		document.documentElement.setAttribute('data-layout-compact', compact ? 'true' : 'false');
 	});
 
@@ -376,7 +376,7 @@
 
 	onMount(async () => {
 		theme.init();
-		compactLayout.init();
+		layoutMode.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
 		showSummary.init();
@@ -435,7 +435,7 @@
 		<LoginForm />
 	{:else}
 		<div class="app-body">
-			{#if $isAuthenticated}
+			{#if $isAuthenticated && isSidebarNavActive($usageLevel, $layoutMode)}
 				<AppSidebar bind:mobileOpen={mobileMenuOpen} />
 			{/if}
 			<main class="main">

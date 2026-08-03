@@ -1,13 +1,60 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { IconButton } from '$lib/components/ui';
+	import { goto } from '$app/navigation';
+	import { LegacyTabs, LegacyTab, IconButton } from '$lib/components/ui';
 	import BrandLogoMark from './BrandLogoMark.svelte';
 	import NotificationCenter from './NotificationCenter.svelte';
 	import { usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import type { ThemeState } from '$lib/stores/theme';
-	import { isAppearanceSettingsVisible, isSectionVisible } from '$lib/types/usageLevel';
+	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
 	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal } from 'lucide-svelte';
+
+	type NavItem = {
+		section: Section;
+		href: string;
+		label: string;
+		matches: (path: string) => boolean;
+	};
+
+	const NAV_ITEMS: NavItem[] = [
+		{
+			section: 'tunnels',
+			href: '/',
+			label: 'ТУННЕЛИ',
+			matches: (p) =>
+				p === '/' ||
+				p.startsWith('/tunnels') ||
+				p.startsWith('/system-tunnels') ||
+				p.startsWith('/freeturn') ||
+				p.startsWith('/wdtt'),
+		},
+		{
+			section: 'servers',
+			href: '/servers',
+			label: 'СЕРВЕРЫ',
+			matches: (p) => p.startsWith('/servers'),
+		},
+		{
+			section: 'routing',
+			href: '/routing',
+			label: 'МАРШРУТИЗАЦИЯ',
+			matches: (p) => p.startsWith('/routing'),
+		},
+		{
+			section: 'diagnostics',
+			href: '/diagnostics',
+			label: 'ИНСТРУМЕНТЫ',
+			matches: (p) => p.startsWith('/diagnostics') || p.startsWith('/logs'),
+		},
+		{
+			section: 'settings',
+			href: '/settings',
+			label: 'НАСТРОЙКИ',
+			matches: (p) => p.startsWith('/settings'),
+		},
+	];
 
 	interface Props {
 		authenticated: boolean;
@@ -53,6 +100,21 @@
 		onOpenDonate,
 	}: Props = $props();
 
+	const visibleItems = $derived(
+		NAV_ITEMS.filter((item) => isSectionVisible($usageLevel, item.section)),
+	);
+
+	const currentRoute = $derived.by(() => {
+		const path = $page.url.pathname;
+		return visibleItems.find((item) => item.matches(path))?.href ?? '';
+	});
+
+	function navigate(value: string) {
+		if (value && value !== currentRoute) {
+			goto(value);
+		}
+	}
+
 	function closeMobileMenu() {
 		mobileMenuOpen = false;
 	}
@@ -61,8 +123,21 @@
 		mobileMenuOpen = !mobileMenuOpen;
 	}
 
+	function prettyMobileLabel(upperLabel: string): string {
+		const map: Record<string, string> = {
+			ТУННЕЛИ: 'Туннели',
+			СЕРВЕРЫ: 'Серверы',
+			МАРШРУТИЗАЦИЯ: 'Маршрутизация',
+			ИНСТРУМЕНТЫ: 'Инструменты',
+			НАСТРОЙКИ: 'Настройки',
+		};
+		return map[upperLabel] ?? upperLabel;
+	}
+
 	/** Для Neo вторая ветка визуально тёмная, но `mode` остаётся dark ради color-scheme — в шапке показываем legacyMode */
 	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
+
+	const sidebarActive = $derived(isSidebarNavActive($usageLevel, $layoutMode));
 
 	const onSettingsPage = $derived($page.url.pathname.startsWith('/settings'));
 	const versionClickableOnSettings = $derived(
@@ -90,7 +165,11 @@
 </script>
 
 <header class="app-header" class:unauthenticated={!authenticated}>
-	<div class="header-inner">
+	<div
+		class="header-inner"
+		class:classic={!sidebarActive}
+		class:sidebar-mode={sidebarActive}
+	>
 		<div class="brand-group">
 			<a href="/" class="brand" aria-label="AWG Manager" onclick={closeMobileMenu}>
 				<BrandLogoMark />
@@ -140,6 +219,18 @@
 			{/if}
 		</div>
 
+		{#if authenticated && !sidebarActive}
+			<nav class="nav" aria-label="Главная навигация">
+				<LegacyTabs value={currentRoute} onChange={navigate} variant="underline">
+					{#each visibleItems as item (item.section)}
+						<LegacyTab value={item.href}>{item.label}</LegacyTab>
+					{/each}
+				</LegacyTabs>
+			</nav>
+		{:else if !authenticated && !sidebarActive}
+			<div class="nav-spacer"></div>
+		{/if}
+
 		<div class="user-tools">
 			{#if authenticated && !authDisabled && username}
 				<span class="user-chip">{username}</span>
@@ -170,9 +261,17 @@
 			{/if}
 
 			{#if authenticated && !authDisabled}
-				<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
-					<LogOut size={16} aria-hidden="true" />
-				</IconButton>
+				{#if sidebarActive}
+					<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
+						<LogOut size={16} aria-hidden="true" />
+					</IconButton>
+				{:else}
+					<span class="logout-desktop">
+						<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
+							<LogOut size={16} aria-hidden="true" />
+						</IconButton>
+					</span>
+				{/if}
 			{/if}
 
 			{#if authenticated}
@@ -192,6 +291,37 @@
 			{/if}
 		</div>
 	</div>
+
+	{#if mobileMenuOpen && authenticated && !sidebarActive}
+		<button
+			type="button"
+			class="mobile-backdrop"
+			onclick={closeMobileMenu}
+			aria-label="Закрыть меню"
+		></button>
+		<nav class="mobile-nav" aria-label="Мобильная навигация">
+			{#each visibleItems as item (item.section)}
+				<a
+					href={item.href}
+					class="mobile-nav-link"
+					class:active={item.matches($page.url.pathname)}
+					onclick={closeMobileMenu}>{prettyMobileLabel(item.label)}</a
+				>
+			{/each}
+			{#if !authDisabled}
+				<button
+					type="button"
+					class="mobile-nav-link mobile-logout"
+					onclick={() => {
+						closeMobileMenu();
+						onLogout();
+					}}
+				>
+					Выйти
+				</button>
+			{/if}
+		</nav>
+	{/if}
 </header>
 
 <style>
@@ -204,13 +334,23 @@
 	}
 
 	.header-inner {
-		width: 100%;
 		padding: 0 var(--header-gutter-x);
 		height: 56px;
-		display: flex;
-		justify-content: space-between;
 		align-items: center;
 		gap: 1rem;
+	}
+
+	.header-inner.sidebar-mode {
+		width: 100%;
+		display: flex;
+		justify-content: space-between;
+	}
+
+	.header-inner.classic {
+		max-width: 1120px;
+		margin: 0 auto;
+		display: grid;
+		grid-template-columns: auto 1fr auto;
 	}
 
 	.brand-group {
@@ -236,12 +376,46 @@
 		text-transform: uppercase;
 	}
 
+	.nav {
+		min-width: 0;
+		display: flex;
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-y: none;
+		scrollbar-width: none;
+	}
+
+	.nav::-webkit-scrollbar {
+		display: none;
+	}
+
+	/* Header-specific tweaks for the underline tabs */
+	.nav :global(.tabs.variant-underline) {
+		border-bottom: none;
+		gap: 1.25rem;
+		flex-shrink: 0;
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	.nav :global(.tab) {
+		white-space: nowrap;
+	}
+
+	.nav-spacer {
+		min-width: 0;
+	}
+
 	.user-tools {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
 		flex-shrink: 0;
 		overflow: visible;
+	}
+
+	.header-inner.classic .user-tools {
+		justify-self: end;
 	}
 
 	.user-chip {
@@ -363,6 +537,19 @@
 		outline-offset: 2px;
 	}
 
+	.mobile-backdrop {
+		display: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		-webkit-appearance: none;
+		appearance: none;
+	}
+
+	.mobile-nav {
+		display: none;
+	}
+
 	@media (max-width: 1050px) {
 		.hamburger {
 			display: inline-flex;
@@ -374,6 +561,84 @@
 
 		.app-header.unauthenticated .wordmark {
 			display: none;
+		}
+
+		.header-inner.classic {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+
+		.nav {
+			display: none;
+		}
+
+		.nav-spacer {
+			display: none;
+		}
+
+		.mobile-backdrop {
+			display: block;
+			position: fixed;
+			inset: 56px 0 0 0;
+			background: rgba(0, 0, 0, 0.4);
+			z-index: var(--z-drawer-backdrop);
+		}
+
+		.mobile-nav {
+			display: flex;
+			flex-direction: column;
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			background: var(--color-bg-secondary);
+			border-bottom: 1px solid var(--color-border);
+			padding: 0;
+			z-index: var(--z-drawer);
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		}
+
+		.mobile-nav-link {
+			padding: 0.75rem var(--header-gutter-x);
+			border-left: 3px solid transparent;
+			color: var(--color-text-secondary);
+			font-size: 0.9375rem;
+			text-decoration: none;
+			transition:
+				background var(--t-fast) ease,
+				color var(--t-fast) ease,
+				border-color var(--t-fast) ease;
+		}
+
+		.mobile-nav-link:hover {
+			color: var(--color-text-primary);
+			background: var(--color-bg-hover);
+		}
+
+		.mobile-nav-link.active {
+			color: var(--color-accent);
+			background: var(--color-accent-tint);
+			border-left: 3px solid var(--color-accent);
+		}
+
+		.logout-desktop {
+			display: none;
+		}
+
+		.mobile-logout {
+			appearance: none;
+			background: transparent;
+			width: 100%;
+			text-align: left;
+			cursor: pointer;
+			color: var(--color-error);
+			border-top: none;
+			border-right: none;
+			border-bottom: none;
+		}
+
+		.mobile-logout:hover {
+			color: var(--color-error);
+			background: var(--color-error-tint);
 		}
 	}
 

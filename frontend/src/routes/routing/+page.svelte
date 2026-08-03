@@ -19,8 +19,9 @@
     import { notifications } from '$lib/stores/notifications';
     import { PageContainer, PageHeader } from '$lib/components/layout';
     import { Search } from 'lucide-svelte';
-    import { Button, Modal } from '$lib/components/ui';
+    import { Button, Modal, Tabs } from '$lib/components/ui';
     import { writeTabParam } from '$lib/utils/tabUrlSync';
+    import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
     import { RoutingSearch } from '$lib/components/routing';
     import DnsRoutesTab from './DnsRoutesTab.svelte';
     import IpRoutesTab from './IpRoutesTab.svelte';
@@ -401,6 +402,14 @@
             </Button>
         {/snippet}
     </PageHeader>
+
+    {#if !isSidebarNavActive($usageLevel, $layoutMode)}
+        <Tabs
+            tabs={tabItems}
+            active={activeTab}
+            onchange={(id) => requestTab(id)}
+        />
+    {/if}
 
     {#if activeTab === 'hrneo'}
         <HrNeoTab

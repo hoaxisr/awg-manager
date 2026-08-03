@@ -6,7 +6,6 @@
 	import { systemInfo } from '$lib/stores/system';
 	import { hydrarouteStatus } from '$lib/stores/hydraroute';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
 	import {
 		buildNavTree,
 		isNavItemActive,
@@ -39,8 +38,6 @@
 			fakeipModeActive,
 		}),
 	);
-
-	const compact = $derived(isCompactLayoutActive($usageLevel, $compactLayout));
 
 	/** Sing-box groups stay collapsed until the user opens them. */
 	let openGroupIds = $state(new Set<string>());
@@ -174,7 +171,6 @@
 <aside
 	class="sidebar"
 	class:mobile-open={mobileOpen}
-	class:compact
 	aria-label="Основная навигация"
 >
 	<nav class="nav">
