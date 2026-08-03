@@ -699,11 +699,14 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	}
 	// Cheap steady-state guard: both carriers already at the desired timeout →
 	// skip the marshal/write entirely (this runs on every reconcile tick).
+	// Listen тоже в guard'е (#689): после обновления рестарт демона не трогает
+	// ни sing-box, ни iptables, и это ЕДИНСТВЕННЫЙ путь, который доведёт
+	// listen 0.0.0.0 → 127.0.0.1 на живом конфиге без ручного передёргивания.
 	effective := resolveUDPTimeout(udpTimeout)
 	inboundOK := false
 	for _, in := range cfg.Inbounds {
 		if in.Tag == "tproxy-in" {
-			inboundOK = in.UDPTimeout == effective
+			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen
 			break
 		}
 	}
