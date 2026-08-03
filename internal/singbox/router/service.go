@@ -461,10 +461,13 @@ type ServiceImpl struct {
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
 	// setupListen after the router service) — под keenDNSMu, потому что
 	// startup-Reconcile читает их из своей горутины уже во время wiring.
-	keenDNSMu     sync.Mutex
-	keenDNSDomain KeenDNSDomainProvider
-	keenDNSLAN    LANIPv4Provider
-	keenDNSSync   KeenDNSRewriteSyncer
+	keenDNSMu sync.Mutex
+	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
+	// не писать один и тот же warn на каждом тике Reconcile.
+	keenDNSWarnState string
+	keenDNSDomain    KeenDNSDomainProvider
+	keenDNSLAN       LANIPv4Provider
+	keenDNSSync      KeenDNSRewriteSyncer
 }
 
 func NewService(d Deps) *ServiceImpl {

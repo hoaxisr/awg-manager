@@ -3,9 +3,16 @@ package router
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// keenDNSQueryTimeout ограничивает поход в NDMS за доменом. Sync вызывается
+// из Reconcile, который уже держит transitionMu, — стоящий RCI (backstop
+// транспорта 30с) иначе заблокировал бы на это время пользовательские
+// Enable/Disable и смену режима.
+const keenDNSQueryTimeout = 5 * time.Second
 
 // KeenDNSDomainProvider returns the router's booked KeenDNS/CrazeDNS FQDN
 // (e.g. "home.netcraze.pro"). Empty string = not configured.
@@ -85,10 +92,12 @@ func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.Singbo
 
 	var domain string
 	if domainProv != nil {
-		d, err := domainProv.KeenDNSDomain(ctx)
+		qctx, cancel := context.WithTimeout(ctx, keenDNSQueryTimeout)
+		d, err := domainProv.KeenDNSDomain(qctx)
+		cancel()
 		if err != nil {
 			// Keep last-good rewrites — do not treat a flap as "unbooked".
-			s.appLog.Warn("keendns-rewrite", "", "KeenDNS domain: "+err.Error())
+			s.warnKeenDNSOnce("err", "KeenDNS domain: "+err.Error())
 			return
 		}
 		domain = d
@@ -100,8 +109,8 @@ func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.Singbo
 
 	if domain == "" {
 		// Confirmed: no booked FQDN → drop managed rewrites.
-		s.appLog.Warn("keendns-rewrite", "",
-			"пресет keendns включён, но KeenDNS не забронирован — managed rewrite снят")
+		s.warnKeenDNSOnce("unbooked",
+			"пресет keendns включён, но KeenDNS не забронирован — перезаписи не создаются")
 		if err := sync.SyncManagedKeenDNS("", ""); err != nil {
 			s.appLog.Warn("keendns-rewrite", "", err.Error())
 		}
@@ -109,11 +118,34 @@ func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.Singbo
 	}
 	if lan == "" {
 		// Domain known but LAN IP missing (iface down) — keep last rewrite.
-		s.appLog.Warn("keendns-rewrite", domain,
+		s.warnKeenDNSOnce("nolan",
 			"пресет keendns включён, но нет LAN IP — оставляем прежний managed rewrite")
 		return
 	}
 	if err := sync.SyncManagedKeenDNS(domain, lan); err != nil {
 		s.appLog.Warn("keendns-rewrite", domain, err.Error())
+		return
 	}
+	s.clearKeenDNSWarn()
+}
+
+// warnKeenDNSOnce пишет предупреждение только при СМЕНЕ состояния. Пресет
+// включён по умолчанию, а Reconcile тикает каждые 30с: без этого гварда
+// штатная конфигурация без KeenDNS (на прошивке без подсистемы /show/ndns
+// отвечает 404) вечно писала бы warn в журнал.
+func (s *ServiceImpl) warnKeenDNSOnce(state, msg string) {
+	s.keenDNSMu.Lock()
+	repeat := s.keenDNSWarnState == state
+	s.keenDNSWarnState = state
+	s.keenDNSMu.Unlock()
+	if repeat {
+		return
+	}
+	s.appLog.Warn("keendns-rewrite", "", msg)
+}
+
+func (s *ServiceImpl) clearKeenDNSWarn() {
+	s.keenDNSMu.Lock()
+	s.keenDNSWarnState = ""
+	s.keenDNSMu.Unlock()
 }

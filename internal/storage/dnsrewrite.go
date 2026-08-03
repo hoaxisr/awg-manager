@@ -125,9 +125,10 @@ func (s *DNSRewriteStore) Move(from, to int) error {
 // empty = drop managed entries only). Non-managed rewrites are preserved
 // in order. Each item is stamped with Managed=id.
 //
-// Managed-записи встают В НАЧАЛО списка: слот компилируется по порядку, а
-// sing-box берёт первое совпавшее DNS-правило — пользовательский широкий
-// паттерн выше (например *.pro) иначе перекрыл бы managed-запись.
+// Managed-записи живут В ХВОСТЕ: их появление и снятие фоновым sync'ом не
+// должно сдвигать индексы пользовательских записей — Update/Delete в API
+// адресуют именно индексом. Приоритет над пользовательскими паттернами
+// обеспечивает не порядок хранения, а порядок компиляции слота (см. flush).
 func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrite) error {
 	if id == "" {
 		return fmt.Errorf("ReplaceManaged: empty managed id")
@@ -139,14 +140,14 @@ func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrit
 		return err
 	}
 	out := make([]dnsrewrite.DNSRewrite, 0, len(d.Rewrites)+len(items))
-	for _, r := range items {
-		r.Managed = id
-		out = append(out, r)
-	}
 	for _, r := range d.Rewrites {
 		if r.Managed == id {
 			continue
 		}
+		out = append(out, r)
+	}
+	for _, r := range items {
+		r.Managed = id
 		out = append(out, r)
 	}
 	d.Rewrites = out

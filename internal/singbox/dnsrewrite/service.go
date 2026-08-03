@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // SlotName — имя слота оркестратора (= orchestrator.SlotDNSRewrites как строка).
@@ -32,6 +33,17 @@ type Service struct {
 	store Store
 	orch  Orchestrator
 	bus   EventBus
+
+	// mu сериализует «прочитать список → изменить → пересобрать слот».
+	// Стор атомарен поштучно, но с приходом keendns-пресета у него два
+	// писателя: HTTP-CRUD и фоновый Reconcile. Без общего лока пользователь
+	// мог удалить не ту запись (индекс посчитан до того, как sync снял
+	// managed-набор), а отставший flush — записать слот без свежей записи.
+	mu sync.Mutex
+	// slotDirty взводится, когда стор уже изменён, а слот пересобрать не
+	// удалось. Без него идемпотентный гвард в SyncManagedKeenDNS замыкал бы
+	// накоротко навсегда: набор в сторе целевой, а слот остался старым.
+	slotDirty bool
 }
 
 func NewService(store Store, orch Orchestrator, bus EventBus) *Service {
@@ -41,6 +53,8 @@ func NewService(store Store, orch Orchestrator, bus EventBus) *Service {
 func (s *Service) List() ([]DNSRewrite, error) { return s.store.List() }
 
 func (s *Service) Add(r DNSRewrite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r.Managed = "" // API/user path cannot forge managed ownership
 	if _, err := compileRewrite(r); err != nil {
 		return err
@@ -52,6 +66,8 @@ func (s *Service) Add(r DNSRewrite) error {
 }
 
 func (s *Service) Update(index int, r DNSRewrite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	items, err := s.store.List()
 	if err != nil {
 		return err
@@ -73,6 +89,8 @@ func (s *Service) Update(index int, r DNSRewrite) error {
 }
 
 func (s *Service) Delete(index int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	items, err := s.store.List()
 	if err != nil {
 		return err
@@ -90,6 +108,8 @@ func (s *Service) Delete(index int) error {
 }
 
 func (s *Service) Move(from, to int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	items, err := s.store.List()
 	if err != nil {
 		return err
@@ -111,7 +131,11 @@ func (s *Service) Move(from, to int) error {
 }
 
 // Resync пересобирает слот из текущего содержимого стора.
-func (s *Service) Resync() error { return s.flush() }
+func (s *Service) Resync() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flush()
+}
 
 // SyncManagedKeenDNS приводит managed-набор пресета keendns в соответствие с
 // (domain, lanIP): точный FQDN, *.FQDN и порталы локального доступа → lanIP.
@@ -123,6 +147,8 @@ func (s *Service) Resync() error { return s.flush() }
 // зовёт её каждые 30с, а любая запись — это writeAtomic двух файлов на флеш,
 // пересборка слота и SSE-инвалидация у фронта.
 func (s *Service) SyncManagedKeenDNS(domain, lanIP string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	domain = strings.TrimSuffix(domain, ".")
 	lanIP = strings.TrimSpace(lanIP)
@@ -139,7 +165,7 @@ func (s *Service) SyncManagedKeenDNS(domain, lanIP string) error {
 			items = append(items, r)
 		}
 	}
-	if managedEqual(s.currentManaged(), items) {
+	if !s.slotDirty && managedEqual(s.currentManaged(), items) {
 		return nil
 	}
 	if err := s.store.ReplaceManaged(ManagedKeenDNS, items); err != nil {
@@ -190,24 +216,38 @@ func (s *Service) flush() error {
 	if err != nil {
 		return err
 	}
+	// Managed-правила компилируются ПЕРВЫМИ: sing-box берёт первое совпавшее
+	// правило, и широкий пользовательский паттерн (*.pro) иначе перекрыл бы
+	// перезапись пресета. Порядок ХРАНЕНИЯ при этом не трогаем — managed
+	// лежат в хвосте, чтобы их появление/снятие фоновым sync'ом не сдвигало
+	// индексы пользовательских записей, которыми адресует API.
 	rules := make([]map[string]any, 0, len(items))
-	for _, r := range items {
-		compiled, err := compileRewrite(r)
-		if err != nil {
-			return fmt.Errorf("compile %q: %w", r.Pattern, err)
+	for _, pass := range []bool{true, false} {
+		for _, r := range items {
+			if (r.Managed != "") != pass {
+				continue
+			}
+			compiled, err := compileRewrite(r)
+			if err != nil {
+				return fmt.Errorf("compile %q: %w", r.Pattern, err)
+			}
+			rules = append(rules, compiled...)
 		}
-		rules = append(rules, compiled...)
 	}
 	data, err := json.MarshalIndent(slotConfig{DNS: slotDNS{Rules: rules}}, "", "  ")
 	if err != nil {
+		s.slotDirty = true
 		return err
 	}
 	if err := s.orch.Save(SlotName, data); err != nil {
+		s.slotDirty = true
 		return err
 	}
 	if err := s.orch.SetEnabled(SlotName, len(rules) > 0); err != nil {
+		s.slotDirty = true
 		return err
 	}
+	s.slotDirty = false
 	if s.bus != nil {
 		s.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.dns-rewrites"})
 	}

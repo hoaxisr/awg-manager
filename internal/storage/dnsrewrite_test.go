@@ -81,10 +81,10 @@ func TestDNSRewriteStoreReplaceManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ := s.List()
-	// Managed прижаты к началу: первое совпавшее DNS-правило выигрывает,
-	// пользовательский широкий паттерн выше перекрыл бы их.
-	if len(list) != 2 || list[0].Managed != dnsrewrite.ManagedKeenDNS ||
-		list[0].Pattern != "home.netcraze.pro" || list[1].Pattern != "nas.lan" {
+	// Managed лежат в хвосте: индексы пользовательских записей не должны
+	// ехать от появления/снятия managed-набора.
+	if len(list) != 2 || list[1].Managed != dnsrewrite.ManagedKeenDNS ||
+		list[0].Pattern != "nas.lan" || list[1].Pattern != "home.netcraze.pro" {
 		t.Fatalf("after upsert: %+v", list)
 	}
 	if err := s.ReplaceManaged(dnsrewrite.ManagedKeenDNS, nil); err != nil {
