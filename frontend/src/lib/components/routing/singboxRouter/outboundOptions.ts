@@ -56,7 +56,7 @@ export function buildOutboundOptions(
 
 	if (awg3.length > 0) {
 		groups.push({
-			group: 'AWG3 туннели',
+			group: 'Endpoints',
 			items: awg3.map((t) => ({
 				value: t.tag,
 				// AWG3-эндпоинты не имеют kernel-iface — скобки печатаются только

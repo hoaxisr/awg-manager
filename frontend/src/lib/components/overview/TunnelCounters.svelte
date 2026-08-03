@@ -46,7 +46,7 @@
 		},
 		{
 			href: '/sb/awg3',
-			title: 'AWG3',
+			title: 'Endpoints',
 			value: awg3.length,
 			sub: awg3.length === 0 ? 'нет туннелей' : 'endpoint-туннели',
 			alarm: false,

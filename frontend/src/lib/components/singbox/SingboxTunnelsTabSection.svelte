@@ -126,7 +126,7 @@
 			{#if openAwg3Import}
 				<button type="button" class="empty-kind-card" onclick={openAwg3Import}>
 					<Waypoints class="empty-kind-icon" size={28} strokeWidth={1.6} aria-hidden="true" />
-					<div class="empty-kind-title">AWG3 Endpoint</div>
+					<div class="empty-kind-title">Endpoint</div>
 					<div class="empty-kind-desc">
 						JSON AmneziaWG 3 — endpoint внутри sing-box.
 					</div>

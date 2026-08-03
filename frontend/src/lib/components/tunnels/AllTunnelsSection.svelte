@@ -429,7 +429,7 @@
 		'awg-managed': 'AWG',
 		'awg-system': 'system',
 		'awg-external': 'external',
-		awg3: 'AWG3',
+		awg3: 'Endpoint',
 		singbox: 'sing-box',
 		'sub-active': 'подписка',
 		'sub-stopped': 'подписка',
@@ -487,7 +487,7 @@
 		const kinds = [`AWG ${awgSummary.active}/${awgSummary.total}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
 		if (subs) kinds.push(`Подписки ${subs.activeCount}/${subs.count}`);
-		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
+		if (awg3Count > 0) kinds.push(`Endpoints ${awg3Count}`);
 		const rx = awgSummary.rx + (sb?.down ?? 0) + (subs?.down ?? 0);
 		const tx = awgSummary.tx + (sb?.up ?? 0) + (subs?.up ?? 0);
 		const leaders = [

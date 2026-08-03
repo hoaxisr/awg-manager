@@ -310,7 +310,7 @@ export const DEVELOP_CHANNEL_QUIZ_QUESTIONS: DevelopQuizQuestion[] = [
 			'В разделе «Подписки» (Settings / Subscriptions)',
 			'В шапке четыре отдельных раздела: AWG, Sing-box, Подписки и Система',
 			'Только в «Настройки» → «Интеграции»',
-			'В «Инструменты» → «Конфиг AWG»',
+			'В «Диагностике» → вкладка «Конфиг AWG»',
 		],
 		correctIndex: 0,
 	},

@@ -29,7 +29,7 @@ describe('buildOutboundOptions', () => {
 	it('lists an awg3 tag with an empty iface without printing parens', () => {
 		const awg3: AWGTagInfo[] = [{ tag: 'awg3-abc', label: 'RouteBox', kind: 'awg3', iface: '' }];
 		const groups = buildOutboundOptions(awg3, null, null, false);
-		const group = groups.find((g) => g.group === 'AWG3 туннели');
+		const group = groups.find((g) => g.group === 'Endpoints');
 		expect(group).toBeDefined();
 		expect(group?.items).toEqual([{ value: 'awg3-abc', label: 'RouteBox' }]);
 	});

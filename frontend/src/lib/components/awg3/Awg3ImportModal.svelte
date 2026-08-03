@@ -142,7 +142,7 @@
 	}
 </script>
 
-<Modal {open} title="Импорт AWG3" size="md" closeOnBackdrop={false} onclose={requestClose}>
+<Modal {open} title="Импорт endpoint'а" size="md" closeOnBackdrop={false} onclose={requestClose}>
 	<div class="import-form">
 		<Input
 			label="Тег"

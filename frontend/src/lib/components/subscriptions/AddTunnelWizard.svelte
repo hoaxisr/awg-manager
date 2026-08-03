@@ -373,7 +373,7 @@
 			{#if onAwg3}
 				<button type="button" class="kind-card" onclick={pickAwg3}>
 					<Waypoints size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
-					<div class="kind-title">AWG3 Endpoint</div>
+					<div class="kind-title">Endpoint</div>
 					<div class="kind-desc">
 						JSON-конфиг AmneziaWG 3 — endpoint внутри sing-box,
 						не отдельный kernel-туннель.

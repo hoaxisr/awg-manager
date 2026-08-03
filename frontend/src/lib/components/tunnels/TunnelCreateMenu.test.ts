@@ -10,35 +10,35 @@ async function openMenu(): Promise<void> {
 }
 
 describe('TunnelCreateMenu', () => {
-	it('пункт AWG3 показан только когда передан onAwg3', async () => {
+	it('пункт Endpoint показан только когда передан onAwg3', async () => {
 		const { unmount } = render(TunnelCreateMenu, {
 			props: { onAwg: vi.fn(), triggerIcon },
 		});
 		await openMenu();
-		expect(screen.queryByText('AWG3 endpoint')).toBeNull();
+		expect(screen.queryByText('Endpoint')).toBeNull();
 		unmount();
 
 		render(TunnelCreateMenu, {
 			props: { onAwg: vi.fn(), onAwg3: vi.fn(), triggerIcon },
 		});
 		await openMenu();
-		expect(screen.getByText('AWG3 endpoint')).toBeTruthy();
+		expect(screen.getByText('Endpoint')).toBeTruthy();
 	});
 
-	it('пункт AWG3 скрыт вместе с остальными sing-box пунктами', async () => {
+	it('пункт Endpoint скрыт вместе с остальными sing-box пунктами', async () => {
 		render(TunnelCreateMenu, {
 			props: { onAwg: vi.fn(), onAwg3: vi.fn(), showSingbox: false, triggerIcon },
 		});
 		await openMenu();
-		expect(screen.queryByText('AWG3 endpoint')).toBeNull();
+		expect(screen.queryByText('Endpoint')).toBeNull();
 		expect(screen.getByText('AmneziaWG туннель')).toBeTruthy();
 	});
 
-	it('клик по пункту AWG3 вызывает колбэк', async () => {
+	it('клик по пункту Endpoint вызывает колбэк', async () => {
 		const onAwg3 = vi.fn();
 		render(TunnelCreateMenu, { props: { onAwg: vi.fn(), onAwg3, triggerIcon } });
 		await openMenu();
-		await fireEvent.click(screen.getByText('AWG3 endpoint'));
+		await fireEvent.click(screen.getByText('Endpoint'));
 		expect(onAwg3).toHaveBeenCalledOnce();
 	});
 });

@@ -74,11 +74,11 @@
 </script>
 
 <svelte:head>
-	<title>AWG3 туннели - AWGM</title>
+	<title>Endpoints - AWGM</title>
 </svelte:head>
 
 <PageContainer>
-	<PageHeader title="AWG3 туннели" />
+	<PageHeader title="Endpoints" />
 	<Awg3TunnelsSection
 		tunnels={awg3List}
 		{renderMode}

@@ -102,8 +102,8 @@
 						onAwg3();
 					}}
 				>
-					<span class="tunnel-create-menu-item-title">AWG3 endpoint</span>
-					<span class="tunnel-create-menu-item-desc">JSON-конфиг AWG3-клиента</span>
+					<span class="tunnel-create-menu-item-title">Endpoint</span>
+					<span class="tunnel-create-menu-item-desc">JSON-конфиг клиента AmneziaWG 3</span>
 				</button>
 			{/if}
 		{/if}

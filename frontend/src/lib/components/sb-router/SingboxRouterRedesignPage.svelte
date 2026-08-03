@@ -165,7 +165,7 @@
     <ConnectionsSubTab />
   {:else if activeSingboxSub === 'logs'}
     <!-- Логи sing-box (bucket singbox: stdout движка + process/runtime-события).
-         Действия над конфигурацией остаются в Инструменты → Журнал (bucket app). -->
+         Действия над конфигурацией остаются в разделе «Журнал» (bucket app). -->
     <LogsTerminal lockBucket="singbox" storagePrefix="awgm.sb-router" />
   {:else if $sbMode === 'beginner'}
     {#if $addWizardOpen}
