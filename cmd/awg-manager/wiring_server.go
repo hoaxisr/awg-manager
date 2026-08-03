@@ -573,7 +573,14 @@ func (a *app) setupListen() {
 			keenDNSLANAdapter{},
 			dnsRewriteSvc,
 		)
-		a.routerSvc.SyncKeenDNSRewrites(context.Background())
+		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
+		// SetKeenDNSPreset и мог увидеть nil-syncer. В горутине и с ctx —
+		// синхронный вызов ходит в NDMS и до 30с держал бы a.serve().
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.routerSvc.SyncKeenDNSRewrites(ctx)
+		}()
 	}
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.

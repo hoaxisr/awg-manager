@@ -459,7 +459,9 @@ type ServiceImpl struct {
 
 	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
-	// setupListen after the router service).
+	// setupListen after the router service) — под keenDNSMu, потому что
+	// startup-Reconcile читает их из своей горутины уже во время wiring.
+	keenDNSMu     sync.Mutex
 	keenDNSDomain KeenDNSDomainProvider
 	keenDNSLAN    LANIPv4Provider
 	keenDNSSync   KeenDNSRewriteSyncer

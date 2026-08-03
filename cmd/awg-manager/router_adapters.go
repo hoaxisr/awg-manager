@@ -19,10 +19,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-// Compile-time guarantee that routerAccessPolicyAdapter satisfies
-// router.AccessPolicyProvider — catches interface drift at the
-// declaration line instead of at the wiring callsite in main.go.
+// Compile-time guarantees that the adapters satisfy their router-side
+// interfaces — catches interface drift at the declaration line instead
+// of at the wiring callsite in main.go.
 var (
+	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
 	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
 	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
 )

@@ -229,12 +229,13 @@ func TestResolveBypassCIDRs_PortPresetsContributeNoCIDRs(t *testing.T) {
 	}
 }
 
-func TestResolveBypassCIDRs_DedupAgainstExtra(t *testing.T) {
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8")
+func TestResolveBypassCIDRs_DedupWithinExtra(t *testing.T) {
+	// Дубль в пользовательском списке схлопывается, порядок стабильный.
+	// (Пресеты сюда больше ничего не приносят — keendns ушёл в DNS-rewrite.)
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8, 78.47.125.180/32")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// keendns contributes no CIDR; only user extras remain.
 	want := []string{"78.47.125.180/32", "10.0.0.0/8"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %v, want %v", got, want)

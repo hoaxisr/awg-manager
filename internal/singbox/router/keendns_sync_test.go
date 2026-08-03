@@ -22,20 +22,15 @@ type fakeLANIP struct{ ip string }
 
 func (f fakeLANIP) LANIPv4() string { return f.ip }
 
-type recordingKeenDNSSync struct {
-	calls []struct {
-		enabled bool
-		domain  string
-		lanIP   string
-	}
+type keenDNSSyncCall struct {
+	domain string
+	lanIP  string
 }
 
-func (r *recordingKeenDNSSync) SyncManagedKeenDNS(enabled bool, domain, lanIP string) error {
-	r.calls = append(r.calls, struct {
-		enabled bool
-		domain  string
-		lanIP   string
-	}{enabled, domain, lanIP})
+type recordingKeenDNSSync struct{ calls []keenDNSSyncCall }
+
+func (r *recordingKeenDNSSync) SyncManagedKeenDNS(domain, lanIP string) error {
+	r.calls = append(r.calls, keenDNSSyncCall{domain, lanIP})
 	return nil
 }
 
@@ -89,7 +84,7 @@ func TestSyncKeenDNSRewrites_UnbookedClears(t *testing.T) {
 		WANAutoDetect: true,
 		DeviceMode:    "policy",
 	})
-	if len(sync.calls) != 1 || sync.calls[0].enabled {
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{}) {
 		t.Fatalf("unbooked KeenDNS must clear managed, got %v", sync.calls)
 	}
 }
@@ -109,7 +104,7 @@ func TestSyncKeenDNSRewrites_HappyPath(t *testing.T) {
 		t.Fatalf("want 1 sync call, got %v", sync.calls)
 	}
 	c := sync.calls[0]
-	if !c.enabled || c.domain != "Home.Netcraze.Pro." || c.lanIP != "192.168.1.1" {
+	if c.domain != "Home.Netcraze.Pro." || c.lanIP != "192.168.1.1" {
 		t.Fatalf("unexpected call: %+v", c)
 	}
 }
@@ -124,7 +119,7 @@ func TestSyncKeenDNSRewrites_PresetOffClears(t *testing.T) {
 		WANAutoDetect: true,
 		DeviceMode:    "policy",
 	})
-	if len(sync.calls) != 1 || sync.calls[0].enabled {
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{}) {
 		t.Fatalf("preset off must clear, got %v", sync.calls)
 	}
 }

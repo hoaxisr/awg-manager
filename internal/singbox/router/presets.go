@@ -55,16 +55,6 @@ var knownPresets = map[string]bypassPreset{
 // PresetKeenDNS is the BypassPresets id for local KeenDNS/CrazeDNS rewrite.
 const PresetKeenDNS = "keendns"
 
-// HasBypassPreset reports whether name is in the active preset list.
-func HasBypassPreset(presets []string, name string) bool {
-	for _, p := range presets {
-		if p == name {
-			return true
-		}
-	}
-	return false
-}
-
 // resolveBypassPorts collects the final UDP and TCP port/range lists from
 // named presets and the user-supplied extra-ports string.
 // Returns an error if any preset name is unknown or the extra string is malformed.

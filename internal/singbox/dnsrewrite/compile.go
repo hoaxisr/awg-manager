@@ -12,6 +12,14 @@ import (
 // upserts/removes these entries.
 const ManagedKeenDNS = "keendns"
 
+// keenDNSPortalDomains — порталы локального доступа Keenetic/Netcraze. Их
+// A-запись указывает на общий 78.47.125.180, который роутер обслуживает сам
+// (см. CLI-мануал NC-1812), поэтому TPROXY уводил их в туннель — исходная
+// половина issue #490. Вывести их из забронированного FQDN нельзя: зона
+// 4-го уровня (crazedns.ru) не даёт имени портала (my.netcraze.net), так
+// что список фиксированный.
+var keenDNSPortalDomains = []string{"my.keenetic.net", "my.netcraze.net"}
+
 // DNSRewrite — каноническая запись перезаписи: glob-паттерн домена → IP.
 type DNSRewrite struct {
 	Pattern string   `json:"pattern"`

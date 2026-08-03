@@ -3,6 +3,7 @@ package dnsrewrite
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -112,30 +113,69 @@ func (s *Service) Move(from, to int) error {
 // Resync пересобирает слот из текущего содержимого стора.
 func (s *Service) Resync() error { return s.flush() }
 
-// SyncManagedKeenDNS upserts or removes the keendns-preset rewrites:
-// exact FQDN and *.FQDN → lanIP. enabled=false or empty domain/lanIP
-// clears managed entries. Idempotent.
-func (s *Service) SyncManagedKeenDNS(enabled bool, domain, lanIP string) error {
+// SyncManagedKeenDNS приводит managed-набор пресета keendns в соответствие с
+// (domain, lanIP): точный FQDN, *.FQDN и порталы локального доступа → lanIP.
+// Пустой domain или lanIP = снести managed-записи. Единственный контракт —
+// «набор равен аргументам», решение «а надо ли вообще трогать» принимает
+// вызывающий (router.syncKeenDNSRewrites бережёт last-good при флапе NDMS).
+//
+// Идемпотентна и БЕЗ побочных эффектов, если набор уже совпадает: Reconcile
+// зовёт её каждые 30с, а любая запись — это writeAtomic двух файлов на флеш,
+// пересборка слота и SSE-инвалидация у фронта.
+func (s *Service) SyncManagedKeenDNS(domain, lanIP string) error {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	domain = strings.TrimSuffix(domain, ".")
 	lanIP = strings.TrimSpace(lanIP)
 
 	var items []DNSRewrite
-	if enabled && domain != "" && lanIP != "" {
-		items = []DNSRewrite{
-			{Pattern: domain, IPs: []string{lanIP}, Managed: ManagedKeenDNS},
-			{Pattern: "*." + domain, IPs: []string{lanIP}, Managed: ManagedKeenDNS},
-		}
-		for _, r := range items {
+	if domain != "" && lanIP != "" {
+		patterns := append([]string{domain, "*." + domain}, keenDNSPortalDomains...)
+		items = make([]DNSRewrite, 0, len(patterns))
+		for _, p := range patterns {
+			r := DNSRewrite{Pattern: p, IPs: []string{lanIP}, Managed: ManagedKeenDNS}
 			if _, err := compileRewrite(r); err != nil {
 				return err
 			}
+			items = append(items, r)
 		}
+	}
+	if managedEqual(s.currentManaged(), items) {
+		return nil
 	}
 	if err := s.store.ReplaceManaged(ManagedKeenDNS, items); err != nil {
 		return err
 	}
 	return s.flush()
+}
+
+// currentManaged возвращает записи пресета keendns в текущем порядке стора.
+// Ошибка чтения = "неизвестно" → nil, и вызывающий пойдёт на полную запись.
+func (s *Service) currentManaged() []DNSRewrite {
+	items, err := s.store.List()
+	if err != nil {
+		return nil
+	}
+	out := make([]DNSRewrite, 0, len(items))
+	for _, r := range items {
+		if r.Managed == ManagedKeenDNS {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// managedEqual сравнивает наборы по паттернам и IP — Managed у обоих один и
+// тот же по построению.
+func managedEqual(a, b []DNSRewrite) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Pattern != b[i].Pattern || !slices.Equal(a[i].IPs, b[i].IPs) {
+			return false
+		}
+	}
+	return true
 }
 
 type slotConfig struct {

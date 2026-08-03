@@ -124,6 +124,10 @@ func (s *DNSRewriteStore) Move(from, to int) error {
 // ReplaceManaged swaps every rewrite with Managed==id for items (may be
 // empty = drop managed entries only). Non-managed rewrites are preserved
 // in order. Each item is stamped with Managed=id.
+//
+// Managed-записи встают В НАЧАЛО списка: слот компилируется по порядку, а
+// sing-box берёт первое совпавшее DNS-правило — пользовательский широкий
+// паттерн выше (например *.pro) иначе перекрыл бы managed-запись.
 func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrite) error {
 	if id == "" {
 		return fmt.Errorf("ReplaceManaged: empty managed id")
@@ -134,17 +138,17 @@ func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrit
 	if err != nil {
 		return err
 	}
-	kept := make([]dnsrewrite.DNSRewrite, 0, len(d.Rewrites))
+	out := make([]dnsrewrite.DNSRewrite, 0, len(d.Rewrites)+len(items))
+	for _, r := range items {
+		r.Managed = id
+		out = append(out, r)
+	}
 	for _, r := range d.Rewrites {
 		if r.Managed == id {
 			continue
 		}
-		kept = append(kept, r)
+		out = append(out, r)
 	}
-	for _, r := range items {
-		r.Managed = id
-		kept = append(kept, r)
-	}
-	d.Rewrites = kept
+	d.Rewrites = out
 	return s.saveUnlocked(d)
 }

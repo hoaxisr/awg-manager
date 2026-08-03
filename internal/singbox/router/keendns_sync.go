@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -17,23 +18,37 @@ type LANIPv4Provider interface {
 	LANIPv4() string
 }
 
-// KeenDNSRewriteSyncer upserts/clears managed DNS rewrites for the keendns preset.
+// KeenDNSRewriteSyncer приводит managed-набор DNS-перезаписей пресета keendns
+// к (domain, lanIP); пустые аргументы = снести набор.
 type KeenDNSRewriteSyncer interface {
-	SyncManagedKeenDNS(enabled bool, domain, lanIP string) error
+	SyncManagedKeenDNS(domain, lanIP string) error
 }
 
 // SetKeenDNSPreset wires optional providers for the keendns bypass preset
 // (domain rewrite path). Safe to call after NewService; nil syncer = no-op.
+//
+// Под keenDNSMu, а не под s.mu: dnsrewrite строится в setupListen, а
+// startup-Reconcile уже крутится в горутине из setupRouter — то есть запись
+// этих полей гарантированно конкурирует с их чтением.
 func (s *ServiceImpl) SetKeenDNSPreset(domain KeenDNSDomainProvider, lan LANIPv4Provider, sync KeenDNSRewriteSyncer) {
+	s.keenDNSMu.Lock()
+	defer s.keenDNSMu.Unlock()
 	s.keenDNSDomain = domain
 	s.keenDNSLAN = lan
 	s.keenDNSSync = sync
 }
 
+// keenDNSPreset снимает согласованный снапшот провайдеров пресета.
+func (s *ServiceImpl) keenDNSPreset() (KeenDNSDomainProvider, LANIPv4Provider, KeenDNSRewriteSyncer) {
+	s.keenDNSMu.Lock()
+	defer s.keenDNSMu.Unlock()
+	return s.keenDNSDomain, s.keenDNSLAN, s.keenDNSSync
+}
+
 // SyncKeenDNSRewrites runs the keendns-preset rewrite sync against current
 // settings. Used at boot after SetKeenDNSPreset; Reconcile also calls it.
 func (s *ServiceImpl) SyncKeenDNSRewrites(ctx context.Context) {
-	if s.keenDNSSync == nil || s.deps.Settings == nil {
+	if _, _, sync := s.keenDNSPreset(); sync == nil || s.deps.Settings == nil {
 		return
 	}
 	settings, err := s.deps.Settings.Load()
@@ -57,20 +72,20 @@ func (s *ServiceImpl) SyncKeenDNSRewrites(ctx context.Context) {
 // confirmed unbooked (empty domain, no provider error). Transient NDMS
 // errors or a missing LAN IP leave existing managed rewrites intact.
 func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.SingboxRouterSettings) {
-	if s.keenDNSSync == nil {
+	domainProv, lanProv, sync := s.keenDNSPreset()
+	if sync == nil {
 		return
 	}
-	enabled := HasBypassPreset(sr.BypassPresets, PresetKeenDNS)
-	if !enabled {
-		if err := s.keenDNSSync.SyncManagedKeenDNS(false, "", ""); err != nil {
+	if !slices.Contains(sr.BypassPresets, PresetKeenDNS) {
+		if err := sync.SyncManagedKeenDNS("", ""); err != nil {
 			s.appLog.Warn("keendns-rewrite", "", err.Error())
 		}
 		return
 	}
 
 	var domain string
-	if s.keenDNSDomain != nil {
-		d, err := s.keenDNSDomain.KeenDNSDomain(ctx)
+	if domainProv != nil {
+		d, err := domainProv.KeenDNSDomain(ctx)
 		if err != nil {
 			// Keep last-good rewrites — do not treat a flap as "unbooked".
 			s.appLog.Warn("keendns-rewrite", "", "KeenDNS domain: "+err.Error())
@@ -79,15 +94,15 @@ func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.Singbo
 		domain = d
 	}
 	var lan string
-	if s.keenDNSLAN != nil {
-		lan = s.keenDNSLAN.LANIPv4()
+	if lanProv != nil {
+		lan = lanProv.LANIPv4()
 	}
 
 	if domain == "" {
 		// Confirmed: no booked FQDN → drop managed rewrites.
 		s.appLog.Warn("keendns-rewrite", "",
 			"пресет keendns включён, но KeenDNS не забронирован — managed rewrite снят")
-		if err := s.keenDNSSync.SyncManagedKeenDNS(false, "", ""); err != nil {
+		if err := sync.SyncManagedKeenDNS("", ""); err != nil {
 			s.appLog.Warn("keendns-rewrite", "", err.Error())
 		}
 		return
@@ -98,7 +113,7 @@ func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.Singbo
 			"пресет keendns включён, но нет LAN IP — оставляем прежний managed rewrite")
 		return
 	}
-	if err := s.keenDNSSync.SyncManagedKeenDNS(true, domain, lan); err != nil {
+	if err := sync.SyncManagedKeenDNS(domain, lan); err != nil {
 		s.appLog.Warn("keendns-rewrite", domain, err.Error())
 	}
 }
