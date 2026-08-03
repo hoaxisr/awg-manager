@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 32
+	CurrentSchemaVersion        = 33
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -188,6 +188,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 32 {
 			s.migrateToV32(&settings)
 		}
+		if settings.SchemaVersion < 33 {
+			s.migrateToV33(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -273,6 +276,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
+			// KeenDNS/CrazeDNS cloud IP must bypass TPROXY by default (#490):
+			// otherwise LAN-only *.keenetic.pro / *.netcraze.* open as
+			// unavailable or hit the router web UI.
+			BypassPresets: []string{"keendns"},
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only

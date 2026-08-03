@@ -146,7 +146,9 @@ type SingboxRouterSettings struct {
 	WANInterface string `json:"wanInterface,omitempty"`
 	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT.
 	// Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-	// (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). nil/[] = nothing excluded.
+	// (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). Default for fresh
+	// installs and post-v33 migrations includes "keendns"; empty after the
+	// user clears every preset = nothing excluded.
 	BypassPresets []string `json:"bypassPresets,omitempty"`
 	// BypassExtraPorts is a user-supplied comma-separated list of extra port
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").

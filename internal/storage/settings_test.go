@@ -51,6 +51,9 @@ func TestSettingsStore_LoadDefault(t *testing.T) {
 	if !settings.SingboxRouter.SnifferEnabled {
 		t.Error("SingboxRouter.SnifferEnabled = false, want true")
 	}
+	if len(settings.SingboxRouter.BypassPresets) != 1 || settings.SingboxRouter.BypassPresets[0] != "keendns" {
+		t.Errorf("SingboxRouter.BypassPresets = %v, want [keendns]", settings.SingboxRouter.BypassPresets)
+	}
 	if settings.Download.RouteTag != "direct" {
 		t.Errorf("Download.RouteTag = %q, want direct", settings.Download.RouteTag)
 	}
