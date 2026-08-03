@@ -4615,9 +4615,9 @@ definitions:
         description: |-
           BypassPresets lists active named port-bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (destination-IP 78.47.125.180, KeenDNS/CrazeDNS).
+          (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). Default includes "keendns".
         example:
-        - l2tp
+        - keendns
         items:
           type: string
         type: array
