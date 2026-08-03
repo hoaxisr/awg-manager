@@ -1368,6 +1368,7 @@ const api_SingboxDNSLookupResponse: v.GenericSchema = v.looseObject({
 
 const api_SingboxDNSRewriteDTO: v.GenericSchema = v.looseObject({
 	ips: v.optional(v.nullable(v.array(v.string()))),
+	managed: v.optional(v.nullable(v.string())),
 	pattern: v.optional(v.nullable(v.string())),
 });
 
