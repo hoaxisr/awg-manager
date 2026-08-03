@@ -254,7 +254,7 @@
 	<title>Sing-box подписки - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Sing-box подписки" />
 	<SubscriptionsTabSection
 		dashboardOn={false}

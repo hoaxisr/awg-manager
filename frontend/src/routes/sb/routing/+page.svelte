@@ -109,7 +109,7 @@
 	<title>Маршрутизация sing-box - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	{#if systemKnown && !singboxInstalled}
 		<EmptyState
 			title="Sing-box не установлен"

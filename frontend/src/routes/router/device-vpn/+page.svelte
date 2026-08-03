@@ -19,7 +19,7 @@
     <title>VPN для устройств - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
     <PageHeader title="VPN для устройств">
         {#snippet actions()}
             <RoutingRefreshButton />

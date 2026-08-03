@@ -232,7 +232,7 @@ onMount(() => {
 	<title>Настройки - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Настройки" />
 	{#if loading}
 		<div class="flex justify-center py-8">

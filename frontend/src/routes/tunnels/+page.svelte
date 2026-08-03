@@ -337,7 +337,7 @@
 	<title>Все туннели - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Все туннели" />
 	{#if loading}
 		<TunnelsLoadingSkeleton compact />

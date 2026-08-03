@@ -29,7 +29,7 @@
     <title>NDMS - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
     <div class="routing-page">
         <PageHeader title="NDMS">
             {#snippet actions()}

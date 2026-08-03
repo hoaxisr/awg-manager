@@ -7,7 +7,7 @@
 	<title>FreeTurn - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="FreeTurn" />
 	<FreeTurnTab />
 </PageContainer>

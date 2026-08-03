@@ -55,7 +55,7 @@
 	<title>Обзор - AWGM</title>
 </svelte:head>
 
-<PageContainer width="narrow">
+<PageContainer>
 	<PageHeader title="Обзор" description="Состояние подсистем, маршрутизации и интеграций">
 		{#snippet actions()}
 			<span

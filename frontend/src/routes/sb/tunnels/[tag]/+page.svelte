@@ -187,7 +187,7 @@
 	<title>{tag} — Sing-box</title>
 </svelte:head>
 
-<PageContainer width="wide">
+<PageContainer>
 	<div class="edit-wrapper">
 	<div class="sticky-header">
 		<div class="header-left">

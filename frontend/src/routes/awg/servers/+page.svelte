@@ -263,7 +263,7 @@
 	<title>Серверы - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Серверы">
 		{#snippet actions()}
 			<ManagedServerBackupToolbar showExport={hasServers} />

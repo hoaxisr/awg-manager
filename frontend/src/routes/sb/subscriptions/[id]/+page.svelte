@@ -286,7 +286,7 @@
 	<title>{subscription?.label ?? 'Подписка'} - AWGM</title>
 </svelte:head>
 
-<PageContainer width="wide">
+<PageContainer>
 	{#if !subscription && loading}
 		<!-- Initial spinner before meta arrives (any subscription size) -->
 		<div class="loading-centered">

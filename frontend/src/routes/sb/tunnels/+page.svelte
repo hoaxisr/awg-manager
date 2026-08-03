@@ -171,7 +171,7 @@
 	<title>Sing-box туннели - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Sing-box туннели" />
 	<SingboxTunnelsTabSection
 		dashboardOn={false}

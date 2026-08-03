@@ -1,23 +1,17 @@
-<script lang="ts" module>
-  import type { Snippet } from 'svelte';
-  export type PageWidth = 'narrow' | 'wide' | 'full';
-</script>
-
 <script lang="ts">
+  import type { Snippet } from 'svelte';
+
   interface Props {
-    width?: PageWidth;
     children: Snippet;
   }
 
-  let { width = 'wide', children }: Props = $props();
+  let { children }: Props = $props();
 </script>
 
-<div
-  class="page-container"
-  class:width-narrow={width === 'narrow'}
-  class:width-wide={width === 'wide'}
-  class:width-full={width === 'full'}
->
+<!-- Единая ширина всех страниц (nav-v3, подэтап 5A): контейнер отдаёт контенту
+     всю доступную ширину оболочки. Единственный рычаг сужения — тумблер
+     «Компактный режим» (data-layout-compact, 960px) в настройках. -->
+<div class="page-container">
   {@render children()}
 </div>
 
@@ -30,9 +24,4 @@
     box-sizing: border-box;
     min-width: 0;
   }
-
-  .width-narrow { max-width: 960px; }
-  .width-wide { max-width: 1440px; }
-  .width-full { max-width: 100%; }
-
 </style>

@@ -77,7 +77,7 @@
 	<title>AWG3 туннели - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="AWG3 туннели" />
 	<Awg3TunnelsSection
 		tunnels={awg3List}

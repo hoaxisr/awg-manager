@@ -30,7 +30,7 @@
     <title>HR Neo - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
     <div class="routing-page">
         <PageHeader title="HR Neo">
             {#snippet actions()}

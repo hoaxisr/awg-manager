@@ -24,7 +24,7 @@
     <title>Политики доступа - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
     <PageHeader title="Политики доступа">
         {#snippet actions()}
             <RoutingRefreshButton />

@@ -322,13 +322,13 @@
 </svelte:head>
 
 {#if loading}
-	<PageContainer width="narrow">
+	<PageContainer>
 		<div class="flex flex-col items-center gap-4 p-12 text-secondary">
 			<LoadingSpinner size="lg" message="Загрузка..." />
 		</div>
 	</PageContainer>
 {:else if tunnel}
-	<PageContainer width="wide">
+	<PageContainer>
 	<div class="edit-wrapper">
 		<TunnelEditHeader
 			tunnelName={tunnel.name ?? ''}

@@ -57,7 +57,7 @@
 	<title>{tunnel?.description || name} — AWGM</title>
 </svelte:head>
 
-<PageContainer width="wide">
+<PageContainer>
 	<div class="edit-wrapper">
 		<div class="sticky-header">
 		<div class="header-left">

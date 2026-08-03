@@ -94,7 +94,7 @@
 	<title>Гео-данные - AWGM</title>
 </svelte:head>
 
-<PageContainer width="full">
+<PageContainer>
 	<PageHeader title="Гео-данные" />
 
 	{#if noEngine}
