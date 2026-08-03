@@ -31,6 +31,9 @@
 	.group-bar {
 		display: flex;
 		align-items: center;
+		/* На 390px строка не влезает, и «По хосту» обрезался краем .segments
+		   (overflow: hidden). Переносим счётчик на вторую строку. */
+		flex-wrap: wrap;
 		gap: 10px;
 		margin-bottom: 10px;
 		font-size: 12px;

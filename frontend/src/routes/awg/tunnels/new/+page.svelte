@@ -128,7 +128,7 @@
 </svelte:head>
 
 <PageContainer>
-<div class="page-header">
+<div class="page-header import-header">
 	<BackLink href="/awg/tunnels" />
 	<h2 class="page-title">Новый туннель</h2>
 </div>
@@ -200,6 +200,14 @@
 	.import-container {
 		max-width: 700px;
 		margin: 0 auto;
+		padding: 0 1rem;
+	}
+
+	/* Шапка живёт в той же колонке, что и форма: страница теперь во всю ширину
+	   оболочки, и без ограничителя заголовок улетал к правому краю экрана. */
+	.import-header {
+		max-width: 700px;
+		margin: 0 auto 1.5rem;
 		padding: 0 1rem;
 	}
 

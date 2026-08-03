@@ -19,6 +19,7 @@
 </svelte:head>
 
 <PageContainer>
+	<div class="import-column">
 	<div class="sticky-header">
 		<div class="header-left">
 			<Button variant="ghost" size="sm" onclick={() => goto('/sb/tunnels')} iconBefore={backIcon}>
@@ -34,6 +35,7 @@
 	</p>
 
 	<SingboxGhostTerminal oncomplete={onComplete} />
+	</div>
 </PageContainer>
 
 {#snippet backIcon()}
@@ -41,6 +43,13 @@
 {/snippet}
 
 <style>
+	/* Страница теперь во всю ширину оболочки, а тут одно поле для вставки
+	   ссылок: без ограничителя на 2560px оно растягивается лентой через весь
+	   экран. Сужаем внутри страницы, ширина политики не касается. */
+	.import-column {
+		max-width: 900px;
+	}
+
 	.sticky-header {
 		display: flex;
 		align-items: center;
