@@ -3,6 +3,11 @@
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
     import { ChevronDown } from 'lucide-svelte';
+    import {
+        menuMemoryKey as sharedMenuMemoryKey,
+        readMenuChild,
+        rememberMenuChild,
+    } from '$lib/utils/menuMemory';
 
     interface TabChild {
         id: string;
@@ -65,35 +70,20 @@
 
     let anyDropdownOpen = $derived(overflowOpen || menuOpenId !== null);
 
-    const MENU_MEMORY_PREFIX = 'ui.tabs.menuLast:';
-
     function menuMemoryKey(tab: Tab): string {
-        // Include leaf ids so two "Sing-box" menus (tunnels vs routing) don't clash.
-        return `${tab.label}:${leafIds(tab).slice().sort().join(',')}`;
+        return sharedMenuMemoryKey(tab.label, leafIds(tab));
     }
 
     function readStoredMenuChild(tab: Tab): string | null {
-        if (typeof localStorage === 'undefined') return null;
-        try {
-            const raw = localStorage.getItem(MENU_MEMORY_PREFIX + menuMemoryKey(tab));
-            if (raw && leafIds(tab).includes(raw)) return raw;
-        } catch {
-            /* private mode */
-        }
-        return null;
+        return readMenuChild(tab.label, leafIds(tab));
     }
 
-    function rememberMenuChild(tab: Tab, childId: string) {
+    function rememberMenuChildFor(tab: Tab, childId: string) {
         if (!leafIds(tab).includes(childId)) return;
         const key = menuMemoryKey(tab);
         if (menuMemory[key] === childId) return;
         menuMemory = { ...menuMemory, [key]: childId };
-        if (typeof localStorage === 'undefined') return;
-        try {
-            localStorage.setItem(MENU_MEMORY_PREFIX + key, childId);
-        } catch {
-            /* private mode */
-        }
+        rememberMenuChild(tab.label, leafIds(tab), childId);
     }
 
     function resolvedMenuChild(tab: Tab): TabChild | undefined {
@@ -147,7 +137,7 @@
         for (const tab of tabs) {
             if (!isMenuTab(tab)) continue;
             const child = activeChild(tab);
-            if (child) rememberMenuChild(tab, child.id);
+            if (child) rememberMenuChildFor(tab, child.id);
         }
     });
 
