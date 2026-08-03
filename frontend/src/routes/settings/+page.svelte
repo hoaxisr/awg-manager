@@ -58,7 +58,6 @@
 	import {
 		CircleArrowDown,
 		Lock,
-		Network,
 		CloudDownload,
 		ScrollText,
 		Activity,
@@ -813,12 +812,6 @@ $effect(() => {
 							/>
 						</div>
 					{/if}
-					</div>
-				</div>
-
-				<div class="settings-block">
-					<div class="card">
-					<SettingsSectionLabel label="HTTP-сервер" icon={Network} tone="blue" header />
 					<HttpServerCard />
 					</div>
 				</div>

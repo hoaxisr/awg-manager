@@ -77,6 +77,9 @@ export const AUTO_INSTALL_MIN_LEVEL: UsageLevel = 'expert';
 /** Подробности маршрута служебных загрузок: "через Direct (WAN)", route labels и transport hints. */
 export const DOWNLOAD_ROUTE_DETAILS_MIN_LEVEL: UsageLevel = 'expert';
 
+/** Порт и интерфейсы HTTP-сервера панели — только на «Продвинутом». */
+export const HTTP_SERVER_SETTINGS_MIN_LEVEL: UsageLevel = 'expert';
+
 export function isUsageLevelAtLeast(level: UsageLevel, minimum: UsageLevel): boolean {
 	return LEVEL_RANK[level] >= LEVEL_RANK[minimum];
 }
@@ -99,6 +102,10 @@ export function isAutoInstallSettingsVisible(level: UsageLevel): boolean {
 
 export function areDownloadRouteDetailsVisible(level: UsageLevel): boolean {
 	return isUsageLevelAtLeast(level, DOWNLOAD_ROUTE_DETAILS_MIN_LEVEL);
+}
+
+export function isHttpServerSettingsVisible(level: UsageLevel): boolean {
+	return isUsageLevelAtLeast(level, HTTP_SERVER_SETTINGS_MIN_LEVEL);
 }
 
 export function isSectionVisible(level: UsageLevel, section: Section): boolean {

@@ -357,7 +357,7 @@
         {#snippet actions()}
             <Button
                 variant="secondary"
-                size="sm"
+                size="md"
                 onclick={() => (searchOpen = true)}
                 iconBefore={searchIcon}
             >
@@ -366,7 +366,7 @@
             <!-- TODO Phase 1: warning variant for missing>0 -->
             <Button
                 variant="secondary"
-                size="sm"
+                size="md"
                 onclick={handleRefresh}
                 disabled={refreshing}
                 loading={refreshing}
@@ -469,7 +469,7 @@
 </Modal>
 
 {#snippet searchIcon()}
-    <Search size={16} strokeWidth={2} aria-hidden="true" />
+    <Search size={14} strokeWidth={2} aria-hidden="true" />
 {/snippet}
 
 <style>
@@ -484,7 +484,7 @@
 
 		.routing-page :global(.page-header .actions .btn) {
 			width: 100%;
-			min-height: 28px;
+			min-width: 0;
 			justify-content: center;
 		}
 	}

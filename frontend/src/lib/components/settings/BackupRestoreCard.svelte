@@ -154,7 +154,7 @@
 		padding-bottom: 0.875rem;
 		border-bottom: 1px solid var(--border);
 		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
+		color: var(--text-muted);
 		line-height: 1.45;
 	}
 
