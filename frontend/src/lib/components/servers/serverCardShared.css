@@ -159,7 +159,8 @@
 
 .server-detail-card .setting-control :global(.dropdown),
 .server-detail-card .setting-control :global(.field),
-.server-detail-card .setting-control :global(.picker) {
+.server-detail-card .setting-control :global(.picker),
+.server-detail-card .setting-control :global(.segmented-control) {
 	width: 100%;
 	min-width: 0;
 }

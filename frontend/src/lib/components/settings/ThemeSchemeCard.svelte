@@ -8,6 +8,7 @@
 		type SettingsSectionIconMode,
 	} from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
+	import { showSummary } from '$lib/stores/showSummary';
 	import { tunnelDashboardMode } from '$lib/stores/tunnelDashboardMode';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isTunnelDashboardAvailable } from '$lib/types/usageLevel';
@@ -245,6 +246,18 @@
 		/>
 	</div>
 	{/if}
+	<div class="setting-row summary-row">
+		<div class="flex flex-col gap-1">
+			<span class="font-medium">Отображать summary</span>
+			<span class="setting-description">
+				Плашка статистики (KPI) наверху страниц туннелей и серверов.
+			</span>
+		</div>
+		<Toggle
+			checked={$showSummary}
+			onchange={(enabled) => showSummary.setEnabled(enabled)}
+		/>
+	</div>
 	<div class="setting-row letter-icons-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Буквенные иконки</span>
@@ -263,6 +276,7 @@
 <style>
 	.compact-layout-row,
 	.dashboard-mode-row,
+	.summary-row,
 	.letter-icons-row {
 		align-items: center;
 	}
@@ -270,6 +284,7 @@
 	@media (max-width: 640px) {
 		.compact-layout-row,
 		.dashboard-mode-row,
+		.summary-row,
 		.letter-icons-row {
 			flex-direction: row;
 			align-items: center;
@@ -279,6 +294,7 @@
 
 		.compact-layout-row > *:first-child,
 		.dashboard-mode-row > *:first-child,
+		.summary-row > *:first-child,
 		.letter-icons-row > *:first-child {
 			flex: 1 1 auto;
 			min-width: 0;

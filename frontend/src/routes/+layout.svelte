@@ -19,6 +19,7 @@
 	} from '$lib/stores/tunnelDashboardPrefs';
 	import { settingsSectionIconMode } from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
+	import { showSummary } from '$lib/stores/showSummary';
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -378,6 +379,7 @@
 		compactLayout.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
+		showSummary.init();
 		tunnelDashboardMode.init();
 		tunnelDashboardLayout.init();
 		tunnelDashboardView.init();

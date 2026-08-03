@@ -13,6 +13,7 @@
 	import type { SubscriptionActiveCardVM, SingboxTunnelListStats } from '$lib/components/subscriptions/subscriptionVMs';
 	import { Globe, LayoutGrid, Link } from 'lucide-svelte';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
+	import { showSummary } from '$lib/stores/showSummary';
 
 	interface Props {
 		dashboardOn: boolean;
@@ -152,7 +153,7 @@
 			</div>
 		</div>
 	{:else if singboxTunnelsList.length > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
-		{#if !dashboardOn}
+		{#if !dashboardOn && $showSummary}
 			<div class="awg-summary-row">
 				<StatStrip>
 					<Stat

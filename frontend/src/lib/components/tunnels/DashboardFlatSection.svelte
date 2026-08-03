@@ -14,6 +14,7 @@
 	import { goto } from '$app/navigation';
 	import { tunnelDashboardLayout, tunnelDashboardView } from '$lib/stores/tunnelDashboardMode';
 	import DashboardSummary from '$lib/components/tunnels/DashboardSummary.svelte';
+	import { showSummary } from '$lib/stores/showSummary';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import { SingboxInstallBanner, SingboxTunnelCard } from '$lib/components/singbox';
 	import { Awg3TunnelCard } from '$lib/components/awg3';
@@ -200,7 +201,9 @@
 			</DashboardToolbar>
 		</div>
 	</div>
-	<DashboardSummary stats={ctx.dashboardSummaryStats} />
+	{#if $showSummary}
+		<DashboardSummary stats={ctx.dashboardSummaryStats} />
+	{/if}
 </div>
 {#if ctx.dashboardFlatCardMode}
 	<div

@@ -28,6 +28,7 @@
 		ServerSettingsPanel,
 	} from '$lib/components/servers';
 	import { Toggle, Button, Stat, StatStrip } from '$lib/components/ui';
+	import { showSummary } from '$lib/stores/showSummary';
 	import { Plus, RefreshCw, ExternalLink, Maximize2 } from 'lucide-svelte';
 
 	interface Props {
@@ -385,12 +386,14 @@
 		</div>
 	</div>
 
+	{#if $showSummary}
 	<StatStrip>
 		<Stat value={formatBytes(totalRx)} label="RX" />
 		<Stat value={formatBytes(totalTx)} label="TX" />
 		<Stat value={`${onlineCount} / ${totalPeers}`} label="Клиенты" sub={onlineCount > 0 ? `${onlineCount} онлайн` : 'нет активных'} />
 		<Stat value={`UDP :${server.listenPort}`} label="Listen" />
 	</StatStrip>
+	{/if}
 
 	<!-- Панель настроек доступна и перенесённым системным серверам: бэкенд
 	     (NAT/политика/endpoint/пиры) принимает их наравне со встроенным. -->

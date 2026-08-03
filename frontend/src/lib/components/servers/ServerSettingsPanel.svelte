@@ -53,7 +53,7 @@
 <style>
 	.settings-panel {
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md, 12px);
+		border-radius: var(--radius);
 		background: var(--color-bg-tertiary);
 		overflow: hidden;
 		/* padding контролируют header/body; гасим глобальный .settings-panel { padding:1rem } из app.css */

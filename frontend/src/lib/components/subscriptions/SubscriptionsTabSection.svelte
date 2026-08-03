@@ -19,6 +19,7 @@
 	import type { Subscription } from '$lib/types';
 	import type { SubscriptionActiveCardVM, SubscriptionsTrafficStats } from './subscriptionVMs';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
+	import { showSummary } from '$lib/stores/showSummary';
 
 
 
@@ -149,7 +150,7 @@
 					</Button>
 				</div>
 			{:else}
-				{#if !dashboardOn}
+				{#if !dashboardOn && $showSummary}
 					<div class="awg-summary-row">
 						<StatStrip>
 							<Stat
