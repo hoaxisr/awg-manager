@@ -7,10 +7,18 @@ import (
 	"strings"
 )
 
+// ManagedKeenDNS marks rewrites owned by the keendns bypass preset
+// (own FQDN → LAN IP). User CRUD must not invent this value; SyncManaged
+// upserts/removes these entries.
+const ManagedKeenDNS = "keendns"
+
 // DNSRewrite — каноническая запись перезаписи: glob-паттерн домена → IP.
 type DNSRewrite struct {
 	Pattern string   `json:"pattern"`
 	IPs     []string `json:"ips"`
+	// Managed — непустой id владельца (например ManagedKeenDNS). Такие
+	// записи создаёт/сносит пресет; пользовательские rewrites оставляют "".
+	Managed string `json:"managed,omitempty"`
 }
 
 // compileRewrite превращает одну запись в одно или два (dual-stack) sing-box

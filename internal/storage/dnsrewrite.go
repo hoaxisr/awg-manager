@@ -120,3 +120,31 @@ func (s *DNSRewriteStore) Move(from, to int) error {
 	d.Rewrites = append(d.Rewrites[:to], append([]dnsrewrite.DNSRewrite{r}, d.Rewrites[to:]...)...)
 	return s.saveUnlocked(d)
 }
+
+// ReplaceManaged swaps every rewrite with Managed==id for items (may be
+// empty = drop managed entries only). Non-managed rewrites are preserved
+// in order. Each item is stamped with Managed=id.
+func (s *DNSRewriteStore) ReplaceManaged(id string, items []dnsrewrite.DNSRewrite) error {
+	if id == "" {
+		return fmt.Errorf("ReplaceManaged: empty managed id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	kept := make([]dnsrewrite.DNSRewrite, 0, len(d.Rewrites))
+	for _, r := range d.Rewrites {
+		if r.Managed == id {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	for _, r := range items {
+		r.Managed = id
+		kept = append(kept, r)
+	}
+	d.Rewrites = kept
+	return s.saveUnlocked(d)
+}

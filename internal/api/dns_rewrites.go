@@ -16,6 +16,7 @@ import (
 type SingboxDNSRewriteDTO struct {
 	Pattern string   `json:"pattern" example:"finland10*.discord.media"`
 	IPs     []string `json:"ips" example:"104.25.158.178"`
+	Managed string   `json:"managed,omitempty" example:"keendns"`
 }
 
 // SingboxDNSRewritesListResponse is the envelope for

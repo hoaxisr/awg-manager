@@ -456,6 +456,13 @@ type ServiceImpl struct {
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
+
+	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
+	// setupListen after the router service).
+	keenDNSDomain KeenDNSDomainProvider
+	keenDNSLAN    LANIPv4Provider
+	keenDNSSync   KeenDNSRewriteSyncer
 }
 
 func NewService(d Deps) *ServiceImpl {

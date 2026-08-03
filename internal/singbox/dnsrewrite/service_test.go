@@ -23,6 +23,80 @@ func (s *fakeStore) Add(r DNSRewrite) error           { s.items = append(s.items
 func (s *fakeStore) Update(i int, r DNSRewrite) error { s.items[i] = r; return nil }
 func (s *fakeStore) Delete(i int) error               { s.items = append(s.items[:i], s.items[i+1:]...); return nil }
 func (s *fakeStore) Move(a, b int) error              { return nil }
+func (s *fakeStore) ReplaceManaged(id string, items []DNSRewrite) error {
+	kept := make([]DNSRewrite, 0, len(s.items))
+	for _, r := range s.items {
+		if r.Managed == id {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	for _, r := range items {
+		r.Managed = id
+		kept = append(kept, r)
+	}
+	s.items = kept
+	return nil
+}
+
+func TestSyncManagedKeenDNS_UpsertsAndClears(t *testing.T) {
+	orch := newFakeOrch()
+	store := &fakeStore{items: []DNSRewrite{{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}}}}
+	svc := NewService(store, orch, nil)
+
+	if err := svc.SyncManagedKeenDNS(true, "home.netcraze.pro", "192.168.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.items) != 3 {
+		t.Fatalf("items = %d, want 3 (user + 2 managed)", len(store.items))
+	}
+	if store.items[1].Pattern != "home.netcraze.pro" || store.items[1].Managed != ManagedKeenDNS {
+		t.Errorf("exact managed = %+v", store.items[1])
+	}
+	if store.items[2].Pattern != "*.home.netcraze.pro" {
+		t.Errorf("wildcard managed = %+v", store.items[2])
+	}
+	if !orch.enabled[SlotName] {
+		t.Error("slot should stay enabled")
+	}
+
+	if err := svc.SyncManagedKeenDNS(false, "home.netcraze.pro", "192.168.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.items) != 1 || store.items[0].Pattern != "nas.lan" {
+		t.Fatalf("after clear: %+v", store.items)
+	}
+}
+
+func TestServiceMoveRejectsManaged(t *testing.T) {
+	store := &fakeStore{items: []DNSRewrite{
+		{Pattern: "a.lan", IPs: []string{"1.1.1.1"}},
+		{Pattern: "home.netcraze.pro", IPs: []string{"192.168.1.1"}, Managed: ManagedKeenDNS},
+	}}
+	svc := NewService(store, newFakeOrch(), nil)
+	if err := svc.Move(1, 0); err == nil {
+		t.Fatal("Move of managed rewrite must fail")
+	}
+	if err := svc.Move(0, 1); err == nil {
+		t.Fatal("Move onto managed rewrite must fail")
+	}
+	if store.items[0].Pattern != "a.lan" || store.items[1].Managed != ManagedKeenDNS {
+		t.Fatalf("store mutated on rejected move: %+v", store.items)
+	}
+}
+
+func TestSyncManagedKeenDNS_NoDomainClears(t *testing.T) {
+	store := &fakeStore{items: []DNSRewrite{
+		{Pattern: "x.lan", IPs: []string{"1.1.1.1"}, Managed: ManagedKeenDNS},
+	}}
+	svc := NewService(store, newFakeOrch(), nil)
+	if err := svc.SyncManagedKeenDNS(true, "", "192.168.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.items) != 0 {
+		t.Fatalf("empty domain must clear managed, got %+v", store.items)
+	}
+}
 
 func TestServiceAddFlushesCompiledRules(t *testing.T) {
 	orch := newFakeOrch()

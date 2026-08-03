@@ -358,6 +358,7 @@ func (a *app) setupRouter() {
 			}
 		},
 	})
+	a.routerSvc = routerSvc
 	// Wire selective-bypass builder. The adapter wraps selective.Builder with the
 	// router service's live config so reconcileInstalled can trigger an ipset
 	// rebuild with a single Rebuild(ctx) call.
@@ -564,6 +565,16 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
+	// keendns preset → managed DNS rewrite (own FQDN → LAN), not iptables
+	// /32 for 78.47.125.180 (that IP is shared with every other KeenDNS host).
+	if a.routerSvc != nil {
+		a.routerSvc.SetKeenDNSPreset(
+			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
+			keenDNSLANAdapter{},
+			dnsRewriteSvc,
+		)
+		a.routerSvc.SyncKeenDNSRewrites(context.Background())
+	}
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	a.srv.SetBootStatusFunc(func() bool { return atomic.LoadInt32(&a.bootDone) == 0 })
