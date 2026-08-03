@@ -1,6 +1,7 @@
 import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
-import type { SingboxRouterRule, SingboxRouterDNSRule } from '$lib/types';
+import type { SingboxRouterRule, SingboxRouterDNSRule, SingboxRouterRuleSet } from '$lib/types';
+import { resolveRuleSetByTag } from '$lib/utils/singboxInlineRules';
 import type { CustomMatcherFields } from './addWizardStore';
 import type { TemplateGroup } from './templatesData';
 import type { SubmitResult } from './templatesActions';
@@ -112,11 +113,42 @@ export async function removeLanNamesRule(): Promise<void> {
   }
 }
 
-function collectTunnelDomainMatchers(rules: SingboxRouterRule[]) {
+/**
+ * IP/geoip rule-set нельзя класть в dns.rules без match_response — sing-box 1.14
+ * помечает это как Legacy Address Filter Fields и падает на check.
+ * Доменные geosite/inline — ок.
+ */
+export function isDnsAddressFilterRuleSet(
+  tag: string,
+  ruleSets: SingboxRouterRuleSet[] = [],
+): boolean {
+  if (/^geoip([-_:]|$)/i.test(tag)) return true;
+
+  const rs = resolveRuleSetByTag(tag, ruleSets) as SingboxRouterRuleSet | undefined;
+  if (!rs) return false;
+
+  const url = rs.url ?? '';
+  if (/[?&]kind=geoip\b/i.test(url) || /\/geoip(?:[-_/]|\.srs|\b)/i.test(url)) return true;
+  if (rs.path && /geoip/i.test(rs.path)) return true;
+
+  if (rs.type === 'inline' && Array.isArray(rs.rules)) {
+    return rs.rules.some((rule) => {
+      if (!rule || typeof rule !== 'object') return false;
+      const ip = rule['ip_cidr'];
+      if (Array.isArray(ip) && ip.length > 0) return true;
+      return rule['ip_is_private'] === true;
+    });
+  }
+  return false;
+}
+
+function collectTunnelDomainMatchers(rules: SingboxRouterRule[], ruleSets: SingboxRouterRuleSet[]) {
   const rs = new Set<string>(), ds = new Set<string>();
   for (const r of rules) {
     if (!r.outbound || r.outbound === 'direct' || r.action === 'reject') continue;
-    (r.rule_set ?? []).forEach((x) => rs.add(x));
+    for (const x of r.rule_set ?? []) {
+      if (!isDnsAddressFilterRuleSet(x, ruleSets)) rs.add(x);
+    }
     (r.domain_suffix ?? []).forEach((x) => ds.add(x));
   }
   return { rule_set: [...rs], domain_suffix: [...ds] };
@@ -124,8 +156,11 @@ function collectTunnelDomainMatchers(rules: SingboxRouterRule[]) {
 
 /** Пересчитывает ОДНО dns-tunnel DNS-правило из всех не-direct routing-правил. */
 export async function syncTunnelDnsRule(): Promise<void> {
-  const rules = await api.singboxRouterListRules();
-  const agg = collectTunnelDomainMatchers(rules);
+  const [rules, ruleSets] = await Promise.all([
+    api.singboxRouterListRules(),
+    api.singboxRouterListRuleSets(),
+  ]);
+  const agg = collectTunnelDomainMatchers(rules, ruleSets);
   const hasAny = agg.rule_set.length || agg.domain_suffix.length;
 
   const servers = await api.singboxRouterListDNSServers();

@@ -8,6 +8,7 @@ vi.mock('$lib/api/client', () => ({
     singboxRouterAddDNSServer: vi.fn(),
     singboxRouterUpdateDNSServer: vi.fn(),
     singboxRouterListRules: vi.fn(async () => []),
+    singboxRouterListRuleSets: vi.fn(async () => []),
     singboxRouterListDNSRules: vi.fn(async () => []),
     singboxRouterAddDNSRule: vi.fn(),
     singboxRouterUpdateDNSRule: vi.fn(),
@@ -40,7 +41,14 @@ import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import { submitWizard } from './addWizardActions';
 import { mergeAndSaveSettings } from './settingsActions';
-import { finishSetup, ensureTunnelDnsInfra, syncTunnelDnsRule, ensureLanNamesRule, removeLanNamesRule } from './emptyStateActions';
+import {
+  finishSetup,
+  ensureTunnelDnsInfra,
+  syncTunnelDnsRule,
+  ensureLanNamesRule,
+  removeLanNamesRule,
+  isDnsAddressFilterRuleSet,
+} from './emptyStateActions';
 
 describe('emptyStateActions', () => {
   beforeEach(() => {
@@ -164,6 +172,61 @@ describe('syncTunnelDnsRule', () => {
     expect(api.singboxRouterDeleteDNSRule).toHaveBeenCalledWith(0);
     expect(api.singboxRouterAddDNSRule).not.toHaveBeenCalled();
     expect(api.singboxRouterUpdateDNSRule).not.toHaveBeenCalled();
+  });
+
+  it('geoip / ip_cidr rule_set не попадают в dns-tunnel (sing-box 1.14 Legacy Address Filter)', async () => {
+    (api.singboxRouterListDNSServers as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'dns-tunnel', type: 'udp', server: '9.9.9.9', detour: 'wg-nl' },
+    ]);
+    (api.singboxRouterListRules as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { rule_set: ['geosite-google', 'geoip-google-v4'], outbound: 'wg-nl', action: 'route' },
+      { rule_set: ['google-ip'], outbound: 'wg-nl', action: 'route' },
+      {
+        rule_set: ['custom-ips'],
+        outbound: 'wg-nl',
+        action: 'route',
+      },
+    ]);
+    (api.singboxRouterListRuleSets as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { tag: 'geosite-google', type: 'remote', url: 'https://example.com/geosite-google.srs' },
+      { tag: 'geoip-google-v4', type: 'inline', rules: [{ ip_cidr: ['8.8.8.0/24'] }] },
+      {
+        tag: 'google-ip',
+        type: 'remote',
+        url: 'http://127.0.0.1/api/singbox/router/rulesets/dat-srs?kind=geoip&tag=GOOGLE',
+      },
+      { tag: 'custom-ips', type: 'inline', rules: [{ ip_cidr: ['1.2.3.0/24'] }] },
+    ]);
+    (api.singboxRouterListDNSRules as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await syncTunnelDnsRule();
+    expect(api.singboxRouterAddDNSRule).toHaveBeenCalledWith(
+      expect.objectContaining({ rule_set: ['geosite-google'], server: 'dns-tunnel' }),
+    );
+  });
+});
+
+describe('isDnsAddressFilterRuleSet', () => {
+  it('ловит geoip-* тег, dat-srs kind=geoip и inline ip_cidr', () => {
+    expect(isDnsAddressFilterRuleSet('geoip-google-v4')).toBe(true);
+    expect(
+      isDnsAddressFilterRuleSet('google-ip', [
+        {
+          tag: 'google-ip',
+          type: 'remote',
+          url: 'http://x/dat-srs?kind=geoip&tag=GOOGLE',
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      isDnsAddressFilterRuleSet('custom-1', [
+        { tag: 'custom-1', type: 'inline', rules: [{ ip_cidr: ['10.0.0.0/8'] }] },
+      ]),
+    ).toBe(true);
+    expect(
+      isDnsAddressFilterRuleSet('geosite-google', [
+        { tag: 'geosite-google', type: 'remote', url: 'https://x/geosite-google.srs' },
+      ]),
+    ).toBe(false);
   });
 });
 
