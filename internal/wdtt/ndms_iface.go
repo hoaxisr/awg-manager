@@ -201,16 +201,18 @@ func (s *Service) activateNDMSOpkgTun(ctx context.Context, cfg ServerConfig) err
 		return nil
 	}
 	ndmsName := cfg.ndmsAccessIface()
-	if err := s.ndmsIfaces.SetPermitAllACL(ctx, ndmsName); err != nil {
-		if s.appLog != nil {
-			s.appLog.Warn("ndms", ndmsName, "firewall permit пропущен: "+err.Error())
-		}
-	}
 	if err := s.ndmsIfaces.SetAddress(ctx, ndmsName, DefaultWdttAddress, DefaultWdttMask); err != nil {
 		return fmt.Errorf("set address %s: %w", ndmsName, err)
 	}
 	if err := s.ndmsIfaces.InterfaceUp(ctx, ndmsName); err != nil {
 		return fmt.Errorf("iface up %s: %w", ndmsName, err)
+	}
+	// Permit-all ACL после address/up: applyServerAccess дублирует вызов, но
+	// первый assert здесь — до entware NAT/LAN в том же StartServerInstance.
+	if err := s.ndmsIfaces.SetPermitAllACL(ctx, ndmsName); err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("ndms", ndmsName, "firewall permit пропущен: "+err.Error())
+		}
 	}
 	return nil
 }

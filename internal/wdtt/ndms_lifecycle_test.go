@@ -93,9 +93,12 @@ func TestPrepareNDMSOpkgTunDoesNotSetAddress(t *testing.T) {
 	if err := svc.activateNDMSOpkgTun(context.Background(), cfg); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
-	addrAt, upAt := fake.index("address "), fake.index("up ")
+	addrAt, upAt, aclAt := fake.index("address "), fake.index("up "), fake.index("acl ")
 	if addrAt < 0 || upAt < 0 || addrAt > upAt {
 		t.Fatalf("адрес должен ставиться на активации и до up: %v", fake.calls)
+	}
+	if aclAt < 0 || aclAt < upAt {
+		t.Fatalf("permit-all ACL должен ставиться после up: %v", fake.calls)
 	}
 }
 
