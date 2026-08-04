@@ -61,7 +61,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 		return err
 	}
 	// Оverlay-поля fakeip (real-server, стек, UDP-таймаут) живут внутри
-	// 21-fakeip.json — Reconcile их не перегенерирует (drift-heal чинит
+	// 20-fakeip.json — Reconcile их не перегенерирует (drift-heal чинит
 	// слоты/маршруты, не содержимое overlay). Без reapply изменение
 	// применялось бы только при следующем выключении/включении режима
 	// (стенд-находка 2026-07-16). Пере-прогоняем overlay изолированным

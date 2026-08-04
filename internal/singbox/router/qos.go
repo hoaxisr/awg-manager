@@ -13,7 +13,7 @@ import (
 // backed by a dedicated pair of sing-box inbounds; managed route rules
 // (`{"inbound":[...],"outbound":X}`) send each class to its outbound. The
 // rules live in their own orchestrator slot (18-qos-routes.json, see
-// qos_routes.go) — never in the user-visible 20-router.json. sing-box ≤1.14
+// qos_routes.go) — never in the user-visible routing slot. sing-box ≤1.14
 // has no native dscp route matcher, so the classification has to happen at
 // the netfilter layer.
 
@@ -46,7 +46,7 @@ func QoSClassPorts(slot int) (tproxyPort, redirectPort int) {
 // namespace for QoS classes. validateRule rejects user rules that reference
 // these prefixes so managed QoS routing (18-qos-routes.json) can never be
 // shadowed or confused by hand-written lookalike rules. No persisted
-// `awgm_managed` marker anywhere: both 18-qos-routes.json and 20-router.json
+// `awgm_managed` marker anywhere: both 18-qos-routes.json and the routing slots
 // are parsed by sing-box itself (config.d merge), and sing-box rejects
 // unknown rule fields — the selective-ip feature already learned that the
 // hard way (selectiveRoutesSlotNeedsHeal).

@@ -589,7 +589,7 @@ func validateInterfaceOutbound(o Outbound) error {
 // process FATAL-loops on every start. Only composite->composite edges can
 // form a cycle; leaf outbounds (awg/sub/sb tunnels, direct) are ignored.
 //
-// Scope is the passed slice (router composites from 20-router.json).
+// Scope is the passed slice (router composites from 21-routing.json).
 // Subscription-slot composites are not passed here, so they count as leaf
 // members — which is sound: their members are subscription servers, never
 // router composites, so no subscription->router edge (and thus no
@@ -835,7 +835,7 @@ func removeTagRefs(tags []string, tag string) []string {
 }
 
 func (c *RouterConfig) CompositeOutbounds() []Outbound {
-	// All non-system outbounds in 20-router.json are composite (urltest,
+	// All non-system outbounds in 21-routing.json are composite (urltest,
 	// selector, loadbalance, ...). AWG-direct outbounds live in
 	// 15-awg.json (owned by awgoutbounds) and are not present here.
 	out := make([]Outbound, 0, len(c.Outbounds))

@@ -24,7 +24,7 @@ const qosReloadWait = 15 * time.Second
 
 // Managed QoS route rules live in their own orchestrator slot,
 // 18-qos-routes.json, mirroring the selective-routes slot (19). Why not
-// 20-router.json:
+// the routing slots (20/21):
 //   - 20 is the user-visible rules file: managed rules leaked into the rules
 //     UI as anonymous matcher-less rows, users deleted them, the reconcile
 //     heal re-added them — a churn loop;
@@ -67,7 +67,7 @@ func marshalQoSRoutesSlot(rules []Rule) ([]byte, error) {
 // sing-box, which rejects unknown rule fields.
 //
 // The leading route-options rule carries the same UDP timeout that
-// EnsureUDPTimeoutRule keeps in 20-router.json (#554). That copy cannot be
+// EnsureUDPTimeoutRule keeps in the mode slot (20-*.json, #554). That copy cannot be
 // reached from here: sing-box merges config.d in filename order, so this slot's
 // rules run first and a class's final `route` action ends evaluation. Without
 // the rule QoS traffic gets no metadata.UDPTimeout at all — the inbound's own
@@ -78,11 +78,11 @@ func marshalQoSRoutesSlot(rules []Rule) ([]byte, error) {
 // for route-options — the docs claim otherwise). Scoped to the class tproxy
 // inbounds on purpose: a matcher-less copy would land ahead of the system
 // hijack-dns rule in the merge and stretch 10s DNS sessions to the user's
-// timeout. The 20-router.json copy stays — this slot is parked whenever QoS
+// timeout. The mode-slot copy stays — this slot is parked whenever QoS
 // is off.
 //
 // The sniff rule is there for the same merge-order reason: the system one lives
-// in 20-router.json, behind the class rules, so QoS connections would carry no
+// in the mode slot (20-*.json), behind the class rules, so QoS connections would carry no
 // protocol/domain in the connections view. It follows the user's sniffer toggle
 // exactly like EnsureSystemRules does, and cannot shorten the timeout above —
 // route/conn.go prefers metadata.UDPTimeout over the sniffed-protocol defaults.
@@ -208,8 +208,8 @@ func (s *ServiceImpl) syncQoSRoutesSlot(ctx context.Context, classes []qosClass,
 
 // disableQoSRoutesSlot parks 18-qos-routes.json under disabled/ when the
 // router itself is disabled: the managed rules reference qos-* inbound tags
-// that only exist while 20-router.json is active, so the overlay must never
-// outlive the router slot.
+// that only exist while the mode slot (20-*.json) is active, so the overlay
+// must never outlive the routing slots.
 func (s *ServiceImpl) disableQoSRoutesSlot() error {
 	if s.deps.Orch == nil {
 		return nil

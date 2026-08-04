@@ -214,9 +214,9 @@ func (s *ServiceImpl) UnbindDevice(ctx context.Context, mac string) error {
 // inspectSlotConfig returns the EFFECTIVE config the inspector must walk —
 // the slot that is live under the CURRENT routing mode — plus that slot for
 // draft reporting. Issue #488: the inspector always walked the tproxy slot
-// (20-router.json), so in fakeip-tun mode it explained decisions by DNS/route
+// (общий слот), so in fakeip-tun mode it explained decisions by DNS/route
 // rules and rule-set names sing-box wasn't even running; the live rules were
-// in the fakeip slot (21-fakeip.json).
+// in the fakeip slot (20-fakeip.json).
 func (s *ServiceImpl) inspectSlotConfig() (*RouterConfig, orchestrator.Slot, error) {
 	mode := ""
 	if s.deps.Settings != nil {

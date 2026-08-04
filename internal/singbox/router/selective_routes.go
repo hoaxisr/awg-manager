@@ -66,7 +66,7 @@ func buildSelectiveIPRules(byOutbound map[string][]string) []Rule {
 }
 
 // stripSelectiveManagedRules removes auto-generated selective-ip rules that were
-// mistakenly persisted into 20-router.json by an earlier build.
+// mistakenly persisted into the routing slot by an earlier build.
 func stripSelectiveManagedRules(rules []Rule) ([]Rule, bool) {
 	if len(rules) == 0 {
 		return rules, false
@@ -84,7 +84,7 @@ func stripSelectiveManagedRules(rules []Rule) ([]Rule, bool) {
 }
 
 // stripLegacySelectiveRulesFromRouter removes managed selective-ip rules from
-// the user-visible router slot (20-router.json). Returns whether anything changed.
+// the user-visible routing slot (21-routing.json). Returns whether anything changed.
 func (s *ServiceImpl) stripLegacySelectiveRulesFromRouter(ctx context.Context) (bool, error) {
 	cfg, err := s.loadRouterConfig()
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *ServiceImpl) stripLegacySelectiveRulesFromRouter(ctx context.Context) (
 // draft / «Применить» banner appears after ipset rebuild.
 //
 // Returns changed=false when the merged config is already in the target shape
-// (byte-equal active slot, same enabled state — mirrors the 20-router.json
+// (byte-equal active slot, same enabled state — mirrors the routing-slot
 // diff in persistConfigDirect) so the caller can skip the sing-box reload: an
 // unconditional SIGHUP after every manual rebuild drops all proxied
 // connections even when zero routes changed.

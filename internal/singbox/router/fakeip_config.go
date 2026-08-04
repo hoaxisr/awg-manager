@@ -162,7 +162,7 @@ func (s *ServiceImpl) loadFakeIPConfig() (*RouterConfig, error) {
 }
 
 // persistFakeIPConfig materializes, validates and saves a fakeip RouterConfig
-// directly to the active path (21-fakeip.json) via Orch.Save. It mirrors
+// directly to the active path (20-fakeip.json) via Orch.Save. It mirrors
 // persistConfigDirect but targets SlotFakeIP instead of SlotRouting.
 // Byte-equal short-circuit: if the serialized bytes match what is already on
 // disk we skip the write (and the debounced reload it would trigger).

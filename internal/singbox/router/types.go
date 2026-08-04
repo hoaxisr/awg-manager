@@ -209,7 +209,7 @@ type Outbound struct {
 
 // CompositeOutboundView is the API/list projection of a composite
 // outbound — the canonical Outbound plus a Source tag identifying which
-// orchestrator slot owns it. "router" entries come from 20-router.json
+// orchestrator slot owns it. "router" entries come from 21-routing.json
 // (mutable via this service); "subscription" entries come from
 // 40-subscriptions.json (managed by the subscription service — the UI
 // renders them read-only).

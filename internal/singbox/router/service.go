@@ -827,7 +827,7 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 			return fmt.Errorf("marshal router config: %w", err)
 		}
 		// Phantom-draft guard: an inline rule-set's rules live in sidecar
-		// artifacts, not in 20-router.json (which carries only a
+		// artifacts, not in the routing slot (which carries only a
 		// {type:local,format:binary,path} reference). Editing only the rules
 		// of an already-applied inline rule-set therefore leaves the
 		// materialized config byte-identical to active — materializeConfig
