@@ -139,7 +139,7 @@ func TestMergedConfigPerMode(t *testing.T) {
 				t.Fatalf("merged route.rules пуст:\n%s", raw)
 			}
 			first := merged.Route.Rules[0]
-			if !isSystemRule(first) {
+			if !isMigratableSystemRule(first) {
 				t.Errorf("route.rules[0] обязан быть системным правилом режима, получено %+v", first)
 			}
 			if tc.mode == stateFakeIPTun && first.Action != "hijack-dns" {

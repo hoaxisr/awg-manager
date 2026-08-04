@@ -79,19 +79,21 @@ func TestBulkSetRuleOutbound_NonRouteAction(t *testing.T) {
 	}
 }
 
-func TestBulkSetRuleOutbound_SystemRule(t *testing.T) {
+// Системный префикс режима лежит в режимном слоте, а bulk правит общий: правило
+// «ip_is_private → выход» в общем слоте — пользовательское (миграция намеренно
+// оставляет такие на месте), и массовая смена outbound'а его касается.
+func TestBulkSetRuleOutbound_UserPrivateRule(t *testing.T) {
 	cfg := NewEmptyConfig()
 	private := true
 	cfg.Route.Rules = []Rule{
 		{Domain: []string{"a.com"}, Action: "route", Outbound: "old"},
 		{Action: "route", IPIsPrivate: &private, Outbound: "old"},
 	}
-	err := bulkSetRuleOutbound(cfg, []int{1}, "direct", knownAllBut())
-	if !errors.Is(err, ErrBulkInvalidSelection) || !strings.Contains(err.Error(), "1") {
-		t.Fatalf("expected ErrBulkInvalidSelection naming index 1 for system ip_is_private rule, got %v", err)
+	if err := bulkSetRuleOutbound(cfg, []int{1}, "direct", knownAllBut()); err != nil {
+		t.Fatalf("bulkSetRuleOutbound: %v", err)
 	}
-	if cfg.Route.Rules[1].Outbound != "old" {
-		t.Fatalf("system rule was mutated: %+v", cfg.Route.Rules[1])
+	if cfg.Route.Rules[1].Outbound != "direct" {
+		t.Fatalf("Outbound = %q, want direct: %+v", cfg.Route.Rules[1].Outbound, cfg.Route.Rules[1])
 	}
 }
 

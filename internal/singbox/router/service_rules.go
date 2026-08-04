@@ -104,6 +104,12 @@ func (s *ServiceImpl) isKnownOutboundTag(ctx context.Context, tag string, cfg *R
 // bulkSetRuleOutbound validates the whole (indices, outbound) batch before
 // mutating c — see BulkSetRuleOutbound. known reports whether outbound is a
 // recognized tag ("direct"/"block"/"dns" or a catalog outbound).
+//
+// Системный префикс режима (sniff / hijack-dns / ip_is_private / route-options)
+// живёт в режимном слоте, а c — общий слот: сюда он не попадает, поэтому
+// отдельной проверки на него нет. Правило вида «ip_is_private → свой LAN-выход»
+// в общем слоте пользователь завёл сам (splitLegacyRouteRules намеренно
+// оставляет такие при миграции) — оно правится наравне с остальными.
 func bulkSetRuleOutbound(c *RouterConfig, indices []int, outbound string, known func(string) bool) error {
 	if len(indices) == 0 {
 		return ErrBulkEmptyIndices
@@ -122,9 +128,6 @@ func bulkSetRuleOutbound(c *RouterConfig, indices []int, outbound string, known 
 		}
 		if !c.Route.Rules[i].ActionIsRoute() {
 			return fmt.Errorf("%w: rule %d is not a route rule (action %q)", ErrBulkInvalidSelection, i, c.Route.Rules[i].Action)
-		}
-		if isSystemRule(c.Route.Rules[i]) {
-			return fmt.Errorf("%w: rule %d is a system rule", ErrBulkInvalidSelection, i)
 		}
 	}
 	for _, i := range indices {

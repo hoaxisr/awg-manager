@@ -966,12 +966,6 @@ func isSystemPrivateRule(r Rule) bool {
 	return r.IPIsPrivate != nil && *r.IPIsPrivate
 }
 
-// isSystemRule reports whether r is one of the leading system rules that
-// EnsureSystemRules manages — bulk outbound changes must never touch them.
-func isSystemRule(r Rule) bool {
-	return isSystemSniffRule(r) || isSystemHijackRule(r) || isSystemUDPTimeoutRule(r) || isSystemPrivateRule(r)
-}
-
 // systemPrefixLen counts the leading system rules (sniff / hijack-dns /
 // ip_is_private bypass) that EnsureSystemRules keeps ahead of any user routing
 // rule. It marks the boundary where a non-final system rule (the udp_timeout
