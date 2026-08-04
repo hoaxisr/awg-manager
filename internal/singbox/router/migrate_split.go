@@ -3,8 +3,6 @@ package router
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // DNSTagRename описывает вынужденное переименование пользовательского
@@ -20,10 +18,30 @@ type LegacySlotSplit struct {
 	// Shared — содержимое общего слота 21-routing.json.
 	Shared []byte
 	// Mode — содержимое режимного слота (20-tproxy / 20-policytun / 20-fakeip).
+	// nil при SharedOnly.
 	Mode []byte
 	// DNSRenames — пользовательские DNS-серверы, переименованные из
 	// зарезервированных движком тегов. Пусто в подавляющем большинстве случаев.
 	DNSRenames []DNSTagRename
+}
+
+// LegacySlotSplitParams — вход разбора.
+type LegacySlotSplitParams struct {
+	// Mode — режим, В КОТОРЫЙ идёт установка. От него зависит резолвер у
+	// outbound'ов общего слота.
+	Mode string
+	// SourceIsFakeIP — разбирается 21-fakeip.json. Определяется ИМЕНЕМ файла, а
+	// не режимом: DNS в нём — механизм fakeip-режима (серверы fakeip/real,
+	// правила на них, dns.final), тогда как DNS в 20-router.json —
+	// пользовательские серверы. На установке, где режим переключили, но движок
+	// в новом режиме не поднимали, эти два случая расходятся.
+	SourceIsFakeIP bool
+	// SharedOnly — собрать только общий слот. Нужен там, где режимную часть
+	// писать некуда: черновик staging (режимные слоты черновиков не имеют) и
+	// запасной вариант, когда разбирается слот НЕ активного режима. В этом
+	// случае движковый DNS из источника выбрасывается — иначе в общем слоте
+	// повисли бы серверы, объявленные только режимом.
+	SharedOnly bool
 }
 
 // SplitLegacyRoutingSlot разбирает файл прежней раскладки на общий и режимный
@@ -41,17 +59,8 @@ type LegacySlotSplit struct {
 //
 // Системные правила В ОБЩИЙ СЛОТ НЕ ПОПАДАЮТ: их пишет режимный генератор, и
 // после первого же Reconcile в merged-конфиге оказалось бы два hijack-dns.
-func SplitLegacyRoutingSlot(data []byte, mode string) (LegacySlotSplit, error) {
-	fakeip := ModeSlot(mode) == orchestrator.SlotFakeIP
-
+func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSplit, error) {
 	shared, err := parseRouterConfigBytes(data)
-	if err != nil {
-		return LegacySlotSplit{}, err
-	}
-	// Второй разбор вместо копии структуры: RouterConfig держит указатели
-	// (*bool, *DomainResolver, *Experimental) и вложенные слайсы, поэтому
-	// поверхностная копия дала бы двум слотам общие ячейки памяти.
-	modeCfg, err := parseRouterConfigBytes(data)
 	if err != nil {
 		return LegacySlotSplit{}, err
 	}
@@ -60,29 +69,49 @@ func SplitLegacyRoutingSlot(data []byte, mode string) (LegacySlotSplit, error) {
 
 	// --- общий слот ---
 	shared.Route.Rules = user
-	if fakeip {
+	switch {
+	case p.SourceIsFakeIP && !p.SharedOnly:
 		// DNS fakeip-режима — это и есть механизм режима; он остаётся в
 		// режимном слоте целиком (решение подэтапа 5D0). Копия в общем слоте
 		// дала бы duplicate-dns на теги fakeip/real.
 		shared.DNS = DNS{Servers: []DNSServer{}, Rules: []DNSRule{}}
+	case p.SourceIsFakeIP:
+		// Режимного слота не будет, а значит серверов fakeip/real не объявит
+		// никто: выбрасываем движковую часть DNS, пользовательскую оставляем —
+		// иначе собственные DNS-серверы пользователя пропали бы вместе с ней.
+		dropEngineDNS(shared)
 	}
 	renames := renameReservedDNSServers(shared)
 	// WAN берём из самого файла — EnsureRouteWAN внутри перепишет поля теми же
 	// значениями, то есть сохранит выбор пользователя.
 	buildRoutingSlot(shared, RoutingSlotParams{
-		Mode:          mode,
+		Mode:          p.Mode,
 		WANAutoDetect: shared.Route.AutoDetectInterface != nil && *shared.Route.AutoDetectInterface,
 		WANInterface:  shared.Route.DefaultInterface,
 	})
+	sharedRaw, err := json.MarshalIndent(shared, "", "  ")
+	if err != nil {
+		return LegacySlotSplit{}, fmt.Errorf("marshal routing slot: %w", err)
+	}
+	if p.SharedOnly {
+		return LegacySlotSplit{Shared: sharedRaw, DNSRenames: renames}, nil
+	}
 
 	// --- режимный слот ---
+	// Второй разбор вместо копии структуры: RouterConfig держит указатели
+	// (*bool, *DomainResolver, *Experimental) и вложенные слайсы, поэтому
+	// поверхностная копия дала бы двум слотам общие ячейки памяти.
+	modeCfg, err := parseRouterConfigBytes(data)
+	if err != nil {
+		return LegacySlotSplit{}, err
+	}
 	stripSharedFromModeSlot(modeCfg)
 	modeCfg.Route.Rules = system
 	// Разметка WAN — скаляры общего слота; в режимном они перебивали бы её
 	// (режимный файл сливается первым).
 	modeCfg.Route.AutoDetectInterface = nil
 	modeCfg.Route.DefaultInterface = ""
-	if !fakeip {
+	if !p.SourceIsFakeIP {
 		// Вне fakeip DNS целиком уехал в общий слот: копия здесь = duplicate-dns.
 		// experimental.cache_file и default_domain_resolver вне fakeip — мусор
 		// прежней раскладки (ссылка на несуществующий резолвер роняет sing-box).
@@ -90,16 +119,36 @@ func SplitLegacyRoutingSlot(data []byte, mode string) (LegacySlotSplit, error) {
 		modeCfg.Experimental = nil
 		modeCfg.Route.DefaultDomainResolver = nil
 	}
-
-	sharedRaw, err := json.MarshalIndent(shared, "", "  ")
-	if err != nil {
-		return LegacySlotSplit{}, fmt.Errorf("marshal routing slot: %w", err)
-	}
 	modeRaw, err := json.MarshalIndent(modeCfg, "", "  ")
 	if err != nil {
 		return LegacySlotSplit{}, fmt.Errorf("marshal mode slot: %w", err)
 	}
 	return LegacySlotSplit{Shared: sharedRaw, Mode: modeRaw, DNSRenames: renames}, nil
+}
+
+// dropEngineDNS выбрасывает из конфига DNS движка fakeip-режима: серверы с
+// движковыми тегами, правила, которые на них ссылаются, и режимные скаляры.
+// Пользовательские серверы и правила остаются — это их данные.
+func dropEngineDNS(cfg *RouterConfig) {
+	servers := make([]DNSServer, 0, len(cfg.DNS.Servers))
+	for _, s := range cfg.DNS.Servers {
+		if engineDNSServerTags[s.Tag] {
+			continue
+		}
+		servers = append(servers, s)
+	}
+	cfg.DNS.Servers = servers
+	rules := make([]DNSRule, 0, len(cfg.DNS.Rules))
+	for _, r := range cfg.DNS.Rules {
+		if engineDNSServerTags[r.Server] {
+			continue
+		}
+		rules = append(rules, r)
+	}
+	cfg.DNS.Rules = rules
+	if engineDNSServerTags[cfg.DNS.Final] {
+		cfg.DNS.Final = ""
+	}
 }
 
 // splitLegacyRouteRules делит route.rules прежнего слота на режимный префикс и

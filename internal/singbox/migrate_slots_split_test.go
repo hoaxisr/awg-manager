@@ -96,13 +96,17 @@ func TestMigrateSlotsSplitIdempotent(t *testing.T) {
 }
 
 // Докат после краха: новая раскладка уже записана, старый файл ещё лежит рядом.
-// Оба в активном каталоге = дубли тегов outbound в merged-конфиге = FATAL
-// sing-box. Миграция обязана довести дело до конца, а не отчитаться «уже готово».
+// Оба в активном каталоге = дубли тегов в merged-конфиге = FATAL sing-box.
+// Миграция обязана довести дело до конца, а не отчитаться «уже готово», и при
+// этом уцелеть должно содержимое ИМЕННО прежнего файла: он новее (после отката
+// версии его писал работавший бинарь), а недописанный общий слот — результат
+// оборванного прогона.
 func TestMigrateSlotsSplitFinishesInterrupted(t *testing.T) {
 	dir := t.TempDir()
-	writeSlotFixture(t, dir, "21-routing.json", routerFixtureWithRules("a"))
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "21-routing.json", routingSlotFixture("stale"))
 	writeSlotFixture(t, dir, "20-tproxy.json", tproxyFixture())
-	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("a")) // остаток
+	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("leftover")) // остаток
 
 	changed, err := MigrateSlotsSplit(dir, "tproxy")
 	if err != nil {
@@ -112,6 +116,17 @@ func TestMigrateSlotsSplitFinishesInterrupted(t *testing.T) {
 		t.Fatal("незавершённая миграция обязана быть доведена до конца")
 	}
 	assertAbsent(t, dir, "20-router.json")
+
+	shared := readSlot(t, dir, "21-routing.json")
+	if !hasRule(shared, "leftover") {
+		t.Errorf("докат не перенёс содержимое прежнего файла:\n%s", readSlotBytes(t, dir, "21-routing.json"))
+	}
+	if hasRule(shared, "stale") {
+		t.Errorf("в общем слоте осталось содержимое оборванного прогона:\n%s", readSlotBytes(t, dir, "21-routing.json"))
+	}
+	// Затёртый общий слот не выброшен, а сохранён.
+	assertBackupExists(t, dir, "21-routing.json")
+	singboxCheckDir(t, dir)
 }
 
 // Чистая установка: мигрировать нечего.
@@ -171,7 +186,169 @@ func TestMigrateSlotsSplitFallsBackToOtherLegacySlot(t *testing.T) {
 	if !hasRule(shared, "router-rule") {
 		t.Errorf("правила единственного слота прежней раскладки потеряны:\n%s", readSlotBytes(t, dir, "21-routing.json"))
 	}
-	assertExists(t, dir, "20-fakeip.json")
+	// Режимный слот НЕ пишется: инбаунды чужого режима (tproxy-in/redirect-in)
+	// в файле fakeip — это не захват трафика, а мусор. Его соберёт генератор.
+	assertAbsent(t, dir, "20-fakeip.json")
+	// А DNS пользователя обязан уцелеть в общем слоте: из режимного он бы
+	// исчез при первой же перегенерации.
+	if got := dnsServerTags(shared); len(got) != 1 || got[0] != "user-dns" {
+		t.Errorf("DNS-серверы пользователя потеряны: %v\n%s", got, readSlotBytes(t, dir, "21-routing.json"))
+	}
+}
+
+// C1: сбой ПОСЛЕ первой записи не имеет права оставить в активном каталоге обе
+// раскладки сразу — это дублирующиеся теги инбаундов и sing-box, который не
+// поднимается вообще. Битый черновик — самый дешёвый способ этот сбой вызвать.
+func TestMigrateSlotsSplitBrokenDraftDoesNotStrandBothLayouts(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("applied"))
+	writeSlotFixture(t, dir, "pending/20-router.json", "{ это не json")
+
+	var log []string
+	changed, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) })
+	if err != nil {
+		t.Fatalf("битый черновик не должен ронять миграцию применённого конфига: %v", err)
+	}
+	if !changed {
+		t.Error("ожидалось changed=true")
+	}
+	assertAbsent(t, dir, "20-router.json")
+	assertAbsent(t, dir, "pending/20-router.json")
+	assertExists(t, dir, "21-routing.json")
+	assertExists(t, dir, "20-tproxy.json")
+	if !logContains(log, "отброшен") {
+		t.Errorf("отброшенный черновик обязан попасть в журнал: %v", log)
+	}
+	singboxCheckDir(t, dir)
+}
+
+// C1, главный случай: запись оборвалась ПОСЛЕ того, как общий слот уже лёг на
+// диск. Уборка обязана состояться всё равно — иначе рядом остаются обе
+// раскладки, и sing-box не поднимется («duplicate inbound tag»), причём
+// повторный прогон воспроизведёт то же самое. Каталог вместо файла режимного
+// слота ломает ровно вторую запись.
+func TestMigrateSlotsSplitCleansUpAfterPartialWrite(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("applied"))
+	if err := os.MkdirAll(filepath.Join(dir, "20-tproxy.json"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := MigrateSlotsSplit(dir, "tproxy")
+	if err == nil {
+		t.Fatal("ожидалась ошибка записи режимного слота")
+	}
+	if !changed {
+		t.Error("общий слот записан — миграция обязана отчитаться об изменении")
+	}
+	assertExists(t, dir, "21-routing.json")
+	assertAbsent(t, dir, "20-router.json")
+	assertBackupExists(t, dir, "20-router.json")
+	// Остаток каталога-подделки убираем — sing-box читает только *.json-файлы,
+	// а каталог с таким именем ему не помеха; проверяем сам merged-конфиг.
+	if err := os.Remove(filepath.Join(dir, "20-tproxy.json")); err != nil {
+		t.Fatal(err)
+	}
+	singboxCheckDir(t, dir)
+}
+
+// Обратная сторона C1: если записать не удалось НИЧЕГО, прежнюю раскладку
+// трогать нельзя — на ней движок продолжает работать до следующей загрузки.
+// Каталог вместо файла общего слота даёт ошибку записи, не тронув ничего.
+func TestMigrateSlotsSplitKeepsLegacyWhenNothingWritten(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("applied"))
+	if err := os.MkdirAll(filepath.Join(dir, "21-routing.json"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := MigrateSlotsSplit(dir, "tproxy")
+	if err == nil {
+		t.Fatal("ожидалась ошибка записи")
+	}
+	if changed {
+		t.Error("changed=true при полном отсутствии записи")
+	}
+	assertExists(t, dir, "20-router.json")
+	assertAbsent(t, dir, "disabled/20-router.json"+legacyBackupSuffix)
+}
+
+// C2: возврат резервной копии под исходным именем (к нему подталкивает
+// инструкция по откату) не имеет права подменить уже мигрированный общий слот
+// правилами неактивного режима.
+func TestMigrateSlotsSplitKeepsMigratedSharedSlot(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "21-routing.json", routingSlotFixture("current"))
+	writeSlotFixture(t, dir, "20-tproxy.json", tproxyFixture())
+	// Пользователь вручную вернул резерв прежней раскладки под исходным именем.
+	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithRules("restored"))
+
+	before := readSlotBytes(t, dir, "21-routing.json")
+	changed, err := MigrateSlotsSplit(dir, "tproxy")
+	if err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if !changed {
+		t.Error("остаток прежней раскладки обязан уехать в резерв")
+	}
+	if !bytes.Equal(readSlotBytes(t, dir, "21-routing.json"), before) {
+		t.Errorf("общий слот подменён данными неактивного режима:\n%s", readSlotBytes(t, dir, "21-routing.json"))
+	}
+	assertAbsent(t, dir, "21-fakeip.json")
+	assertBackupExists(t, dir, "21-fakeip.json")
+	assertAbsent(t, dir, "disabled/21-routing.json"+legacyBackupSuffix)
+	singboxCheckDir(t, dir)
+}
+
+// I1: на установке в режиме fakeip черновик принадлежит ДРУГОМУ набору правил
+// (SaveDraft всегда звался со слотом 20-router.json) — он отбрасывается, но не
+// молча: пользователь видел баннер «есть несохранённые изменения».
+func TestMigrateSlotsSplitDiscardsForeignDraft(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithRules("fakeip-rule"))
+	writeSlotFixture(t, dir, "pending/20-router.json", routerFixtureWithRules("drafted"))
+
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "fakeip-tun", func(m string) { log = append(log, m) }); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	assertAbsent(t, dir, "pending/21-routing.json")
+	assertAbsent(t, dir, "pending/20-router.json")
+	assertBackupExists(t, dir, "20-router.json")
+	if !logContains(log, "отброшен") {
+		t.Errorf("об отброшенном черновике не написано в журнал: %v", log)
+	}
+}
+
+// Запасной вариант с fakeip-источником: режимного слота не будет, значит
+// серверы fakeip/real не объявит никто. Движковый DNS обязан быть выброшен
+// (иначе висячие ссылки и FATAL), а пользовательский — уцелеть.
+func TestMigrateSlotsSplitFallbackDropsEngineDNS(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithRules("fakeip-rule"))
+
+	if _, err := MigrateSlotsSplit(dir, "tproxy"); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	shared := readSlot(t, dir, "21-routing.json")
+	raw := readSlotBytes(t, dir, "21-routing.json")
+	for _, tag := range dnsServerTags(shared) {
+		if tag == "real" || tag == "fakeip" {
+			t.Errorf("движковый DNS-сервер %q остался без объявляющего его режима:\n%s", tag, raw)
+		}
+	}
+	if got := dnsServerTags(shared); len(got) != 1 || got[0] != "user-dns" {
+		t.Errorf("пользовательский DNS-сервер потерян: %v\n%s", got, raw)
+	}
+	if dnsFinal(shared) != "" {
+		t.Errorf("dns.final ссылается на движковый сервер: %q", dnsFinal(shared))
+	}
+	assertAbsent(t, dir, "20-tproxy.json")
+	singboxCheckDir(t, dir)
 }
 
 // Пользовательский DNS-сервер с движковым тегом переименовывается, а ссылки на
@@ -272,7 +449,8 @@ func fakeipFixtureWithRules(tag string) string {
   "dns": {
     "servers": [
       {"tag": "fakeip", "type": "fakeip", "inet4_range": "198.18.0.0/15"},
-      {"tag": "real", "type": "udp", "server": "1.1.1.1"}
+      {"tag": "real", "type": "udp", "server": "1.1.1.1"},
+      {"tag": "user-dns", "type": "udp", "server": "9.9.9.9"}
     ],
     "rules": [{"action": "route", "server": "fakeip", "query_type": ["A", "AAAA"]}],
     "final": "real"
@@ -291,6 +469,27 @@ func fakeipFixtureWithRules(tag string) string {
     "auto_detect_interface": true
   },
   "experimental": {"cache_file": {"enabled": true, "store_fakeip": true, "path": "/tmp/awgm-fakeip-test.db"}}
+}`, tag)
+}
+
+// Слот НОВОЙ раскладки — общий. Отличие от прежней раскладки принципиальное:
+// ни инбаундов, ни системных правил (они в режимном файле).
+func routingSlotFixture(tag string) string {
+	return fmt.Sprintf(`{
+  "outbounds": [
+    {"type": "selector", "tag": "user-proxy", "outbounds": ["direct"]}
+  ],
+  "dns": {
+    "servers": [{"tag": "user-dns", "type": "udp", "server": "1.1.1.1"}],
+    "final": "user-dns"
+  },
+  "route": {
+    "rules": [
+      {"action": "route", "domain_suffix": ["%[1]s.example"], "outbound": "user-proxy"}
+    ],
+    "final": "user-proxy",
+    "auto_detect_interface": true
+  }
 }`, tag)
 }
 
@@ -454,6 +653,15 @@ func dnsFinal(cfg map[string]any) string {
 	return final
 }
 
+func logContains(log []string, substr string) bool {
+	for _, line := range log {
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 func assertExists(t *testing.T, dir, rel string) {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
@@ -468,17 +676,15 @@ func assertAbsent(t *testing.T, dir, rel string) {
 	}
 }
 
-// assertBackupExists проверяет резервную копию слота прежней раскладки в
-// disabled/ — под именем, которое новая раскладка уже не подхватит.
+// assertBackupExists проверяет резервную копию под ТОЧНЫМ именем
+// disabled/<name>.pre-5d0 — не по маске: копия с числовым суффиксом
+// (`.pre-5d0.2`) означает вторую копию того же слота, и путать их нельзя,
+// инструкция по откату называет именно первую.
 func assertBackupExists(t *testing.T, dir, name string) {
 	t.Helper()
-	pattern := filepath.Join(dir, "disabled", name+legacyBackupSuffix+"*")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		t.Fatalf("glob %s: %v", pattern, err)
-	}
-	if len(matches) == 0 {
-		t.Errorf("резервная копия %s не найдена (%s)", name, pattern)
+	path := filepath.Join(dir, "disabled", name+legacyBackupSuffix)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("резервная копия %s не найдена: %v", name, err)
 	}
 }
 
