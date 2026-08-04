@@ -13,7 +13,7 @@ import (
 // References (when set) names what was referenced.
 type ValidationError struct {
 	Slot Slot
-	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "dns-final-conflict" / "route-final-conflict"
+	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "duplicate-rule-set" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "dns-final-conflict" / "route-final-conflict"
 	// Severity is "" (error, blocks reload) or SeverityWarning (advisory,
 	// does not block). Defaults to error so existing entries keep blocking.
 	Severity string
@@ -251,7 +251,20 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 			if ruleSet.Tag == "" {
 				continue
 			}
-			if _, dup := ruleSets[ruleSet.Tag]; !dup {
+			// Дубль тега набора — «FATAL initialize router: duplicate
+			// rule-set tag», то есть sing-box не поднимается вовсе. Ловим
+			// здесь, потому что Reload настоящий `sing-box check` не гоняет,
+			// а в tun-режимах применение конфига — это Stop+Start: падение
+			// оставило бы пользователя без движка. Штатный путь молчит —
+			// наборы объявляет ровно один слот (общий 21-routing.json).
+			if existing, dup := ruleSets[ruleSet.Tag]; dup {
+				errs = append(errs, ValidationError{
+					Slot:    os.slot,
+					Kind:    "duplicate-rule-set",
+					Tag:     ruleSet.Tag,
+					Message: fmt.Sprintf("also declared in [%s]", existing.slot),
+				})
+			} else {
 				ruleSets[ruleSet.Tag] = tagOrigin{slot: os.slot}
 			}
 		}

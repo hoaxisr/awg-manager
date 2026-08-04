@@ -83,6 +83,18 @@ func (a *app) setupSingbox() {
 	if err != nil {
 		a.bootLog.Warn("ruleset-fork-migration", "", err.Error())
 	}
+	// Разделение слота маршрутизации на общий + режимный (подэтап 5D0). Идёт
+	// ДО регистрации слотов и любой записи в них: на немигрированной установке
+	// правила, наборы и outbound'ы пользователя лежат в файле прежней
+	// раскладки, общий слот пуст, и первое же включение движка собрало бы его
+	// с нуля, а генератор режимного слота вычистил бы старый файл.
+	if _, err := singbox.MigrateSlotsSplitWithLog(
+		singboxConfigDir,
+		a.settings.SingboxRouter.RoutingMode,
+		func(msg string) { a.bootLog.Info("routing-slots-migration", "", msg) },
+	); err != nil {
+		a.bootLog.Error("routing-slots-migration", "", err.Error())
+	}
 	a.sbOrch = singboxorch.New(singboxConfigDir, a.singboxOp.Process())
 	a.sbOrch.SetLogger(func(level, msg string) {
 		switch level {

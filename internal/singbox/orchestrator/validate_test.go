@@ -257,6 +257,37 @@ func TestValidateRuleSetRefsResolveAcrossSlots(t *testing.T) {
 	}
 }
 
+// Один и тот же тег набора в двух слотах — «FATAL initialize router:
+// duplicate rule-set tag». Reload настоящий `sing-box check` не гоняет, значит
+// поймать это обязана Validate; окно опасно ровно на апгрейде, когда наборы
+// уже перенесены в общий слот, но ещё лежат в режимном файле.
+func TestValidateDuplicateRuleSetAcrossSlots(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotFakeIP, Filename: "20-fakeip.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-fakeip.json", `{
+		"route":{"rule_set":[{"tag":"geosite-x","type":"remote","url":"https://example.org/x.srs"}]}
+	}`)
+	writeSlot(t, dir, "21-routing.json", `{
+		"route":{"rule_set":[{"tag":"geosite-x","type":"remote","url":"https://example.org/x.srs"}],"final":"direct"}
+	}`)
+	o.enabled[SlotFakeIP] = true
+	o.enabled[SlotRouting] = true
+	res := o.Validate()
+	if res.Ok() {
+		t.Fatal("дубль тега набора обязан блокировать применение")
+	}
+	if !strings.Contains(res.Error(), "duplicate-rule-set") {
+		t.Errorf("нет duplicate-rule-set: %s", res.Error())
+	}
+	if !strings.Contains(res.Error(), "geosite-x") {
+		t.Errorf("нет тега в ошибке: %s", res.Error())
+	}
+}
+
 func TestValidateBuiltinOutboundsAccepted(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
