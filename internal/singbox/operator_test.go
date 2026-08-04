@@ -1951,7 +1951,7 @@ func TestRemoveDNSFinalFromBase_StripsStrategyWhenRouterOwnsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Router slot sets a non-empty strategy → base strategy strip is enabled.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"),
 		[]byte(`{"dns":{"final":"dns-direct","strategy":"ipv4_only","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
 		0644); err != nil {
 		t.Fatal(err)
@@ -1982,7 +1982,7 @@ func TestRemoveDNSFinalFromBase_RouterStrategyEmpty_KeepsBaseStrategy(t *testing
 		t.Fatal(err)
 	}
 	// Router slot exists but strategy is empty → base keeps its strategy.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"),
 		[]byte(`{"dns":{"final":"dns-direct","strategy":"","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
 		0644); err != nil {
 		t.Fatal(err)

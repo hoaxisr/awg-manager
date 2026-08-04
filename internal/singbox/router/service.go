@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -518,8 +519,35 @@ func (s *ServiceImpl) SetSelectiveBuilder(b SelectiveBuilder) {
 	s.deps.SelectiveBuilder = b
 }
 
+// routerConfigPath — путь файла общего слота в legacy-режиме (Orch == nil,
+// только тесты). Имя файла берётся из реестра слотов, а не из литерала: после
+// переименования слота литерал молча увёл бы чтение и запись в разные файлы.
 func (s *ServiceImpl) routerConfigPath() string {
-	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
+	return filepath.Join(s.deps.Singbox.ConfigDir(), slotFilename(orchestrator.SlotRouting))
+}
+
+// slotFilename возвращает имя файла слота из реестра оркестратора. Пустая
+// строка для незарегистрированного слота невозможна — реестр статический.
+func slotFilename(slot orchestrator.Slot) string {
+	for _, meta := range orchestrator.KnownSlots() {
+		if meta.Slot == slot {
+			return meta.Filename
+		}
+	}
+	return string(slot) + ".json"
+}
+
+// slotPaths возвращает три расположения файла слота: активное, припаркованное
+// (disabled/) и черновик (pending/). Всё выводится из Orch.ActivePath —
+// единственного источника имени файла, поэтому переименование слота не может
+// разъехаться с этими путями. Требует Orch != nil.
+func (s *ServiceImpl) slotPaths(slot orchestrator.Slot) (active, disabled, pending string, err error) {
+	active, err = s.deps.Orch.ActivePath(slot)
+	if err != nil {
+		return "", "", "", err
+	}
+	dir, name := filepath.Split(active)
+	return active, filepath.Join(dir, "disabled", name), filepath.Join(dir, "pending", name), nil
 }
 
 func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []string) []string {
@@ -636,14 +664,56 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 	return cfg, nil
 }
 
-// loadRouterConfigForMode returns the routing config for the active mode:
-// SlotFakeIP in fakeip-tun mode, SlotRouting (tproxy) otherwise. Lets
-// mode-agnostic readers (GetStatus) reflect whichever slot is live.
+// loadRouterConfigForMode returns the config a mode-agnostic READER should see:
+// общий слот (правила, наборы, outbound'ы, route.final) плюс режимная часть
+// активного режима — системные route-правила впереди пользовательских и, для
+// fakeip, весь DNS-блок режима.
+//
+// Порядок сборки повторяет слияние config.d: режимный слот сливается ПЕРВЫМ,
+// поэтому его правила идут впереди. Без этого статус и инспектор объясняли бы
+// решения по конфигу, которого sing-box не видит (#488) — только теперь
+// половина, потерянная бы при чтении одного слота, ровно обратная: правила
+// пользователя лежат в общем слоте во ВСЕХ режимах.
 func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
-	if ModeSlot(mode) == orchestrator.SlotFakeIP {
-		return s.loadFakeIPConfig()
+	cfg, err := s.loadRouterConfig()
+	if err != nil {
+		return nil, err
 	}
-	return s.loadRouterConfig()
+	if s.deps.Orch == nil {
+		return cfg, nil
+	}
+	modeCfg, err := s.loadModeSlotConfig(mode)
+	if err != nil || modeCfg == nil {
+		return cfg, err
+	}
+	// Массивы конкатенируются (режимный слот первым), скаляры берутся из
+	// первого файла — ровно как их сливает sing-box.
+	cfg.Route.Rules = append(append([]Rule{}, modeCfg.Route.Rules...), cfg.Route.Rules...)
+	cfg.DNS.Servers = append(append([]DNSServer{}, modeCfg.DNS.Servers...), cfg.DNS.Servers...)
+	cfg.DNS.Rules = append(append([]DNSRule{}, modeCfg.DNS.Rules...), cfg.DNS.Rules...)
+	if modeCfg.DNS.Final != "" {
+		cfg.DNS.Final = modeCfg.DNS.Final
+	}
+	if modeCfg.DNS.Strategy != "" {
+		cfg.DNS.Strategy = modeCfg.DNS.Strategy
+	}
+	if modeCfg.Route.DefaultDomainResolver != nil {
+		cfg.Route.DefaultDomainResolver = modeCfg.Route.DefaultDomainResolver
+	}
+	return cfg, nil
+}
+
+// loadModeSlotConfig читает ЭФФЕКТИВНЫЙ конфиг режимного слота (pending-first,
+// как loadRouterConfig). Требует Orch != nil.
+func (s *ServiceImpl) loadModeSlotConfig(mode string) (*RouterConfig, error) {
+	data, err := s.deps.Orch.LoadEffective(ModeSlot(mode))
+	if err != nil {
+		if errors.Is(err, orchestrator.ErrUnknownSlot) {
+			return nil, nil // слот не зарегистрирован (legacy-обвязка тестов)
+		}
+		return nil, fmt.Errorf("load mode slot config: %w", err)
+	}
+	return parseRouterConfigBytes(data)
 }
 
 // persistConfigDirect writes the router config straight to active/ —
@@ -669,6 +739,17 @@ func (s *ServiceImpl) persistConfigDirect(ctx context.Context, cfg *RouterConfig
 	return s.persistSlotDirect(orchestrator.SlotRouting, cfg, false)
 }
 
+// persistModeSlot пишет режимный слот захвата трафика (20-*.json). При
+// Orch == nil (legacy-обвязка тестов) слотов не существует вовсе — писать
+// некуда, и вызов вырождается в no-op.
+func (s *ServiceImpl) persistModeSlot(slot orchestrator.Slot, cfg *RouterConfig) error {
+	if s.deps.Orch == nil {
+		return nil
+	}
+	_, err := s.persistSlotChanged(slot, cfg, false)
+	return err
+}
+
 // persistSlotDirect materializes cfg and, when the serialized bytes differ from
 // what is already on disk, writes them to the slot's active file via the
 // orchestrator (scheduling a debounced reload). The active path is resolved
@@ -677,27 +758,34 @@ func (s *ServiceImpl) persistConfigDirect(ctx context.Context, cfg *RouterConfig
 // guard before writing. Orch must be non-nil; the caller must have arranged for
 // the slot to be enabled. Shared by persistConfigDirect and persistFakeIPConfig.
 func (s *ServiceImpl) persistSlotDirect(slot orchestrator.Slot, cfg *RouterConfig, checkCycles bool) error {
+	_, err := s.persistSlotChanged(slot, cfg, checkCycles)
+	return err
+}
+
+// persistSlotChanged — persistSlotDirect, дополнительно сообщающий, была ли
+// запись. Нужен путям самолечения: reload дёргается только на изменение.
+func (s *ServiceImpl) persistSlotChanged(slot orchestrator.Slot, cfg *RouterConfig, checkCycles bool) (bool, error) {
 	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if checkCycles {
 		if err := validateNoCompositeCycles(materialized.Outbounds); err != nil {
-			return err
+			return false, err
 		}
 	}
 	data, err := json.MarshalIndent(materialized, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal %s config: %w", slot, err)
+		return false, fmt.Errorf("marshal %s config: %w", slot, err)
 	}
 	activePath, err := s.deps.Orch.ActivePath(slot)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if existing, err := os.ReadFile(activePath); err == nil && bytes.Equal(existing, data) {
-		return nil
+		return false, nil
 	}
-	return s.deps.Orch.Save(slot, data)
+	return true, s.deps.Orch.Save(slot, data)
 }
 
 // notifyRoutingSlotsChanged invokes the OnRoutingSlotsChanged hook (see
@@ -752,7 +840,10 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 		// byte-equal. A missing/unreadable active file (router disabled, first
 		// Enable, slot parked under disabled/) is NOT equal — fall through to
 		// staging so the change is applied normally.
-		activePath := filepath.Join(s.deps.Orch.ConfigDir(), "20-router.json")
+		activePath, aerr := s.deps.Orch.ActivePath(orchestrator.SlotRouting)
+		if aerr != nil {
+			return aerr
+		}
 		if existing, rerr := os.ReadFile(activePath); rerr == nil && bytes.Equal(existing, data) {
 			if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouting); err != nil {
 				return err

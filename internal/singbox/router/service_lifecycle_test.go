@@ -1,9 +1,11 @@
 package router
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Issue #689: tproxy-in на 0.0.0.0 ловит любой UDP на TPROXYPort (включая
@@ -30,34 +32,44 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 
 	// Upgrade path (issue #689): рестарт демона после обновления НЕ трогает
 	// sing-box и не переустанавливает iptables → Reconcile идёт через
-	// healTProxyInbound, а не через Enable. Его steady-state guard проверял
-	// только UDP-timeout'ы — конфиг с верным таймаутом, но listen 0.0.0.0
-	// считался здоровым и дрейф не лечился до ручного передёргивания движка.
+	// самолечение режимного слота, а не через Enable. Прежний steady-state
+	// guard проверял только UDP-timeout'ы — конфиг с верным таймаутом, но
+	// listen 0.0.0.0 считался здоровым и дрейф не лечился до ручного
+	// передёргивания движка.
 	t.Run("heal fixes listen drift with healthy timeouts", func(t *testing.T) {
 		svc, dir := newOrchedTestService(t)
+		if err := svc.deps.Orch.SetEnabled(orchestrator.SlotTProxy, true); err != nil {
+			t.Fatalf("enable tproxy slot: %v", err)
+		}
 
-		cfg := NewEmptyConfig()
-		cfg.Inbounds = ensureTProxyInbound(nil, "")
+		cfg := buildTProxySlot(TProxyParams{})
 		for i := range cfg.Inbounds {
 			if cfg.Inbounds[i].Tag == "tproxy-in" {
 				cfg.Inbounds[i].Listen = "0.0.0.0" // как писали версии до фикса
 			}
 		}
-		cfg.EnsureUDPTimeoutRule(DefaultUDPTimeout) // ruleOK в guard'е — true
-		if err := SaveConfig(filepath.Join(dir, "20-router.json"), cfg); err != nil {
+		if err := SaveConfig(filepath.Join(dir, "20-tproxy.json"), cfg); err != nil {
 			t.Fatalf("seed active: %v", err)
 		}
 		if err := svc.deps.Orch.Bootstrap(); err != nil {
 			t.Fatalf("bootstrap: %v", err)
 		}
 
-		if err := svc.healTProxyInbound(context.Background(), ""); err != nil {
-			t.Fatalf("healTProxyInbound: %v", err)
+		changed, err := svc.syncModeSlot(storage.SingboxRouterSettings{RoutingMode: stateTProxy})
+		if err != nil {
+			t.Fatalf("syncModeSlot: %v", err)
+		}
+		if !changed {
+			t.Error("дрейф listen обязан приводить к перезаписи режимного слота")
 		}
 
-		healed, err := svc.loadAppliedRouterConfig()
+		data, err := svc.deps.Orch.LoadApplied(orchestrator.SlotTProxy)
 		if err != nil {
-			t.Fatalf("reload config: %v", err)
+			t.Fatalf("reload mode slot: %v", err)
+		}
+		healed, err := parseRouterConfigBytes(data)
+		if err != nil {
+			t.Fatalf("parse mode slot: %v", err)
 		}
 		for _, in := range healed.Inbounds {
 			if in.Tag == "tproxy-in" && in.Listen != "127.0.0.1" {

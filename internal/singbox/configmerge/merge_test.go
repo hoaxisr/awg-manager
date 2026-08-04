@@ -52,7 +52,7 @@ func TestMerge_TagCollision_Outbounds(t *testing.T) {
 func TestMerge_TagCollision_DnsServers(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"quad","type":"tls"}]}}`)
-	writeJSON(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"quad","type":"udp"}]}}`)
+	writeJSON(t, dir, "21-routing.json", `{"dns":{"servers":[{"tag":"quad","type":"udp"}]}}`)
 
 	_, err := MergeDir(dir)
 	if err == nil {
@@ -67,7 +67,7 @@ func TestMerge_TagCollision_DnsServers(t *testing.T) {
 func TestMerge_NestedObject_LastWriterWins(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"log":{"level":"info","timestamp":false}}`)
-	writeJSON(t, dir, "20-router.json", `{"log":{"level":"trace"}}`)
+	writeJSON(t, dir, "21-routing.json", `{"log":{"level":"trace"}}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestMerge_NestedObject_LastWriterWins(t *testing.T) {
 func TestMerge_RouteRulesConcat(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"route":{"rules":[{"action":"sniff"}]}}`)
-	writeJSON(t, dir, "20-router.json", `{"route":{"rules":[{"action":"hijack-dns"}]}}`)
+	writeJSON(t, dir, "21-routing.json", `{"route":{"rules":[{"action":"hijack-dns"}]}}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
@@ -100,7 +100,7 @@ func TestMerge_DNSFinal_FirstFileWins(t *testing.T) {
 	dir := t.TempDir()
 	// Mirror the #445 scenario: base sets dns.final first, router second.
 	writeJSON(t, dir, "00-base.json", `{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4"}}`)
-	writeJSON(t, dir, "20-router.json", `{"dns":{"final":"dns-direct","strategy":"ipv4_only"}}`)
+	writeJSON(t, dir, "21-routing.json", `{"dns":{"final":"dns-direct","strategy":"ipv4_only"}}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestMerge_DNSFinal_FirstFileWins(t *testing.T) {
 func TestMerge_RouteFinal_FirstFileWins(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"route":{"final":"direct"}}`)
-	writeJSON(t, dir, "20-router.json", `{"route":{"final":"myproxy"}}`)
+	writeJSON(t, dir, "21-routing.json", `{"route":{"final":"myproxy"}}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestMerge_RouteFinal_FirstFileWins(t *testing.T) {
 func TestMerge_DNSRules_StillConcat(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "00-base.json", `{"dns":{"rules":[{"server":"a"}]}}`)
-	writeJSON(t, dir, "20-router.json", `{"dns":{"rules":[{"server":"b"}]}}`)
+	writeJSON(t, dir, "21-routing.json", `{"dns":{"rules":[{"server":"b"}]}}`)
 
 	out, err := MergeDir(dir)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestMerge_DNSRules_StillConcat(t *testing.T) {
 
 func TestMerge_SkipsDisabledSubdir(t *testing.T) {
 	dir := t.TempDir()
-	writeJSON(t, dir, "20-router.json", `{"inbounds":[{"tag":"active","type":"http"}]}`)
+	writeJSON(t, dir, "21-routing.json", `{"inbounds":[{"tag":"active","type":"http"}]}`)
 	disabled := filepath.Join(dir, "disabled")
 	if err := os.MkdirAll(disabled, 0755); err != nil {
 		t.Fatal(err)

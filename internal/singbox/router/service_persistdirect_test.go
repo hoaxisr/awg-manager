@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // These tests cover the direct-save path that replaced SaveDraft for
@@ -33,7 +34,7 @@ func TestPersistConfigDirect_NoOpWhenActiveMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	activePath := filepath.Join(dir, "20-router.json")
+	activePath := filepath.Join(dir, "21-routing.json")
 	if err := os.WriteFile(activePath, bytesNow, 0644); err != nil {
 		t.Fatalf("seed active: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestPersistConfigDirect_NoOpWhenActiveMatches(t *testing.T) {
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("active should not be re-written when bytes match (before=%v after=%v)", before.ModTime(), after.ModTime())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("pending must not exist after byte-equal direct save: %v", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestPersistConfigDirect_WritesActiveWhenDifferent(t *testing.T) {
 
 	// Seed active with stale bytes (different from what marshalling our
 	// cfg below will produce). Bootstrap marks the slot enabled.
-	activePath := filepath.Join(dir, "20-router.json")
+	activePath := filepath.Join(dir, "21-routing.json")
 	if err := os.WriteFile(activePath, []byte(`{"stale": true}`), 0644); err != nil {
 		t.Fatalf("seed active: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestPersistConfigDirect_WritesActiveWhenDifferent(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("active not overwritten with new bytes\nwant: %s\ngot:  %s", want, got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("pending must not exist after direct save: %v", err)
 	}
 }
@@ -117,7 +118,7 @@ func TestPersistConfigDirect_WritesActiveWhenAbsent(t *testing.T) {
 		t.Fatalf("persistConfigDirect: %v", err)
 	}
 
-	activePath := filepath.Join(dir, "20-router.json")
+	activePath := filepath.Join(dir, "21-routing.json")
 	got, err := os.ReadFile(activePath)
 	if err != nil {
 		t.Fatalf("read active: %v", err)
@@ -126,47 +127,30 @@ func TestPersistConfigDirect_WritesActiveWhenAbsent(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("active not created with expected bytes\nwant: %s\ngot:  %s", want, got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("pending must not exist after direct save: %v", err)
 	}
 }
 
 // Regression: changing the UDP timeout on a running engine goes through
-// Reconcile→reconcileInstalled→healTProxyInbound. The old heal returned early
+// Reconcile→reconcileInstalled→syncModeSlot. The old heal returned early
 // whenever a tproxy-in inbound was present, so a changed udpTimeout was never
 // written to the config (UI showed "1 час" while the file kept "3m0s").
 // #554: the system route-options rule must be brought to spec by the SAME
 // heal — it used to be regenerated only by Enable, so a changed timeout
 // stayed stale in the rule until the engine was toggled off/on.
-func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
+//
+// Носители таймаута уехали в режимный слот (20-tproxy.json) вместе со всем
+// захватом трафика — лечится теперь он.
+func TestSyncModeSlot_AppliesChangedUDPTimeout(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
+	modePath := seedTProxySlot(t, svc, dir, buildTProxySlot(TProxyParams{}))
 
-	// Seed active config with a tproxy-in AND the route-options rule at the
-	// default (5m0s) timeout.
-	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "")
-	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
-	seed, _ := json.MarshalIndent(cfg, "", "  ")
-	activePath := filepath.Join(dir, "20-router.json")
-	if err := os.WriteFile(activePath, seed, 0644); err != nil {
-		t.Fatalf("seed active: %v", err)
-	}
-	if err := svc.deps.Orch.Bootstrap(); err != nil {
-		t.Fatalf("bootstrap: %v", err)
+	if _, err := svc.syncModeSlot(tproxySettings("1h0m0s")); err != nil {
+		t.Fatalf("syncModeSlot: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
-		t.Fatalf("healTProxyInbound: %v", err)
-	}
-
-	raw, err := os.ReadFile(activePath)
-	if err != nil {
-		t.Fatalf("read active: %v", err)
-	}
-	var got RouterConfig
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	got := readRouterConfigFile(t, modePath)
 	var found bool
 	for _, in := range got.Inbounds {
 		if in.Tag == "tproxy-in" {
@@ -193,56 +177,43 @@ func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
 	}
 }
 
-// Heal must judge and rewrite the APPLIED config, never the user's staged
-// pending draft: loadRouterConfig reads pending-first, so healing from it
-// would materialize an unvalidated draft into active/ (bypassing ApplyDraft)
-// while the pending banner keeps hanging over an already-applied config.
-func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
+// Самолечение пишет РЕЖИМНЫЙ слот и не трогает ни активный общий конфиг, ни
+// пользовательский черновик над ним: черновик — про правила и наборы, а
+// материализация его в active мимо ApplyDraft ровно тот баг, от которого
+// защищался прежний тест.
+func TestSyncModeSlot_LeavesRoutingDraftAlone(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
+	seedTProxySlot(t, svc, dir, buildTProxySlot(TProxyParams{}))
 
-	// Active: drifted timeout (heal must rewrite it). Pending: a user draft
-	// with a marker rule that must NOT leak into active.
 	active := NewEmptyConfig()
-	active.Inbounds = ensureTProxyInbound(active.Inbounds, "")
-	active.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
-	seed, _ := json.MarshalIndent(active, "", "  ")
-	activePath := filepath.Join(dir, "20-router.json")
-	if err := os.WriteFile(activePath, seed, 0644); err != nil {
+	activePath := filepath.Join(dir, "21-routing.json")
+	activeBytes, _ := json.MarshalIndent(active, "", "  ")
+	if err := os.WriteFile(activePath, activeBytes, 0644); err != nil {
 		t.Fatalf("seed active: %v", err)
 	}
 	draft := NewEmptyConfig()
-	draft.Inbounds = ensureTProxyInbound(draft.Inbounds, "")
-	draft.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	draft.Route.Rules = append(draft.Route.Rules, Rule{Action: "route", Outbound: "draft-marker", Domain: []string{"draft.example"}})
 	draftBytes, _ := json.MarshalIndent(draft, "", "  ")
 	if err := os.MkdirAll(filepath.Join(dir, "pending"), 0755); err != nil {
 		t.Fatalf("mkdir pending: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "pending", "20-router.json"), draftBytes, 0644); err != nil {
+	pendingPath := filepath.Join(dir, "pending", "21-routing.json")
+	if err := os.WriteFile(pendingPath, draftBytes, 0644); err != nil {
 		t.Fatalf("seed pending: %v", err)
 	}
 	if err := svc.deps.Orch.Bootstrap(); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
-		t.Fatalf("healTProxyInbound: %v", err)
+	if _, err := svc.syncModeSlot(tproxySettings("1h0m0s")); err != nil {
+		t.Fatalf("syncModeSlot: %v", err)
 	}
 
 	raw, _ := os.ReadFile(activePath)
-	if strings.Contains(string(raw), "draft-marker") {
-		t.Fatal("pending draft content leaked into active via heal (must heal the APPLIED config)")
+	if string(raw) != string(activeBytes) {
+		t.Fatalf("общий слот переписан самолечением режимного:\n%s", raw)
 	}
-	var got RouterConfig
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	for _, in := range got.Inbounds {
-		if in.Tag == "tproxy-in" && in.UDPTimeout != "1h0m0s" {
-			t.Errorf("active inbound not healed: got %q", in.UDPTimeout)
-		}
-	}
-	pendingRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	pendingRaw, err := os.ReadFile(pendingPath)
 	if err != nil || !strings.Contains(string(pendingRaw), "draft-marker") {
 		t.Errorf("pending draft must survive heal untouched (err=%v)", err)
 	}
@@ -251,30 +222,24 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 // #554: the rule can drift alone (the inbound is already at spec — e.g. a
 // pre-fix build applied the inbound but never the rule). The heal must still
 // rewrite the config.
-func TestHealTProxyInbound_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
+func TestSyncModeSlot_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
-
-	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
+	drifted := buildTProxySlot(TProxyParams{UDPTimeout: "1h0m0s"})
 	// Rule deliberately absent — the drifted-carrier case.
-	seed, _ := json.MarshalIndent(cfg, "", "  ")
-	activePath := filepath.Join(dir, "20-router.json")
-	if err := os.WriteFile(activePath, seed, 0644); err != nil {
-		t.Fatalf("seed active: %v", err)
+	kept := drifted.Route.Rules[:0]
+	for _, r := range drifted.Route.Rules {
+		if !isSystemUDPTimeoutRule(r) {
+			kept = append(kept, r)
+		}
 	}
-	if err := svc.deps.Orch.Bootstrap(); err != nil {
-		t.Fatalf("bootstrap: %v", err)
+	drifted.Route.Rules = kept
+	modePath := seedTProxySlot(t, svc, dir, drifted)
+
+	if _, err := svc.syncModeSlot(tproxySettings("1h0m0s")); err != nil {
+		t.Fatalf("syncModeSlot: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
-		t.Fatalf("healTProxyInbound: %v", err)
-	}
-
-	raw, _ := os.ReadFile(activePath)
-	var got RouterConfig
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	got := readRouterConfigFile(t, modePath)
 	for _, r := range got.Route.Rules {
 		if isSystemUDPTimeoutRule(r) && r.UDPTimeout == "1h0m0s" {
 			return
@@ -283,40 +248,69 @@ func TestHealTProxyInbound_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
 	t.Fatal("missing route-options rule was not healed")
 }
 
-// The cheap steady-state guard: when the timeout already matches, heal must
-// not rewrite the active file (no spurious SIGHUP every reconcile tick).
-func TestHealTProxyInbound_NoOpWhenTimeoutMatches(t *testing.T) {
+// The cheap steady-state guard: when the slot already matches, heal must
+// not rewrite the file (no spurious SIGHUP every reconcile tick).
+func TestSyncModeSlot_NoOpWhenConverged(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
+	modePath := seedTProxySlot(t, svc, dir, buildTProxySlot(TProxyParams{UDPTimeout: "1h0m0s"}))
 
-	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
-	cfg.EnsureUDPTimeoutRule("1h0m0s")
-	seed, _ := json.MarshalIndent(cfg, "", "  ")
-	activePath := filepath.Join(dir, "20-router.json")
-	if err := os.WriteFile(activePath, seed, 0644); err != nil {
-		t.Fatalf("seed active: %v", err)
-	}
-	if err := svc.deps.Orch.Bootstrap(); err != nil {
-		t.Fatalf("bootstrap: %v", err)
-	}
-
-	before, err := os.Stat(activePath)
+	before, err := os.Stat(modePath)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
-		t.Fatalf("healTProxyInbound: %v", err)
+	changed, err := svc.syncModeSlot(tproxySettings("1h0m0s"))
+	if err != nil {
+		t.Fatalf("syncModeSlot: %v", err)
+	}
+	if changed {
+		t.Error("сошедшийся слот не должен перезаписываться")
 	}
 
-	after, err := os.Stat(activePath)
+	after, err := os.Stat(modePath)
 	if err != nil {
 		t.Fatalf("stat after: %v", err)
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("active rewritten despite matching timeout (before=%v after=%v)", before.ModTime(), after.ModTime())
 	}
+}
+
+// tproxySettings — минимальные настройки режима tproxy с заданным таймаутом.
+func tproxySettings(udpTimeout string) storage.SingboxRouterSettings {
+	return storage.SingboxRouterSettings{RoutingMode: stateTProxy, UDPTimeout: udpTimeout}
+}
+
+// seedTProxySlot кладёт cfg в активный файл режимного слота и переподнимает
+// оркестратор, чтобы слот считался включённым. Возвращает путь файла.
+func seedTProxySlot(t *testing.T, svc *ServiceImpl, dir string, cfg *RouterConfig) string {
+	t.Helper()
+	seed, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal seed: %v", err)
+	}
+	path := filepath.Join(dir, "20-tproxy.json")
+	if err := os.WriteFile(path, seed, 0644); err != nil {
+		t.Fatalf("seed mode slot: %v", err)
+	}
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	return path
+}
+
+func readRouterConfigFile(t *testing.T, path string) RouterConfig {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal %s: %v", path, err)
+	}
+	return cfg
 }
 
 func TestWaitForSingbox_ReturnsWhenRunning(t *testing.T) {

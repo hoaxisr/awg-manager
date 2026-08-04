@@ -22,10 +22,10 @@ func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	dir := t.TempDir()
 
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotFakeIP, Filename: "21-fakeip.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotFakeIP, Filename: "20-fakeip.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Bootstrap(); err != nil {
@@ -83,22 +83,23 @@ func TestFakeIPConfigHandler_ListDNSServers_Returns200Array(t *testing.T) {
 	}
 }
 
-// seedFakeIPConfigOverlay does a no-op route-rule add+delete to trigger
-// fakeipWithConfig once so the engine-locked overlay bits (fakeip/real DNS
-// servers, hijack-dns route rule, etc.) are established in the slot before
-// any user mutations reference them.
+// seedFakeIPConfigOverlay триггерит fakeipWithConfig один раз, чтобы в
+// режимном слоте появились движковые биты (серверы fakeip/real, hijack-dns и
+// т.д.) до пользовательских правок, которые на них ссылаются.
+//
+// Правки правил и наборов сюда больше не годятся: они уехали в общий слот и
+// оверлея режимного слота не касаются. Берём DNS-глобалы — они остались
+// режимными.
 func seedFakeIPConfigOverlay(t *testing.T, fh *SingboxFakeIPConfigHandler) {
 	t.Helper()
-	// Add a route rule (does not reference DNS servers, so no chicken-and-egg
-	// with the fakeip server that only exists after the overlay runs).
-	body := `{"action":"route","outbound":"direct","domain_suffix":[".test.invalid"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/fakeip/config/rules/add",
+	body := `{"strategy":"prefer_ipv4"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/fakeip/config/dns/globals",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	fh.AddRule(rr, req)
+	fh.PutDNSGlobals(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("seedFakeIPConfigOverlay AddRule: want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		t.Fatalf("seedFakeIPConfigOverlay PutDNSGlobals: want 200, got %d (body: %s)", rr.Code, rr.Body.String())
 	}
 }
 

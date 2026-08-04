@@ -216,7 +216,7 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	}
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotRouting,
-		Filename: "20-router.json",
+		Filename: "21-routing.json",
 	}); err != nil {
 		t.Fatalf("register SlotRouting: %v", err)
 	}
@@ -279,11 +279,11 @@ func TestStaging_FullCycle(t *testing.T) {
 	}
 
 	// 2. Pending file must exist; active must not.
-	pending := filepath.Join(env.configDir, "pending", "20-router.json")
+	pending := filepath.Join(env.configDir, "pending", "21-routing.json")
 	if _, err := os.Stat(pending); err != nil {
 		t.Fatalf("pending file missing after AddRule: %v", err)
 	}
-	active := filepath.Join(env.configDir, "20-router.json")
+	active := filepath.Join(env.configDir, "21-routing.json")
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
 		t.Fatalf("active file should not exist after staging only: %v", err)
 	}
@@ -372,13 +372,13 @@ func TestStaging_ValidationFailRetains(t *testing.T) {
 	}
 
 	// 4. Pending must still exist (draft preserved for further editing).
-	pending := filepath.Join(env.configDir, "pending", "20-router.json")
+	pending := filepath.Join(env.configDir, "pending", "21-routing.json")
 	if _, err := os.Stat(pending); err != nil {
 		t.Fatalf("pending file should still exist after validation failure: %v", err)
 	}
 
 	// 5. Active must NOT exist (no commit happened).
-	active := filepath.Join(env.configDir, "20-router.json")
+	active := filepath.Join(env.configDir, "21-routing.json")
 	if _, err := os.Stat(active); !os.IsNotExist(err) {
 		t.Errorf("active file must not exist after validation failure: stat: %v", err)
 	}

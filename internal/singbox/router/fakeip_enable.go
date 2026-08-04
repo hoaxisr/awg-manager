@@ -50,25 +50,34 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
 
-	// A. Load the fakeip config from SlotFakeIP (user-editable, 21-fakeip.json).
-	// When the slot is empty (first enable) seed a starter A/AAAA→fakeip DNS rule
-	// so the chip shows useful defaults, and set route.final to the built-in
-	// "direct" outbound (always known, no dangling reference). The user picks a
-	// real proxy egress afterward via the fakeip page (WYSIWYG).
+	// A. Режимный слот SlotFakeIP (20-fakeip.json) — DNS-механизм режима.
+	// Когда DNS-правил ещё нет (первое включение) сеем стартовое
+	// A/AAAA→fakeip, чтобы чип показывал осмысленный дефолт.
 	fcfg, err := s.loadFakeIPConfig()
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: load fakeip config: %w", err)
 	}
-	if fakeIPConfigEmpty(fcfg) {
+	if len(fcfg.DNS.Rules) == 0 {
 		fcfg.DNS.Rules = append(fcfg.DNS.Rules, DNSRule{Action: "route", Server: "fakeip", QueryType: []string{"A", "AAAA"}})
-		fcfg.Route.Final = "direct"
 	}
 
-	// C. Egress validation from the fakeip config.
-	// "direct" is a built-in known outbound — passes. Refuse to provision with
-	// no usable egress (empty or unknown tag).
-	proxyTag := fcfg.Route.Final
-	if proxyTag == "" || !s.isKnownOutboundTag(ctx, proxyTag, fcfg) {
+	// A2. Общий слот (21-routing.json) — правила, наборы, outbound'ы и
+	// route.final. Он же источник egress'а: скаляр route.final принадлежит
+	// общему слоту во всех режимах. На чистой установке ставим встроенный
+	// "direct" (всегда известен, ссылка не повиснет); реальный выход
+	// пользователь выбирает потом.
+	rcfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		return fmt.Errorf("enable fakeip-tun: load routing config: %w", err)
+	}
+	if rcfg.Route.Final == "" {
+		rcfg.Route.Final = "direct"
+	}
+
+	// C. Egress validation. "direct" is a built-in known outbound — passes.
+	// Refuse to provision with no usable egress (empty or unknown tag).
+	proxyTag := rcfg.Route.Final
+	if !s.isKnownOutboundTag(ctx, proxyTag, rcfg) {
 		return fmt.Errorf("enable fakeip-tun: no usable egress: route.final %q is not a known outbound", proxyTag)
 	}
 
@@ -240,6 +249,14 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		UDPTimeout: sr.UDPTimeout,
 	}
 	ensureFakeIPOverlay(fcfg, spec)
+	// Общая часть — в свой слот: режим влияет на неё только резолвером у
+	// outbound'ов (в fakeip адрес прокси обязан резолвиться через "real",
+	// иначе получит фейковый адрес и туннель не поднимется) и разметкой WAN.
+	buildRoutingSlot(rcfg, RoutingSlotParams{
+		Mode:          stateFakeIPTun,
+		WANAutoDetect: sr.WANAutoDetect,
+		WANInterface:  sr.WANInterface,
+	})
 
 	// Flush stale kernel addresses on the tun BEFORE sing-box starts, while the
 	// tun is still bare (NDMS assigned its address above via SetAddress; we drop
@@ -294,6 +311,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 	if err = s.persistFakeIPConfig(ctx, fcfg); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip config: %w", err)
+	}
+	if err = s.persistConfigDirect(ctx, rcfg); err != nil {
+		return fmt.Errorf("enable fakeip-tun: persist routing config: %w", err)
 	}
 	// Разметка слотов выше поменяла видимость композитов (режимные слоты
 	// чужих режимов припаркованы, fakeip и общий — активны) —
@@ -351,7 +371,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Specific CIDR routes for proxy-routed dst CIDRs (loop-safe pure-dst rules
 	// only — see desiredTunCIDRs): full apply on enable. Best-effort per CIDR — one
 	// bad entry must not fail the whole enable; rollback removes the ones that succeeded.
-	enableCIDRV4, enableCIDRV6 := desiredTunCIDRs(fcfg)
+	// Правила и наборы, из которых считаются CIDR'ы, живут в общем слоте.
+	enableCIDRV4, enableCIDRV6 := desiredTunCIDRs(rcfg)
 	for _, c := range enableCIDRV4 {
 		if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 			s.appLog.Warn("fakeip", iface, "add cidr route "+c+": "+e.Error())

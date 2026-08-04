@@ -31,8 +31,8 @@ func TestFakeIPCompositeOutbound_RejectsUnknownMembers(t *testing.T) {
 		t.Fatal(err0)
 	}
 
-	// Атомарный выход в fakeip-слоте — валидный член.
-	if err := svc.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+	// Атомарный выход в общем слоте — валидный член (композиты переехали туда).
+	if err := svc.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		c.Outbounds = append(c.Outbounds,
 			Outbound{Tag: "have", Type: "socks", Server: "1.2.3.4"},
 			Outbound{Tag: "have2", Type: "socks", Server: "5.6.7.8"})
@@ -86,13 +86,13 @@ func TestRenameExternalOutboundTag_RewritesFakeIPSlot(t *testing.T) {
 		if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotFakeIP, true); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(fakeipCfg), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "20-fakeip.json"), []byte(fakeipCfg), 0644); err != nil {
 			t.Fatal(err)
 		}
 		if err := svc.RenameExternalOutboundTag(ctx, "old-tun", "new-tun"); err != nil {
 			t.Fatal(err)
 		}
-		data, err := os.ReadFile(filepath.Join(dir, "21-fakeip.json"))
+		data, err := os.ReadFile(filepath.Join(dir, "20-fakeip.json"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +105,7 @@ func TestRenameExternalOutboundTag_RewritesFakeIPSlot(t *testing.T) {
 		if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotFakeIP, false); err != nil {
 			t.Fatal(err)
 		}
-		parked := filepath.Join(dir, "disabled", "21-fakeip.json")
+		parked := filepath.Join(dir, "disabled", "20-fakeip.json")
 		if err := os.WriteFile(parked, []byte(fakeipCfg), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -132,7 +132,7 @@ func TestOutboundReferenceLocations_IncludesFakeIPSlot(t *testing.T) {
 	if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotFakeIP, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(fakeipCfg), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "20-fakeip.json"), []byte(fakeipCfg), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestCompositeOutbound_TproxyRejectsUnknownMembers(t *testing.T) {
 
 	// Router-слот с двумя атомарными выходами — валидные члены.
 	routerCfg := `{"outbounds":[{"tag":"have","type":"socks","server":"1.2.3.4"},{"tag":"have2","type":"socks","server":"5.6.7.8"},{"tag":"direct","type":"direct"}],"route":{"final":"direct","rules":[]}}`
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerCfg), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(routerCfg), 0644); err != nil {
 		t.Fatal(err)
 	}
 

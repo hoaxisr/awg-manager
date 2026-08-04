@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -43,10 +42,13 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 		})
 	}
 
-	configDir := s.deps.Orch.ConfigDir()
-	activePath := filepath.Join(configDir, "20-router.json")
-	disabledPath := filepath.Join(configDir, "disabled", "20-router.json")
-	pendingPath := filepath.Join(configDir, "pending", "20-router.json")
+	// Пути обоих слотов выводятся из реестра (ActivePath), а не из литералов:
+	// после переименования файлов литерал молча перестал бы находить конфиг, и
+	// ссылка на переименованный outbound осталась бы висеть (#567).
+	activePath, disabledPath, pendingPath, err := s.slotPaths(orchestrator.SlotRouting)
+	if err != nil {
+		return err
+	}
 	changed := false
 
 	if data, ok, err := rewriteRouterConfigOutboundRefs(activePath, oldTag, newTag); err != nil {
@@ -74,12 +76,13 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 		s.emitStagingEvent("staged")
 		changed = true
 	}
-	// 21-fakeip.json: члены композитов и правила fakeip-слота ссылаются на
-	// те же внешние теги — без переписи ссылка повисает и валит enable
-	// fakeip-tun кросс-слот валидацией (#567). Та же тройка локаций.
-	fakeipActive := filepath.Join(configDir, "21-fakeip.json")
-	fakeipDisabled := filepath.Join(configDir, "disabled", "21-fakeip.json")
-	fakeipPending := filepath.Join(configDir, "pending", "21-fakeip.json")
+	// Режимный слот fakeip: его DNS-правила ссылаются на наборы, а detour
+	// DNS-серверов — на теги outbound'ов. Без переписи ссылка повисает и валит
+	// enable fakeip-tun кросс-слот валидацией (#567). Та же тройка локаций.
+	fakeipActive, fakeipDisabled, fakeipPending, err := s.slotPaths(orchestrator.SlotFakeIP)
+	if err != nil {
+		return err
+	}
 	if data, ok, err := rewriteRouterConfigOutboundRefs(fakeipActive, oldTag, newTag); err != nil {
 		return err
 	} else if ok {

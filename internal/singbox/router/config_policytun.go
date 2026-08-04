@@ -12,6 +12,21 @@ type PolicyTunInboundSpec struct {
 	UDPTimeout string // empty → DefaultUDPTimeout via resolveUDPTimeout
 }
 
+// buildPolicyTunSlot собирает режимный слот policy-tun (20-policytun.json):
+// tun-инбаунд на OpkgTun, инбаунды классов QoS и те же системные route-правила,
+// что и у tproxy. Ни outbound'ов, ни наборов, ни route.final — их пишет общий
+// слот 21-routing.json (режимный сливается раньше, скаляры берутся из первого
+// файла).
+func buildPolicyTunSlot(spec PolicyTunInboundSpec, snifferEnabled bool, classes []qosClass) *RouterConfig {
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = "" // скаляр общего слота, см. выше
+	cfg.Inbounds = ensurePolicyTunInbound(nil, spec)
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, classes, spec.UDPTimeout)
+	cfg.EnsureSystemRules(snifferEnabled)
+	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(spec.UDPTimeout))
+	return cfg
+}
+
 // ensurePolicyTunInbound replaces the tproxy/redirect inbound pair of slot 20
 // with a single tun inbound. QoS inbounds (tproxy-qos-* / redirect-qos-*) are
 // left untouched — they are bound per class and are not part of the main

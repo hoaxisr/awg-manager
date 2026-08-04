@@ -68,14 +68,13 @@ func fileExistsForTest(path string) bool {
 	return err == nil
 }
 
-// registerExtraModeSlots дорегистрирует режимные слоты, которых нет в
-// харнессах, собранных до появления трёх режимов: applyRoutingSlots трогает ВСЕ
-// режимные слоты, а незарегистрированный оркестратор отвергает. Слоты, которые
-// харнесс уже зарегистрировал сам (со своим именем файла), пропускаются.
-func registerExtraModeSlots(t *testing.T, orch *orchestrator.Orchestrator) {
+// registerRoutingSlots регистрирует ВСЕ слоты маршрутизации (три режимных +
+// общий) РЕАЛЬНЫМИ именами файлов из реестра. Именно так делает прод; харнесс,
+// придумывающий свои имена, проверял бы пути, которых в бою нет.
+func registerRoutingSlots(t *testing.T, orch *orchestrator.Orchestrator) {
 	t.Helper()
 	for _, meta := range orchestrator.KnownSlots() {
-		if _, ok := modeBySlot[meta.Slot]; !ok {
+		if _, ok := modeBySlot[meta.Slot]; !ok && meta.Slot != orchestrator.SlotRouting {
 			continue
 		}
 		if err := orch.Register(meta); err != nil && !errors.Is(err, orchestrator.ErrSlotAlreadyRegistered) {

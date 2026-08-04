@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -263,10 +264,12 @@ func (c *RouterConfig) MoveRule(from, to int) error {
 	return nil
 }
 
+// EnsureSystemRules ставит в начало route.rules системный префикс режима:
+// sniff, hijack-dns и обход приватных адресов. Вызывают её ТОЛЬКО генераторы
+// режимных слотов — route.final здесь намеренно не трогается: это скаляр
+// общего слота (21-routing.json), а режимный слот сливается раньше и перебил
+// бы пользовательский выбор.
 func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
-	if c.Route.Final == "" {
-		c.Route.Final = "direct"
-	}
 	hasSniff := false
 	hasHijack := false
 	hasPrivateBypass := false
@@ -372,6 +375,72 @@ func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
 		c.Route.Rules = newRules
 	}
 }
+
+// stripSharedFromModeSlot вычищает из режимного слота всё, что пишет общий
+// слот 21-routing.json: outbound'ы и наборы правил (одинаковые теги в двух
+// файлах = FATAL при слиянии), пользовательские route-правила и скаляр
+// route.final (режимный слот сливается первым и перебил бы выбор
+// пользователя). Системный префикс правил режимный генератор ставит заново
+// сам, поэтому route.rules обнуляются целиком.
+//
+// DNS не трогаем: в fakeip-режиме серверы и правила DNS — это и есть механизм
+// режима, они остаются в режимном слоте (решение подэтапа 5D0).
+func stripSharedFromModeSlot(cfg *RouterConfig) {
+	cfg.Outbounds = []Outbound{}
+	cfg.Route.RuleSet = []RuleSet{}
+	cfg.Route.Rules = []Rule{}
+	cfg.Route.Final = ""
+}
+
+// RoutingSlotParams — вход общего генератора: активный режим (от него зависит
+// резолвер у outbound'ов) и разметка WAN.
+type RoutingSlotParams struct {
+	Mode          string
+	WANAutoDetect bool
+	WANInterface  string
+}
+
+// buildRoutingSlot приводит пользовательский конфиг к содержимому общего слота
+// 21-routing.json: правила, наборы, outbound'ы, route.final, DNS не-fakeip
+// режимов и разметка WAN. Инбаунды вычищаются — захват трафика целиком живёт в
+// режимных слотах, а один и тот же тег инбаунда в двух файлах роняет sing-box
+// при слиянии.
+//
+// Мутирует cfg на месте (вызывающий уже держит свою копию, загруженную из
+// слота).
+func buildRoutingSlot(cfg *RouterConfig, p RoutingSlotParams) {
+	cfg.Inbounds = []Inbound{}
+	cfg.Outbounds = applyRoutingOutbounds(cfg.Outbounds, p.Mode)
+	cfg.EnsureRouteWAN(p.WANAutoDetect, p.WANInterface)
+	if cfg.Route.Final == "" {
+		cfg.Route.Final = "direct"
+	}
+}
+
+// applyRoutingOutbounds готовит outbound'ы общего слота: убирает
+// авто-управляемые direct'ы (они живут в 15-awg.json, дубль тега = FATAL) и
+// расставляет domain_resolver ПО РЕЖИМУ.
+//
+// Резолвер "real" существует только в fakeip-режиме (его объявляет
+// 20-fakeip.json), поэтому в остальных режимах ссылка на него повисает и
+// роняет конфиг — снимаем её. Пользовательский резолвер (любое другое имя)
+// не трогаем ни в одном режиме.
+func applyRoutingOutbounds(outbounds []Outbound, mode string) []Outbound {
+	out := stripAutoManagedDirect(outbounds)
+	if ModeSlot(mode) == orchestrator.SlotFakeIP {
+		return applyOutboundDomainResolver(out, fakeIPRealServerTag)
+	}
+	for i := range out {
+		if out[i].DomainResolver != nil && out[i].DomainResolver.Server == fakeIPRealServerTag {
+			out[i].DomainResolver = nil
+		}
+	}
+	return out
+}
+
+// fakeIPRealServerTag — тег движкового DNS-сервера fakeip-режима с настоящим
+// upstream'ом. Живёт только в 20-fakeip.json.
+const fakeIPRealServerTag = "real"
 
 // EnsureRouteWAN applies the WAN-binding discriminator to route.
 // Exactly one of `auto_detect_interface` / `default_interface` is written

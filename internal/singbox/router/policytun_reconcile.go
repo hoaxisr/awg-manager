@@ -113,7 +113,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		// Teardown только когда что-то реально поднято — иначе каждый
 		// boot-reconcile писал бы ложное «выключение движка» в журнал.
 		provisioned := st != nil && st.Provisioned
-		slotActive := s.deps.Orch != nil && s.routerSlotEnabled()
+		slotActive := s.deps.Orch != nil && s.routingSlotsActive()
 		if !provisioned && !slotActive {
 			return nil
 		}
@@ -267,6 +267,11 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 		if !s.xtDscpUsable(ctx) {
 			qosSpecs = nil
 		}
+	}
+	// Инбаунды классов живут в режимном слоте — сначала он, потом оверлей
+	// правил 18-qos-routes (порядок «конфиг → правила» тот же, что в enable).
+	if _, err := s.syncModeSlot(sr); err != nil {
+		s.appLog.Warn("policy-tun-reconcile", "qos", err.Error())
 	}
 	if _, err := s.healQoSConfig(ctx, sr); err != nil {
 		s.appLog.Warn("policy-tun-reconcile", "qos", err.Error())

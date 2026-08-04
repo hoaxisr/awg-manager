@@ -30,7 +30,7 @@ func newAloneTestOrch(t *testing.T) (*Orchestrator, *recordingAloneValidator) {
 	t.Helper()
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"}); err != nil {

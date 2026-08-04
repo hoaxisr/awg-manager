@@ -461,13 +461,10 @@ func newQoSSlotTestService(t *testing.T, outbounds ...string) (*ServiceImpl, str
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
-		t.Fatal(err)
-	}
+	registerRoutingSlots(t, orch)
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotQoSRoutes, Filename: "18-qos-routes.json"}); err != nil {
 		t.Fatal(err)
 	}
-	registerExtraModeSlots(t, orch)
 	cfg := NewEmptyConfig()
 	for _, ob := range outbounds {
 		cfg.Outbounds = append(cfg.Outbounds, Outbound{Type: "selector", Tag: ob, Outbounds: []string{"direct"}})
@@ -795,9 +792,10 @@ func TestReconcile_QoSPortChange_HealsConfigBeforeInstall(t *testing.T) {
 	// The recorder snapshots the persisted config AT INSTALL TIME: the heal
 	// must already have provisioned the class inbounds by then.
 	installedWithInbounds := false
+	// Инбаунды классов пишет режимный слот — снимок берём с него.
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		sequence = append(sequence, "install")
-		if cfg, err := LoadConfig(filepath.Join(singbox.dir, "20-router.json")); err == nil {
+		if cfg, err := LoadConfig(filepath.Join(singbox.dir, "20-tproxy.json")); err == nil {
 			for _, in := range cfg.Inbounds {
 				if in.Tag == "tproxy-qos-46" {
 					installedWithInbounds = true
@@ -808,6 +806,7 @@ func TestReconcile_QoSPortChange_HealsConfigBeforeInstall(t *testing.T) {
 	})
 	svc := &ServiceImpl{
 		deps: Deps{
+			Settings:           newTestSettingsStore(t, storage.SingboxRouterSettings{}),
 			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
 			IPTables:           ipt,
 			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
@@ -819,6 +818,10 @@ func TestReconcile_QoSPortChange_HealsConfigBeforeInstall(t *testing.T) {
 		currentWANIPs:       []string{"203.0.113.207/32"},
 		currentQoSClasses:   nil, // port set is about to change
 		netfilterStateKnown: true,
+	}
+	orch := attachOrch(t, svc)
+	if err := orch.SetEnabled(orchestrator.SlotTProxy, true); err != nil {
+		t.Fatal(err)
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -944,6 +947,8 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 		XtDscpProbe:        func(context.Context) bool { return true },
 	})
 
+	attachOrch(t, svc)
+
 	if err := svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable (tproxy, qos): %v", err)
 	}
@@ -963,11 +968,11 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 		t.Errorf("currentQoSClasses = %+v, want %+v", svc.currentQoSClasses, want)
 	}
 
-	// sing-box side: persisted config carries the class inbound pair. The
-	// managed route rule does NOT live here anymore — it goes to the
-	// 18-qos-routes.json slot (invisible in the rules UI); with no
-	// orchestrator wired in this legacy-mode test the slot sync is a no-op.
-	cfg, err := LoadConfig(svc.routerConfigPath())
+	// sing-box side: режимный слот несёт пару инбаундов класса. Управляемое
+	// route-правило живёт не здесь — оно уходит в 18-qos-routes.json
+	// (невидимо в UI правил).
+	modePath := filepath.Join(svc.deps.Singbox.ConfigDir(), "20-tproxy.json")
+	cfg, err := LoadConfig(modePath)
 	if err != nil {
 		t.Fatalf("load persisted config: %v", err)
 	}
@@ -989,12 +994,12 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 	for _, r := range cfg.Route.Rules {
 		for _, tag := range r.Inbound {
 			if isQoSInboundTag(tag) {
-				t.Errorf("managed qos rule leaked into 20-router.json: %+v", r)
+				t.Errorf("managed qos rule leaked into 20-tproxy.json: %+v", r)
 			}
 		}
 	}
 	// The persisted JSON must stay sing-box-parseable: no awgm_managed key.
-	raw, _ := os.ReadFile(svc.routerConfigPath())
+	raw, _ := os.ReadFile(modePath)
 	if strings.Contains(string(raw), "awgm_managed") {
 		t.Errorf("persisted config contains awgm_managed (sing-box rejects unknown rule fields):\n%s", raw)
 	}
@@ -1033,7 +1038,7 @@ func TestEnable_Tproxy_QoS_WritesRoutesSlot(t *testing.T) {
 	if !strings.Contains(string(slotRaw), "tproxy-qos-46") || !strings.Contains(string(slotRaw), `"vpn-a"`) {
 		t.Errorf("slot content wrong:\n%s", slotRaw)
 	}
-	routerRaw, err := os.ReadFile(filepath.Join(dir, "20-router.json"))
+	routerRaw, err := os.ReadFile(filepath.Join(dir, "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1105,17 +1110,14 @@ func TestEnable_Tproxy_QoSXtDscpMissing_DegradesWithoutFailing(t *testing.T) {
 func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 	svc, dir := newQoSSlotTestService(t, "fresh-outbound")
 
-	// Seed the active config with a stale class-10 inbound pair on top of the
-	// catalog config newQoSSlotTestService wrote.
-	seed, err := svc.loadAppliedRouterConfig()
-	if err != nil {
+	// Инбаунды классов живут в режимном слоте — сеем туда устаревшую пару
+	// класса 10 и включаем слот, чтобы запись шла в активный файл.
+	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotTProxy, true); err != nil {
 		t.Fatal(err)
 	}
-	seed.Inbounds = []Inbound{
-		{Type: "tproxy", Tag: "tproxy-in", Listen: "0.0.0.0", ListenPort: TPROXYPort, Network: "udp", UDPFragment: true, UDPTimeout: DefaultUDPTimeout},
-		{Type: "tproxy", Tag: "tproxy-qos-10", ListenPort: 51281},
-	}
-	if err := svc.persistConfigDirect(context.Background(), seed); err != nil {
+	stale := buildTProxySlot(TProxyParams{})
+	stale.Inbounds = append(stale.Inbounds, Inbound{Type: "tproxy", Tag: "tproxy-qos-10", ListenPort: 51281})
+	if err := svc.persistSlotDirect(orchestrator.SlotTProxy, stale, false); err != nil {
 		t.Fatal(err)
 	}
 	// Seed a stale slot file for a class that no longer exists.
@@ -1129,18 +1131,30 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 	}
 
 	sr := storage.SingboxRouterSettings{
+		RoutingMode: stateTProxy,
 		QoSClasses: []storage.SingboxQoSClass{
 			{DSCP: 46, Outbound: "fresh-outbound", Enabled: true, Slot: 0},
 		},
+	}
+	modeChanged, err := svc.syncModeSlot(sr)
+	if err != nil {
+		t.Fatalf("syncModeSlot: %v", err)
+	}
+	if !modeChanged {
+		t.Fatal("expected changed=true on a drifted mode slot")
 	}
 	changed, err := svc.healQoSConfig(context.Background(), sr)
 	if err != nil {
 		t.Fatalf("healQoSConfig: %v", err)
 	}
 	if !changed {
-		t.Fatal("expected changed=true on a drifted config")
+		t.Fatal("expected changed=true on a drifted routes slot")
 	}
-	cfg, err := svc.loadAppliedRouterConfig()
+	modeData, err := svc.deps.Orch.LoadApplied(orchestrator.SlotTProxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseRouterConfigBytes(modeData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1148,7 +1162,7 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 	for _, in := range cfg.Inbounds {
 		tags = append(tags, in.Tag)
 	}
-	wantTags := []string{"tproxy-in", "tproxy-qos-46", "redirect-qos-46"}
+	wantTags := []string{"redirect-in", "tproxy-in", "tproxy-qos-46", "redirect-qos-46"}
 	if !slices.Equal(tags, wantTags) {
 		t.Fatalf("healed inbound tags = %v, want %v", tags, wantTags)
 	}
@@ -1162,8 +1176,13 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 
 	// Steady state: second heal must not rewrite either file and must report
 	// changed=false (no sing-box reload).
-	beforeCfg, _ := os.Stat(filepath.Join(dir, "20-router.json"))
+	beforeCfg, _ := os.Stat(filepath.Join(dir, "20-tproxy.json"))
 	beforeSlot, _ := os.Stat(filepath.Join(dir, "18-qos-routes.json"))
+	if modeChanged, err = svc.syncModeSlot(sr); err != nil {
+		t.Fatalf("second syncModeSlot: %v", err)
+	} else if modeChanged {
+		t.Error("steady-state heal must report changed=false (режимный слот)")
+	}
 	changed, err = svc.healQoSConfig(context.Background(), sr)
 	if err != nil {
 		t.Fatalf("second healQoSConfig: %v", err)
@@ -1171,10 +1190,10 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 	if changed {
 		t.Error("steady-state heal must report changed=false")
 	}
-	afterCfg, _ := os.Stat(filepath.Join(dir, "20-router.json"))
+	afterCfg, _ := os.Stat(filepath.Join(dir, "20-tproxy.json"))
 	afterSlot, _ := os.Stat(filepath.Join(dir, "18-qos-routes.json"))
 	if !afterCfg.ModTime().Equal(beforeCfg.ModTime()) {
-		t.Error("steady-state heal must not rewrite 20-router.json")
+		t.Error("steady-state heal must not rewrite 20-tproxy.json")
 	}
 	if !afterSlot.ModTime().Equal(beforeSlot.ModTime()) {
 		t.Error("steady-state heal must not rewrite 18-qos-routes.json")
@@ -1207,7 +1226,7 @@ func TestHealQoSConfig_DoesNotApplyPendingDraft(t *testing.T) {
 	if _, err := svc.healQoSConfig(context.Background(), sr); err != nil {
 		t.Fatalf("healQoSConfig: %v", err)
 	}
-	activeRaw, err := os.ReadFile(filepath.Join(dir, "20-router.json"))
+	activeRaw, err := os.ReadFile(filepath.Join(dir, "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

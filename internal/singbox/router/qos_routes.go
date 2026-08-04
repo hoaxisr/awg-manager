@@ -310,36 +310,21 @@ func (s *ServiceImpl) disableQoSClassesForOutbound(tag string) error {
 }
 
 // healQoSConfig is the reconcile-path self-heal for the QoS sing-box side:
-// per-class inbound pairs in 20-router.json plus the managed route rules in
-// 18-qos-routes.json. It re-derives the canonical state from settings and
-// writes only what actually drifted; applyQoSRoutesSlot then reloads
-// sing-box only on change (sticky-failure aware). Returns whether anything
-// was (re)written so reconcileInstalled can wait for the reload to land
-// before installing new iptables dispatch ports.
+// the managed route rules in 18-qos-routes.json. It re-derives the canonical
+// state from settings and writes only what actually drifted; applyQoSRoutesSlot
+// then reloads sing-box only on change (sticky-failure aware). Returns whether
+// anything was (re)written so reconcileInstalled can wait for the reload to
+// land before installing new iptables dispatch ports.
 //
-// Load-source discipline: the inbound heal reads the APPLIED router config
-// (active/, then disabled/), never LoadEffective — a heal that starts from
-// the pending draft and direct-writes to active would silently apply staged
-// edits, bypassing the «Применить» gate. persistConfigDirect's byte-equal
-// short-circuit keeps the steady state write-free.
+// Инбаунды классов — не здесь: они уехали в режимные слоты захвата и
+// перегенерируются вместе с ними (syncModeSlot). Две точки записи одних и тех
+// же инбаундов дали бы их дубль в merged-конфиге.
 func (s *ServiceImpl) healQoSConfig(ctx context.Context, sr storage.SingboxRouterSettings) (bool, error) {
 	classes := activeQoSClasses(sr.QoSClasses)
-	cfg, err := s.loadAppliedRouterConfig()
+	changed, err := s.syncQoSRoutesSlot(ctx, classes, sr)
 	if err != nil {
 		return false, err
 	}
-	inbounds, inChanged := ensureQoSInbounds(cfg.Inbounds, classes, sr.UDPTimeout)
-	if inChanged {
-		cfg.Inbounds = inbounds
-		if err := s.persistConfigDirect(ctx, cfg); err != nil {
-			return false, err
-		}
-	}
-	slotChanged, err := s.syncQoSRoutesSlot(ctx, classes, sr)
-	if err != nil {
-		return inChanged, err
-	}
-	changed := inChanged || slotChanged
 	s.applyQoSRoutesSlot(changed)
 	return changed, nil
 }

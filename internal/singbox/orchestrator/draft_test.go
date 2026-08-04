@@ -13,7 +13,7 @@ func setupOrch(t *testing.T) (*Orchestrator, string) {
 	t.Helper()
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if err := o.Bootstrap(); err != nil {
@@ -29,7 +29,7 @@ func TestSaveDraft_WritesToPendingDir(t *testing.T) {
 	if err := o.SaveDraft(SlotRouting, bytes); err != nil {
 		t.Fatalf("SaveDraft: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	got, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatalf("pending file missing: %v", err)
 	}
@@ -37,14 +37,14 @@ func TestSaveDraft_WritesToPendingDir(t *testing.T) {
 		t.Errorf("pending bytes mismatch: got %s", got)
 	}
 	// active must be untouched (not exist or empty).
-	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("active file should not exist yet, got: %v", err)
 	}
 }
 
 func TestLoadEffective_PrefersPending(t *testing.T) {
 	o, dir := setupOrch(t)
-	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"active":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{"active":true}`), 0644)
 	_ = o.SaveDraft(SlotRouting, []byte(`{"draft":true}`))
 	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
@@ -57,7 +57,7 @@ func TestLoadEffective_PrefersPending(t *testing.T) {
 
 func TestLoadEffective_FallsBackToActive(t *testing.T) {
 	o, dir := setupOrch(t)
-	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"active":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{"active":true}`), 0644)
 	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
@@ -85,7 +85,7 @@ func TestLoadEffective_FallsBackToDisabled(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "disabled"), 0755); err != nil {
 		t.Fatalf("mkdir disabled: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "disabled", "20-router.json"), []byte(`{"disabled":true}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "disabled", "21-routing.json"), []byte(`{"disabled":true}`), 0644); err != nil {
 		t.Fatalf("write disabled file: %v", err)
 	}
 	got, err := o.LoadEffective(SlotRouting)
@@ -134,7 +134,7 @@ func TestDraftInfo_ReturnsMtime(t *testing.T) {
 	if !info.HasDraft {
 		t.Fatal("DraftInfo says !HasDraft after SaveDraft")
 	}
-	st, _ := os.Stat(filepath.Join(dir, "pending", "20-router.json"))
+	st, _ := os.Stat(filepath.Join(dir, "pending", "21-routing.json"))
 	if !info.DraftedAt.Equal(st.ModTime()) {
 		t.Errorf("DraftedAt mismatch: got %v want %v", info.DraftedAt, st.ModTime())
 	}
@@ -173,7 +173,7 @@ func TestApplyDraft_HappyPath(t *testing.T) {
 	o.enabled[SlotBase] = true
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	_ = os.WriteFile(filepath.Join(dir, "20-router.json"),
+	_ = os.WriteFile(filepath.Join(dir, "21-routing.json"),
 		[]byte(`{"outbounds":[]}`), 0644)
 	_ = o.SaveDraft(SlotRouting,
 		[]byte(`{"outbounds":[],"route":{"final":"direct"}}`))
@@ -192,11 +192,11 @@ func TestApplyDraft_HappyPath(t *testing.T) {
 		t.Errorf("validator should be called once, got %d", fv.calls)
 	}
 	// pending gone
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("pending file should be gone, got: %v", err)
 	}
 	// active updated
-	got, _ := os.ReadFile(filepath.Join(dir, "20-router.json"))
+	got, _ := os.ReadFile(filepath.Join(dir, "21-routing.json"))
 	if string(got) != `{"outbounds":[],"route":{"final":"direct"}}` {
 		t.Errorf("active not updated: %s", got)
 	}
@@ -236,7 +236,7 @@ func (v *snapshotRecordingValidator) Validate(_ context.Context, dir string) err
 func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if err := o.Bootstrap(); err != nil {
@@ -260,7 +260,7 @@ func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 	if !res.Ok() {
 		t.Fatalf("ApplyDraft validation: %s", res.Error())
 	}
-	got, ok := rv.files["20-router.json"]
+	got, ok := rv.files["21-routing.json"]
 	if !ok {
 		t.Fatalf("disabled target's draft missing from sing-box check snapshot; snapshot: %v", rv.files)
 	}
@@ -298,11 +298,11 @@ func TestApplyDraft_CrossSlotValidationFail(t *testing.T) {
 		t.Fatalf("expected validation failure")
 	}
 	// Pending preserved.
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); err != nil {
 		t.Errorf("pending should still exist: %v", err)
 	}
 	// Active untouched.
-	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("active should not exist: %v", err)
 	}
 }
@@ -325,7 +325,7 @@ func TestApplyDraft_SingboxCheckFail(t *testing.T) {
 	if !res.Ok() {
 		t.Errorf("res should be ZeroResult on sb-check failure")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); err != nil {
 		t.Errorf("pending should still exist: %v", err)
 	}
 }

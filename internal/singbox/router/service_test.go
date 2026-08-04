@@ -195,6 +195,24 @@ func newTestService(_ *testing.T, deps Deps) *ServiceImpl {
 	return &ServiceImpl{deps: deps}
 }
 
+// attachOrch подключает к сервису НАСТОЯЩИЙ оркестратор поверх каталога
+// fakeSingbox. Нужен всем тестам, которые смотрят на инбаунды: после
+// разделения генерации захват трафика живёт в режимных слотах, а без
+// оркестратора слотов не существует вовсе.
+func attachOrch(t *testing.T, svc *ServiceImpl) *orchestrator.Orchestrator {
+	t.Helper()
+	orch := orchestrator.New(svc.deps.Singbox.ConfigDir(), nil)
+	registerRoutingSlots(t, orch)
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotQoSRoutes, Filename: "18-qos-routes.json"}); err != nil {
+		t.Fatalf("register qos-routes: %v", err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	svc.deps.Orch = orch
+	return orch
+}
+
 // stubListeningProbe overrides the singboxListeningProbe seam for the test
 // duration so waitForSingbox/GetStatus don't read the real procfs.
 func stubListeningProbe(t *testing.T, fn func() bool) {
@@ -382,7 +400,7 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 		t.Fatalf("SetRouteFinal(sub-test): %v", err)
 	}
 
-	cfg, err := LoadConfig(filepath.Join(singbox.dir, "20-router.json"))
+	cfg, err := LoadConfig(filepath.Join(singbox.dir, "21-routing.json"))
 	if err != nil {
 		t.Fatalf("LoadConfig(20-router.json): %v", err)
 	}
@@ -394,9 +412,7 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, &fakeSingbox{dir: dir})
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
-		t.Fatalf("Register router slot: %v", err)
-	}
+	registerRoutingSlots(t, orch)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -417,7 +433,7 @@ func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 		t.Fatalf("RenameExternalOutboundTag: %v", err)
 	}
 
-	activeCfg, err := LoadConfig(filepath.Join(dir, "20-router.json"))
+	activeCfg, err := LoadConfig(filepath.Join(dir, "21-routing.json"))
 	if err != nil {
 		t.Fatalf("Load active: %v", err)
 	}
@@ -426,7 +442,7 @@ func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 		activeCfg.DNS.Servers[0].Detour != "new" {
 		t.Fatalf("active refs not renamed: %+v", activeCfg)
 	}
-	pendingCfg, err := LoadConfig(filepath.Join(dir, "pending", "20-router.json"))
+	pendingCfg, err := LoadConfig(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatalf("Load pending: %v", err)
 	}
@@ -1289,19 +1305,7 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 	dir := t.TempDir()
 
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotRouting,
-		Filename: "20-router.json",
-	}); err != nil {
-		t.Fatalf("orch.Register SlotRouting: %v", err)
-	}
-	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotFakeIP,
-		Filename: "21-fakeip.json",
-	}); err != nil {
-		t.Fatalf("orch.Register SlotFakeIP: %v", err)
-	}
-	registerExtraModeSlots(t, orch)
+	registerRoutingSlots(t, orch)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("orch.Bootstrap: %v", err)
 	}
@@ -1331,19 +1335,19 @@ func TestPersistConfig_WritesPending_NotActive(t *testing.T) {
 	if err := svc.persistConfig(context.Background(), cfg); err != nil {
 		t.Fatalf("persistConfig: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); err != nil {
 		t.Fatalf("pending missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "21-routing.json")); !os.IsNotExist(err) {
 		t.Errorf("active should not exist after staged write: %v", err)
 	}
 }
 
 func TestLoadRouterConfig_PrefersPending(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
-	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"outbounds":[]}`), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{"outbounds":[]}`), 0644)
 	_ = os.MkdirAll(filepath.Join(dir, "pending"), 0755)
-	_ = os.WriteFile(filepath.Join(dir, "pending", "20-router.json"),
+	_ = os.WriteFile(filepath.Join(dir, "pending", "21-routing.json"),
 		[]byte(`{"outbounds":[{"tag":"draft-tag","type":"direct"}]}`), 0644)
 
 	cfg, err := svc.loadRouterConfig()
@@ -1437,7 +1441,7 @@ func TestAddRuleSet_InlineWritesLocalBinaryToPendingAndListsInline(t *testing.T)
 		t.Fatalf("AddRuleSet: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatalf("read pending router config: %v", err)
 	}
@@ -1634,7 +1638,7 @@ func TestReapplyFakeIPOverlay_RegeneratesSlot(t *testing.T) {
 	if err := s.reapplyFakeIPOverlay(context.Background(), st); err != nil {
 		t.Fatalf("reapplyFakeIPOverlay: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "21-fakeip.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "20-fakeip.json"))
 	if err != nil {
 		t.Fatalf("read slot: %v", err)
 	}
@@ -1735,7 +1739,7 @@ func TestUpdateRuleSet_InlineOverwritesSameSRSFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddRuleSet: %v", err)
 	}
-	firstRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	firstRaw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1755,7 +1759,7 @@ func TestUpdateRuleSet_InlineOverwritesSameSRSFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateRuleSet: %v", err)
 	}
-	secondRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	secondRaw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1816,7 +1820,7 @@ func TestUpdateRuleSet_InlineRenameRewritesVisibleAndMaterializedRefs(t *testing
 		t.Fatalf("visible dns refs = %+v", dnsRules)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1886,7 +1890,7 @@ func TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft(t *testing.T) 
 	if svc.StagingStatus(context.Background()).HasDraft {
 		t.Fatal("rules-only edit must NOT create a pending draft")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Fatalf("pending file should not exist after rules-only edit: %v", err)
 	}
 	// The guard emits a "discarded" staging event so the UI banner clears.
@@ -1967,7 +1971,7 @@ func TestDeleteRuleSet_StagedInlineKeepsSRSCompanionFiles(t *testing.T) {
 	if err := svc.DeleteRuleSet(context.Background(), "to-delete", false); err != nil {
 		t.Fatalf("DeleteRuleSet: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2007,7 +2011,7 @@ func TestDiscardStaging_RecompilesInlineSRSForActiveAfterStagedDelete(t *testing
 	if err != nil || !res.Ok() {
 		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
 	}
-	activeRaw, err := os.ReadFile(filepath.Join(dir, "20-router.json"))
+	activeRaw, err := os.ReadFile(filepath.Join(dir, "21-routing.json"))
 	if err != nil {
 		t.Fatalf("read active router config: %v", err)
 	}
@@ -2026,7 +2030,7 @@ func TestDiscardStaging_RecompilesInlineSRSForActiveAfterStagedDelete(t *testing
 	if err := svc.DeleteRuleSet(context.Background(), "rollback-inline", false); err != nil {
 		t.Fatalf("DeleteRuleSet: %v", err)
 	}
-	pendingRaw, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
+	pendingRaw, err := os.ReadFile(filepath.Join(dir, "pending", "21-routing.json"))
 	if err != nil {
 		t.Fatalf("read pending router config: %v", err)
 	}
@@ -2047,7 +2051,7 @@ func TestDiscardStaging_RecompilesInlineSRSForActiveAfterStagedDelete(t *testing
 	if _, err := os.Stat(srsPath); err != nil {
 		t.Fatalf("expected discard to recompile active .srs, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "pending", "20-router.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "pending", "21-routing.json")); !os.IsNotExist(err) {
 		t.Fatalf("discard must not recreate pending draft, stat err=%v", err)
 	}
 	if compileCalls < 2 {

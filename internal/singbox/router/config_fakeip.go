@@ -9,22 +9,23 @@ import (
 )
 
 // FakeIPTunSpec is the input to BuildFakeIPTunConfig — every value the
-// fakeip-tun mode needs that the builder cannot derive on its own. It carries
-// the kernel tun device, the fakeip pools, the real upstream resolver and the
-// already-built outbound list (proxy + direct).
+// fakeip-tun mode needs that the builder cannot derive on its own: the kernel
+// tun device, the fakeip pools и настоящий upstream-резолвер.
+//
+// Outbound'ов и egress-тега здесь нет: они переехали в общий слот
+// 21-routing.json (см. buildRoutingSlot). Режимный слот отвечает только за
+// захват трафика и резолверную топологию fakeip.
 type FakeIPTunSpec struct {
-	Iface          string     // kernel iface name, e.g. "opkgtun10"
-	TunAddr4       string     // e.g. "172.18.0.1/30"
-	TunAddr6       string     // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
-	MTU            int        //
-	Inet4Range     string     // fakeip v4 pool
-	Inet6Range     string     // fakeip v6 pool (empty to omit v6)
-	CachePath      string     //
-	RealServer     string     // real upstream resolver, e.g. "1.1.1.1"
-	Outbounds      []Outbound // proxy + direct
-	ProxyTag       string     // outbound tag that tun-in routes to
-	DomainRuleSets []string   // .srs tags for domains to fakeip (empty = fake all A/AAAA)
-	SourceIPCIDR   []string   // optional per-device targeting (empty = all sources)
+	Iface          string   // kernel iface name, e.g. "opkgtun10"
+	TunAddr4       string   // e.g. "172.18.0.1/30"
+	TunAddr6       string   // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
+	MTU            int      //
+	Inet4Range     string   // fakeip v4 pool
+	Inet6Range     string   // fakeip v6 pool (empty to omit v6)
+	CachePath      string   //
+	RealServer     string   // real upstream resolver, e.g. "1.1.1.1"
+	DomainRuleSets []string // .srs tags for domains to fakeip (empty = fake all A/AAAA)
+	SourceIPCIDR   []string // optional per-device targeting (empty = all sources)
 	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
 	// "system". When "system" the builder forces gso:false on the tun inbound —
 	// the only stable system-stack combo on this router's kernel (4.9), where the
@@ -44,23 +45,26 @@ type FakeIPTunSpec struct {
 // which is exactly what fakeip-tun must NOT enable because NDMS owns routing).
 func boolPtr(v bool) *bool { return &v }
 
-// BuildFakeIPTunConfig assembles a complete RouterConfig for sing-box's
-// fakeip-tun mode from spec.
+// BuildFakeIPTunConfig assembles the fakeip-tun MODE slot (20-fakeip.json)
+// from spec.
 //
 // Shape:
 //   - tun inbound "tun-in" on s.Iface, gvisor stack, every auto-* flag forced
 //     false (NDMS owns routing/redirect; fakeip-tun must not let sing-box touch
 //     the kernel routing table).
-//   - outbounds: s.Outbounds verbatim, after applying the domain_resolver guard
-//     (see applyOutboundDomainResolver) on a defensive copy.
 //   - DNS: a "fakeip" server (the pool) plus a "real" server (true upstream),
 //     final → "real". A single route rule sends A/AAAA queries to "fakeip",
 //     optionally narrowed by rule_set (domains) and/or source_ip_cidr (devices).
-//   - route: hijack-dns first, then everything to the proxy tag; outbound
+//   - route: hijack-dns first, обход приватных адресов вторым; outbound
 //     hostnames resolve via "real" (default_domain_resolver) so the proxy
 //     endpoint never gets a fake address.
 //   - experimental.cache_file persists the fakeip name↔address map across
 //     restarts so existing connections keep their address.
+//
+// Чего здесь нет: outbound'ов, наборов правил, пользовательских правил и
+// скаляра route.final — всё это пишет общий слот 21-routing.json. Режимный
+// слот сливается ПЕРВЫМ, поэтому его route.final перебил бы выбор
+// пользователя, а catch-all «всё в прокси» затенил бы весь общий слот.
 func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 	if p, err := netip.ParsePrefix(s.TunAddr4); err != nil {
 		return nil, fmt.Errorf("fakeip-tun: invalid TunAddr4 %q: %w", s.TunAddr4, err)
@@ -108,15 +112,6 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 	}
 	cfg.Inbounds = []Inbound{in}
 
-	// Full outbound pipeline: strip auto-managed direct outbounds (awg/nwg/
-	// wireguard bind_interface) — they live in 15-awg.json and are merged by
-	// sing-box across config.d, so re-emitting them here would FATAL the merged
-	// config with "duplicate outbound tag" (stand-verified 2026-06-15). ProxyTag
-	// may reference one of them by tag; sing-box resolves it from 15-awg.json.
-	// Then apply the domain_resolver guard on the survivors. Mirrors the tproxy
-	// path (service.go: stripAutoManagedDirect).
-	cfg.Outbounds = applyOutboundDomainResolver(stripAutoManagedDirect(s.Outbounds), "real")
-
 	fakeip := DNSServer{
 		Tag:        "fakeip",
 		Type:       "fakeip",
@@ -148,12 +143,12 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 		return nil, err
 	}
 
-	cfg.Route.Rules = []Rule{
-		{Action: "hijack-dns", Protocol: "dns"},
-		{Action: "route", Outbound: s.ProxyTag},
-	}
+	cfg.Route.Rules = []Rule{{Action: "hijack-dns", Protocol: "dns"}}
+	forcePrivateBypassAfterHijack(cfg)
 	cfg.EnsureUDPTimeoutRule(udpTimeout)
-	cfg.Route.Final = s.ProxyTag
+	// route.final — скаляр общего слота; режимный его не пишет (NewEmptyConfig
+	// ставит "direct", снимаем).
+	cfg.Route.Final = ""
 	cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
 
 	cfg.Experimental = &Experimental{CacheFile: &CacheFile{
@@ -177,12 +172,19 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 //   - cfg.DNS.Final = "real".
 //   - cfg.Route.DefaultDomainResolver = &DomainResolver{Server:"real"}.
 //   - cfg.Experimental = &Experimental{CacheFile:{Enabled,StoreFakeIP,Path}}.
-//   - hijack-dns Rule forced at route.rules[0] (all existing hijack-dns rules
-//     removed, then one prepended), preserving all other user rules in order.
+//   - hijack-dns Rule forced at route.rules[0], обход приватных адресов вторым.
+//
+// Перед наложением из конфига вычищается всё, что теперь принадлежит общему
+// слоту (stripSharedFromModeSlot): outbound'ы, наборы правил, пользовательские
+// route-правила и route.final. Без этого merged-конфиг получил бы дублирующиеся
+// теги outbound/rule_set (FATAL при загрузке) и режимный route.final,
+// перебивающий пользовательский.
 //
 // The caller is responsible for validating spec fields (TunAddr4 etc.) before
 // calling. ensureFakeIPOverlay is a pure in-place mutator; it does not validate.
 func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
+	stripSharedFromModeSlot(cfg)
+
 	// --- tun-in inbound ---
 	addrs := []string{spec.TunAddr4}
 	if spec.TunAddr6 != "" {

@@ -145,7 +145,7 @@ func TestGCRuleSetArtifacts_DatOrphansSweptTokenAndTmpKept(t *testing.T) {
 		}
 	}
 	// Active router config references only geosite-KEPT via the dat-srs URL.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{
 		"route": {"rule_set": [{
 			"tag": "kept",
 			"type": "remote",
@@ -193,7 +193,7 @@ func TestGCRuleSetArtifacts_KeepsPendingAndFakeIPReferences(t *testing.T) {
 		t.Fatalf("AddRuleSet: %v", err)
 	}
 	// FakeIP active config references a materialized inline rule-set.
-	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(`{
+	if err := os.WriteFile(filepath.Join(dir, "20-fakeip.json"), []byte(`{
 		"route": {"rule_set": [{
 			"tag": "fakeip-set-srs",
 			"type": "local",

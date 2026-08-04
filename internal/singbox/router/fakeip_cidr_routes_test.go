@@ -308,13 +308,12 @@ func TestSyncTunCIDRRoutes_Diff(t *testing.T) {
 	}
 }
 
-// TestFakeipWithConfig_SyncsCIDRRoutes proves Task 4's wiring: every fakeip
-// config CRUD mutation re-syncs the tun's specific CIDR routes. The harness is
-// the real provisioned fakeip service (newFakeIPTestService) with FakeIPState
-// Index=3 and a recStaticRoutes fake wired as deps.StaticRoutes so we can assert
-// the recorded NDMS route call. We add a proxy-routed rule (Outbound != direct)
-// carrying a routable dst CIDR; fakeipWithConfig must add the matching tun route.
-func TestFakeipWithConfig_SyncsCIDRRoutes(t *testing.T) {
+// Правки правил идут в общий слот через staging, поэтому точка синка
+// специфичных CIDR-маршрутов — применение черновика (ApplyStaging), а не сама
+// правка: до «Применить» изменение живёт в pending/ и на живой конфиг не
+// влияет. Харнесс — реальный провижиненный fakeip-сервис (FakeIPState Index=3,
+// то есть OpkgTun3) с записывающим StaticRoutes.
+func TestApplyStaging_SyncsCIDRRoutes(t *testing.T) {
 	svc, _ := newFakeIPTestService(t)
 
 	// Re-provision FakeIPState at Index=3 so fakeIPNDMSName yields OpkgTun3.
@@ -332,16 +331,20 @@ func TestFakeipWithConfig_SyncsCIDRRoutes(t *testing.T) {
 	rec := &recStaticRoutes{log: log}
 	svc.deps.StaticRoutes = rec
 
-	err = svc.fakeipWithConfig(t.Context(), "test", func(cfg *RouterConfig) error {
-		// Outbound "proxy" (non-direct) ⇒ isProxyRoute true; the dst CIDR becomes a
-		// specific tun route. The overlay does not strip user route rules.
-		cfg.Route.Rules = append(cfg.Route.Rules, Rule{
-			Action: "route", Outbound: "proxy", IPCIDR: []string{"149.154.160.0/20"},
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("fakeipWithConfig: %v", err)
+	// Outbound "proxy" (non-direct) ⇒ isProxyRoute true; the dst CIDR becomes a
+	// specific tun route.
+	if err := svc.withConfig(t.Context(), "rules", func(cfg *RouterConfig) error {
+		cfg.Outbounds = append(cfg.Outbounds, Outbound{Type: "direct", Tag: "proxy"})
+		return cfg.AddRule(Rule{Action: "route", Outbound: "proxy", IPCIDR: []string{"149.154.160.0/20"}})
+	}); err != nil {
+		t.Fatalf("withConfig: %v", err)
+	}
+	if rec.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3") {
+		t.Fatalf("маршрут поставлен до «Применить» — черновик не должен влиять на живой конфиг; calls=%v", rec.log.calls)
+	}
+
+	if _, err := svc.ApplyStaging(t.Context()); err != nil {
+		t.Fatalf("ApplyStaging: %v", err)
 	}
 	if !rec.log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3") {
 		t.Errorf("expected CIDR route added for new proxy rule; calls=%v", rec.log.calls)
@@ -362,11 +365,7 @@ func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 	// Seed the fakeip config (21-fakeip.json) with a loop-safe proxy ip_cidr rule.
 	// route.final="direct" is a known built-in outbound so the egress check passes;
 	// a DNS rule keeps fakeIPConfigEmpty false so the seed path leaves our rules be.
-	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
-		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
-		t.Fatalf("write 21-fakeip.json: %v", err)
-	}
+	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}`)
 
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("enable: %v", err)
@@ -394,11 +393,7 @@ func TestDisable_RemovesCIDRRoutes(t *testing.T) {
 	captureDrain(t) // capture the async pool-drain so it never runs inline
 
 	// Seed the fakeip config with a loop-safe proxy ip_cidr rule before provisioning.
-	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
-		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
-		t.Fatalf("write 21-fakeip.json: %v", err)
-	}
+	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}`)
 
 	provisionForDisable(t, h) // Enable + clear the call log
 
@@ -422,11 +417,7 @@ func TestReconcileFakeIPTun_ReaddsCIDRRouteWhenMissing(t *testing.T) {
 
 	// Seed a loop-safe proxy ip_cidr rule before provisioning so loadFakeIPConfig
 	// returns it on reconcile.
-	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
-		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
-		t.Fatalf("write 21-fakeip.json: %v", err)
-	}
+	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}`)
 
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
@@ -466,11 +457,7 @@ func TestReconcileFakeIPTun_V6CIDRSelfHealNoV4(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
 	// Seed a loop-safe proxy rule carrying ONLY a v6 ip_cidr — no v4 CIDR at all.
-	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
-		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["2001:b28::/32"]}]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
-		t.Fatalf("write 21-fakeip.json: %v", err)
-	}
+	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["2001:b28::/32"]}`)
 
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
@@ -507,11 +494,7 @@ func TestReconcileFakeIPTun_V6CIDRGatedOnPresenceProbe(t *testing.T) {
 
 	// Seed a loop-safe proxy rule carrying BOTH a v4 and a v6 ip_cidr so a v6 CIDR
 	// route exists in the desired set.
-	fcfg := `{"outbounds":[{"tag":"proxy","type":"direct"}],"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]},` +
-		`"route":{"final":"direct","rules":[{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20","2001:b28::/32"]}]}}`
-	if err := os.WriteFile(filepath.Join(h.dir, "21-fakeip.json"), []byte(fcfg), 0644); err != nil {
-		t.Fatalf("write 21-fakeip.json: %v", err)
-	}
+	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20","2001:b28::/32"]}`)
 
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
@@ -697,5 +680,21 @@ func TestDesiredTunCIDRs_MergedMatchingBeta1(t *testing.T) {
 				t.Errorf("v4 = %v, want %v", gotV4, tt.wantV4)
 			}
 		})
+	}
+}
+
+// seedFakeIPCIDRSlots раскладывает фикстуру по двум слотам ровно так, как это
+// делает разделённая генерация: DNS-механизм режима — в 20-fakeip.json,
+// правила и outbound'ы — в общий 21-routing.json (именно из него считаются
+// специфичные CIDR-маршруты в tun).
+func seedFakeIPCIDRSlots(t *testing.T, dir, rules string) {
+	t.Helper()
+	mode := `{"dns":{"rules":[{"action":"route","server":"fakeip","query_type":["A","AAAA"]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "20-fakeip.json"), []byte(mode), 0644); err != nil {
+		t.Fatalf("write 20-fakeip.json: %v", err)
+	}
+	shared := `{"outbounds":[{"tag":"proxy","type":"direct"}],"route":{"final":"direct","rules":[` + rules + `]}}`
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(shared), 0644); err != nil {
+		t.Fatalf("write 21-routing.json: %v", err)
 	}
 }

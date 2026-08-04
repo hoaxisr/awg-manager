@@ -98,7 +98,7 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 	}
 
 	routerCfg := `{"outbounds":[{"tag":"proxy-out","type":"socks","server":"1.2.3.4"},{"tag":"direct","type":"direct"}],"route":{"final":"proxy-out","rules":[]}}`
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerCfg), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(routerCfg), 0644); err != nil {
 		t.Fatalf("write router cfg: %v", err)
 	}
 
@@ -213,16 +213,17 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 			t.Errorf("слот %s обязан быть выключен в режиме policy-tun", other)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	// Захват трафика — в режимном слоте; общий слот инбаундов не несёт вовсе.
+	data, err := os.ReadFile(filepath.Join(h.dir, "20-policytun.json"))
 	if err != nil {
-		t.Fatalf("read 20-router.json: %v", err)
+		t.Fatalf("read 20-policytun.json: %v", err)
 	}
 	var cfg RouterConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal 20-router.json: %v", err)
+		t.Fatalf("unmarshal 20-policytun.json: %v", err)
 	}
 	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].Tag != "tun-in" {
-		t.Fatalf("20-router.json must lead with the tun inbound: %s", data)
+		t.Fatalf("20-policytun.json must lead with the tun inbound: %s", data)
 	}
 	if cfg.Inbounds[0].InterfaceName != iface {
 		t.Errorf("tun inbound interface_name = %q, want %q", cfg.Inbounds[0].InterfaceName, iface)
@@ -231,6 +232,24 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 		if in.Tag == "tproxy-in" || in.Tag == "redirect-in" {
 			t.Errorf("policy-tun must not keep the tproxy inbound pair: %s", data)
 		}
+	}
+	if cfg.Route.Final != "" || len(cfg.Outbounds) != 0 {
+		t.Errorf("режимный слот не должен писать общее содержимое: %s", data)
+	}
+
+	shared, err := os.ReadFile(filepath.Join(h.dir, "21-routing.json"))
+	if err != nil {
+		t.Fatalf("read 21-routing.json: %v", err)
+	}
+	var sharedCfg RouterConfig
+	if err := json.Unmarshal(shared, &sharedCfg); err != nil {
+		t.Fatalf("unmarshal 21-routing.json: %v", err)
+	}
+	if len(sharedCfg.Inbounds) != 0 {
+		t.Errorf("общий слот не должен нести инбаунды: %s", shared)
+	}
+	if sharedCfg.Route.Final == "" {
+		t.Errorf("общий слот обязан нести route.final: %s", shared)
 	}
 
 	all, _ := h.store.Load()

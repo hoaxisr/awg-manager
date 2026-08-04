@@ -560,11 +560,42 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 	)
 }
 
-// routerOwnsDNSStrategy reports whether the sibling 20-router.json in configDir
+// routerOwnsDNSStrategy reports whether a sibling routing slot in configDir
 // exists and sets a non-empty dns.strategy. See removeDNSFinalFromBase for why
 // the base dns.strategy strip is gated on this.
+//
+// Слотов маршрутизации теперь четыре (три режимных + общий), и dns.strategy
+// может лежать в любом из них: в fakeip-режиме DNS живёт в режимном слоте, в
+// остальных — в общем. Имена файлов берём из реестра, а не из литерала — после
+// переименования литерал молча вернул бы false и dns.strategy в 00-base.json
+// снова начал бы конфликтовать.
 func routerOwnsDNSStrategy(configDir string) bool {
-	data, err := os.ReadFile(filepath.Join(configDir, "20-router.json"))
+	for _, slot := range []orchestrator.Slot{
+		orchestrator.SlotRouting,
+		orchestrator.SlotFakeIP,
+		orchestrator.SlotTProxy,
+		orchestrator.SlotPolicyTun,
+	} {
+		if slotDNSStrategySet(configDir, slot) {
+			return true
+		}
+	}
+	return false
+}
+
+// slotDNSStrategySet — непустой dns.strategy в активном файле слота.
+func slotDNSStrategySet(configDir string, slot orchestrator.Slot) bool {
+	name := ""
+	for _, meta := range orchestrator.KnownSlots() {
+		if meta.Slot == slot {
+			name = meta.Filename
+			break
+		}
+	}
+	if name == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, name))
 	if err != nil {
 		return false
 	}

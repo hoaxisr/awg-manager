@@ -45,7 +45,7 @@ func TestLoadAppliedState_CorruptJSON(t *testing.T) {
 // same as a non-empty one).
 func TestEnabledConfigHashLocked_StableAndSensitive(t *testing.T) {
 	o, _ := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestReload_SkipsWhenHashUnchangedAndRunning(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestReload_AppliesWhenHashChanged(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
 
 	o1 := New(dir, fp)
-	_ = o1.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
+	_ = o1.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
 	if err := o1.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	if !o2.CurrentHasTun() {
 		t.Fatal("constructor must seed prevHasTun=true from persisted applied state")
 	}
-	if err := o2.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := o2.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := o2.Bootstrap(); err != nil {

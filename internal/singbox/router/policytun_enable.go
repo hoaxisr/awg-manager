@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -190,26 +191,29 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable policy-tun: addr flush: %w", err)
 	}
 
-	// Slot 20 keeps its user rules/outbounds; only the ingress changes — the
-	// tproxy/redirect pair is replaced by a single tun inbound.
+	// Общий слот (21-routing.json) переживает смену режима нетронутым — в нём
+	// правила, наборы и outbound'ы; здесь только пересобираем режимно-зависимую
+	// часть (резолвер у outbound'ов, WAN) и перезаписываем его.
 	cfg, err := s.loadAppliedRouterConfig()
 	if err != nil {
 		return fmt.Errorf("enable policy-tun: load router config: %w", err)
 	}
-	cfg.Inbounds = ensurePolicyTunInbound(cfg.Inbounds, PolicyTunInboundSpec{
+	buildRoutingSlot(cfg, RoutingSlotParams{
+		Mode:          statePolicyTun,
+		WANAutoDetect: sr.WANAutoDetect,
+		WANInterface:  sr.WANInterface,
+	})
+	// Режимный слот (20-policytun.json): tun-инбаунд вместо пары tproxy плюс те
+	// же системные правила и инбаунды классов QoS.
+	qosClasses := activeQoSClasses(sr.QoSClasses)
+	modeCfg := buildPolicyTunSlot(PolicyTunInboundSpec{
 		Iface:      iface,
 		TunAddr4:   p.TunAddr4,
 		TunAddr6:   p.TunAddr6,
 		MTU:        p.MTU,
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
-	})
-	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
-	cfg.EnsureSystemRules(sr.SnifferEnabled)
-	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
-	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
-	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
+	}, sr.SnifferEnabled, qosClasses)
 
 	// Promote the policy-tun slot pair (режимный 20-policytun + общий
 	// 21-routing) FIRST so persistConfigDirect targets the active path.
@@ -239,6 +243,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		}
 	}
 
+	if err = s.persistModeSlot(orchestrator.SlotPolicyTun, modeCfg); err != nil {
+		return fmt.Errorf("enable policy-tun: persist policy-tun slot: %w", err)
+	}
 	if err = s.persistConfigDirect(ctx, cfg); err != nil {
 		return fmt.Errorf("enable policy-tun: persist router config: %w", err)
 	}

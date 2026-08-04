@@ -34,10 +34,10 @@ func TestMigrateRuleSetURLsToFork(t *testing.T) {
 	// remote rule-set URL; миграция обязана подмести ВСЕ slot-файлы в active/
 	// disabled/pending.
 	withVernette := []string{
-		filepath.Join(dir, "20-router.json"),
-		filepath.Join(dir, "21-fakeip.json"),
-		filepath.Join(dir, "disabled", "20-router.json"),
-		filepath.Join(dir, "pending", "21-fakeip.json"),
+		filepath.Join(dir, "21-routing.json"),
+		filepath.Join(dir, "20-fakeip.json"),
+		filepath.Join(dir, "disabled", "21-routing.json"),
+		filepath.Join(dir, "pending", "20-fakeip.json"),
 	}
 	for _, p := range withVernette {
 		if err := os.WriteFile(p, []byte(vern), 0o644); err != nil {

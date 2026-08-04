@@ -40,7 +40,7 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	// Seed a router config so loadRouterConfig returns a usable egress for both
 	// tproxy (inbound ensure) and fakeip (proxy outbound + final).
 	routerCfg := `{"outbounds":[{"tag":"proxy-out","type":"socks","server":"1.2.3.4"},{"tag":"direct","type":"direct"}],"route":{"final":"proxy-out","rules":[]}}`
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerCfg), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(routerCfg), 0644); err != nil {
 		t.Fatalf("write router cfg: %v", err)
 	}
 

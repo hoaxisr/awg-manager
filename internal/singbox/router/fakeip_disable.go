@@ -215,7 +215,8 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// the synthetic pool they need no reject. Explicit per-CIDR removal — the
 	// async pool-drain removes only the pool prefix by net/mask, never these.
 	// Best-effort, logged. Must run while the config is still loadable.
-	if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
+	// Правила и наборы — в общем слоте (см. desiredTunCIDRs).
+	if cfg, cerr := s.loadAppliedRouterConfig(); cerr == nil {
 		cfg = s.ruleSetMaterializer().restoreConfig(cfg)
 		dV4, dV6 := desiredTunCIDRs(cfg)
 		for _, c := range dV4 {

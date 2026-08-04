@@ -44,7 +44,21 @@ func TestInspect_MaterializedInlineRuleSetResolves(t *testing.T) {
 	}
 	cfg.DNS.Rules = []DNSRule{{Action: "route", RuleSet: []string{"geo-telegram"}, Server: "fakeip"}}
 	cfg.DNS.Final = "real"
-	if err := svc.persistSlotDirect(orchestrator.SlotFakeIP, cfg, true); err != nil {
+	// Правила и наборы — в общем слоте, DNS-механизм — в режимном; инспектор
+	// обязан собрать merged-вид, иначе ссылка на набор не резолвится.
+	shared := NewEmptyConfig()
+	shared.Route.RuleSet = cfg.Route.RuleSet
+	shared.Route.Rules = cfg.Route.Rules
+	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("enable SlotRouting: %v", err)
+	}
+	if err := svc.persistSlotDirect(orchestrator.SlotRouting, shared, false); err != nil {
+		t.Fatalf("persist routing slot: %v", err)
+	}
+	mode := NewEmptyConfig()
+	mode.Route.Final = ""
+	mode.DNS = cfg.DNS
+	if err := svc.persistSlotDirect(orchestrator.SlotFakeIP, mode, true); err != nil {
 		t.Fatalf("persist fakeip slot: %v", err)
 	}
 

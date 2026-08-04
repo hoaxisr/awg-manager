@@ -19,8 +19,6 @@ func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", TunAddr6: "fdfe:dcba:9876::1/126", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10", CachePath: "/opt/etc/awg-manager/singbox/cache.db",
 		RealServer:     "1.1.1.1",
-		Outbounds:      []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}, {Type: "direct", Tag: "direct"}},
-		ProxyTag:       "proxy",
 		DomainRuleSets: []string{"geosite-proxy"},
 	}
 	cfg, err := BuildFakeIPTunConfig(spec)
@@ -42,12 +40,19 @@ func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
 	if cfg.Route.DefaultDomainResolver == nil || cfg.Route.DefaultDomainResolver.Server != "real" {
 		t.Error("default_domain_resolver")
 	}
-	// [hijack-dns, route-options(udp_timeout), route→proxy]
+	// [hijack-dns, ip_is_private→direct, route-options(udp_timeout)]
 	if cfg.Route.Rules[0].Action != "hijack-dns" ||
-		cfg.Route.Rules[1].Action != "route-options" || cfg.Route.Rules[1].Network != "udp" ||
-		cfg.Route.Rules[1].UDPTimeout != DefaultUDPTimeout ||
-		cfg.Route.Rules[2].Outbound != "proxy" {
+		cfg.Route.Rules[1].IPIsPrivate == nil || cfg.Route.Rules[1].Outbound != "direct" ||
+		cfg.Route.Rules[2].Action != "route-options" || cfg.Route.Rules[2].Network != "udp" ||
+		cfg.Route.Rules[2].UDPTimeout != DefaultUDPTimeout ||
+		len(cfg.Route.Rules) != 3 {
 		t.Errorf("route rules: %#v", cfg.Route.Rules)
+	}
+	// Общее содержимое — в 21-routing.json: режимный слот не пишет ни
+	// outbound'ов, ни наборов, ни route.final (сливается первым, перебил бы).
+	if len(cfg.Outbounds) != 0 || len(cfg.Route.RuleSet) != 0 || cfg.Route.Final != "" {
+		t.Errorf("режимный слот пишет общее содержимое: outbounds=%d rule_set=%d final=%q",
+			len(cfg.Outbounds), len(cfg.Route.RuleSet), cfg.Route.Final)
 	}
 	if cfg.Experimental == nil || cfg.Experimental.CacheFile == nil || !cfg.Experimental.CacheFile.StoreFakeIP {
 		t.Error("cache_file/store_fakeip")
@@ -65,7 +70,6 @@ func TestBuildFakeIPTunConfig_Stack(t *testing.T) {
 		Iface: "opkgtun3", TunAddr4: "172.18.0.1/30", MTU: 1280,
 		Inet4Range: "10.64.0.0/12", Inet6Range: "fc00::/7",
 		CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
 	}
 
 	cases := []struct {
@@ -119,7 +123,6 @@ func TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse(t *testing.T) {
 	spec := FakeIPTunSpec{
 		Iface: "opkgtun0", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
 		Stack: "system",
 	}
 	cfg, err := BuildFakeIPTunConfig(spec)
@@ -135,45 +138,73 @@ func TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse(t *testing.T) {
 	}
 }
 
-// TestBuildFakeIPTunConfig_StripsAutoManagedDirect verifies BuildFakeIPTunConfig
-// owns the full outbound pipeline: it receives RAW outbounds and strips
-// auto-managed direct outbounds (awg/nwg/wireguard bind_interface) before
-// applying the domain_resolver guard. An auto-managed direct (BindInterface
-// "nwg2") must NOT appear in the output (it lives in 15-awg.json and would FATAL
-// the merged config with a duplicate-tag error); a user direct bound to a
-// non-auto-managed iface and a hostname proxy must survive.
-func TestBuildFakeIPTunConfig_StripsAutoManagedDirect(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{
-			{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},    // auto-managed → stripped
-			{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"},  // user VPN → kept
-			{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io"}, // hostname → kept + resolver
-		},
-		ProxyTag: "proxy",
+// Конвейер outbound'ов переехал в общий слот: он же убирает авто-управляемые
+// direct'ы (живут в 15-awg.json, дубль тега = FATAL merged-конфига) и он же
+// расставляет domain_resolver — но ТОЛЬКО в fakeip-режиме, где сервер "real"
+// существует. В остальных режимах ссылка на "real" повисла бы.
+func TestBuildRoutingSlotDomainResolverByMode(t *testing.T) {
+	raw := []Outbound{
+		{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},    // авто-управляемый → выкинут
+		{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"},  // пользовательский VPN → остаётся
+		{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io"}, // hostname → остаётся + резолвер
+		{Type: "shadowsocks", Tag: "byip", Server: "10.0.0.5"},        // IP-литерал → без резолвера
 	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	for _, o := range cfg.Outbounds {
-		if o.Tag == "awg-direct" {
-			t.Errorf("auto-managed direct must be stripped, got: %#v", cfg.Outbounds)
+	resolvers := func(mode string) map[string]string {
+		cfg := NewEmptyConfig()
+		cfg.Outbounds = append([]Outbound(nil), raw...)
+		buildRoutingSlot(cfg, RoutingSlotParams{Mode: mode})
+		got := map[string]string{}
+		for _, o := range cfg.Outbounds {
+			if o.Tag == "awg-direct" {
+				t.Errorf("авто-управляемый direct обязан вычищаться: %#v", cfg.Outbounds)
+			}
+			if o.DomainResolver != nil {
+				got[o.Tag] = o.DomainResolver.Server
+			}
 		}
-	}
-	if len(cfg.Outbounds) != 2 {
-		t.Fatalf("want 2 surviving outbounds, got %d: %#v", len(cfg.Outbounds), cfg.Outbounds)
-	}
-	// The hostname proxy must additionally get the "real" domain_resolver.
-	var proxy *Outbound
-	for i := range cfg.Outbounds {
-		if cfg.Outbounds[i].Tag == "proxy" {
-			proxy = &cfg.Outbounds[i]
+		if len(cfg.Outbounds) != 3 {
+			t.Fatalf("ожидалось 3 выживших outbound'а, получено %d: %#v", len(cfg.Outbounds), cfg.Outbounds)
 		}
+		return got
 	}
-	if proxy == nil || proxy.DomainResolver == nil || proxy.DomainResolver.Server != "real" {
-		t.Errorf("hostname proxy must get real domain_resolver: %#v", cfg.Outbounds)
+
+	if got := resolvers("fakeip-tun"); got["proxy"] != "real" || len(got) != 1 {
+		t.Errorf("fakeip: резолвер real обязан быть только у hostname-outbound'а, получено %v", got)
+	}
+	if got := resolvers("tproxy"); len(got) != 0 {
+		t.Errorf("tproxy: domain_resolver не должен появляться, получено %v", got)
+	}
+	if got := resolvers(statePolicyTun); len(got) != 0 {
+		t.Errorf("policy-tun: domain_resolver не должен появляться, получено %v", got)
+	}
+}
+
+// Смена режима с fakeip на tproxy обязана СНЯТЬ ссылку на движковый резолвер
+// "real": его объявляет только 20-fakeip.json, и в других режимах sing-box
+// упал бы на неизвестном DNS-сервере. Пользовательский резолвер не трогаем.
+func TestBuildRoutingSlotDropsStaleRealResolver(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Outbounds = []Outbound{
+		{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io", DomainResolver: &DomainResolver{Server: "real"}},
+		{Type: "shadowsocks", Tag: "own", Server: "vpn2.example.io", DomainResolver: &DomainResolver{Server: "google"}},
+	}
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if cfg.Outbounds[0].DomainResolver != nil {
+		t.Errorf("ссылка на движковый резолвер real обязана сниматься вне fakeip: %#v", cfg.Outbounds[0])
+	}
+	if cfg.Outbounds[1].DomainResolver == nil || cfg.Outbounds[1].DomainResolver.Server != "google" {
+		t.Errorf("пользовательский резолвер трогать нельзя: %#v", cfg.Outbounds[1])
+	}
+}
+
+// Инбаунды — только в режимных слотах: общий слот их вычищает, иначе один и
+// тот же тег окажется в двух файлах и sing-box откажется грузить merged-конфиг.
+func TestBuildRoutingSlotDropsInbounds(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Inbounds = []Inbound{{Type: "tproxy", Tag: "tproxy-in"}, {Type: "tun", Tag: "tun-in"}}
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if len(cfg.Inbounds) != 0 {
+		t.Errorf("общий слот не должен писать инбаунды, получено %#v", cfg.Inbounds)
 	}
 }
 
@@ -183,8 +214,6 @@ func TestBuildFakeIPTunConfig_OmitV6(t *testing.T) {
 	spec := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
 	}
 	cfg, err := BuildFakeIPTunConfig(spec)
 	if err != nil {
@@ -205,8 +234,6 @@ func TestBuildFakeIPTunConfig_NoRuleSetNoSource(t *testing.T) {
 	spec := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
 	}
 	cfg, err := BuildFakeIPTunConfig(spec)
 	if err != nil {
@@ -227,8 +254,6 @@ func TestBuildFakeIPTunConfig_SourceIPCIDR(t *testing.T) {
 	spec := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds:    []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:     "proxy",
 		SourceIPCIDR: []string{"192.168.1.50/32"},
 	}
 	cfg, err := BuildFakeIPTunConfig(spec)
@@ -246,8 +271,6 @@ func TestBuildFakeIPTunConfig_InvalidTunAddr4(t *testing.T) {
 	base := FakeIPTunSpec{
 		Iface: "opkgtun10", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
 	}
 	for _, bad := range []string{"", "garbage", "3f80::1/126"} {
 		spec := base
@@ -264,8 +287,6 @@ func TestBuildFakeIPTunConfig_InvalidTunAddr6(t *testing.T) {
 	base := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
 	}
 	for _, bad := range []string{"garbage", "172.18.0.1/30"} {
 		spec := base
@@ -734,19 +755,7 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 	dir := t.TempDir()
 
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotRouting,
-		Filename: "20-router.json",
-	}); err != nil {
-		t.Fatalf("orch.Register SlotRouting: %v", err)
-	}
-	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotFakeIP,
-		Filename: "21-fakeip.json",
-	}); err != nil {
-		t.Fatalf("orch.Register SlotFakeIP: %v", err)
-	}
-	registerExtraModeSlots(t, orch)
+	registerRoutingSlots(t, orch)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("orch.Bootstrap: %v", err)
 	}
@@ -846,11 +855,11 @@ func TestFakeipWithConfig_OverlayAndPersist(t *testing.T) {
 	}
 
 	// File landed at active path, not pending/.
-	activePath := filepath.Join(dir, "21-fakeip.json")
+	activePath := filepath.Join(dir, "20-fakeip.json")
 	if _, err := os.Stat(activePath); err != nil {
 		t.Errorf("21-fakeip.json must exist at active path %s: %v", activePath, err)
 	}
-	pendingPath := filepath.Join(dir, "pending", "21-fakeip.json")
+	pendingPath := filepath.Join(dir, "pending", "20-fakeip.json")
 	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
 		t.Errorf("21-fakeip.json must NOT be in pending/; stat err=%v", err)
 	}
@@ -931,14 +940,14 @@ func TestFakeipGuard_AllowsAppendingUserDNSRule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GetStatus slot-fork: fakeip-tun mode must read SlotFakeIP, not SlotRouting
+// GetStatus в fakeip-режиме: правила и наборы — из ОБЩЕГО слота
 // ---------------------------------------------------------------------------
 
-// TestGetStatus_FakeIPMode_ReadsFakeIPSlot seeds SlotRouting with 0 rule_sets
-// and final="router-final", and SlotFakeIP with 2 rule_sets and
-// final="fakeip-final", then asserts that GetStatus in fakeip-tun mode
-// returns the SlotFakeIP counts (RuleSetCount==2, Final=="fakeip-final").
-func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
+// После разделения генерации правила, наборы и route.final лежат в общем слоте
+// во ВСЕХ режимах, а режимный несёт только захват и DNS-механизм. Статус обязан
+// показывать merged-вид: счётчики и final — из общего слота, системный префикс
+// правил — из режимного (ровно в этом порядке их видит sing-box).
+func TestGetStatus_FakeIPMode_ReadsSharedSlot(t *testing.T) {
 	svc, dir := newFakeIPTestService(t)
 
 	// Wire IPTables stub so Probe() doesn't panic (errProbeIPTables pattern).
@@ -951,15 +960,15 @@ func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
 	stubTunReadyProbe(t, func(string) bool { return false })
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
 
-	// SlotRouting: 0 rule_sets, final="router-final".
-	routerJSON := `{"route":{"rules":[],"rule_set":[],"final":"router-final"}}`
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerJSON), 0644); err != nil {
+	// Общий слот: одно пользовательское правило, два набора, свой final.
+	routerJSON := `{"route":{"rules":[{"action":"route","outbound":"router-final","domain_suffix":["example.com"]}],"rule_set":[{"tag":"rs1","type":"remote","format":"binary","url":"https://example.com/1.srs"},{"tag":"rs2","type":"remote","format":"binary","url":"https://example.com/2.srs"}],"final":"router-final"}}`
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(routerJSON), 0644); err != nil {
 		t.Fatalf("write SlotRouting: %v", err)
 	}
 
-	// SlotFakeIP: 2 rule_sets, final="fakeip-final".
-	fakeipJSON := `{"route":{"rules":[],"rule_set":[{"tag":"rs1","type":"remote","format":"binary","url":"https://example.com/1.srs"},{"tag":"rs2","type":"remote","format":"binary","url":"https://example.com/2.srs"}],"final":"fakeip-final"}}`
-	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(fakeipJSON), 0644); err != nil {
+	// Режимный слот: системный hijack, ни наборов, ни final.
+	fakeipJSON := `{"route":{"rules":[{"action":"hijack-dns","protocol":"dns"}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "20-fakeip.json"), []byte(fakeipJSON), 0644); err != nil {
 		t.Fatalf("write SlotFakeIP: %v", err)
 	}
 
@@ -968,9 +977,12 @@ func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
 		t.Fatalf("GetStatus: %v", err)
 	}
 	if st.RuleSetCount != 2 {
-		t.Errorf("RuleSetCount = %d, want 2 (must read SlotFakeIP, not SlotRouting)", st.RuleSetCount)
+		t.Errorf("RuleSetCount = %d, want 2 (наборы живут в общем слоте)", st.RuleSetCount)
 	}
-	if st.Final != "fakeip-final" {
-		t.Errorf("Final = %q, want %q (must read SlotFakeIP, not SlotRouting)", st.Final, "fakeip-final")
+	if st.Final != "router-final" {
+		t.Errorf("Final = %q, want %q (route.final пишет только общий слот)", st.Final, "router-final")
+	}
+	if st.RuleCount != 2 {
+		t.Errorf("RuleCount = %d, want 2 (системное правило режима + пользовательское)", st.RuleCount)
 	}
 }

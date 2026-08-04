@@ -128,7 +128,7 @@ func TestUpdateDNSServerStripsDetourOnDNSDirect(t *testing.T) {
 
 func TestLoadConfigPreservesLegacyDNSDirectDetour(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "20-router.json")
+	path := filepath.Join(dir, "21-routing.json")
 	raw := []byte(`{
 		"dns": {
 			"servers": [
@@ -499,7 +499,7 @@ func TestMoveDNSServer(t *testing.T) {
 }
 
 func TestDNSRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "20-router.json")
+	path := filepath.Join(t.TempDir(), "21-routing.json")
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("bootstrap", "udp", "1.1.1.1", ""))
 	_ = c.AddDNSServer(DNSServer{

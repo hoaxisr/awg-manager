@@ -583,34 +583,39 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 
 	sr.Enabled = true
 
+	// Settings was already loaded above; revalidate here in case the
+	// store is corrupted or hand-edited around a schema migration. We
+	// fail Enable rather than apply a half-broken config — the user
+	// sees a clean error in the UI and can fix it. Идёт ДО генерации: WAN
+	// пишется в общий слот по уже проверенным значениям.
+	if err := ValidateSingboxRouterSettings(sr); err != nil {
+		return fmt.Errorf("router settings: %w", err)
+	}
+
+	// Общий слот (21-routing.json): правила, наборы, outbound'ы, route.final,
+	// DNS и разметка WAN. Инбаунды и системные правила сюда больше не пишутся —
+	// их целиком держит режимный слот ниже.
 	cfg, err := s.loadAppliedRouterConfig()
 	if err != nil {
 		return err
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout)
-	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
-	cfg.EnsureSystemRules(sr.SnifferEnabled)
-	// Neutralize sing-box's short per-protocol UDP timeouts (QUIC/DTLS 30s,
-	// STUN/DNS 10s) applied on sniff/port inference — they ignore the inbound
-	// udp_timeout and drop games/VoIP early. Raise them to the effective inbound
-	// value via a route-options rule. Placed after the system prefix, before user
-	// rules, so it runs ahead of any final `route` action.
-	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
-	// QoS-by-DSCP (issue #371): per-class inbound pairs, derived from the
-	// same settings snapshot the iptables spec below uses so ports/classes
-	// cannot drift between the two. The managed route rules live in their
-	// own slot (18-qos-routes.json) and are synced after the config write
-	// below — see qos_routes.go for why they must not live in 20-router.json.
+	buildRoutingSlot(cfg, RoutingSlotParams{
+		Mode:          stateTProxy,
+		WANAutoDetect: sr.WANAutoDetect,
+		WANInterface:  sr.WANInterface,
+	})
+	// Режимный слот (20-tproxy.json): пара инбаундов перехвата, инбаунды
+	// классов QoS (issue #371 — порты берутся из того же снимка настроек, что и
+	// спек iptables ниже, чтобы они не разъехались) и системные route-правила,
+	// включая route-options, нейтрализующий короткие UDP-таймауты sing-box.
+	// Управляемые route-правила QoS живут в отдельном слоте (18-qos-routes.json)
+	// и синкаются после записи конфига — см. qos_routes.go.
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
-	// Settings was already loaded above; revalidate here in case the
-	// store is corrupted or hand-edited around a schema migration. We
-	// fail Enable rather than apply a half-broken config — the user
-	// sees a clean error in the UI and can fix it.
-	if err := ValidateSingboxRouterSettings(sr); err != nil {
-		return fmt.Errorf("router settings: %w", err)
-	}
-	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
+	modeCfg := buildTProxySlot(TProxyParams{
+		SnifferEnabled: sr.SnifferEnabled,
+		UDPTimeout:     sr.UDPTimeout,
+		QoSClasses:     qosClasses,
+	})
 
 	// Promote the tproxy slot pair (режимный 20-tproxy + общий 21-routing) to
 	// active FIRST so persistConfigDirect's orch.Save targets the active path
@@ -634,6 +639,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// recovery (Reconcile→Enable with iptables gone but active config
 	// already on disk) a no-op write, which is what kills the phantom
 	// "Несохранённые правки" banner that used to follow every reboot.
+	if err := s.persistModeSlot(orchestrator.SlotTProxy, modeCfg); err != nil {
+		return fmt.Errorf("persist tproxy slot: %w", err)
+	}
 	if err := s.persistConfigDirect(ctx, cfg); err != nil {
 		return err
 	}
@@ -799,50 +807,51 @@ func filterTProxyInbound(in []Inbound) []Inbound {
 	return out
 }
 
-// healTProxyInbound checks the persisted router config and brings the two
-// UDP-timeout carriers to spec: the tproxy-in inbound (re-added if missing,
-// udp_timeout re-applied on drift) AND the system route-options rule that
-// raises sing-box's short sniff timeouts (#469). Both drift the same way —
-// the user changes the setting while the engine is running (UpdateSettings →
-// Reconcile lands here). The rule used to be regenerated only by Enable, so
-// a changed timeout stayed stale in the config until the engine was toggled
-// off/on (#554). Idempotent.
-func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) error {
-	// APPLIED config, not the effective (pending-first) view: heal writes to
-	// active/, so reading a user's staged draft here would materialize the
-	// draft into the live config BYPASSING ApplyDraft validation (and leave
-	// the stale pending banner hanging over an already-applied config).
-	cfg, err := s.loadAppliedRouterConfig()
-	if err != nil {
-		return err
+// syncModeSlot перегенерирует режимный слот захвата под текущие настройки и
+// сообщает, была ли запись (байт-равный результат ничего не пишет, а значит и
+// не взводит reload — путь гоняется на каждом тике reconcile).
+//
+// Это же и самолечение: слот собирается из настроек целиком, поэтому любой
+// дрейф — пропавший после отката Install инбаунд, устаревший udp_timeout
+// (#554, #469), listen 0.0.0.0 вместо 127.0.0.1 после обновления (#689),
+// добавленный или снятый класс QoS — исправляется одной перезаписью.
+//
+// Пользовательский черновик здесь не при чём: содержимое режимного слота
+// целиком выводится из настроек, ни одна его часть не редактируется вручную.
+//
+// Режим fakeip лечит свой слот собственным путём (reconcileFakeIPTun): его
+// режимная часть требует провижининга tun и живёт под своим оверлеем.
+func (s *ServiceImpl) syncModeSlot(sr storage.SingboxRouterSettings) (bool, error) {
+	if s.deps.Orch == nil {
+		return false, nil
 	}
-	// Cheap steady-state guard: both carriers already at the desired timeout →
-	// skip the marshal/write entirely (this runs on every reconcile tick).
-	// Listen тоже в guard'е (#689): после обновления рестарт демона не трогает
-	// ни sing-box, ни iptables, и это ЕДИНСТВЕННЫЙ путь, который доведёт
-	// listen 0.0.0.0 → 127.0.0.1 на живом конфиге без ручного передёргивания.
-	effective := resolveUDPTimeout(udpTimeout)
-	inboundOK := false
-	for _, in := range cfg.Inbounds {
-		if in.Tag == "tproxy-in" {
-			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen
-			break
+	classes := activeQoSClasses(sr.QoSClasses)
+	switch ModeSlot(sr.RoutingMode) {
+	case orchestrator.SlotTProxy:
+		return s.persistSlotChanged(orchestrator.SlotTProxy, buildTProxySlot(TProxyParams{
+			SnifferEnabled: sr.SnifferEnabled,
+			UDPTimeout:     sr.UDPTimeout,
+			QoSClasses:     classes,
+		}), false)
+	case orchestrator.SlotPolicyTun:
+		settings, err := s.deps.Settings.Load()
+		if err != nil {
+			return false, err
 		}
-	}
-	ruleOK := false
-	for _, r := range cfg.Route.Rules {
-		if isSystemUDPTimeoutRule(r) {
-			ruleOK = r.UDPTimeout == effective
-			break
+		if settings == nil || settings.PolicyTun == nil || !settings.PolicyTun.Provisioned {
+			return false, nil // интерфейс ещё не поднят — режимную часть писать не из чего
 		}
+		p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+		return s.persistSlotChanged(orchestrator.SlotPolicyTun, buildPolicyTunSlot(PolicyTunInboundSpec{
+			Iface:      fakeIPIfaceName(settings.PolicyTun.Index),
+			TunAddr4:   p.TunAddr4,
+			TunAddr6:   p.TunAddr6,
+			MTU:        p.MTU,
+			Stack:      sr.FakeIPStack,
+			UDPTimeout: sr.UDPTimeout,
+		}, sr.SnifferEnabled, classes), false)
 	}
-	if inboundOK && ruleOK {
-		return nil
-	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout)
-	cfg.EnsureUDPTimeoutRule(effective)
-	// System self-heal — direct write, no staging UI.
-	return s.persistConfigDirect(ctx, cfg)
+	return false, nil
 }
 
 // ensureTProxyInbound enforces the SKeen-style split: tproxy-in
@@ -1415,7 +1424,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if s.deps.Singbox != nil {
 		engineUp, _ = s.deps.Singbox.IsRunning()
 	}
-	routerSlotParked := s.deps.Orch != nil && !s.routerSlotEnabled()
+	routerSlotParked := s.deps.Orch != nil && s.routingSlotsNeedRewrite(stateTProxy)
 	switch {
 	case sr.Enabled && (!installedComplete || (routerSlotParked && engineUp)):
 		// Drift-heal, NOT user-initiated: must honour a prior master-Stop, so
@@ -1429,16 +1438,37 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// routerSlotEnabled reports whether the shared routing slot (21-routing.json)
-// currently lives in
-// config.d/ AND the file exists (Present) — «включён» флаг при отсутствующем
-// файле даёт тот же тупик (в конфиге нет tproxy-in), а enableLocked его
-// лечит, переписав файл. Caller guarantees deps.Orch != nil. Unregistered
-// slot reads as parked — Reconcile then routes to Enable, whose SetEnabled
-// surfaces the real error.
-func (s *ServiceImpl) routerSlotEnabled() bool {
-	st, ok := s.slotSnapshot(orchestrator.SlotRouting)
-	return ok && st.Enabled && st.Present
+// routingSlotsActive сообщает, что в конфиге ещё живёт хоть какой-то слот
+// маршрутизации (режимный любого режима или общий). Признак «есть что
+// выключать» для teardown-веток: слот прежнего режима, оставшийся включённым,
+// — такая же причина сносить перехват, как и провижиненный интерфейс.
+// Наличие файла (Present) здесь намеренно не проверяется: включённый слот без
+// файла всё равно надо погасить. Caller guarantees deps.Orch != nil.
+func (s *ServiceImpl) routingSlotsActive() bool {
+	for _, slot := range append(modeSlots(), orchestrator.SlotRouting) {
+		if st, ok := s.slotSnapshot(slot); ok && st.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// routingSlotsNeedRewrite сообщает, что разметка слотов для режима mode не
+// доведена до рабочего вида: режимный или общий слот припаркован ЛИБО его файл
+// отсутствует. Отличие от routingSlotsParked — проверка Present: после
+// разделения генерации у каждого слота есть своё содержимое, и включённый слот
+// без файла означает конфиг без перехвата. Лечится только полным Enable
+// (перезапись файлов), поэтому предикат применим лишь там, где ветка ведёт в
+// enableLocked. Незарегистрированный слот читается как требующий перезаписи.
+// Caller guarantees deps.Orch != nil.
+func (s *ServiceImpl) routingSlotsNeedRewrite(mode string) bool {
+	for _, slot := range []orchestrator.Slot{ModeSlot(mode), orchestrator.SlotRouting} {
+		st, ok := s.slotSnapshot(slot)
+		if !ok || !st.Enabled || !st.Present {
+			return true
+		}
+	}
+	return false
 }
 
 // slotSnapshot returns the orchestrator state of one slot. Caller guarantees
@@ -1573,21 +1603,23 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// dispatch ports first would blackhole class traffic onto ports nothing
 	// listens on until the debounced reload lands.
 	//
-	// healTProxyInbound: a previous Install rollback or upgrade hop may have
-	// left 20-router.json without the tproxy-in inbound — re-add it
-	// idempotently so sing-box keeps listening on TPROXYPort.
-	if err := s.healTProxyInbound(ctx, sr.UDPTimeout); err != nil {
-		s.appLog.Warn("heal-tproxy", "", err.Error())
-	}
-	// healQoSConfig: per-class inbound pairs (20-router.json) + managed route
-	// rules (18-qos-routes.json). Converges class add/remove/disable and
-	// outbound edits applied through UpdateSettings→Reconcile, and cleans
-	// stale qos-* artifacts. No-op (no write, no reload) when converged.
+	// syncModeSlot: a previous Install rollback or upgrade hop may have left
+	// 20-tproxy.json without the tproxy-in inbound — режимный слот
+	// перегенерируется целиком, включая инбаунды классов QoS.
 	qosHealed := false
+	if healed, err := s.syncModeSlot(sr); err != nil {
+		s.appLog.Warn("heal-tproxy", "", err.Error())
+	} else {
+		qosHealed = healed
+	}
+	// healQoSConfig: managed route rules (18-qos-routes.json). Converges class
+	// add/remove/disable and outbound edits applied through
+	// UpdateSettings→Reconcile, and cleans stale qos-* artifacts. No-op (no
+	// write, no reload) when converged.
 	if healed, err := s.healQoSConfig(ctx, sr); err != nil {
 		s.appLog.Warn("heal-qos", "", err.Error())
 	} else {
-		qosHealed = healed
+		qosHealed = qosHealed || healed
 	}
 	// The heal rewrote the QoS sing-box config AND the iptables port set is
 	// about to change: wait for sing-box to come back up on its inbounds

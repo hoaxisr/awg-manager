@@ -80,7 +80,7 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
 		t.Error("SlotRouting must be parked after Disable(policy-tun)")
 	}
-	data, err := os.ReadFile(filepath.Join(h.dir, "disabled", "20-router.json"))
+	data, err := os.ReadFile(filepath.Join(h.dir, "disabled", "21-routing.json"))
 	if err != nil {
 		t.Fatalf("read disabled/20-router.json: %v", err)
 	}

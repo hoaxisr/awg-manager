@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // fakeIPCIDRRouteComment labels specific dst-CIDR routes installed for proxy-
@@ -279,6 +281,34 @@ func (s *ServiceImpl) syncTunCIDRRoutes(ctx context.Context, ndmsName string, be
 	nextV4, nextV6 := desiredTunCIDRs(after)
 	s.applyCIDRRouteDiff(ctx, ndmsName, prevV4, nextV4, false)
 	s.applyCIDRRouteDiff(ctx, ndmsName, prevV6, nextV6, true)
+}
+
+// syncFakeIPCIDRRoutesAfterApply сводит специфичные CIDR-маршруты tun'а после
+// применения черновика общего слота. Правила и наборы, из которых считаются
+// CIDR'ы, живут именно там, поэтому точка синка — применение, а не правка:
+// правки уходят в pending/ и до «Применить» на живой конфиг не влияют.
+//
+// before — снимок ПРИМЕНЁННОГО конфига до ApplyDraft (уже восстановленный
+// restoreConfig). Вне fakeip-режима и до провижининга — no-op. Best-effort:
+// ошибка NDMS логируется, reconcile переассертит.
+func (s *ServiceImpl) syncFakeIPCIDRRoutesAfterApply(ctx context.Context, before *RouterConfig) {
+	if before == nil || s.deps.StaticRoutes == nil || s.deps.Settings == nil {
+		return
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil || settings == nil || settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+		return
+	}
+	if ModeSlot(settings.SingboxRouter.RoutingMode) != orchestrator.SlotFakeIP {
+		return
+	}
+	after, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		s.appLog.Warn("fakeip-cidr", "", "load applied routing config: "+err.Error())
+		return
+	}
+	s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(settings.FakeIP.Index),
+		before, s.ruleSetMaterializer().restoreConfig(after))
 }
 
 func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, ndmsName string, prev, next []string, v6 bool) {

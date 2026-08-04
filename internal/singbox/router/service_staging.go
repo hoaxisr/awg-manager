@@ -38,11 +38,19 @@ func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
 // invalidations.
 func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
 	_ = s.healLegacySelectiveRoutesSlotIfNeeded(ctx)
+	// Снимок ПРИМЕНЁННОГО конфига до применения: в fakeip-режиме специфичные
+	// CIDR-маршруты в tun считаются по правилам общего слота, и свести их можно
+	// только диффом «было → стало».
+	var before *RouterConfig
+	if cfg, cerr := s.loadAppliedRouterConfig(); cerr == nil {
+		before = s.ruleSetMaterializer().restoreConfig(cfg)
+	}
 	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouting)
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
 		s.GCRuleSetArtifacts()
+		s.syncFakeIPCIDRRoutesAfterApply(ctx, before)
 		s.emitStagingEvent("applied")
 		s.emitRulesEvent()
 	}

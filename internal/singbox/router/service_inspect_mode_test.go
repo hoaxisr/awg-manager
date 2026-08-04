@@ -7,15 +7,17 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
-// Issue #488: в fakeip-режиме инспектор маршрутов объяснял решения по
-// правилам TPROXY-слота (20-router.json), а не по живому fakeip-слоту
-// (21-fakeip.json). Тесты фиксируют выбор слота по persisted routingMode
-// для всех трёх входов инспектора (Inspect / InspectDNS / InspectStream).
+// Issue #488: в fakeip-режиме инспектор объяснял решения по конфигу, которого
+// sing-box не грузит. После разделения генерации (5D0) картина другая:
+// route-правила и наборы — общие для всех режимов, а режимным остаётся
+// системный префикс правил и DNS-механизм fakeip. Инспектор обязан показывать
+// merged-вид АКТИВНОГО режима: сначала режимный слот, потом общий — ровно в
+// том порядке, в каком их сливает sing-box.
 
-// seedInspectSlots writes DISTINCT configs into both slots so a wrong-slot
-// read is unambiguous: the tproxy slot routes tproxy.example → tproxy-out,
-// the fakeip slot routes fakeip.example → fakeip-out (each with its own DNS
-// rule server tag as well).
+// seedInspectSlots раскладывает по слотам различимые конфиги: общий слот
+// маршрутизирует shared.example → shared-out и держит DNS не-fakeip режимов
+// (tproxy.example → dns-tproxy), режимный слот fakeip — свой DNS-механизм
+// (fakeip.example → fakeip) и системное правило hijack-dns.
 func seedInspectSlots(t *testing.T, svc *ServiceImpl) {
 	t.Helper()
 	// newFakeIPTestService enables only SlotFakeIP; enable SlotRouting too so
@@ -24,7 +26,7 @@ func seedInspectSlots(t *testing.T, svc *ServiceImpl) {
 		t.Fatalf("enable SlotRouting: %v", err)
 	}
 	routerCfg := NewEmptyConfig()
-	routerCfg.Route.Rules = []Rule{{Action: "route", DomainSuffix: []string{"tproxy.example"}, Outbound: "tproxy-out"}}
+	routerCfg.Route.Rules = []Rule{{Action: "route", DomainSuffix: []string{"shared.example"}, Outbound: "shared-out"}}
 	routerCfg.DNS.Servers = []DNSServer{{Tag: "dns-tproxy", Type: "udp", Server: "1.1.1.1"}}
 	routerCfg.DNS.Rules = []DNSRule{{Action: "route", DomainSuffix: []string{"tproxy.example"}, Server: "dns-tproxy"}}
 	routerCfg.DNS.Final = "dns-tproxy"
@@ -33,7 +35,8 @@ func seedInspectSlots(t *testing.T, svc *ServiceImpl) {
 	}
 
 	fakeipCfg := NewEmptyConfig()
-	fakeipCfg.Route.Rules = []Rule{{Action: "route", DomainSuffix: []string{"fakeip.example"}, Outbound: "fakeip-out"}}
+	fakeipCfg.Route.Final = ""
+	fakeipCfg.Route.Rules = []Rule{{Action: "hijack-dns", Protocol: "dns"}}
 	fakeipCfg.DNS.Servers = []DNSServer{
 		{Tag: "fakeip", Type: "fakeip", Inet4Range: "198.18.0.0/15"},
 		{Tag: "real", Type: "udp", Server: "1.1.1.1"},
@@ -58,36 +61,38 @@ func setRoutingMode(t *testing.T, svc *ServiceImpl, mode string) {
 	}
 }
 
-func TestInspect_UsesSlotOfActiveRoutingMode(t *testing.T) {
+// Правила маршрутизации общие: один и тот же ответ в обоих режимах. Плюс
+// системный префикс режимного слота обязан присутствовать в трассе — иначе
+// инспектор снова объясняет решения по половине конфига.
+func TestInspect_UsesSharedRulesInEveryMode(t *testing.T) {
 	svc, _ := newFakeIPTestService(t) // RoutingMode: "fakeip-tun", both slots registered
 	ctx := context.Background()
 	seedInspectSlots(t, svc)
 
-	// fakeip mode → fakeip slot rules.
-	res, err := svc.Inspect(ctx, InspectInput{Domain: "sub.fakeip.example"})
+	res, err := svc.Inspect(ctx, InspectInput{Domain: "sub.shared.example"})
 	if err != nil {
 		t.Fatalf("Inspect (fakeip mode): %v", err)
 	}
-	if res.Destination != "fakeip-out" {
-		t.Errorf("fakeip mode: Destination = %q, want fakeip-out (walked wrong slot?)", res.Destination)
+	if res.Destination != "shared-out" {
+		t.Errorf("fakeip mode: Destination = %q, want shared-out (правила живут в общем слоте)", res.Destination)
 	}
-	// The tproxy-only domain must NOT resolve to the tproxy outbound here.
-	res, err = svc.Inspect(ctx, InspectInput{Domain: "sub.tproxy.example"})
-	if err != nil {
-		t.Fatalf("Inspect (fakeip mode, tproxy domain): %v", err)
-	}
-	if res.Destination == "tproxy-out" {
-		t.Errorf("fakeip mode: tproxy-slot rule matched — inspector walked the tproxy slot")
+	// Системное правило режима идёт ПЕРВЫМ — как при слиянии config.d.
+	if len(res.Matches) == 0 || res.Matches[0].Action != "hijack-dns" {
+		t.Errorf("fakeip mode: разбор обязан начинаться системным правилом режима, получено %+v", res.Matches)
 	}
 
-	// tproxy mode → router slot rules.
 	setRoutingMode(t, svc, "tproxy")
-	res, err = svc.Inspect(ctx, InspectInput{Domain: "sub.tproxy.example"})
+	res, err = svc.Inspect(ctx, InspectInput{Domain: "sub.shared.example"})
 	if err != nil {
 		t.Fatalf("Inspect (tproxy mode): %v", err)
 	}
-	if res.Destination != "tproxy-out" {
-		t.Errorf("tproxy mode: Destination = %q, want tproxy-out", res.Destination)
+	if res.Destination != "shared-out" {
+		t.Errorf("tproxy mode: Destination = %q, want shared-out", res.Destination)
+	}
+	// Режимный слот tproxy в этом харнессе пуст — системного префикса нет,
+	// значит первым идёт пользовательское правило общего слота.
+	if len(res.Matches) == 0 || res.Matches[0].Action == "hijack-dns" {
+		t.Errorf("tproxy mode: чужой системный префикс попал в разбор: %+v", res.Matches)
 	}
 }
 
@@ -119,7 +124,7 @@ func TestInspectStream_UsesSlotOfActiveRoutingMode(t *testing.T) {
 	ctx := context.Background()
 	seedInspectSlots(t, svc)
 
-	ch, err := svc.InspectStream(ctx, InspectInput{Domain: "sub.fakeip.example"})
+	ch, err := svc.InspectStream(ctx, InspectInput{Domain: "sub.shared.example"})
 	if err != nil {
 		t.Fatalf("InspectStream: %v", err)
 	}
@@ -136,7 +141,7 @@ func TestInspectStream_UsesSlotOfActiveRoutingMode(t *testing.T) {
 	if result == nil {
 		t.Fatal("stream ended without a result event")
 	}
-	if result.Destination != "fakeip-out" {
-		t.Errorf("stream fakeip mode: Destination = %q, want fakeip-out", result.Destination)
+	if result.Destination != "shared-out" {
+		t.Errorf("stream fakeip mode: Destination = %q, want shared-out", result.Destination)
 	}
 }

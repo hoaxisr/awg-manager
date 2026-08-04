@@ -242,15 +242,6 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	return nil
 }
 
-// fakeIPConfigEmpty reports whether cfg carries no user routing intent —
-// i.e. neither DNS nor route rules have been authored and route.final is
-// still the system default ("direct" or unset). Used by enableFakeIPTun to
-// decide whether to seed a starter DNS rule on first enable.
-func fakeIPConfigEmpty(cfg *RouterConfig) bool {
-	return len(cfg.Route.Rules) == 0 && len(cfg.DNS.Rules) == 0 &&
-		(cfg.Route.Final == "" || cfg.Route.Final == "direct")
-}
-
 // fakeipWithConfig is the isolated load→restore→clone→mutate→guard→overlay→persist→emit
 // skeleton for the fakeip-tun config slot. It mirrors withConfig but:
 //   - loads/persists SlotFakeIP (not SlotRouting),
@@ -284,12 +275,9 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 	if err := s.persistFakeIPConfig(ctx, cfg); err != nil {
 		return err
 	}
-	// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
-	// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
-	// provisioned (ensureFakeIPOverlayFromState above errors on nil FakeIP).
-	if settings, serr := s.deps.Settings.Load(); serr == nil && settings != nil && settings.FakeIP != nil {
-		s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(settings.FakeIP.Index), before, cfg)
-	}
+	// Специфичные CIDR-маршруты в tun здесь больше не считаются: они выводятся
+	// из route-правил и наборов, а те переехали в общий слот. Их синк живёт на
+	// применении черновика общего слота (ApplyStaging).
 	s.emitCfgEvent(event, cfg)
 	return nil
 }

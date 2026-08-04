@@ -39,7 +39,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		// boot-reconcile при выключенном fakeip (ревью #523) — журнал терял
 		// диагностическую ценность, ради которой запись добавлялась.
 		provisioned := st != nil && st.Provisioned
-		slotActive := s.deps.Orch != nil && s.routerSlotEnabled()
+		slotActive := s.deps.Orch != nil && s.routingSlotsActive()
 		if !provisioned && !slotActive {
 			return nil
 		}
@@ -166,7 +166,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// reads + 2 materializer passes per 30s tick (design §6 reconcile-cost). On a
 	// load error BOTH tiers skip (best-effort, as before).
 	if s.deps.StaticRoutes != nil {
-		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
+		// Правила и наборы, из которых считаются CIDR'ы, лежат в ОБЩЕМ слоте:
+		// после разделения генерации режимный слот несёт только захват и
+		// DNS-механизм.
+		if cfg, cerr := s.loadAppliedRouterConfig(); cerr == nil {
 			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
 
 			// Tier 1: re-assert specific CIDR routes (drift-heal, defense-in-depth).

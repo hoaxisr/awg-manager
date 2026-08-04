@@ -11,7 +11,7 @@ import (
 
 func TestConfigLoadSaveRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "20-router.json")
+	path := filepath.Join(dir, "21-routing.json")
 
 	cfg := &RouterConfig{
 		Inbounds: []Inbound{{
@@ -67,7 +67,7 @@ func TestLoadConfigMissingReturnsEmpty(t *testing.T) {
 }
 
 func TestSaveProducesValidJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "20-router.json")
+	path := filepath.Join(t.TempDir(), "21-routing.json")
 	if err := SaveConfig(path, NewEmptyConfig()); err != nil {
 		t.Fatal(err)
 	}
@@ -93,12 +93,16 @@ func TestNewEmptyConfig_FinalIsDirect(t *testing.T) {
 	}
 }
 
-func TestEnsureSystemRules_EnforcesFinal(t *testing.T) {
+// route.final — скаляр общего слота. EnsureSystemRules зовут только режимные
+// генераторы, и она обязана его НЕ трогать: режимный слот сливается первым, а
+// скаляры берутся из первого файла, так что «direct» отсюда перебил бы выбор
+// пользователя из 21-routing.json.
+func TestEnsureSystemRules_LeavesFinalAlone(t *testing.T) {
 	cfg := NewEmptyConfig()
 	cfg.Route.Final = ""
 	cfg.EnsureSystemRules(true)
-	if cfg.Route.Final != "direct" {
-		t.Errorf("EnsureSystemRules should set Final='direct' when empty, got %q", cfg.Route.Final)
+	if cfg.Route.Final != "" {
+		t.Errorf("EnsureSystemRules не должна писать route.final, получено %q", cfg.Route.Final)
 	}
 }
 
@@ -108,6 +112,22 @@ func TestEnsureSystemRules_PreservesCustomFinal(t *testing.T) {
 	cfg.EnsureSystemRules(true)
 	if cfg.Route.Final != "my-vpn" {
 		t.Errorf("EnsureSystemRules should preserve non-empty Final, got %q", cfg.Route.Final)
+	}
+}
+
+// Дефолт route.final теперь ставит общий генератор — инвариант «пустой final
+// превращается в direct» никуда не делся, просто переехал.
+func TestBuildRoutingSlot_EnforcesFinal(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = ""
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if cfg.Route.Final != "direct" {
+		t.Errorf("общий слот обязан ставить final=direct при пустом, получено %q", cfg.Route.Final)
+	}
+	cfg.Route.Final = "my-vpn"
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if cfg.Route.Final != "my-vpn" {
+		t.Errorf("общий слот не должен перебивать выбор пользователя, получено %q", cfg.Route.Final)
 	}
 }
 

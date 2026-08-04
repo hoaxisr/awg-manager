@@ -69,13 +69,14 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// галок ingress не было, ни одной мутации.
 	s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
 
-	// (4) Вычистить tun-инбаунд из слота 20 ВСЕГДА, даже если слот уже
-	// запаркован: слот общий с tproxy, а ensureTProxyInbound чужие инбаунды не
-	// трогает — остаточный tun-in переоткрыл бы удалённый tun при следующем
-	// enable. Запись при выключенном слоте уходит в disabled/ (Orch.Save).
+	// (4) Вычистить tun-инбаунд из ОБЩЕГО слота: сам режимный слот с tun-in
+	// паркуется ниже целиком, но на установке, пережившей апгрейд с прежней
+	// раскладки (инбаунды лежали в общем слоте), остаточный tun-in переоткрыл
+	// бы удалённый tun при следующем enable. Идемпотентно и байт-равно
+	// short-circuit'ится, когда чистить уже нечего.
 	if cfg, cerr := s.loadAppliedRouterConfig(); cerr != nil {
 		s.appLog.Warn("policy-tun-disable", iface, "load router config: "+cerr.Error())
-	} else {
+	} else if len(cfg.Inbounds) > 0 {
 		cfg.Inbounds = filterPolicyTunInbound(cfg.Inbounds)
 		if err := s.persistConfigDirect(ctx, cfg); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "persist router config: "+err.Error())

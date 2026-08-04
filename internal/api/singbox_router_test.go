@@ -625,7 +625,7 @@ func newTestRouterHandlerReal(t *testing.T) (*SingboxRouterHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "21-routing.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Bootstrap(); err != nil {
@@ -663,11 +663,11 @@ func TestAddRule_RegressionStagesNotApplies(t *testing.T) {
 	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
 		t.Fatalf("AddRule status: %d body=%s", rr.Code, rr.Body)
 	}
-	pendingPath := filepath.Join(dir, "pending", "20-router.json")
+	pendingPath := filepath.Join(dir, "pending", "21-routing.json")
 	if _, err := os.Stat(pendingPath); err != nil {
 		t.Errorf("pending file missing: %v", err)
 	}
-	activePath := filepath.Join(dir, "20-router.json")
+	activePath := filepath.Join(dir, "21-routing.json")
 	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
 		t.Errorf("active file should not exist, got err=%v", err)
 	}

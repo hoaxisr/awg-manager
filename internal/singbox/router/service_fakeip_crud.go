@@ -84,164 +84,80 @@ func (s *ServiceImpl) FakeIPSetDNSGlobals(ctx context.Context, final, strategy s
 	return s.fakeipWithConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy) })
 }
 
-// --- Route rules ---
+// --- Общее содержимое: правила, наборы, композиты, route.final ---
+//
+// Всё это переехало в ОБЩИЙ слот 21-routing.json (подэтап 5D0): режимный слот
+// несёт только захват трафика и DNS-механизм fakeip. Методы ниже оставлены
+// тонкими делегатами к общему CRUD, чтобы ручки и фронт fakeip продолжали
+// работать до их удаления; поведение (валидация, staging, события) —
+// в точности общее.
+//
+// ГОЧА: общий CRUD пишет в pending/ (staging), а не напрямую, как писал
+// fakeip-слот. Правка видна в списках сразу (LoadEffective читает черновик),
+// но в живой конфиг попадает только после «Применить».
 
 func (s *ServiceImpl) FakeIPListRules(ctx context.Context) ([]Rule, error) {
-	cfg, err := s.loadFakeIPConfig()
-	if err != nil {
-		return nil, err
-	}
-	return s.ruleSetMaterializer().restoreConfig(cfg).Route.Rules, nil
+	return s.ListRules(ctx)
 }
 
 func (s *ServiceImpl) FakeIPAddRule(ctx context.Context, r Rule) error {
-	return s.fakeipWithConfig(ctx, "rules", func(c *RouterConfig) error { return c.AddRule(r) })
+	return s.AddRule(ctx, r)
 }
 
 func (s *ServiceImpl) FakeIPUpdateRule(ctx context.Context, index int, r Rule) error {
-	return s.fakeipWithConfig(ctx, "rules", func(c *RouterConfig) error { return c.UpdateRule(index, r) })
+	return s.UpdateRule(ctx, index, r)
 }
 
 func (s *ServiceImpl) FakeIPDeleteRule(ctx context.Context, index int) error {
-	return s.fakeipWithConfig(ctx, "rules", func(c *RouterConfig) error { return c.DeleteRule(index) })
+	return s.DeleteRule(ctx, index)
 }
 
 func (s *ServiceImpl) FakeIPMoveRule(ctx context.Context, from, to int) error {
-	return s.fakeipWithConfig(ctx, "rules", func(c *RouterConfig) error { return c.MoveRule(from, to) })
+	return s.MoveRule(ctx, from, to)
 }
 
-// FakeIPBulkSetRuleOutbound is the fakeip-tun (SlotFakeIP) counterpart of
-// BulkSetRuleOutbound — same validation, routed through fakeipWithConfig.
 func (s *ServiceImpl) FakeIPBulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error {
-	return s.fakeipWithConfig(ctx, "rules", func(c *RouterConfig) error {
-		return bulkSetRuleOutbound(c, indices, outbound, func(t string) bool { return s.isKnownOutboundTag(ctx, t, c) })
-	})
+	return s.BulkSetRuleOutbound(ctx, indices, outbound)
 }
 
-// --- Route final ---
-
-// FakeIPSetRouteFinal sets route.final on the fakeip config slot.
-// Validates that tag is a known outbound tag (mirrors SetRouteFinal exactly).
 func (s *ServiceImpl) FakeIPSetRouteFinal(ctx context.Context, tag string) error {
-	return s.fakeipWithConfig(ctx, "route", func(c *RouterConfig) error {
-		if !s.isKnownOutboundTag(ctx, tag, c) {
-			return fmt.Errorf("unknown outbound tag %q for route.final", tag)
-		}
-		return c.SetRouteFinal(tag)
-	})
+	return s.SetRouteFinal(ctx, tag)
 }
-
-// --- Rule sets ---
 
 func (s *ServiceImpl) FakeIPListRuleSets(ctx context.Context) ([]RuleSet, error) {
-	cfg, err := s.loadFakeIPConfig()
-	if err != nil {
-		return nil, err
-	}
-	restored := s.ruleSetMaterializer().restoreConfig(cfg)
-	return restored.Route.RuleSet, nil
+	return s.ListRuleSets(ctx)
 }
 
-// FakeIPAddRuleSet adds a rule set to the fakeip config slot.
-// Mirrors AddRuleSet defaulting of Type/Format/UpdateInterval.
 func (s *ServiceImpl) FakeIPAddRuleSet(ctx context.Context, rs RuleSet) error {
-	if rs.Type == "" {
-		rs.Type = "remote"
-	}
-	if rs.Format == "" && rs.Type != "inline" {
-		rs.Format = "binary"
-	}
-	if rs.UpdateInterval == "" && rs.Type == "remote" {
-		rs.UpdateInterval = "24h"
-	}
-	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.AddRuleSet(rs) })
+	return s.AddRuleSet(ctx, rs)
 }
 
-// FakeIPUpdateRuleSet updates a rule set in the fakeip config slot.
-// Mirrors UpdateRuleSet defaulting of Type/Format/UpdateInterval.
 func (s *ServiceImpl) FakeIPUpdateRuleSet(ctx context.Context, tag string, rs RuleSet) error {
-	if rs.Type == "" {
-		rs.Type = "remote"
-	}
-	if rs.Format == "" && rs.Type != "inline" {
-		rs.Format = "binary"
-	}
-	if rs.UpdateInterval == "" && rs.Type == "remote" {
-		rs.UpdateInterval = "24h"
-	}
-	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error { return c.UpdateRuleSet(tag, rs) })
+	return s.UpdateRuleSet(ctx, tag, rs)
 }
 
-// FakeIPBulkSetRuleSetDetour is the fakeip-tun (SlotFakeIP) counterpart of
-// BulkSetRuleSetDetour — same validation, routed through fakeipWithConfig.
 func (s *ServiceImpl) FakeIPBulkSetRuleSetDetour(ctx context.Context, tags []string, detour string) error {
-	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error {
-		return bulkSetRuleSetDetour(c, tags, detour, func(t string) bool { return s.isKnownOutboundTag(ctx, t, c) })
-	})
+	return s.BulkSetRuleSetDetour(ctx, tags, detour)
 }
 
 func (s *ServiceImpl) FakeIPDeleteRuleSet(ctx context.Context, tag string, force bool) error {
-	inlineTag := tag
-	if base, ok := inlineTagFromSRSTag(tag); ok {
-		inlineTag = base
-	}
-	return s.fakeipWithConfig(ctx, "rulesets", func(c *RouterConfig) error {
-		if err := c.DeleteRuleSet(inlineTag, force); err != nil {
-			return err
-		}
-		if s.deps.Orch == nil {
-			s.ruleSetMaterializer().removeInlineArtifacts(inlineTag)
-		}
-		return nil
-	})
+	return s.DeleteRuleSet(ctx, tag, force)
 }
 
-// --- Composite outbounds ---
-
 func (s *ServiceImpl) FakeIPListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error) {
-	cfg, err := s.loadFakeIPConfig()
-	if err != nil {
-		return nil, err
-	}
-	own := cfg.CompositeOutbounds()
-	out := make([]CompositeOutboundView, 0, len(own))
-	for _, o := range own {
-		out = append(out, CompositeOutboundView{Outbound: o, Source: "router"})
-	}
-	if s.deps.SubscriptionComposites != nil {
-		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
-			out = append(out, CompositeOutboundView{Outbound: o, Source: "subscription"})
-		}
-	}
-	return out, nil
+	return s.ListCompositeOutbounds(ctx)
 }
 
 func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error {
-	if strings.EqualFold(o.Type, "direct") {
-		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
-			return err
-		}
-	}
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
-			return err
-		}
-		return c.AddCompositeOutbound(o)
-	})
+	return s.AddCompositeOutbound(ctx, o)
 }
 
 func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
-	if strings.EqualFold(o.Type, "direct") {
-		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
-			return err
-		}
-	}
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
-		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
-			return err
-		}
-		return c.UpdateCompositeOutbound(tag, o)
-	})
+	return s.UpdateCompositeOutbound(ctx, tag, o)
+}
+
+func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
+	return s.DeleteCompositeOutbound(ctx, tag, force)
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,
@@ -266,10 +182,6 @@ func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, 
 		return nil
 	}
 	return fmt.Errorf("%w: %s — такие выходы больше не существуют (туннель пересоздан или переименован), выберите членов заново", ErrCompositeMemberUnknown, strings.Join(unknown, ", "))
-}
-
-func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) })
 }
 
 // ---------------------------------------------------------------------------
