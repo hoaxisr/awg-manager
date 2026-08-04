@@ -21,37 +21,37 @@ import (
 // нужные единственной секции). Порядок вызова секций в registerRoutes
 // сохраняет исходный порядок регистрации.
 type routeHandlers struct {
-	appLog              *logging.Service
-	authHandler         *api.AuthHandler
-	tunnelsHandler      *api.TunnelsHandler
-	controlHandler      *api.ControlHandler
-	testingHandler      *api.TestingHandler
-	systemHandler       *api.SystemHandler
-	settingsHandler     *api.SettingsHandler
-	importHandler       *api.ImportHandler
-	wanHandler          *api.WANHandler
-	pingCheckHandler    *api.PingCheckHandler
-	freeturnHandler     *api.FreeTurnHandler
-	wdttHandler         *api.WdttHandler
+	appLog               *logging.Service
+	authHandler          *api.AuthHandler
+	tunnelsHandler       *api.TunnelsHandler
+	controlHandler       *api.ControlHandler
+	testingHandler       *api.TestingHandler
+	systemHandler        *api.SystemHandler
+	settingsHandler      *api.SettingsHandler
+	importHandler        *api.ImportHandler
+	wanHandler           *api.WANHandler
+	pingCheckHandler     *api.PingCheckHandler
+	freeturnHandler      *api.FreeTurnHandler
+	wdttHandler          *api.WdttHandler
 	proxyListenerHandler *api.ProxyListenerHandler
-	loggingHandler      *api.LoggingHandler
-	externalHandler     *api.ExternalTunnelsHandler
-	updateHandler       *api.UpdateHandler
-	dnsRouteHandler     *api.DNSRouteHandler
-	diagRunner          *diagnostics.Runner
-	diagHandler         *api.DiagnosticsHandler
-	connectionsService  *connections.Service
-	connectionsHandler  *api.ConnectionsHandler
-	signatureHandler    *api.SignatureHandler
-	terminalHandler     *api.TerminalHandler
-	eventsHandler       *api.EventsHandler
-	hookHandler         *api.HookHandler
-	staticRouteHandler  *api.StaticRouteHandler
-	systemTunnelHandler *api.SystemTunnelsHandler
-	serverHandler       *api.ServersHandler
-	managedHandler      *api.ManagedServerHandler
-	accessPolicyHandler *api.AccessPolicyHandler
-	crHandler           *api.ClientRouteHandler
+	loggingHandler       *api.LoggingHandler
+	externalHandler      *api.ExternalTunnelsHandler
+	updateHandler        *api.UpdateHandler
+	dnsRouteHandler      *api.DNSRouteHandler
+	diagRunner           *diagnostics.Runner
+	diagHandler          *api.DiagnosticsHandler
+	connectionsService   *connections.Service
+	connectionsHandler   *api.ConnectionsHandler
+	signatureHandler     *api.SignatureHandler
+	terminalHandler      *api.TerminalHandler
+	eventsHandler        *api.EventsHandler
+	hookHandler          *api.HookHandler
+	staticRouteHandler   *api.StaticRouteHandler
+	systemTunnelHandler  *api.SystemTunnelsHandler
+	serverHandler        *api.ServersHandler
+	managedHandler       *api.ManagedServerHandler
+	accessPolicyHandler  *api.AccessPolicyHandler
+	crHandler            *api.ClientRouteHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -172,7 +172,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
 
-	h.proxyListenerHandler = api.NewProxyListenerHandler()
+	h.proxyListenerHandler = api.NewProxyListenerHandler(s.freeturnService, s.wdttService)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc

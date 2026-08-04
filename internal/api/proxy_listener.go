@@ -11,9 +11,58 @@ import (
 )
 
 // ProxyListenerHandler exposes port→PID lookup and kill for proxy clients.
-type ProxyListenerHandler struct{}
+type ProxyListenerHandler struct {
+	freeturn FreeTurnService
+	wdtt     WdttService
+}
 
-func NewProxyListenerHandler() *ProxyListenerHandler { return &ProxyListenerHandler{} }
+func NewProxyListenerHandler(ft FreeTurnService, wd WdttService) *ProxyListenerHandler {
+	return &ProxyListenerHandler{freeturn: ft, wdtt: wd}
+}
+
+type listenerKey struct {
+	port  int
+	proto procport.Proto
+}
+
+// ownsListener — убивать разрешено только процесс на порту нашего же инстанса.
+// Демон работает от root, и без этой проверки один POST сносит ndm (:79),
+// DNS (:53) или SSH. Хост в ключ не входит: он ничего не защищает (процесс на
+// этом порту находится по любому адресу), зато расхождение 0.0.0.0 против
+// 127.0.0.1 ломало бы легитимный сценарий «освободить свой порт».
+func (h *ProxyListenerHandler) ownsListener(port int, proto procport.Proto) bool {
+	owned := make(map[listenerKey]bool)
+	add := func(listen string, proto procport.Proto) {
+		if _, p, ok := procport.ParseListenHostPort(listen, "127.0.0.1"); ok {
+			owned[listenerKey{port: p, proto: proto}] = true
+		}
+	}
+	if h.freeturn != nil {
+		if cfg, err := h.freeturn.GetConfig(); err == nil {
+			for _, c := range cfg.Clients {
+				add(c.Config.Listen, procport.ProtoUDP)
+			}
+			for _, s := range cfg.Servers {
+				serverProto := procport.ProtoUDP
+				if strings.EqualFold(strings.TrimSpace(s.Config.Mode), "tcp") {
+					serverProto = procport.ProtoTCP
+				}
+				add(s.Config.Listen, serverProto)
+			}
+		}
+	}
+	if h.wdtt != nil {
+		if cfg, err := h.wdtt.GetConfig(); err == nil {
+			for _, c := range cfg.Clients {
+				add(c.Config.Listen, procport.ProtoUDP)
+			}
+			for _, s := range cfg.Servers {
+				add(s.Config.Listen, procport.ProtoUDP)
+			}
+		}
+	}
+	return owned[listenerKey{port: port, proto: proto}]
+}
 
 // GetListener handles GET /api/proxy/listener?host=127.0.0.1&port=9000&proto=udp
 //
@@ -67,6 +116,7 @@ type killListenerRequest struct {
 //	@Param			body	body		killListenerRequest	true	"Host, port, proto"
 //	@Success		200		{object}	APIEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		403		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/proxy/kill-listener [post]
 func (h *ProxyListenerHandler) KillListener(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +138,11 @@ func (h *ProxyListenerHandler) KillListener(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	proto := procport.NormalizeProto(req.Proto)
+	if !h.ownsListener(req.Port, proto) {
+		response.ErrorWithStatus(w, http.StatusForbidden,
+			"порт не принадлежит ни одному инстансу FreeTurn/WDTT", "PROXY_LISTENER_NOT_OWNED")
+		return
+	}
 	info, err := procport.KillListener(host, req.Port, proto)
 	if err != nil {
 		response.Error(w, err.Error(), "PROXY_LISTENER_KILL_FAILED")
