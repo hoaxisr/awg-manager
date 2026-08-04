@@ -215,12 +215,11 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// 21-routing) FIRST so persistConfigDirect targets the active path.
 	// Прежняя разметка снимается для отката — откатываемся в ПРЕЖНИЙ режим,
 	// а не в захардкоженный.
-	prevMode, prevEnabled := stateTProxy, false
 	if s.deps.Orch != nil {
-		prevMode, prevEnabled = s.currentRoutingSlots()
-		if err = applyRoutingSlots(s.deps.Orch, statePolicyTun, true); err != nil {
-			return fmt.Errorf("enable policy-tun: %w", err)
-		}
+		prevMode, prevEnabled := s.currentRoutingSlots()
+		// Компенсация встаёт в стек ДО мутации — applyRoutingSlots трогает до
+		// четырёх слотов и может упасть на середине; повторное применение
+		// прежней разметки идемпотентно.
 		push(func() {
 			if e := applyRoutingSlots(s.deps.Orch, prevMode, prevEnabled); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "restore routing slots: "+e.Error())
@@ -229,6 +228,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			// слот 30 под неё до следующего reload.
 			s.notifyRoutingSlotsChanged()
 		})
+		if err = applyRoutingSlots(s.deps.Orch, statePolicyTun, true); err != nil {
+			return fmt.Errorf("enable policy-tun: %w", err)
+		}
 	} else {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
 			if err = s.deps.Singbox.Start(); err != nil {

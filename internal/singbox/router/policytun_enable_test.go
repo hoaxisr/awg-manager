@@ -198,9 +198,20 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 	mustOrderCalls(t, h.log, "Flush:"+iface, "SetDefaultRoute:"+ndmsName)
 	mustOrderCalls(t, h.log, "SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
 
-	// Slot 20 stays the active routing slot and carries the tun inbound.
+	// Разметка слотов: СВОЙ режимный слот промотирован, общий тоже, чужие
+	// режимные погашены. Без ассерта на SlotPolicyTun ошибка в имени режима
+	// молча уводила бы ModeSlot в fallback SlotTProxy — промотировался бы не
+	// тот перехватчик, а тесты оставались бы зелёными.
+	if !slotEnabled(t, h.svc, orchestrator.SlotPolicyTun) {
+		t.Error("SlotPolicyTun must be enabled in policy-tun mode")
+	}
 	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
 		t.Error("SlotRouting must be enabled in policy-tun mode")
+	}
+	for _, other := range []orchestrator.Slot{orchestrator.SlotTProxy, orchestrator.SlotFakeIP} {
+		if slotEnabled(t, h.svc, other) {
+			t.Errorf("слот %s обязан быть выключен в режиме policy-tun", other)
+		}
 	}
 	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
 	if err != nil {

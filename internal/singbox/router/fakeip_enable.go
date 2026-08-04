@@ -258,9 +258,21 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// возвращал ПРЕЖНИЙ режим, а не захардкоженный: буте в fakeip (и первому
 	// enable) движок вообще выключен, и слепое включение tproxy было бы ложью.
 	// Legacy fallback (no orch) uses an explicit Start.
-	prevMode, prevEnabled := stateTProxy, false
 	if s.deps.Orch != nil {
-		prevMode, prevEnabled = s.currentRoutingSlots()
+		prevMode, prevEnabled := s.currentRoutingSlots()
+		// Компенсация встаёт в стек ДО мутации: applyRoutingSlots трогает до
+		// четырёх слотов и может упасть на середине (режимный уже промотирован,
+		// общий — нет). Регистрация после мутации оставила бы такой полу-промоут
+		// без отката. Повторное применение прежней разметки идемпотентно, так
+		// что срабатывание компенсации «вхолостую» безвредно.
+		push(func() {
+			if e := applyRoutingSlots(s.deps.Orch, prevMode, prevEnabled); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "restore routing slots: "+e.Error())
+			}
+			// Rollback вернул прежнюю разметку слотов — device-proxy должен
+			// перегенерировать слот 30 под неё до следующего reload.
+			s.notifyRoutingSlotsChanged()
+		})
 		if err = applyRoutingSlots(s.deps.Orch, stateFakeIPTun, true); err != nil {
 			return fmt.Errorf("enable fakeip-tun: %w", err)
 		}
@@ -271,16 +283,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			}
 		}
 	}
-	push(func() {
-		if s.deps.Orch != nil {
-			if e := applyRoutingSlots(s.deps.Orch, prevMode, prevEnabled); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "restore routing slots: "+e.Error())
-			}
-			// Rollback вернул прежнюю разметку слотов — device-proxy должен
-			// перегенерировать слот 30 под неё до следующего reload.
-			s.notifyRoutingSlotsChanged()
-		}
-	})
 	// Освежить 15-awg.json ДО валидирующего reload'а: протухший каталог
 	// AWG-тегов (byte-кэш, пропущенная инвалидация) даёт ложный
 	// «unknown-outbound» по живому туннелю и откат всего enable (#567).

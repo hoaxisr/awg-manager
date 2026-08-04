@@ -1,6 +1,7 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -60,32 +61,41 @@ var modeBySlot = map[orchestrator.Slot]string{
 // Orch.Save целится в active/ только когда слот уже промотирован, иначе запись
 // уезжает в disabled/ (см. persistConfigDirect).
 //
+// Обход слотов — BEST-EFFORT С АГРЕГАЦИЕЙ: КАЖДЫЙ слот получает свою попытку
+// независимо от чужих ошибок, все сбои склеиваются в один error. Выход по
+// первой ошибке был опасен именно на выключении: сбой на постороннем (и без
+// того выключенном) слоте оставлял бы режимный слот активным, а вызывающие
+// пути выключения только логируют warning и идут сносить tun/OpkgTun — то есть
+// в конфиге остался бы tun-инбаунд на удалённый интерфейс.
+//
 // Вызывающий обязан гарантировать orch != nil (типизированный nil в
 // интерфейсе здесь не отлавливается — все точки вызова уже под проверкой
 // deps.Orch != nil).
 func applyRoutingSlots(orch routingSlotToggler, mode string, enabled bool) error {
 	want := ModeSlot(mode)
+	var errs []error
+	set := func(slot orchestrator.Slot, on bool) {
+		if err := orch.SetEnabled(slot, on); err != nil {
+			verb := "включить"
+			if !on {
+				verb = "выключить"
+			}
+			errs = append(errs, fmt.Errorf("%s слот %s: %w", verb, slot, err))
+		}
+	}
 	for _, slot := range modeSlots() {
 		if enabled && slot == want {
 			continue
 		}
-		if err := orch.SetEnabled(slot, false); err != nil {
-			return fmt.Errorf("выключить слот %s: %w", slot, err)
-		}
+		set(slot, false)
 	}
-	if !enabled {
-		if err := orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
-			return fmt.Errorf("выключить слот %s: %w", orchestrator.SlotRouting, err)
-		}
-		return nil
+	if enabled {
+		set(want, true)
+		set(orchestrator.SlotRouting, true)
+	} else {
+		set(orchestrator.SlotRouting, false)
 	}
-	if err := orch.SetEnabled(want, true); err != nil {
-		return fmt.Errorf("включить слот %s: %w", want, err)
-	}
-	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
-		return fmt.Errorf("включить слот %s: %w", orchestrator.SlotRouting, err)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ApplyRoutingSlots — экспортированная обёртка для boot-вайринга (cmd), где

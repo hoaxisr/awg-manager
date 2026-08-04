@@ -1,33 +1,71 @@
 package router
 
 import (
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // fakeOrch — тонкая обёртка над НАСТОЯЩИМ оркестратором (тем же двойником, что
-// используют соседние тесты пакета): добавляет чтение флага слота по имени.
+// используют соседние тесты пакета): добавляет чтение флага слота по имени и
+// проверку, в каком каталоге лежит файл слота.
 type fakeOrch struct {
 	*orchestrator.Orchestrator
+	dir       string
+	filenames map[orchestrator.Slot]string
 }
 
 // newFakeOrch поднимает оркестратор в t.TempDir() со всем каталогом слотов —
 // applyRoutingSlots трогает четыре из них, а незарегистрированный слот
-// оркестратор отвергает.
+// оркестратор отвергает. Файлы слотов маршрутизации кладутся на диск: без них
+// SetEnabled ограничился бы правкой карты enabled, и перенос active/ ↔
+// disabled/ (то, ради чего слоты и переключают) тесты бы не задели.
 func newFakeOrch(t *testing.T) *fakeOrch {
 	t.Helper()
-	o := orchestrator.New(t.TempDir(), nil)
+	dir := t.TempDir()
+	o := orchestrator.New(dir, nil)
+	filenames := make(map[orchestrator.Slot]string)
 	for _, meta := range orchestrator.KnownSlots() {
 		if err := o.Register(meta); err != nil {
 			t.Fatalf("register %s: %v", meta.Slot, err)
 		}
+		filenames[meta.Slot] = meta.Filename
 	}
 	if err := o.Bootstrap(); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	return &fakeOrch{o}
+	f := &fakeOrch{Orchestrator: o, dir: dir, filenames: filenames}
+	for _, slot := range append(modeSlots(), orchestrator.SlotRouting) {
+		if err := o.SaveSilent(slot, []byte(`{"outbounds":[]}`)); err != nil {
+			t.Fatalf("seed %s: %v", slot, err)
+		}
+	}
+	return f
+}
+
+// fileActive: файл слота лежит в config.d/ (виден sing-box), а не в disabled/.
+func (f *fakeOrch) fileActive(t *testing.T, slot orchestrator.Slot) bool {
+	t.Helper()
+	name := f.filenames[slot]
+	if name == "" {
+		t.Fatalf("нет имени файла для слота %s", slot)
+	}
+	active := fileExistsForTest(filepath.Join(f.dir, name))
+	parked := fileExistsForTest(filepath.Join(f.dir, "disabled", name))
+	if active == parked {
+		t.Fatalf("слот %s: файл должен лежать ровно в одном каталоге (active=%v, disabled=%v)", slot, active, parked)
+	}
+	return active
+}
+
+func fileExistsForTest(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // registerExtraModeSlots дорегистрирует режимные слоты, которых нет в
@@ -102,9 +140,17 @@ func TestApplyRoutingSlotsExclusive(t *testing.T) {
 			if got := orch.enabled(s); got != (s == tc.want) {
 				t.Errorf("%s: слот %s enabled=%v, ожидалось %v", tc.mode, s, got, s == tc.want)
 			}
+			// Флаг без переноса файла — половина работы: sing-box читает
+			// каталог, а не карту в памяти.
+			if got := orch.fileActive(t, s); got != (s == tc.want) {
+				t.Errorf("%s: файл слота %s active=%v, ожидалось %v", tc.mode, s, got, s == tc.want)
+			}
 		}
 		if !orch.enabled(orchestrator.SlotRouting) {
 			t.Errorf("%s: общий слот обязан быть включён вместе с режимным", tc.mode)
+		}
+		if !orch.fileActive(t, orchestrator.SlotRouting) {
+			t.Errorf("%s: файл общего слота обязан лежать в config.d/", tc.mode)
 		}
 	}
 }
@@ -125,6 +171,57 @@ func TestApplyRoutingSlotsDisableAll(t *testing.T) {
 	} {
 		if orch.enabled(s) {
 			t.Errorf("слот %s остался включённым после выключения движка", s)
+		}
+		if orch.fileActive(t, s) {
+			t.Errorf("файл слота %s остался в config.d/ после выключения движка", s)
+		}
+	}
+}
+
+// failingToggler гасит/зажигает слоты, но на заданном слоте всегда падает.
+type failingToggler struct {
+	failOn orchestrator.Slot
+	seen   map[orchestrator.Slot]bool
+}
+
+func (f *failingToggler) SetEnabled(slot orchestrator.Slot, enabled bool) error {
+	if f.seen == nil {
+		f.seen = map[orchestrator.Slot]bool{}
+	}
+	if slot == f.failOn {
+		return errors.New("инъекция: SetEnabled упал")
+	}
+	f.seen[slot] = enabled
+	return nil
+}
+
+// Выключение движка — best-effort: сбой на ОДНОМ слоте не должен оставлять
+// остальные нетронутыми. Обрыв по первой ошибке был опаснее всего именно
+// здесь: вызывающие пути выключения только логируют warning и идут сносить
+// tun/OpkgTun, так что уцелевший режимный слот оставил бы в конфиге инбаунд на
+// удалённый интерфейс.
+func TestApplyRoutingSlotsDisableBestEffort(t *testing.T) {
+	all := append(modeSlots(), orchestrator.SlotRouting)
+	// Падение проверяется на КАЖДОМ слоте: иначе тест был бы завязан на порядок
+	// обхода и пропустил бы обрыв, случившийся на последнем из слотов.
+	for _, failOn := range all {
+		tg := &failingToggler{failOn: failOn}
+
+		if err := applyRoutingSlots(tg, "policy-tun", false); err == nil {
+			t.Fatalf("сбой на %s обязан вернуться ошибкой", failOn)
+		}
+		for _, slot := range all {
+			if slot == failOn {
+				continue
+			}
+			on, tried := tg.seen[slot]
+			if !tried {
+				t.Errorf("сбой на %s: слот %s не получил попытки переключения", failOn, slot)
+				continue
+			}
+			if on {
+				t.Errorf("сбой на %s: слот %s остался включённым", failOn, slot)
+			}
 		}
 	}
 }
@@ -147,5 +244,45 @@ func TestApplyRoutingSlotsSwitchMode(t *testing.T) {
 	}
 	if !orch.enabled(orchestrator.SlotRouting) {
 		t.Error("общий слот обязан пережить смену режима включённым")
+	}
+}
+
+// Интеграционный ассерт на tproxy-пути enableLocked: включение движка в режиме
+// tproxy обязано промотировать ИМЕННО SlotTProxy. Без него ошибка в имени
+// режима молчит — ModeSlot на неизвестном значении отдаёт SlotTProxy, и
+// подмена константы (например на fakeip-tun) зажгла бы чужой слот незаметно.
+func TestEnableTProxy_PromotesTProxySlot(t *testing.T) {
+	svc, dir := newQoSSlotTestService(t, "vpn")
+	ensureDisabledDir(t, dir)
+	if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotRouting, false); err != nil {
+		t.Fatalf("park routing slot: %v", err)
+	}
+	svc.deps.Settings = newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+	})
+	svc.deps.Singbox = &fakeSingbox{dir: dir, isRunningFn: func() (bool, int) { return true, 1234 }}
+	stubListeningProbe(t, func() bool { return true })
+	svc.deps.Policies = &fakeAccessPolicyProvider{}
+	svc.deps.IPTables = newStubIPTables(func(_ context.Context, _ string) error { return nil })
+	svc.deps.WANIPCollector = &fakeWANIPCollector{}
+	svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	if !slotEnabled(t, svc, orchestrator.SlotTProxy) {
+		t.Error("SlotTProxy обязан быть включён после Enable в режиме tproxy")
+	}
+	if !slotEnabled(t, svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting обязан быть включён после Enable в режиме tproxy")
+	}
+	for _, other := range []orchestrator.Slot{orchestrator.SlotFakeIP, orchestrator.SlotPolicyTun} {
+		if slotEnabled(t, svc, other) {
+			t.Errorf("слот %s обязан быть выключен в режиме tproxy", other)
+		}
 	}
 }
