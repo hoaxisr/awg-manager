@@ -262,3 +262,33 @@ func TestParseMieruClientJSON_NoServers(t *testing.T) {
 		t.Fatalf("errors=%+v", res.Errors)
 	}
 }
+
+// Разбор клиентского JSON идёт через protojson с DiscardUnknown, поэтому поля,
+// которых нет в схеме вендоренного mieru, молча выпадают. lowEntropy появился в
+// 3.35.0: если пин откатится ниже, настройка исчезнет из outbound'а без ошибки,
+// и туннель к серверу с включённым режимом просто замолчит.
+func TestParseMieruClientJSON_KeepsLowEntropy(t *testing.T) {
+	body := `{"profiles":[{"profileName":"default","user":{"name":"u","password":"p"},
+      "servers":[{"ipAddress":"12.34.56.78","portBindings":[{"port":6666,"protocol":"TCP"}]}],
+      "trafficPattern":{"lowEntropy":{"mode":"LOW_ENTROPY_MODE_32"}}}]}`
+
+	res := ParseMieruClientJSON([]byte(body))
+	if len(res.Errors) != 0 || len(res.Outbounds) != 1 {
+		t.Fatalf("outbounds=%d errors=%+v", len(res.Outbounds), res.Errors)
+	}
+	encoded, _ := decodeOutbound(t, res.Outbounds[0])["traffic_pattern"].(string)
+	if encoded == "" {
+		t.Fatal("traffic_pattern пуст: lowEntropy потерян при разборе")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64: %v", err)
+	}
+	var tp pb.TrafficPattern
+	if err := proto.Unmarshal(raw, &tp); err != nil {
+		t.Fatalf("protobuf: %v", err)
+	}
+	if got := tp.GetLowEntropy().GetMode(); got != pb.LowEntropyMode_LOW_ENTROPY_MODE_32 {
+		t.Fatalf("lowEntropy.mode = %v, want LOW_ENTROPY_MODE_32", got)
+	}
+}
