@@ -42,6 +42,8 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// целиком и держит список снапшотом времени загрузки страницы: иначе
 	// любое сохранение воскрешало бы удалённых и теряло добавленных.
 	cfg.Clients = full.Servers[idx].Config.Clients
+	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
+	cfg.Enabled = prevCfg.Enabled
 	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
 	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
 	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал

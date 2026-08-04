@@ -16,8 +16,8 @@ const (
 	stallMinUpBytes = int64(400)
 )
 
-// StatsSnapshot — последний срез __WDTT_EVENT__|STATS| из лога wdtt-client.
-type StatsSnapshot struct {
+// statsSnapshot — один срез __WDTT_EVENT__|STATS| из лога wdtt-client.
+type statsSnapshot struct {
 	Active    int
 	BytesDown int64
 	BytesUp   int64
@@ -35,7 +35,7 @@ func ExtractActiveConnectionsFromLog(log string) int {
 // all: отсутствие строк — это «не знаем», а не «активных ноль» (клиент может
 // быть жив, но молчалив либо печатать статистику в другом формате).
 func activeTelemetry(log string) (active int, known bool) {
-	events := ExtractStatsSnapshotsFromLog(log)
+	events := statsEvents(log)
 	if len(events) > 0 {
 		return events[len(events)-1].Active, true
 	}
@@ -45,10 +45,10 @@ func activeTelemetry(log string) (active int, known bool) {
 	return 0, false
 }
 
-// ExtractStatsSnapshotsFromLog parses all STATS events from wdtt-client stdout.
-func ExtractStatsSnapshotsFromLog(log string) []StatsSnapshot {
+// statsEvents parses all STATS events from wdtt-client stdout.
+func statsEvents(log string) []statsSnapshot {
 	const prefix = "__WDTT_EVENT__|STATS|"
-	var out []StatsSnapshot
+	var out []statsSnapshot
 	for _, line := range strings.Split(log, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, prefix) {
@@ -63,7 +63,7 @@ func ExtractStatsSnapshotsFromLog(log string) []StatsSnapshot {
 		if err := json.Unmarshal([]byte(payload), &data); err != nil {
 			continue
 		}
-		out = append(out, StatsSnapshot{
+		out = append(out, statsSnapshot{
 			Active:    data.Active,
 			BytesDown: data.BytesDown,
 			BytesUp:   data.BytesUp,
@@ -72,11 +72,11 @@ func ExtractStatsSnapshotsFromLog(log string) []StatsSnapshot {
 	return out
 }
 
-// ClientTrafficStalled reports a zombie relay: workers look active but only
+// trafficStalled reports a zombie relay window: workers look active but only
 // uplink keepalives grow while downstream bytes stay flat (server restart /
-// relay stale on the remote side).
-func ClientTrafficStalled(log string) bool {
-	events := ExtractStatsSnapshotsFromLog(log)
+// relay stale on the remote side). Одного окна мало для решения — см.
+// clientStallStrikes.
+func trafficStalled(events []statsSnapshot) bool {
 	if len(events) < stallMinEvents {
 		return false
 	}

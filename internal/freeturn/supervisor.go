@@ -55,7 +55,10 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		}
 		proc := s.clientProcs.get(c.ID)
 		st := proc.Status()
-		if !st.Running {
+		// Живой процесс без StartedAt — осиротевший pid-файл, переживший
+		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
+		// Лечится обычным стартом — process.Start усыновляет такой процесс.
+		if !st.Running || st.StartedAt == nil {
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
@@ -68,19 +71,6 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				s.startBackoff.Success(key)
 				if s.appLog != nil {
 					s.appLog.Info("supervisor", c.ID, "клиент перезапущен")
-				}
-			}
-			continue
-		}
-		if st.StartedAt == nil {
-			if err := s.restartClientInstance(c.ID); err != nil {
-				if s.appLog != nil {
-					s.appLog.Warn("supervisor", c.ID, "перезапуск осиротевшего клиента: "+err.Error())
-				}
-			} else {
-				s.startBackoff.Success(key)
-				if s.appLog != nil {
-					s.appLog.Info("supervisor", c.ID, "клиент перезапущен (осиротевший PID)")
 				}
 			}
 			continue
@@ -106,15 +96,14 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.startBackoff.Forget(key)
 			continue
 		}
-		proc := s.serverProcs.get(srv.ID)
-		st := proc.Status()
+		st := s.serverProcs.get(srv.ID).Status()
 		if st.Running && st.StartedAt != nil {
 			s.startBackoff.Success(key)
 			continue
 		}
-		if st.Running {
-			_ = proc.Stop()
-		}
+		// Осиротевший сервер (Running без StartedAt) — как и клиент, лечится
+		// обычным стартом; Stop до проверки backoff гасил бы рабочий процесс
+		// на всё окно ожидания.
 		if !s.startBackoff.Allow(key, now) {
 			continue
 		}

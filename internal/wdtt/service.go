@@ -36,6 +36,7 @@ type Service struct {
 	appLog          *logging.ScopedLogger
 	listenChecker   LocalListenPortChecker
 	clientHealth    *healthTracker
+	clientStall     *healthTracker
 	startBackoff    *proxysup.Backoff
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
@@ -83,7 +84,8 @@ func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 		versionPath:  filepath.Join(dataDir, "wdtt-version.json"),
 		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
 		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
-		clientHealth: newHealthTracker(),
+		clientHealth: newHealthTracker(clientHealthStrikes),
+		clientStall:  newHealthTracker(clientStallStrikes),
 		startBackoff: newStartBackoff(),
 	}
 }
@@ -169,6 +171,8 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	listens := clientListenAddresses(full.Clients)
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg = normalizeClientConfig(cfg)
+	// Enabled — только Start/Stop; UI при сохранении часто шлёт stale false.
+	cfg.Enabled = full.Clients[idx].Config.Enabled
 	full.Clients[idx].Config = cfg
 	// Правка конфига могла устранить причину отказа (порт, пароль, peer) —
 	// не заставляем ждать окно backoff до следующей попытки супервизора.
@@ -217,6 +221,7 @@ func (s *Service) DeleteClient(id string) error {
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(clientKey(id))
 	s.clientHealth.reset(id)
+	s.clientStall.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
