@@ -217,14 +217,20 @@ func filterOutDeviceProxyRouteRules(in []any) []any {
 	return out
 }
 
+// BaseBootstrapDNSTag — тег DNS-сервера, который базовый слот объявляет ВСЕГДА
+// (00-base.json, udp 1.1.1.1) и на который он же целит route.default_domain_resolver.
+// Экспортирован как единственная точка правды для кода, которому нужен заведомо
+// существующий резолвер (миграция раскладки слотов).
+const BaseBootstrapDNSTag = "dns-bootstrap"
+
 // filterOutOurDNSServers removes dns.servers entries whose tag is one of
 // the well-known tags 00-base.json owns ("dns-bootstrap", "dns-doh"). All
 // other entries — user-added custom resolvers — pass through so they end
 // up in 10-tunnels.json and survive the migration.
 func filterOutOurDNSServers(in []any) []any {
 	owned := map[string]bool{
-		"dns-bootstrap": true,
-		"dns-doh":       true,
+		BaseBootstrapDNSTag: true,
+		"dns-doh":           true,
 	}
 	out := make([]any, 0, len(in))
 	for _, v := range in {
@@ -337,7 +343,7 @@ func patchBaseDomainResolver(basePath string) {
 	if _, has := route["default_domain_resolver"]; has {
 		return
 	}
-	route["default_domain_resolver"] = "dns-bootstrap"
+	route["default_domain_resolver"] = BaseBootstrapDNSTag
 	_ = writeJSONFile(basePath, m)
 }
 
@@ -797,7 +803,7 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
 		// Strip final/strategy keys that mirror 00-base defaults — they
 		// would otherwise persist as zombie config noise after the
 		// owned-set servers vanish.
-		if final, _ := dns["final"].(string); final == "dns-doh" || final == "dns-bootstrap" {
+		if final, _ := dns["final"].(string); final == "dns-doh" || final == BaseBootstrapDNSTag {
 			delete(dns, "final")
 			changed = true
 		}
@@ -865,7 +871,7 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			// owns strategy.
 			"strategy": "prefer_ipv4",
 			"servers": []any{
-				map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1"},
+				map[string]any{"type": "udp", "tag": BaseBootstrapDNSTag, "server": "1.1.1.1"},
 			},
 			// dns.final intentionally omitted — owned by 20-router.json
 			// (bug #445). sing-box resolves conflicting scalar sub-keys of
@@ -886,7 +892,7 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			// Sing-box uses first outbound (= direct, see outbounds above)
 			// as fallback when final is absent. See spec
 			// 2026-05-21-route-final-router-owned-design.md.
-			"default_domain_resolver": "dns-bootstrap",
+			"default_domain_resolver": BaseBootstrapDNSTag,
 		},
 	}
 }

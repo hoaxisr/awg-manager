@@ -3,6 +3,7 @@ package singbox
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -204,6 +205,9 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 					"DNS-сервер %q переименован в %q: тег зарезервирован движком fakeip-режима, иначе переключение режима заблокировало бы применение конфигурации",
 					r.From, r.To))
 			}
+			for _, note := range applied.Notes {
+				logf(note)
+			}
 		}
 	}
 	if draftShared != nil && firstErr == nil {
@@ -281,6 +285,12 @@ func splitLegacySlotFile(path string, activeMode string, sharedOnly bool) (route
 		Mode:           activeMode,
 		SourceIsFakeIP: filepath.Base(path) == legacyFakeIPSlotFile,
 		SharedOnly:     sharedOnly,
+		// Резолвер базового слота: он переживает любые переключения режима,
+		// поэтому именно на него перецеливается пользовательский DNS-сервер,
+		// чей резолвер объявлял режимный слот. Читаем с диска, а не берём
+		// константой на веру: подставить тег, которого в базовом слоте нет,
+		// значит своими руками сделать ту самую висячую ссылку.
+		FallbackDNSResolver: baseSlotResolverTag(filepath.Dir(path)),
 	})
 	if err != nil {
 		return router.LegacySlotSplit{}, fmt.Errorf("разобрать %s: %w", path, err)
@@ -352,6 +362,43 @@ func backupLegacySlot(path, disabledDir string) (string, error) {
 	}
 	return dst, nil
 }
+
+// baseSlotResolverTag возвращает тег DNS-сервера базового слота, годный в
+// качестве резолвера, или пустую строку, если базовый слот DNS не объявляет.
+// configDir здесь — каталог разбираемого файла: для pending/ и disabled/
+// базовый слот лежит на уровень выше, поэтому проверяются оба.
+func baseSlotResolverTag(dir string) string {
+	for _, candidate := range []string{
+		filepath.Join(dir, baseSlotFile),
+		filepath.Join(filepath.Dir(dir), baseSlotFile),
+	} {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			DNS struct {
+				Servers []struct {
+					Tag    string `json:"tag"`
+					Server string `json:"server"`
+				} `json:"servers"`
+			} `json:"dns"`
+		}
+		if json.Unmarshal(data, &doc) != nil {
+			continue
+		}
+		for _, srv := range doc.DNS.Servers {
+			if srv.Tag == BaseBootstrapDNSTag {
+				return srv.Tag
+			}
+		}
+	}
+	return ""
+}
+
+// baseSlotFile — имя файла базового слота. Он не входит в раскладку
+// маршрутизации и в реестре живёт своей записью, поэтому имя берётся оттуда.
+var baseSlotFile = knownSlotFilename(orchestrator.SlotBase)
 
 // knownSlotFilename отдаёт имя файла слота из реестра оркестратора: миграция
 // обязана писать ровно те имена, которые потом зарегистрирует оркестратор.

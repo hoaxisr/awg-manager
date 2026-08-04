@@ -23,6 +23,9 @@ type LegacySlotSplit struct {
 	// DNSRenames — пользовательские DNS-серверы, переименованные из
 	// зарезервированных движком тегов. Пусто в подавляющем большинстве случаев.
 	DNSRenames []DNSTagRename
+	// Notes — готовые для журнала строки о правках, которые пользователю нужно
+	// заметить: перецеленный или удалённый DNS-сервер. Пусто в штатном случае.
+	Notes []string
 }
 
 // LegacySlotSplitParams — вход разбора.
@@ -42,6 +45,12 @@ type LegacySlotSplitParams struct {
 	// случае движковый DNS из источника выбрасывается — иначе в общем слоте
 	// повисли бы серверы, объявленные только режимом.
 	SharedOnly bool
+	// FallbackDNSResolver — тег DNS-сервера, на который можно перецелить
+	// пользовательский сервер, потерявший свой резолвер вместе с режимным
+	// слотом. Ожидается сервер базового слота (00-base.json), существующий
+	// всегда; пустая строка означает «целить некуда» — тогда осиротевший
+	// сервер удаляется, потому что висячая ссылка убивает sing-box на СТАРТЕ.
+	FallbackDNSResolver string
 }
 
 // SplitLegacyRoutingSlot разбирает файл прежней раскладки на общий и режимный
@@ -96,21 +105,22 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		WANAutoDetect: shared.Route.AutoDetectInterface != nil && *shared.Route.AutoDetectInterface,
 		WANInterface:  shared.Route.DefaultInterface,
 	})
+	var notes []string
 	if p.SharedOnly {
-		// Режимный слот не пишется — объявить движковый резолвер `real` некому,
-		// а ссылка на него у outbound'а роняет sing-box целиком («FATAL
-		// initialize outbound: domain resolver not found: real»). Снимаем её,
-		// в том числе ту, которую только что поставил buildRoutingSlot
-		// hostname-outbound'ам, когда установка идёт в fakeip-режим. Первый же
-		// Enable/Reconcile соберёт режимный слот и вернёт резолвер на место.
-		dropEngineDomainResolvers(shared)
+		// Режимный слот не пишется — объявить движковый резолвер `real` некому.
+		// Чинить обязательно и у outbound'ов, и у DNS-серверов: висячая ссылка
+		// убивает sing-box (у outbound'а — сразу на check, у DNS-сервера —
+		// только на СТАРТЕ, `check` её пропускает). Сюда же попадает резолвер,
+		// который только что поставил buildRoutingSlot hostname-outbound'ам,
+		// когда установка идёт в fakeip-режим.
+		notes = healDanglingDomainResolvers(shared, p.FallbackDNSResolver)
 	}
 	sharedRaw, err := json.MarshalIndent(shared, "", "  ")
 	if err != nil {
 		return LegacySlotSplit{}, fmt.Errorf("marshal routing slot: %w", err)
 	}
 	if p.SharedOnly {
-		return LegacySlotSplit{Shared: sharedRaw, DNSRenames: renames}, nil
+		return LegacySlotSplit{Shared: sharedRaw, DNSRenames: renames, Notes: notes}, nil
 	}
 
 	// --- режимный слот ---
@@ -142,44 +152,110 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 	return LegacySlotSplit{Shared: sharedRaw, Mode: modeRaw, DNSRenames: renames}, nil
 }
 
-// dropEngineDomainResolvers снимает ссылки на движковые DNS-серверы там, где
-// висячая ссылка ломает загрузку конфига: route.default_domain_resolver и
-// outbound'ы. Проверено настоящим бинарём:
+// healDanglingDomainResolvers чинит ссылки domain_resolver, указывающие в
+// пустоту после того, как режимный слот перестал объявлять свои DNS-серверы.
 //
-//	outbound с domain_resolver на несуществующий тег
-//	  → FATAL initialize outbound[1]: domain resolver not found: real
-//	DNS-сервер с той же висячей ссылкой
-//	  → грузится, sing-box её терпит
-//	DNS-сервер, заданный ИМЕНЕМ хоста, у которого резолвер сняли
-//	  → FATAL initialize DNS server[0]: missing domain resolver for domain server address
+// Поведение настоящего бинаря (проверено `check` И `run` — они расходятся, и
+// это единственная причина, по которой функция выглядит именно так):
 //
-// Отсюда правило для DNS-серверов: ссылку снимаем только у сервера с
-// АДРЕСОМ — там резолвер декоративен. У сервера с именем хоста ссылка
-// остаётся висячей осознанно: конфиг грузится (интернет у пользователя есть), а
-// цена — ErrDNSServerNotFound при правке ИМЕННО ЭТОГО сервера в интерфейсе,
-// пока он не выберет резолвер заново. Снять ссылку означало бы обменять правку
-// в интерфейсе на не поднимающийся sing-box.
-func dropEngineDomainResolvers(cfg *RouterConfig) {
-	if cfg.Route.DefaultDomainResolver != nil && engineDNSServerTags[cfg.Route.DefaultDomainResolver.Server] {
+//	outbound → несуществующий тег          check: FATAL          run: FATAL
+//	DNS-сервер → несуществующий тег        check: OK (!)         run: FATAL
+//	                                       «start service: dependency[real]
+//	                                        not found for server[user-dns]»
+//	DNS-сервер с ИМЕНЕМ хоста без резолвера check: FATAL         —
+//	outbound с именем хоста без резолвера   check: OK            run: OK
+//
+// Наш валидатор гоняет `check`, поэтому висячая ссылка у DNS-сервера прошла бы
+// валидацию и убила движок на старте. Оставлять её нельзя ни в каком виде:
+//
+//   - у outbound'а и в route.default_domain_resolver ссылка просто снимается —
+//     там резолвер необязателен;
+//   - у DNS-сервера с АДРЕСОМ тоже снимается — резолвер ему не нужен;
+//   - у DNS-сервера с ИМЕНЕМ хоста снять нельзя (тогда FATAL про missing domain
+//     resolver), поэтому ссылка ПЕРЕЦЕЛИВАЕТСЯ на уцелевший резолвер: сначала
+//     на пользовательский сервер, заданный адресом, потом на fallback базового
+//     слота. Если целить некуда — сервер удаляется (с записью в журнал):
+//     потерять один резолвер лучше, чем не поднять движок.
+//
+// Обход до фикс-пойнта: удаление сервера снимает ссылки на него у соседей
+// (DeleteDNSServer), и осиротеть может уже они.
+func healDanglingDomainResolvers(cfg *RouterConfig, fallbackResolver string) []string {
+	var notes []string
+	resolvable := func(tag string) bool {
+		if tag == "" {
+			return false
+		}
+		if tag == fallbackResolver {
+			return true
+		}
+		for _, s := range cfg.DNS.Servers {
+			if s.Tag == tag {
+				return true
+			}
+		}
+		return false
+	}
+	if r := cfg.Route.DefaultDomainResolver; r != nil && !resolvable(r.Server) {
 		cfg.Route.DefaultDomainResolver = nil
 	}
 	for i := range cfg.Outbounds {
-		if cfg.Outbounds[i].DomainResolver != nil && engineDNSServerTags[cfg.Outbounds[i].DomainResolver.Server] {
+		if r := cfg.Outbounds[i].DomainResolver; r != nil && !resolvable(r.Server) {
 			cfg.Outbounds[i].DomainResolver = nil
 		}
 	}
-	for i := range cfg.DNS.Servers {
-		s := &cfg.DNS.Servers[i]
-		if s.DomainResolver != nil && engineDNSServerTags[s.DomainResolver.Server] && !isHostname(s.Server) {
-			s.DomainResolver = nil
+	for {
+		var orphaned []string
+		for i := range cfg.DNS.Servers {
+			s := &cfg.DNS.Servers[i]
+			hasResolver := s.DomainResolver != nil && resolvable(s.DomainResolver.Server)
+			if hasResolver {
+				continue
+			}
+			if !isHostname(s.Server) {
+				// Резолвер не нужен — снимаем висячую ссылку, если она была.
+				s.DomainResolver = nil
+				continue
+			}
+			target := pickDomainResolverFor(cfg, s.Tag, fallbackResolver)
+			if target == "" {
+				orphaned = append(orphaned, s.Tag)
+				continue
+			}
+			s.DomainResolver = &DomainResolver{Server: target}
+			notes = append(notes, fmt.Sprintf(
+				"DNS-сервер %q задан именем хоста, а его резолвер объявлял режимный слот — резолвер переключён на %q",
+				s.Tag, target))
+		}
+		if len(orphaned) == 0 {
+			return notes
+		}
+		for _, tag := range orphaned {
+			_ = cfg.DeleteDNSServer(tag, true)
+			notes = append(notes, fmt.Sprintf(
+				"DNS-сервер %q удалён: он задан именем хоста, а разрешать это имя стало некому — с висячей ссылкой sing-box не стартует",
+				tag))
 		}
 	}
 }
 
+// pickDomainResolverFor выбирает, кем разрешать имя хоста DNS-сервера self:
+// первым пользовательским сервером, заданным АДРЕСОМ (такому самому резолвер не
+// нужен, цепочки не выйдет), иначе резолвером базового слота.
+func pickDomainResolverFor(cfg *RouterConfig, self, fallbackResolver string) string {
+	for _, s := range cfg.DNS.Servers {
+		if s.Tag == self || s.Tag == "" || engineDNSServerTags[s.Tag] {
+			continue
+		}
+		if !isHostname(s.Server) {
+			return s.Tag
+		}
+	}
+	return fallbackResolver
+}
+
 // dropEngineDNS выбрасывает из конфига DNS движка fakeip-режима: серверы с
-// движковыми тегами, правила, которые на них ссылаются, режимные скаляры и
-// ссылки на движковые резолверы. Пользовательские серверы и правила остаются —
-// это их данные.
+// движковыми тегами, правила, которые на них ссылаются, и режимные скаляры.
+// Пользовательские серверы и правила остаются — это их данные.
 func dropEngineDNS(cfg *RouterConfig) {
 	servers := make([]DNSServer, 0, len(cfg.DNS.Servers))
 	for _, s := range cfg.DNS.Servers {
@@ -200,7 +276,9 @@ func dropEngineDNS(cfg *RouterConfig) {
 	if engineDNSServerTags[cfg.DNS.Final] {
 		cfg.DNS.Final = ""
 	}
-	dropEngineDomainResolvers(cfg)
+	// Ссылки на удалённые серверы чинит healDanglingDomainResolvers — он
+	// зовётся ПОСЛЕ buildRoutingSlot, который сам может навесить движковый
+	// резолвер на outbound'ы.
 }
 
 // splitLegacyRouteRules делит route.rules прежнего слота на режимный префикс и

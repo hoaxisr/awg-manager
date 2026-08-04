@@ -3,6 +3,7 @@ package singbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -221,6 +223,14 @@ func TestMigrateSlotsSplitResultLoadsInSingbox(t *testing.T) {
 			}
 			assertExists(t, dir, tc.modeFile)
 			assertExists(t, dir, "21-routing.json")
+			// Каталоги с инбаундами захвата запустить в тесте нельзя (нужны
+			// привилегии), поэтому класс «висячая ссылка domain_resolver»,
+			// который `check` не видит, а старт ловит, проверяется статически.
+			shared := readSlot(t, dir, "21-routing.json")
+			mode := readSlot(t, dir, tc.modeFile)
+			known := append(dnsServerTags(mode), BaseBootstrapDNSTag)
+			assertNoDanglingDNSRefs(t, shared, known...)
+			assertNoDanglingDNSRefs(t, mode, append(dnsServerTags(shared), BaseBootstrapDNSTag)...)
 			singboxCheckDir(t, dir)
 		})
 	}
@@ -250,17 +260,18 @@ func TestMigrateSlotsSplitFallsBackToOtherLegacySlot(t *testing.T) {
 	if got := dnsServerTags(shared); len(got) != 1 || got[0] != "user-dns" {
 		t.Errorf("DNS-серверы пользователя потеряны: %v\n%s", got, raw)
 	}
-	// Движкового резолвера `real` объявить некому — режимный слот не пишется.
-	// У outbound'ов ссылки на него быть не должно вовсе: она роняет sing-box
-	// целиком. У DNS-сервера, заданного именем хоста, ссылка остаётся
-	// осознанно — снятая, она даёт «missing domain resolver for domain server
-	// address», то есть тот же мёртвый sing-box (см. dropEngineDomainResolvers).
+	// Движкового резолвера `real` объявить некому — режимный слот не пишется,
+	// а висячая ссылка убивает sing-box (у outbound'а сразу, у DNS-сервера — на
+	// старте, мимо `check`). Здесь у outbound'ов её быть не должно вовсе; у
+	// DNS-серверов ссылки перецелены, это проверяет соседний тест.
 	for _, ob := range outboundsOf(shared) {
 		if _, ok := ob["domain_resolver"]; ok {
 			t.Errorf("у outbound %v осталась ссылка на движковый резолвер:\n%s", ob["tag"], raw)
 		}
 	}
+	assertNoDanglingDNSRefs(t, shared, BaseBootstrapDNSTag)
 	singboxCheckDir(t, dir)
+	singboxRunDir(t, dir)
 }
 
 // C1: сбой ПОСЛЕ первой записи не имеет права оставить в активном каталоге обе
@@ -349,17 +360,21 @@ func TestMigrateSlotsSplitKeepsLegacyWhenNothingWritten(t *testing.T) {
 // ENOSPC/EIO на флеше файловой системой не изображаются.
 func TestMigrateSlotsSplitCleansUpWhenWriteFailsAfterBackup(t *testing.T) {
 	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
 	writeSlotFixture(t, dir, "21-routing.json", routingSlotFixture("current"))
+	// Режимный слот обязателен в фикстуре: без него прежний 20-router.json,
+	// оставленный рядом, дал бы валидный каталог, и тест доказывал бы не то.
+	// С ним неубранный остаток — это дубль тегов инбаундов и мёртвый sing-box.
+	writeSlotFixture(t, dir, "20-tproxy.json", tproxyFixture())
 	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("leftover"))
 
-	restore := stubAtomicWrite(t, func(path string, data []byte) error {
+	stubAtomicWrite(t, func(path string, data []byte) error {
 		if filepath.Base(path) == "21-routing.json" {
 			return errors.New("сбой записи")
 		}
 		return storage.AtomicWrite(path, data)
 	})
 	changed, err := MigrateSlotsSplit(dir, "tproxy")
-	restore()
 
 	if err == nil {
 		t.Fatal("ожидалась ошибка записи")
@@ -371,6 +386,8 @@ func TestMigrateSlotsSplitCleansUpWhenWriteFailsAfterBackup(t *testing.T) {
 	assertAbsent(t, dir, "20-router.json")
 	assertBackupExists(t, dir, "20-router.json")
 	assertBackupExists(t, dir, "21-routing.json")
+	// Каталог обязан оставаться загружаемым: ради этого уборка и делается.
+	singboxCheckDir(t, dir)
 }
 
 // C2: возврат резервной копии под исходным именем (к нему подталкивает
@@ -445,8 +462,17 @@ func TestMigrateSlotsSplitFallbackDropsEngineDNS(t *testing.T) {
 	if dnsFinal(shared) != "" {
 		t.Errorf("dns.final ссылается на движковый сервер: %q", dnsFinal(shared))
 	}
+	// Сервер задан ИМЕНЕМ хоста, а разрешал это имя движковый `real`. Снять
+	// ссылку нельзя (FATAL про missing domain resolver), оставить висячей —
+	// тоже (FATAL на старте, который `check` не видит): она перецеливается на
+	// резолвер базового слота.
+	if got := dnsServerResolver(shared, "user-dns"); got != BaseBootstrapDNSTag {
+		t.Errorf("резолвер user-dns = %q, ожидался %q\n%s", got, BaseBootstrapDNSTag, raw)
+	}
+	assertNoDanglingDNSRefs(t, shared, BaseBootstrapDNSTag)
 	assertAbsent(t, dir, "20-tproxy.json")
 	singboxCheckDir(t, dir)
+	singboxRunDir(t, dir)
 }
 
 // Пользовательский DNS-сервер с движковым тегом переименовывается, а ссылки на
@@ -477,6 +503,34 @@ func TestMigrateSlotsSplitRenamesReservedDNSTag(t *testing.T) {
 	if bytes.Contains(raw, []byte(`"server": "real"`)) {
 		t.Errorf("ссылка на старый тег не переписана:\n%s", raw)
 	}
+}
+
+// Целить резолвер некуда: базовый слот DNS не объявляет вовсе. Оставить
+// висячую ссылку нельзя (sing-box не стартует), снять — тоже (FATAL про
+// missing domain resolver), поэтому сервер удаляется со строкой в журнал.
+func TestMigrateSlotsSplitDropsUnresolvableDNSServer(t *testing.T) {
+	dir := t.TempDir()
+	// Базовый слот БЕЗ dns-блока — резолвера, на который можно перецелить, нет.
+	writeSlotFixture(t, dir, "00-base.json", `{
+  "log": {"level": "warn"},
+  "outbounds": [{"type": "direct", "tag": "direct"}]
+}`)
+	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithRules("fakeip-rule"))
+
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) }); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	shared := readSlot(t, dir, "21-routing.json")
+	if got := dnsServerTags(shared); len(got) != 0 {
+		t.Errorf("сервер без резолвера обязан быть удалён, остались: %v\n%s", got, readSlotBytes(t, dir, "21-routing.json"))
+	}
+	if !logContains(log, "удалён") {
+		t.Errorf("об удалённом DNS-сервере не написано в журнал: %v", log)
+	}
+	assertNoDanglingDNSRefs(t, shared)
+	singboxCheckDir(t, dir)
+	singboxRunDir(t, dir)
 }
 
 // Правило пользователя, стоящее ПОСЛЕ системного префикса, остаётся
@@ -517,7 +571,7 @@ func routerFixtureWithRules(tag string) string {
   },
   "route": {
     "rule_set": [
-      {"tag": "%[1]s-set", "type": "remote", "format": "binary", "url": "https://example.org/%[1]s.srs", "update_interval": "24h"}
+      {"tag": "%[1]s-set", "type": "inline", "rules": [{"domain_suffix": ["%[1]s.example"]}]}
     ],
     "rules": [
       {"action": "sniff"},
@@ -556,7 +610,7 @@ func fakeipFixtureWithRules(tag string) string {
   },
   "route": {
     "rule_set": [
-      {"tag": "%[1]s-set", "type": "remote", "format": "binary", "url": "https://example.org/%[1]s.srs", "update_interval": "24h"}
+      {"tag": "%[1]s-set", "type": "inline", "rules": [{"domain_suffix": ["%[1]s.example"]}]}
     ],
     "rules": [
       {"action": "hijack-dns", "protocol": "dns"},
@@ -648,10 +702,18 @@ func routerFixtureWithUserPrivateRule() string {
 }`
 }
 
+// baseFixture повторяет форму, которую пишет ensureBaseConfig: direct-outbound
+// плюс bootstrap-резолвер. Резолвер здесь не украшение — на него перецеливаются
+// пользовательские DNS-серверы, потерявшие свой (см. healDanglingDomainResolvers).
 func baseFixture() string {
 	return `{
   "log": {"level": "warn"},
-  "outbounds": [{"type": "direct", "tag": "direct"}]
+  "outbounds": [{"type": "direct", "tag": "direct"}],
+  "dns": {
+    "servers": [{"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1"}],
+    "strategy": "prefer_ipv4"
+  },
+  "route": {"default_domain_resolver": "dns-bootstrap"}
 }`
 }
 
@@ -754,6 +816,28 @@ func dnsServerTags(cfg map[string]any) []string {
 	return tags
 }
 
+// dnsServerResolver возвращает domain_resolver.server у сервера с тегом tag.
+func dnsServerResolver(cfg map[string]any, tag string) string {
+	dns, ok := cfg["dns"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	servers, _ := dns["servers"].([]any)
+	for _, sv := range servers {
+		obj, ok := sv.(map[string]any)
+		if !ok || obj["tag"] != tag {
+			continue
+		}
+		r, ok := obj["domain_resolver"].(map[string]any)
+		if !ok {
+			return ""
+		}
+		s, _ := r["server"].(string)
+		return s
+	}
+	return ""
+}
+
 func dnsFinal(cfg map[string]any) string {
 	dns, ok := cfg["dns"].(map[string]any)
 	if !ok {
@@ -763,12 +847,14 @@ func dnsFinal(cfg map[string]any) string {
 	return final
 }
 
-// stubAtomicWrite подменяет запись на время теста и возвращает восстановление.
-func stubAtomicWrite(t *testing.T, fn func(string, []byte) error) func() {
+// stubAtomicWrite подменяет запись на время теста. Восстановление — через
+// t.Cleanup, а не возвращаемой функцией: t.Fatalf между подменой и ручным
+// восстановлением утащил бы заглушку в соседние тесты.
+func stubAtomicWrite(t *testing.T, fn func(string, []byte) error) {
 	t.Helper()
 	prev := atomicWrite
 	atomicWrite = fn
-	return func() { atomicWrite = prev }
+	t.Cleanup(func() { atomicWrite = prev })
 }
 
 func logContains(log []string, substr string) bool {
@@ -803,6 +889,75 @@ func assertBackupExists(t *testing.T, dir, name string) {
 	path := filepath.Join(dir, "disabled", name+legacyBackupSuffix)
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("резервная копия %s не найдена: %v", name, err)
+	}
+}
+
+// singboxRunDir запускает НАСТОЯЩИЙ `sing-box run -C dir` на пару секунд.
+// Нужен отдельно от check, потому что они расходятся: висячий domain_resolver у
+// DNS-сервера check пропускает, а run падает с «start service: dependency[...]
+// not found for server[...]». Наш валидатор гоняет именно check, поэтому такой
+// конфиг проехал бы валидацию и убил движок на старте.
+//
+// Годится только для каталогов без инбаундов захвата: tproxy/tun требуют
+// привилегий, которых у тестового процесса нет.
+func singboxRunDir(t *testing.T, dir string) {
+	t.Helper()
+	bin := locateSingboxBinaryForTest()
+	if bin == "" {
+		t.Log("sing-box не найден — запуск пропущен")
+		return
+	}
+	// 1.5s: FATAL при старте прилетает за десятки миллисекунд, всё
+	// остальное время — доказательство, что движок поднялся и работает.
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "run", "-C", dir)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	_ = cmd.Run() // выход по таймауту — норма: значит движок поднялся и работал
+	if bytes.Contains(out.Bytes(), []byte("FATAL")) {
+		t.Fatalf("sing-box run упал на результате миграции:\n%s", out.String())
+	}
+}
+
+// assertNoDanglingDNSRefs — статический ассерт того же класса дефектов, что
+// ловит singboxRunDir: ни одна ссылка domain_resolver в слоте не должна вести в
+// тег, которого нет ни в самом слоте, ни в базовом. Дешевле запуска и
+// применим к каталогам, которые запустить нельзя (инбаунды захвата).
+func assertNoDanglingDNSRefs(t *testing.T, cfg map[string]any, extraKnown ...string) {
+	t.Helper()
+	known := map[string]bool{}
+	for _, tag := range dnsServerTags(cfg) {
+		known[tag] = true
+	}
+	for _, tag := range extraKnown {
+		known[tag] = true
+	}
+	check := func(where string, holder map[string]any) {
+		r, ok := holder["domain_resolver"].(map[string]any)
+		if !ok {
+			return
+		}
+		tag, _ := r["server"].(string)
+		if !known[tag] {
+			t.Errorf("висячая ссылка domain_resolver %q в %s: sing-box не стартует с ней", tag, where)
+		}
+	}
+	for _, ob := range outboundsOf(cfg) {
+		tag, _ := ob["tag"].(string)
+		check("outbound "+tag, ob)
+	}
+	if dns, ok := cfg["dns"].(map[string]any); ok {
+		servers, _ := dns["servers"].([]any)
+		for _, sv := range servers {
+			if obj, ok := sv.(map[string]any); ok {
+				tag, _ := obj["tag"].(string)
+				check("dns-сервер "+tag, obj)
+			}
+		}
+	}
+	if route, ok := cfg["route"].(map[string]any); ok {
+		check("route.default_domain_resolver", route)
 	}
 }
 
