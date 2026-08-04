@@ -60,6 +60,7 @@ func (s *Service) RefreshSubscription(id string) (ClientInstance, ImportPayload,
 		return ClientInstance{}, ImportPayload{}, fmt.Errorf("клиент %q не найден", id)
 	}
 	full.Clients[idx].Config = cfg
+	s.startBackoff.Forget(clientKey(id))
 	if name := strings.TrimSpace(profile.Name); name != "" {
 		full.Clients[idx].Name = name
 	}

@@ -87,6 +87,26 @@ func TestUpdateConfigClearsBackoff(t *testing.T) {
 	}
 }
 
+// StartServerInstance нормализует listen через UpdateServerInstance. Если тот
+// сбрасывает backoff, окно у серверов навсегда остаётся минимальным: супервизор
+// делает Allow → Start (сброс) → Fail (счётчик с нуля), и рост до 15 минут не
+// работает — при том что путь старта сервера самый дорогой.
+func TestStartServerKeepsBackoff(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	now := time.Now()
+	s.startBackoff.Fail(serverKey(DefaultInstanceID), now)
+
+	// Дефолтный сервер без -connect: старт падает уже после нормализации listen.
+	if err := s.StartServerInstance(DefaultInstanceID); err == nil {
+		t.Fatal("ожидалась ошибка старта сервера без backend-адреса")
+	}
+	if s.startBackoff.Allow(serverKey(DefaultInstanceID), now) {
+		t.Fatal("старт сервера не должен стирать окно backoff")
+	}
+}
+
 func TestDeleteClientForgetsBackoff(t *testing.T) {
 	s := enabledClientService(t, "")
 	defer s.Stop()

@@ -42,8 +42,11 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// целиком и держит список снапшотом времени загрузки страницы: иначе
 	// любое сохранение воскрешало бы удалённых и теряло добавленных.
 	cfg.Clients = full.Servers[idx].Config.Clients
+	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
+	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
+	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
+	// работать ровно там, где путь старта тянет NDMS/RCI.
 	full.Servers[idx].Config = cfg
-	s.startBackoff.Forget(serverKey(id))
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
 	savedCfg := full.Servers[idx].Config

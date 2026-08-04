@@ -85,6 +85,24 @@ func TestUpdateConfigClearsBackoff(t *testing.T) {
 	}
 }
 
+// См. пояснение в freeturn: сброс backoff внутри UpdateServerInstance отключил
+// бы рост окна, потому что StartServerInstance зовёт его сам.
+func TestStartServerKeepsBackoff(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	now := time.Now()
+	s.startBackoff.Fail(serverKey(DefaultInstanceID), now)
+
+	// Дефолтный сервер без пароля: старт падает уже после нормализации listen.
+	if err := s.StartServerInstance(DefaultInstanceID); err == nil {
+		t.Fatal("ожидалась ошибка старта сервера без пароля")
+	}
+	if s.startBackoff.Allow(serverKey(DefaultInstanceID), now) {
+		t.Fatal("старт сервера не должен стирать окно backoff")
+	}
+}
+
 func TestDeleteClientForgetsBackoff(t *testing.T) {
 	s := enabledClientService(t, "")
 	defer s.Stop()

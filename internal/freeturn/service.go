@@ -160,8 +160,11 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
+	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
+	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
+	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
+	// работать ровно там, где он нужнее всего.
 	full.Servers[idx].Config = cfg
-	s.startBackoff.Forget(serverKey(id))
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
 	s.mu.Unlock()
