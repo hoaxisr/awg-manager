@@ -46,10 +46,14 @@ func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {
 	if now.Sub(*st.StartedAt) < clientHealthGrace {
 		return false
 	}
-	// Только явная телеметрия: отсутствие строк статистики в хвосте лога — это
-	// «не знаем», а не «активных ноль» (см. activeTelemetry).
 	active, known := activeTelemetry(st.Log)
-	return known && active == 0
+	if !known {
+		return false
+	}
+	if active == 0 {
+		return true
+	}
+	return ClientTrafficStalled(st.Log)
 }
 
 func (s *Service) restartClientInstance(id string) error {

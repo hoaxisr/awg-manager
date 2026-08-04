@@ -425,6 +425,38 @@ func TestProcess_StartMissingBinary(t *testing.T) {
 	}
 }
 
+func TestProcess_StartRestartsOrphanPID(t *testing.T) {
+	dir := t.TempDir()
+	p1 := newProcess("client", "/bin/sh", dir)
+	p1.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "sleep 30")
+	}
+	if err := p1.Start(nil); err != nil {
+		t.Fatal(err)
+	}
+	orphanPID, _ := p1.readPID()
+
+	// Новый процесс awg-manager: тот же pidfile, startedAt не задан.
+	p2 := newProcess("client", "/bin/sh", dir)
+	p2.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "echo adopted; sleep 30")
+	}
+	if err := p2.Start(nil); err != nil {
+		t.Fatalf("Start orphan: %v", err)
+	}
+	st := p2.Status()
+	if st.StartedAt == nil {
+		t.Fatal("want StartedAt after orphan restart")
+	}
+	if st.PID == orphanPID {
+		t.Fatalf("want new PID, still on orphan %d", orphanPID)
+	}
+	if !strings.Contains(st.Log, "adopted") {
+		t.Fatalf("want log from restarted process, got %q", st.Log)
+	}
+	_ = p2.Stop()
+}
+
 func TestBinaryPresent(t *testing.T) {
 	if binaryPresent("/nonexistent/path") {
 		t.Error("missing path must be absent")

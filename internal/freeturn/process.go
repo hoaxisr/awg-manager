@@ -75,7 +75,14 @@ func (p *process) Start(args []string) error {
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
 	if running, _ := p.IsRunning(); running {
-		return nil
+		p.mu.Lock()
+		tracked := p.startedAt != nil
+		p.mu.Unlock()
+		if tracked {
+			return nil
+		}
+		// PID file from a previous awg-manager run — no log capture in this process.
+		_ = p.Stop()
 	}
 	if p.binary == "" {
 		return fmt.Errorf("freeturn %s: binary path not configured", p.name)

@@ -54,8 +54,8 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
-		running, _ := proc.IsRunning()
-		if !running {
+		st := proc.Status()
+		if !st.Running {
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
@@ -72,8 +72,20 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			}
 			continue
 		}
+		if st.StartedAt == nil {
+			if err := s.restartClientInstance(c.ID); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("supervisor", c.ID, "перезапуск осиротевшего клиента: "+err.Error())
+				}
+			} else {
+				s.startBackoff.Success(key)
+				if s.appLog != nil {
+					s.appLog.Info("supervisor", c.ID, "клиент перезапущен (осиротевший PID)")
+				}
+			}
+			continue
+		}
 		s.startBackoff.Success(key)
-		st := proc.Status()
 		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
@@ -94,9 +106,14 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.startBackoff.Forget(key)
 			continue
 		}
-		if running, _ := s.serverProcs.get(srv.ID).IsRunning(); running {
+		proc := s.serverProcs.get(srv.ID)
+		st := proc.Status()
+		if st.Running && st.StartedAt != nil {
 			s.startBackoff.Success(key)
 			continue
+		}
+		if st.Running {
+			_ = proc.Stop()
 		}
 		if !s.startBackoff.Allow(key, now) {
 			continue

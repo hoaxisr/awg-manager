@@ -191,3 +191,58 @@ func TestService_StopServerClearsEnabled(t *testing.T) {
 		t.Fatal("пользовательский Stop сервера должен сбросить Enabled")
 	}
 }
+
+func TestService_UpdateServerPreservesEnabled(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Servers[0].Config = validServerCfg()
+	cfg.Servers[0].Config.Enabled = true
+	if err := s.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := validServerCfg()
+	stale.Enabled = false // UI часто шлёт false, не перечитав конфиг после Start
+	stale.Debug = true
+	if err := s.UpdateServerInstance(DefaultInstanceID, stale); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetConfig()
+	if !got.Servers[0].Config.Enabled {
+		t.Fatal("UpdateServerInstance не должен сбрасывать Enabled")
+	}
+	if !got.Servers[0].Config.Debug {
+		t.Fatal("прочие поля должны обновляться")
+	}
+}
+
+func TestService_UpdateClientPreservesEnabled(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients[0].Config = validClientCfg("h:1")
+	cfg.Clients[0].Config.Enabled = true
+	if err := s.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := validClientCfg("h:2")
+	stale.Enabled = false
+	if err := s.UpdateClientInstance(DefaultInstanceID, stale); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetConfig()
+	if !got.Clients[0].Config.Enabled {
+		t.Fatal("UpdateClientInstance не должен сбрасывать Enabled")
+	}
+	if got.Clients[0].Config.Peer != "h:2" {
+		t.Fatal("peer должен обновиться")
+	}
+}

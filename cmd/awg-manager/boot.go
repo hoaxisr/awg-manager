@@ -276,7 +276,9 @@ func (a *app) startBootSequence() {
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
-		a.resumeEnabledProxyClients("daemon-restart")
+		// Как на cold-boot: DNS/backend WG могут быть ещё не готовы сразу после
+		// opkg upgrade; отложенный автостарт с повторами надёжнее мгновенного resume.
+		a.scheduleProxyClientAutostart("daemon-restart")
 		a.reconcileLinkedEndpoints("startup")
 	}
 

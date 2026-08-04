@@ -80,7 +80,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: нет активных сессий")
+				s.appLog.Info("health", c.ID, "клиент перезапущен: peer недоступен")
 			}
 			s.clientHealth.reset(c.ID)
 		}

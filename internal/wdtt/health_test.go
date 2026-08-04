@@ -1,6 +1,8 @@
 package wdtt
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +48,26 @@ func TestClientPeerUnhealthyIgnoresMissingTelemetry(t *testing.T) {
 		if clientPeerUnhealthy(st, time.Now()) {
 			t.Fatalf("%s: телеметрии нет — перезапускать нельзя", name)
 		}
+	}
+}
+
+func TestClientPeerUnhealthyStalledTraffic(t *testing.T) {
+	started := time.Now().Add(-4 * time.Minute)
+	var sb strings.Builder
+	for i := 0; i < stallMinEvents; i++ {
+		up := 52000 + i*148
+		sb.WriteString("__WDTT_EVENT__|STATS|{\"active\":9,\"bytes_down\":2424,\"bytes_up\":")
+		sb.WriteString(strconv.Itoa(up))
+		sb.WriteString("}\n")
+	}
+	st := ProcessStatus{
+		Running:         true,
+		StartedAt:       &started,
+		DtlsConnections: 9,
+		Log:             sb.String(),
+	}
+	if !clientPeerUnhealthy(st, time.Now()) {
+		t.Fatal("expected unhealthy for zombie relay with stalled downstream")
 	}
 }
 
