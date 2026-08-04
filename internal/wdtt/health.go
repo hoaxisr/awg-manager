@@ -6,7 +6,10 @@ import (
 )
 
 const (
-	clientHealthGrace   = 3 * time.Minute
+	// clientHealthGrace шире, чем у freeturn: детекта капчи в пакете нет, а
+	// VK-авторизация wt-client'а с ручной капчей легко занимает минуты — на
+	// коротком окне health-check убивал бы её на середине.
+	clientHealthGrace   = 5 * time.Minute
 	clientHealthStrikes = 4
 )
 
@@ -43,7 +46,10 @@ func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {
 	if now.Sub(*st.StartedAt) < clientHealthGrace {
 		return false
 	}
-	return st.DtlsConnections == 0
+	// Только явная телеметрия: отсутствие строк статистики в хвосте лога — это
+	// «не знаем», а не «активных ноль» (см. activeTelemetry).
+	active, known := activeTelemetry(st.Log)
+	return known && active == 0
 }
 
 func (s *Service) restartClientInstance(id string) error {
@@ -52,6 +58,11 @@ func (s *Service) restartClientInstance(id string) error {
 	}
 	if err := s.clientProcs.get(id).Stop(); err != nil {
 		return err
+	}
+	// Stop блокирующий (до ~3 с): пользователь мог за это время нажать «стоп»,
+	// и его решение важнее нашего health-рестарта.
+	if inst, err := s.clientInstance(id); err == nil && !inst.Config.Enabled {
+		return nil
 	}
 	return s.StartClientInstance(id)
 }

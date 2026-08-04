@@ -52,7 +52,10 @@ func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {
 	if logIndicatesCaptchaWaiting(st.Log) {
 		return false
 	}
-	return st.DtlsConnections == 0
+	// Только явная телеметрия: пустой лог-хвост (маркеры стримов вытеснены из
+	// ринга) неотличим от «сессий нет», а рестарт живого клиента рвёт трафик.
+	active, known := dtlsTelemetry(st.Log)
+	return known && active == 0
 }
 
 // restartClientInstance stops and starts the client without clearing Enabled
@@ -63,6 +66,11 @@ func (s *Service) restartClientInstance(id string) error {
 	}
 	if err := s.clientProcs.get(id).Stop(); err != nil {
 		return err
+	}
+	// Stop блокирующий (до ~3 с): пользователь мог за это время нажать «стоп»,
+	// и его решение важнее нашего health-рестарта.
+	if inst, err := s.clientInstance(id); err == nil && !inst.Config.Enabled {
+		return nil
 	}
 	return s.StartClientInstance(id)
 }

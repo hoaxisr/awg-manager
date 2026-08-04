@@ -13,10 +13,21 @@ var wdttStatsLineRE = regexp.MustCompile(`\[СТАТИСТИКА\]\s*Актив�
 // wdtt-client stdout: __WDTT_EVENT__|STATS|{"active":N,...} or the Russian
 // [СТАТИСТИКА] line emitted every 3 seconds.
 func ExtractActiveConnectionsFromLog(log string) int {
+	n, _ := activeTelemetry(log)
+	return n
+}
+
+// activeTelemetry additionally reports whether the log tail carries stats at
+// all: отсутствие строк — это «не знаем», а не «активных ноль» (клиент может
+// быть жив, но молчалив либо печатать статистику в другом формате).
+func activeTelemetry(log string) (active int, known bool) {
 	if n := extractActiveFromEvents(log); n >= 0 {
-		return n
+		return n, true
 	}
-	return extractActiveFromStatsLines(log)
+	if n := extractActiveFromStatsLines(log); n >= 0 {
+		return n, true
+	}
+	return 0, false
 }
 
 func extractActiveFromEvents(log string) int {
@@ -51,9 +62,6 @@ func extractActiveFromStatsLines(log string) int {
 		if n, err := strconv.Atoi(m[1]); err == nil {
 			last = n
 		}
-	}
-	if last < 0 {
-		return 0
 	}
 	return last
 }
