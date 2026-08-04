@@ -60,9 +60,9 @@ func TestSingboxInboundsHandler_AttributionPerSlot(t *testing.T) {
 		  "route":{"rules":[{"inbound":"my-vless-in","outbound":"my-vless"}]}}`)
 	writeSlot(t, dir, "18-qos-routes.json",
 		`{"inbounds":[{"type":"tproxy","tag":"tproxy-qos-0","listen":"127.0.0.1","listen_port":51281}]}`)
-	writeSlot(t, dir, "20-router.json",
+	writeSlot(t, dir, "21-routing.json",
 		`{"inbounds":[{"type":"tproxy","tag":"tproxy-in","listen":"127.0.0.1","listen_port":51280},{"type":"redirect","tag":"redirect-in","listen":"127.0.0.1","listen_port":51300}]}`)
-	writeSlot(t, dir, "21-fakeip.json",
+	writeSlot(t, dir, "20-fakeip.json",
 		`{"inbounds":[{"type":"tun","tag":"tun-in"}]}`)
 	writeSlot(t, dir, "30-deviceproxy.json",
 		`{"inbounds":[{"type":"mixed","tag":"device-proxy-abc-in","listen":"0.0.0.0","listen_port":1099}]}`)
@@ -109,8 +109,8 @@ func TestSingboxInboundsHandler_AttributionPerSlot(t *testing.T) {
 	}{
 		{"my-vless-in", "tunnels", "tunnel", "my-vless"},
 		{"tproxy-qos-0", "qos-routes", "qos", ""},
-		{"tproxy-in", "router", "engine", ""},
-		{"redirect-in", "router", "engine", ""},
+		{"tproxy-in", "routing", "engine", ""},
+		{"redirect-in", "routing", "engine", ""},
 		{"tun-in", "fakeip", "engine", ""},
 		{"device-proxy-abc-in", "deviceproxy", "deviceproxy", "Прокси гостиной"},
 		{"sub-11112222-in", "subscriptions", "subscription", "Моя подписка"},
@@ -209,7 +209,7 @@ func TestSingboxInboundsHandler_IdleMatrix(t *testing.T) {
 				`{"inbounds":[{"type":"mixed","tag":"tun1-in","listen":"127.0.0.1","listen_port":1081}]`+tunnelRules+`}`)
 			writeSlot(t, dir, "18-qos-routes.json",
 				`{"inbounds":[{"type":"tproxy","tag":"tproxy-qos-1","listen":"127.0.0.1","listen_port":51282}]}`)
-			writeSlot(t, dir, "20-router.json",
+			writeSlot(t, dir, "21-routing.json",
 				`{"inbounds":[{"type":"tproxy","tag":"tproxy-in","listen":"127.0.0.1","listen_port":51280}]}`)
 			writeSlot(t, dir, "30-deviceproxy.json",
 				`{"inbounds":[{"type":"mixed","tag":"device-proxy-in","listen":"0.0.0.0","listen_port":1099}]}`)
@@ -265,7 +265,7 @@ func TestSingboxInboundsHandler_DuplicateTagWarning(t *testing.T) {
 	dir := t.TempDir()
 	writeSlot(t, dir, "10-tunnels.json",
 		`{"inbounds":[{"type":"mixed","tag":"clash-in","listen":"127.0.0.1","listen_port":1081}]}`)
-	writeSlot(t, dir, "20-router.json",
+	writeSlot(t, dir, "21-routing.json",
 		`{"inbounds":[{"type":"tproxy","tag":"clash-in","listen":"127.0.0.1","listen_port":51280}]}`)
 
 	h := NewSingboxInboundsHandler(SingboxInboundsDeps{
@@ -279,7 +279,7 @@ func TestSingboxInboundsHandler_DuplicateTagWarning(t *testing.T) {
 	if len(resp.Warnings) != 1 {
 		t.Fatalf("expected 1 duplicate-tag warning, got %v", resp.Warnings)
 	}
-	want := `конфликт тегов inbound: "clash-in" в слотах tunnels и router — sing-box не загрузит такой конфиг`
+	want := `конфликт тегов inbound: "clash-in" в слотах tunnels и routing — sing-box не загрузит такой конфиг`
 	if resp.Warnings[0] != want {
 		t.Errorf("warning = %q, want %q", resp.Warnings[0], want)
 	}
@@ -300,7 +300,7 @@ func TestSingboxInboundsHandler_ActiveSlotsOnly(t *testing.T) {
 	}
 	writeSlot(t, filepath.Join(dir, "disabled"), "40-subscriptions.json",
 		`{"inbounds":[{"type":"mixed","tag":"parked-in","listen":"127.0.0.1","listen_port":1300}]}`)
-	writeSlot(t, filepath.Join(dir, "pending"), "20-router.json",
+	writeSlot(t, filepath.Join(dir, "pending"), "21-routing.json",
 		`{"inbounds":[{"type":"tproxy","tag":"draft-in","listen":"127.0.0.1","listen_port":51280}]}`)
 	writeSlot(t, dir, "notes.txt",
 		`{"inbounds":[{"type":"mixed","tag":"not-json-in","listen":"127.0.0.1","listen_port":2000}]}`)

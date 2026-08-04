@@ -352,7 +352,7 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		switch s.Slot {
 		case "fakeip":
 			fakeIPEnabled = s.Enabled
-		case "router":
+		case "routing":
 			routerEnabled = s.Enabled
 		}
 	}
