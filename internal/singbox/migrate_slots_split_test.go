@@ -228,9 +228,13 @@ func TestMigrateSlotsSplitResultLoadsInSingbox(t *testing.T) {
 			// который `check` не видит, а старт ловит, проверяется статически.
 			shared := readSlot(t, dir, "21-routing.json")
 			mode := readSlot(t, dir, tc.modeFile)
-			known := append(dnsServerTags(mode), BaseBootstrapDNSTag)
-			assertNoDanglingDNSRefs(t, shared, known...)
-			assertNoDanglingDNSRefs(t, mode, append(dnsServerTags(shared), BaseBootstrapDNSTag)...)
+			base := readSlot(t, dir, "00-base.json")
+			all := append(append(dnsServerTags(shared), dnsServerTags(mode)...), dnsServerTags(base)...)
+			assertNoDanglingDNSRefs(t, shared, all...)
+			assertNoDanglingDNSRefs(t, mode, all...)
+			// Базовый слот — единственный, кто пишет резолвер СТРОКОЙ, а не
+			// объектом; проверяем и его, чтобы разбор обеих форм был живым.
+			assertNoDanglingDNSRefs(t, base, all...)
 			singboxCheckDir(t, dir)
 		})
 	}
@@ -503,6 +507,36 @@ func TestMigrateSlotsSplitRenamesReservedDNSTag(t *testing.T) {
 	if bytes.Contains(raw, []byte(`"server": "real"`)) {
 		t.Errorf("ссылка на старый тег не переписана:\n%s", raw)
 	}
+}
+
+// Базовый слот ищется и УРОВНЕМ ВЫШЕ разбираемого файла. Это не экзотика, а
+// самый частый путь: при выключенном движке слот припаркован в disabled/, а
+// черновик всегда лежит в pending/ — 00-base.json в этих каталогах не бывает.
+// Без поиска на уровень выше резолвер не находится, и пользовательский
+// DNS-сервер молча удаляется вместо перецеливания.
+func TestMigrateSlotsSplitFindsBaseSlotOneLevelUp(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	// Движок выключен: слот прежней раскладки припаркован.
+	writeSlotFixture(t, dir, "disabled/21-fakeip.json", fakeipFixtureWithRules("parked"))
+
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) }); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	// Разбор пишется в тот же каталог, где лежал источник.
+	shared := readSlot(t, dir, "disabled/21-routing.json")
+	raw := readSlotBytes(t, dir, "disabled/21-routing.json")
+	if got := dnsServerTags(shared); len(got) != 1 || got[0] != "user-dns" {
+		t.Errorf("DNS-сервер пользователя удалён вместо перецеливания: %v\n%s", got, raw)
+	}
+	if got := dnsServerResolver(shared, "user-dns"); got != BaseBootstrapDNSTag {
+		t.Errorf("резолвер user-dns = %q, ожидался %q\n%s", got, BaseBootstrapDNSTag, raw)
+	}
+	if logContains(log, "удалён") {
+		t.Errorf("сервер удалён, хотя резолвер базового слота был доступен: %v", log)
+	}
+	assertNoDanglingDNSRefs(t, shared, BaseBootstrapDNSTag)
 }
 
 // Целить резолвер некуда: базовый слот DNS не объявляет вовсе. Оставить
@@ -933,32 +967,48 @@ func assertNoDanglingDNSRefs(t *testing.T, cfg map[string]any, extraKnown ...str
 	for _, tag := range extraKnown {
 		known[tag] = true
 	}
-	check := func(where string, holder map[string]any) {
-		r, ok := holder["domain_resolver"].(map[string]any)
+	check := func(where string, holder map[string]any, key string) {
+		tag, ok := resolverTagOf(holder[key])
 		if !ok {
 			return
 		}
-		tag, _ := r["server"].(string)
 		if !known[tag] {
-			t.Errorf("висячая ссылка domain_resolver %q в %s: sing-box не стартует с ней", tag, where)
+			t.Errorf("висячая ссылка %s %q в %s: sing-box не стартует с ней", key, tag, where)
 		}
 	}
 	for _, ob := range outboundsOf(cfg) {
 		tag, _ := ob["tag"].(string)
-		check("outbound "+tag, ob)
+		check("outbound "+tag, ob, "domain_resolver")
 	}
 	if dns, ok := cfg["dns"].(map[string]any); ok {
 		servers, _ := dns["servers"].([]any)
 		for _, sv := range servers {
 			if obj, ok := sv.(map[string]any); ok {
 				tag, _ := obj["tag"].(string)
-				check("dns-сервер "+tag, obj)
+				check("dns-сервер "+tag, obj, "domain_resolver")
 			}
 		}
 	}
+	// Ключ здесь ДРУГОЙ: в route это default_domain_resolver, а не
+	// domain_resolver. С неверным ключом ассерт молча не проверял ничего — а
+	// именно этот носитель `check` не ловит вовсе: скаляр базового слота
+	// выигрывает слияние first-file-wins и маскирует висячую ссылку.
 	if route, ok := cfg["route"].(map[string]any); ok {
-		check("route.default_domain_resolver", route)
+		check("route", route, "default_domain_resolver")
 	}
+}
+
+// resolverTagOf разбирает обе формы, которые sing-box принимает для резолвера:
+// объект {"server":"tag"} и голую строку "tag" — второй пишет сам 00-base.json.
+func resolverTagOf(v any) (string, bool) {
+	switch r := v.(type) {
+	case string:
+		return r, r != ""
+	case map[string]any:
+		tag, _ := r["server"].(string)
+		return tag, tag != ""
+	}
+	return "", false
 }
 
 // singboxCheckDir прогоняет настоящий `sing-box check -C dir`, если бинарь
