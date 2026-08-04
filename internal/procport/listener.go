@@ -1,8 +1,12 @@
 package procport
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Proto is the socket protocol for listener lookup.
@@ -67,28 +71,51 @@ func ParseListenHostPort(addr, defaultHost string) (host string, port int, ok bo
 }
 
 func parsePort(s string) (int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 || n > 65535 {
 		return 0, errInvalidPort
-	}
-	var n int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, errInvalidPort
-		}
-		n = n*10 + int(c-'0')
-		if n > 65535 {
-			return 0, errInvalidPort
-		}
 	}
 	return n, nil
 }
 
-var errInvalidPort = errorString("invalid port")
+var errInvalidPort = errors.New("invalid port")
 
-type errorString string
+const bindLookupTTL = 30 * time.Second
 
-func (e errorString) Error() string { return string(e) }
+var (
+	bindLookupMu    sync.Mutex
+	bindLookupCache = map[string]bindLookupEntry{}
+)
+
+type bindLookupEntry struct {
+	info ListenerInfo
+	at   time.Time
+}
+
+// lookupListenerCached — LookupListener обходит весь /proc с readlink по каждому
+// fd, а статус инстансов опрашивается раз в 2 с, пока открыта вкладка. Владелец
+// занятого порта меняется редко, поэтому здесь (и только здесь, не в kill-пути)
+// ответ переиспользуется.
+func lookupListenerCached(host string, port int, proto Proto) (ListenerInfo, error) {
+	key := string(proto) + "|" + host + "|" + strconv.Itoa(port)
+	now := time.Now()
+
+	bindLookupMu.Lock()
+	if e, ok := bindLookupCache[key]; ok && now.Sub(e.at) < bindLookupTTL {
+		bindLookupMu.Unlock()
+		return e.info, nil
+	}
+	bindLookupMu.Unlock()
+
+	info, err := LookupListener(host, port, proto)
+	if err != nil {
+		return info, err
+	}
+	bindLookupMu.Lock()
+	bindLookupCache[key] = bindLookupEntry{info: info, at: now}
+	bindLookupMu.Unlock()
+	return info, nil
+}
 
 // EnrichBindError appends PID/comm when lastError looks like a bind conflict.
 func EnrichBindError(lastError, listen string, proto Proto) string {
@@ -99,7 +126,7 @@ func EnrichBindError(lastError, listen string, proto Proto) string {
 	if !ok {
 		return lastError
 	}
-	info, err := LookupListener(host, port, proto)
+	info, err := lookupListenerCached(host, port, proto)
 	if err != nil || !info.Open || info.PID <= 0 {
 		return lastError
 	}

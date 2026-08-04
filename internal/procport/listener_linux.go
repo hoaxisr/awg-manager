@@ -5,6 +5,7 @@ package procport
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,16 +18,12 @@ func LookupListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	if port <= 0 || port > 65535 {
 		return info, errInvalidPort
 	}
-	wantPort := fmt.Sprintf("%04X", port)
-	wantAddrs := make(map[string]struct{})
-	for _, hex := range ipv4HexForms(host) {
-		wantAddrs[hex+":"+wantPort] = struct{}{}
-	}
-	if len(wantAddrs) == 0 {
+	want, ok := newAddrMatch(host, port)
+	if !ok {
 		return info, nil
 	}
 
-	inodes := listenerInodes(proto, wantAddrs)
+	inodes := listenerInodes(proto, want)
 	if len(inodes) == 0 {
 		return info, nil
 	}
@@ -49,6 +46,10 @@ func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	if !info.Open || info.PID <= 0 {
 		return info, fmt.Errorf("порт %s:%d (%s) не занят процессом", host, port, proto)
 	}
+	// Себя и init не трогаем ни при каких настройках инстанса.
+	if info.PID == os.Getpid() || info.PID == 1 {
+		return info, fmt.Errorf("процесс %d (%s) остановке не подлежит", info.PID, info.Comm)
+	}
 	if err := terminatePID(info.PID); err != nil {
 		return info, err
 	}
@@ -59,59 +60,37 @@ func KillListener(host string, port int, proto Proto) (ListenerInfo, error) {
 	return info, nil
 }
 
-func listenerInodes(proto Proto, wantAddrs map[string]struct{}) map[string]struct{} {
+func listenerInodes(proto Proto, want addrMatch) map[string]struct{} {
 	out := make(map[string]struct{})
-	switch proto {
-	case ProtoTCP:
-		for _, procFile := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-			collectTCPListenerInodes(procFile, wantAddrs, out)
+	files := []string{"/proc/net/udp", "/proc/net/udp6"}
+	if proto == ProtoTCP {
+		files = []string{"/proc/net/tcp", "/proc/net/tcp6"}
+	}
+	for _, procFile := range files {
+		f, err := os.Open(procFile)
+		if err != nil {
+			continue
 		}
-	default:
-		for _, procFile := range []string{"/proc/net/udp", "/proc/net/udp6"} {
-			collectUDPBoundInodes(procFile, wantAddrs, out)
-		}
+		collectListenerInodes(f, proto, want, out)
+		f.Close()
 	}
 	return out
 }
 
-func collectTCPListenerInodes(procFile string, wantAddrs map[string]struct{}, out map[string]struct{}) {
-	f, err := os.Open(procFile)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
+// collectListenerInodes сканирует таблицу /proc/net/{tcp,udp}[6] и складывает
+// inode'ы сокетов, занявших искомый порт.
+func collectListenerInodes(r io.Reader, proto Proto, want addrMatch, out map[string]struct{}) {
+	sc := bufio.NewScanner(r)
 	sc.Scan() // header
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) < 10 {
 			continue
 		}
-		if fields[3] != "0A" { // TCP_LISTEN
+		if proto == ProtoTCP && fields[3] != "0A" { // TCP_LISTEN
 			continue
 		}
-		if _, ok := wantAddrs[fields[1]]; ok {
-			out[fields[9]] = struct{}{}
-		}
-	}
-}
-
-func collectUDPBoundInodes(procFile string, wantAddrs map[string]struct{}, out map[string]struct{}) {
-	f, err := os.Open(procFile)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	sc.Scan() // header
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 10 {
-			continue
-		}
-		if _, ok := wantAddrs[fields[1]]; ok {
+		if want.matches(fields[1]) {
 			out[fields[9]] = struct{}{}
 		}
 	}
@@ -167,24 +146,73 @@ func readComm(pid int) string {
 	return strings.TrimSpace(string(data))
 }
 
-func ipv4HexForms(host string) []string {
+// addrMatch решает, занял ли сокет из /proc/net искомый host:port.
+type addrMatch struct {
+	portHex  string
+	addrs    map[string]bool // допустимые формы адреса, пусто = любой
+	anyLocal bool            // ищем 0.0.0.0: конфликтует любой адрес на порту
+}
+
+// newAddrMatch раскладывает host в формы, в которых его печатает ядро.
+//
+// /proc/net печатает адрес как %08X от нативных слов, поэтому порядок байт
+// зависит от платформы: на little-endian (aarch64, mipsel) 127.0.0.1 — это
+// "0100007F", на big-endian (mips) — "7F000001". Принимаем обе формы: лишний
+// вариант в худшем случае совпадёт с экзотическим адресом, а пропуск означал бы
+// «порт свободен» ровно там, где bind падает с EADDRINUSE.
+//
+// Для tcp6/udp6 тот же адрес приходит в v4-mapped виде (16 нулей + FFFF + ip),
+// и слово FFFF тоже переставлено на LE — отсюда обе 32-символьные формы.
+// Слушатель на wildcard (0.0.0.0 или ::) занимает порт для любого адреса, его
+// ловит allZeroHex в matches.
+func newAddrMatch(host string, port int) (addrMatch, bool) {
+	m := addrMatch{portHex: fmt.Sprintf("%04X", port)}
 	if host == "localhost" {
 		host = "127.0.0.1"
 	}
+	if host == "0.0.0.0" || host == "::" || host == "" {
+		m.anyLocal = true
+		return m, true
+	}
 	parts := strings.Split(host, ".")
 	if len(parts) != 4 {
-		return nil
+		return m, false
 	}
 	var b [4]byte
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 || n > 255 {
-			return nil
+			return m, false
 		}
 		b[i] = byte(n)
 	}
-	return []string{
-		fmt.Sprintf("%02X%02X%02X%02X", b[3], b[2], b[1], b[0]),
-		fmt.Sprintf("%02X%02X%02X%02X", b[0], b[1], b[2], b[3]),
+	le := fmt.Sprintf("%02X%02X%02X%02X", b[3], b[2], b[1], b[0])
+	be := fmt.Sprintf("%02X%02X%02X%02X", b[0], b[1], b[2], b[3])
+	const zeros16 = "0000000000000000"
+	m.addrs = map[string]bool{
+		le:                        true,
+		be:                        true,
+		zeros16 + "FFFF0000" + le: true,
+		zeros16 + "0000FFFF" + be: true,
 	}
+	return m, true
+}
+
+func (m addrMatch) matches(field string) bool {
+	addr, port, ok := strings.Cut(field, ":")
+	if !ok || !strings.EqualFold(port, m.portHex) {
+		return false
+	}
+	addr = strings.ToUpper(addr)
+	if m.anyLocal || allZeroHex(addr) {
+		return true
+	}
+	return m.addrs[addr]
+}
+
+func allZeroHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	return strings.Trim(s, "0") == ""
 }
