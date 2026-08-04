@@ -33,6 +33,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { createReorderDrag } from '$lib/components/sb-router/reorderDrag.svelte';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -56,12 +57,14 @@
 	import type { SingboxRouterDNSServer, SingboxRouterDNSRule, SingboxRouterDNSStrategy } from '$lib/types';
 
 	// ── Store sub-stores ───────────────────────────────────────────────────
+	// DNS — режимный (fakeip-слот); наборы и outbound'ы, на которые ссылаются
+	// DNS-правила и серверы, живут в общем слоте маршрутизации.
 	const storeDnsServers = fakeipConfig.dnsServers;
 	const storeDnsRules = fakeipConfig.dnsRules;
 	const storeDnsGlobals = fakeipConfig.dnsGlobals;
-	const storeRuleSets = fakeipConfig.ruleSets;
-	const storeOutbounds = fakeipConfig.outbounds;
-	const storeOptions = fakeipConfig.options;
+	const storeRuleSets = singboxRouter.ruleSets;
+	const storeOutbounds = singboxRouter.outbounds;
+	const storeOptions = singboxRouter.options;
 
 	// Контекст блокировки удаления серверов (один проход на список).
 	const dnsServerUsageContext = $derived({
@@ -175,7 +178,9 @@
 	}
 
 	onMount(() => {
+		// Прямой заход на чип может застать оба стора холодными — идемпотентно.
 		void fakeipConfig.loadAll();
+		void singboxRouter.loadAll();
 	});
 
 	onDestroy(() => {

@@ -10,7 +10,7 @@
   память — Clash /connections WebSocket поле `memory` (singbox:memory SSE).
 -->
 <script lang="ts">
-	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -71,8 +71,9 @@
 				: 'остановлен',
 	);
 
-	const outbounds = fakeipConfig.outbounds;
-	const options = fakeipConfig.options;
+	// Outbound'ы — общий слот маршрутизации (тот же стор, что у sb-router).
+	const outbounds = singboxRouter.outbounds;
+	const options = singboxRouter.options;
 
 	// Память процесса sing-box из Clash /connections WebSocket `memory` поля.
 	const memoryBytes = $derived($singboxMemory);

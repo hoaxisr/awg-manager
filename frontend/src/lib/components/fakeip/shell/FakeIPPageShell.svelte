@@ -12,13 +12,20 @@
     - Outbounds     — Status.outboundAwgCount + outboundCompositeCount → «5 + 3».
     - Rule sets     — Status.ruleSetCount.
     - DNS           — длина fakeipConfig.dnsRules.
-    - Маршруты      — Status.ruleCount.
+    - Маршруты      — длина singboxRouter.rules (Status.ruleCount считает
+                      merged-вид с системным префиксом режима, а на странице
+                      правил видны только правила общего слота).
     - Устройства    — Status.deviceCount.
     - Соединения    — liveConnectionsSnapshot.connectionsTotal (Clash WS),
                       тот же источник, что у sb-router LiveConnectionsChip.
 
   Live-WS соединений биндится здесь (bindLiveConnectionsStore — идемпотентно),
   поток открыт только при запущенном движке.
+
+  StagingBanner — тот же, что в sb-router: правила, наборы и outbound'ы лежат в
+  общем слоте маршрутизации и правятся через staging, поэтому правка на любом
+  fakeip-табе (включая привязку устройства) до «Применить» живёт в черновике.
+  Без баннера это выглядело бы как «изменения исчезли».
 -->
 <script lang="ts" module>
 	import type { Snippet } from 'svelte';
@@ -35,6 +42,7 @@
 	import { onMount } from 'svelte';
 	import { Tabs } from '$lib/components/ui';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { StagingBanner } from '$lib/components/singbox-routing';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { deviceProxyInstances } from '$lib/stores/deviceproxy';
 	import {
@@ -95,9 +103,11 @@
 	});
 
 	const status = singboxRouter.status;
+	const routerRules = singboxRouter.rules;
+	const routerInitialized = singboxRouter.initialized;
 	const dnsRules = fakeipConfig.dnsRules;
-	const options = fakeipConfig.options;
-	const outbounds = fakeipConfig.outbounds;
+	const options = singboxRouter.options;
+	const outbounds = singboxRouter.outbounds;
 	const connSnapshot = liveConnectionsSnapshot;
 	// Inbounds badge: tun-in (always 1 in fakeip mode) + device-proxy instances.
 	// Polling store auto-fetches on first subscribe ($-access below).
@@ -122,7 +132,7 @@
 			outbounds: composite > 0 ? `${atomic} + ${composite}` : atomic,
 			rulesets: st?.ruleSetCount,
 			dns: $dnsRules.length,
-			routes: st?.ruleCount,
+			routes: $routerInitialized ? $routerRules.length : undefined,
 			devices: st?.deviceCount,
 			connections: formatCompactCount($connSnapshot.connectionsTotal),
 		};
@@ -139,6 +149,8 @@
 </script>
 
 <div class="fakeip-shell">
+	<StagingBanner />
+
 	<FakeIPHero
 		{title}
 		{engineState}

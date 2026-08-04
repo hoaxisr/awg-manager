@@ -7,15 +7,17 @@
     - устройства: общий polling-store routing.policyDevicesStore
       (api.listPolicyDevices, NDMS hotspot). Подписка сама стартует опрос (30с).
     - назначение (персональный/прямой): чистый resolveDeviceTargeting
-      (deviceTargeting.ts), на вход — route-правила (fakeipConfig.rules).
+      (deviceTargeting.ts), на вход — route-правила (singboxRouter.rules).
       ipInCIDR из utils/cidr.
-    - имя привязанного outbound: лейбл из fakeipConfig.options (тот же каталог,
+    - имя привязанного outbound: лейбл из singboxRouter.options (тот же каталог,
       что route-final/RuleEditModal).
     - live-соединения per-IP: liveConnectionsSnapshot (sb-router) — счётчик по
       metadata.sourceIP. Это ЖИВОЙ сигнал → показываем число только при движке
       live; иначе «—» (честность §12.1). Store биндится в FakeIPPageShell.
     - привязка: фокус-пикер (Dropdown outbound'ов) → add/update route-правила
       {source_ip_cidr:[<ip>/32], outbound}. Снятие — delete по индексу + Confirm.
+      Правило пишется в общий слот через staging: до «Применить» (StagingBanner
+      в каркасе) новая привязка живёт в черновике, а не на роутере.
 
   Движок-гейт: список устройств — информационный (NDMS), рендерится при любом
   состоянии движка; счётчик соединений деградирует по engineState.live.
@@ -23,7 +25,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
-	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { policyDevicesStore } from '$lib/stores/routing';
 	import { liveConnectionsSnapshot } from '$lib/components/sb-router/liveConnectionsStore';
 	import { notifications } from '$lib/stores/notifications';
@@ -44,13 +46,13 @@
 
 	// ── Источники ──────────────────────────────────────────────────────────
 	const devicesState = policyDevicesStore; // подписка стартует опрос (30с)
-	const storeRules = fakeipConfig.rules;
-	const storeOptions = fakeipConfig.options;
+	// Правила и каталог outbound'ов — общий слот маршрутизации.
+	const storeRules = singboxRouter.rules;
+	const storeOptions = singboxRouter.options;
 
 	onMount(() => {
-		// rules/options живут в fakeipConfig; прямой заход на чип может застать
-		// store холодным — идемпотентно.
-		void fakeipConfig.loadAll();
+		// Прямой заход на чип может застать стор холодным — идемпотентно.
+		void singboxRouter.loadAll();
 	});
 
 	const devices = $derived<PolicyDevice[]>($devicesState.data ?? []);
@@ -143,11 +145,11 @@
 		};
 		try {
 			if (bindRuleIndex !== null) {
-				await api.singboxFakeIPUpdateRule(bindRuleIndex, rule);
+				await api.singboxRouterUpdateRule(bindRuleIndex, rule);
 			} else {
-				await api.singboxFakeIPAddRule(rule);
+				await api.singboxRouterAddRule(rule);
 			}
-			await fakeipConfig.loadAll();
+			await singboxRouter.loadAll();
 			notifications.success(`Привязка устройства ${bindDevice.name || ip} сохранена`);
 			bindOpen = false;
 			bindDevice = null;
@@ -167,8 +169,8 @@
 		if (!unbindRow || unbindRow.targeting.ruleIndex === null) return;
 		unbindBusy = true;
 		try {
-			await api.singboxFakeIPDeleteRule(unbindRow.targeting.ruleIndex);
-			await fakeipConfig.loadAll();
+			await api.singboxRouterDeleteRule(unbindRow.targeting.ruleIndex);
+			await singboxRouter.loadAll();
 			notifications.success('Персональная привязка снята');
 			unbindRow = null;
 		} catch (e) {

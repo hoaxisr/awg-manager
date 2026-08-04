@@ -2225,6 +2225,36 @@ let mockBoundDevices = new Set();
 const sseSenders = new Set();
 let mockTransitionSeq = 0;
 
+// ── staging общего слота маршрутизации ─────────────────────────────────────
+// Роутерный CRUD (правила / наборы / outbound'ы) пишет в ЧЕРНОВИК: список
+// отдаётся уже с правкой, но до «Применить» она не на роутере. Это то же
+// поведение, что у бэкенда (persistConfig → SaveDraft), и именно на нём держится
+// StagingBanner на страницах sb-router и FakeIP.
+let mockRouterDraftedAt = null;
+
+function broadcastResource(resource) {
+	for (const sendEvent of sseSenders) {
+		try {
+			sendEvent('resource:invalidated', { resource });
+		} catch {
+			// поток закрылся между тиками — не наша забота
+		}
+	}
+}
+
+function markRouterDraft() {
+	mockRouterDraftedAt = new Date().toISOString();
+	broadcastResource('singbox.router.staging');
+}
+
+// withJsonBody — обёртка над readJsonBody для роутерных мутаций: битое тело
+// отдаёт 400 тем же конвертом, что остальные ручки.
+function withJsonBody(req, res, fn) {
+	readJsonBody(req)
+		.then(fn)
+		.catch((e) => send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } }));
+}
+
 // buildTransitionSequence returns a representative ordered list of
 // singbox-router:transition events for a from→to switch (the same shape the Go
 // backend's router.TransitionEvent emits). Used as the FE mock fixture.
@@ -2891,12 +2921,13 @@ const LEGACY_POLICY_INTERFACE_FIXTURES = [
 	{ name: 'NL vless-grpc', label: 'NL', up: false, source: 'legacy-fixture' },
 ];
 
-const mockSingboxRules = [
-	{ action: 'sniff' },
-	{ action: 'hijack-dns', protocol: 'dns' },
-	// system bypass — render as BYPASS chip; long matcher summary that
-	// triggers issue #214 narrow-viewport wrap problem.
-	{ ip_is_private: true, outbound: 'direct' },
+// Общий слот маршрутизации (21-routing.json): ТОЛЬКО пользовательские правила.
+// Системный префикс режима (sniff / hijack-dns / ip_is_private / route-options)
+// генерируется в режимный слот и через CRUD-ручки не отдаётся — поэтому его
+// здесь нет.
+let mockSingboxRouteFinal = 'direct';
+
+let mockSingboxRules = [
 	{ action: 'route', domain_suffix: ['youtube.com', 'ytimg.com'], outbound: 'sub-demo0001' },
 	{ action: 'route', rule_set: ['geosite-openai'], outbound: 'sub-demo0001' },
 	// Composite «Все AI сервисы» (#450): added + used → its catalog tile is
@@ -2916,7 +2947,7 @@ const mockSingboxRules = [
 	{ action: 'reject', domain: ['vkvideo.ru', 'long-host.example.com'], rule_set: ['geosite-category-ads-all', 'geosite-youtube'] },
 ];
 
-const mockSingboxRuleSets = [
+let mockSingboxRuleSets = [
 	{ tag: 'geosite-cn', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-cn.srs', update_interval: '24h', download_detour: 'direct' },
 	// #450 catalog badges: composite tag from internal/presets/defaults.json
 	// («Все AI сервисы») — added + referenced by a rule above → members get
@@ -5619,6 +5650,143 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Роутерный CRUD правил и наборов — со staging: мутация уходит в список и
+	// поднимает флаг черновика, снимают его только apply/discard.
+	if (req.method === 'POST' && path === '/singbox/router/rules/add') {
+		withJsonBody(req, res, (rule) => {
+			mockSingboxRules.push(rule);
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rules/update') {
+		withJsonBody(req, res, ({ index, rule }) => {
+			if (index < 0 || index >= mockSingboxRules.length) {
+				send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+				return;
+			}
+			mockSingboxRules[index] = rule;
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rules/delete') {
+		withJsonBody(req, res, ({ index }) => {
+			if (index < 0 || index >= mockSingboxRules.length) {
+				send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+				return;
+			}
+			mockSingboxRules.splice(index, 1);
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rules/move') {
+		withJsonBody(req, res, ({ from, to }) => {
+			if (from < 0 || from >= mockSingboxRules.length || to < 0 || to >= mockSingboxRules.length) {
+				send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'rule not found' } });
+				return;
+			}
+			const [moved] = mockSingboxRules.splice(from, 1);
+			mockSingboxRules.splice(to, 0, moved);
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rules/bulk-outbound') {
+		withJsonBody(req, res, ({ indices, outbound }) => {
+			const list = Array.isArray(indices) ? indices : [];
+			for (const i of list) {
+				if (i >= 0 && i < mockSingboxRules.length) mockSingboxRules[i].outbound = outbound;
+			}
+			markRouterDraft();
+			send(res, 200, { success: true, data: { updated: list.length } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/route/final') {
+		withJsonBody(req, res, ({ final }) => {
+			mockSingboxRouteFinal = final;
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rulesets/add') {
+		withJsonBody(req, res, (rs) => {
+			if (mockSingboxRuleSets.some((x) => x.tag === rs.tag)) {
+				send(res, 400, { success: false, error: { code: 'CONFLICT', message: `tag ${rs.tag} exists` } });
+				return;
+			}
+			mockSingboxRuleSets.push(rs);
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rulesets/update') {
+		withJsonBody(req, res, ({ tag, ruleSet }) => {
+			const idx = mockSingboxRuleSets.findIndex((x) => x.tag === tag);
+			if (idx < 0) {
+				send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: `tag ${tag} not found` } });
+				return;
+			}
+			mockSingboxRuleSets[idx] = ruleSet;
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rulesets/delete') {
+		withJsonBody(req, res, ({ tag }) => {
+			mockSingboxRuleSets = mockSingboxRuleSets.filter((x) => x.tag !== tag);
+			markRouterDraft();
+			send(res, 200, { success: true, data: { ok: true } });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/rulesets/bulk-detour') {
+		withJsonBody(req, res, ({ tags, downloadDetour }) => {
+			const list = Array.isArray(tags) ? tags : [];
+			for (const tag of list) {
+				const rs = mockSingboxRuleSets.find((x) => x.tag === tag);
+				if (rs) rs.download_detour = downloadDetour;
+			}
+			markRouterDraft();
+			send(res, 200, { success: true, data: { updated: list.length } });
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/router/staging') {
+		send(res, 200, {
+			success: true,
+			data: { hasDraft: mockRouterDraftedAt !== null, draftedAt: mockRouterDraftedAt },
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && (path === '/singbox/router/staging/apply' || path === '/singbox/router/staging/discard')) {
+		mockRouterDraftedAt = null;
+		broadcastResource('singbox.router.staging');
+		broadcastResource('singbox.router.rules');
+		send(res, 200, { success: true, data: { ok: true } });
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/singbox/router/policies') {
 		const policies = mockSBPolicyExists ? [{ name: 'SBRouter', description: 'wizard' }] : [];
 		send(res, 200, { success: true, data: policies });
@@ -6247,6 +6415,7 @@ const server = http.createServer(async (req, res) => {
 				deviceMode: mockSBSettings.deviceMode || 'policy',
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
+				final: mockSingboxRouteFinal,
 				// fakeip-tun status fields (backend serializes all omitempty).
 				routingMode,
 				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to

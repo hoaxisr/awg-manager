@@ -30,7 +30,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
@@ -55,11 +54,13 @@
 	import type { RuleCardData } from '$lib/components/sb-router/types';
 
 	// ── Store sub-stores ────────────────────────────────────────────────────
-	const storeRules = fakeipConfig.rules;
-	const storeRuleUiKeys = fakeipConfig.ruleUiKeys;
-	const storeRuleSets = fakeipConfig.ruleSets;
-	const storeOutbounds = fakeipConfig.outbounds;
-	const storeOptions = fakeipConfig.options;
+	// Правила, наборы и outbound'ы — общий слот маршрутизации (тот же стор, что
+	// у sb-router); режимный слот их больше не содержит.
+	const storeRules = singboxRouter.rules;
+	const storeRuleUiKeys = singboxRouter.ruleUiKeys;
+	const storeRuleSets = singboxRouter.ruleSets;
+	const storeOutbounds = singboxRouter.outbounds;
+	const storeOptions = singboxRouter.options;
 
 	// singboxRouter.status is mode-aware: in fakeip-tun mode the backend populates
 	// status.final from the fakeip slot.
@@ -68,7 +69,7 @@
 	let currentFinal = $state('direct');
 
 	onMount(() => {
-		void fakeipConfig.loadAll();
+		void singboxRouter.loadAll();
 	});
 
 	// rulesetLabels: tag → отображаемое имя (у набора нет label, только tag).
@@ -147,17 +148,17 @@
 		selected = new Set(selectableIndices);
 	}
 
-	// FakeIP staging не завязан на этот bulk-эндпоинт — backend сам делает один
-	// reload после применения, поэтому здесь достаточно fakeipConfig.loadAll().
+	// Правки уезжают в черновик общего слота — их применяет StagingBanner
+	// (смонтирован в FakeIPPageShell); loadAll поднимает уже черновичный список.
 	async function applyBulkOutbound(value: string): Promise<void> {
 		if (selected.size === 0 || bulkBusy) return;
 		bulkBusy = true;
 		try {
-			const { updated } = await api.singboxFakeIPBulkOutbound([...selected], value);
+			const { updated } = await api.singboxRouterBulkOutbound([...selected], value);
 			notifications.success(`Изменено ${updated}`);
 			selectMode = false;
 			selected = new Set();
-			await fakeipConfig.loadAll();
+			await singboxRouter.loadAll();
 		} catch (e) {
 			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
@@ -229,13 +230,12 @@
 		}
 		finalBusy = true;
 		try {
-			await api.singboxFakeIPSetRouteFinal(draftFinal);
+			await api.singboxRouterPutRouteFinal(draftFinal);
 			currentFinal = draftFinal;
-			// Refresh the mode-aware status (the source the seed-effect reads) BEFORE
-			// clearing finalEditing, so the effect doesn't briefly revert currentFinal
-			// to the pre-save final while waiting for the status SSE event.
-			await singboxRouter.reloadStatus();
-			await fakeipConfig.loadAll();
+			// loadAll обновляет и статус (источник seed-эффекта) — делаем это ДО
+			// снятия finalEditing, иначе эффект успеет откатить currentFinal к
+			// доsave-значению, пока не пришло SSE-событие статуса.
+			await singboxRouter.loadAll();
 			notifications.success('Final-outbound обновлён');
 			finalEditing = false;
 		} catch (e) {
@@ -261,19 +261,20 @@
 		// +1 виртуальная read-only «final»-строка в самом конце.
 		count: () => $storeRules.length + 1,
 		getPanelEl: () => panelEl,
-		// Фиксированы: «final»-строка (последний индекс), системные правила
-		// (sniff / hijack-dns / локальная сеть) — их нельзя ни схватить, ни
-		// сделать целью переноса; firstMovableIndex держит юзер-правила ниже них.
+		// Фиксирована «final»-строка (последний индекс). Системный префикс
+		// (sniff / hijack-dns / локальная сеть) живёт в режимном слоте и в этот
+		// список не попадает — ветка isSystem осталась страховкой на случай
+		// правила такой же формы, заведённого пользователем в общем слоте.
 		// В selectMode (массовое выделение) drag отключается целиком.
 		isFixed: (i) => selectMode || i >= $storeRules.length || !!cards[i]?.isSystem,
 		onCommit: async (from, to) => {
-			const snapshot = get(fakeipConfig.rules);
-			fakeipConfig.applyRules(reorder(snapshot, from, to));
+			const snapshot = get(singboxRouter.rules);
+			singboxRouter.applyRules(reorder(snapshot, from, to));
 			try {
-				await api.singboxFakeIPMoveRule(from, to);
-				await fakeipConfig.loadAll();
+				await api.singboxRouterMoveRule(from, to);
+				await singboxRouter.loadAll();
 			} catch (e) {
-				fakeipConfig.applyRules(snapshot);
+				singboxRouter.applyRules(snapshot);
 				notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
 			}
 		},
@@ -309,13 +310,13 @@
 	// ── Handlers ─────────────────────────────────────────────────────────────
 	async function handleRuleSave(rule: SingboxRouterRule): Promise<void> {
 		if (ruleEditIdx !== null) {
-			await api.singboxFakeIPUpdateRule(ruleEditIdx, rule);
+			await api.singboxRouterUpdateRule(ruleEditIdx, rule);
 		} else {
-			await api.singboxFakeIPAddRule(rule);
+			await api.singboxRouterAddRule(rule);
 		}
 		ruleEditIdx = null;
 		ruleAddOpen = false;
-		await fakeipConfig.loadAll();
+		await singboxRouter.loadAll();
 	}
 
 	async function confirmDelete(): Promise<void> {
@@ -323,8 +324,8 @@
 		const idx = deleteIdx;
 		deleteBusy = true;
 		try {
-			await api.singboxFakeIPDeleteRule(idx);
-			await fakeipConfig.loadAll();
+			await api.singboxRouterDeleteRule(idx);
+			await singboxRouter.loadAll();
 			notifications.success('Правило удалено');
 			deleteIdx = null;
 		} catch (e) {
@@ -379,8 +380,9 @@
 	{@const hiddenCount = Math.max(0, card.matchers.length - MAX_CHIPS)}
 	<div class="rrow" class:dragging={!ghost && drag.draggingIndex === i}>
 		{#if card.isSystem}
-			<!-- Системные правила (sniff / hijack-dns / локальная сеть) — фиксированы:
-			     ни перетащить, ни редактировать, ни удалить. -->
+			<!-- Системный префикс режима сюда не приходит (он в режимном слоте);
+			     ветка страхует правило той же формы из общего слота — оно
+			     фиксировано: ни перетащить, ни редактировать, ни удалить. -->
 			<span class="grip grip-fixed" aria-hidden="true"></span>
 		{:else}
 			<button

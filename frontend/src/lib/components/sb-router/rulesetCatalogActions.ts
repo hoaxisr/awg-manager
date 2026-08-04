@@ -28,8 +28,8 @@ export type AddRuleSetFn = (rs: SingboxRouterRuleSet) => Promise<void>;
 /** Materialise catalog presets as remote rule-sets only (no routing rules).
  *
  * @param addRuleSetFn  Optional override for the add-rule-set API call. Defaults
- *   to `api.singboxRouterAddRuleSet` (tproxy slot). Pass
- *   `(rs) => api.singboxFakeIPAddRuleSet(rs)` when operating on the fakeip slot.
+ *   to `api.singboxRouterAddRuleSet` — наборы живут в общем слоте маршрутизации
+ *   и одинаковы для всех режимов, так что переопределение нужно только тестам.
  */
 export async function applyCatalogPresetsAsRuleSets(
   presets: CatalogPreset[],

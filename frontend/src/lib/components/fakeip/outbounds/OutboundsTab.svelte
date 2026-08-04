@@ -36,7 +36,7 @@
   рендер делегирован под-карточкам.
 -->
 <script lang="ts">
-	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { singboxDelayFromHistory } from '$lib/utils/singboxDelay';
@@ -65,8 +65,9 @@
 	// test) доступны только когда движок реально работает.
 	const live = $derived(engineState !== 'stopped' && engineState !== 'clash-down');
 
-	const storeOutbounds = fakeipConfig.outbounds;
-	const storeOptions = fakeipConfig.options;
+	// Outbound'ы — общий слот маршрутизации (тот же стор, что у sb-router).
+	const storeOutbounds = singboxRouter.outbounds;
+	const storeOptions = singboxRouter.options;
 
 	const partitioned = $derived(partitionOutbounds($storeOutbounds));
 	const subscriptions = $derived($subscriptionsStore.data ?? []);
@@ -89,17 +90,17 @@
 	);
 
 	async function handleAddSave(o: SingboxRouterOutbound): Promise<void> {
-		await api.singboxFakeIPAddOutbound(o);
+		await api.singboxRouterAddOutbound(o);
 		addOpen = false;
-		await fakeipConfig.loadAll();
+		await singboxRouter.loadAll();
 	}
 
 	async function handleEditSave(o: SingboxRouterOutbound): Promise<void> {
 		if (editTag !== null) {
-			await api.singboxFakeIPUpdateOutbound(editTag, o);
+			await api.singboxRouterUpdateOutbound(editTag, o);
 		}
 		editTag = null;
-		await fakeipConfig.loadAll();
+		await singboxRouter.loadAll();
 	}
 
 	let pendingDelete = $state<{ tag: string; title: string } | null>(null);
@@ -113,8 +114,8 @@
 		if (!pendingDelete) return;
 		deleteBusy = true;
 		try {
-			await api.singboxFakeIPDeleteOutbound(pendingDelete.tag);
-			await fakeipConfig.loadAll();
+			await api.singboxRouterDeleteOutbound(pendingDelete.tag);
+			await singboxRouter.loadAll();
 			notifications.success('Outbound удалён');
 			pendingDelete = null;
 		} catch (e) {

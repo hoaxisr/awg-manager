@@ -9,7 +9,8 @@
       ruleSet) + SbRouterRuleSetCatalogModal (dat-каталог geosite/geoip).
     - CRUD — api.singboxRouter{Add,Update,Delete}RuleSet + каталог через
       applyCatalogPresetsAsRuleSets; после мутаций singboxRouter.loadAll()
-      (зеркалит ExpertPanel.svelte и DnsTab).
+      (зеркалит ExpertPanel.svelte и DnsTab). Наборы лежат в общем слоте и
+      правятся через staging — применяет StagingBanner в каркасе.
     - Тип/источник — общие хелперы datInfo/resolveRuleSetDisplayType +
       RuleSetTypeBadge; «используется в» — локальный computeRuleSetUsageRefs
       по dnsRules+rules (computeRuleSetUsage даёт только сумму, не список).
@@ -29,7 +30,9 @@
   ручного «обновить»); статуса/ошибки загрузки у rule-set нет — не показываем.
 -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { pluralize, SET_WORDS } from '$lib/utils/pluralize';
@@ -47,10 +50,19 @@
 	import type { SingboxRouterRuleSet, CatalogPreset } from '$lib/types';
 
 	// ── Store sub-stores ───────────────────────────────────────────────────
-	const storeRuleSets = fakeipConfig.ruleSets;
+	// Наборы, правила и каталог outbound'ов — общий слот маршрутизации;
+	// DNS-правила остаются режимными (fakeip-слот) — они нужны колонке
+	// «используется в».
+	const storeRuleSets = singboxRouter.ruleSets;
+	const storeRules = singboxRouter.rules;
+	const storeOptions = singboxRouter.options;
 	const storeDnsRules = fakeipConfig.dnsRules;
-	const storeRules = fakeipConfig.rules;
-	const storeOptions = fakeipConfig.options;
+
+	onMount(() => {
+		// Прямой заход на чип может застать оба стора холодными — идемпотентно.
+		void singboxRouter.loadAll();
+		void fakeipConfig.loadAll();
+	});
 
 	// ── Тип-фильтр (мокап: Все / dat / remote / local / inline) ───────────
 	type RsFilter = 'all' | 'dat' | 'remote' | 'local' | 'inline';
@@ -162,17 +174,17 @@
 		selected = new Set(filteredSelectableTags);
 	}
 
-	// FakeIP staging не завязан на этот bulk-эндпоинт — backend сам применяет
-	// изменение, здесь достаточно fakeipConfig.loadAll() после успеха.
+	// Правки уезжают в черновик общего слота — их применяет StagingBanner
+	// (смонтирован в FakeIPPageShell); loadAll поднимает уже черновичный список.
 	async function applyBulkDetour(value: string): Promise<void> {
 		if (selected.size === 0 || bulkBusy) return;
 		bulkBusy = true;
 		try {
-			const { updated } = await api.singboxFakeIPBulkDetour([...selected], value);
+			const { updated } = await api.singboxRouterBulkDetour([...selected], value);
 			notifications.success(`Изменено ${updated}`);
 			selectMode = false;
 			selected = new Set();
-			await fakeipConfig.loadAll();
+			await singboxRouter.loadAll();
 		} catch (e) {
 			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
 		} finally {
@@ -238,17 +250,17 @@
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
 	async function handleRsAddSave(rs: SingboxRouterRuleSet): Promise<void> {
-		await api.singboxFakeIPAddRuleSet(rs);
+		await api.singboxRouterAddRuleSet(rs);
 		rsAddOpen = false;
-		await fakeipConfig.loadAll();
+		await singboxRouter.loadAll();
 	}
 
 	async function handleRsEditSave(rs: SingboxRouterRuleSet): Promise<void> {
 		if (rsEditTag !== null) {
-			await api.singboxFakeIPUpdateRuleSet(rsEditTag, rs);
+			await api.singboxRouterUpdateRuleSet(rsEditTag, rs);
 		}
 		rsEditTag = null;
-		await fakeipConfig.loadAll();
+		await singboxRouter.loadAll();
 	}
 
 	function handleDeleteRs(tag: string): void {
@@ -257,8 +269,8 @@
 			message: `Удалить набор «${displayRuleSetTag(tag)}»?`,
 			run: async () => {
 				try {
-					await api.singboxFakeIPDeleteRuleSet(tag);
-					await fakeipConfig.loadAll();
+					await api.singboxRouterDeleteRuleSet(tag);
+					await singboxRouter.loadAll();
 					notifications.success('Набор удалён');
 				} catch (e) {
 					notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
@@ -274,9 +286,9 @@
 			const result = await applyCatalogPresetsAsRuleSets(
 				presets,
 				$storeRuleSets,
-				(rs) => api.singboxFakeIPAddRuleSet(rs),
+				(rs) => api.singboxRouterAddRuleSet(rs),
 			);
-			await fakeipConfig.loadAll();
+			await singboxRouter.loadAll();
 
 			if (result.added.length > 0) {
 				notifications.success(`Добавлено ${pluralize(result.added.length, SET_WORDS)} из каталога`);

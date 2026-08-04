@@ -495,6 +495,9 @@ export class SbRouterClient extends SingboxClient {
 
 
 	// #region FakeIP config CRUD
+	//
+	// Только DNS: правила, наборы и outbound'ы живут в общем слоте маршрутизации
+	// и правятся роутерными ручками (singboxRouter*).
 
 	async singboxFakeIPListDNSServers(): Promise<SingboxRouterDNSServer[]> {
 		return this.request<SingboxRouterDNSServer[]>('/singbox/fakeip/config/dns/servers/list');
@@ -570,109 +573,6 @@ export class SbRouterClient extends SingboxClient {
 		await this.request('/singbox/fakeip/config/dns/globals', {
 			method: 'PUT',
 			body: JSON.stringify(globals),
-		});
-	}
-
-	async singboxFakeIPListRules(): Promise<SingboxRouterRule[]> {
-		return this.request('/singbox/fakeip/config/rules/list');
-	}
-
-	async singboxFakeIPAddRule(rule: SingboxRouterRule): Promise<void> {
-		await this.request('/singbox/fakeip/config/rules/add', {
-			method: 'POST',
-			body: JSON.stringify(rule),
-		});
-	}
-
-	async singboxFakeIPUpdateRule(index: number, rule: SingboxRouterRule): Promise<void> {
-		await this.request('/singbox/fakeip/config/rules/update', {
-			method: 'POST',
-			body: JSON.stringify({ index, rule }),
-		});
-	}
-
-	async singboxFakeIPDeleteRule(index: number): Promise<void> {
-		await this.request('/singbox/fakeip/config/rules/delete', {
-			method: 'POST',
-			body: JSON.stringify({ index }),
-		});
-	}
-
-	async singboxFakeIPMoveRule(from: number, to: number): Promise<void> {
-		await this.request('/singbox/fakeip/config/rules/move', {
-			method: 'POST',
-			body: JSON.stringify({ from, to }),
-		});
-	}
-
-	async singboxFakeIPBulkOutbound(indices: number[], outbound: string): Promise<{ updated: number }> {
-		return this.request('/singbox/fakeip/config/rules/bulk-outbound', {
-			method: 'POST',
-			body: JSON.stringify({ indices, outbound }),
-		});
-	}
-
-	async singboxFakeIPBulkDetour(tags: string[], downloadDetour: string): Promise<{ updated: number }> {
-		return this.request('/singbox/fakeip/config/rulesets/bulk-detour', {
-			method: 'POST',
-			body: JSON.stringify({ tags, downloadDetour }),
-		});
-	}
-
-	async singboxFakeIPSetRouteFinal(final: string): Promise<void> {
-		await this.request('/singbox/fakeip/config/route/final', {
-			method: 'POST',
-			body: JSON.stringify({ final }),
-		});
-	}
-
-	async singboxFakeIPListRuleSets(): Promise<SingboxRouterRuleSet[]> {
-		return this.request('/singbox/fakeip/config/rulesets/list');
-	}
-
-	async singboxFakeIPAddRuleSet(rs: SingboxRouterRuleSet): Promise<void> {
-		await this.request('/singbox/fakeip/config/rulesets/add', {
-			method: 'POST',
-			body: JSON.stringify(rs),
-		});
-	}
-
-	async singboxFakeIPUpdateRuleSet(tag: string, rs: SingboxRouterRuleSet): Promise<void> {
-		await this.request('/singbox/fakeip/config/rulesets/update', {
-			method: 'POST',
-			body: JSON.stringify({ tag, ruleSet: rs }),
-		});
-	}
-
-	async singboxFakeIPDeleteRuleSet(tag: string, force = false): Promise<void> {
-		await this.request('/singbox/fakeip/config/rulesets/delete', {
-			method: 'POST',
-			body: JSON.stringify({ tag, force }),
-		});
-	}
-
-	async singboxFakeIPListOutbounds(): Promise<SingboxRouterOutbound[]> {
-		return this.request('/singbox/fakeip/config/outbounds/list');
-	}
-
-	async singboxFakeIPAddOutbound(o: SingboxRouterOutbound): Promise<void> {
-		await this.request('/singbox/fakeip/config/outbounds/add', {
-			method: 'POST',
-			body: JSON.stringify(o),
-		});
-	}
-
-	async singboxFakeIPUpdateOutbound(tag: string, o: SingboxRouterOutbound): Promise<void> {
-		await this.request('/singbox/fakeip/config/outbounds/update', {
-			method: 'POST',
-			body: JSON.stringify({ tag, outbound: o }),
-		});
-	}
-
-	async singboxFakeIPDeleteOutbound(tag: string, force = false): Promise<void> {
-		await this.request('/singbox/fakeip/config/outbounds/delete', {
-			method: 'POST',
-			body: JSON.stringify({ tag, force }),
 		});
 	}
 
