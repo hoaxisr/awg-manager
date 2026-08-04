@@ -19,16 +19,16 @@ type StagingStatus struct {
 // current cross-slot diagnostic so the UI can render a preview of "what
 // Apply would say".
 func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
-	info := s.deps.Orch.DraftInfo(orchestrator.SlotRouter)
+	info := s.deps.Orch.DraftInfo(orchestrator.SlotRouting)
 	st := StagingStatus{HasDraft: info.HasDraft, DraftedAt: info.DraftedAt}
 	if !info.HasDraft {
 		return st
 	}
-	bytes, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
+	bytes, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouting)
 	if err != nil || bytes == nil {
 		return st
 	}
-	res := s.deps.Orch.ValidateDraft(orchestrator.SlotRouter, bytes)
+	res := s.deps.Orch.ValidateDraft(orchestrator.SlotRouting, bytes)
 	st.Validation = &res
 	return st
 }
@@ -38,7 +38,7 @@ func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
 // invalidations.
 func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
 	_ = s.healLegacySelectiveRoutesSlotIfNeeded(ctx)
-	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
+	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouting)
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
@@ -51,7 +51,7 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 
 // DiscardStaging removes the pending draft for the router slot.
 func (s *ServiceImpl) DiscardStaging(ctx context.Context) error {
-	if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
+	if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouting); err != nil {
 		return err
 	}
 	if err := s.restoreEffectiveRuleSetArtifacts(); err != nil {

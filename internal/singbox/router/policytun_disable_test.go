@@ -77,8 +77,8 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	// Слот 20 запаркован, а tun-инбаунд вычищен из его конфига — иначе
 	// следующий tproxy-enable переоткрыл бы удалённый tun (ensureTProxyInbound
 	// чужие инбаунды не трогает).
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Error("SlotRouter must be parked after Disable(policy-tun)")
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting must be parked after Disable(policy-tun)")
 	}
 	data, err := os.ReadFile(filepath.Join(h.dir, "disabled", "20-router.json"))
 	if err != nil {

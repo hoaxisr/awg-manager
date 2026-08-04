@@ -52,7 +52,7 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 	if data, ok, err := rewriteRouterConfigOutboundRefs(activePath, oldTag, newTag); err != nil {
 		return err
 	} else if ok {
-		if err := s.deps.Orch.Save(orchestrator.SlotRouter, data); err != nil {
+		if err := s.deps.Orch.Save(orchestrator.SlotRouting, data); err != nil {
 			return err
 		}
 		changed = true
@@ -68,7 +68,7 @@ func (s *ServiceImpl) RenameExternalOutboundTag(ctx context.Context, oldTag, new
 	if data, ok, err := rewriteRouterConfigOutboundRefs(pendingPath, oldTag, newTag); err != nil {
 		return err
 	} else if ok {
-		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouter, data); err != nil {
+		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouting, data); err != nil {
 			return err
 		}
 		s.emitStagingEvent("staged")

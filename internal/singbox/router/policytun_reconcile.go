@@ -141,8 +141,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
 	// merged-конфиге нет tun-инбаунда.
 	if s.deps.Orch != nil {
-		if slot, ok := s.slotSnapshot(orchestrator.SlotRouter); !ok || !slot.Enabled {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); e != nil {
+		if slot, ok := s.slotSnapshot(orchestrator.SlotRouting); !ok || !slot.Enabled {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); e != nil {
 				s.appLog.Warn("policy-tun-reconcile", iface, "enable slot: "+e.Error())
 			} else {
 				s.appLog.Info("policy-tun-reconcile", iface,

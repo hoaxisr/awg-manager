@@ -612,13 +612,13 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
-	// Promote SlotRouter to active FIRST so persistConfigDirect's
+	// Promote SlotRouting to active FIRST so persistConfigDirect's
 	// orch.Save targets the active path (it keys on the slot's enabled
 	// flag). SetEnabled also triggers the orchestrator's debounced cold-
 	// start — sing-box will read the active config we are about to write.
 	// Legacy fallback (tests) keeps the explicit Start call.
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 			return fmt.Errorf("orchestrator enable router: %w", err)
 		}
 	} else {
@@ -746,7 +746,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		// tproxy-in) is preserved verbatim. Without the orchestrator
 		// (legacy fallback) the only recourse is to strip the inbound.
 		if s.deps.Orch != nil {
-			_ = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false)
+			_ = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false)
 			// The QoS overlay references qos-* inbounds that just got
 			// parked with the router slot — park it too.
 			_ = s.disableQoSRoutesSlot()
@@ -1310,7 +1310,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 		// -C config.d does not see it after the next reload, so the
 		// tproxy inbound, route rules, DNS rules and composite outbounds
 		// all disappear from the merged config in one atomic rename.
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
 			s.appLog.Warn("orch-disable", "", err.Error())
 		}
 		// Park the QoS routes overlay with it: its rules reference qos-*
@@ -1434,7 +1434,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 // slot reads as parked — Reconcile then routes to Enable, whose SetEnabled
 // surfaces the real error.
 func (s *ServiceImpl) routerSlotEnabled() bool {
-	st, ok := s.slotSnapshot(orchestrator.SlotRouter)
+	st, ok := s.slotSnapshot(orchestrator.SlotRouting)
 	return ok && st.Enabled && st.Present
 }
 

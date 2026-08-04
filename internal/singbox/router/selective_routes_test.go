@@ -194,8 +194,8 @@ func TestHealLegacySelectiveRoutesSlot_StripsAwgmManaged(t *testing.T) {
 func TestStripLegacySelectiveRulesFromRouter(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
-	_ = orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"})
-	_ = orch.SetEnabled(orchestrator.SlotRouter, true)
+	_ = orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"})
+	_ = orch.SetEnabled(orchestrator.SlotRouting, true)
 
 	cfg := NewEmptyConfig()
 	cfg.Route.Rules = []Rule{

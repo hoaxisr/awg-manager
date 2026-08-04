@@ -253,16 +253,16 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
 	}
 
-	// D. Slot XOR: enable SlotFakeIP, disable SlotRouter (fakeip and tproxy router
+	// D. Slot XOR: enable SlotFakeIP, disable SlotRouting (fakeip and tproxy router
 	// slots are mutually exclusive — sing-box must load exactly one routing config).
-	// Capture SlotRouter's prior enabled-state BEFORE the flip so rollback restores
+	// Capture SlotRouting's prior enabled-state BEFORE the flip so rollback restores
 	// THAT, not a hardcoded true — booting into fakeip (or a first enable) has
-	// SlotRouter already off, and a hardcoded re-enable would wrongly turn tproxy on.
+	// SlotRouting already off, and a hardcoded re-enable would wrongly turn tproxy on.
 	// Legacy fallback (no orch) uses an explicit Start.
 	prevRouterEnabled := false
 	if s.deps.Orch != nil {
 		for _, st := range s.deps.Orch.Snapshot() {
-			if st.Slot == orchestrator.SlotRouter {
+			if st.Slot == orchestrator.SlotRouting {
 				prevRouterEnabled = st.Enabled
 				break
 			}
@@ -270,7 +270,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
 			return fmt.Errorf("enable fakeip-tun: orchestrator enable fakeip slot: %w", err)
 		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
 			return fmt.Errorf("enable fakeip-tun: orchestrator disable router slot: %w", err)
 		}
 	} else {
@@ -285,7 +285,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
 				s.appLog.Warn("fakeip-rollback", iface, "disable fakeip slot: "+e.Error())
 			}
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, prevRouterEnabled); e != nil {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, prevRouterEnabled); e != nil {
 				s.appLog.Warn("fakeip-rollback", iface, "restore router slot: "+e.Error())
 			}
 			// Rollback вернул прежнюю разметку слотов — device-proxy должен

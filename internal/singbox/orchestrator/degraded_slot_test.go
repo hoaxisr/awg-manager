@@ -20,7 +20,7 @@ func setupDegradedOrch(t *testing.T) (*Orchestrator, string) {
 	o := New(dir, nil)
 	for _, meta := range KnownSlots() {
 		switch meta.Slot {
-		case SlotAwg, SlotRouter, SlotDeviceProxy:
+		case SlotAwg, SlotRouting, SlotDeviceProxy:
 			if err := o.Register(meta); err != nil {
 				t.Fatalf("register %s: %v", meta.Slot, err)
 			}
@@ -39,7 +39,7 @@ func setupDegradedOrch(t *testing.T) (*Orchestrator, string) {
 		t.Fatal(err)
 	}
 
-	// 20-router.json существует, но припаркован (движок выключен).
+	// 21-routing.json существует, но припаркован (движок выключен).
 	routerJSON := []byte(`{
   "outbounds": [
     {"type": "selector", "tag": "vpn", "outbounds": ["awg-awg10"], "default": "awg-awg10"}
@@ -48,10 +48,10 @@ func setupDegradedOrch(t *testing.T) (*Orchestrator, string) {
 	if err := os.MkdirAll(filepath.Join(dir, disabledSubdir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, disabledSubdir, "20-router.json"), routerJSON, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, disabledSubdir, "21-routing.json"), routerJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.enabled[SlotRouter] = false
+	o.enabled[SlotRouting] = false
 	o.enabled[SlotDeviceProxy] = true
 	return o, dir
 }
@@ -189,7 +189,7 @@ func TestEnabledOutboundTags_VisibilityMatchesPrune(t *testing.T) {
 	}
 
 	// Включаем слот 20 (переносим файл в active) — vpn появляется.
-	if err := o.SetEnabledSilent(SlotRouter, true); err != nil {
+	if err := o.SetEnabledSilent(SlotRouting, true); err != nil {
 		t.Fatalf("SetEnabledSilent: %v", err)
 	}
 	tags = o.EnabledOutboundTags(SlotDeviceProxy)

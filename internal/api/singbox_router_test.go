@@ -534,7 +534,7 @@ func TestPostStagingApply_409OnNoDraft(t *testing.T) {
 func TestPostStagingApply_422OnValidation(t *testing.T) {
 	svc := &mockRouterSvc{
 		applyRes: orchestrator.ValidationResult{Errors: []orchestrator.ValidationError{
-			{Slot: orchestrator.SlotRouter, Kind: "unknown-outbound", Tag: "ghost", InRule: "route.final", Message: "no slot declares this outbound tag"},
+			{Slot: orchestrator.SlotRouting, Kind: "unknown-outbound", Tag: "ghost", InRule: "route.final", Message: "no slot declares this outbound tag"},
 		}},
 	}
 	h := newMockRouterHandler(svc)
@@ -625,13 +625,13 @@ func newTestRouterHandlerReal(t *testing.T) (*SingboxRouterHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	deps := router.Deps{

@@ -12,8 +12,8 @@ func TestRouterSlotForMode(t *testing.T) {
 		want orchestrator.Slot
 	}{
 		{"fakeip-tun", orchestrator.SlotFakeIP},
-		{"tproxy", orchestrator.SlotRouter},
-		{"", orchestrator.SlotRouter},
+		{"tproxy", orchestrator.SlotRouting},
+		{"", orchestrator.SlotRouting},
 	}
 	for _, tc := range tests {
 		got := RouterSlotForMode(tc.mode)
@@ -28,7 +28,7 @@ func TestOtherRouterSlot(t *testing.T) {
 		mode string
 		want orchestrator.Slot
 	}{
-		{"fakeip-tun", orchestrator.SlotRouter},
+		{"fakeip-tun", orchestrator.SlotRouting},
 		{"tproxy", orchestrator.SlotFakeIP},
 		{"", orchestrator.SlotFakeIP},
 	}
@@ -49,7 +49,7 @@ func TestRouterSlotForMode_Complement(t *testing.T) {
 			t.Errorf("mode %q: RouterSlotForMode and OtherRouterSlot returned the same slot %q", mode, primary)
 		}
 		// verify they are exactly the two routing slots
-		slots := map[orchestrator.Slot]bool{orchestrator.SlotRouter: true, orchestrator.SlotFakeIP: true}
+		slots := map[orchestrator.Slot]bool{orchestrator.SlotRouting: true, orchestrator.SlotFakeIP: true}
 		if !slots[primary] {
 			t.Errorf("mode %q: RouterSlotForMode returned unexpected slot %q", mode, primary)
 		}

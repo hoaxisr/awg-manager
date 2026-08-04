@@ -23,8 +23,10 @@ const (
 	SlotDNSRewrites     Slot = "dns-rewrites"     // 17-dns-rewrites.json
 	SlotQoSRoutes       Slot = "qos-routes"       // 18-qos-routes.json
 	SlotSelectiveRoutes Slot = "selective-routes" // 19-selective-routes.json
-	SlotRouter          Slot = "router"           // 20-router.json
-	SlotFakeIP          Slot = "fakeip"           // 21-fakeip.json
+	SlotFakeIP          Slot = "fakeip"           // 20-fakeip.json
+	SlotPolicyTun       Slot = "policytun"        // 20-policytun.json
+	SlotTProxy          Slot = "tproxy"           // 20-tproxy.json
+	SlotRouting         Slot = "routing"          // 21-routing.json
 	SlotDeviceProxy     Slot = "deviceproxy"      // 30-deviceproxy.json
 	SlotDownloadProxy   Slot = "downloadproxy"    // 35-download-proxy.json
 	SlotSubscriptions   Slot = "subscriptions"    // 40-subscriptions.json
@@ -45,7 +47,7 @@ const (
 // catalog.
 type SlotMeta struct {
 	Slot       Slot
-	Filename   string // bare filename, e.g. "20-router.json"
+	Filename   string // bare filename, e.g. "21-routing.json"
 	AlwaysOn   bool
 	HasContent func() bool
 }
@@ -77,8 +79,18 @@ func KnownSlots() []SlotMeta {
 		// DSCP policy) win over selective /32 overlays and user rules.
 		{Slot: SlotQoSRoutes, Filename: "18-qos-routes.json"},
 		{Slot: SlotSelectiveRoutes, Filename: "19-selective-routes.json"},
-		{Slot: SlotRouter, Filename: "20-router.json"},
-		{Slot: SlotFakeIP, Filename: "21-fakeip.json"},
+		// Режимные слоты взаимоисключающи: включён ровно один. Все три
+		// сливаются раньше общего (20 < 21), потому что режим ставит
+		// hijack-dns и обязан обогнать пользовательские правила. Позиция
+		// «двадцатка» сохранена намеренно: она равна прежней позиции
+		// 20-router.json / 21-fakeip.json, поэтому порядок относительно
+		// 17/18/19 не меняется.
+		{Slot: SlotFakeIP, Filename: "20-fakeip.json"},
+		{Slot: SlotPolicyTun, Filename: "20-policytun.json"},
+		{Slot: SlotTProxy, Filename: "20-tproxy.json"},
+		// Общий слот: правила, наборы, outbounds, route.final и DNS
+		// не-fakeip режимов.
+		{Slot: SlotRouting, Filename: "21-routing.json"},
 		{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"},
 		{Slot: SlotDownloadProxy, Filename: "35-download-proxy.json"},
 		{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"},

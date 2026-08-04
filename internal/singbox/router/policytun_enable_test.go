@@ -199,8 +199,8 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 	mustOrderCalls(t, h.log, "SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
 
 	// Slot 20 stays the active routing slot and carries the tun inbound.
-	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Error("SlotRouter must be enabled in policy-tun mode")
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting must be enabled in policy-tun mode")
 	}
 	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
 	if err != nil {

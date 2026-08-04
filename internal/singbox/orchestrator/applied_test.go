@@ -45,14 +45,14 @@ func TestLoadAppliedState_CorruptJSON(t *testing.T) {
 // same as a non-empty one).
 func TestEnabledConfigHashLocked_StableAndSensitive(t *testing.T) {
 	o, _ := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{"a":1}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"a":1}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,7 +64,7 @@ func TestEnabledConfigHashLocked_StableAndSensitive(t *testing.T) {
 		t.Errorf("hash not stable across calls: %q vs %q", h1, h1Again)
 	}
 
-	if err := o.Save(SlotRouter, []byte(`{"a":2}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"a":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	o.mu.Lock()
@@ -74,7 +74,7 @@ func TestEnabledConfigHashLocked_StableAndSensitive(t *testing.T) {
 		t.Errorf("hash did not change when active content changed")
 	}
 
-	if err := o.SetEnabled(SlotRouter, false); err != nil {
+	if err := o.SetEnabled(SlotRouting, false); err != nil {
 		t.Fatal(err)
 	}
 	o.mu.Lock()
@@ -92,14 +92,14 @@ func TestReload_SkipsWhenHashUnchangedAndRunning(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,14 +130,14 @@ func TestReload_AppliesWhenHashChanged(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Reload(); err != nil {
@@ -147,7 +147,7 @@ func TestReload_AppliesWhenHashChanged(t *testing.T) {
 		t.Fatalf("expected 1 reload after first apply, got %d", fp.reloadsN())
 	}
 
-	if err := o.Save(SlotRouter, []byte(`{"tag":"changed"}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"tag":"changed"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Reload(); err != nil {
@@ -171,14 +171,14 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
 
 	o1 := New(dir, fp)
-	_ = o1.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o1.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o1.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o1.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+	if err := o1.Save(SlotRouting, []byte(tunInboundConfig)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o1.SetEnabled(SlotRouter, true); err != nil {
+	if err := o1.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o1.Reload(); err != nil {
@@ -198,7 +198,7 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	if !o2.CurrentHasTun() {
 		t.Fatal("constructor must seed prevHasTun=true from persisted applied state")
 	}
-	if err := o2.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := o2.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := o2.Bootstrap(); err != nil {

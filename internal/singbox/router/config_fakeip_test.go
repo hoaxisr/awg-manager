@@ -735,10 +735,10 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 
 	orch := orchestrator.New(dir, nil)
 	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotRouter,
+		Slot:     orchestrator.SlotRouting,
 		Filename: "20-router.json",
 	}); err != nil {
-		t.Fatalf("orch.Register SlotRouter: %v", err)
+		t.Fatalf("orch.Register SlotRouting: %v", err)
 	}
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotFakeIP,
@@ -930,10 +930,10 @@ func TestFakeipGuard_AllowsAppendingUserDNSRule(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GetStatus slot-fork: fakeip-tun mode must read SlotFakeIP, not SlotRouter
+// GetStatus slot-fork: fakeip-tun mode must read SlotFakeIP, not SlotRouting
 // ---------------------------------------------------------------------------
 
-// TestGetStatus_FakeIPMode_ReadsFakeIPSlot seeds SlotRouter with 0 rule_sets
+// TestGetStatus_FakeIPMode_ReadsFakeIPSlot seeds SlotRouting with 0 rule_sets
 // and final="router-final", and SlotFakeIP with 2 rule_sets and
 // final="fakeip-final", then asserts that GetStatus in fakeip-tun mode
 // returns the SlotFakeIP counts (RuleSetCount==2, Final=="fakeip-final").
@@ -950,10 +950,10 @@ func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
 	stubTunReadyProbe(t, func(string) bool { return false })
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
 
-	// SlotRouter: 0 rule_sets, final="router-final".
+	// SlotRouting: 0 rule_sets, final="router-final".
 	routerJSON := `{"route":{"rules":[],"rule_set":[],"final":"router-final"}}`
 	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(routerJSON), 0644); err != nil {
-		t.Fatalf("write SlotRouter: %v", err)
+		t.Fatalf("write SlotRouting: %v", err)
 	}
 
 	// SlotFakeIP: 2 rule_sets, final="fakeip-final".
@@ -967,9 +967,9 @@ func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
 		t.Fatalf("GetStatus: %v", err)
 	}
 	if st.RuleSetCount != 2 {
-		t.Errorf("RuleSetCount = %d, want 2 (must read SlotFakeIP, not SlotRouter)", st.RuleSetCount)
+		t.Errorf("RuleSetCount = %d, want 2 (must read SlotFakeIP, not SlotRouting)", st.RuleSetCount)
 	}
 	if st.Final != "fakeip-final" {
-		t.Errorf("Final = %q, want %q (must read SlotFakeIP, not SlotRouter)", st.Final, "fakeip-final")
+		t.Errorf("Final = %q, want %q (must read SlotFakeIP, not SlotRouting)", st.Final, "fakeip-final")
 	}
 }

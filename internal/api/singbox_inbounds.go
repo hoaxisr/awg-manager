@@ -263,7 +263,8 @@ func (h *SingboxInboundsHandler) attribute(e *SingboxInboundEntry, routed bool) 
 		e.OwnerLabel = h.deviceProxyName(e.Tag)
 	case string(orchestrator.SlotQoSRoutes):
 		e.Source = "qos"
-	case string(orchestrator.SlotRouter), string(orchestrator.SlotFakeIP):
+	case string(orchestrator.SlotRouting), string(orchestrator.SlotFakeIP),
+		string(orchestrator.SlotPolicyTun), string(orchestrator.SlotTProxy):
 		e.Source = "engine"
 	default:
 		// tun/tproxy/redirect вне известных слотов — тоже перехват движка

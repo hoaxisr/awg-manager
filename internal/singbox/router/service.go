@@ -289,7 +289,7 @@ type Deps struct {
 	SubscriptionComposites *SubscriptionCompositesAdapter
 	// Orch is the config.d orchestrator. When non-nil (production),
 	// persistConfig writes 20-router.json through the slot writer and
-	// Enable / Disable toggle SlotRouter so the file moves between
+	// Enable / Disable toggle SlotRouting so the file moves between
 	// active and disabled/ — sing-box only sees the file when the
 	// router is enabled. When nil (tests), persistConfig falls back
 	// to the legacy in-place write at routerConfigPath().
@@ -572,7 +572,7 @@ func (s *ServiceImpl) ruleSetMaterializer() ruleSetMaterializer {
 // back to an empty config when neither file exists yet.
 func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 	if s.deps.Orch != nil {
-		data, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouter)
+		data, err := s.deps.Orch.LoadEffective(orchestrator.SlotRouting)
 		if err != nil {
 			return nil, fmt.Errorf("load router config: %w", err)
 		}
@@ -594,7 +594,7 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 // running, not what the user has staged and may still discard.
 func (s *ServiceImpl) loadAppliedRouterConfig() (*RouterConfig, error) {
 	if s.deps.Orch != nil {
-		data, err := s.deps.Orch.LoadApplied(orchestrator.SlotRouter)
+		data, err := s.deps.Orch.LoadApplied(orchestrator.SlotRouting)
 		if err != nil {
 			return nil, fmt.Errorf("load applied router config: %w", err)
 		}
@@ -637,7 +637,7 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 }
 
 // loadRouterConfigForMode returns the routing config for the active mode:
-// SlotFakeIP in fakeip-tun mode, SlotRouter (tproxy) otherwise. Lets
+// SlotFakeIP in fakeip-tun mode, SlotRouting (tproxy) otherwise. Lets
 // mode-agnostic readers (GetStatus) reflect whichever slot is live.
 func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
 	if mode == "fakeip-tun" {
@@ -666,7 +666,7 @@ func (s *ServiceImpl) persistConfigDirect(ctx context.Context, cfg *RouterConfig
 		// Test-only legacy fallback: reuse the in-place writer.
 		return s.persistConfig(ctx, cfg)
 	}
-	return s.persistSlotDirect(orchestrator.SlotRouter, cfg, false)
+	return s.persistSlotDirect(orchestrator.SlotRouting, cfg, false)
 }
 
 // persistSlotDirect materializes cfg and, when the serialized bytes differ from
@@ -754,13 +754,13 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 		// staging so the change is applied normally.
 		activePath := filepath.Join(s.deps.Orch.ConfigDir(), "20-router.json")
 		if existing, rerr := os.ReadFile(activePath); rerr == nil && bytes.Equal(existing, data) {
-			if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
+			if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouting); err != nil {
 				return err
 			}
 			s.emitStagingEvent("discarded")
 			return nil
 		}
-		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouter, data); err != nil {
+		if err := s.deps.Orch.SaveDraft(orchestrator.SlotRouting, data); err != nil {
 			return err
 		}
 		s.emitStagingEvent("staged")

@@ -106,7 +106,7 @@ func TestPersistConfigDirect_WritesActiveWhenAbsent(t *testing.T) {
 	if err := svc.deps.Orch.Bootstrap(); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatalf("SetEnabled true: %v", err)
 	}
 

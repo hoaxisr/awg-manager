@@ -267,14 +267,14 @@ func TestReconcilePolicyTun_RepromotesParkedSlot(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	sr := provisionPolicyTunForReconcile(t, h)
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
-	if err := h.svc.deps.Orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+	if err := h.svc.deps.Orch.SetEnabledSilent(orchestrator.SlotRouting, false); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
 	}
-	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
 		t.Error("запаркованный слот 20 должен вернуться в конфиг")
 	}
 }

@@ -437,10 +437,10 @@ func TestReconcileFakeIPTun_ProbeErrorNoReprovision(t *testing.T) {
 	}
 }
 
-// TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter asserts that
+// TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting asserts that
 // when a dead sing-box is restarted by the drift-heal, the reconcile re-enables
 // the FAKEIP slot (21-fakeip.json) and NOT the tproxy router slot (20-router.json).
-func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter(t *testing.T) {
+func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
 	// Provision with sing-box running.
@@ -455,9 +455,9 @@ func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter(t *testing.T) 
 	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
 		t.Fatalf("pre-flip SlotFakeIP off: %v", err)
 	}
-	// SlotRouter stays OFF (XOR invariant set by Enable).
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Fatal("precondition: SlotRouter must be off (XOR)")
+	// SlotRouting stays OFF (XOR invariant set by Enable).
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Fatal("precondition: SlotRouting must be off (XOR)")
 	}
 
 	// Model a dead sing-box: IsRunning returns false on the first probe (the
@@ -482,9 +482,9 @@ func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouter(t *testing.T) 
 	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Error("SlotFakeIP must be ENABLED after fakeip-reconcile revival")
 	}
-	// SlotRouter must remain DISABLED — revival must NOT toggle the tproxy slot.
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Error("SlotRouter must remain DISABLED after fakeip-reconcile revival — tproxy slot must not be touched")
+	// SlotRouting must remain DISABLED — revival must NOT toggle the tproxy slot.
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting must remain DISABLED after fakeip-reconcile revival — tproxy slot must not be touched")
 	}
 }
 

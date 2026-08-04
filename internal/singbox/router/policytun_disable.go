@@ -84,7 +84,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	}
 
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "disable slot: "+err.Error())
 		}
 		// Оверлей QoS ссылается на qos-* инбаунды слота 20 — паркуется вместе.

@@ -13,20 +13,20 @@ func setupOrch(t *testing.T) (*Orchestrator, string) {
 	t.Helper()
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if err := o.Bootstrap(); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	return o, dir
 }
 
 func TestSaveDraft_WritesToPendingDir(t *testing.T) {
 	o, dir := setupOrch(t)
 	bytes := []byte(`{"outbounds":[]}`)
-	if err := o.SaveDraft(SlotRouter, bytes); err != nil {
+	if err := o.SaveDraft(SlotRouting, bytes); err != nil {
 		t.Fatalf("SaveDraft: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "pending", "20-router.json"))
@@ -45,8 +45,8 @@ func TestSaveDraft_WritesToPendingDir(t *testing.T) {
 func TestLoadEffective_PrefersPending(t *testing.T) {
 	o, dir := setupOrch(t)
 	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"active":true}`), 0644)
-	_ = o.SaveDraft(SlotRouter, []byte(`{"draft":true}`))
-	got, err := o.LoadEffective(SlotRouter)
+	_ = o.SaveDraft(SlotRouting, []byte(`{"draft":true}`))
+	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestLoadEffective_PrefersPending(t *testing.T) {
 func TestLoadEffective_FallsBackToActive(t *testing.T) {
 	o, dir := setupOrch(t)
 	_ = os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"active":true}`), 0644)
-	got, err := o.LoadEffective(SlotRouter)
+	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLoadEffective_FallsBackToActive(t *testing.T) {
 
 func TestLoadEffective_ReturnsNilWhenAllMissing(t *testing.T) {
 	o, _ := setupOrch(t)
-	got, err := o.LoadEffective(SlotRouter)
+	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestLoadEffective_FallsBackToDisabled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "disabled", "20-router.json"), []byte(`{"disabled":true}`), 0644); err != nil {
 		t.Fatalf("write disabled file: %v", err)
 	}
-	got, err := o.LoadEffective(SlotRouter)
+	got, err := o.LoadEffective(SlotRouting)
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -99,38 +99,38 @@ func TestLoadEffective_FallsBackToDisabled(t *testing.T) {
 
 func TestHasDraft_TrueAfterSave_FalseAfterDiscard(t *testing.T) {
 	o, _ := setupOrch(t)
-	if o.HasDraft(SlotRouter) {
+	if o.HasDraft(SlotRouting) {
 		t.Fatal("HasDraft true before any SaveDraft")
 	}
-	_ = o.SaveDraft(SlotRouter, []byte(`{}`))
-	if !o.HasDraft(SlotRouter) {
+	_ = o.SaveDraft(SlotRouting, []byte(`{}`))
+	if !o.HasDraft(SlotRouting) {
 		t.Fatal("HasDraft false after SaveDraft")
 	}
-	if err := o.DiscardDraft(SlotRouter); err != nil {
+	if err := o.DiscardDraft(SlotRouting); err != nil {
 		t.Fatalf("DiscardDraft: %v", err)
 	}
-	if o.HasDraft(SlotRouter) {
+	if o.HasDraft(SlotRouting) {
 		t.Fatal("HasDraft true after DiscardDraft")
 	}
 }
 
 func TestDiscardDraft_Idempotent(t *testing.T) {
 	o, _ := setupOrch(t)
-	if err := o.DiscardDraft(SlotRouter); err != nil {
+	if err := o.DiscardDraft(SlotRouting); err != nil {
 		t.Errorf("first discard (no pending): %v", err)
 	}
-	if err := o.DiscardDraft(SlotRouter); err != nil {
+	if err := o.DiscardDraft(SlotRouting); err != nil {
 		t.Errorf("second discard: %v", err)
 	}
 }
 
 func TestDraftInfo_ReturnsMtime(t *testing.T) {
 	o, dir := setupOrch(t)
-	if info := o.DraftInfo(SlotRouter); info.HasDraft {
+	if info := o.DraftInfo(SlotRouting); info.HasDraft {
 		t.Fatal("DraftInfo says HasDraft when no pending file exists")
 	}
-	_ = o.SaveDraft(SlotRouter, []byte(`{}`))
-	info := o.DraftInfo(SlotRouter)
+	_ = o.SaveDraft(SlotRouting, []byte(`{}`))
+	info := o.DraftInfo(SlotRouting)
 	if !info.HasDraft {
 		t.Fatal("DraftInfo says !HasDraft after SaveDraft")
 	}
@@ -143,7 +143,7 @@ func TestDraftInfo_ReturnsMtime(t *testing.T) {
 func TestSaveDraft_DoesNotScheduleReload(t *testing.T) {
 	o, _ := setupOrch(t)
 	o.reloadTimer = nil
-	_ = o.SaveDraft(SlotRouter, []byte(`{}`))
+	_ = o.SaveDraft(SlotRouting, []byte(`{}`))
 	if o.reloadTimer != nil {
 		t.Errorf("SaveDraft armed reload timer (it must not)")
 	}
@@ -175,13 +175,13 @@ func TestApplyDraft_HappyPath(t *testing.T) {
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
 	_ = os.WriteFile(filepath.Join(dir, "20-router.json"),
 		[]byte(`{"outbounds":[]}`), 0644)
-	_ = o.SaveDraft(SlotRouter,
+	_ = o.SaveDraft(SlotRouting,
 		[]byte(`{"outbounds":[],"route":{"final":"direct"}}`))
 
 	fv := &fakeValidator{}
 	o.SetValidator(fv)
 
-	res, err := o.ApplyDraft(SlotRouter)
+	res, err := o.ApplyDraft(SlotRouting)
 	if err != nil {
 		t.Fatalf("ApplyDraft: %v", err)
 	}
@@ -236,24 +236,24 @@ func (v *snapshotRecordingValidator) Validate(_ context.Context, dir string) err
 func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	if err := o.Bootstrap(); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	// Слот НЕ включаем — цель выключена.
-	if o.enabled[SlotRouter] {
+	if o.enabled[SlotRouting] {
 		t.Fatal("precondition: router slot must be disabled")
 	}
 	draft := []byte(`{"outbounds":[{"tag":"draft-ob","type":"direct"}]}`)
-	if err := o.SaveDraft(SlotRouter, draft); err != nil {
+	if err := o.SaveDraft(SlotRouting, draft); err != nil {
 		t.Fatalf("SaveDraft: %v", err)
 	}
 	rv := &snapshotRecordingValidator{}
 	o.SetValidator(rv)
 
-	res, err := o.ApplyDraft(SlotRouter)
+	res, err := o.ApplyDraft(SlotRouting)
 	if err != nil {
 		t.Fatalf("ApplyDraft: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 
 func TestApplyDraft_NoDraft(t *testing.T) {
 	o, _ := setupOrch(t)
-	res, err := o.ApplyDraft(SlotRouter)
+	res, err := o.ApplyDraft(SlotRouting)
 	if !errors.Is(err, ErrNoDraft) {
 		t.Errorf("want ErrNoDraft, got %v", err)
 	}
@@ -287,10 +287,10 @@ func TestApplyDraft_CrossSlotValidationFail(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
 	// Draft references a ghost outbound.
-	_ = o.SaveDraft(SlotRouter,
+	_ = o.SaveDraft(SlotRouting,
 		[]byte(`{"route":{"final":"ghost-tag"}}`))
 
-	res, err := o.ApplyDraft(SlotRouter)
+	res, err := o.ApplyDraft(SlotRouting)
 	if err != nil {
 		t.Fatalf("ApplyDraft: %v (validation failure should be in res, not err)", err)
 	}
@@ -313,12 +313,12 @@ func TestApplyDraft_SingboxCheckFail(t *testing.T) {
 	o.enabled[SlotBase] = true
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	_ = o.SaveDraft(SlotRouter,
+	_ = o.SaveDraft(SlotRouting,
 		[]byte(`{"route":{"final":"direct"}}`))
 
 	o.SetValidator(&fakeValidator{err: errors.New("simulated sb-check failure")})
 
-	res, err := o.ApplyDraft(SlotRouter)
+	res, err := o.ApplyDraft(SlotRouting)
 	if err == nil {
 		t.Fatalf("want sb-check error, got nil; res=%v", res)
 	}
@@ -350,9 +350,9 @@ func TestApplyDraft_CleansTmpdir_OnSuccess(t *testing.T) {
 	o.enabled[SlotBase] = true
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	_ = o.SaveDraft(SlotRouter, []byte(`{"route":{"final":"direct"}}`))
+	_ = o.SaveDraft(SlotRouting, []byte(`{"route":{"final":"direct"}}`))
 	o.SetValidator(&fakeValidator{})
-	_, _ = o.ApplyDraft(SlotRouter)
+	_, _ = o.ApplyDraft(SlotRouting)
 	if tmpDirHasApplyCheck(t, dir) {
 		t.Errorf("tmpdir not cleaned up after success")
 	}
@@ -364,9 +364,9 @@ func TestApplyDraft_CleansTmpdir_OnSbCheckFail(t *testing.T) {
 	o.enabled[SlotBase] = true
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	_ = o.SaveDraft(SlotRouter, []byte(`{"route":{"final":"direct"}}`))
+	_ = o.SaveDraft(SlotRouting, []byte(`{"route":{"final":"direct"}}`))
 	o.SetValidator(&fakeValidator{err: errors.New("nope")})
-	_, _ = o.ApplyDraft(SlotRouter)
+	_, _ = o.ApplyDraft(SlotRouting)
 	if tmpDirHasApplyCheck(t, dir) {
 		t.Errorf("tmpdir not cleaned up after sb-check fail")
 	}
@@ -393,7 +393,7 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 	o.enabled[SlotBase] = true
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	_ = o.SaveDraft(SlotRouter, []byte(`{"route":{"final":"direct"}}`))
+	_ = o.SaveDraft(SlotRouting, []byte(`{"route":{"final":"direct"}}`))
 
 	sv := &slowValidator{ready: make(chan struct{}), gate: make(chan struct{})}
 	o.SetValidator(sv)
@@ -404,7 +404,7 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 	}
 	first := make(chan result, 1)
 	go func() {
-		r, e := o.ApplyDraft(SlotRouter)
+		r, e := o.ApplyDraft(SlotRouting)
 		first <- result{r, e}
 	}()
 
@@ -418,7 +418,7 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 	}
 
 	// Now second call: pending is gone.
-	r2, err := o.ApplyDraft(SlotRouter)
+	r2, err := o.ApplyDraft(SlotRouting)
 	if !errors.Is(err, ErrNoDraft) {
 		t.Errorf("second call want ErrNoDraft, got %v (res=%v)", err, r2)
 	}

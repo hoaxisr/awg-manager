@@ -21,7 +21,7 @@ func newEditorHandler(t *testing.T) (*SingboxConfigEditorHandler, *orchestrator.
 	dir := t.TempDir()
 	o := orchestrator.New(dir, nil)
 	for _, meta := range orchestrator.KnownSlots() {
-		if meta.Slot == orchestrator.SlotRouter || meta.Slot == orchestrator.SlotUser {
+		if meta.Slot == orchestrator.SlotRouting || meta.Slot == orchestrator.SlotUser {
 			if err := o.Register(meta); err != nil {
 				t.Fatalf("register %s: %v", meta.Slot, err)
 			}
@@ -55,10 +55,10 @@ func decodeEnvelope(t *testing.T, body []byte, data any) {
 func TestConfigEditor_ListSlots_Shape(t *testing.T) {
 	h, o, dir := newEditorHandler(t)
 	// router: применённый файл; user: только черновик.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"route":{}}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{"route":{}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := o.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.SaveDraft(orchestrator.SlotUser, []byte(`{}`)); err != nil {
@@ -79,8 +79,8 @@ func TestConfigEditor_ListSlots_Shape(t *testing.T) {
 	for _, s := range data.Slots {
 		byName[s.Slot] = s
 	}
-	router := byName["router"]
-	if router.Ownership != "system" || router.Filename != "20-router.json" || !router.Enabled || router.HasDraft {
+	router := byName["routing"]
+	if router.Ownership != "system" || router.Filename != "21-routing.json" || !router.Enabled || router.HasDraft {
 		t.Errorf("router slot info: %+v", router)
 	}
 	if router.Size == 0 || router.MTime == "" {
@@ -94,15 +94,15 @@ func TestConfigEditor_ListSlots_Shape(t *testing.T) {
 
 func TestConfigEditor_GetSlot_ReadsEffectiveAndState(t *testing.T) {
 	h, o, dir := newEditorHandler(t)
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(`{"route":{"final":"direct"}}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"), []byte(`{"route":{"final":"direct"}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := o.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 
 	rec := httptest.NewRecorder()
-	h.GetSlot(rec, httptest.NewRequest(http.MethodGet, "/api/singbox/config/slot?name=router", nil))
+	h.GetSlot(rec, httptest.NewRequest(http.MethodGet, "/api/singbox/config/slot?name=routing", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -271,11 +271,11 @@ func TestConfigEditor_Check_BodyVsDraftVs409(t *testing.T) {
 // Дубликат тега между user-слотом и системным слотом всплывает в check.
 func TestConfigEditor_Check_CollisionWithSystemSlot(t *testing.T) {
 	h, o, dir := newEditorHandler(t)
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"),
 		[]byte(`{"outbounds":[{"type":"direct","tag":"shared-tag"}]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := o.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -446,11 +446,11 @@ func TestConfigEditor_CheckAndApply_SurfaceWarnings(t *testing.T) {
 	h, o, dir := newEditorHandler(t)
 	// Системный слот уже задаёт route.final → второй сеттер в user-слоте
 	// даёт route-final-conflict (warning, не блокирует).
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
+	if err := os.WriteFile(filepath.Join(dir, "21-routing.json"),
 		[]byte(`{"route":{"final":"direct"}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := o.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	userBody := `{"route":{"final":"direct"}}`

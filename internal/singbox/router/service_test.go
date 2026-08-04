@@ -394,21 +394,21 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, &fakeSingbox{dir: dir})
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("Register router slot: %v", err)
 	}
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 	active := []byte(`{"inbounds":[],"outbounds":[{"type":"selector","tag":"g","outbounds":["old"],"default":"old"}],"route":{"rules":[{"action":"route","outbound":"old"}],"final":"old"},"dns":{"servers":[{"tag":"d","type":"https","server":"example","detour":"old"}]}}`)
-	if err := orch.Save(orchestrator.SlotRouter, active); err != nil {
+	if err := orch.Save(orchestrator.SlotRouting, active); err != nil {
 		t.Fatalf("Save active: %v", err)
 	}
 	pending := []byte(`{"inbounds":[],"outbounds":[],"route":{"rules":[{"type":"logical","rules":[{"outbound":"old"}]}],"final":"direct","rule_set":[{"tag":"rs","type":"remote","url":"https://example.com/rs.srs","download_detour":"old"}]}}`)
-	if err := orch.SaveDraft(orchestrator.SlotRouter, pending); err != nil {
+	if err := orch.SaveDraft(orchestrator.SlotRouting, pending); err != nil {
 		t.Fatalf("SaveDraft: %v", err)
 	}
 	svc := &ServiceImpl{deps: Deps{Singbox: &fakeSingbox{dir: dir}, Orch: orch}}
@@ -676,7 +676,7 @@ func TestReconcileInstalled_SelectiveSelfHealWhenFinalNotDirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouter, data); err != nil {
+	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouting, data); err != nil {
 		t.Fatal(err)
 	}
 
@@ -722,7 +722,7 @@ func TestReconcileInstalled_SelectiveSelfHealIgnoresStagedDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouter, appliedData); err != nil {
+	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouting, appliedData); err != nil {
 		t.Fatal(err)
 	}
 	// …while a still-discardable STAGED draft is not. The self-heal must
@@ -734,7 +734,7 @@ func TestReconcileInstalled_SelectiveSelfHealIgnoresStagedDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, draftData); err != nil {
+	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouting, draftData); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1281,7 +1281,7 @@ type EventPublisher interface {
 // ---------------------------------------------------------------------------
 
 // newOrchedTestService creates a *ServiceImpl backed by a real orchestrator
-// rooted in t.TempDir() with SlotRouter registered, and a mockBus wired as
+// rooted in t.TempDir() with SlotRouting registered, and a mockBus wired as
 // the event publisher. Returns the service and the config directory path so
 // tests can inspect files.
 func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
@@ -1290,10 +1290,10 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 
 	orch := orchestrator.New(dir, nil)
 	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotRouter,
+		Slot:     orchestrator.SlotRouting,
 		Filename: "20-router.json",
 	}); err != nil {
-		t.Fatalf("orch.Register SlotRouter: %v", err)
+		t.Fatalf("orch.Register SlotRouting: %v", err)
 	}
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotFakeIP,
@@ -1389,7 +1389,7 @@ func TestApplyStaging_DelegatesAndEmitsEvent(t *testing.T) {
 func TestDiscardStaging_DelegatesAndEmitsEvent(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	bus := svc.deps.Bus.(*mockBus)
-	_ = svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, []byte(`{}`))
+	_ = svc.deps.Orch.SaveDraft(orchestrator.SlotRouting, []byte(`{}`))
 	bus.Reset()
 	if err := svc.DiscardStaging(context.Background()); err != nil {
 		t.Fatal(err)

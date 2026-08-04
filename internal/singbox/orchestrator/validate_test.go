@@ -17,14 +17,14 @@ func writeSlot(t *testing.T, dir, filename, content string) {
 func TestValidateOk(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "10-tunnels.json", `{"outbounds":[{"tag":"vpn1"}]}`)
 	writeSlot(t, dir, "20-router.json", `{"outbounds":[{"tag":"sel","outbounds":["vpn1","direct"],"default":"vpn1"}],"route":{"rules":[{"outbound":"sel"}],"final":"direct"}}`)
 	o.enabled[SlotTunnels] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !res.Ok() {
 		t.Errorf("expected ok, got: %v", res.Error())
@@ -34,7 +34,7 @@ func TestValidateOk(t *testing.T) {
 func TestValidate_DNSFinalConflict_WarnsButOk(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestValidate_DNSFinalConflict_WarnsButOk(t *testing.T) {
 	writeSlot(t, dir, "10-tunnels.json", `{"dns":{"servers":[{"tag":"s1","type":"udp"}],"final":"s1"}}`)
 	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"s2","type":"udp"}],"final":"s2"}}`)
 	o.enabled[SlotTunnels] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 
 	res := o.Validate()
 	// Warning must NOT block reload (Ok ignores warnings).
@@ -57,7 +57,7 @@ func TestValidate_DNSFinalConflict_WarnsButOk(t *testing.T) {
 		t.Errorf("expected warning severity, got %q", warn.Severity)
 	}
 	// Both slots should be named in the message.
-	if !strings.Contains(warn.Message, string(SlotTunnels)) || !strings.Contains(warn.Message, string(SlotRouter)) {
+	if !strings.Contains(warn.Message, string(SlotTunnels)) || !strings.Contains(warn.Message, string(SlotRouting)) {
 		t.Errorf("warning should name both slots, got: %s", warn.Message)
 	}
 }
@@ -74,7 +74,7 @@ func findValidationWarning(res ValidationResult, kind string) *ValidationError {
 func TestValidate_RouteFinalConflict_WarnsButOk(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestValidate_RouteFinalConflict_WarnsButOk(t *testing.T) {
 	writeSlot(t, dir, "10-tunnels.json", `{"route":{"final":"direct"}}`)
 	writeSlot(t, dir, "20-router.json", `{"route":{"final":"direct"}}`)
 	o.enabled[SlotTunnels] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 
 	res := o.Validate()
 	if !res.Ok() {
@@ -95,13 +95,13 @@ func TestValidate_RouteFinalConflict_WarnsButOk(t *testing.T) {
 
 func TestValidate_SingleDNSFinal_NoWarning(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// Only one slot sets dns.final — the normal post-#445 path.
 	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"s1","type":"udp"}],"final":"s1"}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 
 	res := o.Validate()
 	if !res.Ok() {
@@ -115,14 +115,14 @@ func TestValidate_SingleDNSFinal_NoWarning(t *testing.T) {
 func TestValidateDuplicateOutbound(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "10-tunnels.json", `{"outbounds":[{"tag":"vpn1"}]}`)
 	writeSlot(t, dir, "20-router.json", `{"outbounds":[{"tag":"vpn1"}]}`)
 	o.enabled[SlotTunnels] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if res.Ok() {
 		t.Fatalf("expected dup error")
@@ -137,14 +137,14 @@ func TestValidateDuplicateOutbound(t *testing.T) {
 
 func TestValidateDuplicateInbound(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	_ = o.Register(SlotMeta{Slot: SlotDeviceProxy, Filename: "30-deviceproxy.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"inbounds":[{"tag":"tproxy-in"}]}`)
 	writeSlot(t, dir, "30-deviceproxy.json", `{"inbounds":[{"tag":"tproxy-in"}]}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	o.enabled[SlotDeviceProxy] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "duplicate-inbound") {
@@ -154,12 +154,12 @@ func TestValidateDuplicateInbound(t *testing.T) {
 
 func TestValidateUnknownOutboundInRule(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"ghost"}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "unknown-outbound") {
 		t.Errorf("missing unknown-outbound: %s", res.Error())
@@ -171,12 +171,12 @@ func TestValidateUnknownOutboundInRule(t *testing.T) {
 
 func TestValidateUnknownOutboundInNestedRule(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"type":"logical","mode":"or","rules":[{"outbound":"ghost"}]}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "unknown-outbound") || !strings.Contains(res.Error(), "route.rules[0].rules[0]") {
 		t.Errorf("missing nested unknown-outbound: %s", res.Error())
@@ -185,7 +185,7 @@ func TestValidateUnknownOutboundInNestedRule(t *testing.T) {
 
 func TestValidateUnknownOutboundInDetours(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestValidateUnknownOutboundInDetours(t *testing.T) {
 		"route":{"rule_set":[{"tag":"geo","type":"remote","download_detour":"ghost-rs"}]},
 		"dns":{"servers":[{"tag":"dns","detour":"ghost-dns"}]}
 	}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "ghost-rs") || !strings.Contains(res.Error(), "route.rule_set[0=\"geo\"].download_detour") {
 		t.Errorf("missing rule_set download_detour error: %s", res.Error())
@@ -205,7 +205,7 @@ func TestValidateUnknownOutboundInDetours(t *testing.T) {
 
 func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestValidateUnknownRuleSetRefs(t *testing.T) {
 		"route":{"rule_set":[{"tag":"known"}],"rules":[{"rule_set":["known","missing-route"]}]},
 		"dns":{"rules":[{"rule_set":["missing-dns"]}]}
 	}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "unknown-rule-set") {
 		t.Fatalf("missing unknown-rule-set: %s", res.Error())
@@ -228,12 +228,12 @@ func TestValidateUnknownRuleSetRefs(t *testing.T) {
 
 func TestValidateBuiltinOutboundsAccepted(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"direct"},{"outbound":"block"},{"outbound":"dns"}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !res.Ok() {
 		t.Errorf("builtins should be accepted: %s", res.Error())
@@ -243,14 +243,14 @@ func TestValidateBuiltinOutboundsAccepted(t *testing.T) {
 func TestValidateDisabledSlotsIgnored(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json"})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// Both files have "vpn1", but tunnels is in disabled/ → skipped.
 	writeSlot(t, filepath.Join(dir, "disabled"), "10-tunnels.json", `{"outbounds":[{"tag":"vpn1"}]}`)
 	writeSlot(t, dir, "20-router.json", `{"outbounds":[{"tag":"vpn1"}]}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	// SlotTunnels stays disabled (default).
 	res := o.Validate()
 	if !res.Ok() {
@@ -260,12 +260,12 @@ func TestValidateDisabledSlotsIgnored(t *testing.T) {
 
 func TestValidateSelectorDefaultUnknown(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"outbounds":[{"tag":"sel","outbounds":["direct"],"default":"missing"}]}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !strings.Contains(res.Error(), "unknown-outbound") {
 		t.Errorf("expected unknown-outbound for default: %s", res.Error())
@@ -279,12 +279,12 @@ func TestValidateDraftLocked_SwapsTargetSlot(t *testing.T) {
 	dir := t.TempDir()
 	o := New(dir, nil)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	o.enabled[SlotBase] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 
 	// Active 20-router.json declares outbound tag "live-X"
 	active := []byte(`{"outbounds":[{"tag":"live-X","type":"direct"}]}`)
@@ -298,7 +298,7 @@ func TestValidateDraftLocked_SwapsTargetSlot(t *testing.T) {
 	draft := []byte(`{"outbounds":[{"tag":"draft-Y","type":"direct"}],"route":{"final":"draft-Y"}}`)
 
 	o.mu.Lock()
-	res := o.validateDraftLocked(SlotRouter, draft)
+	res := o.validateDraftLocked(SlotRouting, draft)
 	o.mu.Unlock()
 
 	if !res.Ok() {
@@ -308,7 +308,7 @@ func TestValidateDraftLocked_SwapsTargetSlot(t *testing.T) {
 	// Negative: draft references ghost tag.
 	badDraft := []byte(`{"route":{"final":"ghost"}}`)
 	o.mu.Lock()
-	res = o.validateDraftLocked(SlotRouter, badDraft)
+	res = o.validateDraftLocked(SlotRouting, badDraft)
 	o.mu.Unlock()
 
 	if res.Ok() {
@@ -327,12 +327,12 @@ func TestValidateDraftLocked_SwapsTargetSlot(t *testing.T) {
 
 func TestValidateUnknownDNSFinal(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"real"}],"final":"ghost-dns"}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if res.Ok() {
 		t.Fatalf("expected unknown-dns-server error, got ok")
@@ -347,12 +347,12 @@ func TestValidateUnknownDNSFinal(t *testing.T) {
 
 func TestValidateUnknownDefaultDomainResolver(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"route":{"default_domain_resolver":{"server":"ghost-dns"}},"dns":{"servers":[{"tag":"real"}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if res.Ok() {
 		t.Fatalf("expected unknown-dns-server error, got ok")
@@ -367,13 +367,13 @@ func TestValidateUnknownDefaultDomainResolver(t *testing.T) {
 
 func TestValidateKnownDNSRefsAccepted(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// Valid refs: dns.final and default_domain_resolver both point at declared server "real".
 	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"real"}],"final":"real"},"route":{"default_domain_resolver":{"server":"real"}}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !res.Ok() {
 		t.Errorf("known DNS refs should be accepted: %s", res.Error())
@@ -390,15 +390,15 @@ func TestValidateKnownDNSRefsAccepted(t *testing.T) {
 func TestValidateKnownDNSRefsCrossSlot(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	// SlotBase declares the "real" DNS server; SlotRouter references it in dns.final.
+	// SlotBase declares the "real" DNS server; SlotRouting references it in dns.final.
 	writeSlot(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"real"}]}}`)
 	writeSlot(t, dir, "20-router.json", `{"dns":{"final":"real"}}`)
 	o.enabled[SlotBase] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !res.Ok() {
 		t.Errorf("cross-slot DNS ref should be accepted: %s", res.Error())
@@ -409,10 +409,10 @@ func TestValidateDraftLocked_DetectsDuplicateAcrossSlots(t *testing.T) {
 	dir := t.TempDir()
 	o := New(dir, nil)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	_ = o.Bootstrap()
 	o.enabled[SlotBase] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
@@ -421,7 +421,7 @@ func TestValidateDraftLocked_DetectsDuplicateAcrossSlots(t *testing.T) {
 	draft := []byte(`{"outbounds":[{"tag":"direct","type":"direct","bind_interface":"eth0"}]}`)
 
 	o.mu.Lock()
-	res := o.validateDraftLocked(SlotRouter, draft)
+	res := o.validateDraftLocked(SlotRouting, draft)
 	o.mu.Unlock()
 
 	if res.Ok() {
@@ -445,7 +445,7 @@ func TestValidateDraftLocked_DetectsDuplicateAcrossSlots(t *testing.T) {
 func TestValidateDefaultDomainResolverStringForm(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestValidateDefaultDomainResolverStringForm(t *testing.T) {
 	writeSlot(t, dir, "00-base.json", `{"dns":{"servers":[{"tag":"dns-bootstrap"}]},"route":{"default_domain_resolver":"dns-bootstrap"}}`)
 	writeSlot(t, dir, "20-router.json", `{"route":{"final":"direct"}}`)
 	o.enabled[SlotBase] = true
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if !res.Ok() {
 		t.Fatalf("string-form default_domain_resolver must validate, got: %v", res.Error())
@@ -465,14 +465,14 @@ func TestValidateDefaultDomainResolverStringForm(t *testing.T) {
 // must resolve like any outbound.
 func TestValidateRuleReferencesEndpointTag(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "16-awg3.json", `{"endpoints":[{"tag":"awg3-de","type":"wireguard"}]}`)
 	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"awg3-de"}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	o.enabled[SlotAwg3] = true
 	res := o.Validate()
 	if !res.Ok() {
@@ -506,14 +506,14 @@ func TestValidateEndpointDuplicatesOutbound(t *testing.T) {
 // unknown-outbound (the core delete-guard scenario).
 func TestValidateRuleReferencesRemovedEndpoint(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "16-awg3.json", `{"endpoints":[]}`)
 	writeSlot(t, dir, "20-router.json", `{"route":{"rules":[{"outbound":"awg3-de"}]}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	o.enabled[SlotAwg3] = true
 	res := o.Validate()
 	if res.Ok() {
@@ -528,12 +528,12 @@ func TestValidateRuleReferencesRemovedEndpoint(t *testing.T) {
 // resolver naming an undeclared server must fail.
 func TestValidateDefaultDomainResolverStringForm_Unknown(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	writeSlot(t, dir, "20-router.json", `{"dns":{"servers":[{"tag":"real"}]},"route":{"default_domain_resolver":"ghost-dns"}}`)
-	o.enabled[SlotRouter] = true
+	o.enabled[SlotRouting] = true
 	res := o.Validate()
 	if res.Ok() || !strings.Contains(res.Error(), "unknown-dns-server") {
 		t.Fatalf("bare-string resolver to unknown server must fail unknown-dns-server, got: %v", res.Error())

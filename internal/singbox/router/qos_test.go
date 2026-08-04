@@ -461,7 +461,7 @@ func newQoSSlotTestService(t *testing.T, outbounds ...string) (*ServiceImpl, str
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotQoSRoutes, Filename: "18-qos-routes.json"}); err != nil {
@@ -475,10 +475,10 @@ func newQoSSlotTestService(t *testing.T, outbounds ...string) (*ServiceImpl, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.SetEnabledSilent(orchestrator.SlotRouter, true); err != nil {
+	if err := orch.SetEnabledSilent(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.SaveSilent(orchestrator.SlotRouter, data); err != nil {
+	if err := orch.SaveSilent(orchestrator.SlotRouting, data); err != nil {
 		t.Fatal(err)
 	}
 	return &ServiceImpl{deps: Deps{Orch: orch, Singbox: &fakeSingbox{dir: dir}}}, dir
@@ -582,7 +582,7 @@ func TestSyncQoSRoutesSlot_ResolvesOutboundsAgainstAppliedNotDraft(t *testing.T)
 	draft := NewEmptyConfig()
 	draft.Outbounds = append(draft.Outbounds, Outbound{Type: "selector", Tag: "vpn-staged", Outbounds: []string{"direct"}})
 	data, _ := json.MarshalIndent(draft, "", "  ")
-	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, data); err != nil {
+	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouting, data); err != nil {
 		t.Fatal(err)
 	}
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
@@ -1194,7 +1194,7 @@ func TestHealQoSConfig_DoesNotApplyPendingDraft(t *testing.T) {
 	}
 	draft.Route.Rules = append(draft.Route.Rules, Rule{DomainSuffix: []string{".staged.example"}, Action: "route", Outbound: "vpn-a"})
 	draftData, _ := json.MarshalIndent(draft, "", "  ")
-	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, draftData); err != nil {
+	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouting, draftData); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1214,7 +1214,7 @@ func TestHealQoSConfig_DoesNotApplyPendingDraft(t *testing.T) {
 		t.Errorf("heal leaked the pending draft into the active config (staging gate bypassed):\n%s", activeRaw)
 	}
 	// And the draft itself must still be pending.
-	if !svc.deps.Orch.HasDraft(orchestrator.SlotRouter) {
+	if !svc.deps.Orch.HasDraft(orchestrator.SlotRouting) {
 		t.Error("pending draft vanished during heal")
 	}
 }

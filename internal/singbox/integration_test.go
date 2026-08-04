@@ -198,7 +198,7 @@ type integrationEnv struct {
 
 // newIntegrationEnv sets up a router ServiceImpl backed by a real orchestrator
 // and a fake ProcessController, all rooted in t.TempDir(). SlotBase and
-// SlotRouter are registered; SlotBase gets a seeded 00-base.json declaring a
+// SlotRouting are registered; SlotBase gets a seeded 00-base.json declaring a
 // "direct" outbound so cross-slot validation accepts references to it.
 func newIntegrationEnv(t *testing.T) *integrationEnv {
 	t.Helper()
@@ -215,10 +215,10 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 		t.Fatalf("register SlotBase: %v", err)
 	}
 	if err := orch.Register(orchestrator.SlotMeta{
-		Slot:     orchestrator.SlotRouter,
+		Slot:     orchestrator.SlotRouting,
 		Filename: "20-router.json",
 	}); err != nil {
-		t.Fatalf("register SlotRouter: %v", err)
+		t.Fatalf("register SlotRouting: %v", err)
 	}
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("orch.Bootstrap: %v", err)
@@ -231,9 +231,9 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 		t.Fatalf("seed base: %v", err)
 	}
 
-	// Enable SlotRouter so ApplyDraft promotes pending → active (not disabled/).
-	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
-		t.Fatalf("enable SlotRouter: %v", err)
+	// Enable SlotRouting so ApplyDraft promotes pending → active (not disabled/).
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("enable SlotRouting: %v", err)
 	}
 
 	settingsDir := t.TempDir()

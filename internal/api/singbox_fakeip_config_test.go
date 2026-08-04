@@ -15,14 +15,14 @@ import (
 )
 
 // newTestFakeIPConfigHandler wires a real *router.ServiceImpl over a real
-// *orchestrator.Orchestrator (both SlotRouter and SlotFakeIP registered),
+// *orchestrator.Orchestrator (both SlotRouting and SlotFakeIP registered),
 // with a SettingsStore that has FakeIPState provisioned so writes succeed.
 func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	t.Helper()
 	dir := t.TempDir()
 
 	orch := orchestrator.New(dir, nil)
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotFakeIP, Filename: "21-fakeip.json"}); err != nil {

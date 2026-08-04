@@ -11,7 +11,7 @@ func TestKnownSlotsIncludesDNSRewritesBeforeRouter(t *testing.T) {
 			idxRewrites = i
 		case SlotSelectiveRoutes:
 			idxSelective = i
-		case SlotRouter:
+		case SlotRouting:
 			idxRouter = i
 		}
 	}

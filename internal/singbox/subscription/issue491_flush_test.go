@@ -56,16 +56,16 @@ func newIssue491Harness(t *testing.T) (*OperatorAdapter, *issue491Validator) {
 	dir := t.TempDir()
 	orch := orchestrator.New(dir, nil)
 	// Соседний слот, чтобы merged-снапшот отличался от standalone (2 файла vs 1).
-	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.Save(orchestrator.SlotRouter, []byte(`{"outbounds":[]}`)); err != nil {
+	if err := orch.Save(orchestrator.SlotRouting, []byte(`{"outbounds":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	v := &issue491Validator{}

@@ -35,10 +35,10 @@ func TestRegisterAndBootstrap(t *testing.T) {
 	if err := o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true}); err != nil {
 		t.Fatalf("register base: %v", err)
 	}
-	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("register router: %v", err)
 	}
-	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err == nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err == nil {
 		t.Errorf("expected ErrSlotAlreadyRegistered on duplicate")
 	}
 	if err := o.Bootstrap(); err != nil {
@@ -84,12 +84,12 @@ func TestSaveWritesActivePathWhenEnabled(t *testing.T) {
 
 func TestSaveWritesDisabledPathWhenDisabled(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// Slot is disabled by default (not AlwaysOn, no file yet).
-	if err := o.Save(SlotRouter, []byte(`{"y":2}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"y":2}`)); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "disabled", "20-router.json"))
@@ -106,15 +106,15 @@ func TestSaveWritesDisabledPathWhenDisabled(t *testing.T) {
 
 func TestSetEnabledRenamesFile(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{"y":2}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"y":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	// Lives in disabled/.
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); err != nil {
@@ -124,11 +124,11 @@ func TestSetEnabledRenamesFile(t *testing.T) {
 		t.Errorf("disabled path should be empty")
 	}
 	// Idempotent.
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Errorf("idempotent enable failed: %v", err)
 	}
 	// Disable.
-	if err := o.SetEnabled(SlotRouter, false); err != nil {
+	if err := o.SetEnabled(SlotRouting, false); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "disabled", "20-router.json")); err != nil {
@@ -172,7 +172,7 @@ func TestSetEnabledRejectsAlwaysOn(t *testing.T) {
 
 func TestSaveUnknownSlot(t *testing.T) {
 	o, _ := newTestOrch(t)
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != ErrUnknownSlot {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != ErrUnknownSlot {
 		t.Errorf("expected ErrUnknownSlot, got %v", err)
 	}
 }
@@ -310,17 +310,17 @@ func TestReloadStartsWhenSlotEnabled(t *testing.T) {
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Save(SlotBase, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Reload(); err != nil {
@@ -336,7 +336,7 @@ func TestReloadStopsWhenAllDisabled(t *testing.T) {
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -353,14 +353,14 @@ func TestReloadSighupsWhenAlreadyRunning(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Reload(); err != nil {
@@ -375,15 +375,15 @@ func TestReloadSkippedOnValidationError(t *testing.T) {
 	fp := &fakeProc{}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// Write a config with a dangling outbound reference.
-	if err := o.Save(SlotRouter, []byte(`{"route":{"rules":[{"outbound":"ghost"}]}}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"route":{"rules":[{"outbound":"ghost"}]}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	err := o.Reload()
@@ -400,16 +400,16 @@ func TestDebouncerCoalescesMultipleSaves(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	// Three rapid saves within the debounce window.
 	for i := 0; i < 3; i++ {
-		if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -469,17 +469,17 @@ func TestReloadStartsForBothAlwaysOnContentAndConsumerSlot(t *testing.T) {
 		AlwaysOn:   true,
 		HasContent: func() bool { return true },
 	})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Save(SlotTunnels, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Reload(); err != nil {
@@ -492,8 +492,8 @@ func TestReloadStartsForBothAlwaysOnContentAndConsumerSlot(t *testing.T) {
 
 func TestPendingPath_ReturnsExpectedPath(t *testing.T) {
 	o := New("/tmp/cfg", nil)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
-	meta := o.slots[SlotRouter]
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
+	meta := o.slots[SlotRouting]
 	got := o.pendingPath(meta)
 	want := "/tmp/cfg/pending/20-router.json"
 	if got != want {
@@ -518,7 +518,7 @@ func TestEnsureDirs_CreatesPendingSubdir(t *testing.T) {
 
 func TestBootstrapResolvesBothLocationsConflict(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	// Pre-seed BOTH locations.
 	if err := os.MkdirAll(filepath.Join(dir, "disabled"), 0755); err != nil {
 		t.Fatal(err)
@@ -559,7 +559,7 @@ func TestBootstrap_SweepsStaleCheckDirs(t *testing.T) {
 	}
 
 	o := New(dir, nil)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestBootstrap_SweepsStaleTempFiles(t *testing.T) {
 	}
 
 	o := New(dir, nil)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestBootstrap_LeavesPendingFileIntact(t *testing.T) {
 	}
 
 	o := New(dir, nil)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +631,7 @@ func TestBootstrap_LeavesPendingFileIntact(t *testing.T) {
 	if string(got) != string(bytes) {
 		t.Errorf("pending bytes mutated: got %s", got)
 	}
-	if !o.HasDraft(SlotRouter) {
+	if !o.HasDraft(SlotRouting) {
 		t.Errorf("HasDraft should be true after Bootstrap")
 	}
 }
@@ -645,17 +645,17 @@ func TestReloadColdStartSuppressedByShouldRun(t *testing.T) {
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Save(SlotBase, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	o.SetShouldRun(func() bool { return false }) // sticky-stop intent
@@ -678,17 +678,17 @@ func TestReloadColdStartProceedsWhenShouldRunTrue(t *testing.T) {
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Save(SlotBase, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	o.SetShouldRun(func() bool { return true })
@@ -710,17 +710,17 @@ func TestReloadShouldRunOnlyGatesColdStart(t *testing.T) {
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
 	_ = o.Register(SlotMeta{Slot: SlotBase, Filename: "00-base.json", AlwaysOn: true})
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Save(SlotBase, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	o.SetShouldRun(func() bool { return false }) // would block cold-start
@@ -761,14 +761,14 @@ func TestReload_RestartsWhenTunAdded(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+	if err := o.Save(SlotRouting, []byte(tunInboundConfig)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	// prevHasTun starts false (zero value) — this is the add toggle.
@@ -793,14 +793,14 @@ func TestReload_SighupWhenTunStillPresent(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+	if err := o.Save(SlotRouting, []byte(tunInboundConfig)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	o.prevHasTun = true // tun was present in the prior applied config
@@ -823,16 +823,16 @@ func TestReload_RestartsWhenTunRemoved(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
 	// No tun inbound in the new config, but the slot is enabled so the
 	// daemon is still needed.
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	o.prevHasTun = true // tun WAS present previously
@@ -854,14 +854,14 @@ func TestReload_SighupWhenNoTunEither(t *testing.T) {
 	fp := &fakeProc{running: true}
 	dir := t.TempDir()
 	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	// prevHasTun stays false (zero value).
@@ -881,7 +881,7 @@ func TestKnownSlots_FakeIP(t *testing.T) {
 			fi = &slots[i]
 		}
 	}
-	if fi == nil || fi.Filename != "21-fakeip.json" || fi.AlwaysOn {
+	if fi == nil || fi.Filename != "20-fakeip.json" || fi.AlwaysOn {
 		t.Fatalf("SlotFakeIP missing/wrong: %+v", fi)
 	}
 }
@@ -894,7 +894,7 @@ func TestKnownSlots_FakeIP(t *testing.T) {
 // SetEnabled(false) must reconcile against disk and remove the stray active file.
 func TestSetEnabledReconcilesMapDiskDrift(t *testing.T) {
 	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"})
 	if err := o.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -903,7 +903,7 @@ func TestSetEnabledReconcilesMapDiskDrift(t *testing.T) {
 	disabled := filepath.Join(dir, "disabled", "20-router.json")
 
 	// Drift: both copies present on disk, but the map still says disabled
-	// (Bootstrap saw no active file, so o.enabled[SlotRouter] == false).
+	// (Bootstrap saw no active file, so o.enabled[SlotRouting] == false).
 	if err := os.WriteFile(active, []byte(`{"dns":{"servers":[{"tag":"tproxy"}]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -913,7 +913,7 @@ func TestSetEnabledReconcilesMapDiskDrift(t *testing.T) {
 
 	// Disabling must remove the stray active file rather than no-op on the
 	// stale map.
-	if err := o.SetEnabled(SlotRouter, false); err != nil {
+	if err := o.SetEnabled(SlotRouting, false); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if _, err := os.Stat(active); !os.IsNotExist(err) {

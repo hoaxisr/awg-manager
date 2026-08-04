@@ -277,7 +277,7 @@ func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag str
 // ---------------------------------------------------------------------------
 
 // FakeIPConfigService is the isolated fakeip-tun config CRUD surface
-// (SlotFakeIP), parallel to Service's tproxy CRUD (SlotRouter).
+// (SlotFakeIP), parallel to Service's tproxy CRUD (SlotRouting).
 // Implemented by *ServiceImpl.
 type FakeIPConfigService interface {
 	// DNS servers

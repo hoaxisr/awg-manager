@@ -212,22 +212,22 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
-	// Promote SlotRouter FIRST so persistConfigDirect targets the active path.
+	// Promote SlotRouting FIRST so persistConfigDirect targets the active path.
 	// The prior enabled-state is captured for rollback (SlotFakeIP is not
 	// touched: leaving fakeip is the transition's teardown job, not ours).
 	prevRouterEnabled := false
 	if s.deps.Orch != nil {
 		for _, st := range s.deps.Orch.Snapshot() {
-			if st.Slot == orchestrator.SlotRouter {
+			if st.Slot == orchestrator.SlotRouting {
 				prevRouterEnabled = st.Enabled
 				break
 			}
 		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
 			return fmt.Errorf("enable policy-tun: orchestrator enable router slot: %w", err)
 		}
 		push(func() {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, prevRouterEnabled); e != nil {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, prevRouterEnabled); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "restore router slot: "+e.Error())
 			}
 			// Разметка слотов вернулась — device-proxy должен перегенерировать

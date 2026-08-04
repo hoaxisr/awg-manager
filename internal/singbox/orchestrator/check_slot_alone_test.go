@@ -30,7 +30,7 @@ func newAloneTestOrch(t *testing.T) (*Orchestrator, *recordingAloneValidator) {
 	t.Helper()
 	dir := t.TempDir()
 	o := New(dir, nil)
-	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+	if err := o.Register(SlotMeta{Slot: SlotRouting, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.Register(SlotMeta{Slot: SlotSubscriptions, Filename: "40-subscriptions.json"}); err != nil {
@@ -40,10 +40,10 @@ func newAloneTestOrch(t *testing.T) (*Orchestrator, *recordingAloneValidator) {
 		t.Fatal(err)
 	}
 	// Сосед включён и с файлом — merged-снапшот содержал бы его.
-	if err := o.Save(SlotRouter, []byte(`{"outbounds":[]}`)); err != nil {
+	if err := o.Save(SlotRouting, []byte(`{"outbounds":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
+	if err := o.SetEnabled(SlotRouting, true); err != nil {
 		t.Fatal(err)
 	}
 	v := &recordingAloneValidator{}

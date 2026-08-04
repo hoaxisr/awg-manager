@@ -331,12 +331,12 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 }
 
 // TestEnableFakeIPTun_SlotFakeIPWritten asserts the new enable contract:
-//   - SlotFakeIP is ENABLED and SlotRouter is DISABLED (XOR) after a successful enable.
+//   - SlotFakeIP is ENABLED and SlotRouting is DISABLED (XOR) after a successful enable.
 //   - The persisted active file is 21-fakeip.json, not 20-router.json.
 //   - 21-fakeip.json contains the engine-locked overlay bits (tun-in, fakeip DNS
 //     server, hijack-dns at route.rules[0]) and the seeded A/AAAA→fakeip DNS rule.
 //   - route.final is set (seed provides "direct").
-//   - SlotRouter is parked under disabled/ by the XOR, content unchanged.
+//   - SlotRouting is parked under disabled/ by the XOR, content unchanged.
 func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
@@ -344,7 +344,7 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		t.Fatalf("Enable(fakeip-tun): %v", err)
 	}
 
-	// --- Slot XOR: SlotFakeIP on, SlotRouter off ---
+	// --- Slot XOR: SlotFakeIP on, SlotRouting off ---
 	orch := h.svc.deps.Orch
 	snap := orch.Snapshot()
 	var fakeIPEnabled, routerEnabled bool
@@ -360,7 +360,7 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		t.Error("SlotFakeIP must be ENABLED after enable")
 	}
 	if routerEnabled {
-		t.Error("SlotRouter must be DISABLED (XOR) after fakeip enable")
+		t.Error("SlotRouting must be DISABLED (XOR) after fakeip enable")
 	}
 
 	// --- 21-fakeip.json exists and has the locked bits + seed ---
@@ -623,16 +623,16 @@ func slotEnabled(t *testing.T, svc *ServiceImpl, slot orchestrator.Slot) bool {
 	return false
 }
 
-// Rollback must restore SlotRouter to its PRIOR state, not a hardcoded true.
-// When fakeip is enabled from a state where SlotRouter was already OFF (boot
-// into fakeip / first enable), a post-flip failure must leave SlotRouter OFF —
+// Rollback must restore SlotRouting to its PRIOR state, not a hardcoded true.
+// When fakeip is enabled from a state where SlotRouting was already OFF (boot
+// into fakeip / first enable), a post-flip failure must leave SlotRouting OFF —
 // re-enabling tproxy would be wrong (and break XOR intent).
 func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "AddRoute") // post-flip failure
-	// Force the prior state: SlotRouter DISABLED (the harness writes 20-router.json
+	// Force the prior state: SlotRouting DISABLED (the harness writes 20-router.json
 	// to active, which counts as enabled — flip it off to model boot-into-fakeip).
-	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
-		t.Fatalf("pre-disable SlotRouter: %v", err)
+	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
+		t.Fatalf("pre-disable SlotRouting: %v", err)
 	}
 
 	err := h.svc.Enable(context.Background())
@@ -640,8 +640,8 @@ func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
 		t.Fatal("expected error when AddRoute fails")
 	}
 
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Error("rollback wrongly re-enabled SlotRouter: prior state was disabled")
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("rollback wrongly re-enabled SlotRouting: prior state was disabled")
 	}
 	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Error("rollback must leave SlotFakeIP disabled")
@@ -684,7 +684,7 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 func TestEnableFakeIPTun_RefusesWithoutEgress(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Seed the fakeip config (21-fakeip.json) with a route.final that references a
-	// non-existent outbound. The egress is now sourced from SlotFakeIP, not SlotRouter.
+	// non-existent outbound. The egress is now sourced from SlotFakeIP, not SlotRouting.
 	// A pre-seeded bad egress prevents the "empty config" seed from applying "direct"
 	// (which would pass). We include at least one DNS rule so fakeIPConfigEmpty returns
 	// false and the seed is skipped.
@@ -1397,22 +1397,22 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	}
 }
 
-// TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter asserts that disabling a
+// TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouting asserts that disabling a
 // provisioned fakeip-tun disables the FAKEIP slot (21-fakeip.json) and does NOT
 // touch the tproxy router slot (20-router.json). The XOR contract: after disable,
-// SlotFakeIP is DISABLED and SlotRouter is unchanged (it was already disabled by
+// SlotFakeIP is DISABLED and SlotRouting is unchanged (it was already disabled by
 // the prior Enable's XOR flip).
-func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter(t *testing.T) {
+func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouting(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	captureDrain(t)
-	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP ON, SlotRouter OFF
+	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP ON, SlotRouting OFF
 
 	// Sanity pre-condition: Enable flipped the slots correctly.
 	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Fatal("precondition: SlotFakeIP must be enabled after Enable")
 	}
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Fatal("precondition: SlotRouter must be disabled after Enable (XOR)")
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Fatal("precondition: SlotRouting must be disabled after Enable (XOR)")
 	}
 
 	if err := h.svc.Disable(context.Background()); err != nil {
@@ -1423,10 +1423,10 @@ func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouter(t *testing.T) {
 	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Error("SlotFakeIP must be DISABLED after fakeip Disable")
 	}
-	// SlotRouter must remain DISABLED (untouched — disabling fakeip must not
+	// SlotRouting must remain DISABLED (untouched — disabling fakeip must not
 	// re-enable the tproxy slot, which would be wrong and violate XOR).
-	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
-		t.Error("SlotRouter must remain DISABLED (untouched) after fakeip Disable — must NOT toggle the tproxy slot")
+	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting must remain DISABLED (untouched) after fakeip Disable — must NOT toggle the tproxy slot")
 	}
 }
 

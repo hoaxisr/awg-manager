@@ -18,17 +18,17 @@ import (
 // rule server tag as well).
 func seedInspectSlots(t *testing.T, svc *ServiceImpl) {
 	t.Helper()
-	// newFakeIPTestService enables only SlotFakeIP; enable SlotRouter too so
+	// newFakeIPTestService enables only SlotFakeIP; enable SlotRouting too so
 	// persistSlotDirect writes its file to the active path LoadEffective reads.
-	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
-		t.Fatalf("enable SlotRouter: %v", err)
+	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("enable SlotRouting: %v", err)
 	}
 	routerCfg := NewEmptyConfig()
 	routerCfg.Route.Rules = []Rule{{Action: "route", DomainSuffix: []string{"tproxy.example"}, Outbound: "tproxy-out"}}
 	routerCfg.DNS.Servers = []DNSServer{{Tag: "dns-tproxy", Type: "udp", Server: "1.1.1.1"}}
 	routerCfg.DNS.Rules = []DNSRule{{Action: "route", DomainSuffix: []string{"tproxy.example"}, Server: "dns-tproxy"}}
 	routerCfg.DNS.Final = "dns-tproxy"
-	if err := svc.persistSlotDirect(orchestrator.SlotRouter, routerCfg, false); err != nil {
+	if err := svc.persistSlotDirect(orchestrator.SlotRouting, routerCfg, false); err != nil {
 		t.Fatalf("persist router slot: %v", err)
 	}
 

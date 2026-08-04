@@ -163,7 +163,7 @@ func (s *ServiceImpl) loadFakeIPConfig() (*RouterConfig, error) {
 
 // persistFakeIPConfig materializes, validates and saves a fakeip RouterConfig
 // directly to the active path (21-fakeip.json) via Orch.Save. It mirrors
-// persistConfigDirect but targets SlotFakeIP instead of SlotRouter.
+// persistConfigDirect but targets SlotFakeIP instead of SlotRouting.
 // Byte-equal short-circuit: if the serialized bytes match what is already on
 // disk we skip the write (and the debounced reload it would trigger).
 func (s *ServiceImpl) persistFakeIPConfig(ctx context.Context, cfg *RouterConfig) error {
@@ -253,7 +253,7 @@ func fakeIPConfigEmpty(cfg *RouterConfig) bool {
 
 // fakeipWithConfig is the isolated load→restore→clone→mutate→guard→overlay→persist→emit
 // skeleton for the fakeip-tun config slot. It mirrors withConfig but:
-//   - loads/persists SlotFakeIP (not SlotRouter),
+//   - loads/persists SlotFakeIP (not SlotRouting),
 //   - snapshots `before` (deep copy) after restore so guardFakeIPLocked can
 //     diff the pre-mutation state against the user's edit,
 //   - rejects edits that clobber engine-locked bits via guardFakeIPLocked,

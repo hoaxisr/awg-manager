@@ -27,7 +27,7 @@ func ensureDisabledDir(t *testing.T, dir string) {
 
 func routerSlotEnabled(o *orchestrator.Orchestrator) bool {
 	for _, st := range o.Snapshot() {
-		if st.Slot == orchestrator.SlotRouter {
+		if st.Slot == orchestrator.SlotRouting {
 			return st.Enabled
 		}
 	}
@@ -125,7 +125,7 @@ func TestEnable_Tproxy_NotifiesRoutingSlotsChanged(t *testing.T) {
 	ensureDisabledDir(t, dir)
 	orch := svc.deps.Orch
 	// Стартуем из выключенного состояния (файл в disabled/).
-	if err := orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+	if err := orch.SetEnabledSilent(orchestrator.SlotRouting, false); err != nil {
 		t.Fatalf("park router slot: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestReconcile_ParkedSlotWithLiveChains_RepromotesSlot(t *testing.T) {
 	svc, dir := newQoSSlotTestService(t, "vpn")
 	ensureDisabledDir(t, dir)
 	orch := svc.deps.Orch
-	if err := orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+	if err := orch.SetEnabledSilent(orchestrator.SlotRouting, false); err != nil {
 		t.Fatal(err)
 	}
 	svc.deps.Settings = newTestSettingsStore(t, storage.SingboxRouterSettings{
@@ -213,7 +213,7 @@ func TestReconcile_ParkedSlotDeadEngine_DefersRepromote(t *testing.T) {
 	svc, dir := newQoSSlotTestService(t, "vpn")
 	ensureDisabledDir(t, dir)
 	orch := svc.deps.Orch
-	if err := orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+	if err := orch.SetEnabledSilent(orchestrator.SlotRouting, false); err != nil {
 		t.Fatal(err)
 	}
 	svc.deps.Settings = newTestSettingsStore(t, storage.SingboxRouterSettings{
