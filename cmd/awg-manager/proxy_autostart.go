@@ -23,8 +23,8 @@ func (a *app) resumeEnabledProxyClients(reason string) {
 
 // scheduleProxyClientAutostart откладывает автостарт до готовности WAN/NDMS и
 // даёт DNS-стеку (sing-box на 127.0.0.1:53) время подняться — WDTT vkcalls
-// падает на lookup login.vk.ru, если резолвер ещё не жив. Серверы FT/WDTT
-// могут ждать backend WG — повторные попытки через 30s и 2m.
+// падает на lookup login.vk.ru, если резолвер ещё не жив. Дальнейшие попытки —
+// за супервизором (тик 30 с с backoff), отдельная лестница ретраев не нужна.
 func (a *app) scheduleProxyClientAutostart(trigger string) {
 	go func() {
 		const dnsSettle = 8 * time.Second
@@ -40,12 +40,6 @@ func (a *app) scheduleProxyClientAutostart(trigger string) {
 		case <-time.After(30 * time.Second):
 		}
 		a.resumeEnabledProxyClients(trigger + "-retry")
-		select {
-		case <-a.shutdownCtx.Done():
-			return
-		case <-time.After(2 * time.Minute):
-		}
-		a.resumeEnabledProxyClients(trigger + "-retry2")
 	}()
 }
 

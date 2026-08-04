@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/procport"
+	"github.com/hoaxisr/awg-manager/internal/proxysup"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -45,6 +46,7 @@ type Service struct {
 	listenPortChecker LocalListenPortChecker
 
 	clientHealth *healthTracker
+	startBackoff *proxysup.Backoff
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
@@ -98,14 +100,15 @@ func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
 // NewService wires up config storage and process managers per instance id.
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:       NewStore(dataDir),
-		dataDir:     dataDir,
-		clientBin:   clientBin,
-		serverBin:   serverBin,
-		versionPath: filepath.Join(dataDir, "freeturn-version.json"),
+		store:        NewStore(dataDir),
+		dataDir:      dataDir,
+		clientBin:    clientBin,
+		serverBin:    serverBin,
+		versionPath:  filepath.Join(dataDir, "freeturn-version.json"),
 		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
 		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
 		clientHealth: newHealthTracker(),
+		startBackoff: newStartBackoff(),
 	}
 }
 

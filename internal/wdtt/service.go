@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/procport"
+	"github.com/hoaxisr/awg-manager/internal/proxysup"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -35,6 +36,7 @@ type Service struct {
 	appLog          *logging.ScopedLogger
 	listenChecker   LocalListenPortChecker
 	clientHealth    *healthTracker
+	startBackoff    *proxysup.Backoff
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
 	ndmsIfaces      NDMSOpkgTunCommands
@@ -74,14 +76,15 @@ func (s *Service) opkgStartsInFlight() bool {
 
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:       NewStore(dataDir),
-		dataDir:     dataDir,
-		clientBin:   clientBin,
-		serverBin:   serverBin,
-		versionPath: filepath.Join(dataDir, "wdtt-version.json"),
+		store:        NewStore(dataDir),
+		dataDir:      dataDir,
+		clientBin:    clientBin,
+		serverBin:    serverBin,
+		versionPath:  filepath.Join(dataDir, "wdtt-version.json"),
 		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
 		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
 		clientHealth: newHealthTracker(),
+		startBackoff: newStartBackoff(),
 	}
 }
 
