@@ -16,22 +16,22 @@ func TestNormalizeConnMode(t *testing.T) {
 
 func TestClientUsesWireGuard(t *testing.T) {
 	wg := ClientConfig{ConnMode: "wg"}
-	if !wg.usesWireGuard() {
+	if !wg.UsesWireGuard() {
 		t.Fatal("wg must use wireguard")
 	}
 	raw := ClientConfig{ConnMode: "raw"}
-	if raw.usesWireGuard() {
+	if raw.UsesWireGuard() {
 		t.Fatal("raw must not use wireguard")
 	}
 }
 
 func TestServerUsesWireGuardRelay(t *testing.T) {
 	wg := ServerConfig{RelayMode: "wg"}
-	if !wg.usesWireGuardRelay() {
+	if !wg.UsesWireGuardRelay() {
 		t.Fatal("wg relay expected")
 	}
 	raw := ServerConfig{RelayMode: "raw"}
-	if raw.usesWireGuardRelay() {
+	if raw.UsesWireGuardRelay() {
 		t.Fatal("raw relay must skip wg path")
 	}
 }

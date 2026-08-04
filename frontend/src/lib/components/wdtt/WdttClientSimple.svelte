@@ -13,6 +13,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
 		WdttClientConfig,
@@ -359,6 +360,9 @@
 			meta={`listen ${listenMeta}`}
 			onSelect={(id) => (quickActive = id)}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'import'}
 					<ProxyQuickStartStep
@@ -488,7 +492,11 @@
 			{canStart}
 			onSave={() => onSave(client)}
 			onToggle={onToggle}
-		/>
+		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
+		</ProxyInstanceStatusBar>
 		<ProxyPanelTabs tabs={[...CLIENT_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
 		{#if opsTab === 'setup'}

@@ -57,7 +57,7 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 		response.Error(w, "client not found", "NOT_FOUND")
 		return
 	}
-	if !inst.Config.usesWireGuard() {
+	if !inst.Config.UsesWireGuard() {
 		response.Success(w, EnsureWGTunnelResponse{
 			Created: false,
 			Message: "Режим Raw: AWG-туннель не используется — трафик идёт напрямую через wt-client",

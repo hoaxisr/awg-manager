@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/procport"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -42,6 +43,8 @@ type Service struct {
 	appLog *logging.ScopedLogger
 
 	listenPortChecker LocalListenPortChecker
+
+	clientHealth *healthTracker
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
@@ -100,8 +103,9 @@ func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 		clientBin:   clientBin,
 		serverBin:   serverBin,
 		versionPath: filepath.Join(dataDir, "freeturn-version.json"),
-		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
-		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
+		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
+		clientHealth: newHealthTracker(),
 	}
 }
 
@@ -245,12 +249,14 @@ func (s *Service) DeleteServer(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	cfg := full.Servers[idx].Config
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
 	_ = s.serverProcs.get(id).Stop()
+	removeServerListenFirewall(context.Background(), cfg)
 	return saveErr
 }
 
@@ -366,17 +372,25 @@ func (s *Service) statusLocked() Status {
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
+		ps := s.clientProcs.get(c.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.clientProcs.get(c.ID).Status(),
+			Status: ps,
 		})
 	}
 	for _, srv := range cfg.Servers {
+		ps := s.serverProcs.get(srv.ID).Status()
+		proto := procport.ProtoUDP
+		if strings.EqualFold(strings.TrimSpace(srv.Config.Mode), "tcp") {
+			proto = procport.ProtoTCP
+		}
+		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, proto)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
-			Status: s.serverProcs.get(srv.ID).Status(),
+			Status: ps,
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
@@ -504,6 +518,9 @@ func (s *Service) StartServerInstance(id string) error {
 	if err := applyServerListenFirewall(context.Background(), inst.Config); err != nil && s.appLog != nil {
 		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
 	}
+	if err := s.setServerEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
 	return nil
 }
 
@@ -517,7 +534,11 @@ func (s *Service) StopServerInstance(id string) error {
 		return err
 	}
 	removeServerListenFirewall(context.Background(), inst.Config)
-	return s.serverProcs.get(id).Stop()
+	err = s.serverProcs.get(id).Stop()
+	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
@@ -540,10 +561,9 @@ func (s *Service) Stop() {
 	s.serverProcs.stopAll()
 }
 
-// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
-// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// ResumeEnabled стартует всех клиентов и серверов с Enabled==true (авторитетный
+// флаг «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
 // продолжает; идемпотентно (повторный старт живого процесса — no-op).
-// Серверы вне scope: блэкхол linked-туннеля — клиентская проблема.
 func (s *Service) ResumeEnabled() {
 	full, err := s.store.Load()
 	if err != nil {
@@ -557,7 +577,15 @@ func (s *Service) ResumeEnabled() {
 			continue
 		}
 		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
-			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+			s.appLog.Warn("resume", c.ID, "автостарт клиента не удался: "+err.Error())
+		}
+	}
+	for _, srv := range full.Servers {
+		if !srv.Config.Enabled {
+			continue
+		}
+		if err := s.StartServerInstance(srv.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", srv.ID, "автостарт сервера не удался: "+err.Error())
 		}
 	}
 }
@@ -580,6 +608,24 @@ func (s *Service) setClientEnabled(id string, enabled bool) error {
 		return nil
 	}
 	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
+}
+
+func (s *Service) setServerEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	if full.Servers[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Servers[idx].Config.Enabled = enabled
 	return s.store.Save(full)
 }
 

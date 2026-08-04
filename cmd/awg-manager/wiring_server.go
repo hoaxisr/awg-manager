@@ -639,6 +639,8 @@ func (a *app) setupShutdown() {
 	a.monitoringService.Start(a.shutdownCtx)
 	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
 	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	a.freeturnService.StartSupervisor(a.shutdownCtx)
+	a.wdttService.StartSupervisor(a.shutdownCtx)
 	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
 	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
 		var out []listenfirewall.PortSpec

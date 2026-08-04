@@ -21,10 +21,10 @@ func normalizeRelayMode(mode string) string {
 	return normalizeConnMode(mode)
 }
 
-func (c ClientConfig) usesWireGuard() bool {
+func (c ClientConfig) UsesWireGuard() bool {
 	return normalizeConnMode(c.ConnMode) == ConnModeWG
 }
 
-func (c ServerConfig) usesWireGuardRelay() bool {
+func (c ServerConfig) UsesWireGuardRelay() bool {
 	return normalizeRelayMode(c.RelayMode) == ConnModeWG
 }

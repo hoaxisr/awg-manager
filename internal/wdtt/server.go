@@ -170,7 +170,7 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	useWG := cfg.usesWireGuardRelay()
+	useWG := cfg.UsesWireGuardRelay()
 	if useWG && cfg.usesNDMSOpkgTun() {
 		removeEntwareNAT(ctx, DefaultWdttIface)
 		removeEntwareLAN(ctx, DefaultWdttIface)

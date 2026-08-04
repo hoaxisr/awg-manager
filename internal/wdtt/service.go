@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/procport"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -33,6 +34,7 @@ type Service struct {
 	installing      bool
 	appLog          *logging.ScopedLogger
 	listenChecker   LocalListenPortChecker
+	clientHealth    *healthTracker
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
 	ndmsIfaces      NDMSOpkgTunCommands
@@ -77,8 +79,9 @@ func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 		clientBin:   clientBin,
 		serverBin:   serverBin,
 		versionPath: filepath.Join(dataDir, "wdtt-version.json"),
-		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
-		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
+		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
+		clientHealth: newHealthTracker(),
 	}
 }
 
@@ -278,17 +281,21 @@ func (s *Service) Status() Status {
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
+		ps := s.clientProcs.get(c.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.clientProcs.get(c.ID).Status(),
+			Status: ps,
 		})
 	}
 	for _, srv := range cfg.Servers {
+		ps := s.serverProcs.get(srv.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, procport.ProtoUDP)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
-			Status: s.serverProcs.get(srv.ID).Status(),
+			Status: ps,
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {

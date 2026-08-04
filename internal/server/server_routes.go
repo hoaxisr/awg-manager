@@ -33,6 +33,7 @@ type routeHandlers struct {
 	pingCheckHandler    *api.PingCheckHandler
 	freeturnHandler     *api.FreeTurnHandler
 	wdttHandler         *api.WdttHandler
+	proxyListenerHandler *api.ProxyListenerHandler
 	loggingHandler      *api.LoggingHandler
 	externalHandler     *api.ExternalTunnelsHandler
 	updateHandler       *api.UpdateHandler
@@ -170,6 +171,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	h.proxyListenerHandler = api.NewProxyListenerHandler()
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -395,6 +398,9 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", h.guarded(h.pingCheckHandler.RemoveTunnelPingCheck))
 
 	// FreeTurn (protected)
+	mux.HandleFunc("/api/proxy/listener", h.guarded(h.proxyListenerHandler.GetListener))
+	mux.HandleFunc("/api/proxy/kill-listener", h.guarded(h.proxyListenerHandler.KillListener))
+
 	mux.HandleFunc("/api/freeturn/config", h.guarded(h.freeturnHandler.GetConfig))
 	mux.HandleFunc("/api/freeturn/client/config", h.guarded(h.freeturnHandler.UpdateClientConfig))
 	mux.HandleFunc("/api/freeturn/server/config", h.guarded(h.freeturnHandler.UpdateServerConfig))
