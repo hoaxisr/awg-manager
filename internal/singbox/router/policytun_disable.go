@@ -3,7 +3,6 @@ package router
 import (
 	"context"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -84,8 +83,8 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	}
 
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
-			s.appLog.Warn("policy-tun-disable", iface, "disable slot: "+err.Error())
+		if err := applyRoutingSlots(s.deps.Orch, statePolicyTun, false); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "disable slots: "+err.Error())
 		}
 		// Оверлей QoS ссылается на qos-* инбаунды слота 20 — паркуется вместе.
 		if err := s.disableQoSRoutesSlot(); err != nil {

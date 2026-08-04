@@ -467,6 +467,7 @@ func newQoSSlotTestService(t *testing.T, outbounds ...string) (*ServiceImpl, str
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotQoSRoutes, Filename: "18-qos-routes.json"}); err != nil {
 		t.Fatal(err)
 	}
+	registerExtraModeSlots(t, orch)
 	cfg := NewEmptyConfig()
 	for _, ob := range outbounds {
 		cfg.Outbounds = append(cfg.Outbounds, Outbound{Type: "selector", Tag: ob, Outbounds: []string{"direct"}})

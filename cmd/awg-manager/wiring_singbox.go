@@ -168,8 +168,9 @@ func (a *app) setupSingbox() {
 	// reflected after deviceProxySvc is constructed below.
 	if curSettings, err := a.settingsStore.Load(); err == nil && curSettings != nil {
 		mode := curSettings.SingboxRouter.RoutingMode
-		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
-		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
+		if err := router.ApplyRoutingSlots(a.sbOrch, mode, curSettings.SingboxRouter.Enabled); err != nil {
+			a.bootLog.Warn("singbox-orchestrator", "routing-slots", err.Error())
+		}
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.

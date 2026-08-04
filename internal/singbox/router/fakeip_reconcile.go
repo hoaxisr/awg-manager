@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -78,27 +77,26 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	iface := fakeIPIfaceName(st.Index)   // kernel name: /proc route probe, log labels
 	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: static-route Interface
 
-	// Запаркованный слот 21 — дрейф НЕЗАВИСИМО от жизни процесса (ревью #523):
-	// раньше слот чинился только при мёртвом sing-box, а при живом (крутит
-	// подписки/device-proxy) merged-конфиг оставался без tun-in навсегда —
-	// enableFakeIPTun no-op'ится на provisioned+live и слот не трогает.
+	// Запаркованный слот fakeip (или общий 21-routing) — дрейф НЕЗАВИСИМО от
+	// жизни процесса (ревью #523): раньше слот чинился только при мёртвом
+	// sing-box, а при живом (крутит подписки/device-proxy) merged-конфиг
+	// оставался без tun-in навсегда — enableFakeIPTun no-op'ится на
+	// provisioned+live и слоты не трогает.
 	// Рестарт мёртвого процесса — по-прежнему только watchdog (Operator.
 	// Reconcile); fail-closed при мёртвом движке присущ fakeip: маршруты пула
 	// указывают в OpkgTun без читателя, трафик дропается, не утекает.
-	// SetEnabled — только при фактически запаркованном слоте, иначе каждый
+	// Переключение — только при фактически запаркованном слоте, иначе каждый
 	// тик взводил бы debounced reload.
-	if s.deps.Orch != nil {
-		if st, ok := s.slotSnapshot(orchestrator.SlotFakeIP); !ok || !st.Enabled {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); e != nil {
-				s.appLog.Warn("fakeip-reconcile", iface, "enable slot: "+e.Error())
-			} else {
-				s.appLog.Info("fakeip-reconcile", iface,
-					"слот 21-fakeip был запаркован — возвращён в конфиг (drift-heal)")
-				// Слот вернулся в merged-конфиг — device-proxy должен
-				// восстановить композитные ссылки (ветка reprovision покрыта
-				// через enableLocked, эта — нет).
-				s.notifyRoutingSlotsChanged()
-			}
+	if s.deps.Orch != nil && s.routingSlotsParked(stateFakeIPTun) {
+		if e := applyRoutingSlots(s.deps.Orch, stateFakeIPTun, true); e != nil {
+			s.appLog.Warn("fakeip-reconcile", iface, "enable slots: "+e.Error())
+		} else {
+			s.appLog.Info("fakeip-reconcile", iface,
+				"слоты fakeip-режима были запаркованы — возвращены в конфиг (drift-heal)")
+			// Слот вернулся в merged-конфиг — device-proxy должен
+			// восстановить композитные ссылки (ветка reprovision покрыта
+			// через enableLocked, эта — нет).
+			s.notifyRoutingSlotsChanged()
 		}
 	}
 

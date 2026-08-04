@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
@@ -180,13 +179,14 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		s.deps.IPTables.RemoveFakeIPIngress(ctx)
 	}
 
-	// (4) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
-	// skip — there is no in-place inbound to strip for fakeip-tun. Best-effort.
+	// (4) Stop sing-box (move 20-fakeip.json + 21-routing.json under disabled/).
+	// Legacy (no orch): skip — there is no in-place inbound to strip for
+	// fakeip-tun. Best-effort.
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
-			s.appLog.Warn("fakeip-disable", iface, "disable slot: "+err.Error())
+		if err := applyRoutingSlots(s.deps.Orch, stateFakeIPTun, false); err != nil {
+			s.appLog.Warn("fakeip-disable", iface, "disable slots: "+err.Error())
 		}
-		// Композиты слота 21 пропали из merged-конфига — device-proxy
+		// Композиты слотов маршрутизации пропали из merged-конфига — device-proxy
 		// перегенерирует слот 30 до ближайшего reload (issue #465).
 		s.notifyRoutingSlotsChanged()
 	}

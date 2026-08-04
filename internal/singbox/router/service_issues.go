@@ -231,8 +231,11 @@ func (s *ServiceImpl) inspectSlotConfig() (*RouterConfig, orchestrator.Slot, err
 			mode = settings.SingboxRouter.RoutingMode
 		}
 	}
+	// Слот для draft-отчёта — тот, в котором лежат правила и наборы: сегодня
+	// это режимный слот fakeip либо общий 21-routing (tproxy/policy-tun).
+	// Разделение генерации переведёт черновики целиком в общий слот.
 	slot := orchestrator.SlotRouting
-	if mode == "fakeip-tun" {
+	if ModeSlot(mode) == orchestrator.SlotFakeIP {
 		slot = orchestrator.SlotFakeIP
 	}
 	cfg, err := s.loadRouterConfigForMode(mode)

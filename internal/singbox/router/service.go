@@ -640,7 +640,7 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 // SlotFakeIP in fakeip-tun mode, SlotRouting (tproxy) otherwise. Lets
 // mode-agnostic readers (GetStatus) reflect whichever slot is live.
 func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
-	if mode == "fakeip-tun" {
+	if ModeSlot(mode) == orchestrator.SlotFakeIP {
 		return s.loadFakeIPConfig()
 	}
 	return s.loadRouterConfig()

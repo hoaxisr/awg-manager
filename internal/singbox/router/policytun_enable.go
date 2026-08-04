@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -212,23 +211,19 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
-	// Promote SlotRouting FIRST so persistConfigDirect targets the active path.
-	// The prior enabled-state is captured for rollback (SlotFakeIP is not
-	// touched: leaving fakeip is the transition's teardown job, not ours).
-	prevRouterEnabled := false
+	// Promote the policy-tun slot pair (режимный 20-policytun + общий
+	// 21-routing) FIRST so persistConfigDirect targets the active path.
+	// Прежняя разметка снимается для отката — откатываемся в ПРЕЖНИЙ режим,
+	// а не в захардкоженный.
+	prevMode, prevEnabled := stateTProxy, false
 	if s.deps.Orch != nil {
-		for _, st := range s.deps.Orch.Snapshot() {
-			if st.Slot == orchestrator.SlotRouting {
-				prevRouterEnabled = st.Enabled
-				break
-			}
-		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
-			return fmt.Errorf("enable policy-tun: orchestrator enable router slot: %w", err)
+		prevMode, prevEnabled = s.currentRoutingSlots()
+		if err = applyRoutingSlots(s.deps.Orch, statePolicyTun, true); err != nil {
+			return fmt.Errorf("enable policy-tun: %w", err)
 		}
 		push(func() {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, prevRouterEnabled); e != nil {
-				s.appLog.Warn("policy-tun-rollback", iface, "restore router slot: "+e.Error())
+			if e := applyRoutingSlots(s.deps.Orch, prevMode, prevEnabled); e != nil {
+				s.appLog.Warn("policy-tun-rollback", iface, "restore routing slots: "+e.Error())
 			}
 			// Разметка слотов вернулась — device-proxy должен перегенерировать
 			// слот 30 под неё до следующего reload.

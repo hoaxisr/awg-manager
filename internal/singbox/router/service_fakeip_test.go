@@ -330,13 +330,15 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	}
 }
 
-// TestEnableFakeIPTun_SlotFakeIPWritten asserts the new enable contract:
-//   - SlotFakeIP is ENABLED and SlotRouting is DISABLED (XOR) after a successful enable.
-//   - The persisted active file is 21-fakeip.json, not 20-router.json.
+// TestEnableFakeIPTun_SlotFakeIPWritten asserts the enable contract:
+//   - режимный SlotFakeIP и общий SlotRouting ВКЛЮЧЕНЫ, два чужих режимных
+//     слота выключены (взаимное исключение теперь между режимами, а не между
+//     fakeip и общим слотом);
+//   - The persisted active file is 21-fakeip.json, not the shared slot's file.
 //   - 21-fakeip.json contains the engine-locked overlay bits (tun-in, fakeip DNS
 //     server, hijack-dns at route.rules[0]) and the seeded A/AAAA→fakeip DNS rule.
 //   - route.final is set (seed provides "direct").
-//   - SlotRouting is parked under disabled/ by the XOR, content unchanged.
+//   - файл общего слота fakeip-enable не трогает.
 func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
@@ -344,23 +346,17 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		t.Fatalf("Enable(fakeip-tun): %v", err)
 	}
 
-	// --- Slot XOR: SlotFakeIP on, SlotRouting off ---
-	orch := h.svc.deps.Orch
-	snap := orch.Snapshot()
-	var fakeIPEnabled, routerEnabled bool
-	for _, s := range snap {
-		switch s.Slot {
-		case "fakeip":
-			fakeIPEnabled = s.Enabled
-		case "routing":
-			routerEnabled = s.Enabled
-		}
-	}
-	if !fakeIPEnabled {
+	// --- Разметка слотов: fakeip + общий включены, чужие режимные выключены ---
+	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Error("SlotFakeIP must be ENABLED after enable")
 	}
-	if routerEnabled {
-		t.Error("SlotRouting must be DISABLED (XOR) after fakeip enable")
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting (общий слот) must be ENABLED after fakeip enable")
+	}
+	for _, other := range []orchestrator.Slot{orchestrator.SlotTProxy, orchestrator.SlotPolicyTun} {
+		if slotEnabled(t, h.svc, other) {
+			t.Errorf("слот %s обязан быть выключен после enable fakeip-tun", other)
+		}
 	}
 
 	// --- 21-fakeip.json exists and has the locked bits + seed ---
@@ -424,22 +420,22 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		t.Errorf("21-fakeip.json: seeded A/AAAA→fakeip DNS rule missing: %s", data)
 	}
 
-	// 20-router.json was parked under disabled/ by the XOR (not deleted, not
-	// modified) — fakeip enable must move the router slot out of the active dir
-	// so MergeDir no longer concatenates its DNS, while leaving its content intact.
-	if _, err := os.Stat(filepath.Join(h.dir, "20-router.json")); !os.IsNotExist(err) {
-		t.Errorf("20-router.json must not stay in the active dir after fakeip enable (XOR); stat err=%v", err)
-	}
-	routerData, err := os.ReadFile(filepath.Join(h.dir, "disabled", "20-router.json"))
+	// Файл общего слота остаётся активным (он общий для всех режимов) и
+	// НЕТРОНУТЫМ: перехват fakeip живёт в своём файле, а общий слот
+	// fakeip-enable не переписывает.
+	routerData, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
 	if err != nil {
-		t.Fatalf("parked 20-router.json missing from disabled/: %v", err)
+		t.Fatalf("файл общего слота обязан остаться активным: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "disabled", "20-router.json")); !os.IsNotExist(err) {
+		t.Errorf("общий слот не должен уезжать в disabled/ при включённом движке; stat err=%v", err)
 	}
 	var routerCfg RouterConfig
 	if err := json.Unmarshal(routerData, &routerCfg); err != nil {
 		t.Fatalf("unmarshal 20-router.json: %v", err)
 	}
 	// The harness seeds the router config with a proxy outbound and no fakeip overlay.
-	// After enable, 20-router.json must NOT contain tun-in (fakeip enable must not touch it).
+	// After enable, the shared slot must NOT contain tun-in (fakeip enable must not touch it).
 	for _, in := range routerCfg.Inbounds {
 		if in.Tag == "tun-in" {
 			t.Errorf("20-router.json must not be modified by fakeip enable (found tun-in): %s", routerData)
@@ -1397,36 +1393,34 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	}
 }
 
-// TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouting asserts that disabling a
-// provisioned fakeip-tun disables the FAKEIP slot (21-fakeip.json) and does NOT
-// touch the tproxy router slot (20-router.json). The XOR contract: after disable,
-// SlotFakeIP is DISABLED and SlotRouting is unchanged (it was already disabled by
-// the prior Enable's XOR flip).
-func TestDisableFakeIPTun_DisablesSlotFakeIPNotSlotRouting(t *testing.T) {
+// TestDisableFakeIPTun_DisablesRoutingSlots asserts that disabling a provisioned
+// fakeip-tun гасит и режимный слот fakeip, и общий слот маршрутизации, и НЕ
+// зажигает чужие режимные слоты (выключение движка не должно оборачиваться
+// подъёмом tproxy-перехвата).
+func TestDisableFakeIPTun_DisablesRoutingSlots(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	captureDrain(t)
-	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP ON, SlotRouting OFF
+	provisionForDisable(t, h) // provisions fakeip: SlotFakeIP + SlotRouting ON
 
 	// Sanity pre-condition: Enable flipped the slots correctly.
 	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Fatal("precondition: SlotFakeIP must be enabled after Enable")
 	}
-	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
-		t.Fatal("precondition: SlotRouting must be disabled after Enable (XOR)")
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Fatal("precondition: SlotRouting must be enabled after Enable")
 	}
 
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 
-	// SlotFakeIP must now be DISABLED (the fakeip lifecycle slot was toggled).
-	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
-		t.Error("SlotFakeIP must be DISABLED after fakeip Disable")
-	}
-	// SlotRouting must remain DISABLED (untouched — disabling fakeip must not
-	// re-enable the tproxy slot, which would be wrong and violate XOR).
-	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
-		t.Error("SlotRouting must remain DISABLED (untouched) after fakeip Disable — must NOT toggle the tproxy slot")
+	for _, slot := range []orchestrator.Slot{
+		orchestrator.SlotFakeIP, orchestrator.SlotRouting,
+		orchestrator.SlotTProxy, orchestrator.SlotPolicyTun,
+	} {
+		if slotEnabled(t, h.svc, slot) {
+			t.Errorf("слот %s обязан быть выключен после Disable(fakeip-tun)", slot)
+		}
 	}
 }
 

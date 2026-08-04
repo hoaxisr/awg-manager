@@ -12,8 +12,8 @@ import (
 //
 // The referenced set is the UNION of the APPLIED configs (active/, then
 // disabled/ — what sing-box may be running) and the PENDING drafts (what the
-// user is editing), for BOTH the router and fakeip slots — both slots
-// materialize into the same rule-sets/ dirs. A rule-set deleted only in the
+// user is editing), for the shared routing slot AND every mode slot — all of
+// them materialize into the same rule-sets/ dirs. A rule-set deleted only in the
 // pending draft therefore keeps its files until the draft is applied
 // (TestDeleteRuleSet_StagedInlineKeepsSRSCompanionFiles), and a discarded
 // draft never loses the active artifacts.
@@ -31,7 +31,8 @@ func (s *ServiceImpl) GCRuleSetArtifacts() {
 }
 
 // referencedRuleSetArtifactBases builds the set of artifact base names still
-// referenced by any router/fakeip config (applied or pending).
+// referenced by any routing config (applied or pending), across the shared
+// slot and all three mode slots.
 func (s *ServiceImpl) referencedRuleSetArtifactBases() (map[string]struct{}, error) {
 	referenced := make(map[string]struct{})
 
@@ -47,24 +48,31 @@ func (s *ServiceImpl) referencedRuleSetArtifactBases() (map[string]struct{}, err
 	}
 	addRuleSetArtifactBases(referenced, cfg)
 
-	// FakeIP slot (orch-only): it materializes into the same rule-sets/ dirs.
+	// Режимные слоты (orch-only): все они материализуются в те же каталоги
+	// rule-sets/. Сканируем КАЖДЫЙ, а не только текущий режим: набор,
+	// оставшийся в припаркованном слоте другого режима, — живой (режим
+	// переключат обратно), и снос его .srs сломал бы этот режим.
 	if s.deps.Orch != nil {
-		cfg, err = s.loadFakeIPConfig()
-		if err != nil {
-			return nil, err
-		}
-		addRuleSetArtifactBases(referenced, cfg)
-		data, err := s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
-		if err != nil {
-			if !errors.Is(err, orchestrator.ErrUnknownSlot) {
-				return nil, err
+		for _, slot := range modeSlots() {
+			for _, load := range []func(orchestrator.Slot) ([]byte, error){
+				s.deps.Orch.LoadEffective, s.deps.Orch.LoadApplied,
+			} {
+				data, err := load(slot)
+				if err != nil {
+					if errors.Is(err, orchestrator.ErrUnknownSlot) {
+						continue
+					}
+					return nil, err
+				}
+				if data == nil {
+					continue
+				}
+				cfg, err := parseRouterConfigBytes(data)
+				if err != nil {
+					return nil, err
+				}
+				addRuleSetArtifactBases(referenced, cfg)
 			}
-		} else if data != nil {
-			applied, err := parseRouterConfigBytes(data)
-			if err != nil {
-				return nil, err
-			}
-			addRuleSetArtifactBases(referenced, applied)
 		}
 	}
 	return referenced, nil

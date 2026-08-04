@@ -437,10 +437,11 @@ func TestReconcileFakeIPTun_ProbeErrorNoReprovision(t *testing.T) {
 	}
 }
 
-// TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting asserts that
-// when a dead sing-box is restarted by the drift-heal, the reconcile re-enables
-// the FAKEIP slot (21-fakeip.json) and NOT the tproxy router slot (20-router.json).
-func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting(t *testing.T) {
+// TestReconcileFakeIPTun_RevivalEnablesFakeIPNotTProxy asserts that when a dead
+// sing-box is restarted by the drift-heal, the reconcile возвращает режимный
+// слот fakeip вместе с общим и НЕ зажигает чужие режимные слоты (перехват
+// tproxy не должен воскресать вместе с fakeip).
+func TestReconcileFakeIPTun_RevivalEnablesFakeIPNotTProxy(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
 	// Provision with sing-box running.
@@ -455,9 +456,11 @@ func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting(t *testing.T)
 	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
 		t.Fatalf("pre-flip SlotFakeIP off: %v", err)
 	}
-	// SlotRouting stays OFF (XOR invariant set by Enable).
-	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
-		t.Fatal("precondition: SlotRouting must be off (XOR)")
+	// Чужие режимные слоты выключены разметкой, поставленной Enable.
+	for _, other := range []orchestrator.Slot{orchestrator.SlotTProxy, orchestrator.SlotPolicyTun} {
+		if slotEnabled(t, h.svc, other) {
+			t.Fatalf("precondition: слот %s обязан быть выключен", other)
+		}
 	}
 
 	// Model a dead sing-box: IsRunning returns false on the first probe (the
@@ -482,9 +485,16 @@ func TestReconcileFakeIPTun_RevivalEnablesSlotFakeIPNotSlotRouting(t *testing.T)
 	if !slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
 		t.Error("SlotFakeIP must be ENABLED after fakeip-reconcile revival")
 	}
-	// SlotRouting must remain DISABLED — revival must NOT toggle the tproxy slot.
-	if slotEnabled(t, h.svc, orchestrator.SlotRouting) {
-		t.Error("SlotRouting must remain DISABLED after fakeip-reconcile revival — tproxy slot must not be touched")
+	// Общий слот обязан вернуться вместе с режимным — без него в merged-конфиге
+	// нет ни правил, ни outbound'ов.
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouting) {
+		t.Error("SlotRouting must be ENABLED after fakeip-reconcile revival")
+	}
+	// А вот чужие режимные слоты воскрешение трогать не должно.
+	for _, other := range []orchestrator.Slot{orchestrator.SlotTProxy, orchestrator.SlotPolicyTun} {
+		if slotEnabled(t, h.svc, other) {
+			t.Errorf("слот %s не должен зажигаться воскрешением fakeip", other)
+		}
 	}
 }
 

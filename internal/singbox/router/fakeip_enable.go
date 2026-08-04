@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -253,25 +252,17 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
 	}
 
-	// D. Slot XOR: enable SlotFakeIP, disable SlotRouting (fakeip and tproxy router
-	// slots are mutually exclusive — sing-box must load exactly one routing config).
-	// Capture SlotRouting's prior enabled-state BEFORE the flip so rollback restores
-	// THAT, not a hardcoded true — booting into fakeip (or a first enable) has
-	// SlotRouting already off, and a hardcoded re-enable would wrongly turn tproxy on.
+	// D. Разметка слотов: режимный SlotFakeIP + общий SlotRouting включаются,
+	// два других режимных слота гаснут (sing-box обязан грузить ровно один
+	// перехватчик). Прежнюю разметку снимаем ДО переключения, чтобы откат
+	// возвращал ПРЕЖНИЙ режим, а не захардкоженный: буте в fakeip (и первому
+	// enable) движок вообще выключен, и слепое включение tproxy было бы ложью.
 	// Legacy fallback (no orch) uses an explicit Start.
-	prevRouterEnabled := false
+	prevMode, prevEnabled := stateTProxy, false
 	if s.deps.Orch != nil {
-		for _, st := range s.deps.Orch.Snapshot() {
-			if st.Slot == orchestrator.SlotRouting {
-				prevRouterEnabled = st.Enabled
-				break
-			}
-		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
-			return fmt.Errorf("enable fakeip-tun: orchestrator enable fakeip slot: %w", err)
-		}
-		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
-			return fmt.Errorf("enable fakeip-tun: orchestrator disable router slot: %w", err)
+		prevMode, prevEnabled = s.currentRoutingSlots()
+		if err = applyRoutingSlots(s.deps.Orch, stateFakeIPTun, true); err != nil {
+			return fmt.Errorf("enable fakeip-tun: %w", err)
 		}
 	} else {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
@@ -282,11 +273,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 	push(func() {
 		if s.deps.Orch != nil {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "disable fakeip slot: "+e.Error())
-			}
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, prevRouterEnabled); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "restore router slot: "+e.Error())
+			if e := applyRoutingSlots(s.deps.Orch, prevMode, prevEnabled); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "restore routing slots: "+e.Error())
 			}
 			// Rollback вернул прежнюю разметку слотов — device-proxy должен
 			// перегенерировать слот 30 под неё до следующего reload.
@@ -305,7 +293,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if err = s.persistFakeIPConfig(ctx, fcfg); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip config: %w", err)
 	}
-	// Slot XOR выше поменял видимость композитов (20 припаркован, 21 активен) —
+	// Разметка слотов выше поменяла видимость композитов (режимные слоты
+	// чужих режимов припаркованы, fakeip и общий — активны) —
 	// зависимый слот 30 device-proxy перегенерируется ДО reload ниже (issue #465).
 	s.notifyRoutingSlotsChanged()
 	if err = s.orchestratorApplyNow(); err != nil {

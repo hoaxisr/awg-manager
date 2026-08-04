@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -137,18 +136,16 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
 	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
-	// Запаркованный слот 20 — дрейф независимо от жизни процесса: enable
-	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
-	// merged-конфиге нет tun-инбаунда.
-	if s.deps.Orch != nil {
-		if slot, ok := s.slotSnapshot(orchestrator.SlotRouting); !ok || !slot.Enabled {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); e != nil {
-				s.appLog.Warn("policy-tun-reconcile", iface, "enable slot: "+e.Error())
-			} else {
-				s.appLog.Info("policy-tun-reconcile", iface,
-					"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
-				s.notifyRoutingSlotsChanged()
-			}
+	// Запаркованный слот режима (или общий 21-routing) — дрейф независимо от
+	// жизни процесса: enable no-op'ится на provisioned+live и слоты бы уже не
+	// вернул, а без них в merged-конфиге нет tun-инбаунда.
+	if s.deps.Orch != nil && s.routingSlotsParked(statePolicyTun) {
+		if e := applyRoutingSlots(s.deps.Orch, statePolicyTun, true); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "enable slots: "+e.Error())
+		} else {
+			s.appLog.Info("policy-tun-reconcile", iface,
+				"слоты policy-tun были запаркованы — возвращены в конфиг (drift-heal)")
+			s.notifyRoutingSlotsChanged()
 		}
 	}
 

@@ -746,6 +746,7 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 	}); err != nil {
 		t.Fatalf("orch.Register SlotFakeIP: %v", err)
 	}
+	registerExtraModeSlots(t, orch)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatalf("orch.Bootstrap: %v", err)
 	}

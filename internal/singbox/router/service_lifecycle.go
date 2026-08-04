@@ -612,13 +612,15 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
-	// Promote SlotRouting to active FIRST so persistConfigDirect's
-	// orch.Save targets the active path (it keys on the slot's enabled
-	// flag). SetEnabled also triggers the orchestrator's debounced cold-
-	// start — sing-box will read the active config we are about to write.
+	// Promote the tproxy slot pair (режимный 20-tproxy + общий 21-routing) to
+	// active FIRST so persistConfigDirect's orch.Save targets the active path
+	// (it keys on the slot's enabled flag). SetEnabled also triggers the
+	// orchestrator's debounced cold-start — sing-box will read the active
+	// config we are about to write. Здесь тело именно tproxy: fakeip-tun и
+	// policy-tun диспетчеризованы выше, поэтому режим захардкожен.
 	// Legacy fallback (tests) keeps the explicit Start call.
 	if s.deps.Orch != nil {
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		if err := applyRoutingSlots(s.deps.Orch, stateTProxy, true); err != nil {
 			return fmt.Errorf("orchestrator enable router: %w", err)
 		}
 	} else {
@@ -746,7 +748,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		// tproxy-in) is preserved verbatim. Without the orchestrator
 		// (legacy fallback) the only recourse is to strip the inbound.
 		if s.deps.Orch != nil {
-			_ = s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false)
+			_ = applyRoutingSlots(s.deps.Orch, stateTProxy, false)
 			// The QoS overlay references qos-* inbounds that just got
 			// parked with the router slot — park it too.
 			_ = s.disableQoSRoutesSlot()
@@ -1306,19 +1308,19 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.blackholeActive = false
 
 	if s.deps.Orch != nil {
-		// Move 20-router.json under disabled/ — sing-box's non-recursive
-		// -C config.d does not see it after the next reload, so the
+		// Move the routing slots under disabled/ — sing-box's non-recursive
+		// -C config.d does not see them after the next reload, so the
 		// tproxy inbound, route rules, DNS rules and composite outbounds
 		// all disappear from the merged config in one atomic rename.
-		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
+		if err := applyRoutingSlots(s.deps.Orch, stateTProxy, false); err != nil {
 			s.appLog.Warn("orch-disable", "", err.Error())
 		}
 		// Park the QoS routes overlay with it: its rules reference qos-*
-		// inbound tags that only exist while 20-router.json is active.
+		// inbound tags that only exist while the tproxy slot is active.
 		if err := s.disableQoSRoutesSlot(); err != nil {
 			s.appLog.Warn("orch-disable", "qos-routes", err.Error())
 		}
-		// Композиты из 20-router.json только что пропали из merged-конфига.
+		// Композиты слотов маршрутизации только что пропали из merged-конфига.
 		// Синхронно даём device-proxy перегенерировать слот 30 (деградация
 		// до default-члена композита) — SetEnabled выше взвёл 250ms debounce,
 		// и один коалесцированный reload увидит уже корректный файл вместо
@@ -1427,7 +1429,8 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// routerSlotEnabled reports whether 20-router.json currently lives in
+// routerSlotEnabled reports whether the shared routing slot (21-routing.json)
+// currently lives in
 // config.d/ AND the file exists (Present) — «включён» флаг при отсутствующем
 // файле даёт тот же тупик (в конфиге нет tproxy-in), а enableLocked его
 // лечит, переписав файл. Caller guarantees deps.Orch != nil. Unregistered
