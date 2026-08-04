@@ -125,7 +125,13 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 	outbounds := map[string]tagOrigin{}
 	inbounds := map[string]tagOrigin{}
 	dnsServers := map[string]tagOrigin{}
-	ruleSetsBySlot := map[Slot]map[string]bool{}
+	// Наборы правил резолвятся ГЛОБАЛЬНО, как outbound'ы и DNS-серверы:
+	// sing-box сливает config.d в один документ и файлов не различает, а
+	// пер-слотовая проверка была строже реального движка. С разделением
+	// генерации (5D0) это стало блокером: DNS-правило fakeip-слота ссылается
+	// на набор из общего 21-routing.json, валидатор отвергал ссылку, и reload
+	// не проходил никогда (reload.go гейтит применение по res.Ok()).
+	ruleSets := map[string]tagOrigin{}
 	var errs []ValidationError
 	var hasTun bool
 
@@ -241,13 +247,14 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 				dnsServers[ds.Tag] = tagOrigin{slot: os.slot}
 			}
 		}
-		ruleSetTags := make(map[string]bool, len(c.Route.RuleSet))
 		for _, ruleSet := range c.Route.RuleSet {
-			if ruleSet.Tag != "" {
-				ruleSetTags[ruleSet.Tag] = true
+			if ruleSet.Tag == "" {
+				continue
+			}
+			if _, dup := ruleSets[ruleSet.Tag]; !dup {
+				ruleSets[ruleSet.Tag] = tagOrigin{slot: os.slot}
 			}
 		}
-		ruleSetsBySlot[os.slot] = ruleSetTags
 
 		// Collect refs to check after we have the full outbound set.
 		rs := validationSectionRefs{slot: os.slot}
@@ -360,15 +367,14 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 				})
 			}
 		}
-		ruleSets := ruleSetsBySlot[rs.slot]
 		for _, r := range rs.ruleSets {
-			if !ruleSets[r.refTag] {
+			if _, ok := ruleSets[r.refTag]; !ok {
 				errs = append(errs, ValidationError{
 					Slot:    rs.slot,
 					Kind:    "unknown-rule-set",
 					Tag:     r.refTag,
 					InRule:  r.inRule,
-					Message: "slot does not declare this rule_set tag",
+					Message: "no slot declares this rule_set tag",
 				})
 			}
 		}

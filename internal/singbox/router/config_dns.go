@@ -381,7 +381,44 @@ func (c *RouterConfig) dnsServerTypes() map[string]string {
 	return types
 }
 
+// engineDNSServerTags — теги DNS-серверов, которые ставит движок fakeip-режима
+// (`20-fakeip.json`): пул синтетических адресов и настоящий upstream. Заняты
+// нами, пользователю их брать нельзя.
+//
+// Почему это валидируется, а не «просто не делайте так»: сервер с тегом `real`,
+// заведённый пользователем в режиме tproxy, живёт в общем слоте, который
+// активен во ВСЕХ режимах. Переключение в fakeip добавляет движковый `real` в
+// режимный слот — merged-конфиг получает два одинаковых тега, наш кросс-слот
+// валидатор отдаёт duplicate-dns, и reload блокируется навсегда (движок молча
+// работает на старом конфиге).
+var engineDNSServerTags = map[string]bool{"real": true, "fakeip": true}
+
+// checkDNSServerTagReserved отвергает движковый тег. Проверяется только при
+// СОЗДАНИИ сервера и при переименовании В движковый тег: правка уже
+// существующего `real` (смена upstream-адреса, issue #487) — поддержанный
+// сценарий fakeip-редактора и обязана проходить.
+func checkDNSServerTagReserved(tag string) error {
+	if engineDNSServerTags[strings.TrimSpace(tag)] {
+		return fmt.Errorf("%w: тег %q зарезервирован движком fakeip-режима", ErrDNSServerTagConflict, tag)
+	}
+	return nil
+}
+
 func (c *RouterConfig) AddDNSServer(s DNSServer) error {
+	if err := validateDNSServer(s); err != nil {
+		return err
+	}
+	if err := checkDNSServerTagReserved(s.Tag); err != nil {
+		return err
+	}
+	return c.addEngineDNSServer(s)
+}
+
+// addEngineDNSServer — тот же AddDNSServer, но БЕЗ запрета на движковый тег:
+// серверы `fakeip` и `real` заводит сам движок fakeip-режима, и это
+// единственный легальный путь их появления. Валидация формы (тип, диапазоны
+// пула, ссылка domain_resolver) остаётся полной.
+func (c *RouterConfig) addEngineDNSServer(s DNSServer) error {
 	scrubDNSServerDetourForSingbox(&s)
 	if err := validateDNSServer(s); err != nil {
 		return err
@@ -404,6 +441,11 @@ func (c *RouterConfig) UpdateDNSServer(tag string, s DNSServer) error {
 	scrubDNSServerDetourForSingbox(&s)
 	if err := validateDNSServer(s); err != nil {
 		return err
+	}
+	if s.Tag != tag {
+		if err := checkDNSServerTagReserved(s.Tag); err != nil {
+			return err
+		}
 	}
 	idx := -1
 	for i, existing := range c.DNS.Servers {

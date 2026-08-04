@@ -197,6 +197,37 @@ func TestBuildRoutingSlotDropsStaleRealResolver(t *testing.T) {
 	}
 }
 
+// Зеркало stripSharedFromModeSlot: общий слот вычищает режимные скаляры
+// fakeip. Миграция (Task 4) читает активный файл прежнего режима целиком, так
+// что они туда попасть могут, а ссылка на движковый резолвер `real` вне
+// fakeip-режима роняет sing-box («domain resolver not found: real»).
+func TestBuildRoutingSlotDropsModeOnlyScalars(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
+	cfg.DNS.Final = "real"
+	cfg.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: true, StoreFakeIP: true, Path: "/x.db"}}
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if cfg.Route.DefaultDomainResolver != nil {
+		t.Errorf("route.default_domain_resolver обязан вычищаться: %+v", cfg.Route.DefaultDomainResolver)
+	}
+	if cfg.DNS.Final != "" {
+		t.Errorf("dns.final со ссылкой на движковый сервер обязан вычищаться, получено %q", cfg.DNS.Final)
+	}
+	if cfg.Experimental != nil {
+		t.Errorf("experimental.cache_file обязан вычищаться: %+v", cfg.Experimental)
+	}
+}
+
+// …но пользовательский dns.final общего слота — не режимный скаляр и остаётся.
+func TestBuildRoutingSlotKeepsUserDNSFinal(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.DNS.Final = "dns-direct"
+	buildRoutingSlot(cfg, RoutingSlotParams{Mode: "tproxy"})
+	if cfg.DNS.Final != "dns-direct" {
+		t.Errorf("пользовательский dns.final трогать нельзя, получено %q", cfg.DNS.Final)
+	}
+}
+
 // Инбаунды — только в режимных слотах: общий слот их вычищает, иначе один и
 // тот же тег окажется в двух файлах и sing-box откажется грузить merged-конфиг.
 func TestBuildRoutingSlotDropsInbounds(t *testing.T) {

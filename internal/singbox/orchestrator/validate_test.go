@@ -226,6 +226,37 @@ func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	}
 }
 
+// Раскладка 5D0: DNS-правило режимного слота fakeip ссылается на набор,
+// объявленный в ОБЩЕМ слоте. sing-box сливает config.d в один документ и
+// файлов не различает — настоящий `sing-box check` такую ссылку принимает.
+// Наш валидатор резолвил rule_set внутри одного слота и отвергал её, а
+// reload гейтится по res.Ok(), то есть движок навсегда оставался на старом
+// конфиге при внешне успешном «Применить».
+func TestValidateRuleSetRefsResolveAcrossSlots(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotFakeIP, Filename: "20-fakeip.json"})
+	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	// Набор объявлен в общем слоте…
+	writeSlot(t, dir, "21-routing.json", `{
+		"route":{"rule_set":[{"tag":"geosite-x","type":"remote","url":"https://example.org/x.srs"}],"final":"direct"}
+	}`)
+	// …а ссылаются на него правила режимного слота: DNS-правило (доменное
+	// сужение fakeip) и route-правило.
+	writeSlot(t, dir, "20-fakeip.json", `{
+		"dns":{"rules":[{"rule_set":["geosite-x"],"server":"fakeip"}],"servers":[{"tag":"fakeip","type":"fakeip"}]},
+		"route":{"rules":[{"rule_set":["geosite-x"],"outbound":"direct"}]}
+	}`)
+	o.enabled[SlotFakeIP] = true
+	o.enabled[SlotRouting] = true
+	res := o.Validate()
+	if !res.Ok() {
+		t.Fatalf("кросс-слотовая ссылка на набор обязана резолвиться: %s", res.Error())
+	}
+}
+
 func TestValidateBuiltinOutboundsAccepted(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouting, Filename: "21-routing.json"})

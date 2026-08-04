@@ -433,7 +433,8 @@ func TestDNSRulesShadowedByCatchAll_EvaluateDoesNotShadow(t *testing.T) {
 
 func TestAddDNSRuleValidatesSourceIPCIDR(t *testing.T) {
 	c := NewEmptyConfig()
-	if err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {
+	// Тег fakeip движковый — заводится инженерным путём, не пользовательским.
+	if err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -596,7 +597,7 @@ func TestDNSRuleRegexAndBlock(t *testing.T) {
 
 func TestAddDNSServer_FakeIP(t *testing.T) {
 	c := NewEmptyConfig()
-	err := c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"})
+	err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"})
 	if err != nil {
 		t.Fatalf("add fakeip: %v", err)
 	}
@@ -605,6 +606,55 @@ func TestAddDNSServer_FakeIP(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("missing %s: %s", want, b)
 		}
+	}
+}
+
+// Теги `real` и `fakeip` занимает движок fakeip-режима. Пользовательский
+// сервер с таким тегом живёт в ОБЩЕМ слоте, активном во всех режимах, —
+// переключение в fakeip дало бы duplicate-dns в merged-конфиге и вечный блок
+// reload (движок молча работает на старом конфиге).
+func TestAddDNSServer_RejectsEngineTags(t *testing.T) {
+	for _, tag := range []string{"real", "fakeip"} {
+		c := NewEmptyConfig()
+		err := c.AddDNSServer(DNSServer{Tag: tag, Type: "udp", Server: "9.9.9.9"})
+		if err == nil {
+			t.Fatalf("сервер с движковым тегом %q обязан отвергаться", tag)
+		}
+		if !errors.Is(err, ErrDNSServerTagConflict) {
+			t.Errorf("ошибка обязана оборачивать ErrDNSServerTagConflict (API маппит в 400), получено: %v", err)
+		}
+		if len(c.DNS.Servers) != 0 {
+			t.Errorf("отвергнутый сервер не должен попадать в конфиг: %+v", c.DNS.Servers)
+		}
+	}
+}
+
+// Переименование существующего сервера В движковый тег — тот же запрет.
+func TestUpdateDNSServer_RejectsRenameToEngineTag(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.AddDNSServer(DNSServer{Tag: "mine", Type: "udp", Server: "9.9.9.9"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateDNSServer("mine", DNSServer{Tag: "real", Type: "udp", Server: "9.9.9.9"}); err == nil {
+		t.Fatal("переименование в движковый тег обязано отвергаться")
+	}
+	if c.DNS.Servers[0].Tag != "mine" {
+		t.Errorf("отвергнутое переименование не должно применяться: %+v", c.DNS.Servers[0])
+	}
+}
+
+// А правка САМОГО движкового `real` (смена upstream-адреса, issue #487) —
+// поддержанный сценарий fakeip-редактора и обязана проходить.
+func TestUpdateDNSServer_AllowsEditingEngineServerInPlace(t *testing.T) {
+	c := NewEmptyConfig()
+	if err := c.addEngineDNSServer(DNSServer{Tag: "real", Type: "udp", Server: "1.1.1.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateDNSServer("real", DNSServer{Tag: "real", Type: "udp", Server: "9.9.9.9"}); err != nil {
+		t.Fatalf("смена upstream у движкового real обязана проходить: %v", err)
+	}
+	if c.DNS.Servers[0].Server != "9.9.9.9" {
+		t.Errorf("upstream не применился: %+v", c.DNS.Servers[0])
 	}
 }
 
@@ -617,7 +667,7 @@ func TestValidateDNSServer_FakeIPRequiresRange(t *testing.T) {
 
 func TestAddDNSRule_SourceIPCIDRToFakeip(t *testing.T) {
 	c := NewEmptyConfig()
-	_ = c.AddDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"})
+	_ = c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"})
 	err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A", "AAAA"}, Action: "route", Server: "fakeip"})
 	if err != nil {
 		t.Fatalf("add rule: %v", err)

@@ -27,10 +27,27 @@ import (
 // Когда рядом есть бинарь sing-box — тот же каталог дополнительно проходит
 // настоящий `sing-box check -C`.
 func TestMergedConfigPerMode(t *testing.T) {
-	const userFinal = "user-proxy"
+	const (
+		userFinal        = "user-proxy"
+		sharedRuleSetTag = "geosite-x"
+	)
 
 	sharedCfg := func(mode string) *RouterConfig {
 		cfg := NewEmptyConfig()
+		// Наследие прежней раскладки: инбаунд в общем слоте. Его обязан
+		// вычистить buildRoutingSlot — иначе в merged-конфиге окажется два
+		// одинаковых тега (в режиме tproxy) либо чужой перехватчик (в
+		// остальных).
+		cfg.Inbounds = []Inbound{{
+			Type: "tproxy", Tag: "tproxy-in", Listen: tproxyListen, ListenPort: TPROXYPort, Network: "udp",
+		}}
+		// Оттуда же — режимные скаляры fakeip. Ссылка на движковый резолвер
+		// `real` вне fakeip-режима роняет sing-box на старте
+		// («domain resolver not found»), поэтому её вычистку проверяет
+		// настоящий check ниже.
+		cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
+		cfg.DNS.Final = "real"
+		cfg.Experimental = &Experimental{CacheFile: &CacheFile{Enabled: true, StoreFakeIP: true, Path: "/tmp/awgm-stale.db"}}
 		cfg.Outbounds = []Outbound{
 			{Type: "selector", Tag: userFinal, Outbounds: []string{"direct"}},
 		}
@@ -38,7 +55,7 @@ func TestMergedConfigPerMode(t *testing.T) {
 			{Action: "route", DomainSuffix: []string{"example.com"}, Outbound: userFinal},
 		}
 		cfg.Route.RuleSet = []RuleSet{
-			{Tag: "geosite-x", Type: "remote", Format: "binary", URL: "https://example.org/x.srs", UpdateInterval: "24h"},
+			{Tag: sharedRuleSetTag, Type: "remote", Format: "binary", URL: "https://example.org/x.srs", UpdateInterval: "24h"},
 		}
 		cfg.Route.Final = userFinal
 		buildRoutingSlot(cfg, RoutingSlotParams{Mode: mode, WANAutoDetect: true})
@@ -71,12 +88,28 @@ func TestMergedConfigPerMode(t *testing.T) {
 			},
 		},
 		{
+			// Продовый путь fakeip — оверлей поверх содержимого слота
+			// (BuildFakeIPTunConfig в проде не вызывается). Слот намеренно
+			// набит ОБЩИМ содержимым с теми же тегами, что и 21-routing.json:
+			// это состояние установки, пережившей прежнюю раскладку. Если
+			// оверлей перестанет его вычищать, merge упадёт на дубле тегов —
+			// ровно тот регресс, ради которого делалось разделение.
 			name: "fakeip-tun", mode: stateFakeIPTun, modeFile: "20-fakeip.json",
-			modeCfg: func(t *testing.T) *RouterConfig {
-				cfg, err := BuildFakeIPTunConfig(fakeipSpec)
-				if err != nil {
-					t.Fatalf("build fakeip slot: %v", err)
+			modeCfg: func(*testing.T) *RouterConfig {
+				cfg := NewEmptyConfig()
+				cfg.Outbounds = []Outbound{{Type: "selector", Tag: userFinal, Outbounds: []string{"direct"}}}
+				cfg.Route.RuleSet = []RuleSet{
+					{Tag: sharedRuleSetTag, Type: "remote", Format: "binary", URL: "https://example.org/x.srs", UpdateInterval: "24h"},
 				}
+				cfg.Route.Rules = []Rule{{Action: "route", DomainSuffix: []string{"stale.example"}, Outbound: userFinal}}
+				cfg.Route.Final = "mode-final"
+				// DNS-правило режима ссылается на набор ИЗ ОБЩЕГО слота —
+				// доменное сужение fakeip; sing-box файлов не различает.
+				cfg.DNS.Rules = []DNSRule{{
+					Action: "route", Server: "fakeip",
+					QueryType: []string{"A", "AAAA"}, RuleSet: []string{sharedRuleSetTag},
+				}}
+				ensureFakeIPOverlay(cfg, fakeipSpec)
 				return cfg
 			},
 		},
@@ -89,7 +122,8 @@ func TestMergedConfigPerMode(t *testing.T) {
 				"log":       map[string]any{"level": "warn"},
 				"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
 			})
-			writeSlotJSON(t, dir, tc.modeFile, tc.modeCfg(t))
+			modeCfg := tc.modeCfg(t)
+			writeSlotJSON(t, dir, tc.modeFile, modeCfg)
 			writeSlotJSON(t, dir, "21-routing.json", sharedCfg(tc.mode))
 
 			raw, err := configmerge.MergeDir(dir)
@@ -141,17 +175,59 @@ func TestMergedConfigPerMode(t *testing.T) {
 				if merged.DNS.Final != "real" {
 					t.Errorf("fakeip: dns.final = %q, want real", merged.DNS.Final)
 				}
+				// DNS-правило режима переживает чистку и ссылается на набор из
+				// ДРУГОГО файла — так работает доменное сужение fakeip, и
+				// настоящий check ниже подтверждает, что sing-box это принимает.
+				narrowed := false
+				for _, r := range merged.DNS.Rules {
+					if r.Server == "fakeip" && len(r.RuleSet) == 1 && r.RuleSet[0] == sharedRuleSetTag {
+						narrowed = true
+					}
+				}
+				if !narrowed {
+					t.Errorf("fakeip: DNS-правило с сужением по набору потеряно:\n%s", raw)
+				}
 			} else if hasFakeIP || hasReal {
 				t.Errorf("%s: серверов fakeip/real в конфиге быть не должно:\n%s", tc.name, raw)
 			}
 
-			// Инбаунды приходят ровно из режимного слота — дубля тегов нет.
+			// Инбаунды приходят РОВНО из режимного слота: ни дубля тегов, ни
+			// чужого перехватчика из общего слота.
+			want := map[string]bool{}
+			for _, in := range modeCfg.Inbounds {
+				want[in.Tag] = true
+			}
 			seen := map[string]bool{}
 			for _, in := range merged.Inbounds {
 				if seen[in.Tag] {
 					t.Errorf("дублирующийся тег инбаунда %q — sing-box откажется грузить конфиг", in.Tag)
 				}
 				seen[in.Tag] = true
+				if !want[in.Tag] {
+					t.Errorf("инбаунд %q пришёл не из режимного слота: %s", in.Tag, raw)
+				}
+			}
+			if len(seen) != len(want) {
+				t.Errorf("набор инбаундов %v не совпал с режимным слотом %v", seen, want)
+			}
+			// Набор и outbound объявлены ровно один раз (configmerge ловит
+			// коллизию тегов как sing-box, но проверим и по факту).
+			if len(merged.Route.RuleSet) != 1 || merged.Route.RuleSet[0].Tag != sharedRuleSetTag {
+				t.Errorf("набор правил обязан быть объявлен ровно один раз: %+v", merged.Route.RuleSet)
+			}
+			outTags := map[string]int{}
+			for _, o := range merged.Outbounds {
+				outTags[o.Tag]++
+			}
+			if outTags[userFinal] != 1 {
+				t.Errorf("тег outbound %q встречается %d раз(а) — дубль валит sing-box", userFinal, outTags[userFinal])
+			}
+			// Пользовательское правило из режимного слота (наследие прежней
+			// раскладки) не должно доезжать до merged-конфига.
+			for _, r := range merged.Route.Rules {
+				if len(r.DomainSuffix) == 1 && r.DomainSuffix[0] == "stale.example" {
+					t.Errorf("правило из режимного слота не вычищено: %+v", r)
+				}
 			}
 
 			singboxCheck(t, dir)

@@ -409,12 +409,35 @@ type RoutingSlotParams struct {
 // Мутирует cfg на месте (вызывающий уже держит свою копию, загруженную из
 // слота).
 func buildRoutingSlot(cfg *RouterConfig, p RoutingSlotParams) {
-	cfg.Inbounds = []Inbound{}
+	stripModeOnlyFromRoutingSlot(cfg)
 	cfg.Outbounds = applyRoutingOutbounds(cfg.Outbounds, p.Mode)
 	cfg.EnsureRouteWAN(p.WANAutoDetect, p.WANInterface)
 	if cfg.Route.Final == "" {
 		cfg.Route.Final = "direct"
 	}
+}
+
+// stripModeOnlyFromRoutingSlot вычищает из общего слота всё, что принадлежит
+// режимным: инбаунды и режимные скаляры fakeip. Зеркало
+// stripSharedFromModeSlot и такое же самолечение половинчатой раскладки —
+// миграция (Task 4) читает активный файл прежнего режима целиком, так что эти
+// поля могут в общий слот попасть.
+//
+// Цена каждого поля, если не вычистить (проверено на живом sing-box):
+//   - одинаковый тег инбаунда в двух файлах — FATAL при слиянии;
+//   - route.default_domain_resolver со ссылкой на движковый `real` вне
+//     fakeip-режима — «FATAL initialize outbound: domain resolver not found: real»;
+//   - dns.final="real" — та же висячая ссылка, плюс скаляр общего слота
+//     перебивал бы режимный в fakeip;
+//   - experimental.cache_file (store_fakeip) — кэш fakeip в режиме, где
+//     fakeip нет.
+func stripModeOnlyFromRoutingSlot(cfg *RouterConfig) {
+	cfg.Inbounds = []Inbound{}
+	cfg.Route.DefaultDomainResolver = nil
+	if engineDNSServerTags[cfg.DNS.Final] {
+		cfg.DNS.Final = ""
+	}
+	cfg.Experimental = nil
 }
 
 // applyRoutingOutbounds готовит outbound'ы общего слота: убирает
@@ -423,8 +446,16 @@ func buildRoutingSlot(cfg *RouterConfig, p RoutingSlotParams) {
 //
 // Резолвер "real" существует только в fakeip-режиме (его объявляет
 // 20-fakeip.json), поэтому в остальных режимах ссылка на него повисает и
-// роняет конфиг — снимаем её. Пользовательский резолвер (любое другое имя)
-// не трогаем ни в одном режиме.
+// роняет конфиг («FATAL initialize outbound: domain resolver not found: real»)
+// — снимаем её. Пользовательский резолвер (любое другое имя) не трогаем ни в
+// одном режиме.
+//
+// Снятие безопасно: Outbound.DomainResolver не выставляется НИ ИЗ API, ни из
+// редактора — DTO `domain_resolver` есть только у DNS-серверов
+// (internal/api/singbox_router_dns.go), а у outbound'ов поле пишет
+// исключительно наш код и исключительно тегом "real" (плюс сам тег
+// зарезервирован, см. engineDNSServerTags). Пользовательского резолвера с этим
+// именем взяться неоткуда.
 func applyRoutingOutbounds(outbounds []Outbound, mode string) []Outbound {
 	out := stripAutoManagedDirect(outbounds)
 	if ModeSlot(mode) == orchestrator.SlotFakeIP {
