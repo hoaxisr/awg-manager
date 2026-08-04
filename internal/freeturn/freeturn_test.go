@@ -711,3 +711,32 @@ func TestDecodeLink_LegacyStdEncoding(t *testing.T) {
 		t.Fatalf("legacy mismatch:\n got %+v\nwant %+v", got, p)
 	}
 }
+
+func TestDecodeLink_CompactURLFormat(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{
+		"url": "85.137.95.32:56000?obf-profile=rtpopus&obf-key=deadbeef&transport=tcp&n=8",
+	})
+	link := LinkScheme + base64.RawURLEncoding.EncodeToString(raw)
+	got, err := DecodeLink(link)
+	if err != nil {
+		t.Fatalf("DecodeLink: %v", err)
+	}
+	if got.Peer != "85.137.95.32:56000" {
+		t.Fatalf("peer = %q", got.Peer)
+	}
+	if got.Obf != "rtpopus" || got.Key != "deadbeef" || got.Transport != "tcp" || got.N != 8 {
+		t.Fatalf("got %+v", got)
+	}
+	if got.Provider != "vk" || got.V != 1 {
+		t.Fatalf("defaults: %+v", got)
+	}
+}
+
+func TestHasBundledWgConfig(t *testing.T) {
+	if HasBundledWgConfig("") || HasBundledWgConfig("[Interface]\n") {
+		t.Fatal("empty/stub must be false")
+	}
+	if !HasBundledWgConfig("[Interface]\nPrivateKey = abc\n") {
+		t.Fatal("real config must be true")
+	}
+}

@@ -10,9 +10,10 @@
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
+	import { freeturnLinkHasWg } from '$lib/utils/serverPeerOptions';
 	import { dnsModeOptions, platformOptions, modeOptions, transportOptions } from './options';
-	import { api } from '$lib/api/client';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
@@ -31,7 +32,9 @@
 		routerClock?: string;
 		onSave: (cfg: FreeTurnClientConfig) => void | Promise<void>;
 		onToggle: (on: boolean) => void | Promise<void>;
-		onImportLink: (link: string) => void | Promise<void>;
+		onImportLink: (link: string) => FreeTurnLinkPayload | null | Promise<FreeTurnLinkPayload | null>;
+		onImportManualWg?: (wg: string) => void | Promise<void>;
+		importingWg?: boolean;
 		instances?: LogInstanceItem[];
 		selectedInstanceId?: string;
 		onSelectInstance?: (id: string) => void;
@@ -46,6 +49,8 @@
 		onSave,
 		onToggle,
 		onImportLink,
+		onImportManualWg,
+		importingWg = false,
 		instances = [],
 		selectedInstanceId = '',
 		onSelectInstance
@@ -55,6 +60,8 @@
 	let importing = $state(false);
 	let starting = $state(false);
 	let linkParams = $state<FreeTurnLinkPayload | null>(null);
+	let manualWgConf = $state('');
+	let manualWgApplied = $state(false);
 	let opsTab = $state<ClientTab>('setup');
 	let quickActive = $state('import');
 
@@ -91,6 +98,24 @@
 
 	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const listenMeta = $derived(client.listen?.trim() || '127.0.0.1:9000');
+	const showManualWg = $derived(
+		!!linkParams && !freeturnLinkHasWg(linkParams.wg) && !manualWgApplied
+	);
+
+	async function loadWgFile(file: File) {
+		try {
+			manualWgConf = await file.text();
+		} catch {
+			manualWgConf = '';
+		}
+	}
+
+	async function applyManualWg() {
+		const wg = manualWgConf.trim();
+		if (!wg || !onImportManualWg) return;
+		await onImportManualWg(wg);
+		manualWgApplied = true;
+	}
 
 	const importGuideItems = $derived.by(() =>
 		finalizeGuide([
@@ -142,14 +167,12 @@
 		if (!link) return;
 		importing = true;
 		try {
-			await onImportLink(link);
-			try {
-				linkParams = await api.decodeFreeTurnLink(link);
-			} catch {
-				linkParams = null;
-			}
+			const payload = await onImportLink(link);
+			linkParams = payload;
+			manualWgApplied = false;
 			importLink = '';
-			if (client.peer.trim()) {
+			const hasWg = freeturnLinkHasWg(payload?.wg);
+			if (client.peer.trim() && (hasWg || step2Done)) {
 				quickActive = 'links';
 			}
 		} finally {
@@ -185,6 +208,9 @@
 			meta={`listen ${listenMeta}`}
 			onSelect={(id) => (quickActive = id)}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'import'}
 					<ProxyQuickStartStep
@@ -205,6 +231,42 @@
 							<p class="ft-readonly">peer: <code>{client.peer}</code></p>
 						{/if}
 						<LinkParamsSummary payload={linkParams} peer={client.peer} />
+						{#if showManualWg && onImportManualWg}
+							<div class="ft-wg-manual">
+								<p class="ft-hint">
+									В ссылке нет WireGuard-конфига — вставьте клиентский .conf вручную для AWG-туннеля.
+								</p>
+								<textarea
+									class="ft-simple-textarea"
+									bind:value={manualWgConf}
+									placeholder="[Interface]&#10;PrivateKey = …&#10;[Peer]&#10;…"
+									rows="6"
+								></textarea>
+								<div class="ft-import-row">
+									<label class="ft-file-label">
+										<input
+											type="file"
+											accept=".conf,text/plain"
+											class="ft-file-input"
+											onchange={(e) => {
+												const f = (e.currentTarget as HTMLInputElement).files?.[0];
+												if (f) void loadWgFile(f);
+											}}
+										/>
+										Загрузить .conf
+									</label>
+									<Button
+										variant="secondary"
+										size="sm"
+										loading={importingWg}
+										disabled={!manualWgConf.trim()}
+										onclick={applyManualWg}
+									>
+										Создать AWG-туннель
+									</Button>
+								</div>
+							</div>
+						{/if}
 					</ProxyQuickStartStep>
 				{:else if stepId === 'links'}
 					<ProxyQuickStartStep
@@ -274,7 +336,11 @@
 			{canStart}
 			onSave={saveOnly}
 			onToggle={onToggle}
-		/>
+		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
+		</ProxyInstanceStatusBar>
 		<ProxyPanelTabs tabs={[...CLIENT_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
 		{#if opsTab === 'setup'}
@@ -308,6 +374,7 @@
 				/>
 				<p class="ft-hint">
 					{linksCount} VK-ссылок · listen <code>{listenMeta}</code>
+					<ListenPortKillButton listen={listenMeta} proto="udp" />
 					{#if client.dnsMode === 'plain'}
 						· DNS: UDP/53 (рекомендуется на роутере)
 					{:else if client.dnsMode === 'doh'}
@@ -383,5 +450,19 @@
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
 		margin: 0;
+	}
+	.ft-wg-manual {
+		margin-top: 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.ft-file-label {
+		font-size: 0.75rem;
+		cursor: pointer;
+		color: var(--color-accent, #3b82f6);
+	}
+	.ft-file-input {
+		display: none;
 	}
 </style>

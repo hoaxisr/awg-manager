@@ -5,6 +5,7 @@ import {
   buildServerPeerDropdownOptions,
   parseLocalListenPort,
   linkedTunnelListenPort,
+  freeturnLinkHasWg,
   patchWgConfEndpoint,
 } from './serverPeerOptions';
 import type { ServersSnapshot } from '$lib/stores/servers';
@@ -117,6 +118,14 @@ describe('linkedTunnelListenPort', () => {
   it('prefers saved client listen over link template', () => {
     expect(linkedTunnelListenPort('127.0.0.1:9001', '127.0.0.1:9000')).toBe(9001);
     expect(linkedTunnelListenPort('', '127.0.0.1:9000')).toBe(9000);
+  });
+});
+
+describe('freeturnLinkHasWg', () => {
+  it('detects real wg config vs empty stub', () => {
+    expect(freeturnLinkHasWg('')).toBe(false);
+    expect(freeturnLinkHasWg('[Interface]\n')).toBe(false);
+    expect(freeturnLinkHasWg('[Interface]\nPrivateKey = abc\n')).toBe(true);
   });
 });
 

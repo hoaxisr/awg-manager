@@ -645,6 +645,14 @@ func (a *app) setupShutdown() {
 	a.monitoringService.Start(a.shutdownCtx)
 	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
 	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Супервизор гейтится теми же условиями, что и автостарт прокси-клиентов:
+	// boot-фазы (NDMS/WAN/DNS) и маркер post-restore. Без гейта его первый тик
+	// поднимал бы клиентов раньше резолвера и вопреки восстановлению из архива.
+	proxyReady := func() bool {
+		return atomic.LoadInt32(&a.bootDone) == 1 && !backup.HasPostRestoreMarker(a.dataDir)
+	}
+	a.freeturnService.StartSupervisor(a.shutdownCtx, proxyReady)
+	a.wdttService.StartSupervisor(a.shutdownCtx, proxyReady)
 	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
 	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
 		var out []listenfirewall.PortSpec

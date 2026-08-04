@@ -12,6 +12,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/procport"
+	"github.com/hoaxisr/awg-manager/internal/proxysup"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -42,6 +44,9 @@ type Service struct {
 	appLog *logging.ScopedLogger
 
 	listenPortChecker LocalListenPortChecker
+
+	clientHealth *healthTracker
+	startBackoff *proxysup.Backoff
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
@@ -95,13 +100,15 @@ func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
 // NewService wires up config storage and process managers per instance id.
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:       NewStore(dataDir),
-		dataDir:     dataDir,
-		clientBin:   clientBin,
-		serverBin:   serverBin,
-		versionPath: filepath.Join(dataDir, "freeturn-version.json"),
-		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
-		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
+		store:        NewStore(dataDir),
+		dataDir:      dataDir,
+		clientBin:    clientBin,
+		serverBin:    serverBin,
+		versionPath:  filepath.Join(dataDir, "freeturn-version.json"),
+		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
+		clientHealth: newHealthTracker(),
+		startBackoff: newStartBackoff(),
 	}
 }
 
@@ -132,6 +139,9 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg.Platform = normalizePlatform(cfg.Platform)
 	full.Clients[idx].Config = cfg
+	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
+	// не заставляем ждать окно backoff до следующей попытки супервизора.
+	s.startBackoff.Forget(clientKey(id))
 	return s.store.Save(full)
 }
 
@@ -150,6 +160,10 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
+	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
+	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
+	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
+	// работать ровно там, где он нужнее всего.
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -226,6 +240,8 @@ func (s *Service) DeleteClient(id string) error {
 	}
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(clientKey(id))
+	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -245,12 +261,15 @@ func (s *Service) DeleteServer(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	cfg := full.Servers[idx].Config
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(serverKey(id))
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
 	_ = s.serverProcs.get(id).Stop()
+	removeServerListenFirewall(context.Background(), cfg)
 	return saveErr
 }
 
@@ -366,17 +385,25 @@ func (s *Service) statusLocked() Status {
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
+		ps := s.clientProcs.get(c.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.clientProcs.get(c.ID).Status(),
+			Status: ps,
 		})
 	}
 	for _, srv := range cfg.Servers {
+		ps := s.serverProcs.get(srv.ID).Status()
+		proto := procport.ProtoUDP
+		if strings.EqualFold(strings.TrimSpace(srv.Config.Mode), "tcp") {
+			proto = procport.ProtoTCP
+		}
+		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, proto)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
-			Status: s.serverProcs.get(srv.ID).Status(),
+			Status: ps,
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
@@ -504,6 +531,9 @@ func (s *Service) StartServerInstance(id string) error {
 	if err := applyServerListenFirewall(context.Background(), inst.Config); err != nil && s.appLog != nil {
 		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
 	}
+	if err := s.setServerEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
 	return nil
 }
 
@@ -517,7 +547,11 @@ func (s *Service) StopServerInstance(id string) error {
 		return err
 	}
 	removeServerListenFirewall(context.Background(), inst.Config)
-	return s.serverProcs.get(id).Stop()
+	err = s.serverProcs.get(id).Stop()
+	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
@@ -540,10 +574,9 @@ func (s *Service) Stop() {
 	s.serverProcs.stopAll()
 }
 
-// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
-// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// ResumeEnabled стартует всех клиентов и серверов с Enabled==true (авторитетный
+// флаг «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
 // продолжает; идемпотентно (повторный старт живого процесса — no-op).
-// Серверы вне scope: блэкхол linked-туннеля — клиентская проблема.
 func (s *Service) ResumeEnabled() {
 	full, err := s.store.Load()
 	if err != nil {
@@ -557,7 +590,15 @@ func (s *Service) ResumeEnabled() {
 			continue
 		}
 		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
-			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+			s.appLog.Warn("resume", c.ID, "автостарт клиента не удался: "+err.Error())
+		}
+	}
+	for _, srv := range full.Servers {
+		if !srv.Config.Enabled {
+			continue
+		}
+		if err := s.StartServerInstance(srv.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", srv.ID, "автостарт сервера не удался: "+err.Error())
 		}
 	}
 }
@@ -580,6 +621,24 @@ func (s *Service) setClientEnabled(id string, enabled bool) error {
 		return nil
 	}
 	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
+}
+
+func (s *Service) setServerEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	if full.Servers[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Servers[idx].Config.Enabled = enabled
 	return s.store.Save(full)
 }
 

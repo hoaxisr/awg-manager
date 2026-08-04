@@ -7,6 +7,7 @@
 		id: string;
 		name: string;
 		running?: boolean;
+		autostart?: boolean;
 		startedAt?: string;
 		pid?: number;
 		dtlsConnections?: number;
@@ -67,7 +68,9 @@
 		if (item.running && item.binaryPresent === false) {
 			return ['устаревший процесс', item.pid ? `PID ${item.pid}` : ''].filter(Boolean).join(' · ');
 		}
-		if (!item.running) return 'остановлен';
+		if (!item.running) {
+			return item.autostart ? 'автоподключение · остановлен' : 'остановлен';
+		}
 		return ['запущен', formatUptime(item.startedAt), item.pid ? `PID ${item.pid}` : '']
 			.filter(Boolean)
 			.join(' · ');
@@ -117,7 +120,7 @@
 						controlled
 						size="sm"
 						label=""
-						ariaLabel="{item.name}: запустить или остановить"
+						ariaLabel="{item.name}: {item.running ? 'остановить' : 'запустить с автоподключением после перезагрузки'}"
 					/>
 					{#if onRename}
 						<button

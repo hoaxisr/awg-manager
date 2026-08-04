@@ -1,9 +1,11 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/components/ui';
 
 	interface Props {
 		running?: boolean;
 		meta?: string;
+		metaExtra?: Snippet;
 		saving?: boolean;
 		starting?: boolean;
 		canSave?: boolean;
@@ -16,6 +18,7 @@
 	let {
 		running = false,
 		meta = '',
+		metaExtra,
 		saving = false,
 		starting = false,
 		canSave = true,
@@ -32,6 +35,11 @@
 		<span class="proxy-status-label">{running ? 'Запущен' : 'Остановлен'}</span>
 		{#if meta}
 			<span class="proxy-status-meta">{meta}</span>
+		{/if}
+		{#if metaExtra}
+			<span class="proxy-status-meta-extra">
+				{@render metaExtra()}
+			</span>
 		{/if}
 	</div>
 	<div class="proxy-status-actions">
@@ -96,6 +104,12 @@
 		font-size: 0.75rem;
 		font-family: var(--font-mono);
 		color: var(--color-text-secondary);
+	}
+
+	.proxy-status-meta-extra {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
 	}
 
 	.proxy-status-actions {

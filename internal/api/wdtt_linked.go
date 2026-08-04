@@ -55,6 +55,25 @@ func (h *WdttHandler) syncLinkedTunnelNames(ctx context.Context, clientID, clien
 	}, newName)
 }
 
+func (h *WdttHandler) syncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
+	return syncLinkedAwgTunnelEndpoints(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToWdttClient(tun, clientID)
+	}, listen)
+}
+
+func wdttClientListen(svc WdttService, id string) string {
+	cfg, err := svc.GetConfig()
+	if err != nil {
+		return ""
+	}
+	for _, c := range cfg.Clients {
+		if c.ID == id {
+			return strings.TrimSpace(c.Config.Listen)
+		}
+	}
+	return ""
+}
+
 func (h *WdttHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID string) (deleted []string, errs []string) {
 	if h.awgStore == nil || h.tunnelSvc == nil || strings.TrimSpace(clientID) == "" {
 		return nil, nil
