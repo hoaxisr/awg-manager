@@ -406,7 +406,7 @@ func normalizeServerConfig(cfg ServerConfig) ServerConfig {
 	if cfg.Policy == "" {
 		cfg.Policy = DefaultServerConfig().Policy
 	}
-	cfg.RelayMode = normalizeRelayMode(cfg.RelayMode)
+	cfg.RelayMode = normalizeConnMode(cfg.RelayMode)
 	return cfg
 }
 
@@ -430,7 +430,7 @@ func buildServerArgs(c ServerConfig) []string {
 	if iface := strings.TrimSpace(c.WgIface); iface != "" && iface != DefaultWdttIface {
 		str("-wg-iface", iface)
 	}
-	if mode := normalizeRelayMode(c.RelayMode); mode == ConnModeRaw {
+	if mode := normalizeConnMode(c.RelayMode); mode == ConnModeRaw {
 		args = append(args, "-relay-mode", mode)
 	}
 	// -debug не передаём: wdtt-server его не знает (flag.Parse → exit 2),

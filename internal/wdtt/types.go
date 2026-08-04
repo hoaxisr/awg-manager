@@ -24,8 +24,8 @@ type ClientConfig struct {
 	VKAuthMode  string `json:"vkAuthMode,omitempty"` // -vk-auth-mode
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
 	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
-	ConnMode    string `json:"connMode,omitempty"`
-	Debug       bool   `json:"debug"`
+	ConnMode string `json:"connMode,omitempty"`
+	Debug    bool   `json:"debug"`
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -103,8 +103,8 @@ const (
 
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		Listen:  "0.0.0.0:56002",
-		WgPort:  56001,
+		Listen:    "0.0.0.0:56002",
+		WgPort:    56001,
 		NatMode:   "full",
 		Policy:    "none",
 		RelayMode: ConnModeWG,

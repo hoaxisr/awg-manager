@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -28,7 +27,7 @@
 			pid = null;
 			comm = '';
 			open = false;
-		 return;
+			return;
 		}
 		loading = true;
 		try {
@@ -60,10 +59,8 @@
 		}
 	}
 
-	onMount(() => {
-		void refresh();
-	});
-
+	// $effect срабатывает и при монтировании — отдельный onMount дал бы
+	// два одинаковых запроса подряд (каждый — обход /proc на роутере).
 	$effect(() => {
 		listen;
 		proto;

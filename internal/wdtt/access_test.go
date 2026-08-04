@@ -25,7 +25,7 @@ func (s *stubAccessManager) EnsureInterfaceFirewallPermit(_ context.Context, ifa
 	s.firewallPermitIface = iface
 	return nil
 }
-func (s *stubAccessManager) KernelIfaceName(context.Context, string) string              { return "" }
+func (s *stubAccessManager) KernelIfaceName(context.Context, string) string { return "" }
 func (s *stubAccessManager) ResolveLANSegmentCIDRs(context.Context, []string) ([]string, error) {
 	return nil, nil
 }

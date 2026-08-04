@@ -160,7 +160,7 @@ func mergeURLFormat(p *LinkPayload, compact string) {
 			return
 		}
 		for _, k := range keys {
-			if v := strings.TrimSpace(firstQuery(vals, k)); v != "" {
+			if v := strings.TrimSpace(vals.Get(k)); v != "" {
 				*dst = v
 				return
 			}
@@ -205,13 +205,6 @@ func mergeURLFormat(p *LinkPayload, compact string) {
 		}
 	}
 	setIfEmpty(&p.Provider, "provider")
-}
-
-func firstQuery(vals url.Values, key string) string {
-	if v := vals.Get(key); v != "" {
-		return v
-	}
-	return ""
 }
 
 func intQuery(vals url.Values, keys ...string) (int, bool) {

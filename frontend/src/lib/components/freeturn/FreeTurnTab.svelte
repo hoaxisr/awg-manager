@@ -370,8 +370,7 @@
 		if (!selectedClient || !config) return;
 		importingWg = true;
 		try {
-			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
-			const portForTunnel = listenPort ?? linkedTunnelListenPort(selectedClient.config.listen);
+			const portForTunnel = linkedTunnelListenPort(selectedClient.config.listen);
 			if (portForTunnel == null) {
 				notifications.error('Не удалось определить listen-порт клиента для AWG-туннеля');
 				return;
