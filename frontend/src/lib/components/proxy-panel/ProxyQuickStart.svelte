@@ -12,11 +12,12 @@
 		activeId: string;
 		progress?: string;
 		meta?: string;
+		metaExtra?: Snippet;
 		onSelect?: (id: string) => void;
 		content: Snippet<[string]>;
 	}
 
-	let { items, activeId, progress = '', meta = '', onSelect, content }: Props = $props();
+	let { items, activeId, progress = '', meta = '', metaExtra, onSelect, content }: Props = $props();
 
 	const activeIdx = $derived(items.findIndex((i) => i.id === activeId));
 </script>
@@ -29,6 +30,11 @@
 			{/if}
 			{#if meta}
 				<span class="proxy-quickstart-meta">{meta}</span>
+			{/if}
+			{#if metaExtra}
+				<span class="proxy-quickstart-meta-extra">
+					{@render metaExtra()}
+				</span>
 			{/if}
 		</div>
 	{/if}
@@ -68,6 +74,7 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem 1rem;
+		width: 100%;
 	}
 
 	.proxy-quickstart-progress {
@@ -83,6 +90,12 @@
 		font-size: 0.75rem;
 		font-family: var(--font-mono);
 		color: var(--color-text-secondary);
+	}
+
+	.proxy-quickstart-meta-extra {
+		display: inline-flex;
+		align-items: center;
+		margin-left: auto;
 	}
 
 	.proxy-quickstart-list {

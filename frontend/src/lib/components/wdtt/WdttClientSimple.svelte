@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Dropdown } from '$lib/components/ui';
+	import { Button, Input, Dropdown, SegmentedControl } from '$lib/components/ui';
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
 	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
@@ -13,6 +13,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
 		WdttClientConfig,
@@ -85,6 +86,7 @@
 	let opsTab = $state<ClientTab>('setup');
 	let quickActive = $state('import');
 
+	const isRawMode = $derived((client.connMode ?? 'wg') === 'raw');
 	const hashCount = $derived(
 		client.vkHashes ? client.vkHashes.split(',').filter((s) => s.trim()).length : 0
 	);
@@ -358,6 +360,9 @@
 			meta={`listen ${listenMeta}`}
 			onSelect={(id) => (quickActive = id)}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'import'}
 					<ProxyQuickStartStep
@@ -409,6 +414,23 @@
 						onPrimary={() => { quickActive = 'vk'; }}
 					>
 						<ProxyWizardGuide items={peerGuideItems} />
+						<SegmentedControl
+							ariaLabel="Режим подключения"
+							value={(client.connMode ?? 'wg') as 'wg' | 'raw'}
+							options={[
+								{ value: 'wg', label: 'WG' },
+								{ value: 'raw', label: 'Raw' }
+							]}
+							onchange={(v) => (client.connMode = v)}
+						/>
+						<p class="wdtt-mode-hint">
+							{#if isRawMode}
+								Raw — без AWG-туннеля, выше скорость. Нужны wt-client и сервер с поддержкой
+								Raw (серверу — редеплой): со старым бинарём запуск завершится ошибкой.
+							{:else}
+								WG — классический режим: wt-client выдаёт WireGuard-конфиг для AWG-туннеля.
+							{/if}
+						</p>
 						<Input bind:value={client.peer} placeholder="1.2.3.4:56000" />
 						<label class="wdtt-field">
 							<span>Пароль</span>
@@ -452,8 +474,10 @@
 						onPrimary={saveAndStart}
 					>
 						<ProxyWizardGuide items={startGuideItems} />
-						{#if status?.wgConfig}
+						{#if !isRawMode && status?.wgConfig}
 							<p class="wdtt-wg-hint">WireGuard-конфиг получен — AWG-туннель создаётся автоматически.</p>
+						{:else if isRawMode}
+							<p class="wdtt-wg-hint">Raw: AWG-туннель не нужен — маршрутизируйте трафик на listen-порт wt-client.</p>
 						{/if}
 					</ProxyQuickStartStep>
 				{/if}
@@ -469,7 +493,11 @@
 			{canStart}
 			onSave={() => onSave(client)}
 			onToggle={onToggle}
-		/>
+		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={listenMeta} proto="udp" />
+			{/snippet}
+		</ProxyInstanceStatusBar>
 		<ProxyPanelTabs tabs={[...CLIENT_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
 		{#if opsTab === 'setup'}
@@ -501,6 +529,15 @@
 						{/if}
 					</div>
 				{/if}
+				<SegmentedControl
+					ariaLabel="Режим подключения"
+					value={(client.connMode ?? 'wg') as 'wg' | 'raw'}
+					options={[
+						{ value: 'wg', label: 'WG' },
+						{ value: 'raw', label: 'Raw' }
+					]}
+					onchange={(v) => (client.connMode = v)}
+				/>
 				<Input bind:value={client.peer} placeholder="peer host:port" />
 				<Input type="password" bind:value={client.password} />
 				<Input bind:value={client.listen} placeholder="127.0.0.1:9000" />
@@ -525,7 +562,7 @@
 		{:else}
 			<section class="ops-section">
 				<div class="wdtt-actions">
-					{#if onEnsureWg && (running || status?.wgConfig)}
+					{#if !isRawMode && onEnsureWg && (running || status?.wgConfig)}
 						<Button variant="secondary" loading={ensuringWg} onclick={() => onEnsureWg?.()}>
 							Создать AWG из лога
 						</Button>

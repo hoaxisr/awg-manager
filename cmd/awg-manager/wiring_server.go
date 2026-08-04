@@ -339,7 +339,13 @@ func (a *app) setupRouter() {
 			store: a.ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
 		},
-		OpkgTunScan: opkgTunScanner(a.ndmsQueries.Interfaces),
+		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		RunningConfig: a.ndmsQueries.RunningConfig,
+		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		// *RouteStore satisfies DefaultGatewayResolver directly.
+		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {
 			p := router.DefaultFakeIPTunParams()
 			p.CachePath = singbox.DefaultCacheDBPath()
@@ -358,6 +364,7 @@ func (a *app) setupRouter() {
 			}
 		},
 	})
+	a.routerSvc = routerSvc
 	// Wire selective-bypass builder. The adapter wraps selective.Builder with the
 	// router service's live config so reconcileInstalled can trigger an ipset
 	// rebuild with a single Rebuild(ctx) call.
@@ -564,6 +571,23 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
+	// keendns preset → managed DNS rewrite (own FQDN → LAN), not iptables
+	// /32 for 78.47.125.180 (that IP is shared with every other KeenDNS host).
+	if a.routerSvc != nil {
+		a.routerSvc.SetKeenDNSPreset(
+			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
+			keenDNSLANAdapter{},
+			dnsRewriteSvc,
+		)
+		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
+		// SetKeenDNSPreset и мог увидеть nil-syncer. В горутине и с ctx —
+		// синхронный вызов ходит в NDMS и до 30с держал бы a.serve().
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.routerSvc.SyncKeenDNSRewrites(ctx)
+		}()
+	}
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	a.srv.SetBootStatusFunc(func() bool { return atomic.LoadInt32(&a.bootDone) == 0 })
@@ -621,6 +645,14 @@ func (a *app) setupShutdown() {
 	a.monitoringService.Start(a.shutdownCtx)
 	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
 	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Супервизор гейтится теми же условиями, что и автостарт прокси-клиентов:
+	// boot-фазы (NDMS/WAN/DNS) и маркер post-restore. Без гейта его первый тик
+	// поднимал бы клиентов раньше резолвера и вопреки восстановлению из архива.
+	proxyReady := func() bool {
+		return atomic.LoadInt32(&a.bootDone) == 1 && !backup.HasPostRestoreMarker(a.dataDir)
+	}
+	a.freeturnService.StartSupervisor(a.shutdownCtx, proxyReady)
+	a.wdttService.StartSupervisor(a.shutdownCtx, proxyReady)
 	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
 	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
 		var out []listenfirewall.PortSpec

@@ -18,6 +18,8 @@
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
+	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import type { LogInstanceItem } from '../freeturn/LogInstanceSwitcher.svelte';
 	import type { WdttPanelUserEntry, WdttProcessStatus, WdttServerConfig } from '$lib/types';
 
@@ -91,12 +93,17 @@
 	let opsTab = $state<ServerTab>('main');
 	let quickActive = $state('secret');
 
-	const listenPort = $derived.by(() => {
-		const listen = server.listen?.trim() ?? '';
-		if (!listen) return '56002';
-		const idx = listen.lastIndexOf(':');
-		return idx >= 0 ? listen.slice(idx + 1) : listen;
-	});
+	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56002)));
+	const wgPortStr = $derived(String(server.wgPort || 56001));
+
+	function applyListenPort(portStr: string) {
+		const port = Math.max(1, Math.min(65535, Number(portStr) || 56002));
+		server.listen = setListenPort(server.listen || '0.0.0.0:56002', port, '0.0.0.0');
+	}
+
+	function applyWgPort(portStr: string) {
+		server.wgPort = Math.max(1, Math.min(65535, Number(portStr) || 56001));
+	}
 
 	const step1Done = $derived(!!server.password.trim());
 	const step2Done = $derived(step1Done && !!server.listen.trim());
@@ -128,7 +135,10 @@
 
 	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const quickProgress = $derived(`Прогресс ${quickDoneCount}/${quickItems.length}`);
-	const statusMeta = $derived(`DTLS :${listenPort} · WG :${server.wgPort || 56001}`);
+	const isRawRelay = $derived((server.relayMode ?? 'wg') === 'raw');
+	const statusMeta = $derived(
+		isRawRelay ? `DTLS :${listenPort} · Raw` : `DTLS :${listenPort} · WG :${server.wgPort || 56001}`
+	);
 
 	const natMode = $derived((server.natMode || 'full') as NatMode);
 
@@ -186,7 +196,9 @@
 
 	const startGuideItems = $derived.by((): WizardGuideItem[] =>
 		finalizeGuide([
-			guide('ports', `Проверьте порты: DTLS ${server.listen || '0.0.0.0:56002'}, WG ${server.wgPort || 56001}`, {
+			guide('ports', isRawRelay
+				? `Проверьте DTLS-порт: ${server.listen || '0.0.0.0:56002'} (Raw — WG-порт не используется)`
+				: `Проверьте порты: DTLS ${server.listen || '0.0.0.0:56002'}, WG ${server.wgPort || 56001}`, {
 				done: step2Done,
 				pending: !step1Done
 			}),
@@ -344,6 +356,7 @@
 			});
 			if (result?.link) {
 				quickActive = 'link';
+				opsTab = 'links';
 				notifications.success('Сервер запущен, ссылка wdtt:// готова');
 			}
 		} finally {
@@ -364,9 +377,12 @@
 			items={quickItems}
 			activeId={quickActive}
 			progress={quickProgress}
-			meta={`Порты: DTLS :${listenPort} · WG :${server.wgPort || 56001}`}
+			meta={statusMeta}
 			onSelect={(id) => (quickActive = id)}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto="udp" defaultHost="0.0.0.0" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'secret'}
 					<ProxyQuickStartStep
@@ -400,6 +416,38 @@
 								await onSave(server);
 							}}
 						/>
+						<SegmentedControl
+							ariaLabel="Режим relay сервера"
+							value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
+							options={[
+								{ value: 'wg', label: 'WG' },
+								{ value: 'raw', label: 'Raw' }
+							]}
+							onchange={(v) => (server.relayMode = v)}
+						/>
+						<p class="wdtt-hint">
+							{#if (server.relayMode ?? 'wg') === 'raw'}
+								Raw — без WireGuard на сервере (qWDTT 1.4+). После смены режима перезапустите сервер.
+							{:else}
+								WG — совместимость с прежними клиентами и AWG-туннелем на роутере.
+							{/if}
+						</p>
+						<div class="wdtt-row wdtt-port-row">
+							<Input
+								label="DTLS-порт (-listen)"
+								type="number"
+								value={listenPort}
+								onchange={applyListenPort}
+							/>
+							{#if !isRawRelay}
+								<Input
+									label="WG-порт (-wg-port)"
+									type="number"
+									value={wgPortStr}
+									onchange={applyWgPort}
+								/>
+							{/if}
+						</div>
 					</ProxyQuickStartStep>
 				{:else if stepId === 'link'}
 					<ProxyQuickStartStep
@@ -439,7 +487,12 @@
 					>
 						<ProxyWizardGuide items={startGuideItems} />
 						<p class="wdtt-readonly">
-							DTLS: <code>{server.listen || '0.0.0.0:56002'}</code> · WG: <code>{server.wgPort || 56001}</code>
+							DTLS: <code>{server.listen || '0.0.0.0:56002'}</code>
+							{#if !isRawRelay}
+								· WG: <code>{server.wgPort || 56001}</code>
+							{:else}
+								· Raw (WG-порт не используется)
+							{/if}
 						</p>
 					</ProxyQuickStartStep>
 				{/if}
@@ -471,8 +524,24 @@
 						<Button variant="secondary" size="sm" onclick={randomPassword}>Сгенерировать</Button>
 					</div>
 				</label>
+				<SegmentedControl
+					ariaLabel="Режим relay сервера"
+					value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
+					options={[
+						{ value: 'wg', label: 'WG' },
+						{ value: 'raw', label: 'Raw' }
+					]}
+					onchange={(v) => (server.relayMode = v)}
+				/>
+				<div class="wdtt-row wdtt-port-row">
+					<Input label="DTLS-порт" type="number" value={listenPort} onchange={applyListenPort} />
+					{#if (server.relayMode ?? 'wg') !== 'raw'}
+						<Input label="WG-порт" type="number" value={wgPortStr} onchange={applyWgPort} />
+					{/if}
+				</div>
 				<p class="wdtt-readonly">
-					DTLS: <code>{server.listen || '0.0.0.0:56002'}</code> · WG: <code>{server.wgPort || 56001}</code>
+					Listen: <code>{server.listen || '0.0.0.0:56002'}</code>
+					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto="udp" defaultHost="0.0.0.0" />
 				</p>
 				<Toggle
 					label="Открыть DTLS-порт в firewall"

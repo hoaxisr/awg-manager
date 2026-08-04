@@ -196,5 +196,38 @@ export class FreeturnClient extends SubscriptionsClient {
 		});
 	}
 
+	async lookupProxyListener(
+		host: string,
+		port: number,
+		proto: 'udp' | 'tcp' = 'udp'
+	): Promise<ProxyListenerInfo> {
+		const q = new URLSearchParams({
+			host,
+			port: String(port),
+			proto
+		});
+		return this.request<ProxyListenerInfo>(`/proxy/listener?${q}`);
+	}
+
+	async killProxyListener(
+		host: string,
+		port: number,
+		proto: 'udp' | 'tcp' = 'udp'
+	): Promise<{ message?: string; pid?: number; comm?: string }> {
+		return this.request(`/proxy/kill-listener`, {
+			method: 'POST',
+			body: JSON.stringify({ host, port, proto })
+		});
+	}
+
 	// #endregion
+}
+
+export interface ProxyListenerInfo {
+	open: boolean;
+	pid?: number;
+	comm?: string;
+	proto: string;
+	host: string;
+	port: number;
 }

@@ -1,0 +1,124 @@
+package router
+
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
+
+// disablePolicyTun tears down the policy-tun path. Called with s.mu held by
+// Disable.
+//
+// Структурно — близнец disableFakeIPTun, но БЕЗ pool/reject/drain-механики:
+// у policy-tun нет синтетического пула адресов, который надо фейл-клоузить на
+// время протухания клиентских кэшей. Весь заворот делает NDMS-политика через
+// припаркованный на tun дефолт, поэтому «утечка» после teardown = обычный WAN,
+// то есть штатное поведение выключенного движка.
+//
+// Порядок (каждый шаг best-effort, teardown НИКОГДА не прерывается на ошибке —
+// полуразобранный policy-tun хуже доведённого до конца):
+//  1. восстановление записанного NAT сегментов (source-preserve) — ПЕРВЫМ;
+//  2. снять NDMS-дефолт (v4+v6) с tun, пока интерфейс ещё жив: клиенты политики
+//     сразу уезжают на WAN, а не в дыру;
+//  3. снять ingress-заворот (ip rule iif + таблица 700);
+//  4. конфиг слота 20: выкинуть tun-инбаунд и запарковать слот (+ оверлей QoS),
+//     затем безусловный IPTables.Uninstall;
+//  5. снести OpkgTun; ТОЛЬКО при успехе очистить персист — иначе сироту
+//     добирает ReapOrphanedFakeIPTun (как у fakeip);
+//  6. persist Enabled=false — обязателен, это durable-истина выключения.
+func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
+	st := settings.PolicyTun
+
+	// Ничего не провижинилось (или персист уже очищен) → идемпотентно: только
+	// флаг выключения. NDMS не трогаем.
+	if st == nil || !st.Provisioned {
+		settings.SingboxRouter.Enabled = false
+		if err := s.deps.Settings.Save(settings); err != nil {
+			return err
+		}
+		s.emitStatus(ctx)
+		return nil
+	}
+
+	iface := fakeIPIfaceName(st.Index)   // kernel name: только метки в логах
+	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
+
+	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
+	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —
+	// teardown не прерывается (персист чистится только при успешном delete, так
+	// что провал повторится реапом).
+	if len(st.NATSegments) > 0 {
+		if err := s.restorePolicyTunNAT(ctx, st.NATSegments); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "restore segment NAT: "+err.Error())
+		}
+	}
+
+	// (2) Снять дефолт с tun. v6 снимаем безусловно: персист не хранит,
+	// был ли настроен v6-адрес, а remove-форма NDMS (`no:true`) идемпотентна.
+	if s.deps.DefaultRoute != nil {
+		if err := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "remove default route: "+err.Error())
+		}
+		if err := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "remove ipv6 default route: "+err.Error())
+		}
+	}
+
+	// (3) Снять ingress-заворот: пустой спек означает «заворота быть не должно»,
+	// правила и таблица 700 снимаются по тегу/приоритету. Идемпотентно — если
+	// галок ingress не было, ни одной мутации.
+	s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
+
+	// (4) Вычистить tun-инбаунд из слота 20 ВСЕГДА, даже если слот уже
+	// запаркован: слот общий с tproxy, а ensureTProxyInbound чужие инбаунды не
+	// трогает — остаточный tun-in переоткрыл бы удалённый tun при следующем
+	// enable. Запись при выключенном слоте уходит в disabled/ (Orch.Save).
+	if cfg, cerr := s.loadAppliedRouterConfig(); cerr != nil {
+		s.appLog.Warn("policy-tun-disable", iface, "load router config: "+cerr.Error())
+	} else {
+		cfg.Inbounds = filterPolicyTunInbound(cfg.Inbounds)
+		if err := s.persistConfigDirect(ctx, cfg); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "persist router config: "+err.Error())
+		}
+	}
+
+	if s.deps.Orch != nil {
+		if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "disable slot: "+err.Error())
+		}
+		// Оверлей QoS ссылается на qos-* инбаунды слота 20 — паркуется вместе.
+		if err := s.disableQoSRoutesSlot(); err != nil {
+			s.appLog.Warn("policy-tun-disable", "qos-routes", err.Error())
+		}
+		// Композиты слота 20 пропали из merged-конфига — device-proxy
+		// перегенерирует слот 30 до ближайшего reload (issue #465).
+		s.notifyRoutingSlotsChanged()
+	}
+
+	// Uninstall БЕЗУСЛОВНО: он идемпотентен и снимает остатки dscp-правил даже
+	// тогда, когда классы QoS только что удалили из настроек (тогда enable их
+	// уже не ставил, но живые цепочки с прошлого раза никуда не делись).
+	if s.deps.IPTables != nil {
+		if err := s.deps.IPTables.Uninstall(ctx); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "iptables uninstall: "+err.Error())
+		}
+	}
+
+	// (5) Снести интерфейс. Персист очищаем ТОЛЬКО при успешном delete: иначе
+	// сирота осталась бы неотслеживаемой, а так её добирает reap.
+	if err := s.teardownOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
+		if err := s.deps.Settings.SetPolicyTunState(nil); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "clear policy-tun persist: "+err.Error())
+		}
+	}
+
+	// (6) Persist disabled — ОБЯЗАТЕЛЕН.
+	settings.SingboxRouter.Enabled = false
+	if err := s.deps.Settings.Save(settings); err != nil {
+		return err
+	}
+
+	s.emitStatus(ctx)
+	return nil
+}

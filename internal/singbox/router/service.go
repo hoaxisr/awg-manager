@@ -45,6 +45,11 @@ type Service interface {
 	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
 	ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
 
+	// PolicyTunNATPreview returns the router segments with their current NAT
+	// mode — the editable "what will change" preview behind the policy-tun
+	// source-preserve toggle.
+	PolicyTunNATPreview(ctx context.Context) ([]NATSegmentInfo, error)
+
 	SetRouteFinal(ctx context.Context, tag string) error
 
 	ListRules(ctx context.Context) ([]Rule, error)
@@ -359,6 +364,23 @@ type Deps struct {
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
 
+	// DefaultRoute паркует NDMS-дефолт (v4/v6) на policy-tun интерфейс.
+	// Optional — nil в тестах; wired в cmd/awg-manager на *RouteCommands.
+	DefaultRoute DefaultRouteProvider
+	// SegmentNAT управляет NAT сегментов (`ip nat` / `ip static`) в
+	// policy-tun. Optional — nil в тестах; wired на *NATCommands.
+	SegmentNAT SegmentNATProvider
+	// RunningConfig читает /show/running-config для сверки дрейфа
+	// policy-tun. Optional — nil в тестах; wired на *RunningConfigStore.
+	RunningConfig RunningConfigReader
+	// NATState — структурированное состояние NAT для той же сверки.
+	// Optional — nil в тестах; wired через адаптер над NAT/StaticNAT-сторами.
+	NATState NATStateReader
+	// DefaultGateway отдаёт NDMS-имя WAN (интерфейс дефолтного маршрута) —
+	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
+	// *query.RouteStore.
+	DefaultGateway DefaultGatewayResolver
+
 	// SelectiveBuilder handles ipset population for the selective-bypass
 	// feature. When non-nil and SingboxRouterSettings.SelectiveBypass is
 	// true, reconcileInstalled calls Rebuild after every iptables install
@@ -425,6 +447,10 @@ type ServiceImpl struct {
 	// (сериализован transitionMu).
 	fakeipACLAsserted bool
 
+	// policyTunACLAsserted — тот же one-shot флаг для policy-tun (свой, чтобы
+	// смена режима не съедала ассерт соседа). Доступ только из Reconcile.
+	policyTunACLAsserted bool
+
 	// blackholeActive tracks whether the fail-closed DROP chain is currently
 	// engaged (installed by reconcileInstalled while sing-box is dead and the
 	// PREROUTING interception jumps were wiped). It is removed the moment the
@@ -456,6 +482,18 @@ type ServiceImpl struct {
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
+
+	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
+	// setupListen after the router service) — под keenDNSMu, потому что
+	// startup-Reconcile читает их из своей горутины уже во время wiring.
+	keenDNSMu sync.Mutex
+	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
+	// не писать один и тот же warn на каждом тике Reconcile.
+	keenDNSWarnState string
+	keenDNSDomain    KeenDNSDomainProvider
+	keenDNSLAN       LANIPv4Provider
+	keenDNSSync      KeenDNSRewriteSyncer
 }
 
 func NewService(d Deps) *ServiceImpl {

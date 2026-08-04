@@ -75,6 +75,10 @@ type Settings struct {
 	// mode (see FakeIPState). Pointer so it's absent from JSON when never
 	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
 	FakeIP *FakeIPState `json:"fakeip,omitempty"`
+	// PolicyTun is backend-managed operational state for sing-box policy-tun
+	// mode (see PolicyTunState). Pointer so it's absent from JSON when never
+	// provisioned; nil = not provisioned. Written ONLY via SetPolicyTunState.
+	PolicyTun *PolicyTunState `json:"policyTun,omitempty"`
 	// DNSChainPreset is backend-managed state of the sing-box 1.14 DNS-chain
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
@@ -109,6 +113,23 @@ type FakeIPState struct {
 	Inet6Range  string `json:"inet6Range,omitempty"`
 }
 
+// PolicyTunNATSegment — записанное ИСХОДНОЕ NAT-состояние сегмента перед
+// применением source-preserve, чтобы teardown восстановил именно его, а не
+// безусловный `ip nat`. PriorMode: "dynamic" | "static" | "none".
+type PolicyTunNATSegment struct {
+	Name           string `json:"name"`
+	PriorMode      string `json:"priorMode"`
+	PriorStaticWAN string `json:"priorStaticWan,omitempty"`
+}
+
+// PolicyTunState — backend-managed состояние policy-tun (зеркало FakeIPState).
+// Пишется ТОЛЬКО lifecycle'ом (Enable/Disable/reap) через SetPolicyTunState.
+type PolicyTunState struct {
+	Provisioned bool                  `json:"provisioned,omitempty"`
+	Index       int                   `json:"index,omitempty"`
+	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
 type DownloadSettings struct {
 	RouteTag  string `json:"routeTag"`            // default: "direct"
 	RouteKind string `json:"routeKind,omitempty"` // default: "direct"
@@ -124,7 +145,8 @@ type SingboxRouterSettings struct {
 	DeviceMode string `json:"deviceMode,omitempty"`
 	// RoutingMode selects the sing-box routing path:
 	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
-	// "fakeip-tun" routes via a fake-IP DNS pool + tun device.
+	// "fakeip-tun" routes via a fake-IP DNS pool + tun device;
+	// "policy-tun" captures traffic via an NDMS access policy + tun device.
 	RoutingMode    string `json:"routingMode,omitempty"`
 	SnifferEnabled bool   `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
@@ -144,11 +166,11 @@ type SingboxRouterSettings struct {
 	// system-names don't. The UI layer translates between the two.
 	// Only meaningful when WANAutoDetect == false.
 	WANInterface string `json:"wanInterface,omitempty"`
-	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT.
-	// Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-	// (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). Default for fresh
-	// installs and post-v33 migrations includes "keendns"; empty after the
-	// user clears every preset = nothing excluded.
+	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT
+	// (port-based) or to drive related behaviour. Valid values: "l2tp", "ntp",
+	// "netbios-smb" (ports), "keendns" (managed DNS rewrite of the router's
+	// own KeenDNS/CrazeDNS FQDN → LAN IP — not an iptables CIDR). Default for
+	// fresh installs and post-v33 migrations includes "keendns".
 	BypassPresets []string `json:"bypassPresets,omitempty"`
 	// BypassExtraPorts is a user-supplied comma-separated list of extra port
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
@@ -208,6 +230,13 @@ type SingboxRouterSettings struct {
 	// non-empty. Empty slice = feature off; no schema migration needed (the
 	// zero value is the correct default, same as BypassPresets).
 	QoSClasses []SingboxQoSClass `json:"qosClasses,omitempty"`
+	// PolicyTunSourcePreserve: в режиме policy-tun переводить выбранные сегменты
+	// на static-NAT (no ip nat + ip static → WAN), чтобы sing-box видел реальные
+	// LAN-source (иначе маскарад: все клиенты = tun-адрес). Default false.
+	PolicyTunSourcePreserve bool `json:"policyTunSourcePreserve,omitempty"`
+	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
+	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
+	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
 }
 
 // SelectiveActive reports whether селективный перехват реально действует:

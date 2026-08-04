@@ -213,8 +213,9 @@ func TestResolveBypassCIDRs_KeenDNSPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got) != 1 || got[0] != "78.47.125.180/32" {
-		t.Fatalf("keendns preset CIDRs = %v, want [78.47.125.180/32]", got)
+	// keendns is a DNS-rewrite preset, not an iptables CIDR exclusion.
+	if len(got) != 0 {
+		t.Fatalf("keendns preset CIDRs = %v, want empty (rewrite path)", got)
 	}
 }
 
@@ -228,10 +229,10 @@ func TestResolveBypassCIDRs_PortPresetsContributeNoCIDRs(t *testing.T) {
 	}
 }
 
-func TestResolveBypassCIDRs_DedupAgainstExtra(t *testing.T) {
-	// Пользователь мог продублировать IP пресета вручную (так все и чинили
-	// #490 до пресета) — дубль схлопывается, порядок стабильный.
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8")
+func TestResolveBypassCIDRs_DedupWithinExtra(t *testing.T) {
+	// Дубль в пользовательском списке схлопывается, порядок стабильный.
+	// (Пресеты сюда больше ничего не приносят — keendns ушёл в DNS-rewrite.)
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8, 78.47.125.180/32")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

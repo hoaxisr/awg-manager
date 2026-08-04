@@ -147,6 +147,7 @@ type app struct {
 	subGroupStore       *subscription.GroupStore
 	awgoutboundsSvc     *awgoutbounds.ServiceImpl
 	deviceProxySvc      *deviceproxy.Service
+	routerSvc           *router.ServiceImpl
 	routerScheduler     *router.Scheduler
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service

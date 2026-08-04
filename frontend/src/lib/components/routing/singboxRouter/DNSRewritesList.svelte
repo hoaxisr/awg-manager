@@ -23,10 +23,18 @@
 	let deleteBusy = $state(false);
 
 	function requestEdit(i: number): void {
+		if (rewrites[i]?.managed) {
+			notifications.info('Эта перезапись управляется пресетом KeenDNS — снимите пресет в настройках движка');
+			return;
+		}
 		editIndex = i;
 	}
 
 	function requestDelete(i: number): void {
+		if (rewrites[i]?.managed) {
+			notifications.info('Эта перезапись управляется пресетом KeenDNS — снимите пресет в настройках движка');
+			return;
+		}
 		deleteIndex = i;
 	}
 
@@ -90,6 +98,9 @@
 				title={`Редактировать DNS-перезапись «${rw.pattern}»`}
 			>
 				<code class="pat mono" title={rw.pattern}>{rw.pattern}</code>
+				{#if rw.managed}
+					<span class="managed" title="Управляется пресетом">{rw.managed}</span>
+				{/if}
 				<span class="arrow">→</span>
 				<span class="ips-line">
 					<span class="mobile-arrow">→</span>
@@ -244,6 +255,15 @@
 		overflow-wrap: anywhere;
 		word-break: normal;
 		line-height: 1.35;
+	}
+	.managed {
+		font-size: 0.65rem;
+		color: var(--text-muted);
+		border: 1px solid var(--border, #333);
+		border-radius: 4px;
+		padding: 0 0.35rem;
+		line-height: 1.4;
+		align-self: center;
 	}
 	.ips {
 		color: var(--success, #22c55e);

@@ -21,36 +21,37 @@ import (
 // нужные единственной секции). Порядок вызова секций в registerRoutes
 // сохраняет исходный порядок регистрации.
 type routeHandlers struct {
-	appLog              *logging.Service
-	authHandler         *api.AuthHandler
-	tunnelsHandler      *api.TunnelsHandler
-	controlHandler      *api.ControlHandler
-	testingHandler      *api.TestingHandler
-	systemHandler       *api.SystemHandler
-	settingsHandler     *api.SettingsHandler
-	importHandler       *api.ImportHandler
-	wanHandler          *api.WANHandler
-	pingCheckHandler    *api.PingCheckHandler
-	freeturnHandler     *api.FreeTurnHandler
-	wdttHandler         *api.WdttHandler
-	loggingHandler      *api.LoggingHandler
-	externalHandler     *api.ExternalTunnelsHandler
-	updateHandler       *api.UpdateHandler
-	dnsRouteHandler     *api.DNSRouteHandler
-	diagRunner          *diagnostics.Runner
-	diagHandler         *api.DiagnosticsHandler
-	connectionsService  *connections.Service
-	connectionsHandler  *api.ConnectionsHandler
-	signatureHandler    *api.SignatureHandler
-	terminalHandler     *api.TerminalHandler
-	eventsHandler       *api.EventsHandler
-	hookHandler         *api.HookHandler
-	staticRouteHandler  *api.StaticRouteHandler
-	systemTunnelHandler *api.SystemTunnelsHandler
-	serverHandler       *api.ServersHandler
-	managedHandler      *api.ManagedServerHandler
-	accessPolicyHandler *api.AccessPolicyHandler
-	crHandler           *api.ClientRouteHandler
+	appLog               *logging.Service
+	authHandler          *api.AuthHandler
+	tunnelsHandler       *api.TunnelsHandler
+	controlHandler       *api.ControlHandler
+	testingHandler       *api.TestingHandler
+	systemHandler        *api.SystemHandler
+	settingsHandler      *api.SettingsHandler
+	importHandler        *api.ImportHandler
+	wanHandler           *api.WANHandler
+	pingCheckHandler     *api.PingCheckHandler
+	freeturnHandler      *api.FreeTurnHandler
+	wdttHandler          *api.WdttHandler
+	proxyListenerHandler *api.ProxyListenerHandler
+	loggingHandler       *api.LoggingHandler
+	externalHandler      *api.ExternalTunnelsHandler
+	updateHandler        *api.UpdateHandler
+	dnsRouteHandler      *api.DNSRouteHandler
+	diagRunner           *diagnostics.Runner
+	diagHandler          *api.DiagnosticsHandler
+	connectionsService   *connections.Service
+	connectionsHandler   *api.ConnectionsHandler
+	signatureHandler     *api.SignatureHandler
+	terminalHandler      *api.TerminalHandler
+	eventsHandler        *api.EventsHandler
+	hookHandler          *api.HookHandler
+	staticRouteHandler   *api.StaticRouteHandler
+	systemTunnelHandler  *api.SystemTunnelsHandler
+	serverHandler        *api.ServersHandler
+	managedHandler       *api.ManagedServerHandler
+	accessPolicyHandler  *api.AccessPolicyHandler
+	crHandler            *api.ClientRouteHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -170,6 +171,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	h.proxyListenerHandler = api.NewProxyListenerHandler(s.freeturnService, s.wdttService)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -395,6 +398,9 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", h.guarded(h.pingCheckHandler.RemoveTunnelPingCheck))
 
 	// FreeTurn (protected)
+	mux.HandleFunc("/api/proxy/listener", h.guarded(h.proxyListenerHandler.GetListener))
+	mux.HandleFunc("/api/proxy/kill-listener", h.guarded(h.proxyListenerHandler.KillListener))
+
 	mux.HandleFunc("/api/freeturn/config", h.guarded(h.freeturnHandler.GetConfig))
 	mux.HandleFunc("/api/freeturn/client/config", h.guarded(h.freeturnHandler.UpdateClientConfig))
 	mux.HandleFunc("/api/freeturn/server/config", h.guarded(h.freeturnHandler.UpdateServerConfig))
@@ -836,6 +842,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/wan-interfaces", h.guarded(rh.ListWANInterfaces))
 		mux.HandleFunc("/api/singbox/router/bindable-interfaces", h.guarded(rh.ListBindableInterfaces))
 		mux.HandleFunc("/api/singbox/router/ingress-eligible-interfaces", h.guarded(rh.ListIngressEligibleInterfaces))
+		mux.HandleFunc("/api/singbox/router/policy-tun/nat-preview", h.guarded(rh.PolicyTunNATPreview))
 		mux.HandleFunc("/api/singbox/router/policy-devices", h.guarded(rh.ListPolicyDevices))
 		mux.HandleFunc("/api/singbox/router/policy-devices/bind", h.guarded(rh.BindDevice))
 		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", h.guarded(rh.UnbindDevice))

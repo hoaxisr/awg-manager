@@ -11,7 +11,7 @@ export interface SingboxRouterSettings {
 	 * derivation. Served by GET /singbox/router/settings (omitempty; absent on
 	 * legacy payloads → treat as 'tproxy'). NOT on the status endpoint.
 	 */
-	routingMode?: 'tproxy' | 'fakeip-tun';
+	routingMode?: 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	snifferEnabled: boolean;
 	// WAN-binding discriminator (mirrors backend storage):
 	//   wanAutoDetect=true  + wanInterface=""    → sing-box auto_detect_interface
@@ -46,9 +46,19 @@ export interface SingboxRouterSettings {
 	 */
 	selectiveBypass?: boolean;
 	/**
+	 * policy-tun: перевести выбранные сегменты на static-NAT, чтобы sing-box
+	 * видел реальные адреса клиентов вместо адреса tun-шлюза. Требует непустого
+	 * policyTunNatSegments (бэкенд иначе отвечает 400); при false бэкенд сам
+	 * обнуляет список.
+	 */
+	policyTunSourcePreserve?: boolean;
+	/** Сегменты, выбранные для source-preserve (см. GET .../policy-tun/nat-preview). */
+	policyTunNatSegments?: string[];
+	/**
 	 * QoS/DSCP routing classes (issue #371). Traffic marked with class DSCP is
-	 * routed to the class outbound, trumping other route rules. Works only in
-	 * routingMode 'tproxy' (not fakeip-tun). Max 8 classes; dscp 0–63 unique;
+	 * routed to the class outbound, trumping other route rules. Works in
+	 * routingMode 'tproxy' and 'policy-tun' (DSCP-перехват — единственный
+	 * netfilter policy-tun); не работает в 'fakeip-tun'. Max 8 classes; dscp 0–63 unique;
 	 * name ≤ 32 chars; outbound = any valid outbound tag. Omitempty on the
 	 * wire → absent on legacy/mock payloads (treat undefined as []).
 	 */
@@ -124,6 +134,18 @@ export interface SingboxRouterStatus {
 	fakeipDns?: string;
 	/** Адрес tun-шлюза (хост /30, e.g. «172.18.0.1») в режиме fakeip-tun. */
 	fakeipTunAddr?: string;
+	/**
+	 * Kernel-имя tun-интерфейса режима policy-tun (e.g. "opkgtun0"). Пусто вне
+	 * policy-tun и при выключенном движке.
+	 */
+	policyTunIface?: string;
+	/** NDMS-имя того же интерфейса (e.g. "OpkgTun0") — так он виден в политиках доступа. */
+	policyTunNdmsName?: string;
+	/**
+	 * Применённый режим NAT сегментов (static-NAT вместо маскарада). Отсутствует
+	 * = «неприменимо» (не policy-tun / движок выключен), а не «выключено».
+	 */
+	policyTunSourcePreserve?: boolean;
 	issues?: SingboxRouterIssue[];
 	/** Последняя fatal-причина sing-box; непусто только при «СБОЙ» (enabled && !active). */
 	lastError?: string;
@@ -153,12 +175,23 @@ export interface SingboxRouterTransitionStep {
 
 export interface SingboxRouterTransitionData {
 	transitionId: string;
-	from: 'off' | 'tproxy' | 'fakeip-tun';
-	to: 'off' | 'tproxy' | 'fakeip-tun';
+	from: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
+	to: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	step: SingboxRouterTransitionStep;
 	done?: boolean;
-	finalState?: 'off' | 'tproxy' | 'fakeip-tun';
+	finalState?: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	error?: string;
+}
+
+/**
+ * Один сегмент роутера в предпоказе source-preserve (policy-tun).
+ * Источник: GET /api/singbox/router/policy-tun/nat-preview.
+ * staticWan заполнен только при mode==='static'.
+ */
+export interface PolicyTunNATSegmentInfo {
+	name: string;
+	mode: 'dynamic' | 'static' | 'none';
+	staticWan?: string;
 }
 
 /**
@@ -482,6 +515,8 @@ export interface SingboxRouterDNSChainPreset {
 export interface SingboxRouterDNSRewrite {
 	pattern: string;
 	ips: string[];
+	/** Non-empty when owned by a preset (e.g. keendns). */
+	managed?: string;
 }
 
 // #endregion

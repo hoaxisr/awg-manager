@@ -12,15 +12,21 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-// Compile-time guarantee that routerAccessPolicyAdapter satisfies
-// router.AccessPolicyProvider — catches interface drift at the
-// declaration line instead of at the wiring callsite in main.go.
-var _ router.AccessPolicyProvider = (*routerAccessPolicyAdapter)(nil)
+// Compile-time guarantees that the adapters satisfy their router-side
+// interfaces — catches interface drift at the declaration line instead
+// of at the wiring callsite in main.go.
+var (
+	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
+	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
+	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+)
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
 // into router.AccessPolicyProvider. main.go owns this projection so
@@ -185,6 +191,34 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 // injected without an adapter. This assertion surfaces any ndms
 // method-signature drift at this declaration line.
 var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
+
+// Compile-time satisfaction for the directly-wired policy-tun deps: все три
+// реализуют router-интерфейсы структурно, без адаптера.
+var (
+	_ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
+	_ router.SegmentNATProvider   = (*ndmscommand.NATCommands)(nil)
+	_ router.RunningConfigReader  = (*ndmsquery.RunningConfigStore)(nil)
+	// WAN-цель static-NAT в source-preserve — интерфейс дефолтного маршрута.
+	_ router.DefaultGatewayResolver = (*ndmsquery.RouteStore)(nil)
+)
+
+var _ router.NATStateReader = (*routerNATStateAdapter)(nil)
+
+// routerNATStateAdapter сводит два независимых стора (/show/rc/ip/nat и
+// /show/rc/ip/static) в один router-контракт: имена List разводятся, чтобы
+// одна структура могла отдать оба списка.
+type routerNATStateAdapter struct {
+	nat    *ndmsquery.NATStore
+	static *ndmsquery.StaticNATStore
+}
+
+func (a *routerNATStateAdapter) ListNAT(ctx context.Context) ([]ndmsquery.NATEntry, error) {
+	return a.nat.List(ctx)
+}
+
+func (a *routerNATStateAdapter) ListStaticNAT(ctx context.Context) ([]ndmsquery.StaticNATEntry, error) {
+	return a.static.List(ctx)
+}
 
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
@@ -410,4 +444,30 @@ func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, err
 		return "", fmt.Errorf("managed service not available")
 	}
 	return a.svc.DefaultGatewayNDMSInterface(ctx)
+}
+
+// keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
+type keenDNSDomainAdapter struct {
+	store *ndmsquery.KeenDNSStore
+}
+
+func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	info, err := a.store.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if info == nil || !info.Enabled {
+		return "", nil
+	}
+	return info.Domain, nil
+}
+
+// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
+type keenDNSLANAdapter struct{}
+
+func (keenDNSLANAdapter) LANIPv4() string {
+	return netif.FirstIPv4(storage.DefaultInterface)
 }

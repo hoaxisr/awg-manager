@@ -155,7 +155,7 @@ func TestEnsureQoSInbounds_AddsCanonicalPairs(t *testing.T) {
 	}
 	tp := got[2]
 	if tp.Type != "tproxy" || tp.Tag != "tproxy-qos-46" || tp.ListenPort != 51281 ||
-		tp.Network != "udp" || !tp.UDPFragment || tp.UDPTimeout != "10m0s" || tp.Listen != "0.0.0.0" {
+		tp.Network != "udp" || !tp.UDPFragment || tp.UDPTimeout != "10m0s" || tp.Listen != "127.0.0.1" {
 		t.Errorf("qos tproxy inbound not canonical: %+v", tp)
 	}
 	rd := got[3]
@@ -1230,7 +1230,7 @@ func noopNotInstalledIPTables() *IPTables {
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 }

@@ -43,8 +43,19 @@ type Status struct {
 	FakeIPDns string `json:"fakeipDns,omitempty"`
 	// FakeIPTunAddr is the fakeip-tun gateway address (the tun /30 host, e.g.
 	// "172.18.0.1"); "" when not in fakeip-tun mode. Read-only, for display.
-	FakeIPTunAddr string  `json:"fakeipTunAddr,omitempty"`
-	Issues        []Issue `json:"issues,omitempty"`
+	FakeIPTunAddr string `json:"fakeipTunAddr,omitempty"`
+	// PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+	// интерфейса ("opkgtun0" / "OpkgTun0"). Заполняются при Enabled+Provisioned,
+	// ДО того как режим стал active: имя OpkgTun нужно пользователю, чтобы
+	// разрешить интерфейс в политике доступа. Пусто при Enabled=false.
+	PolicyTunIface    string `json:"policyTunIface,omitempty"`
+	PolicyTunNDMSName string `json:"policyTunNdmsName,omitempty"`
+	// PolicyTunSourcePreserve — ПРИМЕНЁННЫЙ режим NAT сегментов (static-NAT
+	// вместо маскарада), а не эхо настроек: применение живёт в подъёме режима,
+	// вживую опция только снимается. Указатель: nil = «поле неприменимо» (не
+	// policy-tun или движок выключен), false = «применимо и выключено».
+	PolicyTunSourcePreserve *bool   `json:"policyTunSourcePreserve,omitempty"`
+	Issues                  []Issue `json:"issues,omitempty"`
 	// LastError is the last sing-box fatal/exit reason, populated only when
 	// the engine is enabled but not active (СБОЙ). Empty otherwise.
 	LastError string `json:"lastError,omitempty"`

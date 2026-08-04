@@ -1,0 +1,698 @@
+package router
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
+
+// ---------------------------------------------------------------------------
+// Фейк running-config: считает чтения и инвалидации — по ним проверяется, что
+// медленный RCI не дёргается на каждом здоровом тике.
+// ---------------------------------------------------------------------------
+
+type fakeRunningConfig struct {
+	lines       []string
+	reads       int
+	invalidated int
+}
+
+func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
+	f.reads++
+	return f.lines, nil
+}
+
+func (f *fakeRunningConfig) InvalidateAll() { f.invalidated++ }
+
+// healthyPolicyTunRC — running-config провижининга «всё на месте»: дефолты
+// v4/v6 на tun, `ip global` в блоке интерфейса, permit в политике.
+func healthyPolicyTunRC(ndmsName string) []string {
+	return []string{
+		"interface " + ndmsName,
+		"    description awgm policy-tun",
+		"    security-level public",
+		"    ip global 65500",
+		"    up",
+		"!",
+		"ip route default " + ndmsName,
+		"ipv6 route default " + ndmsName,
+		"ip policy Policy0",
+		"    permit global " + ndmsName,
+		"!",
+	}
+}
+
+// provisionPolicyTunForReconcile поднимает режим, помечает интерфейс живым и
+// чистит лог — дальше в логе только то, что сделал reconcile.
+func provisionPolicyTunForReconcile(t *testing.T, h *policyTunEnableHarness) storage.SingboxRouterSettings {
+	t.Helper()
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (provision for reconcile): %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	h.log.calls = nil
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	return sr
+}
+
+// ---------------------------------------------------------------------------
+// Парсеры running-config
+// ---------------------------------------------------------------------------
+
+func TestPolicyTunRunningConfigParsers(t *testing.T) {
+	lines := []string{
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}
+	v4, v6 := policyTunDefaultRoutePresent(lines, "OpkgTun0")
+	if !v4 || !v6 {
+		t.Fatalf("routes: v4=%v v6=%v", v4, v6)
+	}
+	if !policyTunPermitted(lines, "OpkgTun0") {
+		t.Fatal("permit not found")
+	}
+	if policyTunPermitted(lines, "OpkgTun1") {
+		t.Fatal("false positive OpkgTun1 (префикс-ловушка)")
+	}
+	if v4x, _ := policyTunDefaultRoutePresent([]string{"ip route default OpkgTun01"}, "OpkgTun0"); v4x {
+		t.Fatal("false positive: OpkgTun01 не должен матчить OpkgTun0")
+	}
+	// Хвостовые токены NDMS (метрика/автоматика) матч не ломают.
+	if v4x, _ := policyTunDefaultRoutePresent([]string{"ip route default OpkgTun0 auto"}, "OpkgTun0"); !v4x {
+		t.Fatal("хвостовые токены не должны ломать матч маршрута")
+	}
+}
+
+// `ip global` ищется ТОЛЬКО внутри блока своего интерфейса: та же строка под
+// чужим интерфейсом не считается.
+func TestPolicyTunIPGlobalPresent(t *testing.T) {
+	if !policyTunIPGlobalPresent(healthyPolicyTunRC("OpkgTun0"), "OpkgTun0") {
+		t.Error("ip global в блоке своего интерфейса не найден")
+	}
+	foreign := []string{
+		"interface OpkgTun1",
+		"    ip global 65500",
+		"!",
+		"interface OpkgTun0",
+		"    up",
+		"!",
+	}
+	if policyTunIPGlobalPresent(foreign, "OpkgTun0") {
+		t.Error("ip global чужого интерфейса не должен считаться нашим")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile: drift-heal
+// ---------------------------------------------------------------------------
+
+// Пропал дефолт-маршрут в running-config → он ставится заново (v4 и v6
+// раздельно), остальное не трогается.
+func TestReconcilePolicyTun_ReaddsMissingDefaultRoute(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	rc := &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	h.svc.deps.RunningConfig = rc
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("SetDefaultRoute:OpkgTun0") {
+		t.Errorf("пропавший v4-дефолт должен быть переустановлен: %v", h.log.calls)
+	}
+	if h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
+		t.Errorf("присутствующий v6-дефолт трогать не нужно: %v", h.log.calls)
+	}
+	// Нездоровое состояние → кэш running-config сбрасывается, чтобы решение
+	// принималось по свежим данным.
+	if rc.invalidated == 0 {
+		t.Error("при дрейфе кэш running-config обязан инвалидироваться")
+	}
+}
+
+// Диспатч: в policy-tun Reconcile уходит в свой арм (а не в installed-switch
+// tproxy, который при отсутствующих цепочках гнал бы Enable каждый тик), и реап,
+// идущий первым, ingress-заворот не сносит.
+func TestReconcile_DispatchesPolicyTun(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.IngressInterfaces = []string{"iface:nwg3"}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	// Заворот в steady state: любые мутации таблицы 700 в этом тике = дрейф,
+	// внесённый нами самими (свип реапа).
+	rec := &ingressRecorder{
+		natDump:   "-P PREROUTING ACCEPT\n",
+		ruleDump:  ruleDumpFor("nwg3"),
+		routeDump: "throw 10.0.0.0/8\nthrow 172.16.0.0/12\nthrow 192.168.0.0/16\ndefault dev opkgtun0\n",
+	}
+	h.svc.deps.IPTables = rec.tables()
+
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// Арм policy-tun: пропавшие дефолт-маршруты переустановлены, интерфейс НЕ
+	// пересоздан.
+	if !h.log.has("SetDefaultRoute:OpkgTun0") {
+		t.Errorf("Reconcile должен уходить в арм policy-tun: %v", h.log.calls)
+	}
+	if h.log.has("Create:OpkgTun0:public") {
+		t.Errorf("живой интерфейс не должен пересоздаваться: %v", h.log.calls)
+	}
+	// Реап заворот не снял и ensure его не пересобирал: ни одной мутации нашей
+	// таблицы за тик.
+	for _, call := range rec.ip {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "table "+fakeIPIngressTableStr()) {
+			t.Errorf("ingress-заворот policy-tun пересобирается на ровном месте: %v", rec.ip)
+		}
+	}
+}
+
+// Пропал `ip global` → интерфейс исчез из списка выходов политики; ставим снова.
+func TestReconcilePolicyTun_ReassertsIPGlobal(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    security-level public", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("SetIPGlobal:OpkgTun0") {
+		t.Errorf("пропавший ip global должен быть переустановлен: %v", h.log.calls)
+	}
+}
+
+// Анти-churn: всё на месте → со второго тика НИ ОДНОЙ мутации RCI и ни одной
+// инвалидации кэша running-config (он читается по TTL).
+func TestReconcilePolicyTun_NoMutationWhenNoDrift(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	rc := &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.deps.RunningConfig = rc
+
+	// Первый тик одноразово ассертит permit-ACL (upgrade-путь) — допустимая
+	// мутация, и только один раз.
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (первый тик): %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if len(h.log.calls) != 0 {
+		t.Errorf("здоровый тик обязан быть без мутаций NDMS, получено %v", h.log.calls)
+	}
+	if rc.invalidated != 0 {
+		t.Errorf("здоровое состояние не должно сбрасывать кэш running-config (invalidated=%d)", rc.invalidated)
+	}
+}
+
+// Интерфейс исчез (краш/ручное удаление) → reprovision через enable-путь.
+func TestReconcilePolicyTun_ReprovisionsWhenIfaceGone(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("Create:OpkgTun0:public") {
+		t.Errorf("исчезнувший интерфейс должен быть провижинен заново: %v", h.log.calls)
+	}
+}
+
+// Мёртвый sing-box: рестарт — зона watchdog, reconcile его НЕ спавнит.
+func TestReconcilePolicyTun_NoSingboxStart(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	sb.startCalls = 0
+	sb.isRunningFn = func() (bool, int) { return false, 0 }
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if sb.startCalls != 0 {
+		t.Errorf("reconcile не должен рестартить движок, startCalls = %d", sb.startCalls)
+	}
+}
+
+// Запаркованный слот 20 при живом интерфейсе — дрейф: возвращаем в конфиг.
+func TestReconcilePolicyTun_RepromotesParkedSlot(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if err := h.svc.deps.Orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Error("запаркованный слот 20 должен вернуться в конфиг")
+	}
+}
+
+// Ingress-заворот: reconcile его переустанавливает (сброс firewall NDMS,
+// смена состава ingress-интерфейсов через UpdateSettings).
+func TestReconcilePolicyTun_EnsuresIngress(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.IngressInterfaces = []string{"iface:nwg3"}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	rec := &ingressRecorder{natDump: "-P PREROUTING ACCEPT\n", ruleDump: ruleDumpFor()}
+	h.svc.deps.IPTables = rec.tables()
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if n := rec.ipCalls("rule", "add", "iif", "nwg3", "table", fakeIPIngressTableStr()); n != 1 {
+		t.Errorf("ingress-заворот не восстановлен: %v", rec.ip)
+	}
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "PREROUTING 1") || strings.Contains(joined, "DNAT") {
+			t.Errorf("DNAT в policy-tun не ставится: %v", rec.ipt)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QoS: единственный netfilter режима — DSCP-диспатч. UpdateSettings
+// завершается Reconcile'ом, поэтому runtime-изменения классов применяются тут.
+// ---------------------------------------------------------------------------
+
+func TestReconcilePolicyTun_QoSClassesRemoved_Uninstalls(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+	h.svc.deps.WANIPCollector = &fakeWANIPCollector{}
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	provisionPolicyTunForReconcile(t, h)
+
+	// Пользователь удалил классы: сохраняем настройки без них и гоним reconcile.
+	all, _ = h.store.Load()
+	all.SingboxRouter.QoSClasses = nil
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	uninstalled := false
+	ipt := newStubIPTables(func(context.Context, string) error {
+		t.Error("без классов QoS переустановки netfilter быть не должно")
+		return nil
+	})
+	ipt.cleanupHook = func() { uninstalled = true }
+	h.svc.deps.IPTables = ipt
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !uninstalled {
+		t.Error("удаление всех классов QoS обязано снять цепочки (Uninstall)")
+	}
+	// Оверлей qos-правил запаркован вместе с ними.
+	if st, ok := h.svc.slotSnapshot(orchestrator.SlotQoSRoutes); ok && st.Enabled {
+		t.Error("слот 18-qos-routes должен быть запаркован без классов")
+	}
+}
+
+// Изменение состава классов → переустановка DSCP-спека.
+func TestReconcilePolicyTun_QoSClassesChanged_Reinstalls(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+	h.svc.deps.WANIPCollector = &fakeWANIPCollector{}
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	provisionPolicyTunForReconcile(t, h)
+
+	all, _ = h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 26, Name: "Video", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	var restoreInput string
+	installs := 0
+	h.svc.deps.IPTables = newStubIPTables(func(_ context.Context, in string) error {
+		installs++
+		restoreInput = in
+		return nil
+	})
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if installs != 1 {
+		t.Fatalf("IPTables.Install calls = %d, want 1", installs)
+	}
+	if !strings.Contains(restoreInput, "--dscp 26") {
+		t.Errorf("новый класс не попал в спек:\n%s", restoreInput)
+	}
+	if strings.Contains(restoreInput, "--dport 53 -j TPROXY") {
+		t.Errorf("policy-tun не перехватывает DNS:\n%s", restoreInput)
+	}
+
+	// Второй тик без изменений — ни одной переустановки.
+	installs = 0
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (второй тик): %v", err)
+	}
+	if installs != 0 {
+		t.Errorf("без изменений классов переустановки быть не должно, installs = %d", installs)
+	}
+}
+
+// Классы не менялись, но цепочки DSCP-диспатча пропали мимо NDMS (ручной
+// iptables -F, сбой хука) → переустановка; целые цепочки → ноль установок.
+func TestReconcilePolicyTun_QoSChainsWiped_Reinstalls(t *testing.T) {
+	setup := func(t *testing.T) (*policyTunEnableHarness, storage.SingboxRouterSettings) {
+		t.Helper()
+		h := newPolicyTunEnableHarness(t, "")
+		all, _ := h.store.Load()
+		all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+			{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+		}
+		if err := h.store.Save(all); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+		h.svc.deps.WANIPCollector = &fakeWANIPCollector{}
+		h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+		h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+		sr := provisionPolicyTunForReconcile(t, h)
+		h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+		return h, sr
+	}
+
+	t.Run("wiped", func(t *testing.T) {
+		h, sr := setup(t)
+		installs := 0
+		ipt := newStubIPTables(func(context.Context, string) error {
+			installs++
+			return nil
+		})
+		// Дамп без цепочек — Probe видит пропажу перехвата.
+		ipt.runIPTablesOut = func(context.Context, ...string) (string, error) {
+			return "-P PREROUTING ACCEPT\n", nil
+		}
+		h.svc.deps.IPTables = ipt
+
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun: %v", err)
+		}
+		if installs != 1 {
+			t.Errorf("пропавшие цепочки при неизменных классах должны переустанавливаться, installs = %d", installs)
+		}
+	})
+
+	t.Run("intact", func(t *testing.T) {
+		h, sr := setup(t)
+		installs := 0
+		h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error {
+			installs++
+			return nil
+		})
+
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun: %v", err)
+		}
+		if installs != 0 {
+			t.Errorf("целые цепочки и неизменные классы = ноль установок, installs = %d", installs)
+		}
+	})
+
+	t.Run("probe error", func(t *testing.T) {
+		h, sr := setup(t)
+		installs := 0
+		ipt := newStubIPTables(func(context.Context, string) error {
+			installs++
+			return nil
+		})
+		ipt.runIPTablesOut = func(context.Context, ...string) (string, error) {
+			return "", errors.New("транзиентный сбой -S")
+		}
+		h.svc.deps.IPTables = ipt
+
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun: %v", err)
+		}
+		if installs != 0 {
+			t.Errorf("ошибка пробы = «неизвестно», переустановки быть не должно, installs = %d", installs)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Реап: в policy-tun полный свип ingress снёс бы НАШ заворот на каждом тике
+// (Reconcile зовёт реап первым). Снимается только DNAT-половина.
+// ---------------------------------------------------------------------------
+
+func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	rec := &ingressRecorder{
+		natDump: "-P PREROUTING ACCEPT\n" +
+			"-A PREROUTING -i nwg3 -p udp -m udp --dport 53 -m comment --comment " + FakeIPIngressTag +
+			" -j DNAT --to-destination 172.18.0.2:53\n",
+		ruleDump: ruleDumpFor("nwg3"),
+	}
+	svc := newTestService(t, Deps{Settings: store, IPTables: rec.tables()})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	for _, call := range rec.ip {
+		joined := strings.Join(call, " ")
+		if strings.HasPrefix(joined, "rule del") || strings.HasPrefix(joined, "route flush") {
+			t.Errorf("реап в policy-tun не должен снимать наш заворот: %v", rec.ip)
+		}
+	}
+	// Протухший DNAT прежнего режима fakeip обязан быть снят: policy-tun его не
+	// ставит, а ensure с NoDNAT правила DNAT не трогает вовсе.
+	removed := false
+	for _, call := range rec.ipt {
+		if strings.Contains(strings.Join(call, " "), "-D PREROUTING") {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Errorf("протухший DNAT-перехват DNS должен сниматься: %v", rec.ipt)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Готовность: carrier tun, без DNS-инпутов fakeip
+// ---------------------------------------------------------------------------
+
+func TestSingboxReady_PolicyTunCarrier(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	svc := newTestService(t, Deps{Settings: store, Singbox: singbox})
+	stubTunReadyProbe(t, func(string) bool { return true })
+
+	// Без персиста policy-tun готовность fail-closed.
+	if svc.singboxReady(context.Background(), true) {
+		t.Error("без провижининга policy-tun готовность должна быть false")
+	}
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	if !svc.singboxReady(context.Background(), true) {
+		t.Error("процесс жив + carrier → policy-tun готов")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Статус и Issue
+// ---------------------------------------------------------------------------
+
+func TestGetStatus_PolicyTun(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	// Опция валидна только со списком сегментов (NormalizeSingboxRouterSettings).
+	armSourcePreserve(t, h, []string{"Home"})
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+
+	// До провижининга поля пустые.
+	h.svc.deps.IPTables = errProbeIPTables()
+	st0, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st0.PolicyTunIface != "" || st0.PolicyTunNDMSName != "" {
+		t.Errorf("до провижининга имена интерфейса пусты, получено %q/%q", st0.PolicyTunIface, st0.PolicyTunNDMSName)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.PolicyTunIface != "opkgtun0" || st.PolicyTunNDMSName != "OpkgTun0" {
+		t.Errorf("имена интерфейса = %q/%q, want opkgtun0/OpkgTun0", st.PolicyTunIface, st.PolicyTunNDMSName)
+	}
+	if st.PolicyTunSourcePreserve == nil || !*st.PolicyTunSourcePreserve {
+		t.Errorf("PolicyTunSourcePreserve = %v, want true", st.PolicyTunSourcePreserve)
+	}
+	if !st.Installed {
+		t.Error("Installed должен быть true при provisioned policy-tun")
+	}
+	if !st.Active {
+		t.Error("процесс жив + carrier + дефолт в running-config → Active")
+	}
+	if issueOfKind(st.Issues, issuePolicyTunUnbound) != nil {
+		t.Errorf("permit есть — issue не нужен: %+v", st.Issues)
+	}
+
+	// Интерфейс не разрешён ни в одной политике → warning-issue, и Active
+	// остаётся true (маршрут на месте, не разрешён только выход политики).
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+	}}
+	st2, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	iss := issueOfKind(st2.Issues, issuePolicyTunUnbound)
+	if iss == nil {
+		t.Fatalf("ожидался issue %q: %+v", issuePolicyTunUnbound, st2.Issues)
+	}
+	if iss.Severity != "warning" {
+		t.Errorf("severity = %q, want warning", iss.Severity)
+	}
+	if !strings.Contains(iss.Message, "OpkgTun0") {
+		t.Errorf("сообщение должно называть интерфейс: %q", iss.Message)
+	}
+
+	// Выключенный движок не светит ни одного policy-tun поля (урок PE-G).
+	all, _ := h.store.Load()
+	all.SingboxRouter.Enabled = false
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	st3, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st3.PolicyTunIface != "" || st3.PolicyTunNDMSName != "" || st3.PolicyTunSourcePreserve != nil {
+		t.Errorf("при Enabled=false все поля policy-tun пусты, получено %+v", st3)
+	}
+	if issueOfKind(st3.Issues, issuePolicyTunUnbound) != nil {
+		t.Error("выключенный движок не должен ругаться на политику")
+	}
+}
+
+func issueOfKind(issues []Issue, kind string) *Issue {
+	for i := range issues {
+		if issues[i].Kind == kind {
+			return &issues[i]
+		}
+	}
+	return nil
+}
+
+// status.policyTunSourcePreserve — ПРИМЕНЁННОЕ состояние, а не эхо настроек:
+// static-NAT ставится только при подъёме режима, поэтому включение опции вживую
+// обязано светиться расхождением с настройками до перезапуска режима (на нём
+// держится подсказка в карточке).
+func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	// Опцию включили вживую: настройки — да, применения (записей) — нет.
+	setSourcePreserve(t, h, true, []string{"Home"})
+	h.svc.deps.IPTables = errProbeIPTables()
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.PolicyTunSourcePreserve == nil {
+		t.Fatal("PolicyTunSourcePreserve = nil, want непустой указатель в режиме policy-tun")
+	}
+	if *st.PolicyTunSourcePreserve {
+		t.Error("применённое должно быть false: сегменты на static-NAT ещё не переведены")
+	}
+
+	// Записи появились (режим подняли заново) — статус становится true.
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.PolicyTun.NATSegments = []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
+	if err := h.store.SetPolicyTunState(all.PolicyTun); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	st, err = h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus (applied): %v", err)
+	}
+	if st.PolicyTunSourcePreserve == nil || !*st.PolicyTunSourcePreserve {
+		t.Errorf("PolicyTunSourcePreserve = %v, want true при записанных сегментах", st.PolicyTunSourcePreserve)
+	}
+}

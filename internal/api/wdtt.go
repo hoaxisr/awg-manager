@@ -179,8 +179,11 @@ func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), wdtt.DefaultInstanceID, wdttClientListen(h.svc, wdtt.DefaultInstanceID))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), wdtt.DefaultInstanceID)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // StopClient handles POST /api/wdtt/client/stop.
@@ -371,11 +374,16 @@ func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id
 				h.tunnelsHandler.publishTunnelList(r.Context())
 			}
 		}
-		response.Success(w, map[string]any{
+		resp := map[string]any{
 			"config":         cfg,
 			"deletedTunnels": deletedTunnels,
 			"tunnelErrors":   tunnelErrors,
-		})
+		}
+		if !peerChanged {
+			synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
+			appendLinkedTunnelSync(resp, synced, syncErrs)
+		}
+		response.Success(w, resp)
 	case http.MethodPatch:
 		var req renameRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -431,8 +439,11 @@ func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // stopClientInstance handles POST /api/wdtt/clients/{id}/stop.

@@ -31,9 +31,10 @@ mkdir -p build/bin
 # sing-box for the same routers is already built with the system Go.
 GO_CMD="go"
 
-# vendor/ contains pre-built binaries and kernel modules (not Go vendor).
-# Use -mod=mod so Go ignores it and fetches deps from go.sum.
-export GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=mod"
+# vendor/ contains Go module sources for offline builds (see vendor/modules.txt).
+# Use GO_MOD=vendor for air-gapped or flaky-network builds; default is mod.
+GO_MOD="${GO_MOD:-mod}"
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-mod=${GO_MOD}"
 
 echo "Building awg-manager $VERSION for $ARCH ($($GO_CMD version))..."
 

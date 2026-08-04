@@ -133,6 +133,13 @@ export function parseLocalListenPort(listen: string | undefined | null): number 
 	return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
+/** True when freeturn:// carries a usable WG client config (not empty stub). */
+export function freeturnLinkHasWg(wg?: string | null): boolean {
+	const raw = wg?.trim() ?? '';
+	if (!raw) return false;
+	return /PrivateKey\s*=/i.test(raw);
+}
+
 /** Endpoint port for AWG tunnel linked to a proxy client: saved listen wins over link template. */
 export function linkedTunnelListenPort(
 	clientListen: string | undefined | null,

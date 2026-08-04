@@ -38,6 +38,10 @@ import (
 //   - iif-правило петли не создаёт: direct-выход sing-box идёт локальным
 //     сокетом, а не с iif клиента.
 //
+// Режим policy-tun переиспользует ТОЛЬКО вторую половину (spec.NoDNAT): там
+// нет fakeip-резолвера, перехватывать DNS некуда, и весь смысл галки сводится
+// к завороту трафика ingress-интерфейса в tun таблицей 700.
+//
 // Долговечность: своего netfilter.d-хука здесь нет (в отличие от tproxy) —
 // сброшенные при перезагрузке firewall NDMS правила восстанавливает
 // drift-heal в reconcileFakeIPTun, то есть в пределах тика планировщика.
@@ -71,15 +75,22 @@ type FakeIPIngressSpec struct {
 	// TunIface — kernel-имя fakeip-tun (напр. "opkgtun0").
 	TunIface string
 	// TunDNS — адрес DNS туннеля (второй хост /30, напр. "172.18.0.2").
+	// При NoDNAT не используется и может быть пуст.
 	TunDNS string
+	// NoDNAT — ставить только маршрутную половину заворота (ip rule iif +
+	// таблица 700), без перехвата DNS. Режим policy-tun: DNS клиентов там
+	// решает NDMS-политика через припаркованный на tun дефолт, своего
+	// fakeip-резолвера у нас нет, и DNAT :53 увёл бы запросы в никуда.
+	NoDNAT bool
 	// Ifaces — резолвленные kernel-имена ingress-интерфейсов (напр. "opkgtun17").
 	Ifaces []string
 }
 
 // active сообщает, есть ли что устанавливать: пустой список интерфейсов или
-// незаполненные параметры туннеля означают «заворота нет».
+// незаполненные параметры туннеля означают «заворота нет». TunDNS обязателен
+// только там, где ставится DNAT.
 func (spec FakeIPIngressSpec) active() bool {
-	return len(spec.Ifaces) > 0 && spec.TunIface != "" && spec.TunDNS != ""
+	return len(spec.Ifaces) > 0 && spec.TunIface != "" && (spec.NoDNAT || spec.TunDNS != "")
 }
 
 func fakeIPIngressTableStr() string { return strconv.Itoa(fakeIPIngressTable) }
@@ -108,6 +119,11 @@ func fakeIPIngressDNATArgs(iface, proto, tunDNS string) []string {
 // но и чужой тег-однофамилец, неверный адрес назначения и позиция ниже чужих
 // правил (иначе DNS-редирект NDMS, вставленный позже нас, молча победил бы).
 func fakeIPIngressNATDrift(dump string, spec FakeIPIngressSpec) bool {
+	if spec.NoDNAT {
+		// Правил быть не должно, поэтому их отсутствие — норма, а не дрейф:
+		// иначе ingress пересобирался бы каждый тик.
+		return false
+	}
 	want := make(map[string]bool, len(spec.Ifaces)*2)
 	for _, iface := range spec.Ifaces {
 		for _, proto := range []string{"udp", "tcp"} {
@@ -241,11 +257,13 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 
 	// Дрейф: пересобираем целиком — так одинаково лечатся и пропажа правил
 	// (сброс firewall NDMS), и смена состава ingress-интерфейсов.
-	it.removeFakeIPIngressDNAT(ctx, natDump)
-	for _, iface := range spec.Ifaces {
-		for _, proto := range []string{"udp", "tcp"} {
-			if err := it.runIPTables(ctx, fakeIPIngressDNATArgs(iface, proto, spec.TunDNS)...); err != nil {
-				return fmt.Errorf("dnat dns %s/%s: %w", iface, proto, err)
+	if !spec.NoDNAT {
+		it.removeFakeIPIngressDNAT(ctx, natDump)
+		for _, iface := range spec.Ifaces {
+			for _, proto := range []string{"udp", "tcp"} {
+				if err := it.runIPTables(ctx, fakeIPIngressDNATArgs(iface, proto, spec.TunDNS)...); err != nil {
+					return fmt.Errorf("dnat dns %s/%s: %w", iface, proto, err)
+				}
 			}
 		}
 	}
@@ -278,6 +296,21 @@ func (it *IPTables) RemoveFakeIPIngress(ctx context.Context) {
 	}
 	it.drainFakeIPIngressRules(ctx)
 	_ = it.runIP(ctx, "route", "flush", "table", fakeIPIngressTableStr())
+}
+
+// RemoveFakeIPIngressDNAT снимает ТОЛЬКО перехват DNS, не трогая маршрутную
+// половину заворота. Нужен режиму policy-tun: свой заворот там живёт (ip rule
+// iif + таблица 700), а протухший DNAT прежнего fakeip обязан уйти — ensure с
+// NoDNAT правила DNAT не трогает вовсе. Идемпотентно.
+func (it *IPTables) RemoveFakeIPIngressDNAT(ctx context.Context) {
+	if !it.ingressSeamsWired() {
+		return
+	}
+	dump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
+	if err != nil || !strings.Contains(dump, FakeIPIngressTag) {
+		return
+	}
+	it.removeFakeIPIngressDNAT(ctx, dump)
 }
 
 // fakeIPIngressRouteDrift сравнивает дамп `ip route show table <ours>` с
@@ -377,6 +410,15 @@ func (s *ServiceImpl) ensureFakeIPIngress(ctx context.Context, spec FakeIPIngres
 	if err := s.deps.IPTables.EnsureFakeIPIngress(ctx, spec); err != nil {
 		s.appLog.Warn("fakeip-ingress", spec.TunIface, "ingress-заворот: "+err.Error())
 	}
+}
+
+// removeFakeIPIngressDNAT — best-effort обёртка над RemoveFakeIPIngressDNAT
+// (nil-безопасная, как ensureFakeIPIngress).
+func (s *ServiceImpl) removeFakeIPIngressDNAT(ctx context.Context) {
+	if s.deps.IPTables == nil {
+		return
+	}
+	s.deps.IPTables.RemoveFakeIPIngressDNAT(ctx)
 }
 
 // drainFakeIPIngressRules удаляет все ip-правила, указывающие в нашу таблицу,

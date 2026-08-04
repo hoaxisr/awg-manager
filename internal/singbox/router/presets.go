@@ -43,13 +43,17 @@ var knownPresets = map[string]bypassPreset{
 	"l2tp":        {UDP: []int{500, 4500, 1701}},
 	"ntp":         {UDP: []int{123}},
 	"netbios-smb": {UDP: []int{137, 138}, TCP: []int{139, 445}},
-	// KeenDNS/CrazeDNS (issue #490): статическая A-запись доменов
-	// my.keenetic.net / my.netcraze.net и доменов 4-го уровня указывает на
-	// анонсируемый Keenetic'ом IP 78.47.125.180, который роутер при локальном
-	// доступе обслуживает сам. TPROXY-перехват уводит эти соединения в
-	// туннель → ERR_CONNECTION_REFUSED; исключение возвращает их роутеру.
-	"keendns": {CIDRs: []string{"78.47.125.180/32"}},
+	// KeenDNS/CrazeDNS (issue #490 → domain rewrite): сам по себе пресет
+	// больше НЕ исключает 78.47.125.180/32 из TPROXY (общий IP всех чужих
+	// *.keenetic.pro / *.netcraze.* — банил бы и кореша). Вместо этого
+	// UpdateSettings/Reconcile синхронизирует managed DNS-rewrite своего
+	// FQDN из NDMS → LAN IP (см. SyncKeenDNSRewrites). Портов/CIDR нет —
+	// запись нужна только чтобы имя оставалось валидным в BypassPresets.
+	"keendns": {},
 }
+
+// PresetKeenDNS is the BypassPresets id for local KeenDNS/CrazeDNS rewrite.
+const PresetKeenDNS = "keendns"
 
 // resolveBypassPorts collects the final UDP and TCP port/range lists from
 // named presets and the user-supplied extra-ports string.

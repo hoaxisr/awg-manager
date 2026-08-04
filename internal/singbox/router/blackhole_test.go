@@ -145,7 +145,7 @@ func TestRemoveBlackhole_CleansUp(t *testing.T) {
 // The netfilter.d hook must gain a dead-engine branch that re-asserts the
 // blackhole, and an alive-engine scrub that removes any stale blackhole.
 func TestNetfilterHookScript_BlackholeFailClosed(t *testing.T) {
-	s := netfilterHookScript()
+	s := netfilterHookScript(true)
 	if !strings.Contains(s, netfilterBlackholePath) {
 		t.Error("hook missing blackhole rules path (dead-engine restore)")
 	}

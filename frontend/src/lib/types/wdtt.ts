@@ -11,6 +11,8 @@ export interface WdttClientConfig {
 	captchaMode: string;
 	vkAuthMode?: string;
 	sub?: string;
+	/** wg — WireGuard + AWG-туннель; raw — без WG (быстрее, нужен raw-сервер) */
+	connMode?: 'wg' | 'raw';
 	debug?: boolean;
 }
 
@@ -41,6 +43,8 @@ export interface WdttServerConfig {
 	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
 	openFirewall?: boolean;
+	/** wg — WireGuard relay; raw — без WG (нужен редеплой сервера) */
+	relayMode?: 'wg' | 'raw';
 	/** Клиенты сервера — источник правды, panel.db собирается из них */
 	clients?: WdttServerClient[];
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
@@ -109,6 +113,7 @@ export interface WdttImportPayload {
 	subUrl?: string;
 	deviceId?: string;
 	wg?: string;
+	connMode?: 'wg' | 'raw';
 }
 
 export interface WdttSubscriptionPreview {

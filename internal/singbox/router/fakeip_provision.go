@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -46,6 +47,40 @@ type OpkgTunProvisioner interface {
 type StaticRouteProvider interface {
 	AddStaticRoute(ctx context.Context, route StaticRouteSpec) error
 	RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error
+}
+
+// DefaultRouteProvider manages the NDMS default route (v4 + v6) — policy-tun
+// парковка дефолта на tun-интерфейс и снятие при выключении.
+type DefaultRouteProvider interface {
+	SetDefaultRoute(ctx context.Context, name string) error
+	RemoveDefaultRoute(ctx context.Context, name string) error
+	SetIPv6DefaultRoute(ctx context.Context, name string) error
+	RemoveIPv6DefaultRoute(ctx context.Context, name string) error
+}
+
+// SegmentNATProvider manages segment NAT (`ip nat`) и Static NAT (`ip static`)
+// для policy-tun сегментов.
+type SegmentNATProvider interface {
+	SetSegmentNAT(ctx context.Context, seg string) error
+	RemoveSegmentNAT(ctx context.Context, seg string) error
+	SetStaticNAT(ctx context.Context, seg, wan string) error
+	RemoveStaticNAT(ctx context.Context, seg, wan string) error
+}
+
+// RunningConfigReader читает строки /show/running-config. TTL-кэша 60 мин
+// хватает всему остальному, но policy-tun-reconcile обязан звать InvalidateAll
+// перед чтением: дрейф permit/route, внесённый пользователем мимо нас, иначе
+// невидим до часа.
+type RunningConfigReader interface {
+	Lines(ctx context.Context) ([]string, error)
+	InvalidateAll()
+}
+
+// NATStateReader — структурированное состояние NAT (вместо текстового парсинга
+// running-config): /show/rc/ip/nat + /show/rc/ip/static.
+type NATStateReader interface {
+	ListNAT(ctx context.Context) ([]query.NATEntry, error)
+	ListStaticNAT(ctx context.Context) ([]query.StaticNATEntry, error)
 }
 
 // FakeIPTunParams holds the static fakeip-tun provisioning knobs not derivable

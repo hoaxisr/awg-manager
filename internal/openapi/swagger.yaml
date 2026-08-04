@@ -3579,6 +3579,9 @@ definitions:
         items:
           type: string
         type: array
+      managed:
+        example: keendns
+        type: string
       pattern:
         example: finland10*.discord.media
         type: string
@@ -4188,7 +4191,39 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
+        type: string
+    type: object
+  api.SingboxRouterNATPreviewData:
+    properties:
+      segments:
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
+        type: array
+    type: object
+  api.SingboxRouterNATPreviewResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterNATPreviewData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterNATSegmentDTO:
+    properties:
+      mode:
+        enum:
+        - dynamic
+        - static
+        - none
+        example: dynamic
+        type: string
+      name:
+        example: Home
+        type: string
+      staticWan:
+        example: PPPoE0
         type: string
     type: object
   api.SingboxRouterOutboundDTO:
@@ -4613,11 +4648,11 @@ definitions:
         type: string
       bypassPresets:
         description: |-
-          BypassPresets lists active named port-bypass presets.
+          BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (destination-IP 78.47.125.180, KeenDNS/CrazeDNS).
+          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
         example:
-        - l2tp
+        - keendns
         items:
           type: string
         type: array
@@ -4672,13 +4707,31 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunNatSegments:
+        description: |-
+          PolicyTunNATSegments — выбранные пользователем сегменты для
+          source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
+          Обнуляется бэкендом при policyTunSourcePreserve=false.
+        example:
+        - Home
+        items:
+          type: string
+        type: array
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve переводит выбранные сегменты на static-NAT в WAN,
+          чтобы sing-box видел реальные адреса клиентов, а не маскарад в tun.
+          Требует непустого policyTunNatSegments (иначе 400).
+        example: true
+        type: boolean
       qosClasses:
         description: |-
           QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
           outbounds. At most 8 classes; DSCP must be 0-63 and unique across
           classes; outbound is required; name is limited to 32 characters.
-          Only effective when routingMode is "tproxy" and xt_dscp is available
-          (see status.xtDscpAvailable). Empty = feature off.
+          Only effective when routingMode is "tproxy" or "policy-tun" (DSCP-only
+          hybrid) and xt_dscp is available (see status.xtDscpAvailable).
+          Empty = feature off.
         items:
           $ref: '#/definitions/api.SingboxRouterQoSClassDTO'
         type: array
@@ -4686,6 +4739,7 @@ definitions:
         enum:
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       snifferEnabled:
@@ -4791,6 +4845,24 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunIface:
+        description: |-
+          PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+          интерфейса. Заполнены при Enabled+Provisioned (ДО того как режим стал
+          active): по NDMS-имени пользователь разрешает интерфейс в политике
+          доступа. Пусто вне policy-tun и при выключенном движке.
+        example: opkgtun0
+        type: string
+      policyTunNdmsName:
+        example: OpkgTun0
+        type: string
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve — применённый режим NAT сегментов (static-NAT
+          вместо маскарада). Указатель: отсутствует = «неприменимо» (не policy-tun
+          или движок выключен), false = «применимо и выключено».
+        example: true
+        type: boolean
       restartSuppressedUntil:
         description: |-
           RestartSuppressedUntil — RFC3339-время окончания паузы авто-перезапуска
@@ -4838,6 +4910,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       from:
@@ -4845,6 +4918,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       step:
@@ -4854,6 +4928,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       transitionId:
@@ -6461,6 +6536,15 @@ definitions:
         example: 524288
         type: integer
     type: object
+  api.killListenerRequest:
+    properties:
+      host:
+        type: string
+      port:
+        type: integer
+      proto:
+        type: string
+    type: object
   api.serverEnabledRequest:
     properties:
       enabled:
@@ -6997,6 +7081,10 @@ definitions:
       captchaMode:
         description: '-captcha-mode: auto|rjs|wv (router default rjs)'
         type: string
+      connMode:
+        description: ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее;
+          нужен raw-сервер).
+        type: string
       debug:
         type: boolean
       deviceId:
@@ -7070,6 +7158,8 @@ definitions:
     type: object
   wdtt.ImportPayload:
     properties:
+      connMode:
+        type: string
       deviceId:
         type: string
       listen:
@@ -7201,6 +7291,10 @@ definitions:
         type: string
       policy:
         description: NDMS hotspot policy or "none"
+        type: string
+      relayMode:
+        description: RelayMode — wg (WireGuard relay, совместимость) или raw (без
+          WG на сервере; нужен редеплой).
         type: string
       wgIface:
         description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
@@ -11114,6 +11208,41 @@ paths:
       summary: Apply all device proxy instances
       tags:
       - device-proxy
+  /proxy/kill-listener:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Host, port, proto
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.killListenerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Kill process bound to local proxy listen port
+      tags:
+      - device-proxy
   /proxy/listen-choices:
     get:
       produces:
@@ -11134,6 +11263,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Device proxy listen choices
+      tags:
+      - device-proxy
+  /proxy/listener:
+    get:
+      parameters:
+      - description: Bind address (default 127.0.0.1)
+        in: query
+        name: host
+        type: string
+      - description: Listen port
+        in: query
+        name: port
+        required: true
+        type: integer
+      - description: tcp or udp (default udp)
+        in: query
+        name: proto
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Lookup local proxy listen port
       tags:
       - device-proxy
   /proxy/outbounds:
@@ -14455,7 +14620,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun):
+      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun):
         tears down the old mode then brings up the new one, with directional fail-closed
         rollback. Per-step progress is published as "singbox-router:transition" events
         on the existing GET /events SSE stream (see SingboxRouterTransitionData).
@@ -14763,6 +14928,33 @@ paths:
       security:
       - CookieAuth: []
       summary: Unbind device from singbox-router policy
+      tags:
+      - singbox-router
+  /singbox/router/policy-tun/nat-preview:
+    get:
+      description: Returns router segments with their current NAT mode (dynamic `ip
+        nat` / static `ip static <seg> <wan>` / none) — the editable "what will change"
+        preview behind the policy-tun source-preserve toggle. Port-forwarding `ip
+        static` entries (no to-interface) and the manager's own OpkgTun interfaces
+        are excluded.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterNATPreviewResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Preview policy-tun source-preserve segments
       tags:
       - singbox-router
   /singbox/router/presets/apply:

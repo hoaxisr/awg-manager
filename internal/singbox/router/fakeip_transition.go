@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 // Routing-mode transition orchestration (Task 1D.4).
 //
-// A mode switch (off↔tproxy↔fakeip-tun) must TEAR DOWN the old mode then BRING
+// A mode switch (off↔tproxy↔fakeip-tun↔policy-tun) must TEAR DOWN the old mode then BRING
 // UP the new one, with directional fail-closed rollback and per-step progress
 // events for the UI. The old UpdateSettings→Reconcile path dispatches by the NEW
 // mode and never disables the OLD mode's resources — SwitchRoutingMode closes
@@ -35,7 +35,7 @@ type TransitionStep struct {
 // follow-up (Slice 1E) — not emitted by this task.
 type TransitionEvent struct {
 	TransitionID string         `json:"transitionId"`
-	From         string         `json:"from"`                 // source state: off|tproxy|fakeip-tun
+	From         string         `json:"from"`                 // source state: off|tproxy|fakeip-tun|policy-tun
 	To           string         `json:"to"`                   // target state
 	Step         TransitionStep `json:"step"`                 // the milestone this event reports
 	Done         bool           `json:"done,omitempty"`       // terminal event
@@ -80,7 +80,7 @@ func (s *ServiceImpl) emitTransition(id, from, to string, step TransitionStep, d
 // SwitchRoutingMode accepts.
 func validTransitionTarget(target string) bool {
 	switch target {
-	case stateOff, stateTProxy, stateFakeIPTun:
+	case stateOff, stateTProxy, stateFakeIPTun, statePolicyTun:
 		return true
 	default:
 		return false
@@ -107,7 +107,7 @@ func (s *ServiceImpl) currentState() (string, error) {
 
 // SwitchRoutingMode orchestrates a routing-mode transition with directional
 // fail-closed rollback (FE-spec §7.4) and progress events. target ∈
-// {"off","tproxy","fakeip-tun"}.
+// {"off","tproxy","fakeip-tun","policy-tun"}.
 //
 // It COMPOSES the existing Enable/Disable: the teardown calls Disable while the
 // OLD mode is still persisted (Disable dispatches by the persisted mode), then
@@ -119,7 +119,7 @@ func (s *ServiceImpl) currentState() (string, error) {
 // Concurrency: serialized by transitionMu (NOT s.mu — Enable/Disable take s.mu).
 func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) error {
 	if !validTransitionTarget(target) {
-		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun)", target)
+		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun|policy-tun)", target)
 	}
 
 	s.transitionMu.Lock()
@@ -237,12 +237,13 @@ func (s *ServiceImpl) persistMode(mode string, enabled bool) error {
 // after Enable(target) fails. It returns the ORIGINAL Enable error (wrapped with
 // the failing step + final state). The table:
 //
-//	source=tproxy, target=fakeip-tun → restore tproxy (Enable tproxy); finalState=tproxy
-//	source=off,    target=fakeip-tun → leave disabled;                  finalState=off
-//	source=fakeip, target=tproxy     → DO NOT restore fakeip (its teardown already
-//	                                   freed the index); go to OFF;
-//	                                   finalState=off (explicit error)
-//	source=off,    target=tproxy     → leave disabled;                  finalState=off
+//	source=tproxy,     target=fakeip-tun|policy-tun → restore tproxy;   finalState=tproxy
+//	source=policy-tun, target=tproxy                → restore policy-tun; finalState=policy-tun
+//	source=fakeip,     target=tproxy|policy-tun     → DO NOT restore fakeip (its teardown
+//	                                                  already freed the index); go to OFF;
+//	                                                  finalState=off (explicit error)
+//	source=policy-tun, target=fakeip-tun            → same: go to OFF;  finalState=off
+//	source=off,        target=любая                 → leave disabled;   finalState=off
 //
 // If the rollback Enable ALSO fails, the router is left OFF + Enabled=false
 // (fail-closed), and both errors are surfaced.
@@ -252,31 +253,37 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 	s.emitTransition(id, source, target,
 		TransitionStep{Step: "rollback", Status: "current"}, false, "", "")
 
-	// tproxy→fakeip failed: restore the previous tproxy engine.
-	if source == stateTProxy && target == stateFakeIPTun {
-		if perr := s.persistMode(stateTProxy, true); perr != nil {
+	// slot-20-пары восстанавливают прежний режим: tproxy↔policy-tun. NB: к
+	// моменту rollback'а teardown источника уже прошёл и SetPolicyTunState(nil)
+	// выполнен — restore-Enable аллоцирует индекс заново (аллокатор берёт низший
+	// свободный, т.е. почти всегда тот же, но НЕ из персиста).
+	restorable := (source == stateTProxy && (target == stateFakeIPTun || target == statePolicyTun)) ||
+		(source == statePolicyTun && target == stateTProxy)
+	if restorable {
+		if perr := s.persistMode(source, true); perr != nil {
 			return s.failClosed(id, source, target, enableErr,
-				fmt.Errorf("rollback persist tproxy: %w", perr))
+				fmt.Errorf("rollback persist %s: %w", source, perr))
 		}
 		if rerr := s.Enable(ctx); rerr != nil {
-			// Restoring tproxy also failed → fail closed to OFF.
+			// Restoring the source also failed → fail closed to OFF.
 			return s.failClosed(id, source, target, enableErr,
-				fmt.Errorf("rollback re-enable tproxy: %w", rerr))
+				fmt.Errorf("rollback re-enable %s: %w", source, rerr))
 		}
-		final := stateTProxy
+		final := source
 		s.emitTransition(id, source, target,
-			TransitionStep{Step: "rollback", Status: "done", Message: "restored tproxy"},
+			TransitionStep{Step: "rollback", Status: "done", Message: "restored " + final},
 			true, final,
 			fmt.Sprintf("switch to %s failed (step=provision, finalState=%s); rolled back: %v", target, final, enableErr))
 		return fmt.Errorf("switch %s→%s failed (finalState=%s, rolled back): %w", source, target, final, enableErr)
 	}
 
-	// fakeip→tproxy failed AFTER the fakeip teardown already freed the index.
-	// Restoring fakeip blindly would re-allocate/re-provision —
-	// NOT a clean rollback. Go to OFF and say so explicitly.
-	if source == stateFakeIPTun && target == stateTProxy {
-		msg := "switch to tproxy failed after fakeip teardown; left disabled"
-		if perr := s.persistMode(stateTProxy, false); perr != nil {
+	// fakeip→(tproxy|policy-tun) и policy-tun→fakeip failed AFTER the source
+	// teardown already freed its index. Restoring the source blindly would
+	// re-allocate/re-provision — NOT a clean rollback. Go to OFF and say so
+	// explicitly.
+	if source == stateFakeIPTun || (source == statePolicyTun && target == stateFakeIPTun) {
+		msg := fmt.Sprintf("switch to %s failed after %s teardown; left disabled", target, source)
+		if perr := s.persistMode(target, false); perr != nil {
 			return s.failClosed(id, source, target, enableErr,
 				fmt.Errorf("rollback persist disabled: %w", perr))
 		}
@@ -287,7 +294,7 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 		return fmt.Errorf("switch %s→%s failed (finalState=%s): %s: %w", source, target, stateOff, msg, enableErr)
 	}
 
-	// source=off (→ tproxy or → fakeip): nothing to restore — leave disabled.
+	// source=off (→ любая цель): nothing to restore — leave disabled.
 	if perr := s.persistMode(target, false); perr != nil {
 		return s.failClosed(id, source, target, enableErr,
 			fmt.Errorf("rollback persist disabled: %w", perr))

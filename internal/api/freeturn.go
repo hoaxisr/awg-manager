@@ -191,8 +191,11 @@ func (h *FreeTurnHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), freeturn.DefaultInstanceID)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // StopClient handles POST /api/freeturn/client/stop.
@@ -495,6 +498,7 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_UPDATE_FAILED")
 			return
 		}
+		h.syncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 		response.Success(w, cfg)
 	case http.MethodPatch:
 		var req renameRequest
@@ -597,8 +601,11 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // stopClientInstance handles POST /api/freeturn/clients/{id}/stop.

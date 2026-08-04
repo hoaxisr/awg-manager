@@ -39,9 +39,13 @@ func (c *NATCommands) RemoveStaticNAT(ctx context.Context, seg, wan string) erro
 	return c.mutate(ctx, map[string]any{"ip": map[string]any{"static": []map[string]any{{"no": true, "interface": seg, "to-interface": wan}}}}, "no ip static "+seg+" "+wan)
 }
 
-// mutate posts the payload, schedules a save, and invalidates RunningConfig
-// (the cache affected by NAT/static-NAT changes).
+// mutate posts the payload, schedules a save, and invalidates the caches
+// affected by NAT/static-NAT changes: RunningConfig плюс сами NAT-сторы (TTL
+// 30 с) — иначе source-preserve читал бы собственную мутацию как дрейф и
+// применял бы её повторно.
 func (c *NATCommands) mutate(ctx context.Context, payload any, op string) error {
 	return postMutation(ctx, c.poster, c.save, payload, op,
-		c.queries.RunningConfig.InvalidateAll)
+		c.queries.RunningConfig.InvalidateAll,
+		c.queries.NAT.InvalidateAll,
+		c.queries.StaticNAT.InvalidateAll)
 }

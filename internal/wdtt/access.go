@@ -96,11 +96,13 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 			s.appLog.Info("access", id, fmt.Sprintf("NDMS LAN на %s: %v", accessIface, segments))
 		}
 
-		if mode != "none" && !useNDMS {
+		if mode != "none" {
 			if err := s.accessMgr.EnsureInterfaceFirewallPermit(ctx, accessIface); err != nil {
 				if s.appLog != nil {
-					s.appLog.Warn("access", id, "firewall permit пропущен (NDMS не знает "+accessIface+"): "+err.Error())
+					s.appLog.Warn("access", id, "firewall permit пропущен на "+accessIface+": "+err.Error())
 				}
+			} else if s.appLog != nil && useNDMS {
+				s.appLog.Info("access", id, "NDMS firewall permit на "+accessIface)
 			}
 		}
 	} else if mode != "internet-only" {

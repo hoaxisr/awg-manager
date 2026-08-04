@@ -29,9 +29,20 @@ func (r *recordingOpkgTunProvisioner) ClearAddress(_ context.Context, name strin
 }
 
 // scanReturning builds an OpkgTunScan hook returning a fixed set of NDMS
-// OpkgTun IDs (or an error) for the description-scan fallback tests.
+// OpkgTun IDs (or an error) for the description-scan fallback tests. The ids
+// answer the FAKEIP description only — the reap scans policy-tun with its own
+// description too, and in production the two sets are disjoint (one iface
+// carries one description).
 func scanReturning(ids []string, err error) func(context.Context, string) ([]string, error) {
-	return func(context.Context, string) ([]string, error) { return ids, err }
+	return func(_ context.Context, desc string) ([]string, error) {
+		if err != nil {
+			return nil, err
+		}
+		if desc != fakeIPTunDescription {
+			return nil, nil
+		}
+		return ids, nil
+	}
 }
 
 // newReapSettingsStore seeds a store with the given RoutingMode and, when

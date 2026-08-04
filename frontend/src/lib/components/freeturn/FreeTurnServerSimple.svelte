@@ -19,6 +19,8 @@
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
 	import { obfOptions } from './options';
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
+	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
@@ -96,12 +98,14 @@
 	let quickActive = $state('wg');
 	let keeneticPeerSelected = $state(false);
 
-	const listenPort = $derived.by(() => {
-		const listen = server.listen?.trim() ?? '';
-		if (!listen) return '56000';
-		const idx = listen.lastIndexOf(':');
-		return idx >= 0 ? listen.slice(idx + 1) : listen;
-	});
+	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56000)));
+
+	function applyListenPort(portStr: string) {
+		const port = Math.max(1, Math.min(65535, Number(portStr) || 56000));
+		server.listen = setListenPort(server.listen || '0.0.0.0:56000', port, '0.0.0.0');
+	}
+
+	const serverListenProto = $derived((server.mode === 'tcp' ? 'tcp' : 'udp') as 'tcp' | 'udp');
 
 	const step1Done = $derived(!!server.connect.trim());
 	const step2Done = $derived(step1Done && !!server.listen.trim());
@@ -318,6 +322,7 @@
 			if (!running) await onToggle(true);
 			if (await generateLinkNow()) {
 				quickActive = 'launch';
+				opsTab = 'links';
 				notifications.success('Сервер запущен, ссылка freeturn:// готова');
 			}
 		} finally {
@@ -342,6 +347,9 @@
 			meta={`listen :${listenPort}`}
 			onSelect={(id) => (quickActive = id)}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'wg'}
 					<ProxyQuickStartStep
@@ -380,6 +388,13 @@
 								server.openFirewall = v;
 								await onSave(server);
 							}}
+						/>
+						<Input
+							label="Listen-порт сервера (-listen)"
+							type="number"
+							value={listenPort}
+							onchange={applyListenPort}
+							hint="Хост 0.0.0.0 задаётся автоматически; меняется только порт WAN"
 						/>
 					</ProxyQuickStartStep>
 				{:else}
@@ -457,7 +472,16 @@
 				/>
 				<Dropdown label="Obf profile" bind:value={server.obfProfile} options={obfOptions} />
 				<Input type="password" bind:value={server.obfKey} />
-				<p class="ft-readonly"><code>{server.listen || '0.0.0.0:56000'}</code></p>
+				<p class="ft-readonly">
+					Listen: <code>{server.listen || '0.0.0.0:56000'}</code>
+					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
+				</p>
+				<Input
+					label="Listen-порт сервера"
+					type="number"
+					value={listenPort}
+					onchange={applyListenPort}
+				/>
 				<Toggle
 					label="Firewall"
 					checked={server.openFirewall !== false}

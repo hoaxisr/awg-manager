@@ -47,6 +47,21 @@ describe('stepDefsFor — mode-specific copy', () => {
 		expect(stepDefsFor('off', 'fakeip-tun').length).toBe(6);
 		expect(stepDefsFor('fakeip-tun', 'off').length).toBe(4);
 	});
+	it('→policy-tun uses its own bring-up copy (no fakeip DNS, no TPROXY install)', () => {
+		const defs = stepDefsFor('off', 'policy-tun');
+		const joined = defs.map((d) => `${d.title} ${d.detail ?? ''}`).join(' ');
+		expect(joined).toContain('OpkgTun');
+		expect(joined).toContain('Дефолт-маршрут');
+		expect(joined).not.toContain('fakeip');
+		expect(joined).not.toContain('iptables TPROXY установлен');
+	});
+	it('policy-tun→off tears the mode down instead of reusing the fakeip list', () => {
+		const joined = stepDefsFor('policy-tun', 'off')
+			.map((d) => `${d.title} ${d.detail ?? ''}`)
+			.join(' ');
+		expect(joined).toContain('Снят policy-tun');
+		expect(joined).not.toContain('reject-маршрут');
+	});
 });
 
 describe('deriveSteps — enable direction', () => {
