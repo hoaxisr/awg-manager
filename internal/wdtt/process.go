@@ -168,6 +168,10 @@ func (p *process) Stop() error {
 	if err != nil {
 		return nil
 	}
+	if !p.pidIsOurs(pid) {
+		_ = os.Remove(p.pidPath) // протухший pid-файл, чужой процесс не трогаем
+		return nil
+	}
 	p.mu.Lock()
 	p.stopRequested = true
 	p.mu.Unlock()
@@ -197,7 +201,22 @@ func (p *process) IsRunning() (bool, int) {
 	if !childproc.IsAlive(pid) {
 		return false, pid
 	}
+	if !p.pidIsOurs(pid) {
+		return false, pid
+	}
 	return true, pid
+}
+
+// pidIsOurs подтверждает, что pid из pid-файла — действительно наш процесс.
+// Свой ребёнок (startedAt != nil) не может быть переиспользован, пока мы его
+// не схоронили. Для унаследованного pid-файла (пережил ребут или рестарт
+// демона) единственное доказательство — /proc cmdline: файл лежит на флешке,
+// а PID после ребута мог достаться постороннему процессу.
+func (p *process) pidIsOurs(pid int) bool {
+	p.mu.Lock()
+	tracked := p.startedAt != nil
+	p.mu.Unlock()
+	return tracked || childproc.MatchesBinary(pid, p.binary)
 }
 
 func (p *process) Status() ProcessStatus {

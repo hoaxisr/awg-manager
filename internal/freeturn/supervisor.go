@@ -54,8 +54,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
-		running, _ := proc.IsRunning()
-		if !running {
+		st := proc.Status()
+		// Живой процесс без StartedAt — осиротевший pid-файл, переживший
+		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
+		// Лечится обычным стартом — process.Start усыновляет такой процесс.
+		if !st.Running || st.StartedAt == nil {
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
@@ -73,7 +76,6 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		st := proc.Status()
 		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
@@ -94,10 +96,14 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.startBackoff.Forget(key)
 			continue
 		}
-		if running, _ := s.serverProcs.get(srv.ID).IsRunning(); running {
+		st := s.serverProcs.get(srv.ID).Status()
+		if st.Running && st.StartedAt != nil {
 			s.startBackoff.Success(key)
 			continue
 		}
+		// Осиротевший сервер (Running без StartedAt) — как и клиент, лечится
+		// обычным стартом; Stop до проверки backoff гасил бы рабочий процесс
+		// на всё окно ожидания.
 		if !s.startBackoff.Allow(key, now) {
 			continue
 		}

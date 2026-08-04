@@ -50,12 +50,16 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		key := clientKey(c.ID)
 		if !c.Config.Enabled {
 			s.clientHealth.reset(c.ID)
+			s.clientStall.reset(c.ID)
 			s.startBackoff.Forget(key)
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
-		running, _ := proc.IsRunning()
-		if !running {
+		st := proc.Status()
+		// Живой процесс без StartedAt — осиротевший pid-файл, переживший
+		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
+		// Лечится обычным стартом — process.Start усыновляет такой процесс.
+		if !st.Running || st.StartedAt == nil {
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
@@ -73,16 +77,27 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		st := proc.Status()
 		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: нет активных сессий")
+				s.appLog.Info("health", c.ID, "клиент перезапущен: peer недоступен")
 			}
 			s.clientHealth.reset(c.ID)
+			s.clientStall.reset(c.ID)
+			continue
+		}
+		if s.clientStall.note(c.ID, clientRelayStalled(st, now)) {
+			if err := s.restartClientInstance(c.ID); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("health", c.ID, "входящий трафик встал, перезапуск: "+err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("health", c.ID, "клиент перезапущен: нет входящего трафика")
+			}
+			s.clientStall.reset(c.ID)
 		}
 	}
 	for _, srv := range full.Servers {

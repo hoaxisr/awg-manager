@@ -22,5 +22,7 @@ export function proxyServerOpsMode(opts: {
 	if (!proxyInOpsMode(opts)) return false;
 	if (opts.generatedLink?.trim()) return true;
 	if (opts.startedAt?.trim()) return true;
+	// После reboot: enabled=true в конфиге, но startedAt/genWG в UI ещё пустые.
+	if (opts.enabled) return true;
 	return false;
 }

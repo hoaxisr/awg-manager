@@ -49,8 +49,32 @@ func TestClientPeerUnhealthyIgnoresMissingTelemetry(t *testing.T) {
 	}
 }
 
+func TestClientRelayStalled(t *testing.T) {
+	started := time.Now().Add(-6 * time.Minute)
+	st := ProcessStatus{
+		Running:         true,
+		StartedAt:       &started,
+		DtlsConnections: 9,
+		Log:             stalledStatsLog(),
+	}
+	if !clientRelayStalled(st, time.Now()) {
+		t.Fatal("expected stalled relay: downstream flat, uplink keepalives only")
+	}
+	// Активные воркеры есть — «нет сессий» тут ни при чём, лечит только
+	// отдельный счётчик застоя.
+	if clientPeerUnhealthy(st, time.Now()) {
+		t.Fatal("stalled relay must not be reported as zero-session unhealthy")
+	}
+
+	fresh := time.Now().Add(-time.Minute)
+	st.StartedAt = &fresh
+	if clientRelayStalled(st, time.Now()) {
+		t.Fatal("expected no verdict during grace period")
+	}
+}
+
 func TestHealthTrackerStrikes(t *testing.T) {
-	h := newHealthTracker()
+	h := newHealthTracker(clientHealthStrikes)
 	for i := 0; i < clientHealthStrikes-1; i++ {
 		if h.note("c1", true) {
 			t.Fatalf("strike %d should not restart yet", i+1)
@@ -58,5 +82,22 @@ func TestHealthTrackerStrikes(t *testing.T) {
 	}
 	if !h.note("c1", true) {
 		t.Fatal("expected restart after max strikes")
+	}
+}
+
+// Порог застоя намеренно выше «нет сессий»: одного окна мало, чтобы отличить
+// зомби-реле от живого простаивающего туннеля.
+func TestStallTrackerNeedsLongerStreak(t *testing.T) {
+	h := newHealthTracker(clientStallStrikes)
+	for i := 0; i < clientHealthStrikes; i++ {
+		if h.note("c1", true) {
+			t.Fatalf("strike %d: рестарт слишком рано", i+1)
+		}
+	}
+	for i := clientHealthStrikes; i < clientStallStrikes-1; i++ {
+		h.note("c1", true)
+	}
+	if !h.note("c1", true) {
+		t.Fatal("expected restart after clientStallStrikes")
 	}
 }

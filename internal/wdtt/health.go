@@ -11,15 +11,21 @@ const (
 	// коротком окне health-check убивал бы её на середине.
 	clientHealthGrace   = 5 * time.Minute
 	clientHealthStrikes = 4
+	// clientStallStrikes — окно для зомби-реле: 20 тиков супервизора ≈ 10 минут
+	// подряд без единого входящего байта. Шире, чем «нет сессий»: на коротком
+	// окне живой, но простаивающий туннель неотличим от зомби — у обоих
+	// bytes_down стоит на месте, а bytes_up растёт от keepalive'ов.
+	clientStallStrikes = 20
 )
 
 type healthTracker struct {
 	mu      sync.Mutex
+	need    int
 	strikes map[string]int
 }
 
-func newHealthTracker() *healthTracker {
-	return &healthTracker{strikes: make(map[string]int)}
+func newHealthTracker(need int) *healthTracker {
+	return &healthTracker{need: need, strikes: make(map[string]int)}
 }
 
 func (h *healthTracker) note(id string, unhealthy bool) bool {
@@ -30,7 +36,7 @@ func (h *healthTracker) note(id string, unhealthy bool) bool {
 		return false
 	}
 	h.strikes[id]++
-	return h.strikes[id] >= clientHealthStrikes
+	return h.strikes[id] >= h.need
 }
 
 func (h *healthTracker) reset(id string) {
@@ -50,6 +56,21 @@ func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {
 	// «не знаем», а не «активных ноль» (см. activeTelemetry).
 	active, known := activeTelemetry(st.Log)
 	return known && active == 0
+}
+
+// clientRelayStalled — зомби-реле: воркеры числятся активными, наверх уходят
+// keepalive'ы, а снизу не приходит ни байта. Так выглядит клиент после
+// рестарта сервера: сессия протухла на той стороне, сам он этого не замечает и
+// живым рестартом не лечится. Сигнал слабый (тот же профиль у простаивающего
+// туннеля), поэтому решение принимается только по clientStallStrikes подряд.
+func clientRelayStalled(st ProcessStatus, now time.Time) bool {
+	if !st.Running || st.StartedAt == nil {
+		return false
+	}
+	if now.Sub(*st.StartedAt) < clientHealthGrace {
+		return false
+	}
+	return trafficStalled(statsEvents(st.Log))
 }
 
 func (s *Service) restartClientInstance(id string) error {

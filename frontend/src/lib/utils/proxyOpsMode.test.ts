@@ -26,6 +26,10 @@ describe('proxyServerOpsMode', () => {
 		expect(proxyServerOpsMode({ running: true, generatedLink: 'wdtt://x' })).toBe(true);
 	});
 
+	it('enters ops after reboot when autostart is enabled but nothing started yet', () => {
+		expect(proxyServerOpsMode({ enabled: true, startedAt: '', generatedLink: '' })).toBe(true);
+	});
+
 	it('enters ops on return visit via startedAt without link in memory', () => {
 		expect(
 			proxyServerOpsMode({

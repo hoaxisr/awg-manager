@@ -359,7 +359,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить клиент');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 
@@ -473,7 +473,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить сервер');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 

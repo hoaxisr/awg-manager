@@ -138,6 +138,8 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	listens := clientListenAddresses(full.Clients)
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg.Platform = normalizePlatform(cfg.Platform)
+	// Enabled — только Start/Stop; UI при сохранении часто шлёт stale false.
+	cfg.Enabled = full.Clients[idx].Config.Enabled
 	full.Clients[idx].Config = cfg
 	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
 	// не заставляем ждать окно backoff до следующей попытки супервизора.
@@ -160,6 +162,8 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
+	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
+	cfg.Enabled = prevCfg.Enabled
 	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
 	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
 	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
