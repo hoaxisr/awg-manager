@@ -11,6 +11,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/procport"
+	"github.com/hoaxisr/awg-manager/internal/proxysup"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -33,6 +35,8 @@ type Service struct {
 	installing      bool
 	appLog          *logging.ScopedLogger
 	listenChecker   LocalListenPortChecker
+	clientHealth    *healthTracker
+	startBackoff    *proxysup.Backoff
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
 	ndmsIfaces      NDMSOpkgTunCommands
@@ -72,13 +76,15 @@ func (s *Service) opkgStartsInFlight() bool {
 
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:       NewStore(dataDir),
-		dataDir:     dataDir,
-		clientBin:   clientBin,
-		serverBin:   serverBin,
-		versionPath: filepath.Join(dataDir, "wdtt-version.json"),
-		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
-		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
+		store:        NewStore(dataDir),
+		dataDir:      dataDir,
+		clientBin:    clientBin,
+		serverBin:    serverBin,
+		versionPath:  filepath.Join(dataDir, "wdtt-version.json"),
+		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
+		clientHealth: newHealthTracker(),
+		startBackoff: newStartBackoff(),
 	}
 }
 
@@ -164,6 +170,9 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg = normalizeClientConfig(cfg)
 	full.Clients[idx].Config = cfg
+	// Правка конфига могла устранить причину отказа (порт, пароль, peer) —
+	// не заставляем ждать окно backoff до следующей попытки супервизора.
+	s.startBackoff.Forget(clientKey(id))
 	return s.store.Save(full)
 }
 
@@ -206,6 +215,8 @@ func (s *Service) DeleteClient(id string) error {
 	}
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(clientKey(id))
+	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -250,6 +261,7 @@ func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, er
 		full.Clients[idx].Name = name
 	}
 	full.Clients[idx].Config = cfg
+	s.startBackoff.Forget(clientKey(id))
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, payload, err
 	}
@@ -278,17 +290,21 @@ func (s *Service) Status() Status {
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
+		ps := s.clientProcs.get(c.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.clientProcs.get(c.ID).Status(),
+			Status: ps,
 		})
 	}
 	for _, srv := range cfg.Servers {
+		ps := s.serverProcs.get(srv.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, procport.ProtoUDP)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
-			Status: s.serverProcs.get(srv.ID).Status(),
+			Status: ps,
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
@@ -488,6 +504,7 @@ func normalizeClientConfig(cfg ClientConfig) ClientConfig {
 	if cfg.VKAuthMode == "" {
 		cfg.VKAuthMode = DefaultClientConfig().VKAuthMode
 	}
+	cfg.ConnMode = normalizeConnMode(cfg.ConnMode)
 	return cfg
 }
 
@@ -510,6 +527,9 @@ func buildClientArgs(c ClientConfig) []string {
 	str("-device-id", c.DeviceID)
 	str("-captcha-mode", normalizeCaptchaMode(c.CaptchaMode))
 	str("-vk-auth-mode", c.VKAuthMode)
+	if mode := normalizeConnMode(c.ConnMode); mode == ConnModeRaw {
+		args = append(args, "-mode", mode)
+	}
 	return args
 }
 

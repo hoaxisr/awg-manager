@@ -23,7 +23,9 @@ type ClientConfig struct {
 	CaptchaMode string `json:"captchaMode"`          // -captcha-mode: auto|rjs|wv (router default rjs)
 	VKAuthMode  string `json:"vkAuthMode,omitempty"` // -vk-auth-mode
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
-	Debug       bool   `json:"debug"`
+	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
+	ConnMode string `json:"connMode,omitempty"`
+	Debug    bool   `json:"debug"`
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -34,6 +36,7 @@ func DefaultClientConfig() ClientConfig {
 		Fingerprint: "chrome",
 		CaptchaMode: "rjs",
 		VKAuthMode:  "vkcalls",
+		ConnMode:    ConnModeWG,
 	}
 }
 
@@ -67,6 +70,9 @@ type ServerConfig struct {
 	// nil / omitted → true (WAN relay works out of the box).
 	OpenFirewall *bool `json:"openFirewall,omitempty"`
 
+	// RelayMode — wg (WireGuard relay, совместимость) или raw (без WG на сервере; нужен редеплой).
+	RelayMode string `json:"relayMode,omitempty"`
+
 	// NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован в роутере.
 	NdmsIface string `json:"ndmsIface,omitempty"`
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
@@ -97,10 +103,11 @@ const (
 
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		Listen:  "0.0.0.0:56002",
-		WgPort:  56001,
-		NatMode: "full",
-		Policy:  "none",
+		Listen:    "0.0.0.0:56002",
+		WgPort:    56001,
+		NatMode:   "full",
+		Policy:    "none",
+		RelayMode: ConnModeWG,
 	}
 }
 
@@ -205,6 +212,7 @@ type ImportPayload struct {
 	SubURL   string   `json:"subUrl,omitempty"`
 	DeviceID string   `json:"deviceId,omitempty"`
 	WG       string   `json:"wg,omitempty"` // optional bundled WireGuard client config
+	ConnMode string   `json:"connMode,omitempty"`
 }
 
 // wdttPeerCIDR — сеть пиров в нормализованном виде (10.66.66.0/24).
