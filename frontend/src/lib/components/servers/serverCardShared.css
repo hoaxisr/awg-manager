@@ -162,6 +162,14 @@
 	}
 }
 
+/* Сегментному переключателю NAT нужно ~220px на три подписи. В компактном
+   режиме ячейка узкая, 50% от неё давали 214px — и «Интернет» превращался в
+   «Интерн…». Пол по ширине держим здесь: у самого контрола fullWidth, он
+   сжимается до нуля и молча режет подписи. */
+.server-detail-card .settings-panel-body .setting-control:has(.segmented-control) {
+	min-width: 220px;
+}
+
 .server-detail-card .setting-control :global(.dropdown),
 .server-detail-card .setting-control :global(.field),
 .server-detail-card .setting-control :global(.picker),

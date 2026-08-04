@@ -94,8 +94,8 @@
 <div class="setting-row">
 	<div class="setting-copy">
 		<span class="setting-title">Endpoint клиентов</span>
-		<span class="setting-description">
-			{endpointDescription}
+		<span class="setting-description" title={endpointDescription}>
+			Хост для подключения в .conf
 		</span>
 	</div>
 	<div class="setting-control">

@@ -390,21 +390,21 @@
 						class="setting-description"
 						title="Клиент выходит в интернет с внешним IP. В LAN виден не как отдельное устройство, а как роутер{lanRouterLabel}."
 					>
-						Выход в интернет с внешним IP {@render wanIpButton()}, в LAN — как роутер
+						Внешний IP {@render wanIpButton()}, в LAN — роутер
 					</span>
 				{:else if natMode === 'internet-only'}
 					<span
 						class="setting-description"
 						title="Клиент выходит в интернет с внешним IP, в LAN виден со своим VPN-адресом ({vpnSubnetLabel})."
 					>
-						Выход в интернет с внешним IP {@render wanIpButton()}, в LAN — свой адрес
+						Внешний IP {@render wanIpButton()}, в LAN — свой адрес
 					</span>
 				{:else}
 					<span
 						class="setting-description"
 						title="Выхода в интернет для клиента нет (без дополнительной подмены адреса), в LAN виден со своим VPN-адресом ({vpnSubnetLabel})."
 					>
-						Выхода в интернет нет, в LAN — свой адрес ({vpnSubnetLabel})
+						Без интернета, в LAN — свой адрес
 					</span>
 				{/if}
 				{#if ingressEnabled && natMode === 'full'}
@@ -431,7 +431,12 @@
 		<div class="setting-row">
 			<div class="setting-copy">
 				<span class="setting-title">Доступ в LAN</span>
-				<span class="setting-description">Сегменты LAN, доступные клиентам этого сервера.</span>
+				<span
+					class="setting-description"
+					title="Сегменты LAN, доступные клиентам этого сервера."
+				>
+					Доступные сегменты локальной сети
+				</span>
 			</div>
 			<div class="setting-control">
 				<ChipMultiSelect values={server.lanSegments ?? []} options={lanSegmentOptions} onchange={handleSetLANSegments} disabled={settingLAN} />
@@ -457,6 +462,7 @@
 			policy={server.policy}
 			disabled={policyChanging}
 			onchange={handlePolicyChange}
+			description="Правила выхода в интернет"
 		/>
 	</ServerSettingsPanel>
 

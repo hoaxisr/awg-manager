@@ -449,6 +449,7 @@
 				policy={server.policy ?? 'none'}
 				disabled={policyChanging || !policyKnown}
 				onchange={handlePolicyChange}
+				description="Правила выхода в интернет"
 			>
 				{#snippet extra()}
 					{#if !policyKnown}

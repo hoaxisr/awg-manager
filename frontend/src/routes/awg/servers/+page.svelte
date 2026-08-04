@@ -150,6 +150,7 @@
 				peerActive: countActiveManagedPeers(mPeers, statsPeers),
 				peerCount: mPeers.length,
 				kind: 'managed',
+				badge: 'Управляемый',
 			});
 		}
 		for (const s of serverList) {
@@ -163,6 +164,9 @@
 				peerCount: sPeers.length,
 				peerActive: countActiveSystemPeers(sPeers),
 				kind: 'system',
+				// Тот же словарь, что и в бейдже карточки (ServerCard): перенесённый
+				// интерфейс — «Системный», встроенный VPN-сервер — «Встроенный».
+				badge: isMarkedSystemServer(s) ? 'Системный' : 'Встроенный',
 			});
 		}
 		return dedupBy(items, (i) => i.id, { warnTag: 'server rail' });

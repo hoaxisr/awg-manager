@@ -5,14 +5,27 @@
 	import { Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { isStandardAccessPolicyName } from '$lib/utils/accessPolicy';
 
+	/* Полный текст пояснения. В карточках серверов он живёт в сетке настроек и
+	   занимал бы три строки, поэтому там передают короткий `description`, а
+	   полный уходит в подсказку. На странице WDTT остаётся как был. */
+	const fullDescription =
+		'Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.';
+
 	interface Props {
 		policy: string;
 		disabled?: boolean;
 		onchange: (policy: string) => void | Promise<void>;
 		extra?: Snippet;
+		description?: string;
 	}
 
-	let { policy, disabled = false, onchange, extra }: Props = $props();
+	let {
+		policy,
+		disabled = false,
+		onchange,
+		extra,
+		description = fullDescription,
+	}: Props = $props();
 
 	let policies = $state<{ id: string; description: string }[]>([]);
 	let selectedPolicy = $state('');
@@ -51,8 +64,9 @@
 <div class="setting-row">
 	<div class="setting-copy">
 		<span class="setting-title">Политика доступа</span>
-		<span class="setting-description"
-			>Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span
+		<span
+			class="setting-description"
+			title={description === fullDescription ? undefined : fullDescription}>{description}</span
 		>
 		{#if extra}{@render extra()}{/if}
 	</div>
