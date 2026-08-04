@@ -105,11 +105,6 @@
 	padding-bottom: calc((31px - 18px) / 2);
 }
 
-.dns-card .card-route :global(.badge),
-.policy-card .card-route :global(.badge) {
-	flex-shrink: 0;
-}
-
 .route-arrow {
 	color: var(--text-muted);
 	line-height: 1;
@@ -138,10 +133,6 @@
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 4px;
-}
-
-.routing-badges :global(.badge) {
-	flex-shrink: 0;
 }
 
 /* Ghost up/down reorder controls (expert routing table) */

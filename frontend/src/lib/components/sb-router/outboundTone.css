@@ -6,11 +6,10 @@
 	flex-shrink: 0;
 }
 
-.tone-icon :global(svg) {
-	flex-shrink: 0;
-}
-
-.tone-chip :global(svg) {
+/* Чип ужимают снаружи (max-width в ячейке таблицы, в .action у RuleCard).
+   Без запрета на сжатие иконка схлопывается в вертикальную полоску, когда
+   имя outbound'а длинное — текст ужимается многоточием, а svg просто мнётся. */
+.tone-chip svg {
 	flex-shrink: 0;
 }
 
@@ -40,14 +39,6 @@
 
 .tone-chip.tone-chip-compact.tone-direct {
 	font-weight: 500;
-}
-
-.tone-chip :global(.chip-label),
-.tone-chip :global(.chip-main),
-.tone-chip :global(.chip-meta) {
-	font-family: inherit;
-	font-size: inherit;
-	line-height: inherit;
 }
 
 .tone-chip.tone-proxy,

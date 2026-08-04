@@ -54,13 +54,6 @@
 	max-width: 100%;
 }
 
-.server-detail-card .title-main :global(.toggle-container) {
-	flex-shrink: 0;
-	display: inline-flex;
-	align-items: center;
-	align-self: center;
-}
-
 .server-detail-card .title-badges {
 	display: inline-flex;
 	flex-wrap: wrap;
@@ -170,14 +163,6 @@
 	min-width: 220px;
 }
 
-.server-detail-card .setting-control :global(.dropdown),
-.server-detail-card .setting-control :global(.field),
-.server-detail-card .setting-control :global(.picker),
-.server-detail-card .setting-control :global(.segmented-control) {
-	width: 100%;
-	min-width: 0;
-}
-
 .server-detail-card .setting-control-toggle {
 	width: auto;
 	max-width: none;
@@ -261,12 +246,6 @@
 		justify-content: stretch;
 	}
 
-	.server-detail-card.managed-card .header-actions :global(.btn) {
-		width: 100%;
-		min-width: 0;
-		justify-content: center;
-	}
-
 	.server-detail-card .peers-header {
 		flex-direction: column;
 		align-items: stretch;
@@ -280,14 +259,10 @@
 		gap: 0.4rem;
 	}
 
-	.server-detail-card .peers-controls :global(.btn) {
-		grid-column: 2;
-		grid-row: 1;
-		width: 100%;
-		min-width: 0;
-	}
-
-	.server-detail-card .peers-controls:not(:has(:global(.btn))) :global(.peer-search) {
+	/* У системной карточки без кнопки «Добавить клиента» вторая колонка пустая,
+	   а поиск (grid-column: 1 из PeerSortControls) занимает половину строки.
+	   Растягиваем его на всю ширину. */
+	.server-detail-card .peers-controls:not(:has(.btn)) .peer-search {
 		grid-column: 1 / -1;
 	}
 }

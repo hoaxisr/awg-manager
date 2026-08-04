@@ -108,10 +108,6 @@
 	align-items: center;
 }
 
-.awg-list-row--head :global(.sort-header-btn) {
-	justify-content: flex-start;
-}
-
 .awg-list-row--section {
 	grid-template-columns: minmax(0, 1fr);
 	background: var(--color-bg-tertiary);
@@ -261,23 +257,12 @@
 	min-width: 0;
 }
 
-.tunnel-list-status-stack :global(.ping-btn),
-.awg-list-status-stack :global(.ping-btn) {
-	width: auto;
-	max-width: 100%;
-}
-
 .tunnel-list-connectivity-row,
 .awg-list-connectivity-row {
 	display: flex;
 	align-items: center;
 	gap: 0.35rem;
 	flex-wrap: wrap;
-}
-
-.tunnel-list-connectivity-row.recovering :global(.ping-btn),
-.awg-list-connectivity-row.recovering :global(.ping-btn) {
-	color: var(--color-broken);
 }
 
 .awg-connectivity-gear {
@@ -469,14 +454,6 @@ button.tunnel-list-traffic-cell:focus-visible {
 	font-size: 0.6875rem;
 	line-height: 1.1;
 	text-align: left;
-}
-
-.tunnel-list-traffic-stack :global(svg.responsive),
-.awg-list-rate-stack :global(svg.responsive) {
-	width: 100%;
-	min-width: 0;
-	max-width: 100%;
-	flex: 1 1 auto;
 }
 
 .awg-list-mono {
@@ -746,13 +723,6 @@ button.tunnel-list-traffic-cell:focus-visible {
 	font-family: var(--font-mono);
 	text-align: left;
 	cursor: pointer;
-}
-
-.tunnel-list-traffic-cell :global(svg.responsive) {
-	width: 100%;
-	min-width: 0;
-	max-width: 100%;
-	flex: 1 1 auto;
 }
 
 .tunnel-list-traffic-cell .traffic-rate.rx {
@@ -1240,12 +1210,6 @@ button.tunnel-list-traffic-cell:focus-visible {
 	color: inherit;
 	text-align: left;
 	transition: background var(--t-fast) ease, border-color var(--t-fast) ease;
-}
-
-.charts-dense > .traffic-inline :global(svg.responsive) {
-	flex: 1 1 auto;
-	width: 100%;
-	min-width: 0;
 }
 
 .charts-dense > .traffic-inline:hover {
