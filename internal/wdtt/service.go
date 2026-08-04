@@ -170,6 +170,9 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg = normalizeClientConfig(cfg)
 	full.Clients[idx].Config = cfg
+	// Правка конфига могла устранить причину отказа (порт, пароль, peer) —
+	// не заставляем ждать окно backoff до следующей попытки супервизора.
+	s.startBackoff.Forget(clientKey(id))
 	return s.store.Save(full)
 }
 
@@ -212,6 +215,8 @@ func (s *Service) DeleteClient(id string) error {
 	}
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(clientKey(id))
+	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -256,6 +261,7 @@ func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, er
 		full.Clients[idx].Name = name
 	}
 	full.Clients[idx].Config = cfg
+	s.startBackoff.Forget(clientKey(id))
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, payload, err
 	}

@@ -47,7 +47,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		key := "client:" + c.ID
+		key := clientKey(c.ID)
 		if !c.Config.Enabled {
 			s.clientHealth.reset(c.ID)
 			s.startBackoff.Forget(key)
@@ -89,7 +89,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		key := "server:" + srv.ID
+		key := serverKey(srv.ID)
 		if !srv.Config.Enabled {
 			s.startBackoff.Forget(key)
 			continue
@@ -118,3 +118,6 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 func newStartBackoff() *proxysup.Backoff {
 	return proxysup.NewBackoff(supervisorInterval, 15*time.Minute)
 }
+
+func clientKey(id string) string { return "client:" + id }
+func serverKey(id string) string { return "server:" + id }

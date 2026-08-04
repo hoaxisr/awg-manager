@@ -43,6 +43,7 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// любое сохранение воскрешало бы удалённых и теряло добавленных.
 	cfg.Clients = full.Servers[idx].Config.Clients
 	full.Servers[idx].Config = cfg
+	s.startBackoff.Forget(serverKey(id))
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
 	savedCfg := full.Servers[idx].Config
@@ -122,6 +123,7 @@ func (s *Service) DeleteServer(id string) error {
 	inst := full.Servers[idx]
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(serverKey(id))
 	s.mu.Unlock()
 	_ = s.serverProcs.get(id).Stop()
 	kernelIface := inst.Config.kernelWGIface()

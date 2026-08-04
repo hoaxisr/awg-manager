@@ -60,11 +60,43 @@ func TestSuperviseEnabledBacksOffFailingStart(t *testing.T) {
 
 	s.superviseEnabled(context.Background())
 
-	if s.startBackoff.Allow("client:"+DefaultInstanceID, time.Now()) {
+	if s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
 		t.Fatal("после неудачного старта следующая попытка должна быть отложена")
 	}
-	if !s.startBackoff.Allow("client:"+DefaultInstanceID, time.Now().Add(supervisorInterval)) {
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now().Add(supervisorInterval)) {
 		t.Fatal("после паузы попытка снова разрешена")
+	}
+}
+
+// Пользователь чинит конфиг после серии неудачных стартов — ждать окно backoff
+// (до 15 минут) он не должен.
+func TestUpdateConfigClearsBackoff(t *testing.T) {
+	s := enabledClientService(t, "")
+	defer s.Stop()
+
+	s.superviseEnabled(context.Background())
+	if s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("после неудачного старта попытка должна быть отложена")
+	}
+
+	if err := s.UpdateClientInstance(DefaultInstanceID, validClientCfg("127.0.0.1:56000")); err != nil {
+		t.Fatal(err)
+	}
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("после правки конфига попытка должна быть разрешена сразу")
+	}
+}
+
+func TestDeleteClientForgetsBackoff(t *testing.T) {
+	s := enabledClientService(t, "")
+	defer s.Stop()
+
+	s.superviseEnabled(context.Background())
+	if err := s.DeleteClient(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("состояние удалённого инстанса не должно оставаться в памяти")
 	}
 }
 

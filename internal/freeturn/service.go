@@ -139,6 +139,9 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg.Platform = normalizePlatform(cfg.Platform)
 	full.Clients[idx].Config = cfg
+	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
+	// не заставляем ждать окно backoff до следующей попытки супервизора.
+	s.startBackoff.Forget(clientKey(id))
 	return s.store.Save(full)
 }
 
@@ -158,6 +161,7 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
 	full.Servers[idx].Config = cfg
+	s.startBackoff.Forget(serverKey(id))
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
 	s.mu.Unlock()
@@ -233,6 +237,8 @@ func (s *Service) DeleteClient(id string) error {
 	}
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(clientKey(id))
+	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -255,6 +261,7 @@ func (s *Service) DeleteServer(id string) error {
 	cfg := full.Servers[idx].Config
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(serverKey(id))
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
