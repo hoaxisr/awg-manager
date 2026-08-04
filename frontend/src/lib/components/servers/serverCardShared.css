@@ -109,29 +109,24 @@
 	flex: 0 0 auto;
 }
 
-.server-detail-card .server-settings {
-	background: var(--color-bg-tertiary);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	padding: 0 0.875rem;
-	min-width: 0;
+/* Настройки доступа — сетка 2×2 (макет servers-a-toprow). Ячейки
+   самодостаточны, порядок не значим, поэтому auto-fit: когда ячейке не хватает
+   ширины, сетка честно схлопывается в одну колонку. */
+.server-detail-card .settings-panel-body {
+	display: grid;
+	/* min(26rem, 100%) — иначе на узком экране колонка остаётся шире контейнера
+	   и панель уезжает за правый край карточки. */
+	grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));
+	gap: 0.75rem 1.5rem;
+	align-items: start;
 }
 
-.server-detail-card .server-settings .setting-row {
-	justify-content: flex-start;
-}
-
-.server-detail-card .server-settings .setting-row > * {
-	flex: initial;
-	min-width: 0;
-}
-
-.server-detail-card .server-settings .setting-row:first-child {
-	padding-top: 0.875rem;
-}
-
-.server-detail-card .server-settings .setting-row:last-child {
-	padding-bottom: 0.875rem;
+/* Глобальные правила .setting-row (app.css) рисуют вертикальный столбик с
+   разделителями — внутри сетки это мусор. Гасим локально, глобальные не трогаем. */
+.server-detail-card .settings-panel-body .setting-row,
+.server-detail-card .settings-panel-body .setting-row + .setting-row {
+	padding: 0;
+	border-top: none;
 }
 
 .server-detail-card .setting-copy {
@@ -155,6 +150,16 @@
 	width: 100%;
 	min-width: 0;
 	max-width: 280px;
+}
+
+/* В ячейке сетки (26rem ≈ 416px) фиксированные 280px оставляют подписи ~120px —
+   внутри панели настроек контрол занимает не больше половины ячейки. Тумблер
+   исключён (он и так узкий), на мобильном правило не действует: там строка и так
+   переносит контрол на свою строку, а половина ширины его расплющит. */
+@media (min-width: 641px) {
+	.server-detail-card .settings-panel-body .setting-control:not(.setting-control-toggle) {
+		max-width: min(280px, 50%);
+	}
 }
 
 .server-detail-card .setting-control :global(.dropdown),
@@ -181,37 +186,6 @@
 
 .server-detail-card .setting-row-toggle .setting-copy {
 	min-width: 0;
-}
-
-.server-detail-card .server-settings :global(.field .trigger) {
-	background: var(--color-settings-surface-bg);
-	border-color: var(--color-border);
-}
-
-.server-detail-card .server-settings :global(.field .trigger:hover:not(:disabled)) {
-	background: var(--color-bg-hover);
-}
-
-.server-detail-card .server-settings :global(.toggle-container .toggle-slider) {
-	background: var(--color-settings-surface-bg);
-}
-
-.server-detail-card .server-settings :global(.toggle-container:hover input:not(:checked) ~ .toggle-slider) {
-	background: var(--color-bg-hover);
-}
-
-@media (min-width: 641px) {
-	.server-detail-card .server-settings .setting-row:not(.setting-row-toggle) {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(12rem, 280px);
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.server-detail-card .server-settings .setting-control {
-		max-width: none;
-		justify-self: end;
-	}
 }
 
 .server-detail-card .peers-section {
@@ -283,25 +257,6 @@
 		width: 100%;
 		min-width: 0;
 		justify-content: center;
-	}
-
-	.server-detail-card .server-settings .setting-row:not(.setting-row-toggle) {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: 0.5rem;
-	}
-
-	.server-detail-card .server-settings .setting-control {
-		width: 100%;
-		max-width: none;
-		justify-self: stretch;
-	}
-
-	.server-detail-card .server-settings .setting-control-toggle {
-		width: auto;
-		justify-self: end;
-		align-self: center;
 	}
 
 	.server-detail-card .peers-header {

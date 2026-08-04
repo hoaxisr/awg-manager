@@ -398,7 +398,7 @@
 	<!-- Панель настроек доступна и перенесённым системным серверам: бэкенд
 	     (NAT/политика/endpoint/пиры) принимает их наравне со встроенным. -->
 	{#if isBuiltIn || isMarked}
-		<ServerSettingsPanel persistKey="awgm:servers:settingsCollapsed">
+		<ServerSettingsPanel>
 			<div class="setting-row setting-row-toggle">
 				<div class="setting-copy">
 					<span class="setting-title">NAT</span>
@@ -428,11 +428,11 @@
 			<div class="setting-row setting-row-toggle">
 				<div class="setting-copy">
 					<span class="setting-title">Маршрутизация через sing-box</span>
-					<span class="setting-description">
-						Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его
-						правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля.
-						Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP),
-						при остановленном sing-box они остаются без сети.
+					<span
+						class="setting-description"
+						title="Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля. Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP), при остановленном sing-box они остаются без сети."
+					>
+						Заворачивать интернет-трафик клиентов
 					</span>
 				</div>
 				<div class="setting-control setting-control-toggle">

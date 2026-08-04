@@ -381,23 +381,39 @@
 	{/if}
 
 	<!-- Settings -->
-	<ServerSettingsPanel persistKey="awgm:servers:settingsCollapsed">
+	<ServerSettingsPanel>
 		<div class="setting-row">
 			<div class="setting-copy">
 				<span class="setting-title">NAT</span>
 				{#if natMode === 'full'}
-					<span class="setting-description">
-						Клиент выходит в интернет с внешним IP {@render wanIpButton()}. В LAN виден не как отдельное устройство, а как роутер{lanRouterLabel}.
+					<span
+						class="setting-description"
+						title="Клиент выходит в интернет с внешним IP. В LAN виден не как отдельное устройство, а как роутер{lanRouterLabel}."
+					>
+						Выход в интернет с внешним IP {@render wanIpButton()}, в LAN — как роутер
 					</span>
 				{:else if natMode === 'internet-only'}
-					<span class="setting-description">
-						Клиент выходит в интернет с внешним IP {@render wanIpButton()}, в LAN виден со своим VPN-адресом ({vpnSubnetLabel}).
+					<span
+						class="setting-description"
+						title="Клиент выходит в интернет с внешним IP, в LAN виден со своим VPN-адресом ({vpnSubnetLabel})."
+					>
+						Выход в интернет с внешним IP {@render wanIpButton()}, в LAN — свой адрес
 					</span>
 				{:else}
-					<span class="setting-description">Выхода в интернет для клиента нет (без дополнительной подмены адреса), в LAN виден со своим VPN-адресом ({vpnSubnetLabel}).</span>
+					<span
+						class="setting-description"
+						title="Выхода в интернет для клиента нет (без дополнительной подмены адреса), в LAN виден со своим VPN-адресом ({vpnSubnetLabel})."
+					>
+						Выхода в интернет нет, в LAN — свой адрес ({vpnSubnetLabel})
+					</span>
 				{/if}
 				{#if ingressEnabled && natMode === 'full'}
-					<span class="setting-description setting-description-warning">NAT для интернета не действует — интернет-трафик идёт через sing-box (туннель); режим NAT влияет только на видимость в LAN</span>
+					<span
+						class="setting-description setting-description-warning"
+						title="NAT для интернета не действует — интернет-трафик идёт через sing-box (туннель); режим NAT влияет только на видимость в LAN"
+					>
+						NAT не действует: интернет идёт через sing-box
+					</span>
 				{/if}
 			</div>
 			<div class="setting-control">
@@ -425,11 +441,11 @@
 		<div class="setting-row setting-row-toggle">
 			<div class="setting-copy">
 				<span class="setting-title">Маршрутизация через sing-box</span>
-				<span class="setting-description">
-					Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его правилами;
-					в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля. Следствия в FakeIP:
-					выше нагрузка на процессор, у клиентов не работает ping (ICMP), при остановленном sing-box
-					они остаются без сети.
+				<span
+					class="setting-description"
+					title="Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля. Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP), при остановленном sing-box они остаются без сети."
+				>
+					Заворачивать интернет-трафик клиентов
 				</span>
 			</div>
 			<div class="setting-control setting-control-toggle">
