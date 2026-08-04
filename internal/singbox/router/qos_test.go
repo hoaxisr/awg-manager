@@ -1230,7 +1230,7 @@ func noopNotInstalledIPTables() *IPTables {
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 }

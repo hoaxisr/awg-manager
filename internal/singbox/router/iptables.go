@@ -380,6 +380,15 @@ type RestoreInputSpec struct {
 	// Only meaningful when the xt_set kernel module is loaded.
 	SelectiveIPSet bool
 
+	// DSCPOnly — режим policy-tun: netfilter нужен ТОЛЬКО для QoS-DSCP-классов,
+	// основной трафик идёт NDMS-политикой в tun-интерфейс sing-box. Цепочки
+	// содержат лишь bypass-RETURN'ы и dscp-диспатч: ни catch-all, ни перехвата
+	// DNS (основных tproxy/redirect-инбаундов в этом режиме нет), ни
+	// selective/ingress-MARK/DNS-RESCUE. Install в этом режиме также не
+	// оставляет blackhole (fail-closed тут не нужен — трафик и так уходит в
+	// tun, а не мимо него).
+	DSCPOnly bool
+
 	// QoSClasses lists the active DSCP QoS classes (issue #371). Each entry
 	// yields one `-m dscp --dscp N` dispatch rule per chain (mangle UDP
 	// TPROXY --on-port TProxyPort, nat TCP REDIRECT --to-ports RedirectPort)
@@ -544,6 +553,23 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 		fmt.Fprintf(&b, "-A %s -p udp --dport %s -j RETURN\n", ChainName, pr.String())
 	}
 
+	// policy-tun QoS-гибрид: DNS никогда не входит в QoS-диспатчинг (основных
+	// tproxy/redirect-инбаундов в этом режиме НЕТ — перехваченный DNS ушёл бы
+	// в никуда), catch-all отсутствует — основной трафик идёт NDMS-политикой в
+	// tun. Bypass-RETURN'ы обязательны и здесь: без них DSCP-меченный
+	// LAN-to-LAN (или трафик на WAN-IP роутера) уехал бы в sing-box.
+	if spec.DSCPOnly {
+		fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j RETURN\n", ChainName)
+		emitBypassReturns(&b, ChainName, spec.WANIPs)
+		for _, q := range spec.QoSClasses {
+			fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
+				ChainName, q.DSCP, q.TProxyPort, Fwmark)
+		}
+		emitPreroutingJump(&b, ChainName, spec)
+		b.WriteString("COMMIT\n")
+		return b.String()
+	}
+
 	// set_chain_rules: DNS first (when INTERCEPT_DNS_ENABLE=1)
 	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
@@ -626,6 +652,26 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
 
 	emitUserBypassReturns(&b, RedirectChain, spec.BypassCIDRs)
+
+	// policy-tun QoS-гибрид: зеркало mangle-ветки — только bypass и dscp.
+	// Без catch-all REDIRECT'а, без перехвата DNS и DNS-RESCUE, без правила
+	// на порт 79: REDIRECT здесь делает лишь dscp-диспатч, а трафик к веб-морде
+	// роутера DSCP-классов не несёт.
+	if spec.DSCPOnly {
+		for _, pr := range spec.BypassTCPPorts {
+			fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
+		}
+		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j RETURN\n", RedirectChain)
+		emitBypassReturns(&b, RedirectChain, spec.WANIPs)
+		for _, q := range spec.QoSClasses {
+			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
+				RedirectChain, q.DSCP, q.RedirectPort)
+		}
+		emitPreroutingJump(&b, RedirectChain, spec)
+		b.WriteString("COMMIT\n")
+		return b.String()
+	}
+
 	emitBypassReturns(&b, RedirectChain, spec.WANIPs)
 	// Bypass router admin port so we don't redirect our own UI traffic.
 	// (SKeen has equivalent dynamic admin-port discovery — same intent.)
@@ -724,7 +770,7 @@ type IPTables struct {
 	runIP            runFn
 	runIPOut         runOutFn
 	persistRules     persistRulesFn
-	persistHook      func() error
+	persistHook      func(includeBlackhole bool) error
 	cleanupHook      func()
 	persistBlackhole persistFn
 	cleanupBlackhole func()
@@ -826,9 +872,15 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 		}
 	}
 	if it.persistHook != nil {
-		if err := it.persistHook(); err != nil {
+		if err := it.persistHook(!spec.DSCPOnly); err != nil {
 			return fmt.Errorf("write netfilter hook: %w", err)
 		}
+	}
+	// policy-tun: blackhole в этом режиме не применяется — снести файл правил,
+	// оставшийся от прежнего режима, иначе хук прежней установки продолжил бы
+	// поднимать fail-closed DROP на каждой перезагрузке netfilter.
+	if spec.DSCPOnly && it.cleanupBlackhole != nil {
+		it.cleanupBlackhole()
 	}
 	if err := it.restoreNoflush(ctx, input); err != nil {
 		return fmt.Errorf("iptables-restore: %w", err)
@@ -893,8 +945,8 @@ func removeNetfilterBlackholeRulesFile() {
 	_ = os.Remove(netfilterBlackholePath)
 }
 
-func writeNetfilterHook() error {
-	if err := storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript()), 0755); err != nil {
+func writeNetfilterHook(includeBlackhole bool) error {
+	if err := storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript(includeBlackhole)), 0755); err != nil {
 		return err
 	}
 	return storage.AtomicWritePerm(netfilterCtCleanPath, []byte(ctCleanScript()), 0755)
@@ -921,7 +973,23 @@ func writeNetfilterHook() error {
 //     and the jump was wiped) so policy traffic can NEVER reach WAN while the
 //     engine is down — the old hook simply exited here, leaving a leak window
 //     until the next reconcile tick.
-func netfilterHookScript() string {
+//
+// includeBlackhole=false (режим policy-tun) убирает DEAD-ветку целиком: там
+// blackhole не применяется — трафик уходит в tun по NDMS-политике, а не мимо
+// netfilter, так что ронять его при мёртвом движке нечем и незачем.
+func netfilterHookScript(includeBlackhole bool) string {
+	deadBranch := "  exit 0\n"
+	if includeBlackhole {
+		deadBranch = fmt.Sprintf(`  # sing-box DEAD — fail-closed. Re-assert the blackhole DROP if its rules file
+  # exists and the PREROUTING jump was wiped, so policy traffic cannot leak to
+  # WAN while the engine is down.
+  [ -f %[1]q ] || exit 0
+  if ! /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[2]s($| )'; then
+    /opt/sbin/iptables-restore --noflush < %[1]q
+    logger -t awgm-tproxy "netfilter.d: re-asserted fail-closed blackhole (sing-box down)"
+  fi
+`, netfilterBlackholePath, BlackholeChain)
+	}
 	return fmt.Sprintf(`#!/bin/sh
 [ "$type" = "ip6tables" ] && exit 0
 case "$table" in mangle|nat) ;; *) exit 0 ;; esac
@@ -1002,17 +1070,9 @@ if pidof sing-box >/dev/null 2>&1; then
     [ "$mangle_ok" -eq 0 ] && [ -x %[14]q ] && %[14]q
   fi
 else
-  # sing-box DEAD — fail-closed. Re-assert the blackhole DROP if its rules file
-  # exists and the PREROUTING jump was wiped, so policy traffic cannot leak to
-  # WAN while the engine is down.
-  [ -f %[10]q ] || exit 0
-  if ! /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[11]s($| )'; then
-    /opt/sbin/iptables-restore --noflush < %[10]q
-    logger -t awgm-tproxy "netfilter.d: re-asserted fail-closed blackhole (sing-box down)"
-  fi
-fi
+%[10]sfi
 exit 0
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, netfilterBlackholePath, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath)
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath)
 }
 
 // ctCleanScript renders the poisoned-flow eviction script (issue #627). While
@@ -1126,7 +1186,12 @@ func refreshNetfilterHookIfPresent() {
 	if _, err := os.Stat(netfilterHookPath); err != nil {
 		return
 	}
-	_ = writeNetfilterHook()
+	// true: обычный (tproxy) хук с fail-closed веткой. В policy-tun это
+	// БЕЗВРЕДНО и режим не гейтится: DEAD-ветка хука первым делом проверяет
+	// наличие файла blackhole-правил, а его снимает и Install(DSCPOnly)
+	// (cleanupBlackhole), и Uninstall (RemoveBlackhole) на выходе из tproxy —
+	// без файла ветка no-op. Ближайший Install(DSCPOnly) перепишет хук без неё.
+	_ = writeNetfilterHook(true)
 }
 
 func (it *IPTables) Uninstall(ctx context.Context) error {

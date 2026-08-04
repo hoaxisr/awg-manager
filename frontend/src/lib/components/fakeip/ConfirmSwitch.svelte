@@ -40,7 +40,10 @@
 	const actingMode = $derived(to === 'off' ? from : to);
 	const title = $derived(`${to === 'off' ? 'Выключить' : 'Включить'} ${humanLabel(actingMode)}`);
 	const confirmLabel = $derived(to === 'off' ? 'Выключить' : 'Включить');
-	const enabling = $derived(to === 'fakeip-tun');
+	const enablingFakeip = $derived(to === 'fakeip-tun');
+	// Оба tun-режима поднимают один и тот же gvisor-tun — оговорка о пропускной
+	// способности относится к обоим; DoH/DoT-оговорка только к fakeip (свой резолвер).
+	const enablingTun = $derived(to === 'fakeip-tun' || to === 'policy-tun');
 	// Cross-activation: enabling X while a DIFFERENT mode Y is active displaces Y.
 	// Derivable from from/to alone — no extra prop.
 	const displacedMode = $derived(to !== 'off' && from !== 'off' && from !== to ? from : null);
@@ -64,11 +67,13 @@
 					<li>Активный режим {humanLabel(displacedMode)} будет выключен.</li>
 				{/if}
 				<li>Активные соединения{connSuffix} будут разорваны и переустановлены.</li>
-				{#if enabling}
+				{#if enablingFakeip}
 					<li>
 						Устройства с собственным DoH/DoT резолвят мимо fakeip — их трафик не
 						попадёт в туннель.
 					</li>
+				{/if}
+				{#if enablingTun}
 					<li>
 						Режим использует gvisor-стек: пропускная способность ниже TPROXY
 						(ориентир ~25 Мбит/с на типовом SoC, меньше на слабых).

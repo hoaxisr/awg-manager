@@ -125,13 +125,13 @@ func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]bool{"ok": true})
 }
 
-// SwitchMode orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun)
+// SwitchMode orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun)
 // with directional fail-closed rollback. Progress is reported out-of-band as
 // "singbox-router:transition" events on the existing events SSE stream
 // (GET /events) — no new stream endpoint.
 //
 //	@Summary		Switch singbox-router routing mode
-//	@Description	Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun): tears down the old mode then brings up the new one, with directional fail-closed rollback. Per-step progress is published as "singbox-router:transition" events on the existing GET /events SSE stream (see SingboxRouterTransitionData). Returns 400 INVALID_MODE for an unknown mode.
+//	@Description	Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun): tears down the old mode then brings up the new one, with directional fail-closed rollback. Per-step progress is published as "singbox-router:transition" events on the existing GET /events SSE stream (see SingboxRouterTransitionData). Returns 400 INVALID_MODE for an unknown mode.
 //	@Tags			singbox-router
 //	@Accept			json
 //	@Produce		json
@@ -153,10 +153,10 @@ func (h *SingboxRouterHandler) SwitchMode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	switch body.Mode {
-	case "off", "tproxy", "fakeip-tun":
+	case "off", "tproxy", "fakeip-tun", "policy-tun":
 	default:
 		response.ErrorWithStatus(w, http.StatusBadRequest,
-			"invalid routing mode (want off|tproxy|fakeip-tun)", "INVALID_MODE")
+			"invalid routing mode (want off|tproxy|fakeip-tun|policy-tun)", "INVALID_MODE")
 		return
 	}
 	mode := body.Mode
@@ -230,6 +230,33 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 	}
 	h.log.Info("settings", "", "Sing-box router settings updated")
 	response.Success(w, map[string]bool{"ok": true})
+}
+
+// PolicyTunNATPreview lists router segments with their current NAT mode.
+//
+//	@Summary		Preview policy-tun source-preserve segments
+//	@Description	Returns router segments with their current NAT mode (dynamic `ip nat` / static `ip static <seg> <wan>` / none) — the editable "what will change" preview behind the policy-tun source-preserve toggle. Port-forwarding `ip static` entries (no to-interface) and the manager's own OpkgTun interfaces are excluded.
+//	@Tags			singbox-router
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SingboxRouterNATPreviewResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/router/policy-tun/nat-preview [get]
+func (h *SingboxRouterHandler) PolicyTunNATPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	segments, err := h.svc.PolicyTunNATPreview(r.Context())
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	if segments == nil {
+		segments = []router.NATSegmentInfo{}
+	}
+	response.Success(w, map[string]any{"segments": segments})
 }
 
 // ── Staging DTOs ──────────────────────────────────────────────────

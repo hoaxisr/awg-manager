@@ -71,7 +71,7 @@ func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTab
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 }
@@ -971,7 +971,7 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
 		persistRules: func(_, _, _ string) error { return nil },
-		persistHook:  func() error { return nil },
+		persistHook:  func(bool) error { return nil },
 		cleanupHook:  func() {},
 	}
 	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
@@ -1020,7 +1020,7 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
 		persistRules: func(_, _, _ string) error { return nil },
-		persistHook:  func() error { return nil },
+		persistHook:  func(bool) error { return nil },
 		cleanupHook:  func() {},
 	}
 	svc := &ServiceImpl{
@@ -2265,5 +2265,14 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 	ftun.RoutingMode = "fakeip-tun"
 	if _, err := NormalizeSingboxRouterSettings(ftun); err != nil {
 		t.Errorf("fakeip-tun should be valid: %v", err)
+	}
+	ptun := base
+	ptun.RoutingMode = "policy-tun"
+	got, err = NormalizeSingboxRouterSettings(ptun)
+	if err != nil {
+		t.Errorf("policy-tun should be valid: %v", err)
+	}
+	if got.RoutingMode != "policy-tun" {
+		t.Errorf("policy-tun mode = %q, want policy-tun", got.RoutingMode)
 	}
 }

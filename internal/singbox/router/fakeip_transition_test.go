@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -55,6 +56,9 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")
+
+	// policy-tun deps (общий с fakeip OpkgTun/индексы + парковка дефолта).
+	svc.deps.DefaultRoute = &recDefaultRoute{log: log}
 
 	// tproxy deps.
 	wan := &fakeWANIPCollector{ips: []string{"203.0.113.1/32"}}
@@ -367,6 +371,141 @@ func TestSwitch_RollbackFakeIPToTproxy(t *testing.T) {
 	}
 	if term.Error == "" {
 		t.Fatalf("expected explicit error message in terminal event")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// policy-tun: цель перехода + rollback-матрица
+// ---------------------------------------------------------------------------
+
+func TestValidTransitionTarget_PolicyTun(t *testing.T) {
+	if !validTransitionTarget(statePolicyTun) {
+		t.Fatal("policy-tun must be a valid transition target")
+	}
+}
+
+// singboxFailFirstEnable роняет ПЕРВЫЙ Enable на ClearManualStop. Сеанс отказа
+// mode-agnostic (срабатывает в enableLocked до диспетчеризации по режиму), так
+// что цель может быть любой, а rollback-Enable источника проходит нормально.
+type singboxFailFirstEnable struct {
+	*fakeSingbox
+	failed bool
+}
+
+func (f *singboxFailFirstEnable) ClearManualStop() error {
+	if !f.failed {
+		f.failed = true
+		return errContext("enable boom")
+	}
+	return f.fakeSingbox.ClearManualStop()
+}
+
+// failNextEnable подменяет Singbox обёрткой, роняющей ближайший Enable.
+func (h *transitionHarness) failNextEnable(t *testing.T) {
+	t.Helper()
+	sb, ok := h.svc.deps.Singbox.(*fakeSingbox)
+	if !ok {
+		t.Fatalf("harness Singbox = %T want *fakeSingbox", h.svc.deps.Singbox)
+	}
+	h.svc.deps.Singbox = &singboxFailFirstEnable{fakeSingbox: sb}
+}
+
+func TestSwitch_RollbackTproxyToPolicyTun(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, stateTProxy, true)
+	h.failNextEnable(t)
+	stop := h.subscribe(t)
+
+	err := h.svc.SwitchRoutingMode(context.Background(), statePolicyTun)
+	stop()
+	if err == nil {
+		t.Fatal("expected error from failed policy-tun Enable")
+	}
+
+	// Rollback must restore tproxy (slot-20 пара).
+	mode, enabled := h.state(t)
+	if mode != stateTProxy || !enabled {
+		t.Fatalf("after rollback persisted = %q/%v want tproxy/true", mode, enabled)
+	}
+	term, ok := h.terminal()
+	if !ok || term.FinalState != stateTProxy {
+		t.Fatalf("finalState = %q want tproxy (ok=%v)", term.FinalState, ok)
+	}
+}
+
+func TestSwitch_RollbackPolicyTunToTproxy(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, statePolicyTun, true)
+	h.failNextEnable(t)
+	stop := h.subscribe(t)
+
+	err := h.svc.SwitchRoutingMode(context.Background(), stateTProxy)
+	stop()
+	if err == nil {
+		t.Fatal("expected error from failed tproxy Enable")
+	}
+
+	mode, enabled := h.state(t)
+	if mode != statePolicyTun || !enabled {
+		t.Fatalf("after rollback persisted = %q/%v want policy-tun/true", mode, enabled)
+	}
+	term, ok := h.terminal()
+	if !ok || term.FinalState != statePolicyTun {
+		t.Fatalf("finalState = %q want policy-tun (ok=%v)", term.FinalState, ok)
+	}
+}
+
+func TestSwitch_RollbackPolicyTunToFakeIP(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, statePolicyTun, true)
+	h.failNextEnable(t)
+	stop := h.subscribe(t)
+
+	err := h.svc.SwitchRoutingMode(context.Background(), stateFakeIPTun)
+	stop()
+	if err == nil {
+		t.Fatal("expected error from failed fakeip Enable")
+	}
+
+	// Ресурсы policy-tun уже освобождены teardown'ом → OFF, не восстановление.
+	_, enabled := h.state(t)
+	if enabled {
+		t.Fatalf("policy-tun→fakeip rollback must leave disabled, enabled=%v", enabled)
+	}
+	term, _ := h.terminal()
+	if term.FinalState != stateOff {
+		t.Fatalf("finalState = %q want off", term.FinalState)
+	}
+	if !strings.Contains(term.Step.Message, "after policy-tun teardown") {
+		t.Fatalf("terminal message = %q want explicit post-teardown reason", term.Step.Message)
+	}
+}
+
+func TestSwitch_RollbackFakeIPToPolicyTun(t *testing.T) {
+	h := newTransitionHarness(t)
+	h.seedState(t, stateFakeIPTun, true)
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("seed Enable(fakeip): %v", err)
+	}
+	h.failNextEnable(t)
+	stop := h.subscribe(t)
+
+	err := h.svc.SwitchRoutingMode(context.Background(), statePolicyTun)
+	stop()
+	if err == nil {
+		t.Fatal("expected error from failed policy-tun Enable")
+	}
+
+	_, enabled := h.state(t)
+	if enabled {
+		t.Fatalf("fakeip→policy-tun rollback must leave disabled, enabled=%v", enabled)
+	}
+	term, _ := h.terminal()
+	if term.FinalState != stateOff {
+		t.Fatalf("finalState = %q want off", term.FinalState)
+	}
+	if !strings.Contains(term.Step.Message, "after fakeip-tun teardown") {
+		t.Fatalf("terminal message = %q want explicit post-teardown reason", term.Step.Message)
 	}
 }
 

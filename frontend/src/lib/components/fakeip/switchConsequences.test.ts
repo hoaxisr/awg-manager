@@ -6,6 +6,7 @@ describe('humanLabel', () => {
 		expect(humanLabel('off')).toBe('Выключен');
 		expect(humanLabel('tproxy')).toBe('TPROXY');
 		expect(humanLabel('fakeip-tun')).toBe('FakeIP');
+		expect(humanLabel('policy-tun')).toBe('Политики + tun');
 	});
 });
 
@@ -57,5 +58,24 @@ describe('switchConsequences', () => {
 		const joined = switchConsequences('tproxy', 'fakeip-tun').join(' ');
 		expect(joined).toContain('TPROXY');
 		expect(joined).toContain('OpkgTun');
+	});
+	it('off→policy-tun lists the interface + policy binding, no fakeip DNS', () => {
+		const items = switchConsequences('off', 'policy-tun');
+		const joined = items.join(' ');
+		expect(joined).toContain('OpkgTun');
+		expect(joined).toContain('политик');
+		expect(joined).not.toContain('fakeip');
+		// приходим из off — чужого teardown быть не должно
+		expect(joined).not.toContain('Снятие');
+	});
+	it('tproxy→policy-tun keeps the shared routing rules and tears TPROXY down', () => {
+		const joined = switchConsequences('tproxy', 'policy-tun').join(' ');
+		expect(joined).toContain('TPROXY-цепочек');
+		expect(joined).toContain('outbounds сохраняются');
+	});
+	it('policy-tun→off restores segment NAT and removes the interface', () => {
+		const joined = switchConsequences('policy-tun', 'off').join(' ');
+		expect(joined).toContain('OpkgTun удалён');
+		expect(joined).toContain('NAT сегментов восстановлен');
 	});
 });

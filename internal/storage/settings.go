@@ -539,6 +539,19 @@ func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetPolicyTunState atomically persists the policy-tun operational state under
+// the store lock (single-writer pattern; the lifecycle is the only writer). Pass
+// nil to clear (mode left/teardown). Mirrors SetFakeIPState.
+func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.PolicyTun = st
+	return s.saveUnlocked(s.settings)
+}
+
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
 // writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.

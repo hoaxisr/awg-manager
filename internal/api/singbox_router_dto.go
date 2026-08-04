@@ -39,7 +39,17 @@ type SingboxRouterStatusData struct {
 	FakeIPIface            string `json:"fakeipIface,omitempty" example:"opkgtun0"`
 	FakeIPDns              string `json:"fakeipDns,omitempty" example:"172.18.0.2"`
 	FakeIPTunAddr          string `json:"fakeipTunAddr,omitempty" example:"172.18.0.1"`
-	LastError              string `json:"lastError,omitempty" example:"engine start failed"`
+	// PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+	// интерфейса. Заполнены при Enabled+Provisioned (ДО того как режим стал
+	// active): по NDMS-имени пользователь разрешает интерфейс в политике
+	// доступа. Пусто вне policy-tun и при выключенном движке.
+	PolicyTunIface    string `json:"policyTunIface,omitempty" example:"opkgtun0"`
+	PolicyTunNDMSName string `json:"policyTunNdmsName,omitempty" example:"OpkgTun0"`
+	// PolicyTunSourcePreserve — применённый режим NAT сегментов (static-NAT
+	// вместо маскарада). Указатель: отсутствует = «неприменимо» (не policy-tun
+	// или движок выключен), false = «применимо и выключено».
+	PolicyTunSourcePreserve *bool  `json:"policyTunSourcePreserve,omitempty" example:"true"`
+	LastError               string `json:"lastError,omitempty" example:"engine start failed"`
 	// CrashCount — падения sing-box за последние 10 минут (issue #456).
 	CrashCount int `json:"crashCount,omitempty" example:"2"`
 	// LastCrashReason — причина последнего падения в окне (например, OOM-kill).
@@ -61,7 +71,7 @@ type SingboxRouterSettingsData struct {
 	Enabled        bool   `json:"enabled" example:"true"`
 	PolicyName     string `json:"policyName" example:"awgm-router"`
 	DeviceMode     string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
-	RoutingMode    string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun"`
+	RoutingMode    string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun,policy-tun"`
 	SnifferEnabled bool   `json:"snifferEnabled" example:"true"`
 	// WANAutoDetect / WANInterface form a two-field discriminator:
 	//   true  + ""    → sing-box auto_detect_interface
@@ -108,9 +118,18 @@ type SingboxRouterSettingsData struct {
 	// QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
 	// outbounds. At most 8 classes; DSCP must be 0-63 and unique across
 	// classes; outbound is required; name is limited to 32 characters.
-	// Only effective when routingMode is "tproxy" and xt_dscp is available
-	// (see status.xtDscpAvailable). Empty = feature off.
+	// Only effective when routingMode is "tproxy" or "policy-tun" (DSCP-only
+	// hybrid) and xt_dscp is available (see status.xtDscpAvailable).
+	// Empty = feature off.
 	QoSClasses []SingboxRouterQoSClassDTO `json:"qosClasses,omitempty"`
+	// PolicyTunSourcePreserve переводит выбранные сегменты на static-NAT в WAN,
+	// чтобы sing-box видел реальные адреса клиентов, а не маскарад в tun.
+	// Требует непустого policyTunNatSegments (иначе 400).
+	PolicyTunSourcePreserve bool `json:"policyTunSourcePreserve,omitempty" example:"true"`
+	// PolicyTunNATSegments — выбранные пользователем сегменты для
+	// source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
+	// Обнуляется бэкендом при policyTunSourcePreserve=false.
+	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty" example:"Home"`
 }
 
 // SingboxRouterQoSClassDTO mirrors storage.SingboxQoSClass — one DSCP-based
@@ -283,6 +302,27 @@ type SingboxRouterWANInterfacesListResponse struct {
 	Data    []SingboxRouterWANInterfaceDTO `json:"data"`
 }
 
+// SingboxRouterNATSegmentDTO mirrors router.NATSegmentInfo — один сегмент
+// роутера с текущим режимом NAT. staticWan заполнен только для mode=static.
+type SingboxRouterNATSegmentDTO struct {
+	Name      string `json:"name" example:"Home"`
+	Mode      string `json:"mode" example:"dynamic" enums:"dynamic,static,none"`
+	StaticWAN string `json:"staticWan,omitempty" example:"PPPoE0"`
+}
+
+// SingboxRouterNATPreviewData is the payload of
+// GET /singbox/router/policy-tun/nat-preview.
+type SingboxRouterNATPreviewData struct {
+	Segments []SingboxRouterNATSegmentDTO `json:"segments"`
+}
+
+// SingboxRouterNATPreviewResponse is the envelope for
+// GET /singbox/router/policy-tun/nat-preview.
+type SingboxRouterNATPreviewResponse struct {
+	Success bool                        `json:"success" example:"true"`
+	Data    SingboxRouterNATPreviewData `json:"data"`
+}
+
 // SingboxRouterPolicyDeviceDTO mirrors router.PolicyDevice.
 type SingboxRouterPolicyDeviceDTO struct {
 	MAC   string `json:"mac" example:"aa:bb:cc:dd:ee:ff"`
@@ -299,7 +339,7 @@ type SingboxRouterPolicyDevicesListResponse struct {
 
 // SingboxRouterModeRequest is the body for POST /singbox/router/mode.
 type SingboxRouterModeRequest struct {
-	Mode string `json:"mode" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+	Mode string `json:"mode" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun,policy-tun"`
 }
 
 // SingboxRouterTransitionStepDTO mirrors router.TransitionStep — one milestone
@@ -315,11 +355,11 @@ type SingboxRouterTransitionStepDTO struct {
 // SSE stream during a POST /singbox/router/mode switch (the UI progress screen).
 type SingboxRouterTransitionData struct {
 	TransitionID string                         `json:"transitionId" example:"switch-7"`
-	From         string                         `json:"from" example:"tproxy" enums:"off,tproxy,fakeip-tun"`
-	To           string                         `json:"to" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+	From         string                         `json:"from" example:"tproxy" enums:"off,tproxy,fakeip-tun,policy-tun"`
+	To           string                         `json:"to" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun,policy-tun"`
 	Step         SingboxRouterTransitionStepDTO `json:"step"`
 	Done         bool                           `json:"done,omitempty" example:"true"`
-	FinalState   string                         `json:"finalState,omitempty" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun"`
+	FinalState   string                         `json:"finalState,omitempty" example:"fakeip-tun" enums:"off,tproxy,fakeip-tun,policy-tun"`
 	Error        string                         `json:"error,omitempty" example:""`
 }
 

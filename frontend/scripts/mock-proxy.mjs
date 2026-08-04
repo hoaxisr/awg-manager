@@ -2003,6 +2003,10 @@ function moveMockRejectedToInfo(sub, memberTag) {
 // ── Wizard mock state ──────────────────────────────────────────
 let mockEngineRunning = false;
 let mockSBPolicyExists = false;
+// Применённый (а не желаемый) source-preserve policy-tun: бэкенд ставит
+// static-NAT при поднятии режима, поэтому включение вживую расходится с
+// настройками до перезапуска режима.
+let mockPolicyTunSourcePreserveApplied = false;
 
 // Sing-box router settings state. Defaults mirror what
 // storage.defaultSettings() produces on a fresh install — WANAutoDetect=true
@@ -5720,6 +5724,25 @@ const server = http.createServer(async (req, res) => {
 					});
 					return;
 				}
+				// Mirror backend ValidateSingboxRouterSettings: включённый
+				// source-preserve без сегментов — опция, которая ничего не делает;
+				// выключенный чистит протухший выбор.
+				if (payload.policyTunSourcePreserve && (payload.policyTunNatSegments ?? []).length === 0) {
+					send(res, 400, {
+						success: false,
+						error: {
+							code: 'INVALID_REQUEST',
+							message: 'policyTunSourcePreserve=true requires a non-empty policyTunNatSegments list',
+						},
+					});
+					return;
+				}
+				if (payload.policyTunSourcePreserve === false) {
+					payload.policyTunNatSegments = [];
+					// Снятие вживую бэкенд применяет на ближайшем тике (сегментам
+					// возвращается исходный NAT), включение — только перезапуском режима.
+					mockPolicyTunSourcePreserveApplied = false;
+				}
 				mockSBSettings = { ...mockSBSettings, ...payload };
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
@@ -6183,8 +6206,8 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === 'POST' && path === '/singbox/router/mode') {
 		const payload = await readJsonBody(req);
 		const to = payload && payload.mode;
-		if (to !== 'off' && to !== 'tproxy' && to !== 'fakeip-tun') {
-			send(res, 400, { success: false, error: 'invalid routing mode (want off|tproxy|fakeip-tun)', code: 'INVALID_MODE' });
+		if (to !== 'off' && to !== 'tproxy' && to !== 'fakeip-tun' && to !== 'policy-tun') {
+			send(res, 400, { success: false, error: 'invalid routing mode (want off|tproxy|fakeip-tun|policy-tun)', code: 'INVALID_MODE' });
 			return;
 		}
 		const from = mockEngineRunning ? (mockSBSettings.routingMode || 'tproxy') : 'off';
@@ -6197,6 +6220,10 @@ const server = http.createServer(async (req, res) => {
 		});
 		mockEngineRunning = to !== 'off';
 		mockSBSettings = { ...mockSBSettings, routingMode: to === 'off' ? mockSBSettings.routingMode : to, enabled: to !== 'off' };
+		// source-preserve применяется при поднятии режима (вживую бэкенд его
+		// только снимает) — фиксируем применённое значение здесь.
+		mockPolicyTunSourcePreserveApplied =
+			to === 'policy-tun' ? !!mockSBSettings.policyTunSourcePreserve : false;
 		send(res, 200, { success: true, data: { ok: true } });
 		return;
 	}
@@ -6209,9 +6236,10 @@ const server = http.createServer(async (req, res) => {
 				enabled: mockEngineRunning,
 				installed: true,
 				running: mockEngineRunning,
-				// Interception path live (chains + PREROUTING jumps). Only meaningful
-				// in tproxy mode; fakeip-tun drives its own badge via routingMode.
-				active: mockEngineRunning && routingMode === 'tproxy',
+				// Interception path live (chains + PREROUTING jumps) in tproxy; в
+				// policy-tun бэкенд считает active по running-config NDMS. fakeip-tun
+				// drives its own badge via routingMode.
+				active: mockEngineRunning && (routingMode === 'tproxy' || routingMode === 'policy-tun'),
 				version: '1.13.11',
 				configValid: true,
 				netfilterAvailable: true,
@@ -6224,6 +6252,41 @@ const server = http.createServer(async (req, res) => {
 				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to
 				// false here to demo the SegmentsDelivery «доставка DNS придержана» banner.
 				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
+				// policy-tun: интерфейс режима + применённый source-preserve
+				// (указатель на бэкенде: absent = «неприменимо»). Замечание
+				// policy-tun-unbound держим, пока интерфейс не разрешён в политике —
+				// в моке всегда, чтобы вид с warning был доступен.
+				...(routingMode === 'policy-tun'
+					? {
+							policyTunIface: 'opkgtun0',
+							policyTunNdmsName: 'OpkgTun0',
+							policyTunSourcePreserve: mockPolicyTunSourcePreserveApplied,
+							issues: [
+								{
+									severity: 'warning',
+									kind: 'policy-tun-unbound',
+									message:
+										'Интерфейс OpkgTun0 не разрешён ни в одной политике доступа — трафик устройств в туннель не заходит',
+								},
+							],
+						}
+					: {}),
+			},
+		});
+		return;
+	}
+
+	// GET /singbox/router/policy-tun/nat-preview — сегменты роутера с текущим
+	// режимом NAT (предпоказ за тумблером source-preserve).
+	if (req.method === 'GET' && path === '/singbox/router/policy-tun/nat-preview') {
+		send(res, 200, {
+			success: true,
+			data: {
+				segments: [
+					{ name: 'Home', mode: 'dynamic' },
+					{ name: 'Guest', mode: 'static', staticWan: 'PPPoE0' },
+					{ name: 'IoT', mode: 'none' },
+				],
 			},
 		});
 		return;

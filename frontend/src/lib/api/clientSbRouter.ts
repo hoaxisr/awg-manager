@@ -1,5 +1,6 @@
 import type {
 	CatalogPreset,
+	PolicyTunNATSegmentInfo,
 	RouterPolicy,
 	RouterStagingStatusResponse,
 	SelectiveStatus,
@@ -41,8 +42,16 @@ export class SbRouterClient extends SingboxClient {
 		return this.request('/singbox/router/status');
 	}
 
-	async singboxRouterSwitchMode(mode: 'off' | 'tproxy' | 'fakeip-tun'): Promise<void> {
+	async singboxRouterSwitchMode(mode: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun'): Promise<void> {
 		await this.request('/singbox/router/mode', { method: 'POST', body: JSON.stringify({ mode }) });
+	}
+
+	/**
+	 * Сегменты роутера с текущим режимом NAT — предпоказ «что изменится» за
+	 * тумблером source-preserve в policy-tun.
+	 */
+	async getPolicyTunNATPreview(): Promise<{ segments: PolicyTunNATSegmentInfo[] }> {
+		return this.request('/singbox/router/policy-tun/nat-preview');
 	}
 
 	async singboxRouterGetSettings(): Promise<SingboxRouterSettings> {
