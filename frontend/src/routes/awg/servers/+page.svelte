@@ -14,11 +14,11 @@
 		ServerCard,
 		ManagedServerCard,
 		CreateManagedServerModal,
-		ServerRail,
+		ServerStrip,
 		ManagedServerBackupToolbar,
 		ManagedServerDriftBanner,
 		ServersPageSkeleton,
-		type RailItem,
+		type ServerItem,
 	} from '$lib/components/servers';
 	import { dedupBy } from '$lib/utils/dedupBy';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
@@ -131,8 +131,8 @@
 		return MANAGED_PREFIX + iface;
 	}
 
-	let railItems = $derived.by<RailItem[]>(() => {
-		const items: RailItem[] = [];
+	let railItems = $derived.by<ServerItem[]>(() => {
+		const items: ServerItem[] = [];
 		for (const m of managedServers) {
 			const stats = managedStatsMap[m.interfaceName] ?? null;
 			const mPeers = m.peers ?? [];
@@ -290,25 +290,24 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<div class="layout">
-			<ServerRail
-				items={railItems}
-				activeId={activeId}
-				onSelect={setActiveId}
-				onCreate={openCreate}
-			/>
-			<main class="detail">
-				{#if activeItem?.kind === 'managed' && activeManaged}
-					<ManagedServerCard
-						server={activeManaged}
-						stats={activeManagedStats}
-						{routerIP}
-						onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
-						ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`)}
-						onToggleIngress={handleToggleManagedIngress}
-						{lanSegmentOptions}
-					/>
-				{:else if activeItem?.kind === 'system' && activeServer}
+		<ServerStrip
+			items={railItems}
+			activeId={activeId}
+			onSelect={setActiveId}
+			onCreate={openCreate}
+		/>
+		<main class="detail">
+			{#if activeItem?.kind === 'managed' && activeManaged}
+				<ManagedServerCard
+					server={activeManaged}
+					stats={activeManagedStats}
+					{routerIP}
+					onOpenASC={() => openManagedASC(activeManaged!.interfaceName)}
+					ingressEnabled={ingressRefs.includes(`managed:${activeManaged.interfaceName}`)}
+					onToggleIngress={handleToggleManagedIngress}
+					{lanSegmentOptions}
+				/>
+			{:else if activeItem?.kind === 'system' && activeServer}
 				<ServerCard
 					server={activeServer}
 					isMarked={isMarkedSystemServer(activeServer)}
@@ -316,9 +315,8 @@
 					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`)}
 					onToggleIngress={handleToggleSystemIngress}
 				/>
-				{/if}
-			</main>
-		</div>
+			{/if}
+		</main>
 	{/if}
 
 	<CreateManagedServerModal
@@ -330,24 +328,7 @@
 </PageContainer>
 
 <style>
-	.layout {
-		display: flex;
-		gap: 1rem;
-		align-items: flex-start;
-	}
-
 	.detail {
-		flex: 1;
 		min-width: 0;
-	}
-
-	@media (max-width: 768px) {
-		.layout {
-			flex-direction: column;
-			gap: 0.75rem;
-		}
-		.detail {
-			width: 100%;
-		}
 	}
 </style>

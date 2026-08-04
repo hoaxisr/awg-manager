@@ -1,7 +1,7 @@
 <script lang="ts">
-	// Скелет страницы «Серверы»: рейл + detail-карточка. Каркас .layout
-	// продублирован из routes/awg/servers/+page.svelte (scoped-стили страницы
-	// из компонента недостижимы) — включая мобильный брейкпоинт 768px.
+	// Скелет страницы «Серверы»: полоса-селектор сверху + detail-карточка.
+	// Геометрия продублирована из ServerStrip и страницы (scoped-стили из
+	// компонента недостижимы): плашка 240px × 56px, зазор 0.625rem.
 	interface Props {
 		count?: number;
 	}
@@ -9,84 +9,65 @@
 </script>
 
 <div class="layout" aria-hidden="true">
-	<!-- Мобильный (<768px) реальный рейл прячется за компакт-селектором — зеркалим -->
-	<div class="skeleton mobile-bar"></div>
-	<aside class="rail">
-		<div class="skeleton" style="height: 0.875rem; width: 60%; margin-bottom: 12px;"></div>
+	<div class="strip">
 		{#each Array.from({ length: count }) as _, i (i)}
-			<div class="rail-item">
+			<div class="strip-item">
 				<span class="skeleton-circle dot"></span>
-				<span class="skeleton" style="height: 0.75rem; width: 70%"></span>
+				<span class="skeleton" style="height: 0.75rem; width: 60%"></span>
 			</div>
 		{/each}
-	</aside>
-	<main class="detail">
-		<div class="card">
-			<div class="skeleton" style="height: 1.125rem; width: 40%"></div>
-			<div class="skeleton" style="height: 0.75rem; width: 65%"></div>
-			<div class="skeleton" style="height: 0.75rem; width: 55%"></div>
-			<div class="skeleton" style="height: 8rem; width: 100%; margin-top: 8px;"></div>
-		</div>
-	</main>
+	</div>
+	<div class="card">
+		<div class="skeleton" style="height: 1.125rem; width: 40%"></div>
+		<div class="skeleton" style="height: 0.75rem; width: 65%"></div>
+		<div class="skeleton" style="height: 0.75rem; width: 55%"></div>
+		<div class="skeleton" style="height: 8rem; width: 100%; margin-top: 8px;"></div>
+	</div>
 </div>
 
 <style>
 	.layout {
 		display: flex;
-		gap: 1rem;
-		align-items: flex-start;
-	}
-	.rail {
-		/* Геометрия реального ServerRail: 240px + карточный chrome (ревью T4) */
-		width: 240px;
-		flex: none;
-		display: flex;
 		flex-direction: column;
-		gap: 10px;
-		padding: 8px;
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: var(--color-bg-secondary);
+		gap: 1rem;
 	}
-	.mobile-bar {
-		display: none;
-		height: 2.5rem;
-		width: 100%;
+
+	.strip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.625rem;
 	}
-	.rail-item {
+
+	.strip-item {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 0.75rem;
+		box-sizing: border-box;
+		width: 240px;
+		height: 56px;
+		padding: 0.625rem 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		background: var(--color-bg-secondary);
 	}
+
 	.dot {
-		width: 10px;
-		height: 10px;
+		width: 8px;
+		height: 8px;
 		flex: none;
 	}
-	.detail {
-		flex: 1;
-		min-width: 0;
-	}
+
 	.card {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius);
 		padding: 16px;
 	}
-	@media (max-width: 768px) {
-		.layout {
-			flex-direction: column;
-			gap: 0.75rem;
-		}
-		.rail {
-			display: none;
-		}
-		.mobile-bar {
-			display: block;
-		}
-		.detail {
+
+	@media (max-width: 640px) {
+		.strip-item {
 			width: 100%;
 		}
 	}
