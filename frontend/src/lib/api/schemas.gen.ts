@@ -1543,6 +1543,21 @@ const api_SingboxRouterIssueDTO: v.GenericSchema = v.looseObject({
 	tag: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxRouterNATPreviewData: v.GenericSchema = v.looseObject({
+	segments: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterNATSegmentDTO)))),
+});
+
+const api_SingboxRouterNATPreviewResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxRouterNATPreviewData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SingboxRouterNATSegmentDTO: v.GenericSchema = v.looseObject({
+	mode: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	staticWan: v.optional(v.nullable(v.string())),
+});
+
 const api_SingboxRouterOutboundDTO: v.GenericSchema = v.looseObject({
 	bind_interface: v.optional(v.nullable(v.string())),
 	default: v.optional(v.nullable(v.string())),
@@ -1674,6 +1689,8 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	fakeipStack: v.optional(v.nullable(v.string())),
 	ingressInterfaces: v.optional(v.nullable(v.array(v.string()))),
 	policyName: v.optional(v.nullable(v.string())),
+	policyTunNatSegments: v.optional(v.nullable(v.array(v.string()))),
+	policyTunSourcePreserve: v.optional(v.nullable(v.boolean())),
 	qosClasses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterQoSClassDTO)))),
 	routingMode: v.optional(v.nullable(v.string())),
 	snifferEnabled: v.optional(v.nullable(v.boolean())),
@@ -1708,6 +1725,9 @@ const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	policyExists: v.optional(v.nullable(v.boolean())),
 	policyMark: v.optional(v.nullable(v.string())),
 	policyName: v.optional(v.nullable(v.string())),
+	policyTunIface: v.optional(v.nullable(v.string())),
+	policyTunNdmsName: v.optional(v.nullable(v.string())),
+	policyTunSourcePreserve: v.optional(v.nullable(v.boolean())),
 	restartSuppressedUntil: v.optional(v.nullable(v.string())),
 	ruleCount: v.optional(v.nullable(v.number())),
 	ruleSetCount: v.optional(v.nullable(v.number())),
@@ -2821,6 +2841,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/outbounds/list": v.lazy(() => api_SingboxRouterOutboundsListResponse),
 	"GET /singbox/router/policies": v.lazy(() => api_SingboxRouterPoliciesListResponse),
 	"GET /singbox/router/policy-devices": v.lazy(() => api_SingboxRouterPolicyDevicesListResponse),
+	"GET /singbox/router/policy-tun/nat-preview": v.lazy(() => api_SingboxRouterNATPreviewResponse),
 	"GET /singbox/router/presets/list": v.lazy(() => api_SingboxRouterPresetsListResponse),
 	"GET /singbox/router/proxies/list": v.intersect([v.lazy(() => api_OkResponse), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxProxiesListResponse))),
