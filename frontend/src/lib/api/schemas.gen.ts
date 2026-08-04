@@ -2563,6 +2563,7 @@ const presets_SingboxEngine: v.GenericSchema = v.looseObject({
 
 const wdtt_ClientConfig: v.GenericSchema = v.looseObject({
 	captchaMode: v.optional(v.nullable(v.string())),
+	connMode: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	deviceId: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
@@ -2590,6 +2591,7 @@ const wdtt_Config: v.GenericSchema = v.looseObject({
 });
 
 const wdtt_ImportPayload: v.GenericSchema = v.looseObject({
+	connMode: v.optional(v.nullable(v.string())),
 	deviceId: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
@@ -2649,6 +2651,7 @@ const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	openFirewall: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	policy: v.optional(v.nullable(v.string())),
+	relayMode: v.optional(v.nullable(v.string())),
 	wgIface: v.optional(v.nullable(v.string())),
 	wgPort: v.optional(v.nullable(v.number())),
 });
@@ -2764,6 +2767,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /proxy/instance/runtime": v.lazy(() => api_ProxyRuntimeResponse),
 	"GET /proxy/instances": v.lazy(() => api_ProxyInstancesResponse),
 	"GET /proxy/listen-choices": v.lazy(() => api_ProxyListenChoicesResponse),
+	"GET /proxy/listener": v.lazy(() => api_APIEnvelope),
 	"GET /proxy/outbounds": v.lazy(() => api_ProxyOutboundsResponse),
 	"GET /proxy/runtime": v.lazy(() => api_ProxyRuntimeResponse),
 	"GET /routing/access-policies": v.lazy(() => api_AccessPoliciesListResponse),
@@ -2952,6 +2956,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxy/apply": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/instance/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
 	"POST /proxy/instances/apply": v.lazy(() => api_APIEnvelope),
+	"POST /proxy/kill-listener": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
 	"POST /routing/refresh": v.lazy(() => api_RoutingRefreshResponse),
 	"POST /server/listen/change": v.lazy(() => api_ServerListenChangeResponse),

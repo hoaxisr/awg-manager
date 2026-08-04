@@ -16,6 +16,18 @@ type ProxyListenerHandler struct{}
 func NewProxyListenerHandler() *ProxyListenerHandler { return &ProxyListenerHandler{} }
 
 // GetListener handles GET /api/proxy/listener?host=127.0.0.1&port=9000&proto=udp
+//
+//	@Summary		Lookup local proxy listen port
+//	@Tags			device-proxy
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			host	query		string	false	"Bind address (default 127.0.0.1)"
+//	@Param			port	query		int		true	"Listen port"
+//	@Param			proto	query		string	false	"tcp or udp (default udp)"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/proxy/listener [get]
 func (h *ProxyListenerHandler) GetListener(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -46,6 +58,17 @@ type killListenerRequest struct {
 }
 
 // KillListener handles POST /api/proxy/kill-listener
+//
+//	@Summary		Kill process bound to local proxy listen port
+//	@Tags			device-proxy
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		killListenerRequest	true	"Host, port, proto"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/proxy/kill-listener [post]
 func (h *ProxyListenerHandler) KillListener(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

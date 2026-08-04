@@ -6464,6 +6464,15 @@ definitions:
         example: 524288
         type: integer
     type: object
+  api.killListenerRequest:
+    properties:
+      host:
+        type: string
+      port:
+        type: integer
+      proto:
+        type: string
+    type: object
   api.serverEnabledRequest:
     properties:
       enabled:
@@ -7000,6 +7009,10 @@ definitions:
       captchaMode:
         description: '-captcha-mode: auto|rjs|wv (router default rjs)'
         type: string
+      connMode:
+        description: ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее;
+          нужен raw-сервер).
+        type: string
       debug:
         type: boolean
       deviceId:
@@ -7073,6 +7086,8 @@ definitions:
     type: object
   wdtt.ImportPayload:
     properties:
+      connMode:
+        type: string
       deviceId:
         type: string
       listen:
@@ -7204,6 +7219,10 @@ definitions:
         type: string
       policy:
         description: NDMS hotspot policy or "none"
+        type: string
+      relayMode:
+        description: RelayMode — wg (WireGuard relay, совместимость) или raw (без
+          WG на сервере; нужен редеплой).
         type: string
       wgIface:
         description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
@@ -11117,6 +11136,37 @@ paths:
       summary: Apply all device proxy instances
       tags:
       - device-proxy
+  /proxy/kill-listener:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Host, port, proto
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.killListenerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Kill process bound to local proxy listen port
+      tags:
+      - device-proxy
   /proxy/listen-choices:
     get:
       produces:
@@ -11137,6 +11187,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Device proxy listen choices
+      tags:
+      - device-proxy
+  /proxy/listener:
+    get:
+      parameters:
+      - description: Bind address (default 127.0.0.1)
+        in: query
+        name: host
+        type: string
+      - description: Listen port
+        in: query
+        name: port
+        required: true
+        type: integer
+      - description: tcp or udp (default udp)
+        in: query
+        name: proto
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Lookup local proxy listen port
       tags:
       - device-proxy
   /proxy/outbounds:
