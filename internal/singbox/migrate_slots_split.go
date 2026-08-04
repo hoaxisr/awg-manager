@@ -128,26 +128,47 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 	// поверх данных fakeip нельзя. Такой черновик отбрасывается (копия — в
 	// резерве) с отдельной строкой в журнал: пользователь видел баннер «есть
 	// несохранённые изменения» и должен узнать, куда они делись.
-	var draftShared []byte
-	if chosenName != "" {
-		if src := filepath.Join(pendingDir, chosenName); regularFileExists(src) {
-			split, err := splitLegacySlotFile(src, activeMode, true)
-			if err != nil {
-				// Битый черновик не повод бросать миграцию применённого
-				// конфига: он всё равно уедет в резерв целиком.
-				logf(fmt.Sprintf("черновик %s не разобран (%v) — отброшен, копия остаётся в резерве", chosenName, err))
-			} else {
-				draftShared = split.Shared
-			}
+	//
+	// Применённого файла может не быть вовсе, а черновик — быть: staging
+	// работает и при выключенном движке, слот тогда припаркован и на диске его
+	// нет (см. router/service.go, «router disabled, first Enable»). Такой
+	// черновик выбирается по тому же приоритету, что и применённый файл.
+	draftNames := []string{chosenName}
+	if chosenName == "" {
+		draftNames = []string{srcName}
+		if !migrationDone {
+			draftNames = append(draftNames, otherName)
 		}
 	}
-	for _, name := range legacyNames {
-		if name == chosenName {
+	var draftShared []byte
+	draftUsed := ""
+	for _, name := range draftNames {
+		src := filepath.Join(pendingDir, name)
+		if !regularFileExists(src) {
 			continue
 		}
-		if regularFileExists(filepath.Join(pendingDir, name)) {
-			logf(fmt.Sprintf(
-				"несохранённый черновик pending/%s отброшен: он принадлежит другому режиму, чем применённая конфигурация; копия остаётся в резерве", name))
+		split, err := splitLegacySlotFile(src, activeMode, true)
+		if err != nil {
+			// Битый черновик не повод бросать миграцию применённого конфига:
+			// он всё равно уедет в резерв целиком.
+			logf(fmt.Sprintf("черновик %s не разобран (%v) — отброшен, копия остаётся в резерве", name, err))
+			continue
+		}
+		draftShared, draftUsed = split.Shared, name
+		break
+	}
+	// Черновик ДРУГОГО слота отбрасывается — но сказать об этом можно только
+	// когда есть с чем сравнивать: без выбранного слота сообщение про «другой
+	// режим» было бы ложным.
+	if ref := firstNonEmpty(chosenName, draftUsed); ref != "" {
+		for _, name := range legacyNames {
+			if name == ref {
+				continue
+			}
+			if regularFileExists(filepath.Join(pendingDir, name)) {
+				logf(fmt.Sprintf(
+					"несохранённый черновик pending/%s отброшен: он принадлежит другому режиму, чем перенесённая конфигурация; копия остаётся в резерве", name))
+			}
 		}
 	}
 
@@ -199,9 +220,12 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 	}
 
 	// --- Фаза 3: УБОРКА. Выполняется ВСЕГДА, кроме одного случая: запись
-	// сорвалась, не создав ни одного файла новой раскладки. Только тогда на
-	// диске осталась нетронутая прежняя раскладка, и убирать её нельзя —
-	// движок продолжит работать на ней до следующей загрузки.
+	// сорвалась, не тронув НИ ОДНОГО файла новой раскладки — ни записью, ни
+	// уводом в резерв (см. writeMigratedSlot: увод уже сделал прежнюю раскладку
+	// несамодостаточной, и тогда уборка обязательна). Только при полностью
+	// нетронутой новой раскладке на диске осталась работоспособная прежняя, и
+	// убирать её нельзя — движок продолжит работать на ней до следующей
+	// загрузки, а следующий прогон миграции повторит попытку.
 	//
 	// Всё, что осталось от прежней раскладки (разобранный исходный слот, слот
 	// неактивного режима, дубль из disabled/, черновики), уходит в резерв под
@@ -271,25 +295,43 @@ func splitLegacySlotFile(path string, activeMode string, sharedOnly bool) (route
 // случаях истина — файл прежней раскладки (он новее), но затирать чужие данные
 // молча нельзя.
 //
-// Первым значением возвращает «файл новой раскладки записан»: по нему
-// вызывающий решает, можно ли убирать прежнюю раскладку. Байт-равное
-// содержимое записью не считается — файл и так уже на месте, но и уборке это
-// не мешает, поэтому возвращается true.
-func writeMigratedSlot(path string, data []byte, disabledDir string) (bool, error) {
-	if existing, err := os.ReadFile(path); err == nil {
+// Первым значением возвращает «новая раскладка тронута»: файл записан ЛИБО
+// лежавший под этим именем файл уже уведён в резерв. Второе — не педантизм:
+// после увода прежняя раскладка перестала быть самодостаточной (актуального
+// общего слота на месте больше нет), и сорвавшаяся следом запись обязана
+// оставить вызывающему повод доубрать старые файлы, иначе рядом остаются обе
+// раскладки и sing-box не поднимается.
+func writeMigratedSlot(path string, data []byte, disabledDir string) (touched bool, err error) {
+	if existing, readErr := os.ReadFile(path); readErr == nil {
 		if bytes.Equal(existing, data) {
 			return true, nil
 		}
 		if _, err := backupLegacySlot(path, disabledDir); err != nil {
 			return false, err
 		}
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("прочитать %s: %w", path, err)
+		touched = true
+	} else if !os.IsNotExist(readErr) {
+		return false, fmt.Errorf("прочитать %s: %w", path, readErr)
 	}
-	if err := storage.AtomicWrite(path, data); err != nil {
-		return false, fmt.Errorf("записать %s: %w", path, err)
+	if err := atomicWrite(path, data); err != nil {
+		return touched, fmt.Errorf("записать %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// atomicWrite — точка подмены для теста, который проверяет поведение миграции
+// при сбое записи (ENOSPC/EIO на флеше файловой системой не изображаются).
+// В проде это всегда storage.AtomicWrite.
+var atomicWrite = storage.AtomicWrite
+
+// firstNonEmpty возвращает первую непустую строку.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // backupLegacySlot переносит файл в disabled/ под именем с суффиксом

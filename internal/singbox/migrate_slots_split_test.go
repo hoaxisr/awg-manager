@@ -4,6 +4,7 @@ package singbox
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Активный режим — fakeip: его правила становятся общими, режимная часть
@@ -71,6 +74,57 @@ func TestMigrateSlotsSplitKeepsPendingDraft(t *testing.T) {
 	if !hasRule(draft, "drafted") {
 		t.Error("несохранённый черновик потерян")
 	}
+}
+
+// Черновик БЕЗ применённого файла: staging работает и при выключенном движке —
+// слот тогда припаркован, и в активном каталоге его нет вовсе. Черновик всё
+// равно обязан переехать, а ложной строки «принадлежит другому режиму» в
+// журнале быть не должно: сравнивать не с чем.
+func TestMigrateSlotsSplitKeepsDraftWithoutAppliedSlot(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "pending/20-router.json", routerFixtureWithRules("drafted"))
+
+	var log []string
+	changed, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) })
+	if err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if !changed {
+		t.Error("ожидалось changed=true")
+	}
+	draft := readSlot(t, dir, "pending/21-routing.json")
+	if !hasRule(draft, "drafted") {
+		t.Errorf("черновик без применённого файла потерян:\n%s", readSlotBytes(t, dir, "pending/21-routing.json"))
+	}
+	if logContains(log, "принадлежит другому режиму") {
+		t.Errorf("ложное сообщение об отброшенном черновике: %v", log)
+	}
+	singboxCheckDir(t, dir)
+}
+
+// Единственный файл прежней раскладки — битый черновик. Сравнивать его не с
+// чем, поэтому строка «принадлежит другому режиму» была бы ложной: пользователь
+// решил бы, что где-то есть его правки в другом режиме.
+func TestMigrateSlotsSplitBrokenLoneDraftLogsHonestly(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "pending/20-router.json", "{ это не json")
+
+	var log []string
+	changed, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) })
+	if err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if !changed {
+		t.Error("битый черновик обязан уехать в резерв")
+	}
+	if !logContains(log, "не разобран") {
+		t.Errorf("о битом черновике не написано в журнал: %v", log)
+	}
+	if logContains(log, "принадлежит другому режиму") {
+		t.Errorf("ложное сообщение про чужой режим: %v", log)
+	}
+	assertBackupExists(t, dir, "20-router.json")
 }
 
 // Идемпотентность: повторный прогон ничего не меняет.
@@ -177,14 +231,16 @@ func TestMigrateSlotsSplitResultLoadsInSingbox(t *testing.T) {
 // единственного файла, который есть, — иначе они пропадут из интерфейса.
 func TestMigrateSlotsSplitFallsBackToOtherLegacySlot(t *testing.T) {
 	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
 	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("router-rule"))
 
 	if _, err := MigrateSlotsSplit(dir, "fakeip-tun"); err != nil {
 		t.Fatalf("миграция: %v", err)
 	}
 	shared := readSlot(t, dir, "21-routing.json")
+	raw := readSlotBytes(t, dir, "21-routing.json")
 	if !hasRule(shared, "router-rule") {
-		t.Errorf("правила единственного слота прежней раскладки потеряны:\n%s", readSlotBytes(t, dir, "21-routing.json"))
+		t.Errorf("правила единственного слота прежней раскладки потеряны:\n%s", raw)
 	}
 	// Режимный слот НЕ пишется: инбаунды чужого режима (tproxy-in/redirect-in)
 	// в файле fakeip — это не захват трафика, а мусор. Его соберёт генератор.
@@ -192,8 +248,19 @@ func TestMigrateSlotsSplitFallsBackToOtherLegacySlot(t *testing.T) {
 	// А DNS пользователя обязан уцелеть в общем слоте: из режимного он бы
 	// исчез при первой же перегенерации.
 	if got := dnsServerTags(shared); len(got) != 1 || got[0] != "user-dns" {
-		t.Errorf("DNS-серверы пользователя потеряны: %v\n%s", got, readSlotBytes(t, dir, "21-routing.json"))
+		t.Errorf("DNS-серверы пользователя потеряны: %v\n%s", got, raw)
 	}
+	// Движкового резолвера `real` объявить некому — режимный слот не пишется.
+	// У outbound'ов ссылки на него быть не должно вовсе: она роняет sing-box
+	// целиком. У DNS-сервера, заданного именем хоста, ссылка остаётся
+	// осознанно — снятая, она даёт «missing domain resolver for domain server
+	// address», то есть тот же мёртвый sing-box (см. dropEngineDomainResolvers).
+	for _, ob := range outboundsOf(shared) {
+		if _, ok := ob["domain_resolver"]; ok {
+			t.Errorf("у outbound %v осталась ссылка на движковый резолвер:\n%s", ob["tag"], raw)
+		}
+	}
+	singboxCheckDir(t, dir)
 }
 
 // C1: сбой ПОСЛЕ первой записи не имеет права оставить в активном каталоге обе
@@ -273,6 +340,37 @@ func TestMigrateSlotsSplitKeepsLegacyWhenNothingWritten(t *testing.T) {
 	}
 	assertExists(t, dir, "20-router.json")
 	assertAbsent(t, dir, "disabled/20-router.json"+legacyBackupSuffix)
+}
+
+// Сбой записи ПОСЛЕ того, как лежавший под этим именем файл уже уведён в
+// резерв: прежняя раскладка больше не самодостаточна (актуального общего слота
+// на месте нет), и уборка обязана состояться — иначе рядом остаются обе
+// раскладки и sing-box не поднимается. Сбой инжектируется в atomicWrite:
+// ENOSPC/EIO на флеше файловой системой не изображаются.
+func TestMigrateSlotsSplitCleansUpWhenWriteFailsAfterBackup(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "21-routing.json", routingSlotFixture("current"))
+	writeSlotFixture(t, dir, "20-router.json", routerFixtureWithRules("leftover"))
+
+	restore := stubAtomicWrite(t, func(path string, data []byte) error {
+		if filepath.Base(path) == "21-routing.json" {
+			return errors.New("сбой записи")
+		}
+		return storage.AtomicWrite(path, data)
+	})
+	changed, err := MigrateSlotsSplit(dir, "tproxy")
+	restore()
+
+	if err == nil {
+		t.Fatal("ожидалась ошибка записи")
+	}
+	if !changed {
+		t.Error("общий слот уведён в резерв — миграция обязана отчитаться об изменении")
+	}
+	// Главное: прежняя раскладка не осталась рядом с новой.
+	assertAbsent(t, dir, "20-router.json")
+	assertBackupExists(t, dir, "20-router.json")
+	assertBackupExists(t, dir, "21-routing.json")
 }
 
 // C2: возврат резервной копии под исходным именем (к нему подталкивает
@@ -409,7 +507,8 @@ func routerFixtureWithRules(tag string) string {
     {"type": "redirect", "tag": "redirect-in", "listen": "127.0.0.1", "listen_port": 51272}
   ],
   "outbounds": [
-    {"type": "selector", "tag": "user-proxy", "outbounds": ["direct"]}
+    {"type": "selector", "tag": "user-proxy", "outbounds": ["direct", "host-proxy"]},
+    {"type": "socks", "tag": "host-proxy", "server": "proxy.example.org", "server_port": 1080}
   ],
   "dns": {
     "servers": [{"tag": "user-dns", "type": "udp", "server": "1.1.1.1"}],
@@ -450,7 +549,7 @@ func fakeipFixtureWithRules(tag string) string {
     "servers": [
       {"tag": "fakeip", "type": "fakeip", "inet4_range": "198.18.0.0/15"},
       {"tag": "real", "type": "udp", "server": "1.1.1.1"},
-      {"tag": "user-dns", "type": "udp", "server": "9.9.9.9"}
+      {"tag": "user-dns", "type": "udp", "server": "dns.example.org", "domain_resolver": {"server": "real"}}
     ],
     "rules": [{"action": "route", "server": "fakeip", "query_type": ["A", "AAAA"]}],
     "final": "real"
@@ -625,6 +724,17 @@ func assertHijackNotIn(t *testing.T, cfg map[string]any) {
 	}
 }
 
+func outboundsOf(cfg map[string]any) []map[string]any {
+	raw, _ := cfg["outbounds"].([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, o := range raw {
+		if obj, ok := o.(map[string]any); ok {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
 func dnsServerTags(cfg map[string]any) []string {
 	dns, ok := cfg["dns"].(map[string]any)
 	if !ok {
@@ -651,6 +761,14 @@ func dnsFinal(cfg map[string]any) string {
 	}
 	final, _ := dns["final"].(string)
 	return final
+}
+
+// stubAtomicWrite подменяет запись на время теста и возвращает восстановление.
+func stubAtomicWrite(t *testing.T, fn func(string, []byte) error) func() {
+	t.Helper()
+	prev := atomicWrite
+	atomicWrite = fn
+	return func() { atomicWrite = prev }
 }
 
 func logContains(log []string, substr string) bool {

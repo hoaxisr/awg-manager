@@ -81,6 +81,13 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		// иначе собственные DNS-серверы пользователя пропали бы вместе с ней.
 		dropEngineDNS(shared)
 	}
+	// Порядок именно такой: сначала выбросить движковые серверы, потом лечить
+	// пользовательские. Наоборот было бы хуже — переименование увело бы
+	// движковый `fakeip` в `fakeip-user`, dropEngineDNS его бы уже не узнал, и
+	// в конфиге без tun-инбаунда остался бы сервер, раздающий синтетические
+	// адреса. На ветке с dropEngineDNS переименовывать после него нечего, и это
+	// правильно: теги real/fakeip в 21-fakeip.json принадлежат движку, а не
+	// пользователю.
 	renames := renameReservedDNSServers(shared)
 	// WAN берём из самого файла — EnsureRouteWAN внутри перепишет поля теми же
 	// значениями, то есть сохранит выбор пользователя.
@@ -89,6 +96,15 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		WANAutoDetect: shared.Route.AutoDetectInterface != nil && *shared.Route.AutoDetectInterface,
 		WANInterface:  shared.Route.DefaultInterface,
 	})
+	if p.SharedOnly {
+		// Режимный слот не пишется — объявить движковый резолвер `real` некому,
+		// а ссылка на него у outbound'а роняет sing-box целиком («FATAL
+		// initialize outbound: domain resolver not found: real»). Снимаем её,
+		// в том числе ту, которую только что поставил buildRoutingSlot
+		// hostname-outbound'ам, когда установка идёт в fakeip-режим. Первый же
+		// Enable/Reconcile соберёт режимный слот и вернёт резолвер на место.
+		dropEngineDomainResolvers(shared)
+	}
 	sharedRaw, err := json.MarshalIndent(shared, "", "  ")
 	if err != nil {
 		return LegacySlotSplit{}, fmt.Errorf("marshal routing slot: %w", err)
@@ -126,9 +142,44 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 	return LegacySlotSplit{Shared: sharedRaw, Mode: modeRaw, DNSRenames: renames}, nil
 }
 
+// dropEngineDomainResolvers снимает ссылки на движковые DNS-серверы там, где
+// висячая ссылка ломает загрузку конфига: route.default_domain_resolver и
+// outbound'ы. Проверено настоящим бинарём:
+//
+//	outbound с domain_resolver на несуществующий тег
+//	  → FATAL initialize outbound[1]: domain resolver not found: real
+//	DNS-сервер с той же висячей ссылкой
+//	  → грузится, sing-box её терпит
+//	DNS-сервер, заданный ИМЕНЕМ хоста, у которого резолвер сняли
+//	  → FATAL initialize DNS server[0]: missing domain resolver for domain server address
+//
+// Отсюда правило для DNS-серверов: ссылку снимаем только у сервера с
+// АДРЕСОМ — там резолвер декоративен. У сервера с именем хоста ссылка
+// остаётся висячей осознанно: конфиг грузится (интернет у пользователя есть), а
+// цена — ErrDNSServerNotFound при правке ИМЕННО ЭТОГО сервера в интерфейсе,
+// пока он не выберет резолвер заново. Снять ссылку означало бы обменять правку
+// в интерфейсе на не поднимающийся sing-box.
+func dropEngineDomainResolvers(cfg *RouterConfig) {
+	if cfg.Route.DefaultDomainResolver != nil && engineDNSServerTags[cfg.Route.DefaultDomainResolver.Server] {
+		cfg.Route.DefaultDomainResolver = nil
+	}
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].DomainResolver != nil && engineDNSServerTags[cfg.Outbounds[i].DomainResolver.Server] {
+			cfg.Outbounds[i].DomainResolver = nil
+		}
+	}
+	for i := range cfg.DNS.Servers {
+		s := &cfg.DNS.Servers[i]
+		if s.DomainResolver != nil && engineDNSServerTags[s.DomainResolver.Server] && !isHostname(s.Server) {
+			s.DomainResolver = nil
+		}
+	}
+}
+
 // dropEngineDNS выбрасывает из конфига DNS движка fakeip-режима: серверы с
-// движковыми тегами, правила, которые на них ссылаются, и режимные скаляры.
-// Пользовательские серверы и правила остаются — это их данные.
+// движковыми тегами, правила, которые на них ссылаются, режимные скаляры и
+// ссылки на движковые резолверы. Пользовательские серверы и правила остаются —
+// это их данные.
 func dropEngineDNS(cfg *RouterConfig) {
 	servers := make([]DNSServer, 0, len(cfg.DNS.Servers))
 	for _, s := range cfg.DNS.Servers {
@@ -149,6 +200,7 @@ func dropEngineDNS(cfg *RouterConfig) {
 	if engineDNSServerTags[cfg.DNS.Final] {
 		cfg.DNS.Final = ""
 	}
+	dropEngineDomainResolvers(cfg)
 }
 
 // splitLegacyRouteRules делит route.rules прежнего слота на режимный префикс и
