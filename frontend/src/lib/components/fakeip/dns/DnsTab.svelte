@@ -67,11 +67,12 @@
 	const storeOptions = singboxRouter.options;
 	const storeStaging = singboxRouter.staging;
 
-	// Наборы правятся через staging, а DNS fakeip пишется сразу. Пока черновик
-	// маршрутизации не применён, в пикере DNS-правила виден набор, которого в
-	// применённом конфиге ещё нет, — бэкенд такую ссылку отвергает
-	// (guardFakeIPRuleSetRefs). Предупреждаем заранее, чтобы отказ не выглядел
-	// произволом.
+	// Наборы и outbound'ы правятся через staging, а DNS fakeip пишется сразу.
+	// Пока черновик маршрутизации не применён, в пикерах видно то, чего в
+	// применённом конфиге ещё нет: набор — у DNS-правила, detour — у
+	// DNS-сервера. Обе ссылки бэкенд отвергает (guardFakeIPRuleSetRefs и
+	// guardFakeIPOutboundRefs), поэтому предупреждаем на обеих карточках, чтобы
+	// отказ не выглядел произволом.
 	const routingDraft = $derived($storeStaging?.hasDraft === true);
 
 	// Контекст блокировки удаления серверов (один проход на список).
@@ -460,6 +461,13 @@
 			Резолверы. fakeip синтезирует адреса (в туннель), real резолвит через outbound,
 			local — роутер для direct.
 		</p>
+
+		{#if routingDraft}
+			<div class="shadow-note">
+				Есть непринятые изменения маршрутизации. Выходы из черновика ещё не применены —
+				DNS-сервер с таким detour сохранить не удастся, пока не нажать «Применить».
+			</div>
+		{/if}
 
 		{#if $storeDnsServers.length === 0}
 			<div class="empty">Нет DNS-серверов.</div>

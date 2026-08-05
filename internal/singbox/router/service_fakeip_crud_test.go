@@ -232,3 +232,167 @@ func TestFakeIPAddDNSRule_RejectsDraftRuleSet(t *testing.T) {
 		t.Fatalf("FakeIPAddDNSRule с применённым набором: %v", err)
 	}
 }
+
+// Близнец теста выше для ВТОРОЙ ссылки fakeip-слота в общий: detour
+// DNS-сервера. Пикер detour в модалке строится из списка outbound'ов, который
+// читается pending-first, поэтому в нём виден и НЕПРИНЯТЫЙ композит. Ссылка на
+// него обязана отвергаться: Orchestrator.Save пишет файл без валидации, а
+// reload такой merged-конфиг отвергнет — пользователь увидел бы «сохранено»
+// при работающем старом конфиге, а отменённый следом черновик сделал бы ссылку
+// висячей навсегда.
+func TestFakeIPAddDNSServer_RejectsDraftDetour(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	ctx := context.Background()
+	seedFakeIPLocked(t, svc)
+
+	orch := svc.deps.Orch
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("SetEnabled SlotRouting: %v", err)
+	}
+	sharedJSON := []byte(`{"outbounds":[{"tag":"vpn-draft","type":"selector","outbounds":["direct"]}]}`)
+
+	// Композит только в черновике общего слота.
+	if err := orch.SaveDraft(orchestrator.SlotRouting, sharedJSON); err != nil {
+		t.Fatalf("SaveDraft SlotRouting: %v", err)
+	}
+	srv := DNSServer{Tag: "user-doh", Type: "https", Server: "dns.google", Detour: "vpn-draft"}
+	if err := svc.FakeIPAddDNSServer(ctx, srv); !errors.Is(err, ErrOutboundNotApplied) {
+		t.Fatalf("FakeIPAddDNSServer с черновичным detour: err = %v, want ErrOutboundNotApplied", err)
+	}
+	servers, err := svc.FakeIPListDNSServers(ctx)
+	if err != nil {
+		t.Fatalf("FakeIPListDNSServers: %v", err)
+	}
+	for _, sv := range servers {
+		if sv.Tag == "user-doh" {
+			t.Fatalf("отвергнутый сервер всё же записан: %+v", servers)
+		}
+	}
+
+	// Тот же композит применён — правка проходит.
+	if err := orch.Save(orchestrator.SlotRouting, sharedJSON); err != nil {
+		t.Fatalf("Save SlotRouting: %v", err)
+	}
+	if err := svc.FakeIPAddDNSServer(ctx, srv); err != nil {
+		t.Fatalf("FakeIPAddDNSServer с применённым detour: %v", err)
+	}
+}
+
+// Законные случаи, которые гард трогать НЕ должен. Мутация «отвергать всегда»
+// валит именно их — без этих веток гард-заглушка прошла бы тест выше.
+func TestFakeIPAddDNSServer_AllowsAppliedAndCatalogDetours(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		detour string
+		// want — detour, каким он ляжет в слот. Расходится с входом только у
+		// "direct": scrubDNSServerDetourStored считает его синонимом «ключа нет»
+		// и стирает.
+		want string
+		wire func(svc *ServiceImpl)
+	}{
+		{
+			// Встроенный выход sing-box — каталога не требует.
+			name: "встроенный direct", detour: "direct", want: "",
+			wire: func(*ServiceImpl) {},
+		},
+		{
+			name: "композит применённого общего слота", detour: "vpn-applied", want: "vpn-applied",
+			wire: func(svc *ServiceImpl) {
+				if err := svc.deps.Orch.Save(orchestrator.SlotRouting,
+					[]byte(`{"outbounds":[{"tag":"vpn-applied","type":"selector","outbounds":["direct"]}]}`)); err != nil {
+					t.Fatalf("Save SlotRouting: %v", err)
+				}
+			},
+		},
+		{
+			// Выход, объявленный ДРУГИМ включённым слотом: 15-awg.json.
+			name: "AWG-тег соседнего слота", detour: "awg-direct-1", want: "awg-direct-1",
+			wire: func(svc *ServiceImpl) {
+				svc.deps.AWGTags = &fakeAWGTags{tags: []string{"awg-direct-1"}}
+			},
+		},
+		{
+			// То же для 10-tunnels.json.
+			name: "sing-box туннель соседнего слота", detour: "tun-vless", want: "tun-vless",
+			wire: func(svc *ServiceImpl) {
+				svc.deps.SingboxTunnels = &fakeSingboxTunnels{tags: []string{"tun-vless"}}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newFakeIPTestService(t)
+			seedFakeIPLocked(t, svc)
+			if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+				t.Fatalf("SetEnabled SlotRouting: %v", err)
+			}
+			tc.wire(svc)
+
+			srv := DNSServer{Tag: "user-doh", Type: "https", Server: "dns.google", Detour: tc.detour}
+			if err := svc.FakeIPAddDNSServer(ctx, srv); err != nil {
+				t.Fatalf("FakeIPAddDNSServer с detour %q: %v", tc.detour, err)
+			}
+			servers, err := svc.FakeIPListDNSServers(ctx)
+			if err != nil {
+				t.Fatalf("FakeIPListDNSServers: %v", err)
+			}
+			found := false
+			for _, sv := range servers {
+				if sv.Tag == "user-doh" && sv.Detour == tc.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("сервер с detour %q (ожидали в слоте %q) не записан: %+v", tc.detour, tc.want, servers)
+			}
+		})
+	}
+}
+
+// Проверка диффная: ссылка, УЖЕ висевшая в слоте, не должна блокировать другие
+// правки — иначе однажды сломанный слот нельзя было бы починить через API.
+func TestFakeIPUpdateDNSServer_ExistingDanglingDetourDoesNotBlock(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	ctx := context.Background()
+	seedFakeIPLocked(t, svc)
+	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("SetEnabled SlotRouting: %v", err)
+	}
+
+	// Висячий detour попал в слот мимо API (откат черновика, ручная правка).
+	if err := svc.fakeipWithConfigNoGuard(func(c *RouterConfig) error {
+		return c.AddDNSServer(DNSServer{Tag: "user-doh", Type: "https", Server: "dns.google", Detour: "vpn-gone"})
+	}); err != nil {
+		t.Fatalf("посев висячего detour: %v", err)
+	}
+
+	// Правка ДРУГОГО поля того же сервера проходит: ссылка не новая.
+	err := svc.FakeIPUpdateDNSServer(ctx, "user-doh",
+		DNSServer{Tag: "user-doh", Type: "https", Server: "dns.quad9.net", Detour: "vpn-gone"})
+	if err != nil {
+		t.Fatalf("правка сервера с уже висячим detour: %v", err)
+	}
+
+	// А НОВАЯ висячая ссылка по-прежнему отвергается.
+	err = svc.FakeIPAddDNSServer(ctx,
+		DNSServer{Tag: "user-doh-2", Type: "https", Server: "dns.google", Detour: "vpn-other"})
+	if !errors.Is(err, ErrOutboundNotApplied) {
+		t.Fatalf("новая висячая ссылка: err = %v, want ErrOutboundNotApplied", err)
+	}
+}
+
+// fakeipWithConfigNoGuard пишет в fakeip-слот в обход гардов — так в тесте
+// изображается слот, сломанный ДО появления проверки.
+func (s *ServiceImpl) fakeipWithConfigNoGuard(fn func(*RouterConfig) error) error {
+	cfg, err := s.loadFakeIPConfig()
+	if err != nil {
+		return err
+	}
+	if err := fn(cfg); err != nil {
+		return err
+	}
+	return s.persistFakeIPConfig(context.Background(), cfg)
+}

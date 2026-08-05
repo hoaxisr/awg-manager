@@ -37,6 +37,10 @@ var (
 	// он может только на ПРИМЕНЁННЫЙ набор общего слота (см.
 	// guardFakeIPRuleSetRefs).
 	ErrRuleSetNotApplied = errors.New("набор ещё не применён: нажмите «Применить» на вкладке Rule sets и повторите")
+	// ErrOutboundNotApplied — близнец ErrRuleSetNotApplied для detour
+	// DNS-сервера: outbound'ы тоже живут в общем слоте и правятся через
+	// staging (см. guardFakeIPOutboundRefs).
+	ErrOutboundNotApplied = errors.New("выход ещё не применён: нажмите «Применить» на вкладке Outbounds и повторите")
 
 	ErrPolicyNotConfigured = errors.New("router policy not configured (settings.policyName is empty)")
 	ErrPolicyMissing       = errors.New("policy has no fwmark in NDMS (deleted or has no permitted interface)")

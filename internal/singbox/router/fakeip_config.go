@@ -252,6 +252,83 @@ func dnsRuleSetRefs(cfg *RouterConfig) []string {
 	return refs
 }
 
+// guardFakeIPOutboundRefs — близнец guardFakeIPRuleSetRefs для ВТОРОЙ ссылки,
+// которой fakeip-слот дотягивается до общего: detour DNS-сервера.
+//
+// Ровно та же дыра и ровно та же причина: outbound'ы переехали в общий слот и
+// правятся через staging, DNS fakeip пишется в active напрямую, а пикер detour
+// в модалке строится из списка, который читается pending-first — то есть
+// показывает и НЕПРИНЯТЫЙ композит. Без этой проверки applied-конфиг сослался
+// бы на outbound, которого в нём нет: Orchestrator.Save пишет файл без
+// валидации, кросс-слотовую проверку делает только reload, и он такой конфиг
+// отвергает — пользователь видит «сохранено», а движок продолжает работать на
+// старом. Отменённый следом черновик делает ссылку висячей НАВСЕГДА.
+//
+// Что считается применённым — isKnownOutboundTag по APPLIED-конфигу общего
+// слота: встроенные direct/block/dns, композиты общего слота, композиты
+// подписок (40-subscriptions.json), AWG-теги (15-awg.json) и sing-box туннели
+// (10-tunnels.json). Выход, объявленный другим включённым слотом, законен и
+// здесь не отвергается.
+//
+// Проверка диффная — как у близнеца: ссылки, уже висевшие в before, правку не
+// блокируют, иначе однажды сломанный слот нельзя было бы починить.
+//
+// Проверяется только detour DNS-серверов: это единственная ссылка на outbound,
+// которую способен породить CRUD этого слота (у DNS-правил поля detour нет, а
+// системный префикс route-правил пишет генератор, и целит он во встроенный
+// direct).
+func (s *ServiceImpl) guardFakeIPOutboundRefs(ctx context.Context, before, after *RouterConfig) error {
+	if s.deps.Orch == nil {
+		return nil // legacy-обвязка тестов: слотов нет, проверять не по чему
+	}
+	refs := dnsServerDetourRefs(after)
+	if len(refs) == 0 {
+		return nil
+	}
+	appliedCfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		return err
+	}
+	// Собственные outbound'ы слота (сегодня их нет — stripSharedFromModeSlot
+	// чистит, оверлей не добавляет) учитываем на случай, если появятся.
+	appliedCfg.Outbounds = append(appliedCfg.Outbounds, after.Outbounds...)
+
+	known := make(map[string]bool, len(refs))
+	isKnown := func(tag string) bool {
+		if v, seen := known[tag]; seen {
+			return v
+		}
+		v := s.isKnownOutboundTag(ctx, tag, appliedCfg)
+		known[tag] = v
+		return v
+	}
+	wasDangling := make(map[string]bool)
+	for _, tag := range dnsServerDetourRefs(before) {
+		if !isKnown(tag) {
+			wasDangling[tag] = true
+		}
+	}
+	for _, tag := range refs {
+		if !isKnown(tag) && !wasDangling[tag] {
+			return fmt.Errorf("%w: %q", ErrOutboundNotApplied, tag)
+		}
+	}
+	return nil
+}
+
+// dnsServerDetourRefs собирает НЕПУСТЫЕ detour'ы DNS-серверов cfg. Пустой
+// detour означает «ключа в конфиге нет» (прямой набор через WAN) и ссылкой не
+// является.
+func dnsServerDetourRefs(cfg *RouterConfig) []string {
+	refs := make([]string, 0, 2)
+	for _, sv := range cfg.DNS.Servers {
+		if sv.Detour != "" {
+			refs = append(refs, sv.Detour)
+		}
+	}
+	return refs
+}
+
 // captureFakeIPRealServerEdit persists a user edit of the "real" DNS server's
 // upstream address into settings.SingboxRouter.FakeIPRealServer BEFORE the
 // overlay runs, so ensureFakeIPOverlayFromState re-asserts the user's new
@@ -345,6 +422,9 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 		return err
 	}
 	if err := s.guardFakeIPRuleSetRefs(before, cfg); err != nil {
+		return err
+	}
+	if err := s.guardFakeIPOutboundRefs(ctx, before, cfg); err != nil {
 		return err
 	}
 	if err := s.captureFakeIPRealServerEdit(before, cfg); err != nil {

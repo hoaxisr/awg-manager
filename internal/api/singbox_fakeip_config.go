@@ -64,6 +64,10 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 		// 400: DNS-правило сослалось на черновичный набор общего слота —
 		// применять нечего, пока правка наборов не принята.
 		response.Error(w, err.Error(), "RULE_SET_NOT_APPLIED")
+	case errors.Is(err, router.ErrOutboundNotApplied):
+		// 400: то же самое для detour DNS-сервера — он сослался на выход,
+		// который пока только в черновике общего слота.
+		response.Error(w, err.Error(), "OUTBOUND_NOT_APPLIED")
 	case errors.Is(err, router.ErrBulkEmptyIndices),
 		errors.Is(err, router.ErrBulkEmptyTags):
 		// 400: empty selection for a bulk rule/ruleset mutation — nothing to do.
