@@ -75,6 +75,72 @@ func TestConfig_AddTunnel_EnsuresNaiveUDPOverTCP(t *testing.T) {
 	}
 }
 
+func TestEnsureHysteria2ChromeParrot(t *testing.T) {
+	cases := []struct {
+		name string
+		ob   string
+		want bool // ждём ли disable_chrome_parrot=true
+	}{
+		{"обычный tls — парротинг оставляем", `{"type":"hysteria2","tls":{"enabled":true,"server_name":"e.com"}}`, false},
+		{"без tls вообще", `{"type":"hysteria2"}`, false},
+		{"не hysteria2", `{"type":"vless","tls":{"enabled":true,"disable_sni":true}}`, false},
+		{"disable_sni", `{"type":"hysteria2","tls":{"enabled":true,"disable_sni":true}}`, true},
+		// insecure снимает сверку имени, VerifyConnection не ставится — парротинг не мешает.
+		{"disable_sni + insecure", `{"type":"hysteria2","tls":{"enabled":true,"disable_sni":true,"insecure":true}}`, false},
+		{"клиентский сертификат строкой", `{"type":"hysteria2","tls":{"enabled":true,"client_certificate_path":"/c.pem","client_key_path":"/k.pem"}}`, true},
+		{"клиентский сертификат списком", `{"type":"hysteria2","tls":{"enabled":true,"client_certificate":["a"],"client_key":["b"]}}`, true},
+		{"пустые поля сертификата", `{"type":"hysteria2","tls":{"enabled":true,"client_certificate_path":"","client_certificate":[]}}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ob map[string]any
+			if err := json.Unmarshal([]byte(tc.ob), &ob); err != nil {
+				t.Fatal(err)
+			}
+			changed := ensureHysteria2ChromeParrot(ob)
+			if changed != tc.want {
+				t.Fatalf("ensureHysteria2ChromeParrot = %v, want %v", changed, tc.want)
+			}
+			if got, ok := ob["disable_chrome_parrot"]; ok != tc.want || (tc.want && got != true) {
+				t.Fatalf("disable_chrome_parrot=%v (present=%v), want present=%v", got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnsureHysteria2ChromeParrot_RespectsExplicitValue(t *testing.T) {
+	// Пользователь сам выключил отключение — не переписываем.
+	var ob map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"hysteria2","disable_chrome_parrot":false,"tls":{"enabled":true,"disable_sni":true}}`), &ob); err != nil {
+		t.Fatal(err)
+	}
+	if ensureHysteria2ChromeParrot(ob) {
+		t.Fatal("явно заданное значение не должно переписываться")
+	}
+	if ob["disable_chrome_parrot"] != false {
+		t.Fatalf("disable_chrome_parrot=%v, want false", ob["disable_chrome_parrot"])
+	}
+}
+
+func TestConfig_AddTunnel_EnsuresHysteria2ChromeParrot(t *testing.T) {
+	c := NewConfig()
+	ob := json.RawMessage(`{"type":"hysteria2","tag":"H","server":"h","server_port":443,"password":"p","tls":{"enabled":true,"disable_sni":true}}`)
+	if err := c.AddTunnel("H", "hysteria2", "h", 443, ob); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := c.GetOutbound("H")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["disable_chrome_parrot"] != true {
+		t.Fatalf("disable_chrome_parrot=%v", got["disable_chrome_parrot"])
+	}
+}
+
 func TestConfig_RemoveTunnel(t *testing.T) {
 	c := NewConfig()
 	c.AddTunnel("A", "vless", "h", 1, json.RawMessage(`{"type":"vless","tag":"A"}`))

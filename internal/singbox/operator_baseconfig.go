@@ -803,6 +803,26 @@ func patchTunnelsSlotEnsureNaiveUDPOverTCP(tunnelsPath string) {
 	}
 }
 
+// patchTunnelsSlotEnsureHysteria2ChromeParrot чинит уже лежащие на диске
+// hysteria2-туннели: sing-box 1.14.0-beta.7 включил chrome-парротинг по
+// умолчанию, и без этого патча несовместимый туннель остался бы мёртвым до
+// первой ручной правки. См. ensureHysteria2ChromeParrot.
+func patchTunnelsSlotEnsureHysteria2ChromeParrot(tunnelsPath string) {
+	data, err := os.ReadFile(tunnelsPath)
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	outbounds, _ := m["outbounds"].([]any)
+	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
+	if cfg.ensureHysteria2ChromeParrotOutbounds() {
+		_ = writeJSONFile(tunnelsPath, m)
+	}
+}
+
 // freshBaseConfig returns the canonical base sing-box config. Single
 // source of truth for ensureBaseConfig (initial write + self-heal path).
 func freshBaseConfig() map[string]any {

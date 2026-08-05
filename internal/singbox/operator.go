@@ -310,6 +310,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	ensureLegacyConfigMigrated(dir)
 	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"))
 	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"))
+	patchTunnelsSlotEnsureHysteria2ChromeParrot(filepath.Join(configPath, "10-tunnels.json"))
 	stripStrayDirectPlaceholder(configPath)
 	removeFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
 	removeDNSFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
