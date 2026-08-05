@@ -33,6 +33,10 @@ var (
 	ErrDNSRuleIndexOutOfRange   = errors.New("dns rule index out of range")
 	ErrDNSServerIndexOutOfRange = errors.New("dns server index out of range")
 	ErrDNSInvalidServer         = errors.New("dns rule references unknown server tag")
+	// ErrRuleSetNotApplied — DNS fakeip пишется мимо staging, поэтому сослаться
+	// он может только на ПРИМЕНЁННЫЙ набор общего слота (см.
+	// guardFakeIPRuleSetRefs).
+	ErrRuleSetNotApplied = errors.New("набор ещё не применён: нажмите «Применить» на вкладке Rule sets и повторите")
 
 	ErrPolicyNotConfigured = errors.New("router policy not configured (settings.policyName is empty)")
 	ErrPolicyMissing       = errors.New("policy has no fwmark in NDMS (deleted or has no permitted interface)")

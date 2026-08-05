@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // TestFakeIPCRUD_Smoke is the TDD smoke test for the FakeIPConfigService CRUD
@@ -186,4 +188,47 @@ func TestFakeIPCRUD_RealServerRejectsNonAddressFieldEdit(t *testing.T) {
 // coverage toolchain register the symbol.
 func TestFakeIPCRUD_InterfaceAssertion(t *testing.T) {
 	var _ FakeIPConfigService = (*ServiceImpl)(nil)
+}
+
+// TestFakeIPAddDNSRule_RejectsDraftRuleSet: наборы живут в общем слоте и
+// правятся через staging, а DNS fakeip пишется прямо в active. Списки отдаются
+// pending-first, поэтому в пикере DNS-правила виден и НЕПРИМЕНЁННЫЙ набор —
+// ссылка на него обязана отвергаться, иначе applied-конфиг ссылался бы на
+// несуществующий rule_set и reload sing-box упал бы.
+func TestFakeIPAddDNSRule_RejectsDraftRuleSet(t *testing.T) {
+	svc, _ := newFakeIPTestService(t)
+	ctx := context.Background()
+	seedFakeIPLocked(t, svc)
+
+	orch := svc.deps.Orch
+	if err := orch.SetEnabled(orchestrator.SlotRouting, true); err != nil {
+		t.Fatalf("SetEnabled SlotRouting: %v", err)
+	}
+	sharedJSON := []byte(`{"route":{"rule_set":[{"tag":"geosite-draft","type":"remote","format":"binary","url":"https://example.com/x.srs"}]}}`)
+
+	// Набор только в черновике общего слота.
+	if err := orch.SaveDraft(orchestrator.SlotRouting, sharedJSON); err != nil {
+		t.Fatalf("SaveDraft SlotRouting: %v", err)
+	}
+	rule := DNSRule{Action: "route", Server: "fakeip", RuleSet: []string{"geosite-draft"}}
+	if err := svc.FakeIPAddDNSRule(ctx, rule); !errors.Is(err, ErrRuleSetNotApplied) {
+		t.Fatalf("FakeIPAddDNSRule с черновичным набором: err = %v, want ErrRuleSetNotApplied", err)
+	}
+	rules, err := svc.FakeIPListDNSRules(ctx)
+	if err != nil {
+		t.Fatalf("FakeIPListDNSRules: %v", err)
+	}
+	for _, r := range rules {
+		if len(r.RuleSet) == 1 && r.RuleSet[0] == "geosite-draft" {
+			t.Fatalf("отвергнутое правило всё же записано: %+v", rules)
+		}
+	}
+
+	// Тот же набор применён — правка проходит.
+	if err := orch.Save(orchestrator.SlotRouting, sharedJSON); err != nil {
+		t.Fatalf("Save SlotRouting: %v", err)
+	}
+	if err := svc.FakeIPAddDNSRule(ctx, rule); err != nil {
+		t.Fatalf("FakeIPAddDNSRule с применённым набором: %v", err)
+	}
 }

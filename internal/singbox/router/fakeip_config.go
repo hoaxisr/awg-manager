@@ -174,6 +174,63 @@ func (s *ServiceImpl) persistFakeIPConfig(ctx context.Context, cfg *RouterConfig
 	return s.persistSlotDirect(orchestrator.SlotFakeIP, cfg, true)
 }
 
+// guardFakeIPRuleSetRefs не даёт fakeip-слоту сослаться на набор, который ещё
+// НЕ ПРИМЕНЁН в общем слоте.
+//
+// Наборы живут в общем слоте и правятся через staging, а DNS fakeip пишется
+// напрямую в active (persistSlotDirect + reload). Списки же читаются
+// pending-first, поэтому в пикере DNS-правила виден и черновичный набор: без
+// этой проверки пользователь сохранил бы DNS-правило со ссылкой, которой в
+// applied-конфиге нет, — merged-конфиг стал бы битым, а reload sing-box упал бы
+// на неизвестном rule_set. Кросс-слотовая валидация оркестратора этот путь не
+// прикрывает: она работает на применении черновика, которого здесь нет.
+//
+// Проверка диффная: ссылки, уже висевшие в before, не блокируют правку (иначе
+// однажды сломанный слот нельзя было бы починить), отвергаются только НОВЫЕ.
+func (s *ServiceImpl) guardFakeIPRuleSetRefs(before, after *RouterConfig) error {
+	if s.deps.Orch == nil {
+		return nil // legacy-обвязка тестов: слотов нет, проверять не по чему
+	}
+	refs := dnsRuleSetRefs(after)
+	if len(refs) == 0 {
+		return nil
+	}
+	appliedCfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		return err
+	}
+	// Теги — в том же виде, что отдаёт ListRuleSets (после restoreConfig),
+	// иначе материализованные inline-наборы не совпали бы по имени.
+	known := make(map[string]bool)
+	for _, rs := range s.ruleSetMaterializer().restoreConfig(appliedCfg).Route.RuleSet {
+		known[rs.Tag] = true
+	}
+	for _, rs := range after.Route.RuleSet { // собственные наборы слота, если появятся
+		known[rs.Tag] = true
+	}
+	wasDangling := make(map[string]bool)
+	for _, tag := range dnsRuleSetRefs(before) {
+		if !known[tag] {
+			wasDangling[tag] = true
+		}
+	}
+	for _, tag := range refs {
+		if !known[tag] && !wasDangling[tag] {
+			return fmt.Errorf("%w: %q", ErrRuleSetNotApplied, tag)
+		}
+	}
+	return nil
+}
+
+// dnsRuleSetRefs собирает теги наборов, на которые ссылаются DNS-правила cfg.
+func dnsRuleSetRefs(cfg *RouterConfig) []string {
+	refs := make([]string, 0, 4)
+	for _, r := range cfg.DNS.Rules {
+		refs = append(refs, r.RuleSet...)
+	}
+	return refs
+}
+
 // captureFakeIPRealServerEdit persists a user edit of the "real" DNS server's
 // upstream address into settings.SingboxRouter.FakeIPRealServer BEFORE the
 // overlay runs, so ensureFakeIPOverlayFromState re-asserts the user's new
@@ -264,6 +321,9 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 		return err
 	}
 	if err := guardFakeIPLocked(before, cfg); err != nil {
+		return err
+	}
+	if err := s.guardFakeIPRuleSetRefs(before, cfg); err != nil {
 		return err
 	}
 	if err := s.captureFakeIPRealServerEdit(before, cfg); err != nil {
