@@ -4870,6 +4870,9 @@ definitions:
         example: "2026-07-06T12:34:56+03:00"
         type: string
       ruleCount:
+        description: |-
+          RuleCount — правила общего слота маршрутизации (без системного префикса
+          режима, которого нет и в списке правил).
         example: 12
         type: integer
       ruleSetCount:
