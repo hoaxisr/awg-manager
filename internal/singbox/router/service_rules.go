@@ -20,11 +20,49 @@ func (s *ServiceImpl) AddRule(ctx context.Context, r Rule) error {
 }
 
 func (s *ServiceImpl) UpdateRule(ctx context.Context, index int, r Rule) error {
-	return s.withConfig(ctx, "rules", func(c *RouterConfig) error { return c.UpdateRule(index, r) })
+	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
+		i, err := rawRuleIndex(c.Route.Rules, index)
+		if err != nil {
+			return err
+		}
+		return c.UpdateRule(i, r)
+	})
 }
 
 func (s *ServiceImpl) DeleteRule(ctx context.Context, index int) error {
-	return s.withConfig(ctx, "rules", func(c *RouterConfig) error { return c.DeleteRule(index) })
+	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
+		i, err := rawRuleIndex(c.Route.Rules, index)
+		if err != nil {
+			return err
+		}
+		return c.DeleteRule(i)
+	})
+}
+
+// rawRuleIndex переводит индекс правила из СПИСКА, который видит клиент
+// (ListRules отдаёт правила без авто-управляемых selective-ip), в индекс
+// сырого конфига, по которому мутируют UpdateRule/DeleteRule/MoveRule.
+//
+// Без перевода правка «правила №3» на установке с авто-правилами попадала в
+// чужое правило — молча и без единой ошибки. Авто-правила пишет уже не
+// маршрутный слот, а 19-selective-routes.json, поэтому расхождение остаётся
+// только на конфигурациях, где они лежат с прежних версий (их вычищает
+// stripLegacySelectiveRulesFromRouter — но лишь при выключении selective или
+// после пересборки ipset, то есть окно может жить долго).
+func rawRuleIndex(rules []Rule, visible int) (int, error) {
+	if visible >= 0 {
+		seen := 0
+		for i, r := range rules {
+			if r.AwgmManaged == selectiveIPRuleManaged {
+				continue
+			}
+			if seen == visible {
+				return i, nil
+			}
+			seen++
+		}
+	}
+	return 0, fmt.Errorf("%w: %d", ErrRuleIndexOutOfRange, visible)
 }
 
 // BulkSetRuleOutbound sets Outbound on every rule at the given indices in a
@@ -34,12 +72,36 @@ func (s *ServiceImpl) DeleteRule(ctx context.Context, index int) error {
 // anything, so a single invalid element leaves the config untouched.
 func (s *ServiceImpl) BulkSetRuleOutbound(ctx context.Context, indices []int, outbound string) error {
 	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
-		return bulkSetRuleOutbound(c, indices, outbound, func(t string) bool { return s.isKnownOutboundTag(ctx, t, c) })
+		raw := make([]int, 0, len(indices))
+		for _, i := range indices {
+			// Перевод из нумерации списка в нумерацию конфига — та же
+			// причина, что у UpdateRule (см. rawRuleIndex). Дубли и выход за
+			// границы ловит bulkSetRuleOutbound: перевод их сохраняет.
+			ri, err := rawRuleIndex(c.Route.Rules, i)
+			if err != nil {
+				return err
+			}
+			raw = append(raw, ri)
+		}
+		return bulkSetRuleOutbound(c, raw, outbound, func(t string) bool { return s.isKnownOutboundTag(ctx, t, c) })
 	})
 }
 
 func (s *ServiceImpl) MoveRule(ctx context.Context, from, to int) error {
-	return s.withConfig(ctx, "rules", func(c *RouterConfig) error { return c.MoveRule(from, to) })
+	return s.withConfig(ctx, "rules", func(c *RouterConfig) error {
+		rawFrom, err := rawRuleIndex(c.Route.Rules, from)
+		if err != nil {
+			return err
+		}
+		// Целевая позиция переводится так же — «встать туда, где сейчас стоит
+		// видимое правило №to». Порядок ВИДИМЫХ правил после этого совпадает с
+		// тем, что показал бы список; авто-правила невидимы и перегенерируются.
+		rawTo, err := rawRuleIndex(c.Route.Rules, to)
+		if err != nil {
+			return err
+		}
+		return c.MoveRule(rawFrom, rawTo)
+	})
 }
 
 func (s *ServiceImpl) SetRouteFinal(ctx context.Context, tag string) error {
