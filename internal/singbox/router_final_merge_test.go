@@ -14,7 +14,13 @@ import (
 // none is available. Test should t.Skip when this returns "".
 func locateSingboxBinary(t *testing.T) string {
 	t.Helper()
-	// Prefer PATH (developer-installed sing-box).
+	// Prefer AWGM_SINGBOX_BIN (CI-downloaded binary), then PATH
+	// (developer-installed sing-box).
+	if p := os.Getenv("AWGM_SINGBOX_BIN"); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
 	if p, err := exec.LookPath("sing-box"); err == nil {
 		return p
 	}

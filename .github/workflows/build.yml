@@ -177,7 +177,7 @@ jobs:
           ver="${ver%-awgm.*}"
           curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
           tar -xzf /tmp/sb.tgz -C /tmp
-          bin="$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)"
+          bin="$(find "/tmp/sing-box-${ver}-linux-amd64" -type f -name sing-box | head -1)"
           test -x "$bin"
           echo "AWGM_SINGBOX_BIN=$bin" >> "$GITHUB_ENV"
 
