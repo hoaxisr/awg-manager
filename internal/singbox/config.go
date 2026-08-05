@@ -76,6 +76,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 // Save atomically writes config.json to disk (tmp file + rename).
 func (c *Config) Save(path string) error {
 	c.ensureNaiveUDPOverTCPOutbounds()
+	c.ensureHysteria2ChromeParrotOutbounds()
 	b, err := json.MarshalIndent(c.raw, "", "  ")
 	if err != nil {
 		return err
@@ -225,6 +226,7 @@ func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, lis
 	}
 	obMap["tag"] = tag
 	ensureNaiveUDPOverTCP(obMap)
+	ensureHysteria2ChromeParrot(obMap)
 
 	// Insert inbound before existing (any order works)
 	inbound := map[string]any{
@@ -308,6 +310,7 @@ func (c *Config) UpdateTunnel(tag string, outbound json.RawMessage) error {
 	}
 	obMap["tag"] = tag
 	ensureNaiveUDPOverTCP(obMap)
+	ensureHysteria2ChromeParrot(obMap)
 
 	found := false
 	obs := c.outbounds()
@@ -420,6 +423,67 @@ func (c *Config) ensureNaiveUDPOverTCPOutbounds() bool {
 			continue
 		}
 		if ensureNaiveUDPOverTCP(ob) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// tlsFieldSet сообщает, задано ли непустое значение TLS-поля. Listable-поля
+// sing-box приезжают из JSON то строкой, то массивом.
+func tlsFieldSet(tls map[string]any, key string) bool {
+	switch v := tls[key].(type) {
+	case string:
+		return v != ""
+	case []any:
+		return len(v) > 0
+	}
+	return false
+}
+
+// ensureHysteria2ChromeParrot выключает chrome-парротинг тем hysteria2, чьи
+// TLS-опции он не переживёт. sing-box 1.14.0-beta.7 включил его по умолчанию,
+// а его uTLS-хендшейк не игнорирует два клиентских поля, а падает на них:
+// колбэк VerifyConnection (его ставит disable_sni, пока имя сервера всё ещё
+// сверяется) и клиентский сертификат. Outbound'ы приезжают из подписки, где
+// пользователь их не правит, поэтому чиним на своей стороне.
+func ensureHysteria2ChromeParrot(ob map[string]any) bool {
+	if strOr(ob["type"], "") != "hysteria2" {
+		return false
+	}
+	if _, ok := ob["disable_chrome_parrot"]; ok {
+		return false
+	}
+	tls, ok := ob["tls"].(map[string]any)
+	if !ok {
+		return false
+	}
+	disableSNI, _ := tls["disable_sni"].(bool)
+	insecure, _ := tls["insecure"].(bool)
+	incompatible := disableSNI && !insecure
+	if !incompatible {
+		for _, key := range []string{"client_certificate", "client_certificate_path", "client_key", "client_key_path"} {
+			if tlsFieldSet(tls, key) {
+				incompatible = true
+				break
+			}
+		}
+	}
+	if !incompatible {
+		return false
+	}
+	ob["disable_chrome_parrot"] = true
+	return true
+}
+
+func (c *Config) ensureHysteria2ChromeParrotOutbounds() bool {
+	changed := false
+	for _, raw := range c.outbounds() {
+		ob, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ensureHysteria2ChromeParrot(ob) {
 			changed = true
 		}
 	}
