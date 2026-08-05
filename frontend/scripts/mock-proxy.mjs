@@ -2941,6 +2941,12 @@ let mockSingboxRules = [
 	// Персональная привязка устройства (Устройства-чип): source_ip_cidr →
 	// outbound. Work-Mac (192.168.1.47) → manual-eu, рендерит «персональный».
 	{ action: 'route', source_ip_cidr: ['192.168.1.47/32'], outbound: 'manual-eu' },
+	// Пользовательское правило «приватные сети → свой LAN-выход» В СЕРЕДИНЕ
+	// списка. Миграция такие НЕ забирает в режимный слот (isMigratableSystemRule
+	// требует ведущей позиции и точной формы генератора), поэтому в общем слоте
+	// оно законно — и фронт по-прежнему рисует его как системное (BYPASS-чип,
+	// фиксированный грип, длинный матч-саммари — кейс #214).
+	{ ip_is_private: true, outbound: 'direct' },
 	{ action: 'route', rule_set: ['geosite-github'], outbound: 'sub-bigprov' },
 	{ action: 'route', rule_set: ['local-ads-block'], outbound: 'direct' },
 	{ action: 'route', domain_suffix: ['github.com'], outbound: 'direct' },
@@ -2957,6 +2963,9 @@ let mockSingboxRuleSets = [
 	// catalog tile renders the «добавлено, без правил» state.
 	{ tag: 'geosite-telegram', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-telegram.srs', update_interval: '24h', download_detour: 'direct' },
 	{ tag: 'geosite-youtube', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-youtube.srs', update_interval: '24h', download_detour: 'direct' },
+	// Ссылку на этот набор держит reject-правило фикстуры: без него применение
+	// черновика падало бы валидацией (rule-set not found), как на железе.
+	{ tag: 'geosite-category-ads-all', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-category-ads-all.srs', update_interval: '24h', download_detour: 'direct' },
 	{ tag: 'geosite-openai', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-openai.srs', update_interval: '24h', download_detour: 'direct' },
 	{ tag: 'geosite-discord', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-discord.srs', update_interval: '24h', download_detour: 'direct' },
 	{ tag: 'geosite-github', type: 'remote', format: 'binary', url: 'https://cdn.example.com/geosite-github.srs', update_interval: '24h', download_detour: 'direct' },
@@ -5750,7 +5759,21 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'POST' && path === '/singbox/router/rulesets/delete') {
-		withJsonBody(req, res, ({ tag }) => {
+		withJsonBody(req, res, ({ tag, force }) => {
+			// Бэкенд отдаёт 409 (ErrRuleSetReferenced), пока набор используется
+			// route- или DNS-правилом и не передан force — воспроизводим, иначе
+			// ветка подтверждения «набор используется» на моке недостижима.
+			const usedBy = [
+				...mockSingboxRules.filter((r) => (r.rule_set || []).includes(tag)),
+				...mockDNSRules.filter((r) => (r.rule_set || []).includes(tag)),
+			].length;
+			if (usedBy > 0 && !force) {
+				send(res, 409, {
+					success: false,
+					error: { code: 'CONFLICT', message: `rule set ${tag} is referenced by ${usedBy} rule(s)` },
+				});
+				return;
+			}
 			mockSingboxRuleSets = mockSingboxRuleSets.filter((x) => x.tag !== tag);
 			markRouterDraft();
 			send(res, 200, { success: true, data: { ok: true } });
@@ -5771,6 +5794,64 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Инспектор маршрута: бэкенд ходит по ОБЪЕДИНЁННОМУ конфигу режима — сверху
+	// системный префикс режимного слота, потом правила общего. Мок обязан
+	// отдавать ту же раскладку, иначе сноска о смещении нумерации в TracePanel
+	// на стенде не воспроизводится (а на железе она есть).
+	if (req.method === 'POST' && path === '/singbox/router/inspect') {
+		withJsonBody(req, res, ({ domain }) => {
+			const input = String(domain || '');
+			const systemPrefix = [
+				{ action: 'sniff', conditions: ['без условий'] },
+				{ action: 'hijack-dns', conditions: ['protocol: dns'] },
+				{ action: 'route', conditions: ['ip_is_private'] },
+			];
+			const matches = systemPrefix.map((r, i) => ({
+				index: i,
+				matched: false,
+				action: r.action,
+				conditions: r.conditions,
+				reason: 'системное правило режима: не проверяется по домену',
+			}));
+			let matchedRule = -1;
+			let destination = '';
+			mockSingboxRules.forEach((rule, i) => {
+				const idx = systemPrefix.length + i;
+				const hit =
+					matchedRule === -1 &&
+					(rule.domain_suffix || []).some((d) => input === d || input.endsWith(`.${d}`));
+				matches.push({
+					index: idx,
+					matched: hit,
+					action: rule.action || 'route',
+					outbound: rule.outbound,
+					conditions: [
+						...(rule.domain_suffix || []).map((d) => `domain_suffix: ${d}`),
+						...(rule.rule_set || []).map((t) => `rule_set: ${t}`),
+						...(rule.source_ip_cidr || []).map((c) => `source_ip_cidr: ${c}`),
+					],
+					reason: hit ? 'совпало по: domain_suffix' : 'не совпало',
+				});
+				if (hit) {
+					matchedRule = idx;
+					destination = rule.outbound || 'DIRECT';
+				}
+			});
+			send(res, 200, {
+				success: true,
+				data: {
+					input,
+					inputType: /^\d+\.\d+\.\d+\.\d+$/.test(input) ? 'ip' : 'domain',
+					matches,
+					matchedRule,
+					destination: matchedRule === -1 ? mockSingboxRouteFinal : destination,
+					final: mockSingboxRouteFinal,
+				},
+			});
+		});
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/singbox/router/staging') {
 		send(res, 200, {
 			success: true,
@@ -5779,7 +5860,31 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'POST' && (path === '/singbox/router/staging/apply' || path === '/singbox/router/staging/discard')) {
+	if (req.method === 'POST' && path === '/singbox/router/staging/apply') {
+		// Реальный apply гоняет кросс-слот валидацию + `sing-box check` и на
+		// провале отдаёт 422 с sbCheck/validation — на этом держится блок
+		// инлайновых ошибок StagingBanner. Воспроизводим самый частый провал:
+		// правило ссылается на набор, которого нет в конфиге.
+		const known = new Set(mockSingboxRuleSets.map((rs) => rs.tag));
+		const missing = [...mockSingboxRules, ...mockDNSRules]
+			.flatMap((r) => r.rule_set || [])
+			.find((tag) => !known.has(tag));
+		if (missing) {
+			// Формат тела — как у бэкенда: RouterStagingValidationError без
+			// success-конверта (writeJSONStatus в singbox_router_staging.go).
+			send(res, 422, {
+				sbCheck: `FATAL[0000] decode config at config.d/21-routing.json: rule-set not found: ${missing}`,
+			});
+			return;
+		}
+		mockRouterDraftedAt = null;
+		broadcastResource('singbox.router.staging');
+		broadcastResource('singbox.router.rules');
+		send(res, 200, { success: true, data: { ok: true } });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/staging/discard') {
 		mockRouterDraftedAt = null;
 		broadcastResource('singbox.router.staging');
 		broadcastResource('singbox.router.rules');
@@ -6489,6 +6594,7 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 				mockOutbounds.push({ ...o, source: 'router' });
+				markRouterDraft();
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
@@ -6509,6 +6615,7 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 				mockOutbounds[idx] = { ...outbound, source: 'router' };
+				markRouterDraft();
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
@@ -6524,6 +6631,7 @@ const server = http.createServer(async (req, res) => {
 			try {
 				const { tag } = JSON.parse(raw || '{}');
 				mockOutbounds = mockOutbounds.filter((x) => x.tag !== tag);
+				markRouterDraft();
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
