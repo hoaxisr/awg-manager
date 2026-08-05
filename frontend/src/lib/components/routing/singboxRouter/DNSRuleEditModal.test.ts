@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import DNSRuleEditModal from './DNSRuleEditModal.svelte';
-import type { SingboxRouterDNSRule, SingboxRouterDNSServer } from '$lib/types';
+import type { SingboxRouterDNSRule, SingboxRouterDNSServer, SingboxRouterRuleSet } from '$lib/types';
 
 class ResizeObserverStub {
 	observe(): void {}
@@ -108,6 +108,19 @@ describe('DNSRuleEditModal', () => {
 		});
 
 		expect(screen.getByText(/Нет evaluate-правил выше/)).toBeTruthy();
+	});
+
+	it('не предлагает geoip и IP rule-set для DNS-правила', async () => {
+		const availableRuleSets: SingboxRouterRuleSet[] = [
+			{ tag: 'geosite-google', type: 'remote', url: 'https://example.com/geosite-google.srs' },
+			{ tag: 'geoip-ru', type: 'remote', url: 'https://example.com/geoip-ru.srs' },
+			{ tag: 'custom-ips', type: 'inline', rules: [{ ip_cidr: ['10.0.0.0/8'] }] },
+		];
+		render(DNSRuleEditModal, { props: { ...baseProps, availableRuleSets, onSave: vi.fn() } });
+
+		await fireEvent.click(screen.getByRole('button', { name: '+' }));
+
+		expect(screen.getAllByRole('option').map((el) => el.textContent?.trim())).toEqual(['geosite-google']);
 	});
 
 	it('есть evaluate-правило выше → подсказки нет', () => {
