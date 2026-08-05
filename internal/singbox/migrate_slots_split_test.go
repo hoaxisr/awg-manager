@@ -607,11 +607,17 @@ func TestMigrateSlotsSplitLogsDraftNotes(t *testing.T) {
 	}
 }
 
-// В fakeip-режиме hostname-outbound обязан резолвиться через движковый `real`
-// (его объявляет режимный слот), а не через fakeip — иначе endpoint туннеля
-// получает синтетический адрес и соединение не поднимается. Сторож на случай
-// «позвать healDanglingDomainResolvers безусловно»: тот видит только DNS
-// общего слота и снял бы эту ссылку как висячую.
+// Резолвер, который режимный генератор ставит hostname-outbound'ам в
+// fakeip-режиме (`domain_resolver: real`), обязан пережить миграцию: ссылка не
+// висячая — сервер `real` объявляет режимный слот.
+//
+// Сторож на случай «позвать healDanglingDomainResolvers безусловно»: та
+// функция видит только DNS ОБЩЕГО слота плюс один переданный ей внешний тег,
+// поэтому сняла бы эту ссылку как висячую. Здесь это стоило бы смены
+// резолвера, а на пути 20-router.json → tproxy/policy-tun — уже потери
+// пользовательского DNS-сервера (см. комментарий в SplitLegacyRoutingSlot).
+// Сам outbound без резолвера sing-box грузит и запускает, поэтому тест ловит
+// именно ссылку, а не отказ движка.
 func TestMigrateSlotsSplitKeepsFakeIPOutboundResolver(t *testing.T) {
 	dir := t.TempDir()
 	writeSlotFixture(t, dir, "00-base.json", baseFixture())

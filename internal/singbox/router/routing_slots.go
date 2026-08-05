@@ -117,8 +117,12 @@ func ApplyRoutingSlots(orch *orchestrator.Orchestrator, mode string, enabled boo
 // config.d. Победитель тогда определяется порядком KnownSlots, последний
 // включённый выигрывает — молча и намеренно: выбирать не из чего, а сама
 // разметка чинится следующим же applyRoutingSlots, который погасит остальные.
-// Отдельного предупреждения нет и потому, что такое состояние громко видно
-// само: sing-box не грузит конфиг с двумя инбаундами захвата.
+//
+// На «конфиг всё равно не загрузится» здесь полагаться нельзя, это проверено:
+// пара tproxy + fakeip проходит `sing-box check -C` (теги инбаундов разные —
+// tproxy-in против tun-in, дубля нет), и движок поднимется с двумя
+// перехватчиками сразу. Падает только пара fakeip + policy-tun: у них общий
+// тег tun-in.
 func (s *ServiceImpl) currentRoutingSlots() (mode string, enabled bool) {
 	mode = stateTProxy
 	for _, st := range s.deps.Orch.Snapshot() {

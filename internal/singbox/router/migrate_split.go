@@ -114,12 +114,22 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		// который только что поставил buildRoutingSlot hostname-outbound'ам,
 		// когда установка идёт в fakeip-режим.
 		//
-		// БЕЗУСЛОВНЫМ вызов делать нельзя (проверено мутацией): на обычном пути
-		// в fakeip-режим резолвер `real` объявляет РЕЖИМНЫЙ слот, которого
-		// healDanglingDomainResolvers не видит — он судит только по
-		// shared.DNS.Servers. Ссылка была бы снята как висячая, и
-		// hostname-outbound стал бы резолвиться через fakeip, получая
-		// синтетический адрес вместо настоящего (туннель не поднимается).
+		// БЕЗУСЛОВНЫМ вызов делать нельзя, и цена ошибки — пользовательские
+		// данные. healDanglingDomainResolvers считает ссылку живой, только
+		// если тег есть в shared.DNS.Servers ЛИБО равен единственному внешнему
+		// тегу, который ему передают, — FallbackDNSResolver (dns-bootstrap).
+		// А базовый слот объявляет не только его: 00-base.json владеет ещё и
+		// `dns-doh` (см. filterOutOurDNSServers в operator_baseconfig.go).
+		// На пути, где режимный слот ПИШЕТСЯ (20-router.json → tproxy или
+		// policy-tun), весь пользовательский DNS уезжает в общий слот, и
+		// сервер с законным `domain_resolver: dns-doh` был бы объявлен
+		// висячим: резолвер молча перецелен, а сервер, заданный именем хоста
+		// и оставшийся без цели, — удалён. При обычном апгрейде, на ровном
+		// месте.
+		//
+		// Попутно тот же обход снял бы `domain_resolver: real` с
+		// hostname-outbound'ов, который только что поставил buildRoutingSlot:
+		// эту ссылку объявляет режимный слот, а он этой функции не виден.
 		// Сторож — TestMigrateSlotsSplitKeepsFakeIPOutboundResolver.
 		notes = append(notes, healDanglingDomainResolvers(shared, p.FallbackDNSResolver)...)
 	}
