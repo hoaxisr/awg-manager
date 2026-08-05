@@ -298,6 +298,29 @@ func pruneDanglingSelectorRefsInDoc(root map[string]any, known map[string]bool, 
 // exactly when its tag is in this set.
 func (o *Orchestrator) enabledOutboundTagsLocked(exclude map[Slot]bool) map[string]bool {
 	known := map[string]bool{"direct": true, "block": true, "dns": true}
+	o.forEachEnabledSlotConfigLocked(exclude, func(_ Slot, c slotConfig) {
+		for _, ob := range c.Outbounds {
+			if ob.Tag != "" {
+				known[ob.Tag] = true
+			}
+		}
+		// Endpoints share the outbound tag namespace (validate.go collects them
+		// the same way); include them so selector/device-proxy refs to an awg3
+		// endpoint tag aren't pruned as dangling.
+		for _, ep := range c.Endpoints {
+			if ep.Tag != "" {
+				known[ep.Tag] = true
+			}
+		}
+	})
+	return known
+}
+
+// forEachEnabledSlotConfigLocked разбирает активные байты каждого включённого
+// слота (кроме exclude) и отдаёт разобранный slotConfig в fn. Битый или пустой
+// файл пропускается молча — ровно как в validateWithEnabled, где единственный
+// сломанный слот не должен рушить обзор остальных. Caller MUST hold o.mu.
+func (o *Orchestrator) forEachEnabledSlotConfigLocked(exclude map[Slot]bool, fn func(Slot, slotConfig)) {
 	for _, m := range KnownSlots() {
 		if exclude[m.Slot] {
 			continue
@@ -313,21 +336,43 @@ func (o *Orchestrator) enabledOutboundTagsLocked(exclude map[Slot]bool) map[stri
 		if json.Unmarshal(data, &c) != nil {
 			continue
 		}
-		for _, ob := range c.Outbounds {
-			if ob.Tag != "" {
-				known[ob.Tag] = true
-			}
-		}
-		// Endpoints share the outbound tag namespace (validate.go collects them
-		// the same way); include them so selector/device-proxy refs to an awg3
-		// endpoint tag aren't pruned as dangling.
-		for _, ep := range c.Endpoints {
-			if ep.Tag != "" {
-				known[ep.Tag] = true
-			}
-		}
+		fn(m.Slot, c)
 	}
+}
+
+// enabledDNSServerTagsLocked — тот же реестр, что и enabledOutboundTagsLocked,
+// но для тегов DNS-серверов: sing-box резолвит их ГЛОБАЛЬНО по merged-конфигу,
+// как это делает validateWithEnabled. Встроенных тегов у DNS нет, поэтому
+// карта начинается пустой. Caller MUST hold o.mu.
+func (o *Orchestrator) enabledDNSServerTagsLocked(exclude map[Slot]bool) map[string]bool {
+	known := map[string]bool{}
+	o.forEachEnabledSlotConfigLocked(exclude, func(_ Slot, c slotConfig) {
+		for _, ds := range c.DNS.Servers {
+			if ds.Tag != "" {
+				known[ds.Tag] = true
+			}
+		}
+	})
 	return known
+}
+
+// EnabledDNSServerTags returns the DNS-server tags declared by ENABLED slots —
+// DNS-аналог EnabledOutboundTags и та же видимость, по которой судит
+// кросс-слотовая валидация (unknown-dns-server в validateWithEnabled).
+//
+// Нужен продюсерам, которые ПРОВЕРЯЮТ ссылку domain_resolver на своей мутации:
+// в merged-конфиге резолвером законно служит сервер соседнего слота (типично
+// dns-bootstrap из 00-base.json, куда миграция 5D0 перецеливает потерявший
+// резолвер hostname-сервер). Слот, чей конфиг мутируется, передаётся в
+// exclude: его актуальное состояние — правимая копия в памяти, а не файл.
+func (o *Orchestrator) EnabledDNSServerTags(exclude ...Slot) map[string]bool {
+	ex := make(map[Slot]bool, len(exclude))
+	for _, s := range exclude {
+		ex[s] = true
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.enabledDNSServerTagsLocked(ex)
 }
 
 // EnabledOutboundTags returns the outbound tags declared by ENABLED

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -15,13 +16,29 @@ func (s *ServiceImpl) ListDNSServers(ctx context.Context) ([]DNSServer, error) {
 	return cfg.DNS.Servers, nil
 }
 
+// externalDNSServerTags — теги DNS-серверов, объявленных ДРУГИМИ включёнными
+// слотами; own (свой слот) исключается: его актуальное состояние — правимая
+// копия конфига в памяти, а не файл на диске, иначе только что переименованный
+// сервер продолжал бы «существовать» под старым тегом.
+//
+// Без оркестратора (тесты, legacy-путь) — nil: проверка остаётся прежней,
+// «резолвер ищется только в своём слоте».
+func (s *ServiceImpl) externalDNSServerTags(own orchestrator.Slot) map[string]bool {
+	if s.deps.Orch == nil {
+		return nil
+	}
+	return s.deps.Orch.EnabledDNSServerTags(own)
+}
+
 func (s *ServiceImpl) AddDNSServer(ctx context.Context, srv DNSServer) error {
-	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.AddDNSServer(srv) })
+	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		return c.addDNSServer(srv, s.externalDNSServerTags(orchestrator.SlotRouting))
+	})
 }
 
 func (s *ServiceImpl) UpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
 	return s.withConfig(ctx, "dns-servers", func(c *RouterConfig) error {
-		if err := c.UpdateDNSServer(tag, srv); err != nil {
+		if err := c.updateDNSServer(tag, srv, s.externalDNSServerTags(orchestrator.SlotRouting)); err != nil {
 			return err
 		}
 		return s.captureDNSChainServerRename(tag, srv.Tag)

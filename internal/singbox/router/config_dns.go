@@ -404,21 +404,47 @@ func checkDNSServerTagReserved(tag string) error {
 	return nil
 }
 
+// domainResolverResolvable сообщает, годится ли тег в domain_resolver.
+//
+// Кроме серверов этого слота (local) принимаются теги СОСЕДНИХ слотов
+// (external): sing-box сливает config.d в один документ и резолвит ссылки
+// глобально — ровно так же судит кросс-слотовый валидатор оркестратора
+// (unknown-dns-server в validateWithEnabled). Знай проверка только свой слот,
+// правка сервера с чужим резолвером падала бы навсегда: миграция 5D0
+// (pickDomainResolverFor) законно целит hostname-сервер на dns-bootstrap из
+// 00-base.json, а снять резолвер нельзя — hostname-сервер без него роняет
+// `sing-box check`. Пустой external (тесты, вызовы без оркестратора) сохраняет
+// прежнее поведение «только свой слот».
+func domainResolverResolvable(tag string, local map[string]string, external map[string]bool) bool {
+	if _, ok := local[tag]; ok {
+		return true
+	}
+	return external[tag]
+}
+
+// AddDNSServer / UpdateDNSServer — обёртки без знания о соседних слотах:
+// резолвер ищется только среди серверов ЭТОГО конфига. Продакшен ходит через
+// сервис (service_dns.go / service_fakeip_crud.go), который подмешивает теги
+// включённых слотов из оркестратора.
 func (c *RouterConfig) AddDNSServer(s DNSServer) error {
+	return c.addDNSServer(s, nil)
+}
+
+func (c *RouterConfig) addDNSServer(s DNSServer, external map[string]bool) error {
 	if err := validateDNSServer(s); err != nil {
 		return err
 	}
 	if err := checkDNSServerTagReserved(s.Tag); err != nil {
 		return err
 	}
-	return c.addEngineDNSServer(s)
+	return c.addEngineDNSServer(s, external)
 }
 
-// addEngineDNSServer — тот же AddDNSServer, но БЕЗ запрета на движковый тег:
+// addEngineDNSServer — тот же addDNSServer, но БЕЗ запрета на движковый тег:
 // серверы `fakeip` и `real` заводит сам движок fakeip-режима, и это
 // единственный легальный путь их появления. Валидация формы (тип, диапазоны
 // пула, ссылка domain_resolver) остаётся полной.
-func (c *RouterConfig) addEngineDNSServer(s DNSServer) error {
+func (c *RouterConfig) addEngineDNSServer(s DNSServer, external map[string]bool) error {
 	scrubDNSServerDetourForSingbox(&s)
 	if err := validateDNSServer(s); err != nil {
 		return err
@@ -429,7 +455,7 @@ func (c *RouterConfig) addEngineDNSServer(s DNSServer) error {
 		}
 	}
 	if s.DomainResolver != nil && s.DomainResolver.Server != s.Tag {
-		if _, ok := c.dnsServerTypes()[s.DomainResolver.Server]; !ok {
+		if !domainResolverResolvable(s.DomainResolver.Server, c.dnsServerTypes(), external) {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
 		}
 	}
@@ -438,6 +464,10 @@ func (c *RouterConfig) addEngineDNSServer(s DNSServer) error {
 }
 
 func (c *RouterConfig) UpdateDNSServer(tag string, s DNSServer) error {
+	return c.updateDNSServer(tag, s, nil)
+}
+
+func (c *RouterConfig) updateDNSServer(tag string, s DNSServer, external map[string]bool) error {
 	scrubDNSServerDetourForSingbox(&s)
 	if err := validateDNSServer(s); err != nil {
 		return err
@@ -464,7 +494,7 @@ func (c *RouterConfig) UpdateDNSServer(tag string, s DNSServer) error {
 		types := c.dnsServerTypes()
 		delete(types, tag)
 		types[s.Tag] = s.Type
-		if _, ok := types[s.DomainResolver.Server]; !ok {
+		if !domainResolverResolvable(s.DomainResolver.Server, types, external) {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
 		}
 	}

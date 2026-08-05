@@ -1,6 +1,10 @@
 package router
 
-import "context"
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+)
 
 // ---------------------------------------------------------------------------
 // FakeIPConfigService — DNS-механизм режимного слота fakeip-tun (SlotFakeIP)
@@ -25,11 +29,15 @@ func (s *ServiceImpl) FakeIPListDNSServers(ctx context.Context) ([]DNSServer, er
 }
 
 func (s *ServiceImpl) FakeIPAddDNSServer(ctx context.Context, srv DNSServer) error {
-	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.AddDNSServer(srv) })
+	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		return c.addDNSServer(srv, s.externalDNSServerTags(orchestrator.SlotFakeIP))
+	})
 }
 
 func (s *ServiceImpl) FakeIPUpdateDNSServer(ctx context.Context, tag string, srv DNSServer) error {
-	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error { return c.UpdateDNSServer(tag, srv) })
+	return s.fakeipWithConfig(ctx, "dns-servers", func(c *RouterConfig) error {
+		return c.updateDNSServer(tag, srv, s.externalDNSServerTags(orchestrator.SlotFakeIP))
+	})
 }
 
 func (s *ServiceImpl) FakeIPDeleteDNSServer(ctx context.Context, tag string, force bool) error {

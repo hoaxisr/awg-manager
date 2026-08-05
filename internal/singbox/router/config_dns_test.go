@@ -206,6 +206,66 @@ func TestAddDNSServerWithDomainResolver(t *testing.T) {
 	}
 }
 
+// TestDNSServerCrossSlotDomainResolver: резолвером законно служит DNS-сервер
+// СОСЕДНЕГО слота — merged-конфиг у sing-box один, и ссылки он резолвит
+// глобально (так же судит валидатор оркестратора).
+//
+// Без этого правка сервера, которому миграция 5D0 перецелила резолвер на
+// dns-bootstrap из 00-base.json, падала навсегда: ErrDNSServerNotFound на
+// каждый сохранение, а снять резолвер нельзя — hostname-сервер без него
+// роняет `sing-box check`.
+func TestDNSServerCrossSlotDomainResolver(t *testing.T) {
+	// Так выглядит слот после миграции: hostname-сервер, чей резолвер живёт в
+	// чужом слоте, а в своём его нет вовсе.
+	migrated := func() *RouterConfig {
+		c := NewEmptyConfig()
+		c.DNS.Servers = []DNSServer{{
+			Tag: "user-doh", Type: "https", Server: "cloudflare-dns.com",
+			DomainResolver: &DomainResolver{Server: "dns-bootstrap"},
+		}}
+		return c
+	}
+	base := map[string]bool{"dns-bootstrap": true}
+	edited := DNSServer{
+		Tag: "user-doh", Type: "https", Server: "dns.google",
+		DomainResolver: &DomainResolver{Server: "dns-bootstrap"},
+	}
+
+	c := migrated()
+	if err := c.updateDNSServer("user-doh", edited, base); err != nil {
+		t.Fatalf("правка сервера с резолвером соседнего слота: %v", err)
+	}
+	if c.DNS.Servers[0].Server != "dns.google" {
+		t.Fatalf("правка не применилась: %#v", c.DNS.Servers[0])
+	}
+
+	// Чужой слот не отменяет проверку: неизвестный никому тег по-прежнему
+	// отвергается.
+	c = migrated()
+	unknown := edited
+	unknown.DomainResolver = &DomainResolver{Server: "dns-nowhere"}
+	if err := c.updateDNSServer("user-doh", unknown, base); !errors.Is(err, ErrDNSServerNotFound) {
+		t.Fatalf("неизвестный резолвер: ожидался ErrDNSServerNotFound, получено %v", err)
+	}
+
+	// Без списка чужих тегов (нет оркестратора) поведение прежнее — строго
+	// свой слот.
+	c = migrated()
+	if err := c.updateDNSServer("user-doh", edited, nil); !errors.Is(err, ErrDNSServerNotFound) {
+		t.Fatalf("без внешних тегов: ожидался ErrDNSServerNotFound, получено %v", err)
+	}
+
+	// Тот же контракт на создании.
+	c = NewEmptyConfig()
+	if err := c.addDNSServer(edited, base); err != nil {
+		t.Fatalf("создание сервера с резолвером соседнего слота: %v", err)
+	}
+	c = NewEmptyConfig()
+	if err := c.addDNSServer(unknown, base); !errors.Is(err, ErrDNSServerNotFound) {
+		t.Fatalf("создание с неизвестным резолвером: ожидался ErrDNSServerNotFound, получено %v", err)
+	}
+}
+
 // TestUpdateDNSServerFakeIPWithEvaluate: инвариант «evaluate не может
 // использовать fakeip-сервер» обходился сменой ТИПА живого сервера — правила не
 // трогали, а сервер становился fakeip.
@@ -434,7 +494,7 @@ func TestDNSRulesShadowedByCatchAll_EvaluateDoesNotShadow(t *testing.T) {
 func TestAddDNSRuleValidatesSourceIPCIDR(t *testing.T) {
 	c := NewEmptyConfig()
 	// Тег fakeip движковый — заводится инженерным путём, не пользовательским.
-	if err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}); err != nil {
+	if err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -597,7 +657,7 @@ func TestDNSRuleRegexAndBlock(t *testing.T) {
 
 func TestAddDNSServer_FakeIP(t *testing.T) {
 	c := NewEmptyConfig()
-	err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"})
+	err := c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}, nil)
 	if err != nil {
 		t.Fatalf("add fakeip: %v", err)
 	}
@@ -647,7 +707,7 @@ func TestUpdateDNSServer_RejectsRenameToEngineTag(t *testing.T) {
 // поддержанный сценарий fakeip-редактора и обязана проходить.
 func TestUpdateDNSServer_AllowsEditingEngineServerInPlace(t *testing.T) {
 	c := NewEmptyConfig()
-	if err := c.addEngineDNSServer(DNSServer{Tag: "real", Type: "udp", Server: "1.1.1.1"}); err != nil {
+	if err := c.addEngineDNSServer(DNSServer{Tag: "real", Type: "udp", Server: "1.1.1.1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.UpdateDNSServer("real", DNSServer{Tag: "real", Type: "udp", Server: "9.9.9.9"}); err != nil {
@@ -667,7 +727,7 @@ func TestValidateDNSServer_FakeIPRequiresRange(t *testing.T) {
 
 func TestAddDNSRule_SourceIPCIDRToFakeip(t *testing.T) {
 	c := NewEmptyConfig()
-	_ = c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"})
+	_ = c.addEngineDNSServer(DNSServer{Tag: "fakeip", Type: "fakeip", Inet4Range: "10.128.0.0/10"}, nil)
 	err := c.AddDNSRule(DNSRule{SourceIPCIDR: []string{"192.168.1.0/24"}, QueryType: []string{"A", "AAAA"}, Action: "route", Server: "fakeip"})
 	if err != nil {
 		t.Fatalf("add rule: %v", err)

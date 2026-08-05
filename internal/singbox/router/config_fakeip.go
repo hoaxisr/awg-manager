@@ -120,10 +120,10 @@ func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
 	if s.Inet6Range != "" {
 		fakeip.Inet6Range = s.Inet6Range
 	}
-	if err := cfg.addEngineDNSServer(fakeip); err != nil {
+	if err := cfg.addEngineDNSServer(fakeip, nil); err != nil {
 		return nil, err
 	}
-	if err := cfg.addEngineDNSServer(DNSServer{Tag: "real", Type: "udp", Server: s.RealServer}); err != nil {
+	if err := cfg.addEngineDNSServer(DNSServer{Tag: "real", Type: "udp", Server: s.RealServer}, nil); err != nil {
 		return nil, err
 	}
 	cfg.DNS.Final = "real"
