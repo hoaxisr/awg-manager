@@ -20,19 +20,43 @@ export type NavIcon = typeof Server;
 
 export type NavGroupId = 'awg' | 'sb' | 'router' | 'services';
 
+/**
+ * Источник значения бейджа, а не само значение: этот модуль статический, а
+ * счётчики и режим живут в сторах. Маппинг источник → стор — в
+ * `stores/navBadges.ts`, рисует бейдж сайдбар.
+ *
+ * Источник заводится только под реально существующие данные. Счётчика DNS в
+ * Status DTO движка нет, поэтому и источника `dns` здесь нет.
+ */
+export type NavBadgeSource = 'mode' | 'groups' | 'rules' | 'rule-sets' | 'connections';
+
 export interface NavItem {
 	id: string;
 	label: string;
 	href: string;
 	match: (url: URL) => boolean;
+	badge?: NavBadgeSource;
 }
+
+/**
+ * Тихая подпись-разделитель внутри группы — типографская группировка, а не
+ * уровень вложенности: у разделителя нет ни `href`, ни матчера, поэтому
+ * активным его не сделать в принципе, а не «матчер вернул false».
+ */
+export interface NavSeparator {
+	kind: 'separator';
+	id: string;
+	label: string;
+}
+
+export type NavGroupEntry = NavItem | NavSeparator;
 
 export interface NavGroup {
 	kind: 'group';
 	id: NavGroupId;
 	label: string;
 	icon: NavIcon;
-	items: NavItem[];
+	items: NavGroupEntry[];
 }
 
 export interface NavLink extends NavItem {
@@ -41,6 +65,13 @@ export interface NavLink extends NavItem {
 }
 
 export type NavEntry = NavGroup | NavLink;
+
+export const isSeparator = (entry: NavGroupEntry): entry is NavSeparator =>
+	'kind' in entry && entry.kind === 'separator';
+
+/** Кликабельные пункты группы без разделителей. */
+export const groupItems = (group: NavGroup): NavItem[] =>
+	group.items.filter((entry): entry is NavItem => !isSeparator(entry));
 
 const isPath = (url: URL, ...prefixes: string[]) =>
 	prefixes.some((p) => url.pathname === p || url.pathname.startsWith(p + '/'));
@@ -95,7 +126,20 @@ export const NAV_TREE: NavEntry[] = [
 		id: 'sb',
 		label: 'Sing-box',
 		icon: Waypoints,
+		// Состав и порядок — таблица §2 спеки 5D. Страницы `/sb/routing` больше
+		// нет: подэтап 5D1 разобрал её на отдельные маршруты, старый адрес
+		// раздаёт закладки редиректом и пунктом меню быть перестал.
 		items: [
+			{
+				id: 'sb-engine',
+				label: 'Движок',
+				href: '/sb/engine',
+				// Единственное место, где текущий режим захвата виден с любой
+				// страницы группы.
+				badge: 'mode',
+				match: (url) => isPath(url, '/sb/engine'),
+			},
+			{ kind: 'separator', id: 'sb-sep-outbounds', label: 'outbounds' },
 			{
 				id: 'sb-tunnels',
 				label: 'Туннели',
@@ -118,12 +162,61 @@ export const NAV_TREE: NavEntry[] = [
 				match: (url) => isPath(url, '/sb/subscriptions'),
 			},
 			{
-				id: 'sb-routing',
-				label: 'Маршрутизация',
-				href: '/sb/routing',
-				// Поверхность (TProxy/FakeIP) выбирается локальным ?view=,
-				// на подсветку раздела он не влияет — matcher по пути.
-				match: (url) => isPath(url, '/sb/routing'),
+				id: 'sb-groups',
+				label: 'Группы',
+				href: '/sb/groups',
+				badge: 'groups',
+				match: (url) => isPath(url, '/sb/groups'),
+			},
+			{ kind: 'separator', id: 'sb-sep-rules', label: 'правила' },
+			{
+				id: 'sb-wizard',
+				label: 'Мастер',
+				href: '/sb/wizard',
+				match: (url) => isPath(url, '/sb/wizard'),
+			},
+			{
+				id: 'sb-rules',
+				label: 'Маршруты',
+				href: '/sb/rules',
+				badge: 'rules',
+				match: (url) => isPath(url, '/sb/rules'),
+			},
+			{
+				id: 'sb-rule-sets',
+				label: 'Rule sets',
+				href: '/sb/rule-sets',
+				badge: 'rule-sets',
+				match: (url) => isPath(url, '/sb/rule-sets'),
+			},
+			{
+				// Счётчика DNS в Status DTO движка нет — бейджа тоже нет.
+				id: 'sb-dns',
+				label: 'DNS',
+				href: '/sb/dns',
+				match: (url) => isPath(url, '/sb/dns'),
+			},
+			{ kind: 'separator', id: 'sb-sep-watch', label: 'наблюдение' },
+			{
+				id: 'sb-inbounds',
+				label: 'Inbounds',
+				href: '/sb/inbounds',
+				match: (url) => isPath(url, '/sb/inbounds'),
+			},
+			{
+				// «движка» в подписи обязательно: в свёрнутой группе голое
+				// «Соединения» неотличимо от conntrack-пункта верхнего уровня.
+				id: 'sb-connections',
+				label: 'Соединения движка',
+				href: '/sb/connections',
+				badge: 'connections',
+				match: (url) => isPath(url, '/sb/connections'),
+			},
+			{
+				id: 'sb-logs',
+				label: 'Журнал движка',
+				href: '/sb/logs',
+				match: (url) => isPath(url, '/sb/logs'),
 			},
 			{
 				id: 'sb-geodata',
@@ -249,7 +342,7 @@ export function activeItem(url: URL): { group: NavGroup | null; item: NavItem | 
 			if (entry.match(url)) return { group: null, item: entry };
 			continue;
 		}
-		for (const item of entry.items) {
+		for (const item of groupItems(entry)) {
 			if (item.match(url)) return { group: entry, item };
 		}
 	}

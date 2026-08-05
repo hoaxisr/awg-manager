@@ -8,8 +8,12 @@
 		icon?: NavIcon;
 		/** Пункт внутри группы — с отступом под иконку группы. */
 		indent?: boolean;
-		/** Счётчик справа (подключение к stores — фаза 3). */
-		count?: number | null;
+		/**
+		 * Готовое значение бейджа справа (счётчик или режим). Источник значения
+		 * объявляет модель, разбор источника в стор — `stores/navBadges.ts`.
+		 * `null` — бейджа нет, и разметки под него тоже нет.
+		 */
+		badge?: string | null;
 		/** Зелёная статус-точка (подключение — фаза 3). */
 		dot?: boolean;
 		onNavigate?: () => void;
@@ -20,7 +24,7 @@
 		active,
 		icon,
 		indent = false,
-		count = null,
+		badge = null,
 		dot = false,
 		onNavigate,
 	}: Props = $props();
@@ -39,7 +43,7 @@
 	{#if Icon}<Icon size={16} aria-hidden="true" />{/if}
 	<span class="nav-item-label">{item.label}</span>
 	{#if dot}<span class="nav-item-dot" aria-hidden="true"></span>{/if}
-	{#if count !== null}<span class="nav-item-count">{count}</span>{/if}
+	{#if badge}<span class="nav-item-badge">{badge}</span>{/if}
 </a>
 
 <style>
@@ -90,7 +94,7 @@
 		flex: none;
 	}
 
-	.nav-item-count {
+	.nav-item-badge {
 		font-family: var(--font-mono);
 		font-size: 10px;
 		font-weight: 600;
@@ -99,9 +103,14 @@
 		background: var(--color-muted-tint);
 		color: var(--color-text-muted);
 		flex: none;
+		/* Бейдж режима — текст переменной длины («Политики + tun»). Ужимается он,
+		   а не подпись пункта: подпись отвечает на «куда я попаду». */
+		max-width: 50%;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
-	.nav-item.active .nav-item-count {
+	.nav-item.active .nav-item-badge {
 		background: var(--color-accent-tint);
 		color: var(--color-accent);
 	}

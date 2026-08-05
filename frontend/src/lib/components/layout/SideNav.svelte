@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { NAV_TREE, activeItem, type NavGroup } from '$lib/data/navigation';
+	import { NAV_TREE, activeItem, groupItems, type NavGroup } from '$lib/data/navigation';
+	import { navBadges } from '$lib/stores/navBadges';
 	import { menuMemoryKey, readMenuChild, rememberMenuChild } from '$lib/utils/menuMemory';
 	import SideNavGroup from './SideNavGroup.svelte';
 	import SideNavItem from './SideNavItem.svelte';
@@ -26,8 +27,10 @@
 	const activeId = $derived(active?.item.id ?? null);
 	const activeGroupId = $derived(active?.group?.id ?? null);
 
+	// Разделители в память не попадают: они не пункты, открыть их нельзя, а в
+	// ключе памяти лишние id разошлись бы с составом «куда можно вернуться».
 	function groupChildIds(group: NavGroup): string[] {
-		return group.items.map((i) => i.id);
+		return groupItems(group).map((i) => i.id);
 	}
 
 	// Реактивное зеркало памяти. Без него href заголовка протухает навсегда:
@@ -40,8 +43,9 @@
 	// а при пустой памяти — первый.
 	function rememberedItem(group: NavGroup) {
 		const ids = groupChildIds(group);
+		const items = groupItems(group);
 		const remembered = memory[menuMemoryKey(group.label, ids)] ?? readMenuChild(group.label, ids);
-		return group.items.find((i) => i.id === remembered) ?? group.items[0];
+		return items.find((i) => i.id === remembered) ?? items[0];
 	}
 
 	function handleGroupPick(group: NavGroup, itemId: string) {
@@ -65,6 +69,7 @@
 					open={activeGroupId === entry.id}
 					{activeId}
 					href={rememberedItem(entry).href}
+					badges={$navBadges}
 					onPick={(itemId) => handleGroupPick(entry, itemId)}
 					{onNavigate}
 				/>

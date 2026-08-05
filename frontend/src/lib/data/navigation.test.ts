@@ -1,16 +1,109 @@
 import { describe, it, expect } from 'vitest';
-import { NAV_TREE, activeItem, breadcrumbFor } from './navigation';
+import { NAV_TREE, activeItem, breadcrumbFor, groupItems, isSeparator } from './navigation';
+import type { NavGroup } from './navigation';
 
 const u = (path: string) => new URL(`http://router${path}`);
+
+/** Все кликабельные пункты дерева: пункты групп без разделителей + плоские. */
+const allItems = () => NAV_TREE.flatMap((e) => (e.kind === 'group' ? groupItems(e) : [e]));
+
+const sbGroup = (): NavGroup => {
+	const entry = NAV_TREE.find((e) => e.id === 'sb');
+	if (!entry || entry.kind !== 'group') throw new Error('в дереве нет группы sb');
+	return entry;
+};
 
 describe('NAV_TREE hrefs', () => {
 	// Контейнеров-с-вкладками в дереве больше нет: каждый пункт — свой путь.
 	// `?tab=` в href означал бы, что раздел снова живёт вкладкой чужой страницы.
 	it('ни один пункт не ссылается на вкладку', () => {
-		const all = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items : [e]));
-		for (const item of all) {
+		for (const item of allItems()) {
 			expect(item.href).not.toContain('?tab=');
 		}
+	});
+});
+
+describe('группа Sing-box', () => {
+	// Состав и порядок — таблица §2 спеки 5D. Тринадцать пунктов: «14» в
+	// заголовке таблицы — хвост редакции 1, где ещё был раздел «Устройства».
+	it('тринадцать пунктов в порядке спеки', () => {
+		expect(groupItems(sbGroup()).map((i) => [i.id, i.label, i.href])).toEqual([
+			['sb-engine', 'Движок', '/sb/engine'],
+			['sb-tunnels', 'Туннели', '/sb/tunnels'],
+			['sb-awg3', 'Endpoints', '/sb/awg3'],
+			['sb-subs', 'Подписки', '/sb/subscriptions'],
+			['sb-groups', 'Группы', '/sb/groups'],
+			['sb-wizard', 'Мастер', '/sb/wizard'],
+			['sb-rules', 'Маршруты', '/sb/rules'],
+			['sb-rule-sets', 'Rule sets', '/sb/rule-sets'],
+			['sb-dns', 'DNS', '/sb/dns'],
+			['sb-inbounds', 'Inbounds', '/sb/inbounds'],
+			['sb-connections', 'Соединения движка', '/sb/connections'],
+			['sb-logs', 'Журнал движка', '/sb/logs'],
+			['sb-geodata', 'Гео-данные', '/sb/geodata'],
+		]);
+	});
+
+	// Находка ревью 5A: в свёрнутой группе голые «Соединения» и «Журнал»
+	// неотличимы от одноимённых пунктов верхнего уровня.
+	it('ни один пункт не тёзка верхнеуровневого', () => {
+		const topLabels = NAV_TREE.filter((e) => e.kind === 'link').map((e) => e.label);
+		for (const item of groupItems(sbGroup())) {
+			expect(topLabels).not.toContain(item.label);
+		}
+	});
+
+	it('три разделителя в порядке спеки', () => {
+		expect(sbGroup().items.filter(isSeparator).map((s) => s.label)).toEqual([
+			'outbounds',
+			'правила',
+			'наблюдение',
+		]);
+	});
+
+	it('разделители стоят перед своими пунктами', () => {
+		const ids = sbGroup().items.map((e) => e.id);
+		expect(ids.indexOf('sb-sep-outbounds')).toBe(ids.indexOf('sb-tunnels') - 1);
+		expect(ids.indexOf('sb-sep-rules')).toBe(ids.indexOf('sb-wizard') - 1);
+		expect(ids.indexOf('sb-sep-watch')).toBe(ids.indexOf('sb-inbounds') - 1);
+	});
+
+	// Разделитель не может стать активным не потому, что его матчер возвращает
+	// false, а потому, что матчера у него нет вовсе — как и адреса.
+	it('у разделителя нет ни адреса, ни матчера', () => {
+		const separators = sbGroup().items.filter(isSeparator);
+		expect(separators.length).toBeGreaterThan(0);
+		for (const sep of separators) {
+			expect('href' in sep).toBe(false);
+			expect('match' in sep).toBe(false);
+		}
+	});
+
+	// Разделитель — типографская группировка, а не уровень вложенности.
+	it('третьего уровня в группе нет', () => {
+		for (const entry of sbGroup().items) {
+			expect('items' in entry).toBe(false);
+		}
+	});
+
+	// Модель статическая: она объявляет ИСТОЧНИК бейджа, значение приезжает из
+	// сторов (см. stores/navBadges.ts).
+	it('бейджи объявлены источником, а не значением', () => {
+		const declared = groupItems(sbGroup())
+			.filter((i) => i.badge !== undefined)
+			.map((i) => [i.id, i.badge]);
+		expect(declared).toEqual([
+			['sb-engine', 'mode'],
+			['sb-groups', 'groups'],
+			['sb-rules', 'rules'],
+			['sb-rule-sets', 'rule-sets'],
+			['sb-connections', 'connections'],
+		]);
+	});
+
+	// В Status DTO движка счётчика DNS нет — источник без данных не заводим.
+	it('у DNS бейджа нет', () => {
+		expect(groupItems(sbGroup()).find((i) => i.id === 'sb-dns')?.badge).toBeUndefined();
 	});
 });
 
@@ -94,11 +187,35 @@ describe('activeItem', () => {
 		expect(activeItem(u('/routing?tab=policy'))).toBeNull();
 		expect(activeItem(u('/routing?tab=hrneo'))).toBeNull();
 	});
-	it('маршрутизация sing-box на своём маршруте', () => {
-		expect(activeItem(u('/sb/routing'))?.item.id).toBe('sb-routing');
-		// Локальный переключатель поверхности (?view=) на подсветку не влияет.
-		expect(activeItem(u('/sb/routing?view=fakeip'))?.item.id).toBe('sb-routing');
-		expect(activeItem(u('/sb/routing?add=1&mode=expert'))?.item.id).toBe('sb-routing');
+	it('страницы группы движка на своих маршрутах', () => {
+		expect(activeItem(u('/sb/engine'))?.item.id).toBe('sb-engine');
+		expect(activeItem(u('/sb/groups'))?.item.id).toBe('sb-groups');
+		expect(activeItem(u('/sb/wizard'))?.item.id).toBe('sb-wizard');
+		expect(activeItem(u('/sb/rules'))?.item.id).toBe('sb-rules');
+		expect(activeItem(u('/sb/rule-sets'))?.item.id).toBe('sb-rule-sets');
+		expect(activeItem(u('/sb/dns'))?.item.id).toBe('sb-dns');
+		expect(activeItem(u('/sb/inbounds'))?.item.id).toBe('sb-inbounds');
+		expect(activeItem(u('/sb/connections'))?.item.id).toBe('sb-connections');
+		expect(activeItem(u('/sb/logs'))?.item.id).toBe('sb-logs');
+	});
+	it('соседние маршруты /sb/rules и /sb/rule-sets не путаются', () => {
+		expect(activeItem(u('/sb/rule-sets'))?.item.id).not.toBe('sb-rules');
+		expect(activeItem(u('/sb/rules'))?.item.id).not.toBe('sb-rule-sets');
+	});
+	it('соединения и журнал движка не перебивают верхнеуровневые', () => {
+		expect(activeItem(u('/connections'))?.item.id).toBe('connections');
+		expect(activeItem(u('/connections'))?.group).toBeNull();
+		expect(activeItem(u('/logs'))?.item.id).toBe('logs');
+		expect(activeItem(u('/logs'))?.group).toBeNull();
+		expect(activeItem(u('/sb/connections'))?.group?.id).toBe('sb');
+		expect(activeItem(u('/sb/logs'))?.group?.id).toBe('sb');
+	});
+	it('пункта «Маршрутизация» в дереве больше нет — страница разобрана', () => {
+		// /sb/routing раздаёт легаси-закладки редиректом (routes/sb/routing/+page.ts),
+		// пунктом меню он быть перестал.
+		expect(allItems().map((i) => i.id)).not.toContain('sb-routing');
+		expect(allItems().map((i) => i.href)).not.toContain('/sb/routing');
+		expect(activeItem(u('/sb/routing'))).toBeNull();
 	});
 	it('гео-данные на своём маршруте', () => {
 		expect(activeItem(u('/sb/geodata'))?.item.id).toBe('sb-geodata');
@@ -120,14 +237,11 @@ describe('activeItem', () => {
 		expect(activeItem(u('/diagnostics?tab=dns'))?.item.id).toBe('diagnostics');
 	});
 	it('раздела «Инструменты» в дереве больше нет', () => {
-		const ids = NAV_TREE.flatMap((e) => (e.kind === 'group' ? e.items.map((i) => i.id) : [e.id]));
-		expect(ids).not.toContain('tools');
+		expect(allItems().map((i) => i.id)).not.toContain('tools');
 		expect(activeItem(u('/tools'))).toBeNull();
 	});
 	it('AWG3-раздел называется Endpoints', () => {
-		const sb = NAV_TREE.find((e) => e.kind === 'group' && e.id === 'sb');
-		const item = sb?.kind === 'group' ? sb.items.find((i) => i.id === 'sb-awg3') : undefined;
-		expect(item?.label).toBe('Endpoints');
+		expect(groupItems(sbGroup()).find((i) => i.id === 'sb-awg3')?.label).toBe('Endpoints');
 	});
 	it('неизвестный путь → null', () => {
 		expect(activeItem(u('/nope'))).toBeNull();
@@ -138,9 +252,10 @@ describe('breadcrumbFor', () => {
 	it('пункт группы → группа + раздел', () => {
 		expect(breadcrumbFor(u('/router/ndms'))).toEqual({ group: 'Роутер', label: 'NDMS' });
 		expect(breadcrumbFor(u('/services/hrneo'))).toEqual({ group: 'Сервисы', label: 'HR Neo' });
-		expect(breadcrumbFor(u('/sb/routing?view=fakeip'))).toEqual({
+		expect(breadcrumbFor(u('/sb/engine'))).toEqual({ group: 'Sing-box', label: 'Движок' });
+		expect(breadcrumbFor(u('/sb/logs'))).toEqual({
 			group: 'Sing-box',
-			label: 'Маршрутизация',
+			label: 'Журнал движка',
 		});
 		expect(breadcrumbFor(u('/sb/geodata'))).toEqual({ group: 'Sing-box', label: 'Гео-данные' });
 	});
