@@ -82,11 +82,11 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	}
 	data, err := os.ReadFile(filepath.Join(h.dir, "disabled", "21-routing.json"))
 	if err != nil {
-		t.Fatalf("read disabled/20-router.json: %v", err)
+		t.Fatalf("read disabled/21-routing.json: %v", err)
 	}
 	var cfg RouterConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal disabled/20-router.json: %v", err)
+		t.Fatalf("unmarshal disabled/21-routing.json: %v", err)
 	}
 	for _, in := range cfg.Inbounds {
 		if in.Tag == "tun-in" {

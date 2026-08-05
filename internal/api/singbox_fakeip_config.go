@@ -10,11 +10,14 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
-// SingboxFakeIPConfigHandler exposes the FakeIPConfigService CRUD surface
-// (SlotFakeIP) as REST endpoints under /api/singbox/fakeip/config/...
-// It is a pure mechanical mirror of SingboxRouterHandler: same DTO shapes,
-// same error mapping, same nil-array guards, different path prefix and
-// FakeIP-prefixed service calls.
+// SingboxFakeIPConfigHandler отдаёт DNS режимного слота fakeip (SlotFakeIP)
+// ручками под /api/singbox/fakeip/config/dns/... Правила, наборы и outbound'ы
+// сюда больше не входят: они живут в общем слоте 21-routing.json и правятся
+// ручками SingboxRouterHandler (подэтап 5D0).
+//
+// DNS-часть по-прежнему повторяет DTO, маппинг ошибок и nil-гарды роутерного
+// обработчика — расходится только префикс пути и FakeIP-префикс вызовов
+// сервиса.
 type SingboxFakeIPConfigHandler struct {
 	svc router.FakeIPConfigService
 	log *logging.ScopedLogger

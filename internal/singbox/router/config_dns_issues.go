@@ -9,7 +9,7 @@ import (
 
 // dnsUpstreamTypes — типы DNS-серверов с сетевым upstream-адресом (поле
 // server). local/fakeip адреса не имеют, dial-проверки к ним не применимы.
-// tcp в validDNSTypes нашей модели нет, но в сыром 20-router.json он
+// tcp в validDNSTypes нашей модели нет, но в сыром слоте маршрутизации он
 // представим — учитываем, чтобы не «зеленить» такой конфиг молча.
 var dnsUpstreamTypes = map[string]bool{
 	"udp":   true,

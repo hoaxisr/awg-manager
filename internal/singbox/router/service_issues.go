@@ -211,20 +211,29 @@ func (s *ServiceImpl) UnbindDevice(ctx context.Context, mac string) error {
 	return s.deps.Policies.UnassignDevice(ctx, mac)
 }
 
-// inspectSlotConfig returns the EFFECTIVE config the inspector must walk —
-// the slot that is live under the CURRENT routing mode — plus that slot for
-// draft reporting. Issue #488: the inspector always walked the tproxy slot
-// (общий слот), so in fakeip-tun mode it explained decisions by DNS/route
-// rules and rule-set names sing-box wasn't even running; the live rules were
-// in the fakeip slot (20-fakeip.json).
+// inspectSlotConfig отдаёт две разные вещи, и путать их нельзя:
+//
+//   - конфиг — merged-вид АКТИВНОГО режима (правила, наборы и outbound'ы
+//     общего слота 21-routing.json плюс системный префикс режимного слота, а в
+//     fakeip — и его DNS). Инспектор обязан объяснять решения по тому, что
+//     реально видит sing-box;
+//   - слот — тот, у которого бывает черновик, и это ВСЕГДА общий слот:
+//     режимные слоты целиком выводятся из настроек и черновиков не имеют.
+//
+// Issue #488 (до подэтапа 5D0, когда слот на режим был один): инспектор всегда
+// читал 20-router.json, поэтому в fakeip-режиме объяснял решения правилами и
+// наборами, которых sing-box не исполнял — живые лежали в 21-fakeip.json.
+// Разделение слотов эту ловушку не убрало, а перевернуло: теперь половина,
+// потерянная при чтении одного слота, — системный префикс режима.
 func (s *ServiceImpl) inspectSlotConfig() (*RouterConfig, orchestrator.Slot, error) {
 	mode := ""
 	if s.deps.Settings != nil {
 		settings, err := s.deps.Settings.Load()
 		if err != nil {
-			// Fail loud, not wrong: silently falling back to the tproxy slot
-			// on a transient settings read error would reproduce the very
-			// #488 bug (inspector explains decisions by the parked slot).
+			// Fail loud, not wrong: с пустым mode сборка ниже подмешала бы
+			// префикс TPROXY-слота (ModeSlot("") = tproxy), и в fakeip-режиме
+			// инспектор снова объяснял бы решения правилами, которых sing-box
+			// не исполняет — тот же #488, только другой половиной.
 			return nil, orchestrator.SlotRouting, fmt.Errorf("inspector: load settings: %w", err)
 		}
 		if settings != nil {

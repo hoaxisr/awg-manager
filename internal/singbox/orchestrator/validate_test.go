@@ -348,14 +348,14 @@ func TestValidateDraftLocked_SwapsTargetSlot(t *testing.T) {
 	o.enabled[SlotBase] = true
 	o.enabled[SlotRouting] = true
 
-	// Active 20-router.json declares outbound tag "live-X"
+	// Active 21-routing.json declares outbound tag "live-X"
 	active := []byte(`{"outbounds":[{"tag":"live-X","type":"direct"}]}`)
 	_ = os.WriteFile(filepath.Join(dir, "21-routing.json"), active, 0644)
 	// 00-base declares "direct"
 	base := []byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`)
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"), base, 0644)
 
-	// Draft replaces 20-router content with one referring to a new tag "draft-Y"
+	// Draft replaces 21-routing content with one referring to a new tag "draft-Y"
 	// and a route.final referencing it.
 	draft := []byte(`{"outbounds":[{"tag":"draft-Y","type":"direct"}],"route":{"final":"draft-Y"}}`)
 

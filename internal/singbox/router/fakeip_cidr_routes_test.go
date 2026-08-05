@@ -355,14 +355,14 @@ func TestApplyStaging_SyncsCIDRRoutes(t *testing.T) {
 // full set of specific tun CIDR routes for proxy-routed (loop-safe) rules, right
 // after the pool routes, under the same LIFO push-rollback. The harness is the
 // real provisioned enable harness (newFakeIPEnableHarness, index 0 → OpkgTun0).
-// We seed 21-fakeip.json with a pure-dst proxy ip_cidr rule (loop-safe: only the
+// We seed 20-fakeip.json with a pure-dst proxy ip_cidr rule (loop-safe: only the
 // ip_cidr matcher) plus a DNS rule so fakeIPConfigEmpty is false (no seed clobber)
 // and route.final="direct" (a known built-in egress). A successful Enable must
 // POST the matching specific tun route.
 func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
-	// Seed the fakeip config (21-fakeip.json) with a loop-safe proxy ip_cidr rule.
+	// Seed the fakeip config (20-fakeip.json) with a loop-safe proxy ip_cidr rule.
 	// route.final="direct" is a known built-in outbound so the egress check passes;
 	// a DNS rule keeps fakeIPConfigEmpty false so the seed path leaves our rules be.
 	seedFakeIPCIDRSlots(t, h.dir, `{"action":"route","outbound":"proxy","ip_cidr":["149.154.160.0/20"]}`)
@@ -384,10 +384,10 @@ func TestEnable_AppliesCIDRRoutes(t *testing.T) {
 // here or they orphan forever (disable also CLEARS the persisted FakeIP state).
 //
 // Harness: the real provisioned enable harness (index 0 → OpkgTun0). We seed
-// 21-fakeip.json with a loop-safe proxy ip_cidr rule (only the ip_cidr matcher)
+// 20-fakeip.json with a loop-safe proxy ip_cidr rule (only the ip_cidr matcher)
 // plus a DNS rule so fakeIPConfigEmpty is false, provision via Enable, then drive
 // Disable. The removal runs BEFORE the persisted-state clear, while the config is
-// still loadable (21-fakeip.json is not deleted on disable).
+// still loadable (20-fakeip.json is not deleted on disable).
 func TestDisable_RemovesCIDRRoutes(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	captureDrain(t) // capture the async pool-drain so it never runs inline

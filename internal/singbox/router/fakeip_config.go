@@ -10,6 +10,27 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
+// ---------------------------------------------------------------------------
+// Конфиг режимного слота fakeip (SlotFakeIP): его DNS-механизм и оверлей.
+//
+// АСИММЕТРИЯ ЗАПИСИ, о которую спотыкается любое чтение этого файла: после
+// подэтапа 5D0 правки правил, наборов и outbound'ов идут в общий слот ЧЕРЕЗ
+// STAGING (pending/21-routing.json, применяются кнопкой «Применить»), а DNS
+// fakeip пишется в active НАПРЯМУЮ — persistFakeIPConfig → persistSlotDirect,
+// то есть вступает в силу ближайшим reload без всякого «Применить».
+//
+// Так сделано намеренно: режимный слот целиком выводится из настроек и
+// провижининга, черновика у него нет и быть не может (ApplyStaging знает
+// только общий слот). Но на одной странице пользователь видит два разных
+// контракта применения, и оба следствия приходится закрывать руками:
+//
+//   - guardFakeIPRuleSetRefs — DNS-правило не примет ссылку на набор, который
+//     ещё лежит в черновике общего слота (иначе прямая запись DNS обгоняет
+//     «Применить» и reload падает на неизвестном rule_set);
+//   - фронт показывает баннер черновика на всех вкладках страницы fakeip, но
+//     DNS-правки под него не подводит.
+// ---------------------------------------------------------------------------
+
 // cloneRouterConfig returns a deep copy of cfg via a JSON round-trip.
 // ponytail: json round-trip deep copy — config is already JSON-serializable, no hand-written Clone.
 func cloneRouterConfig(cfg *RouterConfig) (*RouterConfig, error) {

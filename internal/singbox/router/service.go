@@ -238,7 +238,7 @@ type AccessPolicyProvider interface {
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned
-// by awgoutbounds (lives in 15-awg.json, not 20-router.json). Router
+// by awgoutbounds (lives in 15-awg.json, not 21-routing.json). Router
 // consults this so computeIssues knows which tags are valid even
 // though they don't appear in cfg.Outbounds.
 type AWGTagCatalog interface {
@@ -289,7 +289,7 @@ type Deps struct {
 	// ListCompositeOutbounds returns only this service's own composites.
 	SubscriptionComposites *SubscriptionCompositesAdapter
 	// Orch is the config.d orchestrator. When non-nil (production),
-	// persistConfig writes 20-router.json through the slot writer and
+	// persistConfig writes 21-routing.json through the slot writer and
 	// Enable / Disable toggle SlotRouting so the file moves between
 	// active and disabled/ — sing-box only sees the file when the
 	// router is enabled. When nil (tests), persistConfig falls back
@@ -321,7 +321,7 @@ type Deps struct {
 	IngressResolver IngressResolver
 	// OnRoutingSlotsChanged, если задан, вызывается СИНХРОННО сразу после
 	// того как Enable / Disable / переключение режима перепарковали слоты
-	// маршрутизации (20-router.json / 21-fakeip.json), но ДО ближайшего
+	// маршрутизации (21-routing.json + режимный 20-*.json), но ДО ближайшего
 	// reload sing-box. Production-обвязка (main.go) дергает здесь
 	// device-proxy ApplyInstances: слот 30 перегенерируется с учётом
 	// новой доступности router-композитов, и коалесцированный reload

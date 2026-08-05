@@ -828,7 +828,7 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 //   - Re-loads via loadFakeIPConfig and asserts the user rule survived.
 //   - Asserts the engine-locked overlay bits are present (hijack-dns first rule,
 //     fakeip DNS server, DNS.Final=="real").
-//   - Asserts the file landed at the active path (21-fakeip.json), not pending/.
+//   - Asserts the file landed at the active path (20-fakeip.json), not pending/.
 func TestFakeipWithConfig_OverlayAndPersist(t *testing.T) {
 	svc, dir := newFakeIPTestService(t)
 	ctx := context.Background()
@@ -888,11 +888,11 @@ func TestFakeipWithConfig_OverlayAndPersist(t *testing.T) {
 	// File landed at active path, not pending/.
 	activePath := filepath.Join(dir, "20-fakeip.json")
 	if _, err := os.Stat(activePath); err != nil {
-		t.Errorf("21-fakeip.json must exist at active path %s: %v", activePath, err)
+		t.Errorf("20-fakeip.json must exist at active path %s: %v", activePath, err)
 	}
 	pendingPath := filepath.Join(dir, "pending", "20-fakeip.json")
 	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
-		t.Errorf("21-fakeip.json must NOT be in pending/; stat err=%v", err)
+		t.Errorf("20-fakeip.json must NOT be in pending/; stat err=%v", err)
 	}
 }
 

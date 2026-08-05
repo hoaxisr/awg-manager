@@ -334,8 +334,8 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 //   - режимный SlotFakeIP и общий SlotRouting ВКЛЮЧЕНЫ, два чужих режимных
 //     слота выключены (взаимное исключение теперь между режимами, а не между
 //     fakeip и общим слотом);
-//   - The persisted active file is 21-fakeip.json, not the shared slot's file.
-//   - 21-fakeip.json contains the engine-locked overlay bits (tun-in, fakeip DNS
+//   - The persisted active file is 20-fakeip.json, not the shared slot's file.
+//   - 20-fakeip.json contains the engine-locked overlay bits (tun-in, fakeip DNS
 //     server, hijack-dns at route.rules[0]) and the seeded A/AAAA→fakeip DNS rule.
 //   - route.final is set (seed provides "direct").
 //   - файл общего слота fakeip-enable не трогает.
@@ -359,15 +359,15 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		}
 	}
 
-	// --- 21-fakeip.json exists and has the locked bits + seed ---
+	// --- 20-fakeip.json exists and has the locked bits + seed ---
 	fakeIPPath := filepath.Join(h.dir, "20-fakeip.json")
 	data, err := os.ReadFile(fakeIPPath)
 	if err != nil {
-		t.Fatalf("21-fakeip.json missing: %v", err)
+		t.Fatalf("20-fakeip.json missing: %v", err)
 	}
 	var cfg RouterConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+		t.Fatalf("unmarshal 20-fakeip.json: %v", err)
 	}
 
 	// tun-in inbound present (overlay).
@@ -379,7 +379,7 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("21-fakeip.json: tun-in inbound missing: %s", data)
+		t.Errorf("20-fakeip.json: tun-in inbound missing: %s", data)
 	}
 
 	// fakeip DNS server present (overlay).
@@ -391,12 +391,12 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		}
 	}
 	if !hasFakeipServer {
-		t.Errorf("21-fakeip.json: fakeip DNS server missing: %s", data)
+		t.Errorf("20-fakeip.json: fakeip DNS server missing: %s", data)
 	}
 
 	// hijack-dns rule at rules[0] (overlay).
 	if len(cfg.Route.Rules) == 0 || cfg.Route.Rules[0].Action != "hijack-dns" {
-		t.Errorf("21-fakeip.json: route.rules[0] must be hijack-dns, got %+v", cfg.Route.Rules)
+		t.Errorf("20-fakeip.json: route.rules[0] must be hijack-dns, got %+v", cfg.Route.Rules)
 	}
 
 	// route.final пишет ТОЛЬКО общий слот: режимный сливается первым, и его
@@ -421,7 +421,7 @@ func TestEnableFakeIPTun_SlotFakeIPWritten(t *testing.T) {
 		}
 	}
 	if !hasAAAAARule {
-		t.Errorf("21-fakeip.json: seeded A/AAAA→fakeip DNS rule missing: %s", data)
+		t.Errorf("20-fakeip.json: seeded A/AAAA→fakeip DNS rule missing: %s", data)
 	}
 
 	// Файл общего слота остаётся активным (он общий для всех режимов), несёт
@@ -502,7 +502,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 		t.Errorf("FakeIP state ranges = %+v, want overridden", st)
 	}
 
-	// The persisted fakeip sing-box config (21-fakeip.json) reflects
+	// The persisted fakeip sing-box config (20-fakeip.json) reflects
 	// stack=system + gso:false + the overridden pools.
 	data, err := os.ReadFile(filepath.Join(h.dir, "20-fakeip.json"))
 	if err != nil {
@@ -510,7 +510,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 	}
 	var cfg RouterConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+		t.Fatalf("unmarshal 20-fakeip.json: %v", err)
 	}
 	if len(cfg.Inbounds) == 0 {
 		t.Fatalf("no inbounds in persisted fakeip config: %s", data)
@@ -537,7 +537,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 		}
 	}
 	if fakeipSrv == nil {
-		t.Fatalf("fakeip DNS server missing in 21-fakeip.json: %s", data)
+		t.Fatalf("fakeip DNS server missing in 20-fakeip.json: %s", data)
 	}
 	if fakeipSrv.Inet4Range != "10.64.0.0/12" || fakeipSrv.Inet6Range != "fc00::/7" {
 		t.Errorf("fakeip DNS server ranges = %q/%q, want overridden", fakeipSrv.Inet4Range, fakeipSrv.Inet6Range)
@@ -634,7 +634,7 @@ func slotEnabled(t *testing.T, svc *ServiceImpl, slot orchestrator.Slot) bool {
 // re-enabling tproxy would be wrong (and break XOR intent).
 func TestEnableFakeIPTun_RollbackRestoresPriorRouterSlotState(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "AddRoute") // post-flip failure
-	// Force the prior state: SlotRouting DISABLED (the harness writes 20-router.json
+	// Force the prior state: SlotRouting DISABLED (the harness writes 21-routing.json
 	// to active, which counts as enabled — flip it off to model boot-into-fakeip).
 	if err := h.svc.deps.Orch.SetEnabled(orchestrator.SlotRouting, false); err != nil {
 		t.Fatalf("pre-disable SlotRouting: %v", err)

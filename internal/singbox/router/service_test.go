@@ -402,7 +402,7 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 
 	cfg, err := LoadConfig(filepath.Join(singbox.dir, "21-routing.json"))
 	if err != nil {
-		t.Fatalf("LoadConfig(20-router.json): %v", err)
+		t.Fatalf("LoadConfig(21-routing.json): %v", err)
 	}
 	if cfg.Route.Final != "sub-test" {
 		t.Fatalf("route.final: want sub-test, got %q", cfg.Route.Final)
@@ -1622,7 +1622,7 @@ func TestReapplyFakeIPOverlay_Gating(t *testing.T) {
 }
 
 // Позитивный путь (и контроль вакуозности гейтинг-теста выше): на включённом
-// provisioned fakeip-tun reapply перегенерирует 21-fakeip.json из ТЕКУЩИХ
+// provisioned fakeip-tun reapply перегенерирует 20-fakeip.json из ТЕКУЩИХ
 // настроек — смена FakeIPRealServer доезжает до слота без disable/enable.
 func TestReapplyFakeIPOverlay_RegeneratesSlot(t *testing.T) {
 	s, dir := newFakeIPTestService(t)
@@ -1643,7 +1643,7 @@ func TestReapplyFakeIPOverlay_RegeneratesSlot(t *testing.T) {
 		t.Fatalf("read slot: %v", err)
 	}
 	if !strings.Contains(string(data), "9.9.9.9") {
-		t.Errorf("21-fakeip.json must carry the new real server, got:\n%s", data)
+		t.Errorf("20-fakeip.json must carry the new real server, got:\n%s", data)
 	}
 }
 
@@ -1842,7 +1842,7 @@ func TestUpdateRuleSet_InlineRenameRewritesVisibleAndMaterializedRefs(t *testing
 // TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft verifies the
 // phantom-draft guard: editing only the rules of an already-applied inline
 // rule-set recompiles the live .srs (sing-box hot-reloads it) but does NOT
-// create a pending draft, because the materialized 20-router.json is
+// create a pending draft, because the materialized 21-routing.json is
 // byte-identical to active (the rules live in a sidecar, not in the config).
 func TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
@@ -1858,7 +1858,7 @@ func TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft(t *testing.T) 
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
 		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
 
-	// Create the inline rule-set and apply it so it lives in active/20-router.json.
+	// Create the inline rule-set and apply it so it lives in active/21-routing.json.
 	if err := svc.AddRuleSet(context.Background(), RuleSet{
 		Tag:   "custom-inline",
 		Type:  "inline",
@@ -1914,7 +1914,7 @@ func TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft(t *testing.T) 
 // TestAddRule_StructuralChangeAfterApply_StillDrafts pins the invariant the
 // phantom-draft guard relies on: a genuinely structural change (here, adding a
 // route rule that references the rule-set) perturbs the materialized
-// 20-router.json, so it is never byte-equal to active and must create a draft.
+// 21-routing.json, so it is never byte-equal to active and must create a draft.
 func TestAddRule_StructuralChangeAfterApply_StillDrafts(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"

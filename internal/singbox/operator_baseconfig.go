@@ -443,7 +443,7 @@ func patchBaseDirectOutbound(basePath string, log *slog.Logger) {
 // removeFinalFromBase strips the legacy route.final key from
 // 00-base.json. Pre-spec installs wrote {route:{final:"direct"}} in
 // base; this could shadow the router-slot final in merged runtime
-// configs. This patch lets 20-router.json own route.final exclusively.
+// configs. This patch lets 21-routing.json own route.final exclusively.
 //
 // Sing-box behavior when route.final is absent: "The first outbound
 // will be used if empty" (per upstream docs). 00-base.json's outbound
@@ -496,7 +496,7 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // config. Bug #445: sing-box resolves conflicting scalar sub-keys of `dns`
 // FIRST-FILE-WINS across config.d (proven for route.final by
 // router_final_merge_test.go), so 00-base.json's dns.final / dns.strategy
-// always beat the user's 20-router.json values. This self-heal runs on every
+// always beat the user's routing-slot values. This self-heal runs on every
 // operator init (right after ensureBaseConfigWithLogLevel) so existing on-disk
 // base files heal on reload. It is a boot self-heal, not a settings migration.
 // Mirrors removeFinalFromBase, which did the same for route.final.
@@ -508,7 +508,7 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // (the only slot that then sets it) wins when enabled. Same observable
 // behavior as the old explicit "dns-bootstrap".
 //
-// dns.strategy — stripped ONLY when the sibling 20-router.json exists AND sets
+// dns.strategy — stripped ONLY when a sibling routing slot exists AND sets
 // a non-empty dns.strategy (the router then owns strategy, set together with
 // final via SetDNSGlobals). Unlike final, strategy has NO first-server
 // fallback: it is a genuine scalar default, so stripping it unconditionally
@@ -867,13 +867,13 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			// router-disabled default (prefer_ipv4). strategy is a genuine
 			// scalar default with no first-server fallback, so it must be
 			// present when the router slot is absent. The self-heal
-			// (removeDNSFinalFromBase) strips it only when 20-router.json
+			// (removeDNSFinalFromBase) strips it only when a routing slot
 			// owns strategy.
 			"strategy": "prefer_ipv4",
 			"servers": []any{
 				map[string]any{"type": "udp", "tag": BaseBootstrapDNSTag, "server": "1.1.1.1"},
 			},
-			// dns.final intentionally omitted — owned by 20-router.json
+			// dns.final intentionally omitted — owned by the routing slots
 			// (bug #445). sing-box resolves conflicting scalar sub-keys of
 			// `dns` FIRST-FILE-WINS across config.d, so a base dns.final
 			// would shadow the user's choice. With final absent sing-box
@@ -888,7 +888,7 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			map[string]any{"type": "direct", "tag": "direct"},
 		},
 		"route": map[string]any{
-			// route.final intentionally omitted — owned by 20-router.json.
+			// route.final intentionally omitted — owned by 21-routing.json.
 			// Sing-box uses first outbound (= direct, see outbounds above)
 			// as fallback when final is absent. See spec
 			// 2026-05-21-route-final-router-owned-design.md.

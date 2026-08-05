@@ -72,7 +72,7 @@ func (a *deviceproxySubscriptionOutboundsAdapter) ListDeviceProxyOutbounds() []d
 
 // deviceproxyRouterOutboundsAdapter adapts *router.ServiceImpl to the
 // deviceproxy.RouterOutboundsCatalog interface, exposing router-defined
-// outbounds (20-router.json) as device-proxy targets. Only Source=="router"
+// outbounds (21-routing.json) as device-proxy targets. Only Source=="router"
 // entries are returned (subscription composites are surfaced separately via
 // SubscriptionOutboundsCatalog). Directs that stripAutoManagedDirect removes
 // from the effective config are hidden — they are not selectable.

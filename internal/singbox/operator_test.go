@@ -195,7 +195,7 @@ func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 		t.Fatalf("route block missing: %#v", base["route"])
 	}
 	if _, has := route["final"]; has {
-		t.Errorf("route.final should be absent (owned by 20-router.json), got %v", route["final"])
+		t.Errorf("route.final should be absent (owned by 21-routing.json), got %v", route["final"])
 	}
 	if route["default_domain_resolver"] != "dns-bootstrap" {
 		t.Errorf("default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
@@ -217,7 +217,7 @@ func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 		t.Errorf("bootstrap: %#v", bs)
 	}
 	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should be absent (owned by 20-router.json), got %v", dns["final"])
+		t.Errorf("dns.final should be absent (owned by 21-routing.json), got %v", dns["final"])
 	}
 }
 
@@ -1892,7 +1892,7 @@ func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
 		t.Fatalf("dns block missing/wrong type: %v", cfg["dns"])
 	}
 	if _, has := dns["final"]; has {
-		t.Errorf("dns.final must be omitted (owned by 20-router.json), got %v", dns["final"])
+		t.Errorf("dns.final must be omitted (owned by 21-routing.json), got %v", dns["final"])
 	}
 	if dns["strategy"] != "prefer_ipv4" {
 		t.Errorf("dns.strategy must stay prefer_ipv4 (router-disabled default), got %v", dns["strategy"])
@@ -1918,7 +1918,7 @@ func TestRemoveDNSFinalFromBase_DropsFinal_KeepsStrategyWhenRouterAbsent(t *test
 		t.Fatal(err)
 	}
 
-	// No 20-router.json → strategy strip is gated off.
+	// No routing slot on disk → strategy strip is gated off.
 	removeDNSFinalFromBase(basePath)
 
 	raw, err := os.ReadFile(basePath)

@@ -495,7 +495,7 @@ func TestPolicyTunEnable_QoSInstallsDSCPOnlyChains(t *testing.T) {
 	if !strings.Contains(restoreInput, "203.0.113.7/32") {
 		t.Errorf("WAN IP exclusion missing:\n%s", restoreInput)
 	}
-	// Managed QoS-правила уехали в свой слот, а не в 20-router.json.
+	// Managed QoS-правила уехали в свой слот, а не в 21-routing.json.
 	if _, err := os.Stat(filepath.Join(h.dir, "18-qos-routes.json")); err != nil {
 		t.Errorf("qos routes slot not written: %v", err)
 	}

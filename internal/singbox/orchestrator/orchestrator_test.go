@@ -887,7 +887,7 @@ func TestKnownSlots_FakeIP(t *testing.T) {
 }
 
 // TestSetEnabledReconcilesMapDiskDrift reproduces the live bug where a
-// map↔disk drift left 20-router.json in BOTH config.d/ and config.d/disabled/
+// map↔disk drift left 21-routing.json in BOTH config.d/ and config.d/disabled/
 // while the in-memory enabled-map still said "disabled". The old no-op
 // short-circuit (o.enabled[slot]==enabled → return nil) skipped renameForToggle,
 // so the stray active file kept leaking into MergeDir (mixed FakeIP+TPROXY DNS).

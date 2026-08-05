@@ -61,7 +61,7 @@ type SubscriptionOutboundInfo struct {
 }
 
 // RouterOutboundsCatalog is the narrow contract Service needs from the
-// sing-box router service. It exposes outbounds defined in 20-router.json
+// sing-box router service. It exposes outbounds defined in 21-routing.json
 // (composite groups and user direct-binds) that can be used as device-proxy
 // targets. Wired post-construction via SetRouterOutbounds (router service is
 // built after deviceproxy.Service).
@@ -71,7 +71,7 @@ type RouterOutboundsCatalog interface {
 
 // RouterOutboundInfo describes one router-defined outbound selectable by
 // device-proxy. DefaultMember/Members mirror the composite definition in
-// 20-router.json (empty for direct-binds) — buildSpec uses them to pick a
+// 21-routing.json (empty for direct-binds) — buildSpec uses them to pick a
 // graceful fallback when the router slot is parked and the composite tag
 // disappears from the merged config (issue #465).
 type RouterOutboundInfo struct {
@@ -615,7 +615,7 @@ func (s *Service) buildSpec(ctx context.Context, instanceID string, cfg Config) 
 	spec.AWGTags = awgTags
 
 	// Graceful degradation (issue #465): если выбранный выход — router-
-	// композит, отсутствующий сейчас в merged-конфиге (слот 20-router
+	// композит, отсутствующий сейчас в merged-конфиге (слот 21-routing
 	// припаркован — движок маршрутизации выключен), подставляем в спек
 	// default-член композита (намерение пользователя), а не оставляем
 	// висячую ссылку, которую prune оркестратора вырезал бы молча и
@@ -720,7 +720,7 @@ func (s *Service) collectSelectorMembers(ctx context.Context, catalog RouterOutb
 		}
 	}
 
-	// Router-defined outbounds (20-router.json) — composite groups and
+	// Router-defined outbounds (21-routing.json) — composite groups and
 	// user direct-binds, exposed as selectable members.
 	if catalog != nil {
 		routerInfos = catalog.ListDeviceProxyRouterOutbounds()

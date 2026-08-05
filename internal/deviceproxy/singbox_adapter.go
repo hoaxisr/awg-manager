@@ -164,7 +164,7 @@ func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []
 // потому что его селекторы — потребители, а не кандидаты в члены.
 // Service.buildSpec uses it to keep
 // generated selectors free of dangling refs when a source slot is
-// parked (router engine off → 20-router.json composites gone, issue
+// parked (router engine off → 21-routing.json composites gone, issue
 // #465). Returns nil when the orchestrator is not wired (legacy /
 // tests) — nil means "unknown", the caller keeps legacy behaviour.
 func (a *SingboxAdapter) AvailableOutboundTags() map[string]bool {

@@ -71,7 +71,7 @@ func (a *app) setupSingbox() {
 	}
 
 	// config.d orchestrator — the single writer of slot files (00-base /
-	// 10-tunnels / 15-awg / 20-router / 30-deviceproxy). Producers route
+	// 10-tunnels / 15-awg / 21-routing / 30-deviceproxy). Producers route
 	// their writes through Save / SetEnabled so a "disabled" domain
 	// actually moves the file out of sing-box's view (config.d/disabled/)
 	// instead of leaving stale content behind.

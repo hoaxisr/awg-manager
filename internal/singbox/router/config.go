@@ -895,7 +895,7 @@ func IsAutoManagedIface(name string) bool {
 // stripAutoManagedDirect filters out direct outbounds whose bind_interface
 // belongs to the awgoutbounds auto-managed set (these live in 15-awg.json,
 // owned by awgoutbounds). User-created direct outbounds bound to other VPN
-// interfaces (IPSec/IKEv2/etc.) are kept — they live here in 20-router.json.
+// interfaces (IPSec/IKEv2/etc.) are kept — they live here in 21-routing.json.
 // Composite outbounds and bind_interface-less direct are always kept.
 //
 // Proxy kernel ifaces (t2sN / proxyN) are NEVER stripped (#323): awgoutbounds

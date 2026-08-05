@@ -14502,7 +14502,7 @@ paths:
     get:
       description: Returns selector/urltest/loadbalance groups managed by this router
         with their currently active member and per-member last latency. Filtered to
-        groups defined in 20-router.json — Clash builtins (DIRECT, GLOBAL, REJECT)
+        groups defined in 21-routing.json — Clash builtins (DIRECT, GLOBAL, REJECT)
         are excluded.
       produces:
       - application/json

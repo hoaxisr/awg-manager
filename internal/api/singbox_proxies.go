@@ -69,7 +69,7 @@ type SingboxProxiesTestResponse struct {
 //     "http://127.0.0.1:9090") — same target the
 //     existing ClashProxy uses.
 //   - knownComposites → returns the set of composite tags we own
-//     (computed from 20-router.json). The List
+//     (computed from 21-routing.json). The List
 //     response is filtered to this set so Clash
 //     builtins (DIRECT, GLOBAL, etc.) and member
 //     outbounds don't leak into the UI.
@@ -96,7 +96,7 @@ func NewSingboxProxiesHandler(clashBaseURL func() string, knownComposites func()
 // List godoc
 //
 //	@Summary		List sing-box composite proxy groups with live state
-//	@Description	Returns selector/urltest/loadbalance groups managed by this router with their currently active member and per-member last latency. Filtered to groups defined in 20-router.json — Clash builtins (DIRECT, GLOBAL, REJECT) are excluded.
+//	@Description	Returns selector/urltest/loadbalance groups managed by this router with their currently active member and per-member last latency. Filtered to groups defined in 21-routing.json — Clash builtins (DIRECT, GLOBAL, REJECT) are excluded.
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth

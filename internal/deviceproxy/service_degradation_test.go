@@ -2,7 +2,7 @@ package deviceproxy
 
 // Тесты graceful-деградации выбранного outbound'а (issue #465): когда
 // выбранный router-композит (vpn/vpn2) отсутствует в merged-конфиге
-// (слот 20-router припаркован — движок выключен), генерация слота 30
+// (слот 21-routing припаркован — движок выключен), генерация слота 30
 // обязана: (а) не эмитить висячие ссылки на теги композитов в члены
 // селектора, (б) подставить default-член композита как selector.default
 // (намерение пользователя, а не произвольный выживший член), (в) не
@@ -382,7 +382,7 @@ func TestGetRuntimeState_ReportsDegradation(t *testing.T) {
 }
 
 // Reconcile НЕ должен выключать инстанс из-за припаркованного слота:
-// композит остаётся в каталоге (файл 20-router.json существует), деградация —
+// композит остаётся в каталоге (файл 21-routing.json существует), деградация —
 // забота генерации, а не reconcile.
 func TestReconcile_ParkedRouterSlot_KeepsInstanceEnabled(t *testing.T) {
 	sb, awg, cat := degradationFixture()

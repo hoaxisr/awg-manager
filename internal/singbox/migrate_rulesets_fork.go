@@ -14,8 +14,9 @@ import (
 // repo.hoaxisr.ru mirror in every persisted sing-box slot file, so sing-box
 // re-fetches the mirror's .srs without the user re-applying presets
 // (raw.githubusercontent.com заблокирован у части провайдеров — #534).
-// Rule-set URLs live in more than one slot (20-router.json AND 21-fakeip.json
-// at least), so we sweep ALL *.json across active, disabled/ and pending/
+// Rule-set URLs live in more than one slot (21-routing.json AND the mode slot
+// 20-fakeip.json at least; на немигрированной установке — ещё и файлы прежней
+// раскладки), so we sweep ALL *.json across active, disabled/ and pending/
 // rather than naming files.
 //
 // Byte-level replace (not a config round-trip): the pattern is anchored on the

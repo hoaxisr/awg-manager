@@ -349,7 +349,8 @@ func TestBuildQoSRouteRules_CanonicalAndDeterministic(t *testing.T) {
 	}
 }
 
-// #554: the system route-options rule lives in 20-router.json, but sing-box
+// #554: the system route-options rule lives in the mode slot (20-tproxy.json),
+// but sing-box
 // merges config.d in filename order — 18-qos-routes.json comes first, so a
 // QoS class's final `route` rule ends evaluation before the timeout rule is
 // ever reached. The slot must carry its own leading copy.
@@ -378,13 +379,13 @@ func TestBuildQoSRouteRules_LeadingUDPTimeoutRule(t *testing.T) {
 		t.Errorf("unset timeout = %q, want %q", fallback[0].UDPTimeout, DefaultUDPTimeout)
 	}
 	// No classes → no slot at all, timeout notwithstanding (an enabled slot
-	// holding only the timeout rule would duplicate 20-router.json's copy).
+	// holding only the timeout rule would duplicate the mode slot's copy).
 	if buildQoSRouteRules(nil, storage.SingboxRouterSettings{UDPTimeout: "1h0m0s"}) != nil {
 		t.Error("no classes must yield nil rules")
 	}
 }
 
-// The system sniff rule sits in 20-router.json, i.e. behind the class rules in
+// The system sniff rule sits in the mode slot (20-tproxy.json), i.e. behind the class rules in
 // the merge — QoS traffic would never be sniffed and would show up without
 // protocol/domain. The slot carries its own copy, gated on the same toggle.
 func TestBuildQoSRouteRules_SniffRule(t *testing.T) {
@@ -454,7 +455,7 @@ func TestMarshalQoSRoutesSlot_RouteOnly(t *testing.T) {
 }
 
 // newQoSSlotTestService wires a ServiceImpl with a real orchestrator in a
-// temp dir, both router + qos-routes slots registered, and a 20-router.json
+// temp dir, both router + qos-routes slots registered, and a 21-routing.json
 // active config carrying the given outbounds (so isKnownOutboundTag can
 // resolve them at emit time).
 func newQoSSlotTestService(t *testing.T, outbounds ...string) (*ServiceImpl, string) {
@@ -1007,7 +1008,7 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 
 // TestEnable_Tproxy_QoS_WritesRoutesSlot is the orchestrator-backed variant:
 // Enable must materialize the managed rules into 18-qos-routes.json and keep
-// 20-router.json free of them.
+// 21-routing.json free of them.
 func TestEnable_Tproxy_QoS_WritesRoutesSlot(t *testing.T) {
 	svc, dir := newQoSSlotTestService(t, "vpn-a")
 	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
@@ -1043,7 +1044,7 @@ func TestEnable_Tproxy_QoS_WritesRoutesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(routerRaw), "\"inbound\": [\n        \"tproxy-qos-46\"") {
-		t.Errorf("managed rule leaked into 20-router.json:\n%s", routerRaw)
+		t.Errorf("managed rule leaked into 21-routing.json:\n%s", routerRaw)
 	}
 	// ListRules (user-visible) must not surface the managed rules.
 	rules, err := svc.ListRules(context.Background())

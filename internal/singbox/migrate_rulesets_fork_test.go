@@ -30,7 +30,7 @@ func TestMigrateRuleSetURLsToFork(t *testing.T) {
 	// НЕ трогать (замена сделала бы его нерабочим гибридом).
 	proxied := `{"route":{"rule_set":[{"tag":"p","type":"remote","url":"https://ghproxy.com/https://github.com/vernette/rulesets/raw/master/srs/x.srs"}]}}`
 
-	// vernette живёт не только в 20-router.json: 21-fakeip.json тоже держит
+	// vernette живёт не только в общем слоте: режимный 20-fakeip.json тоже держит
 	// remote rule-set URL; миграция обязана подмести ВСЕ slot-файлы в active/
 	// disabled/pending.
 	withVernette := []string{

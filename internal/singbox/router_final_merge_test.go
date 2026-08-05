@@ -175,7 +175,7 @@ func TestIntegration_RouterFinal_DisabledRouter_NoFinal(t *testing.T) {
 
 	dir := t.TempDir()
 	writeBaseNoFinal(t, dir)
-	// No 20-router.json — simulates router disabled.
+	// No 21-routing.json — simulates router disabled.
 
 	merged := mergeViaSingbox(t, bin, dir)
 	route, _ := merged["route"].(map[string]any)
@@ -220,7 +220,7 @@ func writeBaseDNSNoFinal(t *testing.T, dir string) {
 	}
 }
 
-// writeRouterDNSSlot writes a 20-router.json with its own dns server and a
+// writeRouterDNSSlot writes a 21-routing.json with its own dns server and a
 // dns.final pointing at it.
 func writeRouterDNSSlot(t *testing.T, dir, finalTag string) {
 	t.Helper()
@@ -276,7 +276,7 @@ func TestIntegration_DNSFinal_DisabledRouter(t *testing.T) {
 
 	dir := t.TempDir()
 	writeBaseDNSNoFinal(t, dir)
-	// No 20-router.json — simulates router disabled.
+	// No 21-routing.json — simulates router disabled.
 
 	merged := mergeViaSingbox(t, bin, dir)
 	dns, _ := merged["dns"].(map[string]any)

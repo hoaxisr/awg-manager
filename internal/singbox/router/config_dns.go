@@ -86,7 +86,7 @@ func scrubDNSServerDetourForSingbox(s *DNSServer) {
 	}
 }
 
-// SanitizeDNSConfigForSingbox prepares DNS servers for 20-router.json / sing-box.
+// SanitizeDNSConfigForSingbox prepares DNS servers for the routing slots / sing-box.
 func SanitizeDNSConfigForSingbox(cfg *RouterConfig) {
 	if cfg == nil {
 		return

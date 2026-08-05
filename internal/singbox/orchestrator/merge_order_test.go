@@ -9,7 +9,8 @@ import (
 // конкатенируются в лексикографическом порядке имён файлов, скаляры берутся из
 // первого файла. Отсюда: режимный слот обязан стоять раньше общего (иначе
 // hijack-dns окажется после пользовательских правил), но позже перезаписи DNS,
-// qos и selective — ровно там, где сегодня лежат 20-router.json и 21-fakeip.json.
+// qos и selective — ровно там, где до подэтапа 5D0 лежали 20-router.json и
+// 21-fakeip.json: позиция «двадцатка» унаследована намеренно.
 func TestKnownSlotsMergeOrder(t *testing.T) {
 	names := map[Slot]string{}
 	var files []string
