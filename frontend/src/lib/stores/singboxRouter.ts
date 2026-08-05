@@ -23,7 +23,9 @@ import type {
 	RouterStagingStatusResponse,
 } from '$lib/types';
 
-function createSingboxRouterStore() {
+// Экспортируется ради тестов: они проверяют поведение loadAll на чистом сторе,
+// а синглтон переживает весь файл тестов.
+export function createSingboxRouterStore() {
 	const status = writable<SingboxRouterStatus | null>(null);
 	const settings = writable<SingboxRouterSettings | null>(null);
 	const rules = writable<SingboxRouterRule[]>([]);
@@ -37,7 +39,14 @@ function createSingboxRouterStore() {
 	const dnsGlobals = writable<SingboxRouterDNSGlobals>({ final: '', strategy: '' });
 	const staging = writable<RouterStagingStatusResponse | null>(null);
 	const loading = writable(false);
+	// Два разных вопроса, поэтому два флага:
+	//   initialized — данные УСПЕШНО загружены (гейт повторной загрузки на mount);
+	//   attempted   — попытка загрузки завершена, чем угодно (гейт скелетона/спиннера).
+	// Слить их в один нельзя: «успех» обязан пускать повторный запрос после
+	// неудачи (кнопки «повторить» на табах нет), а спиннер обязан отпускать даже
+	// на неудаче — иначе упавший бэкенд крутил бы его вечно.
 	const initialized = writable(false);
+	const attempted = writable(false);
 	const error = writable<string | null>(null);
 
 	// options — unified outbound dropdown groups for sub-tabs and wizard.
@@ -108,11 +117,12 @@ function createSingboxRouterStore() {
 			dnsRules.set(dr);
 			dnsRewrites.set(drw);
 			dnsGlobals.set(dg);
+			initialized.set(true);
 		} catch (e) {
 			error.set(e instanceof Error ? e.message : 'Не удалось загрузить singbox-router');
 		} finally {
 			loading.set(false);
-			initialized.set(true);
+			attempted.set(true);
 		}
 		void loadStaging();
 	}
@@ -214,6 +224,7 @@ function createSingboxRouterStore() {
 		optionsReady: { subscribe: optionsReady.subscribe },
 		loading: { subscribe: loading.subscribe },
 		initialized: { subscribe: initialized.subscribe },
+		attempted: { subscribe: attempted.subscribe },
 		error: { subscribe: error.subscribe },
 		loadAll,
 		reloadStatus,

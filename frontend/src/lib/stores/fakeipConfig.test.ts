@@ -14,7 +14,7 @@ vi.mock('$lib/api/client', () => ({
 	},
 }));
 
-import { fakeipConfig } from './fakeipConfig';
+import { fakeipConfig, createFakeipConfigStore } from './fakeipConfig';
 import { api } from '$lib/api/client';
 
 const MOCK_DNS_SERVERS: SingboxRouterDNSServer[] = [
@@ -67,13 +67,17 @@ describe('fakeipConfig store', () => {
 		}
 	});
 
-	it('loadAll on API error sets error and still sets initialized', async () => {
+	// Свежий стор, а не синглтон: у синглтона предыдущие тесты уже подняли
+	// initialized, и ассерт про false прошёл бы мимо проверяемого поведения.
+	it('loadAll на ошибке НЕ помечает стор инициализированным — mount повторит запрос', async () => {
 		vi.mocked(api.singboxFakeIPListDNSServers).mockRejectedValue(new Error('network error'));
 
-		await fakeipConfig.loadAll();
+		const store = createFakeipConfigStore();
+		await store.loadAll();
 
-		expect(get(fakeipConfig.initialized)).toBe(true);
-		expect(get(fakeipConfig.error)).toBe('network error');
+		expect(get(store.initialized)).toBe(false);
+		expect(get(store.loading)).toBe(false);
+		expect(get(store.error)).toBe('network error');
 	});
 
 	it('applyDNSServers replaces dnsServers store', () => {

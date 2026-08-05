@@ -55,7 +55,12 @@
   // Эксперт-редактор config.d (слоты + 90-user.json).
   let configEditorOpen = $state(false);
   const singboxRulesStore = singboxRouterStore.rules;
-  const singboxInitialized = singboxRouterStore.initialized;
+  // Спиннер холодной загрузки снимается по attempted (попытка завершена), а не
+  // по initialized (загрузка удалась): initialized теперь остаётся false после
+  // неудачи, чтобы mount мог повторить запрос, и спиннер на нём крутился бы
+  // вечно. По error гейтить нельзя: EmptyState в своём onMount сам зовёт
+  // loadAll, тот сбрасывает error — и ветки замигали бы друг об друга.
+  const singboxAttempted = singboxRouterStore.attempted;
   let singboxRulesCount = $derived($singboxRulesStore.length);
 
   const SUB_VIEWS = new Set(['connections', 'logs']);
@@ -172,7 +177,7 @@
       <AddWizardPanel />
     {:else if $traceOpen}
       <TracePanel />
-    {:else if !$singboxInitialized}
+    {:else if !$singboxAttempted}
       <div class="boot-loading"><LoadingSpinner size="sm" /></div>
     {:else if singboxRulesCount === 0}
       <EmptyState />

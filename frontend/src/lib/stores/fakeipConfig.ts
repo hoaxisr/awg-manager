@@ -10,7 +10,9 @@ import type {
 	SingboxRouterDNSGlobals,
 } from '$lib/types';
 
-function createFakeipConfigStore() {
+// Экспортируется ради тестов: они проверяют поведение loadAll на чистом сторе,
+// а синглтон переживает весь файл тестов.
+export function createFakeipConfigStore() {
 	const dnsServers = writable<SingboxRouterDNSServer[]>([]);
 	const dnsRules = writable<SingboxRouterDNSRule[]>([]);
 	const dnsGlobals = writable<SingboxRouterDNSGlobals>({ final: '', strategy: '' });
@@ -30,11 +32,15 @@ function createFakeipConfigStore() {
 			dnsServers.set(ds);
 			dnsRules.set(dr);
 			dnsGlobals.set(dg);
+			// initialized поднимается ТОЛЬКО при успехе: потребители гейтят по нему
+			// повторную загрузку, а кнопки «повторить» на табах нет. Подними его в
+			// finally — и однократно недоступный бэкенд оставил бы пустой список до
+			// перезагрузки страницы.
+			initialized.set(true);
 		} catch (e) {
 			error.set(e instanceof Error ? e.message : 'Не удалось загрузить fakeip-конфиг');
 		} finally {
 			loading.set(false);
-			initialized.set(true);
 		}
 	}
 
