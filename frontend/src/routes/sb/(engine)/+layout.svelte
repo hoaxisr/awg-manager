@@ -24,13 +24,21 @@
 	//    страницах группы, включая журнал и соединения движка: без пакета там
 	//    пустой терминал и пустая таблица, неотличимые от «ничего не происходит».
 	//
+	//  * Напоминание о непринятом черновике. Раньше оно жило на /sb/routing и
+	//    считало границей pathname одной страницы; теперь граница — членство
+	//    маршрута в группе (`remindAboutDraft`): ходьба по страницам движка
+	//    молчит, потому что баннер черновика идёт вместе с пользователем.
+	//
 	// Четырёх нетрогаемых страниц (/sb/tunnels, /sb/awg3, /sb/subscriptions,
 	// /sb/geodata) этот слой НЕ накрывает — они лежат вне группы (engine).
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import type { Snippet } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { PageContainer, EmptyState } from '$lib/components/layout';
+	import { Button, Modal } from '$lib/components/ui';
 	import { systemInfo } from '$lib/stores/system';
+	import { remindAboutDraft } from '$lib/data/engineDraftGuard';
 	import { StagingBanner } from '$lib/components/singbox-routing';
 	import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
 	import SelectiveRebuildModal from '$lib/components/sb-router/SelectiveRebuildModal.svelte';
@@ -76,6 +84,36 @@
 		selectiveBypass.clearModalRequest();
 		selectiveBypass.resetProgress();
 	}
+
+	// ── Напоминание о непринятом черновике ────────────────────────────────────
+	// Куда пользователь собрался, пока напоминание на экране. null — напоминания
+	// нет.
+	let leavingTo = $state<string | null>(null);
+	// Повторный goto после подтверждения не должен снова упереться в гард.
+	let leaving = $state(false);
+
+	beforeNavigate((nav) => {
+		if (leaving) return;
+		// `to === null` — уход из приложения (закрытие вкладки, внешняя ссылка),
+		// willUnload — полная перезагрузка документа. Там работает нативный
+		// диалог браузера, наша модалка отрисоваться уже не успеет.
+		const to = nav.to;
+		if (!to || nav.willUnload) return;
+		const hasDraft = get(singboxRouter.staging)?.hasDraft ?? false;
+		if (!remindAboutDraft(nav.from?.url.pathname, to.url.pathname, hasDraft)) return;
+		nav.cancel();
+		leavingTo = to.url.href;
+	});
+
+	function confirmLeave(): void {
+		const href = leavingTo;
+		leavingTo = null;
+		if (!href) return;
+		leaving = true;
+		void goto(href).finally(() => {
+			leaving = false;
+		});
+	}
 </script>
 
 {#if singboxMissing}
@@ -103,6 +141,19 @@
 	onMinimize={minimizeRebuild}
 	onDismiss={dismissRebuild}
 />
+
+<Modal
+	open={leavingTo !== null}
+	title="Правки не применены"
+	size="sm"
+	onclose={() => (leavingTo = null)}
+>
+	<p>Правки sing-box сохранены как черновик, но <strong>ещё не применены</strong>. Черновик никуда не денется, но маршрутизация не изменится, пока вы не нажмёте «Применить».</p>
+	{#snippet actions()}
+		<Button variant="ghost" size="md" onclick={() => (leavingTo = null)}>Остаться</Button>
+		<Button variant="primary" size="md" onclick={confirmLeave}>Уйти всё равно</Button>
+	{/snippet}
+</Modal>
 
 <style>
 	.engine-staging {
