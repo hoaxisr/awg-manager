@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { ArrowLeft } from 'lucide-svelte';
+  import { ArrowLeft, TriangleAlert } from 'lucide-svelte';
   import { LoadingSpinner } from '$lib/components/layout';
+  import { Button } from '$lib/components/ui';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { StagingBanner, RouteInspector, JsonConfigDrawer, ConfigSlotsDrawer } from '$lib/components/singbox-routing';
   import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
@@ -58,10 +59,28 @@
   // Спиннер холодной загрузки снимается по attempted (попытка завершена), а не
   // по initialized (загрузка удалась): initialized теперь остаётся false после
   // неудачи, чтобы mount мог повторить запрос, и спиннер на нём крутился бы
-  // вечно. По error гейтить нельзя: EmptyState в своём onMount сам зовёт
-  // loadAll, тот сбрасывает error — и ветки замигали бы друг об друга.
+  // вечно.
   const singboxAttempted = singboxRouterStore.attempted;
+  // Экран ошибки показываем ТОЛЬКО пока ни одной удачной загрузки не было
+  // (initialized === false): без него упавший бэкенд давал пустой список
+  // правил, неотличимый от «ничего не настроено», и страница предлагала
+  // мастер первичной настройки, который тут же падал бы на записи. Сужение по
+  // initialized обязательно: иначе сбойный фоновый loadAll после мутации
+  // сносил бы уже показанные данные.
+  const singboxError = singboxRouterStore.error;
+  const singboxInitialized = singboxRouterStore.initialized;
+  let loadFailed = $derived($singboxAttempted && !$singboxInitialized && $singboxError !== null);
   let singboxRulesCount = $derived($singboxRulesStore.length);
+  let retrying = $state(false);
+
+  async function retryLoad(): Promise<void> {
+    retrying = true;
+    try {
+      await singboxRouterStore.loadAll();
+    } finally {
+      retrying = false;
+    }
+  }
 
   const SUB_VIEWS = new Set(['connections', 'logs']);
   const LEGACY_SUBS = new Set(['deviceproxy', 'rules', 'rulesets', 'outbounds', 'dns', 'engine']);
@@ -172,6 +191,15 @@
     <!-- Логи sing-box (bucket singbox: stdout движка + process/runtime-события).
          Действия над конфигурацией остаются в разделе «Журнал» (bucket app). -->
     <LogsTerminal lockBucket="singbox" storagePrefix="awgm.sb-router" />
+  {:else if loadFailed}
+    <div class="load-failed">
+      <TriangleAlert size={20} aria-hidden={true} />
+      <p class="load-failed-title">Не удалось загрузить конфигурацию маршрутизации</p>
+      <p class="load-failed-msg">{$singboxError}</p>
+      <Button variant="secondary" size="sm" onclick={retryLoad} disabled={retrying}>
+        {retrying ? 'Повтор…' : 'Повторить'}
+      </Button>
+    </div>
   {:else if $sbMode === 'beginner'}
     {#if $addWizardOpen}
       <AddWizardPanel />
@@ -229,5 +257,28 @@
     display: flex;
     justify-content: center;
     padding: 48px 0;
+  }
+
+  .load-failed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 48px 16px;
+    text-align: center;
+    color: var(--color-error, var(--text-primary));
+  }
+  .load-failed-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .load-failed-msg {
+    margin: 0;
+    max-width: 46ch;
+    font-size: 13px;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
   }
 </style>

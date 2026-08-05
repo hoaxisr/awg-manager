@@ -45,7 +45,10 @@
 	let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
 	let systemKnown = $derived($systemInfo.lastFetchedAt > 0 || $systemInfo.status === 'error');
 
-	let ruleCount = $derived($status?.ruleCount ?? 0);
+	// Без `?? 0`: при недоступном бэкенде статуса нет, и бейдж «0» соврал бы про
+	// пустую конфигурацию. undefined Tabs просто не рисует — так же, как чипы
+	// FakeIP-каркаса (badge: st?.ruleCount).
+	let ruleCount = $derived($status?.ruleCount);
 	let engineEnabled = $derived(!!$status?.enabled);
 	let routingMode = $derived($settings?.routingMode);
 

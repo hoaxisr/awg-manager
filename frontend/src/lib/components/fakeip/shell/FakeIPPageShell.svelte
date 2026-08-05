@@ -11,7 +11,8 @@
     - Inbounds      — tun-in (1, движок-управляемый) + длина deviceProxyInstances.
     - Outbounds     — Status.outboundAwgCount + outboundCompositeCount → «5 + 3».
     - Rule sets     — Status.ruleSetCount.
-    - DNS           — длина fakeipConfig.dnsRules.
+    - DNS           — длина fakeipConfig.dnsRules (пока стор не загружен —
+                      бейджа нет, ноль незагруженного стора не показываем).
     - Маршруты      — Status.ruleCount (после 5D0 это правила ОБЩЕГО слота,
                       то есть ровно та длина, что у списка на странице правил).
     - Устройства    — Status.deviceCount.
@@ -101,14 +102,18 @@
 		bindLiveConnectionsStore();
 		// Бейдж чипа «DNS» считается ЗДЕСЬ, по fakeipConfig.dnsRules, а грузят
 		// этот стор только сами вкладки DNS и Rule sets. Без загрузки в каркасе
-		// на всех остальных чипах бейдж показывал бы честный ноль вместо
-		// настоящего числа (Tabs рисует бейдж при любом значении, кроме
-		// undefined). Три GET'а, без Probe/RCI.
+		// на всех остальных чипах бейджа не было бы вовсе. Три GET'а, без
+		// Probe/RCI.
 		void fakeipConfig.loadOnce();
 	});
 
 	const status = singboxRouter.status;
 	const dnsRules = fakeipConfig.dnsRules;
+	// Пока загрузка не удалась, длина dnsRules — это ноль незагруженного стора,
+	// а не «правил нет». Бейдж в этом окне не рисуем вовсе (undefined), как и
+	// остальные чипы, считающиеся по st?.* — иначе на холодной странице и при
+	// упавшем бэкенде «DNS 0» врёт про конфигурацию.
+	const dnsLoaded = fakeipConfig.initialized;
 	const options = singboxRouter.options;
 	const outbounds = singboxRouter.outbounds;
 	const connSnapshot = liveConnectionsSnapshot;
@@ -134,7 +139,7 @@
 			inbounds: 1 + dpCount,
 			outbounds: composite > 0 ? `${atomic} + ${composite}` : atomic,
 			rulesets: st?.ruleSetCount,
-			dns: $dnsRules.length,
+			dns: $dnsLoaded ? $dnsRules.length : undefined,
 			routes: st?.ruleCount,
 			devices: st?.deviceCount,
 			connections: formatCompactCount($connSnapshot.connectionsTotal),
