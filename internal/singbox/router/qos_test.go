@@ -1201,19 +1201,26 @@ func TestHealQoSConfig_ConvergesAndNoopsWhenClean(t *testing.T) {
 	}
 }
 
-// TestHealQoSConfig_DoesNotApplyPendingDraft guards the staging gate: the
-// heal derives from the APPLIED config (LoadApplied), never the pending
-// draft — the old LoadEffective-based heal silently applied staged edits to
-// active on every reconcile tick.
+// TestHealQoSConfig_DoesNotApplyPendingDraft — сторож staging-гейта: heal
+// решает, эмитить ли правило класса QoS, по ПРИМЕНЁННОМУ конфигу
+// (loadAppliedRouterConfig), а не по черновику.
+//
+// Прежняя редакция теста проверяла, что heal не занёс черновик в активный
+// 21-routing.json. После разделения слотов (5D0) heal туда вообще не пишет —
+// проверка стала тавтологией и переживала любую мутацию. Настоящий остаток
+// гейта здесь один: outbound, существующий ТОЛЬКО в черновике, для sing-box не
+// существует, и правило на него в 18-qos-routes.json = FATAL на загрузке,
+// то есть мёртвый движок из-за неприменённой правки.
 func TestHealQoSConfig_DoesNotApplyPendingDraft(t *testing.T) {
 	svc, dir := newQoSSlotTestService(t, "vpn-a")
 
-	// Stage a draft with a user rule the user has NOT applied yet.
+	// Черновик заводит ВТОРОЙ выход. Кнопку «Применить» пользователь не жал:
+	// в применённом конфиге его нет.
 	draft, err := svc.loadAppliedRouterConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft.Route.Rules = append(draft.Route.Rules, Rule{DomainSuffix: []string{".staged.example"}, Action: "route", Outbound: "vpn-a"})
+	draft.Outbounds = append(draft.Outbounds, Outbound{Type: "selector", Tag: "vpn-draft", Outbounds: []string{"direct"}})
 	draftData, _ := json.MarshalIndent(draft, "", "  ")
 	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouting, draftData); err != nil {
 		t.Fatal(err)
@@ -1222,19 +1229,23 @@ func TestHealQoSConfig_DoesNotApplyPendingDraft(t *testing.T) {
 	sr := storage.SingboxRouterSettings{
 		QoSClasses: []storage.SingboxQoSClass{
 			{DSCP: 46, Outbound: "vpn-a", Enabled: true, Slot: 0},
+			{DSCP: 34, Outbound: "vpn-draft", Enabled: true, Slot: 1},
 		},
 	}
 	if _, err := svc.healQoSConfig(context.Background(), sr); err != nil {
 		t.Fatalf("healQoSConfig: %v", err)
 	}
-	activeRaw, err := os.ReadFile(filepath.Join(dir, "21-routing.json"))
+	qosRaw, err := os.ReadFile(filepath.Join(dir, "18-qos-routes.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(activeRaw), ".staged.example") {
-		t.Errorf("heal leaked the pending draft into the active config (staging gate bypassed):\n%s", activeRaw)
+	if strings.Contains(string(qosRaw), "vpn-draft") {
+		t.Errorf("heal сослался на выход из ЧЕРНОВИКА — sing-box такой конфиг не грузит:\n%s", qosRaw)
 	}
-	// And the draft itself must still be pending.
+	if !strings.Contains(string(qosRaw), "vpn-a") {
+		t.Errorf("класс на применённый выход обязан быть эмитирован:\n%s", qosRaw)
+	}
+	// Черновик остаётся черновиком.
 	if !svc.deps.Orch.HasDraft(orchestrator.SlotRouting) {
 		t.Error("pending draft vanished during heal")
 	}
