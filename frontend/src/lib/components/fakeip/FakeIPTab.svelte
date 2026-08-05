@@ -88,8 +88,9 @@
 	);
 
 	// Routing-mode switch is owned by the shared `modeSwitch` store + the
-	// page-level <ModeSwitchHost> (confirm + progress). The tab only requests a
-	// target mode; `switchBusy` mirrors the in-flight state for the toggle.
+	// ModeSwitchHost mounted in the engine group layout (confirm + progress).
+	// The tab only requests a target mode; `switchBusy` mirrors the in-flight
+	// state for the toggle.
 	function handleEnableRequested(): void {
 		modeSwitch.request('fakeip-tun');
 	}

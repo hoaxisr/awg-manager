@@ -5,7 +5,8 @@
  *
  * The rebuild runs in the background: progress arrives via SSE
  * (singbox-router:selective-progress) → selectiveBypass store → the
- * SelectiveRebuildModal in StatusDrawer opens automatically.
+ * SelectiveRebuildModal mounted in the sing-box engine group layout
+ * (routes/sb/(engine)/+layout.svelte) opens on requestModal() below.
  */
 import { get } from 'svelte/store';
 import { api } from '$lib/api/client';
@@ -21,6 +22,12 @@ import { selectiveBypass } from '$lib/stores/selectiveBypass';
  * error notification after a successful rule save.
  */
 export async function triggerSelectiveRebuildIfEnabled(): Promise<void> {
+  // ЗАВИСИМОСТЬ ОТ ПРАЙМИНГА: незагруженные настройки неотличимы здесь от
+  // выключенного selectiveBypass — обе ветки молча выходят. Пока баннер жил на
+  // странице движка, настройки к этому моменту всегда были подняты её loadAll;
+  // теперь баннер общий, и «Применить» жмут в том числе со страниц, которые
+  // ничего не грузят. Настройки для них праймит routes/sb/+layout.svelte
+  // (reloadSettings) — уберёшь его, и пересборка ipset перестанет запускаться.
   const settings = get(singboxRouter.settings);
   if (!settings?.selectiveBypass) return;
   selectiveBypass.resetProgress();

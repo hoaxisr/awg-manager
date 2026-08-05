@@ -1,8 +1,10 @@
 <!--
-  Page-level host for the unified routing-mode switch. Mounted UNCONDITIONALLY on
-  /routing (outside the {#if activeTab} chain) so the confirm + progress modals
-  survive tab navigation while a switch is in flight. Both tab toggles drive it
-  via the `modeSwitch` store; live progress comes from `fakeipTransition`.
+  Хост общего переключателя режима маршрутизации. Смонтирован БЕЗУСЛОВНО в layout
+  группы движка (routes/sb/(engine)/+layout.svelte) — вне гейта и вне ветвлений,
+  — чтобы подтверждение и прогресс пережили уход со страницы, пока переключение
+  идёт (оно занимает минуты и продолжается в фоне). Запросы на смену режима
+  приходят из стора `modeSwitch` (FakeIPTab, StatusDrawer), живой прогресс — из
+  `fakeipTransition`.
 -->
 <script lang="ts">
 	import ConfirmSwitch from '$lib/components/fakeip/ConfirmSwitch.svelte';

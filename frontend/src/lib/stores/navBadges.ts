@@ -7,9 +7,10 @@
  * `singboxRouter`, ни про Clash-поток соединений.
  *
  * Новых сетевых запросов модуль не создаёт: `singboxRouter.status` наполняется
- * SSE и загрузками страниц группы, `liveConnectionsSnapshot` — сокетом, который
- * поднимают сами страницы движка (`bindLiveConnectionsStore`). Пока данных нет,
- * бейджа просто нет — сайдбар не должен тянуть данные ради украшения.
+ * SSE и праймингом layout'а группы (`routes/sb/+layout.svelte`),
+ * `liveConnectionsSnapshot` — сокетом, который тот же layout и биндит
+ * (`bindLiveConnectionsStore`). Пока данных нет, бейджа просто нет — сайдбар не
+ * должен тянуть данные ради украшения.
  */
 import { derived, type Readable } from 'svelte/store';
 import { singboxRouter } from './singboxRouter';
