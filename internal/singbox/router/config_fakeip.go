@@ -55,9 +55,14 @@ func boolPtr(v bool) *bool { return &v }
 //   - DNS: a "fakeip" server (the pool) plus a "real" server (true upstream),
 //     final → "real". A single route rule sends A/AAAA queries to "fakeip",
 //     optionally narrowed by rule_set (domains) and/or source_ip_cidr (devices).
-//   - route: hijack-dns first, обход приватных адресов вторым; outbound
-//     hostnames resolve via "real" (default_domain_resolver) so the proxy
-//     endpoint never gets a fake address.
+//   - route: hijack-dns first, обход приватных адресов вторым.
+//   - route.default_domain_resolver = "real" пишется, но НИЧЕГО не защищает:
+//     то же поле пишет 00-base.json, а слияние config.d — first-file-wins,
+//     то есть побеждает база (00 < 20) со своим dns-bootstrap. Держим его как
+//     страховку на случай базы без этого поля, не как рабочий механизм.
+//     Имя хоста proxy-выхода от фейкового адреса спасает per-outbound
+//     domain_resolver: его ставит каждому outbound'у общий слот в
+//     fakeip-режиме (applyRoutingOutbounds → applyOutboundDomainResolver).
 //   - experimental.cache_file persists the fakeip name↔address map across
 //     restarts so existing connections keep their address.
 //
