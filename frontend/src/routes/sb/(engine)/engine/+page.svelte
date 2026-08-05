@@ -13,33 +13,26 @@
 	// Волна 5D2a заменит это на страницу по разделу 3 спеки
 	// docs/superpowers/specs/2026-08-04-nav-v3-5d-singbox-design.md.
 	//
-	// Гард черновика и ModeSwitchHost переедут в layout группы (Task 4/5) —
-	// пока живут здесь, как жили на /sb/routing.
-	import { onMount } from 'svelte';
+	// Гард черновика переедет в layout группы (Task 5) — пока живёт здесь, как
+	// жил на /sb/routing. ModeSwitchHost, баннер черновика, окно пересборки ipset
+	// и гейт «Sing-box не установлен» уже переехали в (engine)/+layout.svelte.
+	// Статус и настройки движка (routingMode для поверхности по умолчанию и
+	// mute-XOR переключателя, issue #420) праймит /sb/+layout.svelte — тем же
+	// парным reloadStatus+reloadSettings, что стоял здесь.
 	import { get } from 'svelte/store';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { PageContainer, EmptyState } from '$lib/components/layout';
+	import { PageContainer } from '$lib/components/layout';
 	import { Tabs, Button, Modal } from '$lib/components/ui';
-	import { systemInfo } from '$lib/stores/system';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
 	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
 	import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
 	import FakeIPTab from '$lib/components/fakeip/FakeIPTab.svelte';
-	import ModeSwitchHost from '$lib/components/routing/ModeSwitchHost.svelte';
 
 	type View = 'tproxy' | 'fakeip';
 
 	const settings = singboxRouterStore.settings;
 	const status = singboxRouterStore.status;
-
-	onMount(() => {
-		// Статус и настройки нужны сразу: по routingMode выбирается поверхность
-		// по умолчанию, а mute-XOR переключателя читает `enabled && routingMode`
-		// (issue #420). Без прайминга неактивный режим выглядел бы активным.
-		void singboxRouterStore.reloadStatus();
-		void singboxRouterStore.reloadSettings();
-	});
 
 	// Поверхность по умолчанию = текущий режим маршрутизации. Это замена
 	// бывшего one-shot автоселекта вкладки fakeip на /routing.
@@ -52,9 +45,6 @@
 		initialView === 'fakeip' || initialView === 'tproxy' ? initialView : null,
 	);
 	let view = $derived<View>(chosenView ?? modeDefault);
-
-	let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
-	let systemKnown = $derived($systemInfo.lastFetchedAt > 0 || $systemInfo.status === 'error');
 
 	// Без `?? 0`: при недоступном бэкенде статуса нет, и бейдж «0» соврал бы про
 	// пустую конфигурацию. undefined Tabs просто не рисует — так же, как чипы
@@ -126,27 +116,19 @@
 </svelte:head>
 
 <PageContainer>
-	{#if systemKnown && !singboxInstalled}
-		<EmptyState
-			title="Sing-box не установлен"
-			description="Маршрутизация sing-box доступна после установки пакета — откройте «Настройки»."
-		/>
-	{:else}
-		<Tabs
-			tabs={tabItems}
-			active={view}
-			onchange={requestView}
-			urlParam="view"
-			defaultTab={modeDefault}
-		/>
+	<Tabs
+		tabs={tabItems}
+		active={view}
+		onchange={requestView}
+		urlParam="view"
+		defaultTab={modeDefault}
+	/>
 
-		{#if view === 'fakeip'}
-			<FakeIPTab />
-		{:else}
-			<SingboxRouterRedesignPage />
-		{/if}
+	{#if view === 'fakeip'}
+		<FakeIPTab />
+	{:else}
+		<SingboxRouterRedesignPage />
 	{/if}
-	<ModeSwitchHost />
 </PageContainer>
 
 <Modal

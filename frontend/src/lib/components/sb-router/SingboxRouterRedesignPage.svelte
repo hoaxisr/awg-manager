@@ -6,7 +6,7 @@
   import { LoadingSpinner } from '$lib/components/layout';
   import { Button } from '$lib/components/ui';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-  import { StagingBanner, RouteInspector, JsonConfigDrawer, ConfigSlotsDrawer } from '$lib/components/singbox-routing';
+  import { RouteInspector, JsonConfigDrawer, ConfigSlotsDrawer } from '$lib/components/singbox-routing';
   import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
   import { LogsTerminal } from '$lib/components/diagnostics';
   import {
@@ -25,30 +25,10 @@
     type RouterMode,
   } from '$lib/components/sb-router';
 
-  import SelectiveRebuildModal from './SelectiveRebuildModal.svelte';
-  import { selectiveBypass } from '$lib/stores/selectiveBypass';
-
-  const { progress: globalSelectiveProgress, modalRequested: selectiveModalRequested } = selectiveBypass;
-
-  let globalRebuildOpen = $state(false);
-
-  // Open only when explicitly requested (Apply button or engine enable).
-  $effect(() => {
-    if ($selectiveModalRequested) {
-      globalRebuildOpen = true;
-    }
-  });
-
-  function minimizeGlobalRebuild() {
-    globalRebuildOpen = false;
-    selectiveBypass.clearModalRequest();
-  }
-
-  function dismissGlobalRebuild() {
-    globalRebuildOpen = false;
-    selectiveBypass.clearModalRequest();
-    selectiveBypass.resetProgress();
-  }
+  // Баннер черновика и окно пересборки ipset (SelectiveRebuildModal) живут в
+  // layout группы движка (routes/sb/(engine)/+layout.svelte): черновик один на
+  // весь слот маршрутизации, применить его можно с любой страницы группы, и
+  // прогресс пересборки обязан пережить уход с этой страницы.
 
   let activeSingboxSub = $derived($page.url.searchParams.get('sub'));
   let inspectorOpen = $state(false);
@@ -186,7 +166,6 @@
   onOpenLogs={toggleLogsSub}
   logsActive={activeSingboxSub === 'logs'}
 >
-  <StagingBanner />
   {#if inSubView}
     <button type="button" class="sub-back" onclick={clearSub}>
       <ArrowLeft size={14} /> Назад
@@ -231,13 +210,6 @@
   open={configEditorOpen}
   onClose={() => (configEditorOpen = false)}
   onOpenMerged={() => (jsonOpen = true)}
-/>
-
-<SelectiveRebuildModal
-  open={globalRebuildOpen}
-  progress={$globalSelectiveProgress}
-  onMinimize={minimizeGlobalRebuild}
-  onDismiss={dismissGlobalRebuild}
 />
 
 <style>

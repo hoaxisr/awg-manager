@@ -19,13 +19,13 @@
     - Соединения    — liveConnectionsSnapshot.connectionsTotal (Clash WS),
                       тот же источник, что у sb-router LiveConnectionsChip.
 
-  Live-WS соединений биндится здесь (bindLiveConnectionsStore — идемпотентно),
-  поток открыт только при запущенном движке.
+  Live-WS соединений биндит layout группы Sing-box (routes/sb/+layout.svelte) —
+  счётчик соединений нужен и бейджам сайдбара; здесь только читается снимок.
 
-  StagingBanner — тот же, что в sb-router: правила, наборы и outbound'ы лежат в
-  общем слоте маршрутизации и правятся через staging, поэтому правка на любом
-  fakeip-табе (включая привязку устройства) до «Применить» живёт в черновике.
-  Без баннера это выглядело бы как «изменения исчезли».
+  Баннер черновика (StagingBanner) живёт в layout группы движка
+  (routes/sb/(engine)/+layout.svelte): черновик один на весь слот маршрутизации,
+  правка с любого fakeip-таба копится в общем pending, и баннер обязан быть виден
+  на любой странице группы, а не только под этим каркасом.
 -->
 <script lang="ts" module>
 	import type { Snippet } from 'svelte';
@@ -42,13 +42,9 @@
 	import { onMount } from 'svelte';
 	import { Tabs } from '$lib/components/ui';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
-	import { StagingBanner } from '$lib/components/singbox-routing';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { deviceProxyInstances } from '$lib/stores/deviceproxy';
-	import {
-		bindLiveConnectionsStore,
-		liveConnectionsSnapshot,
-	} from '$lib/components/sb-router/liveConnectionsStore';
+	import { liveConnectionsSnapshot } from '$lib/components/sb-router/liveConnectionsStore';
 	import { formatCompactCount } from './formatCount';
 	import { buildAtomicEgresses } from '../outbounds/atomicEgress';
 	import { partitionOutbounds } from '../outbounds/partitionOutbounds';
@@ -98,8 +94,6 @@
 	}: Props = $props();
 
 	onMount(() => {
-		// Тот же WS, что у sb-router LiveConnectionsChip — для счётчика «Соединения».
-		bindLiveConnectionsStore();
 		// Бейдж чипа «DNS» считается ЗДЕСЬ, по fakeipConfig.dnsRules, а грузят
 		// этот стор только сами вкладки DNS и Rule sets. Без загрузки в каркасе
 		// на всех остальных чипах бейджа не было бы вовсе. Три GET'а, без
@@ -157,8 +151,6 @@
 </script>
 
 <div class="fakeip-shell">
-	<StagingBanner />
-
 	<FakeIPHero
 		{title}
 		{engineState}
@@ -193,13 +185,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-3, 0.75rem);
-	}
-
-	/* У баннера свой margin-bottom (в sb-router он лежит в контейнере без gap),
-	   а тут его складывает с gap колонки — гасим, иначе отступ двойной.
-	   Правило :global — scoped-CSS не достаёт до разметки дочернего компонента. */
-	.fakeip-shell :global(.staging-inline) {
-		margin-bottom: 0;
 	}
 
 	/* Стат-строка тайлов: грид с тонкими разделителями (мокап `.stats`). */
