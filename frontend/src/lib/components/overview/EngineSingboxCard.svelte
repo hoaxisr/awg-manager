@@ -52,7 +52,7 @@
 		{#if mode}
 			<span class="chip">{mode}</span>
 		{/if}
-		<a class="link" href="/sb/routing">Открыть <ChevronRight size={13} aria-hidden="true" /></a>
+		<a class="link" href="/sb/engine">Открыть <ChevronRight size={13} aria-hidden="true" /></a>
 	</div>
 
 	{#if !status}
