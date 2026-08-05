@@ -21,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ENGINE_GROUP_PATHS } from '$lib/data/engineDraftGuard';
+import { REDIRECT_TARGETS } from '$lib/data/legacyRoutingLinks';
 import { NAV_TREE, groupItems, type NavGroup } from '$lib/data/navigation';
 
 const SB_ROUTES = resolve(process.cwd(), 'src/routes/sb');
@@ -73,6 +74,19 @@ describe('состав группы «Движок» сверен с файло�
 
 	it('в сайдбаре нет пунктов, ведущих в несуществующий маршрут', () => {
 		expect(sidebarHrefs()).toEqual([...enginePagesOnDisk(), ...OUTSIDE_GROUP].sort());
+	});
+
+	it('редирект легаси-закладок ведёт только на существующие страницы группы', () => {
+		// Четвёртый список маршрутов — таблицы `legacyRoutingLinks.ts`. Без этой
+		// сверки переименование страницы волной 5D2 уронит три списка выше, а
+		// редирект молча уведёт старые закладки в 404.
+		const pages = enginePagesOnDisk();
+		for (const path of REDIRECT_TARGETS) {
+			expect(ENGINE_GROUP_PATHS as readonly string[]).toContain(path);
+			// Отдельно от списка выше: в нём есть '/sb/routing' — сам редирект,
+			// и цель, указывающая на него, дала бы петлю, а не страницу.
+			expect(pages).toContain(path);
+		}
 	});
 
 	it('нетрогаемые страницы раздела лежат вне слоя (engine)', () => {
