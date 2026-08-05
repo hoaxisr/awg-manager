@@ -69,17 +69,24 @@
   // сносил бы уже показанные данные.
   const singboxError = singboxRouterStore.error;
   const singboxInitialized = singboxRouterStore.initialized;
-  let loadFailed = $derived($singboxAttempted && !$singboxInitialized && $singboxError !== null);
+  const singboxLoading = singboxRouterStore.loading;
+  // ...и НЕ отпускаем экран, пока идёт повтор. loadAll синхронно сбрасывает
+  // error в null, поэтому без `|| $singboxLoading` клик по «Повторить» на
+  // секунду возвращал бы ровно тот мастер настройки, который мы отсюда
+  // убрали, а его onMount слал бы второй круг из десяти запросов.
+  let loadFailed = $derived(
+    $singboxAttempted && !$singboxInitialized && ($singboxError !== null || $singboxLoading),
+  );
   let singboxRulesCount = $derived($singboxRulesStore.length);
-  let retrying = $state(false);
+  // Текст последней ошибки переживает повтор: на время запроса error пуст, а
+  // блок остаётся на экране и обязан что-то показывать.
+  let lastError = $state<string | null>(null);
+  $effect(() => {
+    if ($singboxError !== null) lastError = $singboxError;
+  });
 
-  async function retryLoad(): Promise<void> {
-    retrying = true;
-    try {
-      await singboxRouterStore.loadAll();
-    } finally {
-      retrying = false;
-    }
+  function retryLoad(): void {
+    void singboxRouterStore.loadAll();
   }
 
   const SUB_VIEWS = new Set(['connections', 'logs']);
@@ -195,9 +202,9 @@
     <div class="load-failed">
       <TriangleAlert size={20} aria-hidden={true} />
       <p class="load-failed-title">Не удалось загрузить конфигурацию маршрутизации</p>
-      <p class="load-failed-msg">{$singboxError}</p>
-      <Button variant="secondary" size="sm" onclick={retryLoad} disabled={retrying}>
-        {retrying ? 'Повтор…' : 'Повторить'}
+      <p class="load-failed-msg">{$singboxError ?? lastError ?? ''}</p>
+      <Button variant="secondary" size="sm" onclick={retryLoad} disabled={$singboxLoading}>
+        {$singboxLoading ? 'Повтор…' : 'Повторить'}
       </Button>
     </div>
   {:else if $sbMode === 'beginner'}
