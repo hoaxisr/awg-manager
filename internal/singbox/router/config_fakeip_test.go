@@ -975,9 +975,11 @@ func TestFakeipGuard_AllowsAppendingUserDNSRule(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // После разделения генерации правила, наборы и route.final лежат в общем слоте
-// во ВСЕХ режимах, а режимный несёт только захват и DNS-механизм. Статус обязан
-// показывать merged-вид: счётчики и final — из общего слота, системный префикс
-// правил — из режимного (ровно в этом порядке их видит sing-box).
+// во ВСЕХ режимах, а режимный несёт только захват и DNS-механизм. Статус читает
+// merged-вид режима (issues и скаляры обязаны судить по тому, что видит
+// sing-box), но СЧЁТЧИКИ отдаёт по общему слоту: ruleCount — это длина списка,
+// которым пользователь управляет через CRUD, и рядом с ним на экране всегда
+// стоит этот же список. Системный префикс режима в счёт не идёт.
 func TestGetStatus_FakeIPMode_ReadsSharedSlot(t *testing.T) {
 	svc, dir := newFakeIPTestService(t)
 
@@ -1013,7 +1015,16 @@ func TestGetStatus_FakeIPMode_ReadsSharedSlot(t *testing.T) {
 	if st.Final != "router-final" {
 		t.Errorf("Final = %q, want %q (route.final пишет только общий слот)", st.Final, "router-final")
 	}
-	if st.RuleCount != 2 {
-		t.Errorf("RuleCount = %d, want 2 (системное правило режима + пользовательское)", st.RuleCount)
+	if st.RuleCount != 1 {
+		t.Errorf("RuleCount = %d, want 1 (правила общего слота; системный префикс режима не в счёт)", st.RuleCount)
+	}
+	// Merged-вид при этом никуда не делся — его читают issues и final: системное
+	// правило режима обязано быть в конфиге, по которому считается статус.
+	mergedCfg, _, err := svc.loadRouterConfigsForMode(stateFakeIPTun)
+	if err != nil {
+		t.Fatalf("loadRouterConfigsForMode: %v", err)
+	}
+	if len(mergedCfg.Route.Rules) != 2 || mergedCfg.Route.Rules[0].Action != "hijack-dns" {
+		t.Errorf("merged route.rules = %+v, want [hijack-dns, пользовательское]", mergedCfg.Route.Rules)
 	}
 }

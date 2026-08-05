@@ -675,16 +675,26 @@ func parseRouterConfigBytes(data []byte) (*RouterConfig, error) {
 // половина, потерянная бы при чтении одного слота, ровно обратная: правила
 // пользователя лежат в общем слоте во ВСЕХ режимах.
 func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error) {
+	cfg, _, err := s.loadRouterConfigsForMode(mode)
+	return cfg, err
+}
+
+// loadRouterConfigsForMode — loadRouterConfigForMode, дополнительно отдающий
+// число правил ОБЩЕГО слота (до подмешивания системного префикса режима).
+// Нужен статусу: пользователю показывается длина списка, которым он управляет
+// через CRUD, а не длина merged-вида (см. GetStatus).
+func (s *ServiceImpl) loadRouterConfigsForMode(mode string) (*RouterConfig, int, error) {
 	cfg, err := s.loadRouterConfig()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	sharedRules := len(cfg.Route.Rules)
 	if s.deps.Orch == nil {
-		return cfg, nil
+		return cfg, sharedRules, nil
 	}
 	modeCfg, err := s.loadModeSlotConfig(mode)
 	if err != nil || modeCfg == nil {
-		return cfg, err
+		return cfg, sharedRules, err
 	}
 	// Массивы конкатенируются (режимный слот первым), скаляры берутся из
 	// первого файла — ровно как их сливает sing-box.
@@ -700,7 +710,7 @@ func (s *ServiceImpl) loadRouterConfigForMode(mode string) (*RouterConfig, error
 	if modeCfg.Route.DefaultDomainResolver != nil {
 		cfg.Route.DefaultDomainResolver = modeCfg.Route.DefaultDomainResolver
 	}
-	return cfg, nil
+	return cfg, sharedRules, nil
 }
 
 // loadModeSlotConfig читает ЭФФЕКТИВНЫЙ конфиг режимного слота (pending-first,

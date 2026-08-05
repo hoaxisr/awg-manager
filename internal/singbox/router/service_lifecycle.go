@@ -997,7 +997,12 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	if settings != nil {
 		sr, _ = NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	}
-	cfg, _ := s.loadRouterConfigForMode(sr.RoutingMode)
+	// cfg — merged-вид режима (его читают issues и скаляры), userRuleCount —
+	// длина списка правил ОБЩЕГО слота: ровно то, что отдаёт ListRules и что
+	// видит пользователь на странице правил. Системный префикс режима в счёт не
+	// идёт — иначе бейджи («TProxy N», чипы FakeIP, обзор, FlowGraph) врали бы
+	// на 3-4 относительно списка под ними.
+	cfg, userRuleCount, _ := s.loadRouterConfigsForMode(sr.RoutingMode)
 	if cfg == nil {
 		cfg = NewEmptyConfig()
 	}
@@ -1246,7 +1251,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		DeviceMode:              sr.DeviceMode,
 		SnifferEnabled:          sr.SnifferEnabled,
 		DeviceCount:             deviceCount,
-		RuleCount:               len(cfg.Route.Rules),
+		RuleCount:               userRuleCount,
 		RuleSetCount:            len(cfg.Route.RuleSet),
 		OutboundAWGCount:        awgCount,
 		OutboundCompositeCount:  compCount,

@@ -21,13 +21,17 @@ type Status struct {
 	// XtDscpAvailable reports whether iptables `-m dscp` matching is usable
 	// (xt_dscp kernel module loaded/on-disk AND iptables extension present).
 	// The QoS-DSCP settings UI keys its "supported" state on this field.
-	XtDscpAvailable        bool   `json:"xtDscpAvailable"`
-	PolicyName             string `json:"policyName"`
-	PolicyMark             string `json:"policyMark,omitempty"`
-	PolicyExists           bool   `json:"policyExists"`
-	DeviceMode             string `json:"deviceMode"`
-	SnifferEnabled         bool   `json:"snifferEnabled"`
-	DeviceCount            int    `json:"deviceCount"`
+	XtDscpAvailable bool   `json:"xtDscpAvailable"`
+	PolicyName      string `json:"policyName"`
+	PolicyMark      string `json:"policyMark,omitempty"`
+	PolicyExists    bool   `json:"policyExists"`
+	DeviceMode      string `json:"deviceMode"`
+	SnifferEnabled  bool   `json:"snifferEnabled"`
+	DeviceCount     int    `json:"deviceCount"`
+	// RuleCount — число route-правил ОБЩЕГО слота: ровно то, чем управляет
+	// пользователь (ListRules / страница правил). Системный префикс режима
+	// (sniff / hijack-dns / ip_is_private / route-options) сюда не входит — он
+	// генерируется в режимный слот и через CRUD не виден.
 	RuleCount              int    `json:"ruleCount"`
 	RuleSetCount           int    `json:"ruleSetCount"`
 	OutboundAWGCount       int    `json:"outboundAwgCount"`

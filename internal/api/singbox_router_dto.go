@@ -24,13 +24,15 @@ type SingboxRouterStatusData struct {
 	// XtDscpAvailable reports whether iptables DSCP matching is usable
 	// (xt_dscp kernel module present AND iptables `-m dscp` extension works).
 	// The QoS-DSCP settings UI keys its "supported" badge on this field.
-	XtDscpAvailable        bool   `json:"xtDscpAvailable" example:"true"`
-	PolicyName             string `json:"policyName" example:"awgm-router"`
-	PolicyMark             string `json:"policyMark,omitempty" example:"0xffffaaa"`
-	PolicyExists           bool   `json:"policyExists" example:"true"`
-	DeviceMode             string `json:"deviceMode" example:"policy" enums:"policy,all"`
-	SnifferEnabled         bool   `json:"snifferEnabled" example:"true"`
-	DeviceCount            int    `json:"deviceCount" example:"3"`
+	XtDscpAvailable bool   `json:"xtDscpAvailable" example:"true"`
+	PolicyName      string `json:"policyName" example:"awgm-router"`
+	PolicyMark      string `json:"policyMark,omitempty" example:"0xffffaaa"`
+	PolicyExists    bool   `json:"policyExists" example:"true"`
+	DeviceMode      string `json:"deviceMode" example:"policy" enums:"policy,all"`
+	SnifferEnabled  bool   `json:"snifferEnabled" example:"true"`
+	DeviceCount     int    `json:"deviceCount" example:"3"`
+	// RuleCount — правила общего слота маршрутизации (без системного префикса
+	// режима, которого нет и в списке правил).
 	RuleCount              int    `json:"ruleCount" example:"12"`
 	RuleSetCount           int    `json:"ruleSetCount" example:"4"`
 	OutboundAWGCount       int    `json:"outboundAwgCount" example:"2"`
