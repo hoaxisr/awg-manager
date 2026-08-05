@@ -78,6 +78,7 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 
 	// --- общий слот ---
 	shared.Route.Rules = user
+	var notes []string
 	switch {
 	case p.SourceIsFakeIP && !p.SharedOnly:
 		// DNS fakeip-режима — это и есть механизм режима; он остаётся в
@@ -88,7 +89,7 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		// Режимного слота не будет, а значит серверов fakeip/real не объявит
 		// никто: выбрасываем движковую часть DNS, пользовательскую оставляем —
 		// иначе собственные DNS-серверы пользователя пропали бы вместе с ней.
-		dropEngineDNS(shared)
+		notes = append(notes, dropEngineDNS(shared)...)
 	}
 	// Порядок именно такой: сначала выбросить движковые серверы, потом лечить
 	// пользовательские. Наоборот было бы хуже — переименование увело бы
@@ -105,7 +106,6 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		WANAutoDetect: shared.Route.AutoDetectInterface != nil && *shared.Route.AutoDetectInterface,
 		WANInterface:  shared.Route.DefaultInterface,
 	})
-	var notes []string
 	if p.SharedOnly {
 		// Режимный слот не пишется — объявить движковый резолвер `real` некому.
 		// Чинить обязательно и у outbound'ов, и у DNS-серверов: висячая ссылка
@@ -113,7 +113,15 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 		// только на СТАРТЕ, `check` её пропускает). Сюда же попадает резолвер,
 		// который только что поставил buildRoutingSlot hostname-outbound'ам,
 		// когда установка идёт в fakeip-режим.
-		notes = healDanglingDomainResolvers(shared, p.FallbackDNSResolver)
+		//
+		// БЕЗУСЛОВНЫМ вызов делать нельзя (проверено мутацией): на обычном пути
+		// в fakeip-режим резолвер `real` объявляет РЕЖИМНЫЙ слот, которого
+		// healDanglingDomainResolvers не видит — он судит только по
+		// shared.DNS.Servers. Ссылка была бы снята как висячая, и
+		// hostname-outbound стал бы резолвиться через fakeip, получая
+		// синтетический адрес вместо настоящего (туннель не поднимается).
+		// Сторож — TestMigrateSlotsSplitKeepsFakeIPOutboundResolver.
+		notes = append(notes, healDanglingDomainResolvers(shared, p.FallbackDNSResolver)...)
 	}
 	sharedRaw, err := json.MarshalIndent(shared, "", "  ")
 	if err != nil {
@@ -149,7 +157,7 @@ func SplitLegacyRoutingSlot(data []byte, p LegacySlotSplitParams) (LegacySlotSpl
 	if err != nil {
 		return LegacySlotSplit{}, fmt.Errorf("marshal mode slot: %w", err)
 	}
-	return LegacySlotSplit{Shared: sharedRaw, Mode: modeRaw, DNSRenames: renames}, nil
+	return LegacySlotSplit{Shared: sharedRaw, Mode: modeRaw, DNSRenames: renames, Notes: notes}, nil
 }
 
 // healDanglingDomainResolvers чинит ссылки domain_resolver, указывающие в
@@ -195,9 +203,12 @@ func healDanglingDomainResolvers(cfg *RouterConfig, fallbackResolver string) []s
 		}
 		return false
 	}
-	if r := cfg.Route.DefaultDomainResolver; r != nil && !resolvable(r.Server) {
-		cfg.Route.DefaultDomainResolver = nil
-	}
+	// route.default_domain_resolver здесь не проверяется: единственный вызов
+	// идёт ПОСЛЕ buildRoutingSlot, а тот через stripModeOnlyFromRoutingSlot
+	// обнуляет поле безусловно (в общем слоте оно всё равно инертно — скаляр
+	// 00-base.json перебивает его при слиянии first-file-wins). Ветка была
+	// мёртвой; сторож на висячую ссылку в этом поле — статический ассерт
+	// assertNoDanglingDNSRefs в тестах миграции, а не код здесь.
 	for i := range cfg.Outbounds {
 		if r := cfg.Outbounds[i].DomainResolver; r != nil && !resolvable(r.Server) {
 			cfg.Outbounds[i].DomainResolver = nil
@@ -256,7 +267,13 @@ func pickDomainResolverFor(cfg *RouterConfig, self, fallbackResolver string) str
 // dropEngineDNS выбрасывает из конфига DNS движка fakeip-режима: серверы с
 // движковыми тегами, правила, которые на них ссылаются, и режимные скаляры.
 // Пользовательские серверы и правила остаются — это их данные.
-func dropEngineDNS(cfg *RouterConfig) {
+//
+// Возвращает строки для журнала. Правило, ссылающееся на движковый сервер,
+// уходит целиком — вместе с сужением, которое пользователь мог задать в нём
+// руками (набор правил, адрес источника). Сохранить его нельзя: сервера, на
+// который оно светит, в этой раскладке не существует. Молчать — тоже нельзя:
+// со стороны это выглядит как пропавшая настройка.
+func dropEngineDNS(cfg *RouterConfig) []string {
 	servers := make([]DNSServer, 0, len(cfg.DNS.Servers))
 	for _, s := range cfg.DNS.Servers {
 		if engineDNSServerTags[s.Tag] {
@@ -266,8 +283,10 @@ func dropEngineDNS(cfg *RouterConfig) {
 	}
 	cfg.DNS.Servers = servers
 	rules := make([]DNSRule, 0, len(cfg.DNS.Rules))
+	dropped := 0
 	for _, r := range cfg.DNS.Rules {
 		if engineDNSServerTags[r.Server] {
+			dropped++
 			continue
 		}
 		rules = append(rules, r)
@@ -279,6 +298,12 @@ func dropEngineDNS(cfg *RouterConfig) {
 	// Ссылки на удалённые серверы чинит healDanglingDomainResolvers — он
 	// зовётся ПОСЛЕ buildRoutingSlot, который сам может навесить движковый
 	// резолвер на outbound'ы.
+	if dropped == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"DNS-правил режима fakeip отброшено: %d — они направляли запросы на движковые серверы, которых в этой раскладке нет; заданные в них вручную ограничения (набор правил, адрес источника) не сохранены",
+		dropped)}
 }
 
 // splitLegacyRouteRules делит route.rules прежнего слота на режимный префикс и

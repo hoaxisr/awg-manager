@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -450,8 +451,15 @@ func TestMigrateSlotsSplitFallbackDropsEngineDNS(t *testing.T) {
 	writeSlotFixture(t, dir, "00-base.json", baseFixture())
 	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithRules("fakeip-rule"))
 
-	if _, err := MigrateSlotsSplit(dir, "tproxy"); err != nil {
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) }); err != nil {
 		t.Fatalf("миграция: %v", err)
+	}
+	// DNS-правило режима уходит вместе с сервером, на который оно светило.
+	// Вместе с ним пропадает и сужение, которое пользователь мог задать в нём
+	// руками (набор правил, адрес источника) — молчать об этом нельзя.
+	if !logContains(log, "DNS-правил режима fakeip отброшено") {
+		t.Errorf("об отброшенных DNS-правилах режима не написано в журнал: %v", log)
 	}
 	shared := readSlot(t, dir, "21-routing.json")
 	raw := readSlotBytes(t, dir, "21-routing.json")
@@ -567,6 +575,74 @@ func TestMigrateSlotsSplitDropsUnresolvableDNSServer(t *testing.T) {
 	singboxRunDir(t, dir)
 }
 
+// Черновик разбирается тем же кодом, что и применённый файл, и так же теряет
+// в разборе DNS-серверы и правила. Строки об этом обязаны дойти до журнала:
+// иначе пользователь узнает о пропаже только после «Применить».
+func TestMigrateSlotsSplitLogsDraftNotes(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	// Применённого файла нет вовсе — движок ни разу не поднимали, есть только
+	// черновик. Он же и единственный источник разбора.
+	writeSlotFixture(t, dir, "pending/21-fakeip.json", fakeipFixtureWithRules("drafted"))
+
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) }); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	draft := readSlot(t, dir, "pending/21-routing.json")
+	if !hasRule(draft, "drafted") {
+		t.Fatalf("черновик потерян:\n%s", readSlotBytes(t, dir, "pending/21-routing.json"))
+	}
+	// В черновике сработали обе правки разбора: движковый DNS выброшен
+	// (dropEngineDNS) и пользовательский сервер перецелен на резолвер базового
+	// слота (healDanglingDomainResolvers).
+	if !logContains(log, "черновик: DNS-правил режима fakeip отброшено") {
+		t.Errorf("об отброшенных DNS-правилах черновика не написано в журнал: %v", log)
+	}
+	if !logContains(log, `черновик: DNS-сервер "user-dns"`) {
+		t.Errorf("о перецеленном DNS-сервере черновика не написано в журнал: %v", log)
+	}
+	if got := dnsServerResolver(draft, "user-dns"); got != BaseBootstrapDNSTag {
+		t.Errorf("резолвер user-dns в черновике = %q, ожидался %q", got, BaseBootstrapDNSTag)
+	}
+}
+
+// В fakeip-режиме hostname-outbound обязан резолвиться через движковый `real`
+// (его объявляет режимный слот), а не через fakeip — иначе endpoint туннеля
+// получает синтетический адрес и соединение не поднимается. Сторож на случай
+// «позвать healDanglingDomainResolvers безусловно»: тот видит только DNS
+// общего слота и снял бы эту ссылку как висячую.
+func TestMigrateSlotsSplitKeepsFakeIPOutboundResolver(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "21-fakeip.json", fakeipFixtureWithHostnameOutbound())
+
+	if _, err := MigrateSlotsSplit(dir, "fakeip-tun"); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	shared := readSlot(t, dir, "21-routing.json")
+	found := false
+	for _, o := range outboundsOf(shared) {
+		if o["tag"] != "host-proxy" {
+			continue
+		}
+		found = true
+		r, ok := o["domain_resolver"].(map[string]any)
+		if !ok || r["server"] != "real" {
+			t.Errorf("hostname-outbound остался без резолвера real: %v\n%s", o["domain_resolver"],
+				readSlotBytes(t, dir, "21-routing.json"))
+		}
+	}
+	if !found {
+		t.Fatalf("outbound host-proxy потерян:\n%s", readSlotBytes(t, dir, "21-routing.json"))
+	}
+	// Ссылка не висячая: сервер `real` объявляет режимный слот.
+	mode := readSlot(t, dir, "20-fakeip.json")
+	if !slices.Contains(dnsServerTags(mode), "real") {
+		t.Errorf("режимный слот не объявляет резолвер real: %v", dnsServerTags(mode))
+	}
+}
+
 // Правило пользователя, стоящее ПОСЛЕ системного префикса, остаётся
 // пользовательским, даже если по форме похоже на системное: режимный слот
 // перегенерируется из настроек, и такое правило там бы просто исчезло.
@@ -657,6 +733,16 @@ func fakeipFixtureWithRules(tag string) string {
   },
   "experimental": {"cache_file": {"enabled": true, "store_fakeip": true, "path": "/tmp/awgm-fakeip-test.db"}}
 }`, tag)
+}
+
+// Тот же fakeip-слот, но с outbound'ом, заданным ИМЕНЕМ ХОСТА: только такому
+// buildRoutingSlot ставит domain_resolver, и только на нём видно, уцелела ли
+// ссылка на движковый `real`.
+func fakeipFixtureWithHostnameOutbound() string {
+	return strings.Replace(fakeipFixtureWithRules("fakeip-rule"),
+		`{"type": "selector", "tag": "user-proxy", "outbounds": ["direct"]}`,
+		`{"type": "selector", "tag": "user-proxy", "outbounds": ["direct"]},
+    {"type": "socks", "tag": "host-proxy", "server": "proxy.example.org"}`, 1)
 }
 
 // Слот НОВОЙ раскладки — общий. Отличие от прежней раскладки принципиальное:

@@ -80,6 +80,12 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 	// именем — то, к чему подталкивает инструкция по откату, — увёл бы
 	// актуальный общий слот в резерв и положил поверх правила неактивного
 	// режима.
+	//
+	// Обратная сторона (по замыслу): резерв СВОЕГО режима, возвращённый под
+	// исходным именем, здесь разберётся снова и перезапишет общий слот
+	// содержимым резерва — то есть откатит правки, сделанные после миграции.
+	// Это и есть откат, к которому ведёт инструкция из CHANGELOG; актуальный
+	// общий слот при этом не пропадает, а уходит в резерв (writeMigratedSlot).
 	migrationDone := regularFileExists(filepath.Join(activeDir, sharedFile)) ||
 		regularFileExists(filepath.Join(disabledDir, sharedFile))
 
@@ -142,6 +148,7 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 		}
 	}
 	var draftShared []byte
+	var draftNotes []string
 	draftUsed := ""
 	for _, name := range draftNames {
 		src := filepath.Join(pendingDir, name)
@@ -155,7 +162,7 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 			logf(fmt.Sprintf("черновик %s не разобран (%v) — отброшен, копия остаётся в резерве", name, err))
 			continue
 		}
-		draftShared, draftUsed = split.Shared, name
+		draftShared, draftNotes, draftUsed = split.Shared, split.Notes, name
 		break
 	}
 	// Черновик ДРУГОГО слота отбрасывается — но сказать об этом можно только
@@ -220,6 +227,12 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 			logf(fmt.Sprintf("черновик не перенесён (%v) — копия остаётся в резерве", err))
 		} else {
 			logf(fmt.Sprintf("несохранённый черновик перенесён в pending/%s", sharedFile))
+			// Черновик разбирается тем же кодом, что и применённый файл, и так
+			// же теряет в разборе DNS-серверы и правила. Без этих строк
+			// пользователь увидел бы пропажу только после «Применить».
+			for _, note := range draftNotes {
+				logf("черновик: " + note)
+			}
 		}
 	}
 
