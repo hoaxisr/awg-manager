@@ -172,6 +172,11 @@ func (s *ServiceImpl) isKnownOutboundTag(ctx context.Context, tag string, cfg *R
 // отдельной проверки на него нет. Правило вида «ip_is_private → свой LAN-выход»
 // в общем слоте пользователь завёл сам (splitLegacyRouteRules намеренно
 // оставляет такие при миграции) — оно правится наравне с остальными.
+//
+// Не-мигрированной конфигурации, где префикс лежал бы в редактируемом файле,
+// на этом пути не бывает: миграция отрабатывает до регистрации слотов, а её
+// разбор системный префикс в общий слот не переносит (иначе после первого же
+// Reconcile в merged-конфиге оказалось бы два hijack-dns).
 func bulkSetRuleOutbound(c *RouterConfig, indices []int, outbound string, known func(string) bool) error {
 	if len(indices) == 0 {
 		return ErrBulkEmptyIndices
