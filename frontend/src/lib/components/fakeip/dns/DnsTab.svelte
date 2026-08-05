@@ -186,9 +186,15 @@
 	}
 
 	onMount(() => {
-		// Гейт по initialized — как в FakeIPTab: свежесть держит SSE-инвалидация,
-		// а без гейта каждое переключение чипа перезапрашивало бы обе пачки.
-		if (!get(fakeipConfig.initialized)) void fakeipConfig.loadAll();
+		// fakeipConfig грузим на КАЖДЫЙ монтаж: SSE его не освежает. События
+		// singbox-router:dns-* фронт не слушает, да и включение движка/смена режима
+		// перезаписывают fakeip-слот (сервера оверлея, стартовое DNS-правило)
+		// вообще без событий — с гейтом список протухал бы до перезагрузки страницы.
+		// Три GET'а, без Probe/RCI.
+		void fakeipConfig.loadAll();
+		// singboxRouter — под гейтом: его правила, наборы и outbound'ы держит в
+		// свежести SSE (singbox-router:{rules,rulesets,outbounds}), а loadAll тянет
+		// ещё и GetStatus с iptables-Probe и RCI.
 		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 

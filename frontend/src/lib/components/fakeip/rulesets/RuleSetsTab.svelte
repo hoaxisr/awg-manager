@@ -60,12 +60,13 @@
 	const storeDnsRules = fakeipConfig.dnsRules;
 
 	onMount(() => {
-		// Прямой заход на чип может застать сторы холодными. Гейт по initialized —
-		// как в FakeIPTab: свежесть держит SSE-инвалидация, а без гейта каждое
-		// переключение чипа перезапрашивало бы обе пачки (включая GetStatus с
-		// iptables-пробой и RCI).
+		// Прямой заход на чип может застать сторы холодными. singboxRouter — под
+		// гейтом по initialized: его списки держит в свежести SSE, а loadAll тянет
+		// ещё и GetStatus с iptables-пробой и RCI.
 		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
-		if (!get(fakeipConfig.initialized)) void fakeipConfig.loadAll();
+		// fakeipConfig (колонка «используется в» показывает и DNS-правила) грузим
+		// каждый монтаж: SSE его не освежает — см. комментарий в DnsTab.
+		void fakeipConfig.loadAll();
 	});
 
 	// ── Тип-фильтр (мокап: Все / dat / remote / local / inline) ───────────
