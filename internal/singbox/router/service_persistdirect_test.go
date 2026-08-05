@@ -352,3 +352,58 @@ func TestWaitForSingbox_TimesOutWhenNeverRunning(t *testing.T) {
 		t.Errorf("waitForSingbox returned too late: %v", elapsed)
 	}
 }
+
+// Припаркованный слот. Orch.Save пишет такой слот в disabled/, а сравнение
+// шло с активным путём — файла там нет, и запись каждый раз считалась
+// изменением: лишний Save и debounced reload на каждом тике reconcile (а на
+// тике reconcile за ним ещё и ожидание применения). Второй persist того же
+// содержимого обязан отчитаться «не менялось».
+func TestPersistSlotChanged_ParkedSlotSecondWriteIsNoOp(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	slot := orchestrator.SlotTProxy // режимный слот припаркован: движок выключен
+	if st, ok := svc.slotSnapshot(slot); !ok || st.Enabled {
+		t.Fatalf("предпосылка теста: слот %s должен быть припаркован (%+v)", slot, st)
+	}
+
+	cfg := NewEmptyConfig()
+	cfg.Route.Rules = append(cfg.Route.Rules, Rule{Action: "route", Outbound: "direct", Domain: []string{"a.example"}})
+
+	changed, err := svc.persistSlotChanged(slot, cfg, false)
+	if err != nil {
+		t.Fatalf("первая запись: %v", err)
+	}
+	if !changed {
+		t.Fatal("первая запись припаркованного слота обязана считаться изменением")
+	}
+	parked := filepath.Join(dir, "disabled", "20-tproxy.json")
+	if _, err := os.Stat(parked); err != nil {
+		t.Fatalf("файл припаркованного слота не появился: %v", err)
+	}
+
+	changed, err = svc.persistSlotChanged(slot, cfg, false)
+	if err != nil {
+		t.Fatalf("повторная запись: %v", err)
+	}
+	if changed {
+		t.Error("повторная запись того же содержимого не должна считаться изменением — иначе reload дёргается на каждом тике")
+	}
+
+	// Включённый слот сравнивается с активным файлом, как и раньше: его
+	// пропажа обязана лечиться перезаписью.
+	if err := svc.deps.Orch.SetEnabled(slot, true); err != nil {
+		t.Fatalf("включить слот: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, "20-tproxy.json")); err != nil {
+		t.Fatalf("убрать активный файл: %v", err)
+	}
+	changed, err = svc.persistSlotChanged(slot, cfg, false)
+	if err != nil {
+		t.Fatalf("запись после пропажи активного файла: %v", err)
+	}
+	if !changed {
+		t.Error("пропавший активный файл включённого слота обязан быть перезаписан")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "20-tproxy.json")); err != nil {
+		t.Errorf("активный файл не восстановлен: %v", err)
+	}
+}

@@ -28,6 +28,24 @@ func (o *Orchestrator) ActivePath(slot Slot) (string, error) {
 	return o.activePath(meta), nil
 }
 
+// SavePath returns the path Save/SaveSilent would write for the slot right
+// now: active/ when the slot is enabled, disabled/ when parked. Существует
+// ради сравнения «а что уже лежит на диске»: сравнивать с ActivePath, когда
+// пишется disabled/, значит вечно видеть расхождение — байт-равный
+// short-circuit не срабатывает, и каждая запись тянет за собой reload.
+func (o *Orchestrator) SavePath(slot Slot) (string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	meta, ok := o.slots[slot]
+	if !ok {
+		return "", ErrUnknownSlot
+	}
+	if o.enabled[slot] {
+		return o.activePath(meta), nil
+	}
+	return o.disabledPath(meta), nil
+}
+
 // disabledPath returns the path where the slot's file lives when disabled.
 func (o *Orchestrator) disabledPath(meta SlotMeta) string {
 	return filepath.Join(o.configDir, disabledSubdir, meta.Filename)

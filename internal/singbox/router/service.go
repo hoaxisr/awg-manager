@@ -774,6 +774,13 @@ func (s *ServiceImpl) persistSlotDirect(slot orchestrator.Slot, cfg *RouterConfi
 
 // persistSlotChanged — persistSlotDirect, дополнительно сообщающий, была ли
 // запись. Нужен путям самолечения: reload дёргается только на изменение.
+//
+// Сравнивается ровно тот файл, в который целится Orch.Save (SavePath), а не
+// активный: припаркованный слот пишется в disabled/, и сравнение с
+// несуществующим активным файлом давало вечное changed=true — лишняя запись и
+// debounced reload на каждом тике reconcile. Активный путь при включённом
+// слоте — это тот же SavePath, поэтому самолечение «слот включён, а файла нет»
+// работает как прежде.
 func (s *ServiceImpl) persistSlotChanged(slot orchestrator.Slot, cfg *RouterConfig, checkCycles bool) (bool, error) {
 	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
 	if err != nil {
@@ -788,11 +795,11 @@ func (s *ServiceImpl) persistSlotChanged(slot orchestrator.Slot, cfg *RouterConf
 	if err != nil {
 		return false, fmt.Errorf("marshal %s config: %w", slot, err)
 	}
-	activePath, err := s.deps.Orch.ActivePath(slot)
+	savePath, err := s.deps.Orch.SavePath(slot)
 	if err != nil {
 		return false, err
 	}
-	if existing, err := os.ReadFile(activePath); err == nil && bytes.Equal(existing, data) {
+	if existing, err := os.ReadFile(savePath); err == nil && bytes.Equal(existing, data) {
 		return false, nil
 	}
 	return true, s.deps.Orch.Save(slot, data)
