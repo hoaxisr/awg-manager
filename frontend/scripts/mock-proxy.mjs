@@ -2017,6 +2017,12 @@ let mockSBSettings = {
 	enabled: false,
 	policyName: '',
 	deviceMode: 'policy',
+	// Бэкенд возвращает routingMode ВСЕГДА: GetSettings прогоняет ответ через
+	// NormalizeSingboxRouterSettings, а тот подставляет "tproxy" пустому полю
+	// (service_settings.go). Без этой строки мок отдавал настройки без режима, и
+	// бейдж режима у пункта «Движок» — по разделу 2 спеки 5D единственное место,
+	// где режим виден с любой страницы группы, — на стенде не появлялся вовсе.
+	routingMode: 'tproxy',
 	snifferEnabled: true,
 	refreshMode: 'interval',
 	refreshIntervalHours: 24,
@@ -6736,6 +6742,12 @@ const server = http.createServer(async (req, res) => {
 				deviceMode: mockSBSettings.deviceMode || 'policy',
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
+				// Composite-выходы роутерного слота — источник бейджа «Группы» в
+				// сайдбаре (nav-v3). Бэкенд считает их как len(CompositeOutbounds()),
+				// то есть все выходы слота (config.go:868), и сериализует ВСЕГДА
+				// (без omitempty). Мок поля не отдавал, и бейдж на стенде не
+				// появлялся ни на одной странице.
+				outboundCompositeCount: mockOutbounds.length,
 				final: mockSingboxRouteFinal,
 				// fakeip-tun status fields (backend serializes all omitempty).
 				routingMode,
