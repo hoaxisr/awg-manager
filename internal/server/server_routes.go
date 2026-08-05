@@ -909,22 +909,6 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 				fh.PutDNSGlobals(w, r)
 			}
 		}))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/list", h.guarded(fh.ListRules))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/add", h.guarded(fh.AddRule))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/update", h.guarded(fh.UpdateRule))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/bulk-outbound", h.guarded(fh.BulkSetRuleOutbound))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/delete", h.guarded(fh.DeleteRule))
-		mux.HandleFunc("/api/singbox/fakeip/config/rules/move", h.guarded(fh.MoveRule))
-		mux.HandleFunc("/api/singbox/fakeip/config/route/final", h.guarded(fh.SetRouteFinal))
-		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/list", h.guarded(fh.ListRuleSets))
-		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/add", h.guarded(fh.AddRuleSet))
-		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/update", h.guarded(fh.UpdateRuleSet))
-		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/bulk-detour", h.guarded(fh.BulkSetRuleSetDetour))
-		mux.HandleFunc("/api/singbox/fakeip/config/rulesets/delete", h.guarded(fh.DeleteRuleSet))
-		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/list", h.guarded(fh.ListOutbounds))
-		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/add", h.guarded(fh.AddOutbound))
-		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/update", h.guarded(fh.UpdateOutbound))
-		mux.HandleFunc("/api/singbox/fakeip/config/outbounds/delete", h.guarded(fh.DeleteOutbound))
 	}
 
 	if s.singboxProxiesHandler != nil {

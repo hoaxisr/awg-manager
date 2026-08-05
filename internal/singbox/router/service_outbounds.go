@@ -158,6 +158,30 @@ func (s *ServiceImpl) ListCompositeOutbounds(ctx context.Context) ([]CompositeOu
 	return out, nil
 }
 
+// validateCompositeMembers отклоняет selector/urltest с member-тегами,
+// которых нет ни в одном каталоге (слотовые выходы, subscription-композиты,
+// AWG-теги, sing-box туннели, builtins). Молча сохранённый мёртвый член
+// валит enable fakeip-tun кросс-слот валидацией с откатом в «Выключен»,
+// не объясняя пользователю, что чинить (#567).
+func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, c *RouterConfig) error {
+	switch strings.ToLower(o.Type) {
+	case "selector", "urltest":
+	default:
+		return nil
+	}
+	var unknown []string
+	for _, m := range o.Outbounds {
+		if m == o.Tag || s.isKnownOutboundTag(ctx, m, c) {
+			continue
+		}
+		unknown = append(unknown, m)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s — такие выходы больше не существуют (туннель пересоздан или переименован), выберите членов заново", ErrCompositeMemberUnknown, strings.Join(unknown, ", "))
+}
+
 func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound) error {
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {

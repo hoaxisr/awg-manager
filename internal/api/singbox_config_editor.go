@@ -39,8 +39,8 @@ func NewSingboxConfigEditorHandler(orch *orchestrator.Orchestrator, appLogger lo
 
 // ConfigSlotInfo describes one config.d slot for the slots browser.
 type ConfigSlotInfo struct {
-	Slot     string `json:"slot"     example:"router"`
-	Filename string `json:"filename" example:"20-router.json"`
+	Slot     string `json:"slot"     example:"routing"`
+	Filename string `json:"filename" example:"21-routing.json"`
 	// Ownership: "system" — слот генерируется продюсером и перезаписывается
 	// целиком; "user" — 90-user.json, пишется только редактором.
 	Ownership string `json:"ownership" enums:"system,user"`

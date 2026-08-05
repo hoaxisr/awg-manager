@@ -110,7 +110,7 @@ func (h *SingboxRouterHandler) PostStagingApply(w http.ResponseWriter, r *http.R
 // PostStagingDiscard removes the pending draft.
 //
 //	@Summary		Discard router staging draft
-//	@Description	Removes pending/20-router.json. Idempotent.
+//	@Description	Removes pending/21-routing.json. Idempotent.
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
