@@ -24,6 +24,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { policyDevicesStore } from '$lib/stores/routing';
@@ -52,7 +53,7 @@
 
 	onMount(() => {
 		// Прямой заход на чип может застать стор холодным — идемпотентно.
-		void singboxRouter.loadAll();
+		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 
 	const devices = $derived<PolicyDevice[]>($devicesState.data ?? []);

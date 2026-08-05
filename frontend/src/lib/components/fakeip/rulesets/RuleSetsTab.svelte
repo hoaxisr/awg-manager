@@ -31,6 +31,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { api } from '$lib/api/client';
@@ -59,9 +60,12 @@
 	const storeDnsRules = fakeipConfig.dnsRules;
 
 	onMount(() => {
-		// Прямой заход на чип может застать оба стора холодными — идемпотентно.
-		void singboxRouter.loadAll();
-		void fakeipConfig.loadAll();
+		// Прямой заход на чип может застать сторы холодными. Гейт по initialized —
+		// как в FakeIPTab: свежесть держит SSE-инвалидация, а без гейта каждое
+		// переключение чипа перезапрашивало бы обе пачки (включая GetStatus с
+		// iptables-пробой и RCI).
+		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+		if (!get(fakeipConfig.initialized)) void fakeipConfig.loadAll();
 	});
 
 	// ── Тип-фильтр (мокап: Все / dat / remote / local / inline) ───────────

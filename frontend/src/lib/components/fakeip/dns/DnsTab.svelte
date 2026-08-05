@@ -65,6 +65,14 @@
 	const storeRuleSets = singboxRouter.ruleSets;
 	const storeOutbounds = singboxRouter.outbounds;
 	const storeOptions = singboxRouter.options;
+	const storeStaging = singboxRouter.staging;
+
+	// Наборы правятся через staging, а DNS fakeip пишется сразу. Пока черновик
+	// маршрутизации не применён, в пикере DNS-правила виден набор, которого в
+	// применённом конфиге ещё нет, — бэкенд такую ссылку отвергает
+	// (guardFakeIPRuleSetRefs). Предупреждаем заранее, чтобы отказ не выглядел
+	// произволом.
+	const routingDraft = $derived($storeStaging?.hasDraft === true);
 
 	// Контекст блокировки удаления серверов (один проход на список).
 	const dnsServerUsageContext = $derived({
@@ -178,9 +186,10 @@
 	}
 
 	onMount(() => {
-		// Прямой заход на чип может застать оба стора холодными — идемпотентно.
-		void fakeipConfig.loadAll();
-		void singboxRouter.loadAll();
+		// Гейт по initialized — как в FakeIPTab: свежесть держит SSE-инвалидация,
+		// а без гейта каждое переключение чипа перезапрашивало бы обе пачки.
+		if (!get(fakeipConfig.initialized)) void fakeipConfig.loadAll();
+		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 
 	onDestroy(() => {
@@ -504,6 +513,13 @@
 			Какой сервер для какого запроса. first-match. Матч: домен / rule_set / query_type /
 			источник.
 		</p>
+
+		{#if routingDraft}
+			<div class="shadow-note">
+				Есть непринятые изменения маршрутизации. Наборы из черновика ещё не применены —
+				DNS-правило с таким набором сохранить не удастся, пока не нажать «Применить».
+			</div>
+		{/if}
 
 		{#if shadowedDnsRuleIdx.size > 0}
 			<div class="shadow-note">

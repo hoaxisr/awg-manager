@@ -12,9 +12,8 @@
     - Outbounds     — Status.outboundAwgCount + outboundCompositeCount → «5 + 3».
     - Rule sets     — Status.ruleSetCount.
     - DNS           — длина fakeipConfig.dnsRules.
-    - Маршруты      — длина singboxRouter.rules (Status.ruleCount считает
-                      merged-вид с системным префиксом режима, а на странице
-                      правил видны только правила общего слота).
+    - Маршруты      — Status.ruleCount (после 5D0 это правила ОБЩЕГО слота,
+                      то есть ровно та длина, что у списка на странице правил).
     - Устройства    — Status.deviceCount.
     - Соединения    — liveConnectionsSnapshot.connectionsTotal (Clash WS),
                       тот же источник, что у sb-router LiveConnectionsChip.
@@ -103,8 +102,6 @@
 	});
 
 	const status = singboxRouter.status;
-	const routerRules = singboxRouter.rules;
-	const routerInitialized = singboxRouter.initialized;
 	const dnsRules = fakeipConfig.dnsRules;
 	const options = singboxRouter.options;
 	const outbounds = singboxRouter.outbounds;
@@ -132,7 +129,7 @@
 			outbounds: composite > 0 ? `${atomic} + ${composite}` : atomic,
 			rulesets: st?.ruleSetCount,
 			dns: $dnsRules.length,
-			routes: $routerInitialized ? $routerRules.length : undefined,
+			routes: st?.ruleCount,
 			devices: st?.deviceCount,
 			connections: formatCompactCount($connSnapshot.connectionsTotal),
 		};
@@ -185,6 +182,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-3, 0.75rem);
+	}
+
+	/* У баннера свой margin-bottom (в sb-router он лежит в контейнере без gap),
+	   а тут его складывает с gap колонки — гасим, иначе отступ двойной.
+	   Правило :global — scoped-CSS не достаёт до разметки дочернего компонента. */
+	.fakeip-shell :global(.staging-inline) {
+		margin-bottom: 0;
 	}
 
 	/* Стат-строка тайлов: грид с тонкими разделителями (мокап `.stats`). */

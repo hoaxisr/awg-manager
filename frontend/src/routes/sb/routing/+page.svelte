@@ -67,9 +67,11 @@
 
 	function requestView(id: string): void {
 		if (modeSwitchBusy(get(modeSwitch))) return;
-		// Как и вкладки контейнера: спрашиваем при уходе С поверхности TProxy —
-		// черновик правит именно её конфигурацию.
-		if (view === 'tproxy' && id !== 'tproxy' && hasDraft()) {
+		// Черновик — один на обе поверхности: после 5D0 правила, наборы и
+		// outbound'ы лежат в ОБЩЕМ слоте, и правка с FakeIP-табов копится в том
+		// же pending, что с TProxy. Поэтому спрашиваем при любой смене
+		// поверхности, а не только при уходе с TProxy.
+		if (id !== view && hasDraft()) {
 			pending = { kind: 'view', view: id as View };
 			return;
 		}

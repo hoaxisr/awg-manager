@@ -69,7 +69,7 @@
 	let currentFinal = $state('direct');
 
 	onMount(() => {
-		void singboxRouter.loadAll();
+		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
 	});
 
 	// rulesetLabels: tag → отображаемое имя (у набора нет label, только tag).

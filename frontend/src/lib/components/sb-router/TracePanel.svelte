@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import { Globe, Funnel, MonitorSmartphone } from 'lucide-svelte';
   import { Button, SectionLabel } from '$lib/components/ui';
+  import { pluralize } from '$lib/utils/pluralize';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { ArrowDown } from 'lucide-svelte';
   import {
@@ -46,7 +47,17 @@
   let result = $derived($traceResult);
   let loading = $derived($traceLoading);
   let error = $derived($traceError);
+  const SYSTEM_ROW_WORDS = ['строка', 'строки', 'строк'] as const;
+
   let allRules = $derived($rules);
+
+  // Инспектор ходит по ОБЪЕДИНЁННОМУ конфигу режима (#488): режимный слот
+  // сливается первым, поэтому сверху идут его системные правила, которых нет
+  // ни в ListRules, ни на странице правил. Разница длин и есть смещение
+  // нумерации; при холодном сторе (allRules пуст) молчим, а не врём.
+  function mergedPrefix(walked: number): number {
+    return allRules.length > 0 ? Math.max(0, walked - allRules.length) : 0;
+  }
 
   let dns = $derived($dnsResult);
   let dnsBusy = $derived($dnsLoading);
@@ -246,7 +257,18 @@
     </div>
 
     <div class="rules-section">
-      <SectionLabel>Правила ({result.matches.length} из {allRules.length} проверены)</SectionLabel>
+      <SectionLabel>Правила ({result.matches.length} проверено)</SectionLabel>
+      {#if mergedPrefix(result.matches.length) > 0}
+        <!-- Инспектор ходит по ОБЪЕДИНЁННОМУ конфигу режима (#488): сверху идёт
+             системный префикс режимного слота, которого нет на странице правил.
+             Без этой сноски номер из трейса молча не сходится со списком. -->
+        <p class="numbering-note">
+          Нумерация — по объединённому конфигу режима: сверху идёт системный префикс режима,
+          {pluralize(mergedPrefix(result.matches.length), SYSTEM_ROW_WORDS)}
+          (перехват DNS, sniff, приватные сети), которых нет на странице правил.
+          Правило #{String(mergedPrefix(result.matches.length)).padStart(2, '0')} здесь — это #0 в списке.
+        </p>
+      {/if}
       <div class="rules-list">
         {#each result.matches as match (match.index)}
           <TraceRuleRow {match} winner={match.index === result.matchedRule} />
@@ -466,6 +488,13 @@
     margin-top: 12px;
     font-size: 12px;
     color: var(--warning);
+  }
+
+  .numbering-note {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-muted);
   }
 
   .rules-section {
