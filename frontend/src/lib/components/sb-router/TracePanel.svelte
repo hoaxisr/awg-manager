@@ -266,7 +266,7 @@
           Нумерация — по объединённому конфигу режима: сверху идёт системный префикс режима,
           {pluralize(mergedPrefix(result.matches.length), SYSTEM_ROW_WORDS)}
           (перехват DNS, sniff, приватные сети), которых нет на странице правил.
-          Правило #{String(mergedPrefix(result.matches.length)).padStart(2, '0')} здесь — это #0 в списке.
+          Правило #{String(mergedPrefix(result.matches.length)).padStart(2, '0')} здесь — это #00 в списке.
         </p>
       {/if}
       <div class="rules-list">

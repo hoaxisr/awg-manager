@@ -32,16 +32,34 @@ export function createFakeipConfigStore() {
 			dnsServers.set(ds);
 			dnsRules.set(dr);
 			dnsGlobals.set(dg);
-			// initialized поднимается ТОЛЬКО при успехе: потребители гейтят по нему
-			// повторную загрузку, а кнопки «повторить» на табах нет. Подними его в
-			// finally — и однократно недоступный бэкенд оставил бы пустой список до
-			// перезагрузки страницы.
+			// initialized поднимается ТОЛЬКО при успехе — «данные есть», а не
+			// «попытка была». Гейтить загрузку по нему нельзя (SSE стор не освежает,
+			// см. loadOnce), но флаг остаётся честным признаком для всякого, кому
+			// нужно отличить пустой список от незагруженного.
 			initialized.set(true);
 		} catch (e) {
 			error.set(e instanceof Error ? e.message : 'Не удалось загрузить fakeip-конфиг');
 		} finally {
 			loading.set(false);
 		}
+	}
+
+	// loadOnce — загрузка для onMount. Гейта по initialized тут НЕТ намеренно:
+	// SSE этот стор не освежает, поэтому каждый монтаж обязан перечитать DNS.
+	// Дедуп только по in-flight обещанию — на входе на страницу монтируются
+	// каркас (ему нужен бейдж чипа «DNS») и активная вкладка сразу, и без него
+	// оба слали бы свою тройку GET'ов.
+	//
+	// Мутации зовут loadAll напрямую: им нужен круг ПОСЛЕ записи, а не подписка
+	// на круг, начатый до неё.
+	let inFlight: Promise<void> | null = null;
+	function loadOnce(): Promise<void> {
+		if (!inFlight) {
+			inFlight = loadAll().finally(() => {
+				inFlight = null;
+			});
+		}
+		return inFlight;
 	}
 
 	function applyDNSServers(data: SingboxRouterDNSServer[]): void {
@@ -64,6 +82,7 @@ export function createFakeipConfigStore() {
 		initialized: { subscribe: initialized.subscribe },
 		error: { subscribe: error.subscribe },
 		loadAll,
+		loadOnce,
 		applyDNSServers,
 		applyDNSRules,
 		applyDNSGlobals,

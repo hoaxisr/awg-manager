@@ -191,11 +191,11 @@
 		// перезаписывают fakeip-слот (сервера оверлея, стартовое DNS-правило)
 		// вообще без событий — с гейтом список протухал бы до перезагрузки страницы.
 		// Три GET'а, без Probe/RCI.
-		void fakeipConfig.loadAll();
+		void fakeipConfig.loadOnce();
 		// singboxRouter — под гейтом: его правила, наборы и outbound'ы держит в
 		// свежести SSE (singbox-router:{rules,rulesets,outbounds}), а loadAll тянет
 		// ещё и GetStatus с iptables-Probe и RCI.
-		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+		void singboxRouter.loadOnce();
 	});
 
 	onDestroy(() => {

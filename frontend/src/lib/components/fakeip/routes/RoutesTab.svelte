@@ -62,14 +62,16 @@
 	const storeOutbounds = singboxRouter.outbounds;
 	const storeOptions = singboxRouter.options;
 
-	// singboxRouter.status is mode-aware: in fakeip-tun mode the backend populates
-	// status.final from the fakeip slot.
+	// status.final — скаляр ОБЩЕГО слота во всех режимах: режимный слот его не
+	// объявляет (stripSharedFromModeSlot чистит route.final), и loadRouterConfigsForMode
+	// его оттуда не перетягивает. Поэтому правка идёт через singboxRouterPutRouteFinal
+	// и видна на обеих поверхностях.
 	const routerStatus = singboxRouter.status;
 
 	let currentFinal = $state('direct');
 
 	onMount(() => {
-		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+		void singboxRouter.loadOnce();
 	});
 
 	// rulesetLabels: tag → отображаемое имя (у набора нет label, только tag).

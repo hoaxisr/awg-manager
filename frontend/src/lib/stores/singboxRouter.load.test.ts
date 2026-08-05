@@ -68,3 +68,45 @@ describe('singboxRouter.loadAll', () => {
 		expect(get(store.attempted)).toBe(true);
 	});
 });
+
+describe('singboxRouter.loadOnce', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// clearAllMocks сбрасывает вызовы, но НЕ реализации: mockRejectedValue из
+		// описания выше иначе дожил бы сюда и ронял каждый loadAll.
+		vi.mocked(api.singboxRouterListRules).mockResolvedValue([]);
+	});
+
+	// На входе на страницу FakeIP монтируются каркас и активный таб в одном
+	// флаше: обе onMount видят initialized === false и без дедупа шлют по
+	// полному кругу запросов (в нём GetStatus с iptables-пробой и RCI).
+	it('два параллельных вызова дают ОДИН круг запросов', async () => {
+		const store = createSingboxRouterStore();
+		await Promise.all([store.loadOnce(), store.loadOnce()]);
+
+		expect(vi.mocked(api.singboxRouterStatus)).toHaveBeenCalledTimes(1);
+		expect(get(store.initialized)).toBe(true);
+	});
+
+	it('после успешной загрузки повторный вызов не ходит в сеть', async () => {
+		const store = createSingboxRouterStore();
+		await store.loadOnce();
+		await store.loadOnce();
+
+		expect(vi.mocked(api.singboxRouterStatus)).toHaveBeenCalledTimes(1);
+	});
+
+	// Зеркало гейта по initialized: после неудачи следующий монтаж обязан
+	// попробовать ещё раз — кнопки «повторить» на табах нет.
+	it('после неудачи следующий вызов повторяет запрос', async () => {
+		vi.mocked(api.singboxRouterListRules).mockRejectedValueOnce(new Error('network error'));
+
+		const store = createSingboxRouterStore();
+		await store.loadOnce();
+		expect(get(store.initialized)).toBe(false);
+
+		await store.loadOnce();
+		expect(vi.mocked(api.singboxRouterStatus)).toHaveBeenCalledTimes(2);
+		expect(get(store.initialized)).toBe(true);
+	});
+});

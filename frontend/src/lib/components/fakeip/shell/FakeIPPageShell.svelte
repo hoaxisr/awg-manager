@@ -99,6 +99,12 @@
 	onMount(() => {
 		// Тот же WS, что у sb-router LiveConnectionsChip — для счётчика «Соединения».
 		bindLiveConnectionsStore();
+		// Бейдж чипа «DNS» считается ЗДЕСЬ, по fakeipConfig.dnsRules, а грузят
+		// этот стор только сами вкладки DNS и Rule sets. Без загрузки в каркасе
+		// на всех остальных чипах бейдж показывал бы честный ноль вместо
+		// настоящего числа (Tabs рисует бейдж при любом значении, кроме
+		// undefined). Три GET'а, без Probe/RCI.
+		void fakeipConfig.loadOnce();
 	});
 
 	const status = singboxRouter.status;

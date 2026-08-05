@@ -31,7 +31,6 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { api } from '$lib/api/client';
@@ -63,10 +62,10 @@
 		// Прямой заход на чип может застать сторы холодными. singboxRouter — под
 		// гейтом по initialized: его списки держит в свежести SSE, а loadAll тянет
 		// ещё и GetStatus с iptables-пробой и RCI.
-		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+		void singboxRouter.loadOnce();
 		// fakeipConfig (колонка «используется в» показывает и DNS-правила) грузим
 		// каждый монтаж: SSE его не освежает — см. комментарий в DnsTab.
-		void fakeipConfig.loadAll();
+		void fakeipConfig.loadOnce();
 	});
 
 	// ── Тип-фильтр (мокап: Все / dat / remote / local / inline) ───────────

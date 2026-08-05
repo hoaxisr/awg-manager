@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { get } from 'svelte/store';
 	import { PageContainer } from '$lib/components/layout';
 	import { Button } from '$lib/components/ui';
 	import { Plus } from 'lucide-svelte';
@@ -30,7 +29,7 @@
 		// loadAll(). On direct navigation to /fakeip the store may still be cold
 		// (settings === null → routingMode undefined → 'not-fakeip'), so prime it
 		// once. Idempotent; refreshes status too.
-		if (!get(singboxRouter.initialized)) void singboxRouter.loadAll();
+		void singboxRouter.loadOnce();
 	});
 
 	// FE-spec §3: fixed order + labels of the 9 FakeIP sub-pages. Real chip

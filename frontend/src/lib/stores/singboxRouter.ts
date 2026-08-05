@@ -127,6 +127,26 @@ export function createSingboxRouterStore() {
 		void loadStaging();
 	}
 
+	// loadOnce — холодная загрузка для onMount. Гейта `if (!initialized)` мало:
+	// на входе на страницу FakeIP монтируются ДВА компонента сразу (каркас
+	// FakeIPTab и активный таб), обе onMount выполняются в одном флаше, а
+	// initialized поднимается только после await — то есть оба видят false и
+	// шлют по полному кругу запросов (в нём GetStatus с iptables-пробой и RCI).
+	// Здесь дедуп по in-flight обещанию.
+	//
+	// Мутации ЭТИМ не пользуются: им нужен свежий круг ПОСЛЕ записи, а не
+	// подписка на круг, начатый до неё. Они и дальше зовут loadAll напрямую.
+	let inFlight: Promise<void> | null = null;
+	function loadOnce(): Promise<void> {
+		if (get(initialized)) return Promise.resolve();
+		if (!inFlight) {
+			inFlight = loadAll().finally(() => {
+				inFlight = null;
+			});
+		}
+		return inFlight;
+	}
+
 	async function loadStaging(): Promise<void> {
 		try {
 			const data = await api.singboxRouterStagingStatus();
@@ -227,6 +247,7 @@ export function createSingboxRouterStore() {
 		attempted: { subscribe: attempted.subscribe },
 		error: { subscribe: error.subscribe },
 		loadAll,
+		loadOnce,
 		reloadStatus,
 		reloadSettings,
 		loadStaging,

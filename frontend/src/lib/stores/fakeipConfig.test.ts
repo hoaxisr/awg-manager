@@ -80,6 +80,25 @@ describe('fakeipConfig store', () => {
 		expect(get(store.error)).toBe('network error');
 	});
 
+	// Каркас страницы (ему нужен бейдж чипа «DNS») и активная вкладка монтируются
+	// в одном флаше — без дедупа обе слали бы свою тройку GET'ов.
+	it('loadOnce схлопывает параллельные вызовы в один круг', async () => {
+		const store = createFakeipConfigStore();
+		await Promise.all([store.loadOnce(), store.loadOnce()]);
+
+		expect(api.singboxFakeIPListDNSServers).toHaveBeenCalledOnce();
+	});
+
+	// Гейта по initialized у loadOnce НЕТ намеренно: SSE этот стор не освежает,
+	// поэтому каждый следующий монтаж обязан перечитать DNS.
+	it('loadOnce после завершения загрузки ходит в сеть снова', async () => {
+		const store = createFakeipConfigStore();
+		await store.loadOnce();
+		await store.loadOnce();
+
+		expect(api.singboxFakeIPListDNSServers).toHaveBeenCalledTimes(2);
+	});
+
 	it('applyDNSServers replaces dnsServers store', () => {
 		const next: SingboxRouterDNSServer[] = [{ tag: 'new-server', type: 'udp', server: '1.1.1.1', server_port: 53 }];
 		fakeipConfig.applyDNSServers(next);
