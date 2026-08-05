@@ -461,6 +461,12 @@ func TestMigrateSlotsSplitFallbackDropsEngineDNS(t *testing.T) {
 	if !logContains(log, "DNS-правил режима fakeip отброшено") {
 		t.Errorf("об отброшенных DNS-правилах режима не написано в журнал: %v", log)
 	}
+	// dns.final — пользовательская настройка «куда идут запросы, не подошедшие
+	// ни под одно правило». Она указывала на движковый сервер и снимается
+	// вместе с ним; это тоже пропажа настройки, а не деталь реализации.
+	if !logContains(log, "итоговый DNS-сервер (dns.final)") {
+		t.Errorf("о снятом dns.final не написано в журнал: %v", log)
+	}
 	shared := readSlot(t, dir, "21-routing.json")
 	raw := readSlotBytes(t, dir, "21-routing.json")
 	for _, tag := range dnsServerTags(shared) {
@@ -604,6 +610,28 @@ func TestMigrateSlotsSplitLogsDraftNotes(t *testing.T) {
 	}
 	if got := dnsServerResolver(draft, "user-dns"); got != BaseBootstrapDNSTag {
 		t.Errorf("резолвер user-dns в черновике = %q, ожидался %q", got, BaseBootstrapDNSTag)
+	}
+}
+
+// Вынужденное переименование DNS-сервера в ЧЕРНОВИКЕ доходит до журнала так же,
+// как в применённом файле. Установка, где движок ни разу не поднимали, —
+// единственный путь, на котором переименование бывает только в черновике: там
+// применённого файла нет вовсе, и молчание было бы полным.
+func TestMigrateSlotsSplitLogsDraftDNSRename(t *testing.T) {
+	dir := t.TempDir()
+	writeSlotFixture(t, dir, "00-base.json", baseFixture())
+	writeSlotFixture(t, dir, "pending/20-router.json", routerFixtureWithReservedDNS())
+
+	var log []string
+	if _, err := MigrateSlotsSplitWithLog(dir, "tproxy", func(m string) { log = append(log, m) }); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	draft := readSlot(t, dir, "pending/21-routing.json")
+	if !slices.Contains(dnsServerTags(draft), "real-user") {
+		t.Fatalf("сервер в черновике не переименован: %v", dnsServerTags(draft))
+	}
+	if !logContains(log, `черновик: DNS-сервер "real" переименован в "real-user"`) {
+		t.Errorf("о переименовании в черновике не написано в журнал: %v", log)
 	}
 }
 

@@ -302,18 +302,25 @@ func dropEngineDNS(cfg *RouterConfig) []string {
 		rules = append(rules, r)
 	}
 	cfg.DNS.Rules = rules
+	var notes []string
+	if dropped > 0 {
+		notes = append(notes, fmt.Sprintf(
+			"DNS-правил режима fakeip отброшено: %d — они направляли запросы на движковые серверы, которых в этой раскладке нет; заданные в них вручную ограничения (набор правил, адрес источника) не сохранены",
+			dropped))
+	}
 	if engineDNSServerTags[cfg.DNS.Final] {
+		// dns.final — пользовательская настройка «куда идут запросы, не
+		// подошедшие ни под одно правило». Она указывала на движковый сервер и
+		// снимается вместе с ним; дальше запросы идут к первому серверу списка.
+		notes = append(notes, fmt.Sprintf(
+			"итоговый DNS-сервер (dns.final) был движковым (%q) и снят вместе с ним — задайте его заново, если он был выбран осознанно",
+			cfg.DNS.Final))
 		cfg.DNS.Final = ""
 	}
 	// Ссылки на удалённые серверы чинит healDanglingDomainResolvers — он
 	// зовётся ПОСЛЕ buildRoutingSlot, который сам может навесить движковый
 	// резолвер на outbound'ы.
-	if dropped == 0 {
-		return nil
-	}
-	return []string{fmt.Sprintf(
-		"DNS-правил режима fakeip отброшено: %d — они направляли запросы на движковые серверы, которых в этой раскладке нет; заданные в них вручную ограничения (набор правил, адрес источника) не сохранены",
-		dropped)}
+	return notes
 }
 
 // splitLegacyRouteRules делит route.rules прежнего слота на режимный префикс и

@@ -149,6 +149,7 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 	}
 	var draftShared []byte
 	var draftNotes []string
+	var draftRenames []router.DNSTagRename
 	draftUsed := ""
 	for _, name := range draftNames {
 		src := filepath.Join(pendingDir, name)
@@ -162,7 +163,7 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 			logf(fmt.Sprintf("черновик %s не разобран (%v) — отброшен, копия остаётся в резерве", name, err))
 			continue
 		}
-		draftShared, draftNotes, draftUsed = split.Shared, split.Notes, name
+		draftShared, draftNotes, draftRenames, draftUsed = split.Shared, split.Notes, split.DNSRenames, name
 		break
 	}
 	// Черновик ДРУГОГО слота отбрасывается — но сказать об этом можно только
@@ -208,9 +209,7 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 				"раскладка слотов маршрутизации обновлена: правила, наборы и outbound'ы перенесены из %s в %s (режим %q)",
 				chosenName, sharedFile, activeMode))
 			for _, r := range applied.DNSRenames {
-				logf(fmt.Sprintf(
-					"DNS-сервер %q переименован в %q: тег зарезервирован движком fakeip-режима, иначе переключение режима заблокировало бы применение конфигурации",
-					r.From, r.To))
+				logf(dnsRenameLogLine(r))
 			}
 			for _, note := range applied.Notes {
 				logf(note)
@@ -228,8 +227,12 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 		} else {
 			logf(fmt.Sprintf("несохранённый черновик перенесён в pending/%s", sharedFile))
 			// Черновик разбирается тем же кодом, что и применённый файл, и так
-			// же теряет в разборе DNS-серверы и правила. Без этих строк
-			// пользователь увидел бы пропажу только после «Применить».
+			// же теряет в разборе DNS-серверы и правила и так же переживает
+			// вынужденные переименования. Без этих строк пользователь увидел
+			// бы пропажу только после «Применить».
+			for _, r := range draftRenames {
+				logf("черновик: " + dnsRenameLogLine(r))
+			}
 			for _, note := range draftNotes {
 				logf("черновик: " + note)
 			}
@@ -270,6 +273,15 @@ func MigrateSlotsSplitWithLog(configDir string, activeMode string, logf func(str
 		}
 	}
 	return wrote || movedAny, firstErr
+}
+
+// dnsRenameLogLine — единственная формулировка строки о вынужденном
+// переименовании DNS-сервера. Одна на оба пути (применённый файл и черновик),
+// чтобы формулировки не разъехались.
+func dnsRenameLogLine(r router.DNSTagRename) string {
+	return fmt.Sprintf(
+		"DNS-сервер %q переименован в %q: тег зарезервирован движком fakeip-режима, иначе переключение режима заблокировало бы применение конфигурации",
+		r.From, r.To)
 }
 
 // anyLegacySlotPresent — критерий «есть что мигрировать».
