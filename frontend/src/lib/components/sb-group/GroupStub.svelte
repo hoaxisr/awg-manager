@@ -5,6 +5,7 @@
 	// станет неотличимо от «нарисовано заранее».
 	import { Construction } from 'lucide-svelte';
 	import { PageContainer, PageHeader, EmptyState } from '$lib/components/layout';
+	import { ENGINE_PATH } from '$lib/data/legacyRoutingLinks';
 
 	let {
 		title,
@@ -28,11 +29,19 @@
 	<PageHeader {title} />
 	<div class="stub">
 		<EmptyState
-			title="Страница пока пустая"
+			title="Раздел ещё не переехал"
 			description="Наполнение — волна {wave}. Содержимое приедет из: {source}."
 		>
 			{#snippet icon()}
 				<Construction />
+			{/snippet}
+			{#snippet action()}
+				<!-- Тупик без этой строки: закладка вида `?chip=dns` редиректом
+				     приводит сюда, а живой редактор до волны 5D2 остаётся на
+				     «Движке», и узнать об этом со страницы неоткуда. -->
+				<p class="where">
+					До волны {wave} это живёт на странице <a href={ENGINE_PATH}>Движок</a>.
+				</p>
 			{/snippet}
 		</EmptyState>
 	</div>
@@ -43,5 +52,19 @@
 	   дочернего компонента иконки. */
 	.stub :global(svg) {
 		color: var(--text-muted);
+	}
+
+	.where {
+		color: var(--color-text-secondary);
+		font-size: 0.875rem;
+		/* Узкий экран: строка обязана переноситься по словам, а не уезжать
+		   за край — ширину держим по описанию EmptyState. */
+		max-width: 24rem;
+	}
+
+	/* Подчёркивание: цвет ссылки внутри абзаца приглушённого текста читается
+	   как акцент, а не как «сюда можно кликнуть». */
+	.where a {
+		text-decoration: underline;
 	}
 </style>
