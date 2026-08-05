@@ -46,6 +46,7 @@ type Service struct {
 	listenPortChecker LocalListenPortChecker
 
 	clientHealth *healthTracker
+	serverHealth *healthTracker
 	startBackoff *proxysup.Backoff
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
@@ -108,6 +109,7 @@ func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
 		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
 		clientHealth: newHealthTracker(),
+		serverHealth: newHealthTracker(),
 		startBackoff: newStartBackoff(),
 	}
 }

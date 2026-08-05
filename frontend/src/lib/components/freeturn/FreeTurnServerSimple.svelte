@@ -125,7 +125,8 @@
 			running,
 			startedAt: status?.startedAt,
 			enabled: server.enabled,
-			generatedLink
+			generatedLink,
+			setupComplete: step1Done && obfReady
 		})
 	);
 
@@ -537,6 +538,9 @@
 					{selectedInstanceId}
 					{onSelectInstance}
 				/>
+				{#if !running && server.debug}
+					<p class="ft-debug-hint">Сохраните настройки и запустите сервер — флаг -debug применяется при старте процесса.</p>
+				{/if}
 			</section>
 		{/if}
 	{/if}

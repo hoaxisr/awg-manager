@@ -18,8 +18,11 @@ export function proxyServerOpsMode(opts: {
 	startedAt?: string;
 	enabled?: boolean;
 	generatedLink?: string;
+	/** Конфиг уже сохранён (connect/obf) — не показывать мастер после ручного стопа. */
+	setupComplete?: boolean;
 }): boolean {
 	if (!proxyInOpsMode(opts)) return false;
+	if (opts.setupComplete) return true;
 	if (opts.generatedLink?.trim()) return true;
 	if (opts.startedAt?.trim()) return true;
 	// После reboot: enabled=true в конфиге, но startedAt/genWG в UI ещё пустые.

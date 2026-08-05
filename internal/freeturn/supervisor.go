@@ -94,29 +94,38 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		key := serverKey(srv.ID)
 		if !srv.Config.Enabled {
 			s.startBackoff.Forget(key)
+			s.serverHealth.reset(srv.ID)
 			continue
 		}
-		st := s.serverProcs.get(srv.ID).Status()
-		if st.Running && st.StartedAt != nil {
-			s.startBackoff.Success(key)
-			continue
-		}
-		// Осиротевший сервер (Running без StartedAt) — как и клиент, лечится
-		// обычным стартом; Stop до проверки backoff гасил бы рабочий процесс
-		// на всё окно ожидания.
-		if !s.startBackoff.Allow(key, now) {
-			continue
-		}
-		if err := s.StartServerInstance(srv.ID); err != nil {
-			s.startBackoff.Fail(key, now)
-			if s.appLog != nil {
-				s.appLog.Warn("supervisor", srv.ID, "перезапуск сервера: "+err.Error())
+		proc := s.serverProcs.get(srv.ID)
+		st := proc.Status()
+		if !st.Running || st.StartedAt == nil {
+			if !s.startBackoff.Allow(key, now) {
+				continue
 			}
-		} else {
-			s.startBackoff.Success(key)
-			if s.appLog != nil {
-				s.appLog.Info("supervisor", srv.ID, "сервер перезапущен")
+			if err := s.StartServerInstance(srv.ID); err != nil {
+				s.startBackoff.Fail(key, now)
+				if s.appLog != nil {
+					s.appLog.Warn("supervisor", srv.ID, "перезапуск сервера: "+err.Error())
+				}
+			} else {
+				s.startBackoff.Success(key)
+				if s.appLog != nil {
+					s.appLog.Info("supervisor", srv.ID, "сервер перезапущен")
+				}
 			}
+			continue
+		}
+		s.startBackoff.Success(key)
+		if s.serverHealth.note(srv.ID, serverPeerUnhealthy(st, now)) {
+			if err := s.restartServerInstance(srv.ID); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("health", srv.ID, "peer недоступен, перезапуск: "+err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("health", srv.ID, "сервер перезапущен: handshake/peer недоступен")
+			}
+			s.serverHealth.reset(srv.ID)
 		}
 	}
 }
