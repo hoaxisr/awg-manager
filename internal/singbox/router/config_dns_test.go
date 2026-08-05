@@ -266,6 +266,91 @@ func TestDNSServerCrossSlotDomainResolver(t *testing.T) {
 	}
 }
 
+// Кольцо ссылок domain_resolver. Проверено живым бинарём: `sing-box check`
+// такой конфиг ПРИНИМАЕТ (exit 0), а старт роняет — «start service: circular
+// server dependency: a -> b -> a». Наш валидатор гоняет именно check, поэтому
+// пользователь получил бы «сохранено», применённый reload и мёртвый движок при
+// следующем подъёме. Вырожденный случай (сервер резолвит сам себя) sing-box
+// считает тем же кольцом: «circular server dependency: a -> a».
+func TestDNSServerResolverCycleRejected(t *testing.T) {
+	ring := func() *RouterConfig {
+		c := NewEmptyConfig()
+		c.DNS.Servers = []DNSServer{
+			{Tag: "a", Type: "https", Server: "dns1.example.org", DomainResolver: &DomainResolver{Server: "plain"}},
+			{Tag: "plain", Type: "udp", Server: "1.1.1.1"},
+		}
+		return c
+	}
+
+	// a -> b -> a: кольцо замыкается правкой второго сервера.
+	c := ring()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "b", Type: "https", Server: "dns2.example.org",
+		DomainResolver: &DomainResolver{Server: "a"},
+	}); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+	closing := DNSServer{Tag: "a", Type: "https", Server: "dns1.example.org",
+		DomainResolver: &DomainResolver{Server: "b"}}
+	if err := c.UpdateDNSServer("a", closing); !errors.Is(err, ErrDNSResolverCycle) {
+		t.Errorf("кольцо a->b->a: ожидался ErrDNSResolverCycle, получено %v", err)
+	}
+
+	// То же кольцо, собранное на СОЗДАНИИ второго сервера.
+	c = ring()
+	c.DNS.Servers[0].DomainResolver = &DomainResolver{Server: "b"}
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "b", Type: "https", Server: "dns2.example.org",
+		DomainResolver: &DomainResolver{Server: "a"},
+	}); !errors.Is(err, ErrDNSResolverCycle) {
+		t.Errorf("кольцо на создании: ожидался ErrDNSResolverCycle, получено %v", err)
+	}
+
+	// Сервер, резолвящий сам себя.
+	c = ring()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "self", Type: "https", Server: "dns3.example.org",
+		DomainResolver: &DomainResolver{Server: "self"},
+	}); !errors.Is(err, ErrDNSResolverCycle) {
+		t.Errorf("сервер резолвит сам себя: ожидался ErrDNSResolverCycle, получено %v", err)
+	}
+
+	// Кольцо считается по КОНЕЧНОМУ виду конфига: переименование переписывает
+	// ссылки на переименованный сервер (renameDNSServerReferences), и кольцо
+	// возникает только ПОСЛЕ этой перезаписи — до неё граф выглядит целым.
+	c = ring()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "b", Type: "https", Server: "dns2.example.org",
+		DomainResolver: &DomainResolver{Server: "a"},
+	}); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+	// Сейчас: b -> a -> plain. Переименовываем a в c и целим его резолвер в b:
+	// ссылка b -> a станет b -> c, и выйдет c -> b -> c.
+	renamed := DNSServer{Tag: "c", Type: "https", Server: "dns1.example.org",
+		DomainResolver: &DomainResolver{Server: "b"}}
+	if err := c.UpdateDNSServer("a", renamed); !errors.Is(err, ErrDNSResolverCycle) {
+		t.Errorf("кольцо после переименования: ожидался ErrDNSResolverCycle, получено %v", err)
+	}
+
+	// Проверка не должна быть строже нужного: обычная цепочка длиной в два
+	// звена и ссылка на сервер соседнего слота остаются законными.
+	c = ring()
+	if err := c.AddDNSServer(DNSServer{
+		Tag: "b", Type: "https", Server: "dns2.example.org",
+		DomainResolver: &DomainResolver{Server: "a"},
+	}); err != nil {
+		t.Errorf("цепочка b->a->plain отвергнута: %v", err)
+	}
+	c = NewEmptyConfig()
+	if err := c.addDNSServer(DNSServer{
+		Tag: "user-doh", Type: "https", Server: "dns.google",
+		DomainResolver: &DomainResolver{Server: "dns-bootstrap"},
+	}, map[string]bool{"dns-bootstrap": true}); err != nil {
+		t.Errorf("резолвер соседнего слота отвергнут: %v", err)
+	}
+}
+
 // TestUpdateDNSServerFakeIPWithEvaluate: инвариант «evaluate не может
 // использовать fakeip-сервер» обходился сменой ТИПА живого сервера — правила не
 // трогали, а сервер становился fakeip.

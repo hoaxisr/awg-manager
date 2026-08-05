@@ -422,6 +422,61 @@ func domainResolverResolvable(tag string, local map[string]string, external map[
 	return external[tag]
 }
 
+// dnsResolverCycleWith сообщает, замкнётся ли цепочка domain_resolver в кольцо,
+// если сервер replaced (пустая строка — ничего не заменяется, это add) станет
+// сервером next.
+//
+// Зачем отдельная проверка: кольцо `a -> b -> a` — и вырожденное `a -> a` —
+// наш валидатор пропускает, потому что он гоняет `sing-box check`, а тот такой
+// конфиг принимает. Ронять движок кольцо будет на СТАРТЕ: «start service:
+// circular server dependency: a -> b -> a» (проверено живым бинарём). То есть
+// пользователь видит «сохранено», reload отрабатывает, а следующий подъём
+// sing-box уже не случится.
+//
+// Цепочка обходится ТОЛЬКО от изменённого сервера: остальной граф был без
+// колец до правки, и новое кольцо обязано проходить через него. Ссылка на
+// сервер соседнего слота (типичный dns-bootstrap из 00-base.json) обрывает
+// обход — чужих резолверов мы отсюда не видим, а кольцо через них собрать
+// нечем: базовый слот ссылок на слот маршрутизации не держит.
+func (c *RouterConfig) dnsResolverCycleWith(replaced string, next DNSServer) bool {
+	resolverOf := func(tag string) (string, bool) {
+		if tag == next.Tag {
+			if next.DomainResolver == nil {
+				return "", true
+			}
+			return next.DomainResolver.Server, true
+		}
+		for _, s := range c.DNS.Servers {
+			if s.Tag != tag || (replaced != "" && s.Tag == replaced) {
+				continue
+			}
+			if s.DomainResolver == nil {
+				return "", true
+			}
+			// Переименование сервера переписывает ссылки на него
+			// (renameDNSServerReferences), поэтому кольцо считается по
+			// КОНЕЧНОМУ виду конфига, а не по текущему.
+			if replaced != "" && s.DomainResolver.Server == replaced {
+				return next.Tag, true
+			}
+			return s.DomainResolver.Server, true
+		}
+		return "", false
+	}
+	seen := map[string]bool{next.Tag: true}
+	for cur := next.Tag; ; {
+		to, ok := resolverOf(cur)
+		if !ok || to == "" {
+			return false
+		}
+		if seen[to] {
+			return true
+		}
+		seen[to] = true
+		cur = to
+	}
+}
+
 // AddDNSServer / UpdateDNSServer — обёртки без знания о соседних слотах:
 // резолвер ищется только среди серверов ЭТОГО конфига. Продакшен ходит через
 // сервис (service_dns.go / service_fakeip_crud.go), который подмешивает теги
@@ -458,6 +513,9 @@ func (c *RouterConfig) addEngineDNSServer(s DNSServer, external map[string]bool)
 		if !domainResolverResolvable(s.DomainResolver.Server, c.dnsServerTypes(), external) {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
 		}
+	}
+	if c.dnsResolverCycleWith("", s) {
+		return fmt.Errorf("%w: %q", ErrDNSResolverCycle, s.Tag)
 	}
 	c.DNS.Servers = append(c.DNS.Servers, s)
 	return nil
@@ -497,6 +555,9 @@ func (c *RouterConfig) updateDNSServer(tag string, s DNSServer, external map[str
 		if !domainResolverResolvable(s.DomainResolver.Server, types, external) {
 			return fmt.Errorf("%w: domain_resolver.server %q not found", ErrDNSServerNotFound, s.DomainResolver.Server)
 		}
+	}
+	if c.dnsResolverCycleWith(tag, s) {
+		return fmt.Errorf("%w: %q", ErrDNSResolverCycle, s.Tag)
 	}
 	// Смена типа на fakeip обходила инвариант «evaluate не может использовать
 	// fakeip-сервер»: правила проверяются только на своих мутациях. Правила ещё

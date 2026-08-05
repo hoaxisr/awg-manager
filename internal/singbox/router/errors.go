@@ -33,6 +33,9 @@ var (
 	ErrDNSRuleIndexOutOfRange   = errors.New("dns rule index out of range")
 	ErrDNSServerIndexOutOfRange = errors.New("dns server index out of range")
 	ErrDNSInvalidServer         = errors.New("dns rule references unknown server tag")
+	// ErrDNSResolverCycle — кольцо ссылок domain_resolver. `sing-box check` его
+	// принимает, а старт роняет: «circular server dependency».
+	ErrDNSResolverCycle = errors.New("кольцо ссылок domain_resolver: sing-box с такой конфигурацией не запустится")
 	// ErrRuleSetNotApplied — DNS fakeip пишется мимо staging, поэтому сослаться
 	// он может только на ПРИМЕНЁННЫЙ набор общего слота (см.
 	// guardFakeIPRuleSetRefs).

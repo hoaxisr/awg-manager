@@ -60,6 +60,10 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")
+	case errors.Is(err, router.ErrDNSResolverCycle):
+		// 400: кольцо domain_resolver. `sing-box check` его пропускает —
+		// движок падает на старте, поэтому отвергаем на входе.
+		response.Error(w, err.Error(), "DNS_RESOLVER_CYCLE")
 	case errors.Is(err, router.ErrRuleSetNotApplied):
 		// 400: DNS-правило сослалось на черновичный набор общего слота —
 		// применять нечего, пока правка наборов не принята.

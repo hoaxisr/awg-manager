@@ -294,6 +294,10 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")
+	case errors.Is(err, router.ErrDNSResolverCycle):
+		// 400: кольцо domain_resolver. `sing-box check` его пропускает —
+		// движок падает на старте, поэтому отвергаем на входе.
+		response.Error(w, err.Error(), "DNS_RESOLVER_CYCLE")
 	case errors.Is(err, router.ErrQoSClassesInvalid):
 		// 400 with the detailed Russian message (DSCP range/duplicate/limit/
 		// outbound) intact so the settings UI can surface it verbatim.
