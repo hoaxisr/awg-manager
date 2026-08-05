@@ -3574,13 +3574,105 @@ async function fetchJSON(path, init) {
 	}
 }
 
+// toBackendErrorEnvelope приводит мок-конверт ошибки к бэкендовому.
+//
+// Мок исторически отдавал {success:false, error:{code,message}}, а awg-manager
+// отдаёт APIErrorEnvelope {error:true, message, code} (internal/api/api_common.go).
+// Клиент читает ТОЛЬКО верхнеуровневый message (clientCore.ts), поэтому на моке
+// любая 4xx выглядела как «Ошибка запроса (409)» без текста — и визуальный
+// прогон не мог проверить ни один экран с объяснением отказа (RULE_SET_NOT_APPLIED,
+// OUTBOUND_NOT_APPLIED, «набор используется» и прочие). Правим в одном месте,
+// а не в сотне вызовов send: так и новые ручки получают верный конверт даром.
+//
+// Тела без success:false (успех, 422-валидация staging со своим полем sbCheck,
+// уже-бэкендовые {error:true,...}) проходят насквозь.
+function toBackendErrorEnvelope(body) {
+	if (!body || typeof body !== 'object' || body.success !== false) return body;
+	const raw = body.error;
+	const nested = raw && typeof raw === 'object' ? raw : null;
+	// Прочие поля тела (details у tunnel-referenced и т.п.) сохраняем.
+	const rest = { ...body };
+	delete rest.success;
+	delete rest.error;
+	delete rest.code;
+	delete rest.message;
+	return {
+		...rest,
+		error: true,
+		message: String((nested ? nested.message : raw) ?? body.message ?? ''),
+		code: String((nested ? nested.code : body.code) ?? ''),
+	};
+}
+
 function send(res, status, body, contentType = 'application/json') {
 	res.writeHead(status, { 'Content-Type': contentType });
-	res.end(typeof body === 'string' ? body : JSON.stringify(body));
+	const payload = typeof body === 'string' ? body : JSON.stringify(toBackendErrorEnvelope(body));
+	res.end(payload);
 }
 
 function sendData(res, data, status = 200) {
 	send(res, status, { success: true, data });
+}
+
+// buildInspectResult — разбор маршрута по ОБЪЕДИНЁННОМУ конфигу режима, как у
+// бэкенда: сверху системный префикс РЕЖИМНОГО слота, потом правила общего.
+// Префикс свой у каждого режима, и фиксированные три строки врали:
+//   tproxy / policy-tun — EnsureSystemRules: sniff (только при включённом
+//     сниффере) + hijack-dns + ip_is_private, затем route-options с udp_timeout
+//     (config_tproxy.go, config_policytun.go);
+//   fakeip-tun — hijack-dns + ip_is_private + route-options, sniff'а нет
+//     (config_fakeip.go).
+// На этой разнице держится сноска о смещении нумерации в TracePanel.
+function buildInspectResult(input) {
+	const mode = mockSBSettings.routingMode || 'tproxy';
+	const systemPrefix = [];
+	if (mode !== 'fakeip-tun' && mockSBSettings.snifferEnabled) {
+		systemPrefix.push({ action: 'sniff', conditions: ['без условий'] });
+	}
+	systemPrefix.push(
+		{ action: 'hijack-dns', conditions: ['protocol: dns'] },
+		{ action: 'route', conditions: ['ip_is_private'] },
+		{ action: 'route-options', conditions: ['network: udp', 'udp_timeout: 5m'] },
+	);
+	const matches = systemPrefix.map((r, i) => ({
+		index: i,
+		matched: false,
+		action: r.action,
+		conditions: r.conditions,
+		reason: 'системное правило режима: не проверяется по домену',
+	}));
+	let matchedRule = -1;
+	let destination = '';
+	mockSingboxRules.forEach((rule, i) => {
+		const idx = systemPrefix.length + i;
+		const hit =
+			matchedRule === -1 &&
+			(rule.domain_suffix || []).some((d) => input === d || input.endsWith(`.${d}`));
+		matches.push({
+			index: idx,
+			matched: hit,
+			action: rule.action || 'route',
+			outbound: rule.outbound,
+			conditions: [
+				...(rule.domain_suffix || []).map((d) => `domain_suffix: ${d}`),
+				...(rule.rule_set || []).map((t) => `rule_set: ${t}`),
+				...(rule.source_ip_cidr || []).map((c) => `source_ip_cidr: ${c}`),
+			],
+			reason: hit ? 'совпало по: domain_suffix' : 'не совпало',
+		});
+		if (hit) {
+			matchedRule = idx;
+			destination = rule.outbound || 'DIRECT';
+		}
+	});
+	return {
+		input,
+		inputType: /^\d+\.\d+\.\d+\.\d+$/.test(input) ? 'ip' : 'domain',
+		matches,
+		matchedRule,
+		destination: matchedRule === -1 ? mockSingboxRouteFinal : destination,
+		final: mockSingboxRouteFinal,
+	};
 }
 
 function sendInvalidRequest(res, error, status = 400) {
@@ -5759,6 +5851,17 @@ const server = http.createServer(async (req, res) => {
 				});
 				return;
 			}
+			// force вычищает ссылки из правил — так делает RouterConfig.DeleteRuleSet
+			// (config.go). Без этого мок оставлял висячий rule_set: список правил
+			// рисовал чип удалённого набора, а «Применить» падал 422 на пустом месте.
+			if (force) {
+				for (const r of [...mockSingboxRules, ...mockDNSRules]) {
+					if (Array.isArray(r.rule_set)) {
+						r.rule_set = r.rule_set.filter((t) => t !== tag);
+						if (r.rule_set.length === 0) delete r.rule_set;
+					}
+				}
+			}
 			mockSingboxRuleSets = mockSingboxRuleSets.filter((x) => x.tag !== tag);
 			markRouterDraft();
 			send(res, 200, { success: true, data: { ok: true } });
@@ -5785,55 +5888,51 @@ const server = http.createServer(async (req, res) => {
 	// на стенде не воспроизводится (а на железе она есть).
 	if (req.method === 'POST' && path === '/singbox/router/inspect') {
 		withJsonBody(req, res, ({ domain }) => {
-			const input = String(domain || '');
-			const systemPrefix = [
-				{ action: 'sniff', conditions: ['без условий'] },
-				{ action: 'hijack-dns', conditions: ['protocol: dns'] },
-				{ action: 'route', conditions: ['ip_is_private'] },
-			];
-			const matches = systemPrefix.map((r, i) => ({
-				index: i,
-				matched: false,
-				action: r.action,
-				conditions: r.conditions,
-				reason: 'системное правило режима: не проверяется по домену',
-			}));
-			let matchedRule = -1;
-			let destination = '';
-			mockSingboxRules.forEach((rule, i) => {
-				const idx = systemPrefix.length + i;
-				const hit =
-					matchedRule === -1 &&
-					(rule.domain_suffix || []).some((d) => input === d || input.endsWith(`.${d}`));
-				matches.push({
-					index: idx,
-					matched: hit,
-					action: rule.action || 'route',
-					outbound: rule.outbound,
-					conditions: [
-						...(rule.domain_suffix || []).map((d) => `domain_suffix: ${d}`),
-						...(rule.rule_set || []).map((t) => `rule_set: ${t}`),
-						...(rule.source_ip_cidr || []).map((c) => `source_ip_cidr: ${c}`),
-					],
-					reason: hit ? 'совпало по: domain_suffix' : 'не совпало',
-				});
-				if (hit) {
-					matchedRule = idx;
-					destination = rule.outbound || 'DIRECT';
-				}
-			});
-			send(res, 200, {
-				success: true,
-				data: {
-					input,
-					inputType: /^\d+\.\d+\.\d+\.\d+$/.test(input) ? 'ip' : 'domain',
-					matches,
-					matchedRule,
-					destination: matchedRule === -1 ? mockSingboxRouteFinal : destination,
-					final: mockSingboxRouteFinal,
-				},
-			});
+			send(res, 200, { success: true, data: buildInspectResult(String(domain || '')) });
 		});
+		return;
+	}
+
+	// Тот же разбор, но потоком: RouteInspector (главный инспектор страницы
+	// sb-router и FakeIP-hero) ходит ТОЛЬКО сюда, POST /inspect использует
+	// TracePanel. Без этой ручки запрос уходил в Prism и возвращал 500 —
+	// инспектор на моке показывал «Stream connection lost», то есть целая
+	// поверхность визуально не проверялась.
+	if (req.method === 'GET' && path === '/singbox/router/inspect/stream') {
+		const domain = url.searchParams.get('domain') || '';
+		if (!domain) {
+			send(res, 400, { success: false, error: { code: 'MISSING_DOMAIN', message: 'domain обязателен' } });
+			return;
+		}
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache',
+			Connection: 'keep-alive',
+		});
+		const emit = (type, payload) => res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+		const result = buildInspectResult(domain);
+		const steps = [
+			{ phase: 'start', message: 'Запускаем инспектор маршрутов…' },
+			{ phase: 'load_config', message: 'Загружаем конфигурацию маршрутизации…' },
+			{
+				phase: 'config_loaded',
+				message: `Конфигурация загружена: ${result.matches.length} правил, ${mockSingboxRuleSets.length} rule_set, final: ${mockSingboxRouteFinal}`,
+				ruleTotal: result.matches.length,
+				ruleSetTotal: mockSingboxRuleSets.length,
+			},
+			{ phase: 'rule_walk_started', message: `Начинаем проверку ${result.matches.length} правил маршрутизации`, ruleTotal: result.matches.length },
+		];
+		let i = 0;
+		const timer = setInterval(() => {
+			if (i < steps.length) {
+				emit('progress', { type: 'progress', progress: steps[i++] });
+				return;
+			}
+			clearInterval(timer);
+			emit('result', { type: 'result', result });
+			res.end();
+		}, 180);
+		req.on('close', () => clearInterval(timer));
 		return;
 	}
 
