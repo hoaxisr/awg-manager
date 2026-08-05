@@ -162,10 +162,33 @@ jobs:
         with:
           go-version: 1.26.4
 
+      # Без бинаря sing-box тесты, гоняющие настоящие `check`/`run` на merged
+      # конфиге (TestMergedConfigPerMode, снимки миграции слотов), молча
+      # вырождались в t.Log + return — единственная автоматическая защита от
+      # регресса, который виден только на живом роутере, в CI не работала.
+      # Рецепт тот же, что в release.yml (catalog-drift): апстримный релиз той
+      # же версии, что закреплена в RequiredVersion; суффикс форка отбрасываем —
+      # релизов форка у SagerNet нет, а для check/run хватает апстрим-базы.
+      - name: Host sing-box (pinned RequiredVersion)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's/^const RequiredVersion = "\(.*\)"/\1/p' internal/singbox/installer/embedded.go)"
+          ver="${ver%-awgm.*}"
+          curl -fsSL -o /tmp/sb.tgz "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-amd64.tar.gz"
+          tar -xzf /tmp/sb.tgz -C /tmp
+          bin="$(find /tmp -type f -name sing-box -path "*${ver}-linux-amd64*" | head -1)"
+          test -x "$bin"
+          echo "AWGM_SINGBOX_BIN=$bin" >> "$GITHUB_ENV"
+
       - name: Run go tests with backend coverage
         shell: bash
         run: |
           set -euo pipefail
+
+          # Гейт против тихого возврата к скипам: если переменная не доехала,
+          # тесты бы прошли зелёными, ничего не проверив.
+          "$AWGM_SINGBOX_BIN" version
 
           go test -count=1 \
             -covermode=atomic \
