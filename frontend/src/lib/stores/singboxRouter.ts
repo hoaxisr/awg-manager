@@ -3,7 +3,7 @@ import { api } from '$lib/api/client';
 import { awgTags } from './awgTags';
 import { subscriptionsStore } from './subscriptions';
 import { singboxTunnels } from './singbox';
-import { buildOutboundOptions, type OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
+import { buildOutboundOptions } from '$lib/components/routing/singboxRouter/outboundOptions';
 import { reconcileRuleUiKeys } from '$lib/utils/ruleUiKeys';
 import {
 	normalizeRulesForUI,

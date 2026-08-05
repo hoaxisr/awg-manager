@@ -26,6 +26,7 @@
   import TracePathStation, { type TracePathTone } from './TracePathStation.svelte';
   import TraceRuleRow from './TraceRuleRow.svelte';
   import TraceDNSStep from './TraceDNSStep.svelte';
+  import { mergedPrefix } from './mergedPrefix';
 
   // embedded: панель встроена в модал/контейнер с собственным заголовком
   // (FakeIP-hero «Инспектор маршрутов») — прячем свою крошку «← Назад» и h1,
@@ -51,13 +52,10 @@
 
   let allRules = $derived($rules);
 
-  // Инспектор ходит по ОБЪЕДИНЁННОМУ конфигу режима (#488): режимный слот
-  // сливается первым, поэтому сверху идут его системные правила, которых нет
-  // ни в ListRules, ни на странице правил. Разница длин и есть смещение
-  // нумерации; при холодном сторе (allRules пуст) молчим, а не врём.
-  function mergedPrefix(walked: number): number {
-    return allRules.length > 0 ? Math.max(0, walked - allRules.length) : 0;
-  }
+  // Смещение нумерации трассы против страницы правил — см. mergedPrefix.ts
+  // (вынесено туда ради теста: края «холодный стор» и «список опередил
+  // трассу» из разметки не проверить).
+  let prefixLen = $derived(mergedPrefix(result?.matches.length ?? 0, allRules.length));
 
   let dns = $derived($dnsResult);
   let dnsBusy = $derived($dnsLoading);
@@ -258,15 +256,15 @@
 
     <div class="rules-section">
       <SectionLabel>Правила ({result.matches.length} проверено)</SectionLabel>
-      {#if mergedPrefix(result.matches.length) > 0}
+      {#if prefixLen > 0}
         <!-- Инспектор ходит по ОБЪЕДИНЁННОМУ конфигу режима (#488): сверху идёт
              системный префикс режимного слота, которого нет на странице правил.
              Без этой сноски номер из трейса молча не сходится со списком. -->
         <p class="numbering-note">
           Нумерация — по объединённому конфигу режима: сверху идёт системный префикс режима,
-          {pluralize(mergedPrefix(result.matches.length), SYSTEM_ROW_WORDS)}
+          {pluralize(prefixLen, SYSTEM_ROW_WORDS)}
           (перехват DNS, sniff, приватные сети), которых нет на странице правил.
-          Правило #{String(mergedPrefix(result.matches.length)).padStart(2, '0')} здесь — это #00 в списке.
+          Правило #{String(prefixLen).padStart(2, '0')} здесь — это #00 в списке.
         </p>
       {/if}
       <div class="rules-list">
