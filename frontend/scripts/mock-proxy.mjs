@@ -2247,6 +2247,71 @@ function markRouterDraft() {
 	broadcastResource('singbox.router.staging');
 }
 
+// ── ПРИМЕНЁННОЕ содержимое общего слота ──────────────────────────────────────
+// Бэкенд держит active-файл и pending-черновик РАЗДЕЛЬНО, мок правит одну
+// копию. Для двух гардов 5D0 (RULE_SET_NOT_APPLIED / OUTBOUND_NOT_APPLIED)
+// нужен ровно один вопрос: «есть ли тег в ПРИМЕНЁННОМ конфиге». Держим снимок,
+// снятый на последнем «Применить»; он же даёт честную отмену черновика.
+let mockAppliedSlot = null;
+
+function snapshotAppliedSlot() {
+	mockAppliedSlot = structuredClone({
+		rules: mockSingboxRules,
+		ruleSets: mockSingboxRuleSets,
+		outbounds: mockOutbounds,
+		dnsRules: mockDNSRules,
+	});
+}
+
+function appliedSlot() {
+	if (mockAppliedSlot === null) snapshotAppliedSlot();
+	return mockAppliedSlot;
+}
+
+// guardFakeIPRuleSetRef / guardFakeIPOutboundRef — близнецы одноимённых
+// проверок бэкенда (fakeip_config.go:240 и :313). DNS fakeip пишется в active
+// напрямую, а наборы и outbound'ы общего слота идут через staging: пикеры
+// читают pending-first и показывают ЧЕРНОВИЧНОЕ. Без отказа получилось бы
+// «сохранено» + отвергнутый reload.
+//
+// Диффной поблажки бэкенда (уже висевшая ссылка правку не блокирует) тут нет
+// намеренно: в фикстурах висячих ссылок не бывает, а лишняя механика в моке
+// дороже пользы.
+function guardFakeIPRuleSetRef(rule) {
+	const applied = new Set(appliedSlot().ruleSets.map((rs) => rs.tag));
+	return (rule?.rule_set ?? []).find((tag) => !applied.has(tag)) ?? null;
+}
+
+function guardFakeIPOutboundRef(server) {
+	const detour = typeof server?.detour === 'string' ? server.detour.trim() : '';
+	if (!detour) return null;
+	// Теги из ДРУГИХ слотов и каталогов (туннели, AWG, подписки, встроенные
+	// direct/block/dns) staging'ом общего слота не управляются и законны —
+	// бэкендовый isKnownOutboundTag судит о них так же.
+	if (!mockOutbounds.some((o) => o.tag === detour)) return null;
+	return appliedSlot().outbounds.some((o) => o.tag === detour) ? null : detour;
+}
+
+function sendRuleSetNotApplied(res, tag) {
+	send(res, 400, {
+		success: false,
+		error: {
+			code: 'RULE_SET_NOT_APPLIED',
+			message: `набор ещё не применён: нажмите «Применить» на вкладке Rule sets и повторите: "${tag}"`,
+		},
+	});
+}
+
+function sendOutboundNotApplied(res, tag) {
+	send(res, 400, {
+		success: false,
+		error: {
+			code: 'OUTBOUND_NOT_APPLIED',
+			message: `выход ещё не применён: нажмите «Применить» на вкладке Outbounds и повторите: "${tag}"`,
+		},
+	});
+}
+
 // withJsonBody — обёртка над readJsonBody для роутерных мутаций: битое тело
 // отдаёт 400 тем же конвертом, что остальные ручки.
 function withJsonBody(req, res, fn) {
@@ -3623,42 +3688,54 @@ function sendData(res, data, status = 200) {
 //   fakeip-tun — hijack-dns + ip_is_private + route-options, sniff'а нет
 //     (config_fakeip.go).
 // На этой разнице держится сноска о смещении нумерации в TracePanel.
+//
+// Тексты условий и причин — как у evaluateRule (inspector.go), а не выдуманные:
+// матчерами инспектор считает только domain_suffix / ip_cidr / port / protocol /
+// rule_set. Правило без них (sniff, ip_is_private, route-options, а также
+// логический hijack tproxy — вложенные rules инспектор не разбирает) даёт
+// «пустое правило — пропущено» и ПУСТЫЕ условия. Единственное исключение —
+// hijack режима fakeip: он записан старой формой protocol:dns (config_fakeip.go),
+// и матчер protocol у него настоящий.
 function buildInspectResult(input) {
 	const mode = mockSBSettings.routingMode || 'tproxy';
+	const SKIPPED = { conditions: [], reason: 'пустое правило — пропущено' };
 	const systemPrefix = [];
 	if (mode !== 'fakeip-tun' && mockSBSettings.snifferEnabled) {
-		systemPrefix.push({ action: 'sniff', conditions: ['без условий'] });
+		systemPrefix.push({ action: 'sniff', ...SKIPPED });
 	}
 	systemPrefix.push(
-		{ action: 'hijack-dns', conditions: ['protocol: dns'] },
-		{ action: 'route', conditions: ['ip_is_private'] },
-		{ action: 'route-options', conditions: ['network: udp', 'udp_timeout: 5m'] },
+		mode === 'fakeip-tun'
+			? { action: 'hijack-dns', conditions: ['protocol: dns'], reason: 'нет совпадения' }
+			: { action: 'hijack-dns', ...SKIPPED },
+		{ action: 'route', outbound: 'direct', ...SKIPPED },
+		{ action: 'route-options', ...SKIPPED },
 	);
-	const matches = systemPrefix.map((r, i) => ({
-		index: i,
-		matched: false,
-		action: r.action,
-		conditions: r.conditions,
-		reason: 'системное правило режима: не проверяется по домену',
-	}));
+	const matches = systemPrefix.map((r, i) => ({ index: i, matched: false, ...r }));
 	let matchedRule = -1;
 	let destination = '';
 	mockSingboxRules.forEach((rule, i) => {
 		const idx = systemPrefix.length + i;
-		const hit =
-			matchedRule === -1 &&
-			(rule.domain_suffix || []).some((d) => input === d || input.endsWith(`.${d}`));
+		const suffixes = rule.domain_suffix || [];
+		const ruleSets = rule.rule_set || [];
+		const hit = matchedRule === -1 && suffixes.some((d) => input === d || input.endsWith(`.${d}`));
+		// anyPresent из inspector.go: source_ip_cidr матчером не считается.
+		const anyPresent = suffixes.length > 0 || ruleSets.length > 0;
+		const conditions = [
+			...(rule.source_ip_cidr || []).map((c) => `source_ip_cidr: ${c} (пропущено — нет источника)`),
+			...(suffixes.length > 0 ? [`domain_suffix: [${suffixes.join(', ')}]`] : []),
+			...ruleSets.map((t) => `rule_set ${JSON.stringify(t)} → ${hit ? 'совпало' : 'не совпало'}`),
+		];
 		matches.push({
 			index: idx,
 			matched: hit,
 			action: rule.action || 'route',
 			outbound: rule.outbound,
-			conditions: [
-				...(rule.domain_suffix || []).map((d) => `domain_suffix: ${d}`),
-				...(rule.rule_set || []).map((t) => `rule_set: ${t}`),
-				...(rule.source_ip_cidr || []).map((c) => `source_ip_cidr: ${c}`),
-			],
-			reason: hit ? 'совпало по: domain_suffix' : 'не совпало',
+			conditions,
+			reason: hit
+				? 'совпало по: domain_suffix'
+				: anyPresent
+					? 'нет совпадения'
+					: 'пустое правило — пропущено',
 		});
 		if (hit) {
 			matchedRule = idx;
@@ -5911,18 +5988,63 @@ const server = http.createServer(async (req, res) => {
 		});
 		const emit = (type, payload) => res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
 		const result = buildInspectResult(domain);
+		const total = result.matches.length;
+		const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(domain);
+		// Полная последовательность фаз, как у InspectWithProgress
+		// (inspector.go:140-234) + обвязка InspectStream (service_issues.go:340).
+		// Каркаса из четырёх шагов было мало: на rule_start/rule_done висит
+		// счётчик проверенных правил, прогресс-бар, строка «Далее: правило #N
+		// из M» и тайминги шагов в RouteInspector — без них живая половина
+		// инспектора на моке не воспроизводилась вовсе.
 		const steps = [
 			{ phase: 'start', message: 'Запускаем инспектор маршрутов…' },
 			{ phase: 'load_config', message: 'Загружаем конфигурацию маршрутизации…' },
 			{
 				phase: 'config_loaded',
-				message: `Конфигурация загружена: ${result.matches.length} правил, ${mockSingboxRuleSets.length} rule_set, final: ${mockSingboxRouteFinal}`,
-				ruleTotal: result.matches.length,
+				message: `Конфигурация загружена: ${total} правил, ${mockSingboxRuleSets.length} rule_set, final: ${mockSingboxRouteFinal}`,
+				ruleTotal: total,
 				ruleSetTotal: mockSingboxRuleSets.length,
+				final: mockSingboxRouteFinal,
+				usingDraft: mockRouterDraftedAt !== null,
 			},
-			{ phase: 'rule_walk_started', message: `Начинаем проверку ${result.matches.length} правил маршрутизации`, ruleTotal: result.matches.length },
+			{ phase: 'classify_input', message: isIP ? 'Ввод распознан как IP' : 'Ввод распознан как домен' },
+			{ phase: 'rule_walk_started', message: `Начинаем проверку ${total} правил маршрутизации`, ruleTotal: total },
 		];
+		for (const m of result.matches) {
+			steps.push({
+				phase: 'rule_start',
+				message: `Проверяем правило #${m.index} из ${total}`,
+				ruleIndex: m.index,
+				ruleTotal: total,
+			});
+			steps.push({
+				phase: 'rule_done',
+				message: `Правило #${m.index} ${m.matched ? 'совпало' : 'не совпало'}`,
+				ruleIndex: m.index,
+				ruleTotal: total,
+			});
+			if (!m.matched) continue;
+			const terminal = m.index === result.matchedRule;
+			steps.push(
+				terminal
+					? {
+							phase: 'terminal_match',
+							message: `Найдено финальное правило #${m.index} → ${m.action}`,
+							ruleIndex: m.index,
+							ruleTotal: total,
+						}
+					: {
+							phase: 'non_terminal_match',
+							message: `Нефинальное совпадение в правиле #${m.index}`,
+							ruleIndex: m.index,
+							ruleTotal: total,
+						},
+			);
+		}
+		steps.push({ phase: 'done', message: 'Инспектор завершил проверку' });
 		let i = 0;
+		// Шагов теперь под сорок — интервал короткий, иначе разбор ползёт
+		// секунд десять и стенд не пройти глазами.
 		const timer = setInterval(() => {
 			if (i < steps.length) {
 				emit('progress', { type: 'progress', progress: steps[i++] });
@@ -5931,7 +6053,7 @@ const server = http.createServer(async (req, res) => {
 			clearInterval(timer);
 			emit('result', { type: 'result', result });
 			res.end();
-		}, 180);
+		}, 45);
 		req.on('close', () => clearInterval(timer));
 		return;
 	}
@@ -5962,6 +6084,7 @@ const server = http.createServer(async (req, res) => {
 			return;
 		}
 		mockRouterDraftedAt = null;
+		snapshotAppliedSlot();
 		broadcastResource('singbox.router.staging');
 		broadcastResource('singbox.router.rules');
 		send(res, 200, { success: true, data: { ok: true } });
@@ -5969,6 +6092,15 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'POST' && path === '/singbox/router/staging/discard') {
+		// Отмена ВОЗВРАЩАЕТ применённое содержимое: бэкенд просто выбрасывает
+		// pending-файл. Раньше мок гасил только флаг, и отменённый набор
+		// оставался в списке — то есть черновичный путь на стенде не
+		// воспроизводился до конца.
+		const applied = appliedSlot();
+		mockSingboxRules = structuredClone(applied.rules);
+		mockSingboxRuleSets = structuredClone(applied.ruleSets);
+		mockOutbounds = structuredClone(applied.outbounds);
+		mockDNSRules = structuredClone(applied.dnsRules);
 		mockRouterDraftedAt = null;
 		broadcastResource('singbox.router.staging');
 		broadcastResource('singbox.router.rules');
@@ -7340,7 +7472,13 @@ const server = http.createServer(async (req, res) => {
 		req.on('data', (c) => (raw += c));
 		req.on('end', () => {
 			try {
-				const payload = sanitizeMockDnsServerForWrite(JSON.parse(raw || '{}'));
+				const parsed = JSON.parse(raw || '{}');
+				const draftDetour = guardFakeIPOutboundRef(parsed);
+				if (draftDetour) {
+					sendOutboundNotApplied(res, draftDetour);
+					return;
+				}
+				const payload = sanitizeMockDnsServerForWrite(parsed);
 				mockFakeipDNSServers.push(payload);
 				send(res, 200, { success: true, data: payload });
 			} catch (e) {
@@ -7359,6 +7497,11 @@ const server = http.createServer(async (req, res) => {
 				const idx = mockFakeipDNSServers.findIndex((s) => s.tag === tag);
 				if (idx === -1) {
 					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns server not found' } });
+					return;
+				}
+				const draftDetour = guardFakeIPOutboundRef(server);
+				if (draftDetour) {
+					sendOutboundNotApplied(res, draftDetour);
 					return;
 				}
 				mockFakeipDNSServers[idx] = sanitizeMockDnsServerForWrite(server);
@@ -7421,6 +7564,11 @@ const server = http.createServer(async (req, res) => {
 		req.on('end', () => {
 			try {
 				const payload = JSON.parse(raw || '{}');
+				const draftTag = guardFakeIPRuleSetRef(payload);
+				if (draftTag) {
+					sendRuleSetNotApplied(res, draftTag);
+					return;
+				}
 				mockFakeipDNSRules.push(payload);
 				send(res, 200, { success: true, data: payload });
 			} catch (e) {
@@ -7438,6 +7586,11 @@ const server = http.createServer(async (req, res) => {
 				const { index, rule } = JSON.parse(raw || '{}');
 				if (index < 0 || index >= mockFakeipDNSRules.length) {
 					send(res, 404, { success: false, error: { code: 'NOT_FOUND', message: 'dns rule not found' } });
+					return;
+				}
+				const draftTag = guardFakeIPRuleSetRef(rule);
+				if (draftTag) {
+					sendRuleSetNotApplied(res, draftTag);
 					return;
 				}
 				mockFakeipDNSRules[index] = rule;
@@ -8056,6 +8209,11 @@ const server = http.createServer(async (req, res) => {
 	});
 	req.pipe(proxyReq);
 });
+
+// Стартовая фикстура — это ПРИМЕНЁННОЕ состояние: черновика на старте нет.
+// Снимок обязан быть снят до первой мутации, иначе черновичный набор попадёт
+// в него и гарды 5D0 не сработают.
+snapshotAppliedSlot();
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
