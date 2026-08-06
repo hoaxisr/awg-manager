@@ -41,7 +41,7 @@ vi.mock('$lib/stores/singboxRouter', () => ({
 	},
 }));
 
-import { modeSwitch, currentMode, modeSwitchBusy } from './modeSwitch';
+import { modeSwitch, currentMode, modeSwitchBusy, modeSwitchInFlight } from './modeSwitch';
 
 beforeEach(() => {
 	// Reset store state FIRST (these call mocked reset/loadAll), THEN clear counters,
@@ -64,6 +64,41 @@ describe('currentMode', () => {
 	});
 	it('defaults to tproxy when enabled but routingMode missing', () => {
 		expect(currentMode(asStatus({ enabled: true }), asSettings({}))).toBe('tproxy');
+	});
+});
+
+// Два предиката НЕ синонимы, и разница у них поведенческая.
+//
+// `modeSwitchBusy` блокирует управление: пока диалог открыт или переключение
+// идёт, второй запрос принимать нельзя.
+//
+// `modeSwitchInFlight` подменяет СОСТОЯНИЕ ДВИЖКА: страница «Движок» по нему
+// показывает пилюлю «Переключение…» и гасит живые числа в прочерки. Делать это
+// на фазе `confirming` — враньё: пользователь ещё читает список последствий и
+// может нажать «Отмена», с движком не произошло ничего, а страница уже
+// утверждает, что он перезапускается.
+//
+// Склеить предикат с `modeSwitchBusy` можно было незаметно: до этого блока ни
+// один тест разницу не проверял.
+describe('modeSwitchInFlight vs modeSwitchBusy', () => {
+	const st = (phase: 'idle' | 'confirming' | 'running') =>
+		({ phase, target: 'fakeip-tun', from: 'tproxy' }) as const;
+
+	it('на диалоге подтверждения переключение НЕ в полёте', () => {
+		expect(modeSwitchInFlight(st('confirming'))).toBe(false);
+		// При этом управление уже заблокировано — вот в чём разница.
+		expect(modeSwitchBusy(st('confirming'))).toBe(true);
+	});
+
+	it('в полёте только фаза running', () => {
+		expect(modeSwitchInFlight(st('running'))).toBe(true);
+		expect(modeSwitchInFlight(st('idle'))).toBe(false);
+	});
+
+	it('предикаты расходятся ровно на фазе подтверждения', () => {
+		const phases = ['idle', 'confirming', 'running'] as const;
+		const diff = phases.filter((p) => modeSwitchBusy(st(p)) !== modeSwitchInFlight(st(p)));
+		expect(diff).toEqual(['confirming']);
 	});
 });
 
