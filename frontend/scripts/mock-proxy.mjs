@@ -1556,10 +1556,24 @@ function buildSingboxTrafficEvent() {
  * publish()). Мок их не отдавал вовсе, и стат-полоса «Движка» на стенде
  * выглядела мёртвой при живом движке.
  *
- * Счётчики монотонные, пока процесс жив, и обнуляются на перезапуске — ровно
- * это и означает hasRate:false у фронта после рестарта.
+ * Счётчики монотонные, пока процесс жив, и обнуляются на перезапуске: бэкенд
+ * берёт их из Clash API (traffic.go, TrafficTotalsEvent — «monotonic while the
+ * process lives; reset to zero on engine restart»), а Clash считает от старта
+ * процесса sing-box.
+ *
+ * Обещание сброса надо ВЫПОЛНЯТЬ, иначе «За сессию» на стенде растёт сквозь
+ * выключение движка, а на роутере после off→on показывает нули. Сбрасывает
+ * resetSingboxTotals() — из смены режима и из /singbox/router/enable, то есть
+ * из всех ручек рестарта движка, которые есть у ЭТОГО мока. Ручку
+ * /singbox/control мок-прокси не перехватывает вовсе (её отдаёт Prism по
+ * OpenAPI), поэтому кнопка «Перезапустить» счётчики на стенде не обнулит —
+ * расхождение с роутером известное и лечится только реализацией ручки здесь.
  */
 let mockSingboxTotals = { downloadTotal: 0, uploadTotal: 0 };
+
+function resetSingboxTotals() {
+	mockSingboxTotals = { downloadTotal: 0, uploadTotal: 0 };
+}
 
 function tickSingboxRuntime() {
 	if (!mockEngineRunning) return null;
@@ -6726,6 +6740,7 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'POST' && path === '/singbox/router/enable') {
 		mockEngineRunning = true;
+		resetSingboxTotals(); // подъём движка = новый процесс sing-box
 		send(res, 200, { success: true, data: {} });
 		return;
 	}
@@ -6749,6 +6764,9 @@ const server = http.createServer(async (req, res) => {
 			}, i * 400);
 		});
 		mockEngineRunning = to !== 'off';
+		// Смена режима перезапускает sing-box в любую сторону — счётчики Clash
+		// начинают с нуля (в том числе при уходе в 'off': процесса больше нет).
+		resetSingboxTotals();
 		mockSBSettings = { ...mockSBSettings, routingMode: to === 'off' ? mockSBSettings.routingMode : to, enabled: to !== 'off' };
 		// source-preserve применяется при поднятии режима (вживую бэкенд его
 		// только снимает) — фиксируем применённое значение здесь.
@@ -6779,6 +6797,13 @@ const server = http.createServer(async (req, res) => {
 				configValid: true,
 				netfilterAvailable: true,
 				policyName: mockSBPolicyExists ? 'SBRouter' : '',
+				// policyExists / deviceCount бэкенд сериализует ВСЕГДА (types.go,
+				// без omitempty): «политика жива» и «сколько в ней устройств» —
+				// две строки блока «источник трафика» карточки «Захват трафика».
+				// Мок полей не отдавал, и на стенде блок вечно говорил «В политике
+				// 0 устройств» при живой политике.
+				policyExists: mockSBPolicyExists,
+				deviceCount: mockSBPolicyExists ? 3 : 0,
 				deviceMode: mockSBSettings.deviceMode || 'policy',
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
@@ -6793,12 +6818,23 @@ const server = http.createServer(async (req, res) => {
 				routingMode,
 				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to
 				// false here to demo the SegmentsDelivery «доставка DNS придержана» banner.
-				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
+				// fakeipDns / fakeipTunAddr бэкенд выводит из TunAddr4 (/30
+				// «172.18.0.1/30» → шлюз .1, DNS клиентов .2 — DeriveTunDNS,
+				// service_lifecycle.go). Мок их не отдавал, и строка «DNS для
+				// клиентов» — единственный способ узнать адрес — на стенде не
+				// показывалась вовсе.
+				// Гейт mockEngineRunning — не украшение: на выключении бэкенд зовёт
+				// SetFakeIPState(nil) (fakeip_disable.go), Provisioned пропадает, и
+				// весь fakeip-блок статуса перестаёт сериализоваться. Без гейта мок
+				// показывал бы живой tun-интерфейс и DNS у выключенного движка.
+				...(routingMode === 'fakeip-tun' && mockEngineRunning ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipDns: '172.18.0.2', fakeipTunAddr: '172.18.0.1', fakeipEgressUp: true } : {}),
 				// policy-tun: интерфейс режима + применённый source-preserve
 				// (указатель на бэкенде: absent = «неприменимо»). Замечание
 				// policy-tun-unbound держим, пока интерфейс не разрешён в политике —
 				// в моке всегда, чтобы вид с warning был доступен.
-				...(routingMode === 'policy-tun'
+				// Тот же гейт, что у fakeip: бэкенд светит имена интерфейса режима
+				// при `RoutingMode == policy-tun && Enabled` (service_lifecycle.go).
+				...(routingMode === 'policy-tun' && mockEngineRunning
 					? {
 							policyTunIface: 'opkgtun0',
 							policyTunNdmsName: 'OpkgTun0',
