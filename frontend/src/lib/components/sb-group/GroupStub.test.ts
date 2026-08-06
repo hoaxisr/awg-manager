@@ -27,15 +27,14 @@ describe('GroupStub', () => {
 		expect(getByText('Раздел ещё не переехал')).toBeTruthy();
 	});
 
-	// Без этой ссылки страница — тупик: легаси-закладка (`?chip=dns`) приводит
-	// сюда редиректом, а живой редактор до волны 5D2 остаётся на «Движке».
-	it('уводит на «Движок», где функция живёт до своей волны', () => {
-		const { getByRole } = render(GroupStub, {
+	// До волны 5D2a заглушка уводила на «Движок»: он нёс содержимое старой
+	// /sb/routing. Содержимое снесено, живого редактора нет нигде — ссылка
+	// стала бы тупиком, поэтому её нет, а строка честно называет волну.
+	it('никуда не уводит: до своей волны функции нет в интерфейсе', () => {
+		const { queryByRole, getByText } = render(GroupStub, {
 			props: { title: 'DNS', wave: '5D2c', source: 'DnsTab' },
 		});
-		const link = getByRole('link', { name: 'Движок' });
-		expect(link.getAttribute('href')).toBe('/sb/engine');
-		// Волна названа рядом со ссылкой: «до каких пор» — половина подсказки.
-		expect(link.parentElement?.textContent).toContain('До волны 5D2c');
+		expect(queryByRole('link')).toBeNull();
+		expect(getByText(/До волны 5D2c этой функции нет в интерфейсе/)).toBeTruthy();
 	});
 });

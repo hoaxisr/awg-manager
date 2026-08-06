@@ -18,7 +18,7 @@
  * половину приложения, а нужен только факт существования.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ENGINE_GROUP_PATHS } from '$lib/data/engineDraftGuard';
 import { REDIRECT_TARGETS } from '$lib/data/legacyRoutingLinks';
@@ -99,41 +99,7 @@ describe('состав группы «Движок» сверен с файло�
 	});
 });
 
-/**
- * Обещание заглушек и временное содержимое «Движка» живут и умирают вместе.
- *
- * Шесть заглушек (`GroupStub`) пишут: «до волны 5D2x это живёт на странице
- * „Движок“». Правда с датой истечения — «Движок» несёт содержимое старой
- * `/sb/routing` только до волны 5D2a. Проверять сам факт ссылки бесполезно:
- * `href` останется валидным и после переезда, а обещание станет ложью молча.
- *
- * Связка здесь — по исходникам, а не по импорту: `+page.svelte` «Движка» тянет
- * половину приложения, а нужен только факт наличия маркера.
- */
-describe('заглушки не переживают временное содержимое «Движка»', () => {
-	const TEMP_MARKER = 'TEMP_UNTIL_5D2A';
-	const ENGINE_PAGE = join(ENGINE_ROUTES, 'engine', '+page.svelte');
-	const GROUP_STUB = resolve(process.cwd(), 'src/lib/components/sb-group/GroupStub.svelte');
-
-	it('маркер временного содержимого и ссылка заглушек сняты вместе', () => {
-		const engineIsTemporary = readFileSync(ENGINE_PAGE, 'utf8').includes(TEMP_MARKER);
-		// Ссылку рисует сам GroupStub — она одна на все шесть страниц.
-		const stubsPointAtEngine = readFileSync(GROUP_STUB, 'utf8').includes('ENGINE_PATH');
-
-		const why = [
-			`Маркер ${TEMP_MARKER} в (engine)/engine/+page.svelte: ${engineIsTemporary ? 'есть' : 'снят'}.`,
-			`Ссылка заглушек на «Движок» в GroupStub.svelte: ${stubsPointAtEngine ? 'есть' : 'снята'}.`,
-			'',
-			'Маркер снят, а ссылка осталась — так падает волна 5D2a: содержимое старой',
-			'/sb/routing уехало из «Движка», и строка «до волны N это живёт на странице',
-			'„Движок“» врёт. Перенаправь её туда, куда содержимое переехало, — либо',
-			'убери вместе с наполнением заглушки, если наполняешь эту страницу.',
-			'',
-			'Ссылка снята, а маркер остался — заглушки снова тупик: функция жива на',
-			'«Движке», но со страницы об этом не узнать. Верни строку или сними маркер,',
-			'если временного содержимого там уже нет.',
-		].join('\n');
-
-		expect(stubsPointAtEngine, why).toBe(engineIsTemporary);
-	});
-});
+// Здесь стояла XOR-связка «маркер временного содержимого „Движка“ ↔ ссылка
+// заглушек на него» (5D1). Волна 5D2a сняла обе половины разом, и связка стала
+// сравнением двух отсутствий. Обещание заглушек теперь проверяет рендером
+// `lib/components/sb-group/GroupStub.test.ts`.
