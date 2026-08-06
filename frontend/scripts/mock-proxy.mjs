@@ -2084,6 +2084,63 @@ let mockSBSettings = {
 	fakeipSourcePreserve: true,
 };
 
+// ── Селективный перехват (ipset) ───────────────────────────────────
+// До nav-v3 карточка жила в шторке sb-router, и мок этих ручек не знал вовсе:
+// GET /selective/status отдавал 404, карточка навсегда застревала в состоянии
+// «статус ещё грузится», а установка ipset, статистика и пересборка на стенде
+// не показывались ни разу. Форма ответа — по internal/api/singbox_selective.go
+// (SelectiveStatusData / SelectiveRebuildSnapshotDTO).
+//
+// enabled — ПРОЕКЦИЯ mockSBSettings.selectiveBypass, как и на бэкенде
+// («Mirrors SingboxRouterSettings.SelectiveBypass»): держать второй источник
+// правды значило бы воспроизводить рассинхрон, которого в проде нет.
+//
+// MOCK_IPSET_MISSING=1 — стенд без пакета ipset: состояние «Требуется пакет
+// ipset» + кнопка установки иначе недостижимо.
+let mockSelective = {
+	available: process.env.MOCK_IPSET_MISSING !== '1',
+	xtSetAvailable: true,
+	conntrackAvailable: true,
+	installing: false,
+	rebuilding: false,
+	entryCount: 342,
+	lastRebuild: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+	lastError: '',
+	snapshot: {
+		rebuiltAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+		staticCidrs: ['203.0.113.0/24', '198.51.100.0/24'],
+		domainResults: [],
+		entryCount: 342,
+		staticCidrCount: 2,
+		domainMatcherCount: 17,
+		lastCDNRefresh: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+	},
+};
+
+function selectiveStatusPayload() {
+	return { ...mockSelective, enabled: !!mockSBSettings.selectiveBypass };
+}
+
+function broadcastSelectiveStatus() {
+	for (const sendEvent of sseSenders) {
+		try {
+			sendEvent('singbox-router:selective-status', selectiveStatusPayload());
+		} catch {
+			// поток закрылся между тиками — не наша забота
+		}
+	}
+}
+
+function broadcastSelectiveProgress(progress) {
+	for (const sendEvent of sseSenders) {
+		try {
+			sendEvent('singbox-router:selective-progress', progress);
+		} catch {
+			// см. выше
+		}
+	}
+}
+
 // ── Config editor (config.d slots) mock state ─────────────────────
 // user-слот 90-user.json: applied-содержимое + опциональный черновик,
 // мутируется PUT/apply/discard/enable, чтобы draft-цикл работал в dev-mock.
@@ -6235,6 +6292,71 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'GET' && path === '/singbox/router/settings') {
 		send(res, 200, { success: true, data: mockSBSettings });
+		return;
+	}
+
+	// ── Селективный перехват ──────────────────────────────────────────────
+	if (req.method === 'GET' && path === '/singbox/router/selective/status') {
+		send(res, 200, { success: true, data: selectiveStatusPayload() });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/selective/install-deps') {
+		mockSelective.available = true;
+		send(res, 200, { success: true, data: selectiveStatusPayload() });
+		return;
+	}
+
+	// 202 Accepted = «запущено», НЕ «завершено»: тело несёт rebuilding: true, а
+	// завершение доскажет SSE. Мок обязан отвечать именно так — на 200 с
+	// готовым статусом фронтовый epoch-guard и окно прогресса не проверить.
+	if (req.method === 'POST' && path === '/singbox/router/selective/rebuild') {
+		mockSelective.rebuilding = true;
+		send(res, 202, { success: true, data: selectiveStatusPayload() });
+		let step = 0;
+		const steps = [
+			{ phase: 'collecting', message: 'сбор правил', current: 1, total: 4 },
+			{ phase: 'resolving', message: 'резолв доменов', current: 2, total: 4 },
+			{ phase: 'populating', message: 'наполнение ipset', current: 3, total: 4 },
+			{ phase: 'done', message: 'готово', current: 4, total: 4 },
+		];
+		const timer = setInterval(() => {
+			broadcastSelectiveProgress(steps[step]);
+			if (++step < steps.length) return;
+			clearInterval(timer);
+			mockSelective.rebuilding = false;
+			mockSelective.entryCount += 7;
+			mockSelective.lastRebuild = new Date().toISOString();
+			mockSelective.lastError = '';
+			mockSelective.snapshot = {
+				...mockSelective.snapshot,
+				rebuiltAt: mockSelective.lastRebuild,
+				entryCount: mockSelective.entryCount,
+			};
+			broadcastSelectiveStatus();
+		}, 600);
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/selective/rebuild/cancel') {
+		const cancelled = mockSelective.rebuilding;
+		mockSelective.rebuilding = false;
+		send(res, 200, { success: true, data: { cancelled } });
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/singbox/router/selective/snapshot/matchers') {
+		const matchers = Array.from({ length: 17 }, (_, i) => ({
+			matcher: `example${i}.com`,
+			kind: i % 3 === 0 ? 'suffix' : 'domain',
+			queryHosts: [`example${i}.com`, `www.example${i}.com`],
+			cdn: i % 5 === 0,
+			outbound: i % 2 === 0 ? 'proxy' : 'direct',
+		}));
+		send(res, 200, {
+			success: true,
+			data: { matchers, total: matchers.length, offset: 0, limit: 100 },
+		});
 		return;
 	}
 
