@@ -1550,6 +1550,39 @@ function buildSingboxTrafficEvent() {
 	return merged;
 }
 
+/**
+ * Кумулятивные счётчики движка и его память — то, что бэкенд шлёт событиями
+ * `singbox:traffic-totals` и `singbox:memory` (internal/singbox/traffic.go,
+ * publish()). Мок их не отдавал вовсе, и стат-полоса «Движка» на стенде
+ * выглядела мёртвой при живом движке.
+ *
+ * Счётчики монотонные, пока процесс жив, и обнуляются на перезапуске — ровно
+ * это и означает hasRate:false у фронта после рестарта.
+ */
+let mockSingboxTotals = { downloadTotal: 0, uploadTotal: 0 };
+
+function tickSingboxRuntime() {
+	if (!mockEngineRunning) return null;
+	mockSingboxTotals = {
+		downloadTotal: mockSingboxTotals.downloadTotal + Math.round(900_000 + rand() * 2_400_000),
+		uploadTotal: mockSingboxTotals.uploadTotal + Math.round(120_000 + rand() * 400_000),
+	};
+	return {
+		totals: mockSingboxTotals,
+		// Go-рантайм sing-box, не RSS: десятки мегабайт с небольшим дрейфом.
+		memory: { memory: Math.round(36_000_000 + rand() * 6_000_000) },
+	};
+}
+
+// Пара событий рантайма движка; при выключенном движке молчим — фронт обязан
+// показывать «—», а не последние доехавшие числа.
+function emitSingboxRuntime(sendEvent) {
+	const runtime = tickSingboxRuntime();
+	if (!runtime) return;
+	sendEvent('singbox:traffic-totals', runtime.totals);
+	sendEvent('singbox:memory', runtime.memory);
+}
+
 /** Clamp mock latency to 10..600 ms (0 = timeout). */
 function mockDelayJitter(base, spread = 70) {
 	if (rand() < 0.05) return 0;
@@ -4790,6 +4823,7 @@ const server = http.createServer(async (req, res) => {
 			sendEvent('tunnel:traffic', event);
 		}
 		sendEvent('singbox:traffic', buildSingboxTrafficEvent());
+		emitSingboxRuntime(sendEvent);
 		for (const delay of currentSingboxDelays()) {
 			sendEvent('singbox:delay', delay);
 		}
@@ -4802,6 +4836,7 @@ const server = http.createServer(async (req, res) => {
 				sendEvent('tunnel:traffic', event);
 			}
 			sendEvent('singbox:traffic', buildSingboxTrafficEvent());
+			emitSingboxRuntime(sendEvent);
 			for (const delay of currentSingboxDelays()) {
 				sendEvent('singbox:delay', delay);
 			}
@@ -6731,10 +6766,15 @@ const server = http.createServer(async (req, res) => {
 				enabled: mockEngineRunning,
 				installed: true,
 				running: mockEngineRunning,
-				// Interception path live (chains + PREROUTING jumps) in tproxy; в
-				// policy-tun бэкенд считает active по running-config NDMS. fakeip-tun
-				// drives its own badge via routingMode.
-				active: mockEngineRunning && (routingMode === 'tproxy' || routingMode === 'policy-tun'),
+				// Захват действительно поднят. Поле РЕЖИМНОЕ и на бэкенде считается
+				// для всех трёх режимов (service_lifecycle.go, ветка «Active =
+				// interception path truly live, computed per routing mode»):
+				// tproxy — цепочки + jump'ы + сокеты; policy-tun — running-config
+				// NDMS; fakeip-tun — carrier tun + маршрут на fakeip-пул.
+				// Мок отдавал false в fakeip-tun («вкладка FakeIP считает своё
+				// состояние сама») — на единой странице «Движок» это выглядело бы
+				// как СБОЙ при живом движке, то есть мок врал бы против бэкенда.
+				active: mockEngineRunning,
 				version: '1.13.11',
 				configValid: true,
 				netfilterAvailable: true,
