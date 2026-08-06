@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import EngineExclusionsCard from './EngineExclusionsCard.svelte';
 import { singboxRouter } from '$lib/stores/singboxRouter';
-import type { SingboxRouterSettings } from '$lib/types';
+import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 import type { EngineRoutingMode } from './engineRunState';
 
 const { getSettings, putSettings } = vi.hoisted(() => ({
@@ -30,10 +30,42 @@ function setMode(routingMode: string, patch: Partial<SingboxRouterSettings> = {}
 	} as SingboxRouterSettings);
 }
 
+/** Состояние ядра из статуса: оно обнуляет классы QoS раньше самих классов. */
+function setStatus(patch: Partial<SingboxRouterStatus> = {}): void {
+	singboxRouter.applyStatus({
+		enabled: true,
+		installed: true,
+		active: true,
+		netfilterAvailable: true,
+		tproxyTargetAvailable: true,
+		policyName: 'SBRouter',
+		policyExists: true,
+		deviceMode: 'policy',
+		snifferEnabled: false,
+		deviceCount: 0,
+		ruleCount: 0,
+		ruleSetCount: 0,
+		outboundAwgCount: 0,
+		outboundCompositeCount: 0,
+		final: 'direct',
+		xtDscpAvailable: true,
+		...patch,
+	});
+}
+
+/** Подпись netfilter-блока — пустая строка, если её нет. */
+function netfilterNotice(container: HTMLElement): string {
+	const sec = [...container.querySelectorAll('.sec')].find((s) =>
+		s.querySelector('.sec-cap')?.textContent?.includes('Прямо в WAN'),
+	);
+	return (sec?.querySelector('.hint.warn, .sec-cap + .hint')?.textContent ?? '').trim();
+}
+
 describe('EngineExclusionsCard', () => {
 	beforeEach(() => {
 		getSettings.mockClear().mockResolvedValue({} as SingboxRouterSettings);
 		putSettings.mockClear();
+		setStatus();
 		setMode('tproxy');
 	});
 
@@ -105,14 +137,52 @@ describe('EngineExclusionsCard', () => {
 				})),
 			});
 			const { container } = render(EngineExclusionsCard);
-			const netfilterSection = [...container.querySelectorAll('.sec')].find((s) =>
-				s.textContent?.includes('Прямо в WAN'),
-			);
-			const notice = netfilterSection?.querySelector('.hint.warn, .sec-cap + .hint');
-			expect(netfilterSection).toBeTruthy();
-			expect((notice?.textContent ?? '').trim().length > 0).toBe(hasNotice);
+			expect(netfilterNotice(container).length > 0).toBe(hasNotice);
 		},
 	);
+
+	// ── Состояние ядра врёт так же, как врал режим ───────────────────────────
+	//
+	// Бэкенд обнуляет классы QoS при недоступном netfilter и непригодном
+	// xt_dscp РАНЬШЕ, чем смотрит на сами классы (policytun_enable.go:337-350).
+	// Считать одни классы — оставить ложь про модуль вместо лжи про режим.
+	it('в policy-tun с классом QoS, но без xt_dscp, карточка не обещает работу', () => {
+		setStatus({ xtDscpAvailable: false });
+		setMode('policy-tun', {
+			qosClasses: [{ dscp: 10, name: 'games', outbound: 'direct', enabled: true }],
+		});
+		const { container } = render(EngineExclusionsCard);
+		expect(netfilterNotice(container)).toMatch(/xt_dscp/);
+		expect(container.querySelector('.hint.warn')).not.toBeNull();
+	});
+
+	it('в policy-tun с классом QoS, но без netfilter, карточка не обещает работу', () => {
+		setStatus({ netfilterAvailable: false });
+		setMode('policy-tun', {
+			qosClasses: [{ dscp: 10, name: 'games', outbound: 'direct', enabled: true }],
+		});
+		const { container } = render(EngineExclusionsCard);
+		expect(netfilterNotice(container)).toMatch(/netfilter на роутере недоступен/);
+		expect(container.querySelector('.hint.warn')).not.toBeNull();
+	});
+
+	// Легаси-статус без поля: «не сказали» ≠ «сломано».
+	it('легаси-статус без xtDscpAvailable не выдаётся за поломку', () => {
+		setStatus({ xtDscpAvailable: undefined });
+		setMode('policy-tun', {
+			qosClasses: [{ dscp: 10, name: 'games', outbound: 'direct', enabled: true }],
+		});
+		const { container } = render(EngineExclusionsCard);
+		expect(netfilterNotice(container)).toMatch(/только внутри цепочки/);
+		expect(container.querySelector('.hint.warn')).toBeNull();
+	});
+
+	it('в tproxy недоступный xt_dscp на подпись не влияет', () => {
+		setStatus({ xtDscpAvailable: false });
+		setMode('tproxy');
+		const { container } = render(EngineExclusionsCard);
+		expect(netfilterNotice(container)).toBe('');
+	});
 
 	it('в FakeIP подпись предупреждающая и говорит, что настройка не применяется', () => {
 		setMode('fakeip-tun');

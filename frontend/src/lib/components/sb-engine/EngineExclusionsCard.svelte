@@ -26,13 +26,22 @@
 	import { netfilterExclusionsScope, partitionBypassPresets } from './exclusionsScope';
 
 	const routerSettings = singboxRouter.settings;
+	const routerStatus = singboxRouter.status;
 
 	const cfg = $derived($routerSettings);
 	const mode = $derived(normalizeRoutingMode($routerSettings?.routingMode));
 	// Считаем только ВКЛЮЧЁННЫЕ классы: выключенный класс не попадает в qosSpecs
-	// бэкенда, значит и netfilter-цепочку из-за него не поставят.
+	// бэкенда, значит и netfilter-цепочку из-за него не поставят. Состояние ядра
+	// обнуляет qosSpecs ещё раньше классов — поэтому статус тоже на входе.
 	const qosClassCount = $derived((cfg?.qosClasses ?? []).filter((c) => c.enabled).length);
-	const scope = $derived(netfilterExclusionsScope(mode, qosClassCount));
+	const scope = $derived(
+		netfilterExclusionsScope({
+			mode,
+			qosClassCount,
+			xtDscpAvailable: $routerStatus?.xtDscpAvailable,
+			netfilterAvailable: $routerStatus?.netfilterAvailable,
+		}),
+	);
 
 	const presets = partitionBypassPresets(BYPASS_PRESETS);
 	const active = $derived(cfg?.bypassPresets ?? []);

@@ -37,6 +37,11 @@
 
 	// route.final = direct — обязательное условие: при catch-all проксировании
 	// весь трафик и так идёт через sing-box, селективный ipset не имеет смысла.
+	//
+	// ВНИМАНИЕ НА ДЕФОЛТ. Пока статус роутера не пришёл, `final` НЕИЗВЕСТЕН, а не
+	// «direct»: подстановка нужна только чтобы не рисовать предупреждение о
+	// несовместимости на холодной загрузке. Решение «сохранять или нет»
+	// принимается не здесь — см. finalBlockReason().
 	const routeFinal = $derived($routerStatus?.final || 'direct');
 	const finalOk = $derived(routeFinal === 'direct');
 
@@ -110,10 +115,33 @@
 		}
 	}
 
+	/**
+	 * Почему включать нельзя — или null, если можно.
+	 *
+	 * Читает статус ПО ФАКТУ на момент клика, а не производное `finalOk`. Гард,
+	 * посчитанный из того же выражения, что и `disabled`, недостижим: до
+	 * обработчика клик просто не доходит. А дыра при этом остаётся — пока статус
+	 * не пришёл, `routeFinal` подставляет «direct», тумблер активен, и быстрый
+	 * клик в этом окне сохранил бы selectiveBypass при реальном final = proxy.
+	 * Поэтому «статус неизвестен» — отдельная причина отказа.
+	 */
+	function finalBlockReason(): string | null {
+		const st = get(routerStatus);
+		if (st === null) {
+			return 'Статус движка ещё не загружен — не знаем route.final. Повторите через секунду.';
+		}
+		return (st.final || 'direct') === 'direct'
+			? null
+			: 'Селективный перехват требует route.final = direct';
+	}
+
 	function toggle(checked: boolean): void {
-		if (checked && !finalOk) {
-			notifications.error('Селективный перехват требует route.final = direct');
-			return;
+		if (checked) {
+			const reason = finalBlockReason();
+			if (reason !== null) {
+				notifications.error(reason);
+				return;
+			}
 		}
 		void applyEngineSettings({ selectiveBypass: checked });
 	}

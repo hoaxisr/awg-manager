@@ -148,6 +148,26 @@ describe('EngineSelectiveCard', () => {
 		expect(getByText(/Установите final в «direct»/)).toBeTruthy();
 	});
 
+	// Дыра, которую `disabled` НЕ закрывает: пока статус роутера не пришёл,
+	// routeFinal подставляет «direct», тумблер активен — и клик в этом окне
+	// сохранил бы selectiveBypass при реальном final = proxy. Гард, посчитанный
+	// из того же выражения, что и `disabled`, до обработчика не доходит вовсе.
+	it('пока статус движка не загружен, включение отклоняется, а не сохраняется вслепую', async () => {
+		// Стор статуса снаружи read-only; null — ровно то состояние, с которого
+		// он стартует, поэтому сбрасываем тем же applyStatus.
+		singboxRouter.applyStatus(null as unknown as SingboxRouterStatus);
+		const { container } = render(EngineSelectiveCard);
+		const toggle = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+		expect(toggle.disabled).toBe(false);
+		await fireEvent.click(toggle);
+		await vi.waitFor(() =>
+			expect(get(notifications).some((n) => /route\.final/.test(n.message))).toBe(true),
+		);
+		expect(putSettings).not.toHaveBeenCalled();
+	});
+
+	// Обратная половина: с загруженным статусом и final = direct клик сохраняет.
+	// Без неё гард «отклонять всё подряд» прошёл бы тест выше.
 	it('при route.final = direct тумблер доступен', () => {
 		const { container } = render(EngineSelectiveCard);
 		const toggle = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -209,6 +229,39 @@ describe('EngineSelectiveCard', () => {
 		const { queryByText } = render(EngineSelectiveCard);
 		expect(queryByText('Записей в ipset')).toBeNull();
 		expect(queryByText('Пересобрать ipset')).toBeNull();
+	});
+
+	// Пересборку могли запустить НЕ отсюда: «Применить» в баннере, вторая
+	// вкладка, авто-пересборка на старте. Если кнопка держится только на
+	// локальном флаге, пользователь заходит на страницу, видит доступную кнопку
+	// и жмёт её поверх идущей работы.
+	it('пересборка, запущенная не отсюда, показывается на кнопке', () => {
+		setSelectiveEnabled(true);
+		selectiveBypass.applyStatus(sel({ rebuilding: true }));
+		const { getByText, queryByText } = render(EngineSelectiveCard);
+		expect(getByText('Пересборка…')).toBeTruthy();
+		expect(queryByText('Пересобрать ipset')).toBeNull();
+		expect(getByText('Пересборка…').closest('button')?.getAttribute('aria-busy')).toBe('true');
+	});
+
+	// Вторая половина того же: локальный флаг гаснет в finally сразу после 202,
+	// и дальше «Пересборка…» держится ровно на status.rebuilding из тела ответа.
+	it('после ответа 202 кнопка остаётся в пересборке по статусу, а не по флагу', async () => {
+		setSelectiveEnabled(true);
+		rebuild.mockResolvedValue(sel({ rebuilding: true }));
+		const { getByText } = render(EngineSelectiveCard);
+		await fireEvent.click(getByText('Пересобрать ipset'));
+		await vi.waitFor(() => expect(get(selectiveBypass.status)?.rebuilding).toBe(true));
+		expect(getByText('Пересборка…')).toBeTruthy();
+	});
+
+	it('завершение по SSE возвращает кнопку в исходное состояние', async () => {
+		setSelectiveEnabled(true);
+		selectiveBypass.applyStatus(sel({ rebuilding: true }));
+		const { getByText, queryByText } = render(EngineSelectiveCard);
+		expect(queryByText('Пересобрать ipset')).toBeNull();
+		selectiveBypass.applyStatus(sel({ rebuilding: false }));
+		await vi.waitFor(() => expect(getByText('Пересобрать ipset')).toBeTruthy());
 	});
 
 	it('кнопка «Пересобрать ipset» запускает пересборку и просит окно прогресса', async () => {

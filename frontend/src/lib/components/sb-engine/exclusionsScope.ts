@@ -18,6 +18,13 @@
 //                 настроен хотя бы один класс QoS. Без классов netfilter в этом
 //                 режиме не трогают вовсе — трафик заворачивает политика
 //                 доступа NDMS.
+//                 ВАЖНО: `qosSpecs` обнуляется ЕЩЁ ДВАЖДЫ до этой проверки —
+//                 при недоступном netfilter (`:337-341`) и при непригодном
+//                 xt_dscp (`:343-350`). Считать одни только включённые классы
+//                 значит врать ровно так же, как врал режимный гейт: «один
+//                 класс есть» при незагруженном xt_dscp даёт спокойную подпись
+//                 «действуют внутри цепочки QoS», хотя бэкенд не поставил
+//                 ничего и написал в журнал «классы QoS пропущены».
 //   fakeip-tun  — ни одного вызова resolveBypassPorts/resolveBypassCIDRs:
 //                 перехвата на netfilter нет, весь трафик заходит в sing-box
 //                 через tun. Порты и подсети не применяются вообще.
@@ -56,18 +63,29 @@ export interface ExclusionsScope {
 	notice: string | null;
 }
 
-/**
- * Что происходит с netfilter-исключениями в текущем режиме.
- *
- * @param mode           текущий режим захвата (нормализованный).
- * @param qosClassCount  сколько ВКЛЮЧЁННЫХ классов QoS настроено. Значим только
- *                       для policy-tun: без классов бэкенд не ставит там
- *                       netfilter вообще.
- */
-export function netfilterExclusionsScope(
-	mode: EngineRoutingMode,
-	qosClassCount: number,
-): ExclusionsScope {
+export interface ExclusionsScopeInput {
+	/** Текущий режим захвата (нормализованный). */
+	mode: EngineRoutingMode;
+	/**
+	 * Сколько ВКЛЮЧЁННЫХ классов QoS настроено. Выключенный класс не попадает в
+	 * `qosSpecs` бэкенда, значит цепочку из-за него не поставят.
+	 */
+	qosClassCount: number;
+	/**
+	 * `status.xtDscpAvailable`. Строго `false` — модуль точно непригоден;
+	 * `undefined` — бэкенд не сказал (легаси-ответ), и выдумывать поломку нельзя.
+	 * Тот же тристейт, что у соседа `QosSettingsCard` (`status.xtDscpAvailable
+	 * === false`).
+	 */
+	xtDscpAvailable?: boolean | null;
+	/** `status.netfilterAvailable`. Тот же тристейт. */
+	netfilterAvailable?: boolean | null;
+}
+
+/** Что происходит с netfilter-исключениями при текущем режиме и состоянии ядра. */
+export function netfilterExclusionsScope(input: ExclusionsScopeInput): ExclusionsScope {
+	const { mode, qosClassCount, xtDscpAvailable, netfilterAvailable } = input;
+
 	if (mode === 'fakeip-tun') {
 		return {
 			applies: false,
@@ -77,22 +95,50 @@ export function netfilterExclusionsScope(
 				'заработает после возврата на TPROXY.',
 		};
 	}
+
 	if (mode === 'policy-tun') {
-		return qosClassCount > 0
-			? {
-					applies: true,
-					notice:
-						'В режиме «Политики + tun» эти исключения действуют только внутри цепочки ' +
-						'QoS-классов — то есть на трафике, помеченном DSCP. Остальной трафик ' +
-						'заворачивает политика доступа NDMS, и порты с подсетями его не касаются.',
-				}
-			: {
-					applies: false,
-					notice:
-						'В режиме «Политики + tun» netfilter-правила ставятся только вместе с классами ' +
-						'QoS. Ни одного включённого класса нет — эти порты и подсети сейчас ни на что ' +
-						'не влияют.',
-				};
+		// Порядок веток повторяет порядок обнулений qosSpecs в
+		// policytun_enable.go: сначала netfilter, потом xt_dscp, потом сами классы.
+		// Называть надо ПЕРВУЮ причину — чинить пользователю именно её.
+		if (netfilterAvailable === false) {
+			return {
+				applies: false,
+				notice:
+					'В режиме «Политики + tun» netfilter-правила ставятся только вместе с классами ' +
+					'QoS, а классы сейчас пропущены: netfilter на роутере недоступен. Эти порты и ' +
+					'подсети ни на что не влияют.',
+			};
+		}
+		if (xtDscpAvailable === false) {
+			return {
+				applies: false,
+				notice:
+					'В режиме «Политики + tun» netfilter-правила ставятся только вместе с классами ' +
+					'QoS, а классы сейчас пропущены: модуль ядра xt_dscp недоступен. Эти порты и ' +
+					'подсети ни на что не влияют.',
+			};
+		}
+		if (qosClassCount === 0) {
+			return {
+				applies: false,
+				notice:
+					'В режиме «Политики + tun» netfilter-правила ставятся только вместе с классами ' +
+					'QoS. Ни одного включённого класса нет — эти порты и подсети сейчас ни на что ' +
+					'не влияют.',
+			};
+		}
+		return {
+			applies: true,
+			notice:
+				'В режиме «Политики + tun» эти исключения действуют только внутри цепочки ' +
+				'QoS-классов — то есть на трафике, помеченном DSCP. Остальной трафик ' +
+				'заворачивает политика доступа NDMS, и порты с подсетями его не касаются.',
+		};
 	}
+
+	// TPROXY: bypass уходит в RestoreInputSpec на всех путях, независимо от
+	// классов QoS и xt_dscp. Недоступный netfilter здесь не оговорка к
+	// исключениям, а смерть всего перехвата — об этом говорят пилюля состояния и
+	// карточка «Здоровье»; вторая копия той же тревоги тут была бы шумом.
 	return { applies: true, notice: null };
 }
