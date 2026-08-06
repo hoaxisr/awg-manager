@@ -4,6 +4,8 @@ export { default as EngineStatStrip } from './EngineStatStrip.svelte';
 export { default as EngineCaptureCard } from './EngineCaptureCard.svelte';
 export { default as EngineSelectiveCard } from './EngineSelectiveCard.svelte';
 export { default as EngineExclusionsCard } from './EngineExclusionsCard.svelte';
+export { default as EngineHealthCard } from './EngineHealthCard.svelte';
+export { default as EngineQosCard } from './EngineQosCard.svelte';
 export { CAPTURE_MODES, captureModeCopy, captureModeOptions, type CaptureModeCopy } from './captureModes';
 export { applyEngineSettings } from './engineSettings';
 export {
@@ -13,6 +15,14 @@ export {
 	partitionBypassPresets,
 	type ExclusionsScope,
 } from './exclusionsScope';
+export {
+	UDP_TIMEOUT_OPTIONS,
+	engineCrashInfo,
+	engineDeps,
+	engineIssues,
+	type CrashInfoView,
+	type UdpTimeoutOption,
+} from './healthRows';
 export {
 	canOpenEngineFatal,
 	deriveEnginePill,

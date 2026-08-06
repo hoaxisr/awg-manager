@@ -5,7 +5,10 @@
 import type { SingboxRouterStatus, SingboxRouterIssue } from '$lib/types';
 
 export type DepTone = 'success' | 'error' | 'warning' | 'info' | 'muted';
+/** Устойчивый идентификатор строки — по нему потребители гейтят зависимость по режиму (label — текст для глаз). */
+export type DepId = 'netfilter' | 'tproxy-target';
 export interface DepEntry {
+  id: DepId;
   tone: DepTone;
   label: string;
   hint: string;
@@ -23,6 +26,7 @@ export function deriveDeps(status: SingboxRouterStatus | null): DepEntry[] {
   if (!status) return [];
   return [
     {
+      id: 'netfilter',
       tone: status.netfilterAvailable ? 'success' : 'error',
       label: 'netfilter',
       hint: status.netfilterAvailable
@@ -30,6 +34,7 @@ export function deriveDeps(status: SingboxRouterStatus | null): DepEntry[] {
         : 'не загружен — установите ndm-mod-netfilter',
     },
     {
+      id: 'tproxy-target',
       tone: status.tproxyTargetAvailable ? 'success' : 'error',
       label: 'TPROXY target',
       hint: status.tproxyTargetAvailable
