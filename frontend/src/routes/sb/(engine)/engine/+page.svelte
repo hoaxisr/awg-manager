@@ -2,18 +2,17 @@
 	// Страница «Движок» — состояние и настройки движка sing-box по разделу 3
 	// спеки docs/superpowers/specs/2026-08-04-nav-v3-5d-singbox-design.md.
 	//
-	// Пустой каркас: волна 5D2a вынесла отсюда временное содержимое старой
-	// /sb/routing (обе поверхности, TProxy и FakeIP, с переключателем ?view=),
-	// наполняют страницу задачи 3-7 той же волны. До них живых редакторов
-	// правил, DNS, наборов, групп и inbounds в приложении нет — осознанная цена
-	// того, что каждая следующая задача строит настоящую страницу, а не рисует
-	// поверх старой.
+	// Готово: шапка (состояние, режим, управление) и стат-полоса. Карточки
+	// «Захват трафика», «Селективный перехват», «Исключения», «Здоровье»,
+	// «QoS» и «Конфигурация» наполняют задачи 4-7 той же волны.
 	//
 	// Общие механики группы — в (engine)/+layout.svelte: ModeSwitchHost, баннер
 	// черновика, окно пересборки ipset, гейт «Sing-box не установлен» и
 	// напоминание о непринятом черновике. Статус и настройки движка праймит
-	// /sb/+layout.svelte.
-	import { PageContainer, PageHeader } from '$lib/components/layout';
+	// /sb/+layout.svelte, живые соединения биндит он же — страница ничего из
+	// этого не заводит повторно.
+	import { PageContainer } from '$lib/components/layout';
+	import { EngineHeader, EngineStatStrip } from '$lib/components/sb-engine';
 </script>
 
 <svelte:head>
@@ -21,5 +20,6 @@
 </svelte:head>
 
 <PageContainer>
-	<PageHeader title="Движок" />
+	<EngineHeader />
+	<EngineStatStrip />
 </PageContainer>

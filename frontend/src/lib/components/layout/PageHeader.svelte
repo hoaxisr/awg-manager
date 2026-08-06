@@ -6,10 +6,17 @@
         title: string;
         description?: string;
         actions?: Snippet;
+        /**
+         * Пилюли/бейджи в одну строку с заголовком (состояние и режим движка).
+         * Отдельный сниппет, а не часть `actions`: это утверждение о странице,
+         * а не действие, и на узком экране оно обязано остаться у заголовка,
+         * тогда как actions уезжают на свою строку.
+         */
+        badges?: Snippet;
         backTo?: string;
     }
 
-    let { title, description, actions, backTo }: Props = $props();
+    let { title, description, actions, badges, backTo }: Props = $props();
 </script>
 
 <div class="page-header">
@@ -18,7 +25,12 @@
             <BackLink href={backTo} />
         {/if}
         <div>
-            <h1>{title}</h1>
+            <div class="title-row">
+                <h1>{title}</h1>
+                {#if badges}
+                    {@render badges()}
+                {/if}
+            </div>
             {#if description}
                 <p class="description">{description}</p>
             {/if}
@@ -45,6 +57,17 @@
         display: flex;
         align-items: center;
         gap: 1rem;
+        min-width: 0;
+    }
+
+    /* Бейджи переносятся под заголовок, а не растягивают строку: заголовки
+       страниц бывают из одного длинного слова, и flex-строка без переноса
+       уехала бы за вьюпорт (body скрывает overflow-x). */
+    .title-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
         min-width: 0;
     }
 
