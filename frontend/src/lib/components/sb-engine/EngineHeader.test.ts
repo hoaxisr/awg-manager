@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { render, fireEvent } from '@testing-library/svelte';
 import EngineHeader from './EngineHeader.svelte';
@@ -8,12 +8,15 @@ import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 
 // Мокаем весь клиент: компонент дёргает singboxControl('restart'), а стор
 // статуса следом перечитывает состояние — обе ручки должны быть безобидными.
-const { singboxControl, singboxRouterStatus } = vi.hoisted(() => ({
+const { singboxControl, singboxRouterStatus, singboxRouterSwitchMode } = vi.hoisted(() => ({
 	singboxControl: vi.fn(async () => ({})),
 	singboxRouterStatus: vi.fn(async () => ({ enabled: true, active: true })),
+	// Нужна тестам «переключение в полёте»: modeSwitch.confirm() уносит запрос
+	// смены режима в API и только после этого переводит фазу в 'running'.
+	singboxRouterSwitchMode: vi.fn(async () => ({})),
 }));
 vi.mock('$lib/api/client', () => ({
-	api: { singboxControl, singboxRouterStatus },
+	api: { singboxControl, singboxRouterStatus, singboxRouterSwitchMode },
 	ApiGatewayError: class ApiGatewayError extends Error {},
 }));
 
@@ -44,6 +47,15 @@ describe('EngineHeader', () => {
 		singboxControl.mockClear();
 		modeSwitch.cancel();
 		setEngine({ enabled: true, active: true }, 'tproxy');
+	});
+
+	// Тест, доводящий переключение до фазы 'running', оставляет за собой сторож
+	// SSE-потери (интервал) — гасит его только closeProgress. Он же возвращает
+	// фазу в idle, иначе следующий тест стартует с «занятым» переключателем.
+	// Побочный loadAll внутри безвреден: в моке клиента нет половины ручек,
+	// Promise.all падает до первой записи в стор.
+	afterEach(() => {
+		modeSwitch.closeProgress();
 	});
 
 	it('называет страницу «Движок»', () => {
@@ -150,6 +162,49 @@ describe('EngineHeader', () => {
 		const { getByRole } = render(EngineHeader);
 		await fireEvent.click(getByRole('button', { name: 'Перезапустить' }));
 		expect(singboxControl).toHaveBeenCalledWith('restart');
+	});
+
+	// ── Гарды на время смены режима ──────────────────────────────────────────
+	// Переключение идёт минуты. Пока оно в полёте, кнопки шапки обязаны быть
+	// заблокированы: повторный клик по «Выключить» зовёт modeSwitch.request
+	// второй раз, а рестарт бьёт по движку, который сейчас пересобирают.
+	// Ревью задачи 3 сняло обе блокировки — все тесты остались зелёными.
+
+	it('пока смена режима идёт, «Выключить» заблокирована', () => {
+		setEngine({ enabled: true, active: true }, 'tproxy');
+		modeSwitch.request('policy-tun'); // phase = confirming → busy
+		const { getByRole } = render(EngineHeader);
+		expect(getByRole('button', { name: 'Выключить' })).toHaveProperty('disabled', true);
+	});
+
+	it('пока смена режима идёт, «Перезапустить» заблокирована', () => {
+		setEngine({ enabled: true, active: true }, 'tproxy');
+		modeSwitch.request('policy-tun');
+		const { getByRole } = render(EngineHeader);
+		expect(getByRole('button', { name: 'Перезапустить' })).toHaveProperty('disabled', true);
+	});
+
+	it('пока смена режима идёт, «Включить» заблокирована', () => {
+		setEngine({ enabled: false, active: false }, 'tproxy');
+		modeSwitch.request('fakeip-tun');
+		const { getByRole } = render(EngineHeader);
+		expect(getByRole('button', { name: 'Включить' })).toHaveProperty('disabled', true);
+	});
+
+	// Почему проверка именно на `disabled`, а не на «клик ничего не сделал».
+	// Гард — единственная защита: `modeSwitch.request` внутреннего busy-гарда НЕ
+	// имеет и перепишет цель уже идущего переключения. Браузер клик по
+	// disabled-кнопке не доставляет, а jsdom доставляет (fireEvent диспатчит
+	// событие напрямую), поэтому тест «клик не меняет цель» здесь проверял бы
+	// поведение jsdom, а не наше.
+
+	it('пока смена режима идёт, пилюля говорит «Переключение…», а не «СБОЙ»', async () => {
+		setEngine({ enabled: true, active: false, lastError: 'boom' }, 'tproxy');
+		modeSwitch.request('policy-tun');
+		await modeSwitch.confirm(); // phase = running — переключение в полёте
+		const { getByText, queryByText } = render(EngineHeader);
+		expect(getByText('Переключение…')).toBeTruthy();
+		expect(queryByText('СБОЙ')).toBeNull();
 	});
 
 	// Аптайма в DTO статуса нет: макет рисует «Работает · 4д 02ч», и скопировать

@@ -26,7 +26,7 @@
 /** Режимы захвата. Строка с провода нормализуется через normalizeRoutingMode. */
 export type EngineRoutingMode = 'tproxy' | 'policy-tun' | 'fakeip-tun';
 
-export type EngineRunState = 'off' | 'running' | 'failed';
+export type EngineRunState = 'off' | 'running' | 'failed' | 'switching';
 
 export type EnginePillTone = 'success' | 'error' | 'muted';
 
@@ -37,6 +37,19 @@ export interface EngineStatusInput {
 	active: boolean;
 	/** settings.routingMode. Отсутствует на легаси-ответах. */
 	routingMode: string | null | undefined;
+	/**
+	 * Смена режима В ПОЛЁТЕ (modeSwitch.phase === 'running').
+	 *
+	 * Зачем состояние вообще есть. Переключение идёт минуты, и в его середине
+	 * бэкенд честно отдаёт enabled=true при active=false — по деривации это
+	 * «СБОЙ». Пока движок сознательно разбирают и собирают заново, сбоем это не
+	 * является: пилюля мигала бы красным на ровном месте (concern задачи 3).
+	 *
+	 * Фаза именно 'running', а НЕ modeSwitchBusy: на 'confirming' ещё ничего не
+	 * произошло, движок работает, и подменять его состояние из-за открытого
+	 * диалога было бы враньём в обратную сторону.
+	 */
+	switching?: boolean;
 }
 
 export interface EnginePill {
@@ -75,6 +88,16 @@ const FAILURE_HINTS: Record<EngineRoutingMode, string> = {
 
 export function deriveEnginePill(input: EngineStatusInput): EnginePill {
 	const mode = normalizeRoutingMode(input.routingMode);
+	// Раньше всех остальных веток: во время смены режима и enabled, и active
+	// проходят промежуточные значения, каждое из которых по отдельности врёт.
+	if (input.switching) {
+		return {
+			state: 'switching',
+			label: 'Переключение…',
+			tone: 'muted',
+			hint: 'Идёт смена режима захвата: движок останавливается и поднимается заново.',
+		};
+	}
 	if (!input.enabled) {
 		return {
 			state: 'off',
@@ -96,6 +119,9 @@ export function deriveEnginePill(input: EngineStatusInput): EnginePill {
  * где activeMode знал только tproxy и policy-tun. Перенос этого условия дал бы
  * пустую полосу при живом fakeip-движке — регресс против «Обзора» FakeIP, где
  * те же числа показываются.
+ *
+ * Во время смены режима (`switching`) числа тоже гасятся: движок перезапускают,
+ * счётчики Clash API остались от прежнего запуска.
  */
 export function isEngineRunning(input: EngineStatusInput): boolean {
 	return deriveEnginePill(input).state === 'running';

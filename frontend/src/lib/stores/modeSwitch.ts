@@ -37,6 +37,16 @@ export function modeSwitchBusy(s: ModeSwitchState): boolean {
 	return s.phase !== 'idle';
 }
 
+/**
+ * Смена режима реально ИДЁТ (запрос ушёл, финал не пришёл) — в отличие от
+ * `modeSwitchBusy`, который включает и открытый диалог подтверждения, когда с
+ * движком ещё ничего не произошло. Нужно состоянию движка: пока переключение в
+ * полёте, промежуточные enabled/active врут (см. EngineStatusInput.switching).
+ */
+export function modeSwitchInFlight(s: ModeSwitchState): boolean {
+	return s.phase === 'running';
+}
+
 /** How often the SSE-loss watchdog re-polls backend status. */
 const WATCHDOG_POLL_MS = 5000;
 /** Hard cap: a switch that reported nothing for this long is declared failed. */

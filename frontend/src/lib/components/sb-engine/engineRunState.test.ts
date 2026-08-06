@@ -63,6 +63,54 @@ describe('deriveEnginePill', () => {
 		expect(new Set(hints).size).toBe(3);
 	});
 
+	// Смена режима идёт минуты, и в её середине бэкенд честно отдаёт
+	// enabled=true при active=false — красная пилюля «СБОЙ» на ровном месте.
+	// Признак переключения обязан перебивать ОБЕ ветки: и сбой, и «выключен»
+	// (при переходе в 'off' enabled успевает стать false раньше финала).
+	it.each(MODES)('во время смены режима в %s — «Переключение…», а не «СБОЙ»', (routingMode) => {
+		const pill = deriveEnginePill({
+			enabled: true,
+			active: false,
+			routingMode,
+			switching: true,
+		});
+		expect(pill.state).toBe('switching');
+		expect(pill.label).toBe('Переключение…');
+		expect(pill.tone).toBe('muted');
+	});
+
+	it('во время смены режима «Работает» тоже не утверждаем', () => {
+		const pill = deriveEnginePill({
+			enabled: true,
+			active: true,
+			routingMode: 'tproxy',
+			switching: true,
+		});
+		expect(pill.state).toBe('switching');
+	});
+
+	it('выключение движка тоже показывается как переключение, а не «Выключен»', () => {
+		const pill = deriveEnginePill({
+			enabled: false,
+			active: false,
+			routingMode: 'fakeip-tun',
+			switching: true,
+		});
+		expect(pill.state).toBe('switching');
+	});
+
+	// Отсутствие поля — обычное состояние: признак есть только у страницы
+	// «Движок», остальные читатели его не передают.
+	it('без признака переключения деривация прежняя', () => {
+		expect(deriveEnginePill({ enabled: true, active: false, routingMode: 'tproxy' }).state).toBe(
+			'failed',
+		);
+		expect(
+			deriveEnginePill({ enabled: true, active: false, routingMode: 'tproxy', switching: false })
+				.state,
+		).toBe('failed');
+	});
+
 	// Легаси-ответ без routingMode обязан читаться как tproxy, а не давать
 	// пустую подсказку.
 	it('пустой routingMode трактуется как tproxy', () => {
@@ -94,6 +142,14 @@ describe('isEngineRunning — гейт живых чисел', () => {
 	it.each(MODES)('движок не поднят в режиме %s — чисел нет', (routingMode) => {
 		expect(isEngineRunning({ enabled: true, active: false, routingMode })).toBe(false);
 		expect(isEngineRunning({ enabled: false, active: false, routingMode })).toBe(false);
+	});
+
+	// Счётчики Clash API остались от прежнего запуска движка — во время смены
+	// режима они не «живые числа», а память о предыдущем режиме.
+	it.each(MODES)('во время смены режима в %s числа гасятся', (routingMode) => {
+		expect(isEngineRunning({ enabled: true, active: true, routingMode, switching: true })).toBe(
+			false,
+		);
 	});
 });
 

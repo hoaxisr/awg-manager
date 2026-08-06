@@ -21,6 +21,7 @@
 	// Значения «—», а не скрытая секция: полоса — часть шапки страницы, и её
 	// исчезновение дёргало бы всю раскладку при каждом выключении движка.
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { modeSwitch, modeSwitchInFlight } from '$lib/stores/modeSwitch';
 	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
 	import {
@@ -38,6 +39,9 @@
 			enabled: $status?.enabled ?? false,
 			active: $status?.active ?? false,
 			routingMode: $settings?.routingMode,
+			// Во время смены режима движок перезапускают: счётчики Clash API
+			// остались от прежнего запуска, показывать их как живые нельзя.
+			switching: modeSwitchInFlight($modeSwitch),
 		}),
 	);
 

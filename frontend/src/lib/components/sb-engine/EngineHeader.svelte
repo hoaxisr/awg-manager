@@ -17,7 +17,7 @@
 	import { PageHeader } from '$lib/components/layout';
 	import { api } from '$lib/api/client';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
-	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
+	import { modeSwitch, modeSwitchBusy, modeSwitchInFlight } from '$lib/stores/modeSwitch';
 	import { notifications } from '$lib/stores/notifications';
 	import { humanLabel } from '$lib/components/fakeip/switchConsequences';
 	import EngineFatalModal from '$lib/components/sb-router/EngineFatalModal.svelte';
@@ -37,6 +37,7 @@
 			enabled,
 			active: $status?.active ?? false,
 			routingMode: $settings?.routingMode,
+			switching: modeSwitchInFlight($modeSwitch),
 		}),
 	);
 	const fatalClickable = $derived(canOpenEngineFatal(pill, lastError));
@@ -66,8 +67,8 @@
 	// Целевой режим кнопки «Включить»: persisted routingMode. Бэкенд после
 	// SwitchMode('off') оставляет routingMode прежним, поэтому выключенный
 	// движок включается тем же режимом, каким работал. Выбор ДРУГОГО режима —
-	// карточка «Захват трафика» (следующая задача волны); когда она появится,
-	// цель приедет оттуда, а не отсюда.
+	// пикер в карточке «Захват трафика»: там клик по режиму сам зовёт
+	// modeSwitch.request, то есть включает движок выбранным режимом.
 	function turnOn(): void {
 		modeSwitch.request(mode);
 	}

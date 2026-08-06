@@ -100,7 +100,9 @@
 
   {#if ndmsName}
     <p class="hint">Виден в политиках доступа как <strong>{ndmsName}</strong>.</p>
-    <Button variant="ghost" size="sm" fullWidth href="/routing?tab=policy">
+    <!-- Адрес nav-v3: страницы /routing больше нет (её разобрали на «Роутер»),
+         старая ссылка вела в 404. Тот же путь, что у подсказки FakeIP. -->
+    <Button variant="ghost" size="sm" href="/router/policies">
       Политики доступа →
     </Button>
   {:else}
@@ -193,6 +195,11 @@
     gap: 10px;
   }
   .sec:last-of-type { border-bottom: 0; }
+  /* Ссылка на политики — по содержимому, а не во всю строку: fullWidth был
+     нужен шторке шириной 420px, на всю ширину страницы он растягивал кнопку
+     через всю карточку. Правило :global — scoped-CSS не достаёт до разметки
+     дочернего компонента. */
+  .sec > :global(.btn) { align-self: flex-start; }
   .sec-cap {
     font-size: 11px;
     font-weight: 600;

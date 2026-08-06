@@ -3,6 +3,7 @@ import { render } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import EngineStatStrip from './EngineStatStrip.svelte';
 import { singboxRouter } from '$lib/stores/singboxRouter';
+import { modeSwitch } from '$lib/stores/modeSwitch';
 import { singboxMemory } from '$lib/stores/singboxMemory';
 import { singboxTrafficTotals } from '$lib/stores/singbox';
 import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
@@ -25,6 +26,14 @@ const { snapshotStore, wsStatusStore } = await vi.hoisted(async () => {
 vi.mock('$lib/components/sb-router/liveConnectionsStore', () => ({
 	liveConnectionsSnapshot: snapshotStore,
 	liveConnectionsWsStatus: wsStatusStore,
+}));
+
+// Клиент нужен тесту «смена режима в полёте»: modeSwitch.confirm() уносит
+// запрос в API и только потом переводит фазу в 'running'. Полосе сам клиент не
+// нужен ни для чего другого.
+vi.mock('$lib/api/client', () => ({
+	api: { singboxRouterSwitchMode: vi.fn(async () => ({})) },
+	ApiGatewayError: class ApiGatewayError extends Error {},
 }));
 
 const MB = 1024 * 1024;
@@ -90,6 +99,9 @@ describe('EngineStatStrip', () => {
 	});
 
 	afterEach(() => {
+		// Возвращаем переключатель в idle и гасим сторож SSE-потери, иначе
+		// следующий тест стартует с «переключением в полёте».
+		modeSwitch.closeProgress();
 		vi.restoreAllMocks();
 	});
 
@@ -113,6 +125,21 @@ describe('EngineStatStrip', () => {
 		expect(getByText('142')).toBeTruthy();
 		expect(getByText('2 GB')).toBeTruthy();
 		expect(queryAllByText('—')).toHaveLength(0);
+	});
+
+	// Во время смены режима движок перезапускают: числа в сторах остались от
+	// прежнего запуска, а Clash после рестарта начинает счёт заново. Показывать
+	// их как живые нельзя — гейт обязан читать признак переключения.
+	it('пока смена режима идёт, числа гасятся', async () => {
+		setEngine({ enabled: true, active: true }, 'tproxy');
+		singboxMemory.set(40 * MB);
+		setConnections(142);
+		modeSwitch.request('policy-tun');
+		await modeSwitch.confirm(); // фаза running — переключение в полёте
+		const { queryAllByText, queryByText } = await renderWithTraffic(2 * GB, 512 * MB);
+		expect(queryAllByText('—')).toHaveLength(4);
+		expect(queryByText('40 MB')).toBeNull();
+		expect(queryByText('142')).toBeNull();
 	});
 
 	// Гейт честности: сторы держат последние значения после остановки движка —
