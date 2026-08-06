@@ -40,7 +40,10 @@
  * - GET  /__mock/capabilities — fixture map and runtime state;
  * - GET  /__mock/tunnels — normalized tunnel catalog used by mock surfaces;
  * - POST /__mock/reset-runtime (alias /__mock/reset) — reset volatile runtime switches;
- * - POST /__mock/singbox-install-fail {"enabled": true|false}.
+ * - POST /__mock/singbox-install-fail {"enabled": true|false};
+ * - POST /__mock/engine-fault {"enabled": true|false} — движок «СБОЙ»
+ *   (enabled=true, active=false) с lastError и crash-статистикой #456.
+ *   Env-эквивалент: MOCK_ENGINE_FAULT=1.
  *
  * Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
  */
@@ -128,6 +131,7 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 			'POST /__mock/reset-runtime',
 			'POST /__mock/reset',
 			'POST /__mock/singbox-install-fail',
+			'POST /__mock/engine-fault',
 			'POST /__mock/download-faults',
 			'POST /__mock/keenetic-os',
 		],
@@ -165,6 +169,7 @@ function getRuntimeState() {
 		updateChannel,
 		updateCheckEnabled,
 		singboxInstallShouldFail,
+		mockEngineFault,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -180,6 +185,7 @@ function resetRuntimeControls() {
 	updateChannel = DEFAULT_MOCK_STATE.updateChannel;
 	updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
+	mockEngineFault = process.env.MOCK_ENGINE_FAULT === '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -2049,6 +2055,18 @@ function moveMockRejectedToInfo(sub, memberTag) {
 
 // ── Wizard mock state ──────────────────────────────────────────
 let mockEngineRunning = false;
+// Движок включён, но перехват НЕ поднят («СБОЙ»): enabled=true при active=false.
+// Отдельный переключатель, потому что вживую это состояние приходит от
+// упавшего sing-box, а мок таким состоянием не располагает — active он выводит
+// из mockEngineRunning. Без переключателя недостижимы: пилюля «СБОЙ» и её
+// EngineFatalModal, блок падений (#456) в карточке «Здоровье» и замечание
+// engine-dead-interception. Включается MOCK_ENGINE_FAULT=1 или
+// POST /__mock/engine-fault {"enabled": true}.
+let mockEngineFault = process.env.MOCK_ENGINE_FAULT === '1';
+// Стенд без модулей ядра: netfilter / xt_TPROXY / xt_dscp недоступны. Идиома
+// та же, что у MOCK_IPSET_MISSING: красные строки зависимостей и предупреждение
+// «Модуль ядра xt_dscp недоступен» иначе не увидеть.
+const mockKmodsMissing = process.env.MOCK_KMODS_MISSING === '1';
 let mockSBPolicyExists = false;
 // Применённый (а не желаемый) source-preserve policy-tun: бэкенд ставит
 // static-NAT при поднятии режима, поэтому включение вживую расходится с
@@ -5701,6 +5719,20 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Движок в состоянии «СБОЙ»: enabled=true, active=false, есть lastError и
+	// crash-статистика #456. Тело: {"enabled": true|false}.
+	if (req.method === 'POST' && path === '/__mock/engine-fault') {
+		try {
+			const body = await readJsonBody(req);
+			mockEngineFault = !!body.enabled;
+			send(res, 200, { ok: true, mockEngineFault });
+			console.log(`[mock-proxy] mockEngineFault → ${mockEngineFault}`);
+		} catch (e) {
+			send(res, 400, { error: String(e) });
+		}
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
@@ -6900,12 +6932,27 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'GET' && path === '/singbox/router/status') {
 		const routingMode = mockSBSettings.routingMode || 'tproxy';
+		// «СБОЙ» = движок включён, но перехват не поднят. Бэкенд светит
+		// lastError ровно по этому условию (`sr.Enabled && !active`,
+		// service_lifecycle.go) и вместе с ним отдаёт crash-статистику #456.
+		const faulted = mockEngineRunning && mockEngineFault;
+		const crashFields = faulted
+			? {
+					lastError:
+						'FATAL[0000] start service: initialize inbound/tproxy-in: listen tcp 0.0.0.0:7893: bind: address already in use',
+					crashCount: 3,
+					lastCrashReason: 'сигнал 9 (OOM-killer): процесс убит из-за нехватки памяти',
+					// Пауза анти-crash-loop backoff'а — всегда в будущем, иначе
+					// фронт покажет прошедшее время как действующее.
+					restartSuppressedUntil: new Date(Date.now() + 4 * 60 * 1000).toISOString(),
+				}
+			: {};
 		send(res, 200, {
 			success: true,
 			data: {
 				enabled: mockEngineRunning,
 				installed: true,
-				running: mockEngineRunning,
+				running: mockEngineRunning && !faulted,
 				// Захват действительно поднят. Поле РЕЖИМНОЕ и на бэкенде считается
 				// для всех трёх режимов (service_lifecycle.go, ветка «Active =
 				// interception path truly live, computed per routing mode»):
@@ -6914,10 +6961,20 @@ const server = http.createServer(async (req, res) => {
 				// Мок отдавал false в fakeip-tun («вкладка FakeIP считает своё
 				// состояние сама») — на единой странице «Движок» это выглядело бы
 				// как СБОЙ при живом движке, то есть мок врал бы против бэкенда.
-				active: mockEngineRunning,
+				active: mockEngineRunning && !faulted,
 				version: '1.13.11',
 				configValid: true,
-				netfilterAvailable: true,
+				netfilterAvailable: !mockKmodsMissing,
+				// Три поля готовности ядра бэкенд сериализует ВСЕГДА (без
+				// omitempty, singbox_router_dto.go). Мок отдавал только
+				// netfilterAvailable, поэтому строка «TPROXY target» в карточке
+				// «Здоровье» на стенде вечно горела красным «kmod не доступен»,
+				// а предупреждение QoS про xt_dscp (строгое `=== false`) было
+				// недостижимо вовсе.
+				netfilterComponentName: 'Модули ядра подсистемы сетевой фильтрации',
+				tproxyTargetAvailable: !mockKmodsMissing,
+				xtDscpAvailable: !mockKmodsMissing,
+				...crashFields,
 				policyName: mockSBPolicyExists ? 'SBRouter' : '',
 				// policyExists / deviceCount бэкенд сериализует ВСЕГДА (types.go,
 				// без omitempty): «политика жива» и «сколько в ней устройств» —
@@ -8427,7 +8484,8 @@ snapshotAppliedSlot();
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
-	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/engine-fault, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log(`[mock-proxy] engine fault: ${mockEngineFault} (движок «СБОЙ» + падения #456; MOCK_ENGINE_FAULT=1 или POST /__mock/engine-fault), kmods missing: ${mockKmodsMissing} (MOCK_KMODS_MISSING=1)`);
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
