@@ -121,6 +121,38 @@ describe('EngineConfigCard', () => {
 		await vi.waitFor(() => expect(configSlots.mock.calls.length).toBe(before + 1));
 	});
 
+	// Подсказка чипа проверена как строка в configSlots.test.ts — здесь ровно
+	// то, что тот тест проверить не может: что она доезжает до атрибута.
+	it('подсказка чипа попадает в DOM', async () => {
+		configSlots.mockResolvedValue({ slots: [slot()] });
+		const { container } = render(EngineConfigCard);
+		await vi.waitFor(() => expect(container.querySelectorAll('.chip')).toHaveLength(1));
+		expect(container.querySelector('.chip')?.getAttribute('title')).toContain('20-tproxy.json');
+	});
+
+	// ── «Итоговый конфиг» изнутри шторки слотов ─────────────────────────────
+
+	it('«Итоговый конфиг» из шторки слотов закрывает список и открывает JSON', async () => {
+		const { getByText, getByRole, queryByRole } = render(EngineConfigCard);
+		await fireEvent.click(getByText('Редактор'));
+		await fireEvent.click(getByText('Итоговый конфиг'));
+		expect(queryByRole('dialog', { name: 'Конфигурация sing-box' })).toBeNull();
+		expect(getByRole('dialog', { name: 'Конфиг sing-box' })).toBeTruthy();
+		await vi.waitFor(() => expect(configPreview).toHaveBeenCalled());
+	});
+
+	// Тот же инвариант, что и у закрытия крестиком: в редакторе слот включают,
+	// выключают и применяют черновик, и путь «К списку → Итоговый конфиг»
+	// оставлял бы под шторкой доreload-ные чипы.
+	it('«Итоговый конфиг» из шторки слотов обновляет чипы', async () => {
+		const { getByText } = render(EngineConfigCard);
+		await vi.waitFor(() => expect(configSlots).toHaveBeenCalledTimes(1));
+		await fireEvent.click(getByText('Редактор'));
+		const before = configSlots.mock.calls.length;
+		await fireEvent.click(getByText('Итоговый конфиг'));
+		await vi.waitFor(() => expect(configSlots.mock.calls.length).toBe(before + 1));
+	});
+
 	// Упавший запрос и пустой ответ — разные состояния: «слотов нет» на месте
 	// сетевой ошибки сказало бы, что конфиг пуст, хотя мы про него ничего не знаем.
 	it('упавший запрос слотов не роняет кнопки и виден отдельным состоянием', async () => {
