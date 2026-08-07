@@ -4,19 +4,32 @@ import { render, fireEvent } from '@testing-library/svelte';
 import EngineHeader from './EngineHeader.svelte';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import { modeSwitch } from '$lib/stores/modeSwitch';
+import { applyEngineSettings, resetEngineSaveState } from './engineSettings';
 import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 
 // Мокаем весь клиент: компонент дёргает singboxControl('restart'), а стор
 // статуса следом перечитывает состояние — обе ручки должны быть безобидными.
-const { singboxControl, singboxRouterStatus, singboxRouterSwitchMode } = vi.hoisted(() => ({
-	singboxControl: vi.fn(async () => ({})),
-	singboxRouterStatus: vi.fn(async () => ({ enabled: true, active: true })),
-	// Нужна тестам «переключение в полёте»: modeSwitch.confirm() уносит запрос
-	// смены режима в API и только после этого переводит фазу в 'running'.
-	singboxRouterSwitchMode: vi.fn(async () => ({})),
-}));
+const { singboxControl, singboxRouterStatus, singboxRouterSwitchMode, getSettings, putSettings } =
+	vi.hoisted(() => ({
+		singboxControl: vi.fn(async () => ({})),
+		singboxRouterStatus: vi.fn(async () => ({ enabled: true, active: true })),
+		// Нужна тестам «переключение в полёте»: modeSwitch.confirm() уносит запрос
+		// смены режима в API и только после этого переводит фазу в 'running'.
+		singboxRouterSwitchMode: vi.fn(async () => ({})),
+		// Индикатор автосохранения питает applyEngineSettings → mergeAndSaveSettings
+		// (GET → PUT → loadAll). loadAll глотает свои отказы сам, поэтому
+		// остальные ручки мокать не нужно.
+		getSettings: vi.fn(async () => ({ routingMode: 'tproxy' })),
+		putSettings: vi.fn(async (_next: unknown) => ({})),
+	}));
 vi.mock('$lib/api/client', () => ({
-	api: { singboxControl, singboxRouterStatus, singboxRouterSwitchMode },
+	api: {
+		singboxControl,
+		singboxRouterStatus,
+		singboxRouterSwitchMode,
+		singboxRouterGetSettings: getSettings,
+		singboxRouterPutSettings: putSettings,
+	},
 	ApiGatewayError: class ApiGatewayError extends Error {},
 }));
 
@@ -212,5 +225,38 @@ describe('EngineHeader', () => {
 	it('время работы не показывает', () => {
 		const { getByText } = render(EngineHeader);
 		expect(getByText('Работает').textContent).not.toMatch(/\d/);
+	});
+
+	// E08: полей с автосохранением на странице больше десятка, кнопки
+	// «Сохранить» нет. Индикатор — единственный признак, что правка доехала.
+	describe('индикатор автосохранения', () => {
+		afterEach(resetEngineSaveState);
+
+		it('до первого сохранения ничего не показывает', () => {
+			const { queryByText } = render(EngineHeader);
+			expect(queryByText('✓ Сохранено')).toBeNull();
+			expect(queryByText('Сохраняем…')).toBeNull();
+		});
+
+		it('показывает состояние сохранения из общего стора', async () => {
+			const { getByText, queryByText } = render(EngineHeader);
+			let release: () => void = () => {};
+			putSettings.mockImplementation(
+				() => new Promise<object>((resolve) => (release = () => resolve({}))),
+			);
+			const p = applyEngineSettings({ snifferEnabled: true });
+			await vi.waitFor(() => expect(getByText('Сохраняем…')).toBeTruthy());
+			expect(queryByText('✓ Сохранено')).toBeNull();
+			release();
+			await p;
+			await vi.waitFor(() => expect(getByText('✓ Сохранено')).toBeTruthy());
+		});
+
+		it('провал показывает «Ошибка сохранения»', async () => {
+			const { getByText } = render(EngineHeader);
+			putSettings.mockRejectedValue(new Error('boom'));
+			await applyEngineSettings({ snifferEnabled: true });
+			await vi.waitFor(() => expect(getByText('Ошибка сохранения')).toBeTruthy());
+		});
 	});
 });

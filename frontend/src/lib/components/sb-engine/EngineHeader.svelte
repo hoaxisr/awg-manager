@@ -22,6 +22,7 @@
 	import { humanLabel } from '$lib/components/fakeip/switchConsequences';
 	import EngineFatalModal from '$lib/components/sb-router/EngineFatalModal.svelte';
 	import { canOpenEngineFatal, deriveEnginePill, normalizeRoutingMode } from './engineRunState';
+	import { engineSaveState } from './engineSettings';
 
 	const status = singboxRouter.status;
 	const settings = singboxRouter.settings;
@@ -72,6 +73,16 @@
 	function turnOn(): void {
 		modeSwitch.request(mode);
 	}
+
+	// Автосохранение полей страницы: до первого сохранения не показываем ничего —
+	// шторка рисовала «✓ Сохранено» сразу на открытии, то есть утверждала про
+	// сохранение, которого не было.
+	const SAVE_LABEL: Record<string, string> = {
+		saving: 'Сохраняем…',
+		saved: '✓ Сохранено',
+		error: 'Ошибка сохранения',
+	};
+	const saveLabel = $derived(SAVE_LABEL[$engineSaveState] ?? '');
 </script>
 
 <PageHeader title="Движок">
@@ -103,6 +114,20 @@
 	{/snippet}
 
 	{#snippet actions()}
+		<!-- Узел живёт ВСЕГДА, меняется только его текст: aria-live объявляет
+		     изменения внутри уже смонтированного региона, а регион, вставленный
+		     вместе с текстом, читалки пропускают. Пустой span ширины не имеет —
+		     на раскладке видно только один gap строки действий. -->
+		<span
+			class="save-state"
+			class:err={$engineSaveState === 'error'}
+			aria-live="polite"
+			title={$engineSaveState === 'error'
+				? 'Последняя правка не доехала до роутера — текст ошибки был в уведомлении'
+				: 'Поля страницы сохраняются сами, без кнопки «Сохранить»'}
+		>
+			{saveLabel}
+		</span>
 		<Button
 			variant="ghost"
 			size="sm"
@@ -183,5 +208,17 @@
 	.pill-mode.is-idle {
 		background: var(--bg-tertiary);
 		color: var(--text-muted);
+	}
+
+	/* Индикатор автосохранения: спутник кнопок, а не пилюля состояния — он про
+	   правки формы, а не про движок. */
+	.save-state {
+		font-size: 11.5px;
+		color: var(--text-muted);
+		white-space: nowrap;
+		align-self: center;
+	}
+	.save-state.err {
+		color: var(--color-error, #d05b5b);
 	}
 </style>

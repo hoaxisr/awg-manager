@@ -2433,7 +2433,24 @@ function mockSlotContent(slot) {
 			if (MOCK_MODE_SLOTS[routingMode] !== slot) return null;
 			break;
 		case 'selective-routes':
-			if (!mockSBSettings.selectiveBypass) return null;
+			// Условие ровно как у бэкенда: SelectiveActive() =
+			// Enabled && SelectiveBypass && режим tproxy (storage/types.go:248-251),
+			// и по нему же syncSelectiveRoutesSlot включает слот
+			// (selective_routes.go:121). Мок смотрел на один selectiveBypass, и в
+			// policy-tun, в fakeip и при выключенном движке чипы «Конфигурации»
+			// показывали 19-selective-routes.json, которого на роутере в этих
+			// состояниях нет. Мода на «слот собран по режиму» уже есть у соседа
+			// 18-qos-routes — расхождение было именно здесь.
+			//
+			// Роутер, где селективный обход был и его выключили, мок НЕ моделирует
+			// (файл припаркован в disabled/, слот пришёл бы выключенным с ненулевым
+			// размером) — то же известное ограничение, что у 18-qos-routes.
+			// «Движок включён» берём у mockEngineRunning, а не у
+			// mockSBSettings.enabled: POST /singbox/router/enable трогает только
+			// первый, и вторая копия факта разъехалась бы с ним.
+			if (!mockSBSettings.selectiveBypass || !mockEngineRunning || routingMode !== 'tproxy') {
+				return null;
+			}
 			break;
 		case 'qos-routes':
 			return mockQosRoutesSlotContent();

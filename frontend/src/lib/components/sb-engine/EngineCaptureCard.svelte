@@ -18,8 +18,7 @@
 	import { Button, Card } from '$lib/components/ui';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
-	import { notifications } from '$lib/stores/notifications';
-	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
+	import { applyEngineSettings } from './engineSettings';
 	import TrafficSourceSettings from '$lib/components/sb-router/TrafficSourceSettings.svelte';
 	import PolicyTunCard from '$lib/components/sb-router/PolicyTunCard.svelte';
 	import FakeIpCaptureSettings from './FakeIpCaptureSettings.svelte';
@@ -47,14 +46,11 @@
 		modeSwitch.request(target);
 	}
 
+	// Общий помощник, а не своя копия mergeAndSaveSettings: он же кормит
+	// индикатор автосохранения в шапке страницы, и правки этой карточки без него
+	// оставались бы единственными безмолвными.
 	async function applyPatch(patch: Partial<SingboxRouterSettings>): Promise<void> {
-		try {
-			await mergeAndSaveSettings(patch);
-		} catch (e) {
-			notifications.error(
-				`Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`,
-			);
-		}
+		await applyEngineSettings(patch);
 	}
 </script>
 
