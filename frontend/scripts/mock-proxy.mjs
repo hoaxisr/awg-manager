@@ -2188,6 +2188,28 @@ let mockConfigEditor = {
 	userEnabled: true,
 };
 
+// Закрытый набор слотов orchestrator.KnownSlots() — в порядке слияния.
+// Слоты без фикстуры содержимого ниже существуют, но не собраны: бэкенд отдаёт
+// для них 200 с пустым содержимым и state 'absent' (LoadEffective возвращает
+// nil без ошибки), а 404 — только на неизвестное имя.
+const MOCK_KNOWN_SLOT_FILES = {
+	base: '00-base.json',
+	tunnels: '10-tunnels.json',
+	awg: '15-awg.json',
+	awg3: '16-awg3.json',
+	'dns-rewrites': '17-dns-rewrites.json',
+	'qos-routes': '18-qos-routes.json',
+	'selective-routes': '19-selective-routes.json',
+	fakeip: '20-fakeip.json',
+	policytun: '20-policytun.json',
+	tproxy: '20-tproxy.json',
+	routing: '21-routing.json',
+	deviceproxy: '30-deviceproxy.json',
+	downloadproxy: '35-download-proxy.json',
+	subscriptions: '40-subscriptions.json',
+	user: '90-user.json',
+};
+
 // Реалистичное содержимое системных слотов для read-only просмотра.
 const MOCK_SYSTEM_SLOT_CONTENT = {
 	base: {
@@ -2218,45 +2240,101 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 			2,
 		),
 	},
-	dns: {
-		filename: '05-dns.json',
-		content: JSON.stringify(
-			{
-				dns: {
-					servers: [{ tag: 'doh-quad9', address: 'https://9.9.9.9/dns-query', detour: 'direct' }],
-				},
-			},
-			null,
-			2,
-		),
-	},
-	router: {
-		filename: '10-router.json',
-		content: JSON.stringify(
-			{
-				inbounds: [{ tag: 'tproxy-in', type: 'tproxy', listen: '::', listen_port: 51272, sniff: true }],
-				route: {
-					rules: [
-						{ action: 'sniff' },
-						{ protocol: 'dns', action: 'hijack-dns' },
-						{ rule_set: ['geoip-ru'], outbound: 'direct' },
-					],
-					rule_set: [
-						{ tag: 'geoip-ru', type: 'remote', format: 'binary', url: 'https://example/ru.srs' },
-					],
-				},
-			},
-			null,
-			2,
-		),
-	},
 	tunnels: {
-		filename: '20-tunnels.json',
+		filename: '10-tunnels.json',
 		content: JSON.stringify(
 			{
 				outbounds: [
-					{ tag: 'awg-tunnel-1', type: 'wireguard', server: '203.0.113.7', server_port: 51820 },
+					{ tag: 'sb-tunnel-1', type: 'vless', server: 'eu.example.net', server_port: 443 },
 				],
+			},
+			null,
+			2,
+		),
+	},
+	awg: {
+		filename: '15-awg.json',
+		content: JSON.stringify(
+			{
+				outbounds: [
+					{ tag: 'awg-vpn0', type: 'wireguard', server: '203.0.113.7', server_port: 51820 },
+				],
+			},
+			null,
+			2,
+		),
+	},
+	'dns-rewrites': {
+		filename: '17-dns-rewrites.json',
+		content: JSON.stringify(
+			{
+				dns: {
+					rules: [{ domain: ['home.keenetic.pro'], action: 'predefined', rcode: 'NOERROR' }],
+				},
+			},
+			null,
+			2,
+		),
+	},
+	'selective-routes': {
+		filename: '19-selective-routes.json',
+		content: JSON.stringify(
+			{
+				route: {
+					rules: [{ ip_cidr: ['104.16.0.0/13'], outbound: 'manual-eu' }],
+				},
+			},
+			null,
+			2,
+		),
+	},
+	// Режимные слоты (20-*) взаимоисключающи — в config.d лежит ровно один.
+	tproxy: {
+		filename: '20-tproxy.json',
+		content: JSON.stringify(
+			{
+				inbounds: [{ tag: 'tproxy-in', type: 'tproxy', listen: '::', listen_port: 51272, sniff: true }],
+				route: { rules: [{ action: 'sniff' }, { protocol: 'dns', action: 'hijack-dns' }] },
+			},
+			null,
+			2,
+		),
+	},
+	policytun: {
+		filename: '20-policytun.json',
+		content: JSON.stringify(
+			{
+				inbounds: [{ tag: 'policy-tun-in', type: 'tun', interface_name: 'opkgtun0', mtu: 1420, stack: 'system' }],
+				route: { rules: [{ action: 'sniff' }, { protocol: 'dns', action: 'hijack-dns' }] },
+			},
+			null,
+			2,
+		),
+	},
+	fakeip: {
+		filename: '20-fakeip.json',
+		content: JSON.stringify(
+			{
+				inbounds: [{ tag: 'fakeip-tun-in', type: 'tun', interface_name: 'opkgtun0', mtu: 1420, stack: 'gvisor' }],
+				dns: { fakeip: { enabled: true, inet4_range: '198.18.0.0/15' }, final: 'real' },
+				route: { rules: [{ protocol: 'dns', action: 'hijack-dns' }] },
+			},
+			null,
+			2,
+		),
+	},
+	// Общий слот: правила, наборы, outbound'ы и route.final не-fakeip режимов.
+	routing: {
+		filename: '21-routing.json',
+		content: JSON.stringify(
+			{
+				route: {
+					rules: [{ rule_set: ['geoip-ru'], outbound: 'direct' }],
+					rule_set: [
+						{ tag: 'geoip-ru', type: 'remote', format: 'binary', url: 'https://example/ru.srs' },
+					],
+					final: 'direct',
+				},
 			},
 			null,
 			2,
@@ -5301,18 +5379,49 @@ const server = http.createServer(async (req, res) => {
 	// возвращает ok:false с двумя ошибками, если в конфиге встречается тег
 	// "bad-tag" — маркер для скриншотов ошибок; конфиг с "final" даёт
 	// ok:true + warning (жёлтый блок предупреждений).
+	// Раскладка слотов — та же, что у orchestrator.KnownSlots() после 5D0
+	// (20-tproxy / 20-policytun / 20-fakeip + общий 21-routing). Прежняя
+	// фикстура осталась от 05/06/07/20 и на стенде показывала каталог, которого
+	// у бэкенда нет уже два этапа: чипы карточки «Конфигурация» и список в
+	// редакторе врали бы обе про имена файлов.
+	//
+	// Ручка отдаёт ВЕСЬ закрытый набор, включая несобранные слоты (size: 0) —
+	// фронт сам решает, что из этого показывать. Режимные слоты
+	// взаимоисключающи: собран ровно тот, что соответствует текущему режиму.
 	if (req.method === 'GET' && path === '/singbox/config/slots') {
 		const userEffective = mockConfigEditor.userDraft ?? mockConfigEditor.userActive;
+		const routingMode = mockSBSettings.routingMode || 'tproxy';
+		const modeSize = (mode) => (routingMode === mode ? 2100 : 0);
+		// Имя файла берём из общей карты слотов, чтобы список и содержимое не
+		// разъехались при следующей правке раскладки.
+		const sys = (slot, size, extra = {}) => ({
+			slot,
+			filename: MOCK_KNOWN_SLOT_FILES[slot],
+			ownership: 'system',
+			enabled: true,
+			hasDraft: false,
+			size,
+			...(size > 0 ? { mtime: '2026-07-05T21:14:02Z' } : {}),
+			...extra,
+		});
 		send(res, 200, {
 			success: true,
 			data: {
 				slots: [
-					{ slot: 'base', filename: '00-base.json', ownership: 'system', enabled: true, hasDraft: false, size: 1487, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'dns', filename: '05-dns.json', ownership: 'system', enabled: true, hasDraft: false, size: 612, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'router', filename: '10-router.json', ownership: 'system', enabled: true, hasDraft: true, size: 3961, mtime: '2026-07-06T08:03:41Z' },
-					{ slot: 'tunnels', filename: '20-tunnels.json', ownership: 'system', enabled: true, hasDraft: false, size: 2210, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'deviceproxy', filename: '30-deviceproxy.json', ownership: 'system', enabled: true, hasDraft: false, size: 344, mtime: '2026-07-05T21:14:02Z' },
-					{ slot: 'subscriptions', filename: '40-subscriptions.json', ownership: 'system', enabled: false, hasDraft: false, size: 5133, mtime: '2026-07-04T11:32:19Z' },
+					sys('base', 1487),
+					sys('tunnels', 2210),
+					sys('awg', 918),
+					sys('awg3', 0),
+					sys('dns-rewrites', 344),
+					sys('qos-routes', 0),
+					sys('selective-routes', mockSBSettings.selectiveBypass ? 1266 : 0),
+					sys('fakeip', modeSize('fakeip-tun')),
+					sys('policytun', modeSize('policy-tun')),
+					sys('tproxy', modeSize('tproxy')),
+					sys('routing', 3961, { hasDraft: true }),
+					sys('deviceproxy', 344),
+					sys('downloadproxy', 0),
+					{ ...sys('subscriptions', 5133), enabled: false, mtime: '2026-07-04T11:32:19Z' },
 					{
 						slot: 'user',
 						filename: '90-user.json',
@@ -5345,6 +5454,15 @@ const server = http.createServer(async (req, res) => {
 		}
 		const system = MOCK_SYSTEM_SLOT_CONTENT[name];
 		if (!system) {
+			// Известный, но не собранный слот — пустой ответ, а не 404.
+			const filename = MOCK_KNOWN_SLOT_FILES[name];
+			if (filename) {
+				send(res, 200, {
+					success: true,
+					data: { slot: name, filename, content: '', state: 'absent', hasDraft: false },
+				});
+				return;
+			}
 			send(res, 404, { success: false, error: { code: 'SLOT_NOT_FOUND', message: `slot ${name} not found` } });
 			return;
 		}
@@ -5355,7 +5473,7 @@ const server = http.createServer(async (req, res) => {
 				filename: system.filename,
 				content: system.content,
 				state: name === 'subscriptions' ? 'disabled' : 'active',
-				hasDraft: name === 'router',
+				hasDraft: name === 'routing',
 			},
 		});
 		return;
