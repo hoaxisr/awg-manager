@@ -6,7 +6,9 @@ export { default as EngineSelectiveCard } from './EngineSelectiveCard.svelte';
 export { default as EngineExclusionsCard } from './EngineExclusionsCard.svelte';
 export { default as EngineHealthCard } from './EngineHealthCard.svelte';
 export { default as EngineQosCard } from './EngineQosCard.svelte';
+export { default as EngineConfigCard } from './EngineConfigCard.svelte';
 export { CAPTURE_MODES, captureModeCopy, captureModeOptions, type CaptureModeCopy } from './captureModes';
+export { slotChips, type SlotChip, type SlotChipState } from './configSlots';
 export { applyEngineSettings } from './engineSettings';
 export {
 	DNS_BYPASS_PRESET_IDS,
