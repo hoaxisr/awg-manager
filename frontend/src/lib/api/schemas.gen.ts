@@ -2593,6 +2593,7 @@ const wdtt_ClientConfig: v.GenericSchema = v.looseObject({
 	obfs: v.optional(v.nullable(v.string())),
 	password: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+	policyPermits: v.optional(v.nullable(v.array(v.lazy(() => wdtt_OpkgPolicyPermit)))),
 	rawClientIp: v.optional(v.nullable(v.string())),
 	rawIface: v.optional(v.nullable(v.string())),
 	sub: v.optional(v.nullable(v.string())),
@@ -2635,6 +2636,11 @@ const wdtt_InstanceStatus: v.GenericSchema = v.looseObject({
 const wdtt_LinkDecodeResult: v.GenericSchema = v.looseObject({
 	profile: v.optional(v.nullable(v.lazy(() => wdtt_ImportPayload))),
 	subscription: v.optional(v.nullable(v.lazy(() => wdtt_SubscriptionPreview))),
+});
+
+const wdtt_OpkgPolicyPermit: v.GenericSchema = v.looseObject({
+	name: v.optional(v.nullable(v.string())),
+	order: v.optional(v.nullable(v.number())),
 });
 
 const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
