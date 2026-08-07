@@ -131,8 +131,6 @@
 	);
 	const showWizard = $derived(!opsMode || wizardOpen);
 
-	const clientTabs = CLIENT_TABS_BASE;
-
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'import', label: 'Импорт — ссылка или подписка', done: profileApplied },
 		{ id: 'peer', label: 'Peer + пароль', done: profileApplied && wizardStepIdx >= 1 },
@@ -524,7 +522,7 @@
 				<ListenPortKillButton listen={listenMeta} proto="udp" />
 			{/snippet}
 		</ProxyInstanceStatusBar>
-		<ProxyPanelTabs tabs={clientTabs} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
+		<ProxyPanelTabs tabs={[...CLIENT_TABS_BASE]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
 		{#if opsTab === 'setup'}
 			<section class="ops-section">

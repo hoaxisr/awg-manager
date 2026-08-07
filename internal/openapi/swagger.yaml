@@ -7098,6 +7098,10 @@ definitions:
       listen:
         description: -listen, local UDP addr (default 127.0.0.1:9000)
         type: string
+      ndmsIface:
+        description: 'Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на
+          wdtt-server).'
+        type: string
       obfs:
         description: -obfs, audio|video
         type: string
@@ -7106,6 +7110,12 @@ definitions:
         type: string
       peer:
         description: -peer, VPS host:dtls_port
+        type: string
+      rawClientIp:
+        description: из RAWCONF VPS
+        type: string
+      rawIface:
+        description: kernel opkgtunN
         type: string
       sub:
         description: subscription URL (metadata only)
@@ -7210,8 +7220,14 @@ definitions:
         type: string
       log:
         type: string
+      ndmsIface:
+        type: string
       pid:
         type: integer
+      rawClientIp:
+        type: string
+      rawIface:
+        type: string
       running:
         type: boolean
       startedAt:
@@ -7248,6 +7264,10 @@ definitions:
         type: string
       debug:
         type: boolean
+      directListen:
+        description: DirectListen — -listen-direct (WRAP без DTLS для WG). Пусто →
+          peer = DTLS-порт.
+        type: string
       enabled:
         type: boolean
       ingressEnabled:
@@ -7292,9 +7312,17 @@ definitions:
       policy:
         description: NDMS hotspot policy or "none"
         type: string
+      rawListen:
+        description: RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1
+          на том же host.
+        type: string
       relayMode:
         description: RelayMode — wg (WireGuard relay, совместимость) или raw (без
           WG на сервере; нужен редеплой).
+        type: string
+      statsLog:
+        description: 'StatsLog — server.log (JSON каждые ~2 с): "ram" (default), "off",
+          "disk".'
         type: string
       wgIface:
         description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
