@@ -7111,6 +7111,12 @@ definitions:
       peer:
         description: -peer, VPS host:dtls_port
         type: string
+      policyPermits:
+        description: PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются
+          после рестарта awg-manager.
+        items:
+          $ref: '#/definitions/wdtt.OpkgPolicyPermit'
+        type: array
       rawClientIp:
         description: из RAWCONF VPS
         type: string
@@ -7207,6 +7213,13 @@ definitions:
         $ref: '#/definitions/wdtt.ImportPayload'
       subscription:
         $ref: '#/definitions/wdtt.SubscriptionPreview'
+    type: object
+  wdtt.OpkgPolicyPermit:
+    properties:
+      name:
+        type: string
+      order:
+        type: integer
     type: object
   wdtt.ProcessStatus:
     properties:
