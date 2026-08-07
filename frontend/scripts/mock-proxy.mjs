@@ -2242,10 +2242,13 @@ const MOCK_KNOWN_SLOT_FILES = {
 	user: '90-user.json',
 };
 
-// Реалистичное содержимое системных слотов для read-only просмотра.
+// Реалистичное содержимое системных слотов для read-only просмотра. Ключ —
+// имя слота, имя файла берётся из MOCK_KNOWN_SLOT_FILES: вторая копия имени
+// здесь разъехалась бы с ней на следующей правке раскладки. Слот без записи в
+// этой карте не собран НИКОГДА (16-awg3, 35-download-proxy), слот с записью —
+// когда собран его продюсер (см. mockSlotContent).
 const MOCK_SYSTEM_SLOT_CONTENT = {
 	base: {
-		filename: '00-base.json',
 		content: JSON.stringify(
 			{
 				log: { level: 'info', timestamp: true },
@@ -2273,7 +2276,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	tunnels: {
-		filename: '10-tunnels.json',
 		content: JSON.stringify(
 			{
 				outbounds: [
@@ -2285,7 +2287,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	awg: {
-		filename: '15-awg.json',
 		content: JSON.stringify(
 			{
 				outbounds: [
@@ -2297,7 +2298,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	'dns-rewrites': {
-		filename: '17-dns-rewrites.json',
 		content: JSON.stringify(
 			{
 				dns: {
@@ -2309,7 +2309,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	'selective-routes': {
-		filename: '19-selective-routes.json',
 		content: JSON.stringify(
 			{
 				route: {
@@ -2322,7 +2321,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 	},
 	// Режимные слоты (20-*) взаимоисключающи — в config.d лежит ровно один.
 	tproxy: {
-		filename: '20-tproxy.json',
 		content: JSON.stringify(
 			{
 				inbounds: [{ tag: 'tproxy-in', type: 'tproxy', listen: '::', listen_port: 51272, sniff: true }],
@@ -2333,7 +2331,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	policytun: {
-		filename: '20-policytun.json',
 		content: JSON.stringify(
 			{
 				inbounds: [{ tag: 'policy-tun-in', type: 'tun', interface_name: 'opkgtun0', mtu: 1420, stack: 'system' }],
@@ -2344,7 +2341,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	fakeip: {
-		filename: '20-fakeip.json',
 		content: JSON.stringify(
 			{
 				inbounds: [{ tag: 'fakeip-tun-in', type: 'tun', interface_name: 'opkgtun0', mtu: 1420, stack: 'gvisor' }],
@@ -2357,7 +2353,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 	},
 	// Общий слот: правила, наборы, outbound'ы и route.final не-fakeip режимов.
 	routing: {
-		filename: '21-routing.json',
 		content: JSON.stringify(
 			{
 				route: {
@@ -2373,7 +2368,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	deviceproxy: {
-		filename: '30-deviceproxy.json',
 		content: JSON.stringify(
 			{
 				inbounds: [{ tag: 'device-proxy-in', type: 'mixed', listen: '0.0.0.0', listen_port: 1099 }],
@@ -2383,7 +2377,6 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 	subscriptions: {
-		filename: '40-subscriptions.json',
 		content: JSON.stringify(
 			{
 				outbounds: [
@@ -2396,6 +2389,92 @@ const MOCK_SYSTEM_SLOT_CONTENT = {
 		),
 	},
 };
+
+// AlwaysOn-слоты orchestrator.KnownSlots(): их файл живёт в config.d всегда,
+// поэтому Bootstrap оставляет им enabled=true даже когда файла ещё нет.
+// Остальным слотам без файла тот же Bootstrap ставит enabled=false
+// (orchestrator.go), а шторка слотов рисует по этому полю бейдж «выключен».
+const MOCK_ALWAYS_ON_SLOTS = new Set(['base', 'tunnels', 'awg', 'awg3']);
+
+// Режим → его слот захвата. Режимные слоты взаимоисключающи: собран ровно тот,
+// что отвечает текущему режиму.
+const MOCK_MODE_SLOTS = { tproxy: 'tproxy', 'policy-tun': 'policytun', 'fakeip-tun': 'fakeip' };
+
+// Особые mtime: остальные собранные слоты берут общий.
+const MOCK_SLOT_MTIME = { subscriptions: '2026-07-04T11:32:19Z', user: '2026-07-06T09:12:55Z' };
+
+// ЕДИНСТВЕННЫЙ ИСТОЧНИК ИСТИНЫ про собранность слота: null — файла нет ни в
+// config.d, ни в disabled/ (бэкенд отдаёт 200 с пустым содержимым и state
+// 'absent'), строка — эффективное содержимое. Список слотов и ручка содержимого
+// обязаны отвечать про это одинаково: пока список считал собранность по режиму,
+// а содержимое — по наличию фикстуры, стенд показывал 20-fakeip.json размером
+// «—» и по клику отдавал полный конфиг FakeIP, которого в config.d нет.
+function mockSlotContent(slot) {
+	const routingMode = mockSBSettings.routingMode || 'tproxy';
+	switch (slot) {
+		case 'user':
+			return mockConfigEditor.userDraft ?? mockConfigEditor.userActive;
+		case 'fakeip':
+		case 'policytun':
+		case 'tproxy':
+			if (MOCK_MODE_SLOTS[routingMode] !== slot) return null;
+			break;
+		case 'selective-routes':
+			if (!mockSBSettings.selectiveBypass) return null;
+			break;
+		case 'qos-routes':
+			return mockQosRoutesSlotContent();
+		default:
+			break;
+	}
+	return MOCK_SYSTEM_SLOT_CONTENT[slot]?.content ?? null;
+}
+
+// 18-qos-routes.json собирается из классов QoS — как buildQoSRouteRules на
+// бэкенде: sniff по инбаундам классов, route-options с udp_timeout и по правилу
+// route на класс. Без классов слот не собран (бэкенд паркует его в disabled/).
+// В fakeip-tun классов не бывает вовсе — netfilter-перехвата там нет
+// (isQosLockedByMode).
+function mockQosRoutesSlotContent() {
+	if ((mockSBSettings.routingMode || 'tproxy') === 'fakeip-tun') return null;
+	const classes = (mockSBSettings.qosClasses || []).filter((c) => c && c.enabled && c.outbound);
+	if (classes.length === 0) return null;
+	// Пространство имён тегов зарезервировано бэкендом (qos.go).
+	const tags = (c) => [`tproxy-qos-${c.dscp}`, `redirect-qos-${c.dscp}`];
+	const rules = [];
+	if (mockSBSettings.snifferEnabled) {
+		rules.push({ inbound: classes.flatMap(tags), action: 'sniff' });
+	}
+	rules.push({
+		inbound: classes.map((c) => `tproxy-qos-${c.dscp}`),
+		action: 'route-options',
+		network: 'udp',
+		udp_timeout: mockSBSettings.udpTimeout || '5m0s',
+	});
+	for (const c of classes) {
+		rules.push({ inbound: tags(c), action: 'route', outbound: c.outbound });
+	}
+	return JSON.stringify({ route: { rules } }, null, 2);
+}
+
+function mockSlotSize(slot) {
+	const content = mockSlotContent(slot);
+	return content === null ? 0 : Buffer.byteLength(content);
+}
+
+// Включённость — как orchestrator.Snapshot(): AlwaysOn всегда true, остальным
+// без файла Bootstrap ставит false. 40-subscriptions.json — собранный, но
+// выключенный пользователем слот (файл лежит в disabled/).
+function mockSlotEnabled(slot) {
+	if (slot === 'user') return mockConfigEditor.userEnabled;
+	if (slot === 'subscriptions') return false;
+	return MOCK_ALWAYS_ON_SLOTS.has(slot) || mockSlotContent(slot) !== null;
+}
+
+function mockSlotHasDraft(slot) {
+	if (slot === 'user') return mockConfigEditor.userDraft !== null;
+	return slot === 'routing';
+}
 
 // DHCP pools projected as fakeip "segments" (Task 2.1/2.2). Persistent
 // in-memory state so the POST toggle mutates what the GET reads. dnsServer is
@@ -5421,91 +5500,44 @@ const server = http.createServer(async (req, res) => {
 	// фронт сам решает, что из этого показывать. Режимные слоты
 	// взаимоисключающи: собран ровно тот, что соответствует текущему режиму.
 	if (req.method === 'GET' && path === '/singbox/config/slots') {
-		const userEffective = mockConfigEditor.userDraft ?? mockConfigEditor.userActive;
-		const routingMode = mockSBSettings.routingMode || 'tproxy';
-		const modeSize = (mode) => (routingMode === mode ? 2100 : 0);
-		// Имя файла берём из общей карты слотов, чтобы список и содержимое не
-		// разъехались при следующей правке раскладки.
-		const sys = (slot, size, extra = {}) => ({
-			slot,
-			filename: MOCK_KNOWN_SLOT_FILES[slot],
-			ownership: 'system',
-			enabled: true,
-			hasDraft: false,
-			size,
-			...(size > 0 ? { mtime: '2026-07-05T21:14:02Z' } : {}),
-			...extra,
+		// Порядок ключей карты слотов — порядок слияния файлов; собранность,
+		// включённость и размер считает mockSlotContent, тот же, что отвечает на
+		// запрос содержимого слота.
+		const slots = Object.keys(MOCK_KNOWN_SLOT_FILES).map((slot) => {
+			const size = mockSlotSize(slot);
+			return {
+				slot,
+				filename: MOCK_KNOWN_SLOT_FILES[slot],
+				ownership: slot === 'user' ? 'user' : 'system',
+				enabled: mockSlotEnabled(slot),
+				hasDraft: mockSlotHasDraft(slot),
+				size,
+				...(size > 0 ? { mtime: MOCK_SLOT_MTIME[slot] ?? '2026-07-05T21:14:02Z' } : {}),
+			};
 		});
-		send(res, 200, {
-			success: true,
-			data: {
-				slots: [
-					sys('base', 1487),
-					sys('tunnels', 2210),
-					sys('awg', 918),
-					sys('awg3', 0),
-					sys('dns-rewrites', 344),
-					sys('qos-routes', 0),
-					sys('selective-routes', mockSBSettings.selectiveBypass ? 1266 : 0),
-					sys('fakeip', modeSize('fakeip-tun')),
-					sys('policytun', modeSize('policy-tun')),
-					sys('tproxy', modeSize('tproxy')),
-					sys('routing', 3961, { hasDraft: true }),
-					sys('deviceproxy', 344),
-					sys('downloadproxy', 0),
-					{ ...sys('subscriptions', 5133), enabled: false, mtime: '2026-07-04T11:32:19Z' },
-					{
-						slot: 'user',
-						filename: '90-user.json',
-						ownership: 'user',
-						enabled: mockConfigEditor.userEnabled,
-						hasDraft: mockConfigEditor.userDraft !== null,
-						size: Buffer.byteLength(userEffective),
-						mtime: '2026-07-06T09:12:55Z',
-					},
-				],
-			},
-		});
+		send(res, 200, { success: true, data: { slots } });
 		return;
 	}
 
 	if (req.method === 'GET' && path === '/singbox/config/slot') {
 		const name = url.searchParams.get('name') || '';
-		if (name === 'user') {
-			send(res, 200, {
-				success: true,
-				data: {
-					slot: 'user',
-					filename: '90-user.json',
-					content: mockConfigEditor.userDraft ?? mockConfigEditor.userActive,
-					state: mockConfigEditor.userEnabled ? 'active' : 'disabled',
-					hasDraft: mockConfigEditor.userDraft !== null,
-				},
-			});
+		const filename = MOCK_KNOWN_SLOT_FILES[name];
+		// 404 — только на неизвестное имя слота, как GetSlot (UNKNOWN_SLOT).
+		if (!filename) {
+			send(res, 404, { success: false, error: { code: 'UNKNOWN_SLOT', message: 'unknown slot' } });
 			return;
 		}
-		const system = MOCK_SYSTEM_SLOT_CONTENT[name];
-		if (!system) {
-			// Известный, но не собранный слот — пустой ответ, а не 404.
-			const filename = MOCK_KNOWN_SLOT_FILES[name];
-			if (filename) {
-				send(res, 200, {
-					success: true,
-					data: { slot: name, filename, content: '', state: 'absent', hasDraft: false },
-				});
-				return;
-			}
-			send(res, 404, { success: false, error: { code: 'SLOT_NOT_FOUND', message: `slot ${name} not found` } });
-			return;
-		}
+		// Известный, но не собранный слот — 200 с пустым содержимым и 'absent':
+		// LoadEffective возвращает nil без ошибки.
+		const content = mockSlotContent(name);
 		send(res, 200, {
 			success: true,
 			data: {
 				slot: name,
-				filename: system.filename,
-				content: system.content,
-				state: name === 'subscriptions' ? 'disabled' : 'active',
-				hasDraft: name === 'routing',
+				filename,
+				content: content ?? '',
+				state: content === null ? 'absent' : mockSlotEnabled(name) ? 'active' : 'disabled',
+				hasDraft: mockSlotHasDraft(name),
 			},
 		});
 		return;
