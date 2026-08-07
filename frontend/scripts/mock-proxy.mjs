@@ -158,6 +158,27 @@ function parseProbability(raw, fallback) {
 	if (Number.isFinite(n) && n >= 0 && n <= 1) return n;
 	return fallback;
 }
+
+/**
+ * Время в том же виде, в каком его отдаёт Go: RFC3339 с локальным офсетом и
+ * БЕЗ долей секунды (`time.Format(time.RFC3339)`). `toISOString()` даёт UTC с
+ * миллисекундами — формально тоже разбирается `new Date()`, но мок не должен
+ * отличаться от бэкенда в том, что фронт потом форматирует руками.
+ */
+function rfc3339(ms) {
+	const d = new Date(ms);
+	const pad = (n, width = 2) => String(Math.abs(n)).padStart(width, '0');
+	// getTimezoneOffset() — минуты, которые надо ПРИБАВИТЬ к локальному времени,
+	// чтобы получить UTC: знак обратный тому, что печатается в офсете.
+	const offsetMin = -d.getTimezoneOffset();
+	const sign = offsetMin < 0 ? '-' : '+';
+	const offset =
+		offsetMin === 0 ? 'Z' : `${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`;
+	return (
+		`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+		`T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${offset}`
+	);
+}
 let downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 let downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 
@@ -170,6 +191,7 @@ function getRuntimeState() {
 		updateCheckEnabled,
 		singboxInstallShouldFail,
 		mockEngineFault,
+		mockEngineCrashWindow,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -186,6 +208,7 @@ function resetRuntimeControls() {
 	updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
 	mockEngineFault = process.env.MOCK_ENGINE_FAULT === '1';
+	mockEngineCrashWindow = process.env.MOCK_ENGINE_CRASH_WINDOW === '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -2063,6 +2086,15 @@ let mockEngineRunning = false;
 // engine-dead-interception. Включается MOCK_ENGINE_FAULT=1 или
 // POST /__mock/engine-fault {"enabled": true}.
 let mockEngineFault = process.env.MOCK_ENGINE_FAULT === '1';
+// Падения ЕЩЁ В 10-МИНУТНОМ ОКНЕ при живом движке. Отдельный переключатель,
+// потому что бэкенд заполняет crash-статистику ВСЕГДА из CrashStats()
+// (service_lifecycle.go), а не только при «СБОЙ»: «UI показывает блок и после
+// восстановления, пока падения не выйдут из окна». Мок держал счётчик и причину
+// внутри crash-полей «СБОЯ», и состояние «движок живой, падения в окне, паузы
+// нет» на стенде было недостижимо — а engineCrashInfo спроектирован ровно под
+// него (healthRows.ts). Включается MOCK_ENGINE_CRASH_WINDOW=1 или
+// POST /__mock/engine-crash-window {"enabled": true}.
+let mockEngineCrashWindow = process.env.MOCK_ENGINE_CRASH_WINDOW === '1';
 // Стенд без модулей ядра: netfilter / xt_TPROXY / xt_dscp недоступны. Идиома
 // та же, что у MOCK_IPSET_MISSING: красные строки зависимостей и предупреждение
 // «Модуль ядра xt_dscp недоступен» иначе не увидеть.
@@ -5851,6 +5883,20 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Падения ещё в 10-минутном окне при ЖИВОМ движке: счётчик и причина есть,
+	// паузы авто-перезапуска нет. Тело: {"enabled": true|false}.
+	if (req.method === 'POST' && path === '/__mock/engine-crash-window') {
+		try {
+			const body = await readJsonBody(req);
+			mockEngineCrashWindow = !!body.enabled;
+			send(res, 200, { ok: true, mockEngineCrashWindow });
+			console.log(`[mock-proxy] mockEngineCrashWindow → ${mockEngineCrashWindow}`);
+		} catch (e) {
+			send(res, 400, { error: String(e) });
+		}
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
@@ -7052,19 +7098,64 @@ const server = http.createServer(async (req, res) => {
 		const routingMode = mockSBSettings.routingMode || 'tproxy';
 		// «СБОЙ» = движок включён, но перехват не поднят. Бэкенд светит
 		// lastError ровно по этому условию (`sr.Enabled && !active`,
-		// service_lifecycle.go) и вместе с ним отдаёт crash-статистику #456.
+		// service_lifecycle.go). Crash-статистика #456 к этому условию НЕ
+		// привязана — см. crashesInWindow ниже.
 		const faulted = mockEngineRunning && mockEngineFault;
-		const crashFields = faulted
-			? {
-					lastError:
-						'FATAL[0000] start service: initialize inbound/tproxy-in: listen tcp 0.0.0.0:7893: bind: address already in use',
-					crashCount: 3,
-					lastCrashReason: 'сигнал 9 (OOM-killer): процесс убит из-за нехватки памяти',
-					// Пауза анти-crash-loop backoff'а — всегда в будущем, иначе
-					// фронт покажет прошедшее время как действующее.
-					restartSuppressedUntil: new Date(Date.now() + 4 * 60 * 1000).toISOString(),
-				}
-			: {};
+		// lastError бэкенд светит ровно при `sr.Enabled && !active`, а
+		// crash-статистику — БЕЗУСЛОВНО из CrashStats(): блок падений виден и
+		// после восстановления, пока падения не вышли из 10-минутного окна.
+		// Поэтому счётчик с причиной отвязаны от «СБОЯ», а пауза
+		// авто-перезапуска осталась при нём: живой движок backoff'ом не подавлен.
+		const crashesInWindow = faulted || (mockEngineRunning && mockEngineCrashWindow);
+		const crashFields = {
+			...(faulted
+				? {
+						lastError:
+							'FATAL[0000] start service: initialize inbound/tproxy-in: listen tcp 0.0.0.0:7893: bind: address already in use',
+					}
+				: {}),
+			...(crashesInWindow
+				? {
+						crashCount: 3,
+						lastCrashReason: 'сигнал 9 (OOM-killer): процесс убит из-за нехватки памяти',
+					}
+				: {}),
+			// Пауза анти-crash-loop backoff'а — всегда в будущем, иначе фронт
+			// покажет прошедшее время как действующее.
+			...(faulted ? { restartSuppressedUntil: rfc3339(Date.now() + 4 * 60 * 1000) } : {}),
+		};
+
+		// Замечания статуса. Собираются списком, а не двумя независимыми
+		// spread'ами: в policy-tun при «СБОЕ» оба источника активны разом, и
+		// второй spread молча затирал бы `issues` первого.
+		const statusIssues = [];
+		// policy-tun-unbound держим, пока интерфейс не разрешён в политике — в
+		// моке всегда, чтобы вид с warning был доступен. Гейт тот же, что у
+		// имён интерфейса режима: `RoutingMode == policy-tun && Enabled`.
+		if (routingMode === 'policy-tun' && mockEngineRunning) {
+			statusIssues.push({
+				severity: 'warning',
+				kind: 'policy-tun-unbound',
+				message:
+					'Интерфейс OpkgTun0 не разрешён ни в одной политике доступа — трафик устройств в туннель не заходит',
+			});
+		}
+		// Мёртвый движок при живом перехвате (#456 FIX-B). Бэкенд собирает его в
+		// service_lifecycle.go при `Enabled && routingMode != fakeip-tun && jumps
+		// && !running` и ВКЛАДЫВАЕТ паузу со счётчиком прямо в текст. Комментарий
+		// у mockEngineFault обещал это замечание, но мок его не отдавал — то есть
+		// задвоение фактов с блоком падений на стенде было не воспроизвести.
+		if (faulted && routingMode !== 'fakeip-tun') {
+			const suppressed = crashFields.restartSuppressedUntil;
+			const tail = suppressed
+				? ` Автоперезапуск приостановлен до ${new Date(suppressed).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} (падений за 10 мин: ${crashFields.crashCount}).`
+				: ' Автоперезапуск: при следующей проверке (до 30 с).';
+			statusIssues.push({
+				severity: 'error',
+				kind: 'engine-dead-interception',
+				message: `Движок остановлен, но перехват трафика активен — трафик политик не ходит.${tail}`,
+			});
+		}
 		send(res, 200, {
 			success: true,
 			data: {
@@ -7080,7 +7171,9 @@ const server = http.createServer(async (req, res) => {
 				// состояние сама») — на единой странице «Движок» это выглядело бы
 				// как СБОЙ при живом движке, то есть мок врал бы против бэкенда.
 				active: mockEngineRunning && !faulted,
-				version: '1.13.11',
+				// version здесь НЕ отдаём: поля нет в SingboxRouterStatusData
+				// (singbox_router_dto.go). Версию карточка «Здоровье» берёт из
+				// /singbox/status и сводки системы — единственная реальная цепочка.
 				configValid: true,
 				netfilterAvailable: !mockKmodsMissing,
 				// Три поля готовности ядра бэкенд сериализует ВСЕГДА (без
@@ -7126,26 +7219,18 @@ const server = http.createServer(async (req, res) => {
 				// показывал бы живой tun-интерфейс и DNS у выключенного движка.
 				...(routingMode === 'fakeip-tun' && mockEngineRunning ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipDns: '172.18.0.2', fakeipTunAddr: '172.18.0.1', fakeipEgressUp: true } : {}),
 				// policy-tun: интерфейс режима + применённый source-preserve
-				// (указатель на бэкенде: absent = «неприменимо»). Замечание
-				// policy-tun-unbound держим, пока интерфейс не разрешён в политике —
-				// в моке всегда, чтобы вид с warning был доступен.
-				// Тот же гейт, что у fakeip: бэкенд светит имена интерфейса режима
-				// при `RoutingMode == policy-tun && Enabled` (service_lifecycle.go).
+				// (указатель на бэкенде: absent = «неприменимо»). Тот же гейт, что
+				// у fakeip: бэкенд светит имена интерфейса режима при
+				// `RoutingMode == policy-tun && Enabled` (service_lifecycle.go).
 				...(routingMode === 'policy-tun' && mockEngineRunning
 					? {
 							policyTunIface: 'opkgtun0',
 							policyTunNdmsName: 'OpkgTun0',
 							policyTunSourcePreserve: mockPolicyTunSourcePreserveApplied,
-							issues: [
-								{
-									severity: 'warning',
-									kind: 'policy-tun-unbound',
-									message:
-										'Интерфейс OpkgTun0 не разрешён ни в одной политике доступа — трафик устройств в туннель не заходит',
-								},
-							],
 						}
 					: {}),
+				// omitempty на бэкенде: пустой список поля не рождает.
+				...(statusIssues.length > 0 ? { issues: statusIssues } : {}),
 			},
 		});
 		return;
@@ -8603,7 +8688,7 @@ snapshotAppliedSlot();
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
 	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/engine-fault, POST /__mock/download-faults, POST /__mock/keenetic-os');
-	console.log(`[mock-proxy] engine fault: ${mockEngineFault} (движок «СБОЙ» + падения #456; MOCK_ENGINE_FAULT=1 или POST /__mock/engine-fault), kmods missing: ${mockKmodsMissing} (MOCK_KMODS_MISSING=1)`);
+	console.log(`[mock-proxy] engine fault: ${mockEngineFault} (движок «СБОЙ» + падения #456; MOCK_ENGINE_FAULT=1 или POST /__mock/engine-fault), crash window: ${mockEngineCrashWindow} (падения при живом движке; MOCK_ENGINE_CRASH_WINDOW=1 или POST /__mock/engine-crash-window), kmods missing: ${mockKmodsMissing} (MOCK_KMODS_MISSING=1)`);
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
