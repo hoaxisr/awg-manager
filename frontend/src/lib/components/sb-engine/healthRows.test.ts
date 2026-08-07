@@ -126,7 +126,13 @@ describe('engineCrashInfo', () => {
 
 	it('падения без паузы — блок есть, времени нет', () => {
 		const view = engineCrashInfo(status({ crashCount: 3, lastCrashReason: 'OOM-kill' }));
-		expect(view).toEqual({ count: 3, reason: 'OOM-kill', suppressedUntil: null, restated: false });
+		expect(view).toEqual({
+			count: 3,
+			reason: 'OOM-kill',
+			suppressedUntil: null,
+			restated: false,
+			deadInterception: false,
+		});
 	});
 
 	// Серия неудачных стартов до grace-периода даёт паузу без записанных
@@ -134,7 +140,13 @@ describe('engineCrashInfo', () => {
 	it('пауза без падений — блок есть, счётчик нулевой', () => {
 		const until = new Date(2026, 0, 2, 7, 5).toISOString();
 		const view = engineCrashInfo(status({ crashCount: 0, restartSuppressedUntil: until }));
-		expect(view).toEqual({ count: 0, reason: '', suppressedUntil: '07:05', restated: false });
+		expect(view).toEqual({
+			count: 0,
+			reason: '',
+			suppressedUntil: '07:05',
+			restated: false,
+			deadInterception: false,
+		});
 	});
 
 	it('битую дату паузы не показывает', () => {
@@ -169,11 +181,39 @@ describe('engineCrashInfo · дубликат engine-dead-interception', () => {
 			reason: 'OOM-kill',
 			suppressedUntil: '19:37',
 			restated: true,
+			deadInterception: true,
 		});
 	});
 
 	it('замечание другого рода дубликатом не считается', () => {
 		expect(engineCrashInfo(crashed, other)?.restated).toBe(false);
+		expect(engineCrashInfo(crashed, other)?.deadInterception).toBe(false);
+	});
+
+	// C1. Текст замечания собирается ДВУМЯ ветками (service_lifecycle.go):
+	// счётчик попадает в него только вместе с паузой («приостановлен до 19:37
+	// (падений за 10 мин: 3)»), а без паузы там лишь «Автоперезапуск: при
+	// следующей проверке (до 30 с)». Гейт по одному kind глушил счётчик и во
+	// второй ветке — пользователь в crash-loop видел одно падение вместо трёх.
+	it('замечание без паузы счётчик не глушит — его в тексте нет', () => {
+		const noPause = status({ crashCount: 3, lastCrashReason: 'OOM-kill' });
+		expect(engineCrashInfo(noPause, dead)).toEqual({
+			count: 3,
+			reason: 'OOM-kill',
+			suppressedUntil: null,
+			restated: false,
+			deadInterception: true,
+		});
+	});
+
+	// Гейт стоит по сырому restartSuppressedUntil — это ровно
+	// `!suppressedUntil.IsZero()` бэкенда, то есть ровно то условие, под
+	// которым он вложил оба факта в текст. Формат даты к этому отношения не
+	// имеет: битую дату не показываем, но текст замечания её уже назвал.
+	it('пауза сказана текстом даже при нечитаемой дате', () => {
+		const broken = status({ crashCount: 3, restartSuppressedUntil: 'позавчера' });
+		expect(engineCrashInfo(broken, dead)?.restated).toBe(true);
+		expect(engineCrashInfo(broken, dead)?.suppressedUntil).toBeNull();
 	});
 
 	it('без замечаний блок печатает всё сам', () => {

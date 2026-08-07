@@ -28,6 +28,13 @@
     id?: string;
     fullWidth?: boolean;
     onchange?: (v: T) => void;
+    // controlled: значением владеет родитель. Список НЕ коммитит выбор сам —
+    // он остаётся на прежнем пункте и ждёт нового `value` сверху. Нужно там,
+    // где сохранение может провалиться: проп тогда не меняется, а записанный
+    // самим списком пункт так и остаётся на экране и врёт про состояние
+    // сервера. Идиома та же, что у `controlled` у Toggle. По умолчанию —
+    // прежнее оптимистичное поведение и поддержка bind:value.
+    controlled?: boolean;
   }
 
   let {
@@ -43,6 +50,7 @@
     id,
     fullWidth = false,
     onchange,
+    controlled = false,
   }: Props = $props();
 
   const fallbackId = `dropdown-${Math.random().toString(36).slice(2, 8)}`;
@@ -151,7 +159,7 @@
     const opt = options[idx];
     if (!opt || opt.disabled) return;
     if (value !== opt.value) {
-      value = opt.value;
+      if (!controlled) value = opt.value;
       onchange?.(opt.value);
     }
     closePanel();

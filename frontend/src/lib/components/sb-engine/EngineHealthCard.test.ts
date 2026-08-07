@@ -332,6 +332,30 @@ describe('EngineHealthCard', () => {
 		expect(issueTexts(container)[0]).toContain('при следующей проверке');
 	});
 
+	// C1. Вторая ветка текста замечания — «Автоперезапуск: при следующей
+	// проверке (до 30 с)» — счётчика НЕ содержит. Гейт по одному kind прятал
+	// его и здесь: в crash-loop страница показывала одно падение вместо трёх.
+	it('замечание без паузы: счётчик падений остаётся на странице', () => {
+		setEngine('tproxy', {
+			issues: [
+				{
+					severity: 'error',
+					kind: 'engine-dead-interception',
+					message: `${DEAD} Автоперезапуск: при следующей проверке (до 30 с).`,
+				},
+			],
+			crashCount: 3,
+			lastCrashReason: 'OOM-kill',
+		});
+		const { container } = render(EngineHealthCard);
+		expect(container.querySelector('.crash .stat-value')?.textContent?.trim()).toBe('3');
+		expect(crashText(container)).toContain('Причина: OOM-kill');
+		// Паузы нет — выдумывать её нельзя.
+		expect(crashText(container)).not.toContain('приостановлен');
+		// Движок мёртв, значит путь к кнопке уместен и без паузы.
+		expect(crashText(container)).toContain('в шапке страницы');
+	});
+
 	it('падения без замечания: блок печатает всё сам', () => {
 		setEngine('tproxy', {
 			crashCount: 3,
@@ -465,6 +489,47 @@ describe('EngineHealthCard', () => {
 		await vi.waitFor(() => expect(container.textContent).not.toContain('Не удалось загрузить'));
 	});
 
+	// Латч остаётся одноразовым намеренно: сделай повтор автоматическим — и
+	// упавшая ручка будет долбиться без остановки. Близнец теста живёт в
+	// EngineQosCard.test.ts.
+	it('упавший запрос сам себя не перезапускает', async () => {
+		wanInterfaces.mockRejectedValue(new Error('сеть'));
+		const { container } = render(EngineHealthCard);
+		await vi.waitFor(() => expect(container.textContent).toContain('Не удалось загрузить'));
+		await new Promise((r) => setTimeout(r, 20));
+		expect(wanInterfaces).toHaveBeenCalledTimes(1);
+	});
+
+	// I-1. Dropdown коммитил выбор сам (`value` — $bindable, карточка передаёт
+	// его без bind:), а провал сохранения стор не трогает. Проп после этого не
+	// меняется — значит записанный компонентом пункт остаётся на экране навсегда
+	// и врёт про закреплённый WAN ровно так же, как чинили в I3.
+	it('провал сохранения WAN не оставляет на экране чужой интерфейс', async () => {
+		putSettings.mockRejectedValue(new Error('операция уже выполняется'));
+		const { getByLabelText } = render(EngineHealthCard);
+		await vi.waitFor(() => expect(wanInterfaces).toHaveBeenCalled());
+		await openDropdown('Автоматически');
+		await pickOption(/ppp0 — Letai/);
+		await vi.waitFor(() => expect(putSettings).toHaveBeenCalled());
+		expect(getByLabelText('Интерфейс').textContent).toContain('Автоматически');
+		expect(getByLabelText('Интерфейс').textContent).not.toContain('Letai');
+	});
+
+	// Обратная сторона того же: принятый бэкендом выбор обязан доехать до
+	// экрана, иначе список замер бы навсегда.
+	it('принятый бэкендом выбор WAN доезжает до списка', async () => {
+		const { getByLabelText } = render(EngineHealthCard);
+		await vi.waitFor(() => expect(wanInterfaces).toHaveBeenCalled());
+		await openDropdown('Автоматически');
+		await pickOption(/ppp0 — Letai/);
+		await vi.waitFor(() => expect(putSettings).toHaveBeenCalled());
+		// После удачного PUT настройки перезагружает mergeAndSaveSettings.
+		setEngine('tproxy', {}, { wanAutoDetect: false, wanInterface: 'ppp0' });
+		await vi.waitFor(() =>
+			expect(getByLabelText('Интерфейс').textContent).toContain('Letai'),
+		);
+	});
+
 	// ── Анализ трафика ───────────────────────────────────────────────────────
 
 	it('sniffer сохраняется', async () => {
@@ -480,6 +545,28 @@ describe('EngineHealthCard', () => {
 		await pickOption(/^15 минут$/);
 		await vi.waitFor(() => expect(putSettings).toHaveBeenCalled());
 		expect(putSettings.mock.calls[0][0]).toMatchObject({ udpTimeout: '15m0s' });
+	});
+
+	// Та же болезнь, что у списка WAN: тумблер коммитил себя сам, а провал
+	// сохранения стор не трогает.
+	it('провал сохранения sniffer не оставляет тумблер включённым', async () => {
+		putSettings.mockRejectedValue(new Error('операция уже выполняется'));
+		const { getByLabelText } = render(EngineHealthCard);
+		const toggle = getByLabelText('Включить sniff') as HTMLInputElement;
+		await fireEvent.click(toggle);
+		await vi.waitFor(() => expect(putSettings).toHaveBeenCalled());
+		expect(toggle.checked).toBe(false);
+	});
+
+	it('провал сохранения UDP-таймаута не оставляет чужое значение', async () => {
+		putSettings.mockRejectedValue(new Error('операция уже выполняется'));
+		const { container } = render(EngineHealthCard);
+		await openDropdown('По умолчанию (5 мин)');
+		await pickOption(/^15 минут$/);
+		await vi.waitFor(() => expect(putSettings).toHaveBeenCalled());
+		expect(container.querySelector('#eng-udp-timeout')?.textContent ?? '').toContain(
+			'По умолчанию',
+		);
 	});
 
 	it('возврат к «По умолчанию» снимает поле', async () => {

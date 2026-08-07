@@ -84,6 +84,11 @@ export interface CrashInfoView {
 	/** «HH:MM» окончания паузы авто-перезапуска; null — не подавлен. */
 	suppressedUntil: string | null;
 	/**
+	 * Движок мёртв при живом перехвате — рядом стоит замечание, и путь к кнопке
+	 * «Перезапустить» уместен независимо от паузы.
+	 */
+	deadInterception: boolean;
+	/**
 	 * Счётчик и пауза уже напечатаны текстом замечания рядом — блок обязан их
 	 * промолчать. Причины это не касается: её в тексте замечания нет.
 	 */
@@ -91,12 +96,14 @@ export interface CrashInfoView {
 }
 
 /**
- * Замечание, чей текст уже содержит паузу и счётчик падений.
+ * Замечание про мёртвый движок при живом перехвате.
  *
- * Бэкенд собирает его прозой (service_lifecycle.go): «Движок остановлен, но
- * перехват трафика активен … Автоперезапуск приостановлен до 19:37 (падений за
- * 10 мин: 3).» Разбирать эту строку, чтобы вычесть из неё факты, — гонка с
- * любой правкой формулировки; гейт стоит по kind.
+ * Бэкенд собирает его прозой (service_lifecycle.go), и текст у него ДВА:
+ * с паузой — «… Автоперезапуск приостановлен до 19:37 (падений за 10 мин: 3).»,
+ * без паузы — «… Автоперезапуск: при следующей проверке (до 30 с).» Счётчик
+ * есть только в первом. Разбирать саму строку, чтобы вычесть из неё факты, —
+ * гонка с любой правкой формулировки; гейт стоит по kind ПЛЮС по тому же
+ * условию, по которому бэкенд выбирает ветку (см. ниже).
  */
 const RESTATING_ISSUE_KIND = 'engine-dead-interception';
 
@@ -117,10 +124,18 @@ export function engineCrashInfo(
 	const count = status?.crashCount ?? 0;
 	const suppressedUntil = formatSuppressedUntil(status?.restartSuppressedUntil);
 	if (count <= 0 && suppressedUntil === null) return null;
+	const deadInterception = issues.some((i) => i.kind === RESTATING_ISSUE_KIND);
+	// Пауза, как её видит БЭКЕНД: непустой restartSuppressedUntil — ровно
+	// `!suppressedUntil.IsZero()` из service_lifecycle.go, то есть ровно то
+	// условие, под которым счётчик и пауза попадают в текст замечания. Гейт по
+	// сырому полю, а не по отформатированному: формат — дело показа, а
+	// нечитаемую дату бэкенд в текст всё равно уже вписал.
+	const backendPaused = Boolean(status?.restartSuppressedUntil);
 	return {
 		count: count > 0 ? count : 0,
 		reason: (status?.lastCrashReason ?? '').trim(),
 		suppressedUntil,
-		restated: issues.some((i) => i.kind === RESTATING_ISSUE_KIND),
+		deadInterception,
+		restated: deadInterception && backendPaused,
 	};
 }

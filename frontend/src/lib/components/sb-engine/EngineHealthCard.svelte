@@ -17,13 +17,21 @@
 	//    WAN, sniffer и UDP-таймаут — единственные места правки этих полей.
 	//
 	//  * Блок падений молчит про паузу и счётчик, когда рядом стоит замечание
-	//    engine-dead-interception: бэкенд вкладывает оба факта прямо в его текст
-	//    (service_lifecycle.go), и на странице они печатались встык дважды.
-	//    В шторке их разделяли две секции.
+	//    engine-dead-interception С ПАУЗОЙ: бэкенд вкладывает оба факта прямо в
+	//    его текст (service_lifecycle.go), и на странице они печатались встык
+	//    дважды. В шторке их разделяли две секции. Во второй ветке того же
+	//    замечания («при следующей проверке») счётчика в тексте нет — там блок
+	//    печатает его сам.
+	//
+	//  * Список, тумблер и список таймаута — `controlled`: значением владеет
+	//    стор. Иначе компонент коммитит выбор себе сам, а провал сохранения
+	//    стор не трогает — проп не меняется, и записанное значение остаётся на
+	//    экране навсегда, вопреки бэкенду.
 	//
 	// СПИСОК WAN-ИНТЕРФЕЙСОВ ГРУЗИТ САМА КАРТОЧКА, один раз на монтаж. Ленивой
 	// загрузки больше нет: список — единственный способ задать WAN, и нужен он
 	// всегда, а не только при выключенном авто-определении.
+	import { onMount } from 'svelte';
 	import { Badge, Card, Dropdown, Toggle, type DropdownOption } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
@@ -64,15 +72,12 @@
 	// ── WAN ────────────────────────────────────────────────────────────────
 	let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
 	let wanFailed = $state(false);
-	// Обычный `let`, а НЕ `$state`: латч «запрос уже уходил». Сделай его
-	// реактивным и сбрось в catch — эффект перезапустится сам и будет долбить
-	// упавшую ручку без остановки. Повтор — только по кнопке.
-	let wanRequested = false;
-	$effect(() => {
-		if (wanRequested) return;
-		wanRequested = true;
-		void loadWanInterfaces();
-	});
+	// onMount, а не $effect с латчем: грузить список надо всегда и ровно один
+	// раз — реактивных зависимостей у загрузки нет (в отличие от EngineQosCard,
+	// где прайминг каталога гейтится режимом и потому обязан быть эффектом).
+	// Идиома общая с EngineConfigCard. Повтор после отказа — только по кнопке:
+	// автоматический долбил бы упавшую ручку без остановки.
+	onMount(loadWanInterfaces);
 
 	async function loadWanInterfaces(): Promise<void> {
 		try {
@@ -136,8 +141,10 @@
 			{#if crash}
 				<div class="crash">
 					<!-- `restated` — счётчик и пауза уже напечатаны текстом замечания
-					     engine-dead-interception строкой выше. Причина в тот текст не
-					     входит и остаётся здесь при любом раскладе. -->
+					     engine-dead-interception строкой выше. Так бывает только в его
+					     ветке С ПАУЗОЙ: без неё текст говорит лишь «Автоперезапуск: при
+					     следующей проверке», счётчика в нём нет. Причина в тот текст не
+					     входит никогда и остаётся здесь при любом раскладе. -->
 					{#if crash.count > 0 && !crash.restated}
 						<div class="stat-line">
 							<span class="stat-label">Падений за 10 мин</span>
@@ -147,7 +154,10 @@
 					{#if crash.reason}
 						<p class="crash-reason">Причина: {crash.reason}</p>
 					{/if}
-					{#if crash.restated}
+					<!-- Путь к кнопке — при мёртвом движке, с паузой или без: действовать
+					     сейчас можно в обоих случаях. Строка про паузу ниже поэтому
+					     остаётся ровно для случая «пауза есть, замечания нет». -->
+					{#if crash.deadInterception}
 						<p class="crash-hint">
 							Кнопка «Перезапустить» в шапке страницы запускает движок немедленно.
 						</p>
@@ -176,6 +186,7 @@
 				options={wanOptions}
 				label="Интерфейс"
 				fullWidth
+				controlled
 				id="eng-wan"
 				onchange={(v) => selectWan(String(v))}
 			/>
@@ -200,6 +211,7 @@
 				<Toggle
 					checked={cfg.snifferEnabled}
 					ariaLabel="Включить sniff"
+					controlled
 					onchange={(checked) => void applyEngineSettings({ snifferEnabled: checked })}
 				/>
 			</div>
@@ -214,6 +226,7 @@
 					value={cfg.udpTimeout ?? ''}
 					options={udpOptions}
 					fullWidth
+					controlled
 					id="eng-udp-timeout"
 					onchange={(v) => void applyEngineSettings({ udpTimeout: String(v) || undefined })}
 				/>
