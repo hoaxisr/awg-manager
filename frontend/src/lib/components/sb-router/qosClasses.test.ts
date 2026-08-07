@@ -11,6 +11,7 @@ import {
   removeQosClass,
   resolveOutboundOptions,
   createSaveQueue,
+  isQosLockedByMode,
 } from './qosClasses';
 
 function cls(dscp: number, over: Partial<SingboxQosClass> = {}): SingboxQosClass {
@@ -219,5 +220,31 @@ describe('createSaveQueue', () => {
     await tick();
     expect(save).toHaveBeenCalledTimes(2);
     expect(onDrained).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Классы DSCP опираются на netfilter-перехват, которого в fakeip-tun нет.
+// Предикат один на два места: QosSettingsCard гейтит им РЕНДЕР таблицы,
+// EngineQosCard — прайминг каталога outbound'ов. Разъехавшись, они дали бы
+// пустой дропдаун ровно там, ради чего прайминг и заводили.
+describe('isQosLockedByMode', () => {
+  it('fakeip-tun запирает карточку', () => {
+    expect(isQosLockedByMode('fakeip-tun')).toBe(true);
+  });
+
+  it('tproxy и policy-tun не запирают', () => {
+    expect(isQosLockedByMode('tproxy')).toBe(false);
+    expect(isQosLockedByMode('policy-tun')).toBe(false);
+  });
+
+  // Легаси-payload без routingMode = tproxy (тот же дефолт, что у бэкенда).
+  it('отсутствующий режим не запирает', () => {
+    expect(isQosLockedByMode(undefined)).toBe(false);
+    expect(isQosLockedByMode(null)).toBe(false);
+    expect(isQosLockedByMode('')).toBe(false);
+  });
+
+  it('незнакомый режим не запирает', () => {
+    expect(isQosLockedByMode('что-то новое')).toBe(false);
   });
 });

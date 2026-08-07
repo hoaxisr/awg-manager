@@ -19,6 +19,19 @@ export const QOS_DSCP_PRESETS: ReadonlyArray<{ value: number; label: string }> =
   { value: 8, label: '8 (CS1 — фоновая закачка)' },
 ];
 
+/**
+ * Классы DSCP неприменимы в fakeip-tun: netfilter-перехвата там нет.
+ * Отсутствующий routingMode — легаси-payload, дефолт бэкенда = tproxy.
+ *
+ * Предикат ОДИН на два места: `QosSettingsCard` гейтит им рендер таблицы,
+ * `EngineQosCard` — прайминг каталога outbound'ов. Разъехавшись, они дали бы
+ * пустой дропдаун класса ровно там, ради чего прайминг и заводили: каждый
+ * существующий класс выглядел бы как «outbound не найден».
+ */
+export function isQosLockedByMode(routingMode: string | null | undefined): boolean {
+  return routingMode === 'fakeip-tun';
+}
+
 /** Clamp an arbitrary number to a valid integer DSCP mark (0–63). */
 export function clampDscp(value: number): number {
   if (!Number.isFinite(value)) return QOS_DSCP_MIN;

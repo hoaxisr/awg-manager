@@ -119,6 +119,31 @@ describe('EngineQosCard', () => {
 		expect(listOutbounds).not.toHaveBeenCalled();
 	});
 
+	// m5. Разовая сетевая ошибка оставляла каталог пустым МОЛЧА, и каждый
+	// существующий класс рендерился как «outbound не найден» — пользователь шёл
+	// переназначать рабочие классы. Сброс латча в catch ретраем не был: эффект
+	// без смены зависимостей не перезапускается.
+	it('отказ загрузки каталога виден и повторяется кнопкой', async () => {
+		listOutbounds.mockRejectedValueOnce(new Error('сеть'));
+		const { container, getByRole } = render(EngineQosCard);
+		await vi.waitFor(() => expect(container.textContent).toContain('Не удалось загрузить'));
+		listOutbounds.mockResolvedValue([OUTBOUND]);
+		await fireEvent.click(getByRole('button', { name: 'Повторить' }));
+		await vi.waitFor(() => expect(listOutbounds).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(get(singboxRouter.outbounds)).toHaveLength(1));
+		expect(container.textContent).not.toContain('Не удалось загрузить');
+	});
+
+	// Латч остаётся нереактивным намеренно: сделай его $state и сбрось в catch —
+	// эффект перезапустится сам и будет долбить упавшую ручку без остановки.
+	it('упавший запрос сам себя не перезапускает', async () => {
+		listOutbounds.mockRejectedValue(new Error('сеть'));
+		const { container } = render(EngineQosCard);
+		await vi.waitFor(() => expect(container.textContent).toContain('Не удалось загрузить'));
+		await new Promise((r) => setTimeout(r, 20));
+		expect(listOutbounds).toHaveBeenCalledTimes(1);
+	});
+
 	// ── Сохранение ───────────────────────────────────────────────────────────
 
 	it('добавление класса уходит в настройки движка', async () => {

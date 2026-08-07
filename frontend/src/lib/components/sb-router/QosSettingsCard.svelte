@@ -29,6 +29,7 @@
     removeQosClass,
     resolveOutboundOptions,
     createSaveQueue,
+    isQosLockedByMode,
   } from './qosClasses';
 
   interface Props {
@@ -51,8 +52,9 @@
   // mock-api / легаси-payload без qosClasses → пустой список (undefined-safe).
   const classes = $derived(draft ?? normalizeQosClasses(cfg.qosClasses));
   // Классы применимы в TProxy и «Политики + tun»; в fakeip-tun netfilter-перехвата
-  // нет. Отсутствующий routingMode = легаси tproxy.
-  const locked = $derived((cfg.routingMode ?? 'tproxy') === 'fakeip-tun');
+  // нет. Предикат общий с EngineQosCard (он гейтит им прайминг каталога
+  // outbound'ов): разъехавшись, они дали бы пустой дропдаун класса.
+  const locked = $derived(isQosLockedByMode(cfg.routingMode));
   // Строго false: undefined (мок/старый бэкенд) — неизвестно, баннер не показываем.
   const xtDscpMissing = $derived(status?.xtDscpAvailable === false);
   const atCap = $derived(classes.length >= QOS_MAX_CLASSES);

@@ -6,9 +6,14 @@
 	//
 	// РЕЖИМ FakeIP. Спека требует «вместо карточки — строка-объяснение». Внутри
 	// `QosSettingsCard` такая ветка уже есть (`locked` по routingMode), поэтому
-	// гейт снаружи не заводим: два места, решающих один вопрос, разъезжаются.
-	// Строка при этом остаётся в карточке с заголовком — иначе объяснение
-	// «почему тут пусто» висело бы в воздухе без названия того, чего нет.
+	// гейт РЕНДЕРА снаружи не заводим: два места, решающих один вопрос,
+	// разъезжаются. Строка при этом остаётся в карточке с заголовком — иначе
+	// объяснение «почему тут пусто» висело бы в воздухе без названия того, чего
+	// нет.
+	//
+	// Гейт ПРАЙМИНГА (ниже) — вопрос тот же, поэтому предикат общий с
+	// `QosSettingsCard`: разъехавшись, они дали бы пустой дропдаун ровно там,
+	// ради чего прайминг и заводили.
 	//
 	// КАТАЛОГ OUTBOUND'ОВ ГРУЗИТ ЭТА КАРТОЧКА. `singboxRouter.options` собирается
 	// из стора outbounds, а его на страницах движка не грузил никто: полный
@@ -21,8 +26,8 @@
 	import { api } from '$lib/api/client';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import QosSettingsCard from '$lib/components/sb-router/QosSettingsCard.svelte';
+	import { isQosLockedByMode } from '$lib/components/sb-router/qosClasses';
 	import { applyEngineSettings } from './engineSettings';
-	import { normalizeRoutingMode } from './engineRunState';
 	import type { SingboxRouterSettings } from '$lib/types';
 
 	const routerStatus = singboxRouter.status;
@@ -30,8 +35,12 @@
 	const routerOptions = singboxRouter.options;
 
 	const cfg = $derived($routerSettings);
-	const locked = $derived(normalizeRoutingMode($routerSettings?.routingMode) === 'fakeip-tun');
+	const locked = $derived(isQosLockedByMode($routerSettings?.routingMode));
 
+	let outboundsFailed = $state(false);
+	// Обычный `let`, а НЕ `$state`: латч «запрос уже уходил». Сделай его
+	// реактивным и сбрось в catch — эффект перезапустится сам и будет долбить
+	// упавшую ручку без остановки. Повтор — только по кнопке.
 	let outboundsRequested = false;
 	$effect(() => {
 		if (locked || outboundsRequested) return;
@@ -45,9 +54,12 @@
 	async function loadOutbounds(): Promise<void> {
 		try {
 			singboxRouter.applyOutbounds(await api.singboxRouterListOutbounds());
+			outboundsFailed = false;
 		} catch (_e) {
-			// Молча: каталог — подсказка дропдауна, карточка работает и без него.
-			outboundsRequested = false;
+			// Молчать нельзя: с пустым каталогом КАЖДЫЙ настроенный класс
+			// рендерится как «outbound не найден», и пользователь идёт
+			// переназначать рабочие классы.
+			outboundsFailed = true;
 		}
 	}
 
@@ -64,6 +76,15 @@
 			<div class="title">QoS · приоритеты</div>
 			<div class="sub">Помеченный DSCP трафик уходит в свой туннель мимо остальных правил</div>
 		</div>
+		{#if outboundsFailed}
+			<p class="load-error">
+				Не удалось загрузить каталог выходов — существующие классы покажутся как «outbound не
+				найден».
+				<button type="button" class="retry" onclick={() => void loadOutbounds()}>
+					Повторить
+				</button>
+			</p>
+		{/if}
 		<QosSettingsCard
 			{cfg}
 			status={$routerStatus}
@@ -92,5 +113,22 @@
 		font-size: 12px;
 		line-height: 1.4;
 		color: var(--text-muted);
+	}
+	/* Отказ прайминга: поток текста, кнопка внутри строки. */
+	.load-error {
+		margin: 0;
+		padding: 10px var(--sp-4) 0;
+		font-size: 11.5px;
+		line-height: 1.4;
+		color: var(--color-error, #d05b5b);
+	}
+	.retry {
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: var(--color-accent, #5b9bd0);
+		text-decoration: underline;
+		cursor: pointer;
 	}
 </style>
