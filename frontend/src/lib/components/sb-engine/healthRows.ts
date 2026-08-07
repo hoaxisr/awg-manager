@@ -69,7 +69,11 @@ export function engineIssues(
 					issues: (status.issues ?? []).filter((i) => i.kind !== 'policy-tun-unbound'),
 				}
 			: status;
-	return deriveIssues(source).map((issue) => ({ tone: issue.tone, text: issue.text }));
+	return deriveIssues(source).map((issue) => ({
+		tone: issue.tone,
+		kind: issue.kind,
+		text: issue.text,
+	}));
 }
 
 export interface CrashInfoView {
@@ -79,7 +83,22 @@ export interface CrashInfoView {
 	reason: string;
 	/** «HH:MM» окончания паузы авто-перезапуска; null — не подавлен. */
 	suppressedUntil: string | null;
+	/**
+	 * Счётчик и пауза уже напечатаны текстом замечания рядом — блок обязан их
+	 * промолчать. Причины это не касается: её в тексте замечания нет.
+	 */
+	restated: boolean;
 }
+
+/**
+ * Замечание, чей текст уже содержит паузу и счётчик падений.
+ *
+ * Бэкенд собирает его прозой (service_lifecycle.go): «Движок остановлен, но
+ * перехват трафика активен … Автоперезапуск приостановлен до 19:37 (падений за
+ * 10 мин: 3).» Разбирать эту строку, чтобы вычесть из неё факты, — гонка с
+ * любой правкой формулировки; гейт стоит по kind.
+ */
+const RESTATING_ISSUE_KIND = 'engine-dead-interception';
 
 /**
  * Блок падений (#456) или null, когда показывать нечего.
@@ -87,8 +106,14 @@ export interface CrashInfoView {
  * Падения и пауза независимы: серия неудачных стартов до grace-периода даёт
  * паузу без записанных падений, а после восстановления счётчик ещё держится в
  * 10-минутном окне уже без паузы.
+ *
+ * `issues` — список, который карточка РИСУЕТ (а не сырой status.issues):
+ * дубликат считается по тому, что реально попало на экран.
  */
-export function engineCrashInfo(status: SingboxRouterStatus | null): CrashInfoView | null {
+export function engineCrashInfo(
+	status: SingboxRouterStatus | null,
+	issues: IssueEntry[] = [],
+): CrashInfoView | null {
 	const count = status?.crashCount ?? 0;
 	const suppressedUntil = formatSuppressedUntil(status?.restartSuppressedUntil);
 	if (count <= 0 && suppressedUntil === null) return null;
@@ -96,5 +121,6 @@ export function engineCrashInfo(status: SingboxRouterStatus | null): CrashInfoVi
 		count: count > 0 ? count : 0,
 		reason: (status?.lastCrashReason ?? '').trim(),
 		suppressedUntil,
+		restated: issues.some((i) => i.kind === RESTATING_ISSUE_KIND),
 	};
 }

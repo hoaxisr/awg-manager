@@ -17,6 +17,12 @@ export interface DepEntry {
 export type IssueTone = 'warning' | 'error' | 'info';
 export interface IssueEntry {
   tone: IssueTone;
+  /**
+   * Открытый набор бэкенда (SingboxRouterIssue.kind). Нужен потребителям,
+   * которые гасят СВОЙ дубликат факта, уже вложенного бэкендом в текст
+   * замечания: по прозе сообщения это не различить.
+   */
+  kind: string;
   text: string;
   /** Серый текст-хинт справа от issue (в F3 не кликабелен; F5/F6 заменит на real CTA). */
   ctaHint?: string;
@@ -49,6 +55,7 @@ export function deriveIssues(status: SingboxRouterStatus | null): IssueEntry[] {
   const issues = status.issues ?? [];
   return issues.map((i: SingboxRouterIssue) => ({
     tone: i.severity === 'error' ? ('error' as const) : ('warning' as const),
+    kind: i.kind,
     text: i.message,
     ctaHint: '(в Эксперт)',
   }));

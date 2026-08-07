@@ -96,4 +96,16 @@ describe('deriveIssues', () => {
     const out = deriveIssues(status({ issues }));
     expect(out.map((i) => i.text)).toEqual(['A', 'B']);
   });
+
+  // kind нужен потребителям, которые гасят СВОЙ дубликат факта, уже
+  // напечатанного текстом issue (карточка «Здоровье» — блок падений против
+  // engine-dead-interception). По тексту сообщения это не различить.
+  it('протаскивает kind каждого issue', () => {
+    const issues: SingboxRouterIssue[] = [
+      { severity: 'error', kind: 'engine-dead-interception', message: 'A' },
+      { severity: 'warning', kind: 'orphan-rule', message: 'B' },
+    ];
+    const out = deriveIssues(status({ issues }));
+    expect(out.map((i) => i.kind)).toEqual(['engine-dead-interception', 'orphan-rule']);
+  });
 });

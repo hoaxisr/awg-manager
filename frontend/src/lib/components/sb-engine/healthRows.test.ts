@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { UDP_TIMEOUT_OPTIONS, engineCrashInfo, engineDeps, engineIssues } from './healthRows';
+import type { IssueEntry } from '$lib/components/sb-router/drawerData';
 import type { SingboxRouterIssue, SingboxRouterStatus } from '$lib/types';
 import type { EngineRoutingMode } from './engineRunState';
 
@@ -87,9 +88,21 @@ describe('engineIssues', () => {
 		const second: SingboxRouterIssue = { severity: 'warning', kind: 'x', message: 'B' };
 		const out = engineIssues(status({ issues: [orphan, unbound, second] }), 'policy-tun');
 		expect(out).toEqual([
-			{ tone: 'error', text: orphan.message },
-			{ tone: 'warning', text: 'B' },
+			{ tone: 'error', kind: orphan.kind, text: orphan.message },
+			{ tone: 'warning', kind: 'x', text: 'B' },
 		]);
+	});
+
+	// Блок падений гасит свой дубликат по kind замечания — по тексту
+	// бэкендовой прозы это не различить.
+	it('протаскивает kind', () => {
+		const dead: SingboxRouterIssue = {
+			severity: 'error',
+			kind: 'engine-dead-interception',
+			message: 'Движок остановлен, но перехват трафика активен',
+		};
+		const out = engineIssues(status({ issues: [dead] }), 'tproxy');
+		expect(out.map((i) => i.kind)).toEqual(['engine-dead-interception']);
 	});
 
 	// Режима «Эксперт» в nav-v3 нет: подпись отправляла бы пользователя туда,
@@ -113,7 +126,7 @@ describe('engineCrashInfo', () => {
 
 	it('падения без паузы — блок есть, времени нет', () => {
 		const view = engineCrashInfo(status({ crashCount: 3, lastCrashReason: 'OOM-kill' }));
-		expect(view).toEqual({ count: 3, reason: 'OOM-kill', suppressedUntil: null });
+		expect(view).toEqual({ count: 3, reason: 'OOM-kill', suppressedUntil: null, restated: false });
 	});
 
 	// Серия неудачных стартов до grace-периода даёт паузу без записанных
@@ -121,7 +134,7 @@ describe('engineCrashInfo', () => {
 	it('пауза без падений — блок есть, счётчик нулевой', () => {
 		const until = new Date(2026, 0, 2, 7, 5).toISOString();
 		const view = engineCrashInfo(status({ crashCount: 0, restartSuppressedUntil: until }));
-		expect(view).toEqual({ count: 0, reason: '', suppressedUntil: '07:05' });
+		expect(view).toEqual({ count: 0, reason: '', suppressedUntil: '07:05', restated: false });
 	});
 
 	it('битую дату паузы не показывает', () => {
@@ -131,6 +144,53 @@ describe('engineCrashInfo', () => {
 	it('пустую причину не протаскивает', () => {
 		const view = engineCrashInfo(status({ crashCount: 1, lastCrashReason: '   ' }));
 		expect(view?.reason).toBe('');
+	});
+});
+
+// Бэкенд вкладывает паузу и счётчик В ТЕКСТ замечания engine-dead-interception
+// («Автоперезапуск приостановлен до 19:37 (падений за 10 мин: 3)»,
+// service_lifecycle.go). Блок падений печатает те же два факта своими полями —
+// в шторке их разделяли две секции, на странице они встык.
+describe('engineCrashInfo · дубликат engine-dead-interception', () => {
+	const dead: IssueEntry[] = [
+		{ tone: 'error', kind: 'engine-dead-interception', text: 'Движок остановлен…' },
+	];
+	const other: IssueEntry[] = [{ tone: 'warning', kind: 'orphan-rule', text: 'Правило…' }];
+	const until = new Date(2026, 0, 2, 19, 37).toISOString();
+	const crashed = status({
+		crashCount: 3,
+		lastCrashReason: 'OOM-kill',
+		restartSuppressedUntil: until,
+	});
+
+	it('замечание есть — счётчик и пауза помечены как уже сказанные', () => {
+		expect(engineCrashInfo(crashed, dead)).toEqual({
+			count: 3,
+			reason: 'OOM-kill',
+			suppressedUntil: '19:37',
+			restated: true,
+		});
+	});
+
+	it('замечание другого рода дубликатом не считается', () => {
+		expect(engineCrashInfo(crashed, other)?.restated).toBe(false);
+	});
+
+	it('без замечаний блок печатает всё сам', () => {
+		expect(engineCrashInfo(crashed, [])?.restated).toBe(false);
+		expect(engineCrashInfo(crashed)?.restated).toBe(false);
+	});
+
+	// Причина падения в текст замечания НЕ входит — её блок обязан сохранить
+	// в любом случае, иначе факт пропадает со страницы совсем.
+	it('причину не теряет и при дубликате', () => {
+		expect(engineCrashInfo(crashed, dead)?.reason).toBe('OOM-kill');
+	});
+
+	// Замечание без crash-статистики (ветка «Автоперезапуск: при следующей
+	// проверке») блока не создаёт: печатать нечего.
+	it('замечание без падений и паузы блока не рождает', () => {
+		expect(engineCrashInfo(status(), dead)).toBeNull();
 	});
 });
 
