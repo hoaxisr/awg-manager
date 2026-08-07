@@ -13,7 +13,11 @@
   let { kind, value }: Props = $props();
 
   const label = $derived.by(() => {
-    if (kind === 'backend') return value === 'nativewg' ? 'NativeWG' : 'Kernel';
+    if (kind === 'backend') {
+      if (value === 'nativewg') return 'NativeWG';
+      if (value === 'wdtt-raw') return 'WDTT Raw';
+      return 'Kernel';
+    }
     return ({
       'awg3': 'AWG 3.0',
       'awg2.0': 'AWG 2.0',
@@ -23,7 +27,7 @@
     } as Record<string, string>)[value as string] ?? '';
   });
 
-  const tone = $derived(kind === 'awg' && value !== 'wg' ? 'accent' : 'muted');
+  const tone = $derived(kind === 'awg' && value !== 'wg' ? 'accent' : kind === 'backend' && value === 'wdtt-raw' ? 'accent' : 'muted');
 </script>
 
 {#if label}

@@ -171,6 +171,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
+	h.tunnelsHandler.SetWdttListSource(s.wdttService)
+	h.controlHandler.SetWdttControl(s.tunnels, s.wdttService)
 
 	h.proxyListenerHandler = api.NewProxyListenerHandler(s.freeturnService, s.wdttService)
 

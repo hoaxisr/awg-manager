@@ -78,6 +78,15 @@ type ServiceImpl struct {
 	// SetTunnelLifecycle after construction.
 	lifecycle      TunnelLifecycle
 	tunnelResolver ManagedTunnelResolver
+
+	// opkgRouteSyncer — после ручного permit OpkgTun в политике синхронизирует
+	// default route в table политики (awg-manager / wdtt).
+	opkgRouteSyncer OpkgPolicyRouteSyncer
+}
+
+// OpkgPolicyRouteSyncer reconciles Linux policy routes for WDTT raw OpkgTun uplinks.
+type OpkgPolicyRouteSyncer interface {
+	ReconcileOpkgPolicyRoutes(ctx context.Context)
 }
 
 // SetTunnelLifecycle wires managed-tunnel lifecycle routing for
@@ -86,6 +95,11 @@ type ServiceImpl struct {
 func (s *ServiceImpl) SetTunnelLifecycle(lc TunnelLifecycle, resolver ManagedTunnelResolver) {
 	s.lifecycle = lc
 	s.tunnelResolver = resolver
+}
+
+// SetOpkgPolicyRouteSyncer wires default-route sync after manual OpkgTun permit.
+func (s *ServiceImpl) SetOpkgPolicyRouteSyncer(p OpkgPolicyRouteSyncer) {
+	s.opkgRouteSyncer = p
 }
 
 // New creates a new access policy service backed by the NDMS CQRS layer.
@@ -326,6 +340,10 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 		return err
 	}
 
+	if s.opkgRouteSyncer != nil && isOpkgTunNDMS(iface) {
+		s.opkgRouteSyncer.ReconcileOpkgPolicyRoutes(ctx)
+	}
+
 	s.appLog.Info("permit", name, fmt.Sprintf("Policy %s: interface %s permitted (order %d)", name, iface, order))
 	return nil
 }
@@ -523,6 +541,10 @@ func (s *ServiceImpl) refreshInterfaceAfterLifecycle(ndmsName string) {
 	if s.queries.RunningConfig != nil {
 		s.queries.RunningConfig.InvalidateAll()
 	}
+}
+
+func isOpkgTunNDMS(ndmsName string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ndmsName)), "opkgtun")
 }
 
 // interfaceLabel builds a human-readable label from NDMS interface data.

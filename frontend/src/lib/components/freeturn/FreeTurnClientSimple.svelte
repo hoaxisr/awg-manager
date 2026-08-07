@@ -12,7 +12,7 @@
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
 	import { freeturnLinkHasWg } from '$lib/utils/serverPeerOptions';
 	import { dnsModeOptions, platformOptions, modeOptions, transportOptions } from './options';
-	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import { proxyClientOpsMode } from '$lib/utils/proxyOpsMode';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import type { FreeTurnClientConfig, FreeTurnLinkPayload, FreeTurnProcessStatus } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
@@ -64,6 +64,7 @@
 	let manualWgApplied = $state(false);
 	let opsTab = $state<ClientTab>('setup');
 	let quickActive = $state('import');
+	let wizardOpen = $state(false);
 
 	const linksCount = $derived(
 		client.links ? client.links.split(',').filter((s) => s.trim()).length : 0
@@ -82,12 +83,14 @@
 	const canStart = $derived(step3Done && !saving && !starting);
 
 	const opsMode = $derived(
-		proxyInOpsMode({
+		proxyClientOpsMode({
 			running,
 			startedAt: status?.startedAt,
-			enabled: client.enabled
+			enabled: client.enabled,
+			setupComplete: step3Done
 		})
 	);
+	const showWizard = $derived(!opsMode || wizardOpen);
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'import', label: 'freeturn:// с сервера', done: step1Done },
@@ -200,13 +203,14 @@
 <div class="ft-simple-wrap">
 	<p class="ft-simple-lead">FreeTurn-клиент: freeturn:// → VK-ссылки → потоки → запуск.</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
 			meta={`listen ${listenMeta}`}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
 			{#snippet metaExtra()}
 				<ListenPortKillButton listen={listenMeta} proto="udp" />
@@ -334,6 +338,8 @@
 			{starting}
 			{canSave}
 			{canStart}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={saveOnly}
 			onToggle={onToggle}
 		>

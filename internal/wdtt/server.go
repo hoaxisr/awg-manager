@@ -70,13 +70,26 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 		}
 	}
 	if running {
-		go func(prev, saved ServerConfig) {
+		restart := serverProcessConfigChanged(prevCfg, savedCfg)
+		go func(prev, saved ServerConfig, id string, restart bool) {
 			ctx := context.Background()
-			if err := s.applyServerAccess(ctx, id, saved); err != nil && s.appLog != nil {
-				s.appLog.Warn("access", id, "фоновое применение NAT/LAN: "+err.Error())
+			if restart {
+				if err := s.StopServerInstance(id); err != nil && s.appLog != nil {
+					s.appLog.Warn("restart", id, "stop: "+err.Error())
+				}
+				if err := s.StartServerInstance(id); err != nil && s.appLog != nil {
+					s.appLog.Warn("restart", id, "start: "+err.Error())
+				}
+				return
+			}
+			if serverAccessConfigChanged(prev, saved) {
+				removeEntwareNATForServer(ctx, prev)
+				if err := s.applyServerAccess(ctx, id, saved); err != nil && s.appLog != nil {
+					s.appLog.Warn("access", id, "фоновое применение NAT/LAN: "+err.Error())
+				}
 			}
 			s.syncServerListenFirewall(ctx, id, prev, saved)
-		}(prevCfg, savedCfg)
+		}(prevCfg, savedCfg, id, restart)
 	}
 	return savedCfg, nil
 }
@@ -131,8 +144,8 @@ func (s *Service) DeleteServer(id string) error {
 	s.startBackoff.Forget(serverKey(id))
 	s.mu.Unlock()
 	_ = s.serverProcs.get(id).Stop()
-	kernelIface := inst.Config.kernelWGIface()
-	removeEntwareNAT(context.Background(), kernelIface)
+	kernelIface := inst.Config.kernelServerIface()
+	removeEntwareNATForServer(context.Background(), inst.Config)
 	removeEntwareLAN(context.Background(), kernelIface)
 	_ = s.teardownServerOpkgTun(context.Background(), inst.Config)
 	removeServerListenFirewall(context.Background(), inst.Config)
@@ -177,8 +190,7 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	useWG := cfg.UsesWireGuardRelay()
-	if useWG && cfg.usesNDMSOpkgTun() {
+	if cfg.usesNDMSOpkgTun() {
 		removeEntwareNAT(ctx, DefaultWdttIface)
 		removeEntwareLAN(ctx, DefaultWdttIface)
 		if err := s.prepareNDMSOpkgTun(ctx, cfg); err != nil {
@@ -188,13 +200,13 @@ func (s *Service) StartServerInstance(id string) error {
 	}
 	cfgDir, err := s.serverConfigDir(id, cfg)
 	if err != nil {
-		if useWG && cfg.usesNDMSOpkgTun() {
+		if cfg.usesNDMSOpkgTun() {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 		}
 		return err
 	}
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
-		if useWG && cfg.usesNDMSOpkgTun() {
+		if cfg.usesNDMSOpkgTun() {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 		}
 		return fmt.Errorf("config-dir: %w", err)
@@ -202,20 +214,33 @@ func (s *Service) StartServerInstance(id string) error {
 	// panel.db собираем из wdtt.json до старта: сервер на старте перечитывает
 	// её в память, а при ошибке чтения затирает своим пустым состоянием.
 	s.restoreServerPanelUsers(id, cfgDir, cfg)
+	if err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, cfg.Clients); err != nil && s.appLog != nil {
+		s.appLog.Warn("panel", id, "passwords.json не записан: "+err.Error())
+	}
+	if err := redirectServerStatsLog(cfgDir, id, cfg.StatsLog); err != nil && s.appLog != nil {
+		s.appLog.Warn("stats-log", id, "server.log redirect: "+err.Error())
+	}
 	cfg.ConfigDir = cfgDir
+	_ = s.serverProcs.get(id).Stop()
+	freeStaleServerListenPorts(s.serverBin, cfg)
 	if err := s.serverProcs.get(id).Start(buildServerArgs(cfg)); err != nil {
-		if useWG && cfg.usesNDMSOpkgTun() {
+		if cfg.usesNDMSOpkgTun() {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 		}
 		return err
 	}
-	if useWG {
+	if !waitForInterface(s.ifaceChecker, DefaultRawServerIface, 8*time.Second) {
+		_ = s.serverProcs.get(id).Stop()
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
+		return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server (raw)", DefaultRawServerIface)
+	}
+	if cfg.usesNDMSOpkgTun() {
 		kernelIface := cfg.kernelWGIface()
 		if !waitForInterface(s.ifaceChecker, kernelIface, 8*time.Second) {
 			_ = s.serverProcs.get(id).Stop()
-			if cfg.usesNDMSOpkgTun() {
-				_ = s.teardownServerOpkgTun(ctx, cfg)
-			}
+			_ = s.teardownServerOpkgTun(ctx, cfg)
 			return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server", kernelIface)
 		}
 		if err := s.activateNDMSOpkgTun(ctx, cfg); err != nil {
@@ -223,11 +248,19 @@ func (s *Service) StartServerInstance(id string) error {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 			return err
 		}
-		if err := s.applyServerAccess(ctx, id, cfg); err != nil {
+	} else {
+		kernelIface := cfg.kernelWGIface()
+		if !waitForInterface(s.ifaceChecker, kernelIface, 8*time.Second) {
 			_ = s.serverProcs.get(id).Stop()
-			_ = s.teardownServerOpkgTun(ctx, cfg)
-			return err
+			return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server", kernelIface)
 		}
+	}
+	if err := s.applyServerAccess(ctx, id, cfg); err != nil {
+		_ = s.serverProcs.get(id).Stop()
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
+		return err
 	}
 	if err := applyServerListenFirewall(ctx, cfg); err != nil && s.appLog != nil {
 		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
@@ -248,12 +281,12 @@ func (s *Service) StopServerInstance(id string) error {
 		return err
 	}
 	cfg := inst.Config
-	kernelIface := cfg.kernelWGIface()
+	kernelIface := cfg.kernelServerIface()
 	// Останавливаем ДО снятия правил: Stop блокирует до ~3с, и тик
 	// NAT-ресинка, попав в это окно, увидел бы процесс живым и поставил
 	// правила заново — снять их было бы уже некому.
 	err = s.serverProcs.get(id).Stop()
-	removeEntwareNAT(context.Background(), kernelIface)
+	removeEntwareNATForServer(context.Background(), cfg)
 	removeEntwareLAN(context.Background(), kernelIface)
 	removeServerListenFirewall(context.Background(), inst.Config)
 	_ = s.teardownServerOpkgTun(context.Background(), cfg)
@@ -414,6 +447,8 @@ func normalizeServerConfig(cfg ServerConfig) ServerConfig {
 		cfg.Policy = DefaultServerConfig().Policy
 	}
 	cfg.RelayMode = normalizeConnMode(cfg.RelayMode)
+	cfg.RawListen = strings.TrimSpace(cfg.RawListen)
+	cfg.DirectListen = strings.TrimSpace(cfg.DirectListen)
 	return cfg
 }
 
@@ -434,11 +469,12 @@ func buildServerArgs(c ServerConfig) []string {
 	str("-bot-token", c.BotToken)
 	args = append(args, "-no-nat")
 	str("-nat-if", c.NatIface)
-	if iface := strings.TrimSpace(c.WgIface); iface != "" && iface != DefaultWdttIface {
+	if iface := strings.TrimSpace(c.WgIface); iface != "" {
 		str("-wg-iface", iface)
 	}
-	if mode := normalizeConnMode(c.RelayMode); mode == ConnModeRaw {
-		args = append(args, "-relay-mode", mode)
+	str("-listen-raw", c.EffectiveRawListen())
+	if direct := c.EffectiveDirectListen(); direct != "" && direct != c.Listen {
+		str("-listen-direct", direct)
 	}
 	// -debug не передаём: wdtt-server его не знает (flag.Parse → exit 2),
 	// подробного лога у него нет вовсе. Поле Debug оставлено ради совместимости

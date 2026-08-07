@@ -42,6 +42,7 @@ func TestBuildServerArgsNoNAT(t *testing.T) {
 		"-wg-port", "56001",
 		"-password", "secret",
 		"-no-nat",
+		"-listen-raw", "0.0.0.0:56003",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("buildServerArgs() = %v, want %v", got, want)

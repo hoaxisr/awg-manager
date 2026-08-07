@@ -30,6 +30,7 @@ type process struct {
 	lastErr       string
 	stopRequested bool
 	lastWgConfig  string // last CONFIG event seen in drain; survives log ring-buffer eviction
+	lastRawConfPayload RawConfPayload
 	logTail       *childproc.RingBuffer
 	startCmd      func(bin string, args ...string) *exec.Cmd
 
@@ -97,6 +98,7 @@ func (p *process) Start(args []string) error {
 	p.mu.Lock()
 	p.stopRequested = false
 	p.lastWgConfig = ""
+	p.lastRawConfPayload = RawConfPayload{}
 	p.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
@@ -235,6 +237,11 @@ func (p *process) Status() ProcessStatus {
 	} else if wg := ExtractWGConfigFromLog(st.Log); wg != "" {
 		st.WgConfig = wg
 	}
+	if conf, ok := p.lastRawConfLocked(); ok {
+		st.RawClientIP = conf.ClientIP
+	} else if conf, ok := ExtractRawConfFromLog(st.Log); ok {
+		st.RawClientIP = conf.ClientIP
+	}
 	if running {
 		st.DtlsConnections = ExtractActiveConnectionsFromLog(st.Log)
 	}
@@ -282,7 +289,23 @@ func (p *process) drain(r io.Reader) {
 			p.lastWgConfig = conf
 			p.mu.Unlock()
 		}
+		if conf, ok := parseRawConfLine(line); ok {
+			p.mu.Lock()
+			p.lastRawConfPayload = conf
+			p.mu.Unlock()
+		}
 	}
+}
+
+func (p *process) lastRawConfLocked() (RawConfPayload, bool) {
+	if strings.TrimSpace(p.lastRawConfPayload.ClientIP) == "" {
+		return RawConfPayload{}, false
+	}
+	return p.lastRawConfPayload, true
+}
+
+func (p *process) lastRawConf() (RawConfPayload, bool) {
+	return p.lastRawConfLocked()
 }
 
 func (p *process) setLastErr(s string) {

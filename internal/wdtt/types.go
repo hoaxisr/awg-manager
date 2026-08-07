@@ -26,6 +26,11 @@ type ClientConfig struct {
 	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
 	ConnMode string `json:"connMode,omitempty"`
 	Debug    bool   `json:"debug"`
+
+	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).
+	NdmsIface   string `json:"ndmsIface,omitempty"`   // OpkgTun17..49
+	RawIface    string `json:"rawIface,omitempty"`    // kernel opkgtunN
+	RawClientIP string `json:"rawClientIp,omitempty"` // из RAWCONF VPS
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -72,6 +77,10 @@ type ServerConfig struct {
 
 	// RelayMode — wg (WireGuard relay, совместимость) или raw (без WG на сервере; нужен редеплой).
 	RelayMode string `json:"relayMode,omitempty"`
+	// RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1 на том же host.
+	RawListen string `json:"rawListen,omitempty"`
+	// DirectListen — -listen-direct (WRAP без DTLS для WG). Пусто → peer = DTLS-порт.
+	DirectListen string `json:"directListen,omitempty"`
 
 	// NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован в роутере.
 	NdmsIface string `json:"ndmsIface,omitempty"`
@@ -86,6 +95,9 @@ type ServerConfig struct {
 	// чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
 	LinkPeer     string `json:"linkPeer,omitempty"`
 	LinkVKHashes string `json:"linkVkHashes,omitempty"`
+
+	// StatsLog — server.log (JSON каждые ~2 с): "ram" (default), "off", "disk".
+	StatsLog string `json:"statsLog,omitempty"`
 }
 
 // ServerClient is one WDTT client identity stored in wdtt.json.
@@ -96,9 +108,19 @@ type ServerClient struct {
 }
 
 const (
-	DefaultWdttIface   = "wdtt0"
-	DefaultWdttAddress = "10.66.66.1"
-	DefaultWdttMask    = "255.255.255.0"
+	DefaultWdttIface       = "wdtt0"
+	DefaultWdttAddress     = "10.66.66.1"
+	DefaultWdttMask        = "255.255.255.0"
+	// DefaultWdttServerGateway* — NDMS OpkgTun: /16 совпадает с пулом monolith (10.66.0.x).
+	DefaultWdttServerGatewayAddr = "10.66.0.1"
+	DefaultWdttServerGatewayMask = "255.255.0.0"
+	DefaultRawServerIface  = "wdttraw0"
+	DefaultRawServerAddr   = "10.70.66.1"
+	DefaultRawServerMask   = "255.255.0.0"
+	DefaultRawClientTun    = "wdtturn0"
+	DefaultRawClientMask   = "255.255.255.255"
+	// DefaultWdttClientPoolCIDR — пул qWDTT monolith (getNextIP → 10.66.0.x).
+	DefaultWdttClientPoolCIDR = "10.66.0.0/16"
 )
 
 func DefaultServerConfig() ServerConfig {
@@ -156,6 +178,9 @@ type ProcessStatus struct {
 	LastError       string     `json:"lastError,omitempty"`
 	Log             string     `json:"log,omitempty"`
 	WgConfig        string     `json:"wgConfig,omitempty"`
+	RawClientIP     string     `json:"rawClientIp,omitempty"`
+	RawIface        string     `json:"rawIface,omitempty"`
+	NdmsIface       string     `json:"ndmsIface,omitempty"`
 	DtlsConnections int        `json:"dtlsConnections,omitempty"`
 	Binary          string     `json:"binary"`
 	BinaryPresent   bool       `json:"binaryPresent"`
@@ -215,15 +240,18 @@ type ImportPayload struct {
 	ConnMode string   `json:"connMode,omitempty"`
 }
 
-// wdttPeerCIDR — сеть пиров в нормализованном виде (10.66.66.0/24).
-// iptables -S печатает именно её, поэтому сравнение вывода с
-// DefaultWdttAddress+"/24" (10.66.66.1/24) не совпадало никогда.
-func wdttPeerCIDR() string {
-	_, n, err := net.ParseCIDR(DefaultWdttAddress + "/" + maskBits(DefaultWdttMask))
+// wgServerPeerCIDR — подсеть клиентов qWDTT monolith (10.66.0.x, не 10.66.66.x).
+func wgServerPeerCIDR() string {
+	_, n, err := net.ParseCIDR(DefaultWdttClientPoolCIDR)
 	if err != nil {
-		return DefaultWdttAddress + "/24"
+		return "10.66.0.0/16"
 	}
 	return n.String()
+}
+
+// wdttPeerCIDR — alias для entware NAT/MSS/LAN (monolith client pool).
+func wdttPeerCIDR() string {
+	return wgServerPeerCIDR()
 }
 
 func maskBits(mask string) string {

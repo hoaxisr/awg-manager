@@ -34,6 +34,14 @@
 
 	type ServerTab = (typeof SERVER_TABS)[number]['id'];
 
+	type StatsLogMode = 'ram' | 'off' | 'disk';
+
+	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
+		{ value: 'ram', label: 'RAM' },
+		{ value: 'off', label: 'Выкл' },
+		{ value: 'disk', label: 'Flash' }
+	];
+
 	const natModeOptions: { value: NatMode; label: string }[] = [
 		{ value: 'full', label: 'Полный' },
 		{ value: 'internet-only', label: 'Интернет' },
@@ -61,6 +69,7 @@
 		instances?: LogInstanceItem[];
 		selectedInstanceId?: string;
 		onSelectInstance?: (id: string) => void;
+		opsTab?: ServerTab;
 	}
 
 	let {
@@ -79,7 +88,8 @@
 		onGenerate,
 		instances = [],
 		selectedInstanceId = '',
-		onSelectInstance
+		onSelectInstance,
+		opsTab = $bindable('main')
 	}: Props = $props();
 
 	const wdttIface = $derived(server.wgIface?.trim() || 'wdtt0');
@@ -90,19 +100,67 @@
 	let linkPassword = $state('');
 	let togglingIngress = $state(false);
 	let lanSegmentOptions = $state<{ value: string; label: string }[]>([]);
-	let opsTab = $state<ServerTab>('main');
 	let quickActive = $state('secret');
+	let wizardOpen = $state(false);
 
 	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56002)));
 	const wgPortStr = $derived(String(server.wgPort || 56001));
+	const directListenPort = $derived.by(() =>
+		String(listenPortNumber(server.directListen ?? '', Number(listenPort) || 56002))
+	);
+	const rawListenPort = $derived.by(() =>
+		String(listenPortNumber(server.rawListen ?? '', Number(listenPort) + 1 || 56003))
+	);
+	const rawListenAddr = $derived.by(() => {
+		if (server.rawListen?.trim()) return server.rawListen.trim();
+		const host = (server.listen ?? '0.0.0.0:56002').split(':')[0] || '0.0.0.0';
+		const port = Number(listenPort) + 1 || 56003;
+		return setListenPort(`${host}:${port}`, port, host);
+	});
+	const linkPort = $derived(
+		server.directListen?.trim() ? directListenPort : listenPort
+	);
+	const directDiffersFromDTLS = $derived.by(() => {
+		if (!server.directListen?.trim()) return false;
+		return (
+			listenPortNumber(server.directListen, 0) !== listenPortNumber(server.listen ?? '', 56002)
+		);
+	});
+	const statusMeta = $derived.by(() => {
+		let meta = `DTLS :${listenPort} · Raw :${rawListenPort}`;
+		if (directDiffersFromDTLS) meta += ` · Direct :${directListenPort}`;
+		return meta;
+	});
+	const portsGuideText = $derived.by(() => {
+		let text = `Порты: DTLS ${server.listen || '0.0.0.0:56002'}, Raw ${rawListenAddr}`;
+		if (directDiffersFromDTLS) {
+			text += `, Direct ${server.directListen?.trim()}`;
+		}
+		return text;
+	});
 
 	function applyListenPort(portStr: string) {
 		const port = Math.max(1, Math.min(65535, Number(portStr) || 56002));
 		server.listen = setListenPort(server.listen || '0.0.0.0:56002', port, '0.0.0.0');
+		if (!server.rawListen?.trim()) {
+			server.rawListen = setListenPort('0.0.0.0:56003', port + 1, '0.0.0.0');
+		}
+	}
+
+	function applyRawListenPort(portStr: string) {
+		const port = Math.max(1, Math.min(65535, Number(portStr) || 56003));
+		const host = (server.rawListen ?? server.listen ?? '0.0.0.0:56003').split(':')[0] || '0.0.0.0';
+		server.rawListen = setListenPort(`${host}:${port}`, port, host);
 	}
 
 	function applyWgPort(portStr: string) {
 		server.wgPort = Math.max(1, Math.min(65535, Number(portStr) || 56001));
+	}
+
+	function applyDirectListenPort(portStr: string) {
+		const port = Math.max(1, Math.min(65535, Number(portStr) || 56002));
+		const host = (server.directListen ?? server.listen ?? '0.0.0.0:56002').split(':')[0] || '0.0.0.0';
+		server.directListen = setListenPort(`${host}:${port}`, port, host);
 	}
 
 	const step1Done = $derived(!!server.password.trim());
@@ -116,9 +174,11 @@
 			running,
 			startedAt: status?.startedAt,
 			enabled: server.enabled,
-			generatedLink
+			generatedLink,
+			setupComplete: step2Done
 		})
 	);
+	const showWizard = $derived(!opsMode || wizardOpen);
 	const serverStarted = $derived(
 		proxyInOpsMode({
 			running,
@@ -135,12 +195,9 @@
 
 	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const quickProgress = $derived(`Прогресс ${quickDoneCount}/${quickItems.length}`);
-	const isRawRelay = $derived((server.relayMode ?? 'wg') === 'raw');
-	const statusMeta = $derived(
-		isRawRelay ? `DTLS :${listenPort} · Raw` : `DTLS :${listenPort} · WG :${server.wgPort || 56001}`
-	);
 
 	const natMode = $derived((server.natMode || 'full') as NatMode);
+	const statsLogMode = $derived((server.statsLog?.trim() || 'ram') as StatsLogMode);
 
 	const secretGuideItems = $derived.by((): WizardGuideItem[] =>
 		finalizeGuide([
@@ -196,9 +253,7 @@
 
 	const startGuideItems = $derived.by((): WizardGuideItem[] =>
 		finalizeGuide([
-			guide('ports', isRawRelay
-				? `Проверьте DTLS-порт: ${server.listen || '0.0.0.0:56002'} (Raw — WG-порт не используется)`
-				: `Проверьте порты: DTLS ${server.listen || '0.0.0.0:56002'}, WG ${server.wgPort || 56001}`, {
+			guide('ports', portsGuideText, {
 				done: step2Done,
 				pending: !step1Done
 			}),
@@ -211,13 +266,11 @@
 		if (!step1Done && quickActive !== 'secret') quickActive = 'secret';
 	});
 
-	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
+	/** Запущенный сервер: «Раздача» при смене инстанса, кроме вкладки «Журнал». */
 	$effect(() => {
 		serverInstanceId;
-		// Только на смену инстанса: иначе рестарт сервера (running false→true из
-		// поллинга) утаскивал бы пользователя с «Сети» или «Журнала».
 		untrack(() => {
-			if (opsMode && running) opsTab = 'links';
+			if (opsMode && running && opsTab !== 'log') opsTab = 'links';
 		});
 	});
 
@@ -252,6 +305,16 @@
 		await onSave(server);
 	}
 
+	async function handleStatsLogChange(mode: StatsLogMode) {
+		server.statsLog = mode;
+		await onSave(server);
+		if (running) {
+			await onToggle(false);
+			await onToggle(true);
+			notifications.success('server.log: настройка применена (сервер перезапущен)');
+		}
+	}
+
 	async function handleToggleIngress(enabled: boolean) {
 		togglingIngress = true;
 		try {
@@ -282,7 +345,7 @@
 		loadingWanPeer = true;
 		try {
 			const ip = await api.getWANIP();
-			genPeer = ip.includes(':') ? ip : `${ip}:${listenPort}`;
+			genPeer = ip.includes(':') ? ip : `${ip}:${linkPort}`;
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : 'Не удалось определить WAN IP');
 		} finally {
@@ -372,16 +435,18 @@
 		«Сеть» (или при первом запуске по ссылке).
 	</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={quickProgress}
 			meta={statusMeta}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
 			{#snippet metaExtra()}
 				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto="udp" defaultHost="0.0.0.0" />
+				<ListenPortKillButton listen={rawListenAddr} proto="udp" defaultHost="0.0.0.0" />
 			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'secret'}
@@ -416,21 +481,9 @@
 								await onSave(server);
 							}}
 						/>
-						<SegmentedControl
-							ariaLabel="Режим relay сервера"
-							value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
-							options={[
-								{ value: 'wg', label: 'WG' },
-								{ value: 'raw', label: 'Raw' }
-							]}
-							onchange={(v) => (server.relayMode = v)}
-						/>
 						<p class="wdtt-hint">
-							{#if (server.relayMode ?? 'wg') === 'raw'}
-								Raw — без WireGuard на сервере (qWDTT 1.4+). После смены режима перезапустите сервер.
-							{:else}
-								WG — совместимость с прежними клиентами и AWG-туннелем на роутере.
-							{/if}
+							Сервер слушает WG Direct и Raw одновременно (как qWDTT). Режим клиента — в ссылке
+							(<code>mode=raw</code> или WG).
 						</p>
 						<div class="wdtt-row wdtt-port-row">
 							<Input
@@ -439,14 +492,20 @@
 								value={listenPort}
 								onchange={applyListenPort}
 							/>
-							{#if !isRawRelay}
+							{#if directDiffersFromDTLS}
 								<Input
-									label="WG-порт (-wg-port)"
+									label="Direct-порт (-listen-direct)"
 									type="number"
-									value={wgPortStr}
-									onchange={applyWgPort}
+									value={directListenPort}
+									onchange={applyDirectListenPort}
 								/>
 							{/if}
+							<Input
+								label="Raw-порт (-listen-raw)"
+								type="number"
+								value={rawListenPort}
+								onchange={applyRawListenPort}
+							/>
 						</div>
 					</ProxyQuickStartStep>
 				{:else if stepId === 'link'}
@@ -488,11 +547,10 @@
 						<ProxyWizardGuide items={startGuideItems} />
 						<p class="wdtt-readonly">
 							DTLS: <code>{server.listen || '0.0.0.0:56002'}</code>
-							{#if !isRawRelay}
-								· WG: <code>{server.wgPort || 56001}</code>
-							{:else}
-								· Raw (WG-порт не используется)
+							{#if directDiffersFromDTLS}
+								· Direct: <code>{server.directListen?.trim()}</code>
 							{/if}
+							· Raw: <code>{rawListenAddr}</code>
 						</p>
 					</ProxyQuickStartStep>
 				{/if}
@@ -506,6 +564,8 @@
 			{starting}
 			{canSave}
 			{canStart}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={saveOnly}
 			onToggle={onToggle}
 		/>
@@ -524,24 +584,26 @@
 						<Button variant="secondary" size="sm" onclick={randomPassword}>Сгенерировать</Button>
 					</div>
 				</label>
-				<SegmentedControl
-					ariaLabel="Режим relay сервера"
-					value={(server.relayMode ?? 'wg') as 'wg' | 'raw'}
-					options={[
-						{ value: 'wg', label: 'WG' },
-						{ value: 'raw', label: 'Raw' }
-					]}
-					onchange={(v) => (server.relayMode = v)}
-				/>
+				<p class="wdtt-hint">
+					WG Direct и Raw слушаются одновременно. Режим клиента — в ссылке (<code>mode=raw</code> или WG).
+				</p>
 				<div class="wdtt-row wdtt-port-row">
 					<Input label="DTLS-порт" type="number" value={listenPort} onchange={applyListenPort} />
-					{#if (server.relayMode ?? 'wg') !== 'raw'}
-						<Input label="WG-порт" type="number" value={wgPortStr} onchange={applyWgPort} />
+					{#if directDiffersFromDTLS}
+						<Input
+							label="Direct-порт"
+							type="number"
+							value={directListenPort}
+							onchange={applyDirectListenPort}
+						/>
 					{/if}
+					<Input label="Raw-порт" type="number" value={rawListenPort} onchange={applyRawListenPort} />
 				</div>
 				<p class="wdtt-readonly">
-					Listen: <code>{server.listen || '0.0.0.0:56002'}</code>
+					DTLS: <code>{server.listen || '0.0.0.0:56002'}</code>
 					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto="udp" defaultHost="0.0.0.0" />
+					· Raw: <code>{rawListenAddr}</code>
+					<ListenPortKillButton listen={rawListenAddr} proto="udp" defaultHost="0.0.0.0" />
 				</p>
 				<Toggle
 					label="Открыть DTLS-порт в firewall"
@@ -591,6 +653,47 @@
 
 		{#if opsTab === 'network'}
 		<section class="ops-section server-detail-card wdtt-access-settings">
+				<div class="setting-row">
+					<div class="setting-copy">
+						<span class="setting-title">WG internal (-wg-port)</span>
+						<span class="setting-description">
+							Внутренний WireGuard-порт на <code>127.0.0.1</code> — «труба» между декодером UDP
+							(DTLS/Direct) и WireGuard. Клиенты с WAN сюда не подключаются; меняйте только при
+							конфликте с другим сервисом на роутере.
+						</span>
+					</div>
+					<div class="setting-control">
+						<Input
+							label="Порт"
+							type="number"
+							value={wgPortStr}
+							onchange={async (v) => {
+								applyWgPort(v);
+								await onSave(server);
+							}}
+						/>
+					</div>
+				</div>
+				<div class="setting-row">
+					<div class="setting-copy">
+						<span class="setting-title">Direct-порт (-listen-direct)</span>
+						<span class="setting-description">
+							Отдельный WAN-порт для WRAP без DTLS (быстрее WG). Если совпадает с DTLS или пуст —
+							не используется; клиенты идут через DTLS-порт.
+						</span>
+					</div>
+					<div class="setting-control">
+						<Input
+							label="Порт"
+							type="number"
+							value={directListenPort}
+							onchange={async (v) => {
+								applyDirectListenPort(v);
+								await onSave(server);
+							}}
+						/>
+					</div>
+				</div>
 				<div class="setting-row">
 					<div class="setting-copy">
 						<span class="setting-title">NAT</span>
@@ -647,13 +750,35 @@
 		{/if}
 
 		{#if opsTab === 'log'}
-		<section class="ops-section">
+		<section class="ops-section server-detail-card wdtt-access-settings">
+				<div class="setting-row">
+					<div class="setting-copy">
+						<span class="setting-title">Запись server.log</span>
+						<span class="setting-description">
+							Файл статистики wdtt-server (JSON каждые ~2&nbsp;с). Не путать с логом процесса
+							ниже — это stdout сервера для панели. RAM — symlink в <code>/tmp</code>, не изнашивает
+							flash; Выкл — <code>/dev/null</code>; Flash — писать в config-dir на накопитель.
+						</span>
+					</div>
+					<div class="setting-control">
+						<SegmentedControl
+							value={statsLogMode}
+							options={statsLogOptions}
+							ariaLabel="Режим server.log"
+							disabled={saving || starting}
+							onchange={handleStatsLogChange}
+						/>
+					</div>
+				</div>
+				<div class="wdtt-log-process">
 				<ProcessLogBox
 					log={status?.log}
+					title="Лог процесса (stdout)"
 					{instances}
 					{selectedInstanceId}
 					{onSelectInstance}
 				/>
+				</div>
 		</section>
 		{/if}
 	{/if}
@@ -714,5 +839,10 @@
 
 	.wdtt-access-settings {
 		gap: 0;
+	}
+
+	.wdtt-log-process {
+		padding-top: 0.875rem;
+		border-top: 1px solid var(--color-border);
 	}
 </style>

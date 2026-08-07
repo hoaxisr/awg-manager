@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -31,10 +34,18 @@ type TunnelControlResponse struct {
 type ControlHandler struct {
 	svc            TunnelService
 	orch           *orchestrator.Orchestrator
+	store          *storage.AWGTunnelStore
+	wdttCtl        WdttClientController
 	pingCheck      PingCheckService
 	tunnelsHandler *TunnelsHandler
 	bus            *events.Bus
 	log            *logging.ScopedLogger
+}
+
+// WdttClientController starts/stops WDTT client instances (raw tunnel toggle).
+type WdttClientController interface {
+	StartClientInstance(id string) error
+	StopClientInstance(id string) error
 }
 
 // NewControlHandler creates a new control handler.
@@ -62,6 +73,53 @@ func (h *ControlHandler) SetTunnelsHandler(th *TunnelsHandler) {
 
 // SetEventBus sets the event bus for SSE publishing.
 func (h *ControlHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+func (h *ControlHandler) SetWdttControl(store *storage.AWGTunnelStore, ctl WdttClientController) {
+	h.store = store
+	h.wdttCtl = ctl
+}
+
+func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, id string, start bool) bool {
+	if h.store == nil || h.wdttCtl == nil {
+		return false
+	}
+	stored, err := h.store.Get(id)
+	if err != nil || stored == nil || stored.Backend != wdtt.BackendWdttRaw {
+		return false
+	}
+	clientID := strings.TrimSpace(stored.WdttClientID)
+	if clientID == "" {
+		response.Error(w, "wdtt raw tunnel: client id missing", "INTERNAL")
+		return true
+	}
+	var opErr error
+	if start {
+		opErr = h.wdttCtl.StartClientInstance(clientID)
+	} else {
+		opErr = h.wdttCtl.StopClientInstance(clientID)
+	}
+	if opErr != nil {
+		code := "START_FAILED"
+		if !start {
+			code = "STOP_FAILED"
+		}
+		response.Error(w, opErr.Error(), code)
+		return true
+	}
+	if h.tunnelsHandler != nil {
+		h.tunnelsHandler.publishTunnelList(r.Context())
+	}
+	h.publishRoutingTunnels(r.Context())
+	status := "stopped"
+	if start {
+		status = "running"
+	}
+	response.Success(w, map[string]interface{}{
+		"id":     id,
+		"status": status,
+	})
+	return true
+}
 
 // publishRoutingTunnels posts a resource:invalidated hint so clients
 // refetch the routing tunnel list after a start/stop that changed
@@ -98,6 +156,9 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	if h.controlWdttRaw(w, r, id, true) {
 		return
 	}
 
@@ -154,6 +215,9 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	if h.controlWdttRaw(w, r, id, false) {
 		return
 	}
 

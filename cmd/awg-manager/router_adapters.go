@@ -295,6 +295,19 @@ func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string
 	return err == nil && iface != nil
 }
 
+var _ wdtt.NDMSPolicyTableGetter = (*policyTableAdapter)(nil)
+
+type policyTableAdapter struct {
+	marks *ndmsquery.PolicyMarkStore
+}
+
+func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string) (int, error) {
+	if a.marks == nil {
+		return 0, fmt.Errorf("policy mark store not wired")
+	}
+	return a.marks.Table4(ctx, policyName)
+}
+
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the

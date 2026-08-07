@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -343,13 +344,10 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 	}
 
 	peer := strings.TrimSpace(req.Peer)
+	linkPort := srvCfg.LinkListenPort()
 	if peer != "" {
 		if !strings.Contains(peer, ":") {
-			port := srvCfg.Listen
-			if idx := strings.LastIndex(port, ":"); idx != -1 {
-				port = port[idx+1:]
-			}
-			peer = peer + ":" + port
+			peer = peer + ":" + strconv.Itoa(linkPort)
 		}
 	} else {
 		ip, ipErr := h.resolveExternalIP(r.Context())
@@ -357,11 +355,7 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 			response.Error(w, "Не удалось определить внешний IP: "+ipErr.Error()+". Укажите peer вручную.", "WDTT_EXTERNAL_IP_FAILED")
 			return
 		}
-		port := srvCfg.Listen
-		if idx := strings.LastIndex(port, ":"); idx != -1 {
-			port = port[idx+1:]
-		}
-		peer = ip + ":" + port
+		peer = ip + ":" + strconv.Itoa(linkPort)
 	}
 
 	name := strings.TrimSpace(req.Name)
@@ -374,7 +368,7 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		response.Error(w, err.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return
 	}
-	qLink, qErr := wdtt.EncodeQwdttLink(peer, linkPassword, req.VKHashes, name, 0, 0)
+	qLink, qErr := wdtt.EncodeQwdttLink(peer, linkPassword, req.VKHashes, name, 0, 0, srvCfg.RelayMode)
 	if qErr != nil {
 		response.Error(w, qErr.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return

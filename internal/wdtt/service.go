@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -45,6 +46,10 @@ type Service struct {
 	opkgExist       OpkgTunExistChecker
 	opkgScan        func(ctx context.Context, description string) ([]string, error)
 	routerReconcile RouterReconciler
+	clientRoutes    ClientRouteHooks
+	policyPermit    NDMSPolicyPermitter
+	policyList      NDMSPolicyLister
+	policyTables    NDMSPolicyTableGetter
 
 	wgIfaceMu        sync.Mutex
 	wgIfaceFlagKnown bool
@@ -159,25 +164,29 @@ func (s *Service) UpdateClientConfig(cfg ClientConfig) error {
 
 func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	idx := findClientIndex(full.Clients, id)
 	if idx < 0 {
+		s.mu.Unlock()
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg = normalizeClientConfig(cfg)
-	// Enabled — только Start/Stop; UI при сохранении часто шлёт stale false.
 	cfg.Enabled = full.Clients[idx].Config.Enabled
+	cfg.NdmsIface = full.Clients[idx].Config.NdmsIface
+	cfg.RawIface = full.Clients[idx].Config.RawIface
+	cfg.RawClientIP = full.Clients[idx].Config.RawClientIP
+	cfg.DeviceID = full.Clients[idx].Config.DeviceID
 	full.Clients[idx].Config = cfg
-	// Правка конфига могла устранить причину отказа (порт, пароль, peer) —
-	// не заставляем ждать окно backoff до следующей попытки супервизора.
 	s.startBackoff.Forget(clientKey(id))
-	return s.store.Save(full)
+	saveErr := s.store.Save(full)
+	s.mu.Unlock()
+	return saveErr
 }
 
 func (s *Service) CreateClient(in CreateClientInput) (ClientInstance, error) {
@@ -217,15 +226,17 @@ func (s *Service) DeleteClient(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("клиент %q не найден", id)
 	}
+	inst := full.Clients[idx]
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(clientKey(id))
 	s.clientHealth.reset(id)
 	s.clientStall.reset(id)
 	s.mu.Unlock()
-	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
-	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
 	_ = s.clientProcs.get(id).Stop()
+	if !inst.Config.UsesWireGuard() {
+		_ = s.teardownClientOpkgTun(context.Background(), inst.Config)
+	}
 	return saveErr
 }
 
@@ -241,7 +252,15 @@ func (s *Service) RenameClient(id, name string) error {
 		return fmt.Errorf("клиент %q не найден", id)
 	}
 	full.Clients[idx].Name = strings.TrimSpace(name)
-	return s.store.Save(full)
+	if err := s.store.Save(full); err != nil {
+		return err
+	}
+	inst := full.Clients[idx]
+	if !inst.Config.UsesWireGuard() && inst.Config.usesNDMSOpkgTun() &&
+		s.clientProcs.get(id).Status().Running && s.ndmsIfaces != nil {
+		s.syncClientOpkgNDMSDescription(context.Background(), id, inst.Config)
+	}
+	return nil
 }
 
 func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, error) {
@@ -297,6 +316,10 @@ func (s *Service) Status() Status {
 	for _, c := range cfg.Clients {
 		ps := s.clientProcs.get(c.ID).Status()
 		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
+		if c.Config.usesNDMSOpkgTun() {
+			ps.NdmsIface = c.Config.ndmsAccessIface()
+			ps.RawIface = c.Config.kernelRawIface()
+		}
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
@@ -305,7 +328,7 @@ func (s *Service) Status() Status {
 	}
 	for _, srv := range cfg.Servers {
 		ps := s.serverProcs.get(srv.ID).Status()
-		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, procport.ProtoUDP)
+		ps.LastError = procport.EnrichBindErrorMulti(ps.LastError, srv.Config.ServerListenAddrs(), procport.ProtoUDP)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
@@ -372,6 +395,15 @@ func (s *Service) StartClientInstance(id string) error {
 	if err != nil {
 		return err
 	}
+	prevWorkers := cfg.Workers
+	cfg = normalizeClientConfig(cfg)
+	if cfg.Workers != prevWorkers {
+		if err := s.persistClientConfig(id, cfg); err != nil && s.appLog != nil {
+			s.appLog.Warn("start", id, "workers нормализованы, но конфиг не сохранён: "+err.Error())
+		} else if s.appLog != nil && !cfg.UsesWireGuard() {
+			s.appLog.Info("start", id, fmt.Sprintf("raw workers: %d → %d", prevWorkers, cfg.Workers))
+		}
+	}
 	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
 	}
@@ -381,11 +413,79 @@ func (s *Service) StartClientInstance(id string) error {
 	if strings.TrimSpace(cfg.Password) == "" {
 		return errors.New("укажите пароль подключения (-password)")
 	}
-	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
+
+	isRaw := !cfg.UsesWireGuard()
+	ctx := context.Background()
+	if isRaw {
+		var devErr error
+		cfg, devErr = s.ensureClientDeviceID(id, cfg)
+		if devErr != nil {
+			return devErr
+		}
+		s.beginOpkgStart()
+		defer s.endOpkgStart()
+		var opkgErr error
+		cfg, opkgErr = s.ensureClientOpkgIndex(ctx, id, cfg)
+		if opkgErr != nil {
+			return opkgErr
+		}
+		if err := s.prepareClientNDMSOpkgTun(ctx, id, cfg); err != nil {
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return err
+		}
+	}
+
+	var tunFdSock string
+	if isRaw && cfg.usesNDMSOpkgTun() {
+		tunFdSock = s.clientTunFdSockPath(id)
+	}
+
+	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg, tunFdSock)); err != nil {
+		if isRaw {
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+		}
 		return err
 	}
-	// Enabled авторитетно = «пользователь запустил»; выставляем только по факту
-	// успешного старта (fail-closed). Ошибку сохранения логируем — процесс уже жив.
+
+	if isRaw {
+		kernelIface := cfg.kernelRawIface()
+		if !waitForInterface(s.ifaceChecker, kernelIface, 20*time.Second) {
+			_ = s.clientProcs.get(id).Stop()
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return fmt.Errorf("интерфейс %s не появился (NDMS OpkgTun)", kernelIface)
+		}
+		if tunFdSock != "" {
+			if err := sendTunFD(ctx, tunFdSock, kernelIface); err != nil {
+				_ = s.clientProcs.get(id).Stop()
+				_ = s.teardownClientOpkgTun(ctx, cfg)
+				return fmt.Errorf("передача TUN fd: %w", err)
+			}
+			if s.appLog != nil {
+				s.appLog.Info("start", id, "TUN fd передан клиенту через "+tunFdSock)
+			}
+		}
+		rawConf, ok := s.waitForClientRawConf(id, 90*time.Second)
+		if !ok {
+			_ = s.clientProcs.get(id).Stop()
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return fmt.Errorf("RAWCONF не получен от wt-client")
+		}
+		if err := s.activateClientNDMSOpkgTun(ctx, id, cfg, rawConf); err != nil {
+			_ = s.clientProcs.get(id).Stop()
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return err
+		}
+		cfg.RawClientIP = rawConf.ClientIP
+		_ = s.persistClientConfig(id, cfg)
+		if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
+			_ = s.clientProcs.get(id).Stop()
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return err
+		}
+		s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
+		s.syncOpkgPolicyDefaultRoutes(ctx, cfg.ndmsAccessIface(), cfg.kernelRawIface())
+	}
+
 	if err := s.setEnabled(id, true); err != nil && s.appLog != nil {
 		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
 	}
@@ -397,12 +497,19 @@ func (s *Service) StopClient() error {
 }
 
 func (s *Service) StopClientInstance(id string) error {
-	if _, err := s.clientInstance(id); err != nil {
+	inst, err := s.clientInstance(id)
+	if err != nil {
 		return err
 	}
-	err := s.clientProcs.get(id).Stop()
-	// Явный пользовательский стоп снимает авторитетный Enabled, чтобы автостарт
-	// на следующем бооте его не поднял. Stop() на выходе демона сюда не заходит.
+	cfg := inst.Config
+	ctx := context.Background()
+	err = s.clientProcs.get(id).Stop()
+	if !cfg.UsesWireGuard() && cfg.usesNDMSOpkgTun() {
+		s.notifyClientRouteStop(ctx, id)
+	}
+	if !cfg.UsesWireGuard() {
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+	}
 	if e := s.setEnabled(id, false); e != nil && s.appLog != nil {
 		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
 	}
@@ -412,18 +519,27 @@ func (s *Service) StopClientInstance(id string) error {
 func (s *Service) Stop() {
 	full, _ := s.store.Load()
 	var wasRunning []ServerConfig
+	var wasRawClients []ClientConfig
 	for _, srv := range full.Servers {
 		if s.serverProcs.get(srv.ID).Status().Running {
 			wasRunning = append(wasRunning, srv.Config)
 			removeServerListenFirewall(context.Background(), srv.Config)
 		}
 	}
+	for _, cl := range full.Clients {
+		if !cl.Config.UsesWireGuard() && s.clientProcs.get(cl.ID).Status().Running {
+			wasRawClients = append(wasRawClients, cl.Config)
+		}
+	}
 	s.clientProcs.stopAll()
 	s.serverProcs.stopAll()
+	for _, cfg := range wasRawClients {
+		_ = s.teardownClientOpkgTun(context.Background(), cfg)
+	}
 	// Только те, что реально работали: снимать NDMS-интерфейс у сервера,
 	// который в этой сессии не поднимался, — лишние RCI на каждом рестарте.
 	for _, cfg := range wasRunning {
-		removeEntwareNAT(context.Background(), cfg.kernelWGIface())
+		removeEntwareNATForServer(context.Background(), cfg)
 		_ = s.teardownServerOpkgTun(context.Background(), cfg)
 	}
 }
@@ -513,7 +629,7 @@ func normalizeClientConfig(cfg ClientConfig) ClientConfig {
 	return cfg
 }
 
-func buildClientArgs(c ClientConfig) []string {
+func buildClientArgs(c ClientConfig, tunFdSock string) []string {
 	var args []string
 	str := func(flag, val string) {
 		if val != "" {
@@ -531,11 +647,31 @@ func buildClientArgs(c ClientConfig) []string {
 	str("-fingerprint", c.Fingerprint)
 	str("-device-id", c.DeviceID)
 	str("-captcha-mode", normalizeCaptchaMode(c.CaptchaMode))
-	str("-vk-auth-mode", c.VKAuthMode)
+	appendVkAuthArgs(&args, c.VKAuthMode)
 	if mode := normalizeConnMode(c.ConnMode); mode == ConnModeRaw {
-		args = append(args, "-mode", mode)
+		args = append(args, "-mode", "rawtun")
+		str("-tun-fd-sock", tunFdSock)
+		if iface := strings.TrimSpace(c.RawIface); iface != "" {
+			args = append(args, "-tun-name", iface)
+		}
 	}
 	return args
+}
+
+// appendVkAuthArgs мапит vkAuthMode awg-manager на флаги go_client (-vk-auth / -vk-anon-path).
+func appendVkAuthArgs(args *[]string, vkAuthMode string) {
+	mode := strings.ToLower(strings.TrimSpace(vkAuthMode))
+	switch mode {
+	case "", "vkcalls":
+		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "vkcalls")
+	case "legacy":
+		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "legacy")
+	case "anonymous", "account":
+		*args = append(*args, "-vk-auth", mode)
+	default:
+		// Старые профили с -vk-auth-mode; клиент понимает alias через flags_compat.go.
+		*args = append(*args, "-vk-auth-mode", mode)
+	}
 }
 
 func normalizeCaptchaMode(mode string) string {

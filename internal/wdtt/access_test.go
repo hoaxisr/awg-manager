@@ -44,7 +44,9 @@ func ndmsServerConfig() ServerConfig {
 func TestApplyServerAccessWithoutAccessManager(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
-	if err := svc.applyServerAccess(context.Background(), "srv1", ndmsServerConfig()); err != nil {
+	cfg := ndmsServerConfig()
+	cfg.NatMode = "none"
+	if err := svc.applyServerAccess(context.Background(), "srv1", cfg); err != nil {
 		t.Fatalf("applyServerAccess without accessMgr: %v", err)
 	}
 }
@@ -54,17 +56,16 @@ func TestApplyServerAccessCallsNDMSWhenWired(t *testing.T) {
 	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
 	stub := &stubAccessManager{}
 	svc.SetAccessManager(stub)
-	if err := svc.applyServerAccess(context.Background(), "srv1", ndmsServerConfig()); err != nil {
+	cfg := ndmsServerConfig()
+	cfg.NatMode = "none"
+	if err := svc.applyServerAccess(context.Background(), "srv1", cfg); err != nil {
 		t.Fatalf("applyServerAccess: %v", err)
 	}
 	if stub.natCalls != 1 {
 		t.Fatalf("NDMS NAT calls = %d, want 1", stub.natCalls)
 	}
-	if stub.firewallPermitCalls != 1 {
-		t.Fatalf("firewall permit calls = %d, want 1", stub.firewallPermitCalls)
-	}
-	if stub.firewallPermitIface != "OpkgTun17" {
-		t.Fatalf("firewall permit iface = %q, want OpkgTun17", stub.firewallPermitIface)
+	if stub.firewallPermitCalls != 0 {
+		t.Fatalf("firewall permit calls = %d, want 0 for natMode=none", stub.firewallPermitCalls)
 	}
 }
 
@@ -80,5 +81,21 @@ func TestApplyServerAccessSkipsFirewallPermitWhenNATDisabled(t *testing.T) {
 	}
 	if stub.firewallPermitCalls != 0 {
 		t.Fatalf("firewall permit calls = %d, want 0 for natMode=none", stub.firewallPermitCalls)
+	}
+}
+
+func TestApplyServerAccessOpkgRawUsesNDMSAndEntware(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
+	stub := &stubAccessManager{}
+	svc.SetAccessManager(stub)
+	cfg := ndmsServerConfig()
+	cfg.RelayMode = ConnModeRaw
+	cfg.NatMode = "none"
+	if err := svc.applyServerAccess(context.Background(), "srv1", cfg); err != nil {
+		t.Fatalf("applyServerAccess raw+opkg: %v", err)
+	}
+	if stub.natCalls != 1 {
+		t.Fatalf("NDMS NAT calls = %d, want 1 (OpkgTun WG path)", stub.natCalls)
 	}
 }

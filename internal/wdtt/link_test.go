@@ -98,7 +98,7 @@ func TestEncodeLink_ColonFormat(t *testing.T) {
 }
 
 func TestEncodeQwdttLink_Port9000(t *testing.T) {
-	link, err := EncodeQwdttLink("1.2.3.4:56001", "secret", []string{"h1"}, "Srv", 0, 18)
+	link, err := EncodeQwdttLink("1.2.3.4:56001", "secret", []string{"h1"}, "Srv", 0, 18, "")
 	if err != nil {
 		t.Fatal(err)
 	}

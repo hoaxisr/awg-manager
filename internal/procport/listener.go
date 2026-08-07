@@ -136,3 +136,39 @@ func EnrichBindError(lastError, listen string, proto Proto) string {
 	}
 	return lastError + suffix + ")"
 }
+
+// EnrichBindErrorMulti tries each listen address and falls back to a port parsed from the error text.
+func EnrichBindErrorMulti(lastError string, listens []string, proto Proto) string {
+	if lastError == "" || !strings.Contains(strings.ToLower(lastError), "address already in use") {
+		return lastError
+	}
+	for _, listen := range listens {
+		if enriched := EnrichBindError(lastError, listen, proto); enriched != lastError {
+			return enriched
+		}
+	}
+	if port := extractBindConflictPort(lastError); port > 0 {
+		return EnrichBindError(lastError, fmt.Sprintf("0.0.0.0:%d", port), proto)
+	}
+	return lastError
+}
+
+// extractBindConflictPort pulls the port from kernel bind errors like "listen udp 0.0.0.0:56013".
+func extractBindConflictPort(msg string) int {
+	lower := strings.ToLower(msg)
+	idx := strings.LastIndex(lower, ":address already in use")
+	if idx < 0 {
+		return 0
+	}
+	head := msg[:idx]
+	colon := strings.LastIndex(head, ":")
+	if colon < 0 || colon+1 >= len(head) {
+		return 0
+	}
+	portStr := head[colon+1:]
+	n, err := strconv.Atoi(strings.TrimSpace(portStr))
+	if err != nil || n <= 0 || n > 65535 {
+		return 0
+	}
+	return n
+}

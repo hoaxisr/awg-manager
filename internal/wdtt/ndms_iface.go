@@ -14,6 +14,9 @@ import (
 type NDMSOpkgTunCommands interface {
 	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
 	DeleteOpkgTun(ctx context.Context, name string) error
+	SetDescription(ctx context.Context, name, description string) error
+	SetSecurityLevel(ctx context.Context, name, level string) error
+	SetIPGlobal(ctx context.Context, name string) error
 	SetAddress(ctx context.Context, name, address, mask string) error
 	ClearAddress(ctx context.Context, name string) error
 	SetMTU(ctx context.Context, name string, mtu int) error
@@ -83,12 +86,7 @@ func (cfg ServerConfig) usesNDMSOpkgTun() bool {
 }
 
 func allocateWdttOpkgIndex(live map[int]bool) (int, error) {
-	for i := wdttOpkgIndexMin; i <= wdttOpkgIndexMax; i++ {
-		if !live[i] {
-			return i, nil
-		}
-	}
-	return 0, fmt.Errorf("нет свободного OpkgTun в диапазоне %d..%d", wdttOpkgIndexMin, wdttOpkgIndexMax)
+	return allocateWdttOpkgIndexFrom(live)
 }
 
 func isLegacyWdttOpkgIndex(idx int) bool {
@@ -118,6 +116,7 @@ func (s *Service) serverSupportsWgIface(ctx context.Context) bool {
 // ensureServerOpkgIndex picks/persists OpkgTun index (NdmsIface/WgIface).
 // NDMS create/address happens later in prepareNDMSOpkgTun (после выделения).
 func (s *Service) ensureServerOpkgIndex(ctx context.Context, id string, cfg ServerConfig) (ServerConfig, error) {
+	// Сервер всегда поднимает WG + Raw (как qWDTT); OpkgTun нужен и в raw-режиме для NAT WG-клиентов.
 	if s.ndmsIfaces == nil || s.opkgIndices == nil {
 		return cfg, nil
 	}
@@ -144,6 +143,10 @@ func (s *Service) ensureServerOpkgIndex(ctx context.Context, id string, cfg Serv
 	live, err := s.opkgIndices.LiveOpkgTunIndices(ctx)
 	if err != nil {
 		return cfg, fmt.Errorf("list opkgtun indices: %w", err)
+	}
+	full, loadErr := s.store.Load()
+	if loadErr == nil {
+		live = mergeOpkgIndexMaps(live, configReservedOpkgIndices(full, id, ""))
 	}
 	idx, err := allocateWdttOpkgIndex(live)
 	if err != nil {
@@ -201,7 +204,7 @@ func (s *Service) activateNDMSOpkgTun(ctx context.Context, cfg ServerConfig) err
 		return nil
 	}
 	ndmsName := cfg.ndmsAccessIface()
-	if err := s.ndmsIfaces.SetAddress(ctx, ndmsName, DefaultWdttAddress, DefaultWdttMask); err != nil {
+	if err := s.ndmsIfaces.SetAddress(ctx, ndmsName, DefaultWdttServerGatewayAddr, DefaultWdttServerGatewayMask); err != nil {
 		return fmt.Errorf("set address %s: %w", ndmsName, err)
 	}
 	if err := s.ndmsIfaces.InterfaceUp(ctx, ndmsName); err != nil {
@@ -213,6 +216,9 @@ func (s *Service) activateNDMSOpkgTun(ctx context.Context, cfg ServerConfig) err
 		if s.appLog != nil {
 			s.appLog.Warn("ndms", ndmsName, "firewall permit пропущен: "+err.Error())
 		}
+	}
+	if err := cfg.ensureServerWgClientRoute(ctx); err != nil && s.appLog != nil {
+		s.appLog.Warn("ndms", ndmsName, "маршрут WG-клиентов: "+err.Error())
 	}
 	return nil
 }
@@ -273,16 +279,28 @@ func (s *Service) reapOrphanOpkgTuns(ctx context.Context) {
 		}
 		_ = s.teardownOpkgTunByName(ctx, srv.Config.ndmsAccessIface(), "wdtt-reap")
 	}
+	for _, cl := range full.Clients {
+		if cl.Config.UsesWireGuard() || !cl.Config.usesNDMSOpkgTun() {
+			continue
+		}
+		if s.clientProcs.get(cl.ID).Status().Running {
+			live[cl.Config.ndmsAccessIface()] = true
+			continue
+		}
+		_ = s.teardownOpkgTunByName(ctx, cl.Config.ndmsAccessIface(), "wdtt-reap")
+	}
 	if s.opkgScan == nil {
 		return
 	}
-	ids, scanErr := s.opkgScan(ctx, wdttOpkgDescription)
-	if scanErr != nil {
-		return
-	}
-	for _, id := range ids {
-		if !live[id] {
-			_ = s.teardownOpkgTunByName(ctx, id, "wdtt-reap")
+	for _, desc := range []string{wdttOpkgDescription, wdttOpkgClientDescription} {
+		ids, scanErr := s.opkgScan(ctx, desc)
+		if scanErr != nil {
+			continue
+		}
+		for _, id := range ids {
+			if !live[id] {
+				_ = s.teardownOpkgTunByName(ctx, id, "wdtt-reap")
+			}
 		}
 	}
 }

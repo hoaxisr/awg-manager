@@ -61,7 +61,7 @@ func (s *Service) InterfaceExists(iface string) bool {
 
 // GetInterfaceName returns the kernel interface name for a tunnel.
 func (s *Service) GetInterfaceName(id string) (string, error) {
-	if !IsAWGID(id) {
+	if !s.isManagedTestTunnel(id) {
 		return "", ErrInvalidTunnelID
 	}
 	return s.resolveIfaceName(id), nil
@@ -69,7 +69,7 @@ func (s *Service) GetInterfaceName(id string) (string, error) {
 
 // CheckTunnelRunning validates that the tunnel is available for testing.
 func (s *Service) CheckTunnelRunning(id string) error {
-	if !IsAWGID(id) {
+	if !s.isManagedTestTunnel(id) {
 		return ErrInvalidTunnelID
 	}
 
@@ -82,12 +82,28 @@ func (s *Service) CheckTunnelRunning(id string) error {
 }
 
 // resolveIfaceName returns the kernel interface name for a tunnel,
-// using NativeWG names (nwgN) for nativewg backend, kernel names (opkgtunN) otherwise.
+// using NativeWG names (nwgN) for nativewg backend, wdtt-raw live iface otherwise.
 func (s *Service) resolveIfaceName(id string) string {
-	if stored := s.GetAWG(id); stored != nil && stored.Backend == "nativewg" {
-		return nwg.NewNWGNames(stored.NWGIndex).IfaceName
+	if stored := s.GetAWG(id); stored != nil {
+		if stored.Backend == "nativewg" {
+			return nwg.NewNWGNames(stored.NWGIndex).IfaceName
+		}
+		if stored.Backend == "wdtt-raw" && strings.TrimSpace(stored.RawKernelIface) != "" {
+			return strings.TrimSpace(stored.RawKernelIface)
+		}
 	}
 	return tunnel.NewNames(id).IfaceName
+}
+
+// isManagedTestTunnel reports whether id refers to an AWG-manager tunnel we can test.
+func (s *Service) isManagedTestTunnel(id string) bool {
+	if IsAWGID(id) {
+		return true
+	}
+	if stored := s.GetAWG(id); stored != nil && stored.Backend == "wdtt-raw" {
+		return true
+	}
+	return false
 }
 
 // GetWANInterface returns the active WAN kernel interface for a tunnel.

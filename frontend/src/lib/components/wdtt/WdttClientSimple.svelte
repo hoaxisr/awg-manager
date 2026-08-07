@@ -12,7 +12,7 @@
 	import type { LogInstanceItem } from '../freeturn/LogInstanceSwitcher.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import { proxyClientOpsMode } from '$lib/utils/proxyOpsMode';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
@@ -23,12 +23,12 @@
 		WdttSubscriptionPreview
 	} from '$lib/types';
 
-	const CLIENT_TABS = [
+	const CLIENT_TABS_BASE = [
 		{ id: 'setup', label: 'Настройка' },
 		{ id: 'log', label: 'Журнал' }
 	] as const;
 
-	type ClientTab = (typeof CLIENT_TABS)[number]['id'];
+	type ClientTab = 'setup' | 'log';
 
 	interface Props {
 		client: WdttClientConfig;
@@ -52,6 +52,7 @@
 		instances?: LogInstanceItem[];
 		selectedInstanceId?: string;
 		onSelectInstance?: (id: string) => void;
+		opsTab?: ClientTab;
 	}
 
 	let {
@@ -72,7 +73,8 @@
 		ensuringWg = false,
 		instances = [],
 		selectedInstanceId = '',
-		onSelectInstance
+		onSelectInstance,
+		opsTab = $bindable('setup')
 	}: Props = $props();
 
 	let importLink = $state('');
@@ -83,10 +85,15 @@
 	let loadingSubList = $state(false);
 	let subLoadKey = $state('');
 	let fileInput: HTMLInputElement | undefined = $state();
-	let opsTab = $state<ClientTab>('setup');
 	let quickActive = $state('import');
+	let wizardOpen = $state(false);
 
 	const isRawMode = $derived((client.connMode ?? 'wg') === 'raw');
+	const minWorkers = $derived(isRawMode ? 1 : 12);
+	const clampWorkers = (v: number) => Math.max(minWorkers, v || (isRawMode ? 1 : 24));
+	const rawNdmsIface = $derived(client.ndmsIface?.trim() || status?.ndmsIface?.trim() || '');
+	const rawKernelIface = $derived(client.rawIface?.trim() || status?.rawIface?.trim() || '');
+	const rawClientIp = $derived(status?.rawClientIp?.trim() || client.rawClientIp?.trim() || '');
 	const hashCount = $derived(
 		client.vkHashes ? client.vkHashes.split(',').filter((s) => s.trim()).length : 0
 	);
@@ -115,12 +122,16 @@
 	}
 
 	const opsMode = $derived(
-		proxyInOpsMode({
+		proxyClientOpsMode({
 			running,
 			startedAt: status?.startedAt,
-			enabled: client.enabled
+			enabled: client.enabled,
+			setupComplete: step3Done
 		})
 	);
+	const showWizard = $derived(!opsMode || wizardOpen);
+
+	const clientTabs = CLIENT_TABS_BASE;
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'import', label: 'Импорт — ссылка или подписка', done: profileApplied },
@@ -131,6 +142,11 @@
 
 	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const listenMeta = $derived(client.listen?.trim() || '127.0.0.1:9000');
+	const statusMeta = $derived(
+		isRawMode && rawNdmsIface
+			? `${rawNdmsIface}${rawKernelIface ? ` · ${rawKernelIface}` : ''}${rawClientIp ? ` · ${rawClientIp}` : ''}`
+			: `listen ${listenMeta}`
+	);
 
 	const importGuideItems = $derived.by((): WizardGuideItem[] =>
 		finalizeGuide([
@@ -178,7 +194,9 @@
 				done: hashCount > 0,
 				pending: !step2Done
 			}),
-			guide('workers', 'Укажите число потоков (workers, мин. 12)', {
+			guide('workers', isRawMode
+				? 'Укажите число потоков (workers, для Raw как в APK — 24–27, chunk RR)'
+				: 'Укажите число потоков (workers, мин. 12)', {
 				done: client.workers > 0,
 				pending: !step2Done
 			}),
@@ -188,7 +206,9 @@
 
 	const startGuideItems = $derived.by((): WizardGuideItem[] =>
 		finalizeGuide([
-			guide('start', 'Нажмите «Сохранить и запустить» — AWG-туннель создастся автоматически', {
+			guide('start', isRawMode
+				? 'Нажмите «Сохранить и запустить» — поднимется OpkgTun и raw-туннель'
+				: 'Нажмите «Сохранить и запустить» — AWG-туннель создастся автоматически', {
 				done: running,
 				pending: !step3Done
 			})
@@ -352,13 +372,14 @@
 		WDTT-клиент: импорт wdtt://, qwdtt://, .qwdtt или HTTPS-подписки → peer → запуск.
 	</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
 			meta={`listen ${listenMeta}`}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
 			{#snippet metaExtra()}
 				<ListenPortKillButton listen={listenMeta} proto="udp" />
@@ -425,13 +446,13 @@
 						/>
 						<p class="wdtt-mode-hint">
 							{#if isRawMode}
-								Raw — без AWG-туннеля, выше скорость. Нужны wt-client и сервер с поддержкой
-								Raw (серверу — редеплой): со старым бинарём запуск завершится ошибкой.
+								Raw — без AWG-туннеля. Peer = VPS:<strong>Raw-порт</strong> (обычно DTLS+1,
+								например <code>87.251.85.52:56003</code>). Нужен wt-client и сервер qWDTT 1.4+.
 							{:else}
 								WG — классический режим: wt-client выдаёт WireGuard-конфиг для AWG-туннеля.
 							{/if}
 						</p>
-						<Input bind:value={client.peer} placeholder="1.2.3.4:56000" />
+						<Input bind:value={client.peer} placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'} />
 						<label class="wdtt-field">
 							<span>Пароль</span>
 							<Input type="password" bind:value={client.password} />
@@ -453,7 +474,7 @@
 						<Input
 							type="number"
 							value={String(client.workers)}
-							onchange={(v) => (client.workers = Math.max(12, Number(v) || 24))}
+							onchange={(v) => (client.workers = clampWorkers(Number(v)))}
 						/>
 						<Dropdown
 							label="Капча (-captcha-mode)"
@@ -477,7 +498,10 @@
 						{#if !isRawMode && status?.wgConfig}
 							<p class="wdtt-wg-hint">WireGuard-конфиг получен — AWG-туннель создаётся автоматически.</p>
 						{:else if isRawMode}
-							<p class="wdtt-wg-hint">Raw: AWG-туннель не нужен — маршрутизируйте трафик на listen-порт wt-client.</p>
+							<p class="wdtt-wg-hint">
+								Raw: после запуска интерфейс появится в <strong>AWG-туннели</strong>
+								(badge wdtt-raw) и в «Маршрутизация». Toggle в AWG управляет WDTT-клиентом.
+							</p>
 						{/if}
 					</ProxyQuickStartStep>
 				{/if}
@@ -486,11 +510,13 @@
 	{:else}
 		<ProxyInstanceStatusBar
 			{running}
-			meta={`listen ${listenMeta}`}
+			meta={statusMeta}
 			{saving}
 			{starting}
 			{canSave}
 			{canStart}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={() => onSave(client)}
 			onToggle={onToggle}
 		>
@@ -498,7 +524,7 @@
 				<ListenPortKillButton listen={listenMeta} proto="udp" />
 			{/snippet}
 		</ProxyInstanceStatusBar>
-		<ProxyPanelTabs tabs={[...CLIENT_TABS]} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
+		<ProxyPanelTabs tabs={clientTabs} active={opsTab} onchange={(id) => (opsTab = id as ClientTab)} />
 
 		{#if opsTab === 'setup'}
 			<section class="ops-section">
@@ -545,7 +571,7 @@
 				<Input
 					type="number"
 					value={String(client.workers)}
-					onchange={(v) => (client.workers = Math.max(12, Number(v) || 24))}
+					onchange={(v) => (client.workers = clampWorkers(Number(v)))}
 				/>
 				<Dropdown label="Капча" bind:value={client.captchaMode} options={[
 					{ value: 'rjs', label: 'rjs' },
@@ -559,7 +585,7 @@
 					{/if}
 				</div>
 			</section>
-		{:else}
+		{:else if opsTab === 'log'}
 			<section class="ops-section">
 				<div class="wdtt-actions">
 					{#if !isRawMode && onEnsureWg && (running || status?.wgConfig)}
@@ -643,6 +669,10 @@
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		margin-top: 0.5rem;
+	}
+	.wdtt-readonly {
+		margin: 0;
+		font-size: 0.875rem;
 	}
 	.wdtt-actions {
 		display: flex;

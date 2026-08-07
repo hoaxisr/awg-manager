@@ -11,6 +11,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // TunnelEntry represents a tunnel or interface available for routing.
@@ -96,8 +97,10 @@ type StoreClient interface {
 
 // StoreEntry holds the fields Catalog needs from a stored tunnel.
 type StoreEntry struct {
-	Backend  string
-	NWGIndex int
+	Backend        string
+	NWGIndex       int
+	RawKernelIface string
+	RawNdmsIface   string
 }
 
 // SnapshotFunc returns one piece of routing data for a snapshot.
@@ -248,6 +251,12 @@ func (c *CatalogImpl) ResolveInterface(ctx context.Context, tunnelID string) (st
 	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).NDMSName, nil
 	}
+	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == wdtt.BackendWdttRaw {
+		if entry.RawNdmsIface != "" {
+			return entry.RawNdmsIface, nil
+		}
+		return "", fmt.Errorf("wdtt raw tunnel %q: NDMS interface not ready", tunnelID)
+	}
 
 	// Kernel tunnel
 	names := tunnel.NewNames(tunnelID)
@@ -292,6 +301,12 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, true
 	}
+	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == wdtt.BackendWdttRaw {
+		if entry.RawKernelIface != "" {
+			return entry.RawKernelIface, si.State == tunnel.StateRunning
+		}
+		return "", false
+	}
 	return tunnel.NewNames(tunnelID).IfaceName, true
 }
 
@@ -320,6 +335,12 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 	// NativeWG: kernel iface is "nwgX"
 	if entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, nil
+	}
+	if entry.Backend == wdtt.BackendWdttRaw {
+		if entry.RawKernelIface != "" {
+			return entry.RawKernelIface, nil
+		}
+		return "", fmt.Errorf("wdtt raw tunnel %q: interface not ready", tunnelID)
 	}
 	// Managed kernel: OS4 "awgm0" → "awgm0", OS5 "awg10" → "opkgtun10"
 	return tunnel.NewNames(tunnelID).IfaceName, nil
@@ -395,6 +416,14 @@ func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFu
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.
 func (c *CatalogImpl) resolveNDMSName(t TunnelWithStatus) string {
+	if t.Backend == wdtt.BackendWdttRaw {
+		if c.store != nil {
+			if entry, err := c.store.Get(t.ID); err == nil && entry.RawNdmsIface != "" {
+				return entry.RawNdmsIface
+			}
+		}
+		return ""
+	}
 	if t.Backend == "nativewg" {
 		return nwg.NewNWGNames(t.NWGIndex).NDMSName
 	}

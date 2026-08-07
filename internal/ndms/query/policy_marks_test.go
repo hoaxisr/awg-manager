@@ -59,3 +59,17 @@ func TestPolicyMarkStore_RCIError(t *testing.T) {
 		t.Errorf("expected wrapped transport error, got %v", err)
 	}
 }
+
+func TestPolicyMarkStore_Table4(t *testing.T) {
+	fg := NewFakeGetter()
+	fg.SetRaw("/show/ip/policy", []byte(`{"Policy3":{"description":"Test2","mark":"ffffab0","table4":4108}}`))
+	s := NewPolicyMarkStore(fg, NopLogger())
+
+	table, err := s.Table4(context.Background(), "Policy3")
+	if err != nil {
+		t.Fatalf("Table4: %v", err)
+	}
+	if table != 4108 {
+		t.Errorf("table=%d want 4108", table)
+	}
+}

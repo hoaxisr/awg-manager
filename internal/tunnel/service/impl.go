@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,7 +154,7 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 	var wg sync.WaitGroup
 	for i := range stored {
 		t := stored[i]
-		if !t.Enabled {
+		if t.Backend != "wdtt-raw" && !t.Enabled {
 			continue
 		}
 		wg.Add(1)
@@ -164,11 +165,18 @@ func (s *ServiceImpl) RunningTunnels(ctx context.Context) []traffic.RunningTunne
 				return
 			}
 			var ifaceName, ndmsName string
-			if t.Backend == "nativewg" {
+			switch t.Backend {
+			case "nativewg":
 				names := nwg.NewNWGNames(t.NWGIndex)
 				ifaceName = names.IfaceName
 				ndmsName = names.NDMSName
-			} else {
+			case "wdtt-raw":
+				ifaceName = strings.TrimSpace(t.RawKernelIface)
+				ndmsName = strings.TrimSpace(t.RawNdmsIface)
+				if ifaceName == "" {
+					return
+				}
+			default:
 				names := tunnel.NewNames(t.ID)
 				ifaceName = names.IfaceName
 				ndmsName = names.NDMSName
@@ -1170,6 +1178,9 @@ func (s *ServiceImpl) isNativeWG(stored *storage.AWGTunnel) bool {
 func (s *ServiceImpl) backendLabel(stored *storage.AWGTunnel) string {
 	if s.isNativeWG(stored) {
 		return "nativewg"
+	}
+	if stored.Backend != "" {
+		return stored.Backend
 	}
 	return "kernel"
 }

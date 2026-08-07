@@ -324,6 +324,8 @@ func (h *WdttHandler) ServeClients(w http.ResponseWriter, r *http.Request) {
 		h.importClientInstance(w, r, id)
 	case len(sub) == 1 && sub[0] == "ensure-wg-tunnel":
 		h.ensureWGTunnel(w, r, id)
+	case len(sub) == 1 && sub[0] == "ensure-raw-tunnel":
+		h.ensureRawTunnel(w, r, id)
 	case len(sub) == 2 && sub[0] == "subscription" && sub[1] == "refresh":
 		h.refreshSubscription(w, r, id)
 	case len(sub) == 2 && sub[0] == "linked-tunnels" && sub[1] == "clear":

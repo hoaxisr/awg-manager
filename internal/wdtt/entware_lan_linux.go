@@ -12,7 +12,7 @@ import (
 
 const entwareLANComment = "AWGM_WDTT_LAN"
 
-func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, resolver AccessManager) error {
+func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, resolver AccessManager, peerCIDR string) error {
 	removeEntwareLAN(ctx, wgIface)
 	if len(segments) == 0 || resolver == nil {
 		return nil
@@ -21,7 +21,9 @@ func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, res
 	if err != nil {
 		return err
 	}
-	peerCIDR := wdttPeerCIDR()
+	if peerCIDR == "" {
+		peerCIDR = wdttPeerCIDR()
+	}
 	for _, lanCIDR := range cidrs {
 		lanCIDR = strings.TrimSpace(lanCIDR)
 		if lanCIDR == "" {

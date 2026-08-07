@@ -11,8 +11,11 @@
 		canSave?: boolean;
 		canStart?: boolean;
 		saveLabel?: string;
+		showWizardButton?: boolean;
+		wizardLabel?: string;
 		onSave?: () => void | Promise<void>;
 		onToggle?: (on: boolean) => void | Promise<void>;
+		onOpenWizard?: () => void;
 	}
 
 	let {
@@ -24,8 +27,11 @@
 		canSave = true,
 		canStart = true,
 		saveLabel = 'Сохранить',
+		showWizardButton = false,
+		wizardLabel = 'Мастер',
 		onSave,
-		onToggle
+		onToggle,
+		onOpenWizard
 	}: Props = $props();
 </script>
 
@@ -43,6 +49,11 @@
 		{/if}
 	</div>
 	<div class="proxy-status-actions">
+		{#if showWizardButton && onOpenWizard}
+			<Button variant="ghost" size="sm" onclick={() => onOpenWizard?.()}>
+				{wizardLabel}
+			</Button>
+		{/if}
 		{#if onSave}
 			<Button variant="secondary" size="sm" loading={saving} disabled={!canSave} onclick={() => onSave?.()}>
 				{saveLabel}

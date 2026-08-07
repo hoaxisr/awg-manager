@@ -14,19 +14,29 @@ import (
 
 const entwareNATComment = "AWGM_WDTT"
 
-// entwareNATPresent reports whether awg-manager WDTT iptables rules are still
-// installed AND the MASQUERADE still exits through wanDev (empty wanDev →
-// current default-route dev): после WAN-failover правило с комментом живо, но
-// смотрит в мёртвый интерфейс — считаем его отсутствующим, чтобы reconcile
-// переустановил.
-func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
+// entwareNATPresentForServer reports whether all planned NAT/FORWARD rules exist.
+func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, wanDev string) bool {
+	plans := cfg.serverEntwareNATPlans()
+	if len(plans) == 0 {
+		return true
+	}
 	natOut, err1 := iptables.RunOutput(ctx, "-t", "nat", "-S", "POSTROUTING")
 	fwdOut, err2 := iptables.RunOutput(ctx, "-S", "FORWARD")
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	if !strings.Contains(fwdOut, entwareNATComment) || !strings.Contains(fwdOut, wgIface) {
+	if !strings.Contains(fwdOut, entwareNATComment) {
 		return false
+	}
+	for _, iface := range cfg.serverEntwareNATIfaces() {
+		if !strings.Contains(fwdOut, iface) {
+			return false
+		}
+	}
+	for _, cidr := range cfg.serverEntwarePeerCIDRs() {
+		if !strings.Contains(natOut, cidr) {
+			return false
+		}
 	}
 	if wanDev == "" {
 		dev, err := defaultWANDev(ctx)
@@ -36,6 +46,15 @@ func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
 		wanDev = dev
 	}
 	return masqueradeOutDev(natOut) == wanDev
+}
+
+// entwareNATPresent kept for tests; checks single iface/CIDR only.
+func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
+	cfg := ServerConfig{RelayMode: ConnModeWG, WgIface: wgIface}
+	if wgIface == DefaultRawServerIface {
+		cfg = ServerConfig{RelayMode: ConnModeRaw}
+	}
+	return entwareNATPresentForServer(ctx, cfg, wanDev)
 }
 
 // masqueradeOutDev returns the `-o <dev>` of the AWGM_WDTT MASQUERADE rule.
@@ -54,11 +73,13 @@ func masqueradeOutDev(natOut string) string {
 	return ""
 }
 
-// applyEntwareNAT installs MASQUERADE + FORWARD for Entware-created wdtt0.
-// Keenetic NDMS does not know wireguard-go interfaces, so RCI ip nat is a no-op.
-func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev string) error {
+func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDev string) error {
+	plans := cfg.serverEntwareNATPlans()
+	if len(plans) == 0 {
+		return nil
+	}
 	if mode == "none" {
-		removeEntwareNAT(ctx, wgIface)
+		removeEntwareNATForServer(ctx, cfg)
 		return nil
 	}
 	extIface := strings.TrimSpace(wanDev)
@@ -71,22 +92,72 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev string) error {
 	}
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 
-	setupEntwareForward(ctx, wgIface)
+	setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...)
+	setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRs()...)
 
-	cidr := wdttPeerCIDR()
 	flushEntwareMasquerade(ctx)
-	if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
-		"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
-		return fmt.Errorf("MASQUERADE %s via %s: %w", cidr, extIface, err)
+	for _, cidr := range cfg.serverEntwarePeerCIDRs() {
+		if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
+			"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
+			return fmt.Errorf("MASQUERADE %s via %s: %w", cidr, extIface, err)
+		}
 	}
 	return nil
 }
 
+// applyEntwareNAT installs MASQUERADE + FORWARD for a single iface/CIDR (legacy).
+func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev, peerCIDR string) error {
+	cfg := ServerConfig{RelayMode: ConnModeWG, WgIface: wgIface}
+	if wgIface == DefaultRawServerIface {
+		cfg = ServerConfig{RelayMode: ConnModeRaw}
+	}
+	if peerCIDR != "" && peerCIDR != cfg.serverPeerCIDR() && peerCIDR != wdttPeerCIDR() {
+		// Caller passed explicit CIDR; fall back to single-plan apply.
+		if mode == "none" {
+			removeEntwareNATIfaces(ctx, wgIface)
+			return nil
+		}
+		extIface := strings.TrimSpace(wanDev)
+		if extIface == "" || mode == "full" {
+			var err error
+			extIface, err = defaultWANDev(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
+		setupEntwareForward(ctx, wgIface)
+		setupEntwareMSSClamp(ctx, peerCIDR)
+		flushEntwareMasquerade(ctx)
+		if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
+			"-s", peerCIDR, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
+			return fmt.Errorf("MASQUERADE %s via %s: %w", peerCIDR, extIface, err)
+		}
+		return nil
+	}
+	return applyEntwareNATForServer(ctx, cfg, mode, wanDev)
+}
+
+func removeEntwareNATForServer(ctx context.Context, cfg ServerConfig) {
+	removeEntwareNATIfaces(ctx, cfg.serverEntwareNATIfaces()...)
+}
+
 func removeEntwareNAT(ctx context.Context, wgIface string) {
+	removeEntwareNATIfaces(ctx, wgIface)
+}
+
+func removeEntwareNATIfaces(ctx context.Context, ifaces ...string) {
 	flushEntwareMasquerade(ctx)
-	for i := 0; i < 5; i++ {
-		_ = iptables.Run(ctx, "-D", "FORWARD", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-		_ = iptables.Run(ctx, "-D", "FORWARD", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+	removeEntwareMSSClamp(ctx)
+	for _, iface := range ifaces {
+		iface = strings.TrimSpace(iface)
+		if iface == "" {
+			continue
+		}
+		for i := 0; i < 5; i++ {
+			_ = iptables.Run(ctx, "-D", "FORWARD", "-i", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+			_ = iptables.Run(ctx, "-D", "FORWARD", "-o", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		}
 	}
 }
 
@@ -110,13 +181,84 @@ func flushEntwareMasquerade(ctx context.Context) {
 	}
 }
 
-func setupEntwareForward(ctx context.Context, wgIface string) {
-	for i := 0; i < 5; i++ {
-		_ = iptables.Run(ctx, "-D", "FORWARD", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-		_ = iptables.Run(ctx, "-D", "FORWARD", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+func setupEntwareForward(ctx context.Context, ifaces ...string) {
+	for _, wgIface := range ifaces {
+		wgIface = strings.TrimSpace(wgIface)
+		if wgIface == "" {
+			continue
+		}
+		for i := 0; i < 5; i++ {
+			_ = iptables.Run(ctx, "-D", "FORWARD", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+			_ = iptables.Run(ctx, "-D", "FORWARD", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		}
+		_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
 	}
-	_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-	_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+}
+
+const entwareMSSChain = "awgm_wdtt_mangle"
+
+func entwareMSSPresentAll(ctx context.Context, peerCIDRs []string) bool {
+	if len(peerCIDRs) == 0 {
+		return true
+	}
+	out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", entwareMSSChain)
+	if err != nil {
+		return false
+	}
+	if !strings.Contains(out, "TCPMSS") {
+		return false
+	}
+	for _, cidr := range peerCIDRs {
+		if cidr != "" && !strings.Contains(out, cidr) {
+			return false
+		}
+	}
+	return true
+}
+
+// entwareMSSPresent reports whether TCPMSS clamp for peerCIDR is installed.
+func entwareMSSPresent(ctx context.Context, peerCIDR string) bool {
+	if peerCIDR == "" {
+		return true
+	}
+	return entwareMSSPresentAll(ctx, []string{peerCIDR})
+}
+
+func setupEntwareMSSClamp(ctx context.Context, peerCIDRs ...string) {
+	var cidrs []string
+	for _, c := range peerCIDRs {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			cidrs = append(cidrs, c)
+		}
+	}
+	if len(cidrs) == 0 {
+		return
+	}
+	_ = iptables.Run(ctx, "-t", "mangle", "-N", entwareMSSChain)
+	_ = iptables.Run(ctx, "-t", "mangle", "-F", entwareMSSChain)
+	for _, peerCIDR := range cidrs {
+		for _, spec := range []string{"-s", "-d"} {
+			// Без -m comment: на Keenetic xt_comment часто не загружен (#666),
+			// правило молча не ставится — ручной fix пользователей идёт без comment.
+			_ = iptables.Run(ctx, "-t", "mangle", "-A", entwareMSSChain,
+				spec, peerCIDR, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
+				"-j", "TCPMSS", "--clamp-mss-to-pmtu")
+		}
+	}
+	for i := 0; i < 3; i++ {
+		_ = iptables.Run(ctx, "-t", "mangle", "-D", "FORWARD", "-j", entwareMSSChain)
+	}
+	_ = iptables.Run(ctx, "-t", "mangle", "-I", "FORWARD", "1", "-j", entwareMSSChain)
+}
+
+func removeEntwareMSSClamp(ctx context.Context) {
+	for i := 0; i < 3; i++ {
+		_ = iptables.Run(ctx, "-t", "mangle", "-D", "FORWARD", "-j", entwareMSSChain)
+	}
+	_ = iptables.Run(ctx, "-t", "mangle", "-F", entwareMSSChain)
+	_ = iptables.Run(ctx, "-t", "mangle", "-X", entwareMSSChain)
 }
 
 func defaultWANDev(ctx context.Context) (string, error) {

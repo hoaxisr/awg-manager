@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { Button } from '$lib/components/ui';
 
 	export interface QuickStartItem {
 		id: string;
@@ -14,17 +15,32 @@
 		meta?: string;
 		metaExtra?: Snippet;
 		onSelect?: (id: string) => void;
+		onBack?: () => void;
+		backLabel?: string;
 		content: Snippet<[string]>;
 	}
 
-	let { items, activeId, progress = '', meta = '', metaExtra, onSelect, content }: Props = $props();
+	let {
+		items,
+		activeId,
+		progress = '',
+		meta = '',
+		metaExtra,
+		onSelect,
+		onBack,
+		backLabel = '← К панели',
+		content
+	}: Props = $props();
 
 	const activeIdx = $derived(items.findIndex((i) => i.id === activeId));
 </script>
 
 <div class="proxy-quickstart">
-	{#if progress || meta}
+	{#if progress || meta || onBack}
 		<div class="proxy-quickstart-head">
+			{#if onBack}
+				<Button variant="ghost" size="sm" onclick={() => onBack?.()}>{backLabel}</Button>
+			{/if}
 			{#if progress}
 				<span class="proxy-quickstart-progress">{progress}</span>
 			{/if}

@@ -68,6 +68,25 @@ func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) erro
 		c.queries.RunningConfig.InvalidateAll)
 }
 
+// SetSecurityLevel switches interface between public (egress) and private (LAN).
+func (c *InterfaceCommands) SetSecurityLevel(ctx context.Context, name, level string) error {
+	switch level {
+	case "public", "private":
+	default:
+		level = "public"
+	}
+	payload := map[string]any{
+		"interface": map[string]any{
+			name: map[string]any{
+				"security-level": map[string]any{level: true},
+			},
+		},
+	}
+	return postMutation(ctx, c.poster, c.save, payload, "set security-level "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
+}
+
 // SetIPGlobal enables auto-global IP assignment on the interface.
 func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error {
 	payload := map[string]any{

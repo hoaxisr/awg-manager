@@ -102,6 +102,12 @@ export class WdttClient extends FreeturnClient {
 		});
 	}
 
+	async ensureWdttRawTunnel(id: string): Promise<WdttEnsureWgResult> {
+		return this.request<WdttEnsureWgResult>(`/wdtt/clients/${encodeURIComponent(id)}/ensure-raw-tunnel`, {
+			method: 'POST'
+		});
+	}
+
 	async refreshWdttSubscription(id: string): Promise<{
 		instance: WdttClientInstance;
 		payload: WdttImportPayload;

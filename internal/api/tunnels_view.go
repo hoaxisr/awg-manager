@@ -10,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // stateToStatus converts a tunnel State to the status string sent to the frontend.
@@ -222,6 +223,10 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 	for _, t := range tunnels {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
+		// WDTT Raw rows are appended below with live iface/status from wdtt.
+		if stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+			continue
+		}
 
 		awgVersion := "wg"
 		var endpoint, address string
@@ -335,6 +340,8 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 		items = append(items, item)
 	}
+
+	items = h.appendWdttRawListItems(ctx, items)
 
 	return items, nil
 }

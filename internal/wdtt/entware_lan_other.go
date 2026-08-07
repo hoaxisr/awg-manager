@@ -4,7 +4,7 @@ package wdtt
 
 import "context"
 
-func applyEntwareLAN(_ context.Context, _ string, _ []string, _ AccessManager) error {
+func applyEntwareLAN(_ context.Context, _ string, _ []string, _ AccessManager, _ string) error {
 	return nil
 }
 

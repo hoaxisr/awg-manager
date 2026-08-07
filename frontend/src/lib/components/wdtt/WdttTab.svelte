@@ -56,12 +56,16 @@
 	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
 	let wgEnsureSettled = new Set<string>();
+	let rawEnsureSettled = new Set<string>();
 	const wgEnsureCooldown = new Map<string, number>();
+	const rawEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
 	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
 	let clientUiEpoch = $state(0);
+	let clientPanelTab = $state<'setup' | 'log'>('setup');
+	let serverPanelTab = $state<'main' | 'links' | 'network' | 'log'>('main');
 
 	const selectedClient = $derived(
 		config
@@ -145,13 +149,16 @@
 	}
 
 	function normalizeClient(c: WdttClientConfig): WdttClientConfig {
+		const raw = c.connMode === 'raw';
+		const defaultWorkers = raw ? 24 : 24;
+		const workers = Math.max(raw ? 1 : 12, c.workers > 0 ? c.workers : defaultWorkers);
 		return {
 			...c,
 			peer: c.peer ?? '',
 			password: c.password ?? '',
 			vkHashes: c.vkHashes ?? '',
 			listen: c.listen || '127.0.0.1:9000',
-			workers: c.workers > 0 ? c.workers : 24,
+			workers,
 			obfs: c.obfs || 'audio',
 			fingerprint: c.fingerprint || 'chrome',
 			captchaMode: c.captchaMode || 'rjs',
@@ -176,6 +183,7 @@
 			lanSegments: s.lanSegments ?? [],
 			ingressEnabled: !!s.ingressEnabled,
 			relayMode: s.relayMode === 'raw' ? 'raw' : 'wg',
+			rawListen: s.rawListen ?? '',
 			debug: !!s.debug
 		};
 	}
@@ -218,9 +226,37 @@
 	async function loadStatus() {
 		try {
 			status = await api.getWdttStatus();
-			await maybeEnsureWgFromLog();
+			await Promise.all([maybeEnsureWgFromLog(), maybeEnsureRawFromStatus()]);
 		} catch {
 			// polling — молча
+		}
+	}
+
+	async function maybeEnsureRawFromStatus() {
+		if (!status || ensuringWg) return;
+		const id = selectedClientId;
+		if (rawEnsureSettled.has(id)) return;
+		const clientCfg = config?.clients.find((c) => c.id === id)?.config;
+		if (clientCfg?.connMode !== 'raw') return;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
+		if (!st?.running) return;
+		if (!st.rawIface?.trim() && !st.ndmsIface?.trim()) return;
+		const now = Date.now();
+		if (now - (rawEnsureCooldown.get(id) ?? 0) < 20000) return;
+		rawEnsureCooldown.set(id, now);
+		ensuringWg = true;
+		try {
+			const result = await api.ensureWdttRawTunnel(id);
+			if (result.created) {
+				rawEnsureSettled.add(id);
+				notifications.success(result.message ?? `WDTT Raw «${result.tunnelName}» в AWG-туннелях`);
+			} else if (result.tunnelId) {
+				rawEnsureSettled.add(id);
+			}
+		} catch (e) {
+			notifications.error('WDTT Raw в AWG: ' + errText(e));
+		} finally {
+			ensuringWg = false;
 		}
 	}
 
@@ -350,6 +386,10 @@
 		try {
 			if (on) {
 				wgEnsureSettled.delete(id);
+				const inst = config?.clients.find((c) => c.id === id);
+				if (inst) {
+					await saveClientConfig(inst.config, { silent: true });
+				}
 				await api.startWdttClientInstance(id);
 				notifications.success('WDTT клиент запущен');
 			} else {
@@ -698,6 +738,7 @@
 		selectedId={selectedClientId}
 		onSelect={(id) => {
 			selectedClientId = id;
+			clientPanelTab = 'setup';
 			wgEnsureSettled.delete(id);
 		}}
 		onToggle={toggleClientInstance}
@@ -717,6 +758,7 @@
 				{importing}
 				instances={clientBarItems}
 				selectedInstanceId={selectedClientId}
+				bind:opsTab={clientPanelTab}
 				onSelectInstance={(id) => {
 					selectedClientId = id;
 					wgEnsureSettled.delete(id);
@@ -742,6 +784,7 @@
 		showDtls={false}
 		onSelect={(id) => {
 			selectedServerId = id;
+			serverPanelTab = 'main';
 		}}
 		onToggle={toggleServerInstance}
 		onAdd={canAddWdttServer ? addServer : undefined}
@@ -764,6 +807,7 @@
 				bind:genVKHashes
 				instances={serverBarItems}
 				selectedInstanceId={selectedServerId}
+				bind:opsTab={serverPanelTab}
 				onSelectInstance={(id) => {
 					selectedServerId = id;
 				}}

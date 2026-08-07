@@ -97,6 +97,7 @@
 	let opsTab = $state<ServerTab>('main');
 	let quickActive = $state('wg');
 	let keeneticPeerSelected = $state(false);
+	let wizardOpen = $state(false);
 
 	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56000)));
 
@@ -129,6 +130,7 @@
 			setupComplete: step1Done && obfReady
 		})
 	);
+	const showWizard = $derived(!opsMode || wizardOpen);
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'wg', label: 'WireGuard · obf', done: wgStepDone },
@@ -223,13 +225,11 @@
 		if (!wgStepDone && quickActive !== 'wg') quickActive = 'wg';
 	});
 
-	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
+	/** Запущенный сервер: «Раздача» при смене инстанса, кроме вкладки «Журнал». */
 	$effect(() => {
 		serverInstanceId;
-		// Только на смену инстанса: иначе рестарт сервера (running false→true из
-		// поллинга) утаскивал бы пользователя с других вкладок.
 		untrack(() => {
-			if (opsMode && running) opsTab = 'links';
+			if (opsMode && running && opsTab !== 'log') opsTab = 'links';
 		});
 	});
 
@@ -340,13 +340,14 @@
 <div class="ft-simple-wrap">
 	<p class="ft-simple-lead">FreeTurn-сервер: WG-пир → obf → ссылка freeturn:// для клиентов.</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
 			meta={`listen :${listenPort}`}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
 			{#snippet metaExtra()}
 				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
@@ -451,6 +452,8 @@
 			{canSave}
 			{canStart}
 			saveLabel={statusSaveLabel}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={mainTabNext ? saveAndGoToLinks : saveOnly}
 			onToggle={onToggle}
 		/>

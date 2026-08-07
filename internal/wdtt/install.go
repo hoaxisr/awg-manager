@@ -24,14 +24,15 @@ type ArchSpecs struct {
 	Server BinarySpec
 }
 
-const PinnedClientVersion = "1.0.0-1"
-const PinnedServerVersion = "0.1.7-awgm"
+const PinnedClientVersion = "1.4.2-awgm"
+const PinnedServerVersion = "1.4.2-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
+// После scripts/build-wdtt-client.sh обновить SHA256/Size ниже и залить на repo.hoaxisr.ru.
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
 
 // serverReleaseBase — patched wdtt-server (-no-nat, -wg-iface) for Keenetic/awg-manager.
-// Единственный канал доставки: в IPK бинаря нет (12 МБ на одну арку).
+// После scripts/build-wdtt-server.sh обновить SHA256/Size и залить бинарь на зеркало.
 const serverReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + PinnedServerVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch to pinned wdtt assets.
@@ -39,11 +40,11 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
-			SHA256: "47e72c6491d61cb0ba30aa522b444ca30e2851f9d77361a2520cb92601e6972b", Size: 11337890,
+			SHA256: "f5171ad5fda9a13fb19bf1b5c2b452e418a082be78d43edcbf4408db18f690a0", Size: 15335586,
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "7b7922b9e60f29300382e37c101ae81dd1aee0e4f6b675c170c11cab8cbf3e89", Size: 12320930,
+			SHA256: "ba150d7d28d69359ae4793f90a40c2883403db0570d1ba9bfe1c528cc2642e9c", Size: 8126626,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
@@ -52,13 +53,13 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "7cd2c6b0dfee1bbfb64dba415d8c20318a05dccb8babc59d18d77d843c7163f7", Size: 13172929,
+			SHA256: "844eba00062025eee77dfe24d5240f1a679a7341eea45861a7147504706f23fc", Size: 17563841,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "f62be339ae86ead7f97439fbe919fd17d0321bfd7265fb8ca2ad484709c5392d", Size: 13172929,
+			SHA256: "0819ddf643ed681aac1eb649d34002fba0469802f73b4739b29d824d8ff2fbd1", Size: 17563841,
 		},
 	},
 }
