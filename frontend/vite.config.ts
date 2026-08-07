@@ -109,6 +109,12 @@ export default defineConfig(({ mode }) => {
 		test: {
 			environment: 'jsdom',
 			include: ['src/**/*.test.ts'],
+			// Форк на ядро (дефолт vitest) — это 200-400 МБ на форк, то есть
+			// ~2.5 ГБ на прогон при 12 ядрах. Пары параллельных прогонов
+			// (агент + ревьюер в worktree, или прогон при поднятом мок-стенде)
+			// хватало, чтобы забить ОЗУ и своп и уронить машину по OOM.
+			// Поднять разово можно флагом: --poolOptions.forks.maxForks=N.
+			poolOptions: { forks: { maxForks: 4 } },
 		},
 		resolve: {
 			alias: {
