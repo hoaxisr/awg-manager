@@ -2086,13 +2086,26 @@ let mockEngineRunning = false;
 // engine-dead-interception. Включается MOCK_ENGINE_FAULT=1 или
 // POST /__mock/engine-fault {"enabled": true}.
 let mockEngineFault = process.env.MOCK_ENGINE_FAULT === '1';
-// Падения ЕЩЁ В 10-МИНУТНОМ ОКНЕ при живом движке. Отдельный переключатель,
-// потому что бэкенд заполняет crash-статистику ВСЕГДА из CrashStats()
-// (service_lifecycle.go), а не только при «СБОЙ»: «UI показывает блок и после
-// восстановления, пока падения не выйдут из окна». Мок держал счётчик и причину
-// внутри crash-полей «СБОЯ», и состояние «движок живой, падения в окне, паузы
-// нет» на стенде было недостижимо — а engineCrashInfo спроектирован ровно под
-// него (healthRows.ts). Включается MOCK_ENGINE_CRASH_WINDOW=1 или
+// Падения ЕЩЁ В 10-МИНУТНОМ ОКНЕ, но БЕЗ паузы авто-перезапуска. Отдельный
+// переключатель, потому что бэкенд заполняет crash-статистику ВСЕГДА из
+// CrashStats() (service_lifecycle.go), а не только при «СБОЙ»: «UI показывает
+// блок и после восстановления, пока падения не выйдут из окна». Мок держал
+// счётчик и причину внутри crash-полей «СБОЯ», и состояние «движок живой,
+// падения в окне, паузы нет» на стенде было недостижимо — а engineCrashInfo
+// спроектирован ровно под него (healthRows.ts).
+//
+// ПАУЗУ ЭТОТ ПЕРЕКЛЮЧАТЕЛЬ СНИМАЕТ и при «СБОЕ» — вживую так и есть:
+// SuppressedUntil() отдаёт ноль, как только пауза истекла или порог подавления
+// не набран (restart_backoff.go), а CrashStats() продолжает считать падения по
+// своему окну. Без этого недостижима вторая ветка текста замечания
+// engine-dead-interception («Автоперезапуск: при следующей проверке (до 30 с)»),
+// в которой счётчика НЕТ и его обязан печатать блок падений.
+//
+// Три состояния двумя переключателями:
+//   FAULT                  — движок мёртв, пауза + счётчик в тексте замечания;
+//   FAULT + CRASH_WINDOW   — движок мёртв, паузы нет, счётчик печатает блок;
+//   CRASH_WINDOW           — движок живой, падения ещё в окне.
+// Включается MOCK_ENGINE_CRASH_WINDOW=1 или
 // POST /__mock/engine-crash-window {"enabled": true}.
 let mockEngineCrashWindow = process.env.MOCK_ENGINE_CRASH_WINDOW === '1';
 // Стенд без модулей ядра: netfilter / xt_TPROXY / xt_dscp недоступны. Идиома
@@ -2432,11 +2445,20 @@ function mockSlotContent(slot) {
 
 // 18-qos-routes.json собирается из классов QoS — как buildQoSRouteRules на
 // бэкенде: sniff по инбаундам классов, route-options с udp_timeout и по правилу
-// route на класс. Без классов слот не собран (бэкенд паркует его в disabled/).
-// В fakeip-tun классов не бывает вовсе — netfilter-перехвата там нет
-// (isQosLockedByMode).
+// route на класс. В fakeip-tun классов не бывает вовсе — netfilter-перехвата
+// там нет (isQosLockedByMode).
+//
+// БЕЗ КЛАССОВ мок отдаёт слот как ОТСУТСТВУЮЩИЙ. Это роутер, на котором QoS не
+// настраивали ни разу: syncQoSRoutesSlot при enable=false и отсутствующем файле
+// выходит, ничего не записав (qos_routes.go). Роутер, где классы были и их
+// убрали, мок НЕ моделирует: там файл припаркован в disabled/, значит
+// EffectiveStat его находит и слот приходит как disabled с ненулевым размером.
 function mockQosRoutesSlotContent() {
 	if ((mockSBSettings.routingMode || 'tproxy') === 'fakeip-tun') return null;
+	// Фильтр ПРОЩЕ бэкендового (activeQoSClasses, qos.go): там ещё дедуп по dscp
+	// и по slot, отсечение dscp вне [0,63] и классов с неизвестным outbound.
+	// Через UI такие классы не создать (форма чинит их сама), поэтому мок их и
+	// не моделирует — известное ограничение стенда, а не расхождение поведения.
 	const classes = (mockSBSettings.qosClasses || []).filter((c) => c && c.enabled && c.outbound);
 	if (classes.length === 0) return null;
 	// Пространство имён тегов зарезервировано бэкендом (qos.go).
@@ -2454,6 +2476,9 @@ function mockQosRoutesSlotContent() {
 	for (const c of classes) {
 		rules.push({ inbound: tags(c), action: 'route', outbound: c.outbound });
 	}
+	// Порядок ключей совпадает с Go по совпадению: там его задаёт порядок полей
+	// структуры, здесь — порядок литералов. Побайтовая сверка мока с бэкендом
+	// невозможна, сверять можно только состав правил.
 	return JSON.stringify({ route: { rules } }, null, 2);
 }
 
@@ -7153,8 +7178,12 @@ const server = http.createServer(async (req, res) => {
 					}
 				: {}),
 			// Пауза анти-crash-loop backoff'а — всегда в будущем, иначе фронт
-			// покажет прошедшее время как действующее.
-			...(faulted ? { restartSuppressedUntil: rfc3339(Date.now() + 4 * 60 * 1000) } : {}),
+			// покажет прошедшее время как действующее. Снимается переключателем
+			// MOCK_ENGINE_CRASH_WINDOW: падения в окне БЕЗ паузы — штатное
+			// состояние бэкенда (SuppressedUntil() ноль, CrashStats() считает).
+			...(faulted && !mockEngineCrashWindow
+				? { restartSuppressedUntil: rfc3339(Date.now() + 4 * 60 * 1000) }
+				: {}),
 		};
 
 		// Замечания статуса. Собираются списком, а не двумя независимыми
@@ -8720,7 +8749,7 @@ snapshotAppliedSlot();
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
 	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/engine-fault, POST /__mock/download-faults, POST /__mock/keenetic-os');
-	console.log(`[mock-proxy] engine fault: ${mockEngineFault} (движок «СБОЙ» + падения #456; MOCK_ENGINE_FAULT=1 или POST /__mock/engine-fault), crash window: ${mockEngineCrashWindow} (падения при живом движке; MOCK_ENGINE_CRASH_WINDOW=1 или POST /__mock/engine-crash-window), kmods missing: ${mockKmodsMissing} (MOCK_KMODS_MISSING=1)`);
+	console.log(`[mock-proxy] engine fault: ${mockEngineFault} (движок «СБОЙ» + падения #456 с паузой; MOCK_ENGINE_FAULT=1 или POST /__mock/engine-fault), crash window: ${mockEngineCrashWindow} (падения в окне БЕЗ паузы; с fault — ветка «при следующей проверке»; MOCK_ENGINE_CRASH_WINDOW=1 или POST /__mock/engine-crash-window), kmods missing: ${mockKmodsMissing} (MOCK_KMODS_MISSING=1)`);
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
