@@ -296,9 +296,17 @@ func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string
 }
 
 var _ wdtt.NDMSPolicyTableGetter = (*policyTableAdapter)(nil)
+var _ wdtt.NDMSPolicyMarkGetter = (*policyTableAdapter)(nil)
 
 type policyTableAdapter struct {
 	marks *ndmsquery.PolicyMarkStore
+}
+
+func (a *policyTableAdapter) GetPolicyMark(ctx context.Context, policyName string) (string, error) {
+	if a.marks == nil {
+		return "", fmt.Errorf("policy mark store not wired")
+	}
+	return a.marks.Get(ctx, policyName)
 }
 
 func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string) (int, error) {
@@ -483,4 +491,33 @@ type keenDNSLANAdapter struct{}
 
 func (keenDNSLANAdapter) LANIPv4() string {
 	return netif.FirstIPv4(storage.DefaultInterface)
+}
+
+var _ wdtt.IngressRefEnsurer = (*wdttIngressEnsurer)(nil)
+
+type wdttIngressEnsurer struct {
+	settings *storage.SettingsStore
+	router   wdtt.RouterReconciler
+}
+
+func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wgKernelIface string) error {
+	if e.settings == nil {
+		return nil
+	}
+	settings, err := e.settings.Load()
+	if err != nil {
+		return err
+	}
+	next, changed := wdtt.EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface)
+	if !changed {
+		return nil
+	}
+	settings.SingboxRouter.IngressInterfaces = next
+	if err := e.settings.Save(settings); err != nil {
+		return err
+	}
+	if e.router != nil {
+		return e.router.Reconcile(ctx)
+	}
+	return nil
 }

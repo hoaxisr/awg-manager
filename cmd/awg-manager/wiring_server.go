@@ -550,6 +550,7 @@ func (a *app) setupRouter() {
 	a.srv.AddShutdownHook(subSched.Stop)
 
 	if a.wdttService != nil && a.ndmsCommands != nil {
+		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
 		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
 		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
 			store: a.ndmsQueries.Interfaces,
@@ -562,8 +563,13 @@ func (a *app) setupRouter() {
 		a.wdttService.SetNDMSPolicyRouting(
 			a.ndmsCommands.Policies,
 			a.ndmsQueries.Policies,
-			&policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)},
+			policyMarks,
 		)
+		a.wdttService.SetPolicyMarkGetter(policyMarks)
+		a.wdttService.SetIngressRefEnsurer(&wdttIngressEnsurer{
+			settings: a.settingsStore,
+			router:   routerSvc,
+		})
 		a.accessPolicySvc.SetOpkgPolicyRouteSyncer(a.wdttService)
 	}
 

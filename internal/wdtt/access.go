@@ -46,7 +46,6 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	ndmsIface := cfg.ndmsAccessIface()
 	kernelIface := cfg.kernelServerIface()
 	useNDMS := cfg.usesNDMSAccess()
-	peerCIDR := cfg.serverPeerCIDR()
 	accessAddr := cfg.serverAccessAddress()
 	accessMask := cfg.serverAccessMask()
 
@@ -124,6 +123,11 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 		s.maybeReconcileRouter(ctx)
 	}
 
+	if err := s.applyRawServerPolicy(ctx, id, cfg); err != nil {
+		return err
+	}
+	s.ensureWdttIngressRefs(ctx, cfg)
+
 	if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
 		return fmt.Errorf("wg client route: %w", err)
 	}
@@ -149,11 +153,8 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 		if segments == nil {
 			segments = []string{}
 		}
-		lanIface := kernelIface
-		if useNDMS {
-			lanIface = DefaultRawServerIface
-		}
-		if err := applyEntwareLAN(ctx, lanIface, segments, s.accessMgr, peerCIDR); err != nil {
+		peerCIDRs := cfg.serverEntwarePeerCIDRs()
+		if err := applyEntwareLAN(ctx, kernelIface, segments, s.accessMgr, peerCIDRs...); err != nil {
 			if s.appLog != nil {
 				s.appLog.Warn("access", id, "LAN iptables: "+err.Error())
 			}

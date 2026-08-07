@@ -12,8 +12,8 @@ import (
 
 const entwareLANComment = "AWGM_WDTT_LAN"
 
-func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, resolver AccessManager, peerCIDR string) error {
-	removeEntwareLAN(ctx, wgIface)
+func applyEntwareLAN(ctx context.Context, _ string, segments []string, resolver AccessManager, peerCIDRs ...string) error {
+	removeEntwareLAN(ctx, "")
 	if len(segments) == 0 || resolver == nil {
 		return nil
 	}
@@ -21,23 +21,29 @@ func applyEntwareLAN(ctx context.Context, wgIface string, segments []string, res
 	if err != nil {
 		return err
 	}
-	if peerCIDR == "" {
-		peerCIDR = wdttPeerCIDR()
+	if len(peerCIDRs) == 0 {
+		peerCIDRs = []string{wdttPeerCIDR()}
 	}
-	for _, lanCIDR := range cidrs {
-		lanCIDR = strings.TrimSpace(lanCIDR)
-		if lanCIDR == "" {
+	for _, peerCIDR := range peerCIDRs {
+		peerCIDR = strings.TrimSpace(peerCIDR)
+		if peerCIDR == "" {
 			continue
 		}
-		if err := iptables.Run(ctx, "-I", "FORWARD", "1",
-			"-s", peerCIDR, "-d", lanCIDR,
-			"-m", "comment", "--comment", entwareLANComment, "-j", "ACCEPT"); err != nil {
-			return fmt.Errorf("LAN forward wdtt→%s: %w", lanCIDR, err)
-		}
-		if err := iptables.Run(ctx, "-I", "FORWARD", "1",
-			"-s", lanCIDR, "-d", peerCIDR,
-			"-m", "comment", "--comment", entwareLANComment, "-j", "ACCEPT"); err != nil {
-			return fmt.Errorf("LAN forward %s→wdtt: %w", lanCIDR, err)
+		for _, lanCIDR := range cidrs {
+			lanCIDR = strings.TrimSpace(lanCIDR)
+			if lanCIDR == "" {
+				continue
+			}
+			if err := iptables.Run(ctx, "-I", "FORWARD", "1",
+				"-s", peerCIDR, "-d", lanCIDR,
+				"-m", "comment", "--comment", entwareLANComment, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("LAN forward wdtt→%s: %w", lanCIDR, err)
+			}
+			if err := iptables.Run(ctx, "-I", "FORWARD", "1",
+				"-s", lanCIDR, "-d", peerCIDR,
+				"-m", "comment", "--comment", entwareLANComment, "-j", "ACCEPT"); err != nil {
+				return fmt.Errorf("LAN forward %s→wdtt: %w", lanCIDR, err)
+			}
 		}
 	}
 	return nil
@@ -60,24 +66,32 @@ func removeEntwareLAN(ctx context.Context, _ string) {
 	}
 }
 
-func entwareLANPresent(ctx context.Context, peerCIDR string, lanCIDRs []string) bool {
+func entwareLANPresent(ctx context.Context, peerCIDRs []string, lanCIDRs []string) bool {
 	if len(lanCIDRs) == 0 {
 		return true
+	}
+	if len(peerCIDRs) == 0 {
+		peerCIDRs = []string{wdttPeerCIDR()}
 	}
 	out, err := iptables.RunOutput(ctx, "-S", "FORWARD")
 	if err != nil {
 		return false
 	}
-	want := 2 * len(lanCIDRs)
+	want := 2 * len(lanCIDRs) * len(peerCIDRs)
 	got := 0
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, entwareLANComment) {
 			continue
 		}
-		for _, lan := range lanCIDRs {
-			if strings.Contains(line, peerCIDR) && strings.Contains(line, lan) {
-				got++
-				break
+		for _, peer := range peerCIDRs {
+			if !strings.Contains(line, peer) {
+				continue
+			}
+			for _, lan := range lanCIDRs {
+				if strings.Contains(line, lan) {
+					got++
+					break
+				}
 			}
 		}
 	}

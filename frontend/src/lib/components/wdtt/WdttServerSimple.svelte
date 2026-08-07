@@ -93,6 +93,8 @@
 	}: Props = $props();
 
 	const wdttIface = $derived(server.wgIface?.trim() || 'wdtt0');
+	const rawServerIface = 'wdttraw0';
+	const wdttIngressRefs = $derived([`iface:${wdttIface}`, `iface:${rawServerIface}`]);
 
 	let starting = $state(false);
 	let loadingWanPeer = $state(false);
@@ -284,7 +286,7 @@
 		try {
 			const s = await api.singboxRouterGetSettings();
 			const refs = s.ingressInterfaces ?? [];
-			server.ingressEnabled = refs.includes(`iface:${wdttIface}`);
+			server.ingressEnabled = wdttIngressRefs.some((ref) => refs.includes(ref));
 		} catch {
 			/* ignore */
 		}
@@ -321,9 +323,11 @@
 			await withIngressLock(async () => {
 				const s = await api.singboxRouterGetSettings();
 				const set = new Set(s.ingressInterfaces ?? []);
-				const ref = `iface:${wdttIface}`;
-				if (enabled) set.add(ref);
-				else set.delete(ref);
+				if (enabled) {
+					for (const ref of wdttIngressRefs) set.add(ref);
+				} else {
+					for (const ref of wdttIngressRefs) set.delete(ref);
+				}
 				const next = [...set];
 				await api.singboxRouterPutSettings({ ...s, ingressInterfaces: next });
 				server.ingressEnabled = enabled;
@@ -431,8 +435,8 @@
 
 <div class="wdtt-server-wrap">
 	<p class="wdtt-server-lead">
-		WDTT-сервер: DTLS на WAN, WireGuard <code>{wdttIface}</code> для клиентов. NAT и LAN — на вкладке
-		«Сеть» (или при первом запуске по ссылке).
+		WDTT-сервер: DTLS на WAN, WireGuard <code>{wdttIface}</code> и raw <code>{rawServerIface}</code> для
+		клиентов. NAT, LAN и политика на вкладке «Сеть» действуют для обоих режимов подключения.
 	</p>
 
 	{#if showWizard}
@@ -726,10 +730,10 @@
 					<div class="setting-copy">
 						<span class="setting-title">Маршрутизация через sing-box</span>
 						<span class="setting-description">
-							Весь трафик клиентов этого сервера пойдёт через sing-box и маршрутизируется его
-							правилами; в режиме FakeIP их DNS-запросы перехватываются резолвером туннеля.
-							Следствия в FakeIP: выше нагрузка на процессор, у клиентов не работает ping (ICMP),
-							при остановленном sing-box они остаются без сети.
+							Весь трафик клиентов этого сервера (WireGuard и raw) пойдёт через sing-box и
+							маршрутизируется его правилами; в режиме FakeIP их DNS-запросы перехватываются
+							резолвером туннеля. Следствия в FakeIP: выше нагрузка на процессор, у клиентов не
+							работает ping (ICMP), при остановленном sing-box они остаются без сети.
 						</span>
 					</div>
 					<div class="setting-control setting-control-toggle">

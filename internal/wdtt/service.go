@@ -50,6 +50,8 @@ type Service struct {
 	policyPermit    NDMSPolicyPermitter
 	policyList      NDMSPolicyLister
 	policyTables    NDMSPolicyTableGetter
+	policyMarks     NDMSPolicyMarkGetter
+	ingressEnsurer  IngressRefEnsurer
 
 	wgIfaceMu        sync.Mutex
 	wgIfaceFlagKnown bool

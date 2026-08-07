@@ -78,7 +78,7 @@ type ServerConfig struct {
 	NatStaticWAN   string   `json:"natStaticWan,omitempty"`   // persisted WAN for internet-only teardown
 	Policy         string   `json:"policy"`                   // NDMS hotspot policy or "none"
 	LanSegments    []string `json:"lanSegments,omitempty"`    // LAN bridge names
-	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface
+	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface + wdttraw0
 
 	// OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
 	// nil / omitted → true (WAN relay works out of the box).

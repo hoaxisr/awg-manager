@@ -91,7 +91,6 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
 			}
 		}
-		peerCIDR := cfg.serverPeerCIDR()
 		if !entwareNATPresentForServer(ctx, cfg, wanDev) {
 			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
 				if s.appLog != nil {
@@ -119,17 +118,31 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		if segments == nil {
 			segments = []string{}
 		}
+		peerCIDRs := cfg.serverEntwarePeerCIDRs()
 		if len(segments) > 0 && s.accessMgr != nil {
 			cidrs, err := s.accessMgr.ResolveLANSegmentCIDRs(ctx, segments)
 			if err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
-			} else if !entwareLANPresent(ctx, peerCIDR, cidrs) {
-				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr, peerCIDR); err != nil && s.appLog != nil {
+			} else if !entwareLANPresent(ctx, peerCIDRs, cidrs) {
+				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr, peerCIDRs...); err != nil && s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
 			}
 		}
+		policy := normalizePolicy(cfg.Policy)
+		wantMark := ""
+		if policy != "none" && s.policyMarks != nil {
+			if mark, err := s.policyMarks.GetPolicyMark(ctx, policy); err == nil {
+				wantMark = mark
+			}
+		}
+		if !rawServerPolicyMarkPresent(ctx, wantMark) {
+			if err := s.applyRawServerPolicy(ctx, srv.ID, cfg); err != nil && s.appLog != nil {
+				s.appLog.Warn("policy-reconcile", srv.ID, err.Error())
+			}
+		}
+		s.ensureWdttIngressRefs(ctx, cfg)
 	}
 }

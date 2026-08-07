@@ -147,6 +147,7 @@ func (s *Service) DeleteServer(id string) error {
 	kernelIface := inst.Config.kernelServerIface()
 	removeEntwareNATForServer(context.Background(), inst.Config)
 	removeEntwareLAN(context.Background(), kernelIface)
+	removeRawServerPolicyMark(context.Background())
 	_ = s.teardownServerOpkgTun(context.Background(), inst.Config)
 	removeServerListenFirewall(context.Background(), inst.Config)
 	return saveErr
@@ -288,6 +289,7 @@ func (s *Service) StopServerInstance(id string) error {
 	err = s.serverProcs.get(id).Stop()
 	removeEntwareNATForServer(context.Background(), cfg)
 	removeEntwareLAN(context.Background(), kernelIface)
+	removeRawServerPolicyMark(context.Background())
 	removeServerListenFirewall(context.Background(), inst.Config)
 	_ = s.teardownServerOpkgTun(context.Background(), cfg)
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
