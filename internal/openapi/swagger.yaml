@@ -7284,7 +7284,7 @@ definitions:
       enabled:
         type: boolean
       ingressEnabled:
-        description: sing-box ingress for iface:wgIface
+        description: sing-box ingress for iface:wgIface + wdttraw0
         type: boolean
       lanSegments:
         description: LAN bridge names
