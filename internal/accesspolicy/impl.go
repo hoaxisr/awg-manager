@@ -84,9 +84,12 @@ type ServiceImpl struct {
 	opkgRouteSyncer OpkgPolicyRouteSyncer
 }
 
-// OpkgPolicyRouteSyncer reconciles Linux policy routes for WDTT raw OpkgTun uplinks.
+// OpkgPolicyRouteSyncer reconciles Linux policy routes for WDTT raw OpkgTun uplinks
+// and tracks manual permit/deny for restore after awg-manager restart.
 type OpkgPolicyRouteSyncer interface {
 	ReconcileOpkgPolicyRoutes(ctx context.Context)
+	RecordOpkgPolicyPermit(ctx context.Context, ndmsName, policyName string, order int)
+	RemoveOpkgPolicyPermit(ctx context.Context, ndmsName, policyName string)
 }
 
 // SetTunnelLifecycle wires managed-tunnel lifecycle routing for
@@ -341,6 +344,7 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 	}
 
 	if s.opkgRouteSyncer != nil && isOpkgTunNDMS(iface) {
+		s.opkgRouteSyncer.RecordOpkgPolicyPermit(ctx, iface, name, order)
 		s.opkgRouteSyncer.ReconcileOpkgPolicyRoutes(ctx)
 	}
 
@@ -357,6 +361,10 @@ func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) err
 	if err := s.policies.DenyInterface(ctx, name, iface); err != nil {
 		s.appLog.Warn("deny", name, fmt.Sprintf("Failed to deny %s: %v", iface, err))
 		return err
+	}
+
+	if s.opkgRouteSyncer != nil && isOpkgTunNDMS(iface) {
+		s.opkgRouteSyncer.RemoveOpkgPolicyPermit(ctx, iface, name)
 	}
 
 	s.appLog.Info("deny", name, fmt.Sprintf("Policy %s: interface %s denied", name, iface))

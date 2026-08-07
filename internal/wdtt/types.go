@@ -31,6 +31,15 @@ type ClientConfig struct {
 	NdmsIface   string `json:"ndmsIface,omitempty"`   // OpkgTun17..49
 	RawIface    string `json:"rawIface,omitempty"`    // kernel opkgtunN
 	RawClientIP string `json:"rawClientIp,omitempty"` // из RAWCONF VPS
+
+	// PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются после рестарта awg-manager.
+	PolicyPermits []OpkgPolicyPermit `json:"policyPermits,omitempty"`
+}
+
+// OpkgPolicyPermit — permit global OpkgTun в одной политике (order как в NDMS).
+type OpkgPolicyPermit struct {
+	Name  string `json:"name"`
+	Order int    `json:"order"`
 }
 
 func DefaultClientConfig() ClientConfig {

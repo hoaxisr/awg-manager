@@ -287,7 +287,7 @@ func (s *Service) reapOrphanOpkgTuns(ctx context.Context) {
 			live[cl.Config.ndmsAccessIface()] = true
 			continue
 		}
-		_ = s.teardownOpkgTunByName(ctx, cl.Config.ndmsAccessIface(), "wdtt-reap")
+		_ = s.teardownClientOpkgTun(ctx, cl.Config)
 	}
 	if s.opkgScan == nil {
 		return

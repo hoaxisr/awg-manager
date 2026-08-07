@@ -483,7 +483,7 @@ func (s *Service) StartClientInstance(id string) error {
 			return err
 		}
 		s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
-		s.syncOpkgPolicyDefaultRoutes(ctx, cfg.ndmsAccessIface(), cfg.kernelRawIface())
+		s.restoreOpkgPolicyPermits(ctx, id, cfg)
 	}
 
 	if err := s.setEnabled(id, true); err != nil && s.appLog != nil {

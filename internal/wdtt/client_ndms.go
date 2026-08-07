@@ -179,6 +179,7 @@ func (s *Service) teardownClientOpkgTun(ctx context.Context, cfg ClientConfig) e
 	if !cfg.usesNDMSOpkgTun() {
 		return nil
 	}
+	s.captureOpkgPolicyPermitsForConfig(ctx, cfg)
 	return s.teardownOpkgTunByName(ctx, cfg.ndmsAccessIface(), "wdtt-raw-client")
 }
 

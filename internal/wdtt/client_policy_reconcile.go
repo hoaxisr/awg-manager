@@ -14,6 +14,7 @@ func (s *Service) reconcileRunningClientsPolicyRoutes(ctx context.Context) {
 		if !s.clientProcs.get(cl.ID).Status().Running {
 			continue
 		}
+		s.syncOpkgPolicyPermitsFromLive(ctx, cl.ID, cl.Config)
 		s.syncOpkgPolicyDefaultRoutes(ctx, cl.Config.ndmsAccessIface(), cl.Config.kernelRawIface())
 	}
 }
