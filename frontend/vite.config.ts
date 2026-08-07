@@ -115,8 +115,11 @@ export default defineConfig(({ mode }) => {
 			// а соседние процессы, и падения выглядели чем угодно, только не
 			// нехваткой памяти. Два — потолок, при котором прогон переживает
 			// параллельно открытый браузер и мок-стенд.
-			// Поднять разово можно флагом: --poolOptions.forks.maxForks=N.
-			poolOptions: { forks: { maxForks: 2 } },
+			// Поднять разово можно флагом: --maxWorkers=N. Именно maxWorkers, а
+			// не poolOptions.forks.maxForks: vitest 4 убрал poolOptions и
+			// молча игнорировал предел — печатал DEPRECATED и поднимал форк
+			// на ядро, то есть ограничения не было вовсе.
+			maxWorkers: 2,
 		},
 		resolve: {
 			alias: {
