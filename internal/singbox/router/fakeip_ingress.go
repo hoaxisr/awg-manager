@@ -99,7 +99,7 @@ func fakeIPIngressTableStr() string { return strconv.Itoa(fakeIPIngressTable) }
 // встречается в тестах соседних путей (tproxy), и для них заворот — не их
 // предмет: молча ничего не делаем вместо nil-паники.
 func (it *IPTables) ingressSeamsWired() bool {
-	return it.runIPTables != nil && it.runIPTablesOut != nil && it.runIP != nil && it.runIPOut != nil
+	return it.legacyRun != nil && it.legacyRunOut != nil && it.runIP != nil && it.runIPOut != nil
 }
 
 // fakeIPIngressDNATArgs собирает аргументы вставки DNAT-правила перехвата DNS.
@@ -226,7 +226,7 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 	if !it.ingressSeamsWired() {
 		return nil
 	}
-	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
+	natDump, err := it.legacyRunOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err != nil {
 		return fmt.Errorf("dump nat PREROUTING: %w", err)
 	}
@@ -261,7 +261,7 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 		it.removeFakeIPIngressDNAT(ctx, natDump)
 		for _, iface := range spec.Ifaces {
 			for _, proto := range []string{"udp", "tcp"} {
-				if err := it.runIPTables(ctx, fakeIPIngressDNATArgs(iface, proto, spec.TunDNS)...); err != nil {
+				if err := it.legacyRun(ctx, fakeIPIngressDNATArgs(iface, proto, spec.TunDNS)...); err != nil {
 					return fmt.Errorf("dnat dns %s/%s: %w", iface, proto, err)
 				}
 			}
@@ -290,7 +290,7 @@ func (it *IPTables) RemoveFakeIPIngress(ctx context.Context) {
 	if !it.ingressSeamsWired() {
 		return
 	}
-	dump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
+	dump, err := it.legacyRunOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err == nil {
 		it.removeFakeIPIngressDNAT(ctx, dump)
 	}
@@ -306,7 +306,7 @@ func (it *IPTables) RemoveFakeIPIngressDNAT(ctx context.Context) {
 	if !it.ingressSeamsWired() {
 		return
 	}
-	dump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
+	dump, err := it.legacyRunOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err != nil || !strings.Contains(dump, FakeIPIngressTag) {
 		return
 	}
@@ -368,8 +368,10 @@ func (it *IPTables) buildFakeIPIngressTable(ctx context.Context, tunIface string
 }
 
 // removeFakeIPIngressDNAT удаляет из nat PREROUTING все правила с нашим тегом,
-// разбирая уже снятый дамп (свой, а не removeCommentTaggedRulesFromTable, —
-// тот ходит в sysexec мимо подменяемых сидов и не покрывается тестами).
+// разбирая уже снятый дамп. Свой, а не removeCommentTaggedRules: тот снимает
+// дамп сам, а здесь он уже на руках у вызывающего. Канал — legacy: правила
+// лежат в nat-таблице ndm, и ставит, и снимает их штатный бинарь независимо от
+// активного бэкенда перехвата.
 func (it *IPTables) removeFakeIPIngressDNAT(ctx context.Context, dump string) {
 	for _, line := range strings.Split(dump, "\n") {
 		line = strings.TrimSpace(line)
@@ -378,7 +380,7 @@ func (it *IPTables) removeFakeIPIngressDNAT(ctx context.Context, dump string) {
 		}
 		del := strings.Replace(line, "-A PREROUTING", "-D PREROUTING", 1)
 		args := append([]string{"-t", "nat"}, strings.Fields(strings.ReplaceAll(del, `"`, ""))...)
-		_ = it.runIPTables(ctx, args...)
+		_ = it.legacyRun(ctx, args...)
 	}
 }
 

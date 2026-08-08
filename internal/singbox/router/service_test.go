@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -69,10 +70,18 @@ func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTab
 		restoreNoflush: restoreRecorder,
 		runIPTables:    func(_ context.Context, _ ...string) error { return nil },
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
-		runIP:          func(_ context.Context, _ ...string) error { return nil },
-		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func(bool) error { return nil },
-		cleanupHook:    func() {},
+		// Сиды таблиц ndm — тоже I/O: без них ingressSeamsWired отсекает
+		// заворот fakeip/policy-tun целиком. legacyRestoreNoflush — тот же
+		// приёмник: на него откатывается UseLegacy, и без него откат увёл бы
+		// тест на настоящий /opt/sbin/iptables-restore.
+		legacyRun:            func(_ context.Context, _ ...string) error { return nil },
+		legacyRunOut:         func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
+		legacyRestoreNoflush: restoreRecorder,
+		runIP:                func(_ context.Context, _ ...string) error { return nil },
+		runIPOut:             func(_ context.Context, _ ...string) (string, error) { return ipPresentDump(), nil },
+		persistRules:         func(_, _, _ string) error { return nil },
+		persistHook:          func(bool) error { return nil },
+		cleanupHook:          func() {},
 	}
 }
 
@@ -2274,5 +2283,329 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 	}
 	if got.RoutingMode != "policy-tun" {
 		t.Errorf("policy-tun mode = %q, want policy-tun", got.RoutingMode)
+	}
+}
+
+// iptablesCalls — журнал команд iptables, дошедших до fakeExec, одной строкой
+// на вызов. Проверки ниже смотрят на КОМАНДЫ, а не на порядок полей.
+func iptablesCalls(fe *fakeExec) string {
+	var b strings.Builder
+	for _, c := range fe.calls {
+		if c.kind == "iptables" {
+			b.WriteString(strings.Join(c.args, " ") + "\n")
+		}
+	}
+	return b.String()
+}
+
+// Демон мог упасть в awgm-режиме, а подняться в legacy: настройку сняли, пока
+// он лежал, или бандл не поднялся. Uninstall ходит через команды АКТИВНОГО
+// канала и правил чужого не видит вовсе, а TPROXY в мёртвый сокет молча
+// дропает пакеты — перехватываемый трафик лежал бы до перезагрузки роутера.
+//
+// Живой канал при этом не трогается: своё снимать незачем (Install идемпотентен
+// и переустанавливает перехват сам), а снос открыл бы окно fail-open на каждый
+// рестарт демона.
+func TestAdoptAndCleanSweepsAwgmEvenInLegacyMode(t *testing.T) {
+	var awgmCmds []string
+	fe := &fakeExec{}
+	svc := newTestService(t, Deps{
+		IPTables: newTestIPTables(fe),
+		Awgm:     stubBackend{available: true, calls: &awgmCmds},
+	})
+	svc.setBackendState(BackendState{Requested: BackendLegacy, Effective: BackendLegacy})
+
+	if err := svc.adoptAndClean(context.Background()); err != nil {
+		t.Fatalf("adoptAndClean: %v", err)
+	}
+
+	if !strings.Contains(strings.Join(awgmCmds, "\n"), "-X "+ChainName) {
+		t.Fatalf("awgm-правила прошлого запуска обязаны быть сняты даже в legacy-режиме: "+
+			"иначе TPROXY в мёртвый сокет держит трафик до ребута; команды бэкенда: %v", awgmCmds)
+	}
+	if strings.Contains(iptablesCalls(fe), "-X "+ChainName) {
+		t.Fatalf("adopt снёс правила ЖИВОГО канала — это окно fail-open на каждый рестарт "+
+			"демона; команды: %v", fe.calls)
+	}
+}
+
+// Зеркальный случай: работаем awgm-каналом — чужой здесь legacy, и снимать надо
+// его, а живой awgm-перехват не трогать.
+func TestAdoptAndCleanSweepsLegacyInAwgmMode(t *testing.T) {
+	var awgmCmds []string
+	fe := &fakeExec{}
+	it := newTestIPTables(fe)
+	it.legacyRun, it.legacyRunOut = it.runIPTables, it.runIPTablesOut
+	svc := newTestService(t, Deps{
+		IPTables: it,
+		Awgm:     stubBackend{available: true, calls: &awgmCmds},
+	})
+	svc.setBackendState(BackendState{Requested: BackendAwgm, Effective: BackendAwgm})
+
+	if err := svc.adoptAndClean(context.Background()); err != nil {
+		t.Fatalf("adoptAndClean: %v", err)
+	}
+
+	if !strings.Contains(iptablesCalls(fe), "-X "+ChainName) {
+		t.Fatalf("legacy-правила прошлого запуска обязаны быть сняты legacy-каналом: "+
+			"командам awgm они не видны вовсе; команды: %v", fe.calls)
+	}
+	if strings.Contains(strings.Join(awgmCmds, "\n"), "-X "+ChainName) {
+		t.Fatalf("adopt снёс правила ЖИВОГО awgm-канала, команды бэкенда: %v", awgmCmds)
+	}
+}
+
+// Бандл может быть недоступен вовсе (собран под другую модель, файлов нет) —
+// тогда второй проход звал бы несуществующий бинарь на каждом подъёме движка.
+func TestAdoptAndCleanSkipsAwgmWhenBundleUnavailable(t *testing.T) {
+	var awgmCmds []string
+	svc := newTestService(t, Deps{
+		IPTables: newTestIPTables(&fakeExec{}),
+		Awgm:     stubBackend{available: false, why: "бандл собран под KN-1812", calls: &awgmCmds},
+	})
+
+	if err := svc.adoptAndClean(context.Background()); err != nil {
+		t.Fatalf("adoptAndClean: %v", err)
+	}
+
+	if len(awgmCmds) != 0 {
+		t.Fatalf("недоступный бандл трогать нечем, команды: %v", awgmCmds)
+	}
+}
+
+// Подъём движка в awgm-режиме: правила прошлого запуска снимаются ИМЕННО
+// legacy-каналом — командам awgm они не видны вовсе, и после выбора бэкенда
+// снять их было бы нечем. Каналы при этом не путаются: живой awgm-перехват
+// adopt не трогает. И ровно один раз за процесс: повторный подъём (drift-heal
+// зовётся именно при неполной установке) не имеет права сносить живой
+// перехват этого же процесса на всё время своего выполнения.
+func TestEngineStartAdoptsForeignChannelOnly(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		AwgmBackend:   true,
+	})
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	stubAwgmListeningProbe(t, func() bool { return true })
+
+	var legacyCmds, awgmCmds []string
+	rec := func(_ context.Context, args ...string) error {
+		legacyCmds = append(legacyCmds, strings.Join(args, " "))
+		return nil
+	}
+	it := newStubIPTables(func(context.Context, string) error { return nil })
+	it.runIPTables, it.legacyRun = rec, rec
+
+	svc := newTestService(t, Deps{
+		Settings:           settingsStore,
+		Policies:           &fakeAccessPolicyProvider{},
+		IPTables:           it,
+		Awgm:               stubBackend{available: true, calls: &awgmCmds},
+		Singbox:            singbox,
+		WANIPCollector:     &fakeWANIPCollector{},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if svc.backendMode() != BackendAwgm {
+		t.Fatalf("предусловие: бэкенд обязан включиться, получили %q", svc.backendMode())
+	}
+
+	if n := strings.Count(strings.Join(legacyCmds, "\n"), "-X "+ChainName); n != 1 {
+		t.Fatalf("правила прошлого запуска обязаны сниматься legacy-каналом ровно один раз "+
+			"(командам awgm они не видны), снятий: %d; команды: %v", n, legacyCmds)
+	}
+	if strings.Contains(strings.Join(awgmCmds, "\n"), "-X "+ChainName) {
+		t.Fatalf("adopt снёс правила ЖИВОГО awgm-канала — каналы перепутаны; команды: %v", awgmCmds)
+	}
+
+	// Второй подъём смотрим ПО ОБОИМ каналам: бэкенд уже переключён на awgm, и
+	// снос ушёл бы туда, а не в legacy-журнал.
+	legacyCmds, awgmCmds = nil, nil
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (повторный): %v", err)
+	}
+	both := strings.Join(append(legacyCmds, awgmCmds...), "\n")
+	if strings.Contains(both, "-X "+ChainName) {
+		t.Fatalf("повторный подъём сносит живой перехват этого же процесса, команды: %s", both)
+	}
+}
+
+// Демон упал в awgm-режиме, а поднялся с уже снятой галкой «включён» (или
+// пользователь выключил движок до первого тика). Ветка Disable сюда не придёт:
+// installedAny спрашивает legacy-канал, которому awgm-правила не видны, — и
+// снять их больше некому, TPROXY в мёртвый сокет держал бы трафик до
+// перезагрузки роутера.
+func TestReconcileDisabledSweepsAwgmLeftovers(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		// Enabled: false — движок выключен.
+	})
+	// legacy-канал чист: цепочек нет (HasAnyInstalled судит по коду возврата
+	// `-nL`), значит installedAny=false и ветка Disable не сработает.
+	it := newStubIPTables(func(context.Context, string) error { return nil })
+	absent := func(_ context.Context, args ...string) error {
+		if slices.Contains(args, "-nL") {
+			return errors.New("No chain/target/match by that name")
+		}
+		return nil
+	}
+	it.runIPTables, it.legacyRun = absent, absent
+
+	var awgmCmds []string
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		IPTables: it,
+		Awgm:     stubBackend{available: true, calls: &awgmCmds},
+	})
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if !strings.Contains(strings.Join(awgmCmds, "\n"), "-X "+ChainName) {
+		t.Fatalf("правила awgm-канала при выключенном движке снимать больше некому, команды бэкенда: %v", awgmCmds)
+	}
+}
+
+// Первый applyBackend процесса случается не только в enableLocked: рестарт
+// демона при живом движке идёт сразу в reconcileInstalled, и без adopt'а здесь
+// legacy-остаток прошлой жизни не снял бы никто — команды awgm его не видят.
+func TestReconcileInstalledAdoptsForeignChannel(t *testing.T) {
+	stubAwgmListeningProbe(t, func() bool { return true })
+	singbox := newTestSingbox(t)
+	// Живой процесс: при мёртвом adopt намеренно откладывается, чтобы не снять
+	// fail-closed, не имея чем его заменить.
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	svc := newReconcileInstalledService(t, singbox)
+	var legacyCmds []string
+	rec := func(_ context.Context, args ...string) error {
+		legacyCmds = append(legacyCmds, strings.Join(args, " "))
+		return nil
+	}
+	svc.deps.IPTables.runIPTables, svc.deps.IPTables.legacyRun = rec, rec
+	svc.deps.Awgm = stubBackend{available: true}
+	sr := reconcileInstalledSettings
+	sr.AwgmBackend = true
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if svc.backendMode() != BackendAwgm {
+		t.Fatalf("предусловие: бэкенд обязан включиться, получили %q", svc.backendMode())
+	}
+
+	if n := strings.Count(strings.Join(legacyCmds, "\n"), "-X "+ChainName); n != 1 {
+		t.Fatalf("правила прошлого запуска обязаны сниматься legacy-каналом ровно один раз "+
+			"(командам awgm они не видны), снятий: %d; команды: %v", n, legacyCmds)
+	}
+}
+
+// Тот же выключенный движок, но legacy-остатки ВИДНЫ: Reconcile уходит в ветку
+// Disable, и до adopt-ветки ниже дело не доходит. Остатки обоих стеков разом
+// бывают после краха посреди смены бэкенда; Disable снимает только свой канал,
+// а следующего тика может не быть — при выключенном движке планировщик
+// Reconcile не зовёт.
+func TestReconcileDisableAlsoSweepsAwgmLeftovers(t *testing.T) {
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		// Enabled: false — движок выключен.
+	})
+	// legacy-остатки видны: `-nL` успешен → installedAny=true → ветка Disable.
+	it := newStubIPTables(func(context.Context, string) error { return nil })
+
+	var awgmCmds []string
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		IPTables: it,
+		Awgm:     stubBackend{available: true, calls: &awgmCmds},
+		Singbox:  newTestSingbox(t),
+	})
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if !strings.Contains(strings.Join(awgmCmds, "\n"), "-X "+ChainName) {
+		t.Fatalf("Disable снял только свой канал — остатки awgm обязаны сниматься тем же тиком, "+
+			"команды бэкенда: %v", awgmCmds)
+	}
+}
+
+// newIPRuleReconcileService собирает установившийся reconcile: метка и WAN-IP
+// совпадают с сохранёнными, джампы на месте — переустановка не нужна, и
+// восстановить policy-routing на таком тике может только проверка. (Adopt
+// прошлого запуска, наоборот, зовёт Uninstall и сам сносит ip rule с
+// маршрутом — ровно та дыра, которую проверка закрывает.)
+func newIPRuleReconcileService(t *testing.T, engineUp bool, ipCalls *[]string) *ServiceImpl {
+	t.Helper()
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	// Пусто в обоих дампах: ни правила, ни маршрута нет.
+	ipt.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
+	ipt.runIP = func(_ context.Context, args ...string) error {
+		*ipCalls = append(*ipCalls, strings.Join(args, " "))
+		return nil
+	}
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return engineUp, 1234 }
+	return &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			Singbox:            singbox,
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+		currentMark:         "0xffffaaa",
+		currentWANIPs:       []string{"203.0.113.207/32"},
+		netfilterStateKnown: true,
+	}
+}
+
+var ipRuleReconcileSettings = storage.SingboxRouterSettings{
+	Enabled:       true,
+	PolicyName:    "Policy0",
+	WANAutoDetect: true,
+}
+
+// Probe смотрит только цепочки и джампы, поэтому пропажу policy-routing —
+// нашего `ip rule fwmark` и local-маршрута в таблице — reconcile обязан
+// заметить сам: в awgm-режиме netfilter.d-хука, который их переставлял, нет, и
+// без них перехват слепнет при растущих счётчиках TPROXY.
+func TestReconcileInstalled_RestoresMissingIPRule(t *testing.T) {
+	stubListeningProbe(t, func() bool { return true })
+	var ipCalls []string
+	svc := newIPRuleReconcileService(t, true, &ipCalls)
+
+	if err := svc.reconcileInstalled(context.Background(), ipRuleReconcileSettings); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	wantRule := fmt.Sprintf("rule add fwmark 0x%x table %d priority %d", Fwmark, RoutingTable, IPRulePriority)
+	wantRoute := fmt.Sprintf("route add local 0.0.0.0/0 dev lo table %d", RoutingTable)
+	if !slices.Contains(ipCalls, wantRule) || !slices.Contains(ipCalls, wantRoute) {
+		t.Fatalf("тик обязан восстановить обе половины (%q и %q), вызвано: %q", wantRule, wantRoute, ipCalls)
+	}
+}
+
+// При неготовом движке перехват не ставится вовсе (держится blackhole или
+// TPROXY в мёртвый порт), и маршрутизацию под него восстанавливать незачем.
+func TestReconcileInstalled_SkipsIPRuleWhenEngineDown(t *testing.T) {
+	stubListeningProbe(t, func() bool { return false })
+	var ipCalls []string
+	svc := newIPRuleReconcileService(t, false, &ipCalls)
+
+	if err := svc.reconcileInstalled(context.Background(), ipRuleReconcileSettings); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if len(ipCalls) != 0 {
+		t.Fatalf("при неготовом движке policy-routing трогать нечего, вызвано: %q", ipCalls)
 	}
 }

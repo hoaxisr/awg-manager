@@ -142,7 +142,7 @@ func TestEnsureQoSInbounds_AddsCanonicalPairs(t *testing.T) {
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 46, Outbound: "vpn", Enabled: true},
 	})
-	got, changed := ensureQoSInbounds(base, classes, "10m0s")
+	got, changed := ensureQoSInbounds(base, classes, "10m0s", false)
 	if !changed {
 		t.Fatal("expected changed=true when adding class inbounds")
 	}
@@ -176,7 +176,7 @@ func TestEnsureQoSInbounds_RemovesStaleAndConverges(t *testing.T) {
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 46, Outbound: "vpn", Enabled: true},
 	})
-	got, changed := ensureQoSInbounds(in, classes, "")
+	got, changed := ensureQoSInbounds(in, classes, "", false)
 	if !changed {
 		t.Fatal("expected changed=true")
 	}
@@ -193,7 +193,7 @@ func TestEnsureQoSInbounds_RemovesStaleAndConverges(t *testing.T) {
 	}
 
 	// Second pass over the converged result: no change.
-	again, changed2 := ensureQoSInbounds(got, classes, "")
+	again, changed2 := ensureQoSInbounds(got, classes, "", false)
 	if changed2 {
 		t.Errorf("expected idempotent second pass, got change: %+v", again)
 	}
@@ -205,7 +205,7 @@ func TestEnsureQoSInbounds_NoClasses_RemovesAll(t *testing.T) {
 		{Type: "tproxy", Tag: "tproxy-qos-46"},
 		{Type: "redirect", Tag: "redirect-qos-46"},
 	}
-	got, changed := ensureQoSInbounds(in, nil, "")
+	got, changed := ensureQoSInbounds(in, nil, "", false)
 	if !changed {
 		t.Fatal("expected changed=true when removing stale qos inbounds")
 	}
@@ -214,11 +214,38 @@ func TestEnsureQoSInbounds_NoClasses_RemovesAll(t *testing.T) {
 	}
 
 	// Empty in, no classes → no phantom change.
-	if _, changed := ensureQoSInbounds(nil, nil, ""); changed {
+	if _, changed := ensureQoSInbounds(nil, nil, "", false); changed {
 		t.Error("nil inbounds + no classes must not report change")
 	}
-	if _, changed := ensureQoSInbounds([]Inbound{}, nil, ""); changed {
+	if _, changed := ensureQoSInbounds([]Inbound{}, nil, "", false); changed {
 		t.Error("empty inbounds + no classes must not report change")
+	}
+}
+
+// В awgm-режиме класс обслуживается одним dual-network tproxy-inbound: TCP
+// класса приезжает на его же порт через TPROXY, redirect-порта у класса больше
+// нет.
+func TestAwgmModeQoSClassHasSingleInbound(t *testing.T) {
+	classes := []qosClass{{DSCP: 34, Outbound: "vpn", TProxyPort: 51281, RedirectPort: 51301}}
+	got, _ := ensureQoSInbounds(nil, classes, "5m", true)
+
+	var tproxy, redirect int
+	for _, in := range got {
+		switch in.Type {
+		case "tproxy":
+			tproxy++
+			if in.Network != "" {
+				t.Errorf("класс в awgm-режиме обслуживает оба протокола: network должен быть пуст, получили %q", in.Network)
+			}
+			if !in.TCPFastOpen {
+				t.Error("inbound класса принимает TCP — tcp_fast_open должен быть включён")
+			}
+		case "redirect":
+			redirect++
+		}
+	}
+	if tproxy != 1 || redirect != 0 {
+		t.Fatalf("класс в awgm-режиме — один tproxy-inbound, получили tproxy=%d redirect=%d", tproxy, redirect)
 	}
 }
 

@@ -147,8 +147,13 @@ type SingboxRouterSettings struct {
 	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
 	// "fakeip-tun" routes via a fake-IP DNS pool + tun device;
 	// "policy-tun" captures traffic via an NDMS access policy + tun device.
-	RoutingMode    string `json:"routingMode,omitempty"`
-	SnifferEnabled bool   `json:"snifferEnabled"`
+	RoutingMode string `json:"routingMode,omitempty"`
+	// AwgmBackend включает экспериментальный бэкенд применения правил в
+	// собственной таблице xtables `awgm`, которую ndm при перестройке
+	// firewall не трогает. Доступно не на всех моделях — гейт в
+	// awgmbackend.Available(). Выключено по умолчанию.
+	AwgmBackend    bool `json:"awgmBackend,omitempty"`
+	SnifferEnabled bool `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
 	// true (default) → sing-box uses route.auto_detect_interface; the
 	// WANInterface field is ignored and must be empty (enforced by

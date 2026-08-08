@@ -25,10 +25,11 @@ import (
 // additionally TTL-cached inside IsXtDscpAvailable).
 func (s *ServiceImpl) xtDscpUsable(ctx context.Context) bool {
 	ok := false
-	if s.deps.XtDscpProbe != nil {
+	switch {
+	case s.deps.XtDscpProbe != nil:
 		ok = s.deps.XtDscpProbe(ctx)
-	} else {
-		ok = IsXtDscpAvailable(ctx)
+	case s.deps.IPTables != nil:
+		ok = s.deps.IPTables.IsXtDscpAvailable(ctx)
 	}
 	state := int32(2)
 	if ok {
@@ -45,6 +46,22 @@ func (s *ServiceImpl) xtDscpUsable(ctx context.Context) bool {
 	return ok
 }
 
+// xtDscpDetail — детали пробы xt_dscp (какая из двух половин отсутствует) для
+// текста issue. Отдельный метод, а не прямой вызов: у частично собранного
+// ServiceImpl в тестах соседних путей IPTables нет вовсе.
+func (s *ServiceImpl) xtDscpDetail(ctx context.Context) (moduleOK, matchOK bool) {
+	if s.deps.IPTables == nil {
+		return false, false
+	}
+	return s.deps.IPTables.cachedXtDscpAvailability(ctx)
+}
+
+// tproxyTargetAvailable — nil-безопасная обёртка над пробой таргета TPROXY у
+// активного бинаря (см. xtDscpDetail про частично собранный ServiceImpl).
+func (s *ServiceImpl) tproxyTargetAvailable(ctx context.Context) bool {
+	return s.deps.IPTables != nil && s.deps.IPTables.IsTProxyTargetAvailable(ctx)
+}
+
 // prepareNetfilter runs the common netfilter preflight: xt_TPROXY module
 // load and TPROXY target availability check. It is shared by Enable and
 // reconcileInstalled so both paths run identical validation. Tests can
@@ -58,7 +75,7 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 		return err
 	}
 
-	if !IsTProxyTargetAvailable(ctx) {
+	if !s.tproxyTargetAvailable(ctx) {
 		return fmt.Errorf("iptables TPROXY target unavailable — kernel module loaded but iptables extension missing")
 	}
 
@@ -447,7 +464,7 @@ func (s *ServiceImpl) singboxReady(_ context.Context, tunMode bool) bool {
 		// Clash while the router inbounds failed to bind (port taken,
 		// rejected hot-reload), and installing iptables in that state
 		// blackholes all policy traffic including DNS:53.
-		return singboxListeningProbe()
+		return s.interceptionReady()
 	}
 	// Only iface is needed for the carrier gate; dnsAddr/fakeipNet (which the
 	// demoted DNS probe used) are derived later in enableFakeIPTun for the
@@ -503,6 +520,70 @@ func cleanValidateError(err error) string {
 	return strings.TrimSpace(msg)
 }
 
+// adoptAndClean снимает правила, оставшиеся от ПРЕДЫДУЩЕГО запуска демона
+// (краш, kill, обновление пакета), — но только в том канале, которым этот
+// процесс работать НЕ будет.
+//
+// Свой канал не трогаем. Install идемпотентен: он скрабит джампы и объявляет
+// свои цепочки в блобе, а restore --noflush объявленную цепочку флашит, — то
+// есть рестарт демона в неизменном режиме перехват не роняет и никогда не ронял.
+// Безусловное снятие означало бы окно fail-open на КАЖДЫЙ рестарт, включая
+// каждое обновление пакета на моделях, где awgm не бывает вовсе: сотни
+// миллисекунд в норме и минуты, если сбор метки политики или WAN-адресов
+// упрётся в медленный RCI. Хуже: ошибка на этом пути (RCI не ответил) оставила
+// бы правила снятыми до первого полностью успешного тика.
+//
+// Чужой канал снять обязаны: демон мог упасть в одном режиме, а подняться в
+// другом — настройку сменили, пока он лежал, или бандл не поднялся. Команды
+// ходят через ОДИН бинарь, и правила чужого стека ему не видны вовсе, снять их
+// больше некому. Для legacy это ещё простительно (firewall роутера стирает свою
+// таблицу на ближайшем сетевом событии), а awgm-правила не стирает никто: TPROXY
+// в мёртвый сокет молча дропает пакеты до перезагрузки роутера.
+//
+// Канал каждой половины прибит явно, поэтому порядок вызова относительно выбора
+// бэкенда важен ровно одним: к моменту вызова режим уже обязан быть выбран,
+// иначе «чужим» окажется свой.
+//
+// Best-effort и идемпотентно: подъём движка это уронить не может, а на чистом
+// ядре — no-op.
+func (s *ServiceImpl) adoptAndClean(ctx context.Context) error {
+	if s.deps.IPTables == nil {
+		return nil
+	}
+	// Скрэтч-фасад: подменять канал у рабочего IPTables нельзя (его режим — это
+	// режим движка), а команды нужны те же. Снимается ТОЛЬКО слой правил —
+	// см. UninstallForeignRules: файлы-воскрешатели, DNS-RESCUE и policy-routing
+	// принадлежат живому каналу, и здесь им не место.
+	scratch := NewIPTables()
+	scratch.cleanupBlackhole = nil
+
+	if s.backendMode() == BackendAwgm {
+		// Работаем awgm-каналом — чужой здесь legacy.
+		run, runOut := s.deps.IPTables.legacyChannel()
+		if run == nil || runOut == nil {
+			// Недостижимо в проде (NewIPTables выставляет оба), но звать nil
+			// значило бы уронить подъём движка вместо best-effort уборки.
+			s.appLog.Warn("adopt", "", "legacy-канал не сконфигурирован — остатки прошлого запуска не сняты")
+			return nil
+		}
+		scratch.runIPTables, scratch.runIPTablesOut = run, runOut
+		scratch.legacyRun, scratch.legacyRunOut = run, runOut
+		scratch.UninstallForeignRules(ctx)
+		return nil
+	}
+
+	// Работаем legacy-каналом — чужой здесь awgm.
+	if s.deps.Awgm == nil {
+		return nil
+	}
+	if ok, _ := s.deps.Awgm.Available(); !ok {
+		return nil
+	}
+	scratch.UseAwgm(s.deps.Awgm)
+	scratch.UninstallForeignRules(ctx)
+	return nil
+}
+
 // Enable is the USER-INITIATED router enable (HTTP handler + SwitchRoutingMode).
 // It clears the sticky master-stop intent — an explicit enable is an explicit
 // intent to run sing-box, which must override a prior master-Stop — then runs
@@ -516,7 +597,27 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 // enableLocked provisions the router under s.mu. clearManualStop gates the
 // sticky-intent clear: true for user-initiated Enable, false for drift-heal
 // reuse (Reconcile / reconcileFakeIPTun) which must honour a prior master-Stop.
+//
+// Обёртка над provisionLocked ради fail-safe отката: правила не применились
+// активным awgm-каналом — движок возвращается на legacy и провизионит заново уже
+// им. Повтор ровно один: откат возможен только с awgm, а он уже случился.
+// Решение принимается ВНЕ mu — снятие правил и сброс netfilterStateKnown берут
+// его сами.
+//
+// Решает ОДИН признак — пометка самой установки, а не исход подъёма: часть
+// вызывающих отказ установки глотает (QoS-диспатч деградирует, а не валит
+// режим), и гейт по возвращённой ошибке пропустил бы ровно тот отказ, ради
+// которого fail-safe существует.
 func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) error {
+	err := s.provisionLocked(ctx, clearManualStop)
+	if s.demoteAwgmAfterRuleFailure(ctx) {
+		return s.provisionLocked(ctx, clearManualStop)
+	}
+	return err
+}
+
+// provisionLocked — тело подъёма движка под s.mu.
+func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -544,6 +645,18 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 			return fmt.Errorf("clear manual-stop intent: %w", err)
 		}
 	}
+
+	// Бэкенд правил выбирается ДО ветвления по режиму: от него зависят и
+	// форма инбаундов, и форма правил. Выбор одноразовый: этот путь достижим
+	// и из drift-heal, а смена режима на живом процессе без снятия правил
+	// прежнего канала оставила бы их в ядре невидимыми (см. applyBackend).
+	awgmMode := s.applyBackend(ctx, sr.AwgmBackend).Effective == BackendAwgm
+
+	// Правила прошлого запуска снимаются ПОСЛЕ выбора бэкенда: adopt чистит
+	// канал, которым этот процесс работать не будет, и до выбора «чужим»
+	// оказался бы как раз тот, в котором сейчас живёт перехват. Один раз за
+	// процесс: дальше в ядре уже НАШИ правила.
+	s.adoptOnce.Do(func() { _ = s.adoptAndClean(ctx) })
 
 	// fakeip-tun has an entirely separate provisioning path (OpkgTun + tun +
 	// fakeip DNS + pool/CIDR routes) with its own rollback. The tproxy body
@@ -587,7 +700,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	if err != nil {
 		return err
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout, awgmMode)
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	// Neutralize sing-box's short per-protocol UDP timeouts (QUIC/DTLS 30s,
@@ -602,7 +715,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// own slot (18-qos-routes.json) and are synced after the config write
 	// below — see qos_routes.go for why they must not live in 20-router.json.
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, awgmMode)
 	// Settings was already loaded above; revalidate here in case the
 	// store is corrupted or hand-edited around a schema migration. We
 	// fail Enable rather than apply a half-broken config — the user
@@ -687,7 +800,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// no qualifying bridges = skip the DNS-NOPOLICY logic entirely.
 	var lanBridges []LANBridgeDNSRedir
 	if policyMode {
-		lanBridges, _ = DiscoverLANBridges(ctx, mark)
+		lanBridges, _ = s.deps.IPTables.DiscoverLANBridges(ctx, mark)
 		if len(lanBridges) == 0 {
 			s.appLog.Warn("discover-lan-bridges", "", "no NDMS hotspot LAN bridges, DNS fallback skipped")
 		}
@@ -727,7 +840,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		}
 	}
 
-	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
+	if err := s.installRules(ctx, RestoreInputSpec{
 		PolicyMark:        mark,
 		MatchAll:          !policyMode,
 		WANIPs:            wanIPs,
@@ -738,6 +851,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		IngressInterfaces: ingress,
 		SelectiveIPSet:    sr.SelectiveBypass,
 		QoSClasses:        qosSpecs,
+		AwgmMode:          awgmMode,
 	}); err != nil {
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
@@ -819,13 +933,29 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	// Listen тоже в guard'е (#689): после обновления рестарт демона не трогает
 	// ни sing-box, ни iptables, и это ЕДИНСТВЕННЫЙ путь, который доведёт
 	// listen 0.0.0.0 → 127.0.0.1 на живом конфиге без ручного передёргивания.
+	// Network и наличие redirect-in — тоже часть сверки: формы инбаундов у
+	// двух бэкендов разные, и конфиг, переживший смену режима, несёт форму
+	// прежнего. Без этих двух проверок дрейф проходил бы как «здоровый», и
+	// на пути обновления (без Enable) перехват просто не встал бы.
+	awgmMode := s.backendMode() == BackendAwgm
+	wantNetwork := "udp"
+	if awgmMode {
+		wantNetwork = ""
+	}
 	effective := resolveUDPTimeout(udpTimeout)
 	inboundOK := false
+	hasRedirect := false
 	for _, in := range cfg.Inbounds {
-		if in.Tag == "tproxy-in" {
-			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen
-			break
+		switch in.Tag {
+		case "tproxy-in":
+			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen && in.Network == wantNetwork
+		case "redirect-in":
+			hasRedirect = true
 		}
+	}
+	// legacy держит пару инбаундов, awgm — только tproxy-in.
+	if hasRedirect == awgmMode {
+		inboundOK = false
 	}
 	ruleOK := false
 	for _, r := range cfg.Route.Rules {
@@ -837,22 +967,23 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	if inboundOK && ruleOK {
 		return nil
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout, awgmMode)
 	cfg.EnsureUDPTimeoutRule(effective)
 	// System self-heal — direct write, no staging UI.
 	return s.persistConfigDirect(ctx, cfg)
 }
 
-// ensureTProxyInbound enforces the SKeen-style split: tproxy-in
-// handles UDP only, redirect-in handles TCP. TPROXY for TCP relies on
-// `-m socket --transparent` to deliver established-connection packets
-// to sing-box's accept()ed transparent socket, but that match
+// In legacy mode ensureTProxyInbound enforces the SKeen-style split:
+// tproxy-in handles UDP only, redirect-in handles TCP. TPROXY for TCP
+// relies on `-m socket --transparent` to deliver established-connection
+// packets to sing-box's accept()ed transparent socket, but that match
 // evaluates to 0 on Keenetic 4.9-ndm-5 — established TCP packets fall
 // through to the listener and get RST. NAT REDIRECT sidesteps the
 // problem: conntrack records the DNAT for SYN, established packets
-// are auto-translated.
+// are auto-translated. The awgm backend has no such limitation and
+// collapses the pair — see the awgmMode note on the function itself.
 //
-// The two inbounds bind to DIFFERENT addresses (issue #689):
+// In legacy mode the two inbounds bind to DIFFERENT addresses (issue #689):
 //
 // tproxy-in → 127.0.0.1. The TPROXY target diverts packets to the
 // socket bound at --on-ip 127.0.0.1 (iptables.go), so a loopback
@@ -889,28 +1020,44 @@ func resolveUDPTimeout(configured string) string {
 	return DefaultUDPTimeout
 }
 
-func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
+// awgmMode selects the awgm backend shape: TCP is diverted to the tproxy port by
+// a terminal TPROXY rule in mangle instead of being NAT-REDIRECTed, so a single
+// dual-network tproxy-in serves both protocols and redirect-in is dropped.
+// Normalization runs over the EXISTING entries too — a config that survived the
+// legacy era carries a UDP-only tproxy-in plus a live redirect-in, and leaving
+// either as-is sends the intercepted TCP to an inbound that does not exist.
+func ensureTProxyInbound(in []Inbound, udpTimeout string, awgmMode bool) []Inbound {
 	effective := resolveUDPTimeout(udpTimeout)
 	hasTProxy := false
 	hasRedirect := false
+	// Filter in place over `in`'s own backing array: the input slice DIES with
+	// this call — dropping redirect-in shifts later elements left, so anyone
+	// still holding the original header sees garbage. Every caller assigns the
+	// result back over its own slice.
+	kept := in[:0]
 	for i := range in {
 		switch in[i].Tag {
 		case "tproxy-in":
 			hasTProxy = true
-			// Force UDP-only on existing entry. Older configs had no
+			// Legacy: force UDP-only on existing entry. Older configs had no
 			// `network` field which means TCP+UDP — that's the broken
-			// behaviour we're moving away from.
-			if in[i].Network != "udp" {
-				in[i].Network = "udp"
+			// behaviour we're moving away from. In awgm mode the empty field
+			// is exactly what we want back: TCP lands on this same inbound.
+			want := "udp"
+			if awgmMode {
+				want = ""
+			}
+			if in[i].Network != want {
+				in[i].Network = want
 			}
 			if !in[i].UDPFragment {
 				in[i].UDPFragment = true
 			}
 			// Always apply the effective timeout — user may have changed it.
 			in[i].UDPTimeout = effective
-			// tcp_fast_open is meaningless on a UDP-only inbound.
-			if in[i].TCPFastOpen {
-				in[i].TCPFastOpen = false
+			// tcp_fast_open is meaningful only when the inbound accepts TCP.
+			if in[i].TCPFastOpen != awgmMode {
+				in[i].TCPFastOpen = awgmMode
 			}
 			// Strip RoutingMark — see history note below.
 			if in[i].RoutingMark != 0 {
@@ -920,6 +1067,12 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 				in[i].Listen = tproxyListen
 			}
 		case "redirect-in":
+			if awgmMode {
+				// Drop it: TCP interception moved to the tproxy port, and a
+				// live redirect-in would listen for connections that no
+				// longer arrive.
+				continue
+			}
 			hasRedirect = true
 			if !in[i].TCPFastOpen {
 				in[i].TCPFastOpen = true
@@ -928,20 +1081,26 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 				in[i].Listen = redirectListen
 			}
 		}
+		kept = append(kept, in[i])
 	}
-	out := in
+	out := kept
 	if !hasTProxy {
+		network := "udp"
+		if awgmMode {
+			network = ""
+		}
 		out = append([]Inbound{{
 			Type:        "tproxy",
 			Tag:         "tproxy-in",
 			Listen:      tproxyListen,
 			ListenPort:  TPROXYPort,
-			Network:     "udp",
+			Network:     network,
 			UDPFragment: true,
 			UDPTimeout:  effective,
+			TCPFastOpen: awgmMode,
 		}}, out...)
 	}
-	if !hasRedirect {
+	if !hasRedirect && !awgmMode {
 		out = append([]Inbound{{
 			Type:        "redirect",
 			Tag:         "redirect-in",
@@ -1055,7 +1214,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	} else {
 		// tproxy: chains + PREROUTING jumps + sing-box listening on both inbound sockets.
-		active = jumps && singboxListeningProbe()
+		active = jumps && s.interceptionReady()
 	}
 	// Surface the captured sing-box fatal reason only when the engine is
 	// meant to be up but isn't (СБОЙ). lastError is cleared by the operator
@@ -1159,7 +1318,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	}
 	xtDscpAvailable := s.xtDscpUsable(ctx)
 	if !xtDscpAvailable && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
-		moduleOK, matchOK := cachedXtDscpAvailability(ctx)
+		moduleOK, matchOK := s.xtDscpDetail(ctx)
 		var msg string
 		switch {
 		case !moduleOK && !matchOK:
@@ -1221,13 +1380,35 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		sp := settings != nil && settings.PolicyTun != nil && len(settings.PolicyTun.NATSegments) > 0
 		policyTunSourcePreserve = &sp
 	}
+	// Бэкенд правил: ФАКТИЧЕСКИЙ режим берётся из решения SelectBackend, а
+	// ЗАПРОШЕННЫЙ — из настройки, а не из того же решения. Настройка и есть
+	// запрос пользователя: она переживает перезапуск и именно по ней бэкенд
+	// выберется в следующий раз. Решение же — снимок последнего УСПЕШНОГО
+	// применения, и переключение, провалившееся до перевыбора, оставило бы в
+	// нём прежний режим: галка включена, режим не применился, а расхождения
+	// в статусе нет вовсе.
+	backend := s.backendState()
+	backend.Requested = BackendLegacy
+	if sr.AwgmBackend {
+		backend.Requested = BackendAwgm
+	}
+	// Доступность спрашиваем у бэкенда прямо здесь, а не кешируем: Available()
+	// по контракту без побочных эффектов и стоит одно чтение файла плюс четыре
+	// stat'а — на порядок дешевле соседних полей этого же статуса (проба
+	// таргета TPROXY запускает бинарь, метка политики идёт в RCI). Кеш, наоборот,
+	// вреден: бандл доезжает обновлением пакета, а модель роутера — ответом
+	// NDMS, и оба события обязаны быть видны без перезапуска демона.
+	awgmAvailable, awgmUnavailableReason := false, "бэкенд awgm не подключён к сервису"
+	if s.deps.Awgm != nil {
+		awgmAvailable, awgmUnavailableReason = s.deps.Awgm.Available()
+	}
 	return Status{
 		Enabled:                 sr.Enabled,
 		Installed:               installed,
 		Active:                  active,
 		NetfilterAvailable:      IsNetfilterAvailable(),
 		NetfilterComponentName:  "Модули ядра подсистемы сетевой фильтрации",
-		TProxyTargetAvailable:   IsTProxyTargetAvailable(ctx),
+		TProxyTargetAvailable:   s.tproxyTargetAvailable(ctx),
 		XtDscpAvailable:         xtDscpAvailable,
 		PolicyName:              sr.PolicyName,
 		PolicyMark:              policyMark,
@@ -1251,6 +1432,13 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		CrashCount:              crashCount,
 		LastCrashReason:         lastCrashReason,
 		RestartSuppressedUntil:  restartSuppressedUntil,
+		AwgmBackendRequested:    string(backend.Requested),
+		AwgmBackendEffective:    string(backend.Effective),
+		AwgmBackendReason:       backend.Reason,
+		AwgmBackendAvailable:    awgmAvailable,
+		// Причина нужна только когда режим недоступен: при доступном она пуста
+		// у самого Available(), и omitempty её вырежет.
+		AwgmBackendUnavailableReason: awgmUnavailableReason,
 	}, nil
 }
 
@@ -1362,10 +1550,29 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	// switch's own (possibly rolling-back) Enable/Disable. TryLock: never block the
 	// scheduler; just defer the heal one tick.
 	if !s.transitionMu.TryLock() {
+		// Молчать здесь нельзя: этим же путём откладывается установка правил
+		// после смены бэкенда — она делается штатной сверкой, и при занятом
+		// замке переключение отвечает успехом, а правила встают только
+		// следующим тиком. Без строки в журнале такой разрыв ничем не виден.
+		s.appLog.Info("reconcile", "", "идёт переход режима — сверка (и установка правил) отложена на следующий тик")
 		return nil
 	}
 	defer s.transitionMu.Unlock()
 
+	err := s.reconcileLocked(ctx)
+	// Тот же fail-safe, что и у Enable, но для путей, которые ставят правила
+	// мимо него: перестройка при дрейфе, policy-tun, fakeip-tun. После
+	// перезапуска демона при уже поднятом движке Enable не зовётся вовсе, и без
+	// своей ветки этот путь остался бы заперт. Перехват поднимаем целиком:
+	// enableLocked перепишет и конфиг, и правила под новый канал.
+	if s.demoteAwgmAfterRuleFailure(ctx) {
+		return s.enableLocked(ctx, false)
+	}
+	return err
+}
+
+// reconcileLocked — тело тика сверки под transitionMu.
+func (s *ServiceImpl) reconcileLocked(ctx context.Context) error {
 	// Периодический reap fakeip-сирот: runtime-сирота (провал delete при
 	// disable) лечится в течение тика, а не ждёт перезагрузки роутера. Дёшево
 	// в steady-state: скан читает кэш InterfaceStore, NDMS-вызовы идут только
@@ -1420,7 +1627,35 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		// do not clear the sticky intent (clearManualStop=false).
 		return s.enableLocked(ctx, false)
 	case !sr.Enabled && installedAny:
-		return s.Disable(ctx)
+		err := s.Disable(ctx)
+		// Disable снимает правила командами АКТИВНОГО канала (здесь — legacy,
+		// бэкенд на этом пути не выбирается), поэтому остатки awgm-канала он не
+		// видит. Ловим их тем же тиком: следующего может и не быть — при
+		// выключенном движке планировщик Reconcile не зовёт вовсе. Adopt здесь
+		// и чистит ровно awgm-канал: активный (legacy) он не трогает, а его
+		// только что отработал Disable.
+		s.adoptOnce.Do(func() { _ = s.adoptAndClean(ctx) })
+		return err
+	case !sr.Enabled:
+		// Движок выключен, а установленного ничего не видно — но «не видно»
+		// говорит ТОЛЬКО активный канал (installedAny спрашивает его команды),
+		// и на этом пути бэкенд ещё не выбирался, значит канал legacy. Правила
+		// awgm-канала ему невидимы, Disable сюда не приходит, и снять их больше
+		// некому: демон мог упасть в awgm-режиме, а подняться с уже снятой
+		// галкой (или пользователь выключил движок до первого тика). TPROXY в
+		// мёртвый сокет держал бы трафик до перезагрузки роутера. Тот же
+		// одноразовый adopt, что и на подъёме движка; своих правил при
+		// выключенном движке нет — сносить нечего.
+		s.adoptOnce.Do(func() { _ = s.adoptAndClean(ctx) })
+		// Половина перехвата, живущая в policy-routing, от канала не зависит и
+		// снятием правил канала не убирается. Это ЕДИНСТВЕННЫЙ путь, где своего
+		// Uninstall не было вовсе: ветка Disable выше дренирует сама, а на
+		// путях с Install дренаж делает он. После краха в awgm-режиме с
+		// последующим выключением галки правило метки и наша таблица маршрутов
+		// иначе остались бы до перезагрузки роутера — инертные (направлять в
+		// таблицу больше нечему), но persistent. Идемпотентно: на чистой
+		// системе это два отказавших вызова `ip`.
+		s.deps.IPTables.DrainPolicyRouting(ctx)
 	case sr.Enabled && installedComplete:
 		return s.reconcileInstalled(ctx, sr)
 	}
@@ -1449,6 +1684,18 @@ func (s *ServiceImpl) slotSnapshot(slot orchestrator.Slot) (orchestrator.SlotSta
 	return orchestrator.SlotState{}, false
 }
 
+// installBlackhole ставит fail-closed заглушку и запоминает факт установки.
+// Отдельный метод, потому что вызовов два: второй — после отката на legacy.
+func (s *ServiceImpl) installBlackhole(ctx context.Context, spec RestoreInputSpec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.installBlackholeRules(ctx, spec)
+	if err == nil {
+		s.blackholeActive = true
+	}
+	return err
+}
+
 // reconcileInstalled handles the "Enabled && installed" branch:
 // detect mark or WAN-IP changes and re-Install. Extracted from Reconcile
 // to keep the decision tree testable without stubbing IsInstalled.
@@ -1456,6 +1703,35 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	sr, err := NormalizeSingboxRouterSettings(sr)
 	if err != nil {
 		return err
+	}
+	// После перезапуска демона при уже поднятом движке Enable не зовётся, и
+	// выбирать бэкенд больше некому. Выбор одноразовый (см. applyBackend),
+	// дальше по тику режим только ЧИТАЕТСЯ.
+	s.applyBackend(ctx, sr.AwgmBackend)
+	awgmMode := s.backendMode() == BackendAwgm
+
+	// Правила прошлого запуска — ПОСЛЕ выбора бэкенда: adopt чистит канал,
+	// которым этот процесс работать не будет, и до выбора «чужим» оказался бы
+	// как раз тот, в котором сейчас живёт перехват. Этот путь бывает ПЕРВЫМ в
+	// процессе (рестарт демона при живом движке — Enable не зовётся вовсе).
+	// Перехват своего канала adopt не трогает, а чужой восстанавливать нечему:
+	// netfilterStateKnown у свежего процесса пуст, значит forceInitialSync ниже
+	// переустановит наш целиком.
+	//
+	// Гейт на ЖИВОЙ процесс sing-box (уровень процесса, от бэкенда не зависит):
+	// при мёртвом движке в ядре сейчас держится fail-closed — blackhole или
+	// перехват в мёртвый порт. Снять его, не имея чем заменить, значит открыть
+	// утечку в WAN: восстановление blackhole ниже гейтится пробой, а она
+	// транзиентно отказывает во время перестройки firewall ndm. Adopt
+	// одноразовый и не пропадёт — его сделает ближайший тик с живым движком, и
+	// канал к тому времени уже выбран, так что отложенный вызов чистит тот же
+	// чужой канал, а не оба разом.
+	engineAlive := true
+	if s.deps.Singbox != nil {
+		engineAlive, _ = s.deps.Singbox.IsRunning()
+	}
+	if engineAlive {
+		s.adoptOnce.Do(func() { _ = s.adoptAndClean(ctx) })
 	}
 	// Единственный рестарт-авторитет sing-box — watchdog (Operator.Reconcile,
 	// свой независимый 30s-тик). Router-reconcile больше НЕ рестартит движок
@@ -1529,7 +1805,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	wanIPsChanged := !slices.Equal(s.currentWANIPs, wanIPs)
 	var lanBridges []LANBridgeDNSRedir
 	if policyMode {
-		lanBridges, _ = DiscoverLANBridges(ctx, mark)
+		lanBridges, _ = s.deps.IPTables.DiscoverLANBridges(ctx, mark)
 	}
 	lanBridgesChanged := !equalLANBridges(s.currentLANBridges, lanBridges)
 	var ingress []string
@@ -1642,13 +1918,21 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			BypassUDPPorts: bypassUDP,
 			BypassTCPPorts: bypassTCP,
 			SelectiveIPSet: sr.SelectiveBypass,
+			AwgmMode:       awgmMode,
 		}
-		s.mu.Lock()
-		err := s.deps.IPTables.InstallBlackhole(ctx, blackholeSpec)
-		if err == nil {
-			s.blackholeActive = true
+		err := s.installBlackhole(ctx, blackholeSpec)
+		// Отказ ЧЕРЕЗ АКТИВНЫЙ awgm-канал возвращает движок на legacy и ставит
+		// заглушку заново — уже им. Иначе здесь остаётся единственное окно
+		// fail-open: перехвата нет (основная установка погашена мёртвым
+		// движком), заглушки нет, и policy-трафик течёт в WAN, пока движок не
+		// оживёт. Перехват целиком тут НЕ поднимаем: поднимать его в мёртвый
+		// порт нечем, а сброшенный демоцией netfilterStateKnown заставит
+		// ближайший тик с живым движком переустановить его новым каналом.
+		if err != nil && s.demoteAwgmAfterRuleFailure(ctx) {
+			// Режим в спеке прочитан в начале тика и после отката устарел.
+			blackholeSpec.AwgmMode = s.backendMode() == BackendAwgm
+			err = s.installBlackhole(ctx, blackholeSpec)
 		}
-		s.mu.Unlock()
 		if err != nil {
 			s.appLog.Warn("reconcile", "", "не удалось поставить fail-closed blackhole: "+err.Error())
 		} else {
@@ -1699,7 +1983,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
 		s.mu.Lock()
-		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
+		if err := s.installRules(ctx, RestoreInputSpec{
 			PolicyMark:        mark,
 			MatchAll:          !policyMode,
 			WANIPs:            wanIPs,
@@ -1710,6 +1994,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			IngressInterfaces: ingress,
 			SelectiveIPSet:    sr.SelectiveBypass,
 			QoSClasses:        qosSpecs,
+			AwgmMode:          awgmMode,
 		}); err != nil {
 			s.mu.Unlock()
 			return err
@@ -1758,6 +2043,26 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			s.appLog.Info("reconcile", "", "движок восстановлен — fail-closed blackhole снят")
 		} else {
 			s.mu.Unlock()
+		}
+	}
+
+	// Половина перехвата, живущая в policy-routing (ip rule fwmark + local-
+	// маршрут в нашей таблице), в Probe выше не входит — тот смотрит только
+	// цепочки и джампы. Её пропажу видно лишь по нулю соединений при растущих
+	// счётчиках TPROXY, а переставить её в awgm-режиме некому: полного
+	// netfilter.d-хука там нет. Проверяем на каждом тике — при целых правилах
+	// это два чтения и ни одной мутации.
+	//
+	// Гейт на готовый движок — тот же, что у установки перехвата выше: пока
+	// движок не готов, перехвата мы не ставим (держится blackhole или TPROXY в
+	// мёртвый порт), и восстанавливать под него маршрутизацию незачем.
+	//
+	// После Install звать дешевле, чем до: он только что поставил обе половины
+	// сам, и проверка увидит их на месте, тогда как перед ним восстановленное
+	// правило Install всё равно снёс бы drain'ом и добавил заново.
+	if !engineDown {
+		if err := s.deps.IPTables.EnsureIPRule(ctx); err != nil {
+			s.appLog.Warn("reconcile", "", "не удалось восстановить policy-routing перехвата: "+err.Error())
 		}
 	}
 

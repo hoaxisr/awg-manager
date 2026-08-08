@@ -840,3 +840,27 @@ func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
 		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
 	}
 }
+
+func TestAwgmBackendDefaultsOff(t *testing.T) {
+	s := (&SettingsStore{}).defaultSettings()
+	if s.SingboxRouter.AwgmBackend {
+		t.Fatal("экспериментальный бэкенд обязан быть выключен по умолчанию")
+	}
+}
+
+func TestAwgmBackendSurvivesRoundTrip(t *testing.T) {
+	s := (&SettingsStore{}).defaultSettings()
+	s.SingboxRouter.AwgmBackend = true
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Settings
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !back.SingboxRouter.AwgmBackend {
+		t.Fatal("поле потерялось при сериализации")
+	}
+}

@@ -944,6 +944,10 @@ func TestGetStatus_FakeIPMode_ReadsFakeIPSlot(t *testing.T) {
 	svc.deps.IPTables = &IPTables{
 		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
 		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
+		// Подъём движка снимает правила прошлого запуска (adoptAndClean), а
+		// Uninstall дренирует ip rule — без сида это nil-вызов. Ошибка, а не
+		// nil: цикл дренажа крутится, пока команда не отказала.
+		runIP: func(context.Context, ...string) error { return errors.New("no ip") },
 	}
 
 	// Stub fakeip-tun seams so GetStatus.Active path doesn't panic.

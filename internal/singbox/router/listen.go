@@ -54,6 +54,11 @@ func localPortInState(procData string, port int, state string) bool {
 // binding. Overridable in tests so status checks don't touch real procfs.
 var singboxListeningProbe = singboxIntercepting
 
+// singboxAwgmListeningProbe is the same seam for awgm mode — applyBackend
+// captures its CURRENT value when it switches the service probe, so a test
+// stub set before the switch is what the service ends up using.
+var singboxAwgmListeningProbe = singboxInterceptingAwgm
+
 // singboxIntercepting reports whether sing-box is actually listening on both
 // router inbound sockets — the TCP REDIRECT port (LISTEN) and the UDP TPROXY
 // port (bound). Process-alive (pidof) is not enough: an inbound that failed to
@@ -72,6 +77,31 @@ func singboxIntercepting() bool {
 		return false
 	}
 	return localPortInState(string(udp), TPROXYPort, udpStateBound)
+}
+
+// interceptingFromProcAwgm is the pure core of singboxInterceptingAwgm, split out
+// so the parsing can be unit-tested without touching real procfs.
+func interceptingFromProcAwgm(tcp, udp string) bool {
+	return localPortInState(tcp, TPROXYPort, tcpStateListen) &&
+		localPortInState(udp, TPROXYPort, udpStateBound)
+}
+
+// singboxInterceptingAwgm is the readiness probe for awgm mode. There a SINGLE
+// dual-network tproxy inbound serves both TCP and UDP and no redirect inbound
+// is created at all, so checking LISTEN on RedirectPort would make the probe
+// false forever: reconcile would postpone rule installation indefinitely and
+// the engine would never reach active. Same fail-closed contract as
+// singboxIntercepting — a read error reports false.
+func singboxInterceptingAwgm() bool {
+	tcp, err := os.ReadFile("/proc/net/tcp")
+	if err != nil {
+		return false
+	}
+	udp, err := os.ReadFile("/proc/net/udp")
+	if err != nil {
+		return false
+	}
+	return interceptingFromProcAwgm(string(tcp), string(udp))
 }
 
 // ---------------------------------------------------------------------------

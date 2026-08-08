@@ -144,7 +144,7 @@ func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
 	// Seed active config with a tproxy-in AND the route-options rule at the
 	// default (5m0s) timeout.
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "", false)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -203,7 +203,7 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 	// Active: drifted timeout (heal must rewrite it). Pending: a user draft
 	// with a marker rule that must NOT leak into active.
 	active := NewEmptyConfig()
-	active.Inbounds = ensureTProxyInbound(active.Inbounds, "")
+	active.Inbounds = ensureTProxyInbound(active.Inbounds, "", false)
 	active.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	seed, _ := json.MarshalIndent(active, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -211,7 +211,7 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 		t.Fatalf("seed active: %v", err)
 	}
 	draft := NewEmptyConfig()
-	draft.Inbounds = ensureTProxyInbound(draft.Inbounds, "")
+	draft.Inbounds = ensureTProxyInbound(draft.Inbounds, "", false)
 	draft.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	draft.Route.Rules = append(draft.Route.Rules, Rule{Action: "route", Outbound: "draft-marker", Domain: []string{"draft.example"}})
 	draftBytes, _ := json.MarshalIndent(draft, "", "  ")
@@ -255,7 +255,7 @@ func TestHealTProxyInbound_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", false)
 	// Rule deliberately absent — the drifted-carrier case.
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -289,7 +289,7 @@ func TestHealTProxyInbound_NoOpWhenTimeoutMatches(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", false)
 	cfg.EnsureUDPTimeoutRule("1h0m0s")
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")

@@ -328,7 +328,7 @@ func (s *ServiceImpl) healQoSConfig(ctx context.Context, sr storage.SingboxRoute
 	if err != nil {
 		return false, err
 	}
-	inbounds, inChanged := ensureQoSInbounds(cfg.Inbounds, classes, sr.UDPTimeout)
+	inbounds, inChanged := ensureQoSInbounds(cfg.Inbounds, classes, sr.UDPTimeout, s.backendMode() == BackendAwgm)
 	if inChanged {
 		cfg.Inbounds = inbounds
 		if err := s.persistConfigDirect(ctx, cfg); err != nil {

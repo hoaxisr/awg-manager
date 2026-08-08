@@ -209,7 +209,10 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
+	// Режим бэкенда уже выбран вызывающим (enableLocked) — здесь его только
+	// читают: форма инбаундов и форма правил обязаны быть из одного решения.
+	awgmMode := s.backendMode() == BackendAwgm
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, awgmMode)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
 	// Promote SlotRouter FIRST so persistConfigDirect targets the active path.
@@ -355,7 +358,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		}
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
-		if err = s.deps.IPTables.Install(ctx, RestoreInputSpec{
+		if err = s.installRules(ctx, RestoreInputSpec{
 			DSCPOnly:       true,
 			MatchAll:       true,
 			WANIPs:         wanIPs,
@@ -363,6 +366,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			BypassTCPPorts: bypassTCP,
 			BypassCIDRs:    bypassSubnets,
 			QoSClasses:     qosSpecs,
+			AwgmMode:       awgmMode,
 		}); err != nil {
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}

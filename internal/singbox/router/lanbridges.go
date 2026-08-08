@@ -7,9 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
-	sysiptables "github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
 // LANBridgeDNSRedir pairs a Linux bridge with the ndnproxy port we
@@ -53,10 +50,17 @@ type LANBridgeDNSRedir struct {
 //
 // Returns empty slice (not nil, not error) when no bridges qualify;
 // callers should skip the DNS-RESCUE install logic in that case.
-func DiscoverLANBridges(ctx context.Context, singboxPolicyMark string) ([]LANBridgeDNSRedir, error) {
-	result, err := sysexec.Run(ctx, sysiptables.Binary, "-w", "-t", "nat",
-		"-S", "_NDM_HOTSPOT_DNSREDIR")
-	if err != nil || result == nil {
+// Читаем ВСЕГДА штатным бинарём, даже когда наши правила ушли в таблицу awgm:
+// _NDM_HOTSPOT_DNSREDIR — цепочка ndm в таблице nat, и спрашивать о ней надо
+// того, кто эту таблицу обслуживает, независимо от активного бэкенда.
+func (it *IPTables) DiscoverLANBridges(ctx context.Context, singboxPolicyMark string) ([]LANBridgeDNSRedir, error) {
+	if it.legacyRunOut == nil {
+		// Частично собранный IPTables (тесты соседних путей): discovery —
+		// не их предмет, отвечаем «нечего перенаправлять».
+		return []LANBridgeDNSRedir{}, nil
+	}
+	dump, err := it.legacyRunOut(ctx, "-t", "nat", "-S", "_NDM_HOTSPOT_DNSREDIR")
+	if err != nil {
 		// Chain doesn't exist: router has no hotspot config (fresh
 		// install, no LAN policies created yet). Nothing to redirect
 		// to — return empty, caller skips.
@@ -64,7 +68,7 @@ func DiscoverLANBridges(ctx context.Context, singboxPolicyMark string) ([]LANBri
 	}
 
 	candidates := map[string]map[string]int{}
-	for _, line := range splitLines(result.Stdout) {
+	for _, line := range splitLines(dump) {
 		iface, mark, port, ok := parseDNSRedirRule(line)
 		if !ok {
 			continue

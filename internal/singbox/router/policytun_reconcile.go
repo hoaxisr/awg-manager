@@ -259,6 +259,13 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 // пустому слайсу». Uninstall заодно снимает fail-closed blackhole, оставшийся от
 // tproxy: в policy-tun он не применяется.
 func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.SingboxRouterSettings) {
+	// Бэкенд правил выбирается и здесь, до первого чтения режима: после
+	// перезапуска демона при уже поднятом policy-tun Enable не зовётся вовсе, и
+	// выбрать бэкенд больше некому. Без этого DSCP-диспатч уезжал бы в legacy
+	// поверх awgm-правил прошлой жизни процесса — двойная маркировка и мусор во
+	// втором стеке, снять который активным каналом уже нечем. Выбор
+	// одноразовый (см. applyBackend), дальше по тику режим только читается.
+	s.applyBackend(ctx, sr.AwgmBackend)
 	qosClasses := activeQoSClasses(sr.QoSClasses)
 	qosSpecs := qosIPTablesSpecs(qosClasses)
 	if len(qosSpecs) > 0 {
@@ -330,7 +337,7 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
+	if err := s.installRules(ctx, RestoreInputSpec{
 		DSCPOnly:       true,
 		MatchAll:       true,
 		WANIPs:         wanIPs,
@@ -338,6 +345,7 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 		BypassTCPPorts: bypassTCP,
 		BypassCIDRs:    bypassSubnets,
 		QoSClasses:     qosSpecs,
+		AwgmMode:       s.backendMode() == BackendAwgm,
 	}); err != nil {
 		s.appLog.Warn("policy-tun-reconcile", "qos", "iptables install: "+err.Error())
 		return

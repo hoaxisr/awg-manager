@@ -142,7 +142,10 @@ func qosIPTablesSpecs(classes []qosClass) []QoSClassSpec {
 // append the canonical list" is the simplest convergent form. Returns the
 // new slice and whether anything changed (callers on the reconcile path skip
 // the persist+reload when false).
-func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]Inbound, bool) {
+// In awgm mode the pair collapses to a single dual-network tproxy inbound per
+// class: the class's TCP is diverted to the same tproxy port, so the redirect
+// half has nothing left to accept.
+func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string, awgmMode bool) ([]Inbound, bool) {
 	if len(in) == 0 && len(classes) == 0 {
 		return in, false // nil-vs-empty guard: no phantom "changed" on a bare config
 	}
@@ -154,16 +157,25 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]I
 		}
 		kept = append(kept, i)
 	}
+	network := "udp"
+	if awgmMode {
+		network = ""
+	}
 	for _, c := range classes {
 		kept = append(kept, Inbound{
 			Type:        "tproxy",
 			Tag:         qosTProxyTag(c.DSCP),
 			Listen:      tproxyListen,
 			ListenPort:  c.TProxyPort,
-			Network:     "udp",
+			Network:     network,
 			UDPFragment: true,
 			UDPTimeout:  effective,
-		}, Inbound{
+			TCPFastOpen: awgmMode,
+		})
+		if awgmMode {
+			continue
+		}
+		kept = append(kept, Inbound{
 			Type:        "redirect",
 			Tag:         qosRedirectTag(c.DSCP),
 			Listen:      redirectListen,

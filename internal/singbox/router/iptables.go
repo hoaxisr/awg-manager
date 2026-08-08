@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/awgmbackend"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/selective"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -35,7 +36,8 @@ const (
 	RoutingTable  = 100
 	ChainName     = "AWGM-TPROXY"
 	RedirectChain = "AWGM-REDIRECT"
-	// BlackholeChain is the fail-closed DROP chain (mangle). It is engaged
+	// BlackholeChain is the fail-closed DROP chain (в таблице UDP-перехвата,
+	// см. udpChainTable). It is engaged
 	// ONLY while sing-box is dead AND the PREROUTING interception jumps were
 	// wiped (e.g. an NDMS firewall reload): without it, policy-marked traffic
 	// would fall through to the normal Keenetic routing table and LEAK to WAN
@@ -53,6 +55,11 @@ const (
 	// discovered from _NDM_HOTSPOT_DNSREDIR (see lanbridges.go).
 	// Issue #132.
 	DNSRescueTag = "AWGM-DNS-RESCUE"
+	// PPETag помечает правило `-j PPE`, чтобы скраб мог его найти. Само по
+	// себе PPE не является джампом в AWGM-цепочку, поэтому под общий шаблон
+	// removeSourceHooks (поиск джампов в наши цепочки) не попадает — без тега
+	// restore --noflush добавлял бы ещё одно такое правило на каждый Install.
+	PPETag = "AWGM-PPE"
 	// IngressTag identifies our MARK/CONNMARK rules in mangle PREROUTING
 	// that force selected interfaces' connections to carry the policy
 	// mark (ingress-scope feature). Comment-tagged for idempotent cleanup.
@@ -80,10 +87,56 @@ const (
 	maxIPRuleDrainPasses = 32
 )
 
+// chainRef — пара «таблица/цепочка». Отдельный тип, потому что раскладка
+// перехвата зависит от режима и её приходится передавать целиком.
+type chainRef struct{ table, chain string }
+
+const (
+	// AwgmTable — собственная таблица xtables. ndm чужие таблицы не трогает
+	// (проверено на железе), поэтому правила в ней переживают перестройку
+	// firewall без хука netfilter.d.
+	AwgmTable = "awgm"
+	// AwgmTProxyTarget / AwgmPPETarget — клоны TPROXY/PPE, привязанные к
+	// таблице awgm (.table в модуле). Штатные имена в awgm ядро отвергает,
+	// наши — в mangle: затенения нет в обе стороны (стенд, фаза B §2).
+	AwgmTProxyTarget = "AWGMTPROXY"
+	AwgmPPETarget    = "AWGMPPE"
+)
+
+// udpChainTable / tcpChainTable — ЕДИНСТВЕННЫЙ источник правды о раскладке.
+// В awgm-режиме обе цепочки перехвата (и blackhole) живут в таблице awgm;
+// в legacy UDP — mangle, TCP — nat (REDIRECT'у нужен conntrack DNAT).
+func udpChainTable(awgmLayout bool) string {
+	if awgmLayout {
+		return AwgmTable
+	}
+	return "mangle"
+}
+
+func tcpChainTable(awgmLayout bool) string {
+	if awgmLayout {
+		return AwgmTable
+	}
+	return "nat"
+}
+
+func interceptionChains(awgmLayout bool) []chainRef {
+	return []chainRef{
+		{udpChainTable(awgmLayout), ChainName},
+		{tcpChainTable(awgmLayout), RedirectChain},
+	}
+}
+
 // Mutable in tests via t.Cleanup so they can redirect into a tmp dir.
 // Production code reads these at call time.
 var (
-	netfilterHookPath      = "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh"
+	netfilterHookPath = "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh"
+	// netfilterDNSHookPath — узкий хук awgm-режима. Восстанавливает ТОЛЬКО
+	// nat-блоб с DNS-RESCUE: перехват в таблице awgm ndm не стирает, а
+	// DNS-RESCUE обязан лежать в nat-таблице ndm и потому переставляется
+	// после каждой перестройки firewall. Отдельное имя, чтобы не путать с
+	// полным 50-awgm-tproxy.sh.
+	netfilterDNSHookPath   = "/opt/etc/ndm/netfilter.d/51-awgm-dnsrescue.sh"
 	netfilterRulesPath     = "/opt/etc/awg-manager/singbox/router-netfilter.rules"
 	netfilterBlackholePath = "/opt/etc/awg-manager/singbox/router-blackhole.rules"
 	// Per-table copies of the rules blob (issue #627): the netfilter.d hook
@@ -197,25 +250,32 @@ func ensureKernelModule(ctx context.Context, name string) error {
 	return nil
 }
 
-var (
-	tproxyTargetMu     sync.Mutex
-	tproxyTargetResult bool
-)
-
-func IsTProxyTargetAvailable(ctx context.Context) bool {
-	tproxyTargetMu.Lock()
-	if tproxyTargetResult {
-		tproxyTargetMu.Unlock()
+// IsTProxyTargetAvailable спрашивает АКТИВНЫЙ бинарь, знает ли он таргет
+// TPROXY: штатный бинарь и бандл-бинарь — разные сборки с разным набором
+// расширений.
+func (it *IPTables) IsTProxyTargetAvailable(ctx context.Context) bool {
+	runOut := it.activeRunOut()
+	if runOut == nil {
+		// Частично собранный IPTables (тесты соседних путей): спросить
+		// некого, отвечаем «недоступно».
+		return false
+	}
+	it.probeMu.Lock()
+	if it.tproxyTargetResult {
+		it.probeMu.Unlock()
 		return true
 	}
-	tproxyTargetMu.Unlock()
+	it.probeMu.Unlock()
 
-	res, err := sysexec.Run(ctx, sysiptables.Binary, "-j", "TPROXY", "--help")
-	ok := err == nil && res != nil && strings.Contains(res.Stdout+res.Stderr, "TPROXY")
+	// Вердикт выносит код возврата: без расширения iptables выходит ненулевым,
+	// а справку печатает в stdout. Поэтому stderr здесь не читается осознанно —
+	// на решение он не влияет.
+	out, err := runOut(ctx, "-j", "TPROXY", "--help")
+	ok := err == nil && strings.Contains(out, "TPROXY")
 	if ok {
-		tproxyTargetMu.Lock()
-		tproxyTargetResult = true
-		tproxyTargetMu.Unlock()
+		it.probeMu.Lock()
+		it.tproxyTargetResult = true
+		it.probeMu.Unlock()
 	}
 	return ok
 }
@@ -231,16 +291,6 @@ func EnsureXtDscpModule(ctx context.Context) error {
 	}
 	return err
 }
-
-var (
-	xtDscpMu        sync.Mutex
-	xtDscpModuleOK  bool
-	xtDscpMatchOK   bool
-	xtDscpCheckedAt time.Time
-	// xtDscpAvailabilityFn is the indirection point tests use to count/stub
-	// raw probes; production always runs the real XtDscpAvailability.
-	xtDscpAvailabilityFn = XtDscpAvailability
-)
 
 // xtDscpNegativeTTL bounds how long a NEGATIVE xt_dscp probe result is
 // served from cache. The probe execs `iptables -m dscp -h` — running it on
@@ -264,7 +314,7 @@ const xtDscpNegativeTTL = 10 * time.Minute
 //     `iptables -m dscp -h` probe, mirroring IsTProxyTargetAvailable). This
 //     is the realistic gap on some Entware arches — the kernel module can be
 //     present while the iptables build lacks the extension.
-func XtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
+func (it *IPTables) XtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
 	moduleOK = isModuleLoaded("xt_dscp")
 	if !moduleOK {
 		if kernel := osdetect.KernelRelease(); kernel != "" {
@@ -272,9 +322,14 @@ func XtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
 			moduleOK = err == nil
 		}
 	}
-	res, err := sysexec.Run(ctx, sysiptables.Binary, "-m", "dscp", "-h")
-	matchOK = err == nil && res != nil &&
-		strings.Contains(strings.ToLower(res.Stdout+res.Stderr), "dscp")
+	runOut := it.activeRunOut()
+	if runOut == nil {
+		return moduleOK, false // см. IsTProxyTargetAvailable
+	}
+	// Как и в IsTProxyTargetAvailable: решает код возврата, stderr на вердикт
+	// не влияет.
+	out, err := runOut(ctx, "-m", "dscp", "-h")
+	matchOK = err == nil && strings.Contains(strings.ToLower(out), "dscp")
 	return moduleOK, matchOK
 }
 
@@ -284,25 +339,28 @@ func XtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
 // (IsXtDscpAvailable, GetStatus diagnostics) go through this so a missing
 // module costs at most one `iptables -m dscp -h` exec per TTL window instead
 // of one per reconcile tick / status poll.
-func cachedXtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
-	xtDscpMu.Lock()
-	if xtDscpModuleOK && xtDscpMatchOK {
-		xtDscpMu.Unlock()
+func (it *IPTables) cachedXtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
+	it.probeMu.Lock()
+	if it.xtDscpModuleOK && it.xtDscpMatchOK {
+		it.probeMu.Unlock()
 		return true, true
 	}
-	if !xtDscpCheckedAt.IsZero() && time.Since(xtDscpCheckedAt) < xtDscpNegativeTTL {
-		m, x := xtDscpModuleOK, xtDscpMatchOK
-		xtDscpMu.Unlock()
+	if !it.xtDscpCheckedAt.IsZero() && time.Since(it.xtDscpCheckedAt) < xtDscpNegativeTTL {
+		m, x := it.xtDscpModuleOK, it.xtDscpMatchOK
+		it.probeMu.Unlock()
 		return m, x
 	}
-	probe := xtDscpAvailabilityFn
-	xtDscpMu.Unlock()
+	probe := it.xtDscpAvailabilityFn
+	it.probeMu.Unlock()
 
+	if probe == nil {
+		probe = it.XtDscpAvailability
+	}
 	m, x := probe(ctx)
-	xtDscpMu.Lock()
-	xtDscpModuleOK, xtDscpMatchOK = m, x
-	xtDscpCheckedAt = time.Now()
-	xtDscpMu.Unlock()
+	it.probeMu.Lock()
+	it.xtDscpModuleOK, it.xtDscpMatchOK = m, x
+	it.xtDscpCheckedAt = time.Now()
+	it.probeMu.Unlock()
 	return m, x
 }
 
@@ -313,8 +371,8 @@ func cachedXtDscpAvailability(ctx context.Context) (moduleOK, matchOK bool) {
 // xtDscpNegativeTTL and then re-probed so installing the missing piece is
 // picked up without a restart. Surfaced to the UI as the status field
 // `xtDscpAvailable`.
-func IsXtDscpAvailable(ctx context.Context) bool {
-	moduleOK, matchOK := cachedXtDscpAvailability(ctx)
+func (it *IPTables) IsXtDscpAvailable(ctx context.Context) bool {
+	moduleOK, matchOK := it.cachedXtDscpAvailability(ctx)
 	return moduleOK && matchOK
 }
 
@@ -397,6 +455,23 @@ type RestoreInputSpec struct {
 	// Requires the xt_dscp kernel module (preloaded by the netfilter.d hook
 	// and EnsureRouterNetfilterModules).
 	QoSClasses []QoSClassSpec
+
+	// AwgmMode — правила применяются бандл-бинарём в таблицу awgm; обе цепочки
+	// перехвата и PPE-гард переезжают туда, в nat остаётся только DNS-RESCUE.
+	// Терминальные действия становятся клонами AWGMTPROXY/AWGMPPE: штатные
+	// имена таргетов ядро в таблице awgm отвергает.
+	//
+	// Причина переезда — ndm перестраивает mangle/nat целиком и стирает наши
+	// правила, а чужую таблицу не трогает: перехват в awgm переживает
+	// перестройку firewall без хука netfilter.d.
+	//
+	// --on-ip 127.0.0.1 ОБЯЗАТЕЛЕН в каждом AWGMTPROXY-правиле: без него
+	// клон-модуль читает net_device.ip_ptr (смещение 744) и перехват мёртв.
+	//
+	// PPE-гард нужен потому, что программный fastpath роутера уносит уже
+	// установившийся поток мимо всего перехвата: без этого правила до
+	// forward-хука доходило 48 пакетов из 192, с ним — 205 из 205.
+	AwgmMode bool
 }
 
 // QoSClassSpec is the iptables projection of one active QoS class: the DSCP
@@ -458,16 +533,21 @@ func emitPreroutingJump(b *strings.Builder, chain string, spec RestoreInputSpec)
 	}
 }
 
-// buildBlackholeRestoreInput renders the mangle-only *AWGM-BLACKHOLE* blob:
+// buildBlackholeRestoreInput renders the single-table *AWGM-BLACKHOLE* blob:
 // the SAME LAN/router/WAN RETURN exclusions as the interception chain, then a
 // terminal DROP, entered from PREROUTING by the identical policy selector
 // (emitPreroutingJump). So the set it drops is exactly the set that would have
 // entered AWGM-TPROXY — nothing local is caught, and no policy traffic escapes.
-// mangle (not nat) so every packet of a flow is matched while the tunnel is
-// down, not only the first packet of a new conntrack.
+// Таблица — та же, что у UDP-цепочки перехвата (udpChainTable): не nat, чтобы
+// матчился КАЖДЫЙ пакет потока, пока туннель лежит, а не только первый пакет
+// нового conntrack.
 func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	var b strings.Builder
-	b.WriteString("*mangle\n")
+	if spec.AwgmMode {
+		b.WriteString("*awgm\n")
+	} else {
+		b.WriteString("*mangle\n")
+	}
 	fmt.Fprintf(&b, ":%s - [0:0]\n", BlackholeChain)
 	// User bypass first — an explicitly excluded subnet must never be dropped.
 	emitUserBypassReturns(&b, BlackholeChain, spec.BypassCIDRs)
@@ -504,15 +584,15 @@ func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	return b.String()
 }
 
-// buildRestoreInput renders the full iptables-restore blob — the mangle and
-// nat sections concatenated. Install and the hook's full-rebuild fallback
+// buildRestoreInput renders the full iptables-restore blob — the interception
+// and nat sections concatenated. Install and the hook's full-rebuild fallback
 // consume this; the hook's per-table fast heal consumes the sections
 // individually (issue #627).
 func buildRestoreInput(spec RestoreInputSpec) string {
-	return buildMangleRestoreInput(spec) + buildNatRestoreInput(spec)
+	return buildInterceptRestoreInput(spec) + buildNatRestoreInput(spec)
 }
 
-func buildMangleRestoreInput(spec RestoreInputSpec) string {
+func buildInterceptRestoreInput(spec RestoreInputSpec) string {
 	var b strings.Builder
 
 	// SKeen-style layout (`reference/SKeen/skeen.sh`, set_chain_rules /
@@ -537,11 +617,15 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	//   - no `-m addrtype` or `-i br+` matchers anywhere: zero kernel
 	//     module surface beyond xt_TPROXY
 
-	// ---- *mangle table: UDP via TPROXY ----
+	// ---- interception table (mangle в legacy, awgm иначе): UDP via TPROXY ----
 	// Literal port of `add_tproxy_rules` from reference/SKeen/skeen.sh
 	// (hybrid mode, mangle table) plus the DNS interception rule from
 	// set_chain_rules (`INTERCEPT_DNS_ENABLE=1` branch). No extras.
-	b.WriteString("*mangle\n")
+	if spec.AwgmMode {
+		b.WriteString("*awgm\n")
+	} else {
+		b.WriteString("*mangle\n")
+	}
 	fmt.Fprintf(&b, ":%s - [0:0]\n", ChainName)
 
 	// Пользовательский bypass — целиком мимо sing-box, ДО перехвата DNS.
@@ -562,8 +646,14 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 		fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j RETURN\n", ChainName)
 		emitBypassReturns(&b, ChainName, spec.WANIPs)
 		for _, q := range spec.QoSClasses {
-			fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
-				ChainName, q.DSCP, q.TProxyPort, Fwmark)
+			fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d %s\n",
+				ChainName, q.DSCP, udpDispatch(spec, q.TProxyPort))
+		}
+		// QoS-классы в awgm тоже идут через tproxy — без PPE установившиеся
+		// потоки прошли бы мимо.
+		if spec.AwgmMode {
+			emitPPEGuard(&b, spec)
+			emitTCPChain(&b, spec)
 		}
 		emitPreroutingJump(&b, ChainName, spec)
 		b.WriteString("COMMIT\n")
@@ -571,8 +661,7 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	}
 
 	// set_chain_rules: DNS first (when INTERCEPT_DNS_ENABLE=1)
-	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
-		ChainName, TPROXYPort, Fwmark)
+	fmt.Fprintf(&b, "-A %s -p udp --dport 53 %s\n", ChainName, udpDispatch(spec, TPROXYPort))
 
 	// Selective-bypass guard: only traffic to IPs in AWGM-SELECTIVE reaches
 	// sing-box; everything else returns to PREROUTING and goes to WAN.
@@ -603,13 +692,12 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	//   - BEFORE the catch-all: otherwise the unconditional TPROXY eats the
 	//     packet first and the class rule is dead.
 	for _, q := range spec.QoSClasses {
-		fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
-			ChainName, q.DSCP, q.TProxyPort, Fwmark)
+		fmt.Fprintf(&b, "-A %s -p udp -m dscp --dscp %d %s\n",
+			ChainName, q.DSCP, udpDispatch(spec, q.TProxyPort))
 	}
 
 	// add_tproxy_rules: catch-all TPROXY for UDP.
-	fmt.Fprintf(&b, "-A %s -p udp -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
-		ChainName, TPROXYPort, Fwmark)
+	fmt.Fprintf(&b, "-A %s -p udp %s\n", ChainName, udpDispatch(spec, TPROXYPort))
 
 	// Ingress-scope: пометить выбранные интерфейсы policy-меткой ДО jump'а,
 	// чтобы connmark-jump (ниже в mangle и в nat) принял их за членов
@@ -624,6 +712,13 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 		}
 	}
 
+	// awgm-режим: PPE → цепочка TCP-перехвата → джамп UDP-цепочки. PPE строго
+	// первым — иначе fastpath уносит установившийся поток мимо всего перехвата.
+	if spec.AwgmMode {
+		emitPPEGuard(&b, spec)
+		emitTCPChain(&b, spec)
+	}
+
 	// set_prerouting_rules: policy connmark filter ON THE JUMP, no `-p`
 	// matcher (SKeen jumps unconditionally; per-proto matching happens
 	// inside the chain).
@@ -633,92 +728,165 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	return b.String()
 }
 
-func buildNatRestoreInput(spec RestoreInputSpec) string {
-	var b strings.Builder
-
-	// ---- *nat table: TCP via REDIRECT ----
+// emitTCPChain строит цепочку TCP-перехвата (AWGM-REDIRECT) и джамп в неё из
+// PREROUTING. Структура — bypass'ы, порт 79, selective-гард, DNS-карвауты,
+// dscp-классы, catch-all — одинакова в обоих режимах; отличается только
+// терминальное действие: REDIRECT в nat для legacy, AWGMTPROXY в таблице awgm
+// для awgm-режима.
+// COMMIT цепочка не пишет — это дело вызывающего билдера, у которого ниже
+// может быть ещё код (DNS-RESCUE в nat).
+//
+// Порядок правил менять НЕЛЬЗЯ: каждая строка тут закрывает свой класс утечки,
+// обоснования — в комментариях по месту.
+func emitTCPChain(b *strings.Builder, spec RestoreInputSpec) {
 	// Literal port of `add_redirect_rules` from reference/SKeen/skeen.sh
-	// (hybrid mode, nat table). SKeen's nat chain has ONLY the bypass set
-	// + catch-all `-p tcp -j REDIRECT`; without selective bypass the
+	// (hybrid mode, nat table). SKeen's chain has ONLY the bypass set
+	// + catch-all `-p tcp` dispatch; without selective bypass the
 	// catch-all already covers TCP/53. WITH the selective guard the
 	// catch-all is no longer unconditional, so TCP/53 gets its own
 	// intercept before the guard (see below) — otherwise a truncated-UDP
 	// retry or DNS-over-TCP to a resolver outside the set escapes
 	// hijack-dns and leaks real IPs of proxied domains. The QoS DSCP
-	// dispatch needs the same carve-out (a class REDIRECT would otherwise
+	// dispatch needs the same carve-out (a class dispatch would otherwise
 	// swallow marked TCP/53 onto a class port), emitted with the class
 	// rules below when the selective intercept isn't already present.
-	b.WriteString("*nat\n")
-	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
+	fmt.Fprintf(b, ":%s - [0:0]\n", RedirectChain)
 
-	emitUserBypassReturns(&b, RedirectChain, spec.BypassCIDRs)
+	emitUserBypassReturns(b, RedirectChain, spec.BypassCIDRs)
 
 	// policy-tun QoS-гибрид: зеркало mangle-ветки — только bypass и dscp.
-	// Без catch-all REDIRECT'а, без перехвата DNS и DNS-RESCUE, без правила
-	// на порт 79: REDIRECT здесь делает лишь dscp-диспатч, а трафик к веб-морде
-	// роутера DSCP-классов не несёт.
+	// Без catch-all, без перехвата DNS и DNS-RESCUE, без правила на порт 79:
+	// перехват здесь делает лишь dscp-диспатч, а трафик к веб-морде роутера
+	// DSCP-классов не несёт.
 	if spec.DSCPOnly {
 		for _, pr := range spec.BypassTCPPorts {
-			fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
+			fmt.Fprintf(b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
 		}
-		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j RETURN\n", RedirectChain)
-		emitBypassReturns(&b, RedirectChain, spec.WANIPs)
+		fmt.Fprintf(b, "-A %s -p tcp --dport 53 -j RETURN\n", RedirectChain)
+		emitBypassReturns(b, RedirectChain, spec.WANIPs)
 		for _, q := range spec.QoSClasses {
-			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
-				RedirectChain, q.DSCP, q.RedirectPort)
+			fmt.Fprintf(b, "-A %s -p tcp -m dscp --dscp %d %s\n",
+				RedirectChain, q.DSCP, tcpDispatch(spec, q.TProxyPort, q.RedirectPort))
 		}
-		emitPreroutingJump(&b, RedirectChain, spec)
-		b.WriteString("COMMIT\n")
-		return b.String()
+		emitPreroutingJump(b, RedirectChain, spec)
+		return
 	}
 
-	emitBypassReturns(&b, RedirectChain, spec.WANIPs)
+	emitBypassReturns(b, RedirectChain, spec.WANIPs)
 	// Bypass router admin port so we don't redirect our own UI traffic.
 	// (SKeen has equivalent dynamic admin-port discovery — same intent.)
-	fmt.Fprintf(&b, "-A %s -p tcp --dport 79 -j RETURN\n", RedirectChain)
+	fmt.Fprintf(b, "-A %s -p tcp --dport 79 -j RETURN\n", RedirectChain)
 
-	// Bypass ports: RETURN before catch-all TCP REDIRECT.
+	// Bypass ports: RETURN before the catch-all TCP dispatch.
 	for _, pr := range spec.BypassTCPPorts {
-		fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
+		fmt.Fprintf(b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
 	}
 
-	// Selective-bypass guard for TCP: mirrors the mangle guard above.
+	// Selective-bypass guard for TCP: mirrors the mangle UDP guard.
 	// TCP/53 is intercepted FIRST (mirroring the mangle UDP/53 rule and
 	// honoring the same "DNS must always reach hijack-dns" invariant):
 	// resolver IPs are typically NOT in AWGM-SELECTIVE, so without this
 	// rule the guard would RETURN DNS-over-TCP straight to the upstream.
 	if spec.SelectiveIPSet {
-		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
-			RedirectChain, RedirectPort)
-		fmt.Fprintf(&b, "-A %s -m set ! --match-set %s dst -j RETURN\n",
+		fmt.Fprintf(b, "-A %s -p tcp --dport 53 %s\n",
+			RedirectChain, tcpDispatch(spec, TPROXYPort, RedirectPort))
+		fmt.Fprintf(b, "-A %s -m set ! --match-set %s dst -j RETURN\n",
 			RedirectChain, selectiveSetName)
 	}
 
-	// QoS-by-DSCP dispatch for TCP — mirrors the mangle block above (same
+	// QoS-by-DSCP dispatch for TCP — mirrors the mangle UDP block (same
 	// ordering rationale: after bypasses and the selective guard, before the
 	// catch-all). DNS carve-out first: without it, DSCP-marked DNS-over-TCP
-	// (or a truncated-UDP retry) would land on a CLASS redirect inbound and
-	// only get hijacked if the managed route rules happened to order right —
-	// intercepting TCP/53 onto the MAIN redirect port here kills that whole
-	// leak class at the netfilter level, exactly like the mangle chain's
-	// unconditional UDP/53 intercept above the UDP class rules. Skipped when
-	// the selective guard already emitted the identical intercept earlier in
-	// this chain.
+	// (or a truncated-UDP retry) would land on a CLASS inbound and only get
+	// hijacked if the managed route rules happened to order right —
+	// intercepting TCP/53 onto the MAIN port here kills that whole leak class
+	// at the netfilter level, exactly like the mangle chain's unconditional
+	// UDP/53 intercept above the UDP class rules. Skipped when the selective
+	// guard already emitted the identical intercept earlier in this chain.
 	if len(spec.QoSClasses) > 0 {
 		if !spec.SelectiveIPSet {
-			fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
-				RedirectChain, RedirectPort)
+			fmt.Fprintf(b, "-A %s -p tcp --dport 53 %s\n",
+				RedirectChain, tcpDispatch(spec, TPROXYPort, RedirectPort))
 		}
 		for _, q := range spec.QoSClasses {
-			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
-				RedirectChain, q.DSCP, q.RedirectPort)
+			fmt.Fprintf(b, "-A %s -p tcp -m dscp --dscp %d %s\n",
+				RedirectChain, q.DSCP, tcpDispatch(spec, q.TProxyPort, q.RedirectPort))
 		}
 	}
 
-	// add_redirect_rules: catch-all REDIRECT for TCP.
-	fmt.Fprintf(&b, "-A %s -p tcp -j REDIRECT --to-ports %d\n", RedirectChain, RedirectPort)
+	// add_redirect_rules: catch-all dispatch for TCP.
+	fmt.Fprintf(b, "-A %s -p tcp %s\n", RedirectChain, tcpDispatch(spec, TPROXYPort, RedirectPort))
 
-	emitPreroutingJump(&b, RedirectChain, spec)
+	emitPreroutingJump(b, RedirectChain, spec)
+}
+
+// udpDispatch — терминальное действие UDP-перехвата. Имя таргета зависит от
+// таблицы: TPROXY валиден только в mangle, AWGMTPROXY — только в awgm.
+// --on-ip 127.0.0.1 ОБЯЗАТЕЛЕН: tproxy-инбаунд слушает именно этот адрес, а
+// клон-модуль без него читает net_device.ip_ptr (смещение 744) — правило
+// продукта, охраняется тестом.
+func udpDispatch(spec RestoreInputSpec, port int) string {
+	target := "TPROXY"
+	if spec.AwgmMode {
+		target = AwgmTProxyTarget
+	}
+	return fmt.Sprintf("-j %s --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x", target, port, Fwmark)
+}
+
+// tcpDispatch — терминальное действие для TCP: REDIRECT на redirect-инбаунд в
+// legacy-режиме, AWGMTPROXY на tproxy-инбаунд в awgm-режиме.
+//
+// --on-ip 127.0.0.1 — см. udpDispatch: тот же адрес, та же причина.
+func tcpDispatch(spec RestoreInputSpec, tproxyPort, redirectPort int) string {
+	if spec.AwgmMode {
+		return fmt.Sprintf("-j %s --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x",
+			AwgmTProxyTarget, tproxyPort, Fwmark)
+	}
+	return fmt.Sprintf("-j REDIRECT --to-ports %d", redirectPort)
+}
+
+// emitPPEGuard эмитит ОДНО правило `-j AWGMPPE` в PREROUTING таблицы awgm с тем
+// же селектором, что и джампы перехвата: программный fastpath роутера иначе
+// уносит уже установившийся поток мимо всего перехвата, и тот работает лишь на
+// первых пакетах соединения. Помечено comment-тегом, чтобы скраб
+// (removeSourceHooks) мог снять правило перед переустановкой.
+//
+// Таргет — клон AWGMPPE, а не стоковый PPE: зовётся эмиссия только при
+// AwgmMode, а штатное имя ядро в таблице awgm отвергает вместе со всем блобом.
+func emitPPEGuard(b *strings.Builder, spec RestoreInputSpec) {
+	if spec.MatchAll {
+		fmt.Fprintf(b, "-A PREROUTING -m comment --comment %s -j %s\n", PPETag, AwgmPPETarget)
+		return
+	}
+	if spec.PolicyMark == "" {
+		return
+	}
+	fmt.Fprintf(b, "-A PREROUTING -m connmark --mark %s -m comment --comment %s -j %s\n",
+		spec.PolicyMark, PPETag, AwgmPPETarget)
+}
+
+func buildNatRestoreInput(spec RestoreInputSpec) string {
+	var b strings.Builder
+
+	// ---- *nat table: TCP via REDIRECT ----
+	// В awgm-режиме цепочки перехвата здесь нет вовсе — она уехала в таблицу
+	// awgm (см. RestoreInputSpec.AwgmMode), в nat остаётся только DNS-RESCUE.
+	b.WriteString("*nat\n")
+
+	if !spec.AwgmMode {
+		emitTCPChain(&b, spec)
+	}
+
+	// Ранний выход в DSCPOnly — ДО блока DNS-RESCUE: policy-tun сознательно
+	// живёт без DNS-RESCUE (перехвата DNS в этом режиме нет вообще, см.
+	// комментарий в emitTCPChain). Выход обязан остаться здесь: вынос цепочки
+	// в хелпер стёр бы его, и билдер провалился бы в DNS-RESCUE-гейт. Сейчас
+	// это латентно (оба DSCPOnly-вызывающих не передают LANBridges), но
+	// семантику функции менять нельзя.
+	if spec.DSCPOnly {
+		b.WriteString("COMMIT\n")
+		return b.String()
+	}
 
 	// ---- DNS-RESCUE: per-bridge short-circuit REDIRECT to ndnproxy ----
 	// For each (bridge, ndnproxy-port) discovered from
@@ -764,24 +932,72 @@ type persistFn func(input string) error
 type persistRulesFn func(combined, mangle, nat string) error
 
 type IPTables struct {
-	restoreNoflush   restoreNoflushFn
-	runIPTables      runFn
-	runIPTablesOut   runOutFn
-	runIP            runFn
-	runIPOut         runOutFn
-	persistRules     persistRulesFn
-	persistHook      func(includeBlackhole bool) error
+	restoreNoflush restoreNoflushFn
+	runIPTables    runFn
+	runIPTablesOut runOutFn
+	// legacyRun / legacyRunOut — вызовы, закреплённые за штатным бинарём
+	// НАВСЕГДА, независимо от активного бэкенда. Сюда идут правила и чтения,
+	// чьё место — таблицы ndm (nat/mangle): discovery портов ndnproxy из
+	// _NDM_HOTSPOT_DNSREDIR, DNS-RESCUE, fakeip DNAT :53. Бандл-бинарь эти
+	// таблицы тоже видит, но канал закреплён осознанно: правило чужой таблицы
+	// не должно зависеть от того, каким бэкендом работает перехват.
+	legacyRun    runFn
+	legacyRunOut runOutFn
+	runIP        runFn
+	runIPOut     runOutFn
+	persistRules persistRulesFn
+	persistHook  func(includeBlackhole bool) error
+	// legacyRestoreNoflush — второй канал Install в awgm-режиме: узкий
+	// nat-блоб DNS-RESCUE применяется штатным iptables-restore, потому что
+	// правило обязано лечь в nat-таблицу ndm, а не в нашу.
+	legacyRestoreNoflush restoreNoflushFn
+	// persistDNSHook пишет узкий хук при true и снимает при false.
+	persistDNSHook   func(want bool) error
 	cleanupHook      func()
 	persistBlackhole persistFn
 	cleanupBlackhole func()
-	runCtClean       func(ctx context.Context)
+	// persistCtClean доставляет скрипт вытеснения. Отдельная точка от
+	// persistHook: скрипт нужен в обоих режимах, а полный хук — только в
+	// legacy.
+	persistCtClean func() error
+	runCtClean     func(ctx context.Context)
+
+	// awgmLayout — раскладка правил активного бэкенда: в каких таблицах лежат
+	// цепочки перехвата (см. udpChainTable/tcpChainTable). Меняется вместе с
+	// командами и той же парой UseAwgm/UseLegacy, поэтому живёт под тем же
+	// runnerMu: снятый отдельно от команд, он мог бы описывать уже другой
+	// бэкенд.
+	awgmLayout bool
+
+	// runnerMu защищает четыре поля выше, которые меняет смена бэкенда
+	// (restoreNoflush / runIPTables / runIPTablesOut / awgmLayout). Писать их
+	// некому, кроме UseAwgm/UseLegacy, а читают их и цикл сверки (свой поток), и
+	// статус по HTTP — без замка это гонка за указателями на функции.
+	// Читатели берут снимок через activeRestore/activeRun/activeRunOut.
+	runnerMu sync.Mutex
+
+	// probeMu защищает кеш проб доступности (TPROXY-таргет, xt_dscp).
+	// Кеш живёт здесь, а не в пакетных переменных, потому что пробы
+	// спрашивают конкретный бинарь: после смены бэкенда прежний ответ
+	// относится к другому набору расширений и стал бы враньём.
+	probeMu            sync.Mutex
+	tproxyTargetResult bool
+	xtDscpModuleOK     bool
+	xtDscpMatchOK      bool
+	xtDscpCheckedAt    time.Time
+	// xtDscpAvailabilityFn — точка подмены для тестов (счётчик/заглушка
+	// сырых проб); nil означает настоящую XtDscpAvailability.
+	xtDscpAvailabilityFn func(ctx context.Context) (moduleOK, matchOK bool)
 }
 
 func NewIPTables() *IPTables {
 	return &IPTables{
-		restoreNoflush: sysiptables.RestoreNoflush,
-		runIPTables:    sysiptables.Run,
-		runIPTablesOut: sysiptables.RunOutput,
+		restoreNoflush:       sysiptables.RestoreNoflush,
+		runIPTables:          sysiptables.Run,
+		runIPTablesOut:       sysiptables.RunOutput,
+		legacyRun:            sysiptables.Run,
+		legacyRunOut:         sysiptables.RunOutput,
+		legacyRestoreNoflush: sysiptables.RestoreNoflush,
 		runIP: func(ctx context.Context, args ...string) error {
 			result, err := sysexec.Run(ctx, "ip", args...)
 			return sysexec.FormatError(result, err)
@@ -796,17 +1012,129 @@ func NewIPTables() *IPTables {
 			}
 			return result.Stdout, nil
 		},
-		persistRules:     writeNetfilterRulesFiles,
-		persistHook:      writeNetfilterHook,
+		persistRules: writeNetfilterRulesFiles,
+		persistHook:  writeNetfilterHook,
+		persistDNSHook: func(want bool) error {
+			if !want {
+				removeNetfilterDNSHook()
+				return nil
+			}
+			return writeNetfilterDNSHook()
+		},
 		cleanupHook:      removeNetfilterRulesFile,
 		persistBlackhole: writeNetfilterBlackholeRulesFile,
 		cleanupBlackhole: removeNetfilterBlackholeRulesFile,
+		persistCtClean:   writeCtCleanScript,
 		runCtClean: func(ctx context.Context) {
 			// Best-effort: the script self-logs via logger; a failure here
 			// must never fail Install (interception is already up).
 			_, _ = sysexec.Run(ctx, netfilterCtCleanPath)
 		},
 	}
+}
+
+// RuleRunner — то, что умеет применять правила. Интерфейс, а не конкретный
+// *awgmbackend.Backend, чтобы тесты подсовывали заглушку без приведения типов.
+type RuleRunner interface {
+	RestoreNoflush(ctx context.Context, input string) error
+	Run(ctx context.Context, args ...string) error
+	RunOutput(ctx context.Context, args ...string) (string, error)
+}
+
+// UseAwgm переводит команды над НАШИМИ правилами на бандл-бинарь, знающий
+// таблицу awgm. legacyRun/legacyRunOut не трогаются — см. комментарий к полям.
+func (it *IPTables) UseAwgm(b RuleRunner) {
+	it.runnerMu.Lock()
+	it.restoreNoflush = b.RestoreNoflush
+	it.runIPTables = b.Run
+	it.runIPTablesOut = b.RunOutput
+	it.awgmLayout = true
+	it.runnerMu.Unlock()
+	it.resetProbeCache()
+}
+
+// UseLegacy возвращает команды на штатный iptables. Вызывается при откате и
+// при переключении режима обратно. Источник — legacy-канал ЭТОГО объекта
+// (см. поля legacyRun/legacyRunOut/legacyRestoreNoflush): в проде это те же
+// sysiptables, а объект с подменёнными командами возвращается к своим, а не
+// начинает внезапно звать настоящий бинарь.
+func (it *IPTables) UseLegacy() {
+	it.runnerMu.Lock()
+	it.restoreNoflush = sysiptables.RestoreNoflush
+	if it.legacyRestoreNoflush != nil {
+		it.restoreNoflush = it.legacyRestoreNoflush
+	}
+	it.runIPTables = sysiptables.Run
+	if it.legacyRun != nil {
+		it.runIPTables = it.legacyRun
+	}
+	it.runIPTablesOut = sysiptables.RunOutput
+	if it.legacyRunOut != nil {
+		it.runIPTablesOut = it.legacyRunOut
+	}
+	it.awgmLayout = false
+	it.runnerMu.Unlock()
+	it.resetProbeCache()
+}
+
+// activeRestore / activeRunOut отдают снимок команд активного бэкенда.
+// Снимок берётся один раз на операцию: смена бэкенда посреди цикла удалений
+// иначе отправила бы часть команд в один стек, часть в другой.
+func (it *IPTables) activeRestore() restoreNoflushFn {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.restoreNoflush
+}
+
+func (it *IPTables) activeRunOut() runOutFn {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.runIPTablesOut
+}
+
+// activeRunLayout / activeRunOutLayout отдают команду И раскладку активного
+// бэкенда одним чтением. Порознь они могли бы разъехаться: команда нового
+// бэкенда с раскладкой старого спрашивала бы цепочку не в той таблице и
+// объявила бы живой перехват отсутствующим.
+func (it *IPTables) activeRunLayout() (runFn, bool) {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.runIPTables, it.awgmLayout
+}
+
+func (it *IPTables) activeRunOutLayout() (runOutFn, bool) {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.runIPTablesOut, it.awgmLayout
+}
+
+// activeChannelLayout отдаёт run, runOut И раскладку ОДНИМ снимком под одним
+// захватом runnerMu — как activeRunLayout, но для вызывающих, которым нужны
+// обе команды сразу (иначе пришлось бы звать activeRunLayout()/
+// activeRunOutLayout() отдельно, и конкурентный UseAwgm/UseLegacy между двумя
+// захватами мог бы спарить канал одного бэкенда с раскладкой другого).
+func (it *IPTables) activeChannelLayout() (runFn, runOutFn, bool) {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.runIPTables, it.runIPTablesOut, it.awgmLayout
+}
+
+// legacyChannel отдаёт команды штатного бинаря НЕЗАВИСИМО от активного
+// бэкенда. Поля неизменны после сборки объекта (UseAwgm/UseLegacy их не
+// трогают), поэтому замок не нужен. Нужен там, где правило заведомо лежит в
+// таблицах firewall'а роутера (DNS-RESCUE, DNS-NOPOLICY, fakeip DNAT).
+func (it *IPTables) legacyChannel() (runFn, runOutFn) {
+	return it.legacyRun, it.legacyRunOut
+}
+
+// resetProbeCache забывает результаты проб доступности: они получены у
+// прежнего бинаря, а положительный ответ кешируется навсегда.
+func (it *IPTables) resetProbeCache() {
+	it.probeMu.Lock()
+	it.tproxyTargetResult = false
+	it.xtDscpModuleOK, it.xtDscpMatchOK = false, false
+	it.xtDscpCheckedAt = time.Time{}
+	it.probeMu.Unlock()
 }
 
 // InstallBlackhole engages the fail-closed DROP chain: scrub any stale jump,
@@ -816,15 +1144,16 @@ func NewIPTables() *IPTables {
 // wrote — only the blackhole rules file is blackhole-specific. No fwmark/ip
 // rule: the blackhole only drops, it never delivers to a table. Idempotent.
 func (it *IPTables) InstallBlackhole(ctx context.Context, spec RestoreInputSpec) error {
-	it.removeSourceHooksFromTable(ctx, "mangle", BlackholeChain)
+	run, runOut, layout := it.activeChannelLayout()
+	it.removeSourceHooksFromTable(ctx, run, runOut, udpChainTable(layout), BlackholeChain)
 	input := buildBlackholeRestoreInput(spec)
 	if it.persistBlackhole != nil {
 		if err := it.persistBlackhole(input); err != nil {
 			return fmt.Errorf("write blackhole rules: %w", err)
 		}
 	}
-	if err := it.restoreNoflush(ctx, input); err != nil {
-		return fmt.Errorf("iptables-restore blackhole: %w", err)
+	if err := it.activeRestore()(ctx, input); err != nil {
+		return fmt.Errorf("iptables-restore blackhole: %w", ruleChannelError{err})
 	}
 	return nil
 }
@@ -836,9 +1165,11 @@ func (it *IPTables) RemoveBlackhole(ctx context.Context) {
 	if it.cleanupBlackhole != nil {
 		it.cleanupBlackhole()
 	}
-	it.removeSourceHooksFromTable(ctx, "mangle", BlackholeChain)
-	_ = it.runIPTables(ctx, "-t", "mangle", "-F", BlackholeChain)
-	_ = it.runIPTables(ctx, "-t", "mangle", "-X", BlackholeChain)
+	run, runOut, layout := it.activeChannelLayout()
+	table := udpChainTable(layout)
+	it.removeSourceHooksFromTable(ctx, run, runOut, table, BlackholeChain)
+	_ = run(ctx, "-t", table, "-F", BlackholeChain)
+	_ = run(ctx, "-t", table, "-X", BlackholeChain)
 }
 
 // drainFwmarkRules deletes every `ip rule` for our fwmark/table, looping until
@@ -854,6 +1185,85 @@ func (it *IPTables) drainFwmarkRules(ctx context.Context) {
 	}
 }
 
+// ipRuleFwmarkPresent finds our fwmark rule in an `ip rule show` dump.
+// Опознаём по приоритету и метке, а не по «lookup <номер таблицы>»: если имя
+// таблицы заведено в /etc/iproute2/rt_tables, iproute2 печатает имя, и матч по
+// номеру видел бы вечную пропажу, добавляя правило каждый тик (та же причина,
+// что у fakeIPIngressOwnedRule). Приоритет Install задаёт явно, так что он —
+// надёжная метка владения.
+func ipRuleFwmarkPresent(dump string) bool {
+	prefix := fmt.Sprintf("%d:", IPRulePriority)
+	// Пробел на конце обязателен: без него "fwmark 0x1" совпало бы с
+	// "fwmark 0x10".
+	mark := fmt.Sprintf("fwmark 0x%x ", Fwmark)
+	for _, line := range strings.Split(dump, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) && strings.Contains(line, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// ipRouteLocalDefaultPresent finds the local catch-all route in an
+// `ip route show table <ours>` dump. Ставится маршрут как "local 0.0.0.0/0", а
+// печатается как "local default" — синтаксис ввода и вывода у iproute2 разный,
+// поэтому принимаем обе формы.
+func ipRouteLocalDefaultPresent(dump string) bool {
+	for _, line := range strings.Split(dump, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "local default") || strings.HasPrefix(line, "local 0.0.0.0/0") {
+			return true
+		}
+	}
+	return false
+}
+
+// EnsureIPRule restores the policy-routing half of the interception: our
+// fwmark `ip rule` and the local catch-all route in our table. Ставит их
+// Install, а переставлял после каждой перестройки firewall netfilter.d-хук —
+// в awgm-режиме полного хука нет (перехват живёт в таблице awgm, которую ndm
+// не трогает), и восстановить эту половину больше некому. Пропажа
+// молчаливая: правила TPROXY срабатывают, счётчики растут, но помеченные
+// пакеты не уходят в нашу таблицу — перехват слепнет, соединений ноль.
+// Проверять каждый тик двумя чтениями дешевле, чем доказывать, что чужой код
+// наши `ip rule` не трогает.
+//
+// Идемпотентно: обе половины на месте — ни одной мутации. Безусловный
+// `ip rule add` плодил бы дубли на автоприоритетах (от них и лечит
+// drainFwmarkRules), поэтому «есть — не трогать» здесь обязательно.
+func (it *IPTables) EnsureIPRule(ctx context.Context) error {
+	rules, err := it.runIPOut(ctx, "rule", "show")
+	if err != nil {
+		return fmt.Errorf("dump ip rules: %w", err)
+	}
+	if !ipRuleFwmarkPresent(rules) {
+		if err := it.runIP(ctx, "rule", "add", "fwmark", fmt.Sprintf("0x%x", Fwmark),
+			"table", fmt.Sprintf("%d", RoutingTable),
+			"priority", fmt.Sprintf("%d", IPRulePriority)); err != nil {
+			if !strings.Contains(err.Error(), "File exists") {
+				return fmt.Errorf("ip rule add: %w", err)
+			}
+		}
+	}
+	routes, err := it.runIPOut(ctx, "route", "show", "table", fmt.Sprintf("%d", RoutingTable))
+	if err != nil {
+		return fmt.Errorf("dump table %d: %w", RoutingTable, err)
+	}
+	if ipRouteLocalDefaultPresent(routes) {
+		return nil
+	}
+	// Без маршрута правило указывает в пустую таблицу, и перехват слеп ровно
+	// так же, как без самого правила.
+	if err := it.runIP(ctx, "route", "add", "local", "0.0.0.0/0", "dev", "lo",
+		"table", fmt.Sprintf("%d", RoutingTable)); err != nil {
+		if !strings.Contains(err.Error(), "File exists") {
+			return fmt.Errorf("ip route add: %w", err)
+		}
+	}
+	return nil
+}
+
 func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// Scrub any existing PREROUTING jumps to AWGM-TPROXY before inserting
 	// the new one. iptables-restore --noflush + -I PREROUTING 1 would
@@ -861,19 +1271,61 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// re-Enable: the stale rule from the previous policy/mark survives
 	// because mangle isn't flushed, and the new rule lands in front of it.
 	// Idempotent: a no-op when no prior jumps exist.
-	it.removeSourceHooks(ctx)
+	it.removeSourceHooks(ctx, true)
 
-	mangle := buildMangleRestoreInput(spec)
+	intercept := buildInterceptRestoreInput(spec)
 	nat := buildNatRestoreInput(spec)
-	input := mangle + nat
-	if it.persistRules != nil {
-		if err := it.persistRules(input, mangle, nat); err != nil {
-			return fmt.Errorf("write netfilter rules: %w", err)
+	input := intercept + nat
+
+	if spec.AwgmMode {
+		hasDNSRescue := strings.Contains(nat, DNSRescueTag)
+
+		// 1. Снести артефакты прежнего (legacy) режима — ДО записи своих
+		//    файлов: cleanupHook сносит ВСЕ три блоба, включая nat. Вызов
+		//    после persistRules стёр бы nat-блоб, который узкий хук только
+		//    что получил на чтение, и хук стал бы вечным no-op.
+		removeNetfilterHookFile()
+		if it.cleanupHook != nil {
+			it.cleanupHook()
+		}
+		// 2. Записать только nat: перехват живёт в таблице awgm, которую
+		//    ndm не трогает, и восстановления не требует. Без DNS-RESCUE
+		//    блоб вырождается в пустую транзакцию — такой файл никто не
+		//    читает, поэтому передаём пустую секцию и он сносится.
+		natBlob := ""
+		if hasDNSRescue {
+			natBlob = nat
+		}
+		if it.persistRules != nil {
+			if err := it.persistRules("", "", natBlob); err != nil {
+				return fmt.Errorf("write netfilter rules: %w", err)
+			}
+		}
+		// 3. Узкий хук — только когда DNS-RESCUE реально эмитится.
+		if it.persistDNSHook != nil {
+			if err := it.persistDNSHook(hasDNSRescue); err != nil {
+				return fmt.Errorf("write dns hook: %w", err)
+			}
+		}
+	} else {
+		if it.persistRules != nil {
+			if err := it.persistRules(input, intercept, nat); err != nil {
+				return fmt.Errorf("write netfilter rules: %w", err)
+			}
+		}
+		if it.persistHook != nil {
+			if err := it.persistHook(!spec.DSCPOnly); err != nil {
+				return fmt.Errorf("write netfilter hook: %w", err)
+			}
 		}
 	}
-	if it.persistHook != nil {
-		if err := it.persistHook(!spec.DSCPOnly); err != nil {
-			return fmt.Errorf("write netfilter hook: %w", err)
+	// Скрипт вытеснения — в обоих режимах и на каждом Install: окно между
+	// стартом движка и установкой правил фейл-опен одинаково, а в awgm-режиме
+	// хука, с которым скрипт раньше ехал одним куском, нет. Безусловная
+	// перезапись заодно освежает версию, оставшуюся от прежнего режима.
+	if it.persistCtClean != nil {
+		if err := it.persistCtClean(); err != nil {
+			return fmt.Errorf("write ctclean script: %w", err)
 		}
 	}
 	// policy-tun: blackhole в этом режиме не применяется — снести файл правил,
@@ -882,8 +1334,19 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	if spec.DSCPOnly && it.cleanupBlackhole != nil {
 		it.cleanupBlackhole()
 	}
-	if err := it.restoreNoflush(ctx, input); err != nil {
-		return fmt.Errorf("iptables-restore: %w", err)
+	if spec.AwgmMode {
+		// Два канала: перехват — бандл-бинарём в таблицу awgm, DNS-RESCUE —
+		// штатным iptables, потому что правило обязано попасть в nat ndm.
+		if err := it.activeRestore()(ctx, intercept); err != nil {
+			return fmt.Errorf("iptables-awgm-restore: %w", ruleChannelError{err})
+		}
+		if strings.Contains(nat, DNSRescueTag) {
+			if err := it.legacyRestoreNoflush(ctx, nat); err != nil {
+				return fmt.Errorf("iptables-restore dns-rescue: %w", err)
+			}
+		}
+	} else if err := it.activeRestore()(ctx, input); err != nil {
+		return fmt.Errorf("iptables-restore: %w", ruleChannelError{err})
 	}
 	// Drain ALL existing fwmark rules pointing at our table before
 	// adding a fresh one. Without this, every Install (Reconcile,
@@ -924,14 +1387,25 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 // the hook on every firewall reload; the hook feeds the rules file to
 // iptables-restore), so they must never be observable half-written — use the
 // fsync'ed temp-file+rename writer, not a truncate-in-place WriteFile.
+// Пустая секция означает «этот блоб в текущем режиме не нужен»: файл не
+// создаётся, а оставшийся от прежнего режима сносится — иначе хук скормил бы
+// iptables-restore устаревшие правила.
 func writeNetfilterRulesFiles(combined, mangle, nat string) error {
-	if err := storage.AtomicWritePerm(netfilterRulesPath, []byte(combined), 0644); err != nil {
+	if err := writeOrRemoveRulesFile(netfilterRulesPath, combined); err != nil {
 		return err
 	}
-	if err := storage.AtomicWritePerm(netfilterMangleRulesPath, []byte(mangle), 0644); err != nil {
+	if err := writeOrRemoveRulesFile(netfilterMangleRulesPath, mangle); err != nil {
 		return err
 	}
-	return storage.AtomicWritePerm(netfilterNatRulesPath, []byte(nat), 0644)
+	return writeOrRemoveRulesFile(netfilterNatRulesPath, nat)
+}
+
+func writeOrRemoveRulesFile(path, content string) error {
+	if content == "" {
+		_ = os.Remove(path)
+		return nil
+	}
+	return storage.AtomicWritePerm(path, []byte(content), 0644)
 }
 
 func writeNetfilterBlackholeRulesFile(input string) error {
@@ -945,10 +1419,57 @@ func removeNetfilterBlackholeRulesFile() {
 	_ = os.Remove(netfilterBlackholePath)
 }
 
+// writeNetfilterDNSHook пишет узкий хук awgm-режима: восстанавливает только
+// nat-блоб с DNS-RESCUE. Полный tproxy-хук здесь не годится — он скрабит и
+// восстанавливает джампы из блобов, которых в awgm-режиме нет, то есть на
+// каждом ndm-reload сносил бы работающий перехват и восстанавливал пустоту.
+func writeNetfilterDNSHook() error {
+	return storage.AtomicWritePerm(netfilterDNSHookPath, []byte(netfilterDNSHookScript()), 0755)
+}
+
+// netfilterDNSHookScript рендерит узкий хук. Pure (без I/O) — как и
+// netfilterHookScript, чтобы тест мог проверить шелл через `sh -n`.
+func netfilterDNSHookScript() string {
+	return fmt.Sprintf(`#!/bin/sh
+# awg-manager: восстановление DNS-RESCUE после перестройки firewall ndm.
+# Только nat: перехват живёт в таблице awgm, которую ndm не стирает.
+# Инверсия, как в полном хуке: при пустом $type в какой-нибудь прошивке
+# положительная проверка молча убила бы хук.
+[ "$type" = "ip6tables" ] && exit 0
+[ "$table" = "nat" ] || exit 0
+[ -f %[1]q ] || exit 0
+# Guard от дублей: событие nat может прийти и без фактического wipe, а
+# правила вставляются через -I PREROUTING 1.
+if /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null | grep -q %[2]s; then
+	exit 0
+fi
+/opt/sbin/iptables-restore --noflush < %[1]q
+exit 0
+`, netfilterNatRulesPath, DNSRescueTag)
+}
+
+func removeNetfilterDNSHook() {
+	_ = os.Remove(netfilterDNSHookPath)
+}
+
+// removeNetfilterHookFile сносит полный tproxy-хук. Нужен при переходе в
+// awgm-режим: этот хук скрабит наши джампы и восстанавливает из блобов,
+// которых в awgm-режиме больше нет.
+func removeNetfilterHookFile() {
+	_ = os.Remove(netfilterHookPath)
+}
+
 func writeNetfilterHook(includeBlackhole bool) error {
-	if err := storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript(includeBlackhole)), 0755); err != nil {
-		return err
-	}
+	return storage.AtomicWritePerm(netfilterHookPath, []byte(netfilterHookScript(includeBlackhole)), 0755)
+}
+
+// writeCtCleanScript кладёт скрипт вытеснения отравленных потоков. Отдельно от
+// writeNetfilterHook: в awgm-режиме полного хука нет, а вытеснение на Install
+// нужно всё равно — окно между стартом движка и установкой правил существует в
+// обоих режимах. Пока доставка ехала одним куском с хуком, свежая установка в
+// awgm-режиме скрипта не получала вовсе, а установка после legacy-режима
+// доставалась со старой версией скрипта на диске.
+func writeCtCleanScript() error {
 	return storage.AtomicWritePerm(netfilterCtCleanPath, []byte(ctCleanScript()), 0755)
 }
 
@@ -1086,6 +1607,10 @@ exit 0
 // offload shortcut dies with the entry. UDP only: killing established TCP
 // mid-stream breaks it hard, while new TCP connects self-heal on the next SYN.
 //
+// Дамп PREROUTING читается из той таблицы, где стоят наши правила: mangle в
+// обычном режиме, awgm в awgm-режиме. Штатный бинарь про таблицу awgm не знает,
+// поэтому второй заход делает бандл-бинарь.
+//
 // Scope self-adapts to the device mode by reading the live PREROUTING jump:
 //   - policy mode (connmark on the jump): one kernel-side `conntrack -D
 //     --mark <policy> --reply-dst <WAN IP>` per WAN IP — cost independent of
@@ -1111,11 +1636,28 @@ exit 0
 // Pure (no I/O) so a test can validate the generated shell with `sh -n`.
 func ctCleanScript() string {
 	return fmt.Sprintf(`#!/bin/sh
+# Дамп PREROUTING из той таблицы, где реально стоят НАШИ правила: и проверка
+# живого джампа, и марка читаются дальше только из него. В обычном режиме
+# правила лежат в mangle и их видит штатный iptables; в awgm-режиме — в таблице
+# awgm, про которую знает только бинарь из бандла.
+# Штатный пробуем первым — это основной путь на большинстве моделей.
+# Якорь на нашу цепочку обязателен: без него за свой сошёл бы любой непустой
+# дамп, включая правила ndm, и марка ниже бралась бы из чужого правила.
+AWGM_BIN=%[2]s
+# Единственная форма якоря на нашу цепочку: её спрашивают и выбор таблицы, и
+# гейт PPE ниже — два разных якоря на один вопрос разъехались бы. Голый
+# substring схватил бы более длинное имя (%[1]s-X) или комментарий с этой
+# подстрокой.
+has_our_jump() { printf '%%s\n' "$1" | grep -qE -- '-[jg] %[1]s($| )'; }
+prerouting="$(/opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null)"
+if ! has_our_jump "$prerouting" && [ -x "$AWGM_BIN" ]; then
+  prerouting="$("$AWGM_BIN" -w -t awgm -S PREROUTING 2>/dev/null)"
+fi
 # Hardware offload (MTK PPE) flush — issue #684. Runs before the conntrack work
 # and independently of it: the flows it heals carry no NAT, so no conntrack
 # lookup would find them. Only once the TPROXY jump is really back — flushing
 # while it is absent just re-teaches the same flows through the same hole.
-if /opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-[jg] %[1]s($| )' \
+if has_our_jump "$prerouting" \
   && [ -w /proc/sys/net/hwnat/ppe_flush ] && echo 1 > /proc/sys/net/hwnat/ppe_flush 2>/dev/null; then
   logger -t awgm-ctclean "flushed PPE offload table after TPROXY restore"
 fi
@@ -1127,7 +1669,7 @@ for dev in $(/opt/sbin/ip -4 route show default 2>/dev/null | sed -n 's/.* dev \
 done
 set -- $wan_ips
 [ $# -gt 0 ] || exit 0
-pmark="$(/opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null \
+pmark="$(printf '%%s\n' "$prerouting" \
   | sed -n 's/.*-m connmark --mark \(0x[0-9a-fA-F]*\).*-[jg] %[1]s.*/\1/p' | head -n 1)"
 [ -n "$pmark" ] && pmark="$(printf '%%d' "$pmark" 2>/dev/null)"
 n=0
@@ -1166,7 +1708,7 @@ else
 fi
 [ "$n" -gt 0 ] && logger -t awgm-ctclean "evicted $n direct-NAT UDP flow(s) after TPROXY restore"
 exit 0
-`, ChainName)
+`, ChainName, filepath.Join(awgmbackend.BundleDir, "sbin", "iptables"))
 }
 
 // removeNetfilterRulesFile deletes the persisted rules files so the
@@ -1183,6 +1725,12 @@ func removeNetfilterRulesFile() {
 // pidof guard on daemon startup. No-op when the file is absent —
 // Install creates it on first Enable.
 func refreshNetfilterHookIfPresent() {
+	// Узкий DNS-хук awgm-режима трогать нельзя: полный tproxy-скрипт его
+	// затрёт, и после первого же рестарта демона DNS-RESCUE перестанет
+	// восстанавливаться.
+	if _, err := os.Stat(netfilterDNSHookPath); err == nil {
+		return
+	}
 	if _, err := os.Stat(netfilterHookPath); err != nil {
 		return
 	}
@@ -1192,60 +1740,153 @@ func refreshNetfilterHookIfPresent() {
 	// (cleanupBlackhole), и Uninstall (RemoveBlackhole) на выходе из tproxy —
 	// без файла ветка no-op. Ближайший Install(DSCPOnly) перепишет хук без неё.
 	_ = writeNetfilterHook(true)
+	// Скрипт вытеснения раньше ехал одним куском с хуком и обновлялся вместе
+	// с ним. Доставка разъехалась, а повод обновления остался тем же: хук
+	// зовёт скрипт после каждого восстановления, и старая версия не должна
+	// досидеть до ближайшего Install.
+	_ = writeCtCleanScript()
 }
 
 func (it *IPTables) Uninstall(ctx context.Context) error {
 	if it.cleanupHook != nil {
 		it.cleanupHook()
 	}
+	// Узкий DNS-хук снимаем явно. Без блоба он и так no-op, но уцелевший
+	// файл заставил бы refreshNetfilterHookIfPresent навсегда пропускать
+	// обновление полного хука после возврата в обычный режим. В обычном
+	// режиме файла нет — вызов no-op.
+	removeNetfilterDNSHook()
 	// Also tear down the fail-closed blackhole if one lingers (engine died,
 	// blackhole engaged, then the user disabled the router): delete its rules
 	// file, scrub the jump, drop the chain.
 	it.RemoveBlackhole(ctx)
-	it.removeSourceHooks(ctx)
-	_ = it.runIPTables(ctx, "-t", "mangle", "-F", ChainName)
-	_ = it.runIPTables(ctx, "-t", "mangle", "-X", ChainName)
-	_ = it.runIPTables(ctx, "-t", "nat", "-F", RedirectChain)
-	_ = it.runIPTables(ctx, "-t", "nat", "-X", RedirectChain)
-	// Drain ALL fwmark rules — historically Install accumulated
-	// duplicates at priorities 0-N (auto-assigned), so a single `del`
-	// would leave the rest. Loop until ENOENT, capped defensively.
-	it.drainFwmarkRules(ctx)
-	_ = it.runIP(ctx, "route", "flush", "table", fmt.Sprintf("%d", RoutingTable))
+	it.removeSourceHooks(ctx, true)
+	it.dropInterceptionChains(ctx)
+	it.DrainPolicyRouting(ctx)
 	return nil
 }
 
-func (it *IPTables) removeSourceHooks(ctx context.Context) {
-	it.removeSourceHooksFromTable(ctx, "mangle", ChainName)
-	it.removeSourceHooksFromTable(ctx, "nat", RedirectChain)
+// UninstallForeignRules снимает правила ЧУЖОЙ раскладки — той, в которой этот
+// процесс не работает. «Чужая» задаётся раскладкой самого объекта, а не
+// бинарём: стек один, бандл-бинарь видит и legacy-таблицы, поэтому зовущий
+// (adoptAndClean) собирает scratch-фасад с раскладкой прежнего режима и все
+// команды здесь автоматически уходят в её таблицы. Не Uninstall: тот снимает
+// наше СОБСТВЕННОЕ хозяйство целиком, а здесь чужой только один слой — правила
+// в цепочках чужой раскладки. Остальное принадлежит живому каналу и трогать его
+// нельзя:
+//
+//   - DNS-RESCUE и узкий DNS-хук в awgm-режиме НАШИ. Правило обязано лежать в
+//     nat-таблице роутера, и туда его кладёт legacy-канал при активном awgm —
+//     это часть двухканального Install, а не мусор прошлой жизни. Снятое здесь,
+//     оно осталось бы снятым до первого успешного Install: упади подъём движка
+//     на RCI или на ожидании sing-box — и DNS-RESCUE пропал бы ровно в том
+//     состоянии «движок мёртв», ради которого он существует.
+//   - Файлы-воскрешатели (блобы netfilter.d, полный хук) переписывает ближайший
+//     Install: он первым же шагом сносит артефакты чужого режима сам.
+//   - Половина перехвата в policy-routing (`ip rule` + наша таблица) от канала
+//     не зависит вовсе: снос оставил бы работающий перехват живого канала
+//     слепым.
+func (it *IPTables) UninstallForeignRules(ctx context.Context) {
+	it.RemoveBlackhole(ctx)
+	it.removeSourceHooks(ctx, false)
+	it.dropInterceptionChains(ctx)
+}
+
+// dropInterceptionChains опустошает и удаляет цепочки перехвата СВОЕЙ
+// раскладки. Только своей: стек тут ОДИН — бандл-бинарь видит ровно те же
+// mangle/nat, что и штатный, — и флаш чужой раскладки «на всякий случай» снёс
+// бы живой перехват другого режима. Чужую раскладку чистит тот, у кого на
+// руках объект с ней, — см. UninstallForeignRules и adoptAndClean
+// (scratch-фасад).
+func (it *IPTables) dropInterceptionChains(ctx context.Context) {
+	run, layout := it.activeRunLayout()
+	for _, c := range interceptionChains(layout) {
+		_ = run(ctx, "-t", c.table, "-F", c.chain)
+		_ = run(ctx, "-t", c.table, "-X", c.chain)
+	}
+}
+
+// DrainPolicyRouting снимает половину перехвата, живущую в policy-routing:
+// правило `ip rule` по нашей метке и всю нашу таблицу маршрутов. От бэкенда
+// применения правил она не зависит — одна на оба режима, — поэтому вынесена из
+// снятия правил канала и зовётся отдельно там, где перехвата больше нет.
+//
+// Дренаж ВСЕХ правил метки, а не одного: Install исторически копил дубли на
+// автоприоритетах 0-N, и одиночный `del` оставил бы остальные. Цикл до ENOENT,
+// с защитным ограничением по числу проходов.
+func (it *IPTables) DrainPolicyRouting(ctx context.Context) {
+	it.drainFwmarkRules(ctx)
+	_ = it.runIP(ctx, "route", "flush", "table", fmt.Sprintf("%d", RoutingTable))
+}
+
+// removeSourceHooks снимает наши джампы из PREROUTING и наши comment-правила.
+// Джампы и правила блоба — только в таблицах СВОЕЙ раскладки: стек один, и
+// скраб mangle/nat awgm-каналом снёс бы живой legacy-перехват (см.
+// dropInterceptionChains). withDNSRescue гейтит ОДИН тег — DNS-RESCUE: оно
+// лежит в nat-таблице роутера, оставаясь при этом нашим текущим, и снятие
+// правил чужого канала обязано пройти мимо него (см. UninstallForeignRules).
+//
+// activeRun/activeRunOut/layout — ОДИН снимок (activeChannelLayout), не три
+// раздельных: конкурентный UseAwgm/UseLegacy между отдельными захватами
+// runnerMu мог бы спарить канал одного бэкенда с раскладкой другого — скраб
+// ушёл бы не тем бинарём или не в ту таблицу, и уцелевший джамп остался бы
+// невидим активному каналу (см. обязательство Task 7 по гонке Enable/Reconcile).
+func (it *IPTables) removeSourceHooks(ctx context.Context, withDNSRescue bool) {
+	activeRun, activeRunOut, layout := it.activeChannelLayout()
+	it.removeSourceHooksFromTable(ctx, activeRun, activeRunOut, udpChainTable(layout), ChainName)
+	it.removeSourceHooksFromTable(ctx, activeRun, activeRunOut, tcpChainTable(layout), RedirectChain)
+
+	// Канал скраба выбирается по принципу «чья таблица»: правило снимает тот
+	// бинарь, который его поставил, иначе снять его нечем. Наши правила в наших
+	// таблицах — активный канал; правила в таблицах firewall'а роутера —
+	// ВСЕГДА legacy, потому что и ставятся они туда legacy-каналом.
+	legacyRun, legacyRunOut := it.legacyChannel()
+
 	// DNS-RESCUE: direct PREROUTING REDIRECT rules in nat, tagged with
 	// `-m comment --comment AWGM-DNS-RESCUE`. Scrub before re-install
 	// so we don't accumulate duplicates and so port changes (e.g. NDMS
-	// reassigned ndnproxy:41100→41200) propagate cleanly.
-	it.removeCommentTaggedRulesFromTable(ctx, "nat", "PREROUTING", DNSRescueTag)
+	// reassigned ndnproxy:41100→41200) propagate cleanly. Лежат в nat-таблице
+	// роутера, куда их кладёт legacy-канал даже в awgm-режиме, — им же и
+	// снимаем.
+	if withDNSRescue {
+		removeCommentTaggedRules(ctx, legacyRun, legacyRunOut, "nat", "PREROUTING", DNSRescueTag)
+	}
 	// Legacy: DNS-NOPOLICY MARK rules in mangle from 2.10.x and
 	// earlier. Always scrub on Install for upgrade migration — the
 	// rules are dead code now, but if left in place they'd accumulate
-	// across upgrades.
-	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", DNSNoPolicyTag)
-	// Ingress-scope: direct MARK/CONNMARK rules in mangle PREROUTING,
-	// tagged AWGM-INGRESS. Scrub before re-install so the list stays
-	// idempotent and removed interfaces don't leave dangling marks.
-	it.removeCommentTaggedRulesFromTable(ctx, "mangle", "PREROUTING", IngressTag)
+	// across upgrades. Ставились они версиями, у которых awgm-режима не было
+	// вовсе, то есть лежат в legacy-mangle.
+	removeCommentTaggedRules(ctx, legacyRun, legacyRunOut, "mangle", "PREROUTING", DNSNoPolicyTag)
+	// Ingress и PPE эмитятся в блобе перехвата — таблица активной раскладки.
+	// Ingress-scope: direct MARK/CONNMARK rules in PREROUTING, tagged
+	// AWGM-INGRESS. Scrub before re-install so the list stays idempotent and
+	// removed interfaces don't leave dangling marks.
+	removeCommentTaggedRules(ctx, activeRun, activeRunOut, udpChainTable(layout), "PREROUTING", IngressTag)
+	// PPE (awgm-режим): не джамп в AWGM-цепочку, поэтому под шаблон
+	// removeSourceHooksFromTable не попадает — снимаем по comment-тегу, иначе
+	// restore --noflush добавлял бы ещё одно такое правило на каждый Install.
+	removeCommentTaggedRules(ctx, activeRun, activeRunOut, udpChainTable(layout), "PREROUTING", PPETag)
 }
 
-// removeCommentTaggedRulesFromTable scrubs every rule in `chain` whose
+// removeCommentTaggedRules scrubs every rule in `chain` whose
 // iptables-save output contains the given comment tag. Used for
 // DNS-NOPOLICY where rules are direct PREROUTING entries (not jumps
 // to a custom chain). The grep+sed pattern is the same approach as
 // XKeen's removal logic — robust to rule ordering and matcher changes
 // as long as the `-m comment --comment <tag>` survives serialisation.
-func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table, chain, tag string) {
-	result, err := sysexec.Run(ctx, sysiptables.Binary, "-w", "-t", table, "-S", chain)
-	if err != nil || result == nil {
+//
+// Канал передаётся вызывающим, а не берётся у активного бэкенда: часть наших
+// comment-правил живёт в таблицах firewall'а роутера, и спросить о них надо
+// legacy-бинарь независимо от того, чем сейчас применяются правила перехвата.
+func removeCommentTaggedRules(ctx context.Context, run runFn, runOut runOutFn, table, chain, tag string) {
+	if runOut == nil || run == nil {
 		return
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	out, err := runOut(ctx, "-t", table, "-S", chain)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, `--comment "`+tag+`"`) && !strings.Contains(line, `--comment `+tag) {
 			continue
 		}
@@ -1253,14 +1894,21 @@ func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table
 			continue
 		}
 		delLine := "-D " + strings.TrimPrefix(line, "-A ")
-		args := append([]string{"-w", "-t", table}, strings.Fields(delLine)...)
-		_, _ = sysexec.Run(ctx, sysiptables.Binary, args...)
+		args := append([]string{"-t", table}, strings.Fields(delLine)...)
+		_ = run(ctx, args...)
 	}
 }
 
-func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain string) {
-	result, err := sysexec.Run(ctx, sysiptables.Binary, "-w", "-t", table, "-S", "PREROUTING")
-	if err != nil || result == nil {
+// run/runOut приходят от вызывающего, а не берутся у активного бэкенда сами:
+// вызывающий обязан снять их ОДНИМ снимком вместе с раскладкой (см.
+// activeChannelLayout) — раздельный повторный запрос здесь развязал бы пару и
+// вернул тот же разъезд, ради которого снимок существует.
+func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, run runFn, runOut runOutFn, table, chain string) {
+	if runOut == nil || run == nil {
+		return
+	}
+	out, err := runOut(ctx, "-t", table, "-S", "PREROUTING")
+	if err != nil {
 		return
 	}
 	// Match both `-j chain` (old jump syntax pre-fastnat-fix) and
@@ -1268,7 +1916,7 @@ func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain
 	// stale jumps from previous versions before we re-append the new one.
 	jumpJ := "-j " + chain
 	gotoG := "-g " + chain
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, jumpJ) && !strings.Contains(line, gotoG) {
 			continue
 		}
@@ -1278,7 +1926,7 @@ func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain
 		}
 		deleteLine := strings.Replace(line, "-A PREROUTING", "-D PREROUTING", 1)
 		args := append([]string{"-t", table}, strings.Fields(deleteLine)...)
-		_ = it.runIPTables(ctx, args...)
+		_ = run(ctx, args...)
 	}
 }
 
@@ -1313,20 +1961,28 @@ func EnsureRouterNetfilterModules(ctx context.Context) []error {
 // in the kernel. Used for the disabled-cleanup path: even a partial install
 // (e.g. mangle chain present but nat chain missing after a failed upgrade)
 // must trigger Uninstall so no stale remnants survive.
+//
+// Опрос идёт в раскладке АКТИВНОГО бэкенда: цепочки лежат в разных таблицах, и
+// вопрос про mangle/nat в awgm-режиме не нашёл бы ничего никогда.
 func (it *IPTables) HasAnyInstalled(ctx context.Context) bool {
-	return it.runIPTables(ctx, "-t", "mangle", "-nL", ChainName) == nil ||
-		it.runIPTables(ctx, "-t", "nat", "-nL", RedirectChain) == nil
+	run, awgmLayout := it.activeRunLayout()
+	for _, c := range interceptionChains(awgmLayout) {
+		if run(ctx, "-t", c.table, "-nL", c.chain) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // IsInstalled returns true only when both AWGM chains exist. Used for the
 // enabled-reconcile path: if either chain is missing a full re-install is
-// needed to reach a known-good state.
+// needed to reach a known-good state. Раскладка — как у HasAnyInstalled.
 func (it *IPTables) IsInstalled(ctx context.Context) bool {
-	if it.runIPTables(ctx, "-t", "mangle", "-nL", ChainName) != nil {
-		return false
-	}
-	if it.runIPTables(ctx, "-t", "nat", "-nL", RedirectChain) != nil {
-		return false
+	run, awgmLayout := it.activeRunLayout()
+	for _, c := range interceptionChains(awgmLayout) {
+		if run(ctx, "-t", c.table, "-nL", c.chain) != nil {
+			return false
+		}
 	}
 	return true
 }
@@ -1347,24 +2003,30 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 // On a query error Probe returns (false, false, err); callers must treat that
 // as "unknown" (do NOT reinstall) rather than "broken".
 func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error) {
-	mChain, mJump, err := it.probeTable(ctx, "mangle", ChainName)
+	// Один снимок раннера и раскладки на весь Probe: смена бэкенда между двумя
+	// таблицами дала бы вердикт, собранный из двух разных раскладок.
+	runOut, awgmLayout := it.activeRunOutLayout()
+	udpTable := udpChainTable(awgmLayout)
+	udpDump, err := runOut(ctx, "-t", udpTable, "-S")
 	if err != nil {
 		return false, false, err
 	}
-	nChain, nJump, err := it.probeTable(ctx, "nat", RedirectChain)
-	if err != nil {
-		return false, false, err
+	// В awgm-раскладке обе цепочки живут в одной таблице — тот же дамп
+	// отвечает и про TCP, второй exec не нужен.
+	tcpDump := udpDump
+	if tcpTable := tcpChainTable(awgmLayout); tcpTable != udpTable {
+		if tcpDump, err = runOut(ctx, "-t", tcpTable, "-S"); err != nil {
+			return false, false, err
+		}
 	}
+	mChain, mJump := scanChainDump(udpDump, ChainName)
+	nChain, nJump := scanChainDump(tcpDump, RedirectChain)
 	installed = mChain && nChain
 	jumps = installed && mJump && nJump
 	return installed, jumps, nil
 }
 
-func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainExists, jumpExists bool, err error) {
-	out, err := it.runIPTablesOut(ctx, "-t", table, "-S")
-	if err != nil {
-		return false, false, err
-	}
+func scanChainDump(out, chain string) (chainExists, jumpExists bool) {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "-N "+chain {
@@ -1374,7 +2036,7 @@ func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainE
 			jumpExists = true
 		}
 	}
-	return chainExists, jumpExists, nil
+	return chainExists, jumpExists
 }
 
 // jumpToken reports whether line jumps to chain via `-j chain` or `-g chain`

@@ -17,7 +17,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/awgmbackend"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 )
 
 type Service interface {
@@ -27,6 +29,11 @@ type Service interface {
 	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
 	// fakeip-tun) with directional fail-closed rollback and progress events.
 	SwitchRoutingMode(ctx context.Context, target string) error
+	// SwitchBackend меняет бэкенд применения правил (штатный iptables ↔
+	// iptables-awgm): снимает правила прежним каналом, перевыбирает бэкенд и
+	// поднимает правила заново. Единственный законный путь смены режима на
+	// живом процессе.
+	SwitchBackend(ctx context.Context, awgm bool) error
 	GetStatus(ctx context.Context) (Status, error)
 	GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error)
 	UpdateSettings(ctx context.Context, s storage.SingboxRouterSettings) error
@@ -277,7 +284,13 @@ type Deps struct {
 	Policies      AccessPolicyProvider
 	Events        *events.Bus
 	IPTables      *IPTables
-	AWGTags       AWGTagCatalog // optional — when nil, computeIssues only sees cfg.Outbounds
+	// Awgm — бэкенд применения правил через iptables-awgm. Отдельный от
+	// IPTables объект: тот остаётся фасадом команд, а этот отвечает за
+	// доступность бандла и подъём модулей. Optional — nil заменяется
+	// production-бэкендом в NewService; недоступный бэкенд не мешает
+	// движку работать на legacy.
+	Awgm    awgmLoader
+	AWGTags AWGTagCatalog // optional — when nil, computeIssues only sees cfg.Outbounds
 	// AWGOutboundsRefresh перегенерирует 15-awg.json (awgoutbounds.Reconcile).
 	// Optional. Зовётся перед валидирующим reload'ом enable fakeip-tun, чтобы
 	// протухший каталог AWG-тегов не валил enable «unknown-outbound» (#567).
@@ -425,13 +438,41 @@ type ServiceImpl struct {
 	// transitionReadinessProgress emits readiness heartbeats during
 	// waitForSingbox while SwitchRoutingMode is in flight (nil otherwise).
 	transitionReadinessProgress func(message string)
-	currentMark                 string              // last-installed iptables mark; used by Reconcile to detect change
-	currentWANIPs               []string            // last-collected WAN IPs; used by Reconcile to detect change
-	currentLANBridges           []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
-	currentBypassPresets        []string
-	currentBypassExtraPorts     string
-	currentBypassExtraSubnets   string
-	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+	// backend — последнее решение SelectBackend (запрошенный и фактический
+	// бэкенд применения правил). Свой мьютекс, а не mu: статус читает решение,
+	// не удерживая замок жизненного цикла.
+	// backendSwitchMu сериализует АКТ переключения бэкенда целиком (решение,
+	// команды IPTables, probe, состояние). backendMu защищает только поля и
+	// берётся внутри него; обратного порядка нет нигде.
+	backendSwitchMu sync.Mutex
+	backendMu       sync.Mutex
+	backend         BackendState
+	// backendChosen — выбор бэкенда уже сделан в этом процессе. Цикл сверки
+	// использует его как «один раз за жизнь процесса»: перевыбор между
+	// тиками сменил бы режим без снятия правил прежнего канала.
+	backendChosen bool
+	// awgmRuleInstallErr — активный awgm-канал не смог применить блоб правил.
+	// Под backendMu. Ставит installRules, снимает решение об откате: отличить
+	// этот отказ от отказа настроек, политики или движка по тексту ошибки
+	// нечем, а откатывать бэкенд надо именно на нём.
+	awgmRuleInstallErr error
+	// adoptOnce — снятие правил ПРЕДЫДУЩЕГО запуска демона, ровно один раз за
+	// процесс (см. adoptAndClean). Повторять на каждом подъёме движка нельзя:
+	// дальше в ядре уже наши собственные правила, и снос сделал бы дыру в
+	// перехвате на всё время подъёма.
+	adoptOnce sync.Once
+	// listeningProbe — readiness-probe активного бэкенда. Пусто = legacy:
+	// читатель идёт в singboxListeningProbe. Под backendMu, а НЕ под mu:
+	// probe читается из-под mu (enableLocked → waitForSingbox), и второй
+	// захват того же замка был бы дедлоком.
+	listeningProbe            func() bool
+	currentMark               string              // last-installed iptables mark; used by Reconcile to detect change
+	currentWANIPs             []string            // last-collected WAN IPs; used by Reconcile to detect change
+	currentLANBridges         []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
+	currentBypassPresets      []string
+	currentBypassExtraPorts   string
+	currentBypassExtraSubnets string
+	currentIngress            []string // last-installed резолвленные ingress kernel-имена
 
 	// netfilterStateKnown tracks whether we know for certain that the
 	// installed iptables rules match the current desired state. It starts
@@ -499,6 +540,13 @@ type ServiceImpl struct {
 func NewService(d Deps) *ServiceImpl {
 	if d.IPTables == nil {
 		d.IPTables = NewIPTables()
+	}
+	if d.Awgm == nil {
+		// DetectModel читает кешированную информацию NDMS и передаётся
+		// РЕЗОЛВЕРОМ, а не значением: на старте демона кеш бывает ещё пуст, и
+		// захваченная пустая строка держала бы бэкенд недоступным до
+		// перезапуска демона. Ленивый вызов внутри Available() лечит это сам.
+		d.Awgm = awgmbackend.New(awgmbackend.BundleDir, kmod.DetectModel)
 	}
 	appLog := logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter)
 	if d.WANIPCollector == nil {

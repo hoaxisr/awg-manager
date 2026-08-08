@@ -78,4 +78,9 @@ var (
 	// slot, so such a user rule could never match — it would only sit in the
 	// UI as an inert, confusing shadow rule. Mapped to 400 by the API.
 	ErrReservedInboundTag = errors.New("теги qos-* зарезервированы для QoS-классов")
+
+	// ErrAwgmBackendUnavailable отклоняет включение awgm-режима там, где его
+	// нечем включать: бандл не установлен, собран под другую модель или
+	// неполон. Переход обязан отклоняться ДО снятия правил. Mapped to 400.
+	ErrAwgmBackendUnavailable = errors.New("бэкенд awgm недоступен")
 )

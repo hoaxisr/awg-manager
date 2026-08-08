@@ -69,6 +69,24 @@ type Status struct {
 	// приостановлен анти-crash-loop backoff'ом; пусто, когда не подавлен.
 	// Ручной «Перезапустить» не подавляется и сбрасывает паузу.
 	RestartSuppressedUntil string `json:"restartSuppressedUntil,omitempty"`
+	// AwgmBackendRequested / AwgmBackendEffective — запрошенный и фактический
+	// бэкенд применения правил ("legacy" | "awgm"). Различие обязано быть видно
+	// в UI: пользователь включил галку и вправе считать, что она подействовала,
+	// а awgm-режим может не подняться (нет бандла, не встали модули, нет
+	// таргета PPE). AwgmBackendReason объясняет расхождение и пуст, когда режимы
+	// совпали.
+	AwgmBackendRequested string `json:"awgmBackendRequested"`
+	AwgmBackendEffective string `json:"awgmBackendEffective"`
+	AwgmBackendReason    string `json:"awgmBackendReason,omitempty"`
+	// AwgmBackendAvailable — можно ли вообще включить awgm-режим на этом роутере:
+	// бандл установлен, собран под эту модель и полон. IPK общий на архитектуру,
+	// поэтому на большинстве моделей ответ отрицательный. UI обязан знать это
+	// ЗАРАНЕЕ и держать переключатель выключенным: иначе пользователь узнаёт о
+	// недоступности только после попытки включения.
+	// AwgmBackendUnavailableReason — та же причина, что и у отказа переключения,
+	// пригодная для показа рядом с переключателем; пусто, когда режим доступен.
+	AwgmBackendAvailable         bool   `json:"awgmBackendAvailable"`
+	AwgmBackendUnavailableReason string `json:"awgmBackendUnavailableReason,omitempty"`
 }
 
 type Issue struct {

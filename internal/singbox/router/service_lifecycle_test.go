@@ -13,7 +13,7 @@ import (
 // primary IP интерфейса (96a61c77).
 func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 	t.Run("creates canonical listens", func(t *testing.T) {
-		out := ensureTProxyInbound(nil, "")
+		out := ensureTProxyInbound(nil, "", false)
 		for _, in := range out {
 			switch in.Tag {
 			case "tproxy-in":
@@ -37,7 +37,7 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 		svc, dir := newOrchedTestService(t)
 
 		cfg := NewEmptyConfig()
-		cfg.Inbounds = ensureTProxyInbound(nil, "")
+		cfg.Inbounds = ensureTProxyInbound(nil, "", false)
 		for i := range cfg.Inbounds {
 			if cfg.Inbounds[i].Tag == "tproxy-in" {
 				cfg.Inbounds[i].Listen = "0.0.0.0" // как писали версии до фикса
@@ -70,7 +70,7 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 		out := ensureTProxyInbound([]Inbound{
 			{Type: "tproxy", Tag: "tproxy-in", Listen: "0.0.0.0", ListenPort: TPROXYPort, Network: "udp"},
 			{Type: "redirect", Tag: "redirect-in", Listen: "127.0.0.1", ListenPort: RedirectPort},
-		}, "")
+		}, "", false)
 		for _, in := range out {
 			switch in.Tag {
 			case "tproxy-in":
@@ -84,4 +84,116 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 			}
 		}
 	})
+}
+
+// В awgm-режиме TCP-перехват уходит на tproxy-порт (терминальный -j TPROXY в
+// mangle), поэтому TCP обязан приниматься тем же inbound'ом. В sing-box
+// отсутствующее поле network означает «tcp+udp», так что dual-network — это
+// Network: "".
+func TestAwgmModeEmitsSingleDualNetworkTproxyInbound(t *testing.T) {
+	out := ensureTProxyInbound(nil, "5m", true)
+
+	var tproxy, redirect int
+	for _, in := range out {
+		switch in.Type {
+		case "tproxy":
+			tproxy++
+			if in.Network != "" {
+				t.Fatalf("в awgm-режиме tproxy обслуживает оба протокола: network должен быть пуст, получили %q", in.Network)
+			}
+			if !in.TCPFastOpen {
+				t.Error("inbound принимает TCP — tcp_fast_open должен быть включён")
+			}
+		case "redirect":
+			redirect++
+		}
+	}
+	if tproxy != 1 {
+		t.Fatalf("ожидали один tproxy-inbound, получили %d", tproxy)
+	}
+	if redirect != 0 {
+		t.Fatalf("redirect-inbound в awgm-режиме не нужен, получили %d", redirect)
+	}
+}
+
+func TestAwgmModeNormalizesLegacyConfig(t *testing.T) {
+	// Конфиг, переживший legacy-эпоху: tproxy-in с network=udp и живой
+	// redirect-in. В awgm-режиме первый обязан стать dual-network, второй —
+	// исчезнуть. Иначе TCP-перехват уедет в несуществующий inbound.
+	in := []Inbound{
+		{Type: "tproxy", Tag: "tproxy-in", Network: "udp", ListenPort: TPROXYPort},
+		{Type: "redirect", Tag: "redirect-in", ListenPort: RedirectPort},
+	}
+	out := ensureTProxyInbound(in, "5m", true)
+
+	seenTProxy := false
+	for _, e := range out {
+		if e.Tag == "redirect-in" {
+			t.Fatal("redirect-in обязан быть удалён в awgm-режиме")
+		}
+		if e.Tag == "tproxy-in" {
+			seenTProxy = true
+			if e.Network != "" {
+				t.Fatalf("tproxy-in обязан стать dual-network, получили %q", e.Network)
+			}
+			if !e.TCPFastOpen {
+				t.Error("tproxy-in принимает TCP — tcp_fast_open должен быть включён")
+			}
+		}
+	}
+	if !seenTProxy {
+		t.Fatal("tproxy-in пропал из конфига")
+	}
+}
+
+func TestLegacyModeKeepsSplit(t *testing.T) {
+	out := ensureTProxyInbound(nil, "5m", false)
+
+	var tproxy, redirect int
+	for _, in := range out {
+		switch in.Type {
+		case "tproxy":
+			tproxy++
+			if in.Network != "udp" {
+				t.Fatalf("legacy-режим: tproxy только для UDP, получили %q", in.Network)
+			}
+			if in.TCPFastOpen {
+				t.Error("legacy-режим: tcp_fast_open бессмыслен на UDP-only inbound")
+			}
+		case "redirect":
+			redirect++
+		}
+	}
+	if tproxy != 1 || redirect != 1 {
+		t.Fatalf("legacy обязан сохранить сплит, получили tproxy=%d redirect=%d", tproxy, redirect)
+	}
+}
+
+// Обратный переход: конфиг, побывавший в awgm-режиме (dual-network tproxy-in,
+// redirect-in отсутствует), при возврате в legacy обязан снова разъехаться на
+// пару — иначе TCP пойдёт через REDIRECT в inbound, которого нет.
+func TestLegacyModeRestoresSplitFromAwgmConfig(t *testing.T) {
+	in := []Inbound{
+		{Type: "tproxy", Tag: "tproxy-in", ListenPort: TPROXYPort, TCPFastOpen: true},
+	}
+	out := ensureTProxyInbound(in, "5m", false)
+
+	var tproxy, redirect int
+	for _, e := range out {
+		switch e.Tag {
+		case "tproxy-in":
+			tproxy++
+			if e.Network != "udp" {
+				t.Errorf("tproxy-in обязан вернуться к UDP-only, получили %q", e.Network)
+			}
+			if e.TCPFastOpen {
+				t.Error("tcp_fast_open обязан быть снят с UDP-only inbound")
+			}
+		case "redirect-in":
+			redirect++
+		}
+	}
+	if tproxy != 1 || redirect != 1 {
+		t.Fatalf("ожидали восстановленный сплит, получили tproxy=%d redirect=%d", tproxy, redirect)
+	}
 }

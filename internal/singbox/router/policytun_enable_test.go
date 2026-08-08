@@ -553,7 +553,15 @@ func TestPolicyTunEnable_IngressWithoutDNAT(t *testing.T) {
 	if n := rec.ipCalls("route", "add", "default", "dev", "opkgtun0", "table", fakeIPIngressTableStr()); n != 1 {
 		t.Errorf("default в tun не поставлен: %v", rec.ip)
 	}
-	if len(rec.ipt) != 0 {
-		t.Errorf("netfilter в policy-tun не трогается: %v", rec.ipt)
+	// Перехвата policy-tun не ставит. Единственный netfilter здесь — разовое
+	// снятие правил ПРОШЛОГО запуска на старте движка (adoptAndClean): чужие
+	// tproxy-цепочки, пережившие краш, в этом режиме заворачивали бы трафик в
+	// несуществующий инбаунд.
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if !strings.Contains(joined, " -F ") && !strings.Contains(joined, " -X ") {
+			t.Errorf("policy-tun ставит netfilter-правила: %v", rec.ipt)
+			break
+		}
 	}
 }

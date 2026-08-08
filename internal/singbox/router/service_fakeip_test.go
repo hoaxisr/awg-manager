@@ -1560,6 +1560,10 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h.svc.deps.IPTables = &IPTables{
 		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
 		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
+		// Подъём движка снимает правила прошлого запуска (adoptAndClean), а
+		// Uninstall дренирует ip rule — без сида это nil-вызов. Ошибка, а не
+		// nil: цикл дренажа крутится, пока команда не отказала.
+		runIP: func(context.Context, ...string) error { return errors.New("no ip") },
 	}
 
 	// First Reconcile: Enabled=false initially → nothing. We must first Enable so

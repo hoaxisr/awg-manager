@@ -19,12 +19,18 @@ type ingressRecorder struct {
 }
 
 func (r *ingressRecorder) tables() *IPTables {
+	run := func(_ context.Context, args ...string) error {
+		r.ipt = append(r.ipt, args)
+		return nil
+	}
+	runOut := func(_ context.Context, _ ...string) (string, error) { return r.natDump, nil }
 	return &IPTables{
-		runIPTables: func(_ context.Context, args ...string) error {
-			r.ipt = append(r.ipt, args)
-			return nil
-		},
-		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return r.natDump, nil },
+		runIPTables:    run,
+		runIPTablesOut: runOut,
+		// Заворот fakeip работает legacy-сидами (таблица nat принадлежит ndm),
+		// поэтому без них ingressSeamsWired отсекает путь целиком.
+		legacyRun:    run,
+		legacyRunOut: runOut,
 		runIP: func(_ context.Context, args ...string) error {
 			r.ip = append(r.ip, args)
 			return r.ipErr

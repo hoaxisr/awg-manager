@@ -52,6 +52,35 @@ func TestLocalPortInState_WrongPort(t *testing.T) {
 	}
 }
 
+func TestAwgmProbeIgnoresRedirectPort(t *testing.T) {
+	// В awgm-режиме redirect-inbound не создаётся: TCP и UDP приходят на один
+	// tproxy-порт. Если probe продолжит требовать LISTEN на RedirectPort,
+	// движок никогда не станет готовым и правила не установятся вовсе.
+	// Формат строк — как парсит localPortInState: адрес:порт в hex, затем
+	// состояние. TPROXYPort = 51271 = 0xC847.
+	tcp := "  sl  local_address rem_address   st\n" +
+		"   0: 0100007F:C847 00000000:0000 0A\n"
+	udp := "  sl  local_address rem_address   st\n" +
+		"   0: 0100007F:C847 00000000:0000 07\n"
+
+	if !interceptingFromProcAwgm(tcp, udp) {
+		t.Fatal("tproxy-порт слушается по TCP и UDP — probe обязан быть истинным")
+	}
+
+	// RedirectPort = 51272 = 0xC848 — в awgm-режиме к готовности отношения не имеет.
+	tcpOnlyRedirect := "  sl  local_address rem_address   st\n" +
+		"   0: 0100007F:C848 00000000:0000 0A\n"
+	if interceptingFromProcAwgm(tcpOnlyRedirect, udp) {
+		t.Fatal("LISTEN на RedirectPort в awgm-режиме не считается готовностью")
+	}
+
+	// Одного TCP LISTEN мало: dual-network inbound обязан держать и UDP-сокет,
+	// иначе UDP-ветка TPROXY отдавала бы пакеты в никуда.
+	if interceptingFromProcAwgm(tcp, "") {
+		t.Fatal("без bound UDP-сокета на tproxy-порту готовности нет")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // fakeip-tun readiness probes
 // ---------------------------------------------------------------------------
