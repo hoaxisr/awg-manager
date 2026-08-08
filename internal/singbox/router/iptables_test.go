@@ -3141,6 +3141,52 @@ func TestUninstallRemovesDNSHook(t *testing.T) {
 	}
 }
 
+// Кросс-рестартная дыра: awgm был активен (узкий хук на диске), демон
+// рестартует и SelectBackend демотирует на legacy (например, обновилась
+// прошивка и пробный канал бандла отвалился). Без явного снятия узкий хук
+// продолжил бы жить рядом с полным legacy-хуком: в режиме MatchAll его guard
+// не срабатывает никогда, и на каждом nat-событии он повторно скармливает
+// legacy nat-блоб через --noflush — правила AWGM-REDIRECT и джамп копятся
+// между стираниями таблиц.
+func TestLegacyInstallRemovesStaleDNSHook(t *testing.T) {
+	tmp := t.TempDir()
+	origRules, origMangle, origNat := netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath
+	origHook, origDNS, origCt := netfilterHookPath, netfilterDNSHookPath, netfilterCtCleanPath
+	netfilterRulesPath = filepath.Join(tmp, "router-netfilter.rules")
+	netfilterMangleRulesPath = filepath.Join(tmp, "router-netfilter-mangle.rules")
+	netfilterNatRulesPath = filepath.Join(tmp, "router-netfilter-nat.rules")
+	netfilterHookPath = filepath.Join(tmp, "50-awgm-tproxy.sh")
+	netfilterDNSHookPath = filepath.Join(tmp, "51-awgm-dnsrescue.sh")
+	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
+	t.Cleanup(func() {
+		netfilterRulesPath, netfilterMangleRulesPath, netfilterNatRulesPath = origRules, origMangle, origNat
+		netfilterHookPath, netfilterDNSHookPath, netfilterCtCleanPath = origHook, origDNS, origCt
+	})
+	// Узкий хук — наследство прошлой awgm-жизни этого же демона.
+	if err := writeNetfilterDNSHook(); err != nil {
+		t.Fatal(err)
+	}
+
+	it := NewIPTables()
+	it.restoreNoflush = func(context.Context, string) error { return nil }
+	it.legacyRestoreNoflush = func(context.Context, string) error { return nil }
+	it.runIPTables = func(context.Context, ...string) error { return nil }
+	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
+	it.runIP = func(context.Context, ...string) error { return nil }
+	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
+	it.runCtClean = func(context.Context) {}
+	it.awgmLayout = false // канал уже демотирован на legacy
+
+	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: false}
+	if err := it.Install(context.Background(), spec); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if _, err := os.Stat(netfilterDNSHookPath); err == nil {
+		t.Fatal("legacy Install обязан снести узкий DNS-хук прежнего awgm-режима")
+	}
+}
+
 // ipRuleDumpLine рисует строку `ip rule show` так, как её печатает iproute2:
 // приоритет с двоеточием, TAB, селектор, «lookup» вместо «table».
 func ipRuleDumpLine(table string) string {

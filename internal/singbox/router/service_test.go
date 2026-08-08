@@ -2540,6 +2540,61 @@ func TestReconcileDisableAlsoSweepsAwgmLeftovers(t *testing.T) {
 	}
 }
 
+// Тот же выключенный движок, что и в TestReconcileDisabledSweepsAwgmLeftovers,
+// но проверяет вторую половину той же дыры: узкий DNS-хук и его nat-блоб —
+// наследство awgm-сессии, оборвавшейся крахом демона. UninstallForeignRules
+// сознательно их не трогает (DNS-RESCUE по контракту принадлежит живому
+// каналу), а живого канала при выключенном движке нет — снять их больше
+// некому. Без явного снятия хук вечно восстанавливал бы DNS-RESCUE с
+// вмороженным в файл портом ndnproxy на каждом nat-событии ndm.
+func TestReconcileDisabledSweepsStaleDNSHook(t *testing.T) {
+	tmp := t.TempDir()
+	origDNS, origNat := netfilterDNSHookPath, netfilterNatRulesPath
+	netfilterDNSHookPath = filepath.Join(tmp, "51-awgm-dnsrescue.sh")
+	netfilterNatRulesPath = filepath.Join(tmp, "router-netfilter-nat.rules")
+	t.Cleanup(func() { netfilterDNSHookPath, netfilterNatRulesPath = origDNS, origNat })
+	if err := writeNetfilterDNSHook(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(netfilterNatRulesPath, []byte("*nat\nCOMMIT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		RoutingMode:   "tproxy",
+		DeviceMode:    "all",
+		WANAutoDetect: true,
+		// Enabled: false — движок выключен.
+	})
+	// legacy-канал чист: цепочек нет, значит installedAny=false и ветка
+	// Disable не сработает — ровно тот путь, где своего Uninstall не было.
+	it := newStubIPTables(func(context.Context, string) error { return nil })
+	absent := func(_ context.Context, args ...string) error {
+		if slices.Contains(args, "-nL") {
+			return errors.New("No chain/target/match by that name")
+		}
+		return nil
+	}
+	it.runIPTables, it.legacyRun = absent, absent
+
+	svc := newTestService(t, Deps{
+		Settings: settingsStore,
+		IPTables: it,
+		Awgm:     stubBackend{available: true},
+	})
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if _, err := os.Stat(netfilterDNSHookPath); err == nil {
+		t.Fatal("узкий DNS-хук при выключенном движке снимать больше некому")
+	}
+	if _, err := os.Stat(netfilterNatRulesPath); err == nil {
+		t.Fatal("nat-блоб DNS-RESCUE при выключенном движке снимать больше некому")
+	}
+}
+
 // newIPRuleReconcileService собирает установившийся reconcile: метка и WAN-IP
 // совпадают с сохранёнными, джампы на месте — переустановка не нужна, и
 // восстановить policy-routing на таком тике может только проверка. (Adopt

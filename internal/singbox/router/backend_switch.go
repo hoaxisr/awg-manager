@@ -348,9 +348,9 @@ func (s *ServiceImpl) awgmRunFn() runFn {
 // cleanupBackendArtifacts убирает следы режима, из которого уходим. Uninstall
 // снял правила, а это — файлы, которые их воскрешают.
 //
-// Таблицы ip mangle / ip nat не трогаем: имена стандартные, и ими может
-// пользоваться другой пакет с iptables-nft. Наше — только свои цепочки и
-// джампы, их снял Uninstall.
+// Таблицы ip mangle / ip nat не трогаем: это общие системные таблицы, их
+// содержимым также управляют firewall ndm и сторонний софт (другие Entware-
+// пакеты на iptables). Наше — только свои цепочки и джампы, их снял Uninstall.
 func (s *ServiceImpl) cleanupBackendArtifacts(from BackendMode) {
 	switch from {
 	case BackendLegacy:

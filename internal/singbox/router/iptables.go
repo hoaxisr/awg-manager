@@ -1329,6 +1329,14 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 			}
 		}
 	} else {
+		// Симметрично awgm-ветке (removeNetfilterHookFile выше): снести узкий
+		// DNS-хук awgm-режима ДО записи своих файлов. Без этого сноса демоция
+		// на рестарте демона (awgm был активен, SelectBackend откатил на legacy)
+		// оставляет узкий хук жить рядом с полным: в режиме MatchAll его guard
+		// не срабатывает никогда, и он на каждом nat-событии повторно скармливает
+		// legacy nat-блоб через --noflush — правила AWGM-REDIRECT и джамп
+		// копятся между стираниями таблиц.
+		removeNetfilterDNSHook()
 		if it.persistRules != nil {
 			if err := it.persistRules(input, intercept, nat); err != nil {
 				return fmt.Errorf("write netfilter rules: %w", err)
@@ -1374,7 +1382,7 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 		if err := restore(ctx, intercept); err != nil {
 			return fmt.Errorf("iptables-awgm-restore: %w", ruleChannelError{err})
 		}
-		if strings.Contains(nat, DNSRescueTag) {
+		if strings.Contains(nat, DNSRescueTag) && it.legacyRestoreNoflush != nil {
 			if err := it.legacyRestoreNoflush(ctx, nat); err != nil {
 				return fmt.Errorf("iptables-restore dns-rescue: %w", err)
 			}
@@ -1815,8 +1823,10 @@ func (it *IPTables) Uninstall(ctx context.Context) error {
 //     оно осталось бы снятым до первого успешного Install: упади подъём движка
 //     на RCI или на ожидании sing-box — и DNS-RESCUE пропал бы ровно в том
 //     состоянии «движок мёртв», ради которого он существует.
-//   - Файлы-воскрешатели (блобы netfilter.d, полный хук) переписывает ближайший
-//     Install: он первым же шагом сносит артефакты чужого режима сам.
+//   - Файлы-воскрешатели (блобы netfilter.d, полный хук, узкий DNS-хук)
+//     переписывает ближайший Install: он первым же шагом сносит артефакты
+//     чужого режима сам — в обе стороны (removeNetfilterHookFile при переходе
+//     в awgm, removeNetfilterDNSHook при переходе в legacy).
 //   - Половина перехвата в policy-routing (`ip rule` + наша таблица) от канала
 //     не зависит вовсе: снос оставил бы работающий перехват живого канала
 //     слепым.

@@ -1656,6 +1656,18 @@ func (s *ServiceImpl) reconcileLocked(ctx context.Context) error {
 		// таблицу больше нечему), но persistent. Идемпотентно: на чистой
 		// системе это два отказавших вызова `ip`.
 		s.deps.IPTables.DrainPolicyRouting(ctx)
+		// Узкий DNS-хук и его nat-блоб — та же по духу дыра, что и
+		// policy-routing выше, но своей веткой: UninstallForeignRules сознательно
+		// их не трогает (см. её докстринг) — по контракту DNS-RESCUE принадлежит
+		// живому каналу, а adopt выше снимает только ЧУЖОЙ канал. При выключенном
+		// движке живого канала нет вовсе: демон мог упасть в awgm-режиме и
+		// подняться с уже снятой галкой, и снять их больше некому — Install их
+		// не пишет (движок никто не поднимает), а следующего Reconcile может не
+		// быть до первого Enable. Без явного снятия узкий хук вечно восстанавливал
+		// бы DNS-RESCUE с вмороженным в файл портом ndnproxy на каждом
+		// nat-событии. Идемпотентно: оба вызова — снятие уже отсутствующих файлов.
+		removeNetfilterDNSHook()
+		_ = writeOrRemoveRulesFile(netfilterNatRulesPath, "")
 	case sr.Enabled && installedComplete:
 		return s.reconcileInstalled(ctx, sr)
 	}
