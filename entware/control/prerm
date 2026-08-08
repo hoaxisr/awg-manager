@@ -28,6 +28,27 @@ if [ -x /opt/bin/awg-manager ]; then
     /opt/bin/awg-manager --cleanup 2>&1 || true
 fi
 
+# Правила awgm-режима переживают удаление пакета: ndm таблицу awgm не трогает,
+# а TPROXY в мёртвый сокет молча дропает пакеты до перезагрузки роутера.
+# Идёт ПОСЛЕ остановки демона: живой демон вернул бы правила на ближайшей
+# сверке. Таблица awgm наша эксклюзивно — флашим её целиком, чужих правил в
+# ней быть не может (этим блок и проще nft-предшественника: ни поимённого
+# скраба джампов, ни удаления PPE по номерам).
+AWGM=/opt/lib/awg-manager/awgm
+if [ -x "$AWGM/sbin/iptables" ]; then
+    echo "Removing awgm interception rules..."
+    I="$AWGM/sbin/iptables"
+    $I -t awgm -F 2>/dev/null
+    for c in AWGM-TPROXY AWGM-REDIRECT AWGM-BLACKHOLE; do
+        $I -t awgm -X "$c" 2>/dev/null
+    done
+    # Модули выгружаем best-effort: занятые (гонка с чем-то) останутся до
+    # ребута с пустой таблицей — это policy ACCEPT, вреда нет.
+    for m in xt_AWGMPPE xt_AWGMTPROXY iptable_awgm; do
+        rmmod "$m" 2>/dev/null || true
+    done
+fi
+
 echo ""
 echo "=============================================="
 echo "  awg-manager has been removed."
