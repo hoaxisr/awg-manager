@@ -188,6 +188,21 @@ build_ipk_one() {
 
     echo "Total awg_proxy modules bundled: $AWG_PROXY_COUNT"
 
+    # awgm bundle (own xtables table: 3 kernel modules + static iptables).
+    # Built for a single model, so aarch64 only: mipsel/mips деревья не
+    # проверены вовсе, туда бандл не кладём принципиально.
+    local AWGM_MODEL="KN-1812"
+    if [[ "$ENTWARE_ARCH" == aarch64-* ]]; then
+        local AWGM_SRC="$PROJECT_ROOT/prebuilt/awgm/$AWGM_MODEL"
+        if [[ -d "$AWGM_SRC" ]]; then
+            mkdir -p "$IPK_ROOT/opt/lib/awg-manager"
+            cp -a "$AWGM_SRC" "$IPK_ROOT/opt/lib/awg-manager/awgm"
+            echo "Bundled awgm backend for $AWGM_MODEL ($(du -sh "$AWGM_SRC" | cut -f1))"
+        else
+            echo "WARNING: $AWGM_SRC not found, IPK will have no awgm bundle"
+        fi
+    fi
+
     cp entware/files/etc/init.d/* "$IPK_ROOT/opt/etc/init.d/"
 
     for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
