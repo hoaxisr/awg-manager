@@ -1,0 +1,101 @@
+From: Keenetic SDK Builder <developers@keenetic.com>
+Subject: [PATCH] fix: never call cond_resched() while the SIMD context is held
+
+The encrypt/decrypt workers take the SIMD context once and keep it for the
+whole queue drain, then call cond_resched() inside that region. On arm64
+that means the worker can go to sleep with kernel_neon_busy still set on
+its CPU.
+
+The region looks safe because kernel_neon_begin() ends with
+preempt_disable(), and simd_relax() is supposed to release NEON before a
+reschedule. Neither holds on a 4.9-ndm target:
+
+  - CONFIG_PREEMPT_COUNT is not set, so preempt_disable() compiles to a
+    bare barrier() (include/linux/preempt.h). The task is fully
+    schedulable inside the NEON region.
+  - simd_relax() is wrapped in #ifdef CONFIG_PREEMPT (compat/simd), and
+    the kernel is CONFIG_PREEMPT_NONE, so it compiles to nothing.
+  - cond_resched(), on the other hand, *is* compiled (it is built for
+    !CONFIG_PREEMPT) and should_resched(0) is true, because preempt_count()
+    really is 0 here. It schedules.
+
+Once the worker sleeps with kernel_neon_busy set, the next user of NEON on
+that CPU dies. The reported path is IPsec ESP: ablk_encrypt() sees
+may_use_simd() == false and defers the request to cryptd, and the cryptd
+worker then calls ctr_encrypt(), which begins NEON unconditionally:
+
+  Process kworker/1:1
+  kernel_neon_begin+0xa8/0xc0      <- BUG_ON(!may_use_simd())
+  ctr_encrypt+0x5c/0x180
+  cryptd_blkcipher_crypt+0x48/0x100
+  cryptd_blkcipher_encrypt+0x1c/0x40
+  cryptd_queue_worker+0x78/0xc0
+  process_one_work+0x188/0x340
+
+Reproduced on two NC-1812 (mt7988, 4.9-ndm-5) carrying an ESP tunnel next
+to a busy AmneziaWG interface: a reboot every 5-6 hours on both. A build
+with NEON disabled in the module ran 49 hours on both with no crash, which
+is what put the module's own NEON region under suspicion.
+
+The stock keenetic wireguard.ko (1.0.20200623) holds NEON exactly as long,
+but has no cond_resched() inside the region, which is why it has never
+shown this. The call was inherited from the in-tree driver, where the
+crypto library begins and ends NEON per chunk and there is no region to
+break.
+
+Release the context around the reschedule instead of relying on
+simd_relax(), so sleeping with NEON held becomes impossible regardless of
+the kernel's preemption model. This also drops the now redundant
+simd_relax() call: on CONFIG_PREEMPT kernels the new block does exactly
+what simd_relax() did.
+
+Same bug is present upstream as of v3.0.20260805.
+
+Signed-off-by: Keenetic SDK Builder <developers@keenetic.com>
+---
+--- a/src/send.c
++++ b/src/send.c
+@@ -438,11 +438,15 @@
+ 		}
+ 		wg_queue_enqueue_per_peer_tx(first, state);
+ 
+-#ifdef COMPAT_CRYPTO_IS_ZINC
+-		simd_relax(&simd_context);
+-#endif
+-		if (need_resched())
+-			cond_resched();
++		if (need_resched()) {
++#ifdef COMPAT_CRYPTO_IS_ZINC
++			simd_put(&simd_context);
++#endif
++			cond_resched();
++#ifdef COMPAT_CRYPTO_IS_ZINC
++			simd_get(&simd_context);
++#endif
++		}
+ 	}
+ #ifdef COMPAT_CRYPTO_IS_ZINC
+ 	simd_put(&simd_context);
+--- a/src/receive.c
++++ b/src/receive.c
+@@ -610,11 +610,15 @@
+ 					      COMPAT_MAYBE_SIMD_CONTEXT(&simd_context))) ?
+ 				PACKET_STATE_CRYPTED : PACKET_STATE_DEAD;
+ 		wg_queue_enqueue_per_peer_rx(skb, state);
+-#ifdef COMPAT_CRYPTO_IS_ZINC
+-		simd_relax(&simd_context);
+-#endif
+-		if (need_resched())
+-			cond_resched();
++		if (need_resched()) {
++#ifdef COMPAT_CRYPTO_IS_ZINC
++			simd_put(&simd_context);
++#endif
++			cond_resched();
++#ifdef COMPAT_CRYPTO_IS_ZINC
++			simd_get(&simd_context);
++#endif
++		}
+ 	}
+ 
+ #ifdef COMPAT_CRYPTO_IS_ZINC
