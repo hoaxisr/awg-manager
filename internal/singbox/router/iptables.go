@@ -973,7 +973,8 @@ type IPTables struct {
 	// (restoreNoflush / runIPTables / runIPTablesOut / awgmLayout). Писать их
 	// некому, кроме UseAwgm/UseLegacy, а читают их и цикл сверки (свой поток), и
 	// статус по HTTP — без замка это гонка за указателями на функции.
-	// Читатели берут снимок через activeRestore/activeRun/activeRunOut.
+	// Читатели берут снимок через activeRunOut/activeRunLayout/
+	// activeRunOutLayout/activeChannelLayout/activeRestoreLayout.
 	runnerMu sync.Mutex
 
 	// probeMu защищает кеш проб доступности (TPROXY-таргет, xt_dscp).
@@ -1077,15 +1078,9 @@ func (it *IPTables) UseLegacy() {
 	it.resetProbeCache()
 }
 
-// activeRestore / activeRunOut отдают снимок команд активного бэкенда.
-// Снимок берётся один раз на операцию: смена бэкенда посреди цикла удалений
-// иначе отправила бы часть команд в один стек, часть в другой.
-func (it *IPTables) activeRestore() restoreNoflushFn {
-	it.runnerMu.Lock()
-	defer it.runnerMu.Unlock()
-	return it.restoreNoflush
-}
-
+// activeRunOut отдаёт снимок команд активного бэкенда. Снимок берётся один
+// раз на операцию: смена бэкенда посреди цикла удалений иначе отправила бы
+// часть команд в один стек, часть в другой.
 func (it *IPTables) activeRunOut() runOutFn {
 	it.runnerMu.Lock()
 	defer it.runnerMu.Unlock()
@@ -1106,6 +1101,20 @@ func (it *IPTables) activeRunOutLayout() (runOutFn, bool) {
 	it.runnerMu.Lock()
 	defer it.runnerMu.Unlock()
 	return it.runIPTablesOut, it.awgmLayout
+}
+
+// activeRestoreLayout отдаёт restore-функцию И раскладку одним снимком — как
+// activeRunLayout, но для restore. Нужен там, где решение spec.AwgmMode уже
+// принято РАНЬШЕ, на service-уровне (blob уже построен под конкретную
+// раскладку), и обязано быть сверено с каналом ПРЯМО перед восстановлением:
+// раздельные снимок restore-функции и проверка раскладки оставили бы окно
+// между сверкой и восстановлением, в которое влезла бы демоция с
+// несериализованного Enable-пути — тот же класс разъезда, что и у
+// activeChannelLayout, только для restore, а не для скраба.
+func (it *IPTables) activeRestoreLayout() (restoreNoflushFn, bool) {
+	it.runnerMu.Lock()
+	defer it.runnerMu.Unlock()
+	return it.restoreNoflush, it.awgmLayout
 }
 
 // activeChannelLayout отдаёт run, runOut И раскладку ОДНИМ снимком под одним
@@ -1152,7 +1161,19 @@ func (it *IPTables) InstallBlackhole(ctx context.Context, spec RestoreInputSpec)
 			return fmt.Errorf("write blackhole rules: %w", err)
 		}
 	}
-	if err := it.activeRestore()(ctx, input); err != nil {
+	// restore и restoreLayout — ОДИН снимок, взятый ПРЯМО перед восстановлением
+	// (а не тот, что уже устарел на момент scrub'а выше): spec.AwgmMode решён
+	// раньше, на service-уровне, и несериализованная демоция с Enable-пути
+	// могла успеть переключить канал уже ПОСЛЕ scrub'а. Расхождение — блоб
+	// чужой раскладки в чужой канал — не применяем вовсе: громкий, типизированный
+	// отказ отдаёт решение уже существующей демоции/повтору вместо тихого
+	// провала или неопределённого поведения бинаря на незнакомой таблице.
+	restore, restoreLayout := it.activeRestoreLayout()
+	if restoreLayout != spec.AwgmMode {
+		return fmt.Errorf("install заглушки: канал сменился между выбором режима и restore (канал awgm=%v, спецификация awgm=%v): %w",
+			restoreLayout, spec.AwgmMode, ruleChannelError{errors.New("раскладка канала разошлась со спецификацией")})
+	}
+	if err := restore(ctx, input); err != nil {
 		return fmt.Errorf("iptables-restore blackhole: %w", ruleChannelError{err})
 	}
 	return nil
@@ -1334,10 +1355,23 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	if spec.DSCPOnly && it.cleanupBlackhole != nil {
 		it.cleanupBlackhole()
 	}
+	// restore и restoreLayout — ОДИН снимок ПРЯМО перед восстановлением, взятый
+	// заново: spec.AwgmMode решён на service-уровне ещё до входа в Install
+	// (removeSourceHooks выше уже пробежал по своей,
+	// отдельной раскладке), и несериализованная демоция с Enable-пути могла
+	// успеть переключить канал уже ПОСЛЕ этого. Расхождение — блоб чужой
+	// раскладки в чужой канал — не применяем: громкий, типизированный отказ
+	// вместо тихого провала или неопределённого поведения бинаря на незнакомой
+	// таблице.
+	restore, restoreLayout := it.activeRestoreLayout()
+	if restoreLayout != spec.AwgmMode {
+		return fmt.Errorf("install: канал сменился между выбором режима и restore (канал awgm=%v, спецификация awgm=%v): %w",
+			restoreLayout, spec.AwgmMode, ruleChannelError{errors.New("раскладка канала разошлась со спецификацией")})
+	}
 	if spec.AwgmMode {
 		// Два канала: перехват — бандл-бинарём в таблицу awgm, DNS-RESCUE —
 		// штатным iptables, потому что правило обязано попасть в nat ndm.
-		if err := it.activeRestore()(ctx, intercept); err != nil {
+		if err := restore(ctx, intercept); err != nil {
 			return fmt.Errorf("iptables-awgm-restore: %w", ruleChannelError{err})
 		}
 		if strings.Contains(nat, DNSRescueTag) {
@@ -1345,7 +1379,7 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 				return fmt.Errorf("iptables-restore dns-rescue: %w", err)
 			}
 		}
-	} else if err := it.activeRestore()(ctx, input); err != nil {
+	} else if err := restore(ctx, input); err != nil {
 		return fmt.Errorf("iptables-restore: %w", ruleChannelError{err})
 	}
 	// Drain ALL existing fwmark rules pointing at our table before

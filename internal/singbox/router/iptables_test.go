@@ -2100,6 +2100,9 @@ func TestInstallRefreshesCtCleanScriptInBothModes(t *testing.T) {
 			it.runIP = func(context.Context, ...string) error { return nil }
 			it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
 			it.runCtClean = func(context.Context) {}
+			// Раскладка канала обязана совпадать со spec.AwgmMode — Install
+			// сверяет их прямо перед restore (гонка Enable/Reconcile).
+			it.awgmLayout = tc.awgmMode
 
 			spec := RestoreInputSpec{
 				PolicyMark: "0xffffaaa",
@@ -2155,6 +2158,60 @@ func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
 	}
 	if want := []string{"restore", "ctclean"}; len(order) != 2 || order[0] != want[0] || order[1] != want[1] {
 		t.Errorf("ctclean must run after restore, got order %v", order)
+	}
+}
+
+// Task 7 rereview (гонка Enable/Reconcile): spec.AwgmMode решён РАНЬШЕ, на
+// service-уровне, а канал IPTables мог смениться к моменту restore —
+// несериализованная демоция с Enable-пути (см. activeChannelLayout/
+// activeRestoreLayout) успевает переключить it.awgmLayout между построением
+// спеки и этим вызовом. Блоб чужой раскладки не должен уйти НИ В ОДИН канал —
+// отказ обязан быть ruleChannelError, чтобы демоция/повтор его увидели.
+func TestInstallRejectsChannelLayoutMismatch(t *testing.T) {
+	fe := newFakeExec()
+	it := newFakeIPTables(fe) // awgmLayout=false — канал уже демотирован на legacy
+	it.persistRules = func(string, string, string) error { return nil }
+	it.persistHook = func(bool) error { return nil }
+	it.persistDNSHook = func(bool) error { return nil }
+	it.persistCtClean = func() error { return nil }
+
+	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: true} // спека решена РАНЬШЕ, ещё под awgm
+
+	err := it.Install(context.Background(), spec)
+	if err == nil {
+		t.Fatal("расхождение канала и spec.AwgmMode обязано быть отказом, а не тихим применением")
+	}
+	if !fromRuleChannel(err) {
+		t.Fatalf("отказ обязан быть ruleChannelError — иначе демоция/повтор его не увидят: %v", err)
+	}
+	for _, c := range fe.calls {
+		if c.kind == "restore" {
+			t.Fatalf("блоб чужой раскладки не должен уйти ни в один канал: %+v", fe.calls)
+		}
+	}
+}
+
+// Тот же страж для заглушки (reconcileInstalled ставит её именно на этом
+// пути, при мёртвом движке — самый чувствительный к тихому окну fail-open
+// случай, разобранный ревьюером).
+func TestInstallBlackholeRejectsChannelLayoutMismatch(t *testing.T) {
+	fe := newFakeExec()
+	it := newFakeIPTables(fe) // awgmLayout=false — канал уже демотирован на legacy
+	it.persistBlackhole = func(string) error { return nil }
+
+	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: true} // спека решена РАНЬШЕ, ещё под awgm
+
+	err := it.InstallBlackhole(context.Background(), spec)
+	if err == nil {
+		t.Fatal("расхождение канала и spec.AwgmMode обязано быть отказом при установке заглушки")
+	}
+	if !fromRuleChannel(err) {
+		t.Fatalf("отказ обязан быть ruleChannelError: %v", err)
+	}
+	for _, c := range fe.calls {
+		if c.kind == "restore" {
+			t.Fatalf("блоб заглушки чужой раскладки не должен уйти ни в один канал: %+v", fe.calls)
+		}
 	}
 }
 
@@ -2814,6 +2871,7 @@ func TestAwgmInstallUsesTwoChannels(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
+	it.awgmLayout = true
 
 	spec := RestoreInputSpec{
 		PolicyMark: "0xffffaaa",
@@ -2850,6 +2908,7 @@ func TestAwgmInstallDoesNotWriteFullHook(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
+	it.awgmLayout = true
 
 	spec := RestoreInputSpec{
 		PolicyMark: "0xffffaaa",
@@ -2879,6 +2938,7 @@ func TestAwgmInstallRemovesDNSHookWhenNoBridges(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
+	it.awgmLayout = true
 
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: true} // LANBridges пуст
 	if err := it.Install(context.Background(), spec); err != nil {
@@ -2941,6 +3001,7 @@ func TestAwgmInstallLeavesNatBlobForDNSHook(t *testing.T) {
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runCtClean = func(context.Context) {} // без стаба Install exec'нул бы реальный скрипт
+	it.awgmLayout = true
 
 	spec := RestoreInputSpec{
 		PolicyMark: "0xffffaaa",
@@ -3036,6 +3097,7 @@ func TestAwgmInstallDropsNatBlobWithoutDNSRescue(t *testing.T) {
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runCtClean = func(context.Context) {}
+	it.awgmLayout = true
 
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: true} // LANBridges пуст
 	if err := it.Install(context.Background(), spec); err != nil {
