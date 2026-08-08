@@ -1,0 +1,34 @@
+*mangle
+:AWGM-TPROXY - [0:0]
+-A AWGM-TPROXY -p udp --dport 53 -j TPROXY --on-port 51271 --on-ip 127.0.0.1 --tproxy-mark 0x1
+-A AWGM-TPROXY -d 127.0.0.0/8 -j RETURN
+-A AWGM-TPROXY -d 169.254.0.0/16 -j RETURN
+-A AWGM-TPROXY -d 100.64.0.0/10 -j RETURN
+-A AWGM-TPROXY -d 0.0.0.0/8 -j RETURN
+-A AWGM-TPROXY -d 192.0.0.0/24 -j RETURN
+-A AWGM-TPROXY -d 224.0.0.0/4 -j RETURN
+-A AWGM-TPROXY -d 255.255.255.255/32 -j RETURN
+-A AWGM-TPROXY -d 10.0.0.0/8 -j RETURN
+-A AWGM-TPROXY -d 172.16.0.0/12 -j RETURN
+-A AWGM-TPROXY -d 192.168.0.0/16 -j RETURN
+-A AWGM-TPROXY -p udp -j TPROXY --on-port 51271 --on-ip 127.0.0.1 --tproxy-mark 0x1
+-A PREROUTING -m connmark --mark 0xffffaaa -m conntrack ! --ctstate INVALID -j AWGM-TPROXY
+COMMIT
+*nat
+:AWGM-REDIRECT - [0:0]
+-A AWGM-REDIRECT -d 127.0.0.0/8 -j RETURN
+-A AWGM-REDIRECT -d 169.254.0.0/16 -j RETURN
+-A AWGM-REDIRECT -d 100.64.0.0/10 -j RETURN
+-A AWGM-REDIRECT -d 0.0.0.0/8 -j RETURN
+-A AWGM-REDIRECT -d 192.0.0.0/24 -j RETURN
+-A AWGM-REDIRECT -d 224.0.0.0/4 -j RETURN
+-A AWGM-REDIRECT -d 255.255.255.255/32 -j RETURN
+-A AWGM-REDIRECT -d 10.0.0.0/8 -j RETURN
+-A AWGM-REDIRECT -d 172.16.0.0/12 -j RETURN
+-A AWGM-REDIRECT -d 192.168.0.0/16 -j RETURN
+-A AWGM-REDIRECT -p tcp --dport 79 -j RETURN
+-A AWGM-REDIRECT -p tcp -j REDIRECT --to-ports 51272
+-A PREROUTING -m connmark --mark 0xffffaaa -m conntrack ! --ctstate INVALID -j AWGM-REDIRECT
+-I PREROUTING 1 -i br0 -m mark --mark 0x0 -m pkttype --pkt-type unicast -p udp --dport 53 -m comment --comment "AWGM-DNS-RESCUE" -j REDIRECT --to-ports 41100
+-I PREROUTING 1 -i br0 -m mark --mark 0x0 -m pkttype --pkt-type unicast -p tcp --dport 53 -m comment --comment "AWGM-DNS-RESCUE" -j REDIRECT --to-ports 41100
+COMMIT

@@ -2063,3 +2063,79 @@ func TestBuildRestoreInput_DSCPOnly(t *testing.T) {
 		t.Error("user bypass after dscp")
 	}
 }
+
+// TestGoldenBlob фиксирует байт в байт полный блоб (mangle + nat) для набора
+// характерных spec'ов. Это страж рефакторинга: любая потерянная, лишняя или
+// переставленная строка эмиссии валит тест с диффом.
+//
+// Снимки обновляются осознанно: UPDATE_GOLDEN=1 go test ./internal/singbox/router/
+func TestGoldenBlob(t *testing.T) {
+	cases := map[string]RestoreInputSpec{
+		"plain": {
+			PolicyMark: "0xffffaaa",
+			WANIPs:     []string{"203.0.113.5/32"},
+		},
+		"selective": {
+			PolicyMark:     "0xffffaaa",
+			SelectiveIPSet: true,
+			BypassTCPPorts: []PortRange{{From: 22, To: 22}},
+		},
+		"qos": {
+			PolicyMark: "0xffffaaa",
+			QoSClasses: []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51282}},
+		},
+		"dscponly": {
+			PolicyMark: "0xffffaaa",
+			DSCPOnly:   true,
+			QoSClasses: []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51282}},
+		},
+		// DNS-RESCUE — единственный несдвинутый код рядом с рефакторингом,
+		// и без этого кейса он остался бы вообще без стража.
+		"dnsrescue": {
+			PolicyMark: "0xffffaaa",
+			LANBridges: []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}},
+		},
+		// Проверяет, что DSCPOnly по-прежнему выходит ДО DNS-RESCUE.
+		"dscponly_bridges": {
+			PolicyMark: "0xffffaaa",
+			DSCPOnly:   true,
+			LANBridges: []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}},
+			QoSClasses: []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51282}},
+		},
+		// Внутри QoS-блока есть ветвление по !SelectiveIPSet — покрыть оба.
+		"selective_qos": {
+			PolicyMark:     "0xffffaaa",
+			SelectiveIPSet: true,
+			QoSClasses:     []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51282}},
+		},
+		// MatchAll даёт другую форму PREROUTING-джампа.
+		"matchall": {
+			MatchAll:   true,
+			LANBridges: []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}},
+		},
+	}
+	for name, spec := range cases {
+		t.Run(name, func(t *testing.T) {
+			// Снимаем ОБЕ секции: TCP-цепочка переезжает из nat в mangle,
+			// и страж, смотрящий только на nat, пропустил бы половину дрейфа.
+			got := buildMangleRestoreInput(spec) + buildNatRestoreInput(spec)
+			golden := filepath.Join("testdata", "blob_"+name+".golden")
+			if os.Getenv("UPDATE_GOLDEN") != "" {
+				if err := os.MkdirAll("testdata", 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("нет снимка %s — сгенерировать: UPDATE_GOLDEN=1 go test ./internal/singbox/router/", golden)
+			}
+			if got != string(want) {
+				t.Fatalf("блоб изменился.\nбыло:\n%s\nстало:\n%s", want, got)
+			}
+		})
+	}
+}
