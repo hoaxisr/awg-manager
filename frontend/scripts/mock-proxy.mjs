@@ -6245,6 +6245,14 @@ const server = http.createServer(async (req, res) => {
 				netfilterAvailable: true,
 				policyName: mockSBPolicyExists ? 'SBRouter' : '',
 				deviceMode: mockSBSettings.deviceMode || 'policy',
+				// Бэкенд применения правил: в моке запрошенный режим всегда
+				// поднимается (расхождение вживую даёт недоступность на модели).
+				awgmBackendRequested: mockSBSettings.awgmBackend ? 'awgm' : 'legacy',
+				awgmBackendEffective: mockSBSettings.awgmBackend ? 'awgm' : 'legacy',
+				// Доступность бэкенда: в моке бандл есть. Flip to false here (плюс
+				// awgmBackendUnavailableReason) чтобы посмотреть выключенный
+				// переключатель «Правила в таблице awgm» с причиной.
+				awgmBackendAvailable: true,
 				ruleCount: mockSingboxRules.length,
 				ruleSetCount: mockSingboxRuleSets.length,
 				// fakeip-tun status fields (backend serializes all omitempty).

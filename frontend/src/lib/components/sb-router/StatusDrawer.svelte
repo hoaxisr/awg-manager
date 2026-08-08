@@ -24,6 +24,7 @@
   import SelectiveIpsetSnapshot from './SelectiveIpsetSnapshot.svelte';
   import QosSettingsCard from './QosSettingsCard.svelte';
   import PolicyTunCard from './PolicyTunCard.svelte';
+  import AwgmBackendNotice from './AwgmBackendNotice.svelte';
   import OutboundOption from './OutboundOption.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
@@ -230,6 +231,17 @@
   let routeFinal = $derived(s?.final || 'direct');
   let selectiveFinalOk = $derived(routeFinal === 'direct');
 
+  // Бэкенд правил: бандл awgm входит в IPK только для части моделей, и на
+  // остальных включение обречено. Тумблер выключаем ЗАРАНЕЕ, а не после
+  // неудачной попытки. Строгое сравнение с false обязательно: поле
+  // опционально (старые ответы, mock), и на его отсутствии тумблер обязан
+  // остаться рабочим. Уже включённый режим не блокируем — иначе выключить его
+  // стало бы нечем.
+  let awgmBackendUnavailable = $derived(s?.awgmBackendAvailable === false);
+  let awgmBackendBlocked = $derived(
+    awgmBackendUnavailable && !($storeSettings?.awgmBackend ?? false),
+  );
+
   let selectiveStatus = $derived($selectiveBypassStatus);
   let selectiveStatusLoaded = $derived(selectiveStatus !== null);
   // Пересборка в процессе: локальный флаг покрывает HTTP round-trip (202),
@@ -371,6 +383,14 @@
           {/if}
         </div>
       {/if}
+
+      <!-- Бэкенд применения правил: расхождение режимов видно и новичку —
+           это состояние движка, а не эксперт-настройка. -->
+      <AwgmBackendNotice
+        requested={s?.awgmBackendRequested}
+        effective={s?.awgmBackendEffective}
+        reason={s?.awgmBackendReason}
+      />
     </section>
 
     <!-- Ресурсы: живая память и трафик движка -->
@@ -492,7 +512,7 @@
         </div>
 
         {#if !selectiveFinalOk}
-          <p class="hint selective-warn">
+          <p class="hint warn-text">
             Несовместимо с route.final = «{routeFinal}»: при catch-all проксировании весь трафик идёт через sing-box,
             селективный ipset не имеет смысла. Установите final в «direct» в разделе маршрутизации.
           </p>
@@ -505,7 +525,7 @@
           </p>
         {:else if !selectiveIpsetOk}
           <!-- ipset не установлен -->
-          <p class="hint selective-warn">
+          <p class="hint warn-text">
             Требуется пакет <code class="mono">ipset</code> — он не установлен на роутере.
           </p>
           <Button
@@ -539,7 +559,7 @@
           </div>
 
           {#if selectiveStatus?.lastError}
-            <p class="hint selective-warn">Ошибка пересборки: {selectiveStatus.lastError}</p>
+            <p class="hint warn-text">Ошибка пересборки: {selectiveStatus.lastError}</p>
           {/if}
 
           <p class="hint">
@@ -571,6 +591,35 @@
         {/if}
       </section>
       {/if}
+
+      <!-- Бэкенд применения правил -->
+      <section class="sec">
+        <div class="sec-cap">Бэкенд правил</div>
+        <div class="field-row">
+          <span>Правила в таблице awgm</span>
+          <Toggle
+            checked={cfg.awgmBackend ?? false}
+            disabled={awgmBackendBlocked}
+            onchange={(checked) => void applyPatch({ awgmBackend: checked })}
+          />
+        </div>
+        {#if awgmBackendUnavailable}
+          <p class="hint warn-text">
+            Недоступно на этом роутере{#if s?.awgmBackendUnavailableReason}: {s.awgmBackendUnavailableReason}{/if}.
+            Бандл awgm входит в пакет только для части моделей.
+          </p>
+        {:else}
+          <p class="hint warn-text">
+            Экспериментально. Правила переживают перезапуск демона: при сбое трафик блокируется,
+            а не утекает мимо туннеля. Включение обрывает уже установленные TCP-соединения —
+            они переустановятся сами, уже через прокси.
+          </p>
+          <p class="hint">
+            Правила живут в отдельной таблице awgm, которую роутер не стирает при перестройке firewall.
+            Доступность зависит от модели: фактический режим — в разделе «Состояние» выше.
+          </p>
+        {/if}
+      </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка
            сериализует свои PUT-ы и ресинкается со стором после дренажа очереди. -->
@@ -767,7 +816,7 @@
     padding: 0 3px;
     color: var(--text-secondary);
   }
-  .selective-warn {
+  .warn-text {
     color: var(--color-warning, #dab856);
   }
   .crash-info {

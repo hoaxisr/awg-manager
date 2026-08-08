@@ -12,6 +12,14 @@ export interface SingboxRouterSettings {
 	 * legacy payloads → treat as 'tproxy'). NOT on the status endpoint.
 	 */
 	routingMode?: 'tproxy' | 'fakeip-tun' | 'policy-tun';
+	/**
+	 * Экспериментальный бэкенд применения правил через отдельную таблицу
+	 * xtables awgm: правила живут в ней и не стираются при перестройке
+	 * firewall роутером. Доступность зависит от модели — запрос может не
+	 * примениться, фактический режим смотреть в status.awgmBackendEffective /
+	 * awgmBackendReason.
+	 */
+	awgmBackend?: boolean;
 	snifferEnabled: boolean;
 	// WAN-binding discriminator (mirrors backend storage):
 	//   wanAutoDetect=true  + wanInterface=""    → sing-box auto_detect_interface
@@ -165,6 +173,26 @@ export interface SingboxRouterStatus {
 	 * Optional: absent on legacy/mock payloads → treated as unknown, no warning.
 	 */
 	xtDscpAvailable?: boolean;
+	/**
+	 * Запрошенный и фактический бэкенд применения правил. Расхождение обязано
+	 * быть видно: пользователь включил галку и вправе считать, что она
+	 * подействовала, а awgm-режим может не подняться (нет бандла под модель, не
+	 * встали модули ядра). awgmBackendReason объясняет расхождение и пуст, когда
+	 * режимы совпали. Опциональны: отсутствуют на legacy/mock-ответах.
+	 */
+	awgmBackendRequested?: 'legacy' | 'awgm';
+	awgmBackendEffective?: 'legacy' | 'awgm';
+	awgmBackendReason?: string;
+	/**
+	 * Можно ли вообще включить awgm-режим на этом роутере: бандл установлен,
+	 * собран под эту модель и полон. IPK общий на архитектуру, поэтому на
+	 * большинстве моделей — false. Переключатель обязан быть выключен заранее:
+	 * иначе о недоступности узнаёшь только после неудачной попытки включения.
+	 * awgmBackendUnavailableReason показывается рядом; пуст при доступном режиме.
+	 * Опциональны: отсутствуют на legacy/mock-ответах.
+	 */
+	awgmBackendAvailable?: boolean;
+	awgmBackendUnavailableReason?: string;
 }
 
 export interface SingboxRouterTransitionStep {
