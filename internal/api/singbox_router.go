@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -224,12 +225,65 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 		response.BadRequest(w, err.Error())
 		return
 	}
+	// Прежнее значение читаем ДО сохранения: бэкенд применения правил меняется
+	// не сохранением, а отдельным переходом со снятием правил прежним каналом.
+	prev, err := h.svc.GetSettings(r.Context())
+	if err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
 	if err := h.svc.UpdateSettings(r.Context(), sr); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
+	// Переключать бэкенд заставляет не только смена значения. После автоотката
+	// (правила через awgm не применились) настройка остаётся прежней, а
+	// фактический режим с ней расходится — и повторное сохранение того же
+	// значения обязано быть НОВОЙ попыткой. Иначе единственный путь назад —
+	// «выключить → включить», где выключение снимает и переставляет РАБОЧИЙ
+	// legacy-перехват, то есть рвёт соединения ради перехода legacy→legacy.
+	changed := sr.AwgmBackend != prev.AwgmBackend
+	if changed || h.backendDiverged(r.Context(), sr.AwgmBackend) {
+		// Обычное сохранение сменило бы только настройку: движок выбирает
+		// бэкенд один раз за запуск, а правила прежнего канала остались бы в
+		// ядре — невидимые для команд нового бэкенда и потому неснимаемые.
+		//
+		// WithoutCancel: между снятием и установкой правил обрыв соединения
+		// оставил бы ядро без перехвата до следующего тика сверки. Переход
+		// доводится до конца, отвечать всё равно уже некому.
+		switch err := h.svc.SwitchBackend(context.WithoutCancel(r.Context()), sr.AwgmBackend); {
+		case err == nil:
+			h.log.Info("backend-switch", "", fmt.Sprintf("бэкенд применения правил переключён (awgm=%v)", sr.AwgmBackend))
+		case changed:
+			h.handleErr(w, "backend-switch", err)
+			return
+		default:
+			// Провал ПОВТОРНОЙ попытки не имеет права валить сохранение:
+			// настройки уже записаны, значение никто не менял, а расхождение с
+			// причиной видно в статусе. Иначе застрявшее расхождение (бандл
+			// исчез вместе с моделью роутера) отвечало бы ошибкой на КАЖДОЕ
+			// сохранение настроек движка.
+			h.log.Warn("backend-switch", "", "повторная попытка включить запрошенный бэкенд не удалась: "+err.Error())
+		}
+	}
 	h.log.Info("settings", "", "Sing-box router settings updated")
 	response.Success(w, map[string]bool{"ok": true})
+}
+
+// backendDiverged сообщает, что ФАКТИЧЕСКИЙ режим применения правил разошёлся с
+// запрошенным. Расхождение бывает только после неудачи — автооткат при отказе
+// применения правил, недоступный бандл, провалившийся переход; в здоровом
+// состоянии режимы совпадают, и сохранение настроек, где awgmBackend не менялся,
+// ничего не переключает.
+//
+// Неизвестный режим (статус не ответил, поле пустое) — это НЕ расхождение:
+// снимать и переставлять весь перехват по незнанию дороже, чем не переставить.
+func (h *SingboxRouterHandler) backendDiverged(ctx context.Context, wantAwgm bool) bool {
+	st, err := h.svc.GetStatus(ctx)
+	if err != nil || st.AwgmBackendEffective == "" {
+		return false
+	}
+	return (st.AwgmBackendEffective == string(router.BackendAwgm)) != wantAwgm
 }
 
 // PolicyTunNATPreview lists router segments with their current NAT mode.
@@ -306,6 +360,10 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 		// 400: правило принадлежит оверлею DNS-пресета — править/двигать его
 		// пользователь не может.
 		response.Error(w, err.Error(), "DNS_RULE_MANAGED")
+	case errors.Is(err, router.ErrAwgmBackendUnavailable):
+		// 400: включать awgm-режим нечем (нет бандла под эту модель). Правила
+		// при этом не тронуты — переход отклонён до какого-либо снятия.
+		response.Error(w, err.Error(), "AWGM_BACKEND_UNAVAILABLE")
 	case errors.Is(err, router.ErrReservedInboundTag):
 		// 400: user rules must not claim the reserved qos-* inbound namespace
 		// (they'd be inert shadow rules — the managed slot merges first).

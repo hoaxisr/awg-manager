@@ -52,6 +52,14 @@ type mockRouterSvc struct {
 	// natPreview / natPreviewErr feed the policy-tun source-preserve preview.
 	natPreview    []router.NATSegmentInfo
 	natPreviewErr error
+	// switchBackendArgs записывает каждый вызов SwitchBackend: смена бэкенда
+	// правил обязана идти именно через него, а не через обычное сохранение.
+	switchBackendArgs []bool
+	switchBackendErr  error
+	// status отдаётся GetStatus. Для бэкенда правил важно поле
+	// AwgmBackendEffective: по расхождению с настройкой PutSettings решает,
+	// нужна ли повторная попытка перехода.
+	status router.Status
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
@@ -70,7 +78,7 @@ func (m *mockRouterSvc) switchedTarget() string {
 	return m.switchTarget
 }
 func (m *mockRouterSvc) GetStatus(ctx context.Context) (router.Status, error) {
-	return router.Status{}, nil
+	return m.status, nil
 }
 func (m *mockRouterSvc) GetSettings(ctx context.Context) (storage.SingboxRouterSettings, error) {
 	return m.settings, nil
@@ -81,6 +89,10 @@ func (m *mockRouterSvc) UpdateSettings(ctx context.Context, s storage.SingboxRou
 	}
 	m.settings = s
 	return nil
+}
+func (m *mockRouterSvc) SwitchBackend(ctx context.Context, awgm bool) error {
+	m.switchBackendArgs = append(m.switchBackendArgs, awgm)
+	return m.switchBackendErr
 }
 func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return nil, nil
@@ -339,6 +351,117 @@ func TestRouterPutSettings_RoundTripsPolicyTunSourcePreserve(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET body missing %s: %s", want, body)
 		}
+	}
+}
+
+// Смена бэкенда правил обязана идти через SwitchBackend: обычное сохранение не
+// снимает правила прежним каналом, и они остались бы в ядре — невидимые для
+// команд нового бэкенда и потому неснимаемые.
+func TestRouterPutSettings_AwgmBackendChangeSwitchesBackend(t *testing.T) {
+	svc := &mockRouterSvc{settings: storage.SingboxRouterSettings{AwgmBackend: false}}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"awgmBackend":true}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(svc.switchBackendArgs) != 1 || !svc.switchBackendArgs[0] {
+		t.Fatalf("смена настройки обязана переключить бэкенд, вызовы: %v", svc.switchBackendArgs)
+	}
+	if !svc.settings.AwgmBackend {
+		t.Errorf("настройка обязана сохраниться вместе с остальным телом: %+v", svc.settings)
+	}
+}
+
+// Неизменная настройка при СОВПАДАЮЩИХ режимах — не повод снимать и
+// переставлять весь перехват: любой PUT настроек рвал бы трафик на время
+// переустановки.
+func TestRouterPutSettings_UnchangedAwgmBackendDoesNotSwitch(t *testing.T) {
+	svc := &mockRouterSvc{
+		settings: storage.SingboxRouterSettings{AwgmBackend: true},
+		status:   router.Status{AwgmBackendEffective: "awgm"},
+	}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"awgmBackend":true}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(svc.switchBackendArgs) != 0 {
+		t.Fatalf("бэкенд не менялся — переключать нечего, вызовы: %v", svc.switchBackendArgs)
+	}
+}
+
+// После автоотката настройка осталась включённой, а работает legacy. Сохранение
+// ТОГО ЖЕ значения обязано быть новой попыткой перехода: иначе вернуться в
+// запрошенный режим можно только через «выключить → включить», где выключение
+// снимает и переставляет РАБОЧИЙ legacy-перехват — обрыв соединений ради
+// перехода legacy→legacy.
+func TestRouterPutSettings_DivergedBackendRetriesSwitch(t *testing.T) {
+	svc := &mockRouterSvc{
+		settings: storage.SingboxRouterSettings{AwgmBackend: true},
+		status:   router.Status{AwgmBackendRequested: "awgm", AwgmBackendEffective: "legacy"},
+	}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"awgmBackend":true}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(svc.switchBackendArgs) != 1 || !svc.switchBackendArgs[0] {
+		t.Fatalf("расхождение режимов обязано приводить к новой попытке, вызовы: %v", svc.switchBackendArgs)
+	}
+}
+
+// Повторная попытка — довесок к сохранению, а не его смысл. Её провал не имеет
+// права валить сохранение: настройки уже записаны, значение никто не менял, а
+// причина расхождения видна в статусе. Иначе застрявшее расхождение (бандл
+// исчез) отвечало бы ошибкой на КАЖДОЕ сохранение настроек движка.
+func TestRouterPutSettings_FailedRetryDoesNotFailSave(t *testing.T) {
+	svc := &mockRouterSvc{
+		settings:         storage.SingboxRouterSettings{AwgmBackend: true},
+		status:           router.Status{AwgmBackendRequested: "awgm", AwgmBackendEffective: "legacy"},
+		switchBackendErr: errors.New("бэкенд awgm недоступен: бандл не установлен"),
+	}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"awgmBackend":true,"snifferEnabled":true}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("провал повторной попытки не имеет права валить сохранение: got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if len(svc.switchBackendArgs) != 1 {
+		t.Fatalf("попытка обязана быть ровно одна, вызовы: %v", svc.switchBackendArgs)
+	}
+	if !svc.settings.SnifferEnabled {
+		t.Errorf("настройки обязаны сохраниться целиком: %+v", svc.settings)
+	}
+}
+
+// Провал переключения обязан доехать до пользователя: молчаливый 200 означал бы
+// «галка применена», когда перехват на самом деле лежит.
+func TestRouterPutSettings_SwitchBackendErrorSurfaces(t *testing.T) {
+	svc := &mockRouterSvc{
+		settings:         storage.SingboxRouterSettings{AwgmBackend: false},
+		switchBackendErr: errors.New("снятие правил прежнего бэкенда: устройство занято"),
+	}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"awgmBackend":true}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "устройство занято") {
+		t.Errorf("причина обязана дойти до пользователя: %s", rr.Body.String())
 	}
 }
 

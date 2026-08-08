@@ -4633,6 +4633,14 @@ definitions:
     type: object
   api.SingboxRouterSettingsData:
     properties:
+      awgmBackend:
+        description: |-
+          AwgmBackend requests the experimental xtables rule backend: rules then
+          live in the manager's own awgm table, which ndm does not wipe when it
+          rebuilds the firewall. Availability is model-gated — the request can end
+          up not applied, see status.awgmBackendEffective / awgmBackendReason.
+        example: true
+        type: boolean
       bypassExtraPorts:
         description: |-
           BypassExtraPorts is a user-defined comma-separated list of extra
@@ -4781,6 +4789,39 @@ definitions:
       active:
         example: true
         type: boolean
+      awgmBackendAvailable:
+        description: |-
+          AwgmBackendAvailable — можно ли вообще включить awgm-режим на этом роутере
+          (бандл установлен, собран под эту модель и полон). IPK общий на
+          архитектуру, поэтому на большинстве моделей — false, и UI обязан держать
+          переключатель выключенным заранее, а не после неудачной попытки.
+          AwgmBackendUnavailableReason показывается рядом с ним; пусто при доступном.
+        example: false
+        type: boolean
+      awgmBackendEffective:
+        enum:
+        - legacy
+        - awgm
+        example: legacy
+        type: string
+      awgmBackendReason:
+        example: бандл собран под KN-1812, роутер — KN-1810
+        type: string
+      awgmBackendRequested:
+        description: |-
+          AwgmBackendRequested / AwgmBackendEffective — запрошенный и фактический
+          режим применения правил. Различие обязано быть видно в UI: пользователь
+          включил галку и вправе считать, что она подействовала, а awgm-режим может
+          не подняться (нет бандла под модель, не встали модули ядра, у бинаря нет
+          таргета PPE). AwgmBackendReason объясняет расхождение.
+        enum:
+        - legacy
+        - awgm
+        example: awgm
+        type: string
+      awgmBackendUnavailableReason:
+        example: бандл awgm не установлен
+        type: string
       crashCount:
         description: 'CrashCount — падения sing-box за последние 10 минут (issue #456).'
         example: 2

@@ -1677,6 +1677,7 @@ const api_SingboxRouterRulesListResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
+	awgmBackend: v.optional(v.nullable(v.boolean())),
 	bypassExtraPorts: v.optional(v.nullable(v.string())),
 	bypassExtraSubnets: v.optional(v.nullable(v.string())),
 	bypassPresets: v.optional(v.nullable(v.array(v.string()))),
@@ -1706,6 +1707,11 @@ const api_SingboxRouterSettingsResponse: v.GenericSchema = v.looseObject({
 
 const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	active: v.optional(v.nullable(v.boolean())),
+	awgmBackendAvailable: v.optional(v.nullable(v.boolean())),
+	awgmBackendEffective: v.optional(v.nullable(v.string())),
+	awgmBackendReason: v.optional(v.nullable(v.string())),
+	awgmBackendRequested: v.optional(v.nullable(v.string())),
+	awgmBackendUnavailableReason: v.optional(v.nullable(v.string())),
 	crashCount: v.optional(v.nullable(v.number())),
 	deviceCount: v.optional(v.nullable(v.number())),
 	deviceMode: v.optional(v.nullable(v.string())),

@@ -56,8 +56,23 @@ type SingboxRouterStatusData struct {
 	LastCrashReason string `json:"lastCrashReason,omitempty" example:"sing-box убит OOM-killer'ом"`
 	// RestartSuppressedUntil — RFC3339-время окончания паузы авто-перезапуска
 	// (анти crash-loop); пусто, когда авто-перезапуск не подавлен.
-	RestartSuppressedUntil string                  `json:"restartSuppressedUntil,omitempty" example:"2026-07-06T12:34:56+03:00"`
-	Issues                 []SingboxRouterIssueDTO `json:"issues,omitempty"`
+	RestartSuppressedUntil string `json:"restartSuppressedUntil,omitempty" example:"2026-07-06T12:34:56+03:00"`
+	// AwgmBackendRequested / AwgmBackendEffective — запрошенный и фактический
+	// режим применения правил. Различие обязано быть видно в UI: пользователь
+	// включил галку и вправе считать, что она подействовала, а awgm-режим может
+	// не подняться (нет бандла под модель, не встали модули ядра, у бинаря нет
+	// таргета PPE). AwgmBackendReason объясняет расхождение.
+	AwgmBackendRequested string `json:"awgmBackendRequested" example:"awgm" enums:"legacy,awgm"`
+	AwgmBackendEffective string `json:"awgmBackendEffective" example:"legacy" enums:"legacy,awgm"`
+	AwgmBackendReason    string `json:"awgmBackendReason,omitempty" example:"бандл собран под KN-1812, роутер — KN-1810"`
+	// AwgmBackendAvailable — можно ли вообще включить awgm-режим на этом роутере
+	// (бандл установлен, собран под эту модель и полон). IPK общий на
+	// архитектуру, поэтому на большинстве моделей — false, и UI обязан держать
+	// переключатель выключенным заранее, а не после неудачной попытки.
+	// AwgmBackendUnavailableReason показывается рядом с ним; пусто при доступном.
+	AwgmBackendAvailable         bool                    `json:"awgmBackendAvailable" example:"false"`
+	AwgmBackendUnavailableReason string                  `json:"awgmBackendUnavailableReason,omitempty" example:"бандл awgm не установлен"`
+	Issues                       []SingboxRouterIssueDTO `json:"issues,omitempty"`
 }
 
 // SingboxRouterStatusResponse is the envelope for GET /singbox/router/status.
@@ -68,11 +83,16 @@ type SingboxRouterStatusResponse struct {
 
 // SingboxRouterSettingsData mirrors storage.SingboxRouterSettings.
 type SingboxRouterSettingsData struct {
-	Enabled        bool   `json:"enabled" example:"true"`
-	PolicyName     string `json:"policyName" example:"awgm-router"`
-	DeviceMode     string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
-	RoutingMode    string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun,policy-tun"`
-	SnifferEnabled bool   `json:"snifferEnabled" example:"true"`
+	Enabled     bool   `json:"enabled" example:"true"`
+	PolicyName  string `json:"policyName" example:"awgm-router"`
+	DeviceMode  string `json:"deviceMode,omitempty" example:"policy" enums:"policy,all"`
+	RoutingMode string `json:"routingMode,omitempty" example:"tproxy" enums:"tproxy,fakeip-tun,policy-tun"`
+	// AwgmBackend requests the experimental xtables rule backend: rules then
+	// live in the manager's own awgm table, which ndm does not wipe when it
+	// rebuilds the firewall. Availability is model-gated — the request can end
+	// up not applied, see status.awgmBackendEffective / awgmBackendReason.
+	AwgmBackend    bool `json:"awgmBackend,omitempty" example:"true"`
+	SnifferEnabled bool `json:"snifferEnabled" example:"true"`
 	// WANAutoDetect / WANInterface form a two-field discriminator:
 	//   true  + ""    → sing-box auto_detect_interface
 	//   false + "ppp0"→ sing-box default_interface=ppp0
