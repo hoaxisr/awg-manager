@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // ErrPolicyMarkNotFound is returned by PolicyMarkStore.Get when the
@@ -40,7 +41,13 @@ func NewPolicyMarkStore(g Getter, log Logger) *PolicyMarkStore {
 }
 
 type policyMarkWire struct {
-	Mark string `json:"mark"`
+	Mark   string `json:"mark"`
+	Route4 struct {
+		Route []struct {
+			Destination string `json:"destination"`
+			Interface   string `json:"interface"`
+		} `json:"route"`
+	} `json:"route4"`
 }
 
 // Get returns the hex-formatted mark (e.g. "0xffffaaa") for policyName.
@@ -59,4 +66,46 @@ func (s *PolicyMarkStore) Get(ctx context.Context, policyName string) (string, e
 		return "", ErrPolicyMarkNotFound
 	}
 	return "0x" + p.Mark, nil
+}
+
+// PolicyDefaultExit — политика, чей дефолтный маршрут ведёт в заданный
+// интерфейс, вместе с её NDMS-меткой (hex с префиксом "0x").
+type PolicyDefaultExit struct {
+	Name string
+	Mark string
+}
+
+// ListByDefaultInterface возвращает политики, у которых в эффективной таблице
+// есть маршрут 0.0.0.0/0 через iface.
+//
+// ТОЛЬКО дефолт: NDMS раскладывает connected-подсети всех интерфейсов по
+// таблице КАЖДОЙ политики, поэтому отбор по «есть любой маршрут через iface»
+// вернул бы все политики роутера (проверено на живом дампе 2026-08-09).
+//
+// Результат отсортирован по имени: порядок обхода map в Go случаен, а от него
+// зависят и текст netfilter.d-хука, и сравнение желаемого состояния — без
+// сортировки они дрейфовали бы на каждом тике.
+func (s *PolicyMarkStore) ListByDefaultInterface(ctx context.Context, iface string) ([]PolicyDefaultExit, error) {
+	body, err := s.getter.GetRaw(ctx, "/show/ip/policy")
+	if err != nil {
+		return nil, fmt.Errorf("fetch policies: %w", err)
+	}
+	var doc map[string]policyMarkWire
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("decode policies: %w", err)
+	}
+	var out []PolicyDefaultExit
+	for name, p := range doc {
+		if p.Mark == "" {
+			continue
+		}
+		for _, r := range p.Route4.Route {
+			if r.Destination == "0.0.0.0/0" && r.Interface == iface {
+				out = append(out, PolicyDefaultExit{Name: name, Mark: "0x" + p.Mark})
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
