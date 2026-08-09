@@ -1691,9 +1691,13 @@ AWGM_BIN=%[2]s
 # substring схватил бы более длинное имя (%[1]s-X) или комментарий с этой
 # подстрокой.
 has_our_jump() { printf '%%s\n' "$1" | grep -qE -- '-[jg] %[1]s($| )'; }
+awgm_mode=0
 prerouting="$(/opt/sbin/iptables -w -t mangle -S PREROUTING 2>/dev/null)"
 if ! has_our_jump "$prerouting" && [ -x "$AWGM_BIN" ]; then
   prerouting="$("$AWGM_BIN" -w -t awgm -S PREROUTING 2>/dev/null)"
+  # Режим определяется по тому, ГДЕ нашлись наши правила, а не по настройке:
+  # скрипт зовёт и netfilter.d-хук, которому настройка недоступна.
+  has_our_jump "$prerouting" && awgm_mode=1
 fi
 # Hardware offload (MTK PPE) flush — issue #684. Runs before the conntrack work
 # and independently of it: the flows it heals carry no NAT, so no conntrack
@@ -1705,6 +1709,55 @@ if has_our_jump "$prerouting" \
 fi
 CT=/opt/sbin/conntrack
 [ -x "$CT" ] || { logger -t awgm-ctclean "conntrack tool missing — poisoned-flow eviction skipped"; exit 0; }
+# awgm-режим: гарантия «весь трафик члена политики идёт через sing-box».
+# Уязвима запись, НЕ прошедшая через -j AWGMPPE: ядро печатает у неё [FASTNAT]
+# (флаг ровно по !ct->fast_ext). Помеченные записи — те, что реально прошли
+# перехват, — не трогаем. Оба протокола: TCP связывается с fastpath за доли
+# секунды и раньше не вытеснялся вовсе.
+#
+# Метка политики читается тут же из живого джампа — своя, а не общая с
+# UDP-ветками ниже: те стоят за выходом по отсутствию WAN-адреса, а этот проход
+# обязан работать и без него.
+if [ "$awgm_mode" -eq 1 ]; then
+  fpm="$(printf '%%s\n' "$prerouting" \
+    | sed -n 's/.*-m connmark --mark \(0x[0-9a-fA-F]*\).*-[jg] %[1]s.*/\1/p' | head -n 1)"
+  [ -n "$fpm" ] && fpm="$(printf '%%d' "$fpm" 2>/dev/null)"
+  fastnat="$(awk -v pm="$fpm" '
+    # Локальные назначения — приближение списка RETURN-исключений перехвата
+    # (emitBypassReturns): LAN-to-LAN, сам роутер, loopback, link-local, CGNAT,
+    # multicast. Их перехват не трогает по дизайну, и вытеснять их нельзя —
+    # оборвало бы в том числе веб-сессию, из которой движок включают.
+    # Пользовательские bypass-подсети сюда не попадают: их потоки вытеснятся и
+    # переустановятся сами, уже мимо прокси.
+    function local_dst(d) {
+      return d ~ /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[0-2][0-9])\.|22[4-9]\.|23[0-9]\.)/;
+    }
+    /\[FASTNAT\]/ && ($3 == "tcp" || $3 == "udp") {
+      src = ""; dst = ""; sp = ""; dp = ""; mark = ""; hasmac = 0;
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^src=/ && src == "") src = substr($i, 5);
+        else if ($i ~ /^dst=/ && dst == "") dst = substr($i, 5);
+        else if ($i ~ /^sport=/ && sp == "") sp = substr($i, 7);
+        else if ($i ~ /^dport=/ && dp == "") dp = substr($i, 7);
+        else if ($i ~ /^mark=/) mark = substr($i, 6);
+        else if ($i ~ /^mac=/) hasmac = 1;
+      }
+      # Скоуп: метка политики, а при MatchAll (метки нет) — любой поток,
+      # рождённый в LAN. mac= есть на каждом LAN-потоке Keenetic и нет у
+      # собственных потоков роутера, поэтому он же исключает роутер.
+      if (pm != "" && mark != pm) next;
+      if (pm == "" && !hasmac) next;
+      if (src == "" || dst == "" || sp == "" || dp == "") next;
+      if (local_dst(dst)) next;
+      print $3, src, dst, sp, dp;
+    }' /proc/net/nf_conntrack 2>/dev/null)"
+  if [ -n "$fastnat" ]; then
+    printf '%%s\n' "$fastnat" | while read -r pr s d sp dp; do
+      "$CT" -D -p "$pr" -s "$s" -d "$d" --sport "$sp" --dport "$dp" >/dev/null 2>&1
+    done
+    logger -t awgm-ctclean "evicted $(printf '%%s\n' "$fastnat" | wc -l) unprotected flow(s) in awgm mode"
+  fi
+fi
 wan_ips=""
 for dev in $(/opt/sbin/ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | sort -u); do
   wan_ips="$wan_ips $(/opt/sbin/ip -4 addr show dev "$dev" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')"

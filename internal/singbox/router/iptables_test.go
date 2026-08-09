@@ -1887,8 +1887,14 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 			t.Errorf("ctclean missing %q:\n%s", w, s)
 		}
 	}
-	if strings.Contains(s, "-p tcp") {
-		t.Errorf("ctclean must never evict TCP flows:\n%s", s)
+	// TCP вытесняется ТОЛЬКО в awgm-режиме: там установившийся поток защищён
+	// флагом от -j AWGMPPE, и предикат бьёт ровно по незащищённым. В legacy
+	// флага нет ни у кого, и тот же запрет остаётся в силе — убийство
+	// установившегося TCP ломает его жёстко (issue #627).
+	awgmBlock := s[strings.Index(s, `if [ "$awgm_mode" -eq 1 ]`):]
+	legacyPart := strings.Replace(s, awgmBlock, "", 1)
+	if strings.Contains(legacyPart, "-p tcp") {
+		t.Errorf("ctclean must never evict TCP flows outside awgm mode:\n%s", legacyPart)
 	}
 	// Issue #684: the PPE flush must be guarded by a live TPROXY jump (flushing
 	// into an absent jump re-teaches the same flows) and by node writability
@@ -1909,6 +1915,39 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 	}
 	if !strings.Contains(s, "[ -w /proc/sys/net/hwnat/ppe_flush ]") {
 		t.Errorf("PPE flush must be gated on node writability:\n%s", s)
+	}
+}
+
+func TestCtCleanScriptEvictsFastnatOnBothProtocolsInAwgmMode(t *testing.T) {
+	body := ctCleanScript()
+
+	// Предикат уязвимости: запись НЕ прошла через -j AWGMPPE.
+	if !strings.Contains(body, "[FASTNAT]") {
+		t.Fatal("скрипт не отбирает записи по токену [FASTNAT]")
+	}
+	// TCP пробивает порог привязки к fastpath за доли секунды — он и есть
+	// главный класс утечки, ради которого проход добавлен.
+	if !strings.Contains(body, `$3 == "tcp" || $3 == "udp"`) {
+		t.Fatal("проход по [FASTNAT] не покрывает оба протокола")
+	}
+	// Гейт на awgm-режим: в legacy правила AWGMPPE нет, флаг стоит на каждой
+	// записи, и тот же предикат снёс бы все живые соединения членов политики.
+	if !strings.Contains(body, "awgm_mode=1") {
+		t.Fatal("проход не гейтится awgm-режимом")
+	}
+	// Проход обязан стоять ВЫШЕ выхода по отсутствию WAN-адреса: типичный
+	// триггер скрипта — DHCP-renew, когда адреса ещё нет.
+	pass := strings.Index(body, `if [ "$awgm_mode" -eq 1 ]`)
+	wanExit := strings.Index(body, `[ $# -gt 0 ] || exit 0`)
+	if pass < 0 || wanExit < 0 || pass > wanExit {
+		t.Fatal("awgm-проход стоит ниже выхода по отсутствию WAN-адреса")
+	}
+	// Локальные назначения не вытесняются: перехват их и не трогает
+	// (RETURN на bypass-подсети), а вытеснение оборвало бы веб-сессию, из
+	// которой движок и включают. Точки в предикате экранированы обязательно:
+	// голая `10.` заматчила бы `100.x` — публичный адрес.
+	if !strings.Contains(body, `192\.168\.`) || !strings.Contains(body, `169\.254\.`) {
+		t.Fatal("проход не исключает локальные назначения")
 	}
 }
 
