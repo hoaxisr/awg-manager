@@ -566,6 +566,15 @@ func (s *ServiceImpl) SetSelectiveBuilder(b SelectiveBuilder) {
 	s.deps.SelectiveBuilder = b
 }
 
+// EvictFlows сносит conntrack адресов, чья принадлежность политике только что
+// изменилась. Гарантия «член политики всегда через sing-box» иначе держалась бы
+// только на новых потоках, а установившиеся дожили бы свой век мимо перехвата.
+// Метод на сервисе, потому что *IPTables наружу не отдаётся: он создаётся тут
+// же в Deps и связан с активным каналом правил.
+func (s *ServiceImpl) EvictFlows(ctx context.Context, srcIPs ...string) {
+	s.deps.IPTables.EvictFlows(ctx, srcIPs...)
+}
+
 func (s *ServiceImpl) routerConfigPath() string {
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
 }

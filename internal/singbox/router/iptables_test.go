@@ -1979,6 +1979,67 @@ func TestCtCleanScriptEvictsFastnatOnBothProtocolsInAwgmMode(t *testing.T) {
 	}
 }
 
+func TestCtCleanScriptEvictsExplicitSourceIPs(t *testing.T) {
+	body := ctCleanScript()
+	// Аргументы обязаны сниматься ДО `set -- $wan_ips`, иначе позиционные
+	// параметры затираются списком WAN-адресов.
+	argIdx := strings.Index(body, `evict_ips="$*"`)
+	wanIdx := strings.Index(body, `set -- $wan_ips`)
+	if argIdx < 0 {
+		t.Fatal("скрипт не принимает адреса аргументами")
+	}
+	if wanIdx >= 0 && argIdx > wanIdx {
+		t.Fatal("аргументы снимаются после set -- $wan_ips: они уже затёрты")
+	}
+	// Гейт awgm — тот же, что у прохода по [FASTNAT]: в legacy смена состава
+	// политики не имеет права рвать соединения устройства. Спрашивается у
+	// САМОГО блока: проход, вынесенный за `fi`, отработал бы и в legacy.
+	block := awgmCtCleanBlock(t, body)
+	for _, proto := range []string{"tcp", "udp"} {
+		if !strings.Contains(block, `-D -p `+proto+` -s "$ip"`) {
+			t.Fatalf("нет вытеснения %s по адресу-источнику внутри awgm-блока:\n%s", proto, block)
+		}
+	}
+	if !strings.Contains(block, `for ip in $evict_ips`) {
+		t.Fatalf("проход по явным адресам не гейтится awgm-режимом:\n%s", block)
+	}
+}
+
+func TestInstallRunsCtCleanWithoutExplicitIPs(t *testing.T) {
+	fe := &fakeExec{}
+	it := newFakeIPTables(fe)
+	// Без этих заглушек Install полезет писать в /opt/etc и упадёт не по делу.
+	it.persistRules = func(string, string, string) error { return nil }
+	it.persistHook = func(bool) error { return nil }
+	it.persistCtClean = func() error { return nil }
+	var got [][]string
+	it.runCtClean = func(_ context.Context, ips []string) { got = append(got, ips) }
+
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0x100"}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if len(got) != 1 || len(got[0]) != 0 {
+		t.Fatalf("Install обязан звать вытеснение ровно раз и без адресов, получено %v", got)
+	}
+}
+
+func TestEvictFlowsPassesSourceIPs(t *testing.T) {
+	it := &IPTables{}
+	var got [][]string
+	it.runCtClean = func(_ context.Context, ips []string) { got = append(got, ips) }
+
+	// Пустой вызов не имеет права запускать скрипт: вытеснять нечего, а
+	// побочный ppe_flush сбрасывает аппаратный offload всему LAN.
+	it.EvictFlows(context.Background())
+	if len(got) != 0 {
+		t.Fatalf("вызов без адресов обязан быть no-op, получено %v", got)
+	}
+	it.EvictFlows(context.Background(), "192.168.1.5", "192.168.1.6")
+	if len(got) != 1 || strings.Join(got[0], " ") != "192.168.1.5 192.168.1.6" {
+		t.Fatalf("адреса обязаны дойти до скрипта, получено %v", got)
+	}
+}
+
 // Окно «движок поднялся, правила ещё не стояли» существует в обоих режимах:
 // потоки, рождённые в окне, получают direct-NAT и аппаратный offload, а
 // вылечить уже offloaded поток может только вытеснение записи conntrack.
@@ -2166,7 +2227,7 @@ func TestInstallRefreshesCtCleanScriptInBothModes(t *testing.T) {
 			it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 			it.runIP = func(context.Context, ...string) error { return nil }
 			it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
-			it.runCtClean = func(context.Context) {}
+			it.runCtClean = func(context.Context, []string) {}
 			// Раскладка канала обязана совпадать со spec.AwgmMode — Install
 			// сверяет их прямо перед restore (гонка Enable/Reconcile).
 			it.awgmLayout = tc.awgmMode
@@ -2211,7 +2272,7 @@ func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
 			return nil
 		},
 		persistHook: func(bool) error { return nil },
-		runCtClean:  func(_ context.Context) { order = append(order, "ctclean") },
+		runCtClean:  func(_ context.Context, _ []string) { order = append(order, "ctclean") },
 	}
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
 	if err := it.Install(context.Background(), spec); err != nil {
@@ -3067,7 +3128,7 @@ func TestAwgmInstallLeavesNatBlobForDNSHook(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
-	it.runCtClean = func(context.Context) {} // без стаба Install exec'нул бы реальный скрипт
+	it.runCtClean = func(context.Context, []string) {} // без стаба Install exec'нул бы реальный скрипт
 	it.awgmLayout = true
 
 	spec := RestoreInputSpec{
@@ -3163,7 +3224,7 @@ func TestAwgmInstallDropsNatBlobWithoutDNSRescue(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
-	it.runCtClean = func(context.Context) {}
+	it.runCtClean = func(context.Context, []string) {}
 	it.awgmLayout = true
 
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: true} // LANBridges пуст
@@ -3241,7 +3302,7 @@ func TestLegacyInstallRemovesStaleDNSHook(t *testing.T) {
 	it.runIPTablesOut = func(context.Context, ...string) (string, error) { return "", nil }
 	it.runIP = func(context.Context, ...string) error { return nil }
 	it.runIPOut = func(context.Context, ...string) (string, error) { return "", nil }
-	it.runCtClean = func(context.Context) {}
+	it.runCtClean = func(context.Context, []string) {}
 	it.awgmLayout = false // канал уже демотирован на legacy
 
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", AwgmMode: false}

@@ -960,7 +960,7 @@ type IPTables struct {
 	// persistHook: скрипт нужен в обоих режимах, а полный хук — только в
 	// legacy.
 	persistCtClean func() error
-	runCtClean     func(ctx context.Context)
+	runCtClean     func(ctx context.Context, srcIPs []string)
 
 	// awgmLayout — раскладка правил активного бэкенда: в каких таблицах лежат
 	// цепочки перехвата (см. udpChainTable/tcpChainTable). Меняется вместе с
@@ -1026,10 +1026,10 @@ func NewIPTables() *IPTables {
 		persistBlackhole: writeNetfilterBlackholeRulesFile,
 		cleanupBlackhole: removeNetfilterBlackholeRulesFile,
 		persistCtClean:   writeCtCleanScript,
-		runCtClean: func(ctx context.Context) {
+		runCtClean: func(ctx context.Context, srcIPs []string) {
 			// Best-effort: the script self-logs via logger; a failure here
 			// must never fail Install (interception is already up).
-			_, _ = sysexec.Run(ctx, netfilterCtCleanPath)
+			_, _ = sysexec.Run(ctx, netfilterCtCleanPath, srcIPs...)
 		},
 	}
 }
@@ -1420,9 +1420,17 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// absent TPROXY jump carry a direct WAN NAT in conntrack and would
 	// bypass tproxy for life (issue #627) — evict them now that rules are up.
 	if it.runCtClean != nil {
-		it.runCtClean(ctx)
+		it.runCtClean(ctx, nil)
 	}
 	return nil
+}
+
+// EvictFlows вытесняет весь conntrack перечисленных адресов-источников.
+func (it *IPTables) EvictFlows(ctx context.Context, srcIPs ...string) {
+	if len(srcIPs) == 0 || it.runCtClean == nil {
+		return
+	}
+	it.runCtClean(ctx, srcIPs)
 }
 
 // Both files are consumed by OTHER software at arbitrary times (NDMS executes
@@ -1678,6 +1686,9 @@ exit 0
 // Pure (no I/O) so a test can validate the generated shell with `sh -n`.
 func ctCleanScript() string {
 	return fmt.Sprintf(`#!/bin/sh
+# Адреса, чьи потоки вытесняются целиком, приходят аргументами (смена состава
+# политики). Снимаются ПЕРВЫМ делом: ниже $@ затирается списком WAN-адресов.
+evict_ips="$*"
 # Дамп PREROUTING из той таблицы, где реально стоят НАШИ правила: и проверка
 # живого джампа, и марка читаются дальше только из него. В обычном режиме
 # правила лежат в mangle и их видит штатный iptables; в awgm-режиме — в таблице
@@ -1719,6 +1730,15 @@ CT=/opt/sbin/conntrack
 # UDP-ветками ниже: те стоят за выходом по отсутствию WAN-адреса, а этот проход
 # обязан работать и без него.
 if [ "$awgm_mode" -eq 1 ]; then
+  # Состав политики изменился: у этих адресов протух ВЕСЬ conntrack —
+  # вступившее устройство несёт записи с меткой прежней политики (мимо скоупа
+  # ниже), вышедшее — помеченные записи, которые иначе досидели бы в sing-box
+  # до конца потока. Предикат [FASTNAT] тут неприменим: нужны обе категории.
+  for ip in $evict_ips; do
+    "$CT" -D -p tcp -s "$ip" >/dev/null 2>&1
+    "$CT" -D -p udp -s "$ip" >/dev/null 2>&1
+  done
+  [ -n "$evict_ips" ] && logger -t awgm-ctclean "evicted flows of $evict_ips after policy membership change"
   fpm="$(printf '%%s\n' "$prerouting" \
     | sed -n 's/.*-m connmark --mark \(0x[0-9a-fA-F]*\).*-[jg] %[1]s.*/\1/p' | head -n 1)"
   [ -n "$fpm" ] && fpm="$(printf '%%d' "$fpm" 2>/dev/null)"
