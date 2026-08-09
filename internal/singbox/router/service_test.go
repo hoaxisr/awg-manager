@@ -28,6 +28,8 @@ type fakeAccessPolicyProvider struct {
 	createErr     error
 	assignCalls   int
 	unassignCalls int
+	exits         []query.PolicyDefaultExit
+	exitsErr      error
 }
 
 func (f *fakeAccessPolicyProvider) GetPolicyMark(_ context.Context, _ string) (string, error) {
@@ -50,6 +52,9 @@ func (f *fakeAccessPolicyProvider) ListPolicies(_ context.Context) ([]PolicyInfo
 }
 func (f *fakeAccessPolicyProvider) CreatePolicy(_ context.Context, _ string) (PolicyInfo, error) {
 	return f.createReturn, f.createErr
+}
+func (f *fakeAccessPolicyProvider) ListPolicyExits(_ context.Context, _ string) ([]query.PolicyDefaultExit, error) {
+	return f.exits, f.exitsErr
 }
 
 // fakeWANIPCollector is a test double for WANIPCollector.

@@ -40,6 +40,10 @@ func (a *routerAccessPolicyAdapter) GetPolicyMark(ctx context.Context, name stri
 	return a.svc.GetPolicyMark(ctx, name)
 }
 
+func (a *routerAccessPolicyAdapter) ListPolicyExits(ctx context.Context, iface string) ([]ndmsquery.PolicyDefaultExit, error) {
+	return a.svc.ListPolicyExits(ctx, iface)
+}
+
 func (a *routerAccessPolicyAdapter) AssignDevice(ctx context.Context, mac, name string) error {
 	return a.svc.AssignDevice(ctx, mac, name)
 }

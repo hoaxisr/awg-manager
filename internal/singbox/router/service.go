@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -234,6 +235,10 @@ type AccessPolicyProvider interface {
 	ListDevicesForPolicy(ctx context.Context, policyName string) ([]PolicyDevice, error)
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
 	CreatePolicy(ctx context.Context, description string) (PolicyInfo, error)
+	// ListPolicyExits — политики, чей дефолт ведёт в iface (policy-tun:
+	// источник connmark для перехвата DNS; политика там задаётся в NDMS,
+	// а не в настройках, поэтому sr.PolicyName непригоден).
+	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned
