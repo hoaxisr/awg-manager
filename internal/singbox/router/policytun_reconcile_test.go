@@ -534,6 +534,40 @@ func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 	}
 }
 
+func TestReap_PolicyTunKeepsOwnDNATRules(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	rec := &ingressRecorder{
+		natDump: "-P PREROUTING ACCEPT\n" +
+			"-A PREROUTING -i nwg3 -p udp --dport 53 -m comment --comment " + FakeIPIngressTag + " -j DNAT --to-destination 172.18.0.2:53\n" +
+			"-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment " + PolicyTunDNSTag + " -j DNAT --to-destination 172.18.0.2:53\n",
+		ruleDump: ruleDumpFor("nwg3"),
+	}
+	svc := newTestService(t, Deps{Settings: store, IPTables: rec.tables()})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, PolicyTunDNSTag) {
+			t.Fatalf("реап снёс правило policy-tun: %s", joined)
+		}
+	}
+	removedFakeIP := false
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, FakeIPIngressTag) {
+			removedFakeIP = true
+		}
+	}
+	if !removedFakeIP {
+		t.Errorf("протухший DNAT прежнего fakeip обязан сниматься: %v", rec.ipt)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Готовность: carrier tun, без DNS-инпутов fakeip
 // ---------------------------------------------------------------------------

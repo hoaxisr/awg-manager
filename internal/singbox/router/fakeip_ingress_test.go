@@ -494,6 +494,144 @@ func TestIngressDNATArgsCarryTagAndSelector(t *testing.T) {
 	}
 }
 
+func TestLineHasIngressSelector(t *testing.T) {
+	const markLine = `-A PREROUTING -p udp -m connmark --mark 0xffffaab -m udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`
+	// Часть сборок iptables печатает connmark с маской — матч обязан это
+	// пережить, иначе детектор увидит вечный дрейф.
+	const maskedLine = `-A PREROUTING -p udp -m connmark --mark 0xffffaab/0xffffffff --dport 53 -j DNAT --to-destination 172.18.0.2:53`
+	const ifaceLine = `-A PREROUTING -i opkgtun17 -p udp -m udp --dport 53 -j DNAT --to-destination 172.18.0.2:53`
+
+	mark := []string{"-m", "connmark", "--mark", "0xffffaab"}
+	other := []string{"-m", "connmark", "--mark", "0xffffaac"}
+	iface := []string{"-i", "opkgtun17"}
+	shortIface := []string{"-i", "opkgtun1"}
+
+	if !lineHasIngressSelector(markLine, mark) {
+		t.Error("марка без маски не совпала")
+	}
+	if !lineHasIngressSelector(maskedLine, mark) {
+		t.Error("марка с маской не совпала")
+	}
+	if lineHasIngressSelector(markLine, other) {
+		t.Error("чужая марка совпала")
+	}
+	if !lineHasIngressSelector(ifaceLine, iface) {
+		t.Error("интерфейс не совпал")
+	}
+	if lineHasIngressSelector(ifaceLine, shortIface) {
+		t.Error("opkgtun1 совпал с opkgtun17 — нужен разделитель")
+	}
+	if lineHasIngressSelector(ifaceLine, mark) {
+		t.Error("марка совпала со строкой без connmark")
+	}
+}
+
+func TestNATDriftMixedSelectorsSteadyState(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: testTunDNS, Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab"}, Ifaces: []string{"opkgtun17"},
+	}
+	dump := strings.Join([]string{
+		`-P PREROUTING ACCEPT`,
+		`-A PREROUTING -i opkgtun17 -p tcp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -i opkgtun17 -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p tcp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -i br0 -j _NDM_DNS_FLT_REDIR`,
+	}, "\n")
+	if fakeIPIngressNATDrift(dump, spec) {
+		t.Error("установившееся состояние с двумя видами селекторов считается дрейфом")
+	}
+}
+
+func TestNATDriftDetectsMissingForeignAboveAndStale(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: testTunDNS, Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab"},
+	}
+	if !fakeIPIngressNATDrift(`-P PREROUTING ACCEPT`, spec) {
+		t.Error("пропажа правил — дрейф")
+	}
+	below := strings.Join([]string{
+		`-A PREROUTING -i br0 -j _NDM_DNS_FLT_REDIR`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p tcp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+	}, "\n")
+	if !fakeIPIngressNATDrift(below, spec) {
+		t.Error("наши правила ниже чужих — дрейф")
+	}
+	stale := strings.Join([]string{
+		`-A PREROUTING -m connmark --mark 0xffffaad -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p tcp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+	}, "\n")
+	if !fakeIPIngressNATDrift(stale, spec) {
+		t.Error("правило с протухшей маркой — дрейф")
+	}
+}
+
+func TestNATDriftWithoutDNATHalfWantsRulesGone(t *testing.T) {
+	// Перехват выключен (53 в bypass), но ingress-интерфейсы есть: правила с
+	// нашим тегом обязаны считаться дрейфом, иначе они останутся навсегда.
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", Tag: PolicyTunDNSTag, Ifaces: []string{"opkgtun17"},
+	}
+	dump := `-A PREROUTING -i opkgtun17 -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`
+	if !fakeIPIngressNATDrift(dump, spec) {
+		t.Error("правила есть, а перехвата быть не должно — это дрейф")
+	}
+	if fakeIPIngressNATDrift(`-P PREROUTING ACCEPT`, spec) {
+		t.Error("отсутствие правил при выключенном перехвате — норма")
+	}
+}
+
+func TestEnsureIngressRemovesOwnRulesWhenDNATOff(t *testing.T) {
+	r := &ingressRecorder{
+		natDump:  `-A PREROUTING -i opkgtun17 -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+		ruleDump: ruleDumpFor("opkgtun17"),
+	}
+	spec := FakeIPIngressSpec{TunIface: "opkgtun0", Tag: PolicyTunDNSTag, Ifaces: []string{"opkgtun17"}}
+	if err := r.tables().EnsureFakeIPIngress(context.Background(), spec); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	removed := false
+	for _, call := range r.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, PolicyTunDNSTag) {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Errorf("правило перехвата не снято при выключенном DNAT: %v", r.ipt)
+	}
+}
+
+func TestEnsureIngressInactiveRemovesBothTags(t *testing.T) {
+	r := &ingressRecorder{natDump: strings.Join([]string{
+		`-A PREROUTING -i opkgtun17 -p udp --dport 53 -m comment --comment "AWGM-FAKEIP-INGRESS" -j DNAT --to-destination 172.18.0.2:53`,
+		`-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment "AWGM-POLICYTUN-DNS" -j DNAT --to-destination 172.18.0.2:53`,
+	}, "\n")}
+	if err := r.tables().EnsureFakeIPIngress(context.Background(), FakeIPIngressSpec{}); err != nil {
+		t.Fatalf("EnsureFakeIPIngress: %v", err)
+	}
+	var fakeip, policy int
+	for _, call := range r.ipt {
+		joined := strings.Join(call, " ")
+		if !strings.Contains(joined, "-D PREROUTING") {
+			continue
+		}
+		if strings.Contains(joined, FakeIPIngressTag) {
+			fakeip++
+		}
+		if strings.Contains(joined, PolicyTunDNSTag) {
+			policy++
+		}
+	}
+	if fakeip != 1 || policy != 1 {
+		t.Errorf("снято fakeip=%d policy=%d, хотели по одному", fakeip, policy)
+	}
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

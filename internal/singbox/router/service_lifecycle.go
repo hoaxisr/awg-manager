@@ -215,13 +215,15 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// EnsureFakeIPIngress с пустым spec трогает правила только если они есть.
 	//
 	// В policy-tun полный свип НЕДОПУСТИМ: там заворот СВОЙ (ip rule iif +
-	// таблица 700, без DNAT), а реап идёт в Reconcile первым — свип сносил бы
-	// его на каждом тике, и enable/reconcile ставили бы заново (churn) или не
-	// ставили вовсе (enable no-op'ится на provisioned+live). Снимаем только
-	// DNAT-половину: policy-tun её не ставит, а протухшая от fakeip ломала бы
-	// DNS клиентов (ensure с NoDNAT правила DNAT не трогает вовсе).
+	// таблица 700), а реап идёт в Reconcile первым — свип сносил бы его на
+	// каждом тике, и enable/reconcile ставили бы заново (churn) или не ставили
+	// вовсе (enable no-op'ится на provisioned+live). Снимаем только ЧУЖОЙ,
+	// fakeip-тег: протухший от fakeip DNAT ломал бы DNS клиентов, а правила
+	// перехвата policy-tun (PolicyTunDNSTag) ставит и чинит ensure этого же
+	// режима — снос их здесь дал бы churn каждые 30 секунд с окном резолвинга
+	// мимо туннеля внутри каждого тика.
 	if sr.RoutingMode == statePolicyTun {
-		s.removeFakeIPIngressDNAT(ctx)
+		s.removeFakeIPIngressDNAT(ctx, FakeIPIngressTag)
 	} else {
 		s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
 	}
