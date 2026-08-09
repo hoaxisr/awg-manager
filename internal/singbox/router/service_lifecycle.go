@@ -807,12 +807,25 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 			SelectiveIPSet: sr.SelectiveBypass,
 			AwgmMode:       awgmMode,
 		}
-		if err := s.installBlackholeRules(ctx, bootSpec); err != nil {
+		// Флаг «снять её потом» взводится ДО попытки, а не по успеху:
+		// InstallBlackhole пишет файл правил РАНЬШЕ restore, и после отказа
+		// restore файл остаётся лежать. Не снять его — значит оставить
+		// DEAD-ветке хука возможность позже поднять заглушку по стухшей спеке,
+		// невидимую для blackholeActive. RemoveBlackhole идемпотентен, лишний
+		// вызов стоит пары отказавших iptables.
+		bootBlackhole = true
+		// InstallBlackhole напрямую, МИМО обёртки installBlackholeRules: та
+		// помечает отказ как отказ канала правил, а пометку снимает только
+		// демоция — последующий УСПЕШНЫЙ installRules её не гасит, и
+		// enableLocked снёс бы только что вставший рабочий awgm-перехват ради
+		// отката на legacy. Заглушка здесь best-effort по замыслу: её отказ мы
+		// логируем и идём дальше, а если канал правил действительно сломан, это
+		// через мгновение покажет installRules — вот он основание законное.
+		if err := s.deps.IPTables.InstallBlackhole(ctx, bootSpec); err != nil {
 			// Не валим подъём: без заглушки остаётся ровно то поведение, что
-			// было до этой правки, а отказ уже помечен для fail-safe демоции.
+			// было до этой правки.
 			s.appLog.Warn("enable", "", "не удалось поставить fail-closed заглушку на время подъёма: "+err.Error())
 		} else {
-			bootBlackhole = true
 			s.blackholeActive = true
 			s.appLog.Info("enable", "", "на время подъёма движка включён fail-closed DROP policy-трафика")
 		}
@@ -937,8 +950,15 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 	installed = true
 	// Перехват стоит — заглушка больше не нужна. Строго ПОСЛЕ Install: снятие
 	// раньше открыло бы то же окно, ради которого она ставилась.
+	//
+	// WithoutCancel — как и в defer выше, и по той же причине: ctx здесь
+	// запросный, и обрыв клиента в зазоре после успешного Install оставил бы
+	// заглушку в ядре ВПЕРЕДИ перехвата (её джамп добавлен раньше, а
+	// removeSourceHooks внутри Install скрабит только цепочки перехвата) при
+	// сохранённом Enabled=true и сброшенном blackholeActive — то есть вечный
+	// DROP при зелёном статусе и без единого пути самолечения.
 	if bootBlackhole {
-		s.deps.IPTables.RemoveBlackhole(ctx)
+		s.deps.IPTables.RemoveBlackhole(context.WithoutCancel(ctx))
 		s.blackholeActive = false
 	}
 	s.currentMark = mark

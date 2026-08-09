@@ -342,6 +342,173 @@ func TestProvisionRemovesBootBlackholeWhenSingboxNeverReady(t *testing.T) {
 	}
 }
 
+// Обрыв запроса в зазоре между вставшим перехватом и снятием заглушки. ctx у
+// Enable — запросный (api/singbox_router.go:85), exec с оборванным контекстом
+// не выполняется вовсе, а джамп заглушки добавлен РАНЬШЕ джампа перехвата и
+// скрабом внутри Install не трогается. Снятие мёртвым контекстом оставило бы
+// заглушку впереди перехвата при сохранённом Enabled=true и сброшенном
+// blackholeActive — вечный DROP при зелёном статусе, самолечения нет.
+func TestProvisionRemovesBootBlackholeWhenClientDisconnectsAfterInstall(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	ipt := notInstalledFakeIPTables(fe)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Рвём контекст ровно на блобе перехвата: Install через него уже прошёл,
+	// снятие заглушки — ещё нет.
+	intercepted := false
+	ipt.restoreNoflush = func(c context.Context, in string) error {
+		err := fe.restoreNoflush(c, in)
+		if strings.Contains(in, ":"+ChainName+" - [0:0]") {
+			intercepted = true
+			cancel()
+		}
+		return err
+	}
+	ipt.legacyRestoreNoflush = ipt.restoreNoflush
+	svc := newBootBlackholeServiceWith(t, ipt)
+
+	_ = svc.Enable(ctx)
+
+	if !intercepted {
+		t.Fatalf("предусловие: перехват не ставился вовсе, вызовы: %+v", fe.calls)
+	}
+	if restoreIndexOf(fe, "-A "+BlackholeChain+" -j DROP") < 0 {
+		t.Fatal("предусловие: заглушка на время подъёма не ставилась")
+	}
+	if blackholeRemoveIndex(fe) < 0 {
+		t.Fatal("обрыв запроса сразу после Install оставил заглушку впереди перехвата: тумблер включён, статус зелёный, policy-трафик дропается")
+	}
+	if svc.blackholeActive {
+		t.Error("blackholeActive остался выставленным после снятия заглушки")
+	}
+}
+
+// Порядок операций проверяют соседние тесты, этот — СОДЕРЖИМОЕ спеки заглушки.
+// В policy-режиме с пустой меткой джамп не эмитится вовсе (цепочка есть,
+// входить в неё некому — правка становится молчаливым no-op), а MatchAll вместо
+// метки уронил бы весь трафик роутера, а не трафик членов политики.
+func TestBootBlackholeSpecCarriesPolicySelectorAndBypass(t *testing.T) {
+	const (
+		mark   = "0xffffaaa"
+		bypass = "192.0.2.0/24"
+	)
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	sb := newTestSingbox(t)
+	sb.isRunningFn = func() (bool, int) { return true, 1234 }
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			RoutingMode:        "tproxy",
+			DeviceMode:         "policy",
+			PolicyName:         "Policy0",
+			BypassExtraSubnets: bypass,
+			SelectiveBypass:    true,
+			WANAutoDetect:      true,
+		}),
+		Policies:           &fakeAccessPolicyProvider{mark: mark},
+		IPTables:           notInstalledFakeIPTables(fe),
+		Singbox:            sb,
+		WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.7/32"}},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	i := restoreIndexOf(fe, "-A "+BlackholeChain+" -j DROP")
+	if i < 0 {
+		t.Fatalf("предусловие: заглушка на время подъёма не ставилась, вызовы: %+v", fe.calls)
+	}
+	blob := fe.calls[i].stdin
+	jump := "-A PREROUTING -m connmark --mark " + mark + " -m conntrack ! --ctstate INVALID -j " + BlackholeChain
+	if !strings.Contains(blob, jump) {
+		t.Errorf("в заглушку никто не входит по метке политики — правка стала no-op, окно снова fail-open:\n%s", blob)
+	}
+	if !strings.Contains(blob, "-A "+BlackholeChain+" -d "+bypass+" -j RETURN") {
+		t.Errorf("заглушка дропает подсеть, которую пользователь явно исключил из проксирования:\n%s", blob)
+	}
+	if !strings.Contains(blob, "-A "+BlackholeChain+" -m set ! --match-set "+selectiveSetName+" dst -j RETURN") {
+		t.Errorf("в selective-режиме заглушка дропает весь трафик вместо проксируемого подмножества:\n%s", blob)
+	}
+}
+
+// blackholeFailBackend — awgm-канал, у которого не проходит ТОЛЬКО блоб
+// заглушки; блоб перехвата встаёт нормально. `-nL` отвечает отказом, то есть
+// перехвата в ядре сейчас нет (табличная проба выбора бэкенда идёт другими
+// аргументами и остаётся успешной).
+type blackholeFailBackend struct{ stubBackend }
+
+func (b blackholeFailBackend) RestoreNoflush(ctx context.Context, input string) error {
+	err := b.stubBackend.RestoreNoflush(ctx, input) // попытка видна в restored
+	if strings.Contains(input, BlackholeChain) {
+		return errors.New("iptables-restore: bad rule")
+	}
+	return err
+}
+
+func (b blackholeFailBackend) Run(ctx context.Context, args ...string) error {
+	if slices.Contains(args, "-nL") {
+		return errors.New("iptables: No chain/target/match by that name")
+	}
+	return b.stubBackend.Run(ctx, args...)
+}
+
+// Загрузочная заглушка — best-effort: её отказ логируется, и подъём идёт
+// дальше. Основанием для fail-safe демоции он быть не должен — иначе отказ
+// заглушки сносит только что вставший РАБОЧИЙ awgm-перехват и поднимает всё
+// заново на legacy. Сломанный канал правил через мгновение покажет installRules,
+// и вот это основание законное.
+func TestBootBlackholeFailureDoesNotDemoteAwgm(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	stubAwgmListeningProbe(t, func() bool { return true })
+	sb := newTestSingbox(t)
+	sb.isRunningFn = func() (bool, int) { return true, 1234 }
+	var restored, calls []string
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			RoutingMode:   "tproxy",
+			DeviceMode:    "all",
+			WANAutoDetect: true,
+			AwgmBackend:   true,
+		}),
+		Policies:           &fakeAccessPolicyProvider{},
+		IPTables:           notInstalledFakeIPTables(fe),
+		Awgm:               blackholeFailBackend{stubBackend{available: true, restored: &restored, calls: &calls}},
+		Singbox:            sb,
+		WANIPCollector:     &fakeWANIPCollector{},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	if svc.backendMode() != BackendAwgm {
+		t.Fatalf("отказ best-effort заглушки увёл движок на %q, снеся рабочий awgm-перехват", svc.backendMode())
+	}
+	var blackhole, intercept int
+	for _, blob := range restored {
+		if strings.Contains(blob, BlackholeChain) {
+			blackhole++
+		}
+		if strings.Contains(blob, ":"+ChainName+" - [0:0]") {
+			intercept++
+		}
+	}
+	if blackhole != 1 || intercept != 1 {
+		t.Errorf("ожидали по одной попытке заглушки и перехвата, получили blackhole=%d intercept=%d", blackhole, intercept)
+	}
+	// InstallBlackhole пишет файл правил ДО restore: снять его обязаны и после
+	// отказавшей попытки, иначе DEAD-ветка хука позже поднимет заглушку по
+	// стухшей спеке, невидимую для blackholeActive.
+	if !slices.ContainsFunc(calls, func(c string) bool { return strings.Contains(c, "-F "+BlackholeChain) }) {
+		t.Errorf("после отказавшей попытки заглушку никто не снял, вызовы канала: %v", calls)
+	}
+}
+
 // Второе условие правки: заглушку ставим ТОЛЬКО когда перехвата сейчас нет.
 // Этот путь достижим drift-heal'ом при живых правилах (запаркованный слот при
 // работающем движке), и заглушка поверх рабочего перехвата дала бы обрыв на всё
