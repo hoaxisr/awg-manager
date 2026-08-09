@@ -50,6 +50,11 @@ const (
 	// FakeIPIngressTag — comment-тег DNAT-правил перехвата DNS. По нему они
 	// находятся для идемпотентной переустановки и снятия.
 	FakeIPIngressTag = "AWGM-FAKEIP-INGRESS"
+	// PolicyTunDNSTag — comment-тег DNAT-правил перехвата DNS в режиме
+	// policy-tun. ОБЯЗАН отличаться от FakeIPIngressTag: реап
+	// (ReapOrphanedFakeIPTun) в policy-tun каждый тик сносит правила со
+	// СВОИМ тегом, и общий тег означал бы churn каждые 30 секунд.
+	PolicyTunDNSTag = "AWGM-POLICYTUN-DNS"
 	// fakeIPIngressTable — таблица маршрутизации с default в fakeip-tun.
 	// Выбрана вдали от чужих диапазонов: 100 — таблица fwmark-правила tproxy,
 	// 400-599 занимает clientroute, политики NDMS живут в низких номерах.
@@ -78,19 +83,58 @@ type FakeIPIngressSpec struct {
 	// При NoDNAT не используется и может быть пуст.
 	TunDNS string
 	// NoDNAT — ставить только маршрутную половину заворота (ip rule iif +
-	// таблица 700), без перехвата DNS. Режим policy-tun: DNS клиентов там
-	// решает NDMS-политика через припаркованный на tun дефолт, своего
-	// fakeip-резолвера у нас нет, и DNAT :53 увёл бы запросы в никуда.
+	// таблица 700), без перехвата DNS. Перехват сам по себе возможен и в
+	// policy-tun (DNS туннеля — тот же адрес), поэтому NoDNAT остаётся только
+	// для случая, когда перехват выключен намеренно.
 	NoDNAT bool
 	// Ifaces — резолвленные kernel-имена ingress-интерфейсов (напр. "opkgtun17").
 	Ifaces []string
+	// Tag — comment-тег DNAT-правил этого спека. Пусто = FakeIPIngressTag.
+	Tag string
+	// Marks — connmark политик (hex "0x…"), чей DNS перехватывается.
+	// Только policy-tun; в fakeip всегда пусто.
+	Marks []string
 }
 
-// active сообщает, есть ли что устанавливать: пустой список интерфейсов или
-// незаполненные параметры туннеля означают «заворота нет». TunDNS обязателен
-// только там, где ставится DNAT.
+func (spec FakeIPIngressSpec) tag() string {
+	if spec.Tag != "" {
+		return spec.Tag
+	}
+	return FakeIPIngressTag
+}
+
+// dnatSelectors — селекторы правил перехвата в порядке сборки: сначала
+// политики (по connmark), затем ingress-интерфейсы (по -i).
+func (spec FakeIPIngressSpec) dnatSelectors() [][]string {
+	out := make([][]string, 0, len(spec.Marks)+len(spec.Ifaces))
+	for _, m := range spec.Marks {
+		out = append(out, []string{"-m", "connmark", "--mark", m})
+	}
+	for _, i := range spec.Ifaces {
+		out = append(out, []string{"-i", i})
+	}
+	return out
+}
+
+// routeHalf — ставится ли маршрутная половина заворота (ip rule iif +
+// таблица 700). Она имеет смысл только для ingress-интерфейсов: члены
+// политики попадают в tun припаркованным дефолтом NDMS, а не нашей таблицей.
+func (spec FakeIPIngressSpec) routeHalf() bool { return len(spec.Ifaces) > 0 }
+
+// dnatHalf — ставится ли перехват DNS.
+func (spec FakeIPIngressSpec) dnatHalf() bool {
+	return spec.TunIface != "" && !spec.NoDNAT && spec.TunDNS != "" &&
+		(len(spec.Marks) > 0 || len(spec.Ifaces) > 0)
+}
+
+// active — есть ли что устанавливать вообще. Пустой спек означает
+// «заворота быть не должно» и приводит к полному снятию. Клауза
+// (NoDNAT || TunDNS != "") сохранена от прежней редакции: спек с
+// интерфейсами, но без адреса DNS — это нерезолвленный туннель, и заворот
+// маршрутов без перехвата даёт ровно ту поломку, ради которой заворот и делался.
 func (spec FakeIPIngressSpec) active() bool {
-	return len(spec.Ifaces) > 0 && spec.TunIface != "" && (spec.NoDNAT || spec.TunDNS != "")
+	return spec.TunIface != "" && (spec.NoDNAT || spec.TunDNS != "") &&
+		(spec.routeHalf() || spec.dnatHalf())
 }
 
 func fakeIPIngressTableStr() string { return strconv.Itoa(fakeIPIngressTable) }
@@ -102,16 +146,17 @@ func (it *IPTables) ingressSeamsWired() bool {
 	return it.runIPTables != nil && it.runIPTablesOut != nil && it.runIP != nil && it.runIPOut != nil
 }
 
-// fakeIPIngressDNATArgs собирает аргументы вставки DNAT-правила перехвата DNS.
-// Вставка в позицию 1: правило обязано стоять выше DNS-редиректов NDMS, иначе
-// запрос уйдёт в ndnproxy мимо fakeip.
-func fakeIPIngressDNATArgs(iface, proto, tunDNS string) []string {
-	return []string{
-		"-t", "nat", "-I", "PREROUTING", "1",
-		"-i", iface, "-p", proto, "--dport", "53",
-		"-m", "comment", "--comment", FakeIPIngressTag,
-		"-j", "DNAT", "--to-destination", net.JoinHostPort(tunDNS, "53"),
-	}
+// fakeIPIngressDNATArgs собирает вставку правила перехвата DNS для одного
+// селектора. Вставка в позицию 1: правило обязано стоять выше DNS-редиректов
+// NDMS, иначе запрос уйдёт в ndnproxy.
+func fakeIPIngressDNATArgs(sel []string, proto, tunDNS, tag string) []string {
+	args := make([]string, 0, len(sel)+14)
+	args = append(args, "-t", "nat", "-I", "PREROUTING", "1")
+	args = append(args, sel...)
+	return append(args,
+		"-p", proto, "--dport", "53",
+		"-m", "comment", "--comment", tag,
+		"-j", "DNAT", "--to-destination", net.JoinHostPort(tunDNS, "53"))
 }
 
 // fakeIPIngressNATDrift сравнивает дамп `iptables -t nat -S PREROUTING` с
@@ -259,10 +304,10 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 	// (сброс firewall NDMS), и смена состава ingress-интерфейсов.
 	if !spec.NoDNAT {
 		it.removeFakeIPIngressDNAT(ctx, natDump)
-		for _, iface := range spec.Ifaces {
+		for _, sel := range spec.dnatSelectors() {
 			for _, proto := range []string{"udp", "tcp"} {
-				if err := it.runIPTables(ctx, fakeIPIngressDNATArgs(iface, proto, spec.TunDNS)...); err != nil {
-					return fmt.Errorf("dnat dns %s/%s: %w", iface, proto, err)
+				if err := it.runIPTables(ctx, fakeIPIngressDNATArgs(sel, proto, spec.TunDNS, spec.tag())...); err != nil {
+					return fmt.Errorf("dnat dns %v/%s: %w", sel, proto, err)
 				}
 			}
 		}

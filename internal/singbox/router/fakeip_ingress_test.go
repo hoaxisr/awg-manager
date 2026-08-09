@@ -418,6 +418,82 @@ func TestEnsureFakeIPIngress_NoDNATSteadyStateDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestIngressSpecHalves(t *testing.T) {
+	cases := []struct {
+		name              string
+		spec              FakeIPIngressSpec
+		route, dnat, live bool
+	}{
+		{"пусто", FakeIPIngressSpec{}, false, false, false},
+		{"fakeip: интерфейсы + DNS", FakeIPIngressSpec{TunIface: "opkgtun0", TunDNS: testTunDNS, Ifaces: []string{"opkgtun17"}}, true, true, true},
+		{"policy-tun: только марки", FakeIPIngressSpec{TunIface: "opkgtun0", TunDNS: testTunDNS, Marks: []string{"0xffffaab"}, Tag: PolicyTunDNSTag}, false, true, true},
+		{"policy-tun: марки + интерфейсы", FakeIPIngressSpec{TunIface: "opkgtun0", TunDNS: testTunDNS, Marks: []string{"0xffffaab"}, Ifaces: []string{"opkgtun17"}, Tag: PolicyTunDNSTag}, true, true, true},
+		{"NoDNAT: только маршруты", FakeIPIngressSpec{TunIface: "opkgtun0", NoDNAT: true, Ifaces: []string{"opkgtun17"}}, true, false, true},
+		{"марки без DNS-адреса", FakeIPIngressSpec{TunIface: "opkgtun0", Marks: []string{"0xffffaab"}}, false, false, false},
+		{"нет tun-интерфейса", FakeIPIngressSpec{TunDNS: testTunDNS, Marks: []string{"0xffffaab"}}, false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.spec.routeHalf(); got != c.route {
+				t.Errorf("routeHalf = %v, want %v", got, c.route)
+			}
+			if got := c.spec.dnatHalf(); got != c.dnat {
+				t.Errorf("dnatHalf = %v, want %v", got, c.dnat)
+			}
+			if got := c.spec.active(); got != c.live {
+				t.Errorf("active = %v, want %v", got, c.live)
+			}
+		})
+	}
+}
+
+func TestIngressSpecTagDefaultsToFakeIP(t *testing.T) {
+	if got := (FakeIPIngressSpec{}).tag(); got != FakeIPIngressTag {
+		t.Errorf("tag = %q, want %q", got, FakeIPIngressTag)
+	}
+	if got := (FakeIPIngressSpec{Tag: PolicyTunDNSTag}).tag(); got != PolicyTunDNSTag {
+		t.Errorf("tag = %q, want %q", got, PolicyTunDNSTag)
+	}
+}
+
+func TestIngressDNATSelectorsOrder(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: testTunDNS, Tag: PolicyTunDNSTag,
+		Marks:  []string{"0xffffaab", "0xffffaac"},
+		Ifaces: []string{"opkgtun17"},
+	}
+	got := spec.dnatSelectors()
+	want := [][]string{
+		{"-m", "connmark", "--mark", "0xffffaab"},
+		{"-m", "connmark", "--mark", "0xffffaac"},
+		{"-i", "opkgtun17"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d selectors, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if strings.Join(got[i], " ") != strings.Join(want[i], " ") {
+			t.Errorf("[%d] got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestIngressDNATArgsCarryTagAndSelector(t *testing.T) {
+	args := fakeIPIngressDNATArgs([]string{"-m", "connmark", "--mark", "0xffffaab"}, "udp", testTunDNS, PolicyTunDNSTag)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"-t nat -I PREROUTING 1",
+		"-m connmark --mark 0xffffaab",
+		"-p udp --dport 53",
+		"--comment " + PolicyTunDNSTag,
+		"--to-destination 172.18.0.2:53",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args %q missing %q", joined, want)
+		}
+	}
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
