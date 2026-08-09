@@ -2,8 +2,14 @@ package router
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Issue #689: tproxy-in на 0.0.0.0 ловит любой UDP на TPROXYPort (включая
@@ -195,5 +201,169 @@ func TestLegacyModeRestoresSplitFromAwgmConfig(t *testing.T) {
 	}
 	if tproxy != 1 || redirect != 1 {
 		t.Fatalf("ожидали восстановленный сплит, получили tproxy=%d redirect=%d", tproxy, redirect)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fail-closed на время подъёма движка
+// ---------------------------------------------------------------------------
+
+// notInstalledFakeIPTables — тот же fakeExec-приёмник, что и newFakeIPTables,
+// с двумя отличиями. Первое: проверка наличия цепочек перехвата отвечает «не
+// установлено» — у newFakeIPTables успешна ЛЮБАЯ команда, значит IsInstalled
+// там всегда true, и ветка «перехвата сейчас нет» была бы недостижима. Второе:
+// команда с оборванным контекстом не выполняется, как настоящий exec.
+func notInstalledFakeIPTables(fe *fakeExec) *IPTables {
+	it := newFakeIPTables(fe)
+	run := it.runIPTables
+	notInstalled := func(ctx context.Context, args ...string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if slices.Contains(args, "-nL") {
+			return errors.New("iptables: No chain/target/match by that name")
+		}
+		return run(ctx, args...)
+	}
+	it.runIPTables = notInstalled
+	it.legacyRun = notInstalled
+	return it
+}
+
+// restoreIndexOf — индекс первого iptables-restore, чей блоб содержит marker
+// (-1, если такого нет). Блоб заглушки отличим от блоба перехвата по имени
+// цепочки.
+func restoreIndexOf(fe *fakeExec, marker string) int {
+	for i, c := range fe.calls {
+		if c.kind == "restore" && strings.Contains(c.stdin, marker) {
+			return i
+		}
+	}
+	return -1
+}
+
+// blackholeRemoveIndex — индекс `-F AWGM-BLACKHOLE`, то есть снятия заглушки
+// (RemoveBlackhole — единственный, кто флашит эту цепочку).
+func blackholeRemoveIndex(fe *fakeExec) int {
+	for i, c := range fe.calls {
+		if c.kind == "iptables" && slices.Contains(c.args, "-F") && slices.Contains(c.args, BlackholeChain) {
+			return i
+		}
+	}
+	return -1
+}
+
+// newBootBlackholeService — минимальный подъём tproxy в режиме «все
+// устройства»: Orch нет (legacy-ветка со Start), перехвата в ядре нет.
+func newBootBlackholeService(t *testing.T, fe *fakeExec) *ServiceImpl {
+	t.Helper()
+	return newBootBlackholeServiceWith(t, notInstalledFakeIPTables(fe))
+}
+
+func newBootBlackholeServiceWith(t *testing.T, ipt *IPTables) *ServiceImpl {
+	t.Helper()
+	sb := newTestSingbox(t)
+	sb.isRunningFn = func() (bool, int) { return true, 1234 }
+	return newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			RoutingMode:   "tproxy",
+			DeviceMode:    "all",
+			WANAutoDetect: true,
+		}),
+		Policies:           &fakeAccessPolicyProvider{},
+		IPTables:           ipt,
+		Singbox:            sb,
+		WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.7/32"}},
+		NetfilterPreflight: func(context.Context) error { return nil },
+	})
+}
+
+// Между промоутом слота и установкой правил стоит ожидание готовности sing-box
+// (минимум 60 с): перехвата ещё нет, и policy-трафик всё это время уходит в WAN
+// мимо движка. Окно обязано держаться fail-closed заглушкой, а она — исчезать
+// сразу после того, как встал настоящий перехват.
+func TestProvisionInstallsBlackholeBeforeWaitingForSingbox(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	svc := newBootBlackholeService(t, fe)
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	blackhole := restoreIndexOf(fe, "-A "+BlackholeChain+" -j DROP")
+	intercept := restoreIndexOf(fe, ":"+ChainName+" - [0:0]")
+	if intercept < 0 {
+		t.Fatalf("предусловие: перехват не ставился вовсе, вызовы: %+v", fe.calls)
+	}
+	if blackhole < 0 {
+		t.Fatal("fail-closed заглушка на время подъёма не ставилась")
+	}
+	if blackhole > intercept {
+		t.Fatal("заглушка встала ПОСЛЕ перехвата — окно подъёма осталось fail-open")
+	}
+	removed := blackholeRemoveIndex(fe)
+	if removed < 0 {
+		t.Fatal("заглушка осталась в ядре поверх работающего перехвата — весь policy-трафик дропается")
+	}
+	if removed < intercept {
+		t.Fatal("заглушка снята ДО установки перехвата — окно, ради которого она ставилась, снова открыто")
+	}
+	if svc.blackholeActive {
+		t.Error("blackholeActive остался выставленным после снятия заглушки")
+	}
+}
+
+// Провал ожидания готовности — ровно тот сценарий, ради которого заглушка и
+// ставится. Настройки в этот момент ещё держат Enabled=false, а ветка Reconcile
+// «выключено» заглушку не видит (HasAnyInstalled смотрит только цепочки
+// перехвата) — не снять её здесь значит оставить вечный DROP.
+func TestProvisionRemovesBootBlackholeWhenSingboxNeverReady(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return false }) // готовность не наступает
+	svc := newBootBlackholeService(t, fe)
+
+	// bootWait зажат снизу 60 с (bootWaitWithFloor), поэтому ожидание
+	// ограничиваем контекстом: waitForSingbox возвращает ctx.Err().
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	if err := svc.Enable(ctx); err == nil {
+		t.Fatal("ожидание обязано было провалиться")
+	}
+	if restoreIndexOf(fe, "-A "+BlackholeChain+" -j DROP") < 0 {
+		t.Fatal("предусловие: заглушка на время подъёма не ставилась")
+	}
+	if blackholeRemoveIndex(fe) < 0 {
+		t.Fatal("провал подъёма оставил вечный DROP: цепочка заглушки не снята")
+	}
+	if svc.blackholeActive {
+		t.Fatal("провал подъёма оставил вечный DROP: в настройках Enabled=false и снять его будет некому")
+	}
+}
+
+// Второе условие правки: заглушку ставим ТОЛЬКО когда перехвата сейчас нет.
+// Этот путь достижим drift-heal'ом при живых правилах (запаркованный слот при
+// работающем движке), и заглушка поверх рабочего перехвата дала бы обрыв на всё
+// время ожидания готовности.
+func TestProvisionSkipsBootBlackholeWhenInterceptionLive(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	// newFakeIPTables отвечает успехом на любую команду → IsInstalled=true:
+	// ровно состояние «цепочки перехвата в ядре живы».
+	svc := newBootBlackholeServiceWith(t, newFakeIPTables(fe))
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	if restoreIndexOf(fe, ":"+ChainName+" - [0:0]") < 0 {
+		t.Fatalf("предусловие: перехват не ставился вовсе, вызовы: %+v", fe.calls)
+	}
+	if restoreIndexOf(fe, "-A "+BlackholeChain+" -j DROP") >= 0 {
+		t.Fatal("заглушка встала поверх живого перехвата — drift-heal обрывает трафик на всё ожидание готовности")
+	}
+	if svc.blackholeActive {
+		t.Error("blackholeActive выставлен, хотя заглушку не ставили")
 	}
 }

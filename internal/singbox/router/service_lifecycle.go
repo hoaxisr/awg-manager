@@ -761,6 +761,79 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 		return fmt.Errorf("orchestrator reload after enable: %w", err)
 	}
 
+	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
+	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+
+	// Pre-create the AWGM-SELECTIVE ipset (empty) before iptables-restore
+	// when selective bypass is enabled. iptables-restore fails immediately
+	// if the set referenced in -m set --match-set doesn't exist yet.
+	if sr.SelectiveBypass {
+		if err := ensureSelectiveSetExists(ctx); err != nil {
+			s.appLog.Warn("selective", "", fmt.Sprintf("pre-create ipset failed: %v", err))
+		}
+	}
+
+	// Fail-closed на время подъёма. Окно между промоутом слота и установкой
+	// правил длится всё ожидание готовности (до 60 с и дольше) и до сих пор
+	// было fail-OPEN: перехвата нет, policy-трафик уходит в WAN мимо sing-box.
+	// Заглушка превращает утечку в управляемый простой — тот же DROP с теми же
+	// RETURN-исключениями, что ставит reconcile при мёртвом движке.
+	//
+	// Только когда перехвата сейчас нет: этот путь достижим и drift-heal'ом при
+	// живых правилах (запаркованный слот при работающем движке), и там заглушка
+	// поверх рабочего перехвата стоила бы пользователю минуты обрыва.
+	//
+	// В legacy-режиме окно уже́, но не нулевое: ALIVE-ветка netfilter.d-хука
+	// гейтится на живой процесс sing-box (iptables.go:1585-1590), а процесс во
+	// время ожидания уже поднят — перестройка firewall ndm в этом окне снесёт
+	// заглушку. В awgm-режиме полного хука нет и вопрос не стоит.
+	bootBlackhole := false
+	if !s.deps.IPTables.IsInstalled(ctx) {
+		// Отдельный best-effort сбор адресов: настоящий, фатальный, живёт перед
+		// Install и на этом раннем этапе может честно не найти ещё не поднятый
+		// WAN. Пустой список означает лишь, что заглушка на время ожидания не
+		// исключит трафик на WAN-адрес самого роутера.
+		bootWANIPs, wanErr := s.deps.WANIPCollector.Collect(ctx)
+		if wanErr != nil {
+			s.appLog.Warn("enable", "", "WAN-адреса для заглушки на время подъёма не собрались: "+wanErr.Error())
+		}
+		bootSpec := RestoreInputSpec{
+			PolicyMark:     mark,
+			MatchAll:       !policyMode,
+			WANIPs:         bootWANIPs,
+			BypassCIDRs:    bypassSubnets,
+			BypassUDPPorts: bypassUDP,
+			BypassTCPPorts: bypassTCP,
+			SelectiveIPSet: sr.SelectiveBypass,
+			AwgmMode:       awgmMode,
+		}
+		if err := s.installBlackholeRules(ctx, bootSpec); err != nil {
+			// Не валим подъём: без заглушки остаётся ровно то поведение, что
+			// было до этой правки, а отказ уже помечен для fail-safe демоции.
+			s.appLog.Warn("enable", "", "не удалось поставить fail-closed заглушку на время подъёма: "+err.Error())
+		} else {
+			bootBlackhole = true
+			s.blackholeActive = true
+			s.appLog.Info("enable", "", "на время подъёма движка включён fail-closed DROP policy-трафика")
+		}
+	}
+	// Заглушка обязана исчезнуть на ЛЮБОМ исходе. На успехе её снимает явное
+	// снятие после Install (ниже), на отказе — этот defer: настройки в этот
+	// момент ещё держат Enabled=false, Reconcile уйдёт в ветку «выключено», а
+	// она blackhole не видит (HasAnyInstalled смотрит только цепочки
+	// перехвата) — заглушка осталась бы вечным DROP при выключенном тумблере.
+	// WithoutCancel: типовой отказ — обрыв ожидания по контексту (клиент не
+	// дождался минуты), и снятие тем же мёртвым контекстом не выполнилось бы
+	// вовсе, оставив ровно тот вечный DROP, от которого defer и защищает.
+	installed := false
+	defer func() {
+		if bootBlackhole && !installed {
+			s.deps.IPTables.RemoveBlackhole(context.WithoutCancel(ctx))
+			s.blackholeActive = false
+			s.appLog.Warn("enable", "", "подъём движка не состоялся — fail-closed заглушка снята")
+		}
+	}()
+
 	// Wait for sing-box to be listening before iptables start redirecting
 	// traffic to its TPROXY/REDIRECT ports. HARD fail (issue #221): if
 	// sing-box never comes up — most commonly because a slot config is
@@ -809,18 +882,6 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 	var ingress []string
 	if policyMode {
 		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
-	}
-
-	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
-
-	// Pre-create the AWGM-SELECTIVE ipset (empty) before iptables-restore
-	// when selective bypass is enabled. iptables-restore fails immediately
-	// if the set referenced in -m set --match-set doesn't exist yet.
-	if sr.SelectiveBypass {
-		if err := ensureSelectiveSetExists(ctx); err != nil {
-			s.appLog.Warn("selective", "", fmt.Sprintf("pre-create ipset failed: %v", err))
-		}
 	}
 
 	// QoS iptables dispatch — graceful degradation: when xt_dscp support is
@@ -872,6 +933,13 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 			_ = s.persistConfigDirect(ctx, cfg)
 		}
 		return fmt.Errorf("iptables install: %w", err)
+	}
+	installed = true
+	// Перехват стоит — заглушка больше не нужна. Строго ПОСЛЕ Install: снятие
+	// раньше открыло бы то же окно, ради которого она ставилась.
+	if bootBlackhole {
+		s.deps.IPTables.RemoveBlackhole(ctx)
+		s.blackholeActive = false
 	}
 	s.currentMark = mark
 	s.currentWANIPs = wanIPs
