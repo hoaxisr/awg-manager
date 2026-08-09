@@ -365,6 +365,9 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
+	// Смена состава политики обязана убивать установившиеся потоки устройства:
+	// перехват действует на новые, а старые дожили бы своё мимо sing-box.
+	a.accessPolicySvc.SetFlowEvictor(routerSvc)
 	// Wire selective-bypass builder. The adapter wraps selective.Builder with the
 	// router service's live config so reconcileInstalled can trigger an ipset
 	// rebuild with a single Rebuild(ctx) call.

@@ -58,6 +58,13 @@ type ManagedTunnelResolver interface {
 	ManagedTunnelByNDMSName(ctx context.Context, ndmsName string) (id string, ok bool)
 }
 
+// FlowEvictor вытесняет conntrack адресов, чья принадлежность политике только
+// что изменилась. Необязательная зависимость: nil — вытеснения нет (контексты
+// без движка, стартовый cleanup-sweep). Реализуется роутером sing-box.
+type FlowEvictor interface {
+	EvictFlows(ctx context.Context, srcIPs ...string)
+}
+
 // ServiceImpl implements Service on top of the NDMS CQRS layer
 // (command.PolicyCommands for writes, query.Queries for reads).
 // InterfaceCommands is plumbed in so SetInterfaceUp can reuse the
@@ -78,6 +85,14 @@ type ServiceImpl struct {
 	// SetTunnelLifecycle after construction.
 	lifecycle      TunnelLifecycle
 	tunnelResolver ManagedTunnelResolver
+
+	// evictor — см. FlowEvictor. Прокидывается SetFlowEvictor после
+	// конструирования, как и lifecycle.
+	evictor FlowEvictor
+	// hostIPByMAC — резолв адреса устройства; поле, а не метод, чтобы тест
+	// проверял вытеснение без фейка RCI-транспорта. nil = настоящий резолв
+	// через хотспот.
+	hostIPByMAC func(ctx context.Context, mac string) string
 }
 
 // SetTunnelLifecycle wires managed-tunnel lifecycle routing for
@@ -86,6 +101,42 @@ type ServiceImpl struct {
 func (s *ServiceImpl) SetTunnelLifecycle(lc TunnelLifecycle, resolver ManagedTunnelResolver) {
 	s.lifecycle = lc
 	s.tunnelResolver = resolver
+}
+
+// SetFlowEvictor подключает вытеснение потоков на смене состава политики.
+func (s *ServiceImpl) SetFlowEvictor(e FlowEvictor) { s.evictor = e }
+
+// evictDeviceFlows сносит conntrack устройства после смены его политики.
+// Best-effort во всём: неизвестный адрес или отсутствующий эвиктор означают
+// лишь, что установившиеся потоки доживут своё — сама смена политики уже
+// применена, откатывать её не за что.
+func (s *ServiceImpl) evictDeviceFlows(ctx context.Context, mac string) {
+	if s.evictor == nil {
+		return
+	}
+	resolve := s.hostIPByMAC
+	if resolve == nil {
+		resolve = s.lookupHostIP
+	}
+	if ip := resolve(ctx, mac); ip != "" {
+		s.evictor.EvictFlows(ctx, ip)
+	}
+}
+
+// lookupHostIP ищет адрес устройства в хотспоте. Пустая строка — не нашли.
+func (s *ServiceImpl) lookupHostIP(ctx context.Context, mac string) string {
+	hosts, err := s.queries.Hotspot.List(ctx)
+	if err != nil {
+		s.appLog.Warn("evict-flows", mac, err.Error())
+		return ""
+	}
+	want := strings.ToLower(mac)
+	for _, h := range hosts {
+		if strings.ToLower(h.MAC) == want {
+			return h.IP
+		}
+	}
+	return ""
 }
 
 // New creates a new access policy service backed by the NDMS CQRS layer.
@@ -360,6 +411,7 @@ func (s *ServiceImpl) AssignDevice(ctx context.Context, mac, policyName string) 
 	}
 
 	s.appLog.Info("assign-device", mac, fmt.Sprintf("Device %s assigned to %s", mac, policyName))
+	s.evictDeviceFlows(ctx, mac)
 	return nil
 }
 
@@ -371,6 +423,7 @@ func (s *ServiceImpl) UnassignDevice(ctx context.Context, mac string) error {
 	}
 
 	s.appLog.Info("unassign-device", mac, fmt.Sprintf("Device %s unassigned", mac))
+	s.evictDeviceFlows(ctx, mac)
 	return nil
 }
 
