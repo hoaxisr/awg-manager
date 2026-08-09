@@ -2009,6 +2009,24 @@ func TestCtCleanScriptEvictsExplicitSourceIPs(t *testing.T) {
 	if strings.Contains(block, `/\[FASTNAT\]/ && (`) {
 		t.Fatalf("токен отсекает записи до тела — адреса без него не отберутся:\n%s", block)
 	}
+	// Дальше — два свойства, которые отбор не меняют и потому невидимы
+	// поведенческому тесту, но стоят секунд CPU на большой таблице conntrack.
+	// Без утверждений на форму регрессия вернулась бы молча.
+	//
+	// Дешёвый гард в шапке: без него цикл разбора полей (~22 поля × 6
+	// регулярок) крутится на КАЖДОЙ tcp/udp-записи, в том числе на частом
+	// пути «аргументов нет» (так зовёт Install/Reconcile).
+	if !strings.Contains(block, `(evict != "" || /\[FASTNAT\]/) &&`) {
+		t.Fatalf("в шапке правила нет дешёвого гарда — разбор пойдёт по всей таблице:\n%s", block)
+	}
+	// Предфильтр перед awk: на смене состава политики awk обязан видеть
+	// строки нужных адресов и записи с токеном, а не всю таблицу.
+	if !strings.Contains(block, `set -- "$@" -e "src=$ip "`) {
+		t.Fatalf("нет предфильтра по адресам — awk получит всю таблицу:\n%s", block)
+	}
+	if !strings.Contains(block, `grep "$@" /proc/net/nf_conntrack`) {
+		t.Fatalf("предфильтр не подключён к проходу:\n%s", block)
+	}
 }
 
 // Поведение отбора проверяется прогоном настоящего awk на фикстуре
@@ -2145,6 +2163,28 @@ func TestCtCleanScriptSelectsExplicitSourceIPs(t *testing.T) {
 		if strings.Contains(out, noMac) {
 			t.Errorf("поток самого роутера (без mac=) вытеснять нельзя:\n%s", out)
 		}
+	}
+
+	// Два адреса: у обоих скоуп «весь conntrack», поэтому берутся и записи
+	// без токена, и записи с чужой меткой. Заодно проверка, что предфильтр
+	// собирает несколько -e, а не один.
+	two, _ := run(nil, "192.168.1.5", "192.168.1.9")
+	for _, want := range []string{joinedTCP, joinedUDP, foreign, fastnat, foreignMark} {
+		if !strings.Contains(two, want) {
+			t.Errorf("с двумя адресами обязана отбираться запись %q:\n%s", want, two)
+		}
+	}
+	for _, unwanted := range []string{localDst, noMac} {
+		if strings.Contains(two, unwanted) {
+			t.Errorf("с двумя адресами отобрано лишнее (%q):\n%s", unwanted, two)
+		}
+	}
+
+	// Мусор в аргументе не имеет права ломать разбор: адреса разворачиваются
+	// без кавычек, и лишние слова обязаны просто не совпасть ни с чем.
+	junk, _ := run(nil, "192.168.1.5", "не адрес; rm -rf /")
+	if junk != got {
+		t.Errorf("мусорный аргумент изменил отбор:\nбыло:\n%s\nстало:\n%s", got, junk)
 	}
 
 	// legacy: вытеснения по адресам нет вовсе, но факт вызова обязан попасть
