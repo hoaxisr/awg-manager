@@ -125,6 +125,11 @@ func (s *ServiceImpl) evictDeviceFlows(ctx context.Context, mac string) {
 
 // lookupHostIP ищет адрес устройства в хотспоте. Пустая строка — не нашли.
 func (s *ServiceImpl) lookupHostIP(ctx context.Context, mac string) string {
+	// Кэш сбрасываем принудительно — тем же способом, что и ListDevices по
+	// ContextWithForceRefresh. Протухшая аренда здесь опаснее лишнего
+	// RCI-запроса: прежний адрес устройства мог уже достаться соседу, и
+	// вытеснение снесло бы conntrack ему.
+	s.queries.Hotspot.InvalidateAll()
 	hosts, err := s.queries.Hotspot.List(ctx)
 	if err != nil {
 		s.appLog.Warn("evict-flows", mac, err.Error())
