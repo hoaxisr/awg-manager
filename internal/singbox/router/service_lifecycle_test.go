@@ -242,11 +242,16 @@ func restoreIndexOf(fe *fakeExec, marker string) int {
 	return -1
 }
 
-// blackholeRemoveIndex — индекс `-F AWGM-BLACKHOLE`, то есть снятия заглушки
-// (RemoveBlackhole — единственный, кто флашит эту цепочку).
+// blackholeRemoveIndex — индекс `-t mangle -F AWGM-BLACKHOLE`, то есть снятия
+// заглушки в АКТИВНОЙ (legacy) раскладке. RemoveBlackhole — единственный, кто
+// флашит эту цепочку; таблица в матче нужна, чтобы за снятие не сошла уборка
+// чужой (awgm) раскладки, которую делает adopt.
 func blackholeRemoveIndex(fe *fakeExec) int {
 	for i, c := range fe.calls {
-		if c.kind == "iptables" && slices.Contains(c.args, "-F") && slices.Contains(c.args, BlackholeChain) {
+		if c.kind != "iptables" || !slices.Contains(c.args, "-F") || !slices.Contains(c.args, BlackholeChain) {
+			continue
+		}
+		if slices.Contains(c.args, udpChainTable(false)) {
 			return i
 		}
 	}
@@ -390,8 +395,11 @@ func TestProvisionRemovesBootBlackholeWhenClientDisconnectsAfterInstall(t *testi
 // метки уронил бы весь трафик роутера, а не трафик членов политики.
 func TestBootBlackholeSpecCarriesPolicySelectorAndBypass(t *testing.T) {
 	const (
-		mark   = "0xffffaaa"
-		bypass = "192.0.2.0/24"
+		mark    = "0xffffaaa"
+		bypass  = "192.0.2.0/24"
+		udpPort = "51820"
+		tcpPort = "1194"
+		wanIP   = "203.0.113.7/32"
 	)
 	fe := &fakeExec{}
 	stubListeningProbe(t, func() bool { return true })
@@ -403,13 +411,14 @@ func TestBootBlackholeSpecCarriesPolicySelectorAndBypass(t *testing.T) {
 			DeviceMode:         "policy",
 			PolicyName:         "Policy0",
 			BypassExtraSubnets: bypass,
+			BypassExtraPorts:   udpPort + " UDP, " + tcpPort + " TCP",
 			SelectiveBypass:    true,
 			WANAutoDetect:      true,
 		}),
 		Policies:           &fakeAccessPolicyProvider{mark: mark},
 		IPTables:           notInstalledFakeIPTables(fe),
 		Singbox:            sb,
-		WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.7/32"}},
+		WANIPCollector:     &fakeWANIPCollector{ips: []string{wanIP}},
 		NetfilterPreflight: func(context.Context) error { return nil },
 	})
 
@@ -431,6 +440,15 @@ func TestBootBlackholeSpecCarriesPolicySelectorAndBypass(t *testing.T) {
 	}
 	if !strings.Contains(blob, "-A "+BlackholeChain+" -m set ! --match-set "+selectiveSetName+" dst -j RETURN") {
 		t.Errorf("в selective-режиме заглушка дропает весь трафик вместо проксируемого подмножества:\n%s", blob)
+	}
+	if !strings.Contains(blob, "-A "+BlackholeChain+" -p udp --dport "+udpPort+" -j RETURN") {
+		t.Errorf("заглушка дропает UDP-порт, который пользователь явно исключил:\n%s", blob)
+	}
+	if !strings.Contains(blob, "-A "+BlackholeChain+" -p tcp --dport "+tcpPort+" -j RETURN") {
+		t.Errorf("заглушка дропает TCP-порт, который пользователь явно исключил:\n%s", blob)
+	}
+	if !strings.Contains(blob, "-A "+BlackholeChain+" -d "+wanIP+" -j RETURN") {
+		t.Errorf("заглушка дропает трафик на WAN-адрес самого роутера:\n%s", blob)
 	}
 }
 
@@ -506,6 +524,37 @@ func TestBootBlackholeFailureDoesNotDemoteAwgm(t *testing.T) {
 	// стухшей спеке, невидимую для blackholeActive.
 	if !slices.ContainsFunc(calls, func(c string) bool { return strings.Contains(c, "-F "+BlackholeChain) }) {
 		t.Errorf("после отказавшей попытки заглушку никто не снял, вызовы канала: %v", calls)
+	}
+}
+
+// Смерть демона в окне подъёма (kill, питание, паника) оставляет в настройках
+// Enabled=false при живой заглушке в ядре: её файл правил пишется ДО restore,
+// adopt в этой ветке снимает blackhole только ЧУЖОЙ раскладки, а DEAD-ветка
+// netfilter.d-хука в legacy воскрешает заглушку по уцелевшему файлу. Тик сверки
+// при выключенном тумблере обязан её снять — иначе вечный DROP policy-трафика.
+func TestReconcileDisabledRemovesLeftoverBlackhole(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return false })
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			RoutingMode:   "tproxy",
+			Enabled:       false,
+			WANAutoDetect: true,
+		}),
+		IPTables: notInstalledFakeIPTables(fe), // перехвата в ядре нет: ветка «выключено»
+		Singbox:  newTestSingbox(t),
+	})
+	svc.blackholeActive = true // прошлый процесс успел поставить заглушку
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if blackholeRemoveIndex(fe) < 0 {
+		t.Fatalf("тумблер выключен, а заглушка в ядре не снята — вечный DROP policy-трафика, вызовы: %+v", fe.calls)
+	}
+	if svc.blackholeActive {
+		t.Error("blackholeActive остался выставленным после снятия заглушки")
 	}
 }
 
