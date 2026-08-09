@@ -2,33 +2,69 @@ package accesspolicy
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
-type fakeEvictor struct{ got []string }
+const hotspotPath = "/show/ip/hotspot"
 
-func (f *fakeEvictor) EvictFlows(_ context.Context, ips ...string) {
+type fakeEvictor struct {
+	got []string
+	// ctxErr — состояние контекста на момент вызова: вытеснение обязано
+	// получать неотменяемый контекст.
+	ctxErr error
+}
+
+func (f *fakeEvictor) EvictFlows(ctx context.Context, ips ...string) {
+	f.ctxErr = ctx.Err()
 	f.got = append(f.got, ips...)
 }
 
+// hotspotQueries собирает Queries с настоящим HotspotStore поверх фейкового
+// геттера — свой шов резолва в проде ради этого не нужен.
+func hotspotQueries(fg *query.FakeGetter) *query.Queries {
+	return &query.Queries{Hotspot: query.NewHotspotStore(fg, query.NopLogger())}
+}
+
+// Регистр MAC приходит от NDMS и от вызывающего независимо, поэтому нормализуются
+// обе стороны сравнения.
 func TestEvictDeviceFlowsResolvesAddressByMAC(t *testing.T) {
-	ev := &fakeEvictor{}
-	svc := &ServiceImpl{evictor: ev}
-	svc.hostIPByMAC = func(context.Context, string) string { return "192.168.1.55" }
+	cases := []struct {
+		name       string
+		callerMAC  string
+		hotspotMAC string
+	}{
+		{"вызывающий в верхнем регистре", "AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff"},
+		{"хотспот в верхнем регистре", "aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fg := query.NewFakeGetter()
+			fg.SetJSON(hotspotPath, fmt.Sprintf(`{"host":[
+				{"ip":"192.168.1.12","mac":"11:22:33:44:55:66"},
+				{"ip":"192.168.1.55","mac":%q}
+			]}`, tc.hotspotMAC))
 
-	svc.evictDeviceFlows(context.Background(), "AA:BB:CC:DD:EE:FF")
+			ev := &fakeEvictor{}
+			svc := &ServiceImpl{queries: hotspotQueries(fg), evictor: ev}
 
-	if len(ev.got) != 1 || ev.got[0] != "192.168.1.55" {
-		t.Fatalf("вытеснение не вызвано для адреса устройства: %v", ev.got)
+			svc.evictDeviceFlows(context.Background(), tc.callerMAC)
+
+			if len(ev.got) != 1 || ev.got[0] != "192.168.1.55" {
+				t.Fatalf("вытеснение не вызвано для адреса устройства: %q", ev.got)
+			}
+		})
 	}
 }
 
 func TestEvictDeviceFlowsSkipsUnknownAddress(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON(hotspotPath, `{"host":[{"ip":"192.168.1.12","mac":"11:22:33:44:55:66"}]}`)
+
 	ev := &fakeEvictor{}
-	svc := &ServiceImpl{evictor: ev}
-	svc.hostIPByMAC = func(context.Context, string) string { return "" }
+	svc := &ServiceImpl{queries: hotspotQueries(fg), evictor: ev}
 
 	svc.evictDeviceFlows(context.Background(), "AA:BB:CC:DD:EE:FF")
 
@@ -41,15 +77,11 @@ func TestEvictDeviceFlowsSkipsUnknownAddress(t *testing.T) {
 // аренду, а прежний адрес — достаться соседу, которому вытеснение снесло бы
 // его собственные соединения.
 func TestEvictDeviceFlowsRefreshesHotspotCache(t *testing.T) {
-	const hotspotPath = "/show/ip/hotspot"
 	fg := query.NewFakeGetter()
 	fg.SetJSON(hotspotPath, `{"host":[{"ip":"192.168.1.10","mac":"aa:bb:cc:dd:ee:ff"}]}`)
 
 	ev := &fakeEvictor{}
-	svc := &ServiceImpl{
-		queries: &query.Queries{Hotspot: query.NewHotspotStore(fg, query.NopLogger())},
-		evictor: ev,
-	}
+	svc := &ServiceImpl{queries: hotspotQueries(fg), evictor: ev}
 
 	svc.evictDeviceFlows(context.Background(), "AA:BB:CC:DD:EE:FF")
 
@@ -63,8 +95,29 @@ func TestEvictDeviceFlowsRefreshesHotspotCache(t *testing.T) {
 	}
 }
 
+// Отмена HTTP-запроса не должна отменять вытеснение: политика в роутере уже
+// сменена. Фейки контекст не читают, поэтому проверяем сам контракт — вниз
+// уходит неотменённый контекст.
+func TestEvictDeviceFlowsSurvivesRequestCancel(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON(hotspotPath, `{"host":[{"ip":"192.168.1.55","mac":"aa:bb:cc:dd:ee:ff"}]}`)
+
+	ev := &fakeEvictor{}
+	svc := &ServiceImpl{queries: hotspotQueries(fg), evictor: ev}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.evictDeviceFlows(ctx, "AA:BB:CC:DD:EE:FF")
+
+	if len(ev.got) != 1 || ev.got[0] != "192.168.1.55" {
+		t.Fatalf("вытеснение не вызвано: %q", ev.got)
+	}
+	if ev.ctxErr != nil {
+		t.Fatalf("вытеснение получило отменённый контекст: %v", ev.ctxErr)
+	}
+}
+
 func TestEvictDeviceFlowsSilentWithoutEvictor(t *testing.T) {
 	svc := &ServiceImpl{}
-	svc.hostIPByMAC = func(context.Context, string) string { return "192.168.1.55" }
 	svc.evictDeviceFlows(context.Background(), "aa:bb:cc:dd:ee:ff") // не должно паниковать
 }

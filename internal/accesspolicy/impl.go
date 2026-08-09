@@ -89,10 +89,6 @@ type ServiceImpl struct {
 	// evictor — см. FlowEvictor. Прокидывается SetFlowEvictor после
 	// конструирования, как и lifecycle.
 	evictor FlowEvictor
-	// hostIPByMAC — резолв адреса устройства; поле, а не метод, чтобы тест
-	// проверял вытеснение без фейка RCI-транспорта. nil = настоящий резолв
-	// через хотспот.
-	hostIPByMAC func(ctx context.Context, mac string) string
 }
 
 // SetTunnelLifecycle wires managed-tunnel lifecycle routing for
@@ -114,19 +110,22 @@ func (s *ServiceImpl) evictDeviceFlows(ctx context.Context, mac string) {
 	if s.evictor == nil {
 		return
 	}
-	resolve := s.hostIPByMAC
-	if resolve == nil {
-		resolve = s.lookupHostIP
-	}
-	if ip := resolve(ctx, mac); ip != "" {
+	// WithoutCancel: политика в роутере уже сменилась, и обрыв HTTP-запроса
+	// клиентом не должен отменять резолв и запуск вытеснения — иначе потоки
+	// изредка и невоспроизводимо переживали бы смену политики. Свои таймауты
+	// у нижних слоёв остаются.
+	ctx = context.WithoutCancel(ctx)
+	if ip := s.lookupHostIP(ctx, mac); ip != "" {
 		s.evictor.EvictFlows(ctx, ip)
 	}
 }
 
 // lookupHostIP ищет адрес устройства в хотспоте. Пустая строка — не нашли.
 func (s *ServiceImpl) lookupHostIP(ctx context.Context, mac string) string {
-	// Кэш сбрасываем принудительно — тем же способом, что и ListDevices по
-	// ContextWithForceRefresh. Протухшая аренда здесь опаснее лишнего
+	// Сама команда смены политики уже сбросила кэш хотспота (postMutation), но
+	// между её сбросом и нашим чтением кэш мог успеть перезалиться ответом,
+	// снятым ДО мутации. Сбрасываем ещё раз — тем же способом, что и ListDevices
+	// по ContextWithForceRefresh. Протухшая аренда здесь опаснее лишнего
 	// RCI-запроса: прежний адрес устройства мог уже достаться соседу, и
 	// вытеснение снесло бы conntrack ему.
 	s.queries.Hotspot.InvalidateAll()
