@@ -1891,8 +1891,13 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 	// флагом от -j AWGMPPE, и предикат бьёт ровно по незащищённым. В legacy
 	// флага нет ни у кого, и тот же запрет остаётся в силе — убийство
 	// установившегося TCP ломает его жёстко (issue #627).
-	awgmBlock := s[strings.Index(s, `if [ "$awgm_mode" -eq 1 ]`):]
-	legacyPart := strings.Replace(s, awgmBlock, "", 1)
+	legacyPart := strings.Replace(s, awgmCtCleanBlock(t, s), "", 1)
+	// Вырезан обязан быть РОВНО awgm-блок. Срез «до конца скрипта» унёс бы с
+	// собой и legacy-вытеснение, и запрет ниже стал бы вакуумным. Якорь на то,
+	// что legacy на месте, — его собственный `-p udp`.
+	if !strings.Contains(legacyPart, "-p udp") {
+		t.Fatalf("вырезан не только awgm-блок — legacy-часть выпала из-под проверки:\n%s", legacyPart)
+	}
 	if strings.Contains(legacyPart, "-p tcp") {
 		t.Errorf("ctclean must never evict TCP flows outside awgm mode:\n%s", legacyPart)
 	}
@@ -1918,22 +1923,45 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 	}
 }
 
+// Границы awgm-блока в ctclean: открывающий `if` и его СОБСТВЕННЫЙ закрывающий
+// `fi` — тот, что стоит в первой колонке (вложенные идут с отступом). Нужен
+// двум тестам: одному — чтобы вырезать блок, другому — чтобы доказать, что
+// проход лежит внутри него, а не за `fi`.
+func awgmCtCleanBlock(t *testing.T, s string) string {
+	t.Helper()
+	const open = "if [ \"$awgm_mode\" -eq 1 ]; then\n"
+	start := strings.Index(s, open)
+	if start < 0 {
+		t.Fatalf("в скрипте нет awgm-блока:\n%s", s)
+	}
+	end := strings.Index(s[start:], "\nfi\n")
+	if end < 0 {
+		t.Fatalf("awgm-блок не закрыт `fi` в первой колонке:\n%s", s)
+	}
+	return s[start : start+end+len("\nfi\n")]
+}
+
 func TestCtCleanScriptEvictsFastnatOnBothProtocolsInAwgmMode(t *testing.T) {
 	body := ctCleanScript()
+	// Всё, что проверяется ниже, спрашивается у САМОГО блока: проход, вынесенный
+	// за `fi`, отработал бы и в legacy, где флага нет ни у одной записи и тот же
+	// предикат снёс бы все живые соединения членов политики.
+	block := awgmCtCleanBlock(t, body)
 
-	// Предикат уязвимости: запись НЕ прошла через -j AWGMPPE.
-	if !strings.Contains(body, "[FASTNAT]") {
+	// Предикат уязвимости: запись НЕ прошла через -j AWGMPPE. Ищется ровно
+	// awk-регулярка (скобки экранированы), а не текст токена: упоминание
+	// [FASTNAT] в комментарии отбора не делает.
+	if !strings.Contains(block, `/\[FASTNAT\]/`) {
 		t.Fatal("скрипт не отбирает записи по токену [FASTNAT]")
 	}
 	// TCP пробивает порог привязки к fastpath за доли секунды — он и есть
 	// главный класс утечки, ради которого проход добавлен.
-	if !strings.Contains(body, `$3 == "tcp" || $3 == "udp"`) {
+	if !strings.Contains(block, `$3 == "tcp" || $3 == "udp"`) {
 		t.Fatal("проход по [FASTNAT] не покрывает оба протокола")
 	}
-	// Гейт на awgm-режим: в legacy правила AWGMPPE нет, флаг стоит на каждой
-	// записи, и тот же предикат снёс бы все живые соединения членов политики.
+	// Признак режима вообще выставляется — блок иначе мёртв.
 	if !strings.Contains(body, "awgm_mode=1") {
-		t.Fatal("проход не гейтится awgm-режимом")
+		t.Fatal("признак awgm-режима нигде не выставляется")
 	}
 	// Проход обязан стоять ВЫШЕ выхода по отсутствию WAN-адреса: типичный
 	// триггер скрипта — DHCP-renew, когда адреса ещё нет.
@@ -1946,7 +1974,7 @@ func TestCtCleanScriptEvictsFastnatOnBothProtocolsInAwgmMode(t *testing.T) {
 	// (RETURN на bypass-подсети), а вытеснение оборвало бы веб-сессию, из
 	// которой движок и включают. Точки в предикате экранированы обязательно:
 	// голая `10.` заматчила бы `100.x` — публичный адрес.
-	if !strings.Contains(body, `192\.168\.`) || !strings.Contains(body, `169\.254\.`) {
+	if !strings.Contains(block, `192\.168\.`) || !strings.Contains(block, `169\.254\.`) {
 		t.Fatal("проход не исключает локальные назначения")
 	}
 }
