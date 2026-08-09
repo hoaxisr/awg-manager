@@ -1754,7 +1754,13 @@ if [ "$awgm_mode" -eq 1 ]; then
     function local_dst(d) {
       return d ~ /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|22[4-9]\.|23[0-9]\.)/;
     }
-    ($3 == "tcp" || $3 == "udp") {
+    # Дешёвый гард в шапке правила. Разбор полей ниже — ~22 поля × 6 регулярок
+    # на запись, и на частом пути (аргументов нет, зовёт Install/Reconcile) он
+    # обязан крутиться только на записях с токеном: на большой таблице
+    # conntrack безусловный разбор стоит секунды CPU (mips — кратно больше).
+    # С непустым списком дороже, но там разбор нужен: у искомых записей токена
+    # может не быть вовсе.
+    (evict != "" || /\[FASTNAT\]/) && ($3 == "tcp" || $3 == "udp") {
       src = ""; dst = ""; sp = ""; dp = ""; mark = ""; hasmac = 0;
       for (i = 1; i <= NF; i++) {
         if ($i ~ /^src=/ && src == "") src = substr($i, 5);
@@ -1793,6 +1799,12 @@ if [ "$awgm_mode" -eq 1 ]; then
     logger -t awgm-ctclean "evicted $(printf '%%s\n' "$fastnat" | wc -l) unprotected flow(s) in awgm mode"
   fi
 fi
+# Симметричная запись для legacy: адреса приехали, но вытеснения по ним не
+# будет. Без неё молчание журнала неотличимо от «адреса не приехали вовсе» —
+# ровно тот вопрос, ради которого строка выше и добавлена. Только журнал:
+# поведение legacy-канала не меняется.
+[ "$awgm_mode" -eq 1 ] || [ -z "$evict_ips" ] \
+  || logger -t awgm-ctclean "policy membership changed for $evict_ips, but interception is not in awgm mode — nothing evicted"
 wan_ips=""
 for dev in $(/opt/sbin/ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | sort -u); do
   wan_ips="$wan_ips $(/opt/sbin/ip -4 addr show dev "$dev" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')"

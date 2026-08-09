@@ -2014,29 +2014,46 @@ func TestCtCleanScriptEvictsExplicitSourceIPs(t *testing.T) {
 // Поведение отбора проверяется прогоном настоящего awk на фикстуре
 // /proc/net/nf_conntrack: текстовые утверждения выше не отличают рабочий
 // предикат от опечатки в имени массива.
-func TestCtCleanScriptSelectsExplicitSourceIPsInAwgmMode(t *testing.T) {
-	// Поля — как в /proc/net/nf_conntrack Keenetic: $3 — протокол, mac= есть
-	// у всякого потока из LAN, [FASTNAT] — флаг «мимо -j AWGMPPE».
-	entry := func(proto, src, dst, mark, extra string) string {
-		return fmt.Sprintf("ipv4 2 %s 6 431999 ESTABLISHED src=%s dst=%s sport=1111 dport=443 %s"+
-			"packets=1 bytes=1 src=%s dst=%s sport=443 dport=1111 mac=aa:bb:cc:dd:ee:ff mark=%s use=2\n",
-			proto, src, dst, extra, dst, src, mark)
+func TestCtCleanScriptSelectsExplicitSourceIPs(t *testing.T) {
+	// Поля — как в /proc/net/nf_conntrack: $3 — протокол, mac= есть у всякого
+	// потока из LAN и нет у собственных потоков роутера, [FASTNAT] — флаг
+	// «мимо -j AWGMPPE». Заголовок протокол-специфичный: у tcp номер 6 и
+	// состояние, у udp — номер 17 и только таймаут.
+	entry := func(proto, src, dst, mark, extra string, mac bool) string {
+		head := "ipv4 2 tcp 6 431999 ESTABLISHED"
+		if proto == "udp" {
+			head = "ipv4 2 udp 17 29"
+		}
+		macField := "mac=aa:bb:cc:dd:ee:ff "
+		if !mac {
+			macField = ""
+		}
+		return fmt.Sprintf("%s src=%s dst=%s sport=1111 dport=443 %spackets=1 bytes=1 "+
+			"src=%s dst=%s sport=443 dport=1111 %smark=%s use=2\n",
+			head, src, dst, extra, dst, src, macField, mark)
 	}
 	fixture := "" +
 		// Вступившее устройство: записи прежней политики — без токена и с
 		// чужой меткой. Ровно то, что скоуп по метке не видит.
-		entry("tcp", "192.168.1.5", "93.184.216.34", "0", "") +
-		entry("udp", "192.168.1.5", "93.184.216.35", "0", "") +
+		entry("tcp", "192.168.1.5", "93.184.216.34", "0", "", true) +
+		entry("udp", "192.168.1.5", "93.184.216.35", "0", "", true) +
 		// Тот же адрес, но назначение локальное: перехват его не трогает,
 		// и вытеснение оборвало бы веб-сессию к самому роутеру.
-		entry("tcp", "192.168.1.5", "192.168.1.1", "0", "") +
+		entry("tcp", "192.168.1.5", "192.168.1.1", "0", "", true) +
 		// Чужой адрес без токена — не наше дело.
-		entry("tcp", "192.168.1.9", "93.184.216.36", "0", "") +
+		entry("tcp", "192.168.1.9", "93.184.216.36", "0", "", true) +
 		// Чужой адрес с токеном и нашей меткой — прежний скоуп, обязан
 		// вытесняться и без всяких аргументов.
-		entry("tcp", "192.168.1.9", "93.184.216.37", "256", "[FASTNAT] ")
+		entry("tcp", "192.168.1.9", "93.184.216.37", "256", "[FASTNAT] ", true) +
+		// Токен есть, но метка чужая: поток не члена политики, вытеснять
+		// его нельзя.
+		entry("tcp", "192.168.1.9", "93.184.216.38", "999", "[FASTNAT] ", true) +
+		// Токен и наша метка есть, но mac= нет — это поток самого роутера,
+		// вплоть до аплинка sing-box (issue #627).
+		entry("tcp", "10.0.0.55", "93.184.216.39", "256", "[FASTNAT] ", false)
 	bin := t.TempDir()
 	ctLog := filepath.Join(bin, "conntrack.log")
+	logLog := filepath.Join(bin, "logger.log")
 	ctFile := filepath.Join(bin, "nf_conntrack")
 	if err := os.WriteFile(ctFile, []byte(fixture), 0o644); err != nil {
 		t.Fatal(err)
@@ -2046,11 +2063,13 @@ func TestCtCleanScriptSelectsExplicitSourceIPsInAwgmMode(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("iptables", "exit 0\n") // mangle пуст — наши правила в таблице awgm
+	// Пустой дамп mangle — наши правила в таблице awgm. С AWGM_TEST_LEGACY
+	// джамп находится штатным бинарём, и режим становится legacy.
+	write("iptables", "[ -n \"$AWGM_TEST_LEGACY\" ] && echo '-A PREROUTING -m connmark --mark 0x100 -j "+ChainName+"'\nexit 0\n")
 	write("iptables-awgm", "echo '-A PREROUTING -m connmark --mark 0x100 -j "+ChainName+"'\n")
 	write("ip", "exit 0\n") // WAN-адреса нет: проход обязан работать и до DHCP
 	write("conntrack", fmt.Sprintf("echo \"$*\" >> %q\n", ctLog))
-	write("logger", "exit 0\n")
+	write("logger", fmt.Sprintf("echo \"$*\" >> %q\n", logLog))
 
 	body := ctCleanScript()
 	body = strings.ReplaceAll(body, "/proc/net/nf_conntrack", ctFile)
@@ -2062,26 +2081,34 @@ func TestCtCleanScriptSelectsExplicitSourceIPsInAwgmMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := func(args ...string) string {
-		_ = os.Remove(ctLog)
-		if out, err := exec.Command("sh", append([]string{script}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("скрипт завершился ошибкой: %v\n%s", err, out)
-		}
-		got, err := os.ReadFile(ctLog)
+	read := func(path string) string {
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return ""
 		}
-		return string(got)
+		return string(data)
+	}
+	run := func(env []string, args ...string) (evicted, logged string) {
+		_ = os.Remove(ctLog)
+		_ = os.Remove(logLog)
+		cmd := exec.Command("sh", append([]string{script}, args...)...)
+		cmd.Env = append(os.Environ(), env...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("скрипт завершился ошибкой: %v\n%s", err, out)
+		}
+		return read(ctLog), read(logLog)
 	}
 
 	const (
-		joinedTCP = "-D -p tcp -s 192.168.1.5 -d 93.184.216.34 --sport 1111 --dport 443"
-		joinedUDP = "-D -p udp -s 192.168.1.5 -d 93.184.216.35 --sport 1111 --dport 443"
-		localDst  = "-d 192.168.1.1 "
-		foreign   = "-s 192.168.1.9 -d 93.184.216.36"
-		fastnat   = "-s 192.168.1.9 -d 93.184.216.37"
+		joinedTCP   = "-D -p tcp -s 192.168.1.5 -d 93.184.216.34 --sport 1111 --dport 443"
+		joinedUDP   = "-D -p udp -s 192.168.1.5 -d 93.184.216.35 --sport 1111 --dport 443"
+		localDst    = "-d 192.168.1.1 "
+		foreign     = "-s 192.168.1.9 -d 93.184.216.36"
+		fastnat     = "-s 192.168.1.9 -d 93.184.216.37"
+		foreignMark = "-s 192.168.1.9 -d 93.184.216.38"
+		noMac       = "-s 10.0.0.55 -d 93.184.216.39"
 	)
-	got := run("192.168.1.5")
+	got, _ := run(nil, "192.168.1.5")
 	for _, want := range []string{joinedTCP, joinedUDP} {
 		if !strings.Contains(got, want) {
 			t.Errorf("запись адреса из списка не отобрана (токена и метки у неё нет): %q\nвытеснено:\n%s", want, got)
@@ -2099,14 +2126,35 @@ func TestCtCleanScriptSelectsExplicitSourceIPsInAwgmMode(t *testing.T) {
 
 	// Пустой список не имеет права превращаться в множество, матчащее что
 	// попало: без аргументов обязан отбираться ровно прежний скоуп.
-	got = run()
-	if !strings.Contains(got, fastnat) {
-		t.Errorf("без аргументов прежний скоуп обязан работать:\n%s", got)
+	empty, _ := run(nil)
+	if !strings.Contains(empty, fastnat) {
+		t.Errorf("без аргументов прежний скоуп обязан работать:\n%s", empty)
 	}
 	for _, unwanted := range []string{joinedTCP, joinedUDP, foreign, localDst} {
-		if strings.Contains(got, unwanted) {
-			t.Errorf("без аргументов отобрано лишнее (%q):\n%s", unwanted, got)
+		if strings.Contains(empty, unwanted) {
+			t.Errorf("без аргументов отобрано лишнее (%q):\n%s", unwanted, empty)
 		}
+	}
+
+	// Скоуп прежнего прохода — в обоих прогонах: чужая метка и поток самого
+	// роутера (нет mac=) не вытесняются, сколько бы аргументов ни пришло.
+	for _, out := range []string{got, empty} {
+		if strings.Contains(out, foreignMark) {
+			t.Errorf("запись с чужой меткой вытеснять нельзя:\n%s", out)
+		}
+		if strings.Contains(out, noMac) {
+			t.Errorf("поток самого роутера (без mac=) вытеснять нельзя:\n%s", out)
+		}
+	}
+
+	// legacy: вытеснения по адресам нет вовсе, но факт вызова обязан попасть
+	// в журнал — молчание неотличимо от «адреса не приехали».
+	legacy, logged := run([]string{"AWGM_TEST_LEGACY=1"}, "192.168.1.5")
+	if strings.Contains(legacy, "-D ") {
+		t.Errorf("в legacy смена состава политики не имеет права рвать соединения:\n%s", legacy)
+	}
+	if !strings.Contains(logged, "192.168.1.5") || !strings.Contains(logged, "not in awgm mode") {
+		t.Errorf("вызов с адресами в legacy обязан попасть в журнал, записано:\n%s", logged)
 	}
 }
 
