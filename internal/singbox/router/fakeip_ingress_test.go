@@ -651,3 +651,102 @@ func TestFakeIPIngressRuleDrift_NamedTable(t *testing.T) {
 		t.Error("правило с именованной таблицей прочитано как дрейф")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Жизненный цикл netfilter.d-хука перехвата DNS
+// ---------------------------------------------------------------------------
+
+func TestEnsureIngressWritesAndRewritesPolicyTunHook(t *testing.T) {
+	r := &ingressRecorder{}
+	it := r.tables()
+	var written []string
+	var cleared int
+	it.persistPolicyTunDNSHook = func(s string) error { written = append(written, s); return nil }
+	it.cleanupPolicyTunDNSHook = func() { cleared++ }
+
+	base := FakeIPIngressSpec{TunIface: "opkgtun0", TunDNS: testTunDNS, Tag: PolicyTunDNSTag, Marks: []string{"0xffffaab"}}
+	if err := it.EnsureFakeIPIngress(context.Background(), base); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if len(written) != 1 || !strings.Contains(written[0], "0xffffaab") {
+		t.Fatalf("хук не записан: %v", written)
+	}
+
+	// Смена состава политик обязана переписать файл, даже если правила на
+	// месте: guard `grep -q TAG` в хуке протухания не увидит (§7.1).
+	grown := base
+	grown.Marks = []string{"0xffffaab", "0xffffaac"}
+	if err := it.EnsureFakeIPIngress(context.Background(), grown); err != nil {
+		t.Fatalf("ensure grown: %v", err)
+	}
+	if len(written) != 2 || !strings.Contains(written[1], "0xffffaac") {
+		t.Fatalf("хук не переписан при смене набора марок: %v", written)
+	}
+
+	// Пустой спек: хук снимается ВСЕГДА, даже когда правил в дампе уже нет
+	// (их мог стереть NDMS) — иначе осиротевший файл вечно возвращал бы DNAT.
+	if err := it.EnsureFakeIPIngress(context.Background(), FakeIPIngressSpec{}); err != nil {
+		t.Fatalf("ensure empty: %v", err)
+	}
+	if cleared == 0 {
+		t.Error("хук не снят на пустом спеке")
+	}
+
+	// Чужой режим (fakeip) обязан снести наш хук.
+	cleared = 0
+	if err := it.EnsureFakeIPIngress(context.Background(), testIngressSpec("opkgtun17")); err != nil {
+		t.Fatalf("ensure fakeip: %v", err)
+	}
+	if cleared == 0 {
+		t.Error("переход в fakeip не снял хук policy-tun")
+	}
+}
+
+func TestEnsureIngressNoDNATSpecDropsStaleOwnRules(t *testing.T) {
+	// Достижимая связка, которую до сих пор не покрывал ни один тест:
+	// перехват выключен (NoDNAT), заворот интерфейсов живёт, а в дампе
+	// остались правила своего тега. Ensure обязан снять правила и НЕ снести
+	// маршрутную половину. Ловит регресс «снос вернули под dnatHalf()».
+	r := &ingressRecorder{
+		natDump: `-A PREROUTING -i nwg3 -p udp --dport 53 -m comment --comment "` +
+			FakeIPIngressTag + `" -j DNAT --to-destination 172.18.0.2:53`,
+		ruleDump: ruleDumpFor("nwg3"),
+	}
+	if err := r.tables().EnsureFakeIPIngress(context.Background(), testIngressSpecNoDNAT("nwg3")); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	removed := false
+	for _, call := range r.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, FakeIPIngressTag) {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Errorf("протухшее правило своего тега не снято: %v", r.ipt)
+	}
+	if r.ipCalls("rule", "add") == 0 {
+		t.Errorf("маршрутная половина не пересобрана: %v", r.ip)
+	}
+}
+
+func TestEnsureIngressHookWriteFailureIsBestEffort(t *testing.T) {
+	r := &ingressRecorder{}
+	it := r.tables()
+	it.persistPolicyTunDNSHook = func(string) error { return errors.New("read-only fs") }
+	it.cleanupPolicyTunDNSHook = func() {}
+
+	spec := FakeIPIngressSpec{TunIface: "opkgtun0", TunDNS: testTunDNS, Tag: PolicyTunDNSTag, Marks: []string{"0xffffaab"}}
+	if err := it.EnsureFakeIPIngress(context.Background(), spec); err != nil {
+		t.Fatalf("сбой записи хука не должен ронять ensure: %v", err)
+	}
+	installed := false
+	for _, call := range r.ipt {
+		if strings.Contains(strings.Join(call, " "), "-I PREROUTING") {
+			installed = true
+		}
+	}
+	if !installed {
+		t.Error("правила не поставлены при сбое записи хука (§11: best-effort)")
+	}
+}

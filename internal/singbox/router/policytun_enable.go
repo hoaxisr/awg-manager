@@ -308,11 +308,14 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
-	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box»: тот
-	// же механизм, что у fakeip (issue #678), но без перехвата DNS — своего
-	// резолвера в policy-tun нет. Best-effort (см. ensureFakeIPIngress): без
-	// заворота режим работает, просто трафик таких серверов идёт мимо политики.
-	s.ensureFakeIPIngress(ctx, s.policyTunIngressSpec(ctx, iface, sr))
+	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box» плюс
+	// перехват DNS у членов политики: тот же механизм, что у fakeip (issue
+	// #678). Best-effort (см. ensureFakeIPIngress): без заворота режим
+	// работает, просто трафик таких серверов идёт мимо политики. Неприменимый
+	// спек (марки не прочитались) пропускаем — их починит drift-heal.
+	if spec, ok := s.policyTunIngressSpec(ctx, iface, ndmsName, sr); ok {
+		s.ensureFakeIPIngress(ctx, spec)
+	}
 	push(func() {
 		// Откат обязан снять и заворот: иначе `ip rule iif` пережил бы удаление
 		// tun и увёл трафик ingress-серверов в несуществующий интерфейс.

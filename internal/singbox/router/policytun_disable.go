@@ -18,7 +18,8 @@ import (
 //
 // Порядок (каждый шаг best-effort, teardown НИКОГДА не прерывается на ошибке —
 // полуразобранный policy-tun хуже доведённого до конца):
-//  1. восстановление записанного NAT сегментов (source-preserve) — ПЕРВЫМ;
+//  0. снять netfilter.d-хук перехвата DNS — до любых RCI-мутаций;
+//  1. восстановление записанного NAT сегментов (source-preserve);
 //  2. снять NDMS-дефолт (v4+v6) с tun, пока интерфейс ещё жив: клиенты политики
 //     сразу уезжают на WAN, а не в дыру;
 //  3. снять ingress-заворот (ip rule iif + таблица 700);
@@ -43,6 +44,14 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 
 	iface := fakeIPIfaceName(st.Index)   // kernel name: только метки в логах
 	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
+
+	// (0) Хук перехвата DNS сносим ПЕРВЫМ. Ниже идут RCI-мутации (возврат NAT
+	// сегментов, снятие дефолта) и teardown интерфейса — каждая способна
+	// спровоцировать перестройку firewall, и живой хук вернул бы правила
+	// перехвата, которые уже некому убирать. Идемпотентно: файла нет — no-op.
+	if s.deps.IPTables != nil {
+		s.deps.IPTables.RemovePolicyTunDNSHook()
+	}
 
 	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
 	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —

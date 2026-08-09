@@ -1016,14 +1016,26 @@ exit 0
 // марок меняется в NDMS без нашего участия, и запись «один раз на enable»
 // оставила бы навсегда протухший файл.
 func writePolicyTunDNSHook(script string) error {
-	if cur, err := os.ReadFile(netfilterPolicyTunDNSHookPath); err == nil && string(cur) == script {
-		return nil
+	// Сверяем И содержимое, И права: файл со сбитым снаружи режимом NDMS
+	// молча не исполнит, а по одному лишь совпадению байтов мы бы его не
+	// переписали.
+	if st, err := os.Stat(netfilterPolicyTunDNSHookPath); err == nil && st.Mode().Perm() == 0755 {
+		if cur, rerr := os.ReadFile(netfilterPolicyTunDNSHookPath); rerr == nil && string(cur) == script {
+			return nil
+		}
 	}
 	return storage.AtomicWritePerm(netfilterPolicyTunDNSHookPath, []byte(script), 0755)
 }
 
 func removePolicyTunDNSHook() {
 	_ = os.Remove(netfilterPolicyTunDNSHookPath)
+}
+
+// RemovePolicyTunDNSHook снимает файл хука перехвата DNS. Идемпотентно.
+func (it *IPTables) RemovePolicyTunDNSHook() {
+	if it.cleanupPolicyTunDNSHook != nil {
+		it.cleanupPolicyTunDNSHook()
+	}
 }
 
 // netfilterHookScript renders the netfilter.d hook with all placeholders

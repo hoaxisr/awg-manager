@@ -43,9 +43,11 @@ import (
 // правил перехвата идёт по connmark политики, а не по `-i`, и правила несут
 // свой тег (PolicyTunDNSTag), чтобы режимы не сносили правила друг друга.
 //
-// Долговечность: своего netfilter.d-хука здесь нет (в отличие от tproxy) —
+// Долговечность: в fakeip своего netfilter.d-хука нет (в отличие от tproxy) —
 // сброшенные при перезагрузке firewall NDMS правила восстанавливает
-// drift-heal в reconcileFakeIPTun, то есть в пределах тика планировщика.
+// drift-heal в reconcileFakeIPTun, то есть в пределах тика планировщика. У
+// перехвата policy-tun хук есть (52-awgm-policytun-dns.sh): режим fail-closed,
+// и тика ожидания там быть не должно.
 
 const (
 	// FakeIPIngressTag — comment-тег DNAT-правил перехвата DNS. По нему они
@@ -309,6 +311,11 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 	}
 
 	if !spec.active() {
+		if it.cleanupPolicyTunDNSHook != nil {
+			// Безусловно: правила мог стереть NDMS, а уцелевший файл вечно
+			// возвращал бы DNAT в снесённый туннель.
+			it.cleanupPolicyTunDNSHook()
+		}
 		// Снимаем только если есть что снимать — иначе в tproxy-режиме каждый
 		// тик reap'а тратил бы вызовы впустую.
 		if strings.Contains(natDump, FakeIPIngressTag) ||
@@ -317,6 +324,22 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 			it.RemoveFakeIPIngress(ctx)
 		}
 		return nil
+	}
+
+	// Хук: пишем при перехвате policy-tun, снимаем во всех прочих случаях
+	// (чужой режим, отключённый перехват). Запись сравнивает содержимое, так
+	// что в установившемся состоянии это одно чтение файла. Пишем ДО проверки
+	// дрейфа: набор марок меняется и тогда, когда правила стоят на месте.
+	if spec.tag() == PolicyTunDNSTag && spec.dnatHalf() {
+		if it.persistPolicyTunDNSHook != nil {
+			// Ошибка НАМЕРЕННО не возвращается наверх: §11 обещает, что без
+			// файла хука режим работает, а правила чинит drift-heal.
+			// Фатальный возврат отменил бы это обещание на прошивке без
+			// каталога /opt/etc/ndm/netfilter.d.
+			_ = it.persistPolicyTunDNSHook(policyTunDNSHookScript(spec))
+		}
+	} else if it.cleanupPolicyTunDNSHook != nil {
+		it.cleanupPolicyTunDNSHook()
 	}
 
 	routeDrift := false
@@ -376,6 +399,11 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 func (it *IPTables) RemoveFakeIPIngress(ctx context.Context) {
 	if !it.ingressSeamsWired() {
 		return
+	}
+	// Кто снимает правила перехвата, тот снимает и файл, который их
+	// восстанавливает: иначе первое же событие nat вернуло бы DNAT.
+	if it.cleanupPolicyTunDNSHook != nil {
+		it.cleanupPolicyTunDNSHook()
 	}
 	dump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err == nil {

@@ -2132,6 +2132,18 @@ func TestWritePolicyTunDNSHookSkipsIdenticalContent(t *testing.T) {
 		t.Error("файл переписан при неизменном содержимом")
 	}
 
+	// Сбитые снаружи права обязаны чиниться, даже когда байты совпадают.
+	if err := os.Chmod(netfilterPolicyTunDNSHookPath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("запись при сбитых правах: %v", err)
+	}
+	st3, _ := os.Stat(netfilterPolicyTunDNSHookPath)
+	if st3.Mode().Perm() != 0755 {
+		t.Errorf("права не восстановлены: %v", st3.Mode().Perm())
+	}
+
 	if err := writePolicyTunDNSHook(script + "# tail\n"); err != nil {
 		t.Fatalf("запись изменённого: %v", err)
 	}

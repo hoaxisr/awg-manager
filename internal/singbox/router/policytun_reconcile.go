@@ -75,18 +75,65 @@ func policyTunIPGlobalPresent(lines []string, ndmsName string) bool {
 	return false
 }
 
-// policyTunIngressSpec собирает желаемое состояние ingress-заворота для
-// policy-tun: только маршрутная половина (NoDNAT) — своего резолвера в режиме
-// нет, перехватывать DNS некуда. Единый источник для enable и reconcile.
-func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface string, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
+// policyTunIngressSpec собирает желаемое состояние перехвата и заворота для
+// policy-tun. Второе значение false означает «пропустить тик»: набор марок
+// прочитать не удалось, и трактовать это как «политик нет» нельзя — снятие
+// правил на каждой икоте RCI открывало бы окно резолвинга мимо туннеля.
+//
+// Единый источник для enable и reconcile.
+func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface, ndmsName string, sr storage.SingboxRouterSettings) (FakeIPIngressSpec, bool) {
 	if iface == "" {
-		return FakeIPIngressSpec{}
+		return FakeIPIngressSpec{}, true
 	}
-	return FakeIPIngressSpec{
+	spec := FakeIPIngressSpec{
 		TunIface: iface,
-		NoDNAT:   true,
+		Tag:      PolicyTunDNSTag,
 		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
 	}
+
+	// Аварийный выход, паритет с tproxy: явно исключённый порт 53 отключает
+	// перехват целиком (в tproxy это RETURN до правила --dport 53). Bypass
+	// задаётся диапазонами, поэтому проверяется вхождение, а не равенство.
+	//
+	// NoDNAT ОБЯЗАТЕЛЕН во всех ветках без TunDNS: без него active() читает
+	// такой спек как неактивный и EnsureFakeIPIngress сносит заворот ЦЕЛИКОМ,
+	// вместе с маршрутной половиной, которая от DNS не зависит.
+	if bypassUDP, _, err := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts); err == nil && portRangesContain(bypassUDP, 53) {
+		spec.NoDNAT = true
+		return spec, true
+	}
+
+	tunDNS, err := DeriveTunDNS(resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr4)
+	if err != nil {
+		// Маршрутную половину заворота сохраняем: она от DNS не зависит.
+		s.appLog.Warn("policy-tun-ingress", iface, "derive tun DNS: "+err.Error())
+		spec.NoDNAT = true
+		return spec, true
+	}
+	if s.deps.Policies == nil {
+		spec.NoDNAT = true
+		return spec, true
+	}
+	exits, err := s.deps.Policies.ListPolicyExits(ctx, ndmsName)
+	if err != nil {
+		s.appLog.Warn("policy-tun-ingress", iface, "список политик: "+err.Error())
+		return FakeIPIngressSpec{}, false
+	}
+	spec.TunDNS = tunDNS
+	for _, e := range exits {
+		spec.Marks = append(spec.Marks, e.Mark)
+	}
+	return spec, true
+}
+
+// portRangesContain — вхождение порта в набор диапазонов bypass.
+func portRangesContain(ranges []PortRange, port int) bool {
+	for _, pr := range ranges {
+		if port >= pr.From && port <= pr.To {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcilePolicyTun — арм policy-tun в Reconcile (диспатч в начале Reconcile).
@@ -170,7 +217,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).
 	// Реап, идущий в Reconcile первым, наш заворот в этом режиме не трогает —
 	// см. ReapOrphanedFakeIPTun.
-	s.ensureFakeIPIngress(ctx, s.policyTunIngressSpec(ctx, iface, sr))
+	if spec, ok := s.policyTunIngressSpec(ctx, iface, ndmsName, sr); ok {
+		s.ensureFakeIPIngress(ctx, spec)
+	}
 
 	s.restoreRevokedPolicyTunNAT(ctx, sr, st, iface)
 	s.reconcilePolicyTunNAT(ctx, sr, st, iface)

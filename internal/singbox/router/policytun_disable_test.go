@@ -318,3 +318,27 @@ func hasLogEntry(rec *recordingAppLogger, want string) bool {
 	}
 	return false
 }
+
+// Хук перехвата DNS снимается ПЕРВЫМ шагом teardown: следом идут RCI-мутации
+// (возврат NAT сегментов, снятие дефолта), каждая из которых способна
+// спровоцировать перестройку firewall, и живой хук вернул бы правила перехвата.
+func TestDisablePolicyTunRemovesDNSHookFirst(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForDisable(t, h)
+
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	ipt.cleanupPolicyTunDNSHook = func() { h.log.add("RemoveDNSHook") }
+	h.svc.deps.IPTables = ipt
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+
+	hook := h.log.idxOf("RemoveDNSHook")
+	if hook < 0 {
+		t.Fatalf("хук перехвата DNS не снят: %v", h.log.calls)
+	}
+	if route := h.log.idxOf("RemoveDefaultRoute:OpkgTun0"); route < 0 || hook > route {
+		t.Errorf("хук снят не первым: hook=%d removeDefaultRoute=%d (%v)", hook, route, h.log.calls)
+	}
+}

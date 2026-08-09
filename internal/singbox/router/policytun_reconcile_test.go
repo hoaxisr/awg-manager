@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -728,5 +729,105 @@ func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
 	}
 	if st.PolicyTunSourcePreserve == nil || !*st.PolicyTunSourcePreserve {
 		t.Errorf("PolicyTunSourcePreserve = %v, want true при записанных сегментах", st.PolicyTunSourcePreserve)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Спек ingress-заворота policy-tun: марки политик + перехват DNS
+// ---------------------------------------------------------------------------
+
+func newServiceWithExits(t *testing.T, exits []query.PolicyDefaultExit, err error) *ServiceImpl {
+	t.Helper()
+	return newTestService(t, Deps{
+		Policies:  &fakeAccessPolicyProvider{exits: exits, exitsErr: err},
+		FakeIPTun: FakeIPTunParams{TunAddr4: "172.18.0.1/30"},
+	})
+}
+
+func TestPolicyTunIngressSpecMarksAndDNS(t *testing.T) {
+	s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{})
+	if !ok {
+		t.Fatal("спек обязан быть применим")
+	}
+	if spec.Tag != PolicyTunDNSTag {
+		t.Errorf("Tag = %q, want %q", spec.Tag, PolicyTunDNSTag)
+	}
+	if spec.NoDNAT {
+		t.Error("NoDNAT в policy-tun больше не выставляется")
+	}
+	if spec.TunDNS != "172.18.0.2" {
+		t.Errorf("TunDNS = %q", spec.TunDNS)
+	}
+	if len(spec.Marks) != 1 || spec.Marks[0] != "0xffffaab" {
+		t.Errorf("Marks = %v", spec.Marks)
+	}
+}
+
+func TestPolicyTunIngressSpecSkipsTickOnRCIError(t *testing.T) {
+	s := newServiceWithExits(t, nil, errors.New("rci timeout"))
+	if _, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{}); ok {
+		t.Error("ошибка чтения марок обязана давать skip, а не пустой спек")
+	}
+}
+
+func TestPolicyTunIngressSpecEmptyOnNoPolicies(t *testing.T) {
+	s := newServiceWithExits(t, nil, nil)
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{})
+	if !ok {
+		t.Fatal("успешно прочитанный пустой набор — это применимый спек")
+	}
+	if len(spec.Marks) != 0 || spec.dnatHalf() {
+		t.Error("без политик перехвата быть не должно")
+	}
+}
+
+func TestPolicyTunIngressSpecHonorsBypass53(t *testing.T) {
+	s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+	// Формат bypass — "PORT-PORT UDP|TCP" (parseExtraPorts, presets.go:157).
+	sr := storage.SingboxRouterSettings{BypassExtraPorts: "50-60 UDP"}
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
+	if !ok {
+		t.Fatal("спек применим")
+	}
+	if spec.dnatHalf() {
+		t.Error("53 внутри bypass-диапазона 50-60 — перехвата быть не должно")
+	}
+	// Маршрутная половина заворота обязана уцелеть: без NoDNAT active()
+	// прочитал бы спек как неактивный и снёс бы ingress-заворот целиком.
+	if !spec.NoDNAT {
+		t.Error("NoDNAT не выставлен — заворот будет снесён вместе с перехватом")
+	}
+}
+
+func TestPolicyTunIngressSpecKeepsRouteHalfWithoutTunDNS(t *testing.T) {
+	// Адрес DNS туннеля не вычисляется (битый TunAddr4) — перехвата нет, но
+	// маршрутная половина заворота обязана остаться применимой.
+	s := newTestService(t, Deps{
+		Policies:  &fakeAccessPolicyProvider{},
+		FakeIPTun: FakeIPTunParams{TunAddr4: "не-адрес"},
+	})
+	sr := storage.SingboxRouterSettings{}
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
+	if !ok {
+		t.Fatal("спек применим")
+	}
+	if !spec.NoDNAT {
+		t.Error("NoDNAT не выставлен при невычислимом адресе DNS")
+	}
+	if spec.dnatHalf() {
+		t.Error("перехват без адреса DNS невозможен")
+	}
+}
+
+func TestPortRangesContain(t *testing.T) {
+	ranges := []PortRange{{From: 50, To: 60}, {From: 443, To: 443}}
+	for _, c := range []struct {
+		port int
+		want bool
+	}{{53, true}, {50, true}, {60, true}, {49, false}, {61, false}, {443, true}, {80, false}} {
+		if got := portRangesContain(ranges, c.port); got != c.want {
+			t.Errorf("portRangesContain(%d) = %v, want %v", c.port, got, c.want)
+		}
 	}
 }
