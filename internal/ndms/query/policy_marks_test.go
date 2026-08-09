@@ -116,3 +116,40 @@ func TestPolicyMarkStore_RCIError(t *testing.T) {
 		t.Errorf("expected wrapped transport error, got %v", err)
 	}
 }
+
+// Марка из RCI попадает в текст netfilter.d-хука, который ndm исполняет от
+// root, поэтому всё, что не голый hex, обязано отсеиваться на входе.
+const policyDumpWithBadMark = `{
+  "PolicyBad": {"description":"Broken","mark":"ffff aab","table4":4098,
+    "route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun17"}]}},
+  "PolicyInject": {"description":"Injected","mark":"ffff;rm -rf /","table4":4100,
+    "route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun17"}]}},
+  "PolicyPrefixed": {"description":"AlreadyHex","mark":"0xffffaae","table4":4102,
+    "route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun17"}]}},
+  "PolicyGood": {"description":"Valid","mark":"ffffaac","table4":4104,
+    "route4":{"route":[{"destination":"0.0.0.0/0","interface":"OpkgTun17"}]}}
+}`
+
+func TestPolicyMarkStore_ListByDefaultInterface_SkipsInvalidMarks(t *testing.T) {
+	fg := NewFakeGetter()
+	fg.SetRaw("/show/ip/policy", []byte(policyDumpWithBadMark))
+	s := NewPolicyMarkStore(fg, NopLogger())
+
+	got, err := s.ListByDefaultInterface(context.Background(), "OpkgTun17")
+	if err != nil {
+		t.Fatalf("ListByDefaultInterface: %v", err)
+	}
+	want := []PolicyDefaultExit{{Name: "PolicyGood", Mark: "0xffffaac"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if got[0] != want[0] {
+		t.Errorf("got %+v, want %+v", got[0], want[0])
+	}
+
+	// Продовая обвязка передаёт nil-логгер — пропуск невалидной марки не
+	// должен на нём паниковать.
+	if _, err := NewPolicyMarkStore(fg, nil).ListByDefaultInterface(context.Background(), "OpkgTun17"); err != nil {
+		t.Fatalf("nil-логгер: %v", err)
+	}
+}

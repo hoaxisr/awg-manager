@@ -37,6 +37,12 @@ type PolicyMarkStore struct {
 }
 
 func NewPolicyMarkStore(g Getter, log Logger) *PolicyMarkStore {
+	// Оба продовых вызова (wiring_routing.go, cleanup.go) передают nil —
+	// подменяем на no-op, как NewInterfaceStore, иначе первый же Warnf
+	// про невалидную марку упал бы паникой.
+	if log == nil {
+		log = NopLogger()
+	}
 	return &PolicyMarkStore{getter: g, log: log}
 }
 
@@ -68,6 +74,17 @@ func (s *PolicyMarkStore) Get(ctx context.Context, policyName string) (string, e
 	return "0x" + p.Mark, nil
 }
 
+// isBareHex — непустая строка из одних шестнадцатеричных цифр, как NDMS отдаёт
+// марку (без префикса "0x" — его добавляем мы).
+func isBareHex(s string) bool {
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return s != ""
+}
+
 // PolicyDefaultExit — политика, чей дефолтный маршрут ведёт в заданный
 // интерфейс, вместе с её NDMS-меткой (hex с префиксом "0x").
 type PolicyDefaultExit struct {
@@ -97,6 +114,13 @@ func (s *PolicyMarkStore) ListByDefaultInterface(ctx context.Context, iface stri
 	var out []PolicyDefaultExit
 	for name, p := range doc {
 		if p.Mark == "" {
+			continue
+		}
+		// Марка уезжает в текст netfilter.d-хука, который ndm исполняет от
+		// root, поэтому всё, что не голый hex (пробелы, спецсимволы, чужой
+		// префикс "0x"), отбрасываем на входе, а не вклеиваем в скрипт.
+		if !isBareHex(p.Mark) {
+			s.log.Warnf("policy %s: невалидная марка %q — политика пропущена", name, p.Mark)
 			continue
 		}
 		for _, r := range p.Route4.Route {
