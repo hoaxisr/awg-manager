@@ -1481,6 +1481,11 @@ func writeNetfilterDNSHook() error {
 // netfilterHookScript, чтобы тест мог проверить шелл через `sh -n`.
 func netfilterDNSHookScript() string {
 	return fmt.Sprintf(`#!/bin/sh
+# PATH задаём сами — по той же причине, что и в полном хуке: запускает ndm,
+# состав его PATH не измеряли. Здесь на кону guard от дублей: он держится на
+# grep, и если grep не найдётся, условие станет ложным, а -I PREROUTING 1 из
+# блоба будет добавлять правила DNS-RESCUE на КАЖДОМ nat-событии.
+export PATH="${PATH:+$PATH:}/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin"
 # awg-manager: восстановление DNS-RESCUE после перестройки firewall ndm.
 # Только nat: перехват живёт в таблице awgm, которую ndm не стирает.
 # Инверсия, как в полном хуке: при пустом $type в какой-нибудь прошивке
@@ -1562,6 +1567,14 @@ func netfilterHookScript(includeBlackhole bool) string {
 `, netfilterBlackholePath, BlackholeChain)
 	}
 	return fmt.Sprintf(`#!/bin/sh
+# Хук запускает ndm, и состав его PATH мы НЕ измеряли. На роутере проверено,
+# что awk лежит только в /opt/bin (симлинк на busybox Entware), про остальные
+# утилиты того же busybox проверки нет — полагаться на вызывающего нельзя.
+# Здесь без путей зовутся grep (проверка живого джампа) и logger: без grep
+# обе проверки молча провалятся, mangle_ok/nat_ok останутся нулями, и хук
+# уйдёт в полный restore вместо лечения одной таблицы. Каталоги — как в
+# init-скрипте пакета, дописаны в хвост: приоритет вызывающего не меняем.
+export PATH="${PATH:+$PATH:}/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin"
 [ "$type" = "ip6tables" ] && exit 0
 case "$table" in mangle|nat) ;; *) exit 0 ;; esac
 # Best-effort kernel module preload (both paths need these). Absent .ko or
@@ -1686,6 +1699,19 @@ exit 0
 // Pure (no I/O) so a test can validate the generated shell with `sh -n`.
 func ctCleanScript() string {
 	return fmt.Sprintf(`#!/bin/sh
+# Проверено на роутере: awk есть ТОЛЬКО в /opt/bin (симлинк на busybox
+# Entware), /bin/awk и /usr/bin/awk не существуют вовсе. Скрипт зовёт не только
+# демон — его дёргает хук netfilter.d, который запускает ndm, а состав PATH у
+# ndm мы НЕ измеряли. Если /opt/bin туда не попал, весь проход молча не
+# сработает: вывод давится в 2>/dev/null, и это неотличимо от «утечек не было».
+# Поэтому PATH задаём сами, а не полагаемся на вызывающего. Тем же способом и в
+# том же порядке перечисляет каталоги init-скрипт пакета
+# (entware/files/etc/init.d/S99awg-manager). Дописываем их в ХВОСТ: приоритет
+# вызывающего не трогаем — правка чинит нахождение бинаря, а не выбор между
+# ними. ${PATH:+$PATH:} — чтобы при пустом PATH не приклеить ведущее
+# двоеточие, означающее текущий каталог. Неквалифицированных вызовов тут семь:
+# awk, sed, grep, logger, head, wc, sort.
+export PATH="${PATH:+$PATH:}/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin"
 # Адреса, чьи потоки вытесняются целиком, приходят аргументами (смена состава
 # политики). Снимаются ПЕРВЫМ делом: ниже $@ затирается списком WAN-адресов.
 evict_ips="$*"

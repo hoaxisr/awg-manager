@@ -2158,6 +2158,57 @@ func TestCtCleanScriptSelectsExplicitSourceIPs(t *testing.T) {
 	}
 }
 
+// Все три скрипта, которые мы кладём на роутер, запускает не только демон:
+// оба хука дёргает ndm, а ctclean — ещё и полный хук. Состав PATH у ndm мы НЕ
+// измеряли, зато проверено, что awk есть ТОЛЬКО в /opt/bin (симлинк на busybox
+// Entware, /bin/awk и /usr/bin/awk отсутствуют). Отказ найти бинарь везде
+// молчаливый: в ctclean вывод давится в 2>/dev/null, в полном хуке падает
+// проверка живого джампа (полный restore вместо лечения одной таблицы), в
+// узком — guard от дублей (правила DNS-RESCUE копятся на каждом nat-событии).
+func TestGeneratedScriptsPinPath(t *testing.T) {
+	// Строка спрашивается целиком, а не по кускам: `${PATH:+…}` (страж от
+	// ведущего двоеточия, то есть от текущего каталога в списке поиска у
+	// скрипта, который бежит от root) упомянут и в комментариях рядом, и
+	// проверка по подстроке была бы истинна от одного комментария. Каталоги
+	// дописаны в ХВОСТ: приоритет вызывающего правка не меняет, она чинит
+	// только нахождение бинаря.
+	const pathLine = `export PATH="${PATH:+$PATH:}/bin:/sbin:/usr/bin:/usr/sbin:/opt/bin:/opt/sbin"`
+	scripts := map[string]string{
+		"ctclean":    ctCleanScript(),
+		"tproxy-хук": netfilterHookScript(true),
+		"dns-хук":    netfilterDNSHookScript(),
+	}
+	for name, body := range scripts {
+		if !strings.Contains(body, pathLine) {
+			t.Errorf("%s обязан сам приводить PATH в порядок строкой %s:\n%s", name, pathLine, body)
+			continue
+		}
+		// PATH обязан встать ДО первого внешнего вызова, иначе он бесполезен.
+		// Позиции считаются по КОДУ: те же вызовы упоминаются в комментариях
+		// выше, и сравнение по сырому тексту падало бы на комментарии.
+		code := stripShellComments(body)
+		p := strings.Index(code, pathLine)
+		for _, call := range []string{"/opt/sbin/", "grep ", "awk "} {
+			if i := strings.Index(code, call); i >= 0 && p > i {
+				t.Errorf("%s: PATH выставляется после вызова %q (path=%d call=%d)", name, call, p, i)
+			}
+		}
+	}
+}
+
+// stripShellComments выбрасывает строки-комментарии шелла (и комментарии
+// внутри встроенной awk-программы — они там той же формы).
+func stripShellComments(s string) string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
 func TestInstallRunsCtCleanWithoutExplicitIPs(t *testing.T) {
 	fe := &fakeExec{}
 	it := newFakeIPTables(fe)
