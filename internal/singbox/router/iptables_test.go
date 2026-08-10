@@ -1927,6 +1927,12 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 // `fi` — тот, что стоит в первой колонке (вложенные идут с отступом). Нужен
 // двум тестам: одному — чтобы вырезать блок, другому — чтобы доказать, что
 // проход лежит внутри него, а не за `fi`.
+// Срез «до первого `fi` в первой колонке» держится на форме вложенных блоков:
+// стоит вложенному `fi` потерять отступ — и блок молча сузится. Сужение
+// невидимо для утверждений-отрицаний («в блоке НЕТ такого-то») и потому опасно
+// ровно там, где проверка и нужна. Страховка — баланс: у вырезанного куска
+// число открывающих `…; then` обязано сойтись с числом строк `fi`. Считаем по
+// коду: `; then` внутри комментария баланс бы перекосил.
 func awgmCtCleanBlock(t *testing.T, s string) string {
 	t.Helper()
 	const open = "if [ \"$awgm_mode\" -eq 1 ]; then\n"
@@ -1938,19 +1944,36 @@ func awgmCtCleanBlock(t *testing.T, s string) string {
 	if end < 0 {
 		t.Fatalf("awgm-блок не закрыт `fi` в первой колонке:\n%s", s)
 	}
-	return s[start : start+end+len("\nfi\n")]
+	block := s[start : start+end+len("\nfi\n")]
+	opens, closes := 0, 0
+	for _, line := range strings.Split(stripShellComments(block), "\n") {
+		switch line = strings.TrimSpace(line); {
+		case strings.HasSuffix(line, "; then"):
+			opens++
+		case line == "fi":
+			closes++
+		}
+	}
+	if opens != closes {
+		t.Fatalf("вырезан не ровно awgm-блок: открывающих `; then` %d, закрывающих `fi` %d:\n%s",
+			opens, closes, block)
+	}
+	return block
 }
 
 func TestCtCleanScriptEvictsFastnatOnBothProtocolsInAwgmMode(t *testing.T) {
-	body := ctCleanScript()
+	// Всё ниже спрашивается у КОДА, без строк-комментариев: те же формы
+	// (имя токена, признак режима, сам `if`) обсуждаются в комментариях рядом,
+	// и сверка по сырому тексту стала бы истинной по построению. Сейчас тест
+	// спасает только случайность — комментарий пишет `[FASTNAT]` без
+	// экранирования, а утверждение требует awk-регулярку.
+	body := stripShellComments(ctCleanScript())
 	// Всё, что проверяется ниже, спрашивается у САМОГО блока: проход, вынесенный
 	// за `fi`, отработал бы и в legacy, где флага нет ни у одной записи и тот же
 	// предикат снёс бы все живые соединения членов политики.
 	block := awgmCtCleanBlock(t, body)
 
-	// Предикат уязвимости: запись НЕ прошла через -j AWGMPPE. Ищется ровно
-	// awk-регулярка (скобки экранированы), а не текст токена: упоминание
-	// [FASTNAT] в комментарии отбора не делает.
+	// Предикат уязвимости: запись НЕ прошла через -j AWGMPPE.
 	if !strings.Contains(block, `/\[FASTNAT\]/`) {
 		t.Fatal("скрипт не отбирает записи по токену [FASTNAT]")
 	}
@@ -2252,14 +2275,16 @@ func TestGeneratedScriptsPinPath(t *testing.T) {
 		"dns-хук":    netfilterDNSHookScript(),
 	}
 	for name, body := range scripts {
-		if !strings.Contains(body, pathLine) {
-			t.Errorf("%s обязан сам приводить PATH в порядок строкой %s:\n%s", name, pathLine, body)
+		// И наличие, и позиция спрашиваются у КОДА, без строк-комментариев: та
+		// же строка обсуждается в комментариях рядом, и вопрос к сырому тексту
+		// был бы истинен от одного комментария — при том что позиция ниже уже
+		// считалась по коду, то есть утверждения расходились бы источником.
+		code := stripShellComments(body)
+		if !strings.Contains(code, pathLine) {
+			t.Errorf("%s обязан сам приводить PATH в порядок строкой %s:\n%s", name, pathLine, code)
 			continue
 		}
 		// PATH обязан встать ДО первого внешнего вызова, иначе он бесполезен.
-		// Позиции считаются по КОДУ: те же вызовы упоминаются в комментариях
-		// выше, и сравнение по сырому тексту падало бы на комментарии.
-		code := stripShellComments(body)
 		p := strings.Index(code, pathLine)
 		for _, call := range []string{"/opt/sbin/", "grep ", "awk "} {
 			if i := strings.Index(code, call); i >= 0 && p > i {
