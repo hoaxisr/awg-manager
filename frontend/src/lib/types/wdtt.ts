@@ -18,6 +18,7 @@ export interface WdttClientConfig {
 	ndmsIface?: string;
 	rawIface?: string;
 	rawClientIp?: string;
+	rawClientMTU?: number;
 }
 
 export interface WdttClientInstance {

@@ -2603,6 +2603,7 @@ const wdtt_ClientConfig: v.GenericSchema = v.looseObject({
 	peer: v.optional(v.nullable(v.string())),
 	policyPermits: v.optional(v.nullable(v.array(v.lazy(() => wdtt_OpkgPolicyPermit)))),
 	rawClientIp: v.optional(v.nullable(v.string())),
+	rawClientMTU: v.optional(v.nullable(v.number())),
 	rawIface: v.optional(v.nullable(v.string())),
 	sub: v.optional(v.nullable(v.string())),
 	vkAuthMode: v.optional(v.nullable(v.string())),
