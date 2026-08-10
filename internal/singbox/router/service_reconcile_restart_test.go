@@ -357,8 +357,10 @@ type recordingAppLogger struct {
 	entries []string
 }
 
-func (r *recordingAppLogger) AppLog(_ logging.Level, _, _, action, target, message string) {
-	r.entries = append(r.entries, action+"|"+target+"|"+message)
+// Уровень пишется в ту же строку, чтобы утверждение про уровень можно было
+// предъявить К КОНКРЕТНОЙ записи, а не «где-то в журнале есть warn».
+func (r *recordingAppLogger) AppLog(level logging.Level, _, _, action, target, message string) {
+	r.entries = append(r.entries, string(level)+"|"+action+"|"+target+"|"+message)
 }
 
 // Транзиентная ошибка чтения метки политики (RCI недоступен — ранняя

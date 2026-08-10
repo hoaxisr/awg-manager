@@ -586,43 +586,34 @@ func TestProvisionSkipsBootBlackholeWhenInterceptionLive(t *testing.T) {
 	}
 }
 
-// captureAppLog собирает строки журнала: newTestService минует конструктор
-// сервиса, поэтому логгер тесты навешивают вручную.
-type captureAppLog struct{ lines []string }
-
-func (c *captureAppLog) AppLog(level logging.Level, _, _, action, _, message string) {
-	c.lines = append(c.lines, string(level)+" "+action+" "+message)
-}
-
-func (c *captureAppLog) has(sub string) bool {
-	return slices.ContainsFunc(c.lines, func(l string) bool { return strings.Contains(l, sub) })
-}
-
 // Отсутствие conntrack не мешает перехвату встать, но ломает вытеснение
 // потоков, ушедших мимо него. Скрипт вытеснения об этом молчит (выходит
 // нулём), поэтому сказать обязан демон — и ровно тогда, когда бинаря нет.
 func TestProvisionWarnsWhenConntrackMissing(t *testing.T) {
-	provision := func(t *testing.T, conntrack string) *captureAppLog {
+	provision := func(t *testing.T, conntrack string) *recordingAppLogger {
 		t.Helper()
 		stubListeningProbe(t, func() bool { return true })
 		it := newFakeIPTables(&fakeExec{})
 		it.conntrackPath = conntrack
 		svc := newBootBlackholeServiceWith(t, it)
-		log := &captureAppLog{}
-		svc.appLog = logging.NewScopedLogger(log, logging.GroupRouting, logging.SubSingboxRouter)
+		// newTestService минует конструктор сервиса, поэтому журнал
+		// подставляется вручную — идиома пакета.
+		rec := &recordingAppLogger{}
+		svc.appLog = logging.NewScopedLogger(rec, logging.GroupRouting, logging.SubSingboxRouter)
 		if err := svc.Enable(context.Background()); err != nil {
 			t.Fatalf("enable: %v", err)
 		}
-		return log
+		return rec
 	}
 
 	t.Run("бинаря нет — предупреждение в журнале", func(t *testing.T) {
-		log := provision(t, filepath.Join(t.TempDir(), "conntrack"))
-		if !log.has(conntrackBinPath) {
-			t.Fatalf("подъём без conntrack прошёл молча, журнал: %v", log.lines)
-		}
-		if !log.has(string(logging.LevelWarn)) {
-			t.Fatalf("строка обязана быть предупреждением, журнал: %v", log.lines)
+		rec := provision(t, filepath.Join(t.TempDir(), "conntrack"))
+		// Уровень, действие и текст спрашиваются ОДНОЙ подстрокой: запись
+		// пишется как level|action|target|message, и разнесённые проверки
+		// стали бы истинны от любой чужой warn-строки на пути Enable.
+		want := string(logging.LevelWarn) + "|ctclean||нет " + conntrackBinPath
+		if !hasLogEntry(rec, want) {
+			t.Fatalf("подъём без conntrack прошёл молча, журнал: %v", rec.entries)
 		}
 	})
 
@@ -631,8 +622,8 @@ func TestProvisionWarnsWhenConntrackMissing(t *testing.T) {
 		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if log := provision(t, path); log.has(conntrackBinPath) {
-			t.Fatalf("бинарь на месте, а демон жалуется, журнал: %v", log.lines)
+		if rec := provision(t, path); hasLogEntry(rec, conntrackBinPath) {
+			t.Fatalf("бинарь на месте, а демон жалуется, журнал: %v", rec.entries)
 		}
 	})
 }

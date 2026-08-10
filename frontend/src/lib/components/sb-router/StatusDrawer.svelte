@@ -621,7 +621,8 @@
         {/if}
         {#if s?.conntrackAvailable === false}
           <p class="hint warn-text">
-            Не найден conntrack — потоки, успевшие уйти мимо перехвата, не вытесняются.
+            Не найден <code class="mono">/opt/sbin/conntrack</code> — потоки, успевшие уйти мимо
+            перехвата, не вытесняются.
             Установите его: <code class="mono">opkg install conntrack</code>.
           </p>
         {/if}
