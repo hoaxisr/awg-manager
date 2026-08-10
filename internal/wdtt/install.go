@@ -24,8 +24,8 @@ type ArchSpecs struct {
 	Server BinarySpec
 }
 
-const PinnedClientVersion = "1.4.2-awgm"
-const PinnedServerVersion = "1.4.3-awgm"
+const PinnedClientVersion = "1.4.4-awgm"
+const PinnedServerVersion = "1.4.4-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 // После scripts/build-wdtt-client.sh обновить SHA256/Size ниже и залить на repo.hoaxisr.ru.
@@ -40,11 +40,11 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
-			SHA256: "f5171ad5fda9a13fb19bf1b5c2b452e418a082be78d43edcbf4408db18f690a0", Size: 15335586,
+			SHA256: "6f82bfd0b5851b1c61398d80ea4665575ba570c5dd641997194b25aef17f6e83", Size: 15401122,
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "8fbd9391a350a1ac95cb1f1cc8de556f9c97d1d08d74eaf6fafffed4c398cea9", Size: 8126626,
+			SHA256: "b639505b9952485bc16e9e3d43d6503975a878b0b18aba3fa5269953b61fd000", Size: 8126626,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
@@ -53,13 +53,13 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "844eba00062025eee77dfe24d5240f1a679a7341eea45861a7147504706f23fc", Size: 17563841,
+			SHA256: "0af429515d65f7f844c3d24f0ec052c6b27cb65f6a9ef70e6ebdeb9f39782b7d", Size: 17563841,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "0819ddf643ed681aac1eb649d34002fba0469802f73b4739b29d824d8ff2fbd1", Size: 17563841,
+			SHA256: "8b4d2d838c696f91b771507c2992ba62d9b1f2993fad32ef396d5b53b976906e", Size: 17563841,
 		},
 	},
 }
