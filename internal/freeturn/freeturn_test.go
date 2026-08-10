@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -488,6 +490,79 @@ func TestProcess_StartKeepsForeignPID(t *testing.T) {
 	if _, err := p.readPID(); err == nil {
 		t.Fatal("протухший pid-файл должен быть удалён")
 	}
+}
+
+// TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF — репро зомби-бага
+// (симметрично internal/wdtt): ребёнок форкает фонового хелпера (sleep 60),
+// унаследовавшего stderr, и сразу выходит. Хелпер живёт дольше startupGrace
+// (1.5с), поэтому Start() возвращается через ветку time.After(startupGrace) —
+// это свойство гонки select'ов, не признак бага, содержимое ошибки не
+// проверяем. Дискриминатор — реап процесса и самоисправление IsRunning().
+func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
+	var capturedCmd *exec.Cmd
+	p := newProcess("client", "/bin/sh", t.TempDir())
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		capturedCmd = exec.Command("/bin/sh", "-c", "sleep 60 <&- >&2 2>&2 &\nexit 0")
+		return capturedCmd
+	}
+
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() { done <- result{p.Start(nil)} }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() не вернулся за 5с — жнец гейтится на EOF пайпов орфан-хелпера (зомби-баг)")
+	}
+
+	if capturedCmd == nil || capturedCmd.Process == nil {
+		t.Fatal("cmd.Process не установлен")
+	}
+	pid := capturedCmd.Process.Pid
+	// Хелпер (sleep 60) — сирота в той же группе (Setsid лидер = наш прямой
+	// ребёнок): -pid валит всю группу. Гигиена теста, не часть проверяемого
+	// поведения.
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	if state, ok := freeturnProcStatState(pid); ok && state == "Z" {
+		t.Fatalf("pid %d остался зомби сразу после возврата Start() — реап гейтится на EOF пайпов", pid)
+	}
+
+	notRunning := make(chan struct{})
+	go func() {
+		for {
+			if running, _ := p.IsRunning(); !running {
+				close(notRunning)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	select {
+	case <-notRunning:
+	case <-time.After(5 * time.Second):
+		t.Fatal("IsRunning() всё ещё true спустя 5с — не самоисправляется, пока жив орфан-хелпер (зомби-баг, супервизор не увидит смерть процесса)")
+	}
+}
+
+// freeturnProcStatState читает третье поле /proc/<pid>/stat (state).
+// Возвращает ok=false, если процесс уже не существует (тоже не зомби).
+func freeturnProcStatState(pid int) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", false
+	}
+	s := string(data)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return "", false
+	}
+	fields := strings.Fields(s[i+2:])
+	if len(fields) == 0 {
+		return "", false
+	}
+	return fields[0], true
 }
 
 func TestBinaryPresent(t *testing.T) {
