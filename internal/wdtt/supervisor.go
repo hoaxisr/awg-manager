@@ -53,6 +53,8 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.clientStall.reset(c.ID)
 			s.startBackoff.Forget(key)
 			s.startBackoff.Forget(clientHealthKey(c.ID))
+			s.startBackoff.Forget(reconcileKey(c.ID))
+			s.startBackoff.Forget(clientStallKey(c.ID))
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
@@ -84,28 +86,38 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		if ndmsBad && !peerBad {
 			// Reconcile — первая (дешёвая) попытка лечения: поднять OpkgTun без
 			// рестарта wt-client. Рестарт — эскалация ниже, если интерфейс не
-			// ожил.
-			reconciled, rerr := s.reconcileClientRawNDMS(ctx, c.ID, c.Config)
-			switch {
-			case rerr != nil:
-				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: "+rerr.Error())
+			// ожил. Сам reconcile — ~10-13 RCI-команд, поэтому гоняется под
+			// собственным backoff (F1): вечно мёртвый OpkgTun не должен грузить
+			// роутер RCI-вызовами каждый тик, а страйк в clientHealth всё равно
+			// копится независимо от того, пропущен reconcile backoff'ом или нет.
+			rKey := reconcileKey(c.ID)
+			if s.startBackoff.Allow(rKey, now) {
+				reconciled, rerr := s.reconcileClientRawNDMS(ctx, c.ID, c.Config)
+				switch {
+				case rerr != nil:
+					if s.appLog != nil {
+						s.appLog.Warn("health", c.ID, "OpkgTun reconcile: "+rerr.Error())
+					}
+				case !reconciled:
+					// Пустой RawClientIP и т.п. — reconcile ничего не сделал; это
+					// не должно молча сходить за успех.
+					if s.appLog != nil {
+						s.appLog.Warn("health", c.ID, "OpkgTun reconcile: пропущен, нет условий для восстановления")
+					}
 				}
-			case !reconciled:
-				// Пустой RawClientIP и т.п. — reconcile ничего не сделал; это
-				// не должно молча сходить за успех.
-				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: пропущен, нет условий для восстановления")
+				st = proc.Status()
+				ndmsBad = clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
+				if ndmsBad {
+					s.startBackoff.Fail(rKey, now)
+				} else {
+					s.startBackoff.Success(rKey)
+					s.clientHealth.reset(c.ID)
+					s.clientStall.reset(c.ID)
+					continue
 				}
 			}
-			st = proc.Status()
-			ndmsBad = clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
-			if !ndmsBad {
-				s.clientHealth.reset(c.ID)
-				s.clientStall.reset(c.ID)
-				continue
-			}
-			// Не ожил — страйк той же механики, что peerBad/relayBad, ниже.
+			// Не ожил (или reconcile сам пропущен backoff'ом) — страйк той же
+			// механики, что peerBad/relayBad, ниже.
 		}
 		unhealthy := peerBad || ndmsBad || relayBad
 		if s.clientHealth.note(c.ID, unhealthy) {
@@ -145,7 +157,22 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			// backoff можно.
 			s.startBackoff.Success(clientHealthKey(c.ID))
 		}
-		if s.clientStall.note(c.ID, clientRelayStalled(st, now)) {
+		stalled := clientRelayStalled(st, now)
+		if s.clientStall.note(c.ID, stalled) {
+			// (б): свой ключ, а не clientHealthKey — профиль застоя ловит и
+			// живой простаивающий туннель (см. комментарий у clientRelayStalled
+			// в health.go), это отдельный от «явно неисправен» повод и не
+			// должен делить окно backoff с peerBad/ndmsBad/relayBad: страйк
+			// одного не должен ни ускорять, ни тормозить эскалацию другого.
+			stallKey := clientStallKey(c.ID)
+			if !s.startBackoff.Allow(stallKey, now) {
+				// F5: страйк-трекер clientStall тут намеренно НЕ трогаем —
+				// note() уже вернул true (страйки на пороге), и при следующем
+				// разрешённом тике, если застой не прошёл, рестарт случится
+				// сразу, без повторного набора clientStallStrikes с нуля.
+				continue
+			}
+			s.startBackoff.Fail(stallKey, now)
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("health", c.ID, "входящий трафик встал, перезапуск: "+err.Error())
@@ -154,6 +181,10 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				s.appLog.Info("health", c.ID, "клиент перезапущен: нет входящего трафика")
 			}
 			s.clientStall.reset(c.ID)
+			continue
+		}
+		if !stalled && st.StartedAt != nil && now.Sub(*st.StartedAt) >= clientHealthGrace {
+			s.startBackoff.Success(clientStallKey(c.ID))
 		}
 	}
 	for _, srv := range full.Servers {
@@ -198,3 +229,15 @@ func serverKey(id string) string { return "server:" + id }
 // безусловно на каждом тике с живым процессом (см. Success(key) выше) и стёр бы
 // health-backoff раньше, чем он успеет отработать.
 func clientHealthKey(id string) string { return "health-client:" + id }
+
+// reconcileKey — свой backoff для самого вызова reconcileClientRawNDMS (F1):
+// отдельно от clientHealthKey, потому что reconcile может пропускаться своим
+// backoff'ом (дорогая серия RCI-команд), а страйк ndmsBad в clientHealth при
+// этом всё равно обязан копиться и эскалировать в рестарт.
+func reconcileKey(id string) string { return "reconcile-client:" + id }
+
+// clientStallKey — свой backoff для рестарта по застою входящего трафика (б):
+// отдельно от clientHealthKey, потому что признак застоя (health.go) сам
+// признаёт неотличимость от живого простаивающего туннеля — смешивать его
+// backoff-окно с окном явно неисправных peerBad/ndmsBad/relayBad не стоит.
+func clientStallKey(id string) string { return "stall-client:" + id }

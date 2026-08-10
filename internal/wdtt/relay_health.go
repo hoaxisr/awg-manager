@@ -38,5 +38,12 @@ func clientRawRelayUnhealthy(ctx context.Context, cfg ClientConfig, probe RelayP
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	return !probe.ProbeInterface(probeCtx, iface)
+	ok := probe.ProbeInterface(probeCtx, iface)
+	if ctx.Err() != nil {
+		// F2: отмена родительского тика — это не сигнал о здоровье интерфейса,
+		// проба просто не успела отработать. false здесь означало бы «сломан»
+		// и на границе страйков рестартовало бы клиента посреди шатдауна.
+		return false
+	}
+	return !ok
 }

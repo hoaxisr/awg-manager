@@ -157,6 +157,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
 	// не заставляем ждать окно backoff до следующей попытки супервизора.
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
 	return s.store.Save(full)
 }
 
@@ -258,6 +259,7 @@ func (s *Service) DeleteClient(id string) error {
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
 	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
@@ -282,6 +284,8 @@ func (s *Service) DeleteServer(id string) error {
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	s.serverHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.

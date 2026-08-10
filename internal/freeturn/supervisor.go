@@ -119,6 +119,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		key := serverKey(srv.ID)
 		if !srv.Config.Enabled {
 			s.startBackoff.Forget(key)
+			s.startBackoff.Forget(serverHealthKey(srv.ID))
 			s.serverHealth.reset(srv.ID)
 			continue
 		}
@@ -142,7 +143,16 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		if s.serverHealth.note(srv.ID, serverPeerUnhealthy(st, now)) {
+		srvBad := serverPeerUnhealthy(st, now)
+		if s.serverHealth.note(srv.ID, srvBad) {
+			healthKey := serverHealthKey(srv.ID)
+			if !s.startBackoff.Allow(healthKey, now) {
+				continue
+			}
+			// Симметрично клиентскому I2: сам факт повторного выбивания порога
+			// после предыдущего health-рестарта — уже неудача backoff'а. Мёртвый
+			// backend WG на сервере иначе рестартовал бы раз в ~5 мин навсегда.
+			s.startBackoff.Fail(healthKey, now)
 			if err := s.restartServerInstance(srv.ID); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("health", srv.ID, "peer недоступен, перезапуск: "+err.Error())
@@ -151,6 +161,13 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				s.appLog.Info("health", srv.ID, "сервер перезапущен: handshake/peer недоступен")
 			}
 			s.serverHealth.reset(srv.ID)
+			continue
+		}
+		if !srvBad && st.StartedAt != nil && now.Sub(*st.StartedAt) >= clientHealthGrace {
+			// Настоящее выздоровление (симметрично клиентскому блоку выше) —
+			// с последнего старта прошёл grace, и предикат чист не потому что
+			// «ещё рано».
+			s.startBackoff.Success(serverHealthKey(srv.ID))
 		}
 	}
 }
@@ -167,3 +184,9 @@ func serverKey(id string) string { return "server:" + id }
 // каждом тике с живым процессом (см. Success(key) выше) и стёр бы
 // health-backoff раньше, чем он успеет отработать.
 func clientHealthKey(id string) string { return "health-client:" + id }
+
+// serverHealthKey — отдельное пространство ключей backoff для серверных
+// health-рестартов (а): отдельно от serverKey по той же причине, что и
+// clientHealthKey от clientKey — serverKey безусловно получает Success() на
+// каждом тике с живым процессом.
+func serverHealthKey(id string) string { return "health-server:" + id }

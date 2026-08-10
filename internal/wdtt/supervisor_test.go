@@ -2,6 +2,7 @@ package wdtt
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,16 +104,31 @@ func TestStartServerKeepsBackoff(t *testing.T) {
 	}
 }
 
+// F3: DeleteClient обязан забывать не только стартовый backoff (clientKey), но
+// и все ключи, заведённые этим раундом (health/reconcile/stall) — иначе они
+// молча копятся в памяти под удалённым id.
 func TestDeleteClientForgetsBackoff(t *testing.T) {
 	s := enabledClientService(t, "")
 	defer s.Stop()
 
 	s.superviseEnabled(context.Background())
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
+	s.startBackoff.Fail(reconcileKey(DefaultInstanceID), time.Now())
+	s.startBackoff.Fail(clientStallKey(DefaultInstanceID), time.Now())
 	if err := s.DeleteClient(DefaultInstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
 		t.Fatal("состояние удалённого инстанса не должно оставаться в памяти")
+	}
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("health-backoff удалённого инстанса не должен оставаться в памяти")
+	}
+	if !s.startBackoff.Allow(reconcileKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("reconcile-backoff удалённого инстанса не должен оставаться в памяти")
+	}
+	if !s.startBackoff.Allow(clientStallKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("stall-backoff удалённого инстанса не должен оставаться в памяти")
 	}
 }
 
@@ -237,5 +253,66 @@ func TestSuperviseNDMSReconcileNoopIsNotSuccess(t *testing.T) {
 
 	if s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
 		t.Fatal("(false, nil) от reconcile не должен считаться выздоровлением: страйки должны были дойти до порога")
+	}
+}
+
+// F4: настоящее выздоровление обнуляет backoff только ПОСЛЕ того, как с
+// последнего старта прошёл clientHealthGrace — до этого предикаты чисты
+// просто потому что «ещё рано» (grace внутри самих предикатов), а не потому
+// что клиент реально восстановился. Удаление grace-условия в супервизоре
+// (оставить только !unhealthy) уронит первую проверку этого теста.
+func TestSuperviseTrueRecoveryClearsBackoffOnlyAfterGrace(t *testing.T) {
+	s, proc := enabledRawClientService(t, "10.70.0.5") // StartedAt ~3 мин назад, < clientHealthGrace (5 мин)
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": true}, // здоров с самого начала
+	})
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	s.superviseEnabled(ctx)
+	if s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("Success не должен ставиться до истечения clientHealthGrace, даже если предикаты уже чисты")
+	}
+
+	settled := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &settled
+	s.superviseEnabled(ctx)
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("после clientHealthGrace на чистых предикатах backoff должен сброситься")
+	}
+}
+
+// (б): рестарт по застою входящего трафика тоже гейтится backoff'ом —
+// профиль stall сам по себе неотличим от живого простаивающего туннеля
+// (см. clientRelayStalled), поэтому здоровый туннель не должен рваться на
+// каждом достижении clientStallStrikes без экспоненциальной паузы.
+func TestSuperviseStallGatedByBackoff(t *testing.T) {
+	s, proc := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": true},
+	})
+	for _, line := range strings.Split(stalledStatsLog(), "\n") {
+		if line != "" {
+			proc.logTail.WriteLine(line)
+		}
+	}
+	past := time.Now().Add(-2 * clientHealthGrace) // застой предикат сам требует clientHealthGrace
+	proc.startedAt = &past
+
+	before := proc.Status().StartedAt
+	s.startBackoff.Fail(clientStallKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	for i := 0; i < clientStallStrikes; i++ {
+		s.superviseEnabled(ctx)
+	}
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("backoff-отказ должен был запретить рестарт по застою трафика")
 	}
 }

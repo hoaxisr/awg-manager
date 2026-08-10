@@ -191,6 +191,9 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.DeviceID = full.Clients[idx].Config.DeviceID
 	full.Clients[idx].Config = cfg
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
+	s.startBackoff.Forget(reconcileKey(id))
+	s.startBackoff.Forget(clientStallKey(id))
 	saveErr := s.store.Save(full)
 	s.mu.Unlock()
 	return saveErr
@@ -237,6 +240,9 @@ func (s *Service) DeleteClient(id string) error {
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
+	s.startBackoff.Forget(reconcileKey(id))
+	s.startBackoff.Forget(clientStallKey(id))
 	s.clientHealth.reset(id)
 	s.clientStall.reset(id)
 	s.mu.Unlock()
@@ -293,6 +299,9 @@ func (s *Service) ImportLink(id, link string) (ClientInstance, ImportPayload, er
 	}
 	full.Clients[idx].Config = cfg
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
+	s.startBackoff.Forget(reconcileKey(id))
+	s.startBackoff.Forget(clientStallKey(id))
 	if err := s.store.Save(full); err != nil {
 		return ClientInstance{}, payload, err
 	}
