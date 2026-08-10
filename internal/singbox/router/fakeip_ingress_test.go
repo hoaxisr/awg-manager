@@ -750,3 +750,23 @@ func TestEnsureIngressHookWriteFailureIsBestEffort(t *testing.T) {
 		t.Error("правила не поставлены при сбое записи хука (§11: best-effort)")
 	}
 }
+
+func TestEnsureIngressRemovesHookWhenDumpFails(t *testing.T) {
+	// Откат enable зовёт ensure с пустым спеком. Если решение по хуку стоит
+	// ниже дампов, сбой чтения (`iptables -S` во время reload NDMS) оставляет
+	// файл на диске навсегда: персист откат уже снёс, и снимать хук некому.
+	r := &ingressRecorder{}
+	it := r.tables()
+	it.runIPTablesOut = func(context.Context, ...string) (string, error) {
+		return "", errors.New("iptables: resource temporarily unavailable")
+	}
+	cleared := 0
+	it.cleanupPolicyTunDNSHook = func() { cleared++ }
+
+	if err := it.EnsureFakeIPIngress(context.Background(), FakeIPIngressSpec{}); err == nil {
+		t.Fatal("сбой дампа обязан возвращаться наверх")
+	}
+	if cleared == 0 {
+		t.Error("хук не снят при сбое дампа")
+	}
+}

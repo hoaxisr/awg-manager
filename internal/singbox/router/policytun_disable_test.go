@@ -342,3 +342,34 @@ func TestDisablePolicyTunRemovesDNSHookFirst(t *testing.T) {
 		t.Errorf("хук снят не первым: hook=%d removeDefaultRoute=%d (%v)", hook, route, h.log.calls)
 	}
 }
+
+// Осиротевший хук без персиста: enable успел записать файл и упал, откат снёс
+// персист, и снимать хук больше некому — реап в этом режиме трогает только
+// чужой (fakeip) тег. Значит, снос обязан отрабатывать и на раннем гарде
+// `st == nil`, не делая при этом ни одной RCI-мутации.
+func TestDisablePolicyTunRemovesDNSHookWithoutPersist(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.Enabled = true
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cleared := 0
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	ipt.cleanupPolicyTunDNSHook = func() { cleared++ }
+	h.svc.deps.IPTables = ipt
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	if cleared == 0 {
+		t.Error("хук перехвата DNS не снят при пустом персисте — файл остался бы навсегда")
+	}
+	if len(h.log.calls) != 0 {
+		t.Errorf("без персиста NDMS трогать нельзя, получено %v", h.log.calls)
+	}
+}

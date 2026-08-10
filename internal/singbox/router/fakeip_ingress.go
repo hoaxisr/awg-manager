@@ -301,6 +301,28 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 	if !it.ingressSeamsWired() {
 		return nil
 	}
+	// Хук: пишем при перехвате policy-tun, снимаем во всех прочих случаях
+	// (чужой режим, отключённый перехват, пустой спек). Решение зависит ТОЛЬКО
+	// от спека, поэтому стоит выше дампов: сбой чтения `iptables -S` не должен
+	// оставлять файл на диске — откат enable снимает хук именно этим вызовом, и
+	// после него персиста уже нет, а реап в policy-tun чужой тег не трогает.
+	// Запись сравнивает содержимое, так что в установившемся состоянии это одно
+	// чтение файла. Она же идёт до проверки дрейфа: набор марок меняется и
+	// тогда, когда правила стоят на месте.
+	if spec.tag() == PolicyTunDNSTag && spec.dnatHalf() {
+		if it.persistPolicyTunDNSHook != nil {
+			// Ошибка НАМЕРЕННО не возвращается наверх: §11 обещает, что без
+			// файла хука режим работает, а правила чинит drift-heal.
+			// Фатальный возврат отменил бы это обещание на прошивке без
+			// каталога /opt/etc/ndm/netfilter.d.
+			_ = it.persistPolicyTunDNSHook(policyTunDNSHookScript(spec))
+		}
+	} else if it.cleanupPolicyTunDNSHook != nil {
+		// Безусловно: правила мог стереть NDMS, а уцелевший файл вечно
+		// возвращал бы DNAT в снесённый туннель.
+		it.cleanupPolicyTunDNSHook()
+	}
+
 	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err != nil {
 		return fmt.Errorf("dump nat PREROUTING: %w", err)
@@ -311,11 +333,6 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 	}
 
 	if !spec.active() {
-		if it.cleanupPolicyTunDNSHook != nil {
-			// Безусловно: правила мог стереть NDMS, а уцелевший файл вечно
-			// возвращал бы DNAT в снесённый туннель.
-			it.cleanupPolicyTunDNSHook()
-		}
 		// Снимаем только если есть что снимать — иначе в tproxy-режиме каждый
 		// тик reap'а тратил бы вызовы впустую.
 		if strings.Contains(natDump, FakeIPIngressTag) ||
@@ -324,22 +341,6 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 			it.RemoveFakeIPIngress(ctx)
 		}
 		return nil
-	}
-
-	// Хук: пишем при перехвате policy-tun, снимаем во всех прочих случаях
-	// (чужой режим, отключённый перехват). Запись сравнивает содержимое, так
-	// что в установившемся состоянии это одно чтение файла. Пишем ДО проверки
-	// дрейфа: набор марок меняется и тогда, когда правила стоят на месте.
-	if spec.tag() == PolicyTunDNSTag && spec.dnatHalf() {
-		if it.persistPolicyTunDNSHook != nil {
-			// Ошибка НАМЕРЕННО не возвращается наверх: §11 обещает, что без
-			// файла хука режим работает, а правила чинит drift-heal.
-			// Фатальный возврат отменил бы это обещание на прошивке без
-			// каталога /opt/etc/ndm/netfilter.d.
-			_ = it.persistPolicyTunDNSHook(policyTunDNSHookScript(spec))
-		}
-	} else if it.cleanupPolicyTunDNSHook != nil {
-		it.cleanupPolicyTunDNSHook()
 	}
 
 	routeDrift := false
