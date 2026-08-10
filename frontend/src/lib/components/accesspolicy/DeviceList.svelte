@@ -38,6 +38,11 @@
 <div class="device-list-section">
 	<h4 class="section-title">Все устройства</h4>
 
+	<p class="list-hint">
+		Смена политики применяется к новым соединениям. Чтобы перевести уже установленные —
+		переподключите устройство к сети; это касается и правок в веб-интерфейсе роутера.
+	</p>
+
 	<label class="offline-toggle">
 		<input type="checkbox" bind:checked={showOffline} />
 		<span>Отобразить offline устройства</span>
@@ -107,6 +112,15 @@
 		font-weight: 600;
 		margin: 0;
 		color: var(--text-primary);
+	}
+
+	/* Приватная подпись этого компонента: общего класса подписи здесь нет,
+	   размер и цвет взяты у соседнего .offline-toggle. */
+	.list-hint {
+		margin: 0;
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--text-muted);
 	}
 
 	.offline-toggle {
