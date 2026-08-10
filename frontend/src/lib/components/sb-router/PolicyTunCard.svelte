@@ -120,7 +120,7 @@
   {#if cfg.policyName}
     <p class="hint">
       Интерфейс разрешается выходом этой политики автоматически. В ней
-      <strong>{pluralize(deviceCount, DEVICE_WORDS)}</strong> — в туннель уходит только их трафик.
+      <strong>{pluralize(deviceCount, DEVICE_WORDS)}</strong> — их трафик и уходит в туннель.
       При смене политики прежняя останется разрешённой: снимите разрешение вручную.
     </p>
     {#if policyMissing}

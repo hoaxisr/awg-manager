@@ -112,6 +112,23 @@ func TestPolicyTunRunningConfigParsers(t *testing.T) {
 	if policyTunPermitted(inDescr, "OpkgTun0", "Policy0") {
 		t.Fatal("false positive: слова permit global в description политики")
 	}
+	// Из блока обязан быть ВЫХОД: целевая политика пуста и стоит раньше чужой,
+	// разрешение в которой нашим не является.
+	targetFirst := []string{
+		"ip policy Policy0", "!",
+		"ip policy Policy1", "    permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(targetFirst, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: разрешение из блока, следующего за целевым")
+	}
+	// Снятое разрешение разрешением не является: RCI хранит исторические
+	// `no …`-строки (см. policies.go), и первым токеном правила идёт `no`.
+	revoked := []string{
+		"ip policy Policy0", "    no permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(revoked, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: снятое разрешение (no permit)")
+	}
 	if v4x, _ := policyTunDefaultRoutePresent([]string{"ip route default OpkgTun01"}, "OpkgTun0"); v4x {
 		t.Fatal("false positive: OpkgTun01 не должен матчить OpkgTun0")
 	}

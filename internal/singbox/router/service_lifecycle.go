@@ -1205,7 +1205,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			Severity: "warning",
 			Kind:     issuePolicyTunUnbound,
 			Message: fmt.Sprintf("%s не разрешён %s — трафик клиентов не направляется; "+
-				"разрешите интерфейс в политике и привяжите устройства", policyTunNDMSName, where),
+				"разрешение ставится автоматически, проверьте политику в NDMS", policyTunNDMSName, where),
 		})
 	}
 	// policy-tun: имена интерфейса нужны пользователю ДО того, как режим станет

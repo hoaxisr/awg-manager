@@ -565,6 +565,25 @@ func TestPolicyTunEnable_PermitsInterfaceInPolicy(t *testing.T) {
 	}
 }
 
+// Разрешение в чужой политике включение не удовлетворяет: целевая обязана
+// получить своё. Иначе режим поднимается молча мёртвым.
+func TestPolicyTunEnable_PermitsWhenOtherPolicyPermitted(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy1")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+		"ip policy Policy1", "!",
+	}}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+	want := []string{"Policy1:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
+	}
+}
+
 // Политика не выбрана — permit слать некуда: молча пропускаем.
 func TestPolicyTunEnable_SkipsPermitWithoutPolicyName(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
