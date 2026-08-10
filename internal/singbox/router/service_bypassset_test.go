@@ -18,7 +18,8 @@ import (
 
 type stubCounts map[string]int
 
-func (s stubCounts) GeoIPTagCounts() map[string]int { return s }
+func (s stubCounts) GeoIPTagCounts() map[string]int          { return s }
+func (s stubCounts) GeoFilePaths() (geoIP, geoSite []string) { return nil, nil }
 
 func TestValidateBypassGeoIPTags(t *testing.T) {
 	svc := &ServiceImpl{deps: Deps{GeoTagCounts: stubCounts{"ru": 20000, "big": 500000}}}
@@ -61,43 +62,93 @@ func TestValidateBypassGeoIPTagsNilCounter(t *testing.T) {
 
 // ── Адаптер GeoSource ──────────────────────────────────────────────
 
-// stubExpander — GeoTagExpander с фиксированным ответом.
-type stubExpander struct {
+// stubGeoFiles — GeoIPTagCounter с фиксированным списком geoip-.dat.
+type stubGeoFiles struct {
+	counts map[string]int
+	geoIP  []string
+}
+
+func (s stubGeoFiles) GeoIPTagCounts() map[string]int          { return s.counts }
+func (s stubGeoFiles) GeoFilePaths() (geoIP, geoSite []string) { return s.geoIP, nil }
+
+// geoAnswer — ответ разбора одного .dat в стабе адаптера.
+type geoAnswer struct {
 	lines []string
 	err   error
 }
 
-func (s stubExpander) ExpandGeoTag(_, _ string) ([]string, string, error) {
-	return s.lines, "", s.err
+// newStubAdapter собирает адаптер над списком файлов и таблицей ответов
+// «файл → (строки, ошибка)»; файл вне таблицы отвечает sentinel'ом «тега нет».
+func newStubAdapter(files []string, answers map[string]geoAnswer) geoSourceAdapter {
+	return geoSourceAdapter{
+		files: stubGeoFiles{geoIP: files},
+		extract: func(path, _ string) ([]string, error) {
+			a, ok := answers[path]
+			if !ok {
+				return nil, fmt.Errorf("тег: %w", hydraroute.ErrGeoTagNotFound)
+			}
+			return a.lines, a.err
+		},
+	}
 }
-func (s stubExpander) ExpandGeoTagTyped(kind, tag string) ([]string, string, error) {
-	return s.ExpandGeoTag(kind, tag)
+
+// Одноимённый тег в нескольких .dat: бюджет-валидация и UI суммируют его по
+// всем файлам, значит и набор обязан наполняться из всех — иначе обход молча
+// покрывает часть диапазонов.
+func TestGeoSourceAdapter_AggregatesAllFiles(t *testing.T) {
+	g := newStubAdapter([]string{"a.dat", "b.dat"}, map[string]geoAnswer{
+		"a.dat": {lines: []string{"1.2.3.0/24"}},
+		"b.dat": {lines: []string{"5.6.7.0/24", "8.9.0.0/16"}},
+	})
+	lines, notFound, err := g.GeoIPTagLines("ru")
+	if notFound || err != nil {
+		t.Fatalf("want (lines,false,nil), got (%v,%v,%v)", lines, notFound, err)
+	}
+	if !slices.Equal(lines, []string{"1.2.3.0/24", "5.6.7.0/24", "8.9.0.0/16"}) {
+		t.Fatalf("строки собраны не со всех файлов: %v", lines)
+	}
+}
+
+// Тег есть только во втором файле — это не «тега нет».
+func TestGeoSourceAdapter_FoundInSecondFileOnly(t *testing.T) {
+	g := newStubAdapter([]string{"a.dat", "b.dat"}, map[string]geoAnswer{
+		"b.dat": {lines: []string{"5.6.7.0/24"}},
+	})
+	lines, notFound, err := g.GeoIPTagLines("ru")
+	if notFound || err != nil || !slices.Equal(lines, []string{"5.6.7.0/24"}) {
+		t.Fatalf("want ([5.6.7.0/24],false,nil), got (%v,%v,%v)", lines, notFound, err)
+	}
 }
 
 // Контракт Populate: notFound проверяется РАНЬШЕ err, поэтому адаптер обязан
-// отдавать sentinel как (nil, true, nil) — без ненулевой ошибки рядом.
-func TestGeoSourceAdapter_SentinelIsNotFoundWithoutError(t *testing.T) {
-	g := geoSourceAdapter{exp: stubExpander{err: fmt.Errorf("тег: %w", hydraroute.ErrGeoTagNotFound)}}
+// отдавать «тега нет ни в одном файле» как (nil, true, nil).
+func TestGeoSourceAdapter_MissingEverywhereIsNotFound(t *testing.T) {
+	g := newStubAdapter([]string{"a.dat", "b.dat"}, nil)
 	lines, notFound, err := g.GeoIPTagLines("nosuch")
 	if !notFound || err != nil || lines != nil {
 		t.Fatalf("want (nil,true,nil), got (%v,%v,%v)", lines, notFound, err)
 	}
 }
 
-func TestGeoSourceAdapter_OtherErrorIsError(t *testing.T) {
-	boom := errors.New("boom")
-	g := geoSourceAdapter{exp: stubExpander{err: boom}}
-	lines, notFound, err := g.GeoIPTagLines("ru")
-	if notFound || !errors.Is(err, boom) || lines != nil {
-		t.Fatalf("want (nil,false,boom), got (%v,%v,%v)", lines, notFound, err)
+// Файлов вообще нет — тега нет нигде.
+func TestGeoSourceAdapter_NoFilesIsNotFound(t *testing.T) {
+	g := newStubAdapter(nil, nil)
+	_, notFound, err := g.GeoIPTagLines("ru")
+	if !notFound || err != nil {
+		t.Fatalf("want (nil,true,nil), got (%v,%v)", notFound, err)
 	}
 }
 
-func TestGeoSourceAdapter_Success(t *testing.T) {
-	g := geoSourceAdapter{exp: stubExpander{lines: []string{"1.2.3.0/24"}}}
+// Битый файл — fail-closed: наполнять набор частью диапазонов нельзя.
+func TestGeoSourceAdapter_ParseErrorFailsClosed(t *testing.T) {
+	boom := errors.New("boom")
+	g := newStubAdapter([]string{"a.dat", "b.dat"}, map[string]geoAnswer{
+		"a.dat": {lines: []string{"1.2.3.0/24"}},
+		"b.dat": {err: boom},
+	})
 	lines, notFound, err := g.GeoIPTagLines("ru")
-	if notFound || err != nil || !slices.Equal(lines, []string{"1.2.3.0/24"}) {
-		t.Fatalf("want lines, got (%v,%v,%v)", lines, notFound, err)
+	if notFound || !errors.Is(err, boom) || lines != nil {
+		t.Fatalf("want (nil,false,boom), got (%v,%v,%v)", lines, notFound, err)
 	}
 }
 

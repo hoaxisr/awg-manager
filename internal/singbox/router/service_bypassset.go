@@ -16,10 +16,15 @@ import (
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-// GeoIPTagCounter — узкий контракт бюджет-валидации geoip-bypass.
-// *hydraroute.GeoDataStore удовлетворяет (GeoIPTagCounts).
+// GeoIPTagCounter — узкий контракт geoip-bypass: бюджет-валидация тегов и
+// перечисление .dat, из которых наполняется набор. *hydraroute.GeoDataStore
+// удовлетворяет обоим методам.
 type GeoIPTagCounter interface {
 	GeoIPTagCounts() map[string]int
+	// GeoFilePaths отдаёт пути отслеживаемых geo-файлов. Наполнение обходит
+	// ВСЕ geoip-файлы: GeoIPTagCounts (и UI) суммируют одноимённый тег по
+	// ним всем, набор обязан покрывать ровно то же.
+	GeoFilePaths() (geoIP, geoSite []string)
 }
 
 const bypassSetMaxElem = bypassset.SetMaxElem // = maxelem набора AWGM-BYPASS
@@ -43,19 +48,41 @@ func (s *ServiceImpl) validateBypassGeoIPTags(sr storage.SingboxRouterSettings) 
 	return nil
 }
 
-// geoSourceAdapter переводит Deps.GeoData (ExpandGeoTag) в bypassset.GeoSource,
-// классифицируя sentinel hydraroute.ErrGeoTagNotFound в notFound. Populate
-// смотрит notFound РАНЬШЕ err, поэтому «тега нет» отдаётся без ошибки рядом.
-// Импорт hydraroute здесь — только ради sentinel-константы (осознанно).
-type geoSourceAdapter struct{ exp GeoTagExpander }
+// geoSourceAdapter собирает строки geoip-тега из ВСЕХ отслеживаемых .dat и
+// отдаёт их bypassset.GeoSource. Обход всех файлов, а не первого попавшегося
+// (как ExpandGeoTag), — потому что бюджет-валидация и UI суммируют
+// одноимённый тег по всем файлам. Дубликаты строк между файлами гасит
+// `ipset restore -exist`. Populate смотрит notFound РАНЬШЕ err, поэтому «тега
+// нет ни в одном файле» отдаётся без ошибки рядом; ошибка разбора ЛЮБОГО
+// файла — fail-closed: половина диапазонов хуже, чем явный сбой.
+type geoSourceAdapter struct {
+	files GeoIPTagCounter
+	// extract — шов разбора одного .dat для тестов (nil =
+	// hydraroute.ExtractGeoIPTagLines).
+	extract func(path, tag string) ([]string, error)
+}
 
 func (g geoSourceAdapter) GeoIPTagLines(tag string) ([]string, bool, error) {
-	lines, _, err := g.exp.ExpandGeoTag("geoip", tag)
-	if err != nil {
-		if errors.Is(err, hydraroute.ErrGeoTagNotFound) {
-			return nil, true, nil
+	extract := g.extract
+	if extract == nil {
+		extract = hydraroute.ExtractGeoIPTagLines
+	}
+	geoIP, _ := g.files.GeoFilePaths()
+	var lines []string
+	found := false
+	for _, path := range geoIP {
+		got, err := extract(path, tag)
+		if err != nil {
+			if errors.Is(err, hydraroute.ErrGeoTagNotFound) {
+				continue
+			}
+			return nil, false, err
 		}
-		return nil, false, err
+		found = true
+		lines = append(lines, got...)
+	}
+	if !found {
+		return nil, true, nil
 	}
 	return lines, false, nil
 }
@@ -99,10 +126,10 @@ func (s *ServiceImpl) populateBypassSetOnce(ctx context.Context, tags []string) 
 	if s.populateBypassSet != nil {
 		return s.populateBypassSet(ctx, tags)
 	}
-	if s.deps.GeoData == nil {
+	if s.deps.GeoTagCounts == nil {
 		return bypassset.PopulateResult{}, fmt.Errorf("geo-данные не подключены")
 	}
-	return bypassset.Populate(ctx, geoSourceAdapter{exp: s.deps.GeoData}, bypassset.PopulateInput{
+	return bypassset.Populate(ctx, geoSourceAdapter{files: s.deps.GeoTagCounts}, bypassset.PopulateInput{
 		GeoIPTags: tags,
 		SavePath:  bypassSavePath,
 	})
