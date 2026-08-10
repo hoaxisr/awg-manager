@@ -7,7 +7,6 @@ import { get, writable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { fakeipTransition, type FakeIPMode } from '$lib/stores/fakeipTransition';
 import { singboxRouter } from '$lib/stores/singboxRouter';
-import { selectiveBypass } from '$lib/stores/selectiveBypass';
 import type { SingboxRouterStatus, SingboxRouterSettings } from '$lib/types';
 
 export type ModeSwitchPhase = 'idle' | 'confirming' | 'running';
@@ -122,7 +121,6 @@ function createModeSwitch() {
 		const { from, target } = get(store);
 		store.update((s) => ({ ...s, phase: 'running' }));
 		fakeipTransition.begin(from, target);
-		selectiveBypass.resetProgress();
 		try {
 			await api.singboxRouterSwitchMode(target);
 			// Переключение асинхронное: прогресс и финал приходят по SSE,
@@ -137,7 +135,6 @@ function createModeSwitch() {
 		stopWatchdog();
 		store.update((s) => ({ ...s, phase: 'idle' }));
 		fakeipTransition.reset();
-		selectiveBypass.resetProgress();
 		void singboxRouter.loadAll();
 	}
 

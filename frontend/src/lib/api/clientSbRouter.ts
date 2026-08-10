@@ -3,7 +3,6 @@ import type {
 	PolicyTunNATSegmentInfo,
 	RouterPolicy,
 	RouterStagingStatusResponse,
-	SelectiveStatus,
 	SingboxGeositesData,
 	SingboxProxiesListResponse,
 	SingboxProxiesSelectRequest,
@@ -441,54 +440,6 @@ export class SbRouterClient extends SingboxClient {
 		await this.request('/singbox/router/staging/discard', {
 			method: 'POST',
 		});
-	}
-
-	// #endregion
-
-
-	// ─────────────────────────────────────────────
-	// #region Selective Bypass
-	// ─────────────────────────────────────────────
-
-	async singboxRouterSelectiveStatus(): Promise<SelectiveStatus> {
-		return this.request('/singbox/router/selective/status');
-	}
-
-	async singboxRouterSelectiveInstallDeps(): Promise<SelectiveStatus> {
-		return this.request('/singbox/router/selective/install-deps', { method: 'POST' });
-	}
-
-	async singboxRouterSelectiveInstallConntrack(): Promise<SelectiveStatus> {
-		return this.request('/singbox/router/selective/install-conntrack', { method: 'POST' });
-	}
-
-	/**
-	 * Запускает пересборку ipset. Бэкенд отвечает 202 Accepted сразу —
-	 * data это текущий статус с rebuilding: true («запущено», не «завершено»);
-	 * реальное завершение приходит по SSE singbox-router:selective-progress /
-	 * selective-status. Повторный POST во время пересборки тоже вернёт 202,
-	 * не запуская вторую.
-	 */
-	async singboxRouterSelectiveRebuild(): Promise<SelectiveStatus> {
-		return this.request('/singbox/router/selective/rebuild', { method: 'POST' });
-	}
-
-	/**
-	 * Останавливает текущую пересборку ipset. cancelled=false — пересборки
-	 * не было (безопасный no-op). Завершение отменённой пересборки приходит
-	 * обычным путём: SSE singbox-router:selective-progress (phase=error,
-	 * «пересборка отменена пользователем») / selective-status.
-	 */
-	async singboxRouterSelectiveRebuildCancel(): Promise<{ cancelled: boolean }> {
-		return this.request('/singbox/router/selective/rebuild/cancel', { method: 'POST' });
-	}
-
-	async singboxRouterSelectiveSnapshotMatchers(
-		offset = 0,
-		limit = 100,
-	): Promise<{ matchers: import('$lib/types').SelectiveDomainMatcherRecord[]; total: number }> {
-		const q = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-		return this.request(`/singbox/router/selective/snapshot/matchers?${q}`);
 	}
 
 	// #endregion

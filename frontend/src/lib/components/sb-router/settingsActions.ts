@@ -22,9 +22,8 @@ export async function mergeAndSaveSettings(
 ): Promise<void> {
   // База для merge — СВЕЖИЙ GET с сервера, а не значение стора: настройки
   // меняются и вне settings-форм (fakeipRealServer пишет бэкенд при правке
-  // адреса DNS-сервера «real» — #487; selectiveBypass гасит
-  // reconcile-самолечение — #486), а PUT уносит полный объект, поэтому эхо
-  // устаревшего стора молча откатывало такие изменения.
+  // адреса DNS-сервера «real» — #487), а PUT уносит полный объект, поэтому
+  // эхо устаревшего стора молча откатывало такие изменения.
   const current = await api.singboxRouterGetSettings();
   const merged: SingboxRouterSettings = { ...current, ...patch };
   await api.singboxRouterPutSettings(merged);

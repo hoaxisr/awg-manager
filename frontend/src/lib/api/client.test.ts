@@ -131,7 +131,7 @@ describe('ApiClient gateway/HTML error classification', () => {
 
 	it('classifies nginx 504 HTML as ApiGatewayError without leaking markup', async () => {
 		mockResponse(504, NGINX_504, 'text/html');
-		const err = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const err = await catchFrom(api.singboxRouterStagingApply());
 		expect(err).toBeInstanceOf(ApiGatewayError);
 		const gw = err as ApiGatewayError;
 		expect(gw.status).toBe(504);
@@ -144,7 +144,7 @@ describe('ApiClient gateway/HTML error classification', () => {
 
 	it('classifies 502 HTML as ApiGatewayError', async () => {
 		mockResponse(502, '<html><body>502 Bad Gateway</body></html>', 'text/html');
-		const err = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const err = await catchFrom(api.singboxRouterStagingApply());
 		expect(err).toBeInstanceOf(ApiGatewayError);
 		expect((err as ApiGatewayError).status).toBe(502);
 		expect((err as ApiGatewayError).message).not.toContain('<');
@@ -152,12 +152,12 @@ describe('ApiClient gateway/HTML error classification', () => {
 
 	it('classifies non-JSON 503 as ApiGatewayError, keeps JSON 503 message intact', async () => {
 		mockResponse(503, '<html><body>503</body></html>', 'text/html');
-		const gw = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const gw = await catchFrom(api.singboxRouterStagingApply());
 		expect(gw).toBeInstanceOf(ApiGatewayError);
 		expect((gw as ApiGatewayError).status).toBe(503);
 
 		mockResponse(503, JSON.stringify({ error: true, message: 'идёт операция' }), 'application/json');
-		const jsonErr = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const jsonErr = await catchFrom(api.singboxRouterStagingApply());
 		expect(jsonErr).toBeInstanceOf(Error);
 		expect(jsonErr).not.toBeInstanceOf(ApiGatewayError);
 		expect((jsonErr as Error).message).toBe('идёт операция');
@@ -165,7 +165,7 @@ describe('ApiClient gateway/HTML error classification', () => {
 
 	it('never includes HTML body for non-gateway statuses', async () => {
 		mockResponse(500, '<html><body>Internal Server Error</body></html>', 'text/html');
-		const err = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const err = await catchFrom(api.singboxRouterStagingApply());
 		expect(err).toBeInstanceOf(Error);
 		expect(err).not.toBeInstanceOf(ApiGatewayError);
 		expect((err as Error).message).toBe('Ошибка сервера (500)');
@@ -173,7 +173,7 @@ describe('ApiClient gateway/HTML error classification', () => {
 
 	it('keeps plain-text bodies in the message for non-gateway statuses', async () => {
 		mockResponse(500, 'boom from upstream', 'text/plain');
-		const err = await catchFrom(api.singboxRouterSelectiveRebuild());
+		const err = await catchFrom(api.singboxRouterStagingApply());
 		expect((err as Error).message).toBe('Ошибка сервера (500): boom from upstream');
 	});
 });

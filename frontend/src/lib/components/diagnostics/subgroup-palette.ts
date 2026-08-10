@@ -16,7 +16,7 @@ export const SUBGROUP_FAMILY: Record<string, SubgroupFamily> = {
   'singbox-router': 'routing',
   'hrneo': 'routing',
   'subscription': 'routing',
-  'selective': 'routing',
+  'bypass-set': 'routing',
   // lifecycle
   'lifecycle': 'lifecycle',
   'ops': 'lifecycle',

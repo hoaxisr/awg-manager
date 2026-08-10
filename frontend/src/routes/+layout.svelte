@@ -45,7 +45,6 @@
 	import { loadPresetCatalog } from '$lib/stores/presets';
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
-	import { selectiveBypass } from '$lib/stores/selectiveBypass';
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
 	import { TriangleAlert } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
@@ -251,10 +250,6 @@
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
-
-			// Selective-bypass rebuild progress and status.
-			onSingboxRouterSelectiveProgress: (data) => selectiveBypass.applyProgress(data),
-			onSingboxRouterSelectiveStatus: (data) => selectiveBypass.applyStatus(data),
 		});
 	}
 

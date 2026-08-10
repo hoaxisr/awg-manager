@@ -22,6 +22,11 @@ export interface SingboxRouterSettings {
 	bypassPresets?: string[];
 	bypassExtraPorts?: string;
 	bypassExtraSubnets?: string;
+	/**
+	 * Geoip-теги из настроенных .dat-файлов, чьи CIDR целиком обходят sing-box
+	 * через ipset AWGM-BYPASS (та же семантика, что bypassExtraSubnets).
+	 */
+	bypassGeoipTags?: string[];
 	ingressInterfaces?: string[];
 	// fakeip-tun engine settings (user-editable; round-trip via GET/PUT
 	// /singbox/router/settings). Defaults mirror DefaultFakeIPTunParams:
@@ -39,12 +44,6 @@ export interface SingboxRouterSettings {
 	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
 	udpTimeout?: string;
-	/**
-	 * When true, only traffic matching the AWGM-SELECTIVE ipset reaches sing-box.
-	 * All other traffic bypasses sing-box entirely (goes straight to WAN).
-	 * Requires ipset binary and xt_set kernel module on the router.
-	 */
-	selectiveBypass?: boolean;
 	/**
 	 * policy-tun: перевести выбранные сегменты на static-NAT, чтобы sing-box
 	 * видел реальные адреса клиентов вместо адреса tun-шлюза. Требует непустого
@@ -655,81 +654,3 @@ export interface CatalogPreset {
 
 // #endregion
 
-// ─────────────────────────────────────────────
-// #region Selective Bypass (TProxy ipset feature)
-// ─────────────────────────────────────────────
-
-/**
- * Status of the selective-bypass feature.
- * Returned by GET /api/singbox/router/selective/status.
- */
-export interface SelectiveDomainResolveResult {
-	matcher: string;
-	kind: 'domain' | 'suffix';
-	queryHosts: string[];
-	/** @deprecated IPs are no longer returned — use entryCount on snapshot. */
-	ips?: string[];
-	cdn?: boolean;
-	error?: string;
-	outbound?: string;
-}
-
-export interface SelectiveDomainMatcherRecord {
-	matcher: string;
-	kind: 'domain' | 'suffix';
-	queryHosts: string[];
-	cdn?: boolean;
-	error?: string;
-	outbound?: string;
-}
-
-export interface SelectiveRebuildSnapshot {
-	rebuiltAt: string;
-	staticCidrs: string[];
-	domainResults: SelectiveDomainResolveResult[];
-	entryCount: number;
-	staticCidrCount?: number;
-	domainMatcherCount?: number;
-	lastCDNRefresh?: string;
-}
-
-export interface SelectiveStatus {
-	/** True when the ipset binary is present on the router (/opt/sbin/ipset etc). */
-	available: boolean;
-	/** True when the xt_set kernel module is loaded or available as .ko. */
-	xtSetAvailable: boolean;
-	/** True when the conntrack binary is present. Without it a full rebuild
-	 *  only affects new connections; background CDN refresh never flushes conntrack. */
-	conntrackAvailable: boolean;
-	/** True while `opkg install ipset` is running. */
-	installing: boolean;
-	/** Mirrors SingboxRouterSettings.selectiveBypass. */
-	enabled: boolean;
-	/** True while an ipset rebuild is running. POST /selective/rebuild отвечает
-	 *  202 сразу (data = статус с rebuilding: true); завершение приходит по SSE
-	 *  singbox-router:selective-progress / selective-status. */
-	rebuilding?: boolean;
-	/** Current number of entries in AWGM-SELECTIVE ipset. 0 when set doesn't exist. */
-	entryCount: number;
-	/** RFC3339 timestamp of the last successful rebuild. Empty if never rebuilt. */
-	lastRebuild?: string;
-	/** Error message from the last failed rebuild. Empty on success. */
-	lastError?: string;
-	/** Last successful rebuild: static CIDRs + domain→IP mapping. */
-	snapshot?: SelectiveRebuildSnapshot;
-}
-
-/**
- * Progress update during an ipset rebuild.
- * Delivered via SSE event "singbox-router:selective-progress".
- */
-export interface SelectiveProgress {
-	phase: 'collecting' | 'resolving' | 'populating' | 'done' | 'error';
-	message: string;
-	current: number;
-	total: number;
-	matcher?: string;
-	queryHost?: string;
-}
-
-// #endregion
