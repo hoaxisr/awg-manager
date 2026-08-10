@@ -6561,6 +6561,23 @@ definitions:
       vkHash:
         type: string
     type: object
+  api.wdttSetLANSegmentsRequest:
+    properties:
+      segments:
+        items:
+          type: string
+        type: array
+    type: object
+  api.wdttSetNATModeRequest:
+    properties:
+      mode:
+        type: string
+    type: object
+  api.wdttSetPolicyRequest:
+    properties:
+      policy:
+        type: string
+    type: object
   diagnostics.DNSProxy:
     properties:
       displayName:
@@ -18716,6 +18733,30 @@ paths:
       summary: Update config, rename or delete a WDTT server instance
       tags:
       - wdtt
+  /wdtt/servers/{id}/lan-segments:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: LAN bridge names
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetLANSegmentsRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server LAN segments
+      tags:
+      - wdtt
   /wdtt/servers/{id}/link:
     post:
       consumes:
@@ -18745,6 +18786,54 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Generate a wdtt:// / qwdtt:// share link for a server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/nat:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: NAT mode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetNATModeRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server NAT mode
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/policy:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy name or none
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetPolicyRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server IP policy
       tags:
       - wdtt
   /wdtt/servers/{id}/start:
