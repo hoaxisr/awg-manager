@@ -70,9 +70,9 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	// уходит в WAN, а не в дыру.
 	mustOrderCalls(t, h.log, "RemoveDefaultRoute:"+ndmsName, "RemoveIPv6DefaultRoute:"+ndmsName)
 	mustOrderCalls(t, h.log, "RemoveIPv6DefaultRoute:"+ndmsName, "Uninstall")
-	// Интерфейс сносится ПОСЛЕ снятия маршрутов и netfilter-правил.
+	// Интерфейс разбирается ПОСЛЕ снятия маршрутов и netfilter-правил.
 	mustOrderCalls(t, h.log, "Uninstall", "InterfaceDown:"+ndmsName)
-	mustOrderCalls(t, h.log, "InterfaceDown:"+ndmsName, "Delete:"+ndmsName)
+	mustOrderCalls(t, h.log, "InterfaceDown:"+ndmsName, "ClearAddress:"+ndmsName)
 
 	// Слот 20 запаркован, а tun-инбаунд вычищен из его конфига — иначе
 	// следующий tproxy-enable переоткрыл бы удалённый tun (ensureTProxyInbound
@@ -94,8 +94,42 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 		}
 	}
 
-	if st := h.loadPolicyTun(t); st != nil {
-		t.Errorf("PolicyTun persist = %+v, want nil after a successful teardown", st)
+	all, _ := h.store.Load()
+	if all.SingboxRouter.Enabled {
+		t.Error("SingboxRouter.Enabled must be false after Disable")
+	}
+}
+
+// Выключение УДЕРЖИВАЕТ интерфейс и его индекс: permit в политике доступа
+// привязан к имени OpkgTun<N>, а удаление заставляло следующее включение взять
+// другой номер и рвало разрешение. Адреса при этом снимаются обязательно —
+// интерфейс с настроенным `ip address` без kernel-адреса вгоняет ndm в
+// бесконечный nginx-reload (стенд 2026-07-15).
+func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForDisable(t, h)
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+
+	if h.log.has("Delete:OpkgTun0") {
+		t.Errorf("интерфейс обязан пережить выключение: %v", h.log.calls)
+	}
+	for _, want := range []string{
+		"RemovePermitACL:OpkgTun0",
+		"InterfaceDown:OpkgTun0",
+		"ClearAddress:OpkgTun0",
+		"ClearIPv6Address:OpkgTun0",
+	} {
+		if !h.log.has(want) {
+			t.Errorf("нет вызова %s: %v", want, h.log.calls)
+		}
+	}
+
+	st := h.loadPolicyTun(t)
+	if st == nil || st.Provisioned || st.Index != 0 {
+		t.Errorf("PolicyTun persist = %+v, want {Provisioned:false Index:0}", st)
 	}
 	all, _ := h.store.Load()
 	if all.SingboxRouter.Enabled {
@@ -103,21 +137,96 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	}
 }
 
-// Провал delete ОСТАВЛЯЕТ персист: сироту добирает reap на следующем тике.
-func TestPolicyTunDisable_DeleteFailureKeepsPersist(t *testing.T) {
+// Отказ на снятии v6-адреса провалом НЕ считается: v6 мог не настраиваться
+// вовсе, а Provisioned=true заставил бы выключение повторяться каждый тик.
+func TestPolicyTunDisable_IPv6ClearFailureIsNotFailure(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForDisable(t, h)
-	h.opkg.failAt = "Delete"
+	h.opkg.failAt = "ClearIPv6Address"
 
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable(policy-tun): %v", err)
 	}
-	if st := h.loadPolicyTun(t); st == nil || st.Index != 0 {
-		t.Errorf("PolicyTun persist = %+v, want kept for the reap", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Provisioned {
+		t.Errorf("PolicyTun persist = %+v, want provisioned=false", st)
+	}
+}
+
+// А вот провал снятия v4-адреса удерживает Provisioned: адрес остался на месте,
+// то есть nginx-цикл ndm жив, и выключение обязано повториться.
+func TestPolicyTunDisable_AddressClearFailureKeepsProvisioned(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForDisable(t, h)
+	h.opkg.failAt = "ClearAddress"
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned {
+		t.Errorf("PolicyTun persist = %+v, want provisioned=true", st)
+	}
+}
+
+// Запись о прежнем NAT сегментов — единственный след того, каким он был до нас:
+// чистим её ТОЛЬКО когда восстановление удалось.
+func TestPolicyTunDisable_NATSegments(t *testing.T) {
+	recorded := []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}}
+
+	t.Run("провал восстановления сохраняет запись", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		provisionPolicyTunForDisable(t, h)
+		// SegmentNAT/NATState не подключены → restore возвращает ошибку.
+		if err := h.store.SetPolicyTunState(&storage.PolicyTunState{
+			Provisioned: true, Index: 0, NATSegments: recorded,
+		}); err != nil {
+			t.Fatalf("SetPolicyTunState: %v", err)
+		}
+
+		if err := h.svc.Disable(context.Background()); err != nil {
+			t.Fatalf("Disable(policy-tun): %v", err)
+		}
+		st := h.loadPolicyTun(t)
+		if st == nil || len(st.NATSegments) != 1 {
+			t.Errorf("NATSegments = %+v, want сохранены при провале restore", st)
+		}
+	})
+
+	t.Run("успешное восстановление очищает запись", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		provisionPolicyTunForDisable(t, h)
+		state := &fakeNATState{}
+		h.svc.deps.NATState = state
+		h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: state}
+		if err := h.store.SetPolicyTunState(&storage.PolicyTunState{
+			Provisioned: true, Index: 0, NATSegments: recorded,
+		}); err != nil {
+			t.Fatalf("SetPolicyTunState: %v", err)
+		}
+
+		if err := h.svc.Disable(context.Background()); err != nil {
+			t.Fatalf("Disable(policy-tun): %v", err)
+		}
+		st := h.loadPolicyTun(t)
+		if st == nil || len(st.NATSegments) != 0 {
+			t.Errorf("NATSegments = %+v, want очищены после успешного restore", st)
+		}
+	})
+}
+
+// Провал разбора интерфейса не отменяет durable-истину выключения: движок
+// выключен, даже если NDMS не отдал адрес. (Прежде этот инвариант проверялся на
+// провале delete — удаления в этом режиме больше нет.)
+func TestPolicyTunDisable_ClearFailureStillDisables(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForDisable(t, h)
+	h.opkg.failAt = "ClearAddress"
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
 	}
 	all, _ := h.store.Load()
 	if all.SingboxRouter.Enabled {
-		t.Error("SingboxRouter.Enabled must be false even when the delete failed")
+		t.Error("SingboxRouter.Enabled must be false even when the address clear failed")
 	}
 }
 

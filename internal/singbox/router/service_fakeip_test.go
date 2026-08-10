@@ -75,7 +75,7 @@ func (r *recOpkgTun) SetIPv6Address(_ context.Context, name, addr string) error 
 }
 func (r *recOpkgTun) ClearAddress(_ context.Context, name string) error {
 	r.log.add("ClearAddress:" + name)
-	return nil
+	return r.maybeFail("ClearAddress")
 }
 func (r *recOpkgTun) SetPermitAllACL(_ context.Context, name string) error {
 	r.log.add("SetPermitACL:" + name)
@@ -87,7 +87,7 @@ func (r *recOpkgTun) RemovePermitAllACL(_ context.Context, name string) error {
 }
 func (r *recOpkgTun) ClearIPv6Address(_ context.Context, name string) error {
 	r.log.add("ClearIPv6Address:" + name)
-	return nil
+	return r.maybeFail("ClearIPv6Address")
 }
 func (r *recOpkgTun) SetMTU(_ context.Context, name string, mtu int) error {
 	r.log.add("SetMTU:" + name + ":" + strconv.Itoa(mtu))

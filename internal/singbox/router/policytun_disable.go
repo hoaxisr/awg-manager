@@ -26,8 +26,8 @@ import (
 //  3. снять ingress-заворот (ip rule iif + таблица 700);
 //  4. конфиг слота 20: выкинуть tun-инбаунд и запарковать слот (+ оверлей QoS),
 //     затем безусловный IPTables.Uninstall;
-//  5. снести OpkgTun; ТОЛЬКО при успехе очистить персист — иначе сироту
-//     добирает ReapOrphanedFakeIPTun (как у fakeip);
+//  5. удержать OpkgTun (снять ACL, положить, снять адреса) — интерфейс и его
+//     индекс переживают выключение: к имени привязан permit в политике;
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.PolicyTun
@@ -64,9 +64,11 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —
 	// teardown не прерывается (персист чистится только при успешном delete, так
 	// что провал повторится реапом).
+	natRestored := true
 	if len(st.NATSegments) > 0 {
 		if err := s.restorePolicyTunNAT(ctx, st.NATSegments); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "restore segment NAT: "+err.Error())
+			natRestored = false
 		}
 	}
 
@@ -121,11 +123,23 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (5) Снести интерфейс. Персист очищаем ТОЛЬКО при успешном delete: иначе
-	// сирота осталась бы неотслеживаемой, а так её добирает reap.
-	if err := s.teardownOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-		if err := s.deps.Settings.SetPolicyTunState(nil); err != nil {
-			s.appLog.Warn("policy-tun-disable", iface, "clear policy-tun persist: "+err.Error())
+	// (5) Удержать интерфейс: индекс закреплён за режимом, потому что permit в
+	// политике доступа привязан к имени. Персист переписываем ТОЛЬКО при успехе
+	// — иначе Provisioned остаётся истиной и выключение повторится следующим
+	// тиком (адрес на месте = nginx-цикл ndm жив).
+	//
+	// Запись о прежнем NAT сегментов переживает выключение, если восстановить
+	// его не удалось: она единственный след того, каким он был до нас.
+	// Автоматического повтора у неё НЕТ — в выключенном состоянии
+	// reconcilePolicyTun выходит рано; запись отработает на следующем включении,
+	// смене режима или реапе.
+	if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
+		held := &storage.PolicyTunState{Index: st.Index}
+		if !natRestored {
+			held.NATSegments = st.NATSegments
+		}
+		if err := s.deps.Settings.SetPolicyTunState(held); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
 		}
 	}
 
