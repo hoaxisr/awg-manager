@@ -188,7 +188,13 @@ func runCleanup(dataDir string) {
 
 	// Интерфейс policy-tun живёт в NDMS и переживает удаление файлов: снимаем
 	// его отдельно, вместе с записанным NAT сегментов и NDMS-дефолтом.
-	if err := router.ReleasePolicyTunForRemoval(ctx, router.Deps{
+	//
+	// СВОЙ бюджет, а не остаток общего: при большом числе туннелей CleanupAll
+	// съедает 60 секунд целиком, и снятие не успело бы даже начаться — а
+	// повторить его некому, демона после удаления пакета уже нет.
+	ptCtx, ptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer ptCancel()
+	if err := router.ReleasePolicyTunForRemoval(ptCtx, router.Deps{
 		AppLog:       loggingService,
 		Settings:     settingsStore,
 		OpkgTun:      cleanupNDMSCommands.Interfaces,

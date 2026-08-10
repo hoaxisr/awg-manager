@@ -355,6 +355,31 @@ func TestReconcilePolicyTun_NoopWhenDisabledAndHeld(t *testing.T) {
 	}
 }
 
+// Персиста нет, а слот 20 остался активным (провал парковки в прошлом
+// выключении): гард «нечего разбирать» обязан всё равно запарковать слот.
+// Иначе reconcile видит живой слот, зовёт Disable, тот no-op'ится — и так
+// каждые 30 секунд при живом sing-box.
+func TestPolicyTunDisable_ParksSlotWithoutPersist(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	// Персист стёрт мимо нас, слот при этом жив.
+	if err := h.store.SetPolicyTunState(nil); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Fatal("предусловие: слот обязан быть активным")
+	}
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	if slotEnabled(t, h.svc, orchestrator.SlotRouter) {
+		t.Error("слот 20 обязан быть запаркован даже без персиста")
+	}
+}
+
 // Удержанный выключением интерфейс (Provisioned=false, индекс закреплён) реап
 // сносить не имеет права: он наш, к его имени привязан permit в политике, и
 // следующее включение обязано взять тот же номер.
@@ -473,6 +498,35 @@ func TestPolicyTunDisable_RemovesIngress(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Реап: кросс-персистная коллизия индексов
 // ---------------------------------------------------------------------------
+
+// Гард коллизии щадит интерфейс ТОЛЬКО в режиме fakeip-tun: там персист
+// policy-tun может указывать на живой чужой интерфейс. В третьем режиме
+// (tproxy) не активен ни один из двух, и сироту обязан снести обычный реап —
+// иначе она пережила бы смену режима из-за одного лишь совпадения индексов.
+func TestReap_IndexCollision_RemovesOrphanInThirdMode(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	if err := store.SetFakeIPState(&storage.FakeIPState{
+		Provisioned: true, Index: 2, Inet4Range: "198.18.0.0/15",
+	}); err != nil {
+		t.Fatalf("SetFakeIPState: %v", err)
+	}
+	opkg := &recordingOpkgTunProvisioner{}
+	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	// Проверяем ОЧИСТКУ ПЕРСИСТА, а не факт удаления интерфейса: тот же
+	// OpkgTun2 сносит и fakeip-ветка по своему персисту, поэтому по `deleted`
+	// не отличить, сработала наша ветка или чужая.
+	all, _ := store.Load()
+	if all.PolicyTun != nil {
+		t.Errorf("PolicyTun persist = %+v, want nil: вне обоих режимов сироту убирает реап", all.PolicyTun)
+	}
+}
 
 // Протухший FakeIPState с индексом ЖИВОГО policy-tun-интерфейса не должен
 // снести активный режим: владелец определяется активным режимом, а не персистом.

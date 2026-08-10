@@ -48,7 +48,20 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 
 	// Ничего не провижинилось (или персист уже очищен) → идемпотентно: только
 	// флаг выключения. NDMS не трогаем.
+	//
+	// Слот 20 при этом паркуем: reconcile зовёт Disable, пока слот активен, и
+	// без парковки гард возвращал бы «сделано», ничего не сделав, — тик
+	// повторял бы Disable вечно. Раньше «не провижинен при живом слоте» было
+	// экзотикой, теперь Provisioned=false — штатное состояние выключенного
+	// режима (интерфейс удержан).
 	if st == nil || !st.Provisioned {
+		if s.deps.Orch != nil && s.routerSlotEnabled() {
+			if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+				s.appLog.Warn("policy-tun-disable", "", "disable slot: "+err.Error())
+			} else {
+				s.notifyRoutingSlotsChanged()
+			}
+		}
 		settings.SingboxRouter.Enabled = false
 		if err := s.deps.Settings.Save(settings); err != nil {
 			return err
