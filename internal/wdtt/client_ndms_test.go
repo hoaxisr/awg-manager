@@ -2,6 +2,8 @@ package wdtt
 
 import (
 	"context"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +80,74 @@ func TestClientOpkgNDMSDescription(t *testing.T) {
 	got := s.clientOpkgNDMSDescription("vps1")
 	if got != "4vps wdtt" {
 		t.Fatalf("description=%q want %q", got, "4vps wdtt")
+	}
+}
+
+// I1: усыновление живого untracked-процесса (StartedAt==nil, зомби прошлого
+// запуска awg-manager) обязано пере-создать OpkgTun ПОСЛЕ recycle-teardown,
+// до ожидания kernel-интерфейса — иначе bootstrap ждёт 20 с интерфейс,
+// который больше некому создать (prepare отработал ДО teardown).
+func TestStartClientInstanceRecyclePreparesAfterTeardown(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	fake := &fakeOpkgCommands{}
+	s.SetNDMSInterfaceCommands(fake)
+	s.SetOpkgTunIndexLister(fakeOpkgIndexLister{})
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": true},
+	})
+
+	cfg := validClientCfg("127.0.0.1:56000")
+	cfg.ConnMode = ConnModeRaw
+	cfg.NdmsIface = "OpkgTun18"
+	cfg.RawIface = "opkgtun18"
+	cfg.RawClientIP = "10.70.0.5"
+	full, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Clients[0].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := s.clientProcs.get(DefaultInstanceID)
+	// "; true" вместо голого sleep — иначе sh с одной командой в -c делает
+	// tail-call exec, argv0 подменяется на "sleep" и MatchesBinary("/bin/sh")
+	// в pidIsOurs (untracked-путь) не срабатывает.
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "sleep 30; true")
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatal(err)
+	}
+	// Симулируем зомби прошлого запуска: живой процесс без StartedAt.
+	proc.mu.Lock()
+	proc.startedAt = nil
+	proc.mu.Unlock()
+
+	startErr := s.StartClientInstance(DefaultInstanceID)
+	// Реальный TUN fd в песочнице недоступен (нет /dev/net/tun под нужными
+	// правами) — ошибка на этом шаге ожидаема. Важно, что это НЕ старая
+	// ошибка «интерфейс не появился»: к этому моменту фейк уже обязан был
+	// пере-создать OpkgTun после recycle-teardown.
+	if startErr != nil && strings.Contains(startErr.Error(), "не появился") {
+		t.Fatalf("bootstrap ждал интерфейс, который никто не пересоздал: %v (calls=%v)", startErr, fake.calls)
+	}
+
+	var createAt []int
+	for i, c := range fake.calls {
+		if strings.HasPrefix(c, "create OpkgTun18") {
+			createAt = append(createAt, i)
+		}
+	}
+	if len(createAt) < 2 {
+		t.Fatalf("ожидали повторный create после recycle-teardown, calls=%v", fake.calls)
+	}
+	deleteAt := fake.index("delete OpkgTun18")
+	if deleteAt < 0 || deleteAt < createAt[0] || deleteAt > createAt[1] {
+		t.Fatalf("ожидали порядок create → delete → create, calls=%v", fake.calls)
 	}
 }
 

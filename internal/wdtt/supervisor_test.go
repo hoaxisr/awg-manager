@@ -316,3 +316,70 @@ func TestSuperviseStallGatedByBackoff(t *testing.T) {
 		t.Fatal("backoff-отказ должен был запретить рестарт по застою трафика")
 	}
 }
+
+// I4: пока где-то идёт StartClientInstance (bootstrap ждёт RAWCONF — VK-
+// капча, может занять минуты), супервизор не должен параллельно гонять
+// reconcile — гонка мутации NDMS-интерфейса без лока. Guard стоит ДО
+// Allow(reconcileKey), поэтому скип не должен потратить backoff-окно.
+func TestSuperviseSkipsReconcileWhileStartInFlight(t *testing.T) {
+	s, _ := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": false}, // ndmsBad
+	})
+	fake, ok := s.ndmsIfaces.(*fakeOpkgCommands)
+	if !ok {
+		t.Fatal("ожидали fakeOpkgCommands из enabledRawClientService")
+	}
+
+	s.beginOpkgStart() // симулируем идущий StartClientInstance (любого клиента)
+	s.superviseEnabled(context.Background())
+	s.endOpkgStart()
+
+	if len(fake.calls) != 0 {
+		t.Fatalf("reconcile не должен был выполниться во время старта: %v", fake.calls)
+	}
+	if !s.startBackoff.Allow(reconcileKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("guard не должен жечь backoff-окно reconcile на скип")
+	}
+}
+
+// I4: reconcile гоняет пачку RCI-команд (~10-13), не мгновенно. Если
+// пользователь успел нажать «стоп» (Enabled=false) за это время, результат
+// reconcile не должен трогать backoff/страйки клиента — тот же паттерн, что
+// в restartClientInstance (health.go:106-110): решение пользователя важнее.
+func TestSuperviseReconcileIgnoresResultAfterUserStop(t *testing.T) {
+	s, _ := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": false},
+	})
+	// Пользователь жмёт «стоп» ровно во время RCI-пачки reconcile.
+	s.SetNDMSInterfaceCommands(&stopMidCallOpkg{svc: s})
+
+	s.superviseEnabled(context.Background())
+
+	if !s.startBackoff.Allow(reconcileKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("отменённый пользователем reconcile не должен жечь backoff-окно")
+	}
+	if strikes := s.clientHealth.strikes[DefaultInstanceID]; strikes != 0 {
+		t.Fatalf("трекер страйков не должен трогаться после отмены пользователем, strikes=%d", strikes)
+	}
+}
+
+// stopMidCallOpkg симулирует StopClientInstance, сработавший ровно во время
+// блокирующей RCI-пачки reconcileClientRawNDMS (I4).
+type stopMidCallOpkg struct {
+	fakeOpkgCommands
+	svc *Service
+}
+
+func (f *stopMidCallOpkg) SetAddress(ctx context.Context, name, addr, mask string) error {
+	if full, err := f.svc.store.Load(); err == nil {
+		full.Clients[0].Config.Enabled = false
+		_ = f.svc.store.Save(full)
+	}
+	return f.fakeOpkgCommands.SetAddress(ctx, name, addr, mask)
+}

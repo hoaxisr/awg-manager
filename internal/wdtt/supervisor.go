@@ -83,7 +83,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		peerBad := clientPeerUnhealthy(st, now)
 		ndmsBad := clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
 		relayBad := clientRawRelayUnhealthy(ctx, c.Config, s.relayProbe, s.ifaceChecker, st, now)
-		if ndmsBad && !peerBad {
+		// I4: пока где-то идёт StartClientInstance (bootstrap ждёт RAWCONF —
+		// VK-капча, может занять минуты), reconcile не должен параллельно
+		// мутировать NDMS-интерфейс без лока. Guard до Allow(rKey) — не жжём
+		// backoff-окно на скип, страйк ниже всё равно копится как обычно.
+		if ndmsBad && !peerBad && !s.opkgStartsInFlight() {
 			// Reconcile — первая (дешёвая) попытка лечения: поднять OpkgTun без
 			// рестарта wt-client. Рестарт — эскалация ниже, если интерфейс не
 			// ожил. Сам reconcile — ~10-13 RCI-команд, поэтому гоняется под
@@ -93,6 +97,13 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			rKey := reconcileKey(c.ID)
 			if s.startBackoff.Allow(rKey, now) {
 				reconciled, rerr := s.reconcileClientRawNDMS(ctx, c.ID, c.Config)
+				// Reconcile — блокирующая пачка RCI-команд: пользователь мог
+				// нажать «стоп» за это время, и его решение важнее нашего
+				// лечения (тот же паттерн, что в restartClientInstance,
+				// health.go:106-110).
+				if inst, err := s.clientInstance(c.ID); err == nil && !inst.Config.Enabled {
+					continue
+				}
 				switch {
 				case rerr != nil:
 					if s.appLog != nil {

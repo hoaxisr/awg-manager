@@ -469,6 +469,12 @@ func (s *Service) StartClientInstance(id string) error {
 				_ = s.clientProcs.get(id).Stop()
 				if rawClientNDMSReady(cfg, s.ifaceChecker) {
 					_ = s.teardownClientOpkgTun(ctx, cfg)
+					// teardown снёс OpkgTun целиком; prepare выше отработал ДО
+					// него — без повторного вызова bootstrapRawClient ждёт
+					// интерфейс, который больше некому создать (I1).
+					if err := s.prepareClientNDMSOpkgTun(ctx, id, cfg); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -485,6 +491,8 @@ func (s *Service) StartClientInstance(id string) error {
 		_, bootstrapped := s.clientProcs.get(id).lastRawConf()
 		if bootstrapped && rawClientNDMSReady(cfg, s.ifaceChecker) {
 			if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
+				_ = s.clientProcs.get(id).Stop()
+				_ = s.teardownClientOpkgTun(ctx, cfg)
 				return err
 			}
 			s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
@@ -529,6 +537,7 @@ func (s *Service) bootstrapRawClient(ctx context.Context, id string, cfg ClientC
 		return err
 	}
 	cfg.RawClientIP = rawConf.ClientIP
+	cfg.RawClientMTU = rawConf.MTU
 	_ = s.persistClientConfig(id, cfg)
 	if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
 		_ = s.clientProcs.get(id).Stop()

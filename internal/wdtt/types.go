@@ -28,9 +28,10 @@ type ClientConfig struct {
 	Debug    bool   `json:"debug"`
 
 	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).
-	NdmsIface   string `json:"ndmsIface,omitempty"`   // OpkgTun17..49
-	RawIface    string `json:"rawIface,omitempty"`    // kernel opkgtunN
-	RawClientIP string `json:"rawClientIp,omitempty"` // из RAWCONF VPS
+	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTun17..49
+	RawIface     string `json:"rawIface,omitempty"`     // kernel opkgtunN
+	RawClientIP  string `json:"rawClientIp,omitempty"`  // из RAWCONF VPS
+	RawClientMTU int    `json:"rawClientMTU,omitempty"` // MTU из RAWCONF VPS
 
 	// PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются после рестарта awg-manager.
 	PolicyPermits []OpkgPolicyPermit `json:"policyPermits,omitempty"`

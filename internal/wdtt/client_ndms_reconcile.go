@@ -24,7 +24,11 @@ func (s *Service) reconcileClientRawNDMS(ctx context.Context, id string, cfg Cli
 	if err := s.prepareClientNDMSOpkgTun(ctx, id, cfg); err != nil {
 		return false, err
 	}
-	conf := RawConfPayload{ClientIP: cfg.RawClientIP, MTU: 1300}
+	mtu := cfg.RawClientMTU
+	if mtu <= 0 {
+		mtu = 1300
+	}
+	conf := RawConfPayload{ClientIP: cfg.RawClientIP, MTU: mtu}
 	if err := s.activateClientNDMSOpkgTun(ctx, id, cfg, conf); err != nil {
 		return false, err
 	}
