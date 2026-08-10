@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +31,8 @@ type fakeAccessPolicyProvider struct {
 	unassignCalls int
 	exits         []query.PolicyDefaultExit
 	exitsErr      error
+	permits       []string // "<политика>:<интерфейс>:<order>" в порядке вызовов
+	permitErr     error
 }
 
 func (f *fakeAccessPolicyProvider) GetPolicyMark(_ context.Context, _ string) (string, error) {
@@ -55,6 +58,10 @@ func (f *fakeAccessPolicyProvider) CreatePolicy(_ context.Context, _ string) (Po
 }
 func (f *fakeAccessPolicyProvider) ListPolicyExits(_ context.Context, _ string) ([]query.PolicyDefaultExit, error) {
 	return f.exits, f.exitsErr
+}
+func (f *fakeAccessPolicyProvider) PermitInterface(_ context.Context, name, iface string, order int) error {
+	f.permits = append(f.permits, fmt.Sprintf("%s:%s:%d", name, iface, order))
+	return f.permitErr
 }
 
 // fakeWANIPCollector is a test double for WANIPCollector.

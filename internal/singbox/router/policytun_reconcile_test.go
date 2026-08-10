@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 
 type fakeRunningConfig struct {
 	lines       []string
+	fresh       []string // если задано — что отдаёт чтение ПОСЛЕ инвалидации (протухший кэш)
 	reads       int
 	invalidated int
 }
@@ -27,7 +29,12 @@ func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
 	return f.lines, nil
 }
 
-func (f *fakeRunningConfig) InvalidateAll() { f.invalidated++ }
+func (f *fakeRunningConfig) InvalidateAll() {
+	f.invalidated++
+	if f.fresh != nil {
+		f.lines = f.fresh
+	}
+}
 
 // healthyPolicyTunRC — running-config провижининга «всё на месте»: дефолты
 // v4/v6 на tun, `ip global` в блоке интерфейса, permit в политике.
@@ -306,6 +313,72 @@ func TestReconcilePolicyTun_EnsuresIngress(t *testing.T) {
 		if strings.Contains(joined, "PREROUTING 1") || strings.Contains(joined, "DNAT") {
 			t.Errorf("DNAT в policy-tun не ставится: %v", rec.ipt)
 		}
+	}
+}
+
+// Permit пропал (или не встал при включении: отказ RCI повторное включение не
+// ретраит — оно no-op'ится по гарду provisioned+live) → drift-heal доставляет его.
+func TestReconcilePolicyTun_PermitsWhenMissing(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil // permit включения в счёт не идёт
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "!",
+	}}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	want := []string{"Policy0:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
+	}
+}
+
+// Permit на месте → drift-heal его не переставляет: order=0 каждый тик тасовал
+// бы список выходов политики.
+func TestReconcilePolicyTun_NoPermitWhenPresent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("стоящий permit не должен переставляться, получено %v", pol.permits)
+	}
+}
+
+// Кэш running-config протух: permit пользователь поставил мимо нас. Свежее
+// чтение обязано пересчитать и permitted — иначе heal слал бы order=0 каждый
+// тик, переставляя список выходов политики.
+func TestReconcilePolicyTun_NoPermitAfterStaleCacheRefresh(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{
+		lines: []string{ // по кэшу permit'а нет
+			"interface OpkgTun0", "    ip global 65500", "!",
+			"ip route default OpkgTun0",
+			"ipv6 route default OpkgTun0",
+			"ip policy Policy0", "!",
+		},
+		fresh: healthyPolicyTunRC("OpkgTun0"), // а на роутере он уже стоит
+	}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("решение о permit обязано приниматься по свежему конфигу, получено %v", pol.permits)
 	}
 }
 

@@ -308,6 +308,21 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
+	// Разрешаем tun выходом целевой политики. ПОСЛЕ подъёма интерфейса и
+	// парковки дефолта: permit имени, под которым интерфейса ещё нет, NDMS
+	// может отвергнуть, а разрешение до готовности sing-box увело бы трафик
+	// членов политики в туннель без читателя.
+	//
+	// Откат уже поставленный permit НЕ снимает (осознанно: DenyInterface мог бы
+	// снять разрешение, поставленное пользователем).
+	permitted := false
+	if s.deps.RunningConfig != nil {
+		if lines, e := s.deps.RunningConfig.Lines(ctx); e == nil {
+			permitted = policyTunPermitted(lines, ndmsName)
+		}
+	}
+	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
+
 	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box» плюс
 	// перехват DNS у членов политики: тот же механизм, что у fakeip (issue
 	// #678). Best-effort (см. ensureFakeIPIngress): без заворота режим

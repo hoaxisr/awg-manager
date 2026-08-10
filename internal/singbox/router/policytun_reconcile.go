@@ -259,7 +259,8 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 
 	v4, v6 := policyTunDefaultRoutePresent(lines, ndmsName)
 	global := policyTunIPGlobalPresent(lines, ndmsName)
-	healthy := v4 && global && policyTunPermitted(lines, ndmsName) && (!wantV6 || v6)
+	permitted := policyTunPermitted(lines, ndmsName)
+	healthy := v4 && global && permitted && (!wantV6 || v6)
 	if !healthy {
 		// По кэшу всё плохо — перечитываем и решаем по свежим данным: иначе
 		// починка мимо нас (пользователь в веб-морде) выглядела бы дрейфом и
@@ -268,6 +269,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		if fresh, ferr := s.deps.RunningConfig.Lines(ctx); ferr == nil {
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
+			permitted = policyTunPermitted(fresh, ndmsName)
 		}
 	}
 
@@ -279,6 +281,10 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 				"ip global пропал у "+ndmsName+" — интерфейс не был виден в политиках, восстановлен (drift-heal)")
 		}
 	}
+	// Permit-ассерт: включение доставить его повторно не может — оно no-op'ится
+	// по гарду provisioned+live, поэтому отказ RCI при включении и смена
+	// PolicyName на работающем режиме чинятся только здесь.
+	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
 	if s.deps.DefaultRoute == nil {
 		return
 	}
@@ -296,6 +302,28 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
 		}
 	}
+}
+
+// ensurePolicyTunPermit разрешает наш интерфейс выходом целевой политики
+// (sr.PolicyName) — без этого режим поднят, а трафик членов политики в туннель
+// не заходит.
+//
+// permitted — ответ «уже разрешён?» из running-config: идемпотентность держится
+// на чтении перед записью, а не на поведении NDMS (повторный order=0 в непустой
+// политике переставляет список выходов). Цена — permit, стоящий не первым, мы
+// не двигаем: расстановку пользователя не перебиваем.
+//
+// Best-effort: отказ RCI логируется и НЕ валит подъём режима — permit доставит
+// drift-heal на следующем тике.
+func (s *ServiceImpl) ensurePolicyTunPermit(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string, permitted bool) {
+	if permitted || sr.PolicyName == "" || s.deps.Policies == nil {
+		return
+	}
+	if e := s.deps.Policies.PermitInterface(ctx, sr.PolicyName, ndmsName, 0); e != nil {
+		s.appLog.Warn("policy-tun", iface, "permit "+ndmsName+" в политике "+sr.PolicyName+": "+e.Error())
+		return
+	}
+	s.appLog.Info("policy-tun", iface, ndmsName+" разрешён выходом политики "+sr.PolicyName+" (order 0)")
 }
 
 // reconcilePolicyTunQoS применяет runtime-изменения классов QoS — единственный

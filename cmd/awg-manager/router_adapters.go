@@ -44,6 +44,10 @@ func (a *routerAccessPolicyAdapter) ListPolicyExits(ctx context.Context, iface s
 	return a.svc.ListPolicyExits(ctx, iface)
 }
 
+func (a *routerAccessPolicyAdapter) PermitInterface(ctx context.Context, name, iface string, order int) error {
+	return a.svc.PermitInterface(ctx, name, iface, order)
+}
+
 func (a *routerAccessPolicyAdapter) AssignDevice(ctx context.Context, mac, name string) error {
 	return a.svc.AssignDevice(ctx, mac, name)
 }

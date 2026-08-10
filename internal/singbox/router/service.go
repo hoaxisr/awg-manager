@@ -239,6 +239,11 @@ type AccessPolicyProvider interface {
 	// источник connmark для перехвата DNS; политика там задаётся в NDMS,
 	// а не в настройках, поэтому sr.PolicyName непригоден).
 	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
+	// PermitInterface разрешает интерфейс как выход политики. order —
+	// позиция с нуля; policy-tun ставит 0, потому что туннель обязан стать
+	// дефолтным выходом политики (в непустой политике order=0 вставляет в
+	// начало и сдвигает прежние — это цель, а не побочный эффект).
+	PermitInterface(ctx context.Context, policyName, iface string, order int) error
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned

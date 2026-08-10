@@ -139,6 +139,23 @@ func (h *policyTunEnableHarness) loadPolicyTun(t *testing.T) *storage.PolicyTunS
 	return all.PolicyTun
 }
 
+// withPolicy задаёт целевую политику режима (sr.PolicyName) и подсовывает фейк
+// провайдера политик; возвращает его для проверки permit-вызовов.
+func (h *policyTunEnableHarness) withPolicy(t *testing.T, name string) *fakeAccessPolicyProvider {
+	t.Helper()
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.PolicyName = name
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	pol := &fakeAccessPolicyProvider{}
+	h.svc.deps.Policies = pol
+	return pol
+}
+
 // mustOrderCalls asserts a happened strictly before b in the recorded log.
 func mustOrderCalls(t *testing.T, log *callLog, a, b string) {
 	t.Helper()
@@ -524,6 +541,78 @@ func TestPolicyTunEnable_NoQoSNoIPTables(t *testing.T) {
 	}
 	if installs != 0 {
 		t.Errorf("IPTables.Install calls = %d, want 0 without QoS classes", installs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Permit интерфейса в политике доступа
+// ---------------------------------------------------------------------------
+
+// Интерфейс обязан разрешаться в целевой политике сам: без permit'а режим
+// поднят, а трафик членов политики в туннель не заходит. order=0 — туннель
+// обязан стать дефолтным выходом политики.
+func TestPolicyTunEnable_PermitsInterfaceInPolicy(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{"ip policy Policy0", "!"}}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+	want := []string{"Policy0:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
+	}
+}
+
+// Политика не выбрана — permit слать некуда: молча пропускаем.
+func TestPolicyTunEnable_SkipsPermitWithoutPolicyName(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{"ip policy Policy0", "!"}}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("без имени политики permit слать некуда, получено %v", pol.permits)
+	}
+}
+
+// Идемпотентность — чтением перед записью: permit уже стоит, повторный с order=0
+// переставил бы список выходов политики.
+func TestPolicyTunEnable_SkipsPermitWhenAlreadyPermitted(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("уже разрешённый интерфейс не должен переразрешаться, получено %v", pol.permits)
+	}
+}
+
+// Запись в конфигурацию роутера best-effort: отказ RCI на permit не валит подъём
+// режима (permit доставит drift-heal на следующем тике).
+func TestPolicyTunEnable_PermitFailureDoesNotFailEnable(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	pol.permitErr = errors.New("injected: permit")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{"ip policy Policy0", "!"}}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("отказ permit не должен валить Enable: %v", err)
+	}
+	if len(pol.permits) != 1 {
+		t.Errorf("permit должен быть попытан ровно один раз, получено %v", pol.permits)
+	}
+	if !h.log.has("SetDefaultRoute:OpkgTun0") {
+		t.Errorf("режим обязан подняться: %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned {
+		t.Errorf("PolicyTun persist = %+v, want provisioned", st)
 	}
 }
 
