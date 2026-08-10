@@ -22,11 +22,11 @@ func TestExtractRawConfFromLog(t *testing.T) {
 
 func TestBuildClientArgsRawTunName(t *testing.T) {
 	args := buildClientArgs(ClientConfig{
-		Peer:     "203.0.113.5:56013",
-		Password: "secret",
-		VKHashes: "abc",
-		ConnMode: ConnModeRaw,
-		RawIface: "opkgtun22",
+		Peer:      "203.0.113.5:56013",
+		Password:  "secret",
+		VKHashes:  "abc",
+		ConnMode:  ConnModeRaw,
+		RawIface:  "opkgtun22",
 		NdmsIface: "OpkgTun22",
 	}, "/tmp/wdtt-tun.sock")
 	if !containsArgPair(args, "-tun-name") || !containsArgPair(args, "opkgtun22") {

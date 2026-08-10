@@ -25,14 +25,14 @@ type process struct {
 
 	startMu sync.Mutex // serializes Start so two concurrent calls can't both spawn
 
-	mu            sync.Mutex
-	startedAt     *time.Time
-	lastErr       string
-	stopRequested bool
-	lastWgConfig  string // last CONFIG event seen in drain; survives log ring-buffer eviction
+	mu                 sync.Mutex
+	startedAt          *time.Time
+	lastErr            string
+	stopRequested      bool
+	lastWgConfig       string // last CONFIG event seen in drain; survives log ring-buffer eviction
 	lastRawConfPayload RawConfPayload
-	logTail       *childproc.RingBuffer
-	startCmd      func(bin string, args ...string) *exec.Cmd
+	logTail            *childproc.RingBuffer
+	startCmd           func(bin string, args ...string) *exec.Cmd
 
 	// drainStartDelay искусственно задерживает старт чтения пайпа —
 	// тест-seam для форсирования окна гонки «Wait закрыл пайп раньше drain».
