@@ -350,6 +350,9 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 		s.appLog.Warn("policy-tun-reconcile", "qos", "iptables install: "+err.Error())
 		return
 	}
+	// Заглушки в policy-tun нет, но вытеснение — шаг вызывающего на всех путях
+	// установки; см. EvictUnprotectedFlows.
+	s.deps.IPTables.EvictUnprotectedFlows(ctx)
 	s.currentQoSClasses = qosSpecs
 	s.netfilterStateKnown = true
 }

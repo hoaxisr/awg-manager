@@ -2336,7 +2336,11 @@ func TestCtCleanScriptUsesConntrackBinPath(t *testing.T) {
 	}
 }
 
-func TestInstallRunsCtCleanWithoutExplicitIPs(t *testing.T) {
+// Вытеснение — ОТДЕЛЬНЫЙ шаг вызывающего, а не хвост Install: на пути Enable в
+// момент возврата Install ещё стоит fail-closed заглушка (её джамп впереди
+// джампа перехвата), и синхронный тридцатисекундный проход под ней означал бы
+// ровно столько же полного DROP policy-трафика.
+func TestInstallDoesNotEvictFlows(t *testing.T) {
 	fe := &fakeExec{}
 	it := newFakeIPTables(fe)
 	// Без этих заглушек Install полезет писать в /opt/etc и упадёт не по делу.
@@ -2349,8 +2353,31 @@ func TestInstallRunsCtCleanWithoutExplicitIPs(t *testing.T) {
 	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0x100"}); err != nil {
 		t.Fatalf("install: %v", err)
 	}
+	if len(got) != 0 {
+		t.Fatalf("Install не имеет права вытеснять сам — заглушка снимается только после него, получено %v", got)
+	}
+}
+
+func TestEvictUnprotectedFlowsRunsScriptWithoutExplicitIPs(t *testing.T) {
+	it := &IPTables{}
+	var got [][]string
+	var ctxErr error
+	it.runCtClean = func(c context.Context, ips []string) {
+		ctxErr = c.Err()
+		got = append(got, ips)
+	}
+
+	// Контекст на путях Enable/Reconcile запросный: обрыв клиента в зазоре
+	// после Install не имеет права оставить утечку жить до конца потока.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	it.EvictUnprotectedFlows(ctx)
+
 	if len(got) != 1 || len(got[0]) != 0 {
-		t.Fatalf("Install обязан звать вытеснение ровно раз и без адресов, получено %v", got)
+		t.Fatalf("вытеснение обязано зваться ровно раз и без адресов, получено %v", got)
+	}
+	if ctxErr != nil {
+		t.Fatalf("вытеснение получило отменённый контекст: %v", ctxErr)
 	}
 }
 
@@ -2584,9 +2611,11 @@ func TestInstallRefreshesCtCleanScriptInBothModes(t *testing.T) {
 }
 
 // Install persists all three rules files (combined for Install/fallback,
-// per-table for the hook's fast heal) and runs the eviction script after the
-// rules are up — the engine-start window is fail-open just like a reload.
-func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
+// per-table for the hook's fast heal). Вытеснение сюда больше не входит — оно
+// шаг вызывающего (TestInstallDoesNotEvictFlows и порядок на пути провизии в
+// service_lifecycle_test.go), — но соседство проверяется здесь же: блоб правил
+// обязан уйти в ядро, а не остаться одним лишь файлом.
+func TestInstall_PersistsPerTableRules(t *testing.T) {
 	fe := &fakeExec{}
 	var persisted [3]string
 	order := []string{}
@@ -2615,8 +2644,8 @@ func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
 	if persisted[1] != buildInterceptRestoreInput(spec) || persisted[2] != buildNatRestoreInput(spec) {
 		t.Errorf("per-table rules mismatch")
 	}
-	if want := []string{"restore", "ctclean"}; len(order) != 2 || order[0] != want[0] || order[1] != want[1] {
-		t.Errorf("ctclean must run after restore, got order %v", order)
+	if want := []string{"restore"}; len(order) != 1 || order[0] != want[0] {
+		t.Errorf("Install обязан применить блоб и не звать вытеснение, порядок %v", order)
 	}
 }
 

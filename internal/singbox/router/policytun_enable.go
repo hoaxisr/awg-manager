@@ -370,6 +370,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		}); err != nil {
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}
+		// Заглушки в policy-tun нет, но вытеснение — шаг вызывающего на всех
+		// путях установки; см. EvictUnprotectedFlows.
+		s.deps.IPTables.EvictUnprotectedFlows(ctx)
 		// Применённое состояние netfilter — база сравнения для reconcile: без
 		// него первое же runtime-изменение классов выглядело бы «без изменений»
 		// (или, наоборот, переустанавливалось бы каждый тик). Пишем ТОЛЬКО после

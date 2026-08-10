@@ -968,6 +968,10 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 		s.deps.IPTables.RemoveBlackhole(context.WithoutCancel(ctx))
 		s.blackholeActive = false
 	}
+	// Строго ПОСЛЕ снятия заглушки: проход синхронный и длится до 30 секунд, а
+	// заглушка стоит впереди перехвата — вытеснение под ней означало бы, что
+	// весь policy-трафик дропается всё это время. См. EvictUnprotectedFlows.
+	s.deps.IPTables.EvictUnprotectedFlows(ctx)
 	s.currentMark = mark
 	s.currentWANIPs = wanIPs
 	s.currentLANBridges = lanBridges
@@ -2124,6 +2128,9 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			s.mu.Unlock()
 			return err
 		}
+		// Заглушки на этом пути нет (её ставит только провизия), но вытеснение
+		// всё равно шаг вызывающего — см. EvictUnprotectedFlows.
+		s.deps.IPTables.EvictUnprotectedFlows(ctx)
 		s.currentMark = mark
 		s.currentWANIPs = wanIPs
 		s.currentLANBridges = lanBridges

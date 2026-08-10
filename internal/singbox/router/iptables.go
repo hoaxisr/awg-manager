@@ -1437,14 +1437,33 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 			return fmt.Errorf("ip route add: %w", err)
 		}
 	}
-	// The window between engine start and this Install is fail-open exactly
-	// like an NDMS reload: UDP flows whose first packet slipped past the
-	// absent TPROXY jump carry a direct WAN NAT in conntrack and would
-	// bypass tproxy for life (issue #627) — evict them now that rules are up.
-	if it.runCtClean != nil {
-		it.runCtClean(ctx, nil)
-	}
 	return nil
+}
+
+// EvictUnprotectedFlows вытесняет потоки, ушедшие мимо перехвата в окне между
+// стартом движка и установкой правил: их первый пакет прошёл при отсутствующем
+// джампе, получил прямой WAN-NAT в conntrack и аппаратный offload — дальше они
+// минуют TPROXY до конца жизни (issue #627). Зовётся ПОСЛЕ Install, каждым его
+// вызывающим.
+//
+// Отдельным шагом, а не хвостом Install, ровно по одной причине: проход
+// синхронный и дорогой (grep по всей таблице conntrack плюс форк conntrack -D
+// на каждый вытесняемый поток, потолок — sysexec.DefaultTimeout), а на пути
+// Enable в этот момент ещё стоит fail-closed заглушка. Её джамп добавлен
+// ВПЕРЕДИ джампа перехвата, и removeSourceHooks внутри Install скрабит только
+// цепочки перехвата — заглушка выигрывает по порядку и дропает весь
+// policy-трафик всё время прохода. Порядок «снять заглушку → вытеснять» умеет
+// соблюсти только вызывающий: он один и знает, что заглушка стоит.
+//
+// WithoutCancel: ctx на путях Enable/Reconcile запросный, а вытеснять надо
+// именно те потоки, что уже родились. Обрыв клиента в зазоре после успешного
+// Install оставил бы утечку жить до конца потока — то есть до бесконечности у
+// долгих закачек, ради которых проход и существует.
+func (it *IPTables) EvictUnprotectedFlows(ctx context.Context) {
+	if it.runCtClean == nil {
+		return
+	}
+	it.runCtClean(context.WithoutCancel(ctx), nil)
 }
 
 // EvictFlows вытесняет весь conntrack перечисленных адресов-источников.

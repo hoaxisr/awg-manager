@@ -391,6 +391,48 @@ func TestProvisionRemovesBootBlackholeWhenClientDisconnectsAfterInstall(t *testi
 	}
 }
 
+// Вытеснение потоков, ушедших мимо перехвата, обязано начинаться ПОСЛЕ снятия
+// заглушки. Проход синхронный и стоит до 30 секунд (grep по всей таблице
+// conntrack плюс форк conntrack -D на каждый поток), а джамп заглушки добавлен
+// ВПЕРЕДИ джампа перехвата и скрабом внутри Install не трогается — вытеснение
+// под ней означало бы полный DROP policy-трафика всё это время, ровно в момент
+// срабатывания фичи.
+func TestProvisionEvictsFlowsOnlyAfterBlackholeRemoved(t *testing.T) {
+	fe := &fakeExec{}
+	stubListeningProbe(t, func() bool { return true })
+	ipt := notInstalledFakeIPTables(fe)
+	evictAt := -1
+	var evictIPs []string
+	ipt.runCtClean = func(_ context.Context, ips []string) {
+		evictAt = len(fe.calls)
+		evictIPs = ips
+	}
+	svc := newBootBlackholeServiceWith(t, ipt)
+
+	if err := svc.Enable(context.Background()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	intercept := restoreIndexOf(fe, ":"+ChainName+" - [0:0]")
+	removed := blackholeRemoveIndex(fe)
+	if intercept < 0 || removed < 0 {
+		t.Fatalf("предусловие: перехват (%d) или снятие заглушки (%d) не состоялись, вызовы: %+v",
+			intercept, removed, fe.calls)
+	}
+	if evictAt < 0 {
+		t.Fatal("вытеснение потоков, ушедших мимо перехвата в окне подъёма, не запускалось вовсе")
+	}
+	if len(evictIPs) != 0 {
+		t.Errorf("вытеснение после подъёма идёт по всей выборке, без адресов, получено %v", evictIPs)
+	}
+	if evictAt <= removed {
+		t.Fatal("вытеснение началось до снятия заглушки — весь policy-трафик дропается всё время прохода")
+	}
+	if evictAt <= intercept {
+		t.Fatal("вытеснение началось до установки перехвата — вытесненные потоки родились бы заново мимо него")
+	}
+}
+
 // Порядок операций проверяют соседние тесты, этот — СОДЕРЖИМОЕ спеки заглушки.
 // В policy-режиме с пустой меткой джамп не эмитится вовсе (цепочка есть,
 // входить в неё некому — правка становится молчаливым no-op), а MatchAll вместо

@@ -166,6 +166,11 @@ func (s *ServiceImpl) forceRetireAwgm(ctx context.Context) {
 // нужна ради fail-safe отката: отказ применения ЧЕРЕЗ АКТИВНЫЙ AWGM-КАНАЛ обязан
 // быть отличим от отказа настроек, политики или движка, а по тексту ошибки их
 // не развести.
+//
+// Вытеснение потоков, ушедших мимо перехвата в окне подъёма, сюда НЕ входит:
+// оно обязано идти после снятия fail-closed заглушки, а про заглушку знает
+// только вызывающий — см. IPTables.EvictUnprotectedFlows. Каждый успешный
+// вызов installRules обязан завершиться им.
 func (s *ServiceImpl) installRules(ctx context.Context, spec RestoreInputSpec) error {
 	err := s.deps.IPTables.Install(ctx, spec)
 	s.markAwgmRuleFailure(err)

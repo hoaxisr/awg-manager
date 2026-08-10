@@ -281,6 +281,12 @@ func TestReconcileInstalled_AliveEngineStillHealsJumps(t *testing.T) {
 	installs := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error { installs++; return nil })
 	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	evicted := 0
+	ipt.runCtClean = func(_ context.Context, ips []string) {
+		if len(ips) == 0 {
+			evicted++
+		}
+	}
 	svc.deps.IPTables = ipt
 
 	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
@@ -288,6 +294,13 @@ func TestReconcileInstalled_AliveEngineStillHealsJumps(t *testing.T) {
 	}
 	if installs != 1 {
 		t.Errorf("Install calls = %d, want 1 (jump heal must proceed with a live engine)", installs)
+	}
+	// Пропажа джампов — это и есть окно fail-open: потоки, родившиеся без
+	// перехвата, унесли прямой WAN-NAT в conntrack и мимо TPROXY доживут до
+	// конца (issue #627). Переустановка обязана заканчиваться их вытеснением —
+	// шагом вызывающего, а не хвостом Install (см. EvictUnprotectedFlows).
+	if evicted != 1 {
+		t.Errorf("вытеснений после лечения джампов = %d, want 1", evicted)
 	}
 }
 
