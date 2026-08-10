@@ -7164,6 +7164,9 @@ definitions:
       rawClientIp:
         description: из RAWCONF VPS
         type: string
+      rawClientMTU:
+        description: MTU из RAWCONF VPS
+        type: integer
       rawIface:
         description: kernel opkgtunN
         type: string
