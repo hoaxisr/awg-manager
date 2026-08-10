@@ -51,6 +51,35 @@ func TestBuildServerArgsNoNAT(t *testing.T) {
 
 // wdtt-server (v1.4.62) не знает флага -debug: flag.Parse печатает
 // «flag provided but not defined» и выходит с кодом 2 — сервер не стартует.
+func TestValidateServerMainPassword_RejectsClientMatch(t *testing.T) {
+	clientPass := "b3cb9612bee5da6b8260cf9eb4340402"
+	err := validateServerMainPassword(clientPass, []ServerClient{{Password: clientPass, Comment: "Иван"}})
+	if err == nil {
+		t.Fatal("ожидалась ошибка при совпадении пароля сервера и клиента")
+	}
+	if err := validateServerMainPassword("owner-main-pass", []ServerClient{{Password: clientPass}}); err != nil {
+		t.Fatalf("разные пароли должны проходить: %v", err)
+	}
+}
+
+func TestUpdateServerInstance_RejectsMainPasswordSameAsClient(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg := DefaultServerConfig()
+	cfg.Password = "owner-main-pass00000000"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.AddServerPanelUser(DefaultInstanceID, "", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPass := st.Users[1].Password
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, ServerConfig{Password: clientPass}); err == nil {
+		t.Fatal("ожидалась ошибка: пароль сервера совпадает с паролем клиента")
+	}
+}
+
 func TestBuildServerArgsNoDebugFlag(t *testing.T) {
 	got := buildServerArgs(ServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001, Debug: true})
 	if slices.Contains(got, "-debug") {

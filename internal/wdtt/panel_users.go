@@ -474,3 +474,60 @@ func bumpUsersRevInTx(tx *sql.Tx) error {
 	_, err := tx.Exec(`UPDATE wdtt_global SET users_rev = users_rev + 1 WHERE id = 1`)
 	return err
 }
+
+// purgeGatewayIPDevices removes panel.db rows where client IP equals the OpkgTun gateway.
+func purgeGatewayIPDevices(configDir string) (int, error) {
+	gateway := DefaultWdttServerGatewayAddr
+	var removed int
+	err := withPanelDBRetry(func() error {
+		db, err := openPanelDBWrite(configDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		defer db.Close()
+		rows, err := db.Query(`SELECT device_id FROM wdtt_devices WHERE ip = ?`, gateway)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, id := range ids {
+			if _, err := tx.Exec(`DELETE FROM wdtt_user_devices WHERE device_id = ?`, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM wdtt_devices WHERE device_id = ?`, id); err != nil {
+				return err
+			}
+		}
+		if err := bumpUsersRevInTx(tx); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		removed = len(ids)
+		return nil
+	})
+	return removed, err
+}

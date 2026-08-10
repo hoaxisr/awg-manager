@@ -74,6 +74,11 @@ WDTT_SERVER_SOURCE=ildarmaga bash scripts/build-wdtt-server.sh
 - **`-wg-iface opkgtun90`** — имя userspace WireGuard-интерфейса (по умолчанию `wdtt0`).
 - Нужен для регистрации WDTT в NDMS как `OpkgTun17..49`: NAT/LAN/policy через `ip nat` и ACL роутера, как у managed WireGuard.
 
+## getNextIP (qwdtt-monolith / apply-keenetic.py)
+
+- **`10.66.0.1` пропускается** при выдаче IP клиенту — это адрес шлюза OpkgTun на Keenetic (`DefaultWdttServerGatewayAddr`).
+- Без пропуска первый клиент получал `.1`, трафик не форвардился и NAT не срабатывал.
+
 ## Сборка ildarmaga (Entware arm64)
 
 ```bash

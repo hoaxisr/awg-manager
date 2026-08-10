@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
 const natReconcileInterval = 15 * time.Second
@@ -63,6 +65,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 	if len(legacyIfaces) == 0 {
 		if !s.anyServerRunning(full) {
 			removeEntwareNAT(ctx, DefaultWdttIface)
+			removeWdttForwardNetfilterHook()
 		}
 		return
 	}
@@ -70,8 +73,14 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		for iface := range legacyIfaces {
 			removeEntwareNAT(ctx, iface)
 		}
+		removeWdttForwardNetfilterHook()
 		return
 	}
+	allEntwareIfaces := make([]string, 0, len(legacyIfaces))
+	for iface := range legacyIfaces {
+		allEntwareIfaces = append(allEntwareIfaces, iface)
+	}
+	_ = ensureWdttForwardNetfilterHook(ctx, allEntwareIfaces)
 	for _, srv := range full.Servers {
 		if !s.serverProcs.get(srv.ID).Status().Running {
 			continue
@@ -98,6 +107,14 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				}
 			} else if s.appLog != nil {
 				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен "+strings.Join(cfg.serverEntwareNATIfaces(), ","))
+			}
+		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfaces()) {
+			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...); err != nil && s.appLog != nil {
+				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
+			} else if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfaces()); err != nil && s.appLog != nil {
+				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
+			} else if s.appLog != nil {
+				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfaces(), ","))
 			}
 		} else if !entwareMSSPresentAll(ctx, cfg.serverEntwarePeerCIDRs()) {
 			setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRs()...)

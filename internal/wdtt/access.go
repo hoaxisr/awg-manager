@@ -128,15 +128,13 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	}
 	s.ensureWdttIngressRefs(ctx, cfg)
 
-	if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
-		return fmt.Errorf("wg client route: %w", err)
-	}
-
 	wanDev := ""
 	if mode == "internet-only" && newStaticWAN != "" && s.accessMgr != nil {
 		wanDev = s.accessMgr.KernelIfaceName(ctx, newStaticWAN)
 	}
 
+	// Entware NAT/FORWARD до wg-маршрута: raw/wdttraw0 должен форвардиться даже
+	// если ip route add на opkgtun гоняется с NDMS.
 	if cfg.needsEntwareNAT() {
 		if mode != "none" {
 			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
@@ -159,6 +157,10 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 				s.appLog.Warn("access", id, "LAN iptables: "+err.Error())
 			}
 		}
+	}
+
+	if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
+		return fmt.Errorf("wg client route: %w", err)
 	}
 
 	return nil

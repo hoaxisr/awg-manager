@@ -101,7 +101,23 @@ def patch_server_go(text: str) -> str:
     text = patch_listen_wrapped_batch(text)
     text = patch_stats_active_devices(text)
     text = patch_dtls_idle_timeout(text)
+    text = patch_get_next_ip_skip_gateway(text)
     return text
+
+
+def patch_get_next_ip_skip_gateway(text: str) -> str:
+    """OpkgTun gateway on Keenetic is 10.66.0.1 — must not be assigned to clients."""
+    old = '\t\t\tif ip == "10.66.66.1" {\n\t\t\t\tcontinue\n\t\t\t}'
+    new = (
+        '\t\t\tif ip == "10.66.66.1" || ip == "10.66.0.1" {\n'
+        "\t\t\t\tcontinue\n"
+        "\t\t\t}"
+    )
+    if old not in text:
+        if 'ip == "10.66.0.1"' in text:
+            return text
+        raise SystemExit("getNextIP gateway patch: anchor not found in server.go")
+    return text.replace(old, new, 1)
 
 
 def patch_stats_active_devices(text: str) -> str:

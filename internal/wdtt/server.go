@@ -42,6 +42,10 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// целиком и держит список снапшотом времени загрузки страницы: иначе
 	// любое сохранение воскрешало бы удалённых и теряло добавленных.
 	cfg.Clients = full.Servers[idx].Config.Clients
+	if err := validateServerMainPassword(cfg.Password, cfg.Clients); err != nil {
+		s.mu.Unlock()
+		return ServerConfig{}, err
+	}
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
 	cfg.Enabled = prevCfg.Enabled
 	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
@@ -215,6 +219,11 @@ func (s *Service) StartServerInstance(id string) error {
 	// panel.db собираем из wdtt.json до старта: сервер на старте перечитывает
 	// её в память, а при ошибке чтения затирает своим пустым состоянием.
 	s.restoreServerPanelUsers(id, cfgDir, cfg)
+	if n, err := purgeGatewayIPDevices(cfgDir); err != nil && s.appLog != nil {
+		s.appLog.Warn("panel", id, "очистка устройств с IP шлюза: "+err.Error())
+	} else if n > 0 && s.appLog != nil {
+		s.appLog.Warn("panel", id, fmt.Sprintf("удалено %d устройств с IP %s — клиент перерегистрируется", n, DefaultWdttServerGatewayAddr))
+	}
 	if err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, cfg.Clients); err != nil && s.appLog != nil {
 		s.appLog.Warn("panel", id, "passwords.json не записан: "+err.Error())
 	}
@@ -429,6 +438,21 @@ func (s *Service) setServerEnabled(id string, enabled bool) error {
 	}
 	full.Servers[idx].Config.Enabled = enabled
 	return s.store.Save(full)
+}
+
+// validateServerMainPassword rejects owner main password that equals a client password.
+// wdtt-server uses main_password for WRAP; matching a client hash breaks DTLS/WG handshakes.
+func validateServerMainPassword(main string, clients []ServerClient) error {
+	main = strings.TrimSpace(main)
+	if main == "" {
+		return nil
+	}
+	for _, c := range clients {
+		if strings.TrimSpace(c.Password) == main {
+			return errors.New("пароль сервера не должен совпадать с паролем клиента")
+		}
+	}
+	return nil
 }
 
 func normalizeServerConfig(cfg ServerConfig) ServerConfig {

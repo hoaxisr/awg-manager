@@ -6,13 +6,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
-const entwareNATComment = "AWGM_WDTT"
+const (
+	entwareNATComment            = "AWGM_WDTT"
+	wdttForwardNetfilterHookPath = "/opt/etc/ndm/netfilter.d/61-awgm-wdtt-forward.sh"
+)
 
 // entwareNATPresentForServer reports whether all planned NAT/FORWARD rules exist.
 func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, wanDev string) bool {
@@ -25,11 +30,11 @@ func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, wanDev st
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	if !strings.Contains(fwdOut, entwareNATComment) {
+	if !strings.Contains(fwdOut, entwareNATComment) && !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfaces()) {
 		return false
 	}
 	for _, iface := range cfg.serverEntwareNATIfaces() {
-		if !strings.Contains(fwdOut, iface) {
+		if !strings.Contains(fwdOut, iface) && !entwareForwardIfacesPresent(fwdOut, []string{iface}) {
 			return false
 		}
 	}
@@ -92,7 +97,12 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	}
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 
-	setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...)
+	if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...); err != nil {
+		return fmt.Errorf("entware FORWARD: %w", err)
+	}
+	if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfaces()); err != nil {
+		return fmt.Errorf("netfilter.d FORWARD: %w", err)
+	}
 	setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRs()...)
 
 	flushEntwareMasquerade(ctx)
@@ -142,6 +152,68 @@ func removeEntwareNATForServer(ctx context.Context, cfg ServerConfig) {
 	removeEntwareNATIfaces(ctx, cfg.serverEntwareNATIfaces()...)
 }
 
+func wdttForwardNetfilterHookScript(ifaces []string) string {
+	seen := make(map[string]bool, len(ifaces))
+	uniq := make([]string, 0, len(ifaces))
+	for _, iface := range ifaces {
+		iface = strings.TrimSpace(iface)
+		if iface == "" || seen[iface] {
+			continue
+		}
+		seen[iface] = true
+		uniq = append(uniq, iface)
+	}
+	sort.Strings(uniq)
+
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("# AWG Manager: FORWARD ACCEPT for WDTT kernel ifaces (survives NDMS reload).\n")
+	b.WriteString("[ \"$type\" = \"ip6tables\" ] && exit 0\n")
+	b.WriteString("[ \"$table\" = \"filter\" ] || exit 0\n")
+	b.WriteString("IPTABLES=/opt/sbin/iptables\n")
+	b.WriteString("[ -x \"$IPTABLES\" ] || IPTABLES=iptables\n")
+	b.WriteString("run() { \"$IPTABLES\" -w \"$@\" 2>/dev/null || \"$IPTABLES\" \"$@\" 2>/dev/null; }\n")
+	for _, iface := range uniq {
+		fmt.Fprintf(&b, "if /opt/sbin/ip link show %q >/dev/null 2>&1; then\n", iface)
+		fmt.Fprintf(&b, "  run -C FORWARD -i %q -j ACCEPT || run -I FORWARD 1 -i %q -j ACCEPT\n", iface, iface)
+		fmt.Fprintf(&b, "  run -C FORWARD -o %q -j ACCEPT || run -I FORWARD 1 -o %q -j ACCEPT\n", iface, iface)
+		b.WriteString("fi\n")
+	}
+	b.WriteString("exit 0\n")
+	return b.String()
+}
+
+func ensureWdttForwardNetfilterHook(ctx context.Context, ifaces []string) error {
+	ifaces = dedupeStrings(ifaces)
+	if len(ifaces) == 0 {
+		return nil
+	}
+	script := wdttForwardNetfilterHookScript(ifaces)
+	if err := storage.AtomicWritePerm(wdttForwardNetfilterHookPath, []byte(script), 0o755); err != nil {
+		return err
+	}
+	_, err := exec.Run(ctx, "sh", "-c", "table=filter type=iptables sh "+wdttForwardNetfilterHookPath)
+	return err
+}
+
+func removeWdttForwardNetfilterHook() {
+	_ = os.Remove(wdttForwardNetfilterHookPath)
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
 func removeEntwareNAT(ctx context.Context, wgIface string) {
 	removeEntwareNATIfaces(ctx, wgIface)
 }
@@ -181,19 +253,75 @@ func flushEntwareMasquerade(ctx context.Context) {
 	}
 }
 
-func setupEntwareForward(ctx context.Context, ifaces ...string) {
+func entwareForwardIfacesPresent(fwdOut string, ifaces []string) bool {
+	for _, iface := range ifaces {
+		iface = strings.TrimSpace(iface)
+		if iface == "" {
+			continue
+		}
+		in := false
+		out := false
+		for _, line := range strings.Split(fwdOut, "\n") {
+			if !strings.Contains(line, iface) {
+				continue
+			}
+			if strings.Contains(line, " -i "+iface+" ") || strings.HasSuffix(strings.TrimSpace(line), " -i "+iface) {
+				in = true
+			}
+			if strings.Contains(line, " -o "+iface+" ") || strings.HasSuffix(strings.TrimSpace(line), " -o "+iface) {
+				out = true
+			}
+		}
+		if !in || !out {
+			return false
+		}
+	}
+	return len(ifaces) > 0
+}
+
+func entwareForwardRulePresent(ctx context.Context, dir, iface string) bool {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return true
+	}
+	switch strings.TrimSpace(dir) {
+	case "-i", "-o":
+	default:
+		return false
+	}
+	return iptables.Run(ctx, "-C", "FORWARD", dir, iface, "-j", "ACCEPT") == nil
+}
+
+func ensureEntwareForwardRule(ctx context.Context, dir, iface string) error {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return nil
+	}
+	if entwareForwardRulePresent(ctx, dir, iface) {
+		return nil
+	}
+	// Без -m comment: на Keenetic xt_comment для FORWARD часто не ставится (#666).
+	if err := iptables.Run(ctx, "-I", "FORWARD", "1", dir, iface, "-j", "ACCEPT"); err != nil {
+		return fmt.Errorf("FORWARD %s %s: %w", dir, iface, err)
+	}
+	return nil
+}
+
+func setupEntwareForward(ctx context.Context, ifaces ...string) error {
+	var firstErr error
 	for _, wgIface := range ifaces {
 		wgIface = strings.TrimSpace(wgIface)
 		if wgIface == "" {
 			continue
 		}
-		for i := 0; i < 5; i++ {
-			_ = iptables.Run(ctx, "-D", "FORWARD", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-			_ = iptables.Run(ctx, "-D", "FORWARD", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		if err := ensureEntwareForwardRule(ctx, "-i", wgIface); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-i", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-		_ = iptables.Run(ctx, "-I", "FORWARD", "1", "-o", wgIface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		if err := ensureEntwareForwardRule(ctx, "-o", wgIface); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
 const entwareMSSChain = "awgm_wdtt_mangle"

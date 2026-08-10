@@ -120,9 +120,10 @@ const (
 	DefaultWdttIface       = "wdtt0"
 	DefaultWdttAddress     = "10.66.66.1"
 	DefaultWdttMask        = "255.255.255.0"
-	// DefaultWdttServerGateway* — NDMS OpkgTun: /16 совпадает с пулом monolith (10.66.0.x).
-	DefaultWdttServerGatewayAddr = "10.66.0.1"
-	DefaultWdttServerGatewayMask = "255.255.0.0"
+	// DefaultWdttServerGateway* — NDMS OpkgTun: шлюз 10.66.66.1/24, клиенты monolith 10.66.0.x.
+	// Нельзя 10.66.0.1/16: getNextIP выдаёт клиенту 10.66.0.1 — совпадение с local addr, нет NAT.
+	DefaultWdttServerGatewayAddr = "10.66.66.1"
+	DefaultWdttServerGatewayMask = "255.255.255.0"
 	DefaultRawServerIface  = "wdttraw0"
 	DefaultRawServerAddr   = "10.70.66.1"
 	DefaultRawServerMask   = "255.255.0.0"
