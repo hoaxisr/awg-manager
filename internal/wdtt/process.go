@@ -18,6 +18,13 @@ import (
 
 const startupGrace = 1500 * time.Millisecond
 
+// drainGrace — сколько ждать естественного EOF пайпов после реапа ребёнка,
+// прежде чем добить выживших членов группы и принудительно закрыть
+// read-концы. Должно быть меньше startupGrace: иначе ребёнок, умерший
+// мгновенно с выжившим хелпером, никогда не попадёт в ветку errCh раньше
+// startupGrace — Start() вернёт ложный nil («успех»), а не ошибку старта.
+const drainGrace = 1 * time.Second
+
 type process struct {
 	name    string
 	binary  string
@@ -104,6 +111,7 @@ func (p *process) Start(args []string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("wdtt %s: start: %w", p.name, err)
 	}
+	pid := cmd.Process.Pid
 
 	var drainWG sync.WaitGroup
 	drainWG.Add(2)
@@ -119,35 +127,43 @@ func (p *process) Start(args []string) error {
 		if waitErr == nil && state != nil && !state.Success() {
 			waitErr = &exec.ExitError{ProcessState: state}
 		}
-		// Дать drain'ам дочитать хвост; если пайп держит выживший хелпер —
-		// принудительно закрыть read-концы, чтобы не течь горутинами.
+		// Дать drain'ам дочитать хвост естественным EOF; если пайп держит
+		// выживший хелпер — добить всю группу (pgid ребёнка не
+		// переиспользуется, пока в ней есть живые члены — заодно даёт
+		// честный EOF) и принудительно закрыть read-концы, чтобы не течь
+		// горутинами drain.
 		done := make(chan struct{})
 		go func() { drainWG.Wait(); close(done) }()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(drainGrace):
+			_ = childproc.KillGroup(pid)
 			_ = stdout.Close()
 			_ = stderr.Close()
 			<-done
 		}
+		// cmd.Wait() раньше закрывал parent-концы пайпов сам; теперь его
+		// нет (двойной wait — ошибка), закрываем явно на ОБЕИХ ветках —
+		// иначе на штатном пути (EOF раньше drainGrace) read-концы никто
+		// не закрывает, и они текут до GC.
+		_ = stdout.Close()
+		_ = stderr.Close()
 		errCh <- waitErr
 	}()
-	// cmd.Wait() после этого не вызывается нигде — cmd.Process.Wait() выше
-	// уже реапнул ребёнка (двойной wait — ошибка).
 
-	if err := p.writePID(cmd.Process.Pid); err != nil {
-		_ = childproc.TerminateGroup(cmd.Process.Pid)
+	if err := p.writePID(pid); err != nil {
+		_ = childproc.TerminateGroup(pid)
 		<-errCh
 		return fmt.Errorf("wdtt %s: pidfile: %w", p.name, err)
 	}
 
-	myPid := cmd.Process.Pid
+	myPid := pid
 
 	select {
 	case waitErr := <-errCh:
 		p.cleanupPidIfOurs(myPid)
-		// К моменту получения из errCh drain'ы гарантированно завершены (Wait
-		// вызывается после drainWG.Wait()), хвост stderr уже в logTail.
+		// К моменту получения из errCh drain'ы гарантированно завершены
+		// (errCh получает значение только после <-done в горутине выше).
 		msg := strings.TrimSpace(p.logTail.LastLines(30))
 		if msg == "" && waitErr != nil {
 			msg = waitErr.Error()

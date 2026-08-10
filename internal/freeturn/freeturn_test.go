@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -494,10 +495,10 @@ func TestProcess_StartKeepsForeignPID(t *testing.T) {
 
 // TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF — репро зомби-бага
 // (симметрично internal/wdtt): ребёнок форкает фонового хелпера (sleep 60),
-// унаследовавшего stderr, и сразу выходит. Хелпер живёт дольше startupGrace
-// (1.5с), поэтому Start() возвращается через ветку time.After(startupGrace) —
-// это свойство гонки select'ов, не признак бага, содержимое ошибки не
-// проверяем. Дискриминатор — реап процесса и самоисправление IsRunning().
+// унаследовавшего stderr, и сразу выходит. drainGrace (1с) < startupGrace
+// (1.5с), поэтому errCh на исправленном коде успевает раньше внешнего
+// грейса: Start() должен вернуть ошибку старта, а не ложный nil. Ещё
+// дискриминатор — реап процесса и самоисправление IsRunning().
 func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
 	var capturedCmd *exec.Cmd
 	p := newProcess("client", "/bin/sh", t.TempDir())
@@ -510,8 +511,9 @@ func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
 	done := make(chan result, 1)
 	go func() { done <- result{p.Start(nil)} }()
 
+	var r result
 	select {
-	case <-done:
+	case r = <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start() не вернулся за 5с — жнец гейтится на EOF пайпов орфан-хелпера (зомби-баг)")
 	}
@@ -522,8 +524,12 @@ func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
 	pid := capturedCmd.Process.Pid
 	// Хелпер (sleep 60) — сирота в той же группе (Setsid лидер = наш прямой
 	// ребёнок): -pid валит всю группу. Гигиена теста, не часть проверяемого
-	// поведения.
+	// поведения (фикс уже должен был убить группу сам через drainGrace-фолбэк).
 	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	if r.err == nil || !strings.Contains(r.err.Error(), "exited during startup") {
+		t.Fatalf("want ошибку «exited during startup» быстро (drainGrace < startupGrace), got %v", r.err)
+	}
 
 	if state, ok := freeturnProcStatState(pid); ok && state == "Z" {
 		t.Fatalf("pid %d остался зомби сразу после возврата Start() — реап гейтится на EOF пайпов", pid)
@@ -543,6 +549,77 @@ func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
 	case <-notRunning:
 	case <-time.After(5 * time.Second):
 		t.Fatal("IsRunning() всё ещё true спустя 5с — не самоисправляется, пока жив орфан-хелпер (зомби-баг, супервизор не увидит смерть процесса)")
+	}
+}
+
+// TestProcess_FallbackBranch_KillsSurvivingHelperGroup — упрощённая версия
+// internal/wdtt.TestProcess_FallbackBranch_KillsSurvivingHelperGroup (код
+// Start() скопирован, сценарий и дискриминатор те же): ребёнок печатает pid
+// хелпера в stderr и сразу выходит; хелпер держит stderr дольше drainGrace,
+// поэтому фолбэк обязан убить всю группу (childproc.KillGroup).
+func TestProcess_FallbackBranch_KillsSurvivingHelperGroup(t *testing.T) {
+	var capturedCmd *exec.Cmd
+	p := newProcess("client", "/bin/sh", t.TempDir())
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		capturedCmd = exec.Command("/bin/sh", "-c",
+			"sleep 60 <&- >&2 2>&2 &\necho \"HELPERPID=$!\" >&2\nexit 0")
+		return capturedCmd
+	}
+
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() { done <- result{p.Start(nil)} }()
+
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() не вернулся за 5с")
+	}
+	if r.err == nil || !strings.Contains(r.err.Error(), "exited during startup") {
+		t.Fatalf("want ошибку «exited during startup», got %v", r.err)
+	}
+
+	if capturedCmd == nil || capturedCmd.Process == nil {
+		t.Fatal("cmd.Process не установлен")
+	}
+	pid := capturedCmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) }) // страховка
+
+	log := p.Status().Log
+	const marker = "HELPERPID="
+	i := strings.Index(log, marker)
+	if i < 0 {
+		t.Fatalf("хвост stderr хелпера не попал в лог: %q", log)
+	}
+	helperPID, err := strconv.Atoi(strings.Fields(log[i+len(marker):])[0])
+	if err != nil {
+		t.Fatalf("не удалось распарсить HELPERPID из лога %q: %v", log, err)
+	}
+
+	// Не childproc.IsAlive: kill(pid,0) успешен и для зомби. И не голый
+	// /proc/pid/stat: реап сироты — дело внешнего субридера (init), не
+	// мгновенное, а pid к этому моменту мог быть переиспользован ДРУГИМ
+	// процессом (гонка на нагруженной машине, не признак незаконченного
+	// kill). MatchesBinary по cmdline: false и для зомби (cmdline пуст), и
+	// для чужого процесса — true только если ЖИВОЙ pid всё ещё "sleep".
+	//
+	// SIGKILL уже отправлен (KillGroup внутри Start() синхронно завершился
+	// до его возврата) — но доставка сигнала асинхронна: между kill() и
+	// фактическим уходом жертвы из «живого» состояния есть окно в
+	// миллисекунды (шире под нагрузкой). Поэтому — короткий bounded-poll, а
+	// не одна синхронная проверка сразу после возврата Start().
+	killed := make(chan struct{})
+	go func() {
+		for childproc.MatchesBinary(helperPID, "sleep") {
+			time.Sleep(20 * time.Millisecond)
+		}
+		close(killed)
+	}()
+	select {
+	case <-killed:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("хелпер (pid %d) всё ещё выполняется как sleep спустя 2с — group-kill не сработал", helperPID)
 	}
 }
 
