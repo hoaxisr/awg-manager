@@ -80,7 +80,8 @@ func TestWdttNetfilterHookScript(t *testing.T) {
 func TestWdttNetfilterHookScriptShellSyntax(t *testing.T) {
 	spec := wdttNetfilterSpec{ForwardIfaces: []string{"wdttraw0"},
 		DNS:  []wdttDNSSpec{{Iface: "wdttraw0", Gateway: "10.70.66.1"}},
-		Masq: []entwareNATPlan{{Iface: "wdttraw0", CIDR: "10.70.0.0/16"}}, MasqMode: "full"}
+		Masq: []entwareNATPlan{{Iface: "wdttraw0", CIDR: "10.70.0.0/16"}}, MasqMode: "full",
+		RawPolicyMark: "0xffffaaf"}
 	path := filepath.Join(t.TempDir(), "hook.sh")
 	if err := os.WriteFile(path, []byte(wdttNetfilterHookScript(spec)), 0o755); err != nil {
 		t.Fatal(err)

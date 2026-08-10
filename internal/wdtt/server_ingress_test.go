@@ -28,7 +28,7 @@ func TestEnsureWdttIngressRefs(t *testing.T) {
 	if !containsString(next, "iface:wdttraw0") {
 		t.Fatalf("next = %v", next)
 	}
-	if containsString(next, "managed:Wireguard3") {
+	if !containsString(next, "managed:Wireguard3") {
 		t.Fatalf("must preserve unrelated refs: %v", next)
 	}
 

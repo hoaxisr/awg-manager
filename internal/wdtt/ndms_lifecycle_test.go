@@ -98,7 +98,7 @@ func TestPrepareNDMSOpkgTunDoesNotSetAddress(t *testing.T) {
 	if i := fake.index("address "); i >= 0 {
 		t.Fatalf("prepare выставил адрес до появления kernel-интерфейса: %v", fake.calls)
 	}
-	if fake.index("create OpkgTun17 private") < 0 {
+	if fake.index("create OpkgTun17 "+wdttOpkgDescription+" private") < 0 {
 		t.Fatalf("ожидали create с security-level private, получили %v", fake.calls)
 	}
 

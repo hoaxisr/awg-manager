@@ -171,8 +171,12 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 		}
 	}
 
-	if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
-		return fmt.Errorf("wg client route: %w", err)
+	// На NDMS-пути адрес OpkgTun = 10.66.0.1/16 (PR #697, F2) — connected-маршрут
+	// сети интерфейса уже покрывает весь пул клиентов, ручной ip route add избыточен.
+	if !useNDMS {
+		if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
+			return fmt.Errorf("wg client route: %w", err)
+		}
 	}
 
 	return nil
