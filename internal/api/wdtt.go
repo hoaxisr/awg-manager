@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -28,6 +29,9 @@ type WdttService interface {
 	RefreshSubscription(id string) (wdtt.ClientInstance, wdtt.ImportPayload, error)
 	UpdateServerConfig(wdtt.ServerConfig) error
 	UpdateServerInstance(id string, cfg wdtt.ServerConfig) (wdtt.ServerConfig, error)
+	SetServerNATMode(ctx context.Context, id, mode string) (wdtt.ServerConfig, error)
+	SetServerPolicy(ctx context.Context, id, policy string) (wdtt.ServerConfig, error)
+	SetServerLANSegments(ctx context.Context, id string, segments []string) (wdtt.ServerConfig, error)
 	CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error)
 	DeleteServer(id string) error
 	RenameServer(id, name string) error
@@ -176,6 +180,10 @@ func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.StartClient(); err != nil {
+		if errors.Is(err, wdtt.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "WDTT_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
@@ -324,6 +332,8 @@ func (h *WdttHandler) ServeClients(w http.ResponseWriter, r *http.Request) {
 		h.importClientInstance(w, r, id)
 	case len(sub) == 1 && sub[0] == "ensure-wg-tunnel":
 		h.ensureWGTunnel(w, r, id)
+	case len(sub) == 1 && sub[0] == "ensure-raw-tunnel":
+		h.ensureRawTunnel(w, r, id)
 	case len(sub) == 2 && sub[0] == "subscription" && sub[1] == "refresh":
 		h.refreshSubscription(w, r, id)
 	case len(sub) == 2 && sub[0] == "linked-tunnels" && sub[1] == "clear":
@@ -436,6 +446,10 @@ func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.StartClientInstance(id); err != nil {
+		if errors.Is(err, wdtt.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "WDTT_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}

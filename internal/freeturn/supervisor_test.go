@@ -107,16 +107,241 @@ func TestStartServerKeepsBackoff(t *testing.T) {
 	}
 }
 
+// W3+ B: пользователь чинит конфиг сервера через публичный UpdateServerInstance
+// (API PUT) после серии health-эскалаций — ждать оставшееся окно
+// health-backoff (до 15 мин) он не должен, симметрично клиентскому
+// TestUpdateConfigClearsBackoff. Внутренний путь (StartServerInstance зовёт
+// UpdateServerInstance сам для нормализации listen) health-backoff трогать не
+// должен — иначе окно обнулялось бы на каждой попытке супервизора, симметрично
+// TestStartServerKeepsBackoff (там про serverKey, здесь про serverHealthKey).
+func TestUpdateServerInstancePublicClearsHealthBackoffInternalDoesNot(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	now := time.Now()
+
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), now)
+	if err := s.UpdateServerInstance(DefaultInstanceID, validServerCfg()); err != nil {
+		t.Fatal(err)
+	}
+	if !s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), now) {
+		t.Fatal("публичный UpdateServerInstance должен снимать health-backoff")
+	}
+
+	sleepSeam(s.serverProcs.get(DefaultInstanceID))
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), now)
+	if err := s.StartServerInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), now) {
+		t.Fatal("внутренний путь (StartServerInstance) не должен снимать health-backoff")
+	}
+}
+
+// F3: DeleteClient обязан забывать не только стартовый backoff (clientKey), но
+// и health-backoff (clientHealthKey), заведённый этим раундом.
 func TestDeleteClientForgetsBackoff(t *testing.T) {
 	s := enabledClientService(t, "")
 	defer s.Stop()
 
 	s.superviseEnabled(context.Background())
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
 	if err := s.DeleteClient(DefaultInstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
 		t.Fatal("состояние удалённого инстанса не должно оставаться в памяти")
+	}
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("health-backoff удалённого инстанса не должен оставаться в памяти")
+	}
+}
+
+// I2: рестарт по relayBad не должен игнорировать backoff — если предыдущий
+// health-рестарт уже исчерпал окно, новый рестарт на этом тике не происходит
+// (обрыв живых DTLS-потоков рестартом на каждом тике недопустим).
+func TestSuperviseRelayBadGatedByBackoff(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	defer s.Stop()
+	proc := s.clientProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &past
+
+	s.SetRelayProbe(fakeRelayProbe{ok: map[string]bool{"awg0": false}}) // проба всегда падает
+	s.SetLinkedTunnelResolver(fakeLinkedTunnels{iface: "awg0", ok: true})
+
+	before := proc.Status().StartedAt
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes; i++ {
+		s.superviseEnabled(ctx)
+	}
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("backoff-отказ должен был запретить рестарт по relayBad")
+	}
+}
+
+// (а): серверный health-рестарт (serverPeerUnhealthy → restartServerInstance)
+// тоже обязан идти через backoff — иначе мёртвый backend WG рестартовал бы
+// сервер каждый раз, как только strike-трекер снова доходит до порога.
+func TestSuperviseServerHealthGatedByBackoff(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	if err := s.UpdateServerConfig(validServerCfg()); err != nil {
+		t.Fatal(err)
+	}
+	proc := s.serverProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartServerInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &past
+	for i := 0; i < handshakeFailMinCount; i++ {
+		proc.logTail.WriteLine("2026/08/10 00:00:00 Handshake failed with peer")
+	}
+
+	before := proc.Status().StartedAt
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes; i++ {
+		s.superviseEnabled(ctx)
+	}
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("backoff-отказ должен был запретить рестарт сервера по serverPeerUnhealthy")
+	}
+}
+
+// F4 (сервер, симметрично клиентскому): Success по serverHealthKey ставится
+// только после clientHealthGrace на чистом предикате, а не при каждом «ещё
+// рано» отрицательном результате.
+func TestSuperviseServerTrueRecoveryClearsBackoffOnlyAfterGrace(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	if err := s.UpdateServerConfig(validServerCfg()); err != nil {
+		t.Fatal(err)
+	}
+	proc := s.serverProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartServerInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	fresh := time.Now().Add(-time.Minute) // меньше clientHealthGrace (3 мин)
+	proc.startedAt = &fresh
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	s.superviseEnabled(ctx)
+	if s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("Success не должен ставиться до истечения clientHealthGrace")
+	}
+
+	settled := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &settled
+	s.superviseEnabled(ctx)
+	if !s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("после clientHealthGrace на чистом предикате backoff должен сброситься")
+	}
+}
+
+// F4: настоящее выздоровление клиента обнуляет backoff только ПОСЛЕ
+// clientHealthGrace — удаление grace-условия в супервизоре уронит первую
+// проверку этого теста.
+func TestSuperviseTrueRecoveryClearsBackoffOnlyAfterGrace(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	defer s.Stop()
+	proc := s.clientProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	fresh := time.Now().Add(-time.Minute) // меньше clientHealthGrace (3 мин)
+	proc.startedAt = &fresh
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	s.superviseEnabled(ctx)
+	if s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("Success не должен ставиться до истечения clientHealthGrace")
+	}
+
+	settled := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &settled
+	s.superviseEnabled(ctx)
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("после clientHealthGrace на чистых предикатах backoff должен сброситься")
+	}
+}
+
+// M2 (симметрично wdtt, F6): основная ветка супервизора («процесс мёртв или
+// без StartedAt») обязана уважать per-client guard — иначе, пока API-старт
+// этого же клиента ещё не дошёл до proc.Start (st.Running всё ещё false),
+// тик супервизора запустил бы параллельный StartClientInstance.
+func TestSuperviseSkipsDeadClientStartWhileOwnStartInFlight(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+	defer s.Stop()
+
+	s.beginClientStart(DefaultInstanceID) // старт этого клиента уже идёт (например, через API)
+	s.superviseEnabled(context.Background())
+	s.endClientStart(DefaultInstanceID)
+
+	if running, _ := s.clientProcs.get(DefaultInstanceID).IsRunning(); running {
+		t.Fatal("супервизор не должен был запускать клиента параллельно его собственному in-flight старту")
+	}
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип по in-flight не должен тратить backoff-окно старта")
+	}
+}
+
+// F6 (симметрично wdtt): пока клиент сам мид-флайт стартует (например, через
+// API), эскалация в restartClientInstance должна придерживаться — иначе
+// StartClientInstance гоняется параллельно самому себе. Страйки при этом
+// продолжают копиться, а backoff-окно скип не должен тратить.
+func TestSuperviseEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	defer s.Stop()
+	proc := s.clientProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &past
+
+	s.SetRelayProbe(fakeRelayProbe{ok: map[string]bool{"awg0": false}}) // проба всегда падает
+	s.SetLinkedTunnelResolver(fakeLinkedTunnels{iface: "awg0", ok: true})
+
+	before := proc.Status().StartedAt
+
+	s.beginClientStart(DefaultInstanceID) // симулируем идущий собственный старт
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes+2; i++ {
+		s.superviseEnabled(ctx)
+	}
+	s.endClientStart(DefaultInstanceID)
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("рестарт не должен был случиться, пока идёт собственный старт клиента")
+	}
+	if strikes := s.clientHealth.strikes[DefaultInstanceID]; strikes < clientHealthStrikes {
+		t.Fatalf("страйки должны продолжать копиться несмотря на скип эскалации, strikes=%d", strikes)
+	}
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип эскалации по in-flight не должен тратить backoff-окно")
 	}
 }
 

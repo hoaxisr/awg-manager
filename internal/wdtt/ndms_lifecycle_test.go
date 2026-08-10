@@ -12,19 +12,36 @@ import (
 type fakeOpkgCommands struct {
 	calls     []string
 	deleteErr error
+	// mtuErrOn — если > 0, N-й по счёту вызов SetMTU (1-based) возвращает
+	// mtuErr вместо nil; нужно для симуляции отказа повторного prepare.
+	mtuErrOn int
+	mtuErr   error
+	mtuCalls int
 }
 
 func (f *fakeOpkgCommands) rec(format string, args ...any) {
 	f.calls = append(f.calls, fmt.Sprintf(format, args...))
 }
 
-func (f *fakeOpkgCommands) CreateOpkgTunWithSecurityLevel(_ context.Context, name, _, level string) error {
-	f.rec("create %s %s", name, level)
+func (f *fakeOpkgCommands) CreateOpkgTunWithSecurityLevel(_ context.Context, name, desc, level string) error {
+	f.rec("create %s %s %s", name, desc, level)
+	return nil
+}
+func (f *fakeOpkgCommands) SetDescription(_ context.Context, name, desc string) error {
+	f.rec("description %s %s", name, desc)
 	return nil
 }
 func (f *fakeOpkgCommands) DeleteOpkgTun(_ context.Context, name string) error {
 	f.rec("delete %s", name)
 	return f.deleteErr
+}
+func (f *fakeOpkgCommands) SetSecurityLevel(_ context.Context, name, level string) error {
+	f.rec("security %s %s", name, level)
+	return nil
+}
+func (f *fakeOpkgCommands) SetIPGlobal(_ context.Context, name string) error {
+	f.rec("ip-global %s", name)
+	return nil
 }
 func (f *fakeOpkgCommands) SetAddress(_ context.Context, name, addr, _ string) error {
 	f.rec("address %s %s", name, addr)
@@ -36,6 +53,10 @@ func (f *fakeOpkgCommands) ClearAddress(_ context.Context, name string) error {
 }
 func (f *fakeOpkgCommands) SetMTU(_ context.Context, name string, mtu int) error {
 	f.rec("mtu %s %d", name, mtu)
+	f.mtuCalls++
+	if f.mtuErrOn > 0 && f.mtuCalls == f.mtuErrOn {
+		return f.mtuErr
+	}
 	return nil
 }
 func (f *fakeOpkgCommands) InterfaceUp(_ context.Context, name string) error {
@@ -86,7 +107,7 @@ func TestPrepareNDMSOpkgTunDoesNotSetAddress(t *testing.T) {
 	if i := fake.index("address "); i >= 0 {
 		t.Fatalf("prepare выставил адрес до появления kernel-интерфейса: %v", fake.calls)
 	}
-	if fake.index("create OpkgTun17 private") < 0 {
+	if fake.index("create OpkgTun17 "+wdttOpkgDescription+" private") < 0 {
 		t.Fatalf("ожидали create с security-level private, получили %v", fake.calls)
 	}
 
@@ -179,7 +200,7 @@ func TestReapSkipsWhileStartInFlight(t *testing.T) {
 func TestWdttPeerCIDRIsNormalizedNetwork(t *testing.T) {
 	// iptables -S печатает сеть, а не адрес с маской: несовпадение делало
 	// entwareLANPresent вечно ложным, и ресинк переписывал правила каждые 15 с.
-	if got := wdttPeerCIDR(); got != "10.66.66.0/24" {
-		t.Fatalf("wdttPeerCIDR() = %q, want 10.66.66.0/24", got)
+	if got := wdttPeerCIDR(); got != "10.66.0.0/16" {
+		t.Fatalf("wdttPeerCIDR() = %q, want 10.66.0.0/16", got)
 	}
 }

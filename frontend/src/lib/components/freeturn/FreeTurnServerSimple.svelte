@@ -21,6 +21,8 @@
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
 	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
@@ -97,6 +99,7 @@
 	let opsTab = $state<ServerTab>('main');
 	let quickActive = $state('wg');
 	let keeneticPeerSelected = $state(false);
+	let wizardOpen = $state(false);
 
 	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56000)));
 
@@ -125,9 +128,12 @@
 			running,
 			startedAt: status?.startedAt,
 			enabled: server.enabled,
-			generatedLink
+			generatedLink,
+			setupComplete: step1Done && obfReady
 		})
 	);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'wg', label: 'WireGuard · obf', done: wgStepDone },
@@ -222,13 +228,11 @@
 		if (!wgStepDone && quickActive !== 'wg') quickActive = 'wg';
 	});
 
-	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
+	/** Запущенный сервер: «Раздача» при смене инстанса, кроме вкладки «Журнал». */
 	$effect(() => {
 		serverInstanceId;
-		// Только на смену инстанса: иначе рестарт сервера (running false→true из
-		// поллинга) утаскивал бы пользователя с других вкладок.
 		untrack(() => {
-			if (opsMode && running) opsTab = 'links';
+			if (opsMode && running && opsTab !== 'log') opsTab = 'links';
 		});
 	});
 
@@ -339,13 +343,14 @@
 <div class="ft-simple-wrap">
 	<p class="ft-simple-lead">FreeTurn-сервер: WG-пир → obf → ссылка freeturn:// для клиентов.</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
 			meta={`listen :${listenPort}`}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
 			{#snippet metaExtra()}
 				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
@@ -377,7 +382,7 @@
 						{#if obfHint}
 							<p class="ft-hint">{obfHint}</p>
 						{/if}
-						<Input label="Ключ (-obf-key)" type="password" bind:value={server.obfKey} placeholder="64 hex" />
+						<SensitiveInput label="Ключ (-obf-key)" bind:value={server.obfKey} placeholder="64 hex" />
 						<Button variant="ghost" size="sm" onclick={() => (server.obfKey = randomObfKeyHex())}>
 							Сгенерировать ключ
 						</Button>
@@ -450,6 +455,8 @@
 			{canSave}
 			{canStart}
 			saveLabel={statusSaveLabel}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={mainTabNext ? saveAndGoToLinks : saveOnly}
 			onToggle={onToggle}
 		/>
@@ -471,7 +478,7 @@
 					}}
 				/>
 				<Dropdown label="Obf profile" bind:value={server.obfProfile} options={obfOptions} />
-				<Input type="password" bind:value={server.obfKey} />
+				<SensitiveInput label="Obf key" bind:value={server.obfKey} placeholder="64 hex" />
 				<p class="ft-readonly">
 					Listen: <code>{server.listen || '0.0.0.0:56000'}</code>
 					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
@@ -490,6 +497,15 @@
 						await onSave(server);
 					}}
 				/>
+				{#if isExpert}
+					<Input label="Connect (-connect)" bind:value={server.connect} placeholder="peer:port для WG" />
+					<Dropdown label="Mode (-mode)" bind:value={server.mode} options={[
+						{ value: 'udp', label: 'udp' },
+						{ value: 'tcp', label: 'tcp' }
+					]} />
+					<Input label="Clients file (-clients-file)" bind:value={server.clientsFile} />
+					<Toggle label="Debug (-debug)" checked={!!server.debug} onchange={(v) => (server.debug = v)} />
+				{/if}
 				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
 					{mainTabNext ? 'Далее' : 'Сохранить'}
 				</Button>
@@ -537,6 +553,9 @@
 					{selectedInstanceId}
 					{onSelectInstance}
 				/>
+				{#if !running && server.debug}
+					<p class="ft-debug-hint">Сохраните настройки и запустите сервер — флаг -debug применяется при старте процесса.</p>
+				{/if}
 			</section>
 		{/if}
 	{/if}

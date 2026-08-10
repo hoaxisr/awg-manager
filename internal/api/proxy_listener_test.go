@@ -32,6 +32,11 @@ func testProxyListenerHandler() *ProxyListenerHandler {
 	}}
 	wd := stubWdttConfig{cfg: wdtt.Config{
 		Clients: []wdtt.ClientInstance{{ID: "default", Config: wdtt.ClientConfig{Listen: "127.0.0.1:9100"}}},
+		Servers: []wdtt.ServerInstance{{ID: "default", Config: wdtt.ServerConfig{
+			Listen:    "0.0.0.0:56002",
+			RawListen: "0.0.0.0:56013",
+			WgPort:    56001,
+		}}},
 	}}
 	return NewProxyListenerHandler(ft, wd)
 }
@@ -47,6 +52,15 @@ func TestProxyListenerOwnsOnlyConfiguredPorts(t *testing.T) {
 	}
 	if !h.ownsListener(56000, procport.ProtoTCP) {
 		t.Fatal("tcp-сервер freeturn должен считаться своим")
+	}
+	if !h.ownsListener(56002, procport.ProtoUDP) {
+		t.Fatal("dtls wdtt-сервера должен считаться своим")
+	}
+	if !h.ownsListener(56013, procport.ProtoUDP) {
+		t.Fatal("raw wdtt-сервера должен считаться своим")
+	}
+	if !h.ownsListener(56001, procport.ProtoUDP) {
+		t.Fatal("wg internal wdtt-сервера должен считаться своим")
 	}
 	if h.ownsListener(56000, procport.ProtoUDP) {
 		t.Fatal("протокол обязан совпадать: udp-сокет на tcp-порту сервера — чужой")

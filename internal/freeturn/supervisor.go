@@ -2,6 +2,7 @@ package freeturn
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxysup"
@@ -51,6 +52,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		if !c.Config.Enabled {
 			s.clientHealth.reset(c.ID)
 			s.startBackoff.Forget(key)
+			s.startBackoff.Forget(clientHealthKey(c.ID))
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
@@ -59,10 +61,22 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
 		// Лечится обычным стартом — process.Start усыновляет такой процесс.
 		if !st.Running || st.StartedAt == nil {
+			// F6: StartClientInstance этого клиента уже идёт где-то ещё (API —
+			// процесс мог не успеть пройти proc.Start, st.Running всё ещё false)
+			// — не запускать параллельный старт.
+			if s.clientStartInFlight(c.ID) {
+				continue
+			}
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
 			if err := s.StartClientInstance(c.ID); err != nil {
+				// ErrClientStartInFlight — TryLock проиграл гонку со стартом того
+				// же клиента откуда-то ещё: это не провал старта, жечь backoff-окно
+				// не за что.
+				if errors.Is(err, ErrClientStartInFlight) {
+					continue
+				}
 				s.startBackoff.Fail(key, now)
 				if s.appLog != nil {
 					s.appLog.Warn("supervisor", c.ID, "перезапуск клиента: "+err.Error())
@@ -76,15 +90,51 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
+		peerBad := clientPeerUnhealthy(st, now)
+		relayBad := clientRelayUnhealthy(ctx, s.relayProbe, s.linkedTunnels, c.ID, st, now)
+		unhealthy := peerBad || relayBad
+		if s.clientHealth.note(c.ID, unhealthy) {
+			healthKey := clientHealthKey(c.ID)
+			if !s.startBackoff.Allow(healthKey, now) {
+				continue
+			}
+			// F6: клиент сам мид-флайт стартует (StartClientInstance где-то ещё
+			// в процессе — API или сам супервизор) — не гонять рестарт
+			// параллельно тому же старту. Страйк уже учтён note() выше и
+			// остаётся накопленным, backoff-окно не трогаем — переоценим на
+			// следующем тике.
+			if s.clientStartInFlight(c.ID) {
+				continue
+			}
+			// Сам факт повторного выбивания порога после предыдущего
+			// health-рестарта — уже неудача backoff'а, независимо от того,
+			// стартует ли процесс технически: иначе рестарт при мёртвом
+			// check-URL/серверной стороне повторялся бы каждые ~3.5 мин без
+			// роста паузы, обрывая живые DTLS-потоки на ровном месте.
+			s.startBackoff.Fail(healthKey, now)
+			reason := "нет активных DTLS-сессий"
+			if relayBad && !peerBad {
+				reason = "linked-туннель не проходит проверку связи"
+			}
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
+					if errors.Is(err, ErrClientStartInFlight) {
+						s.appLog.Info("health", c.ID, "перезапуск пропущен: старт клиента уже выполняется")
+					} else {
+						s.appLog.Warn("health", c.ID, reason+", перезапуск: "+err.Error())
+					}
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: нет активных DTLS-сессий")
+				s.appLog.Info("health", c.ID, "клиент перезапущен: "+reason)
 			}
 			s.clientHealth.reset(c.ID)
+			continue
+		}
+		if !unhealthy && st.StartedAt != nil && now.Sub(*st.StartedAt) >= clientHealthGrace {
+			// Health-предикаты чисты, и с последнего старта прошло достаточно,
+			// чтобы relay-grace (короче) тоже успел дать реальный сигнал —
+			// настоящее выздоровление, backoff можно обнулять.
+			s.startBackoff.Success(clientHealthKey(c.ID))
 		}
 	}
 	for _, srv := range full.Servers {
@@ -94,29 +144,55 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		key := serverKey(srv.ID)
 		if !srv.Config.Enabled {
 			s.startBackoff.Forget(key)
+			s.startBackoff.Forget(serverHealthKey(srv.ID))
+			s.serverHealth.reset(srv.ID)
 			continue
 		}
-		st := s.serverProcs.get(srv.ID).Status()
-		if st.Running && st.StartedAt != nil {
-			s.startBackoff.Success(key)
-			continue
-		}
-		// Осиротевший сервер (Running без StartedAt) — как и клиент, лечится
-		// обычным стартом; Stop до проверки backoff гасил бы рабочий процесс
-		// на всё окно ожидания.
-		if !s.startBackoff.Allow(key, now) {
-			continue
-		}
-		if err := s.StartServerInstance(srv.ID); err != nil {
-			s.startBackoff.Fail(key, now)
-			if s.appLog != nil {
-				s.appLog.Warn("supervisor", srv.ID, "перезапуск сервера: "+err.Error())
+		proc := s.serverProcs.get(srv.ID)
+		st := proc.Status()
+		if !st.Running || st.StartedAt == nil {
+			if !s.startBackoff.Allow(key, now) {
+				continue
 			}
-		} else {
-			s.startBackoff.Success(key)
-			if s.appLog != nil {
-				s.appLog.Info("supervisor", srv.ID, "сервер перезапущен")
+			if err := s.StartServerInstance(srv.ID); err != nil {
+				s.startBackoff.Fail(key, now)
+				if s.appLog != nil {
+					s.appLog.Warn("supervisor", srv.ID, "перезапуск сервера: "+err.Error())
+				}
+			} else {
+				s.startBackoff.Success(key)
+				if s.appLog != nil {
+					s.appLog.Info("supervisor", srv.ID, "сервер перезапущен")
+				}
 			}
+			continue
+		}
+		s.startBackoff.Success(key)
+		srvBad := serverPeerUnhealthy(st, now)
+		if s.serverHealth.note(srv.ID, srvBad) {
+			healthKey := serverHealthKey(srv.ID)
+			if !s.startBackoff.Allow(healthKey, now) {
+				continue
+			}
+			// Симметрично клиентскому I2: сам факт повторного выбивания порога
+			// после предыдущего health-рестарта — уже неудача backoff'а. Мёртвый
+			// backend WG на сервере иначе рестартовал бы раз в ~5 мин навсегда.
+			s.startBackoff.Fail(healthKey, now)
+			if err := s.restartServerInstance(srv.ID); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("health", srv.ID, "peer недоступен, перезапуск: "+err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("health", srv.ID, "сервер перезапущен: handshake/peer недоступен")
+			}
+			s.serverHealth.reset(srv.ID)
+			continue
+		}
+		if !srvBad && st.StartedAt != nil && now.Sub(*st.StartedAt) >= clientHealthGrace {
+			// Настоящее выздоровление (симметрично клиентскому блоку выше) —
+			// с последнего старта прошёл grace, и предикат чист не потому что
+			// «ещё рано».
+			s.startBackoff.Success(serverHealthKey(srv.ID))
 		}
 	}
 }
@@ -127,3 +203,15 @@ func newStartBackoff() *proxysup.Backoff {
 
 func clientKey(id string) string { return "client:" + id }
 func serverKey(id string) string { return "server:" + id }
+
+// clientHealthKey — отдельное пространство ключей backoff для health-рестартов
+// (peerBad/relayBad), отдельное от clientKey: тот сбрасывается безусловно на
+// каждом тике с живым процессом (см. Success(key) выше) и стёр бы
+// health-backoff раньше, чем он успеет отработать.
+func clientHealthKey(id string) string { return "health-client:" + id }
+
+// serverHealthKey — отдельное пространство ключей backoff для серверных
+// health-рестартов (а): отдельно от serverKey по той же причине, что и
+// clientHealthKey от clientKey — serverKey безусловно получает Success() на
+// каждом тике с живым процессом.
+func serverHealthKey(id string) string { return "health-server:" + id }

@@ -113,6 +113,34 @@ build_ipk_one() {
     cp "$AWG_CLI_BIN" "$IPK_ROOT/opt/sbin/awg"
     chmod +x "$IPK_ROOT/opt/sbin/awg"
 
+    # Опционально: wdtt client/server из build/wdtt (develop/test IPK, без зеркала).
+    if [[ "${BUNDLE_WDTT:-0}" == "1" ]]; then
+        local WDTT_SRC="$PROJECT_ROOT/build/wdtt"
+        local WDTT_CLIENT=""
+        case "$ENTWARE_ARCH" in
+            aarch64-3.10) WDTT_CLIENT="$WDTT_SRC/wt-client-linux-arm64" ;;
+            mipsel-3.4)   WDTT_CLIENT="$WDTT_SRC/wt-client-linux-mipsle-softfloat" ;;
+            mips-3.4)     WDTT_CLIENT="$WDTT_SRC/wt-client-linux-mips-softfloat" ;;
+        esac
+        if [[ -n "$WDTT_CLIENT" && -f "$WDTT_CLIENT" ]]; then
+            cp "$WDTT_CLIENT" "$IPK_ROOT/opt/bin/wdtt-client"
+            chmod 755 "$IPK_ROOT/opt/bin/wdtt-client"
+            echo "Bundled wdtt-client ($(basename "$WDTT_CLIENT"))"
+        else
+            echo "WARNING: BUNDLE_WDTT=1 but client binary missing for $ENTWARE_ARCH"
+        fi
+        if [[ "$ENTWARE_ARCH" == "aarch64-3.10" ]]; then
+            local WDTT_SERVER="$WDTT_SRC/wdtt-server-linux-arm64"
+            if [[ -f "$WDTT_SERVER" ]]; then
+                cp "$WDTT_SERVER" "$IPK_ROOT/opt/bin/wdtt-server"
+                chmod 755 "$IPK_ROOT/opt/bin/wdtt-server"
+                echo "Bundled wdtt-server (arm64 + listen-raw)"
+            else
+                echo "WARNING: BUNDLE_WDTT=1 but wdtt-server-linux-arm64 missing"
+            fi
+        fi
+    fi
+
     local KMOD_VERSION
     KMOD_VERSION=$(grep 'ExpectedKmodVersion' internal/sys/kmod/download.go | grep -oP '"[^"]+"' | tr -d '"')
     local BUNDLED_DIR="$IPK_ROOT/opt/etc/awg-manager/modules/bundled"

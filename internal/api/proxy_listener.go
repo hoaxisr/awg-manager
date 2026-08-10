@@ -57,7 +57,9 @@ func (h *ProxyListenerHandler) ownsListener(port int, proto procport.Proto) bool
 				add(c.Config.Listen, procport.ProtoUDP)
 			}
 			for _, s := range cfg.Servers {
-				add(s.Config.Listen, procport.ProtoUDP)
+				for _, addr := range s.Config.ServerListenAddrs() {
+					add(addr, procport.ProtoUDP)
+				}
 			}
 		}
 	}

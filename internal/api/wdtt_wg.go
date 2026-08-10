@@ -60,7 +60,7 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 	if !inst.Config.UsesWireGuard() {
 		response.Success(w, EnsureWGTunnelResponse{
 			Created: false,
-			Message: "Режим Raw: AWG-туннель не используется — трафик идёт напрямую через wt-client",
+			Message: "Режим Raw: AWG-туннель не используется — трафик идёт через OpkgTun (NDMS)",
 		})
 		return
 	}

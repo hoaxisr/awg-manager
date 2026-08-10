@@ -6,6 +6,7 @@
 	import { ProcessAlerts, Tabs } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import WdttServerSimple from './WdttServerSimple.svelte';
+	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import { errText } from '$lib/utils/errorMessage';
@@ -56,12 +57,17 @@
 	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
 	let wgEnsureSettled = new Set<string>();
+	let rawEnsureSettled = new Set<string>();
 	const wgEnsureCooldown = new Map<string, number>();
+	const rawEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
+	let importingWgTunnel = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
 	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
 	let clientUiEpoch = $state(0);
+	let clientPanelTab = $state<'setup' | 'log'>('setup');
+	let serverPanelTab = $state<'main' | 'links' | 'network' | 'log'>('main');
 
 	const selectedClient = $derived(
 		config
@@ -145,13 +151,16 @@
 	}
 
 	function normalizeClient(c: WdttClientConfig): WdttClientConfig {
+		const raw = c.connMode === 'raw';
+		const defaultWorkers = raw ? 24 : 24;
+		const workers = Math.max(raw ? 1 : 12, c.workers > 0 ? c.workers : defaultWorkers);
 		return {
 			...c,
 			peer: c.peer ?? '',
 			password: c.password ?? '',
 			vkHashes: c.vkHashes ?? '',
 			listen: c.listen || '127.0.0.1:9000',
-			workers: c.workers > 0 ? c.workers : 24,
+			workers,
 			obfs: c.obfs || 'audio',
 			fingerprint: c.fingerprint || 'chrome',
 			captchaMode: c.captchaMode || 'rjs',
@@ -176,6 +185,7 @@
 			lanSegments: s.lanSegments ?? [],
 			ingressEnabled: !!s.ingressEnabled,
 			relayMode: s.relayMode === 'raw' ? 'raw' : 'wg',
+			rawListen: s.rawListen ?? '',
 			debug: !!s.debug
 		};
 	}
@@ -218,9 +228,37 @@
 	async function loadStatus() {
 		try {
 			status = await api.getWdttStatus();
-			await maybeEnsureWgFromLog();
+			await Promise.all([maybeEnsureWgFromLog(), maybeEnsureRawFromStatus()]);
 		} catch {
 			// polling — молча
+		}
+	}
+
+	async function maybeEnsureRawFromStatus() {
+		if (!status || ensuringWg) return;
+		const id = selectedClientId;
+		if (rawEnsureSettled.has(id)) return;
+		const clientCfg = config?.clients.find((c) => c.id === id)?.config;
+		if (clientCfg?.connMode !== 'raw') return;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
+		if (!st?.running) return;
+		if (!st.rawIface?.trim() && !st.ndmsIface?.trim()) return;
+		const now = Date.now();
+		if (now - (rawEnsureCooldown.get(id) ?? 0) < 20000) return;
+		rawEnsureCooldown.set(id, now);
+		ensuringWg = true;
+		try {
+			const result = await api.ensureWdttRawTunnel(id);
+			if (result.created) {
+				rawEnsureSettled.add(id);
+				notifications.success(result.message ?? `WDTT Raw «${result.tunnelName}» в AWG-туннелях`);
+			} else if (result.tunnelId) {
+				rawEnsureSettled.add(id);
+			}
+		} catch (e) {
+			notifications.error('WDTT Raw в AWG: ' + errText(e));
+		} finally {
+			ensuringWg = false;
 		}
 	}
 
@@ -350,6 +388,10 @@
 		try {
 			if (on) {
 				wgEnsureSettled.delete(id);
+				const inst = config?.clients.find((c) => c.id === id);
+				if (inst) {
+					await saveClientConfig(inst.config, { silent: true });
+				}
 				await api.startWdttClientInstance(id);
 				notifications.success('WDTT клиент запущен');
 			} else {
@@ -429,6 +471,15 @@
 		const sidx = savedConfig.servers.findIndex((s) => s.id === id);
 		if (idx >= 0) config.servers[idx].config = structuredClone(cfg);
 		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
+	}
+
+	async function applyServerAccessConfig(id: string, cfg: WdttServerConfig) {
+		const norm = normalizeServer(cfg);
+		patchServerInConfig(id, norm);
+		if (savedConfig) {
+			const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+			if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(norm);
+		}
 	}
 
 	async function saveServerConfig(cfg: WdttServerConfig) {
@@ -554,6 +605,37 @@
 			return null;
 		} finally {
 			generating = false;
+		}
+	}
+
+	async function importWgTunnelFromConf(wgRaw: string, tunnelLabel?: string) {
+		if (!selectedClient || !config) return;
+		const c = selectedClient.config;
+		if ((c.connMode ?? 'wg') === 'raw') {
+			notifications.info('Raw-режим — AWG-туннель не нужен');
+			return;
+		}
+		const port = linkedTunnelListenPort(c.listen);
+		if (port == null) {
+			notifications.error('Укажите listen (127.0.0.1:порт) перед импортом WG');
+			return;
+		}
+		importingWgTunnel = true;
+		try {
+			const wg = patchWgConfEndpoint(wgRaw.trim(), port);
+			const tunnel = await api.importConfig(
+				wg,
+				wdttTunnelName(tunnelLabel || selectedClient.name),
+				undefined,
+				undefined,
+				selectedClientId
+			);
+			wgEnsureSettled.delete(selectedClientId);
+			notifications.success(`AWG-туннель «${tunnel.name}» создан (Endpoint 127.0.0.1:${port})`);
+		} catch (e) {
+			notifications.error('Не удалось создать AWG-туннель: ' + errText(e));
+		} finally {
+			importingWgTunnel = false;
 		}
 	}
 
@@ -692,12 +774,15 @@
 		}}
 	/>
 
+	<ProxyPanelModeToggle />
+
 	{#if activeTab === 'client'}
 	<InstanceBar
 		items={clientBarItems}
 		selectedId={selectedClientId}
 		onSelect={(id) => {
 			selectedClientId = id;
+			clientPanelTab = 'setup';
 			wgEnsureSettled.delete(id);
 		}}
 		onToggle={toggleClientInstance}
@@ -717,6 +802,7 @@
 				{importing}
 				instances={clientBarItems}
 				selectedInstanceId={selectedClientId}
+				bind:opsTab={clientPanelTab}
 				onSelectInstance={(id) => {
 					selectedClientId = id;
 					wgEnsureSettled.delete(id);
@@ -730,6 +816,8 @@
 				subscriptionTick={subscriptionTick}
 				onEnsureWg={ensureWgManual}
 				ensuringWg={ensuringWg}
+				onImportWgTunnel={importWgTunnelFromConf}
+				importingWgTunnel={importingWgTunnel}
 			/>
 		{/key}
 	{:else}
@@ -742,6 +830,7 @@
 		showDtls={false}
 		onSelect={(id) => {
 			selectedServerId = id;
+			serverPanelTab = 'main';
 		}}
 		onToggle={toggleServerInstance}
 		onAdd={canAddWdttServer ? addServer : undefined}
@@ -764,10 +853,12 @@
 				bind:genVKHashes
 				instances={serverBarItems}
 				selectedInstanceId={selectedServerId}
+				bind:opsTab={serverPanelTab}
 				onSelectInstance={(id) => {
 					selectedServerId = id;
 				}}
 				onSave={saveServerConfig}
+				onAccessUpdated={(cfg) => applyServerAccessConfig(selectedServerId, cfg)}
 				onToggle={(on) => toggleServerInstance(selectedServerId, on)}
 				onGenerate={generateServerLink}
 			/>

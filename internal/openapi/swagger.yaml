@@ -6539,6 +6539,23 @@ definitions:
       vkHash:
         type: string
     type: object
+  api.wdttSetLANSegmentsRequest:
+    properties:
+      segments:
+        items:
+          type: string
+        type: array
+    type: object
+  api.wdttSetNATModeRequest:
+    properties:
+      mode:
+        type: string
+    type: object
+  api.wdttSetPolicyRequest:
+    properties:
+      policy:
+        type: string
+    type: object
   diagnostics.DNSProxy:
     properties:
       displayName:
@@ -7076,6 +7093,10 @@ definitions:
       listen:
         description: -listen, local UDP addr (default 127.0.0.1:9000)
         type: string
+      ndmsIface:
+        description: 'Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на
+          wdtt-server).'
+        type: string
       obfs:
         description: -obfs, audio|video
         type: string
@@ -7084,6 +7105,21 @@ definitions:
         type: string
       peer:
         description: -peer, VPS host:dtls_port
+        type: string
+      policyPermits:
+        description: PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются
+          после рестарта awg-manager.
+        items:
+          $ref: '#/definitions/wdtt.OpkgPolicyPermit'
+        type: array
+      rawClientIp:
+        description: из RAWCONF VPS
+        type: string
+      rawClientMTU:
+        description: MTU из RAWCONF VPS
+        type: integer
+      rawIface:
+        description: kernel opkgtunN
         type: string
       sub:
         description: subscription URL (metadata only)
@@ -7176,6 +7212,13 @@ definitions:
       subscription:
         $ref: '#/definitions/wdtt.SubscriptionPreview'
     type: object
+  wdtt.OpkgPolicyPermit:
+    properties:
+      name:
+        type: string
+      order:
+        type: integer
+    type: object
   wdtt.ProcessStatus:
     properties:
       binary:
@@ -7188,8 +7231,14 @@ definitions:
         type: string
       log:
         type: string
+      ndmsIface:
+        type: string
       pid:
         type: integer
+      rawClientIp:
+        type: string
+      rawIface:
+        type: string
       running:
         type: boolean
       startedAt:
@@ -7226,10 +7275,14 @@ definitions:
         type: string
       debug:
         type: boolean
+      directListen:
+        description: DirectListen — -listen-direct (WRAP без DTLS для WG). Пусто →
+          peer = DTLS-порт.
+        type: string
       enabled:
         type: boolean
       ingressEnabled:
-        description: sing-box ingress for iface:wgIface
+        description: sing-box ingress for iface:wgIface + wdttraw0
         type: boolean
       lanSegments:
         description: LAN bridge names
@@ -7270,9 +7323,17 @@ definitions:
       policy:
         description: NDMS hotspot policy or "none"
         type: string
+      rawListen:
+        description: RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1
+          на том же host.
+        type: string
       relayMode:
         description: RelayMode — wg (WireGuard relay, совместимость) или raw (без
           WG на сервере; нужен редеплой).
+        type: string
+      statsLog:
+        description: 'StatsLog — server.log (JSON каждые ~2 с): "ram" (default), "off",
+          "disk".'
         type: string
       wgIface:
         description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
@@ -18583,6 +18644,30 @@ paths:
       summary: Update config, rename or delete a WDTT server instance
       tags:
       - wdtt
+  /wdtt/servers/{id}/lan-segments:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: LAN bridge names
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetLANSegmentsRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server LAN segments
+      tags:
+      - wdtt
   /wdtt/servers/{id}/link:
     post:
       consumes:
@@ -18612,6 +18697,54 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Generate a wdtt:// / qwdtt:// share link for a server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/nat:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: NAT mode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetNATModeRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server NAT mode
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/policy:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy name or none
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetPolicyRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server IP policy
       tags:
       - wdtt
   /wdtt/servers/{id}/start:

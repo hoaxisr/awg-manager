@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
@@ -261,6 +262,7 @@ func (a *app) setupDeviceProxy() {
 		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.wdttService.EnsureBundledInstall()
 	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
 	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
 	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
@@ -514,6 +516,7 @@ func (a *app) setupRouter() {
 	a.srv.AddShutdownHook(subSched.Stop)
 
 	if a.wdttService != nil && a.ndmsCommands != nil {
+		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
 		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
 		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
 			store: a.ndmsQueries.Interfaces,
@@ -522,6 +525,18 @@ func (a *app) setupRouter() {
 		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
 		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
 		a.wdttService.SetRouterReconciler(routerSvc)
+		a.wdttService.SetClientRouteHooks(a.clientRouteService)
+		a.wdttService.SetNDMSPolicyRouting(
+			a.ndmsCommands.Policies,
+			a.ndmsQueries.Policies,
+			policyMarks,
+		)
+		a.wdttService.SetPolicyMarkGetter(policyMarks)
+		a.wdttService.SetIngressRefEnsurer(&wdttIngressEnsurer{
+			settings: a.settingsStore,
+			router:   routerSvc,
+		})
+		a.accessPolicySvc.SetOpkgPolicyRouteSyncer(a.wdttService)
 	}
 
 }

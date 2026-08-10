@@ -14,6 +14,11 @@ export interface WdttClientConfig {
 	/** wg — WireGuard + AWG-туннель; raw — без WG (быстрее, нужен raw-сервер) */
 	connMode?: 'wg' | 'raw';
 	debug?: boolean;
+	/** Raw client: OpkgTun17..49 для маршрутизации LAN (NAT — на wdtt-server) */
+	ndmsIface?: string;
+	rawIface?: string;
+	rawClientIp?: string;
+	rawClientMTU?: number;
 }
 
 export interface WdttClientInstance {
@@ -39,17 +44,23 @@ export interface WdttServerConfig {
 	natIface?: string;
 	/** Kernel WG dev (opkgtunN); пусто → legacy wdtt0 */
 	wgIface?: string;
-	/** NDMS id (OpkgTun90..99) when registered in router */
+	/** NDMS id (OpkgTun17..49) when registered in router */
 	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
 	openFirewall?: boolean;
-	/** wg — WireGuard relay; raw — без WG (нужен редеплой сервера) */
+	/** wg — WireGuard relay; raw — без WG (нужен сервер qWDTT 1.4+ с -listen-raw) */
 	relayMode?: 'wg' | 'raw';
+	/** UDP-порт Raw (-listen-raw). Пусто → DTLS+1 */
+	rawListen?: string;
+	/** WG peer-порт (-listen-direct, WRAP без DTLS). Пусто → DTLS-порт */
+	directListen?: string;
 	/** Клиенты сервера — источник правды, panel.db собирается из них */
 	clients?: WdttServerClient[];
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
 	linkPeer?: string;
 	linkVkHashes?: string;
+	/** server.log (JSON ~2 с): ram (default), off, disk */
+	statsLog?: 'ram' | 'off' | 'disk';
 }
 
 export interface WdttServerClient {
@@ -77,6 +88,9 @@ export interface WdttProcessStatus {
 	lastError?: string;
 	log?: string;
 	wgConfig?: string;
+	rawClientIp?: string;
+	rawIface?: string;
+	ndmsIface?: string;
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;

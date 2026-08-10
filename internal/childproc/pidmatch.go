@@ -18,15 +18,48 @@ func MatchesBinary(pid int, binary string) bool {
 	if binary == "" {
 		return true // тесты конструируют процесс без бинаря
 	}
+	base, ok := cmdlineArgv0Base(pid)
+	if !ok {
+		// Личность не подтверждается: pid исчез между kill(0) и чтением либо
+		// cmdline недоступен, либо cmdline пуст (зомби). Fail-closed —
+		// считаем, что это не наш процесс.
+		return false
+	}
+	return base == filepath.Base(binary)
+}
+
+// MatchesAnyBinary reports whether pid's /proc cmdline argv0 basename equals
+// one of basenames (сравнение тоже по basename — симметрично MatchesBinary,
+// полный путь в basenames не молча проваливает сверку). Для случаев, когда
+// известен только класс процесса (одна из нескольких известных программ), а
+// не единственный ожидаемый путь — например, сирота-pidfile
+// freeturn-*/wdtt-*, который может принадлежать либо клиенту, либо серверу.
+// Как и MatchesBinary, fail-closed: недоступный или пустой cmdline — не
+// совпадение.
+func MatchesAnyBinary(pid int, basenames ...string) bool {
+	base, ok := cmdlineArgv0Base(pid)
+	if !ok {
+		return false
+	}
+	for _, name := range basenames {
+		if base == filepath.Base(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdlineArgv0Base reads pid's /proc cmdline and returns argv0's basename.
+// ok is false if cmdline is unreadable or empty (zombie) — the fail-closed
+// case shared by MatchesBinary and MatchesAnyBinary.
+func cmdlineArgv0Base(pid int) (string, bool) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
-		// Личность не подтверждается: pid исчез между kill(0) и чтением либо
-		// cmdline недоступен. Fail-closed — считаем, что это не наш процесс.
-		return false
+		return "", false
 	}
 	argv0, _, _ := strings.Cut(string(b), "\x00")
 	if argv0 == "" {
-		return false // зомби: cmdline пуст
+		return "", false
 	}
-	return filepath.Base(argv0) == filepath.Base(binary)
+	return filepath.Base(argv0), true
 }

@@ -91,6 +91,15 @@ func (s *stubWdttForImport) UpdateServerConfig(wdtt.ServerConfig) error { return
 func (s *stubWdttForImport) UpdateServerInstance(string, wdtt.ServerConfig) (wdtt.ServerConfig, error) {
 	return wdtt.ServerConfig{}, nil
 }
+func (s *stubWdttForImport) SetServerNATMode(context.Context, string, string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) SetServerPolicy(context.Context, string, string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) SetServerLANSegments(context.Context, string, []string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
 func (s *stubWdttForImport) CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error) {
 	return wdtt.ServerInstance{}, nil
 }

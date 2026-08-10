@@ -140,7 +140,7 @@ func EncodeLinkWithClientPort(peer string, wgPort int, password string, vkHashes
 }
 
 // EncodeQwdttLink builds qwdtt:// for qWDTT/Android — явный port=9000 в query.
-func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int) (string, error) {
+func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string) (string, error) {
 	peer = normalizePeer(strings.TrimSpace(peer))
 	password = strings.TrimSpace(password)
 	if peer == "" {
@@ -167,6 +167,9 @@ func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clie
 	}
 	q.Set("port", strconv.Itoa(clientListenPort))
 	q.Set("workers", strconv.Itoa(workers))
+	if mode := normalizeConnMode(connMode); mode == ConnModeRaw {
+		q.Set("mode", mode)
+	}
 	if n := strings.TrimSpace(name); n != "" {
 		q.Set("name", n)
 	}

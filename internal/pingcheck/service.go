@@ -264,6 +264,10 @@ func (s *Service) GetStatus() []TunnelStatus {
 			if t.Backend == "nativewg" {
 				continue
 			}
+			// WDTT Raw registry rows are not kernel AWG tunnels.
+			if t.Backend == "wdtt-raw" {
+				continue
+			}
 			// Fast sysfs check — no subprocess or network call
 			ifaceName := s.resolveIfaceName(t.ID)
 			if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", ifaceName)); err != nil {

@@ -1,6 +1,7 @@
 package freeturn
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -52,10 +53,34 @@ func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {
 	if logIndicatesCaptchaWaiting(st.Log) {
 		return false
 	}
+	if logRecentHandshakeFailures(st.Log, handshakeFailWindowLines, handshakeFailMinCount) {
+		return true
+	}
+	if clientPeerStaleZombie(st, now) {
+		return true
+	}
 	// Только явная телеметрия: пустой лог-хвост (маркеры стримов вытеснены из
 	// ринга) неотличим от «сессий нет», а рестарт живого клиента рвёт трафик.
 	active, known := dtlsTelemetry(st.Log)
 	return known && active == 0
+}
+
+// serverPeerUnhealthy reports a running server stuck retrying handshakes
+// (backend WG down, obf mismatch, or client side gone stale after server restart).
+func serverPeerUnhealthy(st ProcessStatus, now time.Time) bool {
+	if !st.Running || st.StartedAt == nil {
+		return false
+	}
+	if now.Sub(*st.StartedAt) < clientHealthGrace {
+		return false
+	}
+	if logRecentHandshakeFailures(st.Log, handshakeFailWindowLines, handshakeFailMinCount) {
+		return true
+	}
+	if now.Sub(*st.StartedAt) >= logStaleMinUptime && logTailStale(st.Log, now, logStaleMaxAge) {
+		return true
+	}
+	return false
 }
 
 // restartClientInstance stops and starts the client without clearing Enabled
@@ -73,4 +98,19 @@ func (s *Service) restartClientInstance(id string) error {
 		return nil
 	}
 	return s.StartClientInstance(id)
+}
+
+func (s *Service) restartServerInstance(id string) error {
+	if _, err := s.serverInstance(id); err != nil {
+		return err
+	}
+	inst, _ := s.serverInstance(id)
+	removeServerListenFirewall(context.Background(), inst.Config)
+	if err := s.serverProcs.get(id).Stop(); err != nil {
+		return err
+	}
+	if inst, err := s.serverInstance(id); err == nil && !inst.Config.Enabled {
+		return nil
+	}
+	return s.StartServerInstance(id)
 }

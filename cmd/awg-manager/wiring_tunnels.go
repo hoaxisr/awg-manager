@@ -16,6 +16,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
+	"github.com/hoaxisr/awg-manager/internal/proxyhealth"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -211,6 +212,22 @@ func (a *app) setupServices() {
 		FreeTurn:               a.freeturnService,
 		IncludeFreeTurnClients: true,
 	})
+	relayProbe := &proxyhealth.HTTPRelayProbe{
+		CheckURL: func() string {
+			if a.settingsStore == nil {
+				return ""
+			}
+			st, err := a.settingsStore.Load()
+			if err != nil || st == nil {
+				return ""
+			}
+			return st.ConnectivityCheckURL
+		},
+	}
+	linkedTunnels := &proxyhealth.AWGLinkedTunnelResolver{Store: a.awgStore}
+	a.freeturnService.SetRelayProbe(relayProbe)
+	a.freeturnService.SetLinkedTunnelResolver(linkedTunnels)
+	a.wdttService.SetRelayProbe(relayProbe)
 	a.deferOnExit(a.freeturnService.Stop)
 	a.deferOnExit(a.wdttService.Stop)
 

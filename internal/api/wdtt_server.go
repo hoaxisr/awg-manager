@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -152,6 +153,12 @@ func (h *WdttHandler) ServeServers(w http.ResponseWriter, r *http.Request) {
 		h.stopServerInstance(w, r, id)
 	case len(sub) == 1 && sub[0] == "link":
 		h.generateLinkForServer(w, r, id)
+	case len(sub) == 1 && sub[0] == "nat":
+		h.setServerNATMode(w, r, id)
+	case len(sub) == 1 && sub[0] == "policy":
+		h.setServerPolicy(w, r, id)
+	case len(sub) == 1 && sub[0] == "lan-segments":
+		h.setServerLANSegments(w, r, id)
 	case len(sub) >= 1 && sub[0] == "users":
 		h.serveServerPanelUsers(w, r, id, sub[1:])
 	default:
@@ -343,13 +350,10 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 	}
 
 	peer := strings.TrimSpace(req.Peer)
+	linkPort := srvCfg.LinkListenPort()
 	if peer != "" {
 		if !strings.Contains(peer, ":") {
-			port := srvCfg.Listen
-			if idx := strings.LastIndex(port, ":"); idx != -1 {
-				port = port[idx+1:]
-			}
-			peer = peer + ":" + port
+			peer = peer + ":" + strconv.Itoa(linkPort)
 		}
 	} else {
 		ip, ipErr := h.resolveExternalIP(r.Context())
@@ -357,11 +361,7 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 			response.Error(w, "Не удалось определить внешний IP: "+ipErr.Error()+". Укажите peer вручную.", "WDTT_EXTERNAL_IP_FAILED")
 			return
 		}
-		port := srvCfg.Listen
-		if idx := strings.LastIndex(port, ":"); idx != -1 {
-			port = port[idx+1:]
-		}
-		peer = ip + ":" + port
+		peer = ip + ":" + strconv.Itoa(linkPort)
 	}
 
 	name := strings.TrimSpace(req.Name)
@@ -374,7 +374,7 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		response.Error(w, err.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return
 	}
-	qLink, qErr := wdtt.EncodeQwdttLink(peer, linkPassword, req.VKHashes, name, 0, 0)
+	qLink, qErr := wdtt.EncodeQwdttLink(peer, linkPassword, req.VKHashes, name, 0, 0, srvCfg.RelayMode)
 	if qErr != nil {
 		response.Error(w, qErr.Error(), "WDTT_LINK_ENCODE_FAILED")
 		return
@@ -384,4 +384,91 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		"linkQwdtt": qLink,
 		"peer":      peer,
 	})
+}
+
+type wdttSetNATModeRequest struct {
+	Mode string `json:"mode"`
+}
+
+type wdttSetPolicyRequest struct {
+	Policy string `json:"policy"`
+}
+
+type wdttSetLANSegmentsRequest struct {
+	Segments []string `json:"segments"`
+}
+
+// @Summary	Set WDTT server NAT mode
+// @Tags		wdtt
+// @Accept		json
+// @Param		id		path		string					true	"Server instance id"
+// @Param		body	body		wdttSetNATModeRequest	true	"NAT mode"
+// @Success	200		{object}	APIEnvelope
+// @Router		/wdtt/servers/{id}/nat [post]
+func (h *WdttHandler) setServerNATMode(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+	var req wdttSetNATModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	saved, err := h.svc.SetServerNATMode(r.Context(), id, req.Mode)
+	if err != nil {
+		response.Error(w, err.Error(), "WDTT_SERVER_NAT_FAILED")
+		return
+	}
+	response.Success(w, map[string]any{"config": saved})
+}
+
+// @Summary	Set WDTT server IP policy
+// @Tags		wdtt
+// @Accept		json
+// @Param		id		path		string				true	"Server instance id"
+// @Param		body	body		wdttSetPolicyRequest	true	"Policy name or none"
+// @Success	200		{object}	APIEnvelope
+// @Router		/wdtt/servers/{id}/policy [post]
+func (h *WdttHandler) setServerPolicy(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+	var req wdttSetPolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	saved, err := h.svc.SetServerPolicy(r.Context(), id, req.Policy)
+	if err != nil {
+		response.Error(w, err.Error(), "WDTT_SERVER_POLICY_FAILED")
+		return
+	}
+	response.Success(w, map[string]any{"config": saved})
+}
+
+// @Summary	Set WDTT server LAN segments
+// @Tags		wdtt
+// @Accept		json
+// @Param		id		path		string						true	"Server instance id"
+// @Param		body	body		wdttSetLANSegmentsRequest	true	"LAN bridge names"
+// @Success	200		{object}	APIEnvelope
+// @Router		/wdtt/servers/{id}/lan-segments [post]
+func (h *WdttHandler) setServerLANSegments(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+	var req wdttSetLANSegmentsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	saved, err := h.svc.SetServerLANSegments(r.Context(), id, req.Segments)
+	if err != nil {
+		response.Error(w, err.Error(), "WDTT_SERVER_LAN_FAILED")
+		return
+	}
+	response.Success(w, map[string]any{"config": saved})
 }

@@ -46,13 +46,77 @@ type Service struct {
 	listenPortChecker LocalListenPortChecker
 
 	clientHealth *healthTracker
+	serverHealth *healthTracker
 	startBackoff *proxysup.Backoff
+
+	relayProbe    RelayProbe
+	linkedTunnels LinkedTunnelResolver
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
 	matchMu  sync.Mutex
 	matchKey string
 	matchVal bool
+
+	// clientStarts — per-client счётчик стартов в полёте (симметрично
+	// wdtt.Service.clientStarts, F6): даёт супервизору дешёвый совещательный
+	// fast-path, чтобы скипнуть тик без сжигания backoff-окна. Совещательный
+	// (TOCTOU: окно между проверкой и стартом открыто) — жёсткая сериализация
+	// самого старта обеспечивается clientStartLocks (TryLock внутри
+	// StartClientInstance).
+	clientStartMu    sync.Mutex
+	clientStarts     map[string]int
+	clientStartLocks map[string]*sync.Mutex
+}
+
+// ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
+// где-то ещё (TryLock не взят); возвращается без запуска процесса.
+var ErrClientStartInFlight = errors.New("старт клиента уже выполняется")
+
+// tryLockClientStart — жёсткая per-client сериализация StartClientInstance:
+// второй конкурентный вызов для того же id не блокируется, а сразу получает
+// отказ. unlock должен вызываться defer'ом сразу после успешного захвата.
+func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
+	s.clientStartMu.Lock()
+	if s.clientStartLocks == nil {
+		s.clientStartLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.clientStartLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.clientStartLocks[id] = l
+	}
+	s.clientStartMu.Unlock()
+	if !l.TryLock() {
+		return nil, false
+	}
+	return l.Unlock, true
+}
+
+func (s *Service) beginClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts == nil {
+		s.clientStarts = make(map[string]int)
+	}
+	s.clientStarts[id]++
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) endClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts[id] > 0 {
+		s.clientStarts[id]--
+		if s.clientStarts[id] == 0 {
+			delete(s.clientStarts, id)
+		}
+	}
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) clientStartInFlight(id string) bool {
+	s.clientStartMu.Lock()
+	defer s.clientStartMu.Unlock()
+	return s.clientStarts[id] > 0
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
@@ -63,6 +127,14 @@ func (s *Service) SetLogger(appLogger logging.AppLogger) {
 // SetListenPortChecker wires external localhost listen ports (AWG tunnel endpoints, etc.).
 func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenPortChecker = c
+}
+
+func (s *Service) SetRelayProbe(p RelayProbe) {
+	s.relayProbe = p
+}
+
+func (s *Service) SetLinkedTunnelResolver(r LinkedTunnelResolver) {
+	s.linkedTunnels = r
 }
 
 func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
@@ -108,6 +180,7 @@ func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
 		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
 		clientHealth: newHealthTracker(),
+		serverHealth: newHealthTracker(),
 		startBackoff: newStartBackoff(),
 	}
 }
@@ -144,10 +217,31 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
 	// не заставляем ждать окно backoff до следующей попытки супервизора.
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
 	return s.store.Save(full)
 }
 
+// UpdateServerInstance — публичный путь (вызывается API на PUT). В отличие от
+// updateServerInstanceInternal, после успешного апдейта сбрасывает и стартовый,
+// и health-backoff: пользователь чинит конфиг сервера руками — ждать
+// оставшееся окно backoff (до 15 мин после серии эскалаций) до следующей
+// попытки супервизора не нужно. У внутреннего пути такого Forget нет — см.
+// его комментарий.
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	if err := s.updateServerInstanceInternal(id, cfg); err != nil {
+		return err
+	}
+	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	return nil
+}
+
+// updateServerInstanceInternal — тело апдейта без сброса backoff. Вызывается
+// и публичным UpdateServerInstance, и StartServerInstance (тот зовёт его сам
+// для нормализации listen на каждой попытке супервизора) — если бы backoff
+// сбрасывался здесь, окно стиралось бы на каждой попытке и рост до 15 минут
+// переставал работать ровно там, где он нужнее всего.
+func (s *Service) updateServerInstanceInternal(id string, cfg ServerConfig) error {
 	s.mu.Lock()
 	full, err := s.store.Load()
 	if err != nil {
@@ -164,10 +258,6 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
 	cfg.Enabled = prevCfg.Enabled
-	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
-	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
-	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
-	// работать ровно там, где он нужнее всего.
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -245,6 +335,7 @@ func (s *Service) DeleteClient(id string) error {
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
 	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
@@ -269,6 +360,8 @@ func (s *Service) DeleteServer(id string) error {
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
 	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	s.serverHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -466,6 +559,20 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 }
 
 func (s *Service) StartClientInstance(id string) error {
+	// Жёсткая сериализация (F6, симметрично wdtt): второй конкурентный старт
+	// этого же id не гоняется с первым, а сразу отказывает.
+	unlock, ok := s.tryLockClientStart(id)
+	if !ok {
+		return ErrClientStartInFlight
+	}
+	defer unlock()
+
+	// Per-client in-flight guard (F6): супервизор проверяет clientStartInFlight
+	// перед health-эскалацией, чтобы не гоняться со StartClientInstance этого
+	// же клиента, запущенным откуда-то ещё (API, сам супервизор).
+	s.beginClientStart(id)
+	defer s.endClientStart(id)
+
 	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
@@ -516,7 +623,7 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.UpdateServerInstance(id, inst.Config); err != nil {
+	if err := s.updateServerInstanceInternal(id, inst.Config); err != nil {
 		return err
 	}
 	inst, err = s.serverInstance(id)

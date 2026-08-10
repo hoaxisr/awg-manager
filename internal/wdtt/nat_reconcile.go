@@ -4,13 +4,15 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
 const natReconcileInterval = 15 * time.Second
 
 // StartNATReconciler periodically re-applies entware iptables NAT for running
-// WDTT servers on the legacy wdtt0 path. sing-box router reconcile can flush
-// POSTROUTING/FORWARD rules. NDMS OpkgTun servers use NDMS NAT instead.
+// WDTT servers. sing-box router reconcile can flush POSTROUTING/FORWARD rules.
+// OpkgTun: entware только wdttraw0; WG через NDMS как у managed AWG.
 func (s *Service) StartNATReconciler(ctx context.Context) {
 	if s == nil {
 		return
@@ -28,6 +30,7 @@ func (s *Service) natReconcileLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.reconcileRunningServersNAT(ctx)
+			s.reconcileRunningClientsPolicyRoutes(ctx)
 			// Не на первом (синхронном) проходе: автостарт серверов
 			// отложен на 8 с, до него «процесс не запущен» ещё не
 			// означает сироту.
@@ -52,14 +55,17 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 	}
 	legacyIfaces := map[string]bool{}
 	for _, srv := range full.Servers {
-		if srv.Config.usesNDMSOpkgTun() {
+		if !srv.Config.needsEntwareNAT() {
 			continue
 		}
-		legacyIfaces[srv.Config.kernelWGIface()] = true
+		for _, iface := range srv.Config.serverEntwareNATIfaces() {
+			legacyIfaces[iface] = true
+		}
 	}
 	if len(legacyIfaces) == 0 {
 		if !s.anyServerRunning(full) {
 			removeEntwareNAT(ctx, DefaultWdttIface)
+			removeWdttForwardNetfilterHook()
 		}
 		return
 	}
@@ -67,6 +73,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		for iface := range legacyIfaces {
 			removeEntwareNAT(ctx, iface)
 		}
+		removeWdttForwardNetfilterHook()
 		return
 	}
 	for _, srv := range full.Servers {
@@ -74,44 +81,94 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			continue
 		}
 		cfg := srv.Config
-		if cfg.usesNDMSOpkgTun() {
+		if !cfg.needsEntwareNAT() {
 			continue
 		}
-		iface := cfg.kernelWGIface()
+		iface := cfg.kernelServerIface()
 		mode := normalizeNatMode(cfg.NatMode)
 		if mode == "none" {
+			removeWdttForwardNetfilterHook()
 			continue
 		}
 		wanDev := ""
-		if mode == "internet-only" {
-			if wan := strings.TrimSpace(cfg.NatStaticWAN); wan != "" && s.accessMgr != nil {
-				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
+		if dev, err := s.resolveServerEntwareNATExtIface(ctx, cfg, mode); err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("nat-reconcile", srv.ID, "NAT egress: "+err.Error())
+			}
+		} else {
+			wanDev = dev
+		}
+		policy := normalizePolicy(cfg.Policy)
+		wantMark := ""
+		if policy != "none" && s.policyMarks != nil {
+			if mark, err := s.policyMarks.GetPolicyMark(ctx, policy); err == nil {
+				wantMark = mark
 			}
 		}
-		if !entwareNATPresent(ctx, iface, wanDev) {
-			if err := applyEntwareNAT(ctx, iface, mode, wanDev); err != nil {
+		// Безусловно, каждый тик, до if/else-цепочки ниже: файл хука
+		// должен всегда отражать актуальный spec (DNS/MASQUERADE/mark), а не
+		// только FORWARD-ifaces — иначе после NDM table-flap DNAT :53 и
+		// MASQUERADE не восстановятся до следующего цикла (C1, PR #697).
+		// Второй сервер невозможен (CreateServer запрещает) — агрегация
+		// spec по нескольким серверам не нужна.
+		hookWanDev, err := resolveExtIfaceOrDefault(ctx, wanDev)
+		if err != nil && s.appLog != nil {
+			s.appLog.Warn("nat-reconcile", srv.ID, "NAT egress (hook): "+err.Error())
+		}
+		if err := ensureWdttNetfilterHook(ctx, wdttNetfilterSpecForServer(cfg, mode, hookWanDev, wantMark)); err != nil && s.appLog != nil {
+			s.appLog.Warn("nat-reconcile", srv.ID, "netfilter.d hook: "+err.Error())
+		}
+		if !entwareNATPresentForServer(ctx, cfg, mode, wanDev) {
+			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev, wantMark); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен на "+iface)
+				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
+			}
+		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfacesForMode(mode)) {
+			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfacesForMode(mode)...); err != nil && s.appLog != nil {
+				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
+			} else if s.appLog != nil {
+				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
+			}
+		} else if !entwareMSSPresentAll(ctx, cfg.serverEntwarePeerCIDRsForMode(mode)) {
+			setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRsForMode(mode)...)
+			if s.appLog != nil {
+				s.appLog.Info("nat-reconcile", srv.ID, "TCPMSS clamp восстановлен ("+strings.Join(cfg.serverEntwarePeerCIDRsForMode(mode), ", ")+")")
+			}
+		}
+		if !wgClientRoutePresent(ctx, cfg.kernelWGIface(), wgServerPeerCIDR()) {
+			if err := cfg.ensureServerWgClientRoute(ctx); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("nat-reconcile", srv.ID, "wg client route: "+err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("nat-reconcile", srv.ID, "маршрут WG-клиентов восстановлен "+cfg.kernelWGIface())
 			}
 		}
 		segments := cfg.LanSegments
 		if segments == nil {
 			segments = []string{}
 		}
+		peerCIDRs := cfg.serverEntwarePeerCIDRsForMode(mode)
 		if len(segments) > 0 && s.accessMgr != nil {
 			cidrs, err := s.accessMgr.ResolveLANSegmentCIDRs(ctx, segments)
 			if err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
-			} else if !entwareLANPresent(ctx, wdttPeerCIDR(), cidrs) {
-				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr); err != nil && s.appLog != nil {
+			} else if !entwareLANPresent(ctx, peerCIDRs, cidrs) {
+				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr, peerCIDRs...); err != nil && s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
 			}
 		}
+		if !rawServerPolicyMarkPresent(ctx, wantMark) {
+			if _, err := s.applyRawServerPolicy(ctx, srv.ID, cfg); err != nil && s.appLog != nil {
+				s.appLog.Warn("policy-reconcile", srv.ID, err.Error())
+			}
+		}
+		s.ensureWdttIngressRefs(ctx, cfg)
 	}
 }

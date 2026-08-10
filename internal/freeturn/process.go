@@ -26,6 +26,13 @@ import (
 // grace period than internal/singbox.Process uses.
 const startupGrace = 1500 * time.Millisecond
 
+// drainGrace — сколько ждать естественного EOF пайпов после реапа ребёнка,
+// прежде чем добить выживших членов группы и принудительно закрыть
+// read-концы. Должно быть меньше startupGrace: иначе ребёнок, умерший
+// мгновенно с выжившим хелпером, никогда не попадёт в ветку errCh раньше
+// startupGrace — Start() вернёт ложный nil («успех»), а не ошибку старта.
+const drainGrace = 1 * time.Second
+
 // process manages a single long-running freeturn invocation — either the
 // client or the server binary, distinguished by `name` ("client"/"server")
 // which is also used to namespace the PID file.
@@ -115,33 +122,60 @@ func (p *process) Start(args []string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("freeturn %s: start: %w", p.name, err)
 	}
+	pid := cmd.Process.Pid
 
 	var drainWG sync.WaitGroup
 	drainWG.Add(2)
 	go func() { defer drainWG.Done(); p.drain(stdout) }()
 	go func() { defer drainWG.Done(); p.drain(stderr) }()
 
-	if err := p.writePID(cmd.Process.Pid); err != nil {
-		_ = childproc.Terminate(cmd.Process.Pid)
-		drainWG.Wait() // Terminate убил ребёнка → write-концы закрылись → drain EOF
-		_ = cmd.Wait()
+	errCh := make(chan error, 1)
+	go func() {
+		// Reap НЕМЕДЛЕННО по смерти ребёнка, не дожидаясь EOF пайпов:
+		// хелпер, унаследовавший stdout/stderr, раньше держал cmd.Wait
+		// заложником → зомби + IsRunning()==true для мёртвого процесса.
+		state, waitErr := cmd.Process.Wait()
+		if waitErr == nil && state != nil && !state.Success() {
+			waitErr = &exec.ExitError{ProcessState: state}
+		}
+		// Дать drain'ам дочитать хвост естественным EOF; если пайп держит
+		// выживший хелпер — добить всю группу (pgid ребёнка не
+		// переиспользуется, пока в ней есть живые члены — заодно даёт
+		// честный EOF) и принудительно закрыть read-концы, чтобы не течь
+		// горутинами drain.
+		done := make(chan struct{})
+		go func() { drainWG.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(drainGrace):
+			_ = childproc.KillGroup(pid)
+			_ = stdout.Close()
+			_ = stderr.Close()
+			<-done
+		}
+		// cmd.Wait() раньше закрывал parent-концы пайпов сам; теперь его
+		// нет (двойной wait — ошибка), закрываем явно на ОБЕИХ ветках —
+		// иначе на штатном пути (EOF раньше drainGrace) read-концы никто
+		// не закрывает, и они текут до GC.
+		_ = stdout.Close()
+		_ = stderr.Close()
+		errCh <- waitErr
+	}()
+
+	if err := p.writePID(pid); err != nil {
+		_ = childproc.TerminateGroup(pid)
+		<-errCh
 		return fmt.Errorf("freeturn %s: write pidfile: %w", p.name, err)
 	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		drainWG.Wait()      // drain'ы дочитали до EOF — Wait не уничтожит буфер пайпов
-		errCh <- cmd.Wait() // безопасно: читать больше нечего
-	}()
-
-	myPid := cmd.Process.Pid
+	myPid := pid
 
 	select {
 	case waitErr := <-errCh:
 		// Died before grace period — this is a startup failure.
 		p.cleanupPidIfOurs(myPid)
-		// К моменту получения из errCh drain'ы гарантированно завершены (Wait
-		// вызывается после drainWG.Wait()), хвост stderr уже в logTail.
+		// К моменту получения из errCh drain'ы гарантированно завершены
+		// (errCh получает значение только после <-done в горутине выше).
 		msg := strings.TrimSpace(p.logTail.LastLines(30))
 		if msg == "" && waitErr != nil {
 			msg = waitErr.Error()
@@ -203,7 +237,7 @@ func (p *process) Stop() error {
 	p.mu.Lock()
 	p.stopRequested = true
 	p.mu.Unlock()
-	_ = childproc.Terminate(pid) // SIGTERM on Linux, Process.Kill elsewhere
+	_ = childproc.TerminateGroup(pid) // SIGTERM to the group on Linux, Process.Kill elsewhere
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -213,7 +247,7 @@ func (p *process) Stop() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if childproc.IsAlive(pid) {
-		_ = childproc.Kill(pid) // SIGKILL on Linux, Process.Kill elsewhere
+		_ = childproc.KillGroup(pid) // SIGKILL to the group on Linux, Process.Kill elsewhere
 	}
 	_ = os.Remove(p.pidPath)
 

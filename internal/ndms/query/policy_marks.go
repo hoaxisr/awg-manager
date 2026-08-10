@@ -48,6 +48,7 @@ func NewPolicyMarkStore(g Getter, log Logger) *PolicyMarkStore {
 
 type policyMarkWire struct {
 	Mark   string `json:"mark"`
+	Table4 int    `json:"table4"`
 	Route4 struct {
 		Route []struct {
 			Destination string `json:"destination"`
@@ -72,6 +73,23 @@ func (s *PolicyMarkStore) Get(ctx context.Context, policyName string) (string, e
 		return "", ErrPolicyMarkNotFound
 	}
 	return "0x" + p.Mark, nil
+}
+
+// Table4 returns the IPv4 routing table id assigned to policyName.
+func (s *PolicyMarkStore) Table4(ctx context.Context, policyName string) (int, error) {
+	body, err := s.getter.GetRaw(ctx, "/show/ip/policy")
+	if err != nil {
+		return 0, fmt.Errorf("fetch policy tables: %w", err)
+	}
+	var doc map[string]policyMarkWire
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return 0, fmt.Errorf("decode policy tables: %w", err)
+	}
+	p, ok := doc[policyName]
+	if !ok || p.Table4 <= 0 {
+		return 0, ErrPolicyMarkNotFound
+	}
+	return p.Table4, nil
 }
 
 // isBareHex — непустая строка из одних шестнадцатеричных цифр, как NDMS отдаёт

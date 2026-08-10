@@ -17,6 +17,7 @@
 	import InstanceBar from './InstanceBar.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
+	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint, freeturnLinkHasWg } from '$lib/utils/serverPeerOptions';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
@@ -533,6 +534,8 @@
 	defaultTab="client"
 />
 
+<ProxyPanelModeToggle />
+
 {#if loading}
 	<div class="ft-loading">Загрузка…</div>
 {:else if loadError && !config}
@@ -591,6 +594,7 @@
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
 				onImportManualWg={importManualWg}
+				onImportWgTunnel={importManualWg}
 				{importingWg}
 			/>
 		{:else}

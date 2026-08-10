@@ -1,8 +1,10 @@
 package freeturn
 
 import (
+	"errors"
 	"os/exec"
 	"testing"
+	"time"
 )
 
 // sleepSeam подменяет реальный запуск клиента на долгий sleep, чтобы Start
@@ -101,6 +103,73 @@ func TestService_StopExitKeepsEnabled(t *testing.T) {
 	if !got.Clients[0].Config.Enabled {
 		t.Fatal("Service.Stop() не должен сбрасывать Enabled")
 	}
+}
+
+// TestService_StartClientInstance_ConcurrentSameIDSerializes: два конкурентных
+// StartClientInstance для одного id не гоняются друг с другом — второй сразу
+// получает ErrClientStartInFlight, пока первый ещё держит TryLock внутри
+// Start() (startupGrace ~1.5с).
+func TestService_StartClientInstance_ConcurrentSameIDSerializes(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	if err := s.UpdateClientConfig(validClientCfg("127.0.0.1:56000")); err != nil {
+		t.Fatal(err)
+	}
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+
+	firstErr := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		firstErr <- s.StartClientInstance(DefaultInstanceID)
+	}()
+	<-started
+	time.Sleep(100 * time.Millisecond) // первый старт уже внутри Start() и держит лок
+
+	if err := s.StartClientInstance(DefaultInstanceID); !errors.Is(err, ErrClientStartInFlight) {
+		t.Fatalf("второй конкурентный старт: ожидали ErrClientStartInFlight, получили %v", err)
+	}
+
+	if err := <-firstErr; err != nil {
+		t.Fatalf("первый старт: %v", err)
+	}
+	defer s.Stop()
+}
+
+// TestService_StartClientInstance_DifferentIDsNotBlocked: лок per-client —
+// старт клиента A не блокирует конкурентный старт клиента B.
+func TestService_StartClientInstance_DifferentIDsNotBlocked(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Clients[0].Config = validClientCfg("h:1")
+	b := ClientInstance{ID: "b", Name: "B", Config: validClientCfg("h:2")}
+	cfg.Clients = append(cfg.Clients, b)
+	if err := s.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+	sleepSeam(s.clientProcs.get("b"))
+
+	aErr := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		aErr <- s.StartClientInstance(DefaultInstanceID)
+	}()
+	<-started
+	time.Sleep(100 * time.Millisecond) // старт A уже внутри Start() и держит свой лок
+
+	if err := s.StartClientInstance("b"); err != nil {
+		t.Fatalf("старт b не должен блокироваться стартом default: %v", err)
+	}
+	if err := <-aErr; err != nil {
+		t.Fatalf("старт default: %v", err)
+	}
+	defer s.Stop()
 }
 
 func TestService_ResumeEnabledStartsOnlyEnabled(t *testing.T) {

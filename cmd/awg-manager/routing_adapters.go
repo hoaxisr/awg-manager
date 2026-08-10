@@ -101,7 +101,12 @@ func (a *storeAdapter) Get(id string) (routing.StoreEntry, error) {
 	if err != nil {
 		return routing.StoreEntry{}, err
 	}
-	return routing.StoreEntry{Backend: t.Backend, NWGIndex: t.NWGIndex}, nil
+	return routing.StoreEntry{
+		Backend:        t.Backend,
+		NWGIndex:       t.NWGIndex,
+		RawKernelIface: t.RawKernelIface,
+		RawNdmsIface:   t.RawNdmsIface,
+	}, nil
 }
 
 func (a *storeAdapter) Exists(id string) bool {
