@@ -211,6 +211,28 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
 	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
+	// Провижинен и жив, но tun-инбаунда в слоте нет — состояние НЕДОДЕЛАНО, и
+	// само оно не заживёт. Так выглядит краш между удержанием интерфейса и
+	// записью персиста: выключение успело вырезать инбаунд (шаг 4), персист
+	// остался Provisioned=true, а NDMS-объект пережил и down, и снятие адресов —
+	// значит live истинен, полного re-provision никто не запустит, и heal ниже
+	// вернёт только маршруты с permit. Адрес, up и инбаунд не вернёт НИКТО.
+	//
+	// Признак взят из НАШЕГО файла (applied-конфиг слота), а не из
+	// running-config: его форму мы задаём сами, и она не зависит от NDMS.
+	// Гасим гард идемпотентности через персист и переустанавливаем режим целиком.
+	if !s.policyTunInboundPresent() {
+		s.appLog.Warn("policy-tun-reconcile", iface,
+			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
+		if e := s.deps.Settings.SetPolicyTunState(&storage.PolicyTunState{
+			Index: st.Index, NATSegments: st.NATSegments,
+		}); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
+		}
+		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
+		return s.enableLocked(ctx, false)
+	}
+
 	// Запаркованный слот 20 — дрейф независимо от жизни процесса: enable
 	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
 	// merged-конфиге нет tun-инбаунда.
@@ -320,6 +342,17 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
 		}
 	}
+}
+
+// policyTunInboundPresent сообщает, есть ли tun-инбаунд в applied-конфиге
+// слота 20. Ошибка чтения трактуется как «есть»: «не знаем» ≠ «пропал», а
+// цена ложного срабатывания — полный re-provision живого режима.
+func (s *ServiceImpl) policyTunInboundPresent() bool {
+	cfg, err := s.loadAppliedRouterConfig()
+	if err != nil || cfg == nil {
+		return true
+	}
+	return len(filterPolicyTunInbound(cfg.Inbounds)) != len(cfg.Inbounds)
 }
 
 // ensurePolicyTunPermit разрешает наш интерфейс выходом целевой политики

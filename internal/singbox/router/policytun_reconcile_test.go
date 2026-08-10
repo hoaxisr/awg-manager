@@ -3,6 +3,8 @@ package router
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -414,6 +416,83 @@ func TestReconcilePolicyTun_EnsuresIngress(t *testing.T) {
 		if strings.Contains(joined, "PREROUTING 1") || strings.Contains(joined, "DNAT") {
 			t.Errorf("DNAT в policy-tun не ставится: %v", rec.ipt)
 		}
+	}
+}
+
+// Краш между удержанием интерфейса и записью персиста: на диске Provisioned
+// остался истиной, интерфейс жив (NDMS-объект переживает и down, и снятие
+// адресов), а tun-инбаунд выключение уже вырезало. Такое состояние не
+// самозаживает: enable no-op'ится по гарду provisioned+live, а heal возвращает
+// только маршруты и permit — адрес, up и инбаунд не возвращает никто, и режим
+// числится включённым при мёртвом трафике. Тик обязан это переустановить.
+func TestReconcilePolicyTun_ReprovisionsWhenTunInboundGone(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun0")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	// Ровно то, что делает шаг 4 выключения: инбаунд вырезан из слота 20.
+	cfg, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	cfg.Inbounds = filterPolicyTunInbound(cfg.Inbounds)
+	if err := h.svc.persistConfigDirect(context.Background(), cfg); err != nil {
+		t.Fatalf("persistConfigDirect: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	// Переустановка — это адрес и подъём интерфейса; их не делает ни один heal.
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") || !h.log.has("InterfaceUp:OpkgTun0") {
+		t.Errorf("недоделанное состояние обязано переустанавливаться: %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 {
+		t.Errorf("PolicyTun persist = %+v, want provisioned index 0", st)
+	}
+	after, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig (after): %v", err)
+	}
+	if len(filterPolicyTunInbound(after.Inbounds)) == len(after.Inbounds) {
+		t.Error("tun-инбаунд обязан вернуться в слот")
+	}
+}
+
+// Конфиг слота не прочитался — «не знаем» ≠ «инбаунд пропал»: цена ложного
+// срабатывания здесь полный re-provision живого режима.
+func TestReconcilePolicyTun_NoReprovisionWhenConfigUnreadable(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if err := os.WriteFile(filepath.Join(h.dir, "20-router.json"), []byte("{{{ не json"), 0644); err != nil {
+		t.Fatalf("write broken config: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("нечитаемый конфиг не повод переустанавливать режим: %v", h.log.calls)
+	}
+}
+
+// Обратное: инбаунд на месте — тик ничего не переустанавливает. Иначе штатный
+// рестарт sing-box уходил бы в полный re-provision каждые 30 с.
+func TestReconcilePolicyTun_NoReprovisionWhenInboundPresent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("здоровое состояние переустанавливать нельзя: %v", h.log.calls)
 	}
 }
 
