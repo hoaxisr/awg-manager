@@ -40,6 +40,14 @@ func (a *routerAccessPolicyAdapter) GetPolicyMark(ctx context.Context, name stri
 	return a.svc.GetPolicyMark(ctx, name)
 }
 
+func (a *routerAccessPolicyAdapter) ListPolicyExits(ctx context.Context, iface string) ([]ndmsquery.PolicyDefaultExit, error) {
+	return a.svc.ListPolicyExits(ctx, iface)
+}
+
+func (a *routerAccessPolicyAdapter) PermitInterface(ctx context.Context, name, iface string, order int) error {
+	return a.svc.PermitInterface(ctx, name, iface, order)
+}
+
 func (a *routerAccessPolicyAdapter) AssignDevice(ctx context.Context, mac, name string) error {
 	return a.svc.AssignDevice(ctx, mac, name)
 }
@@ -470,4 +478,26 @@ type keenDNSLANAdapter struct{}
 
 func (keenDNSLANAdapter) LANIPv4() string {
 	return netif.FirstIPv4(storage.DefaultInterface)
+}
+
+// routerSegmentDetailsAdapter отдаёт router описание и адресацию сегмента по
+// NDMS-имени: экран source-preserve показывает сети человеку, а системные
+// `Home`/`Wireguard1` он знает только по веб-морде роутера.
+type routerSegmentDetailsAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *routerSegmentDetailsAdapter) SegmentInfo(ctx context.Context, ndmsName string) (router.SegmentInfo, error) {
+	iface, err := a.store.Get(ctx, ndmsName)
+	if err != nil {
+		return router.SegmentInfo{}, err
+	}
+	if iface == nil {
+		return router.SegmentInfo{}, nil
+	}
+	return router.SegmentInfo{
+		Label:   iface.Description,
+		Address: iface.Address,
+		Mask:    iface.Mask,
+	}, nil
 }

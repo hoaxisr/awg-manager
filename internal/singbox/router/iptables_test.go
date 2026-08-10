@@ -2063,3 +2063,97 @@ func TestBuildRestoreInput_DSCPOnly(t *testing.T) {
 		t.Error("user bypass after dscp")
 	}
 }
+
+func TestPolicyTunDNSHookScriptShellValid(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: "172.18.0.2", Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab"}, Ifaces: []string{"opkgtun17"},
+	}
+	script := policyTunDNSHookScript(spec)
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sh -n: %v\n%s\n---\n%s", err, out, script)
+	}
+
+	for _, want := range []string{
+		`[ "$table" = "nat" ] || exit 0`,
+		"-m connmark --mark 0xffffaab -p udp --dport 53",
+		"-m connmark --mark 0xffffaab -p tcp --dport 53",
+		"-i opkgtun17 -p udp --dport 53",
+		"--comment " + PolicyTunDNSTag,
+		"--to-destination 172.18.0.2:53",
+		"xt_comment",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("в хуке нет %q", want)
+		}
+	}
+	// Гейта на живость движка быть НЕ должно: решение fail-closed (спека §7.3).
+	if strings.Contains(script, "pidof sing-box") {
+		t.Error("хук гейтится на pidof sing-box — это ломает fail-closed")
+	}
+}
+
+func TestPolicyTunDNSHookScriptStableAcrossCalls(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: "172.18.0.2", Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab", "0xffffaac"},
+	}
+	if policyTunDNSHookScript(spec) != policyTunDNSHookScript(spec) {
+		t.Error("рендер не детерминирован")
+	}
+}
+
+func TestWritePolicyTunDNSHookSkipsIdenticalContent(t *testing.T) {
+	dir := t.TempDir()
+	prev := netfilterPolicyTunDNSHookPath
+	netfilterPolicyTunDNSHookPath = filepath.Join(dir, "52-awgm-policytun-dns.sh")
+	t.Cleanup(func() { netfilterPolicyTunDNSHookPath = prev })
+
+	script := "#!/bin/sh\nexit 0\n"
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("первая запись: %v", err)
+	}
+	st1, err := os.Stat(netfilterPolicyTunDNSHookPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if st1.Mode().Perm() != 0755 {
+		t.Errorf("права %v, хотели 0755", st1.Mode().Perm())
+	}
+
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("повторная запись: %v", err)
+	}
+	st2, _ := os.Stat(netfilterPolicyTunDNSHookPath)
+	if st1.ModTime() != st2.ModTime() {
+		t.Error("файл переписан при неизменном содержимом")
+	}
+
+	// Сбитые снаружи права обязаны чиниться, даже когда байты совпадают.
+	if err := os.Chmod(netfilterPolicyTunDNSHookPath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("запись при сбитых правах: %v", err)
+	}
+	st3, _ := os.Stat(netfilterPolicyTunDNSHookPath)
+	if st3.Mode().Perm() != 0755 {
+		t.Errorf("права не восстановлены: %v", st3.Mode().Perm())
+	}
+
+	if err := writePolicyTunDNSHook(script + "# tail\n"); err != nil {
+		t.Fatalf("запись изменённого: %v", err)
+	}
+	got, _ := os.ReadFile(netfilterPolicyTunDNSHookPath)
+	if !strings.HasSuffix(string(got), "# tail\n") {
+		t.Error("изменённое содержимое не записалось")
+	}
+
+	removePolicyTunDNSHook()
+	if _, err := os.Stat(netfilterPolicyTunDNSHookPath); !os.IsNotExist(err) {
+		t.Error("файл не снят")
+	}
+}

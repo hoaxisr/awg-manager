@@ -1,6 +1,7 @@
 import type {
 	CatalogPreset,
 	PolicyTunNATSegmentInfo,
+	PolicyTunNATPreview,
 	RouterPolicy,
 	RouterStagingStatusResponse,
 	SelectiveStatus,
@@ -50,7 +51,7 @@ export class SbRouterClient extends SingboxClient {
 	 * Сегменты роутера с текущим режимом NAT — предпоказ «что изменится» за
 	 * тумблером source-preserve в policy-tun.
 	 */
-	async getPolicyTunNATPreview(): Promise<{ segments: PolicyTunNATSegmentInfo[] }> {
+	async getPolicyTunNATPreview(): Promise<PolicyTunNATPreview> {
 		return this.request('/singbox/router/policy-tun/nat-preview');
 	}
 
