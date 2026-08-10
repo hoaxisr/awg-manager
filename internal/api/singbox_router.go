@@ -248,15 +248,19 @@ func (h *SingboxRouterHandler) PolicyTunNATPreview(w http.ResponseWriter, r *htt
 		response.MethodNotAllowed(w)
 		return
 	}
-	segments, err := h.svc.PolicyTunNATPreview(r.Context())
+	preview, err := h.svc.PolicyTunNATPreview(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return
 	}
-	if segments == nil {
-		segments = []router.NATSegmentInfo{}
+	if preview.Segments == nil {
+		preview.Segments = []router.NATSegmentInfo{}
 	}
-	response.Success(w, map[string]any{"segments": segments})
+	response.Success(w, map[string]any{
+		"segments": preview.Segments,
+		"wanName":  preview.WANName,
+		"wanLabel": preview.WANLabel,
+	})
 }
 
 // ── Staging DTOs ──────────────────────────────────────────────────

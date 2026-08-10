@@ -479,3 +479,25 @@ type keenDNSLANAdapter struct{}
 func (keenDNSLANAdapter) LANIPv4() string {
 	return netif.FirstIPv4(storage.DefaultInterface)
 }
+
+// routerSegmentDetailsAdapter отдаёт router описание и адресацию сегмента по
+// NDMS-имени: экран source-preserve показывает сети человеку, а системные
+// `Home`/`Wireguard1` он знает только по веб-морде роутера.
+type routerSegmentDetailsAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *routerSegmentDetailsAdapter) SegmentInfo(ctx context.Context, ndmsName string) (router.SegmentInfo, error) {
+	iface, err := a.store.Get(ctx, ndmsName)
+	if err != nil {
+		return router.SegmentInfo{}, err
+	}
+	if iface == nil {
+		return router.SegmentInfo{}, nil
+	}
+	return router.SegmentInfo{
+		Label:   iface.Description,
+		Address: iface.Address,
+		Mask:    iface.Mask,
+	}, nil
+}

@@ -192,6 +192,22 @@ export interface PolicyTunNATSegmentInfo {
 	name: string;
 	mode: 'dynamic' | 'static' | 'none';
 	staticWan?: string;
+	/** Описание сегмента из NDMS. Пусто, если не задано. */
+	label?: string;
+	/** Подсеть сегмента, напр. "192.168.1.0/24". Пусто, если адресации нет. */
+	subnet?: string;
+}
+
+/**
+ * Предпоказ source-preserve: сегменты и ВЫХОД, на котором подмена адреса
+ * сохранится. Без второй половины экран не отвечает на главный вопрос —
+ * между чем и чем подмена снимается.
+ */
+export interface PolicyTunNATPreview {
+	segments: PolicyTunNATSegmentInfo[];
+	/** Пусто, когда выход определить нельзя: режим уже включён. */
+	wanName?: string;
+	wanLabel?: string;
 }
 
 /**

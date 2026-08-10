@@ -6283,10 +6283,16 @@ const server = http.createServer(async (req, res) => {
 			success: true,
 			data: {
 				segments: [
-					{ name: 'Home', mode: 'dynamic' },
-					{ name: 'Guest', mode: 'static', staticWan: 'PPPoE0' },
-					{ name: 'IoT', mode: 'none' },
+					{ name: 'Home', mode: 'dynamic', label: 'Домашняя сеть', subnet: '192.168.1.0/24' },
+					{ name: 'Guest', mode: 'static', staticWan: 'PPPoE0', label: 'Гостевая сеть', subnet: '192.168.2.0/24' },
+					// Без description в NDMS: фронт обязан показать системное имя.
+					{ name: 'Wireguard1', mode: 'dynamic', subnet: '172.16.6.0/24' },
+					{ name: 'IoT', mode: 'none', label: 'Умный дом', subnet: '192.168.3.0/24' },
 				],
+				// Выход, на котором подмена адреса сохранится (static-NAT ставится
+				// на пару «сегмент → этот выход»).
+				wanName: 'PPPoE0',
+				wanLabel: 'Провайдер',
 			},
 		});
 		return;

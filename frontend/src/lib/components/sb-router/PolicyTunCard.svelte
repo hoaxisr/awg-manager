@@ -49,6 +49,13 @@
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let selected = $state<string[]>([]);
+  // Выход, на котором подмена адреса СОХРАНИТСЯ: static-NAT ставится на пару
+  // «сегмент → этот выход», а к туннелю записи нет — на этом опция и держится.
+  let wanName = $state('');
+  let wanLabel = $state('');
+
+  const wanTitle = $derived(wanLabel || wanName || 'Интернет');
+  const tunName = $derived(ndmsName || 'туннель sing-box');
 
   async function openPicker() {
     pickerOpen = true;
@@ -58,6 +65,8 @@
     try {
       const data = await api.getPolicyTunNATPreview();
       preview = data.segments ?? [];
+      wanName = data.wanName ?? '';
+      wanLabel = data.wanLabel ?? '';
       // Уже выбранное пользователем важнее умолчания; на первом включении
       // предвыбираем сегменты за динамическим NAT — именно их маскарад скрывает
       // адреса клиентов от sing-box.
@@ -91,10 +100,16 @@
     void onPatch({ policyTunSourcePreserve: true, policyTunNatSegments: selected });
   }
 
-  function segmentNote(seg: PolicyTunNATSegmentInfo): string {
-    if (seg.mode === 'dynamic') return 'динамический NAT';
-    if (seg.mode === 'static') return `static-NAT → ${seg.staticWan || '—'}`;
-    return 'без NAT';
+  // Вторая строка сегмента: системное имя (по нему сеть ищут в веб-морде
+  // роутера) и подсеть — по ней свою сеть узнают вернее, чем по названию.
+  function segmentTech(seg: PolicyTunNATSegmentInfo): string {
+    return [seg.name, seg.subnet].filter(Boolean).join(' · ');
+  }
+
+  // Сегмент, уже переведённый на static-NAT вручную, трогать незачем: адреса
+  // его устройств и так доезжают до sing-box.
+  function alreadyPreserved(seg: PolicyTunNATSegmentInfo): boolean {
+    return seg.mode === 'static';
   }
 </script>
 
@@ -186,29 +201,63 @@
     <p class="hint">Сегментов, которым можно сменить режим NAT, не найдено.</p>
   {:else}
     <p class="hint">
-      Выбранные сегменты переводятся на static-NAT в WAN — sing-box увидит реальные
-      адреса клиентов вместо адреса tun-шлюза.
+      Отметьте сети, устройства которых sing-box должен видеть по их настоящим адресам.
+      В интернет они продолжат выходить через адрес роутера.
     </p>
-    <ul class="seg-list">
-      {#each preview as seg (seg.name)}
-        <li class="seg-row">
-          <label class="seg-label">
-            <input
-              type="checkbox"
-              checked={selected.includes(seg.name)}
-              onchange={() => toggleSegment(seg.name)}
-            />
-            <span class="seg-name">{seg.name}</span>
-          </label>
-          <Badge variant={seg.mode === 'dynamic' ? 'default' : 'muted'} size="xs">
-            {segmentNote(seg)}
-          </Badge>
-        </li>
-      {/each}
-    </ul>
+
+    <div class="flow">
+      <div class="flow-col">
+        <div class="flow-cap">Сети</div>
+        <ul class="seg-list">
+          {#each preview as seg (seg.name)}
+            <li class="seg-row" class:seg-on={selected.includes(seg.name)}>
+              <label class="seg-label">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(seg.name)}
+                  onchange={() => toggleSegment(seg.name)}
+                />
+                <span class="seg-main">
+                  <span class="seg-name">{seg.label || seg.name}</span>
+                  <span class="seg-tech">{segmentTech(seg)}</span>
+                  {#if alreadyPreserved(seg)}
+                    <span class="seg-side">
+                      <Badge variant="muted" size="xs">уже настроено вручную</Badge>
+                    </span>
+                  {/if}
+                </span>
+              </label>
+            </li>
+          {/each}
+        </ul>
+      </div>
+
+      <div class="flow-arrow" aria-hidden="true">→</div>
+
+      <div class="flow-col">
+        <div class="flow-cap">Что увидит выход</div>
+        <div class="dest dest-free">
+          <span class="dest-name">Туннель sing-box</span>
+          <span class="dest-tech">{tunName}</span>
+          <span class="dest-note">адреса устройств — правила и статистика по клиентам работают</span>
+        </div>
+        <div class="dest">
+          <span class="dest-name">{wanTitle}</span>
+          {#if wanName && wanName !== wanTitle}
+            <span class="dest-tech">{wanName}</span>
+          {/if}
+          <span class="dest-note">адрес роутера — как и было, интернет не меняется</span>
+        </div>
+      </div>
+    </div>
+
     <p class="hint hint-warning">
-      Меняет NAT-режим выбранных сегментов (static-NAT). Проверьте проброс портов и UPnP —
-      они настраиваются отдельно от режима NAT.
+      Меняется способ выхода отмеченных сетей в интернет: <b>проверьте проброс портов и UPnP</b>,
+      они настраиваются отдельно.
+      {#if wanName}
+        Адрес подменяется только на выходе <b>{wanName}</b>; если у сети есть другие выходы в
+        интернет, трафик к ним пойдёт с адресом устройства и может не вернуться.
+      {/if}
     </p>
   {/if}
 
@@ -266,9 +315,50 @@
     text-align: right;
     word-break: break-all;
   }
+  /* Схема «слева сети → справа выходы»: экран объясняет форму́й, а не текстом,
+     что подмена адреса снимается для ПАРЫ «сеть → выход», а не для сети. */
+  .flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    margin: 0.75rem 0;
+  }
+  @media (max-width: 560px) {
+    .flow { grid-template-columns: minmax(0, 1fr); }
+    .flow-arrow { display: none; }
+  }
+  .flow-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .flow-cap {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  .flow-arrow {
+    align-self: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    text-align: center;
+  }
+  .dest {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+  }
+  .dest-free { border-color: var(--color-success, #9ece6a); }
+  .dest-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .dest-tech { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+  .dest-note { font-size: 11.5px; color: var(--text-secondary); line-height: 1.4; }
+
   .seg-list {
     list-style: none;
-    margin: 0.75rem 0;
+    margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
@@ -276,24 +366,36 @@
   }
   .seg-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    align-items: flex-start;
     gap: 10px;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
   }
+  .seg-on { border-color: var(--color-accent); }
   .seg-label {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
+    /* flex:1 + min-width:0 обязательны: без них бейдж справа выдавливает текст
+       сети в нулевую ширину и тот ломается по одному символу в столбик. */
+    flex: 1 1 auto;
     min-width: 0;
     cursor: pointer;
   }
+  .seg-label input { flex: none; margin-top: 2px; }
+  .seg-side { margin-top: 3px; }
+  .seg-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .seg-name {
     font-size: 13px;
     color: var(--text-primary);
     word-break: break-word;
+  }
+  .seg-tech {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-all;
   }
 </style>

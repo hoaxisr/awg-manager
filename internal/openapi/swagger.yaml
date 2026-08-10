@@ -4201,6 +4201,16 @@ definitions:
         items:
           $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
         type: array
+      wanLabel:
+        example: Провайдер
+        type: string
+      wanName:
+        description: |-
+          WANName/WANLabel — выход, на котором подмена адреса СОХРАНИТСЯ (туда
+          встанет static-NAT). Пустые, когда выход определить нельзя: режим уже
+          включён и дефолт припаркован на нашем tun.
+        example: PPPoE0
+        type: string
     type: object
   api.SingboxRouterNATPreviewResponse:
     properties:
@@ -4212,6 +4222,12 @@ definitions:
     type: object
   api.SingboxRouterNATSegmentDTO:
     properties:
+      label:
+        description: |-
+          Label — описание сегмента из NDMS, Subnet — его подсеть. Пустые, когда
+          NDMS описания не дал или адресации у сегмента нет.
+        example: Домашняя сеть
+        type: string
       mode:
         enum:
         - dynamic
@@ -4224,6 +4240,9 @@ definitions:
         type: string
       staticWan:
         example: PPPoE0
+        type: string
+      subnet:
+        example: 192.168.1.0/24
         type: string
     type: object
   api.SingboxRouterOutboundDTO:

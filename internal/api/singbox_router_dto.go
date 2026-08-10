@@ -308,12 +308,21 @@ type SingboxRouterNATSegmentDTO struct {
 	Name      string `json:"name" example:"Home"`
 	Mode      string `json:"mode" example:"dynamic" enums:"dynamic,static,none"`
 	StaticWAN string `json:"staticWan,omitempty" example:"PPPoE0"`
+	// Label — описание сегмента из NDMS, Subnet — его подсеть. Пустые, когда
+	// NDMS описания не дал или адресации у сегмента нет.
+	Label  string `json:"label,omitempty" example:"Домашняя сеть"`
+	Subnet string `json:"subnet,omitempty" example:"192.168.1.0/24"`
 }
 
 // SingboxRouterNATPreviewData is the payload of
 // GET /singbox/router/policy-tun/nat-preview.
 type SingboxRouterNATPreviewData struct {
 	Segments []SingboxRouterNATSegmentDTO `json:"segments"`
+	// WANName/WANLabel — выход, на котором подмена адреса СОХРАНИТСЯ (туда
+	// встанет static-NAT). Пустые, когда выход определить нельзя: режим уже
+	// включён и дефолт припаркован на нашем tun.
+	WANName  string `json:"wanName,omitempty" example:"PPPoE0"`
+	WANLabel string `json:"wanLabel,omitempty" example:"Провайдер"`
 }
 
 // SingboxRouterNATPreviewResponse is the envelope for

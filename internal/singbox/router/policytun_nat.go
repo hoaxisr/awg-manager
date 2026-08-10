@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -20,10 +21,56 @@ const (
 
 // NATSegmentInfo — строка предпоказа source-preserve: что за сегмент и в каком
 // он NAT-режиме сейчас. StaticWAN заполнен только для static.
+//
+// Label и Subnet — для человека: системные имена (`Home`, `Wireguard1`) он
+// видит только в веб-морде роутера, а выбирать ему предстоит то, у чего
+// меняется способ выхода в интернет. Пустые, когда NDMS описания не дал или
+// адресации у сегмента нет.
 type NATSegmentInfo struct {
 	Name      string `json:"name"`
 	Mode      string `json:"mode"`
 	StaticWAN string `json:"staticWan,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Subnet    string `json:"subnet,omitempty"`
+}
+
+// NATPreview — всё, что экран «Сохранять адреса клиентов» показывает до
+// включения: сами сегменты и ВЫХОД, на котором подмена адреса сохранится.
+// Без второй половины пользователь видит только «какие сети выбрать» и не
+// видит, между чем и чем подмена снимается.
+//
+// WANName пуст, когда выход определить нельзя (режим уже включён — дефолт
+// припаркован на нашем tun).
+type NATPreview struct {
+	Segments []NATSegmentInfo
+	WANName  string
+	WANLabel string
+}
+
+// SegmentInfo — то, что NDMS знает о сегменте помимо его имени.
+type SegmentInfo struct {
+	Label   string // description NDMS; пусто, если не задано
+	Address string // адрес интерфейса, напр. "192.168.1.1"
+	Mask    string // маска, напр. "255.255.255.0"
+}
+
+// SegmentDetails отдаёт описание и адресацию сегмента по NDMS-имени.
+// Optional — nil означает «показываем системные имена, как раньше».
+type SegmentDetails interface {
+	SegmentInfo(ctx context.Context, ndmsName string) (SegmentInfo, error)
+}
+
+// segmentSubnet сводит адрес и маску интерфейса в подсеть ("192.168.1.0/24").
+// Пустая строка при любой неполноте: подпись «сеть такая-то» обязана быть
+// верной либо отсутствовать.
+func segmentSubnet(address, mask string) string {
+	ip := net.ParseIP(address).To4()
+	m := net.ParseIP(mask).To4()
+	if ip == nil || m == nil {
+		return ""
+	}
+	ipnet := net.IPNet{IP: ip.Mask(net.IPMask(m)), Mask: net.IPMask(m)}
+	return ipnet.String()
 }
 
 // DefaultGatewayResolver отдаёт NDMS-имя интерфейса с дефолтным маршрутом —
@@ -41,11 +88,31 @@ type DefaultGatewayResolver interface {
 // PolicyTunNATPreview — предпоказ «что будет изменено» для тумблера
 // «Сохранять адреса клиентов»: сегменты роутера с их текущим NAT-режимом.
 // Пользователь снимает галочки с сегментов, которые трогать не надо.
-func (s *ServiceImpl) PolicyTunNATPreview(ctx context.Context) ([]NATSegmentInfo, error) {
+func (s *ServiceImpl) PolicyTunNATPreview(ctx context.Context) (NATPreview, error) {
 	if s.deps.NATState == nil {
-		return nil, fmt.Errorf("policy-tun: NAT state reader not wired")
+		return NATPreview{}, fmt.Errorf("policy-tun: NAT state reader not wired")
 	}
-	return s.scanSegmentNAT(ctx)
+	segs, err := s.scanSegmentNAT(ctx)
+	if err != nil {
+		return NATPreview{}, err
+	}
+	out := NATPreview{Segments: segs}
+
+	// Выход, на который встанет static — best-effort: при уже включённом режиме
+	// дефолт припаркован на нашем tun, и резолвер честно отвергает такой ответ
+	// (см. resolvePolicyTunWAN). Тогда экран назовёт выход обобщённо, а не
+	// соврёт именем нашего же туннеля.
+	if s.deps.DefaultGateway != nil {
+		if wan, werr := s.resolvePolicyTunWAN(ctx); werr == nil {
+			out.WANName = wan
+			if s.deps.Segments != nil {
+				if info, ierr := s.deps.Segments.SegmentInfo(ctx, wan); ierr == nil {
+					out.WANLabel = info.Label
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // scanSegmentNAT сводит два структурированных списка NDMS (`/show/rc/ip/nat` и
@@ -91,7 +158,26 @@ func (s *ServiceImpl) scanSegmentNAT(ctx context.Context) ([]NATSegmentInfo, err
 		idx[e.Interface] = len(out)
 		out = append(out, info)
 	}
+	s.labelSegments(ctx, out)
 	return out, nil
+}
+
+// labelSegments дополняет строки предпоказа описанием и подсетью. Best-effort:
+// отказ NDMS оставляет системные имена, но не валит предпоказ — без него опцию
+// вообще не включить.
+func (s *ServiceImpl) labelSegments(ctx context.Context, segs []NATSegmentInfo) {
+	if s.deps.Segments == nil {
+		return
+	}
+	for i := range segs {
+		info, err := s.deps.Segments.SegmentInfo(ctx, segs[i].Name)
+		if err != nil {
+			s.appLog.Debug("policy-tun-nat", segs[i].Name, "segment info: "+err.Error())
+			continue
+		}
+		segs[i].Label = info.Label
+		segs[i].Subnet = segmentSubnet(info.Address, info.Mask)
+	}
 }
 
 // isOpkgTunName сообщает, что имя принадлежит OpkgTun-семейству (наш policy-tun

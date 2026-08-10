@@ -49,7 +49,7 @@ type Service interface {
 	// PolicyTunNATPreview returns the router segments with their current NAT
 	// mode — the editable "what will change" preview behind the policy-tun
 	// source-preserve toggle.
-	PolicyTunNATPreview(ctx context.Context) ([]NATSegmentInfo, error)
+	PolicyTunNATPreview(ctx context.Context) (NATPreview, error)
 
 	SetRouteFinal(ctx context.Context, tag string) error
 
@@ -374,6 +374,10 @@ type Deps struct {
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
 
+	// Segments отдаёт описание и адресацию сегментов для предпоказа
+	// source-preserve: без них пользователь выбирает сегменты по системным
+	// именам вслепую. Optional — nil оставляет системные имена.
+	Segments SegmentDetails
 	// DefaultRoute паркует NDMS-дефолт (v4/v6) на policy-tun интерфейс.
 	// Optional — nil в тестах; wired в cmd/awg-manager на *RouteCommands.
 	DefaultRoute DefaultRouteProvider
