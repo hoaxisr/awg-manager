@@ -2,10 +2,41 @@ package wdtt
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
 )
+
+// F2: UpdateClientInstance перепинивает серверные поля (RawClientIP, ...) из
+// сохранённого конфига — PUT без RawClientMTU (например, старый фронт) не
+// должен молча обнулять персист и откатывать reconcile на дефолт 1300.
+func TestUpdateClientInstanceRepinsRawClientMTU(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	full, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Clients[0].Config = validClientCfg("h:1")
+	full.Clients[0].Config.RawClientMTU = 1280
+	if err := s.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := validClientCfg("h:2") // фронт не знает про RawClientMTU, шлёт 0
+	if err := s.UpdateClientInstance(DefaultInstanceID, stale); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clients[0].Config.RawClientMTU != 1280 {
+		t.Fatalf("RawClientMTU=%d, want сохранённый 1280 (не обнулён PUT'ом)", got.Clients[0].Config.RawClientMTU)
+	}
+}
 
 func TestEnsureClientDeviceID(t *testing.T) {
 	dir := t.TempDir()
@@ -148,6 +179,66 @@ func TestStartClientInstanceRecyclePreparesAfterTeardown(t *testing.T) {
 	deleteAt := fake.index("delete OpkgTun18")
 	if deleteAt < 0 || deleteAt < createAt[0] || deleteAt > createAt[1] {
 		t.Fatalf("ожидали порядок create → delete → create, calls=%v", fake.calls)
+	}
+}
+
+// F3: ошибка ПОВТОРНОГО prepare в recycle-ветке (после teardown) обязана
+// чиститься так же, как ошибка первичного prepare (:449-451) — иначе
+// OpkgTun остаётся полусозданным (create прошёл, mtu — нет).
+func TestStartClientInstanceRecyclePrepareErrorTearsDown(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	mtuErr := fmt.Errorf("rci: mtu отказал")
+	fake := &fakeOpkgCommands{mtuErrOn: 2, mtuErr: mtuErr}
+	s.SetNDMSInterfaceCommands(fake)
+	s.SetOpkgTunIndexLister(fakeOpkgIndexLister{})
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": true},
+	})
+
+	cfg := validClientCfg("127.0.0.1:56000")
+	cfg.ConnMode = ConnModeRaw
+	cfg.NdmsIface = "OpkgTun18"
+	cfg.RawIface = "opkgtun18"
+	cfg.RawClientIP = "10.70.0.5"
+	full, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Clients[0].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := s.clientProcs.get(DefaultInstanceID)
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "sleep 30; true")
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatal(err)
+	}
+	proc.mu.Lock()
+	proc.startedAt = nil
+	proc.mu.Unlock()
+
+	startErr := s.StartClientInstance(DefaultInstanceID)
+	if !errors.Is(startErr, mtuErr) {
+		t.Fatalf("ожидали ошибку повторного prepare, got %v", startErr)
+	}
+	deletes := 0
+	for _, c := range fake.calls {
+		if strings.HasPrefix(c, "delete OpkgTun18") {
+			deletes++
+		}
+	}
+	// Первый delete — recycle-teardown до повторного prepare; второй —
+	// чистка ПОСЛЕ провала самого повторного prepare (F3).
+	if deletes != 2 {
+		t.Fatalf("ожидали 2 delete (recycle-teardown + чистка после провала re-prepare), got %d: %v", deletes, fake.calls)
+	}
+	if last := fake.calls[len(fake.calls)-1]; !strings.HasPrefix(last, "delete OpkgTun18") {
+		t.Fatalf("последний вызов должен быть delete (чистка после провала re-prepare), calls=%v", fake.calls)
 	}
 }
 

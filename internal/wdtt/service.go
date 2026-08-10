@@ -188,6 +188,7 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	cfg.NdmsIface = full.Clients[idx].Config.NdmsIface
 	cfg.RawIface = full.Clients[idx].Config.RawIface
 	cfg.RawClientIP = full.Clients[idx].Config.RawClientIP
+	cfg.RawClientMTU = full.Clients[idx].Config.RawClientMTU
 	cfg.DeviceID = full.Clients[idx].Config.DeviceID
 	full.Clients[idx].Config = cfg
 	s.startBackoff.Forget(clientKey(id))
@@ -473,6 +474,7 @@ func (s *Service) StartClientInstance(id string) error {
 					// него — без повторного вызова bootstrapRawClient ждёт
 					// интерфейс, который больше некому создать (I1).
 					if err := s.prepareClientNDMSOpkgTun(ctx, id, cfg); err != nil {
+						_ = s.teardownClientOpkgTun(ctx, cfg)
 						return err
 					}
 				}

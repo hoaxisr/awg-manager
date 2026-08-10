@@ -3,6 +3,7 @@ package wdtt
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,18 @@ func TestParseRawConfLine(t *testing.T) {
 	}
 	if conf.ClientIP != "10.70.0.2" || conf.DNS != "1.1.1.1,1.0.0.1" || conf.MTU != 1300 {
 		t.Fatalf("unexpected conf: %+v", conf)
+	}
+}
+
+// F2: верхний потолок MTU симметричен нижнему (<576) — абсурдный/битый MTU
+// из RAWCONF не должен уходить в персист и в NDMS как есть.
+func TestParseRawConfLineClampsOversizedMTU(t *testing.T) {
+	conf, ok := parseRawConfLine("RAWCONF|10.70.0.2|1.1.1.1|65535")
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if conf.MTU != 1300 {
+		t.Fatalf("MTU=%d, want фолбэк 1300 при значении выше потолка", conf.MTU)
 	}
 }
 
@@ -74,8 +87,10 @@ func TestReconcileClientRawNDMSUsesPersistedMTU(t *testing.T) {
 	if err != nil || !reconciled {
 		t.Fatalf("reconcile: reconciled=%v err=%v", reconciled, err)
 	}
-	if fake.index("mtu OpkgTun18 1280") < 0 {
-		t.Fatalf("ожидали mtu 1280 из RawClientMTU, calls=%v", fake.calls)
+	// prepare безусловно шлёт SetMTU 1300 ДО активации — дискриминирующий
+	// сигнал только mtu ПОСЛЕ address (реальная активация с RawClientMTU).
+	if got := lastMTUAfterAddress(t, fake.calls); got != "mtu OpkgTun18 1280" {
+		t.Fatalf("ожидали mtu 1280 из RawClientMTU после address, got %q calls=%v", got, fake.calls)
 	}
 
 	fake.calls = nil
@@ -84,9 +99,32 @@ func TestReconcileClientRawNDMSUsesPersistedMTU(t *testing.T) {
 	if err != nil || !reconciled {
 		t.Fatalf("reconcile (fallback): reconciled=%v err=%v", reconciled, err)
 	}
-	if fake.index("mtu OpkgTun18 1300") < 0 {
-		t.Fatalf("ожидали фолбэк mtu 1300 при RawClientMTU=0, calls=%v", fake.calls)
+	if got := lastMTUAfterAddress(t, fake.calls); got != "mtu OpkgTun18 1300" {
+		t.Fatalf("ожидали фолбэк mtu 1300 при RawClientMTU=0 после address, got %q calls=%v", got, fake.calls)
 	}
+}
+
+// lastMTUAfterAddress возвращает mtu-вызов, сделанный ПОСЛЕ первого address —
+// это активация реальным MTU, а не безусловный SetMTU 1300 из prepare.
+func lastMTUAfterAddress(t *testing.T, calls []string) string {
+	t.Helper()
+	addrAt := -1
+	for i, c := range calls {
+		if strings.HasPrefix(c, "address OpkgTun18") {
+			addrAt = i
+			break
+		}
+	}
+	if addrAt < 0 {
+		t.Fatalf("нет address в calls=%v", calls)
+	}
+	for _, c := range calls[addrAt:] {
+		if strings.HasPrefix(c, "mtu OpkgTun18") {
+			return c
+		}
+	}
+	t.Fatalf("нет mtu после address, calls=%v", calls)
+	return ""
 }
 
 func TestClientConfigUsesNDMSOpkgTun(t *testing.T) {

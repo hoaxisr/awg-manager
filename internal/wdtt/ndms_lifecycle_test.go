@@ -12,6 +12,11 @@ import (
 type fakeOpkgCommands struct {
 	calls     []string
 	deleteErr error
+	// mtuErrOn — если > 0, N-й по счёту вызов SetMTU (1-based) возвращает
+	// mtuErr вместо nil; нужно для симуляции отказа повторного prepare.
+	mtuErrOn int
+	mtuErr   error
+	mtuCalls int
 }
 
 func (f *fakeOpkgCommands) rec(format string, args ...any) {
@@ -48,6 +53,10 @@ func (f *fakeOpkgCommands) ClearAddress(_ context.Context, name string) error {
 }
 func (f *fakeOpkgCommands) SetMTU(_ context.Context, name string, mtu int) error {
 	f.rec("mtu %s %d", name, mtu)
+	f.mtuCalls++
+	if f.mtuErrOn > 0 && f.mtuCalls == f.mtuErrOn {
+		return f.mtuErr
+	}
 	return nil
 }
 func (f *fakeOpkgCommands) InterfaceUp(_ context.Context, name string) error {

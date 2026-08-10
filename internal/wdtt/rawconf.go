@@ -25,7 +25,7 @@ func parseRawConfLine(line string) (RawConfPayload, bool) {
 		return RawConfPayload{}, false
 	}
 	mtu, err := strconv.Atoi(strings.TrimSpace(parts[2]))
-	if err != nil || mtu < 576 {
+	if err != nil || mtu < 576 || mtu > 9000 {
 		mtu = 1300
 	}
 	ip := strings.TrimSpace(parts[0])
