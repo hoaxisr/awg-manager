@@ -253,10 +253,11 @@ func (s *ServiceImpl) rollbackSwitch(ctx context.Context, id, source, target str
 	s.emitTransition(id, source, target,
 		TransitionStep{Step: "rollback", Status: "current"}, false, "", "")
 
-	// slot-20-пары восстанавливают прежний режим: tproxy↔policy-tun. NB: к
-	// моменту rollback'а teardown источника уже прошёл и SetPolicyTunState(nil)
-	// выполнен — restore-Enable аллоцирует индекс заново (аллокатор берёт низший
-	// свободный, т.е. почти всегда тот же, но НЕ из персиста).
+	// slot-20-пары восстанавливают прежний режим: tproxy↔policy-tun. К моменту
+	// rollback'а teardown источника уже прошёл, но для policy-tun он теперь
+	// УДЕРЖИВАЮЩИЙ: интерфейс жив, персист хранит {Provisioned:false, Index}, и
+	// restore-Enable переиспользует тот же номер вместе с разрешением в
+	// политике. (Прежде персист очищался и индекс аллоцировался заново.)
 	restorable := (source == stateTProxy && (target == stateFakeIPTun || target == statePolicyTun)) ||
 		(source == statePolicyTun && target == stateTProxy)
 	if restorable {

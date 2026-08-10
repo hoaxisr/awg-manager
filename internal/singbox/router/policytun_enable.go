@@ -177,6 +177,13 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// отвалился во время waitForSingbox) — иначе NDMS-вызовы отката no-op'ятся
 	// с context.Canceled и OpkgTun остаётся с настроенным адресом (nginx-loop,
 	// см. teardownOpkgTun).
+	//
+	// ОСОЗНАННАЯ ПОТЕРЯ: откат УДАЛЯЕТ интерфейс, даже если включение его не
+	// создавало, а переиспользовало удержанный. Номер не теряется (персист цел,
+	// следующее включение возьмёт его же), теряется идентичность интерфейса —
+	// переживает ли пересоздание permit в политике, не проверено. Откат также
+	// не снимает уже поставленный нами permit: DenyInterface мог бы снять
+	// разрешение, которое пользователь дал интерфейсу сознательно.
 	rbCtx := context.WithoutCancel(ctx)
 	push(func() {
 		_ = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
