@@ -67,9 +67,39 @@ type Service struct {
 	// clientStarts — per-client счётчик стартов в полёте (StartClientInstance
 	// целиком, супервизор и API учитываются одинаково). В отличие от
 	// opkgStarts (глобальный, для reap/сервера) — не даёт старту одного
-	// клиента глушить reconcile/эскалацию у другого.
-	clientStartMu sync.Mutex
-	clientStarts  map[string]int
+	// клиента глушить reconcile/эскалацию у другого. Совещательный fast-path
+	// (TOCTOU: окно между проверкой и стартом открыто) — жёсткая сериализация
+	// самого старта обеспечивается clientStartLocks (TryLock внутри
+	// StartClientInstance).
+	clientStartMu    sync.Mutex
+	clientStarts     map[string]int
+	clientStartLocks map[string]*sync.Mutex
+}
+
+// ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
+// где-то ещё (TryLock не взят); возвращается без какой-либо RCI-работы.
+var ErrClientStartInFlight = errors.New("старт клиента уже выполняется")
+
+// tryLockClientStart — жёсткая per-client сериализация StartClientInstance:
+// второй конкурентный вызов для того же id не блокируется, а сразу получает
+// отказ (в отличие от clientStartInFlight — совещательной проверки для
+// супервизора). unlock должен вызываться defer'ом сразу после успешного
+// захвата.
+func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
+	s.clientStartMu.Lock()
+	if s.clientStartLocks == nil {
+		s.clientStartLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.clientStartLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.clientStartLocks[id] = l
+	}
+	s.clientStartMu.Unlock()
+	if !l.TryLock() {
+		return nil, false
+	}
+	return l.Unlock, true
 }
 
 func (s *Service) beginOpkgStart() {
@@ -441,6 +471,14 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 }
 
 func (s *Service) StartClientInstance(id string) error {
+	// Жёсткая сериализация (L4): второй конкурентный старт этого же id не
+	// гоняется с первым, а сразу отказывает — без RCI-работы.
+	unlock, ok := s.tryLockClientStart(id)
+	if !ok {
+		return ErrClientStartInFlight
+	}
+	defer unlock()
+
 	// Per-client in-flight guard (F6): супервизор проверяет clientStartInFlight
 	// перед reconcile/эскалацией, чтобы не гоняться со StartClientInstance
 	// этого же клиента, запущенным откуда-то ещё (API, сам супервизор).

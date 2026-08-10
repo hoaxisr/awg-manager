@@ -2,6 +2,7 @@ package wdtt
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxysup"
@@ -73,6 +74,12 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				continue
 			}
 			if err := s.StartClientInstance(c.ID); err != nil {
+				// ErrClientStartInFlight — TryLock проиграл гонку со стартом того
+				// же клиента откуда-то ещё: это не провал старта, жечь backoff-окно
+				// не за что, на следующем тике клиент, скорее всего, уже поднят.
+				if errors.Is(err, ErrClientStartInFlight) {
+					continue
+				}
 				s.startBackoff.Fail(key, now)
 				if s.appLog != nil {
 					s.appLog.Warn("supervisor", c.ID, "перезапуск клиента: "+err.Error())

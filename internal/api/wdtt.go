@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -179,6 +180,10 @@ func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.StartClient(); err != nil {
+		if errors.Is(err, wdtt.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "WDTT_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
@@ -441,6 +446,10 @@ func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.StartClientInstance(id); err != nil {
+		if errors.Is(err, wdtt.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "WDTT_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
