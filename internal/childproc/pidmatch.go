@@ -30,3 +30,27 @@ func MatchesBinary(pid int, binary string) bool {
 	}
 	return filepath.Base(argv0) == filepath.Base(binary)
 }
+
+// MatchesAnyBinary reports whether pid's /proc cmdline argv0 basename equals
+// one of basenames. Для случаев, когда известен только класс процесса (одна
+// из нескольких известных программ), а не единственный ожидаемый путь —
+// например, сирота-pidfile freeturn-*/wdtt-*, который может принадлежать
+// либо клиенту, либо серверу. Как и MatchesBinary, fail-closed: недоступный
+// или пустой cmdline — не совпадение.
+func MatchesAnyBinary(pid int, basenames ...string) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	argv0, _, _ := strings.Cut(string(b), "\x00")
+	if argv0 == "" {
+		return false
+	}
+	base := filepath.Base(argv0)
+	for _, name := range basenames {
+		if base == name {
+			return true
+		}
+	}
+	return false
+}

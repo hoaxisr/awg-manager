@@ -25,3 +25,21 @@ func TestMatchesBinary(t *testing.T) {
 		t.Fatal("несуществующий pid не подтверждается")
 	}
 }
+
+func TestMatchesAnyBinary(t *testing.T) {
+	pid := os.Getpid()
+	self := filepath.Base(os.Args[0])
+
+	if !MatchesAnyBinary(pid, "freeturn-client", self, "wdtt-server") {
+		t.Fatal("должно совпасть по одному из перечисленных имён")
+	}
+	if MatchesAnyBinary(pid, "freeturn-client", "wdtt-server") {
+		t.Fatal("посторонний список имён не должен совпадать")
+	}
+	if MatchesAnyBinary(-1, self) {
+		t.Fatal("несуществующий pid не подтверждается")
+	}
+	if MatchesAnyBinary(pid) {
+		t.Fatal("пустой список basenames не должен совпадать ни с чем")
+	}
+}
