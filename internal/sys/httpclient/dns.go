@@ -57,10 +57,10 @@ func LookupIPv4ForBind(ctx context.Context, host string, dnsServers []string, bi
 
 // LookupAllIPv4ForBind resolves host to ALL of its IPv4 addresses. Server and
 // bind semantics match LookupIPv4ForBind, but every A record found is returned
-// (deduplicated) instead of just the first. This matters for the selective
-// ipset: a domain may serve several A records (CDN, round-robin) and the client
-// can connect to any of them — the set must contain all so none leak past the
-// guard. Returns an error only when nothing could be resolved.
+// (deduplicated) instead of just the first. Needed wherever every address of a
+// host must be covered: a domain may serve several A records (CDN,
+// round-robin) and the client can connect to any of them. Returns an error
+// only when nothing could be resolved.
 func LookupAllIPv4ForBind(ctx context.Context, host string, dnsServers []string, bindIface string) ([]string, error) {
 	host = strings.TrimSuffix(strings.TrimSpace(host), ".")
 	if host == "" {

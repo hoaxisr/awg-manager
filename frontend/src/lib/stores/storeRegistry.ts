@@ -29,7 +29,8 @@ export type ResourceKey =
 	| 'deviceproxy.outbounds'       // ResourceDeviceProxyOutbounds
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
 	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
-	| 'singbox.router.rules';       // emitted by emitRulesEvent — triggers loadRulesSnapshot()
+	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
+	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
 
 /**
  * Resource key → list of polling stores. Multiple stores can register under

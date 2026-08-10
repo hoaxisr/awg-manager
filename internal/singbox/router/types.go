@@ -126,8 +126,9 @@ type Rule struct {
 	// no outbound, so this and Action are the only fields it sets.
 	UDPTimeout string `json:"udp_timeout,omitempty"`
 	// AwgmManaged marks auto-generated route rules owned by AWG Manager.
-	// "selective-ip" rules map resolved domain IPs to proxy outbounds for
-	// selective TPROXY mode; they are replaced on each ipset rebuild.
+	// The only value still seen in the wild is the legacy "selective-ip" of
+	// the removed selective-TPROXY feature: such rules are stripped from the
+	// applied config by the one-shot startup cleanup.
 	AwgmManaged string `json:"awgm_managed,omitempty"`
 }
 

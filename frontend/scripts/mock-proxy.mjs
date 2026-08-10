@@ -2031,6 +2031,39 @@ let mockSBSettings = {
 	fakeipSourcePreserve: true,
 };
 
+// Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
+// чтобы cn+us+ru перебирали предел набора (262144) — превышение бюджета
+// в UI обхода по geoip проверяемо без роутера.
+const MOCK_GEO_TAGS = {
+	'/opt/etc/HydraRoute/geoip_GA.dat': [
+		{ name: 'ru', count: 48210 },
+		{ name: 'cn', count: 120340 },
+		{ name: 'us', count: 98765 },
+		{ name: 'telegram', count: 2140 },
+		{ name: 'discord', count: 860 },
+		{ name: 'cloudflare', count: 1980 },
+		{ name: 'private', count: 32 },
+	],
+	'/opt/etc/HydraRoute/geoip_antifilter.dat': [
+		{ name: 'ru', count: 3000 },
+		{ name: 'antifilter', count: 18400 },
+	],
+	'/opt/etc/HydraRoute/geosite_GA.dat': [],
+};
+
+// Состояние набора обхода AWGM-BYPASS (GET/POST /singbox/router/bypass-set/*).
+let mockBypassSet = {
+	available: true,
+	xtSetAvailable: true,
+	conntrackAvailable: false,
+	installing: false,
+	entryCount: 148223,
+	entryCountOK: true,
+	lastPopulate: new Date(Date.now() - 6 * 60_000).toISOString(),
+	lastError: '',
+	missingTags: [],
+};
+
 // ── Config editor (config.d slots) mock state ─────────────────────
 // user-слот 90-user.json: applied-содержимое + опциональный черновик,
 // мутируется PUT/apply/discard/enable, чтобы draft-цикл работал в dev-mock.
@@ -4310,6 +4343,33 @@ const server = http.createServer(async (req, res) => {
 				},
 			],
 		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/hydraroute/geo-tags') {
+		send(res, 200, {
+			success: true,
+			data: MOCK_GEO_TAGS[url.searchParams.get('path') ?? ''] ?? [],
+		});
+		return;
+	}
+
+	// Набор обхода AWGM-BYPASS: статус + установка пакетов. Состояние
+	// в памяти, чтобы кнопки установки давали видимый эффект в dev-mock.
+	if (req.method === 'GET' && path === '/singbox/router/bypass-set/status') {
+		send(res, 200, { success: true, data: mockBypassSet });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/bypass-set/install-deps') {
+		mockBypassSet = { ...mockBypassSet, available: true, xtSetAvailable: true };
+		send(res, 200, { success: true, data: mockBypassSet });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/bypass-set/install-conntrack') {
+		mockBypassSet = { ...mockBypassSet, conntrackAvailable: true };
+		send(res, 200, { success: true, data: mockBypassSet });
 		return;
 	}
 

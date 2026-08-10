@@ -12,7 +12,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/singbox/router/selective"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -707,15 +706,6 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
 
-	// Pre-create the AWGM-SELECTIVE ipset (empty) before iptables-restore
-	// when selective bypass is enabled. iptables-restore fails immediately
-	// if the set referenced in -m set --match-set doesn't exist yet.
-	if sr.SelectiveBypass {
-		if err := ensureSelectiveSetExists(ctx); err != nil {
-			s.appLog.Warn("selective", "", fmt.Sprintf("pre-create ipset failed: %v", err))
-		}
-	}
-
 	// QoS iptables dispatch — graceful degradation: when xt_dscp support is
 	// missing the DSCP rules are skipped (feature-off) with a warning, NEVER
 	// failing Enable — otherwise a missing optional module would take down
@@ -733,6 +723,13 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		}
 	}
 
+	// Набор geoip-обхода должен существовать ДО установки правил: правило
+	// `-m set --match-set AWGM-BYPASS` на отсутствующий набор роняет весь
+	// iptables-restore. Наполняется он асинхронно ниже.
+	if len(sr.BypassGeoIPTags) > 0 {
+		s.ensureBypassSetExists(ctx)
+	}
+
 	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
 		PolicyMark:        mark,
 		MatchAll:          !policyMode,
@@ -741,8 +738,8 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		BypassUDPPorts:    bypassUDP,
 		BypassTCPPorts:    bypassTCP,
 		BypassCIDRs:       bypassSubnets,
+		BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
 		IngressInterfaces: ingress,
-		SelectiveIPSet:    sr.SelectiveBypass,
 		QoSClasses:        qosSpecs,
 	}); err != nil {
 		// Stop sing-box from listening on the now-orphan TPROXY port,
@@ -771,23 +768,21 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	s.currentBypassPresets = sr.BypassPresets
 	s.currentBypassExtraPorts = sr.BypassExtraPorts
 	s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+	s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 	s.currentIngress = ingress
-	s.currentSelectiveBypass = sr.SelectiveBypass
 	s.currentQoSClasses = qosSpecs
 	s.netfilterStateKnown = true
+	// Правила переустановлены и на AWGM-SELECTIVE больше не ссылаются —
+	// теперь набор выпиленного селектива можно снести (однократно).
+	s.destroyLegacySelectiveSetOnce(ctx)
 
 	settings.SingboxRouter = sr
 	if err := s.deps.Settings.Save(settings); err != nil {
 		return err
 	}
 
-	// Populate the freshly-created (empty) AWGM-SELECTIVE set right away.
-	// Without this, everything between Enable and the first reconcile-driven
-	// rebuild (startup delay + tick, minutes) matches nothing in the guard
-	// and "proxied" traffic leaves via WAN in the clear.
-	if sr.SelectiveBypass {
-		s.triggerSelectiveRebuild(ctx)
-	}
+	// После сохранения настроек: триггер читает теги из стора.
+	s.TriggerBypassSetPopulate()
 
 	s.emitStatus(ctx)
 	return nil
@@ -1297,6 +1292,12 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 		s.appLog.Warn("uninstall", "", err.Error())
 	}
+	// Только ПОСЛЕ Uninstall: пока правило `--match-set` в ядре, ipset
+	// откажется сносить набор («set is in use»). Безусловно, а не по
+	// currentBypassGeoIPTags: после рестарта демона поле пустое, а набор и
+	// дамп на диске — нет, и хук воскрешал бы их на каждой перезагрузке.
+	s.teardownBypassSet(ctx)
+	s.currentBypassGeoIPTags = nil
 	s.currentMark = ""
 	s.currentWANIPs = nil
 	s.currentLANBridges = nil
@@ -1304,11 +1305,6 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.currentBypassExtraPorts = ""
 	s.currentBypassExtraSubnets = ""
 	s.currentIngress = nil
-	// Reset selective tracking too: after Uninstall the guard rules are gone,
-	// so the "currently applied" selective state is false. Leaving this stale
-	// made tproxy→off→tproxy re-enables skip the rebuild (selectiveChanged
-	// stayed false) and run with a permanently empty set.
-	s.currentSelectiveBypass = false
 	s.currentQoSClasses = nil
 	s.netfilterStateKnown = false
 	// Uninstall already tore down the fail-closed blackhole (if any); clear the
@@ -1375,6 +1371,11 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	defer s.transitionMu.Unlock()
+
+	// Однократная зачистка наследия выпиленного селектива (файлы config.d +
+	// managed-правила в применённом конфиге). Под transitionMu: пишет тот же
+	// слот 20, что и смена режима.
+	s.cleanupLegacySelectiveOnce(ctx)
 
 	// Периодический reap fakeip-сирот: runtime-сирота (провал delete при
 	// disable) лечится в течение тика, а не ждёт перезагрузки роутера. Дёшево
@@ -1488,28 +1489,6 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		engineReady = s.singboxReady(ctx, false)
 	}
 	engineDown := !engineReady
-	if sr.SelectiveBypass {
-		if err := s.validateSelectiveBypassAgainstApplied(sr); err != nil {
-			if errors.Is(err, errSelectiveIncompatible) {
-				// Definitive conflict with the APPLIED config — self-heal by
-				// persisting the disable so the guard doesn't blackhole traffic.
-				s.appLog.Warn("selective", "", err.Error()+"; disabling selective bypass")
-				settings, loadErr := s.deps.Settings.Load()
-				if loadErr == nil {
-					settings.SingboxRouter.SelectiveBypass = false
-					if saveErr := s.deps.Settings.Save(settings); saveErr != nil {
-						s.appLog.Warn("selective", "", "failed to persist selective bypass disable: "+saveErr.Error())
-					}
-				}
-				sr.SelectiveBypass = false
-			} else {
-				// Could not check (transient I/O, torn state during apply) —
-				// keep the user's setting and retry on the next tick. Flipping
-				// persisted settings on a read hiccup is not self-healing.
-				s.appLog.Warn("selective", "", err.Error()+"; keeping selective bypass, will re-validate")
-			}
-		}
-	}
 	policyMode := sr.DeviceMode == "" || sr.DeviceMode == "policy"
 	mark := ""
 	if policyMode {
@@ -1550,9 +1529,10 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	bypassPresetsChanged := !slices.Equal(s.currentBypassPresets, sr.BypassPresets)
 	bypassExtraChanged := s.currentBypassExtraPorts != sr.BypassExtraPorts
 	bypassSubnetsChanged := s.currentBypassExtraSubnets != sr.BypassExtraSubnets
-
-	// Selective-bypass change detection.
-	selectiveChanged := s.currentSelectiveBypass != sr.SelectiveBypass
+	// Смена состава geoip-тегов меняет и наличие правила `--match-set`
+	// (пусто ↔ непусто), и содержимое набора — переустанавливаем правила и
+	// пересобираем набор ниже.
+	bypassGeoTagsChanged := !slices.Equal(s.currentBypassGeoIPTags, sr.BypassGeoIPTags)
 
 	// QoS-DSCP change detection: only the iptables-relevant projection
 	// (DSCP + ports). An outbound-only change does not need an iptables
@@ -1633,17 +1613,9 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	if wantBlackhole {
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
-		// Selective guard references the AWGM-SELECTIVE ipset; ensure it exists so
-		// iptables-restore of the blackhole doesn't fail with "Set ... doesn't
-		// exist" (same pre-create the real Install path does below).
-		if sr.SelectiveBypass {
-			if e := ensureSelectiveSetExists(ctx); e != nil {
-				s.appLog.Warn("selective", "", fmt.Sprintf("pre-create ipset for blackhole: %v", e))
-			}
-		}
-		// Mirror the real interception spec's exclusions (bypass ports + selective
-		// guard) so the blackhole drops EXACTLY what would have been proxied — not
-		// the user's non-selective traffic and not their bypass ports.
+		// Mirror the real interception spec's exclusions (bypass ports) so the
+		// blackhole drops EXACTLY what would have been proxied — not the user's
+		// bypass ports.
 		blackholeSpec := RestoreInputSpec{
 			PolicyMark:     mark,
 			MatchAll:       !policyMode,
@@ -1651,7 +1623,13 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			BypassCIDRs:    bypassSubnets,
 			BypassUDPPorts: bypassUDP,
 			BypassTCPPorts: bypassTCP,
-			SelectiveIPSet: sr.SelectiveBypass,
+			BypassGeoIPSet: len(sr.BypassGeoIPTags) > 0,
+		}
+		// Набор обязан существовать, иначе iptables-restore blackhole'а падает
+		// целиком и fail-closed не встаёт вовсе (пустой набор безопасен: он
+		// просто ничего не исключает из DROP).
+		if len(sr.BypassGeoIPTags) > 0 {
+			s.ensureBypassSetExists(ctx)
 		}
 		s.mu.Lock()
 		err := s.deps.IPTables.InstallBlackhole(ctx, blackholeSpec)
@@ -1667,7 +1645,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		// Реальный перехват в мёртвый порт всё равно не восстанавливаем.
 		jumpsMissing = false
 	}
-	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || selectiveChanged || qosChanged
+	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || bypassGeoTagsChanged || qosChanged
 
 	// Движок не готов интерсептить (мёртв или inbound-сокеты не привязаны) —
 	// НЕ ставим iptables ни по какому триггеру (#221): REDIRECT/TPROXY в
@@ -1691,23 +1669,12 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			return err
 		}
 
-		// If selective-bypass is enabled, the ipset MUST exist before
-		// iptables-restore runs — iptables-restore fails with "Set
-		// AWGM-SELECTIVE doesn't exist" if the set was never created.
-		// Create it empty now; it will be populated by the async rebuild
-		// triggered below. An empty set means no traffic is selectively
-		// intercepted yet, which is safe: the engine will fill it shortly.
-		if sr.SelectiveBypass {
-			if err := ensureSelectiveSetExists(ctx); err != nil {
-				s.appLog.Warn("selective", "", fmt.Sprintf("pre-create ipset failed: %v", err))
-				// Don't abort — if xt_set is missing, iptables-restore will
-				// surface a clear error; if ipset isn't installed but SelectiveBypass
-				// was somehow set, same. Proceed and let Install fail gracefully.
-			}
-		}
-
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+		// Набор должен существовать до правила `--match-set` (см. Enable).
+		if len(sr.BypassGeoIPTags) > 0 {
+			s.ensureBypassSetExists(ctx)
+		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
 			PolicyMark:        mark,
@@ -1717,8 +1684,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			BypassUDPPorts:    bypassUDP,
 			BypassTCPPorts:    bypassTCP,
 			BypassCIDRs:       bypassSubnets,
+			BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
 			IngressInterfaces: ingress,
-			SelectiveIPSet:    sr.SelectiveBypass,
 			QoSClasses:        qosSpecs,
 		}); err != nil {
 			s.mu.Unlock()
@@ -1730,24 +1697,27 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		s.currentBypassPresets = sr.BypassPresets
 		s.currentBypassExtraPorts = sr.BypassExtraPorts
 		s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+		s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 		s.currentIngress = ingress
-		s.currentSelectiveBypass = sr.SelectiveBypass
 		s.currentQoSClasses = qosSpecs
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
 
-		// If selective mode is being disabled, destroy the ipset so it
-		// doesn't linger in kernel memory.
-		if !sr.SelectiveBypass {
-			if err := destroySelectiveSet(ctx); err != nil {
-				s.appLog.Warn("selective", "", fmt.Sprintf("destroy ipset after disable: %v", err))
-			}
-			if err := s.disableSelectiveRoutesSlot(); err != nil {
-				s.appLog.Warn("selective", "", fmt.Sprintf("disable selective routes slot: %v", err))
-			}
-			if _, err := s.stripLegacySelectiveRulesFromRouter(ctx); err != nil {
-				s.appLog.Warn("selective", "", fmt.Sprintf("strip legacy selective rules: %v", err))
-			}
+		// Правила установлены — набор селектива больше никем не занят.
+		s.destroyLegacySelectiveSetOnce(ctx)
+		// Наполнение — после установки правил (пустой набор = обхода нет,
+		// а не сломанный перехват). forceInitialSync покрывает рестарт демона:
+		// набор мог не пережить перезагрузку роутера.
+		switch {
+		case len(sr.BypassGeoIPTags) > 0 && (bypassGeoTagsChanged || forceInitialSync):
+			s.TriggerBypassSetPopulate()
+		case len(sr.BypassGeoIPTags) == 0 && (bypassGeoTagsChanged || forceInitialSync):
+			// Теги сняты: правила уже переустановлены без `--match-set`,
+			// набор освободился — сносим его вместе с дампом для хука.
+			// forceInitialSync здесь обязателен: после рестарта демона поле
+			// currentBypassGeoIPTags пустое, «изменения» не видно, и набор с
+			// дампом остались бы сиротами — хук воскрешал бы их вечно.
+			s.teardownBypassSet(ctx)
 		}
 	}
 
@@ -1771,18 +1741,5 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Selective-bypass: rebuild on first Enable, when toggled on, or on daemon
-	// start only if the ipset was never populated yet. Rule changes trigger
-	// rebuild explicitly via staging Apply (frontend) — no periodic refresh.
-	if sr.SelectiveBypass && s.deps.SelectiveBuilder != nil {
-		configDir := ""
-		if s.deps.Singbox != nil {
-			configDir = s.deps.Singbox.ConfigDir()
-		}
-		needsInitialBuild := selective.NeedsPopulation(ctx, configDir)
-		if selectiveChanged || (forceInitialSync && needsInitialBuild) {
-			s.triggerSelectiveRebuild(ctx)
-		}
-	}
 	return nil
 }

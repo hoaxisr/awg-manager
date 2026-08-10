@@ -1,4 +1,4 @@
-package selective
+package bypassset
 
 import (
 	"context"
@@ -12,36 +12,26 @@ import (
 )
 
 const (
-	// SetName is the ipset name used for the AWGM selective bypass filter.
-	SetName = "AWGM-SELECTIVE"
+	// SetName is the ipset name used for the AWGM bypass filter.
+	SetName = "AWGM-BYPASS"
 
-	// setMaxElem is the maximum number of entries in the ipset.
+	// SetMaxElem is the maximum number of entries in the ipset.
 	// hash:net on Keenetic kernels supports up to ~1M entries; 262144
 	// is a safe ceiling that covers all realistic rule-set sizes without
 	// consuming excessive kernel memory.
-	setMaxElem = 262144
+	SetMaxElem = 262144
 
 	// ipsetCtlTimeout — явный таймаут одиночных управляющих команд ipset
 	// (create/flush/swap/destroy/list -t). Дефолтные 30 с sysexec тесны для
 	// наборов с maxelem=262144 на нагруженном MIPS-роутере; сами команды
-	// конечны, поэтому щедрый потолок безопасен — зависание ловит этот
-	// exec-таймаут, а не stall guard пересборки.
+	// конечны, поэтому щедрый потолок безопасен.
 	ipsetCtlTimeout = 120 * time.Second
 )
 
 // runIpsetCtl запускает управляющую команду ipset с ipsetCtlTimeout вместо
-// дефолтного таймаута sysexec. Прогресс stall guard'у сигналится до И после
-// каждой команды (ProgressTouch — no-op вне пересборки): цепочки ctl-команд
-// (create→create staging→flush в начале прогона, swap→flush→count в конце)
-// иначе шли без единого touch до ~600 с подряд, и на нагруженном MIPS-роутере
-// guard ложно срабатывал посреди populate. Зависание самой команды ловит её
-// exec-таймаут, а не stall guard.
+// дефолтного таймаута sysexec.
 func runIpsetCtl(ctx context.Context, bin string, args ...string) (*sysexec.Result, error) {
-	touch := ProgressTouch(ctx)
-	touch()
-	res, err := sysexec.RunWithOptions(ctx, bin, args, sysexec.Options{Timeout: ipsetCtlTimeout})
-	touch()
-	return res, err
+	return sysexec.RunWithOptions(ctx, bin, args, sysexec.Options{Timeout: ipsetCtlTimeout})
 }
 
 // ipsetBin returns the path to ipset, or an error if not available.
@@ -53,7 +43,7 @@ func ipsetBin() (string, error) {
 	return p, nil
 }
 
-// CreateSet creates the AWGM-SELECTIVE ipset (hash:net) if it does not
+// CreateSet creates the AWGM-BYPASS ipset (hash:net) if it does not
 // already exist. Idempotent — "set with the same name already exists" is
 // silently ignored.
 func CreateSet(ctx context.Context) error {
@@ -63,7 +53,7 @@ func CreateSet(ctx context.Context) error {
 	}
 	res, err := runIpsetCtl(ctx, bin,
 		"create", SetName, "hash:net",
-		"maxelem", fmt.Sprintf("%d", setMaxElem),
+		"maxelem", fmt.Sprintf("%d", SetMaxElem),
 		"family", "inet",
 	)
 	if err != nil {
@@ -80,14 +70,20 @@ func CreateSet(ctx context.Context) error {
 	return nil
 }
 
-// DestroySet removes the AWGM-SELECTIVE ipset. Idempotent — "set does not
+// DestroySet removes the AWGM-BYPASS ipset. Idempotent — "set does not
 // exist" is silently ignored (set was never created or already cleaned up).
 func DestroySet(ctx context.Context) error {
+	return DestroyNamedSet(ctx, SetName)
+}
+
+// DestroyNamedSet removes an arbitrary AWGM-owned ipset (live or staging),
+// with the same idempotent "does not exist" handling as DestroySet.
+func DestroyNamedSet(ctx context.Context, name string) error {
 	bin, err := ipsetBin()
 	if err != nil {
 		return err
 	}
-	res, err := runIpsetCtl(ctx, bin, "destroy", SetName)
+	res, err := runIpsetCtl(ctx, bin, "destroy", name)
 	if err != nil {
 		combined := ""
 		if res != nil {
@@ -96,16 +92,15 @@ func DestroySet(ctx context.Context) error {
 		if strings.Contains(combined, "does not exist") || strings.Contains(combined, "not found") {
 			return nil
 		}
-		return sysexec.FormatError(res, fmt.Errorf("ipset destroy: %w", err))
+		return sysexec.FormatError(res, fmt.Errorf("ipset destroy %s: %w", name, err))
 	}
 	return nil
 }
 
-// SetExists reports whether the AWGM-SELECTIVE ipset currently exists in
+// SetExists reports whether the AWGM-BYPASS ipset currently exists in
 // the kernel. Uses `ipset list -name` which is fast (no entry output), но
 // идёт тем же медленным kernel-путём, что и `list -t`, — дефолтные 30 с
-// sysexec на нагруженном роутере давали ложное «набора нет» (и лишнюю
-// пересборку через NeedsPopulation/ensureSelectiveSetExists), поэтому
+// sysexec на нагруженном роутере давали ложное «набора нет», поэтому
 // команда выполняется через runIpsetCtl с ipsetCtlTimeout.
 func SetExists(ctx context.Context) bool {
 	bin, err := ipsetBin()
@@ -124,13 +119,8 @@ func SetExists(ctx context.Context) bool {
 	return false
 }
 
-// EntryCount returns the number of entries in the AWGM-SELECTIVE ipset,
+// EntryCount returns the number of entries in the AWGM-BYPASS ipset,
 // or 0 if the set does not exist or the count cannot be determined.
-//
-// Uses `ipset list -t` (terse: header only) and reads the "Number of
-// entries" field. A full `ipset list` dump of a maxelem-262144 set is
-// megabytes of text piped through a fork on a 128MB router — and this
-// runs on every status request and CDN refresh.
 func EntryCount(ctx context.Context) int {
 	n, _ := EntryCountChecked(ctx)
 	return n
@@ -142,6 +132,12 @@ func EntryCount(ctx context.Context) int {
 // которых 0 и «неизвестно» — разные исходы: итоговое сообщение пересборки
 // после успешного swap не должно выдавать сбой счётчика за «ipset пустой —
 // весь трафик в WAN».
+//
+// Сначала пробует поле "Number of entries" из `ipset list -t` (protocol 7,
+// дёшево — только header). Ядра Keenetic работают на kernel protocol 6, где
+// это поле НЕ печатается ни в терсе, ни в полном list; там счётчик снимается
+// подсчётом `add`-строк из `ipset save` (дороже — дампит набор, но статус
+// запрашивают редко, не в горячем пути).
 func EntryCountChecked(ctx context.Context) (n int, ok bool) {
 	bin, err := ipsetBin()
 	if err != nil {
@@ -149,26 +145,44 @@ func EntryCountChecked(ctx context.Context) (n int, ok bool) {
 	}
 	res, err := runIpsetCtl(ctx, bin, "list", SetName, "-t")
 	if err != nil || res == nil {
-		return 0, false
+		return 0, false // ошибка команды / несуществующий набор
 	}
 	for _, line := range strings.Split(res.Stdout, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), ":")
-		if !ok || strings.TrimSpace(k) != "Number of entries" {
+		k, v, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found || strings.TrimSpace(k) != "Number of entries" {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
+		parsed, perr := strconv.Atoi(strings.TrimSpace(v))
+		if perr != nil {
 			return 0, false
 		}
-		return n, true
+		return parsed, true
 	}
-	return 0, false
+	// Набор существует (list -t не ошибся), но поле счётчика отсутствует —
+	// protocol 6. Считаем члены через save.
+	return countViaSave(ctx, bin)
 }
 
-// normalizeEntry canonicalises a CIDR or bare IPv4 address for ipset.
+// countViaSave считает записи набора как число `add`-строк в `ipset save`.
+// Fallback для kernel protocol 6, где `list -t` не печатает счётчик.
+func countViaSave(ctx context.Context, bin string) (n int, ok bool) {
+	res, err := runIpsetCtl(ctx, bin, "save", SetName)
+	if err != nil || res == nil {
+		return 0, false
+	}
+	count := 0
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "add ") {
+			count++
+		}
+	}
+	return count, true
+}
+
+// NormalizeEntry canonicalises a CIDR or bare IPv4 address for ipset.
 // Returns "" for anything that is not a valid IPv4 address or CIDR.
 // IPv6 is not supported — sing-box TProxy on Keenetic is IPv4-only.
-func normalizeEntry(raw string) string {
+func NormalizeEntry(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""

@@ -449,6 +449,53 @@ definitions:
         example: 0
         type: integer
     type: object
+  api.BypassSetStatusData:
+    properties:
+      available:
+        description: Available reports whether the ipset binary is present on the
+          router.
+        type: boolean
+      conntrackAvailable:
+        description: |-
+          ConntrackAvailable reports whether the conntrack binary is present.
+          Without it a routing change applies only to new connections (existing
+          flows linger until they expire).
+        type: boolean
+      entryCount:
+        description: |-
+          EntryCount is the number of entries in the AWGM-BYPASS set after the
+          last populate. Meaningful only when EntryCountOK is true.
+        type: integer
+      entryCountOK:
+        description: |-
+          EntryCountOK reports whether EntryCount is a fact. False means the
+          counter could not be read — EntryCount=0 then does NOT mean «set empty».
+        type: boolean
+      installing:
+        description: Installing is true while an opkg install started here is running.
+        type: boolean
+      lastError:
+        description: LastError is the error message from the last failed populate,
+          or empty.
+        type: string
+      lastPopulate:
+        description: |-
+          LastPopulate is the RFC3339 timestamp of the last populate run, or
+          empty string when no populate has run yet.
+        type: string
+      missingTags:
+        description: |-
+          MissingTags lists the configured geoip tags that were not found in the
+          .dat files during the last populate.
+        items:
+          type: string
+        type: array
+      xtSetAvailable:
+        description: |-
+          XtSetAvailable reports whether the xt_set kernel module is loaded or
+          available as a .ko file (required for -m set iptables matching).
+        type: boolean
+    type: object
   api.ChangelogData:
     properties:
       entries:
@@ -2965,112 +3012,6 @@ definitions:
       state:
         type: string
     type: object
-  api.SelectiveCancelData:
-    properties:
-      cancelled:
-        description: |-
-          Cancelled is true when an active rebuild run was found and its
-          cancellation was requested; false when no rebuild was running.
-        type: boolean
-    type: object
-  api.SelectiveDomainMatcherRecordDTO:
-    properties:
-      cdn:
-        type: boolean
-      error:
-        type: string
-      kind:
-        type: string
-      matcher:
-        type: string
-      outbound:
-        type: string
-      queryHosts:
-        items:
-          type: string
-        type: array
-    type: object
-  api.SelectiveRebuildSnapshotDTO:
-    properties:
-      domainMatcherCount:
-        type: integer
-      domainResults:
-        items: {}
-        type: array
-      entryCount:
-        type: integer
-      lastCDNRefresh:
-        type: string
-      rebuiltAt:
-        type: string
-      staticCidrCount:
-        type: integer
-      staticCidrs:
-        items:
-          type: string
-        type: array
-    type: object
-  api.SelectiveSnapshotMatchersData:
-    properties:
-      limit:
-        type: integer
-      matchers:
-        items:
-          $ref: '#/definitions/api.SelectiveDomainMatcherRecordDTO'
-        type: array
-      offset:
-        type: integer
-      total:
-        type: integer
-    type: object
-  api.SelectiveStatusData:
-    properties:
-      available:
-        description: Available reports whether the ipset binary is present on the
-          router.
-        type: boolean
-      conntrackAvailable:
-        description: |-
-          ConntrackAvailable reports whether the conntrack binary is present.
-          Without it a routing change applies only to new connections (existing
-          flows linger until they expire).
-        type: boolean
-      enabled:
-        description: Enabled mirrors SingboxRouterSettings.SelectiveBypass.
-        type: boolean
-      entryCount:
-        description: |-
-          EntryCount is the current number of entries in the AWGM-SELECTIVE ipset.
-          0 when the set does not exist or is empty.
-        type: integer
-      installing:
-        description: Installing is true while opkg install ipset is running.
-        type: boolean
-      lastError:
-        description: LastError is the error message from the last failed rebuild,
-          or empty.
-        type: string
-      lastRebuild:
-        description: |-
-          LastRebuild is the RFC3339 timestamp of the last successful rebuild, or
-          empty string if no rebuild has run yet.
-        type: string
-      rebuilding:
-        description: |-
-          Rebuilding is true while an ipset rebuild is in flight (POST /rebuild
-          responds 202 and runs the rebuild in the background; completion is
-          delivered via the singbox-router:selective-status SSE event).
-        type: boolean
-      snapshot:
-        allOf:
-        - $ref: '#/definitions/api.SelectiveRebuildSnapshotDTO'
-        description: Snapshot is summary metadata from the last rebuild (no IP lists).
-      xtSetAvailable:
-        description: |-
-          XtSetAvailable reports whether the xt_set kernel module is loaded or
-          available as a .ko file (required for -m set iptables matching).
-        type: boolean
-    type: object
   api.ServerAddPeerRequestDTO:
     properties:
       description:
@@ -4673,6 +4614,16 @@ definitions:
           DNS/53). Bare IP is treated as /32. E.g. "203.0.113.0/24, 10.8.0.5".
         example: 203.0.113.0/24
         type: string
+      bypassGeoipTags:
+        description: |-
+          BypassGeoipTags lists geoip tags from the configured .dat files whose
+          CIDRs bypass sing-box entirely via the AWGM-BYPASS ipset (same full
+          bypass semantics as bypassExtraSubnets, ipset-backed because of scale).
+        example:
+        - geoip:ru
+        items:
+          type: string
+        type: array
       bypassPresets:
         description: |-
           BypassPresets lists active named bypass presets.
@@ -13761,6 +13712,91 @@ paths:
       summary: List bindable interfaces for direct outbounds
       tags:
       - singbox-router
+  /singbox/router/bypass-set/install-conntrack:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: already installing
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install conntrack-tools package
+      tags:
+      - singbox-router
+  /singbox/router/bypass-set/install-deps:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: already installing
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install ipset package
+      tags:
+      - singbox-router
+  /singbox/router/bypass-set/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Geoip bypass-set status
+      tags:
+      - singbox-router
   /singbox/router/disable:
     post:
       description: Stops the singbox-router engine and uninstalls iptables/policy
@@ -15574,161 +15610,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router ruleset
-      tags:
-      - singbox-router
-  /singbox/router/selective/install-conntrack:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-      security:
-      - CookieAuth: []
-      summary: Install conntrack-tools package
-      tags:
-      - singbox-router
-  /singbox/router/selective/install-deps:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-        "409":
-          description: already installing
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Install ipset package
-      tags:
-      - singbox-router
-  /singbox/router/selective/rebuild:
-    post:
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: rebuild started (or already running); rebuilding reflects live
-            state
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-        "409":
-          description: sing-box config apply in progress
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: builder not configured
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Force ipset rebuild (asynchronous)
-      tags:
-      - singbox-router
-  /singbox/router/selective/rebuild/cancel:
-    post:
-      description: Requests cancellation of the in-flight selective ipset rebuild.
-        Returns cancelled=false when no rebuild is running (safe no-op). Completion
-        is delivered via the selective-progress/selective-status SSE events.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveCancelData'
-              type: object
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Cancel a running ipset rebuild
-      tags:
-      - singbox-router
-  /singbox/router/selective/snapshot/matchers:
-    get:
-      description: Returns a paginated slice of matcher records (DNS query hosts,
-        no IPs) from the NDJSON snapshot.
-      parameters:
-      - default: 0
-        description: Zero-based record offset
-        in: query
-        name: offset
-        type: integer
-      - default: 200
-        description: Page size (max 1000)
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
-              type: object
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: List domain matchers from last ipset rebuild
-      tags:
-      - singbox-router
-  /singbox/router/selective/status:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-      security:
-      - CookieAuth: []
-      summary: Selective-bypass status
       tags:
       - singbox-router
   /singbox/router/settings:

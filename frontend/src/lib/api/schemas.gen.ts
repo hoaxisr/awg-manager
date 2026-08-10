@@ -161,6 +161,18 @@ const api_BootStatusResponse: v.GenericSchema = v.looseObject({
 	remainingSeconds: v.optional(v.nullable(v.number())),
 });
 
+const api_BypassSetStatusData: v.GenericSchema = v.looseObject({
+	available: v.optional(v.nullable(v.boolean())),
+	conntrackAvailable: v.optional(v.nullable(v.boolean())),
+	entryCount: v.optional(v.nullable(v.number())),
+	entryCountOK: v.optional(v.nullable(v.boolean())),
+	installing: v.optional(v.nullable(v.boolean())),
+	lastError: v.optional(v.nullable(v.string())),
+	lastPopulate: v.optional(v.nullable(v.string())),
+	missingTags: v.optional(v.nullable(v.array(v.string()))),
+	xtSetAvailable: v.optional(v.nullable(v.boolean())),
+});
+
 const api_ChangelogData: v.GenericSchema = v.looseObject({
 	entries: v.optional(v.nullable(v.array(v.lazy(() => api_ChangelogEntryDTO)))),
 });
@@ -1164,49 +1176,6 @@ const api_SaveStatusDTO: v.GenericSchema = v.looseObject({
 	state: v.optional(v.nullable(v.string())),
 });
 
-const api_SelectiveCancelData: v.GenericSchema = v.looseObject({
-	cancelled: v.optional(v.nullable(v.boolean())),
-});
-
-const api_SelectiveDomainMatcherRecordDTO: v.GenericSchema = v.looseObject({
-	cdn: v.optional(v.nullable(v.boolean())),
-	error: v.optional(v.nullable(v.string())),
-	kind: v.optional(v.nullable(v.string())),
-	matcher: v.optional(v.nullable(v.string())),
-	outbound: v.optional(v.nullable(v.string())),
-	queryHosts: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_SelectiveRebuildSnapshotDTO: v.GenericSchema = v.looseObject({
-	domainMatcherCount: v.optional(v.nullable(v.number())),
-	domainResults: v.optional(v.nullable(v.array(v.unknown()))),
-	entryCount: v.optional(v.nullable(v.number())),
-	lastCDNRefresh: v.optional(v.nullable(v.string())),
-	rebuiltAt: v.optional(v.nullable(v.string())),
-	staticCidrCount: v.optional(v.nullable(v.number())),
-	staticCidrs: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_SelectiveSnapshotMatchersData: v.GenericSchema = v.looseObject({
-	limit: v.optional(v.nullable(v.number())),
-	matchers: v.optional(v.nullable(v.array(v.lazy(() => api_SelectiveDomainMatcherRecordDTO)))),
-	offset: v.optional(v.nullable(v.number())),
-	total: v.optional(v.nullable(v.number())),
-});
-
-const api_SelectiveStatusData: v.GenericSchema = v.looseObject({
-	available: v.optional(v.nullable(v.boolean())),
-	conntrackAvailable: v.optional(v.nullable(v.boolean())),
-	enabled: v.optional(v.nullable(v.boolean())),
-	entryCount: v.optional(v.nullable(v.number())),
-	installing: v.optional(v.nullable(v.boolean())),
-	lastError: v.optional(v.nullable(v.string())),
-	lastRebuild: v.optional(v.nullable(v.string())),
-	rebuilding: v.optional(v.nullable(v.boolean())),
-	snapshot: v.optional(v.nullable(v.lazy(() => api_SelectiveRebuildSnapshotDTO))),
-	xtSetAvailable: v.optional(v.nullable(v.boolean())),
-});
-
 const api_ServerListenChangeData: v.GenericSchema = v.looseObject({
 	boundAddrs: v.optional(v.nullable(v.array(v.string()))),
 	confirmDeadline: v.optional(v.nullable(v.string())),
@@ -1687,6 +1656,7 @@ const api_SingboxRouterRulesListResponse: v.GenericSchema = v.looseObject({
 const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	bypassExtraPorts: v.optional(v.nullable(v.string())),
 	bypassExtraSubnets: v.optional(v.nullable(v.string())),
+	bypassGeoipTags: v.optional(v.nullable(v.array(v.string()))),
 	bypassPresets: v.optional(v.nullable(v.array(v.string()))),
 	deviceMode: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
@@ -2836,6 +2806,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxInboundsResponse))),
 })]),
 	"GET /singbox/router/bindable-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
+	"GET /singbox/router/bypass-set/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
 	"GET /singbox/router/dns/chain-preset": v.lazy(() => api_SingboxDNSChainPresetResponse),
 	"GET /singbox/router/dns/globals": v.lazy(() => api_SingboxDNSGlobalsResponse),
 	"GET /singbox/router/dns/rewrites/list": v.lazy(() => api_SingboxDNSRewritesListResponse),
@@ -2857,12 +2830,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/rules/list": v.lazy(() => api_SingboxRouterRulesListResponse),
 	"GET /singbox/router/rulesets/dat-url": v.lazy(() => api_SingboxRouterDatRuleSetURLResponse),
 	"GET /singbox/router/rulesets/list": v.lazy(() => api_SingboxRouterRuleSetsListResponse),
-	"GET /singbox/router/selective/snapshot/matchers": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveSnapshotMatchersData))),
-})]),
-	"GET /singbox/router/selective/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
 	"GET /singbox/router/settings": v.lazy(() => api_SingboxRouterSettingsResponse),
 	"GET /singbox/router/staging": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_RouterStagingStatusResponse))),
@@ -3034,6 +3001,12 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/fakeip/config/rulesets/update": v.lazy(() => api_OkResponse),
 	"POST /singbox/install": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/ndms-proxy": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/router/bypass-set/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
+	"POST /singbox/router/bypass-set/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
 	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
@@ -3074,18 +3047,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/rulesets/bulk-detour": v.lazy(() => api_SingboxRouterBulkUpdatedResponse),
 	"POST /singbox/router/rulesets/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/rulesets/update": v.lazy(() => api_OkResponse),
-	"POST /singbox/router/selective/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/rebuild": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/rebuild/cancel": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveCancelData))),
-})]),
 	"POST /singbox/router/settings": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/apply": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/discard": v.lazy(() => api_OkResponse),

@@ -1,58 +1,59 @@
-package selective
+package bypassset
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
 
-// ── normalizeEntry ────────────────────────────────────────────────────────────
+// ── NormalizeEntry ────────────────────────────────────────────────────────────
 
 func TestNormalizeEntry_ValidCIDR(t *testing.T) {
-	if got := normalizeEntry("10.0.0.0/8"); got != "10.0.0.0/8" {
+	if got := NormalizeEntry("10.0.0.0/8"); got != "10.0.0.0/8" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_BareIPBecomesSlash32(t *testing.T) {
-	if got := normalizeEntry("1.2.3.4"); got != "1.2.3.4/32" {
+	if got := NormalizeEntry("1.2.3.4"); got != "1.2.3.4/32" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_CanonicalisesCIDR(t *testing.T) {
 	// Host bits should be masked: 10.0.0.1/8 → 10.0.0.0/8
-	if got := normalizeEntry("10.0.0.1/8"); got != "10.0.0.0/8" {
+	if got := NormalizeEntry("10.0.0.1/8"); got != "10.0.0.0/8" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_IPv6Rejected(t *testing.T) {
-	if got := normalizeEntry("::1/128"); got != "" {
+	if got := NormalizeEntry("::1/128"); got != "" {
 		t.Errorf("expected empty for IPv6, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_IPv6BareRejected(t *testing.T) {
-	if got := normalizeEntry("fe80::1"); got != "" {
+	if got := NormalizeEntry("fe80::1"); got != "" {
 		t.Errorf("expected empty for IPv6, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_GarbageRejected(t *testing.T) {
-	if got := normalizeEntry("not-an-ip"); got != "" {
+	if got := NormalizeEntry("not-an-ip"); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_EmptyString(t *testing.T) {
-	if got := normalizeEntry(""); got != "" {
+	if got := NormalizeEntry(""); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_Whitespace(t *testing.T) {
-	if got := normalizeEntry("  1.2.3.4  "); got != "1.2.3.4/32" {
+	if got := NormalizeEntry("  1.2.3.4  "); got != "1.2.3.4/32" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -92,6 +93,62 @@ func TestIPSetBinary_ReturnsEmptyWhenNotFound(t *testing.T) {
 	}
 	if IsIPSetAvailable() {
 		t.Error("IsIPSetAvailable() should be false when binary missing")
+	}
+}
+
+// ── EntryCountChecked — protocol 6 fallback ───────────────────────────────────
+
+// useStubIPSet направляет EntryCountChecked на скрипт-заглушку.
+func useStubIPSet(t *testing.T, script string) {
+	t.Helper()
+	bin := writeStubIPSet(t, script)
+	original := ipsetBinaryPaths
+	ipsetBinaryPaths = []string{bin}
+	resetIPSetHealthForTest()
+	t.Cleanup(func() {
+		ipsetBinaryPaths = original
+		resetIPSetHealthForTest()
+	})
+}
+
+// Kernel protocol 7: `list -t` печатает "Number of entries" — читаем прямо,
+// `save` дёргать не нужно (стаб на save падает, чтобы это доказать).
+func TestEntryCountChecked_Protocol7ReadsTerse(t *testing.T) {
+	useStubIPSet(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"list) echo 'Name: X'; echo 'Number of entries: 42' ;;\n"+
+		"save) exit 1 ;;\n"+
+		"esac\nexit 0\n")
+	n, ok := EntryCountChecked(context.Background())
+	if !ok || n != 42 {
+		t.Fatalf("want (42,true) from terse, got (%d,%v)", n, ok)
+	}
+}
+
+// Kernel protocol 6 (ядра Keenetic): `list -t` даёт только header без
+// счётчика — падаем на подсчёт `add`-строк из `save`.
+func TestEntryCountChecked_Protocol6FallsBackToSave(t *testing.T) {
+	useStubIPSet(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"list) echo 'Name: X'; echo 'Type: hash:net'; echo 'Header: family inet maxelem 262144' ;;\n"+
+		"save) echo 'create X hash:net family inet maxelem 262144'; echo 'add X 1.2.3.0/24'; echo 'add X 5.6.7.0/24'; echo 'add X 9.9.9.0/24' ;;\n"+
+		"esac\nexit 0\n")
+	n, ok := EntryCountChecked(context.Background())
+	if !ok || n != 3 {
+		t.Fatalf("want (3,true) via save fallback, got (%d,%v)", n, ok)
+	}
+}
+
+// Несуществующий набор: `list -t` завершается ошибкой — (0,false), save не зовём.
+func TestEntryCountChecked_MissingSetIsNotOK(t *testing.T) {
+	useStubIPSet(t, "#!/bin/sh\n"+
+		"case \"$1\" in\n"+
+		"list) echo 'The set with the name X does not exist' >&2; exit 1 ;;\n"+
+		"save) exit 1 ;;\n"+
+		"esac\nexit 0\n")
+	n, ok := EntryCountChecked(context.Background())
+	if ok || n != 0 {
+		t.Fatalf("want (0,false) for missing set, got (%d,%v)", n, ok)
 	}
 }
 

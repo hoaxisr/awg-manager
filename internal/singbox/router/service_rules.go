@@ -10,9 +10,7 @@ func (s *ServiceImpl) ListRules(ctx context.Context) ([]Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-	rules := s.ruleSetMaterializer().restoreConfig(cfg).Route.Rules
-	filtered, _ := stripSelectiveManagedRules(rules)
-	return filtered, nil
+	return s.ruleSetMaterializer().restoreConfig(cfg).Route.Rules, nil
 }
 
 func (s *ServiceImpl) AddRule(ctx context.Context, r Rule) error {
@@ -43,18 +41,12 @@ func (s *ServiceImpl) MoveRule(ctx context.Context, from, to int) error {
 }
 
 func (s *ServiceImpl) SetRouteFinal(ctx context.Context, tag string) error {
-	if err := s.withConfig(ctx, "route", func(c *RouterConfig) error {
+	return s.withConfig(ctx, "route", func(c *RouterConfig) error {
 		if !s.isKnownOutboundTag(ctx, tag, c) {
 			return fmt.Errorf("unknown outbound tag %q for route.final", tag)
 		}
 		return c.SetRouteFinal(tag)
-	}); err != nil {
-		return err
-	}
-	if tag != "direct" {
-		return s.disableSelectiveBypassIfEnabled(ctx)
-	}
-	return nil
+	})
 }
 
 // isKnownOutboundTag returns true if tag is a sing-box built-in or matches

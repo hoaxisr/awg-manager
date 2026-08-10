@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -352,6 +353,10 @@ type Deps struct {
 	// exec'ing iptables.
 	XtDscpProbe func(context.Context) bool
 	GeoData     GeoTagExpander
+	// GeoTagCounts даёт суммарные размеры geoip-тегов для бюджет-валидации
+	// BypassGeoIPTags и список .dat для наполнения набора обхода. Optional —
+	// nil в тестах; при nil бюджет не проверяется, а наполнение отдаёт ошибку.
+	GeoTagCounts GeoIPTagCounter
 	// OpkgTun provisions the fakeip-tun kernel interface via NDMS.
 	// Optional — nil in tests; wired in cmd/awg-manager to
 	// *ndmscommand.InterfaceCommands. Consumed by Slice 1D Enable.
@@ -394,17 +399,6 @@ type Deps struct {
 	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
 	// *query.RouteStore.
 	DefaultGateway DefaultGatewayResolver
-
-	// SelectiveBuilder handles ipset population for the selective-bypass
-	// feature. When non-nil and SingboxRouterSettings.SelectiveBypass is
-	// true, reconcileInstalled calls Rebuild after every iptables install
-	// that changes rules/rule-sets. When nil the feature is disabled.
-	SelectiveBuilder SelectiveBuilder
-
-	// NDMSDNSSource provides fallback DNS server addresses (NDMS router
-	// upstreams) for the selective-bypass domain resolver. Optional — nil
-	// means only sing-box DNS servers and the system resolver are used.
-	NDMSDNSSource SelectiveDNSSource
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -431,7 +425,10 @@ func (a *routerLoggerAdapter) Info(msg string) {
 type ServiceImpl struct {
 	deps   Deps
 	appLog *logging.ScopedLogger
-	mu     sync.Mutex
+	// bypassLog — журнал набора обхода (подгруппа «Набор обхода»), чтобы итоги
+	// наполнения не терялись в общем потоке singbox-router.
+	bypassLog *logging.ScopedLogger
+	mu        sync.Mutex
 	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
 	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
 	// holding mu across the whole switch would self-deadlock.
@@ -445,7 +442,34 @@ type ServiceImpl struct {
 	currentBypassPresets        []string
 	currentBypassExtraPorts     string
 	currentBypassExtraSubnets   string
+	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
 	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+
+	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
+	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
+	// взводят bypassRerunPending.
+	bypassPopulating atomic.Bool
+	// bypassRerunPending — триггер, пришедший во время наполнения: по его
+	// завершении прогон повторяется один раз с актуальными тегами.
+	bypassRerunPending atomic.Bool
+	// Итог последнего наполнения bypass-набора (под mu). bypassCountOK
+	// различает подтверждённый ноль и «счётчик получить не удалось» — пустой
+	// набор и неизвестный размер не одно и то же.
+	bypassEntryCount   int
+	bypassCountOK      bool
+	bypassLastPopulate time.Time
+	bypassLastError    string
+	bypassMissingTags  []string
+	// populateBypassSet — шов наполнения для тестов (nil = bypassset.Populate).
+	populateBypassSet func(ctx context.Context, tags []string) (bypassset.PopulateResult, error)
+	// teardownBypassSetFn — шов сноса набора для тестов (nil = реальный снос).
+	teardownBypassSetFn func(ctx context.Context)
+
+	// Однократные зачистки наследия выпиленного селектива: файлы + managed-
+	// правила на старте, ipset'ы AWGM-SELECTIVE(-STG) — после первой установки
+	// правил (до неё набор ещё занят старыми правилами).
+	legacySelectiveOnce    sync.Once
+	legacySelectiveSetOnce sync.Once
 
 	// netfilterStateKnown tracks whether we know for certain that the
 	// installed iptables rules match the current desired state. It starts
@@ -471,9 +495,6 @@ type ServiceImpl struct {
 	// engine recovers. Guarded by s.mu, like the other current* install state.
 	blackholeActive bool
 
-	// selective tracking
-	currentSelectiveBypass bool // last-applied value of SelectiveBypass
-
 	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
 	// ports only — the class outbound lives in sing-box config, not in
 	// iptables). Reconcile re-Installs when it drifts from settings.
@@ -481,7 +502,7 @@ type ServiceImpl struct {
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.
-	// See applyQoSRoutesSlot (mirrors selectiveBuilderAdapter.lastApplyFailed).
+	// См. applyQoSRoutesSlot.
 	qosApplyFailed atomic.Bool
 
 	// xtDscpState tracks the last observed xt_dscp availability for
@@ -523,13 +544,11 @@ func NewService(d Deps) *ServiceImpl {
 	// the current version. No-op when the file is absent — Install
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
-	return &ServiceImpl{deps: d, appLog: appLog}
-}
-
-// SetSelectiveBuilder wires the selective-bypass builder post-construction.
-// Called after NewService because the adapter needs a *ServiceImpl reference.
-func (s *ServiceImpl) SetSelectiveBuilder(b SelectiveBuilder) {
-	s.deps.SelectiveBuilder = b
+	return &ServiceImpl{
+		deps:      d,
+		appLog:    appLog,
+		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+	}
 }
 
 func (s *ServiceImpl) routerConfigPath() string {

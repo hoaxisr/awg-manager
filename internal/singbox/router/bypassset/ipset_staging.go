@@ -1,4 +1,4 @@
-package selective
+package bypassset
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 )
 
 // StagingSetName is the scratch ipset populated during rebuild and atomically
-// swapped with SetName when the pipeline completes.
-const StagingSetName = "AWGM-SELECTIVE-STG"
+// swapped with SetName by the populator when all entries are in.
+const StagingSetName = "AWGM-BYPASS-STG"
 
 // IpsetChunkSize is how many entries are batched into one ipset restore call.
 const IpsetChunkSize = 512
@@ -21,8 +21,7 @@ const IpsetChunkSize = 512
 // ipsetRestoreTimeout ограничивает один вызов `ipset restore` на чанк из
 // IpsetChunkSize записей. Медленный роутер под нагрузкой (256–512MB MIPS)
 // легально укладывает чанк не за секунды, а за минуты; чанк конечен (512
-// записей), поэтому зависание команды ловит этот exec-таймаут, а не stall
-// guard пересборки (rebuildStallTimeout подобран не меньше этого шага).
+// записей), поэтому щедрый потолок безопасен.
 const ipsetRestoreTimeout = 180 * time.Second
 
 var ipsetChunkPool = sync.Pool{
@@ -35,6 +34,13 @@ var ipsetChunkPool = sync.Pool{
 // EnsureStagingSet creates the staging set (empty) if missing.
 func EnsureStagingSet(ctx context.Context) error {
 	return createNamedSet(ctx, StagingSetName)
+}
+
+// DestroyStagingSet removes the staging set. Idempotent, like DestroySet —
+// teardown must not leave AWGM-BYPASS-STG behind as an orphan holding the
+// last rebuild's entries in kernel memory.
+func DestroyStagingSet(ctx context.Context) error {
+	return DestroyNamedSet(ctx, StagingSetName)
 }
 
 // FlushStagingSet removes all members from the staging set.
@@ -64,11 +70,6 @@ func SwapWithStaging(ctx context.Context) error {
 // ChunkedAddStaging appends entries to the staging set in restore batches.
 func ChunkedAddStaging(ctx context.Context, cidrs []string) error {
 	return chunkedAddToSet(ctx, StagingSetName, cidrs)
-}
-
-// ChunkedAddLive appends entries to the live set (CDN refresh path).
-func ChunkedAddLive(ctx context.Context, cidrs []string) error {
-	return chunkedAddToSet(ctx, SetName, cidrs)
 }
 
 func chunkedAddToSet(ctx context.Context, setName string, cidrs []string) error {
@@ -105,14 +106,8 @@ func addEntriesToSet(ctx context.Context, setName string, cidrs []string) error 
 	if writeRestoreLines(b, setName, cidrs) == 0 {
 		return nil
 	}
-	// Прогресс stall guard'у до и после restore-команды (ProgressTouch —
-	// no-op вне пересборки): «начали операцию» — тоже прогресс, зависание
-	// самой команды ловит её exec-таймаут ipsetRestoreTimeout.
-	touch := ProgressTouch(ctx)
-	touch()
 	res, err := sysexec.RunWithOptions(ctx, bin, []string{"restore", "-exist"},
 		sysexec.Options{Stdin: b, Timeout: ipsetRestoreTimeout})
-	touch()
 	if err != nil {
 		return sysexec.FormatError(res, fmt.Errorf("ipset restore: %w", err))
 	}
@@ -126,7 +121,7 @@ func addEntriesToSet(ctx context.Context, setName string, cidrs []string) error 
 func writeRestoreLines(b *bytes.Buffer, setName string, cidrs []string) int {
 	valid := 0
 	for _, raw := range cidrs {
-		entry := normalizeEntry(raw)
+		entry := NormalizeEntry(raw)
 		if entry == "" {
 			continue
 		}
@@ -143,7 +138,7 @@ func createNamedSet(ctx context.Context, name string) error {
 	}
 	res, err := runIpsetCtl(ctx, bin,
 		"create", name, "hash:net",
-		"maxelem", fmt.Sprintf("%d", setMaxElem),
+		"maxelem", fmt.Sprintf("%d", SetMaxElem),
 		"family", "inet",
 	)
 	if err != nil {

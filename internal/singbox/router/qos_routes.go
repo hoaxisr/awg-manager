@@ -23,8 +23,7 @@ import (
 const qosReloadWait = 15 * time.Second
 
 // Managed QoS route rules live in their own orchestrator slot,
-// 18-qos-routes.json, mirroring the selective-routes slot (19). Why not
-// 20-router.json:
+// 18-qos-routes.json. Why not 20-router.json:
 //   - 20 is the user-visible rules file: managed rules leaked into the rules
 //     UI as anonymous matcher-less rows, users deleted them, the reconcile
 //     heal re-added them — a churn loop;
@@ -32,10 +31,9 @@ const qosReloadWait = 15 * time.Second
 //     EFFECTIVE config (pending draft preferred) and direct-writes to active
 //     silently applied staged drafts, bypassing the «Применить» gate;
 //   - sing-box evaluates merged route rules in file order, so rules parked at
-//     a fixed position inside 20 could end up AFTER the selective /32 overlay
-//     rules from 19 and never match under selective bypass. Slot 18 merges
-//     before 19 and 20, so a DSCP mark (an explicit per-packet policy signal)
-//     always wins over selective overlays and user rules.
+//     a fixed position inside 20 could end up AFTER user rules and never
+//     match. Slot 18 merges before 20, so a DSCP mark (an explicit per-packet
+//     policy signal) always wins over user rules.
 //
 // DNS never depends on these rules: buildRestoreInput intercepts UDP/53 to
 // the main TPROXY port and (with QoS classes present) TCP/53 to the main
@@ -46,7 +44,7 @@ const qosReloadWait = 15 * time.Second
 
 // qosRoutesSlot is the JSON shape for 18-qos-routes.json. Only route.rules —
 // never inbounds/outbounds; null slices in a merged slot corrupt sing-box's
-// outbounds array (same lesson as selectiveRoutesSlot).
+// outbounds array.
 type qosRoutesSlot struct {
 	Route struct {
 		Rules []Rule `json:"rules"`
@@ -148,7 +146,7 @@ func (s *ServiceImpl) filterQoSClassesWithKnownOutbounds(ctx context.Context, cl
 // triggered — callers decide when to apply (Enable's orchestratorApplyNow,
 // the reconcile heal's applyQoSRoutesSlot).
 //
-// File semantics mirror syncSelectiveRoutesSlot: at least one emitted rule ⇒
+// File semantics: at least one emitted rule ⇒
 // slot enabled with the canonical content; no classes (feature off, all
 // disabled, or every outbound unknown) ⇒ the slot is cleared (canonical empty
 // content written, file parked under disabled/). Returns changed=false when
@@ -221,7 +219,7 @@ func (s *ServiceImpl) disableQoSRoutesSlot() error {
 // previous apply failed — disk state ≠ running sing-box after a failed
 // apply, so the next heal must re-apply even when everything on disk is
 // byte-identical, or the retry heal becomes a no-op forever and loses its
-// self-heal role. Mirrors selectiveBuilderAdapter.applyRoutesSlot.
+// self-heal role.
 func (s *ServiceImpl) applyQoSRoutesSlot(changed bool) {
 	if !changed && !s.qosApplyFailed.Load() {
 		return

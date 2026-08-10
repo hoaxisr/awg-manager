@@ -181,6 +181,11 @@ type SingboxRouterSettings struct {
 	// целиком мимо sing-box (включая DNS/53). Голый IP трактуется как /32.
 	// Парсится в момент генерации правил. Пусто = нет исключений.
 	BypassExtraSubnets string `json:"bypassExtraSubnets,omitempty"`
+	// BypassGeoIPTags — geoip-теги из настроенных .dat, чьи CIDR уходят в WAN
+	// мимо sing-box через ipset AWGM-BYPASS (та же семантика полного обхода,
+	// что у BypassExtraSubnets, но масштаб geoip требует ipset вместо
+	// дискретных правил). Пусто — набора и правила нет.
+	BypassGeoIPTags []string `json:"bypassGeoipTags,omitempty"`
 	// IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
@@ -213,14 +218,6 @@ type SingboxRouterSettings struct {
 	// умолчанию (DefaultUDPTimeout, 5m). Увеличение помогает играм и другим
 	// UDP-приложениям, которые могут молчать дольше и терять сессию.
 	UDPTimeout string `json:"udpTimeout,omitempty"`
-	// SelectiveBypass, when true, installs an iptables -m set guard in front
-	// of the TPROXY/REDIRECT catch-all rules so only traffic whose destination
-	// IP is present in the AWGM-SELECTIVE ipset reaches sing-box. All other
-	// traffic bypasses sing-box entirely (RETURN → WAN). The ipset is built
-	// from ip_cidr matchers and resolved domain_suffix/domain entries across
-	// all active router rules and their rule sets. Only meaningful when
-	// RoutingMode == "tproxy" and ipset + xt_set are available on the router.
-	SelectiveBypass bool `json:"selectiveBypass,omitempty"`
 	// QoSClasses lists DSCP-based QoS traffic classes (issue #371). Each
 	// enabled class gets its own iptables `-m dscp` dispatch (mangle TPROXY +
 	// nat REDIRECT), a dedicated pair of sing-box inbounds and a managed route
@@ -237,17 +234,6 @@ type SingboxRouterSettings struct {
 	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
 	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
-}
-
-// SelectiveActive reports whether селективный перехват реально действует:
-// движок включён, режим tproxy (пустой RoutingMode нормализуется в tproxy)
-// и флаг SelectiveBypass взведён. В режиме fakeip-tun взведённый флаг —
-// валидное «спящее» состояние (router.validateSelectiveBypassSettings) и
-// активности НЕ означает: пересборки ipset и включение слота
-// 19-selective-routes.json на него реагировать не должны (#564).
-func (sr SingboxRouterSettings) SelectiveActive() bool {
-	return sr.Enabled && sr.SelectiveBypass &&
-		(sr.RoutingMode == "" || sr.RoutingMode == "tproxy")
 }
 
 // SingboxQoSClass is one DSCP-based QoS traffic class routed to a dedicated

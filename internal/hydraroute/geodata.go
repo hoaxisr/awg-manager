@@ -71,6 +71,7 @@ type GeoDataStore struct {
 	reserved    map[string]string // path -> fileType
 	progress    func(rawURL, fileType, phase string, downloaded, total int64, errMsg string)
 	appLog      *logging.ScopedLogger
+	onChange    func()
 }
 
 var (
@@ -96,6 +97,32 @@ func (s *GeoDataStore) SetProgressReporter(fn func(rawURL, fileType, phase strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.progress = fn
+}
+
+// SetOnChange регистрирует колбэк изменения состава/содержимого геофайлов
+// (Update / UpdateAll / Delete / TakeControl). Потребитель — bypass-набор:
+// его содержимое выведено из .dat, поэтому обязано пересобираться следом.
+// Optional; nil — уведомлений нет.
+func (s *GeoDataStore) SetOnChange(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onChange = fn
+}
+
+// notifyChange дёргает колбэк в отдельной горутине — потребитель читает те же
+// геофайлы через сам стор и не должен ждать под его мьютексом.
+func (s *GeoDataStore) notifyChange() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.notifyChangeLocked()
+}
+
+// notifyChangeLocked — то же для мест, где s.mu уже удерживается (RWMutex не
+// реентрантен, повторный захват из notifyChange был бы дедлоком).
+func (s *GeoDataStore) notifyChangeLocked() {
+	if s.onChange != nil {
+		go s.onChange()
+	}
 }
 
 // NewGeoDataStore creates a store and loads entries from the JSON file.
@@ -351,6 +378,7 @@ func (s *GeoDataStore) TakeControl(path string) (*GeoFileEntry, error) {
 	if err := s.saveUnlocked(); err != nil {
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
+	s.notifyChangeLocked() // s.mu удерживается до выхода (defer)
 	updated := entry
 	return &updated, nil
 }
@@ -380,7 +408,11 @@ func (s *GeoDataStore) Delete(path string) error {
 	s.entries = append(s.entries[:idx], s.entries[idx+1:]...)
 	delete(s.tagCache, path)
 
-	return s.saveUnlocked()
+	if err := s.saveUnlocked(); err != nil {
+		return err
+	}
+	s.notifyChangeLocked() // s.mu удерживается до выхода (defer)
+	return nil
 }
 
 // Update re-downloads and revalidates a tracked file from its stored URL.
@@ -398,6 +430,14 @@ func (s *GeoDataStore) UpdateWithClient(ctx context.Context, path string, client
 // for app logging. The caller is responsible for passing the route used by
 // the provided HTTP client.
 func (s *GeoDataStore) UpdateWithClientVia(ctx context.Context, path string, client *http.Client, routeLabel string) (*GeoFileEntry, error) {
+	return s.updateWithClientVia(ctx, path, client, routeLabel, true)
+}
+
+// updateWithClientVia — тело обновления одного файла. notify=false использует
+// UpdateAll: он уведомляет один раз за весь прогон, а не по файлу (иначе
+// single-flight потребителя проглотил бы уведомления о файлах, обновлённых
+// пока идёт пересборка по первому).
+func (s *GeoDataStore) updateWithClientVia(ctx context.Context, path string, client *http.Client, routeLabel string, notify bool) (*GeoFileEntry, error) {
 	path = filepath.Clean(path)
 	if !s.isManagedPath(path) {
 		return nil, fmt.Errorf("path outside managed geo directories")
@@ -565,6 +605,9 @@ func (s *GeoDataStore) UpdateWithClientVia(ctx context.Context, path string, cli
 		progress(sourceURL, entry.Type, "done", size, size, "")
 	}
 	s.logInfo("update-url", sourceURL, fmt.Sprintf("Обновление geo-data через %s: %s", normalizeRouteLabel(routeLabel), sourceURL))
+	if notify {
+		s.notifyChange()
+	}
 	return &updated, nil
 }
 
@@ -635,11 +678,14 @@ func (s *GeoDataStore) UpdateAllWithClientVia(ctx context.Context, client *http.
 	updated := 0
 	var errs []string
 	for _, path := range paths {
-		if _, err := s.UpdateWithClientVia(ctx, path, client, routeLabel); err != nil {
+		if _, err := s.updateWithClientVia(ctx, path, client, routeLabel, false); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", path, err))
 			continue
 		}
 		updated++
+	}
+	if updated > 0 {
+		s.notifyChange()
 	}
 
 	if len(errs) > 0 {
@@ -747,6 +793,24 @@ func (s *GeoDataStore) GeoFilePaths() (geoIP, geoSite []string) {
 		}
 	}
 	return dedupeGeoPaths(geoIP), dedupeGeoPaths(geoSite)
+}
+
+// GeoIPTagCounts суммирует Count каждого geoip-тега по всем отслеживаемым
+// geoip-файлам. Источник бюджет-валидации bypass-тегов; ошибки чтения
+// отдельного файла пропускаются (валидация консервативна и без него).
+func (s *GeoDataStore) GeoIPTagCounts() map[string]int {
+	geoIP, _ := s.GeoFilePaths()
+	out := make(map[string]int)
+	for _, p := range geoIP {
+		tags, err := s.GetTags(p)
+		if err != nil {
+			continue
+		}
+		for _, t := range tags {
+			out[strings.ToLower(t.Name)] += t.Count
+		}
+	}
+	return out
 }
 
 // AdoptExternalFiles scans the provided hrneo config for GeoSite/GeoIP file

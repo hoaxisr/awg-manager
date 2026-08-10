@@ -47,7 +47,7 @@
     'access-policy': 'Access policies',
     'client-route': 'Per-client routes',
     'singbox-router': 'Sing-box router',
-    selective: 'Селективный ipset',
+    'bypass-set': 'Набор обхода',
     subscription: 'Подписки',
     deviceproxy: 'Device proxy',
     hrneo: 'HrNeo',
