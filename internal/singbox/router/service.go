@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -423,7 +424,28 @@ type ServiceImpl struct {
 	currentBypassPresets        []string
 	currentBypassExtraPorts     string
 	currentBypassExtraSubnets   string
+	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
 	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+
+	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
+	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) — no-op.
+	bypassPopulating atomic.Bool
+	// Итог последнего наполнения bypass-набора (под mu). bypassCountOK
+	// различает подтверждённый ноль и «счётчик получить не удалось» — пустой
+	// набор и неизвестный размер не одно и то же.
+	bypassEntryCount   int
+	bypassCountOK      bool
+	bypassLastPopulate time.Time
+	bypassLastError    string
+	bypassMissingTags  []string
+	// populateBypassSet — шов наполнения для тестов (nil = bypassset.Populate).
+	populateBypassSet func(ctx context.Context, tags []string) (bypassset.PopulateResult, error)
+
+	// Однократные зачистки наследия выпиленного селектива: файлы + managed-
+	// правила на старте, ipset AWGM-SELECTIVE — после первой удачной установки
+	// правил (до неё набор ещё занят старыми правилами).
+	legacySelectiveOnce    sync.Once
+	legacySelectiveSetOnce sync.Once
 
 	// netfilterStateKnown tracks whether we know for certain that the
 	// installed iptables rules match the current desired state. It starts

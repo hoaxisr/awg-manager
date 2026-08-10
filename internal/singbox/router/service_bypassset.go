@@ -1,11 +1,19 @@
 package router
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 // GeoIPTagCounter — узкий контракт бюджет-валидации geoip-bypass.
@@ -33,4 +41,250 @@ func (s *ServiceImpl) validateBypassGeoIPTags(sr storage.SingboxRouterSettings) 
 		return fmt.Errorf("geoip-обход: выбрано ~%d записей при пределе %d — уберите часть тегов", total, bypassSetMaxElem)
 	}
 	return nil
+}
+
+// geoSourceAdapter переводит Deps.GeoData (ExpandGeoTag) в bypassset.GeoSource,
+// классифицируя sentinel hydraroute.ErrGeoTagNotFound в notFound. Populate
+// смотрит notFound РАНЬШЕ err, поэтому «тега нет» отдаётся без ошибки рядом.
+// Импорт hydraroute здесь — только ради sentinel-константы (осознанно).
+type geoSourceAdapter struct{ exp GeoTagExpander }
+
+func (g geoSourceAdapter) GeoIPTagLines(tag string) ([]string, bool, error) {
+	lines, _, err := g.exp.ExpandGeoTag("geoip", tag)
+	if err != nil {
+		if errors.Is(err, hydraroute.ErrGeoTagNotFound) {
+			return nil, true, nil
+		}
+		return nil, false, err
+	}
+	return lines, false, nil
+}
+
+// bypassPopulateTimeout ограничивает одну пересборку набора: разбор .dat и
+// заливка сотен тысяч записей на MIPS небыстры, но конечны.
+const bypassPopulateTimeout = 10 * time.Minute
+
+// TriggerBypassSetPopulate асинхронно наполняет AWGM-BYPASS из выбранных
+// geoip-тегов. No-op: пустой список, режим не tproxy, движок выключен,
+// наполнение уже идёт. По завершении публикует resource:invalidated
+// (bypass-set) и пишет итог в журнал.
+func (s *ServiceImpl) TriggerBypassSetPopulate() {
+	if s.deps.Settings == nil {
+		return
+	}
+	settings, err := s.deps.Settings.Load()
+	if err != nil {
+		return
+	}
+	sr := settings.SingboxRouter
+	if !sr.Enabled || len(sr.BypassGeoIPTags) == 0 ||
+		(sr.RoutingMode != "" && sr.RoutingMode != "tproxy") {
+		return
+	}
+	if !s.bypassPopulating.CompareAndSwap(false, true) {
+		return
+	}
+	tags := slices.Clone(sr.BypassGeoIPTags)
+	go func() {
+		defer s.bypassPopulating.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), bypassPopulateTimeout)
+		defer cancel()
+		res, err := s.populateBypassSetOnce(ctx, tags)
+		s.storeBypassSetOutcome(res, err)
+	}()
+}
+
+// populateBypassSetOnce — продакшн-наполнение (или тест-шов, если задан).
+func (s *ServiceImpl) populateBypassSetOnce(ctx context.Context, tags []string) (bypassset.PopulateResult, error) {
+	if s.populateBypassSet != nil {
+		return s.populateBypassSet(ctx, tags)
+	}
+	if s.deps.GeoData == nil {
+		return bypassset.PopulateResult{}, fmt.Errorf("geo-данные не подключены")
+	}
+	return bypassset.Populate(ctx, geoSourceAdapter{exp: s.deps.GeoData}, bypassset.PopulateInput{
+		GeoIPTags: tags,
+		SavePath:  bypassSavePath,
+	})
+}
+
+// storeBypassSetOutcome фиксирует итог наполнения, журналирует его и зовёт
+// фронт перечитать статус. Текст ошибки отдаётся как есть: «ipset save» после
+// удавшегося swap значит «набор живой, но дампа для хука нет» — это не то же
+// самое, что «набор не собран».
+func (s *ServiceImpl) storeBypassSetOutcome(res bypassset.PopulateResult, err error) {
+	s.mu.Lock()
+	s.bypassLastPopulate = time.Now()
+	s.bypassMissingTags = res.MissingTags
+	s.bypassEntryCount, s.bypassCountOK = res.EntryCount, res.CountOK
+	if !res.CountOK {
+		s.bypassEntryCount = 0
+	}
+	if err != nil {
+		s.bypassLastError = err.Error()
+	} else {
+		s.bypassLastError = ""
+	}
+	s.mu.Unlock()
+
+	switch {
+	case err != nil:
+		s.appLog.Warn("bypass-set", "", "geoip-обход: "+err.Error())
+	case res.CountOK:
+		s.appLog.Info("bypass-set", "", fmt.Sprintf("geoip-обход: набор наполнен, записей %d", res.EntryCount))
+	default:
+		s.appLog.Info("bypass-set", "", "geoip-обход: набор наполнен, размер набора получить не удалось")
+	}
+	if len(res.MissingTags) > 0 {
+		s.appLog.Warn("bypass-set", "", "geoip-обход: теги не найдены в .dat: "+strings.Join(res.MissingTags, ", "))
+	}
+	if s.deps.Bus != nil {
+		s.deps.Bus.Publish("resource:invalidated", map[string]any{"resource": "bypass-set"})
+	}
+}
+
+// BypassSetStatus отдаёт итог последнего наполнения. countOK=false — размер
+// набора неизвестен (счётчик не получен), и entryCount=0 в этом случае НЕ
+// значит «набор пуст».
+func (s *ServiceImpl) BypassSetStatus() (entryCount int, countOK bool, lastPopulate, lastError string, missingTags []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.bypassLastPopulate.IsZero() {
+		lastPopulate = s.bypassLastPopulate.UTC().Format(time.RFC3339)
+	}
+	return s.bypassEntryCount, s.bypassCountOK, lastPopulate, s.bypassLastError, slices.Clone(s.bypassMissingTags)
+}
+
+// ensureBypassSetExists создаёт пустой AWGM-BYPASS до установки правил:
+// правило `-m set --match-set` на несуществующий набор роняет весь
+// iptables-restore. Best-effort — реальная причина всплывёт на Install.
+func (s *ServiceImpl) ensureBypassSetExists(ctx context.Context) {
+	if err := bypassset.EnsureXtSetModule(ctx); err != nil {
+		s.appLog.Warn("bypass-set", "", "загрузка xt_set: "+err.Error())
+	}
+	if bypassset.IPSetBinary() == "" {
+		s.appLog.Warn("bypass-set", "", bypassset.ErrIPSetNotAvailable.Error())
+		return
+	}
+	if err := bypassset.CreateSet(ctx); err != nil {
+		s.appLog.Warn("bypass-set", "", "создание набора: "+err.Error())
+	}
+}
+
+// teardownBypassSet сносит набор и дамп для хука. Вызывать ТОЛЬКО после
+// переустановки правил без ссылки на набор — иначе ipset ответит «set is in
+// use by a kernel component» и набор переживёт снос.
+func (s *ServiceImpl) teardownBypassSet(ctx context.Context) {
+	if bypassset.IPSetBinary() != "" {
+		if err := bypassset.DestroySet(ctx); err != nil {
+			s.appLog.Warn("bypass-set", "", "снос набора: "+err.Error())
+		}
+	}
+	if err := os.Remove(bypassSavePath); err != nil && !os.IsNotExist(err) {
+		s.appLog.Warn("bypass-set", "", "удаление дампа набора: "+err.Error())
+	}
+}
+
+// legacySelectiveSetName — ipset выпиленного динамического селектива.
+const legacySelectiveSetName = "AWGM-SELECTIVE"
+
+// legacySelectiveSlotFile — слот выпиленного селектива в config.d.
+const legacySelectiveSlotFile = "19-selective-routes.json"
+
+// removeLegacySelectiveFiles удаляет с диска артефакты выпиленного селектива:
+// слот 19 (активный и припаркованный), снапшоты пересборки и маркер последней
+// пересборки. Осиротевший слот 19 у апгрейдящихся пользователей мержится
+// sing-box'ом в конфиг, поэтому его убираем в первую очередь.
+func removeLegacySelectiveFiles(configDir string) {
+	if configDir == "" {
+		return
+	}
+	doomed := []string{
+		filepath.Join(configDir, legacySelectiveSlotFile),
+		filepath.Join(configDir, "disabled", legacySelectiveSlotFile),
+		filepath.Join(configDir, "selective-last-rebuild"),
+	}
+	snapshots, _ := filepath.Glob(filepath.Join(configDir, "selective-snapshot*"))
+	for _, p := range append(doomed, snapshots...) {
+		_ = os.Remove(p)
+	}
+}
+
+// cleanupLegacySelectiveOnce — однократная стартовая зачистка наследия:
+// файлы селектива + managed-правила «selective-ip», осевшие в применённом
+// 20-router.json (раньше их прятал отдельный фильтр, теперь они всплыли бы
+// в UI как пользовательские).
+func (s *ServiceImpl) cleanupLegacySelectiveOnce(ctx context.Context) {
+	s.legacySelectiveOnce.Do(func() {
+		removeLegacySelectiveFiles(s.configDir())
+		if err := s.dropLegacySelectiveManagedRules(ctx); err != nil {
+			s.appLog.Warn("bypass-set", "", "зачистка managed-правил селектива: "+err.Error())
+		}
+	})
+}
+
+// configDir возвращает каталог config.d sing-box (оркестратор — источник
+// правды, Singbox — легаси-путь тестов).
+func (s *ServiceImpl) configDir() string {
+	if s.deps.Orch != nil {
+		return s.deps.Orch.ConfigDir()
+	}
+	if s.deps.Singbox != nil {
+		return s.deps.Singbox.ConfigDir()
+	}
+	return ""
+}
+
+func (s *ServiceImpl) dropLegacySelectiveManagedRules(ctx context.Context) error {
+	cfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		return err
+	}
+	kept := make([]Rule, 0, len(cfg.Route.Rules))
+	for _, r := range cfg.Route.Rules {
+		if r.AwgmManaged == "selective-ip" {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	removed := len(cfg.Route.Rules) - len(kept)
+	if removed == 0 {
+		return nil
+	}
+	cfg.Route.Rules = kept
+	if err := s.persistConfigDirect(ctx, cfg); err != nil {
+		return err
+	}
+	s.appLog.Info("bypass-set", "", fmt.Sprintf("удалены managed-правила выпиленного селектива: %d", removed))
+	s.emitRulesEvent()
+	return nil
+}
+
+// destroyLegacySelectiveSetOnce сносит ipset выпиленного селектива — один раз
+// за жизнь процесса и ТОЛЬКО после успешной установки правил: до неё набор
+// ещё может быть занят старыми правилами в ядре.
+func (s *ServiceImpl) destroyLegacySelectiveSetOnce(ctx context.Context) {
+	s.legacySelectiveSetOnce.Do(func() {
+		bin := bypassset.IPSetBinary()
+		if bin == "" {
+			return
+		}
+		res, err := sysexec.Run(ctx, bin, "destroy", legacySelectiveSetName)
+		if err == nil {
+			s.appLog.Info("bypass-set", legacySelectiveSetName, "удалён набор выпиленного селектива")
+			return
+		}
+		out := ""
+		if res != nil {
+			out = res.Stdout + res.Stderr
+		}
+		switch {
+		case strings.Contains(out, "does not exist") || strings.Contains(out, "not found"):
+			// Набора нет — зачищать нечего.
+		case strings.Contains(out, "in use"):
+			s.appLog.Warn("bypass-set", legacySelectiveSetName, "набор ещё занят правилами ядра — удалится после перезагрузки роутера")
+		default:
+			s.appLog.Warn("bypass-set", legacySelectiveSetName, "снос набора селектива: "+sysexec.FormatError(res, err).Error())
+		}
+	})
 }

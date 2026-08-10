@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -39,6 +40,30 @@ func newTestGeoStore(t *testing.T) *GeoDataStore {
 	t.Helper()
 	tmp := t.TempDir()
 	return NewGeoDataStore(tmp)
+}
+
+// Колбэк изменения состава геофайлов — источник пересборки bypass-набора.
+func TestSetOnChange_FiresOnDelete(t *testing.T) {
+	store := newTestGeoStore(t)
+	path := filepath.Join(store.geoDir, "geoip.dat")
+	if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.entries = []GeoFileEntry{{Type: "geoip", Path: path}}
+	store.mu.Unlock()
+
+	fired := make(chan struct{}, 1)
+	store.SetOnChange(func() { fired <- struct{}{} })
+
+	if err := store.Delete(path); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("onChange не вызван после Delete")
+	}
 }
 
 func TestGeoDataStore_LogsDownloadAndUpdateRouteURLs(t *testing.T) {

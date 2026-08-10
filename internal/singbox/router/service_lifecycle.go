@@ -717,6 +717,13 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		}
 	}
 
+	// Набор geoip-обхода должен существовать ДО установки правил: правило
+	// `-m set --match-set AWGM-BYPASS` на отсутствующий набор роняет весь
+	// iptables-restore. Наполняется он асинхронно ниже.
+	if len(sr.BypassGeoIPTags) > 0 {
+		s.ensureBypassSetExists(ctx)
+	}
+
 	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
 		PolicyMark:        mark,
 		MatchAll:          !policyMode,
@@ -725,6 +732,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		BypassUDPPorts:    bypassUDP,
 		BypassTCPPorts:    bypassTCP,
 		BypassCIDRs:       bypassSubnets,
+		BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
 		IngressInterfaces: ingress,
 		QoSClasses:        qosSpecs,
 	}); err != nil {
@@ -754,14 +762,21 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	s.currentBypassPresets = sr.BypassPresets
 	s.currentBypassExtraPorts = sr.BypassExtraPorts
 	s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+	s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 	s.currentIngress = ingress
 	s.currentQoSClasses = qosSpecs
 	s.netfilterStateKnown = true
+	// Правила переустановлены и на AWGM-SELECTIVE больше не ссылаются —
+	// теперь набор выпиленного селектива можно снести (однократно).
+	s.destroyLegacySelectiveSetOnce(ctx)
 
 	settings.SingboxRouter = sr
 	if err := s.deps.Settings.Save(settings); err != nil {
 		return err
 	}
+
+	// После сохранения настроек: триггер читает теги из стора.
+	s.TriggerBypassSetPopulate()
 
 	s.emitStatus(ctx)
 	return nil
@@ -1267,6 +1282,12 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 		s.appLog.Warn("uninstall", "", err.Error())
 	}
+	// Только ПОСЛЕ Uninstall: пока правило `--match-set` в ядре, ipset
+	// откажется сносить набор («set is in use»). Безусловно, а не по
+	// currentBypassGeoIPTags: после рестарта демона поле пустое, а набор и
+	// дамп на диске — нет, и хук воскрешал бы их на каждой перезагрузке.
+	s.teardownBypassSet(ctx)
+	s.currentBypassGeoIPTags = nil
 	s.currentMark = ""
 	s.currentWANIPs = nil
 	s.currentLANBridges = nil
@@ -1340,6 +1361,11 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	defer s.transitionMu.Unlock()
+
+	// Однократная зачистка наследия выпиленного селектива (файлы config.d +
+	// managed-правила в применённом конфиге). Под transitionMu: пишет тот же
+	// слот 20, что и смена режима.
+	s.cleanupLegacySelectiveOnce(ctx)
 
 	// Периодический reap fakeip-сирот: runtime-сирота (провал delete при
 	// disable) лечится в течение тика, а не ждёт перезагрузки роутера. Дёшево
@@ -1493,6 +1519,10 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	bypassPresetsChanged := !slices.Equal(s.currentBypassPresets, sr.BypassPresets)
 	bypassExtraChanged := s.currentBypassExtraPorts != sr.BypassExtraPorts
 	bypassSubnetsChanged := s.currentBypassExtraSubnets != sr.BypassExtraSubnets
+	// Смена состава geoip-тегов меняет и наличие правила `--match-set`
+	// (пусто ↔ непусто), и содержимое набора — переустанавливаем правила и
+	// пересобираем набор ниже.
+	bypassGeoTagsChanged := !slices.Equal(s.currentBypassGeoIPTags, sr.BypassGeoIPTags)
 
 	// QoS-DSCP change detection: only the iptables-relevant projection
 	// (DSCP + ports). An outbound-only change does not need an iptables
@@ -1583,6 +1613,13 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			BypassCIDRs:    bypassSubnets,
 			BypassUDPPorts: bypassUDP,
 			BypassTCPPorts: bypassTCP,
+			BypassGeoIPSet: len(sr.BypassGeoIPTags) > 0,
+		}
+		// Набор обязан существовать, иначе iptables-restore blackhole'а падает
+		// целиком и fail-closed не встаёт вовсе (пустой набор безопасен: он
+		// просто ничего не исключает из DROP).
+		if len(sr.BypassGeoIPTags) > 0 {
+			s.ensureBypassSetExists(ctx)
 		}
 		s.mu.Lock()
 		err := s.deps.IPTables.InstallBlackhole(ctx, blackholeSpec)
@@ -1598,7 +1635,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		// Реальный перехват в мёртвый порт всё равно не восстанавливаем.
 		jumpsMissing = false
 	}
-	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || qosChanged
+	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || bypassGeoTagsChanged || qosChanged
 
 	// Движок не готов интерсептить (мёртв или inbound-сокеты не привязаны) —
 	// НЕ ставим iptables ни по какому триггеру (#221): REDIRECT/TPROXY в
@@ -1624,6 +1661,10 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+		// Набор должен существовать до правила `--match-set` (см. Enable).
+		if len(sr.BypassGeoIPTags) > 0 {
+			s.ensureBypassSetExists(ctx)
+		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
 			PolicyMark:        mark,
@@ -1633,6 +1674,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			BypassUDPPorts:    bypassUDP,
 			BypassTCPPorts:    bypassTCP,
 			BypassCIDRs:       bypassSubnets,
+			BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
 			IngressInterfaces: ingress,
 			QoSClasses:        qosSpecs,
 		}); err != nil {
@@ -1645,10 +1687,28 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		s.currentBypassPresets = sr.BypassPresets
 		s.currentBypassExtraPorts = sr.BypassExtraPorts
 		s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+		s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 		s.currentIngress = ingress
 		s.currentQoSClasses = qosSpecs
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
+
+		// Правила установлены — набор селектива больше никем не занят.
+		s.destroyLegacySelectiveSetOnce(ctx)
+		// Наполнение — после установки правил (пустой набор = обхода нет,
+		// а не сломанный перехват). forceInitialSync покрывает рестарт демона:
+		// набор мог не пережить перезагрузку роутера.
+		switch {
+		case len(sr.BypassGeoIPTags) > 0 && (bypassGeoTagsChanged || forceInitialSync):
+			s.TriggerBypassSetPopulate()
+		case len(sr.BypassGeoIPTags) == 0 && (bypassGeoTagsChanged || forceInitialSync):
+			// Теги сняты: правила уже переустановлены без `--match-set`,
+			// набор освободился — сносим его вместе с дампом для хука.
+			// forceInitialSync здесь обязателен: после рестарта демона поле
+			// currentBypassGeoIPTags пустое, «изменения» не видно, и набор с
+			// дампом остались бы сиротами — хук воскрешал бы их вечно.
+			s.teardownBypassSet(ctx)
+		}
 	}
 
 	// Снимаем fail-closed blackhole ТОЛЬКО когда движок жив И probe успешен —
