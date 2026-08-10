@@ -50,6 +50,10 @@ func TestWdttNetfilterHookScript(t *testing.T) {
 		`-t nat -I PREROUTING 1 -i "wdttraw0" -p udp --dport 53 -j DNAT --to-destination 10.70.66.1:53`,
 		`-t nat -I PREROUTING 1 -i "opkgtun17" -p tcp --dport 53 -j DNAT --to-destination 10.66.0.1:53`,
 		`-s 10.70.0.0/16 ! -o wdttraw0`,
+		// mangle: пара CONNMARK+MARK вставляется только если ОБА правила
+		// отсутствуют (M1) — независимая довставка при частичном состоянии
+		// инвертирует итоговый порядок (F3).
+		`if ! run -t mangle -C PREROUTING -i "wdttraw0" -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff && ! run -t mangle -C PREROUTING -i "wdttraw0" -j MARK --set-xmark 0xffffaaf/0xffffffff; then`,
 		`-t mangle -I PREROUTING 1 -i "wdttraw0" -j CONNMARK --save-mark`,
 		`-t mangle -I PREROUTING 1 -i "wdttraw0" -j MARK --set-xmark 0xffffaaf/0xffffffff`,
 	} {
@@ -57,8 +61,13 @@ func TestWdttNetfilterHookScript(t *testing.T) {
 			t.Fatalf("в скрипте нет %q:\n%s", want, script)
 		}
 	}
-	// порядок вставки в mangle: CONNMARK раньше MARK (оба -I 1 → итог MARK@1)
-	if strings.Index(script, "-j CONNMARK") > strings.Index(script, "-j MARK --set-xmark") {
+	// порядок ВСТАВКИ (не проверок) в mangle: CONNMARK раньше MARK (оба -I 1 → итог MARK@1)
+	connInsIdx := strings.Index(script, `-t mangle -I PREROUTING 1 -i "wdttraw0" -j CONNMARK`)
+	markInsIdx := strings.Index(script, `-t mangle -I PREROUTING 1 -i "wdttraw0" -j MARK`)
+	if connInsIdx < 0 || markInsIdx < 0 {
+		t.Fatalf("не нашли строки вставки CONNMARK/MARK:\n%s", script)
+	}
+	if connInsIdx > markInsIdx {
 		t.Fatal("mangle: CONNMARK должен вставляться раньше MARK")
 	}
 	// без метки — mangle-секция пустая

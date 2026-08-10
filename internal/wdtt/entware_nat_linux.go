@@ -118,13 +118,9 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 			removeEntwareNATIfaces(ctx, iface)
 		}
 	}
-	extIface := strings.TrimSpace(wanDev)
-	if extIface == "" {
-		dev, err := defaultWANDev(ctx)
-		if err != nil && mode == "internet-only" {
-			return err
-		}
-		extIface = dev
+	extIface, err := resolveExtIfaceOrDefault(ctx, wanDev)
+	if err != nil && mode == "internet-only" {
+		return err
 	}
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 
@@ -264,11 +260,21 @@ func wdttNetfilterHookScript(spec wdttNetfilterSpec) string {
 	b.WriteString(";;\nmangle)\n")
 	if mark := strings.TrimSpace(spec.RawPolicyMark); mark != "" {
 		iface := DefaultRawServerIface
+		connCheck := fmt.Sprintf("-t mangle -C PREROUTING -i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)
+		markCheck := fmt.Sprintf("-t mangle -C PREROUTING -i %q -j MARK --set-xmark %s/0xffffffff", iface, mark)
+		connIns := fmt.Sprintf("-t mangle -I PREROUTING 1 -i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)
+		markIns := fmt.Sprintf("-t mangle -I PREROUTING 1 -i %q -j MARK --set-xmark %s/0xffffffff", iface, mark)
 		fmt.Fprintf(&b, "if has_if %q; then\n", iface)
-		conn := fmt.Sprintf("-i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)
-		markRule := fmt.Sprintf("-i %q -j MARK --set-xmark %s/0xffffffff", iface, mark)
-		fmt.Fprintf(&b, "  run -t mangle -C PREROUTING %s || run -t mangle -I PREROUTING 1 %s\n", conn, conn)
-		fmt.Fprintf(&b, "  run -t mangle -C PREROUTING %s || run -t mangle -I PREROUTING 1 %s\n", markRule, markRule)
+		// Пара CONNMARK+MARK вставляется ТОЛЬКО когда ОБА правила отсутствуют:
+		// независимая довставка при частичном состоянии (одно есть, другого
+		// нет) инвертирует итоговый порядок в цепочке (баг F3, PR #697, чинил
+		// коммит a0066f9b). Частичное состояние — забота Go-reconcile:
+		// rawServerPolicyMarkPresent находит рассинхрон и пересобирает оба
+		// правила в правильном порядке за ≤ natReconcileInterval (15с).
+		fmt.Fprintf(&b, "  if ! run %s && ! run %s; then\n", connCheck, markCheck)
+		fmt.Fprintf(&b, "    run %s\n", connIns)
+		fmt.Fprintf(&b, "    run %s\n", markIns)
+		b.WriteString("  fi\n")
 		b.WriteString("fi\n")
 	}
 	b.WriteString(";;\nesac\nexit 0\n")
@@ -352,7 +358,11 @@ func removeWdttDNSRules(ctx context.Context, iface string) {
 			}
 			var deleted bool
 			for _, line := range strings.Split(out, "\n") {
-				if !strings.Contains(line, "-i "+iface) || !strings.Contains(line, "--dport 53") {
+				// Границы токена: без них "-i opkgtun1" ловит и "-i opkgtun17"
+				// (см. entwareForwardIfacesPresent в этом же файле).
+				hasIface := strings.Contains(line, " -i "+iface+" ") ||
+					strings.HasSuffix(strings.TrimSpace(line), " -i "+iface)
+				if !hasIface || !strings.Contains(line, "--dport 53") {
 					continue
 				}
 				fields := strings.Fields(line)
@@ -525,6 +535,18 @@ func removeEntwareMSSClamp(ctx context.Context) {
 	}
 	_ = iptables.Run(ctx, "-t", "mangle", "-F", entwareMSSChain)
 	_ = iptables.Run(ctx, "-t", "mangle", "-X", entwareMSSChain)
+}
+
+// resolveExtIfaceOrDefault возвращает явный wanDev или (если не задан) дефолтный
+// WAN по default-маршруту. Общая точка для applyEntwareNATForServer и
+// nat-reconcile: без неё internet-only при незаданном/неразрешённом wanDev
+// молча деградирует в full-форму MASQUERADE (`! -o`, любой egress) — H1, PR #697.
+func resolveExtIfaceOrDefault(ctx context.Context, wanDev string) (string, error) {
+	extIface := strings.TrimSpace(wanDev)
+	if extIface != "" {
+		return extIface, nil
+	}
+	return defaultWANDev(ctx)
 }
 
 func defaultWANDev(ctx context.Context) (string, error) {

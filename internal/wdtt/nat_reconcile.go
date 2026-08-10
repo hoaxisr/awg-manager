@@ -76,11 +76,6 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		removeWdttForwardNetfilterHook()
 		return
 	}
-	allEntwareIfaces := make([]string, 0, len(legacyIfaces))
-	for iface := range legacyIfaces {
-		allEntwareIfaces = append(allEntwareIfaces, iface)
-	}
-	_ = ensureWdttNetfilterHook(ctx, wdttNetfilterSpec{ForwardIfaces: allEntwareIfaces})
 	for _, srv := range full.Servers {
 		if !s.serverProcs.get(srv.ID).Status().Running {
 			continue
@@ -109,6 +104,19 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				wantMark = mark
 			}
 		}
+		// Безусловно, каждый тик, до if/else-цепочки ниже: файл хука
+		// должен всегда отражать актуальный spec (DNS/MASQUERADE/mark), а не
+		// только FORWARD-ifaces — иначе после NDM table-flap DNAT :53 и
+		// MASQUERADE не восстановятся до следующего цикла (C1, PR #697).
+		// Второй сервер невозможен (CreateServer запрещает) — агрегация
+		// spec по нескольким серверам не нужна.
+		hookWanDev, err := resolveExtIfaceOrDefault(ctx, wanDev)
+		if err != nil && s.appLog != nil {
+			s.appLog.Warn("nat-reconcile", srv.ID, "NAT egress (hook): "+err.Error())
+		}
+		if err := ensureWdttNetfilterHook(ctx, wdttNetfilterSpecForServer(cfg, mode, hookWanDev, wantMark)); err != nil && s.appLog != nil {
+			s.appLog.Warn("nat-reconcile", srv.ID, "netfilter.d hook: "+err.Error())
+		}
 		if !entwareNATPresentForServer(ctx, cfg, mode, wanDev) {
 			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev, wantMark); err != nil {
 				if s.appLog != nil {
@@ -119,8 +127,6 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			}
 		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfacesForMode(mode)) {
 			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfacesForMode(mode)...); err != nil && s.appLog != nil {
-				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
-			} else if err := ensureWdttNetfilterHook(ctx, wdttNetfilterSpecForServer(cfg, mode, wanDev, wantMark)); err != nil && s.appLog != nil {
 				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 			} else if s.appLog != nil {
 				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
