@@ -10,10 +10,12 @@ import (
 )
 
 // ensureWgClientRoute adds a connected route for qWDTT monolith client pool
-// (10.66.0.0/16) via the kernel WG TUN. Только для legacy wdtt0/raw: адрес там
-// 10.66.66.1/24, поэтому реплаи в 10.66.0.x иначе ушли бы через WAN. NDMS
-// OpkgTun сам получает 10.66.0.1/16 (PR #697, F2) — connected-маршрут /16 уже
-// покрывает пул, вызывающие на этом пути cfg.ensureServerWgClientRoute не зовут.
+// (10.66.0.0/16) via the kernel WG TUN. Для legacy wdtt0 обязателен: адрес там
+// 10.66.66.1/24, поэтому реплаи в 10.66.0.x иначе ушли бы через WAN. На
+// NDMS-пути маршрут избыточен (адрес интерфейса 10.66.0.1/16 сам даёт
+// connected-маршрут пула, PR #697, F2), но как страховка всё равно
+// выставляется — в activateNDMSOpkgTun (после up) и в периодическом
+// ресинке nat_reconcile; applyServerAccess его на NDMS-пути не зовёт.
 func ensureWgClientRoute(ctx context.Context, iface, cidr string) error {
 	iface = strings.TrimSpace(iface)
 	cidr = strings.TrimSpace(cidr)
