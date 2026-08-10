@@ -80,7 +80,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 	for iface := range legacyIfaces {
 		allEntwareIfaces = append(allEntwareIfaces, iface)
 	}
-	_ = ensureWdttForwardNetfilterHook(ctx, allEntwareIfaces)
+	_ = ensureWdttNetfilterHook(ctx, wdttNetfilterSpec{ForwardIfaces: allEntwareIfaces})
 	for _, srv := range full.Servers {
 		if !s.serverProcs.get(srv.ID).Status().Running {
 			continue
@@ -102,8 +102,15 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		} else {
 			wanDev = dev
 		}
+		policy := normalizePolicy(cfg.Policy)
+		wantMark := ""
+		if policy != "none" && s.policyMarks != nil {
+			if mark, err := s.policyMarks.GetPolicyMark(ctx, policy); err == nil {
+				wantMark = mark
+			}
+		}
 		if !entwareNATPresentForServer(ctx, cfg, mode, wanDev) {
-			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
+			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev, wantMark); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 				}
@@ -113,7 +120,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfacesForMode(mode)) {
 			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfacesForMode(mode)...); err != nil && s.appLog != nil {
 				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
-			} else if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfacesForMode(mode)); err != nil && s.appLog != nil {
+			} else if err := ensureWdttNetfilterHook(ctx, wdttNetfilterSpecForServer(cfg, mode, wanDev, wantMark)); err != nil && s.appLog != nil {
 				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 			} else if s.appLog != nil {
 				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
@@ -148,13 +155,6 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				if err := applyEntwareLAN(ctx, iface, segments, s.accessMgr, peerCIDRs...); err != nil && s.appLog != nil {
 					s.appLog.Warn("lan-reconcile", srv.ID, err.Error())
 				}
-			}
-		}
-		policy := normalizePolicy(cfg.Policy)
-		wantMark := ""
-		if policy != "none" && s.policyMarks != nil {
-			if mark, err := s.policyMarks.GetPolicyMark(ctx, policy); err == nil {
-				wantMark = mark
 			}
 		}
 		if !rawServerPolicyMarkPresent(ctx, wantMark) {

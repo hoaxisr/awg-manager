@@ -93,7 +93,7 @@ func masqueradeMatchArgs(plan entwareNATPlan, mode, staticWANDev string) []strin
 		"-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"}
 }
 
-func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDev string) error {
+func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDev, rawMark string) error {
 	mode = normalizeNatMode(mode)
 	plans := cfg.serverEntwareNATPlansForMode(mode)
 	activeIfaces := entwarePlansIfaces(plans)
@@ -131,8 +131,8 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	if err := setupEntwareForward(ctx, activeIfaces...); err != nil {
 		return fmt.Errorf("entware FORWARD: %w", err)
 	}
-	if err := ensureWdttForwardNetfilterHook(ctx, activeIfaces); err != nil {
-		return fmt.Errorf("netfilter.d FORWARD: %w", err)
+	if err := ensureWdttNetfilterHook(ctx, wdttNetfilterSpecForServer(cfg, mode, extIface, rawMark)); err != nil {
+		return fmt.Errorf("netfilter.d hook: %w", err)
 	}
 	setupEntwareMSSClamp(ctx, activeCIDRs...)
 
@@ -178,55 +178,119 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev, peerCIDR string
 		}
 		return nil
 	}
-	return applyEntwareNATForServer(ctx, cfg, mode, wanDev)
+	return applyEntwareNATForServer(ctx, cfg, mode, wanDev, "")
 }
 
 func removeEntwareNATForServer(ctx context.Context, cfg ServerConfig) {
 	removeEntwareNATIfaces(ctx, cfg.serverEntwareNATIfaces()...)
 }
 
-func wdttForwardNetfilterHookScript(ifaces []string) string {
-	seen := make(map[string]bool, len(ifaces))
-	uniq := make([]string, 0, len(ifaces))
-	for _, iface := range ifaces {
-		iface = strings.TrimSpace(iface)
-		if iface == "" || seen[iface] {
-			continue
-		}
-		seen[iface] = true
-		uniq = append(uniq, iface)
-	}
-	sort.Strings(uniq)
+// wdttDNSSpec — kernel iface WDTT-сервера + gateway для DNAT :53.
+type wdttDNSSpec struct {
+	Iface   string
+	Gateway string
+}
 
+// wdttNetfilterSpec — вход генератора netfilter.d-хука: правила, переживающие
+// перезапись таблиц NDM (filter/nat/mangle), в одном скрипте с диспетчером по $table.
+type wdttNetfilterSpec struct {
+	ForwardIfaces []string         // filter: FORWARD accept
+	DNS           []wdttDNSSpec    // filter: INPUT :53 accept; nat: DNAT :53 → Gateway
+	Masq          []entwareNATPlan // nat: MASQUERADE (masqueradeMatchArgs)
+	MasqMode      string           // full | internet-only
+	MasqStaticWAN string           // для internet-only
+	RawPolicyMark string           // mangle: MARK+CONNMARK на wdttraw0; "" — не ставить
+}
+
+// wdttNetfilterSpecForServer собирает spec для cfg/mode/wanDev/rawMark —
+// единая точка сборки для applyEntwareNATForServer и nat-reconcile.
+func wdttNetfilterSpecForServer(cfg ServerConfig, mode, wanDev, rawMark string) wdttNetfilterSpec {
+	plans := cfg.serverEntwareNATPlansForMode(mode)
+	spec := wdttNetfilterSpec{
+		ForwardIfaces: entwarePlansIfaces(plans),
+		Masq:          plans,
+		MasqMode:      mode,
+		MasqStaticWAN: wanDev,
+		RawPolicyMark: rawMark,
+		DNS:           []wdttDNSSpec{{Iface: DefaultRawServerIface, Gateway: DefaultRawServerAddr}},
+	}
+	if cfg.UsesWireGuardRelay() {
+		spec.DNS = append(spec.DNS, wdttDNSSpec{Iface: cfg.kernelServerIface(), Gateway: cfg.serverAccessAddress()})
+	}
+	return spec
+}
+
+func wdttNetfilterHookScript(spec wdttNetfilterSpec) string {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
-	b.WriteString("# AWG Manager: FORWARD ACCEPT for WDTT kernel ifaces (survives NDMS reload).\n")
+	b.WriteString("# AWG Manager: правила WDTT-сервера, переживающие перезапись таблиц NDM.\n")
+	b.WriteString("# filter: FORWARD/INPUT; nat: DNAT :53 + MASQUERADE; mangle: policy-mark.\n")
 	b.WriteString("[ \"$type\" = \"ip6tables\" ] && exit 0\n")
-	b.WriteString("[ \"$table\" = \"filter\" ] || exit 0\n")
 	b.WriteString("IPTABLES=/opt/sbin/iptables\n")
 	b.WriteString("[ -x \"$IPTABLES\" ] || IPTABLES=iptables\n")
 	b.WriteString("run() { \"$IPTABLES\" -w \"$@\" 2>/dev/null || \"$IPTABLES\" \"$@\" 2>/dev/null; }\n")
-	for _, iface := range uniq {
-		fmt.Fprintf(&b, "if /opt/sbin/ip link show %q >/dev/null 2>&1; then\n", iface)
+	b.WriteString("has_if() { /opt/sbin/ip link show \"$1\" >/dev/null 2>&1; }\n")
+	forwardIfaces := dedupeStrings(spec.ForwardIfaces)
+	sort.Strings(forwardIfaces)
+	b.WriteString("case \"$table\" in\nfilter)\n")
+	for _, iface := range forwardIfaces {
+		fmt.Fprintf(&b, "if has_if %q; then\n", iface)
 		fmt.Fprintf(&b, "  run -C FORWARD -i %q -j ACCEPT || run -I FORWARD 1 -i %q -j ACCEPT\n", iface, iface)
 		fmt.Fprintf(&b, "  run -C FORWARD -o %q -j ACCEPT || run -I FORWARD 1 -o %q -j ACCEPT\n", iface, iface)
 		b.WriteString("fi\n")
 	}
-	b.WriteString("exit 0\n")
+	for _, d := range spec.DNS {
+		fmt.Fprintf(&b, "if has_if %q; then\n", d.Iface)
+		for _, proto := range []string{"udp", "tcp"} {
+			rule := fmt.Sprintf("INPUT 1 -i %q -p %s --dport 53 -j ACCEPT", d.Iface, proto)
+			check := fmt.Sprintf("INPUT -i %q -p %s --dport 53 -j ACCEPT", d.Iface, proto)
+			fmt.Fprintf(&b, "  run -C %s || run -I %s\n", check, rule)
+		}
+		b.WriteString("fi\n")
+	}
+	b.WriteString(";;\nnat)\n")
+	for _, d := range spec.DNS {
+		fmt.Fprintf(&b, "if has_if %q; then\n", d.Iface)
+		for _, proto := range []string{"udp", "tcp"} {
+			match := fmt.Sprintf("-i %q -p %s --dport 53 -j DNAT --to-destination %s:53", d.Iface, proto, d.Gateway)
+			fmt.Fprintf(&b, "  run -t nat -C PREROUTING %s || run -t nat -I PREROUTING 1 %s\n", match, match)
+		}
+		b.WriteString("fi\n")
+	}
+	for _, plan := range spec.Masq {
+		match := strings.Join(masqueradeMatchArgs(plan, spec.MasqMode, spec.MasqStaticWAN), " ")
+		fmt.Fprintf(&b, "run -t nat -C POSTROUTING %s || run -t nat -I POSTROUTING 1 %s\n", match, match)
+	}
+	b.WriteString(";;\nmangle)\n")
+	if mark := strings.TrimSpace(spec.RawPolicyMark); mark != "" {
+		iface := DefaultRawServerIface
+		fmt.Fprintf(&b, "if has_if %q; then\n", iface)
+		conn := fmt.Sprintf("-i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)
+		markRule := fmt.Sprintf("-i %q -j MARK --set-xmark %s/0xffffffff", iface, mark)
+		fmt.Fprintf(&b, "  run -t mangle -C PREROUTING %s || run -t mangle -I PREROUTING 1 %s\n", conn, conn)
+		fmt.Fprintf(&b, "  run -t mangle -C PREROUTING %s || run -t mangle -I PREROUTING 1 %s\n", markRule, markRule)
+		b.WriteString("fi\n")
+	}
+	b.WriteString(";;\nesac\nexit 0\n")
 	return b.String()
 }
 
-func ensureWdttForwardNetfilterHook(ctx context.Context, ifaces []string) error {
-	ifaces = dedupeStrings(ifaces)
-	if len(ifaces) == 0 {
+func ensureWdttNetfilterHook(ctx context.Context, spec wdttNetfilterSpec) error {
+	spec.ForwardIfaces = dedupeStrings(spec.ForwardIfaces)
+	if len(spec.ForwardIfaces) == 0 {
 		return nil
 	}
-	script := wdttForwardNetfilterHookScript(ifaces)
+	script := wdttNetfilterHookScript(spec)
 	if err := storage.AtomicWritePerm(wdttForwardNetfilterHookPath, []byte(script), 0o755); err != nil {
 		return err
 	}
-	_, err := exec.Run(ctx, "sh", "-c", "table=filter type=iptables sh "+wdttForwardNetfilterHookPath)
-	return err
+	for _, table := range []string{"filter", "nat", "mangle"} {
+		if _, err := exec.Run(ctx, "sh", "-c",
+			"table="+table+" type=iptables sh "+wdttForwardNetfilterHookPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func removeWdttForwardNetfilterHook() {
@@ -262,6 +326,47 @@ func removeEntwareNATIfaces(ctx context.Context, ifaces ...string) {
 		for i := 0; i < 5; i++ {
 			_ = iptables.Run(ctx, "-D", "FORWARD", "-i", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
 			_ = iptables.Run(ctx, "-D", "FORWARD", "-o", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+		}
+		removeWdttDNSRules(ctx, iface)
+	}
+}
+
+// removeWdttDNSRules сносит DNAT :53 (nat/PREROUTING) и INPUT :53 (filter/INPUT)
+// для iface — по образцу removeRawServerPolicyMarkRules: реплей -S, матч по
+// --dport 53 + -i <iface>, удаление -D (iptables -D требует точного совпадения
+// спеки, фиксированную спеку нельзя удалить вслепую).
+func removeWdttDNSRules(ctx context.Context, iface string) {
+	type target struct {
+		args  []string // -t <table> -S <chain>
+		table []string // -t <table> -D
+	}
+	targets := []target{
+		{args: []string{"-t", "nat", "-S", "PREROUTING"}, table: []string{"-t", "nat", "-D"}},
+		{args: []string{"-S", "INPUT"}, table: []string{"-D"}},
+	}
+	for _, tg := range targets {
+		for pass := 0; pass < 8; pass++ {
+			out, err := iptables.RunOutput(ctx, tg.args...)
+			if err != nil {
+				break
+			}
+			var deleted bool
+			for _, line := range strings.Split(out, "\n") {
+				if !strings.Contains(line, "-i "+iface) || !strings.Contains(line, "--dport 53") {
+					continue
+				}
+				fields := strings.Fields(line)
+				if len(fields) < 2 || fields[0] != "-A" {
+					continue
+				}
+				if iptables.Run(ctx, append(append([]string{}, tg.table...), fields[1:]...)...) == nil {
+					deleted = true
+					break
+				}
+			}
+			if !deleted {
+				break
+			}
 		}
 	}
 }

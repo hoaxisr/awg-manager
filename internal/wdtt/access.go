@@ -129,7 +129,6 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	if err != nil {
 		return err
 	}
-	_ = rawMark // используется в netfilter.d-хуке (следующий коммит)
 	s.ensureWdttIngressRefs(ctx, cfg)
 
 	wanDev := ""
@@ -149,7 +148,7 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	// если ip route add на opkgtun гоняется с NDMS.
 	if cfg.needsEntwareNAT() {
 		if mode != "none" {
-			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
+			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev, rawMark); err != nil {
 				return fmt.Errorf("entware NAT %s: %w", mode, err)
 			}
 			if s.appLog != nil {
