@@ -880,16 +880,6 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
 	}
 
-	if s.selectiveHandler != nil {
-		sh := s.selectiveHandler
-		mux.HandleFunc("/api/singbox/router/selective/status", h.guarded(sh.GetStatus))
-		mux.HandleFunc("/api/singbox/router/selective/snapshot/matchers", h.guarded(sh.GetSnapshotMatchers))
-		mux.HandleFunc("/api/singbox/router/selective/install-deps", h.guarded(sh.InstallDeps))
-		mux.HandleFunc("/api/singbox/router/selective/install-conntrack", h.guarded(sh.InstallConntrack))
-		mux.HandleFunc("/api/singbox/router/selective/rebuild", h.guarded(sh.Rebuild))
-		mux.HandleFunc("/api/singbox/router/selective/rebuild/cancel", h.guarded(sh.CancelRebuild))
-	}
-
 	if s.singboxFakeIPConfigHandler != nil {
 		fh := s.singboxFakeIPConfigHandler
 		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/list", h.guarded(fh.ListDNSServers))

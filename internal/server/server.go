@@ -118,7 +118,6 @@ type Server struct {
 	singboxConfigEditorHandler *api.SingboxConfigEditorHandler
 	singboxInboundsHandler     *api.SingboxInboundsHandler
 	singboxProxiesHandler      *api.SingboxProxiesHandler
-	selectiveHandler           *api.SelectiveHandler
 	awgOutboundsHandler        *api.AWGOutboundsHandler
 	subscriptionHandler        *api.SubscriptionHandler
 	dnsRewritesHandler         *api.DNSRewritesHandler
@@ -378,12 +377,6 @@ func (s *Server) SetSingboxInboundsHandler(h *api.SingboxInboundsHandler) {
 // (for the upstream URL) are constructed late.
 func (s *Server) SetSingboxProxiesHandler(h *api.SingboxProxiesHandler) {
 	s.singboxProxiesHandler = h
-}
-
-// SetSelectiveHandler wires the selective-bypass handler so
-// /api/singbox/router/selective/* routes can be registered.
-func (s *Server) SetSelectiveHandler(h *api.SelectiveHandler) {
-	s.selectiveHandler = h
 }
 
 // SetSubscriptionHandler wires the VPN subscription CRUD handler so the

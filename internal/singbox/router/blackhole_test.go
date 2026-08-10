@@ -47,30 +47,27 @@ func TestBuildBlackholeRestoreInput_PolicyMark(t *testing.T) {
 	}
 }
 
-// Selective mode + bypass ports: the blackhole must mirror the interception
-// chain's RETURN set — the selective-set guard (so only the selective subset is
-// dropped, not the whole of the user's traffic) and the user's bypass UDP/TCP
-// ports (so deliberately-excluded traffic goes direct, not dropped).
-func TestBuildBlackholeRestoreInput_SelectiveAndBypassPorts(t *testing.T) {
+// Bypass ports: the blackhole must mirror the interception chain's RETURN set —
+// the user's bypass UDP/TCP ports (so deliberately-excluded traffic goes
+// direct, not dropped).
+func TestBuildBlackholeRestoreInput_BypassPorts(t *testing.T) {
 	got := buildBlackholeRestoreInput(RestoreInputSpec{
 		PolicyMark:     "0xff",
-		SelectiveIPSet: true,
 		BypassUDPPorts: []PortRange{{51820, 51820}},
 		BypassTCPPorts: []PortRange{{22, 22}},
 	})
 	must := []string{
 		"-A " + BlackholeChain + " -p udp --dport 51820 -j RETURN",
 		"-A " + BlackholeChain + " -p tcp --dport 22 -j RETURN",
-		"-A " + BlackholeChain + " -m set ! --match-set " + selectiveSetName + " dst -j RETURN",
 	}
 	for _, s := range must {
 		if !strings.Contains(got, s) {
 			t.Errorf("blackhole blob missing %q\n---\n%s", s, got)
 		}
 	}
-	// The selective guard and every port RETURN must still precede the DROP.
+	// Every port RETURN must still precede the DROP.
 	if strings.Index(got, "-j DROP") < strings.LastIndex(got, "-j RETURN") {
-		t.Error("DROP must be after the selective guard and bypass-port RETURNs")
+		t.Error("DROP must be after the bypass-port RETURNs")
 	}
 }
 

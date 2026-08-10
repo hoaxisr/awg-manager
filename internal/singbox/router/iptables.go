@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/singbox/router/selective"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 	sysiptables "github.com/hoaxisr/awg-manager/internal/sys/iptables"
@@ -96,10 +95,6 @@ var (
 	// invoked by the hook after a TPROXY restore and by Install.
 	netfilterCtCleanPath = "/opt/etc/awg-manager/singbox/awgm-ctclean.sh"
 )
-
-// selectiveSetName is the ipset name used for selective bypass — aliased
-// from the selective sub-package so the name has exactly one definition.
-const selectiveSetName = selective.SetName
 
 func kernelModuleName() string { return "xt_TPROXY" }
 
@@ -370,21 +365,11 @@ type RestoreInputSpec struct {
 	// connmark-jump'а. Пусто / MatchAll / пустой PolicyMark = no-op.
 	IngressInterfaces []string
 
-	// SelectiveIPSet, when true, inserts an iptables -m set guard rule in
-	// both AWGM-TPROXY (mangle) and AWGM-REDIRECT (nat) chains so that
-	// only traffic whose destination IP is listed in AWGM-SELECTIVE reaches
-	// sing-box. All other traffic gets an early RETURN and bypasses sing-box
-	// entirely (going straight to WAN). The guard is placed after user bypass
-	// RETURN rules (port/CIDR exclusions) but before the catch-all TPROXY /
-	// REDIRECT rule, so explicit bypass rules still take precedence.
-	// Only meaningful when the xt_set kernel module is loaded.
-	SelectiveIPSet bool
-
 	// DSCPOnly — режим policy-tun: netfilter нужен ТОЛЬКО для QoS-DSCP-классов,
 	// основной трафик идёт NDMS-политикой в tun-интерфейс sing-box. Цепочки
 	// содержат лишь bypass-RETURN'ы и dscp-диспатч: ни catch-all, ни перехвата
 	// DNS (основных tproxy/redirect-инбаундов в этом режиме нет), ни
-	// selective/ingress-MARK/DNS-RESCUE. Install в этом режиме также не
+	// ingress-MARK/DNS-RESCUE. Install в этом режиме также не
 	// оставляет blackhole (fail-closed тут не нужен — трафик и так уходит в
 	// tun, а не мимо него).
 	DSCPOnly bool
@@ -483,14 +468,6 @@ func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	for _, pr := range spec.BypassTCPPorts {
 		fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", BlackholeChain, pr.String())
 	}
-	// Selective mode: only destinations in AWGM-SELECTIVE are proxied; everything
-	// else is SUPPOSED to go direct to WAN. Mirror the interception guard so the
-	// blackhole drops ONLY the selective subset — without it a dead engine would
-	// blackhole the user's entire (mostly non-selective) traffic, taking policy
-	// devices fully offline, which is worse than the fail-open it replaces.
-	if spec.SelectiveIPSet {
-		fmt.Fprintf(&b, "-A %s -m set ! --match-set %s dst -j RETURN\n", BlackholeChain, selectiveSetName)
-	}
 	// LAN/loopback/CGNAT/multicast + router-owned WAN IPs: reused verbatim from
 	// the interception chain so the exclusion set cannot drift and the blackhole
 	// can never over-block router-local, LAN-to-LAN, or management traffic.
@@ -574,15 +551,6 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	fmt.Fprintf(&b, "-A %s -p udp --dport 53 -j TPROXY --on-port %d --on-ip 127.0.0.1 --tproxy-mark 0x%x\n",
 		ChainName, TPROXYPort, Fwmark)
 
-	// Selective-bypass guard: only traffic to IPs in AWGM-SELECTIVE reaches
-	// sing-box; everything else returns to PREROUTING and goes to WAN.
-	// Placed after DNS intercept so DNS still reaches sing-box regardless
-	// of ipset membership (DNS must always be intercepted for hijack-dns).
-	if spec.SelectiveIPSet {
-		fmt.Fprintf(&b, "-A %s -m set ! --match-set %s dst -j RETURN\n",
-			ChainName, selectiveSetName)
-	}
-
 	// set_chain_rules: bypass set. SKeen uses one ipset rule; we render
 	// the same destinations as discrete CIDR rules (semantically equal).
 	emitBypassReturns(&b, ChainName, spec.WANIPs)
@@ -597,9 +565,6 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 	//   - AFTER user/builtin bypass RETURNs and WAN-IP exclusions: an
 	//     explicit bypass always wins; DSCP marks must not re-capture
 	//     traffic the user excluded (or loop router-WAN-IP traffic back in).
-	//   - AFTER the selective guard: in selective mode only ipset-listed
-	//     destinations enter sing-box at all; QoS classifies within that
-	//     scope, it does not widen it.
 	//   - BEFORE the catch-all: otherwise the unconditional TPROXY eats the
 	//     packet first and the class rule is dead.
 	for _, q := range spec.QoSClasses {
@@ -639,15 +604,10 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 	// ---- *nat table: TCP via REDIRECT ----
 	// Literal port of `add_redirect_rules` from reference/SKeen/skeen.sh
 	// (hybrid mode, nat table). SKeen's nat chain has ONLY the bypass set
-	// + catch-all `-p tcp -j REDIRECT`; without selective bypass the
-	// catch-all already covers TCP/53. WITH the selective guard the
-	// catch-all is no longer unconditional, so TCP/53 gets its own
-	// intercept before the guard (see below) — otherwise a truncated-UDP
-	// retry or DNS-over-TCP to a resolver outside the set escapes
-	// hijack-dns and leaks real IPs of proxied domains. The QoS DSCP
-	// dispatch needs the same carve-out (a class REDIRECT would otherwise
-	// swallow marked TCP/53 onto a class port), emitted with the class
-	// rules below when the selective intercept isn't already present.
+	// + catch-all `-p tcp -j REDIRECT`, which already covers TCP/53. The
+	// QoS DSCP dispatch needs its own TCP/53 carve-out (a class REDIRECT
+	// sits before the catch-all and would otherwise swallow marked TCP/53
+	// onto a class port), emitted with the class rules below.
 	b.WriteString("*nat\n")
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
 
@@ -682,33 +642,17 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 		fmt.Fprintf(&b, "-A %s -p tcp --dport %s -j RETURN\n", RedirectChain, pr.String())
 	}
 
-	// Selective-bypass guard for TCP: mirrors the mangle guard above.
-	// TCP/53 is intercepted FIRST (mirroring the mangle UDP/53 rule and
-	// honoring the same "DNS must always reach hijack-dns" invariant):
-	// resolver IPs are typically NOT in AWGM-SELECTIVE, so without this
-	// rule the guard would RETURN DNS-over-TCP straight to the upstream.
-	if spec.SelectiveIPSet {
-		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
-			RedirectChain, RedirectPort)
-		fmt.Fprintf(&b, "-A %s -m set ! --match-set %s dst -j RETURN\n",
-			RedirectChain, selectiveSetName)
-	}
-
 	// QoS-by-DSCP dispatch for TCP — mirrors the mangle block above (same
-	// ordering rationale: after bypasses and the selective guard, before the
-	// catch-all). DNS carve-out first: without it, DSCP-marked DNS-over-TCP
-	// (or a truncated-UDP retry) would land on a CLASS redirect inbound and
-	// only get hijacked if the managed route rules happened to order right —
+	// ordering rationale: after bypasses, before the catch-all). DNS
+	// carve-out first: without it, DSCP-marked DNS-over-TCP (or a
+	// truncated-UDP retry) would land on a CLASS redirect inbound and only
+	// get hijacked if the managed route rules happened to order right —
 	// intercepting TCP/53 onto the MAIN redirect port here kills that whole
 	// leak class at the netfilter level, exactly like the mangle chain's
-	// unconditional UDP/53 intercept above the UDP class rules. Skipped when
-	// the selective guard already emitted the identical intercept earlier in
-	// this chain.
+	// unconditional UDP/53 intercept above the UDP class rules.
 	if len(spec.QoSClasses) > 0 {
-		if !spec.SelectiveIPSet {
-			fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
-				RedirectChain, RedirectPort)
-		}
+		fmt.Fprintf(&b, "-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d\n",
+			RedirectChain, RedirectPort)
 		for _, q := range spec.QoSClasses {
 			fmt.Fprintf(&b, "-A %s -p tcp -m dscp --dscp %d -j REDIRECT --to-ports %d\n",
 				RedirectChain, q.DSCP, q.RedirectPort)

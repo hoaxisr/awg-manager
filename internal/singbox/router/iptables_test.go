@@ -1324,93 +1324,14 @@ func TestBuildRestoreInput_BypassCIDRs(t *testing.T) {
 	}
 }
 
-func TestBuildRestoreInput_SelectiveIPSet_AddsGuardRules(t *testing.T) {
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
-	}
-	out := buildRestoreInput(spec)
-
-	mangleGuard := fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName)
-	natGuard := fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName)
-
-	if !strings.Contains(out, mangleGuard) {
-		t.Errorf("mangle chain missing selective guard rule\ngot:\n%s", out)
-	}
-	if !strings.Contains(out, natGuard) {
-		t.Errorf("nat chain missing selective guard rule\ngot:\n%s", out)
-	}
-}
-
-func TestBuildRestoreInput_SelectiveIPSet_Disabled_NoGuardRules(t *testing.T) {
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: false,
-	}
-	out := buildRestoreInput(spec)
-
-	if strings.Contains(out, "--match-set") {
-		t.Errorf("unexpected selective guard rule when SelectiveIPSet=false\ngot:\n%s", out)
-	}
-}
-
-func TestBuildRestoreInput_SelectiveIPSet_GuardAfterDNS(t *testing.T) {
-	// The selective guard must appear AFTER the DNS intercept rule so that
-	// DNS (port 53) is always intercepted regardless of ipset membership.
-	// This ensures that the hijack-dns action keeps working even when
-	// selective mode is on.
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
-	}
-	out := buildRestoreInput(spec)
-
-	dnsIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp --dport 53 -j TPROXY", ChainName))
-	guardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName))
-	catchAllIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp -j TPROXY", ChainName))
-
-	if dnsIdx == -1 || guardIdx == -1 || catchAllIdx == -1 {
-		t.Fatalf("missing rule(s): dns=%d guard=%d catchAll=%d\n%s", dnsIdx, guardIdx, catchAllIdx, out)
-	}
-	if guardIdx < dnsIdx {
-		t.Errorf("selective guard (%d) must appear AFTER DNS intercept (%d)", guardIdx, dnsIdx)
-	}
-	if guardIdx > catchAllIdx {
-		t.Errorf("selective guard (%d) must appear BEFORE catch-all TPROXY (%d)", guardIdx, catchAllIdx)
-	}
-}
-
-func TestBuildRestoreInput_SelectiveIPSet_NatTCPDNSBeforeGuard(t *testing.T) {
-	// In the nat chain the TCP/53 REDIRECT must appear BEFORE the selective
-	// guard: resolver IPs are typically not in AWGM-SELECTIVE, so a guard-first
-	// order would RETURN DNS-over-TCP (and truncated-UDP retries) straight to
-	// the real upstream, leaking real IPs of proxied domains past hijack-dns.
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
-	}
-	out := buildRestoreInput(spec)
-
-	dnsIdx := strings.Index(out, fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT", RedirectChain))
-	guardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName))
-
-	if dnsIdx == -1 || guardIdx == -1 {
-		t.Fatalf("missing rule(s): tcpDNS=%d guard=%d\n%s", dnsIdx, guardIdx, out)
-	}
-	if dnsIdx > guardIdx {
-		t.Errorf("nat TCP/53 REDIRECT (%d) must appear BEFORE selective guard (%d)", dnsIdx, guardIdx)
-	}
-}
-
-func TestBuildRestoreInput_NoSelective_NoNatTCPDNSRule(t *testing.T) {
-	// Without the selective guard AND without QoS classes the catch-all
-	// REDIRECT covers TCP/53 — the chain must stay a literal port of SKeen's
-	// add_redirect_rules.
+func TestBuildRestoreInput_NoQoS_NoNatTCPDNSRule(t *testing.T) {
+	// Without QoS classes the catch-all REDIRECT covers TCP/53 — the chain
+	// must stay a literal port of SKeen's add_redirect_rules.
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
 	out := buildRestoreInput(spec)
 
 	if strings.Contains(out, fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT", RedirectChain)) {
-		t.Errorf("unexpected TCP/53 rule without SelectiveIPSet/QoS\ngot:\n%s", out)
+		t.Errorf("unexpected TCP/53 rule without QoS\ngot:\n%s", out)
 	}
 }
 
@@ -1525,30 +1446,6 @@ func TestBuildRestoreInput_QoSClasses_OrderingWithinNat(t *testing.T) {
 	}
 }
 
-func TestBuildRestoreInput_QoSClasses_AfterSelectiveGuard(t *testing.T) {
-	// Selective mode narrows what enters sing-box; QoS classifies WITHIN that
-	// scope. Both chains: guard first, then the DSCP dispatch.
-	spec := qosTestSpec()
-	spec.SelectiveIPSet = true
-	out := buildRestoreInput(spec)
-
-	mangleGuardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName))
-	mangleQoSIdx := strings.Index(out, "-A AWGM-TPROXY -p udp -m dscp --dscp 46")
-	natGuardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName))
-	natQoSIdx := strings.Index(out, "-A AWGM-REDIRECT -p tcp -m dscp --dscp 46")
-
-	if mangleGuardIdx == -1 || mangleQoSIdx == -1 || natGuardIdx == -1 || natQoSIdx == -1 {
-		t.Fatalf("missing rule(s): mGuard=%d mQoS=%d nGuard=%d nQoS=%d\n%s",
-			mangleGuardIdx, mangleQoSIdx, natGuardIdx, natQoSIdx, out)
-	}
-	if mangleQoSIdx < mangleGuardIdx {
-		t.Errorf("mangle QoS rule (%d) must come AFTER selective guard (%d)", mangleQoSIdx, mangleGuardIdx)
-	}
-	if natQoSIdx < natGuardIdx {
-		t.Errorf("nat QoS rule (%d) must come AFTER selective guard (%d)", natQoSIdx, natGuardIdx)
-	}
-}
-
 func TestBuildRestoreInput_NoQoSClasses_NoDscpRules(t *testing.T) {
 	out := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
 	if strings.Contains(out, "-m dscp") {
@@ -1610,25 +1507,6 @@ func TestBuildRestoreInput_QoS_NatTCPDNSCarveOutBeforeClassRules(t *testing.T) {
 	udpQoSIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp -m dscp --dscp 46", ChainName))
 	if udpDNSIdx == -1 || udpQoSIdx == -1 || udpDNSIdx > udpQoSIdx {
 		t.Errorf("mangle UDP/53 intercept (%d) must precede the class rules (%d)", udpDNSIdx, udpQoSIdx)
-	}
-}
-
-// TestBuildRestoreInput_QoSWithSelective_SingleTCPDNSIntercept: the selective
-// guard already emits the identical TCP/53 intercept ahead of the guard; the
-// QoS block must not duplicate it.
-func TestBuildRestoreInput_QoSWithSelective_SingleTCPDNSIntercept(t *testing.T) {
-	spec := qosTestSpec()
-	spec.SelectiveIPSet = true
-	out := buildRestoreInput(spec)
-
-	dnsRule := fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", RedirectChain, RedirectPort)
-	if n := strings.Count(out, dnsRule); n != 1 {
-		t.Fatalf("expected exactly one TCP/53 intercept with selective+QoS, got %d:\n%s", n, out)
-	}
-	dnsIdx := strings.Index(out, dnsRule)
-	qosIdx := strings.Index(out, fmt.Sprintf("-A %s -p tcp -m dscp --dscp 46", RedirectChain))
-	if dnsIdx > qosIdx {
-		t.Errorf("TCP/53 intercept (%d) must precede the class rules (%d)", dnsIdx, qosIdx)
 	}
 }
 

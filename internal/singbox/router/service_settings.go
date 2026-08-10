@@ -37,9 +37,6 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err != nil {
 		return err
 	}
-	if err := s.validateSelectiveBypassSettings(ctx, normalized); err != nil {
-		return err
-	}
 	// QoS classes must route to outbounds that actually exist — an unknown
 	// tag would either be skipped at emit time (class silently inert) or,
 	// unguarded, take the whole merged config down at sing-box load. Checked

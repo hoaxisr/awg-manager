@@ -11,6 +11,19 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+func TestParseDatRuleSetURL(t *testing.T) {
+	kind, tags, ok := parseDatRuleSetURL("http://127.0.0.1:8080/api/singbox/router/rulesets/dat-srs?kind=geosite&tag=GOOGLE&tag=YOUTUBE&token=x")
+	if !ok {
+		t.Fatal("expected dat URL to parse")
+	}
+	if kind != "geosite" || len(tags) != 2 || tags[0] != "GOOGLE" || tags[1] != "YOUTUBE" {
+		t.Fatalf("got kind=%q tags=%v", kind, tags)
+	}
+	if _, _, ok := parseDatRuleSetURL("https://example.com/geosite-youtube.srs"); ok {
+		t.Fatal("external URL must not parse as dat")
+	}
+}
+
 type fakeGeoExpander struct {
 	lines []string
 	path  string

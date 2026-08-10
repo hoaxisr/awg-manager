@@ -365,50 +365,10 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
-	// Wire selective-bypass builder. The adapter wraps selective.Builder with the
-	// router service's live config so reconcileInstalled can trigger an ipset
-	// rebuild with a single Rebuild(ctx) call.
-	selectiveGeo := selective.GeoPaths{}
-	if geoCfg, err := hydraroute.ReadConfig(); err == nil {
-		selectiveGeo.GeoSite = geoCfg.GeoSiteFiles
-		selectiveGeo.GeoIP = geoCfg.GeoIPFiles
-	}
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.
 	selective.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective))
-	selectiveBuilder := selective.NewBuilder(selective.BuilderConfig{
-		ConfigDir:       a.singboxOp.ConfigDir(),
-		DNSSource:       a.ndmsQueries.DNSProxyStatus,
-		Log:             logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective),
-		Bus:             a.eventBus,
-		Geo:             selectiveGeo,
-		OpenRuleSetJSON: routerSvc.OpenSelectiveRuleSetJSON,
-	})
-	selectiveAdapter := router.NewSelectiveBuilderAdapter(routerSvc, selectiveBuilder)
-	routerSvc.SetSelectiveBuilder(selectiveAdapter)
-	a.srv.SetSelectiveHandler(api.NewSelectiveHandler(
-		a.settingsStore,
-		a.singboxOp.ConfigDir(),
-		selectiveAdapter,
-		selectiveBuilder,
-		a.loggingService,
-	))
-	selectiveCDNRefresh := selective.StartCDNRefreshLoop(
-		selective.CDNRefreshInterval,
-		func() bool {
-			st, err := a.settingsStore.Load()
-			if err != nil {
-				return false
-			}
-			// SelectiveActive: в fakeip-режиме взведённый флаг — «спящий»,
-			// фоновый CDN-refresh не должен трогать ipset и слот 19 (#564).
-			return st.SingboxRouter.SelectiveActive()
-		},
-		selectiveAdapter.RefreshCDN,
-		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective),
-	)
-	_ = selectiveCDNRefresh // stopped via process exit; no explicit Stop on shutdown today
 
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.

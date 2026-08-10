@@ -380,17 +380,6 @@ type Deps struct {
 	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
 	// *query.RouteStore.
 	DefaultGateway DefaultGatewayResolver
-
-	// SelectiveBuilder handles ipset population for the selective-bypass
-	// feature. When non-nil and SingboxRouterSettings.SelectiveBypass is
-	// true, reconcileInstalled calls Rebuild after every iptables install
-	// that changes rules/rule-sets. When nil the feature is disabled.
-	SelectiveBuilder SelectiveBuilder
-
-	// NDMSDNSSource provides fallback DNS server addresses (NDMS router
-	// upstreams) for the selective-bypass domain resolver. Optional — nil
-	// means only sing-box DNS servers and the system resolver are used.
-	NDMSDNSSource SelectiveDNSSource
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -457,9 +446,6 @@ type ServiceImpl struct {
 	// engine recovers. Guarded by s.mu, like the other current* install state.
 	blackholeActive bool
 
-	// selective tracking
-	currentSelectiveBypass bool // last-applied value of SelectiveBypass
-
 	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
 	// ports only — the class outbound lives in sing-box config, not in
 	// iptables). Reconcile re-Installs when it drifts from settings.
@@ -467,7 +453,7 @@ type ServiceImpl struct {
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.
-	// See applyQoSRoutesSlot (mirrors selectiveBuilderAdapter.lastApplyFailed).
+	// См. applyQoSRoutesSlot.
 	qosApplyFailed atomic.Bool
 
 	// xtDscpState tracks the last observed xt_dscp availability for
@@ -510,12 +496,6 @@ func NewService(d Deps) *ServiceImpl {
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
 	return &ServiceImpl{deps: d, appLog: appLog}
-}
-
-// SetSelectiveBuilder wires the selective-bypass builder post-construction.
-// Called after NewService because the adapter needs a *ServiceImpl reference.
-func (s *ServiceImpl) SetSelectiveBuilder(b SelectiveBuilder) {
-	s.deps.SelectiveBuilder = b
 }
 
 func (s *ServiceImpl) routerConfigPath() string {
