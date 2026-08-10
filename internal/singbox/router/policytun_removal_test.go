@@ -53,15 +53,17 @@ func TestReleasePolicyTunForRemoval_RestoresSegmentNATFirst(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
+	// ОДИН регистратор на все шаги: с раздельными журналами утверждение о
+	// порядке недоказуемо — можно проверить только факт вызовов.
 	log := &callLog{}
-	opkg := &recordingOpkgTunProvisioner{}
 	state := &fakeNATState{}
 
 	if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
-		Settings:   store,
-		OpkgTun:    opkg,
-		SegmentNAT: &recSegmentNAT{log: log, state: state},
-		NATState:   state,
+		Settings:     store,
+		OpkgTun:      &recOpkgTun{log: log},
+		DefaultRoute: &recDefaultRoute{log: log},
+		SegmentNAT:   &recSegmentNAT{log: log, state: state},
+		NATState:     state,
 	}); err != nil {
 		t.Fatalf("ReleasePolicyTunForRemoval: %v", err)
 	}
@@ -69,8 +71,13 @@ func TestReleasePolicyTunForRemoval_RestoresSegmentNATFirst(t *testing.T) {
 	if !log.has("SetSegmentNAT:Home") {
 		t.Errorf("сегменту обязан вернуться динамический NAT: %v", log.calls)
 	}
-	if len(opkg.deleted) != 1 || opkg.deleted[0] != "OpkgTun1" {
-		t.Errorf("deleted = %v, want [OpkgTun1]", opkg.deleted)
+	// Возврат NAT — ПЕРВЫМ: после сноса интерфейса дефолт уедет на WAN, и
+	// восстанавливать сегменты будет уже поздно (записи уходят вместе с
+	// пакетом). Дефолт снимается до сноса по той же причине.
+	mustOrderCalls(t, log, "SetSegmentNAT:Home", "RemoveDefaultRoute:OpkgTun1")
+	mustOrderCalls(t, log, "RemoveDefaultRoute:OpkgTun1", "Delete:OpkgTun1")
+	if !log.has("Delete:OpkgTun1") {
+		t.Errorf("интерфейс обязан сноситься: %v", log.calls)
 	}
 }
 

@@ -276,16 +276,6 @@ func (s *ServiceImpl) scheduleFakeIPDrain(poolNet4, poolMask4, ndmsName string) 
 	})
 }
 
-// teardownOpkgTun best-effort сносит NDMS OpkgTun: down → delete; при провале
-// delete снимает сконфигурированные v4/v6 адреса. Единственное место, где живёт
-// инвариант: интерфейс с настроенным `ip address`, но без kernel-адреса вгоняет
-// ndm в бесконечный nginx-reload цикл (bind fail → регенерация конфига →
-// reload → …), подвешивающий весь RCI на секунды (stand-verified 2026-07-15) —
-// поэтому провал delete ОБЯЗАН оставлять интерфейс без адресов. Clear'ы идут
-// ПОСЛЕ провала delete: на happy-path они были бы лишними RCI-вызовами, а на
-// уже исчезнувшем интерфейсе delete идемпотентно успешен и clear'ы (с их
-// create-on-reference риском в NDMS) не выполняются вовсе. Возвращает ошибку
-// delete; down и clear'ы — warn-and-continue.
 // holdOpkgTun — выключение БЕЗ удаления интерфейса: индекс закреплён за
 // режимом, потому что permit в политике доступа привязан к имени OpkgTun<N>, и
 // удаление заставило бы следующее включение взять другой номер, оставив
@@ -320,6 +310,16 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 	return err
 }
 
+// teardownOpkgTun best-effort сносит NDMS OpkgTun: down → delete; при провале
+// delete снимает сконфигурированные v4/v6 адреса. Единственное место, где живёт
+// инвариант: интерфейс с настроенным `ip address`, но без kernel-адреса вгоняет
+// ndm в бесконечный nginx-reload цикл (bind fail → регенерация конфига →
+// reload → …), подвешивающий весь RCI на секунды (stand-verified 2026-07-15) —
+// поэтому провал delete ОБЯЗАН оставлять интерфейс без адресов. Clear'ы идут
+// ПОСЛЕ провала delete: на happy-path они были бы лишними RCI-вызовами, а на
+// уже исчезнувшем интерфейсе delete идемпотентно успешен и clear'ы (с их
+// create-on-reference риском в NDMS) не выполняются вовсе. Возвращает ошибку
+// delete; down и clear'ы — warn-and-continue.
 func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope string) error {
 	// Снять permit-all ACL (unbind + no access-list) ДО down/delete: при
 	// успешном delete auto-delete каскадит ACL и сам, но при провале delete

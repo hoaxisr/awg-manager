@@ -105,7 +105,41 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 // другой номер и рвало разрешение. Адреса при этом снимаются обязательно —
 // интерфейс с настроенным `ip address` без kernel-адреса вгоняет ndm в
 // бесконечный nginx-reload (стенд 2026-07-15).
+// Индекс здесь НЕНУЛЕВОЙ осознанно: `Index` объявлен omitempty, поэтому на
+// нуле утверждение «индекс сохранён» проходит и для персиста, потерявшего поле.
 func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable (provision for disable): %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.log.calls = nil
+
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	h.svc.deps.IPTables = ipt
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+
+	if h.log.has("Delete:OpkgTun3") {
+		t.Errorf("интерфейс обязан пережить выключение: %v", h.log.calls)
+	}
+	for _, want := range []string{"ClearAddress:OpkgTun3", "ClearIPv6Address:OpkgTun3"} {
+		if !h.log.has(want) {
+			t.Errorf("нет вызова %s: %v", want, h.log.calls)
+		}
+	}
+	st := h.loadPolicyTun(t)
+	if st == nil || st.Provisioned || st.Index != 3 {
+		t.Errorf("PolicyTun persist = %+v, want {Provisioned:false Index:3}", st)
+	}
+}
+
+func TestPolicyTunDisable_HoldsInterfaceAtIndexZero(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForDisable(t, h)
 
@@ -282,6 +316,42 @@ func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 	if !scan.scanned(fakeIPTunDescription) || !scan.scanned(policyTunDescription) {
 		t.Errorf("scanned descriptions = %v, want both %q and %q",
 			scan.descs, fakeIPTunDescription, policyTunDescription)
+	}
+}
+
+// Выключенный режим с удержанным интерфейсом — устойчивое состояние: тик
+// reconcile не имеет права заново разбирать то, что уже разобрано. Иначе
+// каждые 30 с шёл бы полный Disable с RCI-мутациями, SSE-событием и
+// перегенерацией слотов.
+func TestReconcilePolicyTun_NoopWhenDisabledAndHeld(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForDisable(t, h)
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	h.log.calls = nil
+	// Снятие DNS-хука идёт в disablePolicyTun ДО гарда «нечего разбирать»,
+	// поэтому это единственный наблюдаемый след повторного Disable: сам гард
+	// NDMS не трогает и в журнал вызовов ничего не пишет.
+	disables := 0
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	ipt.cleanupPolicyTunDNSHook = func() { disables++ }
+	h.svc.deps.IPTables = ipt
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	if disables != 0 {
+		t.Errorf("тик не должен заново разбирать уже разобранное: Disable вызван %d раз", disables)
+	}
+	if len(h.log.calls) != 0 {
+		t.Errorf("удержанное выключенное состояние обязано быть устойчивым, получено %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Provisioned {
+		t.Errorf("PolicyTun persist = %+v, want удержанный {Provisioned:false}", st)
 	}
 }
 
