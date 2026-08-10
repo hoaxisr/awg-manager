@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// resolveServerEntwareNATExtIface picks the kernel egress for entware MASQUERADE.
-// internet-only → NatStaticWAN; policy set → default dev in policy table (e.g. nwg2);
-// full without policy → ISP WAN (eth3).
+// resolveServerEntwareNATExtIface picks kernel egress for entware MASQUERADE on wdttraw0.
+// Mirrors managed AWG: internet-only → static WAN; PolicyN → policy table default;
+// policy none + full → NDMS default-route WAN (same as managed full NAT).
 func (s *Service) resolveServerEntwareNATExtIface(ctx context.Context, cfg ServerConfig, mode string) (string, error) {
 	mode = normalizeNatMode(mode)
 	if mode == "none" {
@@ -31,6 +31,13 @@ func (s *Service) resolveServerEntwareNATExtIface(ctx context.Context, cfg Serve
 		}
 		if dev := policyTableDefaultDev(ctx, table); dev != "" {
 			return dev, nil
+		}
+	}
+	if s.accessMgr != nil {
+		if ndmsWAN, err := s.accessMgr.DefaultGatewayNDMS(ctx); err == nil && ndmsWAN != "" {
+			if k := strings.TrimSpace(s.accessMgr.KernelIfaceName(ctx, ndmsWAN)); k != "" {
+				return k, nil
+			}
 		}
 	}
 	return defaultWANDev(ctx)

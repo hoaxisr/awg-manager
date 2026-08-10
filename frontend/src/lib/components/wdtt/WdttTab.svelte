@@ -471,6 +471,15 @@
 		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
 	}
 
+	async function applyServerAccessConfig(id: string, cfg: WdttServerConfig) {
+		const norm = normalizeServer(cfg);
+		patchServerInConfig(id, norm);
+		if (savedConfig) {
+			const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+			if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(norm);
+		}
+	}
+
 	async function saveServerConfig(cfg: WdttServerConfig) {
 		if (!selectedServer) return;
 		saving = true;
@@ -812,6 +821,7 @@
 					selectedServerId = id;
 				}}
 				onSave={saveServerConfig}
+				onAccessUpdated={(cfg) => applyServerAccessConfig(selectedServerId, cfg)}
 				onToggle={(on) => toggleServerInstance(selectedServerId, on)}
 				onGenerate={generateServerLink}
 			/>

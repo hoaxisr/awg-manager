@@ -126,6 +126,30 @@ export class WdttClient extends FreeturnClient {
 		return { config: res.config };
 	}
 
+	async setWdttServerNATMode(id: string, mode: 'full' | 'internet-only' | 'none'): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/nat`,
+			{ method: 'POST', body: JSON.stringify({ mode }) }
+		);
+		return { config: res.config };
+	}
+
+	async setWdttServerPolicy(id: string, policy: string): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/policy`,
+			{ method: 'POST', body: JSON.stringify({ policy }) }
+		);
+		return { config: res.config };
+	}
+
+	async setWdttServerLANSegments(id: string, segments: string[]): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/lan-segments`,
+			{ method: 'POST', body: JSON.stringify({ segments }) }
+		);
+		return { config: res.config };
+	}
+
 	async createWdttServer(name?: string, config?: WdttServerConfig): Promise<WdttServerInstance> {
 		return this.request<WdttServerInstance>('/wdtt/servers', {
 			method: 'POST',

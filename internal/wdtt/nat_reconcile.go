@@ -11,8 +11,8 @@ import (
 const natReconcileInterval = 15 * time.Second
 
 // StartNATReconciler periodically re-applies entware iptables NAT for running
-// WDTT servers on the legacy wdtt0 path. sing-box router reconcile can flush
-// POSTROUTING/FORWARD rules. NDMS OpkgTun servers also use entware on opkgtun + wdttraw0.
+// WDTT servers. sing-box router reconcile can flush POSTROUTING/FORWARD rules.
+// OpkgTun: entware только wdttraw0; WG через NDMS как у managed AWG.
 func (s *Service) StartNATReconciler(ctx context.Context) {
 	if s == nil {
 		return
@@ -102,26 +102,26 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		} else {
 			wanDev = dev
 		}
-		if !entwareNATPresentForServer(ctx, cfg, wanDev) {
+		if !entwareNATPresentForServer(ctx, cfg, mode, wanDev) {
 			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен "+strings.Join(cfg.serverEntwareNATIfaces(), ","))
+				s.appLog.Info("nat-reconcile", srv.ID, "entware NAT восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
 			}
-		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfaces()) {
-			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...); err != nil && s.appLog != nil {
+		} else if fwdOut, err := iptables.RunOutput(ctx, "-S", "FORWARD"); err != nil || !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfacesForMode(mode)) {
+			if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfacesForMode(mode)...); err != nil && s.appLog != nil {
 				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
-			} else if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfaces()); err != nil && s.appLog != nil {
+			} else if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfacesForMode(mode)); err != nil && s.appLog != nil {
 				s.appLog.Warn("nat-reconcile", srv.ID, err.Error())
 			} else if s.appLog != nil {
-				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfaces(), ","))
+				s.appLog.Info("nat-reconcile", srv.ID, "FORWARD восстановлен "+strings.Join(cfg.serverEntwareNATIfacesForMode(mode), ","))
 			}
-		} else if !entwareMSSPresentAll(ctx, cfg.serverEntwarePeerCIDRs()) {
-			setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRs()...)
+		} else if !entwareMSSPresentAll(ctx, cfg.serverEntwarePeerCIDRsForMode(mode)) {
+			setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRsForMode(mode)...)
 			if s.appLog != nil {
-				s.appLog.Info("nat-reconcile", srv.ID, "TCPMSS clamp восстановлен ("+strings.Join(cfg.serverEntwarePeerCIDRs(), ", ")+")")
+				s.appLog.Info("nat-reconcile", srv.ID, "TCPMSS clamp восстановлен ("+strings.Join(cfg.serverEntwarePeerCIDRsForMode(mode), ", ")+")")
 			}
 		}
 		if !wgClientRoutePresent(ctx, cfg.kernelWGIface(), wgServerPeerCIDR()) {
@@ -137,7 +137,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		if segments == nil {
 			segments = []string{}
 		}
-		peerCIDRs := cfg.serverEntwarePeerCIDRs()
+		peerCIDRs := cfg.serverEntwarePeerCIDRsForMode(mode)
 		if len(segments) > 0 && s.accessMgr != nil {
 			cidrs, err := s.accessMgr.ResolveLANSegmentCIDRs(ctx, segments)
 			if err != nil {

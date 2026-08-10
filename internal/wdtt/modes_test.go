@@ -67,6 +67,33 @@ func TestServerConfig_serverEntwareNATPlans_opkgIncludesWG(t *testing.T) {
 	}
 }
 
+func TestServerConfig_serverEntwareNATPlansForMode_opkgFullRawOnly(t *testing.T) {
+	opkg := ServerConfig{RelayMode: ConnModeWG, NdmsIface: "OpkgTun17", WgIface: "opkgtun17"}
+	plans := opkg.serverEntwareNATPlansForMode("full")
+	if len(plans) != 1 {
+		t.Fatalf("opkg full NAT plans = %d, want 1 (wdttraw0 only; WG via NDMS)", len(plans))
+	}
+	if plans[0].Iface != DefaultRawServerIface || plans[0].CIDR != "10.70.0.0/16" {
+		t.Fatalf("plan[0] = %+v", plans[0])
+	}
+}
+
+func TestServerConfig_serverEntwareNATPlansForMode_opkgNoneUsesFullPlans(t *testing.T) {
+	opkg := ServerConfig{RelayMode: ConnModeWG, NdmsIface: "OpkgTun17", WgIface: "opkgtun17"}
+	plans := opkg.serverEntwareNATPlansForMode("none")
+	if len(plans) != 2 {
+		t.Fatalf("none mode keeps full plan list for cleanup: %+v", plans)
+	}
+}
+
+func TestServerConfig_serverEntwareNATPlansForMode_legacyUnchanged(t *testing.T) {
+	legacy := ServerConfig{RelayMode: ConnModeWG}
+	plans := legacy.serverEntwareNATPlansForMode("full")
+	if len(plans) != 2 {
+		t.Fatalf("legacy full NAT plans = %d, want 2", len(plans))
+	}
+}
+
 func TestNormalizeClientConfig_rawWorkersUncapped(t *testing.T) {
 	got := normalizeClientConfig(ClientConfig{ConnMode: ConnModeRaw, Workers: 24})
 	if got.Workers != 24 {

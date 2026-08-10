@@ -84,9 +84,7 @@ type entwareNATPlan struct {
 	CIDR  string
 }
 
-// serverEntwareNATPlans — пары iface/CIDR для iptables NAT/MSS.
-// wdttraw0 всегда; kernel WG (opkgtunN/wdtt0) — entware даже с OpkgTun
-// (NDMS NAT на OpkgTun не всегда покрывает userspace WG на opkgtun).
+// serverEntwareNATPlans — legacy/full list (wdttraw0 + kernel WG).
 func (c ServerConfig) serverEntwareNATPlans() []entwareNATPlan {
 	return []entwareNATPlan{
 		{Iface: DefaultRawServerIface, CIDR: rawServerPeerCIDR()},
@@ -94,16 +92,17 @@ func (c ServerConfig) serverEntwareNATPlans() []entwareNATPlan {
 	}
 }
 
-func rawServerPeerCIDR() string {
-	_, n, err := net.ParseCIDR(DefaultRawServerAddr + "/16")
-	if err != nil {
-		return "10.70.0.0/16"
+// serverEntwareNATPlansForMode — entware там, где NDMS не покрывает (паритет managed AWG).
+// OpkgTun + NAT≠none: WG через NDMS NAT/policy на OpkgTun; entware только wdttraw0/raw.
+func (c ServerConfig) serverEntwareNATPlansForMode(mode string) []entwareNATPlan {
+	raw := entwareNATPlan{Iface: DefaultRawServerIface, CIDR: rawServerPeerCIDR()}
+	if c.usesNDMSAccess() && normalizeNatMode(mode) != "none" {
+		return []entwareNATPlan{raw}
 	}
-	return n.String()
+	return c.serverEntwareNATPlans()
 }
 
-func (c ServerConfig) serverEntwareNATIfaces() []string {
-	plans := c.serverEntwareNATPlans()
+func entwarePlansIfaces(plans []entwareNATPlan) []string {
 	seen := make(map[string]bool, len(plans))
 	out := make([]string, 0, len(plans))
 	for _, p := range plans {
@@ -117,8 +116,7 @@ func (c ServerConfig) serverEntwareNATIfaces() []string {
 	return out
 }
 
-func (c ServerConfig) serverEntwarePeerCIDRs() []string {
-	plans := c.serverEntwareNATPlans()
+func entwarePlansCIDRs(plans []entwareNATPlan) []string {
 	seen := make(map[string]bool, len(plans))
 	out := make([]string, 0, len(plans))
 	for _, p := range plans {
@@ -130,4 +128,28 @@ func (c ServerConfig) serverEntwarePeerCIDRs() []string {
 		out = append(out, cidr)
 	}
 	return out
+}
+
+func (c ServerConfig) serverEntwareNATIfacesForMode(mode string) []string {
+	return entwarePlansIfaces(c.serverEntwareNATPlansForMode(mode))
+}
+
+func (c ServerConfig) serverEntwarePeerCIDRsForMode(mode string) []string {
+	return entwarePlansCIDRs(c.serverEntwareNATPlansForMode(mode))
+}
+
+func rawServerPeerCIDR() string {
+	_, n, err := net.ParseCIDR(DefaultRawServerAddr + "/16")
+	if err != nil {
+		return "10.70.0.0/16"
+	}
+	return n.String()
+}
+
+func (c ServerConfig) serverEntwareNATIfaces() []string {
+	return entwarePlansIfaces(c.serverEntwareNATPlans())
+}
+
+func (c ServerConfig) serverEntwarePeerCIDRs() []string {
+	return entwarePlansCIDRs(c.serverEntwareNATPlans())
 }

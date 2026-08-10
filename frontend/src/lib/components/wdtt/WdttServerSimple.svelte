@@ -60,6 +60,7 @@
 		genPeer?: string;
 		genVKHashes?: string;
 		onSave: (cfg: WdttServerConfig) => void | Promise<void>;
+		onAccessUpdated?: (cfg: WdttServerConfig) => void | Promise<void>;
 		onToggle: (on: boolean) => void | Promise<void>;
 		onGenerate: (
 			peer: string,
@@ -84,6 +85,7 @@
 		genPeer = $bindable(''),
 		genVKHashes = $bindable(''),
 		onSave,
+		onAccessUpdated,
 		onToggle,
 		onGenerate,
 		instances = [],
@@ -101,6 +103,9 @@
 	let showPassword = $state(false);
 	let linkPassword = $state('');
 	let togglingIngress = $state(false);
+	let togglingNAT = $state(false);
+	let policyChanging = $state(false);
+	let settingLAN = $state(false);
 	let lanSegmentOptions = $state<{ value: string; label: string }[]>([]);
 	let quickActive = $state('secret');
 	let wizardOpen = $state(false);
@@ -293,18 +298,67 @@
 	});
 
 	async function handleSetNATMode(mode: NatMode) {
-		server.natMode = mode;
-		await onSave(server);
+		if (mode === natMode) return;
+		if (!serverInstanceId) {
+			server.natMode = mode;
+			await onSave(server);
+			return;
+		}
+		togglingNAT = true;
+		try {
+			const result = await api.setWdttServerNATMode(serverInstanceId, mode);
+			server.natMode = result.config.natMode ?? mode;
+			if (onAccessUpdated) {
+				await onAccessUpdated(result.config);
+			}
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения режима NAT');
+		} finally {
+			togglingNAT = false;
+		}
 	}
 
 	async function handlePolicyChange(policy: string) {
-		server.policy = policy;
-		await onSave(server);
+		if (policy === (server.policy ?? 'none')) return;
+		if (!serverInstanceId) {
+			server.policy = policy;
+			await onSave(server);
+			return;
+		}
+		policyChanging = true;
+		try {
+			const result = await api.setWdttServerPolicy(serverInstanceId, policy);
+			server.policy = result.config.policy ?? policy;
+			if (onAccessUpdated) {
+				await onAccessUpdated(result.config);
+			}
+			notifications.success('Политика обновлена');
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения политики');
+		} finally {
+			policyChanging = false;
+		}
 	}
 
 	async function handleSetLANSegments(segments: string[]) {
-		server.lanSegments = segments;
-		await onSave(server);
+		if (settingLAN) return;
+		if (!serverInstanceId) {
+			server.lanSegments = segments;
+			await onSave(server);
+			return;
+		}
+		settingLAN = true;
+		try {
+			const result = await api.setWdttServerLANSegments(serverInstanceId, segments);
+			server.lanSegments = result.config.lanSegments ?? segments;
+			if (onAccessUpdated) {
+				await onAccessUpdated(result.config);
+			}
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка изменения доступа в LAN');
+		} finally {
+			settingLAN = false;
+		}
 	}
 
 	async function handleStatsLogChange(mode: StatsLogMode) {
@@ -708,7 +762,7 @@
 							value={natMode}
 							options={natModeOptions}
 							ariaLabel="Режим NAT"
-							disabled={saving}
+							disabled={saving || togglingNAT}
 							onchange={handleSetNATMode}
 						/>
 					</div>
@@ -722,7 +776,7 @@
 							values={server.lanSegments ?? []}
 							options={lanSegmentOptions}
 							onchange={handleSetLANSegments}
-							disabled={saving}
+							disabled={saving || settingLAN}
 						/>
 					</div>
 				</div>
@@ -747,7 +801,7 @@
 				</div>
 				<ServerAccessPolicyDropdown
 					policy={server.policy ?? 'none'}
-					disabled={saving}
+					disabled={saving || policyChanging}
 					onchange={handlePolicyChange}
 				/>
 		</section>

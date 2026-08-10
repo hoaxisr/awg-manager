@@ -149,7 +149,8 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 				return fmt.Errorf("entware NAT %s: %w", mode, err)
 			}
 			if s.appLog != nil {
-				s.appLog.Info("access", id, fmt.Sprintf("entware NAT %s (%v → %v)", mode, cfg.serverEntwareNATIfaces(), cfg.serverEntwarePeerCIDRs()))
+				s.appLog.Info("access", id, fmt.Sprintf("entware NAT %s (%v → %v via %s)", mode,
+					cfg.serverEntwareNATIfacesForMode(mode), cfg.serverEntwarePeerCIDRsForMode(mode), wanDev))
 			}
 		} else {
 			removeEntwareNATForServer(ctx, cfg)
@@ -159,7 +160,7 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 		if segments == nil {
 			segments = []string{}
 		}
-		peerCIDRs := cfg.serverEntwarePeerCIDRs()
+		peerCIDRs := cfg.serverEntwarePeerCIDRsForMode(mode)
 		if err := applyEntwareLAN(ctx, kernelIface, segments, s.accessMgr, peerCIDRs...); err != nil {
 			if s.appLog != nil {
 				s.appLog.Warn("access", id, "LAN iptables: "+err.Error())

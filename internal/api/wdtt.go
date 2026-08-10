@@ -28,6 +28,9 @@ type WdttService interface {
 	RefreshSubscription(id string) (wdtt.ClientInstance, wdtt.ImportPayload, error)
 	UpdateServerConfig(wdtt.ServerConfig) error
 	UpdateServerInstance(id string, cfg wdtt.ServerConfig) (wdtt.ServerConfig, error)
+	SetServerNATMode(ctx context.Context, id, mode string) (wdtt.ServerConfig, error)
+	SetServerPolicy(ctx context.Context, id, policy string) (wdtt.ServerConfig, error)
+	SetServerLANSegments(ctx context.Context, id string, segments []string) (wdtt.ServerConfig, error)
 	CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error)
 	DeleteServer(id string) error
 	RenameServer(id, name string) error

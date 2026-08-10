@@ -20,25 +20,27 @@ const (
 )
 
 // entwareNATPresentForServer reports whether all planned NAT/FORWARD rules exist.
-func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, wanDev string) bool {
-	plans := cfg.serverEntwareNATPlans()
-	if len(plans) == 0 {
+func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, mode, wanDev string) bool {
+	plans := cfg.serverEntwareNATPlansForMode(mode)
+	if len(plans) == 0 || normalizeNatMode(mode) == "none" {
 		return true
 	}
+	ifaces := entwarePlansIfaces(plans)
+	cidrs := entwarePlansCIDRs(plans)
 	natOut, err1 := iptables.RunOutput(ctx, "-t", "nat", "-S", "POSTROUTING")
 	fwdOut, err2 := iptables.RunOutput(ctx, "-S", "FORWARD")
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	if !strings.Contains(fwdOut, entwareNATComment) && !entwareForwardIfacesPresent(fwdOut, cfg.serverEntwareNATIfaces()) {
+	if !strings.Contains(fwdOut, entwareNATComment) && !entwareForwardIfacesPresent(fwdOut, ifaces) {
 		return false
 	}
-	for _, iface := range cfg.serverEntwareNATIfaces() {
+	for _, iface := range ifaces {
 		if !strings.Contains(fwdOut, iface) && !entwareForwardIfacesPresent(fwdOut, []string{iface}) {
 			return false
 		}
 	}
-	for _, cidr := range cfg.serverEntwarePeerCIDRs() {
+	for _, cidr := range cidrs {
 		if !strings.Contains(natOut, cidr) {
 			return false
 		}
@@ -59,7 +61,7 @@ func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
 	if wgIface == DefaultRawServerIface {
 		cfg = ServerConfig{RelayMode: ConnModeRaw}
 	}
-	return entwareNATPresentForServer(ctx, cfg, wanDev)
+	return entwareNATPresentForServer(ctx, cfg, "full", wanDev)
 }
 
 // masqueradeOutDev returns the `-o <dev>` of the AWGM_WDTT MASQUERADE rule.
@@ -79,13 +81,29 @@ func masqueradeOutDev(natOut string) string {
 }
 
 func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDev string) error {
-	plans := cfg.serverEntwareNATPlans()
+	mode = normalizeNatMode(mode)
+	plans := cfg.serverEntwareNATPlansForMode(mode)
+	activeIfaces := entwarePlansIfaces(plans)
+	activeCIDRs := entwarePlansCIDRs(plans)
 	if len(plans) == 0 {
 		return nil
 	}
 	if mode == "none" {
 		removeEntwareNATForServer(ctx, cfg)
 		return nil
+	}
+	// Убрать entware с ifaces, которые больше не в плане (OpkgTun → NDMS для WG).
+	for _, iface := range cfg.serverEntwareNATIfaces() {
+		still := false
+		for _, a := range activeIfaces {
+			if a == iface {
+				still = true
+				break
+			}
+		}
+		if !still {
+			removeEntwareNATIfaces(ctx, iface)
+		}
 	}
 	extIface := strings.TrimSpace(wanDev)
 	if extIface == "" {
@@ -97,16 +115,16 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	}
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 
-	if err := setupEntwareForward(ctx, cfg.serverEntwareNATIfaces()...); err != nil {
+	if err := setupEntwareForward(ctx, activeIfaces...); err != nil {
 		return fmt.Errorf("entware FORWARD: %w", err)
 	}
-	if err := ensureWdttForwardNetfilterHook(ctx, cfg.serverEntwareNATIfaces()); err != nil {
+	if err := ensureWdttForwardNetfilterHook(ctx, activeIfaces); err != nil {
 		return fmt.Errorf("netfilter.d FORWARD: %w", err)
 	}
-	setupEntwareMSSClamp(ctx, cfg.serverEntwarePeerCIDRs()...)
+	setupEntwareMSSClamp(ctx, activeCIDRs...)
 
 	flushEntwareMasquerade(ctx)
-	for _, cidr := range cfg.serverEntwarePeerCIDRs() {
+	for _, cidr := range activeCIDRs {
 		if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
 			"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
 			return fmt.Errorf("MASQUERADE %s via %s: %w", cidr, extIface, err)
