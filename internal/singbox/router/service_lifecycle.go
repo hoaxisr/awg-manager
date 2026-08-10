@@ -914,6 +914,13 @@ func (s *ServiceImpl) provisionLocked(ctx context.Context, clearManualStop bool)
 		}
 	}
 
+	// Отсутствие conntrack не мешает подъёму перехвата, но ломает вытеснение
+	// потоков, ушедших мимо него: скрипт молча выходит нулём, и «утечек нет»
+	// становится неотличимо от «мы их не искали».
+	if !s.deps.IPTables.IsConntrackAvailable() {
+		s.appLog.Warn("ctclean", "", "нет "+conntrackBinPath+" — потоки, ушедшие мимо перехвата, не вытесняются (см. статус conntrackAvailable)")
+	}
+
 	if err := s.installRules(ctx, RestoreInputSpec{
 		PolicyMark:        mark,
 		MatchAll:          !policyMode,
@@ -1405,6 +1412,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	}
 	xtDscpAvailable := s.xtDscpUsable(ctx)
+	conntrackAvailable := s.deps.IPTables.IsConntrackAvailable()
 	if !xtDscpAvailable && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
 		moduleOK, matchOK := s.xtDscpDetail(ctx)
 		var msg string
@@ -1498,6 +1506,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		NetfilterComponentName:  "Модули ядра подсистемы сетевой фильтрации",
 		TProxyTargetAvailable:   s.tproxyTargetAvailable(ctx),
 		XtDscpAvailable:         xtDscpAvailable,
+		ConntrackAvailable:      conntrackAvailable,
 		PolicyName:              sr.PolicyName,
 		PolicyMark:              policyMark,
 		PolicyExists:            policyExists,

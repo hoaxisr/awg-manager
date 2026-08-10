@@ -24,7 +24,11 @@ type SingboxRouterStatusData struct {
 	// XtDscpAvailable reports whether iptables DSCP matching is usable
 	// (xt_dscp kernel module present AND iptables `-m dscp` extension works).
 	// The QoS-DSCP settings UI keys its "supported" badge on this field.
-	XtDscpAvailable        bool   `json:"xtDscpAvailable" example:"true"`
+	XtDscpAvailable bool `json:"xtDscpAvailable" example:"true"`
+	// ConntrackAvailable reports whether /opt/sbin/conntrack is present. Flow
+	// eviction — and with it the "policy member never bypasses sing-box"
+	// guarantee — depends on it.
+	ConntrackAvailable     bool   `json:"conntrackAvailable" example:"true"`
 	PolicyName             string `json:"policyName" example:"awgm-router"`
 	PolicyMark             string `json:"policyMark,omitempty" example:"0xffffaaa"`
 	PolicyExists           bool   `json:"policyExists" example:"true"`

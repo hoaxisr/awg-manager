@@ -1712,6 +1712,7 @@ const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	awgmBackendReason: v.optional(v.nullable(v.string())),
 	awgmBackendRequested: v.optional(v.nullable(v.string())),
 	awgmBackendUnavailableReason: v.optional(v.nullable(v.string())),
+	conntrackAvailable: v.optional(v.nullable(v.boolean())),
 	crashCount: v.optional(v.nullable(v.number())),
 	deviceCount: v.optional(v.nullable(v.number())),
 	deviceMode: v.optional(v.nullable(v.string())),

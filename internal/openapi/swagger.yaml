@@ -4822,6 +4822,13 @@ definitions:
       awgmBackendUnavailableReason:
         example: бандл awgm не установлен
         type: string
+      conntrackAvailable:
+        description: |-
+          ConntrackAvailable reports whether /opt/sbin/conntrack is present. Flow
+          eviction — and with it the "policy member never bypasses sing-box"
+          guarantee — depends on it.
+        example: true
+        type: boolean
       crashCount:
         description: 'CrashCount — падения sing-box за последние 10 минут (issue #456).'
         example: 2

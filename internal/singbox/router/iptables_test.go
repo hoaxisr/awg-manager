@@ -2282,6 +2282,46 @@ func stripShellComments(s string) string {
 	return strings.Join(out, "\n")
 }
 
+func TestIsConntrackAvailableReadsBinary(t *testing.T) {
+	it := NewIPTables()
+	dir := t.TempDir()
+	it.conntrackPath = filepath.Join(dir, "conntrack")
+	if it.IsConntrackAvailable() {
+		t.Fatal("бинаря нет, а проба говорит «есть»")
+	}
+	if err := os.WriteFile(it.conntrackPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !it.IsConntrackAvailable() {
+		t.Fatal("бинарь на месте, а проба говорит «нет»")
+	}
+	// Неисполняемый файл и каталог — не бинарь: проба, отвечающая «есть» на
+	// os.Stat без разбора, соврала бы ровно там, где скрипт вытеснения потом
+	// молча выйдет по своему `[ -x "$CT" ]`.
+	if err := os.Chmod(it.conntrackPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if it.IsConntrackAvailable() {
+		t.Fatal("файл без бита исполнения — не бинарь, а проба говорит «есть»")
+	}
+	it.conntrackPath = dir
+	if it.IsConntrackAvailable() {
+		t.Fatal("каталог — не бинарь, а проба говорит «есть»")
+	}
+}
+
+// Путь бинаря знают двое: константа (её читает проба и по ней строится статус)
+// и скрипт вытеснения (по нему бинарь реально зовётся). Разъедутся — статус
+// начнёт врать, поэтому равенство спрашивается явно. Комментарии из скрипта
+// вырезаны: тот же путь упомянут в пояснениях рядом, и проверка по сырому
+// тексту была бы истинна от одного комментария.
+func TestCtCleanScriptUsesConntrackBinPath(t *testing.T) {
+	code := stripShellComments(ctCleanScript())
+	if !strings.Contains(code, "CT="+conntrackBinPath+"\n") {
+		t.Fatalf("скрипт вытеснения обязан звать conntrack по %s:\n%s", conntrackBinPath, code)
+	}
+}
+
 func TestInstallRunsCtCleanWithoutExplicitIPs(t *testing.T) {
 	fe := &fakeExec{}
 	it := newFakeIPTables(fe)

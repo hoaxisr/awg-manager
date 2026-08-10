@@ -3,12 +3,14 @@ package router
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -581,5 +583,90 @@ func TestProvisionSkipsBootBlackholeWhenInterceptionLive(t *testing.T) {
 	}
 	if svc.blackholeActive {
 		t.Error("blackholeActive выставлен, хотя заглушку не ставили")
+	}
+}
+
+// captureAppLog собирает строки журнала: newTestService минует конструктор
+// сервиса, поэтому логгер тесты навешивают вручную.
+type captureAppLog struct{ lines []string }
+
+func (c *captureAppLog) AppLog(level logging.Level, _, _, action, _, message string) {
+	c.lines = append(c.lines, string(level)+" "+action+" "+message)
+}
+
+func (c *captureAppLog) has(sub string) bool {
+	return slices.ContainsFunc(c.lines, func(l string) bool { return strings.Contains(l, sub) })
+}
+
+// Отсутствие conntrack не мешает перехвату встать, но ломает вытеснение
+// потоков, ушедших мимо него. Скрипт вытеснения об этом молчит (выходит
+// нулём), поэтому сказать обязан демон — и ровно тогда, когда бинаря нет.
+func TestProvisionWarnsWhenConntrackMissing(t *testing.T) {
+	provision := func(t *testing.T, conntrack string) *captureAppLog {
+		t.Helper()
+		stubListeningProbe(t, func() bool { return true })
+		it := newFakeIPTables(&fakeExec{})
+		it.conntrackPath = conntrack
+		svc := newBootBlackholeServiceWith(t, it)
+		log := &captureAppLog{}
+		svc.appLog = logging.NewScopedLogger(log, logging.GroupRouting, logging.SubSingboxRouter)
+		if err := svc.Enable(context.Background()); err != nil {
+			t.Fatalf("enable: %v", err)
+		}
+		return log
+	}
+
+	t.Run("бинаря нет — предупреждение в журнале", func(t *testing.T) {
+		log := provision(t, filepath.Join(t.TempDir(), "conntrack"))
+		if !log.has(conntrackBinPath) {
+			t.Fatalf("подъём без conntrack прошёл молча, журнал: %v", log.lines)
+		}
+		if !log.has(string(logging.LevelWarn)) {
+			t.Fatalf("строка обязана быть предупреждением, журнал: %v", log.lines)
+		}
+	})
+
+	t.Run("бинарь на месте — молчим", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "conntrack")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if log := provision(t, path); log.has(conntrackBinPath) {
+			t.Fatalf("бинарь на месте, а демон жалуется, журнал: %v", log.lines)
+		}
+	})
+}
+
+// Статус — то, что видит пользователь: без этого поля UI не отличит «утечек
+// нет» от «их некому вытеснять». Поле обязано приходить из живой пробы, а не
+// быть константой, и обязано переспрашиваться (бинарь доставляют руками).
+func TestGetStatusReportsConntrackAvailability(t *testing.T) {
+	stubListeningProbe(t, func() bool { return false })
+	it := newTestIPTables(&fakeExec{})
+	it.conntrackPath = filepath.Join(t.TempDir(), "conntrack")
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{PolicyName: "Policy0"}),
+		Policies: &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		IPTables: it,
+		Singbox:  newTestSingbox(t),
+	})
+
+	st, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.ConntrackAvailable {
+		t.Fatal("бинаря нет, а статус говорит «есть»")
+	}
+
+	if err := os.WriteFile(it.conntrackPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err = svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !st.ConntrackAvailable {
+		t.Fatal("бинарь на месте, а статус говорит «нет»")
 	}
 }

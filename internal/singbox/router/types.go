@@ -21,7 +21,12 @@ type Status struct {
 	// XtDscpAvailable reports whether iptables `-m dscp` matching is usable
 	// (xt_dscp kernel module loaded/on-disk AND iptables extension present).
 	// The QoS-DSCP settings UI keys its "supported" state on this field.
-	XtDscpAvailable        bool   `json:"xtDscpAvailable"`
+	XtDscpAvailable bool `json:"xtDscpAvailable"`
+	// ConntrackAvailable сообщает о наличии /opt/sbin/conntrack. На нём держится
+	// вытеснение потоков, ушедших мимо перехвата; без бинаря гарантия «член
+	// политики всегда через sing-box» не выполняется, и UI обязан сказать это
+	// вслух.
+	ConntrackAvailable     bool   `json:"conntrackAvailable"`
 	PolicyName             string `json:"policyName"`
 	PolicyMark             string `json:"policyMark,omitempty"`
 	PolicyExists           bool   `json:"policyExists"`

@@ -150,6 +150,12 @@ var (
 	netfilterCtCleanPath = "/opt/etc/awg-manager/singbox/awgm-ctclean.sh"
 )
 
+// conntrackBinPath — тот же путь, что зашит в скрипт вытеснения. Бинарь
+// объявлен зависимостью пакета (scripts/build-ipk.sh), но пакет ставят и
+// руками, а на вытеснении держится гарантия «член политики всегда через
+// sing-box» — молчать о его отсутствии нельзя.
+const conntrackBinPath = "/opt/sbin/conntrack"
+
 // selectiveSetName is the ipset name used for selective bypass — aliased
 // from the selective sub-package so the name has exactly one definition.
 const selectiveSetName = selective.SetName
@@ -374,6 +380,19 @@ func (it *IPTables) cachedXtDscpAvailability(ctx context.Context) (moduleOK, mat
 func (it *IPTables) IsXtDscpAvailable(ctx context.Context) bool {
 	moduleOK, matchOK := it.cachedXtDscpAvailability(ctx)
 	return moduleOK && matchOK
+}
+
+// IsConntrackAvailable сообщает, есть ли исполняемый conntrack. Без него
+// вытеснение отравленных потоков не работает, и статус обязан это показать.
+// Результат не кешируется: проба — один os.Stat, а бинарь могут доставить
+// руками в любой момент, и ответ обязан обновиться без перезапуска демона.
+func (it *IPTables) IsConntrackAvailable() bool {
+	path := it.conntrackPath
+	if path == "" {
+		path = conntrackBinPath
+	}
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
 type RestoreInputSpec struct {
@@ -989,6 +1008,9 @@ type IPTables struct {
 	// xtDscpAvailabilityFn — точка подмены для тестов (счётчик/заглушка
 	// сырых проб); nil означает настоящую XtDscpAvailability.
 	xtDscpAvailabilityFn func(ctx context.Context) (moduleOK, matchOK bool)
+
+	// conntrackPath — точка подмены для тестов; пусто означает conntrackBinPath.
+	conntrackPath string
 }
 
 func NewIPTables() *IPTables {

@@ -619,6 +619,12 @@
             Доступность зависит от модели: фактический режим — в разделе «Состояние» выше.
           </p>
         {/if}
+        {#if s?.conntrackAvailable === false}
+          <p class="hint warn-text">
+            Не найден conntrack — потоки, успевшие уйти мимо перехвата, не вытесняются.
+            Установите его: <code class="mono">opkg install conntrack</code>.
+          </p>
+        {/if}
       </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка
