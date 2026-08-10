@@ -17,10 +17,18 @@ func applyRawServerPolicyMark(ctx context.Context, mark string) error {
 		return nil
 	}
 	iface := DefaultRawServerIface
-	if err := ensureRawServerPolicyMarkRule(ctx, iface, mark); err != nil {
+	if rawServerMarkRulePresent(ctx, iface, mark) && rawServerConnmarkRulePresent(ctx, iface) {
+		return nil
+	}
+	// Итоговый порядок в цепочке: MARK (поз.1), CONNMARK (поз.2) — иначе
+	// save-mark пишет ноль (PR #697, F3). Вставка обратная (оба -I 1):
+	// CONNMARK первым, MARK вторым. При любой частичной пропаже — пересборка
+	// обоих: одиночная довставка инвертирует порядок.
+	removeRawServerPolicyMarkRules(ctx, iface)
+	if err := ensureRawServerPolicyConnmarkRule(ctx, iface); err != nil {
 		return err
 	}
-	if err := ensureRawServerPolicyConnmarkRule(ctx, iface); err != nil {
+	if err := ensureRawServerPolicyMarkRule(ctx, iface, mark); err != nil {
 		removeRawServerPolicyMark(ctx)
 		return err
 	}
@@ -31,7 +39,6 @@ func ensureRawServerPolicyMarkRule(ctx context.Context, iface, mark string) erro
 	if rawServerMarkRulePresent(ctx, iface, mark) {
 		return nil
 	}
-	removeRawServerPolicyMarkRules(ctx, iface)
 	// Без -m comment: на Keenetic xt_comment часто не загружен (#666).
 	if err := iptables.Run(ctx, "-t", "mangle", "-I", "PREROUTING", "1",
 		"-i", iface, "-j", "MARK", "--set-xmark", mark+"/0xffffffff"); err != nil {

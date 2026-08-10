@@ -24,29 +24,29 @@ func (s *Service) SetIngressRefEnsurer(e IngressRefEnsurer) {
 	s.ingressEnsurer = e
 }
 
-func (s *Service) applyRawServerPolicy(ctx context.Context, id string, cfg ServerConfig) error {
+func (s *Service) applyRawServerPolicy(ctx context.Context, id string, cfg ServerConfig) (string, error) {
 	policy := normalizePolicy(cfg.Policy)
 	if policy == "none" {
 		removeRawServerPolicyMark(ctx)
-		return nil
+		return "", nil
 	}
 	if s.policyMarks == nil {
-		return nil
+		return "", nil
 	}
 	mark, err := s.policyMarks.GetPolicyMark(ctx, policy)
 	if err != nil {
 		if s.appLog != nil {
 			s.appLog.Warn("access", id, fmt.Sprintf("policy mark %s: %v", policy, err))
 		}
-		return nil
+		return "", nil
 	}
 	if err := applyRawServerPolicyMark(ctx, mark); err != nil {
-		return fmt.Errorf("raw policy mark: %w", err)
+		return "", fmt.Errorf("raw policy mark: %w", err)
 	}
 	if s.appLog != nil {
 		s.appLog.Info("access", id, fmt.Sprintf("policy %s mark %s на %s", policy, mark, DefaultRawServerIface))
 	}
-	return nil
+	return mark, nil
 }
 
 func (s *Service) ensureWdttIngressRefs(ctx context.Context, cfg ServerConfig) {

@@ -19,7 +19,7 @@ func TestApplyRawServerPolicyNoneRemovesMark(t *testing.T) {
 	svc.SetPolicyMarkGetter(&fakePolicyMarkGetter{mark: "0xffffaaa"})
 	cfg := ndmsServerConfig()
 	cfg.Policy = "none"
-	if err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
+	if _, err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
 		t.Fatalf("applyRawServerPolicy: %v", err)
 	}
 }
@@ -28,7 +28,7 @@ func TestApplyRawServerPolicyWithoutGetter(t *testing.T) {
 	svc := NewService(t.TempDir(), t.TempDir(), "", "")
 	cfg := ndmsServerConfig()
 	cfg.Policy = "Policy3"
-	if err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
+	if _, err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
 		t.Fatalf("applyRawServerPolicy: %v", err)
 	}
 }
@@ -38,7 +38,7 @@ func TestApplyRawServerPolicyWithGetterNonLinux(t *testing.T) {
 	svc.SetPolicyMarkGetter(&fakePolicyMarkGetter{mark: "0xffffaaa"})
 	cfg := ndmsServerConfig()
 	cfg.Policy = "Policy3"
-	if err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
+	if _, err := svc.applyRawServerPolicy(context.Background(), "srv1", cfg); err != nil {
 		t.Fatalf("applyRawServerPolicy: %v", err)
 	}
 }

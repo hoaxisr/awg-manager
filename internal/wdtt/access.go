@@ -125,9 +125,11 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 		s.maybeReconcileRouter(ctx)
 	}
 
-	if err := s.applyRawServerPolicy(ctx, id, cfg); err != nil {
+	rawMark, err := s.applyRawServerPolicy(ctx, id, cfg)
+	if err != nil {
 		return err
 	}
+	_ = rawMark // используется в netfilter.d-хуке (следующий коммит)
 	s.ensureWdttIngressRefs(ctx, cfg)
 
 	wanDev := ""
