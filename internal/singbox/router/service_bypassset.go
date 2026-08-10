@@ -200,14 +200,14 @@ func (s *ServiceImpl) storeBypassSetOutcome(res bypassset.PopulateResult, err er
 
 	switch {
 	case err != nil:
-		s.appLog.Warn("bypass-set", "", "geoip-обход: "+err.Error())
+		s.bypassLog.Warn("bypass-set", "", "geoip-обход: "+err.Error())
 	case res.CountOK:
-		s.appLog.Info("bypass-set", "", fmt.Sprintf("geoip-обход: набор наполнен, записей %d", res.EntryCount))
+		s.bypassLog.Info("bypass-set", "", fmt.Sprintf("geoip-обход: набор наполнен, записей %d", res.EntryCount))
 	default:
-		s.appLog.Info("bypass-set", "", "geoip-обход: набор наполнен, размер набора получить не удалось")
+		s.bypassLog.Info("bypass-set", "", "geoip-обход: набор наполнен, размер набора получить не удалось")
 	}
 	if len(res.MissingTags) > 0 {
-		s.appLog.Warn("bypass-set", "", "geoip-обход: теги не найдены в .dat: "+strings.Join(res.MissingTags, ", "))
+		s.bypassLog.Warn("bypass-set", "", "geoip-обход: теги не найдены в .dat: "+strings.Join(res.MissingTags, ", "))
 	}
 	if s.deps.Bus != nil {
 		s.deps.Bus.Publish("resource:invalidated", map[string]any{"resource": "bypass-set"})
@@ -231,20 +231,22 @@ func (s *ServiceImpl) BypassSetStatus() (entryCount int, countOK bool, lastPopul
 // iptables-restore. Best-effort — реальная причина всплывёт на Install.
 func (s *ServiceImpl) ensureBypassSetExists(ctx context.Context) {
 	if err := bypassset.EnsureXtSetModule(ctx); err != nil {
-		s.appLog.Warn("bypass-set", "", "загрузка xt_set: "+err.Error())
+		s.bypassLog.Warn("bypass-set", "", "загрузка xt_set: "+err.Error())
 	}
 	if bypassset.IPSetBinary() == "" {
-		s.appLog.Warn("bypass-set", "", bypassset.ErrIPSetNotAvailable.Error())
+		s.bypassLog.Warn("bypass-set", "", bypassset.ErrIPSetNotAvailable.Error())
 		return
 	}
 	if err := bypassset.CreateSet(ctx); err != nil {
-		s.appLog.Warn("bypass-set", "", "создание набора: "+err.Error())
+		s.bypassLog.Warn("bypass-set", "", "создание набора: "+err.Error())
 	}
 }
 
-// teardownBypassSet сносит набор и дамп для хука. Вызывать ТОЛЬКО после
-// переустановки правил без ссылки на набор — иначе ipset ответит «set is in
-// use by a kernel component» и набор переживёт снос.
+// teardownBypassSet сносит набор, staging-близнеца и дамп для хука. Вызывать
+// ТОЛЬКО после переустановки правил без ссылки на набор — иначе ipset ответит
+// «set is in use by a kernel component» и набор переживёт снос. Staging
+// правилами не занят никогда, но без сноса остаётся сиротой с записями
+// последней пересборки в памяти ядра.
 func (s *ServiceImpl) teardownBypassSet(ctx context.Context) {
 	if s.teardownBypassSetFn != nil {
 		s.teardownBypassSetFn(ctx)
@@ -252,16 +254,23 @@ func (s *ServiceImpl) teardownBypassSet(ctx context.Context) {
 	}
 	if bypassset.IPSetBinary() != "" {
 		if err := bypassset.DestroySet(ctx); err != nil {
-			s.appLog.Warn("bypass-set", "", "снос набора: "+err.Error())
+			s.bypassLog.Warn("bypass-set", "", "снос набора: "+err.Error())
+		}
+		if err := bypassset.DestroyStagingSet(ctx); err != nil {
+			s.bypassLog.Warn("bypass-set", "", "снос staging-набора: "+err.Error())
 		}
 	}
 	if err := os.Remove(bypassSavePath); err != nil && !os.IsNotExist(err) {
-		s.appLog.Warn("bypass-set", "", "удаление дампа набора: "+err.Error())
+		s.bypassLog.Warn("bypass-set", "", "удаление дампа набора: "+err.Error())
 	}
 }
 
-// legacySelectiveSetName — ipset выпиленного динамического селектива.
-const legacySelectiveSetName = "AWGM-SELECTIVE"
+// legacySelectiveSetName / legacySelectiveStagingSetName — ipset'ы
+// выпиленного динамического селектива: живой и его staging-близнец.
+const (
+	legacySelectiveSetName        = "AWGM-SELECTIVE"
+	legacySelectiveStagingSetName = "AWGM-SELECTIVE-STG"
+)
 
 // legacySelectiveSlotFile — слот выпиленного селектива в config.d.
 const legacySelectiveSlotFile = "19-selective-routes.json"
@@ -293,7 +302,7 @@ func (s *ServiceImpl) cleanupLegacySelectiveOnce(ctx context.Context) {
 	s.legacySelectiveOnce.Do(func() {
 		removeLegacySelectiveFiles(s.configDir())
 		if err := s.dropLegacySelectiveManagedRules(ctx); err != nil {
-			s.appLog.Warn("bypass-set", "", "зачистка managed-правил селектива: "+err.Error())
+			s.bypassLog.Warn("bypass-set", "", "зачистка managed-правил селектива: "+err.Error())
 		}
 	})
 }
@@ -330,36 +339,38 @@ func (s *ServiceImpl) dropLegacySelectiveManagedRules(ctx context.Context) error
 	if err := s.persistConfigDirect(ctx, cfg); err != nil {
 		return err
 	}
-	s.appLog.Info("bypass-set", "", fmt.Sprintf("удалены managed-правила выпиленного селектива: %d", removed))
+	s.bypassLog.Info("bypass-set", "", fmt.Sprintf("удалены managed-правила выпиленного селектива: %d", removed))
 	s.emitRulesEvent()
 	return nil
 }
 
-// destroyLegacySelectiveSetOnce сносит ipset выпиленного селектива — один раз
-// за жизнь процесса и ТОЛЬКО после успешной установки правил: до неё набор
-// ещё может быть занят старыми правилами в ядре.
+// destroyLegacySelectiveSetOnce сносит ipset'ы выпиленного селектива (живой и
+// staging) — один раз за жизнь процесса и ТОЛЬКО после успешной установки
+// правил: до неё живой набор ещё может быть занят старыми правилами в ядре.
 func (s *ServiceImpl) destroyLegacySelectiveSetOnce(ctx context.Context) {
 	s.legacySelectiveSetOnce.Do(func() {
 		bin := bypassset.IPSetBinary()
 		if bin == "" {
 			return
 		}
-		res, err := sysexec.Run(ctx, bin, "destroy", legacySelectiveSetName)
-		if err == nil {
-			s.appLog.Info("bypass-set", legacySelectiveSetName, "удалён набор выпиленного селектива")
-			return
-		}
-		out := ""
-		if res != nil {
-			out = res.Stdout + res.Stderr
-		}
-		switch {
-		case strings.Contains(out, "does not exist") || strings.Contains(out, "not found"):
-			// Набора нет — зачищать нечего.
-		case strings.Contains(out, "in use"):
-			s.appLog.Warn("bypass-set", legacySelectiveSetName, "набор ещё занят правилами ядра — удалится после перезагрузки роутера")
-		default:
-			s.appLog.Warn("bypass-set", legacySelectiveSetName, "снос набора селектива: "+sysexec.FormatError(res, err).Error())
+		for _, name := range []string{legacySelectiveSetName, legacySelectiveStagingSetName} {
+			res, err := sysexec.Run(ctx, bin, "destroy", name)
+			if err == nil {
+				s.bypassLog.Info("bypass-set", name, "удалён набор выпиленного селектива")
+				continue
+			}
+			out := ""
+			if res != nil {
+				out = res.Stdout + res.Stderr
+			}
+			switch {
+			case strings.Contains(out, "does not exist") || strings.Contains(out, "not found"):
+				// Набора нет — зачищать нечего.
+			case strings.Contains(out, "in use"):
+				s.bypassLog.Warn("bypass-set", name, "набор ещё занят правилами ядра — удалится после перезагрузки роутера")
+			default:
+				s.bypassLog.Warn("bypass-set", name, "снос набора селектива: "+sysexec.FormatError(res, err).Error())
+			}
 		}
 	})
 }

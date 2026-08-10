@@ -36,6 +36,13 @@ func EnsureStagingSet(ctx context.Context) error {
 	return createNamedSet(ctx, StagingSetName)
 }
 
+// DestroyStagingSet removes the staging set. Idempotent, like DestroySet —
+// teardown must not leave AWGM-BYPASS-STG behind as an orphan holding the
+// last rebuild's entries in kernel memory.
+func DestroyStagingSet(ctx context.Context) error {
+	return DestroyNamedSet(ctx, StagingSetName)
+}
+
 // FlushStagingSet removes all members from the staging set.
 func FlushStagingSet(ctx context.Context) error {
 	return flushNamedSet(ctx, StagingSetName)

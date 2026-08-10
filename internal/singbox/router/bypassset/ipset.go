@@ -73,11 +73,17 @@ func CreateSet(ctx context.Context) error {
 // DestroySet removes the AWGM-BYPASS ipset. Idempotent — "set does not
 // exist" is silently ignored (set was never created or already cleaned up).
 func DestroySet(ctx context.Context) error {
+	return DestroyNamedSet(ctx, SetName)
+}
+
+// DestroyNamedSet removes an arbitrary AWGM-owned ipset (live or staging),
+// with the same idempotent "does not exist" handling as DestroySet.
+func DestroyNamedSet(ctx context.Context, name string) error {
 	bin, err := ipsetBin()
 	if err != nil {
 		return err
 	}
-	res, err := runIpsetCtl(ctx, bin, "destroy", SetName)
+	res, err := runIpsetCtl(ctx, bin, "destroy", name)
 	if err != nil {
 		combined := ""
 		if res != nil {
@@ -86,7 +92,7 @@ func DestroySet(ctx context.Context) error {
 		if strings.Contains(combined, "does not exist") || strings.Contains(combined, "not found") {
 			return nil
 		}
-		return sysexec.FormatError(res, fmt.Errorf("ipset destroy: %w", err))
+		return sysexec.FormatError(res, fmt.Errorf("ipset destroy %s: %w", name, err))
 	}
 	return nil
 }

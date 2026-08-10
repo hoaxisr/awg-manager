@@ -411,7 +411,10 @@ func (a *routerLoggerAdapter) Info(msg string) {
 type ServiceImpl struct {
 	deps   Deps
 	appLog *logging.ScopedLogger
-	mu     sync.Mutex
+	// bypassLog — журнал набора обхода (подгруппа «Набор обхода»), чтобы итоги
+	// наполнения не терялись в общем потоке singbox-router.
+	bypassLog *logging.ScopedLogger
+	mu        sync.Mutex
 	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
 	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
 	// holding mu across the whole switch would self-deadlock.
@@ -527,7 +530,11 @@ func NewService(d Deps) *ServiceImpl {
 	// the current version. No-op when the file is absent — Install
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
-	return &ServiceImpl{deps: d, appLog: appLog}
+	return &ServiceImpl{
+		deps:      d,
+		appLog:    appLog,
+		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+	}
 }
 
 func (s *ServiceImpl) routerConfigPath() string {
