@@ -43,6 +43,7 @@ func TestBuildServerArgsNoNAT(t *testing.T) {
 		"-password", "secret",
 		"-no-nat",
 		"-listen-raw", "0.0.0.0:56003",
+		"-dns", "10.66.66.1",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("buildServerArgs() = %v, want %v", got, want)
@@ -84,5 +85,25 @@ func TestBuildServerArgsNoDebugFlag(t *testing.T) {
 	got := buildServerArgs(ServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001, Debug: true})
 	if slices.Contains(got, "-debug") {
 		t.Fatalf("buildServerArgs() отдал -debug: %v", got)
+	}
+}
+
+func TestBuildServerArgsDNS(t *testing.T) {
+	hasFlag := func(args []string, flag, want string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == flag && args[i+1] == want {
+				return true
+			}
+		}
+		return false
+	}
+	wg := DefaultServerConfig() // RelayMode: wg
+	if !hasFlag(buildServerArgs(wg), "-dns", wg.serverAccessAddress()) {
+		t.Fatalf("wg-relay: нет -dns %s в %v", wg.serverAccessAddress(), buildServerArgs(wg))
+	}
+	raw := DefaultServerConfig()
+	raw.RelayMode = ConnModeRaw
+	if !hasFlag(buildServerArgs(raw), "-dns", DefaultRawServerAddr) {
+		t.Fatalf("raw-relay: нет -dns %s в %v", DefaultRawServerAddr, buildServerArgs(raw))
 	}
 }

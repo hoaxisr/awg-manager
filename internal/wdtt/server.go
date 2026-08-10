@@ -505,5 +505,14 @@ func buildServerArgs(c ServerConfig) []string {
 	// -debug не передаём: wdtt-server его не знает (flag.Parse → exit 2),
 	// подробного лога у него нет вовсе. Поле Debug оставлено ради совместимости
 	// формата wdtt.json.
+	// -dns: резолвер = шлюз, который видят клиенты. Дефолт монолита 8.8.8.8
+	// уводит DNS мимо роутера — HR-ipset и доменные правила sing-box слепнут
+	// к клиентским резолвам (PR #697, F1). DNAT :53 в netfilter.d-хуке
+	// перехватывает и тех, кто раздачу игнорирует.
+	if c.UsesWireGuardRelay() {
+		str("-dns", c.serverAccessAddress())
+	} else {
+		str("-dns", DefaultRawServerAddr)
+	}
 	return args
 }
