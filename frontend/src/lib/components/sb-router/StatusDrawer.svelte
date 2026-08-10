@@ -598,6 +598,16 @@
           <PortChipsInput inputId="ed-ports-input" value={cfg.bypassExtraPorts ?? ''} onChange={(v) => void applyPatch({ bypassExtraPorts: v })} />
         </div>
         <p class="hint">Эти порты пойдут мимо sing-box (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы. Поддерживаются одиночные порты (<code class="mono">443 TCP</code>) и диапазоны (<code class="mono">5000-5500 UDP</code>).</p>
+        <!-- В «Политики + tun» перехвата netfilter нет вовсе, поэтому исключения
+             работают иначе, чем в TPROXY: они влияют только на классы QoS и на
+             перехват DNS. Про 53 сказано отдельно — там выключатель СОЗНАТЕЛЬНО
+             грубее, чем в TPROXY (пер-протокольный там, общий здесь), потому что
+             сам перехват 53-го неделим: на усечённый ответ клиент переспрашивает
+             по TCP, и половинчатый перехват дал бы резолвинг, зависящий от
+             размера ответа. -->
+        {#if policyTunMode}
+          <p class="hint">В режиме «Политики + tun» исключения влияют только на классы QoS и на перехват DNS. Порт <code class="mono">53</code> в любом из списков — UDP или TCP — выключает перехват DNS целиком, для обоих протоколов сразу.</p>
+        {/if}
         <div class="field">
           <label class="lbl" for="ed-subnets-input">Доп. подсети</label>
           <SubnetChipsInput inputId="ed-subnets-input" value={cfg.bypassExtraSubnets ?? ''} onChange={(v) => void applyPatch({ bypassExtraSubnets: v })} />
