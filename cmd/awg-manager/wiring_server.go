@@ -312,7 +312,7 @@ func (a *app) setupDeviceProxy() {
 }
 
 // setupRouter builds the sing-box router service with its adapters,
-// selective bypass, subscription scheduler/handler and the remaining
+// the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
 func (a *app) setupRouter() {
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}

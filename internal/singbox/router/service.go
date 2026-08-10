@@ -452,7 +452,7 @@ type ServiceImpl struct {
 	teardownBypassSetFn func(ctx context.Context)
 
 	// Однократные зачистки наследия выпиленного селектива: файлы + managed-
-	// правила на старте, ipset AWGM-SELECTIVE — после первой удачной установки
+	// правила на старте, ipset'ы AWGM-SELECTIVE(-STG) — после первой установки
 	// правил (до неё набор ещё занят старыми правилами).
 	legacySelectiveOnce    sync.Once
 	legacySelectiveSetOnce sync.Once

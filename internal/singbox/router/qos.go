@@ -48,8 +48,7 @@ func QoSClassPorts(slot int) (tproxyPort, redirectPort int) {
 // shadowed or confused by hand-written lookalike rules. No persisted
 // `awgm_managed` marker anywhere: both 18-qos-routes.json and 20-router.json
 // are parsed by sing-box itself (config.d merge), and sing-box rejects
-// unknown rule fields — the selective-ip feature already learned that the
-// hard way (selectiveRoutesSlotNeedsHeal).
+// unknown rule fields.
 const (
 	qosTProxyTagPrefix   = "tproxy-qos-"
 	qosRedirectTagPrefix = "redirect-qos-"

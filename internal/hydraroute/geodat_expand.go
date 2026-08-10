@@ -166,8 +166,8 @@ func parseEntryItems(br *bufio.Reader, entryLen int, wantTag string, parseItem i
 
 // parseGeoSiteDomainLine converts a v2fly Domain submessage to an inline list
 // line (LEGACY, lossy format: Plain and Full both come out bare). Kept
-// byte-stable — the Geo File Viewer HTTP endpoint and the selective-bypass
-// streaming path consume this output.
+// byte-stable — the Geo File Viewer HTTP endpoint and the streaming
+// expansion path (StreamGeoSiteTagLines) consume this output.
 func parseGeoSiteDomainLine(data []byte) (string, bool, error) {
 	domainType, value, err := decodeGeoSiteDomain(data)
 	if err != nil {

@@ -113,7 +113,7 @@ func (o *Orchestrator) EffectiveStat(slot Slot) (size int64, mtime time.Time, ex
 // LoadApplied returns the bytes of the slot's APPLIED config: active/ when
 // the slot is enabled, otherwise disabled/. Unlike LoadEffective it never
 // reads pending/ — callers that make enforcement decisions (e.g. the
-// reconcile self-heal for selective bypass) must not act on an un-applied
+// reconcile self-heal) must not act on an un-applied
 // draft the user may still discard. Returns (nil, nil) when the slot was
 // never configured.
 func (o *Orchestrator) LoadApplied(slot Slot) ([]byte, error) {
