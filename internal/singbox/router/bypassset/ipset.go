@@ -121,11 +121,6 @@ func SetExists(ctx context.Context) bool {
 
 // EntryCount returns the number of entries in the AWGM-BYPASS ipset,
 // or 0 if the set does not exist or the count cannot be determined.
-//
-// Uses `ipset list -t` (terse: header only) and reads the "Number of
-// entries" field. A full `ipset list` dump of a maxelem-262144 set is
-// megabytes of text piped through a fork on a 128MB router — and this
-// runs on every status request.
 func EntryCount(ctx context.Context) int {
 	n, _ := EntryCountChecked(ctx)
 	return n
@@ -137,6 +132,12 @@ func EntryCount(ctx context.Context) int {
 // которых 0 и «неизвестно» — разные исходы: итоговое сообщение пересборки
 // после успешного swap не должно выдавать сбой счётчика за «ipset пустой —
 // весь трафик в WAN».
+//
+// Сначала пробует поле "Number of entries" из `ipset list -t` (protocol 7,
+// дёшево — только header). Ядра Keenetic работают на kernel protocol 6, где
+// это поле НЕ печатается ни в терсе, ни в полном list; там счётчик снимается
+// подсчётом `add`-строк из `ipset save` (дороже — дампит набор, но статус
+// запрашивают редко, не в горячем пути).
 func EntryCountChecked(ctx context.Context) (n int, ok bool) {
 	bin, err := ipsetBin()
 	if err != nil {
@@ -144,20 +145,38 @@ func EntryCountChecked(ctx context.Context) (n int, ok bool) {
 	}
 	res, err := runIpsetCtl(ctx, bin, "list", SetName, "-t")
 	if err != nil || res == nil {
-		return 0, false
+		return 0, false // ошибка команды / несуществующий набор
 	}
 	for _, line := range strings.Split(res.Stdout, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), ":")
-		if !ok || strings.TrimSpace(k) != "Number of entries" {
+		k, v, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found || strings.TrimSpace(k) != "Number of entries" {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil {
+		parsed, perr := strconv.Atoi(strings.TrimSpace(v))
+		if perr != nil {
 			return 0, false
 		}
-		return n, true
+		return parsed, true
 	}
-	return 0, false
+	// Набор существует (list -t не ошибся), но поле счётчика отсутствует —
+	// protocol 6. Считаем члены через save.
+	return countViaSave(ctx, bin)
+}
+
+// countViaSave считает записи набора как число `add`-строк в `ipset save`.
+// Fallback для kernel protocol 6, где `list -t` не печатает счётчик.
+func countViaSave(ctx context.Context, bin string) (n int, ok bool) {
+	res, err := runIpsetCtl(ctx, bin, "save", SetName)
+	if err != nil || res == nil {
+		return 0, false
+	}
+	count := 0
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "add ") {
+			count++
+		}
+	}
+	return count, true
 }
 
 // NormalizeEntry canonicalises a CIDR or bare IPv4 address for ipset.

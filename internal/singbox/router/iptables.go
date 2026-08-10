@@ -1066,14 +1066,18 @@ for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_d
 done
 # Восстановление набора AWGM-BYPASS ДО любого iptables-restore: правила с
 # "-m set" роняют ВЕСЬ restore (включая fail-closed blackhole), пока набора
-# нет — а ipset'ы живут в RAM и после ребута пусты. Гейт по числу записей
-# обязателен: NDMS дёргает хук до 18-21 раза за один flap, и перезаливать
-# живой набор каждый раз незачем. Сам матч "-m set" — отдельный модуль
-# xt_set, он в прерольном списке выше: набора без матча (и наоборот) мало.
+# нет — а ipset'ы живут в RAM и после ребута пусты. Гейт по успеху create
+# БЕЗ -exist: он проходит только когда набора не было (ребут) — тогда
+# заливаем дамп; при живом наборе (NDMS дёргает хук до 18-21 раза за один
+# flap) create падает "already exists" и restore пропускается, живой набор
+# не перезаливается. Счётчик записей для гейта не годится: ядра Keenetic
+# работают на ipset kernel protocol 6, где list не печатает "Number of
+# entries" вовсе. Сам матч "-m set" — отдельный модуль xt_set, он в
+# прерольном списке выше: набора без матча (и наоборот) мало.
 if [ -f %[15]q ]; then
-  /opt/sbin/ipset create %[16]s hash:net maxelem %[17]d family inet -exist 2>/dev/null
-  n="$(/opt/sbin/ipset list %[16]s -t 2>/dev/null | sed -n 's/^Number of entries: //p')"
-  [ "${n:-0}" -eq 0 ] && /opt/sbin/ipset restore -exist < %[15]q
+  if /opt/sbin/ipset create %[16]s hash:net maxelem %[17]d family inet 2>/dev/null; then
+    /opt/sbin/ipset restore -exist < %[15]q
+  fi
 fi
 # scrub_jumps <table> <chain>: delete every PREROUTING jump into <chain>.
 scrub_jumps() {

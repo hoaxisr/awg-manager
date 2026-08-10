@@ -122,15 +122,24 @@ func TestNetfilterHookScript_BypassPreStep(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"ipset create " + bypassSetName + " hash:net maxelem 262144 family inet -exist",
-		"ipset list " + bypassSetName + " -t",
-		"Number of entries",
+		"ipset create " + bypassSetName + " hash:net maxelem 262144 family inet",
 		"ipset restore -exist",
 		bypassSavePath,
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("hook missing %q", want)
 		}
+	}
+
+	// Гейт по успеху `create` БЕЗ -exist: create с -exist никогда не падает,
+	// и restore лил бы на каждый вызов хука (перезаливка живого набора).
+	// Счётчик записей для гейта не годится — ядра Keenetic на protocol 6 его
+	// не печатают.
+	if strings.Contains(script, "family inet -exist") {
+		t.Error("bypass pre-step must NOT use `create ... -exist` (gate needs create to fail on a live set)")
+	}
+	if strings.Contains(script, "Number of entries") {
+		t.Error("bypass pre-step must not gate on entry count (absent on Keenetic ipset protocol 6)")
 	}
 
 	// Пре-шаг — ДО любого iptables-restore, иначе он бесполезен.
