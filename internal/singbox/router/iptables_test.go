@@ -498,9 +498,24 @@ func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 	body := string(data)
 
 	// The hook must contain the module preload loop with all known modules.
-	for _, mod := range []string{"xt_TPROXY", "xt_comment", "xt_mark", "xt_connmark", "xt_conntrack", "xt_pkttype"} {
-		if !strings.Contains(body, mod) {
-			t.Errorf("hook missing module preload entry for %q:\n%s", mod, body)
+	// Проверяем именно строку цикла: упоминание модуля где-то ещё в скрипте
+	// (в правиле или комментарии) прерольным не является. xt_set обязателен —
+	// без него iptables-restore правила `-m set --match-set AWGM-BYPASS`
+	// падает ЦЕЛИКОМ (вместе с fail-closed blackhole) до первого Install
+	// демона, то есть ровно после ребута, где пре-шаг и восстанавливает набор.
+	var loopLine string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "for mod in ") {
+			loopLine = line
+			break
+		}
+	}
+	if loopLine == "" {
+		t.Fatalf("hook has no module preload loop:\n%s", body)
+	}
+	for _, mod := range []string{"xt_TPROXY", "xt_comment", "xt_mark", "xt_connmark", "xt_conntrack", "xt_pkttype", "xt_set"} {
+		if !strings.Contains(loopLine, mod) {
+			t.Errorf("hook missing module preload entry for %q in %q", mod, loopLine)
 		}
 	}
 	// insmod path must use /lib/modules/${KREL}

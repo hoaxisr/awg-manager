@@ -974,7 +974,7 @@ case "$table" in mangle|nat) ;; *) exit 0 ;; esac
 # Best-effort kernel module preload (both paths need these). Absent .ko or
 # built-in modules are silently skipped — iptables-restore surfaces the verdict.
 KREL="$(uname -r)"
-for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_dscp; do
+for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_dscp xt_set; do
   grep -q "^${mod} " /proc/modules 2>/dev/null && continue
   [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
 done
@@ -982,7 +982,8 @@ done
 # "-m set" роняют ВЕСЬ restore (включая fail-closed blackhole), пока набора
 # нет — а ipset'ы живут в RAM и после ребута пусты. Гейт по числу записей
 # обязателен: NDMS дёргает хук до 18-21 раза за один flap, и перезаливать
-# живой набор каждый раз незачем.
+# живой набор каждый раз незачем. Сам матч "-m set" — отдельный модуль
+# xt_set, он в прерольном списке выше: набора без матча (и наоборот) мало.
 if [ -f %[15]q ]; then
   /opt/sbin/ipset create %[16]s hash:net maxelem %[17]d family inet -exist 2>/dev/null
   n="$(/opt/sbin/ipset list %[16]s -t 2>/dev/null | sed -n 's/^Number of entries: //p')"
