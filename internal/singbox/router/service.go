@@ -342,6 +342,9 @@ type Deps struct {
 	// exec'ing iptables.
 	XtDscpProbe func(context.Context) bool
 	GeoData     GeoTagExpander
+	// GeoTagCounts даёт суммарные размеры geoip-тегов для бюджет-валидации
+	// BypassGeoIPTags. Optional — nil в тестах; при nil бюджет не проверяется.
+	GeoTagCounts GeoIPTagCounter
 	// OpkgTun provisions the fakeip-tun kernel interface via NDMS.
 	// Optional — nil in tests; wired in cmd/awg-manager to
 	// *ndmscommand.InterfaceCommands. Consumed by Slice 1D Enable.

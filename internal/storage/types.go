@@ -181,6 +181,11 @@ type SingboxRouterSettings struct {
 	// целиком мимо sing-box (включая DNS/53). Голый IP трактуется как /32.
 	// Парсится в момент генерации правил. Пусто = нет исключений.
 	BypassExtraSubnets string `json:"bypassExtraSubnets,omitempty"`
+	// BypassGeoIPTags — geoip-теги из настроенных .dat, чьи CIDR уходят в WAN
+	// мимо sing-box через ipset AWGM-BYPASS (та же семантика полного обхода,
+	// что у BypassExtraSubnets, но масштаб geoip требует ipset вместо
+	// дискретных правил). Пусто — набора и правила нет.
+	BypassGeoIPTags []string `json:"bypassGeoipTags,omitempty"`
 	// IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.

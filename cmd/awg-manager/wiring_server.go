@@ -333,6 +333,7 @@ func (a *app) setupRouter() {
 		IngressResolver:        &routerIngressResolverAdapter{store: a.ndmsQueries.Interfaces},
 		PresetCatalog:          a.presetCatalog,
 		GeoData:                a.geoDataStore,
+		GeoTagCounts:           a.geoDataStore,
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{

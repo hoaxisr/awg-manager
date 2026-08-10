@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -47,6 +48,16 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
 		return err
+	}
+	if err := s.validateBypassGeoIPTags(normalized); err != nil {
+		return err
+	}
+	// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
+	// переходе: при уже выбранных тегах и сломанном ipset прочие правки
+	// настроек остаются проходимыми.
+	if len(normalized.BypassGeoIPTags) > 0 && len(settings.SingboxRouter.BypassGeoIPTags) == 0 &&
+		!bypassset.IsIPSetAvailable() {
+		return bypassset.ErrIPSetNotAvailable
 	}
 	// Port-slot stability: the UI contract carries no slot field, so incoming
 	// classes are re-associated with their persisted slots by DSCP before the
