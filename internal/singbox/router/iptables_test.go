@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,45 @@ func TestNetfilterHookScript_ValidShell(t *testing.T) {
 	}
 	if !strings.Contains(script, "grep -qE -- '-[jg] "+RedirectChain+"($| )'") {
 		t.Error("hook missing nat jump-presence gate")
+	}
+}
+
+// Пре-шаг восстановления набора AWGM-BYPASS: без него iptables-restore с
+// `-m set` падает ЦЕЛИКОМ (включая fail-closed blackhole), пока набора нет
+// после ребута. Гейт по пустоте обязателен — NDMS дёргает хук до 18-21 раза
+// за один flap.
+func TestNetfilterHookScript_BypassPreStep(t *testing.T) {
+	script := netfilterHookScript(true)
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated netfilter.d hook is not valid sh: %v\n%s", err, out)
+	}
+
+	for _, want := range []string{
+		"ipset create " + bypassSetName + " hash:net maxelem 262144 family inet -exist",
+		"ipset list " + bypassSetName + " -t",
+		"Number of entries",
+		"ipset restore -exist",
+		bypassSavePath,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("hook missing %q", want)
+		}
+	}
+
+	// Пре-шаг — ДО любого iptables-restore, иначе он бесполезен.
+	preIdx := strings.Index(script, "ipset create "+bypassSetName)
+	restoreIdx := strings.Index(script, "/opt/sbin/iptables-restore")
+	if preIdx == -1 || restoreIdx == -1 || preIdx > restoreIdx {
+		t.Fatalf("bypass pre-step (%d) must precede the first iptables-restore (%d)", preIdx, restoreIdx)
+	}
+
+	// Всё тело пре-шага — под гейтом наличия save-файла: нет файла → no-op.
+	gate := strings.Index(script, "[ -f "+strconv.Quote(bypassSavePath)+" ]")
+	if gate == -1 || gate > preIdx {
+		t.Fatalf("bypass pre-step must sit inside a `[ -f %s ]` gate (gate=%d)", bypassSavePath, gate)
 	}
 }
 
@@ -1321,6 +1361,66 @@ func TestBuildRestoreInput_BypassCIDRs(t *testing.T) {
 	}
 	if bypassIdx > dnsIdx {
 		t.Errorf("user bypass (%d) must precede DNS intercept (%d) in mangle", bypassIdx, dnsIdx)
+	}
+}
+
+// geoip-bypass набор AWGM-BYPASS: правило `-m set` стоит РЯДОМ с
+// пользовательскими bypass-CIDR — сразу после них и ДО перехвата :53 в mangle
+// и до catch-all в nat. Семантика полного обхода, включая DNS.
+func TestBuildRestoreInput_BypassGeoIPSetRule(t *testing.T) {
+	spec := RestoreInputSpec{
+		MatchAll:       true,
+		BypassCIDRs:    []string{"203.0.113.0/24"},
+		BypassGeoIPSet: true,
+	}
+	rule := " -m set --match-set " + bypassSetName + " dst -j RETURN"
+
+	mangle := buildMangleRestoreInput(spec)
+	setIdx := strings.Index(mangle, "-A "+ChainName+rule)
+	userIdx := strings.Index(mangle, "-A "+ChainName+" -d 203.0.113.0/24 -j RETURN")
+	dnsIdx := strings.Index(mangle, "-A "+ChainName+" -p udp --dport 53 -j TPROXY")
+	if setIdx == -1 || userIdx == -1 || dnsIdx == -1 {
+		t.Fatalf("mangle: setIdx=%d userIdx=%d dnsIdx=%d\n%s", setIdx, userIdx, dnsIdx, mangle)
+	}
+	if setIdx < userIdx {
+		t.Errorf("mangle: set rule (%d) must follow user bypass CIDRs (%d)", setIdx, userIdx)
+	}
+	if setIdx > dnsIdx {
+		t.Errorf("mangle: set rule (%d) must precede DNS intercept (%d)", setIdx, dnsIdx)
+	}
+
+	nat := buildNatRestoreInput(spec)
+	natSetIdx := strings.Index(nat, "-A "+RedirectChain+rule)
+	natUserIdx := strings.Index(nat, "-A "+RedirectChain+" -d 203.0.113.0/24 -j RETURN")
+	natCatchIdx := strings.Index(nat, fmt.Sprintf("-A %s -p tcp -j REDIRECT --to-ports %d", RedirectChain, RedirectPort))
+	if natSetIdx == -1 || natUserIdx == -1 || natCatchIdx == -1 {
+		t.Fatalf("nat: setIdx=%d userIdx=%d catchIdx=%d\n%s", natSetIdx, natUserIdx, natCatchIdx, nat)
+	}
+	if natSetIdx < natUserIdx {
+		t.Errorf("nat: set rule (%d) must follow user bypass CIDRs (%d)", natSetIdx, natUserIdx)
+	}
+	if natSetIdx > natCatchIdx {
+		t.Errorf("nat: set rule (%d) must precede catch-all REDIRECT (%d)", natSetIdx, natCatchIdx)
+	}
+}
+
+// Выключенный набор не должен оставлять в правилах ни одного упоминания
+// AWGM-BYPASS: иначе iptables-restore падает целиком, пока набора нет.
+func TestBuildRestoreInput_NoBypassGeoIPSetRuleWhenOff(t *testing.T) {
+	spec := RestoreInputSpec{MatchAll: true, BypassCIDRs: []string{"203.0.113.0/24"}}
+	out := buildRestoreInput(spec) + buildBlackholeRestoreInput(spec)
+	if strings.Contains(out, bypassSetName) {
+		t.Errorf("rules must not mention %s when the feature is off:\n%s", bypassSetName, out)
+	}
+}
+
+// policy-tun (DSCPOnly) вне скоупа: основной трафик идёт в tun NDMS-политикой,
+// цепочки несут лишь bypass и dscp-диспатч — правила с `-m set` там нет.
+func TestBuildRestoreInput_DSCPOnlyHasNoBypassGeoIPSetRule(t *testing.T) {
+	spec := RestoreInputSpec{MatchAll: true, DSCPOnly: true, BypassGeoIPSet: true}
+	out := buildMangleRestoreInput(spec) + buildNatRestoreInput(spec)
+	if strings.Contains(out, bypassSetName) {
+		t.Errorf("DSCPOnly chains must not mention %s:\n%s", bypassSetName, out)
 	}
 }
 

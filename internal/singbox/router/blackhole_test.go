@@ -71,6 +71,30 @@ func TestBuildBlackholeRestoreInput_BypassPorts(t *testing.T) {
 	}
 }
 
+// geoip-bypass: адреса из AWGM-BYPASS уходят прямо и при живом движке, так что
+// мёртвый движок их тем более не должен дропать — RETURN рядом с
+// пользовательскими bypass-CIDR и строго до терминального DROP.
+func TestBuildBlackholeRestoreInput_BypassGeoIPSetReturn(t *testing.T) {
+	got := buildBlackholeRestoreInput(RestoreInputSpec{
+		PolicyMark:     "0xff",
+		BypassCIDRs:    []string{"192.168.50.0/24"},
+		BypassGeoIPSet: true,
+	})
+
+	setIdx := strings.Index(got, "-A "+BlackholeChain+" -m set --match-set "+bypassSetName+" dst -j RETURN")
+	userIdx := strings.Index(got, "-A "+BlackholeChain+" -d 192.168.50.0/24 -j RETURN")
+	dropIdx := strings.Index(got, "-A "+BlackholeChain+" -j DROP")
+	if setIdx == -1 || userIdx == -1 || dropIdx == -1 {
+		t.Fatalf("setIdx=%d userIdx=%d dropIdx=%d\n%s", setIdx, userIdx, dropIdx, got)
+	}
+	if setIdx < userIdx {
+		t.Errorf("set rule (%d) must follow user bypass CIDRs (%d)", setIdx, userIdx)
+	}
+	if setIdx > dropIdx {
+		t.Errorf("set rule (%d) must precede the terminal DROP (%d)", setIdx, dropIdx)
+	}
+}
+
 // MatchAll (device mode, no policy mark) drops all non-excluded traffic without
 // a connmark filter — mirroring the interception jump.
 func TestBuildBlackholeRestoreInput_MatchAll(t *testing.T) {

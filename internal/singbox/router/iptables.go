@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 	sysiptables "github.com/hoaxisr/awg-manager/internal/sys/iptables"
@@ -94,7 +95,15 @@ var (
 	// netfilterCtCleanPath is the poisoned-flow eviction script (issue #627),
 	// invoked by the hook after a TPROXY restore and by Install.
 	netfilterCtCleanPath = "/opt/etc/awg-manager/singbox/awgm-ctclean.sh"
+	// bypassSavePath is the `ipset save` dump of AWGM-BYPASS written after every
+	// rebuild. ipsets live in RAM, so it is the only way the set survives a
+	// reboot: the netfilter.d hook restores it before any iptables-restore.
+	bypassSavePath = "/opt/etc/awg-manager/singbox/bypass.ipset"
 )
+
+// bypassSetName is the ipset holding the geoip bypass ranges — aliased from
+// the bypassset sub-package so the name has exactly one definition.
+const bypassSetName = bypassset.SetName
 
 func kernelModuleName() string { return "xt_TPROXY" }
 
@@ -365,6 +374,14 @@ type RestoreInputSpec struct {
 	// connmark-jump'а. Пусто / MatchAll / пустой PolicyMark = no-op.
 	IngressInterfaces []string
 
+	// BypassGeoIPSet, when true, вставляет `-m set --match-set AWGM-BYPASS dst
+	// -j RETURN` рядом с пользовательскими bypass-CIDR — в начале AWGM-TPROXY,
+	// AWGM-REDIRECT и blackhole, ДО перехвата :53: полный обход, включая DNS
+	// (та же семантика, что у BypassCIDRs). Включается при непустом списке
+	// geoip-тегов. Требует загруженного модуля xt_set и живого набора —
+	// иначе iptables-restore падает целиком.
+	BypassGeoIPSet bool
+
 	// DSCPOnly — режим policy-tun: netfilter нужен ТОЛЬКО для QoS-DSCP-классов,
 	// основной трафик идёт NDMS-политикой в tun-интерфейс sing-box. Цепочки
 	// содержат лишь bypass-RETURN'ы и dscp-диспатч: ни catch-all, ни перехвата
@@ -431,6 +448,18 @@ func emitUserBypassReturns(b *strings.Builder, chain string, cidrs []string) {
 	}
 }
 
+// emitBypassSetReturn эмитит ранний `-j RETURN` для адресов из geoip-набора
+// AWGM-BYPASS. Ставится сразу за пользовательскими bypass-CIDR (emitUserBypassReturns)
+// — то есть в начале цепочки, ДО перехвата :53: обход полный, включая DNS.
+// В режиме policy-tun (DSCPOnly) не эмитится — там нет ни catch-all, ни
+// перехвата, обходить нечего.
+func emitBypassSetReturn(b *strings.Builder, chain string, spec RestoreInputSpec) {
+	if !spec.BypassGeoIPSet || spec.DSCPOnly {
+		return
+	}
+	fmt.Fprintf(b, "-A %s -m set --match-set %s dst -j RETURN\n", chain, bypassSetName)
+}
+
 // emitPreroutingJump appends the PREROUTING jump into chain, gated by the same
 // policy-mark condition for mangle (UDP) and nat (TCP) so a device is proxied
 // by identical criteria on both protocols (drift = "half-broken tunnel").
@@ -456,6 +485,9 @@ func buildBlackholeRestoreInput(spec RestoreInputSpec) string {
 	fmt.Fprintf(&b, ":%s - [0:0]\n", BlackholeChain)
 	// User bypass first — an explicitly excluded subnet must never be dropped.
 	emitUserBypassReturns(&b, BlackholeChain, spec.BypassCIDRs)
+	// geoip-bypass: эти адреса и при живом движке идут мимо sing-box — мёртвый
+	// движок тем более не должен их дропать.
+	emitBypassSetReturn(&b, BlackholeChain, spec)
 	// User bypass ports (BOTH protocols): traffic the user deliberately keeps off
 	// the proxy (STUN/VoIP/WireGuard/games) must go direct, not be dropped. The
 	// blackhole matches every protocol (connmark on the jump, no -p filter), so it
@@ -523,6 +555,7 @@ func buildMangleRestoreInput(spec RestoreInputSpec) string {
 
 	// Пользовательский bypass — целиком мимо sing-box, ДО перехвата DNS.
 	emitUserBypassReturns(&b, ChainName, spec.BypassCIDRs)
+	emitBypassSetReturn(&b, ChainName, spec)
 
 	// Bypass ports: RETURN first — before DNS intercept and catch-all so that
 	// any explicitly excluded port skips sing-box entirely (including port 53).
@@ -612,6 +645,7 @@ func buildNatRestoreInput(spec RestoreInputSpec) string {
 	fmt.Fprintf(&b, ":%s - [0:0]\n", RedirectChain)
 
 	emitUserBypassReturns(&b, RedirectChain, spec.BypassCIDRs)
+	emitBypassSetReturn(&b, RedirectChain, spec)
 
 	// policy-tun QoS-гибрид: зеркало mangle-ветки — только bypass и dscp.
 	// Без catch-all REDIRECT'а, без перехвата DNS и DNS-RESCUE, без правила
@@ -944,6 +978,16 @@ for mod in xt_TPROXY xt_comment xt_mark xt_connmark xt_conntrack xt_pkttype xt_d
   grep -q "^${mod} " /proc/modules 2>/dev/null && continue
   [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
 done
+# Восстановление набора AWGM-BYPASS ДО любого iptables-restore: правила с
+# "-m set" роняют ВЕСЬ restore (включая fail-closed blackhole), пока набора
+# нет — а ipset'ы живут в RAM и после ребута пусты. Гейт по числу записей
+# обязателен: NDMS дёргает хук до 18-21 раза за один flap, и перезаливать
+# живой набор каждый раз незачем.
+if [ -f %[15]q ]; then
+  /opt/sbin/ipset create %[16]s hash:net maxelem %[17]d family inet -exist 2>/dev/null
+  n="$(/opt/sbin/ipset list %[16]s -t 2>/dev/null | sed -n 's/^Number of entries: //p')"
+  [ "${n:-0}" -eq 0 ] && /opt/sbin/ipset restore -exist < %[15]q
+fi
 # scrub_jumps <table> <chain>: delete every PREROUTING jump into <chain>.
 scrub_jumps() {
   /opt/sbin/iptables -w -t "$1" -S PREROUTING 2>/dev/null \
@@ -1016,7 +1060,7 @@ if pidof sing-box >/dev/null 2>&1; then
 else
 %[10]sfi
 exit 0
-`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath)
+`, netfilterRulesPath, ChainName, Fwmark, RoutingTable, IPRulePriority, RedirectChain, DNSRescueTag, DNSNoPolicyTag, IngressTag, deadBranch, BlackholeChain, netfilterMangleRulesPath, netfilterNatRulesPath, netfilterCtCleanPath, bypassSavePath, bypassSetName, bypassset.SetMaxElem)
 }
 
 // ctCleanScript renders the poisoned-flow eviction script (issue #627). While
