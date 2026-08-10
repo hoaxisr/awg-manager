@@ -61,6 +61,16 @@ func opkgPolicyNeedsDefault(policy ndms.Policy, ndmsName string) bool {
 	return permitted[0].Name == ndmsName
 }
 
+func opkgPolicySoleUplink(policy ndms.Policy, ndmsName string) bool {
+	var permitted []ndms.PermittedIface
+	for _, pi := range policy.Interfaces {
+		if !pi.Denied {
+			permitted = append(permitted, pi)
+		}
+	}
+	return len(permitted) == 1 && permitted[0].Name == ndmsName
+}
+
 // ReconcileOpkgPolicyRoutes syncs default routes for policies where OpkgTun is uplink.
 func (s *Service) ReconcileOpkgPolicyRoutes(ctx context.Context) {
 	s.reconcileRunningClientsPolicyRoutes(ctx)

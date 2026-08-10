@@ -64,4 +64,11 @@ func TestOpkgPolicyNeedsDefault(t *testing.T) {
 	if !opkgPolicyNeedsDefault(first, "OpkgTun18") {
 		t.Fatal("first opkg should need default")
 	}
+	multiWG := ndms.Policy{Name: "Policy3", Interfaces: []ndms.PermittedIface{
+		{Name: "Wireguard2", Order: 0},
+		{Name: "OpkgTun17", Order: 1},
+	}}
+	if opkgPolicySoleUplink(multiWG, "OpkgTun17") {
+		t.Fatal("multi-uplink opkg is not sole")
+	}
 }

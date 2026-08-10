@@ -131,6 +131,14 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	wanDev := ""
 	if mode == "internet-only" && newStaticWAN != "" && s.accessMgr != nil {
 		wanDev = s.accessMgr.KernelIfaceName(ctx, newStaticWAN)
+	} else if cfg.needsEntwareNAT() && mode != "none" {
+		if dev, err := s.resolveServerEntwareNATExtIface(ctx, cfg, mode); err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("access", id, "NAT egress: "+err.Error())
+			}
+		} else {
+			wanDev = dev
+		}
 	}
 
 	// Entware NAT/FORWARD до wg-маршрута: raw/wdttraw0 должен форвардиться даже

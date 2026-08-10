@@ -88,7 +88,7 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 		return nil
 	}
 	extIface := strings.TrimSpace(wanDev)
-	if extIface == "" || mode == "full" {
+	if extIface == "" {
 		var err error
 		extIface, err = defaultWANDev(ctx)
 		if err != nil {

@@ -10,73 +10,109 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
-const rawServerPolicyComment = "AWGM-WDTT-POLICY"
-
 func applyRawServerPolicyMark(ctx context.Context, mark string) error {
 	mark = strings.TrimSpace(mark)
 	if mark == "" {
 		removeRawServerPolicyMark(ctx)
 		return nil
 	}
-	removeRawServerPolicyMark(ctx)
 	iface := DefaultRawServerIface
-	if err := iptables.Run(ctx, "-t", "mangle", "-A", "PREROUTING",
-		"-i", iface, "-m", "comment", "--comment", rawServerPolicyComment,
-		"-j", "MARK", "--set-xmark", mark+"/0xffffffff"); err != nil {
+	if err := ensureRawServerPolicyMarkRule(ctx, iface, mark); err != nil {
+		return err
+	}
+	if err := ensureRawServerPolicyConnmarkRule(ctx, iface); err != nil {
+		removeRawServerPolicyMark(ctx)
+		return err
+	}
+	return nil
+}
+
+func ensureRawServerPolicyMarkRule(ctx context.Context, iface, mark string) error {
+	if rawServerMarkRulePresent(ctx, iface, mark) {
+		return nil
+	}
+	removeRawServerPolicyMarkRules(ctx, iface)
+	// Без -m comment: на Keenetic xt_comment часто не загружен (#666).
+	if err := iptables.Run(ctx, "-t", "mangle", "-I", "PREROUTING", "1",
+		"-i", iface, "-j", "MARK", "--set-xmark", mark+"/0xffffffff"); err != nil {
 		return fmt.Errorf("MARK %s on %s: %w", mark, iface, err)
 	}
-	if err := iptables.Run(ctx, "-t", "mangle", "-A", "PREROUTING",
-		"-i", iface, "-m", "comment", "--comment", rawServerPolicyComment,
-		"-j", "CONNMARK", "--save-mark", "--nfmask", "0xffffffff", "--ctmask", "0xffffffff"); err != nil {
-		removeRawServerPolicyMark(ctx)
+	return nil
+}
+
+func ensureRawServerPolicyConnmarkRule(ctx context.Context, iface string) error {
+	if rawServerConnmarkRulePresent(ctx, iface) {
+		return nil
+	}
+	if err := iptables.Run(ctx, "-t", "mangle", "-I", "PREROUTING", "1",
+		"-i", iface, "-j", "CONNMARK",
+		"--save-mark", "--nfmask", "0xffffffff", "--ctmask", "0xffffffff"); err != nil {
 		return fmt.Errorf("CONNMARK on %s: %w", iface, err)
 	}
 	return nil
 }
 
+func rawServerMarkRulePresent(ctx context.Context, iface, mark string) bool {
+	return iptables.Run(ctx, "-t", "mangle", "-C", "PREROUTING",
+		"-i", iface, "-j", "MARK", "--set-xmark", mark+"/0xffffffff") == nil
+}
+
+func rawServerConnmarkRulePresent(ctx context.Context, iface string) bool {
+	return iptables.Run(ctx, "-t", "mangle", "-C", "PREROUTING",
+		"-i", iface, "-j", "CONNMARK",
+		"--save-mark", "--nfmask", "0xffffffff", "--ctmask", "0xffffffff") == nil
+}
+
 func removeRawServerPolicyMark(ctx context.Context) {
-	out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", "PREROUTING")
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, rawServerPolicyComment) {
-			continue
+	removeRawServerPolicyMarkRules(ctx, DefaultRawServerIface)
+}
+
+func removeRawServerPolicyMarkRules(ctx context.Context, iface string) {
+	for pass := 0; pass < 8; pass++ {
+		out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", "PREROUTING")
+		if err != nil {
+			return
 		}
-		if !strings.Contains(line, "-i "+DefaultRawServerIface) {
-			continue
+		var deleted bool
+		for _, line := range strings.Split(out, "\n") {
+			if !strings.Contains(line, "-i "+iface) {
+				continue
+			}
+			if !strings.Contains(line, "-j MARK") && !strings.Contains(line, "-j CONNMARK") &&
+				!strings.Contains(line, "AWGM-WDTT-POLICY") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] != "-A" {
+				continue
+			}
+			if iptables.Run(ctx, append([]string{"-t", "mangle", "-D"}, fields[1:]...)...) == nil {
+				deleted = true
+				break
+			}
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "-A" {
-			continue
+		if !deleted {
+			return
 		}
-		_ = iptables.Run(ctx, append([]string{"-t", "mangle", "-D"}, fields[1:]...)...)
 	}
 }
 
 func rawServerPolicyMarkPresent(ctx context.Context, mark string) bool {
-	out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", "PREROUTING")
-	if err != nil {
-		return false
-	}
 	mark = strings.TrimSpace(mark)
-	hasMark := mark == ""
-	hasConn := mark == ""
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, rawServerPolicyComment) || !strings.Contains(line, "-i "+DefaultRawServerIface) {
-			continue
+	iface := DefaultRawServerIface
+	if mark == "" {
+		out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", "PREROUTING")
+		if err != nil {
+			return true
 		}
-		if strings.Contains(line, "-j MARK") {
-			if mark == "" || strings.Contains(line, mark) {
-				hasMark = true
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "-i "+iface) &&
+				(strings.Contains(line, "-j MARK") || strings.Contains(line, "-j CONNMARK")) {
+				return false
 			}
 		}
-		if strings.Contains(line, "-j CONNMARK") {
-			hasConn = true
-		}
+		return true
 	}
-	if mark == "" {
-		return !hasMark && !hasConn
-	}
-	return hasMark && hasConn
+	return rawServerMarkRulePresent(ctx, iface, mark) &&
+		rawServerConnmarkRulePresent(ctx, iface)
 }

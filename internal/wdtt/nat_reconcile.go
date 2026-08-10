@@ -95,10 +95,12 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			continue
 		}
 		wanDev := ""
-		if mode == "internet-only" {
-			if wan := strings.TrimSpace(cfg.NatStaticWAN); wan != "" && s.accessMgr != nil {
-				wanDev = s.accessMgr.KernelIfaceName(ctx, wan)
+		if dev, err := s.resolveServerEntwareNATExtIface(ctx, cfg, mode); err != nil {
+			if s.appLog != nil {
+				s.appLog.Warn("nat-reconcile", srv.ID, "NAT egress: "+err.Error())
 			}
+		} else {
+			wanDev = dev
 		}
 		if !entwareNATPresentForServer(ctx, cfg, wanDev) {
 			if err := applyEntwareNATForServer(ctx, cfg, mode, wanDev); err != nil {
