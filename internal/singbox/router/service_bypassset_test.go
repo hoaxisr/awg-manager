@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +155,20 @@ func TestGeoSourceAdapter_ParseErrorFailsClosed(t *testing.T) {
 
 // ── Триггер наполнения ─────────────────────────────────────────────
 
+// setTestBypassTags переписывает список geoip-тегов в уже созданном store —
+// имитация правки настроек во время наполнения.
+func setTestBypassTags(t *testing.T, store *storage.SettingsStore, tags []string) {
+	t.Helper()
+	all, err := store.Load()
+	if err != nil {
+		t.Fatalf("settingsStore.Load: %v", err)
+	}
+	all.SingboxRouter.BypassGeoIPTags = tags
+	if err := store.Save(all); err != nil {
+		t.Fatalf("settingsStore.Save: %v", err)
+	}
+}
+
 // waitBypassOutcome ждёт, пока фоновая горутина запишет итог наполнения.
 func waitBypassOutcome(t *testing.T, svc *ServiceImpl) {
 	t.Helper()
@@ -258,22 +273,94 @@ func TestTriggerBypassSetPopulate_SingleFlight(t *testing.T) {
 		Enabled: true, BypassGeoIPTags: []string{"ru"},
 	})
 	svc := &ServiceImpl{deps: Deps{Settings: store}}
-	entered := make(chan struct{})
+	entered := make(chan struct{}, 4)
 	release := make(chan struct{})
-	calls := 0
+	var calls atomic.Int32
 	svc.populateBypassSet = func(context.Context, []string) (bypassset.PopulateResult, error) {
-		calls++
-		close(entered)
-		<-release
+		n := calls.Add(1)
+		entered <- struct{}{}
+		if n == 1 {
+			<-release
+		}
 		return bypassset.PopulateResult{CountOK: true}, nil
 	}
 	svc.TriggerBypassSetPopulate()
 	<-entered
-	svc.TriggerBypassSetPopulate() // наполнение уже идёт — обязан быть no-op
+	svc.TriggerBypassSetPopulate() // наполнение уже идёт — второй прогон только откладывается
+	time.Sleep(20 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("параллельных наполнений: %d, want 1 (single-flight)", got)
+	}
 	close(release)
 	waitBypassOutcome(t, svc)
-	if calls != 1 {
-		t.Fatalf("наполнений: %d, want 1 (single-flight)", calls)
+	if got := calls.Load(); got > 2 {
+		t.Fatalf("наполнений: %d, want ≤2 (один отложенный повтор)", got)
+	}
+}
+
+// Пока шло наполнение, пользователь снял теги: teardown уже прошёл и снёс
+// набор с дампом, а наш swap+save их воскресил. Сироту обязаны снести сами,
+// а итог не публиковать как актуальное состояние.
+func TestTriggerBypassSetPopulate_StaleWhenTagsClearedMidRun(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		Enabled: true, BypassGeoIPTags: []string{"ru"},
+	})
+	bus := &mockBus{}
+	svc := &ServiceImpl{deps: Deps{Settings: store, Bus: bus}}
+	torn := make(chan struct{})
+	svc.teardownBypassSetFn = func(context.Context) { close(torn) }
+	svc.populateBypassSet = func(context.Context, []string) (bypassset.PopulateResult, error) {
+		setTestBypassTags(t, store, nil)
+		return bypassset.PopulateResult{EntryCount: 42, CountOK: true}, nil
+	}
+	svc.TriggerBypassSetPopulate()
+
+	select {
+	case <-torn:
+	case <-time.After(3 * time.Second):
+		t.Fatal("teardown не вызван — воскрешённый набор остался сиротой")
+	}
+	if _, _, last, _, _ := svc.BypassSetStatus(); last != "" {
+		t.Fatalf("итог протухшего наполнения опубликован: last=%q", last)
+	}
+	if bus.HasEvent("bypass-set") {
+		t.Fatal("протухшее наполнение не должно публиковать событие")
+	}
+}
+
+// Триггер во время наполнения не проглатывается: по завершении прогон
+// повторяется ровно один раз (иначе смена .dat/тегов теряется до следующего
+// изменения настроек).
+func TestTriggerBypassSetPopulate_RerunsAfterTriggerDuringRun(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+		Enabled: true, BypassGeoIPTags: []string{"ru"},
+	})
+	svc := &ServiceImpl{deps: Deps{Settings: store}}
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	svc.populateBypassSet = func(context.Context, []string) (bypassset.PopulateResult, error) {
+		n := calls.Add(1)
+		entered <- struct{}{}
+		if n == 1 {
+			<-release
+		}
+		return bypassset.PopulateResult{CountOK: true}, nil
+	}
+	svc.TriggerBypassSetPopulate()
+	<-entered                       // первый прогон вошёл
+	svc.TriggerBypassSetPopulate()  // занято → взводит повтор
+	close(release)
+
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("повторный прогон не запущен — триггер проглочен")
+	}
+	waitBypassOutcome(t, svc)
+	time.Sleep(50 * time.Millisecond) // повтор ровно один, а не цикл
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("наполнений: %d, want 2", got)
 	}
 }
 

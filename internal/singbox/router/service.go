@@ -429,8 +429,12 @@ type ServiceImpl struct {
 	currentIngress              []string // last-installed резолвленные ingress kernel-имена
 
 	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
-	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) — no-op.
+	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
+	// взводят bypassRerunPending.
 	bypassPopulating atomic.Bool
+	// bypassRerunPending — триггер, пришедший во время наполнения: по его
+	// завершении прогон повторяется один раз с актуальными тегами.
+	bypassRerunPending atomic.Bool
 	// Итог последнего наполнения bypass-набора (под mu). bypassCountOK
 	// различает подтверждённый ноль и «счётчик получить не удалось» — пустой
 	// набор и неизвестный размер не одно и то же.
@@ -441,6 +445,8 @@ type ServiceImpl struct {
 	bypassMissingTags  []string
 	// populateBypassSet — шов наполнения для тестов (nil = bypassset.Populate).
 	populateBypassSet func(ctx context.Context, tags []string) (bypassset.PopulateResult, error)
+	// teardownBypassSetFn — шов сноса набора для тестов (nil = реальный снос).
+	teardownBypassSetFn func(ctx context.Context)
 
 	// Однократные зачистки наследия выпиленного селектива: файлы + managed-
 	// правила на старте, ipset AWGM-SELECTIVE — после первой удачной установки

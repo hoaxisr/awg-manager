@@ -91,34 +91,78 @@ func (g geoSourceAdapter) GeoIPTagLines(tag string) ([]string, bool, error) {
 // заливка сотен тысяч записей на MIPS небыстры, но конечны.
 const bypassPopulateTimeout = 10 * time.Minute
 
-// TriggerBypassSetPopulate асинхронно наполняет AWGM-BYPASS из выбранных
-// geoip-тегов. No-op: пустой список, режим не tproxy, движок выключен,
-// наполнение уже идёт. По завершении публикует resource:invalidated
-// (bypass-set) и пишет итог в журнал.
-func (s *ServiceImpl) TriggerBypassSetPopulate() {
+// bypassSetWanted отвечает, нужен ли набор обхода ПРЯМО СЕЙЧАС, и с какими
+// тегами. wanted=false — набора быть не должно (пустой список тегов, движок
+// выключен, режим не tproxy). Ошибка чтения настроек отдаётся отдельно от
+// wanted=false: «не смогли прочитать» не повод сносить живой набор.
+func (s *ServiceImpl) bypassSetWanted() (tags []string, wanted bool, err error) {
 	if s.deps.Settings == nil {
-		return
+		return nil, false, errNoSettingsStore
 	}
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
-		return
+		return nil, false, err
 	}
 	sr := settings.SingboxRouter
 	if !sr.Enabled || len(sr.BypassGeoIPTags) == 0 ||
 		(sr.RoutingMode != "" && sr.RoutingMode != "tproxy") {
+		return nil, false, nil
+	}
+	return slices.Clone(sr.BypassGeoIPTags), true, nil
+}
+
+var errNoSettingsStore = errors.New("хранилище настроек не подключено")
+
+// TriggerBypassSetPopulate асинхронно наполняет AWGM-BYPASS из выбранных
+// geoip-тегов. No-op: пустой список, режим не tproxy, движок выключен. Пока
+// наполнение идёт, повторный триггер только взводит признак повтора — по
+// завершении прогон выполняется ещё раз с уже актуальными тегами (иначе
+// уведомление о смене .dat или тегов проглатывалось бы без ретрая). По
+// завершении публикует resource:invalidated (bypass-set) и пишет итог в
+// журнал.
+func (s *ServiceImpl) TriggerBypassSetPopulate() {
+	tags, wanted, err := s.bypassSetWanted()
+	if err != nil || !wanted {
 		return
 	}
 	if !s.bypassPopulating.CompareAndSwap(false, true) {
+		s.bypassRerunPending.Store(true)
 		return
 	}
-	tags := slices.Clone(sr.BypassGeoIPTags)
 	go func() {
 		defer s.bypassPopulating.Store(false)
-		ctx, cancel := context.WithTimeout(context.Background(), bypassPopulateTimeout)
-		defer cancel()
-		res, err := s.populateBypassSetOnce(ctx, tags)
-		s.storeBypassSetOutcome(res, err)
+		for {
+			s.runBypassPopulate(tags)
+			// Триггер, пришедший ровно между этой проверкой и снятием
+			// признака занятости, теряется — окно в наносекунды, следующая
+			// смена настроек/.dat запустит наполнение заново.
+			if !s.bypassRerunPending.CompareAndSwap(true, false) {
+				return
+			}
+			next, wanted, err := s.bypassSetWanted()
+			if err != nil || !wanted {
+				return
+			}
+			tags = next
+		}
 	}()
+}
+
+// runBypassPopulate — один прогон наполнения. Если к его концу набор больше
+// не нужен (пользователь снял теги / выключил движок / сменил режим), teardown
+// уже прошёл и снёс набор с дампом, а наш swap+save их воскресил: сносим
+// сироту сами и НЕ публикуем итог как актуальное состояние — иначе хук вечно
+// восстанавливал бы набор, которого быть не должно.
+func (s *ServiceImpl) runBypassPopulate(tags []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), bypassPopulateTimeout)
+	defer cancel()
+	res, err := s.populateBypassSetOnce(ctx, tags)
+	if _, wanted, wErr := s.bypassSetWanted(); wErr == nil && !wanted {
+		// ctx мог истечь вместе с наполнением — снос идёт по своему.
+		s.teardownBypassSet(context.Background())
+		return
+	}
+	s.storeBypassSetOutcome(res, err)
 }
 
 // populateBypassSetOnce — продакшн-наполнение (или тест-шов, если задан).
@@ -202,6 +246,10 @@ func (s *ServiceImpl) ensureBypassSetExists(ctx context.Context) {
 // переустановки правил без ссылки на набор — иначе ipset ответит «set is in
 // use by a kernel component» и набор переживёт снос.
 func (s *ServiceImpl) teardownBypassSet(ctx context.Context) {
+	if s.teardownBypassSetFn != nil {
+		s.teardownBypassSetFn(ctx)
+		return
+	}
 	if bypassset.IPSetBinary() != "" {
 		if err := bypassset.DestroySet(ctx); err != nil {
 			s.appLog.Warn("bypass-set", "", "снос набора: "+err.Error())
