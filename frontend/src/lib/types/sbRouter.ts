@@ -75,6 +75,34 @@ export interface SingboxQosClass {
 	enabled: boolean;
 }
 
+/**
+ * Состояние набора обхода AWGM-BYPASS (GET /singbox/router/bypass-set/status).
+ * Зеркало api.BypassSetStatusData.
+ */
+export interface BypassSetStatus {
+	/** Бинарь ipset есть на роутере. */
+	available: boolean;
+	/** Модуль xt_set загружен или доступен .ko (нужен для `-m set`). */
+	xtSetAvailable: boolean;
+	/** Бинарь conntrack есть: без него правки бьют только по новым соединениям. */
+	conntrackAvailable: boolean;
+	/** Идёт установка пакета, запущенная через install-эндпоинты. */
+	installing: boolean;
+	/** Записей в наборе после последнего наполнения; факт только при entryCountOK. */
+	entryCount: number;
+	/**
+	 * entryCount — факт. false значит «размер набора неизвестен», и entryCount=0
+	 * в этом случае НЕ равно «набор пуст» (в UI — «н/д»).
+	 */
+	entryCountOK: boolean;
+	/** RFC3339-время последнего наполнения; пусто — наполнения не было. */
+	lastPopulate?: string;
+	/** Ошибка последнего наполнения; пусто — ошибок нет. */
+	lastError?: string;
+	/** Выбранные теги, не найденные в .dat при последнем наполнении. */
+	missingTags?: string[];
+}
+
 // WAN interface for the sing-box router WAN-binding picker. `name` is
 // the kernel system-name (stable across NDMS re-creation) and is what
 // gets persisted into SingboxRouterSettings.wanInterface. `up` is

@@ -23,6 +23,7 @@
   import TrafficSourceSettings from './TrafficSourceSettings.svelte';
   import QosSettingsCard from './QosSettingsCard.svelte';
   import PolicyTunCard from './PolicyTunCard.svelte';
+  import BypassGeoIPTags from './BypassGeoIPTags.svelte';
   import OutboundOption from './OutboundOption.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
   import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
@@ -418,6 +419,11 @@
           <SubnetChipsInput inputId="ed-subnets-input" value={cfg.bypassExtraSubnets ?? ''} onChange={(v) => void applyPatch({ bypassExtraSubnets: v })} />
         </div>
         <p class="hint">IP или подсети, чей трафик целиком пойдёт мимо sing-box (прямо в WAN). Нужно для корпоративных VPN (Cisco AnyConnect и т.п.), чтобы их трафик не перехватывался.</p>
+        <!-- Набор AWGM-BYPASS живёт только в TPROXY-перехвате: в policy-tun
+             (DSCPOnly) правило обхода не эмитится — обходить нечего. -->
+        {#if !policyTunMode}
+          <BypassGeoIPTags {cfg} onPatch={(patch) => applyPatch(patch)} />
+        {/if}
       </section>
     {/if}
   </div>

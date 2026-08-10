@@ -23,6 +23,13 @@ export { drawerOpen, openDrawer, closeDrawer, toggleDrawer } from './drawerStore
 export { default as DepRow } from './DepRow.svelte';
 export { default as IssueRow } from './IssueRow.svelte';
 export { default as PolicyTunCard } from './PolicyTunCard.svelte';
+export { default as BypassGeoIPTags } from './BypassGeoIPTags.svelte';
+export {
+  aggregateGeoIPTags,
+  sumSelectedTags,
+  BYPASS_SET_MAX_ELEM,
+  type GeoIPTagOption,
+} from './bypassGeoTags';
 export type { DepTone, DepEntry, IssueTone, IssueEntry } from './drawerData';
 export { deriveDeps, deriveIssues } from './drawerData';
 

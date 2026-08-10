@@ -1,4 +1,5 @@
 import type {
+	BypassSetStatus,
 	CatalogPreset,
 	PolicyTunNATSegmentInfo,
 	RouterPolicy,
@@ -440,6 +441,27 @@ export class SbRouterClient extends SingboxClient {
 		await this.request('/singbox/router/staging/discard', {
 			method: 'POST',
 		});
+	}
+
+	// #endregion
+
+
+	// ─────────────────────────────────────────────
+	// #region Geoip bypass set (AWGM-BYPASS)
+	// ─────────────────────────────────────────────
+
+	async singboxRouterBypassSetStatus(): Promise<BypassSetStatus> {
+		return this.request('/singbox/router/bypass-set/status');
+	}
+
+	/** Ставит пакет ipset; отвечает свежим статусом набора. */
+	async singboxRouterBypassSetInstallDeps(): Promise<BypassSetStatus> {
+		return this.request('/singbox/router/bypass-set/install-deps', { method: 'POST' });
+	}
+
+	/** Ставит conntrack-tools; отвечает свежим статусом набора. */
+	async singboxRouterBypassSetInstallConntrack(): Promise<BypassSetStatus> {
+		return this.request('/singbox/router/bypass-set/install-conntrack', { method: 'POST' });
 	}
 
 	// #endregion
