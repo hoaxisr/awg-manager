@@ -36,17 +36,35 @@ func policyTunDefaultRoutePresent(lines []string, ndmsName string) (v4, v6 bool)
 	return v4, v6
 }
 
-// policyTunPermitted сообщает, разрешён ли интерфейс хотя бы в одной политике
-// доступа (`permit global <name>` внутри блока `ip policy …`). Блок политики не
-// разбирается: достаточно факта разрешения где угодно — привязка устройств к
-// конкретной политике вне зоны детекта v1.
-func policyTunPermitted(lines []string, ndmsName string) bool {
+// policyTunPermitted сообщает, разрешён ли интерфейс выходом ЦЕЛЕВОЙ политики
+// доступа: `permit global <ndmsName>` внутри блока `ip policy <policyName>`.
+// Разрешение в чужой политике таковым не является — устройства сидят в целевой,
+// и выхода у неё нет. Блок разбирается той же формой, что в
+// policyTunIPGlobalPresent: заголовок без отступа, тело с отступом.
+//
+// Пустой policyName — «политика не выбрана»: годится разрешение в любой, сказать
+// в какой именно оно обязано стоять нам нечего.
+func policyTunPermitted(lines []string, ndmsName, policyName string) bool {
+	inPolicy := false
 	for _, line := range lines {
-		f := strings.Fields(line)
-		for i := 0; i+2 < len(f); i++ {
-			if f[i] == "permit" && f[i+1] == "global" && f[i+2] == ndmsName {
-				return true
-			}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if line == trimmed { // строка без отступа — заголовок блока или его конец
+			f := strings.Fields(trimmed)
+			inPolicy = len(f) == 3 && f[0] == "ip" && f[1] == "policy" &&
+				(policyName == "" || f[2] == policyName)
+			continue
+		}
+		if !inPolicy {
+			continue
+		}
+		// Матч с начала строки, а не скользящим окном: `permit` — первый токен
+		// правила, а окно ловило бы те же слова в description.
+		f := strings.Fields(trimmed)
+		if len(f) >= 3 && f[0] == "permit" && f[1] == "global" && f[2] == ndmsName {
+			return true
 		}
 	}
 	return false
@@ -259,7 +277,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 
 	v4, v6 := policyTunDefaultRoutePresent(lines, ndmsName)
 	global := policyTunIPGlobalPresent(lines, ndmsName)
-	permitted := policyTunPermitted(lines, ndmsName)
+	permitted := policyTunPermitted(lines, ndmsName, sr.PolicyName)
 	healthy := v4 && global && permitted && (!wantV6 || v6)
 	if !healthy {
 		// По кэшу всё плохо — перечитываем и решаем по свежим данным: иначе
@@ -269,7 +287,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		if fresh, ferr := s.deps.RunningConfig.Lines(ctx); ferr == nil {
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
-			permitted = policyTunPermitted(fresh, ndmsName)
+			permitted = policyTunPermitted(fresh, ndmsName, sr.PolicyName)
 		}
 	}
 

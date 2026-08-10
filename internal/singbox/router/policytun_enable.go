@@ -318,7 +318,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	permitted := false
 	if s.deps.RunningConfig != nil {
 		if lines, e := s.deps.RunningConfig.Lines(ctx); e == nil {
-			permitted = policyTunPermitted(lines, ndmsName)
+			permitted = policyTunPermitted(lines, ndmsName, sr.PolicyName)
 		}
 	}
 	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)

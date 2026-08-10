@@ -1190,18 +1190,22 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			fakeIPTunAddr = addr
 		}
 	}
-	// policy-tun: интерфейс поднят, но не разрешён ни в одной политике доступа —
-	// технически всё живо, а трафик клиентов в tun не заходит. Это ручной шаг
-	// пользователя (permit + привязка устройств), поэтому warning с подсказкой.
+	// policy-tun: интерфейс поднят, но не разрешён выходом целевой политики —
+	// технически всё живо, а трафик клиентов в tun не заходит. Продукт ставит
+	// permit сам, так что issue означает отказ RCI или правку мимо нас.
 	// Без строк running-config (dep не подключён / чтение упало) issue не
 	// собирается: «не знаем» ≠ «не разрешено».
 	if sr.Enabled && policyTunNDMSName != "" && len(policyTunLines) > 0 &&
-		!policyTunPermitted(policyTunLines, policyTunNDMSName) {
+		!policyTunPermitted(policyTunLines, policyTunNDMSName, sr.PolicyName) {
+		where := "ни в одной политике доступа"
+		if sr.PolicyName != "" {
+			where = "в политике " + sr.PolicyName
+		}
 		issues = append(issues, Issue{
 			Severity: "warning",
 			Kind:     issuePolicyTunUnbound,
-			Message: fmt.Sprintf("%s не разрешён ни в одной политике доступа — трафик клиентов не направляется; "+
-				"разрешите интерфейс в политике и привяжите устройства", policyTunNDMSName),
+			Message: fmt.Sprintf("%s не разрешён %s — трафик клиентов не направляется; "+
+				"разрешите интерфейс в политике и привяжите устройства", policyTunNDMSName, where),
 		})
 	}
 	// policy-tun: имена интерфейса нужны пользователю ДО того, как режим станет

@@ -82,11 +82,35 @@ func TestPolicyTunRunningConfigParsers(t *testing.T) {
 	if !v4 || !v6 {
 		t.Fatalf("routes: v4=%v v6=%v", v4, v6)
 	}
-	if !policyTunPermitted(lines, "OpkgTun0") {
+	if !policyTunPermitted(lines, "OpkgTun0", "Policy0") {
 		t.Fatal("permit not found")
 	}
-	if policyTunPermitted(lines, "OpkgTun1") {
+	if policyTunPermitted(lines, "OpkgTun1", "Policy0") {
 		t.Fatal("false positive OpkgTun1 (префикс-ловушка)")
+	}
+	// Разрешение в чужой политике целевую не покрывает.
+	if policyTunPermitted(lines, "OpkgTun0", "Policy1") {
+		t.Fatal("permit в Policy0 не разрешение для Policy1")
+	}
+	// Политика не выбрана — годится любая.
+	if !policyTunPermitted(lines, "OpkgTun0", "") {
+		t.Fatal("без имени политики разрешение в любой должно засчитываться")
+	}
+	// Вне блока политики permit не бывает: те же слова в теле чужого блока
+	// разрешением не являются.
+	outside := []string{
+		"interface OpkgTun0", "    description permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(outside, "OpkgTun0", "") {
+		t.Fatal("false positive: permit вне блока ip policy")
+	}
+	// Внутри блока политики матч идёт с начала строки: те же слова в её
+	// description разрешением не являются.
+	inDescr := []string{
+		"ip policy Policy0", "    description permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(inDescr, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: слова permit global в description политики")
 	}
 	if v4x, _ := policyTunDefaultRoutePresent([]string{"ip route default OpkgTun01"}, "OpkgTun0"); v4x {
 		t.Fatal("false positive: OpkgTun01 не должен матчить OpkgTun0")
@@ -353,6 +377,32 @@ func TestReconcilePolicyTun_NoPermitWhenPresent(t *testing.T) {
 	}
 	if len(pol.permits) != 0 {
 		t.Errorf("стоящий permit не должен переставляться, получено %v", pol.permits)
+	}
+}
+
+// Permit стоит в ЧУЖОЙ политике: для целевой это не разрешение — устройства
+// сидят в ней, а выхода у неё нет. Разрешением где угодно детект
+// удовлетворяться не имеет права, иначе режим молча мёртв (и смена PolicyName
+// на работающем режиме не доезжает никогда).
+func TestReconcilePolicyTun_PermitsWhenOtherPolicyPermitted(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy1")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+		"ip policy Policy1", "!",
+	}}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	want := []string{"Policy1:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
 	}
 }
 
@@ -747,6 +797,36 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	}
 	if issueOfKind(st3.Issues, issuePolicyTunUnbound) != nil {
 		t.Error("выключенный движок не должен ругаться на политику")
+	}
+}
+
+// Permit стоит в чужой политике: для статуса это «не разрешён», и сообщение
+// обязано назвать целевую — иначе пользователь смотрит на живой permit и не
+// понимает, о чём issue.
+func TestGetStatus_PolicyTunUnboundNamesTargetPolicy(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.withPolicy(t, "Policy1")
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+	}}
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	iss := issueOfKind(st.Issues, issuePolicyTunUnbound)
+	if iss == nil {
+		t.Fatalf("permit в чужой политике не разрешение — ожидался issue: %+v", st.Issues)
+	}
+	if !strings.Contains(iss.Message, "Policy1") {
+		t.Errorf("сообщение должно называть целевую политику: %q", iss.Message)
 	}
 }
 

@@ -11,6 +11,8 @@
   import { Toggle, Button, Badge, Modal } from '$lib/components/ui';
   import { api } from '$lib/api/client';
   import IssueRow from './IssueRow.svelte';
+  import PolicyCombobox from './PolicyCombobox.svelte';
+  import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type {
     PolicyTunNATSegmentInfo,
     SingboxRouterSettings,
@@ -34,6 +36,12 @@
   const unboundIssue = $derived(
     (status?.issues ?? []).find((i) => i.kind === 'policy-tun-unbound') ?? null,
   );
+  // Политика — то же поле, что у режима tproxy (cfg.policyName): в policy-tun
+  // она задаёт, чей трафик уходит в туннель, и продукт сам разрешает ею наш
+  // интерфейс. Счётчик устройств тут не украшение: ноль привязанных при живом
+  // разрешении — второе молчаливо мёртвое состояние режима.
+  const deviceCount = $derived(status?.deviceCount ?? 0);
+  const policyMissing = $derived(!!cfg.policyName && status?.policyExists === false);
 
   // ── Предпоказ сегментов (модалка включения) ──
   let pickerOpen = $state(false);
@@ -100,11 +108,41 @@
 
   {#if ndmsName}
     <p class="hint">Виден в политиках доступа как <strong>{ndmsName}</strong>.</p>
+  {:else}
+    <p class="hint">Интерфейс ещё не создан — он появится после включения режима.</p>
+  {/if}
+
+  <div class="field">
+    <span class="lbl">Политика доступа</span>
+    <PolicyCombobox value={cfg.policyName} onChange={(name) => void onPatch({ policyName: name })} />
+  </div>
+
+  {#if cfg.policyName}
+    <p class="hint">
+      Интерфейс разрешается выходом этой политики автоматически. В ней
+      <strong>{pluralize(deviceCount, DEVICE_WORDS)}</strong> — в туннель уходит только их трафик.
+      При смене политики прежняя останется разрешённой: снимите разрешение вручную.
+    </p>
+    {#if policyMissing}
+      <p class="hint hint-warning">
+        Политика «{cfg.policyName}» не найдена в NDMS — создайте заново или выберите другую.
+      </p>
+    {/if}
+    <Button
+      variant="ghost"
+      size="sm"
+      fullWidth
+      href="/routing?tab=policy&policy={encodeURIComponent(cfg.policyName)}"
+    >
+      Управление устройствами →
+    </Button>
+  {:else}
+    <p class="hint">
+      Политика не выбрана — трафик устройств в туннель не пойдёт: интерфейсу некуда встать выходом.
+    </p>
     <Button variant="ghost" size="sm" fullWidth href="/routing?tab=policy">
       Политики доступа →
     </Button>
-  {:else}
-    <p class="hint">Интерфейс ещё не создан — он появится после включения режима.</p>
   {/if}
 
   {#if unboundIssue}
@@ -203,6 +241,8 @@
   .hint { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
   .hint strong { color: var(--text-primary); font-weight: 600; }
   .hint-warning { color: var(--color-warning, #dab856); }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .lbl { font-size: 11px; color: var(--text-muted); font-weight: 500; }
   .field-row {
     display: flex;
     align-items: center;
