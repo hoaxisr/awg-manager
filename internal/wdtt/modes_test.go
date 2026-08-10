@@ -1,6 +1,9 @@
 package wdtt
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestServerConfig_kernelServerIface(t *testing.T) {
 	wg := ServerConfig{RelayMode: ConnModeWG}
@@ -108,5 +111,22 @@ func TestNormalizeClientConfig_rawWorkersUncapped(t *testing.T) {
 func TestRawTunnelID(t *testing.T) {
 	if got := RawTunnelID("default"); got != "wdttraw-default" {
 		t.Fatalf("RawTunnelID(default) = %q", got)
+	}
+}
+
+func TestServerAccessAddressMatchesClientPool(t *testing.T) {
+	cfg := ServerConfig{NdmsIface: "OpkgTun17", WgIface: "opkgtun17"}
+	if !cfg.usesNDMSOpkgTun() {
+		t.Fatalf("фикстура не в NDMS-режиме — поправь поля по образцу соседних тестов")
+	}
+	if got := cfg.serverAccessAddress(); got != "10.66.0.1" {
+		t.Fatalf("gateway addr = %q, want 10.66.0.1 (сеть интерфейса обязана совпадать с пулом клиентов)", got)
+	}
+	if got := cfg.serverAccessMask(); got != "255.255.0.0" {
+		t.Fatalf("gateway mask = %q, want 255.255.0.0", got)
+	}
+	_, pool, _ := net.ParseCIDR(DefaultWdttClientPoolCIDR)
+	if !pool.Contains(net.ParseIP(cfg.serverAccessAddress())) {
+		t.Fatalf("шлюз %s вне пула %s", cfg.serverAccessAddress(), DefaultWdttClientPoolCIDR)
 	}
 }
