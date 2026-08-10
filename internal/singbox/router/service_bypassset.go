@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -13,7 +14,7 @@ type GeoIPTagCounter interface {
 	GeoIPTagCounts() map[string]int
 }
 
-const bypassSetMaxElem = 262144 // = maxelem набора AWGM-BYPASS
+const bypassSetMaxElem = bypassset.SetMaxElem // = maxelem набора AWGM-BYPASS
 
 // validateBypassGeoIPTags: суммарный размер выбранных geoip-тегов не
 // превышает maxelem. Проверка КОНСЕРВАТИВНА: Count учитывает и IPv6-элементы

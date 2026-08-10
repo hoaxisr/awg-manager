@@ -12,7 +12,7 @@ import (
 )
 
 // StagingSetName is the scratch ipset populated during rebuild and atomically
-// swapped with SetName when the pipeline completes.
+// swapped with SetName by the populator when all entries are in.
 const StagingSetName = "AWGM-BYPASS-STG"
 
 // IpsetChunkSize is how many entries are batched into one ipset restore call.
@@ -131,7 +131,7 @@ func createNamedSet(ctx context.Context, name string) error {
 	}
 	res, err := runIpsetCtl(ctx, bin,
 		"create", name, "hash:net",
-		"maxelem", fmt.Sprintf("%d", setMaxElem),
+		"maxelem", fmt.Sprintf("%d", SetMaxElem),
 		"family", "inet",
 	)
 	if err != nil {

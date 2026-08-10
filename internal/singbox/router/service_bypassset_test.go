@@ -22,6 +22,7 @@ func TestValidateBypassGeoIPTags(t *testing.T) {
 		{"budget_exceeded", []string{"big"}, false},
 		{"unknown_tag_ok_zero_count", []string{"nosuch"}, true},
 		{"case_insensitive", []string{"RU"}, true},
+		{"case_insensitive_over_budget", []string{"BIG"}, false},
 		{"sum_over_budget", []string{"ru", "big"}, false},
 	}
 	for _, c := range cases {

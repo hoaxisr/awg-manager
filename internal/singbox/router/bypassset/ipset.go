@@ -15,11 +15,11 @@ const (
 	// SetName is the ipset name used for the AWGM bypass filter.
 	SetName = "AWGM-BYPASS"
 
-	// setMaxElem is the maximum number of entries in the ipset.
+	// SetMaxElem is the maximum number of entries in the ipset.
 	// hash:net on Keenetic kernels supports up to ~1M entries; 262144
 	// is a safe ceiling that covers all realistic rule-set sizes without
 	// consuming excessive kernel memory.
-	setMaxElem = 262144
+	SetMaxElem = 262144
 
 	// ipsetCtlTimeout — явный таймаут одиночных управляющих команд ipset
 	// (create/flush/swap/destroy/list -t). Дефолтные 30 с sysexec тесны для
@@ -53,7 +53,7 @@ func CreateSet(ctx context.Context) error {
 	}
 	res, err := runIpsetCtl(ctx, bin,
 		"create", SetName, "hash:net",
-		"maxelem", fmt.Sprintf("%d", setMaxElem),
+		"maxelem", fmt.Sprintf("%d", SetMaxElem),
 		"family", "inet",
 	)
 	if err != nil {
