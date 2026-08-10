@@ -147,40 +147,6 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	return nil
 }
 
-// applyEntwareNAT installs MASQUERADE + FORWARD for a single iface/CIDR (legacy).
-func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev, peerCIDR string) error {
-	cfg := ServerConfig{RelayMode: ConnModeWG, WgIface: wgIface}
-	if wgIface == DefaultRawServerIface {
-		cfg = ServerConfig{RelayMode: ConnModeRaw}
-	}
-	if peerCIDR != "" && peerCIDR != cfg.serverPeerCIDR() && peerCIDR != wdttPeerCIDR() {
-		// Caller passed explicit CIDR; fall back to single-plan apply.
-		if mode == "none" {
-			removeEntwareNATIfaces(ctx, wgIface)
-			return nil
-		}
-		extIface := strings.TrimSpace(wanDev)
-		if extIface == "" || mode == "full" {
-			var err error
-			extIface, err = defaultWANDev(ctx)
-			if err != nil {
-				return err
-			}
-		}
-		_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
-		setupEntwareForward(ctx, wgIface)
-		setupEntwareMSSClamp(ctx, peerCIDR)
-		flushEntwareMasquerade(ctx)
-		args := append([]string{"-t", "nat", "-I", "POSTROUTING", "1"},
-			masqueradeMatchArgs(entwareNATPlan{Iface: wgIface, CIDR: peerCIDR}, mode, extIface)...)
-		if err := iptables.Run(ctx, args...); err != nil {
-			return fmt.Errorf("MASQUERADE %s: %w", peerCIDR, err)
-		}
-		return nil
-	}
-	return applyEntwareNATForServer(ctx, cfg, mode, wanDev, "")
-}
-
 func removeEntwareNATForServer(ctx context.Context, cfg ServerConfig) {
 	removeEntwareNATIfaces(ctx, cfg.serverEntwareNATIfaces()...)
 }
