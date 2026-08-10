@@ -7,7 +7,7 @@ import (
 
 const (
 	logAllStreamsDown = `2026/07/22 18:16:07 [INFO] [STREAM 1] Established DTLS connection
-2026/07/22 18:16:19 [INFO] [STREAM 1] DTLS connection closed
+2026/07/22 18:16:19 [INFO] [STREAM 1] Closed DTLS connection
 `
 	logStreamUp = `2026/07/22 18:16:07 [INFO] [STREAM 1] Established DTLS connection
 2026/07/22 18:16:08 [INFO] [STREAM 6] Established DTLS connection

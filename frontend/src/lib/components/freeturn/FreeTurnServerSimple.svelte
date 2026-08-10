@@ -21,6 +21,8 @@
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
 	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
@@ -130,7 +132,8 @@
 			setupComplete: step1Done && obfReady
 		})
 	);
-	const showWizard = $derived(!opsMode || wizardOpen);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'wg', label: 'WireGuard · obf', done: wgStepDone },
@@ -379,7 +382,7 @@
 						{#if obfHint}
 							<p class="ft-hint">{obfHint}</p>
 						{/if}
-						<Input label="Ключ (-obf-key)" type="password" bind:value={server.obfKey} placeholder="64 hex" />
+						<SensitiveInput label="Ключ (-obf-key)" bind:value={server.obfKey} placeholder="64 hex" />
 						<Button variant="ghost" size="sm" onclick={() => (server.obfKey = randomObfKeyHex())}>
 							Сгенерировать ключ
 						</Button>
@@ -475,7 +478,7 @@
 					}}
 				/>
 				<Dropdown label="Obf profile" bind:value={server.obfProfile} options={obfOptions} />
-				<Input type="password" bind:value={server.obfKey} />
+				<SensitiveInput label="Obf key" bind:value={server.obfKey} placeholder="64 hex" />
 				<p class="ft-readonly">
 					Listen: <code>{server.listen || '0.0.0.0:56000'}</code>
 					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
@@ -494,6 +497,15 @@
 						await onSave(server);
 					}}
 				/>
+				{#if isExpert}
+					<Input label="Connect (-connect)" bind:value={server.connect} placeholder="peer:port для WG" />
+					<Dropdown label="Mode (-mode)" bind:value={server.mode} options={[
+						{ value: 'udp', label: 'udp' },
+						{ value: 'tcp', label: 'tcp' }
+					]} />
+					<Input label="Clients file (-clients-file)" bind:value={server.clientsFile} />
+					<Toggle label="Debug (-debug)" checked={!!server.debug} onchange={(v) => (server.debug = v)} />
+				{/if}
 				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
 					{mainTabNext ? 'Далее' : 'Сохранить'}
 				</Button>

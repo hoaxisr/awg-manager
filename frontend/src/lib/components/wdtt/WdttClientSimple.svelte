@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { Button, Input, Dropdown, SegmentedControl } from '$lib/components/ui';
+	import { Button, Input, Dropdown, SegmentedControl, Toggle } from '$lib/components/ui';
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
 	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
 	import ProxyQuickStart from '../proxy-panel/ProxyQuickStart.svelte';
 	import ProxyQuickStartStep from '../proxy-panel/ProxyQuickStartStep.svelte';
 	import ProxyWizardGuide from '../proxy-panel/ProxyWizardGuide.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import WgConfExportPanel from '../proxy-panel/WgConfExportPanel.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
@@ -14,6 +17,11 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { proxyClientOpsMode } from '$lib/utils/proxyOpsMode';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
+	import {
+		linkHasBundledWg,
+		linkedTunnelListenPort,
+		patchWgConfEndpoint
+	} from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import type {
 		WdttClientConfig,
@@ -49,6 +57,8 @@
 		subscriptionTick?: number;
 		onEnsureWg?: () => void | Promise<void>;
 		ensuringWg?: boolean;
+		onImportWgTunnel?: (wg: string) => void | Promise<void>;
+		importingWgTunnel?: boolean;
 		instances?: LogInstanceItem[];
 		selectedInstanceId?: string;
 		onSelectInstance?: (id: string) => void;
@@ -71,6 +81,8 @@
 		subscriptionTick = 0,
 		onEnsureWg,
 		ensuringWg = false,
+		onImportWgTunnel,
+		importingWgTunnel = false,
 		instances = [],
 		selectedInstanceId = '',
 		onSelectInstance,
@@ -129,7 +141,30 @@
 			setupComplete: step3Done
 		})
 	);
-	const showWizard = $derived(!opsMode || wizardOpen);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
+
+	const bundledWgRaw = $derived.by(() => {
+		if (linkHasBundledWg(linkParams?.wg)) return linkParams!.wg!.trim();
+		if (linkHasBundledWg(status?.wgConfig)) return status!.wgConfig!.trim();
+		return '';
+	});
+
+	const displayWgConf = $derived.by(() => {
+		if (!bundledWgRaw) return '';
+		const port = linkedTunnelListenPort(client.listen, linkParams?.listen);
+		if (port == null) return bundledWgRaw;
+		return patchWgConfEndpoint(bundledWgRaw, port);
+	});
+
+	const wgExportFilename = $derived.by(() => {
+		const base = (linkParams?.name || client.peer.split(':')[0] || 'wdtt-client').trim();
+		return `${base.replace(/[^\w.-]+/g, '_')}.conf`;
+	});
+
+	const canImportWgTunnel = $derived(
+		!!displayWgConf && !isRawMode && linkedTunnelListenPort(client.listen, linkParams?.listen) != null
+	);
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'import', label: 'Импорт — ссылка или подписка', done: profileApplied },
@@ -451,10 +486,7 @@
 							{/if}
 						</p>
 						<Input bind:value={client.peer} placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'} />
-						<label class="wdtt-field">
-							<span>Пароль</span>
-							<Input type="password" bind:value={client.password} />
-						</label>
+						<SensitiveInput label="Пароль" bind:value={client.password} />
 						<label class="wdtt-field">
 							<span>Listen (AWG Endpoint)</span>
 							<Input bind:value={client.listen} placeholder="127.0.0.1:9000" />
@@ -493,7 +525,15 @@
 						onPrimary={saveAndStart}
 					>
 						<ProxyWizardGuide items={startGuideItems} />
-						{#if !isRawMode && status?.wgConfig}
+						{#if displayWgConf && !isRawMode}
+							<WgConfExportPanel
+								wgConf={displayWgConf}
+								filename={wgExportFilename}
+								onImportTunnel={onImportWgTunnel ? () => onImportWgTunnel?.(displayWgConf) : undefined}
+								importingTunnel={importingWgTunnel}
+								importDisabled={!canImportWgTunnel}
+							/>
+						{:else if !isRawMode && status?.wgConfig}
 							<p class="wdtt-wg-hint">WireGuard-конфиг получен — AWG-туннель создаётся автоматически.</p>
 						{:else if isRawMode}
 							<p class="wdtt-wg-hint">
@@ -526,6 +566,18 @@
 
 		{#if opsTab === 'setup'}
 			<section class="ops-section">
+				{#if isExpert}
+					<div class="wdtt-import-row">
+						<Input bind:value={importLink} placeholder="wdtt://, qwdtt://, HTTPS-подписка…" />
+						<Button variant="primary" size="sm" loading={importing} disabled={!importLink.trim()} onclick={applyImport}>
+							Импорт
+						</Button>
+						<Button variant="secondary" size="sm" loading={importing} onclick={() => fileInput?.click()}>
+							.qwdtt
+						</Button>
+					</div>
+					<input bind:this={fileInput} type="file" accept=".qwdtt,application/json,text/plain" class="wdtt-file-input" onchange={onFileInputChange} />
+				{/if}
 				{#if client.sub?.trim() || subscriptionPreview}
 					<div class="wdtt-sub-box">
 						<p class="wdtt-sub-title">Подписка — смена сервера</p>
@@ -563,7 +615,7 @@
 					onchange={(v) => (client.connMode = v)}
 				/>
 				<Input bind:value={client.peer} placeholder="peer host:port" />
-				<Input type="password" bind:value={client.password} />
+				<SensitiveInput label="Пароль" bind:value={client.password} />
 				<Input bind:value={client.listen} placeholder="127.0.0.1:9000" />
 				<Input bind:value={client.vkHashes} placeholder="VK-хеши" />
 				<Input
@@ -576,6 +628,32 @@
 					{ value: 'auto', label: 'auto' },
 					{ value: 'wv', label: 'wv' }
 				]} />
+				{#if isExpert}
+					<div class="wdtt-expert-grid">
+						<Dropdown label="Obfs (-obfs)" bind:value={client.obfs} options={[
+							{ value: 'audio', label: 'audio' },
+							{ value: 'video', label: 'video' }
+						]} />
+						<Input label="Fingerprint" bind:value={client.fingerprint} placeholder="chrome" />
+						<Input label="Device ID" bind:value={client.deviceId} placeholder="auto" />
+						<Dropdown label="VK auth" bind:value={client.vkAuthMode} options={[
+							{ value: 'vkcalls', label: 'vkcalls' },
+							{ value: 'anonymous', label: 'anonymous' },
+							{ value: 'account', label: 'account' }
+						]} />
+					</div>
+					<Input label="URL подписки (-sub)" bind:value={client.sub} placeholder="https://…/_wdtt.json" />
+					<Toggle label="Debug (-debug)" checked={!!client.debug} onchange={(v) => (client.debug = v)} />
+					{#if displayWgConf && !isRawMode}
+						<WgConfExportPanel
+							wgConf={displayWgConf}
+							filename={wgExportFilename}
+							onImportTunnel={onImportWgTunnel ? () => onImportWgTunnel?.(displayWgConf) : undefined}
+							importingTunnel={importingWgTunnel}
+							importDisabled={!canImportWgTunnel}
+						/>
+					{/if}
+				{/if}
 				<div class="wdtt-actions">
 					<Button variant="secondary" disabled={!canSave || saving} onclick={() => onSave(client)}>Сохранить</Button>
 					{#if onRevert}
@@ -676,6 +754,11 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+	}
+	.wdtt-expert-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+		gap: 0.625rem;
 	}
 	.wdtt-wg-hint {
 		margin: 0;

@@ -20,9 +20,11 @@ type AccessManager interface {
 	DefaultGatewayNDMS(ctx context.Context) (string, error)
 }
 
-// InterfaceChecker waits until the WG interface appears after wdtt-server start.
+// InterfaceChecker waits until the WG interface appears after wdtt-server start
+// and reports whether a kernel iface is operationally up (operstate up/unknown).
 type InterfaceChecker interface {
 	InterfaceExists(name string) bool
+	InterfaceOperUp(name string) bool
 }
 
 func normalizeNatMode(mode string) string {

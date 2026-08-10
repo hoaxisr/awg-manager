@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { Button, Input, Toggle, SegmentedControl, ChipMultiSelect } from '$lib/components/ui';
+	import { Button, Input, Toggle, SegmentedControl, ChipMultiSelect, Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
@@ -20,6 +20,8 @@
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
 	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { LogInstanceItem } from '../freeturn/LogInstanceSwitcher.svelte';
 	import type { WdttPanelUserEntry, WdttProcessStatus, WdttServerConfig } from '$lib/types';
 
@@ -100,7 +102,6 @@
 
 	let starting = $state(false);
 	let loadingWanPeer = $state(false);
-	let showPassword = $state(false);
 	let linkPassword = $state('');
 	let togglingIngress = $state(false);
 	let togglingNAT = $state(false);
@@ -185,7 +186,8 @@
 			setupComplete: step2Done
 		})
 	);
-	const showWizard = $derived(!opsMode || wizardOpen);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
 	const serverStarted = $derived(
 		proxyInOpsMode({
 			running,
@@ -520,14 +522,7 @@
 					>
 						<ProxyWizardGuide items={secretGuideItems} />
 						<div class="wdtt-row">
-							<Input
-								type={showPassword ? 'text' : 'password'}
-								bind:value={server.password}
-								placeholder="секретный пароль"
-							/>
-							<Button variant="secondary" onclick={() => (showPassword = !showPassword)}>
-								{showPassword ? 'Скрыть' : 'Показать'}
-							</Button>
+							<SensitiveInput bind:value={server.password} placeholder="секретный пароль" />
 							<Button variant="secondary" onclick={randomPassword}>Сгенерировать</Button>
 						</div>
 						<Toggle
@@ -635,10 +630,7 @@
 				<label class="wdtt-field">
 					<span class="section-label">Пароль (-password)</span>
 					<div class="wdtt-row">
-						<Input type={showPassword ? 'text' : 'password'} bind:value={server.password} />
-						<Button variant="secondary" size="sm" onclick={() => (showPassword = !showPassword)}>
-							{showPassword ? 'Скрыть' : 'Показать'}
-						</Button>
+						<SensitiveInput bind:value={server.password} />
 						<Button variant="secondary" size="sm" onclick={randomPassword}>Сгенерировать</Button>
 					</div>
 				</label>
@@ -671,6 +663,21 @@
 						await onSave(server);
 					}}
 				/>
+				{#if isExpert}
+					<div class="wdtt-row wdtt-port-row">
+						<Input label="WG-порт (-wg-port)" type="number" value={wgPortStr} onchange={applyWgPort} />
+					</div>
+					<Input label="Config dir (-config-dir)" bind:value={server.configDir} placeholder="/opt/etc/wdtt-server" />
+					<Input label="Admin ID (-admin-id)" bind:value={server.adminId} placeholder="Telegram admin" />
+					<SensitiveInput label="Bot token (-bot-token)" bind:value={server.botToken} />
+					<Dropdown
+						label="Stats log (-stats-log)"
+						value={statsLogMode}
+						options={statsLogOptions}
+						onchange={(v: StatsLogMode) => (server.statsLog = v)}
+					/>
+					<Toggle label="Debug (-debug)" checked={!!server.debug} onchange={(v) => (server.debug = v)} />
+				{/if}
 		</section>
 		{/if}
 

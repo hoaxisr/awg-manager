@@ -13,6 +13,7 @@ var dtlsEstablishedMarkers = []string{
 }
 
 var dtlsDownMarkers = []string{
+	"Closed DTLS connection", // ft-client 2.0.x+
 	"DTLS connection closed",
 	"DTLS handshake failed",
 	"DTLS disconnected",

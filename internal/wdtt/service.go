@@ -39,6 +39,7 @@ type Service struct {
 	clientHealth    *healthTracker
 	clientStall     *healthTracker
 	startBackoff    *proxysup.Backoff
+	relayProbe      RelayProbe
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
 	ndmsIfaces      NDMSOpkgTunCommands
@@ -111,6 +112,10 @@ func (s *Service) SetAccessManager(m AccessManager) {
 
 func (s *Service) SetInterfaceChecker(c InterfaceChecker) {
 	s.ifaceChecker = c
+}
+
+func (s *Service) SetRelayProbe(p RelayProbe) {
+	s.relayProbe = p
 }
 
 func (s *Service) SetInstallSpecs(specs ArchSpecs) {
@@ -442,6 +447,24 @@ func (s *Service) StartClientInstance(id string) error {
 		tunFdSock = s.clientTunFdSockPath(id)
 	}
 
+	if isRaw && cfg.usesNDMSOpkgTun() {
+		st := s.clientProcs.get(id).Status()
+		if st.Running {
+			recycle := st.StartedAt == nil || !rawClientNDMSReady(cfg, s.ifaceChecker)
+			if !recycle {
+				if _, ok := s.clientProcs.get(id).lastRawConf(); !ok {
+					recycle = true
+				}
+			}
+			if recycle {
+				_ = s.clientProcs.get(id).Stop()
+				if rawClientNDMSReady(cfg, s.ifaceChecker) {
+					_ = s.teardownClientOpkgTun(ctx, cfg)
+				}
+			}
+		}
+	}
+
 	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg, tunFdSock)); err != nil {
 		if isRaw {
 			_ = s.teardownClientOpkgTun(ctx, cfg)
@@ -450,46 +473,65 @@ func (s *Service) StartClientInstance(id string) error {
 	}
 
 	if isRaw {
-		kernelIface := cfg.kernelRawIface()
-		if !waitForInterface(s.ifaceChecker, kernelIface, 20*time.Second) {
-			_ = s.clientProcs.get(id).Stop()
-			_ = s.teardownClientOpkgTun(ctx, cfg)
-			return fmt.Errorf("интерфейс %s не появился (NDMS OpkgTun)", kernelIface)
-		}
-		if tunFdSock != "" {
-			if err := sendTunFD(ctx, tunFdSock, kernelIface); err != nil {
-				_ = s.clientProcs.get(id).Stop()
-				_ = s.teardownClientOpkgTun(ctx, cfg)
-				return fmt.Errorf("передача TUN fd: %w", err)
+		_, bootstrapped := s.clientProcs.get(id).lastRawConf()
+		if bootstrapped && rawClientNDMSReady(cfg, s.ifaceChecker) {
+			if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
+				return err
 			}
-			if s.appLog != nil {
-				s.appLog.Info("start", id, "TUN fd передан клиенту через "+tunFdSock)
-			}
-		}
-		rawConf, ok := s.waitForClientRawConf(id, 90*time.Second)
-		if !ok {
-			_ = s.clientProcs.get(id).Stop()
-			_ = s.teardownClientOpkgTun(ctx, cfg)
-			return fmt.Errorf("RAWCONF не получен от wt-client")
-		}
-		if err := s.activateClientNDMSOpkgTun(ctx, id, cfg, rawConf); err != nil {
-			_ = s.clientProcs.get(id).Stop()
-			_ = s.teardownClientOpkgTun(ctx, cfg)
+			s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
+			s.restoreOpkgPolicyPermits(ctx, id, cfg)
+		} else if err := s.bootstrapRawClient(ctx, id, cfg, tunFdSock); err != nil {
 			return err
 		}
-		cfg.RawClientIP = rawConf.ClientIP
-		_ = s.persistClientConfig(id, cfg)
-		if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
-			_ = s.clientProcs.get(id).Stop()
-			_ = s.teardownClientOpkgTun(ctx, cfg)
-			return err
-		}
-		s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
-		s.restoreOpkgPolicyPermits(ctx, id, cfg)
 	}
 
 	if err := s.setEnabled(id, true); err != nil && s.appLog != nil {
 		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
+	return nil
+}
+
+func (s *Service) bootstrapRawClient(ctx context.Context, id string, cfg ClientConfig, tunFdSock string) error {
+	kernelIface := cfg.kernelRawIface()
+	if !waitForInterface(s.ifaceChecker, kernelIface, 20*time.Second) {
+		_ = s.clientProcs.get(id).Stop()
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+		return fmt.Errorf("интерфейс %s не появился (NDMS OpkgTun)", kernelIface)
+	}
+	if tunFdSock != "" {
+		if err := sendTunFD(ctx, tunFdSock, kernelIface); err != nil {
+			_ = s.clientProcs.get(id).Stop()
+			_ = s.teardownClientOpkgTun(ctx, cfg)
+			return fmt.Errorf("передача TUN fd: %w", err)
+		}
+		if s.appLog != nil {
+			s.appLog.Info("start", id, "TUN fd передан клиенту через "+tunFdSock)
+		}
+	}
+	rawConf, ok := s.waitForClientRawConf(id, 90*time.Second)
+	if !ok {
+		_ = s.clientProcs.get(id).Stop()
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+		return fmt.Errorf("RAWCONF не получен от wt-client")
+	}
+	if err := s.activateClientNDMSOpkgTun(ctx, id, cfg, rawConf); err != nil {
+		_ = s.clientProcs.get(id).Stop()
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+		return err
+	}
+	cfg.RawClientIP = rawConf.ClientIP
+	_ = s.persistClientConfig(id, cfg)
+	if err := s.applyClientRawIface(ctx, id, cfg); err != nil {
+		_ = s.clientProcs.get(id).Stop()
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+		return err
+	}
+	s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
+	s.restoreOpkgPolicyPermits(ctx, id, cfg)
+	if s.ifaceChecker != nil && !s.ifaceChecker.InterfaceOperUp(kernelIface) {
+		_ = s.clientProcs.get(id).Stop()
+		_ = s.teardownClientOpkgTun(ctx, cfg)
+		return fmt.Errorf("интерфейс %s operstate down после bootstrap", kernelIface)
 	}
 	return nil
 }

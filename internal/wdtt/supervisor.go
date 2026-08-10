@@ -77,13 +77,38 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
+		peerBad := clientPeerUnhealthy(st, now)
+		ndmsBad := clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
+		relayBad := clientRawRelayUnhealthy(c.Config, s.relayProbe, s.ifaceChecker, st, now)
+		if ndmsBad && !peerBad {
+			if _, err := s.reconcileClientRawNDMS(ctx, c.ID, c.Config); err == nil {
+				st = proc.Status()
+				ndmsBad = clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
+			} else if err := s.restartClientInstance(c.ID); err != nil {
+				if s.appLog != nil {
+					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: "+err.Error())
+				}
+			} else if s.appLog != nil {
+				s.appLog.Info("health", c.ID, "клиент перезапущен: OpkgTun down")
+			}
+			s.clientHealth.reset(c.ID)
+			s.clientStall.reset(c.ID)
+			continue
+		}
+		if s.clientHealth.note(c.ID, peerBad || ndmsBad || relayBad) {
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: peer недоступен")
+				reason := "peer недоступен"
+				switch {
+				case relayBad && !peerBad && !ndmsBad:
+					reason = "raw-туннель не проходит проверку связи"
+				case ndmsBad && !peerBad:
+					reason = "OpkgTun интерфейс down"
+				}
+				s.appLog.Info("health", c.ID, "клиент перезапущен: "+reason)
 			}
 			s.clientHealth.reset(c.ID)
 			s.clientStall.reset(c.ID)

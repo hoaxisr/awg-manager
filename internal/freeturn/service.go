@@ -49,6 +49,9 @@ type Service struct {
 	serverHealth *healthTracker
 	startBackoff *proxysup.Backoff
 
+	relayProbe     RelayProbe
+	linkedTunnels  LinkedTunnelResolver
+
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
 	matchMu  sync.Mutex
@@ -64,6 +67,14 @@ func (s *Service) SetLogger(appLogger logging.AppLogger) {
 // SetListenPortChecker wires external localhost listen ports (AWG tunnel endpoints, etc.).
 func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenPortChecker = c
+}
+
+func (s *Service) SetRelayProbe(p RelayProbe) {
+	s.relayProbe = p
+}
+
+func (s *Service) SetLinkedTunnelResolver(r LinkedTunnelResolver) {
+	s.linkedTunnels = r
 }
 
 func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {

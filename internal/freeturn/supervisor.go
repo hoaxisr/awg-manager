@@ -76,13 +76,19 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			continue
 		}
 		s.startBackoff.Success(key)
-		if s.clientHealth.note(c.ID, clientPeerUnhealthy(st, now)) {
+		peerBad := clientPeerUnhealthy(st, now)
+		relayBad := clientRelayUnhealthy(s.relayProbe, s.linkedTunnels, c.ID, st, now)
+		if s.clientHealth.note(c.ID, peerBad || relayBad) {
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
 					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
 				}
 			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: нет активных DTLS-сессий")
+				reason := "нет активных DTLS-сессий"
+				if relayBad && !peerBad {
+					reason = "linked-туннель не проходит проверку связи"
+				}
+				s.appLog.Info("health", c.ID, "клиент перезапущен: "+reason)
 			}
 			s.clientHealth.reset(c.ID)
 		}

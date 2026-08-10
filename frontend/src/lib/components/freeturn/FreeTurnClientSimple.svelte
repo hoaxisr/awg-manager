@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Dropdown } from '$lib/components/ui';
+	import { Button, Input, Dropdown, Toggle } from '$lib/components/ui';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
@@ -7,10 +7,17 @@
 	import ProxyQuickStart from '../proxy-panel/ProxyQuickStart.svelte';
 	import ProxyQuickStartStep from '../proxy-panel/ProxyQuickStartStep.svelte';
 	import ProxyWizardGuide from '../proxy-panel/ProxyWizardGuide.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import WgConfExportPanel from '../proxy-panel/WgConfExportPanel.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { WizardGuideItem } from '../proxy-panel/ProxyWizardGuide.svelte';
 	import type { QuickStartItem } from '../proxy-panel/ProxyQuickStart.svelte';
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
-	import { freeturnLinkHasWg } from '$lib/utils/serverPeerOptions';
+	import {
+		linkHasBundledWg,
+		linkedTunnelListenPort,
+		patchWgConfEndpoint
+	} from '$lib/utils/serverPeerOptions';
 	import { dnsModeOptions, platformOptions, modeOptions, transportOptions } from './options';
 	import { proxyClientOpsMode } from '$lib/utils/proxyOpsMode';
 	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
@@ -34,6 +41,7 @@
 		onToggle: (on: boolean) => void | Promise<void>;
 		onImportLink: (link: string) => FreeTurnLinkPayload | null | Promise<FreeTurnLinkPayload | null>;
 		onImportManualWg?: (wg: string) => void | Promise<void>;
+		onImportWgTunnel?: (wg: string) => void | Promise<void>;
 		importingWg?: boolean;
 		instances?: LogInstanceItem[];
 		selectedInstanceId?: string;
@@ -50,6 +58,7 @@
 		onToggle,
 		onImportLink,
 		onImportManualWg,
+		onImportWgTunnel,
 		importingWg = false,
 		instances = [],
 		selectedInstanceId = '',
@@ -90,7 +99,28 @@
 			setupComplete: step3Done
 		})
 	);
-	const showWizard = $derived(!opsMode || wizardOpen);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
+
+	const bundledWgRaw = $derived.by(() =>
+		linkHasBundledWg(linkParams?.wg) ? linkParams!.wg!.trim() : ''
+	);
+
+	const displayWgConf = $derived.by(() => {
+		if (!bundledWgRaw) return '';
+		const port = linkedTunnelListenPort(client.listen, linkParams?.listen);
+		if (port == null) return bundledWgRaw;
+		return patchWgConfEndpoint(bundledWgRaw, port);
+	});
+
+	const wgExportFilename = $derived.by(() => {
+		const base = (linkParams?.name || client.peer.split(':')[0] || 'freeturn-client').trim();
+		return `${base.replace(/[^\w.-]+/g, '_')}.conf`;
+	});
+
+	const canImportWgTunnel = $derived(
+		!!displayWgConf && linkedTunnelListenPort(client.listen, linkParams?.listen) != null
+	);
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'import', label: 'freeturn:// с сервера', done: step1Done },
@@ -102,7 +132,7 @@
 	const quickDoneCount = $derived(quickItems.filter((i) => i.done).length);
 	const listenMeta = $derived(client.listen?.trim() || '127.0.0.1:9000');
 	const showManualWg = $derived(
-		!!linkParams && !freeturnLinkHasWg(linkParams.wg) && !manualWgApplied
+		!!linkParams && !linkHasBundledWg(linkParams.wg) && !manualWgApplied
 	);
 
 	async function loadWgFile(file: File) {
@@ -174,7 +204,7 @@
 			linkParams = payload;
 			manualWgApplied = false;
 			importLink = '';
-			const hasWg = freeturnLinkHasWg(payload?.wg);
+			const hasWg = linkHasBundledWg(payload?.wg);
 			if (client.peer.trim() && (hasWg || step2Done)) {
 				quickActive = 'links';
 			}
@@ -235,6 +265,19 @@
 							<p class="ft-readonly">peer: <code>{client.peer}</code></p>
 						{/if}
 						<LinkParamsSummary payload={linkParams} peer={client.peer} />
+						{#if displayWgConf}
+							<WgConfExportPanel
+								wgConf={displayWgConf}
+								filename={wgExportFilename}
+								onImportTunnel={
+									onImportWgTunnel || onImportManualWg
+										? () => (onImportWgTunnel ?? onImportManualWg)?.(displayWgConf)
+										: undefined
+								}
+								importingTunnel={importingWg}
+								importDisabled={!canImportWgTunnel}
+							/>
+						{/if}
 						{#if showManualWg && onImportManualWg}
 							<div class="ft-wg-manual">
 								<p class="ft-hint">
@@ -351,6 +394,14 @@
 
 		{#if opsTab === 'setup'}
 			<section class="ops-section">
+				{#if isExpert}
+					<div class="ft-import-row">
+						<Input bind:value={importLink} placeholder="freeturn://…" />
+						<Button variant="primary" size="sm" loading={importing} disabled={!importLink.trim()} onclick={applyImport}>
+							Импорт
+						</Button>
+					</div>
+				{/if}
 				<p class="ft-readonly">peer: <code>{client.peer}</code></p>
 				<textarea class="ft-simple-textarea" bind:value={client.links} rows="3"></textarea>
 				<div class="ft-simple-grid">
@@ -378,6 +429,36 @@
 					bind:value={client.dnsServers}
 					placeholder="ip[:port],… — пусто = встроенные"
 				/>
+				{#if isExpert}
+					<div class="ft-simple-grid">
+						<Input label="Provider" bind:value={client.provider} />
+						<Input label="Client ID" bind:value={client.clientId} />
+						<SensitiveInput label="Obf key (-obf-key)" bind:value={client.obfKey} placeholder="64 hex" />
+						<Dropdown label="Obf profile" bind:value={client.obfProfile} options={[
+							{ value: 'none', label: 'none' },
+							{ value: 'rtpopus', label: 'rtpopus' },
+							{ value: 'rtpopus2', label: 'rtpopus2' },
+							{ value: 'rtpopus3', label: 'rtpopus3' }
+						]} />
+					</div>
+					<Input label="Listen" bind:value={client.listen} placeholder="127.0.0.1:9000" />
+					<Input label="URL подписки (-sub)" bind:value={client.sub} />
+					<Toggle label="Bond (-bond)" checked={!!client.bond} onchange={(v) => (client.bond = v)} />
+					<Toggle label="Debug (-debug)" checked={!!client.debug} onchange={(v) => (client.debug = v)} />
+					{#if displayWgConf}
+						<WgConfExportPanel
+							wgConf={displayWgConf}
+							filename={wgExportFilename}
+							onImportTunnel={
+								onImportWgTunnel || onImportManualWg
+									? () => (onImportWgTunnel ?? onImportManualWg)?.(displayWgConf)
+									: undefined
+							}
+							importingTunnel={importingWg}
+							importDisabled={!canImportWgTunnel}
+						/>
+					{/if}
+				{/if}
 				<p class="ft-hint">
 					{linksCount} VK-ссылок · listen <code>{listenMeta}</code>
 					<ListenPortKillButton listen={listenMeta} proto="udp" />

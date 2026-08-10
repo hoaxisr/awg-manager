@@ -6,6 +6,9 @@ import (
 )
 
 const (
+	// clientNDMSGrace — короче основного grace: OpkgTun down при живом процессе
+	// лечится reconcile/restart, ждать 5 мин незачем.
+	clientNDMSGrace = 90 * time.Second
 	// clientHealthGrace шире, чем у freeturn: детекта капчи в пакете нет, а
 	// VK-авторизация wt-client'а с ручной капчей легко занимает минуты — на
 	// коротком окне health-check убивал бы её на середине.
@@ -43,6 +46,26 @@ func (h *healthTracker) reset(id string) {
 	h.mu.Lock()
 	delete(h.strikes, id)
 	h.mu.Unlock()
+}
+
+// clientRawNDMSUnhealthy: raw-клиент на OpkgTun живёт как процесс, но NDMS-
+// интерфейс после stop/start awg-manager остался down (teardown без повторной
+// активации). Типично после deploy/restart демона.
+func clientRawNDMSUnhealthy(cfg ClientConfig, checker InterfaceChecker, st ProcessStatus, now time.Time) bool {
+	if !st.Running || st.StartedAt == nil || cfg.UsesWireGuard() || !cfg.usesNDMSOpkgTun() {
+		return false
+	}
+	if now.Sub(*st.StartedAt) < clientNDMSGrace {
+		return false
+	}
+	if checker == nil {
+		return false
+	}
+	iface := cfg.kernelRawIface()
+	if !checker.InterfaceExists(iface) {
+		return true
+	}
+	return !checker.InterfaceOperUp(iface)
 }
 
 func clientPeerUnhealthy(st ProcessStatus, now time.Time) bool {

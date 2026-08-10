@@ -49,6 +49,43 @@ func TestClientPeerUnhealthyIgnoresMissingTelemetry(t *testing.T) {
 	}
 }
 
+type fakeIfaceChecker struct {
+	exists map[string]bool
+	operUp map[string]bool
+}
+
+func (f fakeIfaceChecker) InterfaceExists(name string) bool { return f.exists[name] }
+func (f fakeIfaceChecker) InterfaceOperUp(name string) bool { return f.operUp[name] }
+
+func TestClientRawNDMSUnhealthy(t *testing.T) {
+	started := time.Now().Add(-6 * time.Minute)
+	cfg := ClientConfig{
+		ConnMode:  ConnModeRaw,
+		NdmsIface: "OpkgTun18",
+		RawIface:  "opkgtun18",
+	}
+	st := ProcessStatus{Running: true, StartedAt: &started}
+	checker := fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": false},
+	}
+	if !clientRawNDMSUnhealthy(cfg, checker, st, time.Now()) {
+		t.Fatal("expected unhealthy when opkg iface operstate is down")
+	}
+	checker.operUp["opkgtun18"] = true
+	if clientRawNDMSUnhealthy(cfg, checker, st, time.Now()) {
+		t.Fatal("expected healthy when iface is up")
+	}
+	if clientRawNDMSUnhealthy(ClientConfig{ConnMode: ConnModeWG}, checker, st, time.Now()) {
+		t.Fatal("wg mode must not use raw NDMS health")
+	}
+	fresh := time.Now().Add(-time.Minute)
+	st.StartedAt = &fresh
+	if clientRawNDMSUnhealthy(cfg, checker, st, time.Now()) {
+		t.Fatal("expected healthy during grace period")
+	}
+}
+
 func TestClientRelayStalled(t *testing.T) {
 	started := time.Now().Add(-6 * time.Minute)
 	st := ProcessStatus{

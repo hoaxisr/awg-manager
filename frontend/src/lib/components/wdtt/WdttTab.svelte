@@ -6,6 +6,7 @@
 	import { ProcessAlerts, Tabs } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import WdttServerSimple from './WdttServerSimple.svelte';
+	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
 	import { errText } from '$lib/utils/errorMessage';
@@ -60,6 +61,7 @@
 	const wgEnsureCooldown = new Map<string, number>();
 	const rawEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
+	let importingWgTunnel = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
 	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
@@ -606,6 +608,38 @@
 		}
 	}
 
+	async function importWgTunnelFromConf(wgRaw: string, tunnelLabel?: string) {
+		if (!selectedClient || !config) return;
+		const c = selectedClient.config;
+		if ((c.connMode ?? 'wg') === 'raw') {
+			notifications.info('Raw-режим — AWG-туннель не нужен');
+			return;
+		}
+		const port = linkedTunnelListenPort(c.listen);
+		if (port == null) {
+			notifications.error('Укажите listen (127.0.0.1:порт) перед импортом WG');
+			return;
+		}
+		importingWgTunnel = true;
+		try {
+			const wg = patchWgConfEndpoint(wgRaw.trim(), port);
+			const tunnel = await api.importConfig(
+				wg,
+				wdttTunnelName(tunnelLabel || selectedClient.name),
+				undefined,
+				undefined,
+				selectedClientId
+			);
+			wgEnsureSettled.delete(selectedClientId);
+			notifications.success(`AWG-туннель «${tunnel.name}» создан (Endpoint 127.0.0.1:${port})`);
+		} catch (e) {
+			notifications.error('Не удалось создать AWG-туннель: ' + errText(e));
+			throw e;
+		} finally {
+			importingWgTunnel = false;
+		}
+	}
+
 	async function applyImportPayload(
 		payload: WdttImportPayload,
 		meta?: { subUrl?: string; clientName?: string; andStart?: boolean }
@@ -741,6 +775,8 @@
 		}}
 	/>
 
+	<ProxyPanelModeToggle />
+
 	{#if activeTab === 'client'}
 	<InstanceBar
 		items={clientBarItems}
@@ -781,6 +817,8 @@
 				subscriptionTick={subscriptionTick}
 				onEnsureWg={ensureWgManual}
 				ensuringWg={ensuringWg}
+				onImportWgTunnel={importWgTunnelFromConf}
+				importingWgTunnel={importingWgTunnel}
 			/>
 		{/key}
 	{:else}
