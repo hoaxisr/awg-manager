@@ -15,7 +15,7 @@ func TestAWGLinkedTunnelResolverFreeTurn(t *testing.T) {
 	if err := os.MkdirAll(tunnelsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewAWGTunnelStore(tunnelsDir)
+	store := storage.NewAWGTunnelStoreWithLockDir(tunnelsDir, filepath.Join(dir, "locks"))
 	if err := store.Save(&storage.AWGTunnel{
 		ID:               "awg10",
 		Enabled:          true,
