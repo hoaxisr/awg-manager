@@ -2,6 +2,7 @@ package hydraroute
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,10 @@ import (
 )
 
 const maxGeoExpandLines = 100_000
+
+// ErrGeoTagNotFound помечает «тег отсутствует в файле» — потребители
+// (bypass-набор) различают его с ошибкой парсинга .dat (та фатальна).
+var ErrGeoTagNotFound = errors.New("geo tag not found")
 
 // ExtractGeoSiteTagLines returns sing-box inline list lines for a geosite tag.
 func ExtractGeoSiteTagLines(path, tag string) ([]string, error) {
@@ -68,7 +73,7 @@ func extractTagLines(path, wantTag, kind string, parseItem itemParser) ([]string
 	}
 
 	if !found {
-		return nil, fmt.Errorf("%s tag %q not found in %s", kind, wantTag, path)
+		return nil, fmt.Errorf("%s tag %q not found in %s: %w", kind, wantTag, path, ErrGeoTagNotFound)
 	}
 	return lines, nil
 }
@@ -394,5 +399,5 @@ func (s *GeoDataStore) expandGeoTag(kind, tag string, geositeExtract func(path, 
 	if lastErr != nil {
 		return nil, "", lastErr
 	}
-	return nil, "", fmt.Errorf("%s tag %q not found in any file", kind, tag)
+	return nil, "", fmt.Errorf("%s tag %q not found in any file: %w", kind, tag, ErrGeoTagNotFound)
 }

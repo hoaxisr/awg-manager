@@ -1,6 +1,7 @@
 package hydraroute
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,6 +163,44 @@ func TestExtractGeoIPTagLines(t *testing.T) {
 		if lines[i] != want[i] {
 			t.Errorf("lines[%d] = %q, want %q", i, lines[i], want[i])
 		}
+	}
+}
+
+// TestExpandGeoTag_NotFoundSentinel pins that a missing tag is reported with
+// ErrGeoTagNotFound through every expansion entry point, so consumers can tell
+// it apart from a .dat parse failure (which is fatal for them).
+func TestExpandGeoTag_NotFoundSentinel(t *testing.T) {
+	entries := [][]byte{
+		buildGeoEntryWithItems(1, "RU", [][]byte{
+			buildCidrItem([]byte{5, 8, 0, 0}, 21),
+		}),
+	}
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, "geoip.dat")
+	if err := os.WriteFile(tmp, buildGeoDAT(entries), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gds := NewGeoDataStore(dir)
+	gds.entries = []GeoFileEntry{{Type: "geoip", Path: tmp}}
+
+	if _, _, err := gds.ExpandGeoTag("geoip", "nosuchtag"); !errors.Is(err, ErrGeoTagNotFound) {
+		t.Fatalf("ExpandGeoTag: want ErrGeoTagNotFound, got %v", err)
+	}
+	if _, _, err := gds.ExpandGeoTagTyped("geoip", "nosuchtag"); !errors.Is(err, ErrGeoTagNotFound) {
+		t.Fatalf("ExpandGeoTagTyped: want ErrGeoTagNotFound, got %v", err)
+	}
+	if err := StreamGeoIPTagLines(tmp, "nosuchtag", func(string) error { return nil }); !errors.Is(err, ErrGeoTagNotFound) {
+		t.Fatalf("StreamGeoIPTagLines: want ErrGeoTagNotFound, got %v", err)
+	}
+	if _, err := ExtractGeoIPTagLines(tmp, "nosuchtag"); !errors.Is(err, ErrGeoTagNotFound) {
+		t.Fatalf("ExtractGeoIPTagLines: want ErrGeoTagNotFound, got %v", err)
+	}
+
+	// No tracked file of that kind at all — still "not found", not a parse error.
+	empty := NewGeoDataStore(t.TempDir())
+	if _, _, err := empty.ExpandGeoTag("geoip", "ru"); !errors.Is(err, ErrGeoTagNotFound) {
+		t.Fatalf("ExpandGeoTag (no files): want ErrGeoTagNotFound, got %v", err)
 	}
 }
 

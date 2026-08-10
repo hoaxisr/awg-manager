@@ -778,3 +778,48 @@ func TestGeoDataStore_Recovery_RemovesBackupWhenOriginalExists(t *testing.T) {
 		t.Fatalf("backup artifact still exists: %v", err)
 	}
 }
+
+// TestGeoIPTagCounts_SumsAcrossFiles pins the budget-validation source: counts
+// are summed per tag across every tracked geoip file, keyed lower-case, with
+// geosite files ignored and unreadable files skipped.
+func TestGeoIPTagCounts_SumsAcrossFiles(t *testing.T) {
+	store := newTestGeoStore(t)
+
+	first := filepath.Join(store.geoDir, "geoip-1.dat")
+	if err := os.WriteFile(first, buildGeoDAT([][]byte{buildGeoEntry(1, "RU", 2, 2)}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(store.geoDir, "geoip-2.dat")
+	if err := os.WriteFile(second, buildGeoDAT([][]byte{
+		buildGeoEntry(1, "ru", 2, 3),
+		buildGeoEntry(1, "US", 2, 1),
+	}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	site := filepath.Join(store.geoDir, "geosite.dat")
+	if err := os.WriteFile(site, buildGeoDAT([][]byte{buildGeoEntry(1, "RU", 2, 7)}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(store.geoDir, "geoip-broken.dat")
+	if err := os.WriteFile(broken, []byte("not-a-dat"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store.entries = []GeoFileEntry{
+		{Type: "geoip", Path: first},
+		{Type: "geoip", Path: second},
+		{Type: "geosite", Path: site},
+		{Type: "geoip", Path: broken},
+	}
+
+	counts := store.GeoIPTagCounts()
+	if counts["ru"] != 5 {
+		t.Fatalf("want ru=5, got %v", counts)
+	}
+	if counts["us"] != 1 {
+		t.Fatalf("want us=1, got %v", counts)
+	}
+	if len(counts) != 2 {
+		t.Fatalf("unexpected tags: %v", counts)
+	}
+}

@@ -749,6 +749,24 @@ func (s *GeoDataStore) GeoFilePaths() (geoIP, geoSite []string) {
 	return dedupeGeoPaths(geoIP), dedupeGeoPaths(geoSite)
 }
 
+// GeoIPTagCounts суммирует Count каждого geoip-тега по всем отслеживаемым
+// geoip-файлам. Источник бюджет-валидации bypass-тегов; ошибки чтения
+// отдельного файла пропускаются (валидация консервативна и без него).
+func (s *GeoDataStore) GeoIPTagCounts() map[string]int {
+	geoIP, _ := s.GeoFilePaths()
+	out := make(map[string]int)
+	for _, p := range geoIP {
+		tags, err := s.GetTags(p)
+		if err != nil {
+			continue
+		}
+		for _, t := range tags {
+			out[strings.ToLower(t.Name)] += t.Count
+		}
+	}
+	return out
+}
+
 // AdoptExternalFiles scans the provided hrneo config for GeoSite/GeoIP file
 // paths not yet tracked by this store, and registers them as External entries.
 // Returns the number of files adopted.
