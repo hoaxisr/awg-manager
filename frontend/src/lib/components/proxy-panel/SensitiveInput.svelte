@@ -30,6 +30,7 @@
 			bind:value
 			{placeholder}
 			{disabled}
+			autocomplete="off"
 		/>
 		<Button variant="secondary" size="sm" {disabled} onclick={() => (revealed = !revealed)}>
 			{revealed ? 'Скрыть' : 'Показать'}

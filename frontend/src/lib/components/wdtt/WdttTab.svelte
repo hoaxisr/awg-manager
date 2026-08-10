@@ -634,7 +634,6 @@
 			notifications.success(`AWG-туннель «${tunnel.name}» создан (Endpoint 127.0.0.1:${port})`);
 		} catch (e) {
 			notifications.error('Не удалось создать AWG-туннель: ' + errText(e));
-			throw e;
 		} finally {
 			importingWgTunnel = false;
 		}
