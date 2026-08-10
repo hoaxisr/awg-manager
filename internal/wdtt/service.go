@@ -63,6 +63,13 @@ type Service struct {
 	// интерфейс из-под старта.
 	opkgStartMu sync.Mutex
 	opkgStarts  int
+
+	// clientStarts — per-client счётчик стартов в полёте (StartClientInstance
+	// целиком, супервизор и API учитываются одинаково). В отличие от
+	// opkgStarts (глобальный, для reap/сервера) — не даёт старту одного
+	// клиента глушить reconcile/эскалацию у другого.
+	clientStartMu sync.Mutex
+	clientStarts  map[string]int
 }
 
 func (s *Service) beginOpkgStart() {
@@ -81,6 +88,32 @@ func (s *Service) opkgStartsInFlight() bool {
 	s.opkgStartMu.Lock()
 	defer s.opkgStartMu.Unlock()
 	return s.opkgStarts > 0
+}
+
+func (s *Service) beginClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts == nil {
+		s.clientStarts = make(map[string]int)
+	}
+	s.clientStarts[id]++
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) endClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts[id] > 0 {
+		s.clientStarts[id]--
+		if s.clientStarts[id] == 0 {
+			delete(s.clientStarts, id)
+		}
+	}
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) clientStartInFlight(id string) bool {
+	s.clientStartMu.Lock()
+	defer s.clientStartMu.Unlock()
+	return s.clientStarts[id] > 0
 }
 
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
@@ -408,6 +441,11 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 }
 
 func (s *Service) StartClientInstance(id string) error {
+	// Per-client in-flight guard (F6): супервизор проверяет clientStartInFlight
+	// перед reconcile/эскалацией, чтобы не гоняться со StartClientInstance
+	// этого же клиента, запущенным откуда-то ещё (API, сам супервизор).
+	s.beginClientStart(id)
+	defer s.endClientStart(id)
 	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err

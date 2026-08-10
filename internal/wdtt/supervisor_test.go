@@ -317,10 +317,11 @@ func TestSuperviseStallGatedByBackoff(t *testing.T) {
 	}
 }
 
-// I4: пока где-то идёт StartClientInstance (bootstrap ждёт RAWCONF — VK-
-// капча, может занять минуты), супервизор не должен параллельно гонять
-// reconcile — гонка мутации NDMS-интерфейса без лока. Guard стоит ДО
-// Allow(reconcileKey), поэтому скип не должен потратить backoff-окно.
+// I4/F6: пока у ЭТОГО клиента где-то идёт StartClientInstance (bootstrap
+// ждёт RAWCONF — VK-капча, может занять минуты), супервизор не должен
+// параллельно гонять reconcile — гонка мутации NDMS-интерфейса без лока.
+// Guard стоит ДО Allow(reconcileKey), поэтому скип не должен потратить
+// backoff-окно.
 func TestSuperviseSkipsReconcileWhileStartInFlight(t *testing.T) {
 	s, _ := enabledRawClientService(t, "10.70.0.5")
 	defer s.Stop()
@@ -333,15 +334,72 @@ func TestSuperviseSkipsReconcileWhileStartInFlight(t *testing.T) {
 		t.Fatal("ожидали fakeOpkgCommands из enabledRawClientService")
 	}
 
-	s.beginOpkgStart() // симулируем идущий StartClientInstance (любого клиента)
+	s.beginClientStart(DefaultInstanceID) // симулируем идущий StartClientInstance этого клиента
 	s.superviseEnabled(context.Background())
-	s.endOpkgStart()
+	s.endClientStart(DefaultInstanceID)
 
 	if len(fake.calls) != 0 {
 		t.Fatalf("reconcile не должен был выполниться во время старта: %v", fake.calls)
 	}
 	if !s.startBackoff.Allow(reconcileKey(DefaultInstanceID), time.Now()) {
 		t.Fatal("guard не должен жечь backoff-окно reconcile на скип")
+	}
+}
+
+// F6: старт клиента A не должен блокировать reconcile клиента B — guard
+// per-client, а не глобальный (был баг: глобальный opkgStartsInFlight()
+// вешал reconcile для всех клиентов на время старта любого одного).
+func TestSuperviseReconcileNotBlockedByOtherClientStart(t *testing.T) {
+	s, _ := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": false}, // ndmsBad
+	})
+	fake, ok := s.ndmsIfaces.(*fakeOpkgCommands)
+	if !ok {
+		t.Fatal("ожидали fakeOpkgCommands из enabledRawClientService")
+	}
+
+	s.beginClientStart("other-client") // старт ДРУГОГО клиента в полёте
+	s.superviseEnabled(context.Background())
+	s.endClientStart("other-client")
+
+	if len(fake.calls) == 0 {
+		t.Fatal("старт клиента B не должен блокировать reconcile клиента A")
+	}
+}
+
+// F6: пока клиент сам мид-флайт стартует (например, через API), эскалация в
+// restartClientInstance должна придерживаться — иначе StartClientInstance
+// гоняется параллельно самому себе. Страйки при этом продолжают копиться, а
+// backoff-окно скип не должен тратить.
+func TestSuperviseEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
+	s, proc := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": false}, // ndmsBad всегда
+	})
+
+	before := proc.Status().StartedAt
+
+	s.beginClientStart(DefaultInstanceID) // симулируем идущий собственный старт
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes+2; i++ {
+		s.superviseEnabled(ctx)
+	}
+	s.endClientStart(DefaultInstanceID)
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("рестарт не должен был случиться, пока идёт собственный старт клиента")
+	}
+	if strikes := s.clientHealth.strikes[DefaultInstanceID]; strikes < clientHealthStrikes {
+		t.Fatalf("страйки должны продолжать копиться несмотря на скип эскалации, strikes=%d", strikes)
+	}
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип эскалации по in-flight не должен тратить backoff-окно")
 	}
 }
 

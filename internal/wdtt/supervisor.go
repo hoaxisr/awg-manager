@@ -83,11 +83,13 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		peerBad := clientPeerUnhealthy(st, now)
 		ndmsBad := clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
 		relayBad := clientRawRelayUnhealthy(ctx, c.Config, s.relayProbe, s.ifaceChecker, st, now)
-		// I4: пока где-то идёт StartClientInstance (bootstrap ждёт RAWCONF —
-		// VK-капча, может занять минуты), reconcile не должен параллельно
-		// мутировать NDMS-интерфейс без лока. Guard до Allow(rKey) — не жжём
-		// backoff-окно на скип, страйк ниже всё равно копится как обычно.
-		if ndmsBad && !peerBad && !s.opkgStartsInFlight() {
+		// I4/F6: пока у ЭТОГО клиента где-то идёт StartClientInstance
+		// (bootstrap ждёт RAWCONF — VK-капча, может занять минуты), reconcile
+		// не должен параллельно мутировать NDMS-интерфейс без лока. Per-client
+		// guard — старт клиента A не должен глушить reconcile клиента B. Guard
+		// до Allow(rKey) — не жжём backoff-окно на скип, страйк ниже всё равно
+		// копится как обычно.
+		if ndmsBad && !peerBad && !s.clientStartInFlight(c.ID) {
 			// Reconcile — первая (дешёвая) попытка лечения: поднять OpkgTun без
 			// рестарта wt-client. Рестарт — эскалация ниже, если интерфейс не
 			// ожил. Сам reconcile — ~10-13 RCI-команд, поэтому гоняется под
@@ -136,6 +138,14 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			if !s.startBackoff.Allow(healthKey, now) {
 				continue
 			}
+			// F6: клиент сам мид-флайт стартует (StartClientInstance где-то
+			// ещё в процессе — API или сам супервизор) — не гонять рестарт
+			// параллельно тому же старту. Страйк уже учтён note() выше и
+			// остаётся накопленным, backoff-окно не трогаем — переоценим на
+			// следующем тике.
+			if s.clientStartInFlight(c.ID) {
+				continue
+			}
 			// Порог страйков выбит повторно после предыдущего health-рестарта —
 			// само по себе это значит, что лечение не удержалось. Считаем это
 			// неудачей backoff'а независимо от того, стартует ли процесс
@@ -181,6 +191,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				// note() уже вернул true (страйки на пороге), и при следующем
 				// разрешённом тике, если застой не прошёл, рестарт случится
 				// сразу, без повторного набора clientStallStrikes с нуля.
+				continue
+			}
+			// F6: тот же per-client guard, что у health-эскалации выше —
+			// не гонять рестарт по застою параллельно собственному старту.
+			if s.clientStartInFlight(c.ID) {
 				continue
 			}
 			s.startBackoff.Fail(stallKey, now)
