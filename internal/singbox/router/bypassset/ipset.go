@@ -1,4 +1,4 @@
-package selective
+package bypassset
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// SetName is the ipset name used for the AWGM selective bypass filter.
-	SetName = "AWGM-SELECTIVE"
+	// SetName is the ipset name used for the AWGM bypass filter.
+	SetName = "AWGM-BYPASS"
 
 	// setMaxElem is the maximum number of entries in the ipset.
 	// hash:net on Keenetic kernels supports up to ~1M entries; 262144
@@ -24,24 +24,14 @@ const (
 	// ipsetCtlTimeout — явный таймаут одиночных управляющих команд ipset
 	// (create/flush/swap/destroy/list -t). Дефолтные 30 с sysexec тесны для
 	// наборов с maxelem=262144 на нагруженном MIPS-роутере; сами команды
-	// конечны, поэтому щедрый потолок безопасен — зависание ловит этот
-	// exec-таймаут, а не stall guard пересборки.
+	// конечны, поэтому щедрый потолок безопасен.
 	ipsetCtlTimeout = 120 * time.Second
 )
 
 // runIpsetCtl запускает управляющую команду ipset с ipsetCtlTimeout вместо
-// дефолтного таймаута sysexec. Прогресс stall guard'у сигналится до И после
-// каждой команды (ProgressTouch — no-op вне пересборки): цепочки ctl-команд
-// (create→create staging→flush в начале прогона, swap→flush→count в конце)
-// иначе шли без единого touch до ~600 с подряд, и на нагруженном MIPS-роутере
-// guard ложно срабатывал посреди populate. Зависание самой команды ловит её
-// exec-таймаут, а не stall guard.
+// дефолтного таймаута sysexec.
 func runIpsetCtl(ctx context.Context, bin string, args ...string) (*sysexec.Result, error) {
-	touch := ProgressTouch(ctx)
-	touch()
-	res, err := sysexec.RunWithOptions(ctx, bin, args, sysexec.Options{Timeout: ipsetCtlTimeout})
-	touch()
-	return res, err
+	return sysexec.RunWithOptions(ctx, bin, args, sysexec.Options{Timeout: ipsetCtlTimeout})
 }
 
 // ipsetBin returns the path to ipset, or an error if not available.
@@ -53,7 +43,7 @@ func ipsetBin() (string, error) {
 	return p, nil
 }
 
-// CreateSet creates the AWGM-SELECTIVE ipset (hash:net) if it does not
+// CreateSet creates the AWGM-BYPASS ipset (hash:net) if it does not
 // already exist. Idempotent — "set with the same name already exists" is
 // silently ignored.
 func CreateSet(ctx context.Context) error {
@@ -80,7 +70,7 @@ func CreateSet(ctx context.Context) error {
 	return nil
 }
 
-// DestroySet removes the AWGM-SELECTIVE ipset. Idempotent — "set does not
+// DestroySet removes the AWGM-BYPASS ipset. Idempotent — "set does not
 // exist" is silently ignored (set was never created or already cleaned up).
 func DestroySet(ctx context.Context) error {
 	bin, err := ipsetBin()
@@ -101,11 +91,10 @@ func DestroySet(ctx context.Context) error {
 	return nil
 }
 
-// SetExists reports whether the AWGM-SELECTIVE ipset currently exists in
+// SetExists reports whether the AWGM-BYPASS ipset currently exists in
 // the kernel. Uses `ipset list -name` which is fast (no entry output), но
 // идёт тем же медленным kernel-путём, что и `list -t`, — дефолтные 30 с
-// sysexec на нагруженном роутере давали ложное «набора нет» (и лишнюю
-// пересборку через NeedsPopulation/ensureSelectiveSetExists), поэтому
+// sysexec на нагруженном роутере давали ложное «набора нет», поэтому
 // команда выполняется через runIpsetCtl с ipsetCtlTimeout.
 func SetExists(ctx context.Context) bool {
 	bin, err := ipsetBin()
@@ -124,13 +113,13 @@ func SetExists(ctx context.Context) bool {
 	return false
 }
 
-// EntryCount returns the number of entries in the AWGM-SELECTIVE ipset,
+// EntryCount returns the number of entries in the AWGM-BYPASS ipset,
 // or 0 if the set does not exist or the count cannot be determined.
 //
 // Uses `ipset list -t` (terse: header only) and reads the "Number of
 // entries" field. A full `ipset list` dump of a maxelem-262144 set is
 // megabytes of text piped through a fork on a 128MB router — and this
-// runs on every status request and CDN refresh.
+// runs on every status request.
 func EntryCount(ctx context.Context) int {
 	n, _ := EntryCountChecked(ctx)
 	return n
@@ -165,10 +154,10 @@ func EntryCountChecked(ctx context.Context) (n int, ok bool) {
 	return 0, false
 }
 
-// normalizeEntry canonicalises a CIDR or bare IPv4 address for ipset.
+// NormalizeEntry canonicalises a CIDR or bare IPv4 address for ipset.
 // Returns "" for anything that is not a valid IPv4 address or CIDR.
 // IPv6 is not supported — sing-box TProxy on Keenetic is IPv4-only.
-func normalizeEntry(raw string) string {
+func NormalizeEntry(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""

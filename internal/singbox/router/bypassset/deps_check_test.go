@@ -1,4 +1,4 @@
-package selective
+package bypassset
 
 import (
 	"errors"

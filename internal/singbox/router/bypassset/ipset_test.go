@@ -1,4 +1,4 @@
-package selective
+package bypassset
 
 import (
 	"bytes"
@@ -6,53 +6,53 @@ import (
 	"testing"
 )
 
-// ── normalizeEntry ────────────────────────────────────────────────────────────
+// ── NormalizeEntry ────────────────────────────────────────────────────────────
 
 func TestNormalizeEntry_ValidCIDR(t *testing.T) {
-	if got := normalizeEntry("10.0.0.0/8"); got != "10.0.0.0/8" {
+	if got := NormalizeEntry("10.0.0.0/8"); got != "10.0.0.0/8" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_BareIPBecomesSlash32(t *testing.T) {
-	if got := normalizeEntry("1.2.3.4"); got != "1.2.3.4/32" {
+	if got := NormalizeEntry("1.2.3.4"); got != "1.2.3.4/32" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_CanonicalisesCIDR(t *testing.T) {
 	// Host bits should be masked: 10.0.0.1/8 → 10.0.0.0/8
-	if got := normalizeEntry("10.0.0.1/8"); got != "10.0.0.0/8" {
+	if got := NormalizeEntry("10.0.0.1/8"); got != "10.0.0.0/8" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestNormalizeEntry_IPv6Rejected(t *testing.T) {
-	if got := normalizeEntry("::1/128"); got != "" {
+	if got := NormalizeEntry("::1/128"); got != "" {
 		t.Errorf("expected empty for IPv6, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_IPv6BareRejected(t *testing.T) {
-	if got := normalizeEntry("fe80::1"); got != "" {
+	if got := NormalizeEntry("fe80::1"); got != "" {
 		t.Errorf("expected empty for IPv6, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_GarbageRejected(t *testing.T) {
-	if got := normalizeEntry("not-an-ip"); got != "" {
+	if got := NormalizeEntry("not-an-ip"); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_EmptyString(t *testing.T) {
-	if got := normalizeEntry(""); got != "" {
+	if got := NormalizeEntry(""); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
 }
 
 func TestNormalizeEntry_Whitespace(t *testing.T) {
-	if got := normalizeEntry("  1.2.3.4  "); got != "1.2.3.4/32" {
+	if got := NormalizeEntry("  1.2.3.4  "); got != "1.2.3.4/32" {
 		t.Errorf("got %q", got)
 	}
 }

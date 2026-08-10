@@ -1,8 +1,8 @@
-// Package selective implements the selective-bypass feature for the sing-box
-// TProxy router: only traffic whose destination IP is listed in the
-// AWGM-SELECTIVE ipset reaches sing-box; all other traffic bypasses it
-// entirely (RETURN → WAN).
-package selective
+// Package bypassset owns the AWGM-BYPASS ipset: creation, population and the
+// availability checks for the userspace tooling it needs (ipset binary,
+// xt_set kernel module, conntrack). Traffic whose destination IP is listed in
+// the set bypasses sing-box entirely (RETURN → WAN).
+package bypassset
 
 import (
 	"context"
@@ -29,7 +29,7 @@ var ipsetBinaryPaths = []string{
 	"/sbin/ipset",
 }
 
-// healthLog — журнал приложения (routing/selective) для вердиктов health-check
+// healthLog — журнал приложения для вердиктов health-check
 // бинаря ipset. nil-safe: до/без подключения через SetHealthLogger вердикты
 // просто не журналируются (следующий скан после подключения зажурналирует
 // актуальный сбой заново — Warn пишется на каждый скан, не однократно).
@@ -258,7 +258,7 @@ func IsXtSetAvailable() bool {
 
 // isModuleLoaded checks /proc/modules for the given module name.
 // Identical to the helper in iptables.go; duplicated to keep the
-// selective package self-contained and avoid an internal import cycle.
+// bypassset package self-contained and avoid an internal import cycle.
 func isModuleLoaded(name string) bool {
 	data, err := os.ReadFile("/proc/modules")
 	if err != nil {
@@ -336,13 +336,37 @@ func InstallIPSet(ctx context.Context, progressFn func(line string)) error {
 
 	// Best-effort: also install conntrack so a routing change takes effect
 	// immediately (existing flows get evicted) instead of waiting for old
-	// connections to expire. Failure here is non-fatal — the selective guard
+	// connections to expire. Failure here is non-fatal — the bypass guard
 	// works without it, just with delayed effect on established flows.
 	if !IsConntrackAvailable() {
 		_ = InstallConntrackTools(ctx, progressFn)
 	}
 	return nil
 }
+
+// conntrackBinaryPaths lists candidate absolute paths for the conntrack
+// binary (from the conntrack-tools package), searched in preference order.
+var conntrackBinaryPaths = []string{
+	"/opt/sbin/conntrack",
+	"/usr/sbin/conntrack",
+	"/sbin/conntrack",
+}
+
+// ConntrackBinary returns the path to the conntrack binary, or "" when not
+// found. The conntrack package is optional — without it the bypass guard
+// still applies to NEW connections, it just can't evict already-tracked ones
+// (changes take effect only once the old flow expires).
+func ConntrackBinary() string {
+	for _, p := range conntrackBinaryPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// IsConntrackAvailable reports whether the conntrack binary is present.
+func IsConntrackAvailable() bool { return ConntrackBinary() != "" }
 
 // InstallConntrackTools installs the conntrack userspace binary via opkg.
 // Keenetic Entware ships it as package "conntrack"; some feeds use
