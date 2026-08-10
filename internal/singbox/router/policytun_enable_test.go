@@ -266,11 +266,46 @@ func TestPolicyTunEnable_PrefersPersistedIndex(t *testing.T) {
 	}
 }
 
-// Занятый персистентный индекс отдаётся аллокатору — иначе Create ударился бы
-// в живой чужой интерфейс.
-func TestPolicyTunEnable_ReallocatesWhenPersistedIndexBusy(t *testing.T) {
+// scanOwning отдаёт скану по описанию policy-tun заданный список NDMS-имён.
+func scanOwning(names ...string) func(context.Context, string) ([]string, error) {
+	return func(_ context.Context, desc string) ([]string, error) {
+		if desc == policyTunDescription {
+			return names, nil
+		}
+		return nil, nil
+	}
+}
+
+// Живой интерфейс из персиста — НАШ (описание совпадает): переиспользуем его
+// вместе с индексом. Выключение интерфейс больше не удаляет, и без этой ветки
+// каждое включение брало бы следующий номер, оставляя permit в политике висеть
+// на прежнем имени.
+func TestPolicyTunEnable_ReusesHeldOwnInterface(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun3")
+	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+
+	if !h.log.has("Create:OpkgTun3:public") {
+		t.Errorf("удержанный свой индекс 3 обязан переиспользоваться, получено %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Index != 3 {
+		t.Errorf("PolicyTun persist = %+v, want index 3", st)
+	}
+}
+
+// Тот же номер занят ЧУЖИМ интерфейсом (нашего описания на нём нет) — отдаём
+// аллокатору: Create ударился бы в живой чужой интерфейс.
+func TestPolicyTunEnable_ReallocatesWhenPersistedIndexForeign(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.svc.deps.OpkgTunScan = scanOwning() // наших интерфейсов нет вовсе
 	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
@@ -280,7 +315,47 @@ func TestPolicyTunEnable_ReallocatesWhenPersistedIndexBusy(t *testing.T) {
 	}
 
 	if !h.log.has("Create:OpkgTun0:public") {
-		t.Errorf("busy index 3 must fall back to the allocator, got %v", h.log.calls)
+		t.Errorf("чужой занятый индекс 3 обязан уйти аллокатору, получено %v", h.log.calls)
+	}
+}
+
+// Скан упал — владение недоказано: тот же fail-closed, что и при его
+// отсутствии. Иначе транзиентный сбой NDMS отдал бы нам чужой живой интерфейс.
+func TestPolicyTunEnable_ReallocatesWhenScanFails(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.svc.deps.OpkgTunScan = func(context.Context, string) ([]string, error) {
+		return []string{"OpkgTun3"}, errors.New("injected: scan")
+	}
+	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+
+	if !h.log.has("Create:OpkgTun0:public") {
+		t.Errorf("сбой скана обязан уводить к аллокатору, получено %v", h.log.calls)
+	}
+}
+
+// Скан не подключён — владение недоказуемо, поэтому занятый индекс отдаём
+// аллокатору: «не знаем» ≠ «наш».
+func TestPolicyTunEnable_ReallocatesWhenScanUnavailable(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.svc.deps.OpkgTunScan = nil
+	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+
+	if !h.log.has("Create:OpkgTun0:public") {
+		t.Errorf("без скана занятый индекс обязан уйти аллокатору, получено %v", h.log.calls)
 	}
 }
 

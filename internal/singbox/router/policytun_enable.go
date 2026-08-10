@@ -3,10 +3,25 @@ package router
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание policy-tun.
+// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
+// интерфейсу переписал бы его настройки.
+func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName string) bool {
+	if s.deps.OpkgTunScan == nil {
+		return false
+	}
+	ids, err := s.deps.OpkgTunScan(ctx, policyTunDescription)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(ids, ndmsName)
+}
 
 // enablePolicyTun provisions the policy-tun path: persist index → create a
 // PUBLIC + `ip global` OpkgTun (so NDMS lists it as a policy exit) → addr/mtu/up
@@ -66,11 +81,22 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Prefer the persisted index while it is free: the user pins permits in the
 	// NDMS policy to a concrete OpkgTun name, and silently renaming the exit on
 	// every enable would break them.
+	//
+	// Занятый персистом индекс тоже наш, если на нём висит НАШ интерфейс:
+	// выключение его больше не удаляет, а удерживает (holdOpkgTun). Без этой
+	// ветки удержание оборачивалось бы дрейфом хуже прежнего — номер занят,
+	// аллокатор берёт следующий, permit в политике остаётся на прежнем имени.
+	// Владение доказывается описанием; скан не подключён — «не знаем» ≠ «наш».
 	idx := 0
-	if prev != nil && !live[prev.Index] {
+	switch {
+	case prev != nil && !live[prev.Index]:
 		idx = prev.Index
-	} else if idx, err = allocateFakeIPIndex(live); err != nil {
-		return fmt.Errorf("enable policy-tun: allocate index: %w", err)
+	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index)):
+		idx = prev.Index
+	default:
+		if idx, err = allocateFakeIPIndex(live); err != nil {
+			return fmt.Errorf("enable policy-tun: allocate index: %w", err)
+		}
 	}
 	// Two names per index: NDMS RCI takes the CamelCase ndmsName, the kernel
 	// (sing-box config, ip flush, /sys carrier) sees the lowercase iface.
