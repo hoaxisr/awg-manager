@@ -158,9 +158,13 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		owned = fakeIPNDMSName(st.Index)
 	}
 
-	// То же для policy-tun: свой персист, своё NDMS-описание.
+	// То же для policy-tun: свой персист, своё NDMS-описание. Гейта на
+	// Provisioned тут НЕТ, в отличие от fakeip: выключение policy-tun интерфейс
+	// не удаляет, а удерживает вместе с индексом (holdOpkgTun), и удержанный
+	// интерфейс — наш, а не сирота. Владение здесь = наличие персиста; отменяет
+	// его смена режима (ветка ниже сносит интерфейс и чистит персист).
 	ownedPolicy := ""
-	if st := settings.PolicyTun; st != nil && st.Provisioned {
+	if st := settings.PolicyTun; st != nil {
 		ownedPolicy = fakeIPNDMSName(st.Index)
 	}
 

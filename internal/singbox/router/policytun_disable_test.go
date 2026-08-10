@@ -285,6 +285,55 @@ func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 	}
 }
 
+// Удержанный выключением интерфейс (Provisioned=false, индекс закреплён) реап
+// сносить не имеет права: он наш, к его имени привязан permit в политике, и
+// следующее включение обязано взять тот же номер.
+func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	opkg := &recordingOpkgTunProvisioner{}
+	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2", "OpkgTun5"}}}
+	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	if len(opkg.deleted) != 1 || opkg.deleted[0] != "OpkgTun5" {
+		t.Errorf("deleted = %v, want [OpkgTun5] (удержанный OpkgTun2 обязан уцелеть)", opkg.deleted)
+	}
+	all, _ := store.Load()
+	if all.PolicyTun == nil || all.PolicyTun.Index != 2 {
+		t.Errorf("PolicyTun persist = %+v, want удержанный индекс 2", all.PolicyTun)
+	}
+}
+
+// А вот смена режима удержание отменяет: интерфейс сносится И персист чистится.
+// Утверждение про персист здесь несущее — без ветки «чужой режим» интерфейс
+// всё равно снёс бы скан по описанию, и проверка одного только сноса стала бы
+// вакуумной.
+func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	opkg := &recordingOpkgTunProvisioner{}
+	scan := &recOpkgTunScan{}
+	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	if len(opkg.deleted) != 1 || opkg.deleted[0] != "OpkgTun2" {
+		t.Errorf("deleted = %v, want [OpkgTun2]", opkg.deleted)
+	}
+	all, _ := store.Load()
+	if all.PolicyTun != nil {
+		t.Errorf("PolicyTun persist = %+v, want nil: удержание отменено сменой режима", all.PolicyTun)
+	}
+}
+
 // Активный режим владеет ТОЛЬКО своим интерфейсом: в policy-tun реап не трогает
 // ни персист policy-tun, ни его интерфейс из скана.
 func TestPolicyTunReap_NoopInPolicyTunMode(t *testing.T) {
