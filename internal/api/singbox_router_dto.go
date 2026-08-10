@@ -93,6 +93,10 @@ type SingboxRouterSettingsData struct {
 	// IP/CIDR destinations whose traffic bypasses sing-box entirely (incl.
 	// DNS/53). Bare IP is treated as /32. E.g. "203.0.113.0/24, 10.8.0.5".
 	BypassExtraSubnets string `json:"bypassExtraSubnets,omitempty" example:"203.0.113.0/24"`
+	// BypassGeoipTags lists geoip tags from the configured .dat files whose
+	// CIDRs bypass sing-box entirely via the AWGM-BYPASS ipset (same full
+	// bypass semantics as bypassExtraSubnets, ipset-backed because of scale).
+	BypassGeoipTags []string `json:"bypassGeoipTags,omitempty" example:"geoip:ru"`
 	// IngressInterfaces lists interface refs whose ingress traffic is
 	// redirected through the sing-box router (e.g. "managed:Wireguard3").
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty" example:"managed:Wireguard3"`

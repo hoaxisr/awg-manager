@@ -71,7 +71,7 @@ func withHealthTestEnv(t *testing.T, paths []string, probe func(path string) (bo
 	if probe != nil {
 		probeIPSetBinary = probe
 	}
-	healthLog = logging.NewScopedLogger(capture, logging.GroupRouting, logging.SubSelective)
+	healthLog = logging.NewScopedLogger(capture, logging.GroupRouting, logging.SubBypassSet)
 	ipsetHealth.mu.Unlock()
 	resetIPSetHealthForTest()
 	t.Cleanup(func() {

@@ -369,10 +369,11 @@ func (a *app) setupRouter() {
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.
-	bypassset.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective))
+	bypassset.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubBypassSet))
 	// Содержимое bypass-набора выведено из .dat-файлов: их обновление/удаление
 	// обязано пересобирать набор (сам триггер — no-op вне tproxy и без тегов).
 	a.geoDataStore.SetOnChange(routerSvc.TriggerBypassSetPopulate)
+	a.srv.SetBypassSetHandler(api.NewBypassSetHandler(routerSvc, a.loggingService))
 
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.

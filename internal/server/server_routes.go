@@ -880,6 +880,13 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
 	}
 
+	if s.bypassSetHandler != nil {
+		bh := s.bypassSetHandler
+		mux.HandleFunc("/api/singbox/router/bypass-set/status", h.guarded(bh.GetStatus))
+		mux.HandleFunc("/api/singbox/router/bypass-set/install-deps", h.guarded(bh.InstallDeps))
+		mux.HandleFunc("/api/singbox/router/bypass-set/install-conntrack", h.guarded(bh.InstallConntrack))
+	}
+
 	if s.singboxFakeIPConfigHandler != nil {
 		fh := s.singboxFakeIPConfigHandler
 		mux.HandleFunc("/api/singbox/fakeip/config/dns/servers/list", h.guarded(fh.ListDNSServers))
