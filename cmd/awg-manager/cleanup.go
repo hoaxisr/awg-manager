@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -183,6 +184,25 @@ func runCleanup(dataDir string) {
 	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, configSaver{sc: cleanupNDMSSave})
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
+	}
+
+	// Интерфейс policy-tun живёт в NDMS и переживает удаление файлов: снимаем
+	// его отдельно, вместе с записанным NAT сегментов и NDMS-дефолтом.
+	//
+	// СВОЙ бюджет, а не остаток общего: при большом числе туннелей CleanupAll
+	// съедает 60 секунд целиком, и снятие не успело бы даже начаться — а
+	// повторить его некому, демона после удаления пакета уже нет.
+	ptCtx, ptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer ptCancel()
+	if err := router.ReleasePolicyTunForRemoval(ptCtx, router.Deps{
+		AppLog:       loggingService,
+		Settings:     settingsStore,
+		OpkgTun:      cleanupNDMSCommands.Interfaces,
+		DefaultRoute: cleanupNDMSCommands.Routes,
+		SegmentNAT:   cleanupNDMSCommands.NAT,
+		NATState:     &routerNATStateAdapter{nat: cleanupNDMSQueries.NAT, static: cleanupNDMSQueries.StaticNAT},
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "policy-tun cleanup error: %v\n", err)
 	}
 
 	// Remove all config/runtime files

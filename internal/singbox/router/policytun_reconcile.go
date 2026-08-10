@@ -36,20 +36,76 @@ func policyTunDefaultRoutePresent(lines []string, ndmsName string) (v4, v6 bool)
 	return v4, v6
 }
 
-// policyTunPermitted сообщает, разрешён ли интерфейс хотя бы в одной политике
-// доступа (`permit global <name>` внутри блока `ip policy …`). Блок политики не
-// разбирается: достаточно факта разрешения где угодно — привязка устройств к
-// конкретной политике вне зоны детекта v1.
-func policyTunPermitted(lines []string, ndmsName string) bool {
+// policyTunPermitted сообщает, разрешён ли интерфейс выходом ЦЕЛЕВОЙ политики
+// доступа: `permit global <ndmsName>` внутри блока `ip policy <policyName>`.
+// Разрешение в чужой политике таковым не является — устройства сидят в целевой,
+// и выхода у неё нет. Блок разбирается той же формой, что в
+// policyTunIPGlobalPresent: заголовок без отступа, тело с отступом.
+//
+// Пустой policyName — «политика не выбрана»: годится разрешение в любой, сказать
+// в какой именно оно обязано стоять нам нечего.
+func policyTunPermitted(lines []string, ndmsName, policyName string) bool {
+	inPolicy := false
 	for _, line := range lines {
-		f := strings.Fields(line)
-		for i := 0; i+2 < len(f); i++ {
-			if f[i] == "permit" && f[i+1] == "global" && f[i+2] == ndmsName {
-				return true
-			}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if line == trimmed { // строка без отступа — заголовок блока или его конец
+			f := strings.Fields(trimmed)
+			inPolicy = len(f) == 3 && f[0] == "ip" && f[1] == "policy" &&
+				(policyName == "" || f[2] == policyName)
+			continue
+		}
+		if !inPolicy {
+			continue
+		}
+		// Матч с начала строки, а не скользящим окном: `permit` — первый токен
+		// правила, а окно ловило бы те же слова в description.
+		f := strings.Fields(trimmed)
+		if len(f) >= 3 && f[0] == "permit" && f[1] == "global" && f[2] == ndmsName {
+			return true
 		}
 	}
 	return false
+}
+
+// globalEgressInterfaces собирает интерфейсы, которые МОГУТ быть выходом
+// наружу: те, у кого в блоке есть `ip global`. Порядок — как в конфиге.
+//
+// Почему не выходы политики: `ip static <Seg> <iface>` — общероутерная
+// настройка, а не свойство политики. Правило SNAT вешается на выходной
+// интерфейс и срабатывает для любого трафика сегмента, ушедшего в него, — хоть
+// по политике, хоть мимо неё. Привязка целей к составу политики оставила бы
+// без SNAT ровно те пути, которыми ходят устройства вне её.
+//
+// Собственные OpkgTun отсеивает вызывающий: они выход, но SNAT в них — тот
+// самый маскарад, от которого опция и спасает.
+func globalEgressInterfaces(lines []string) []string {
+	var out []string
+	current := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if line == trimmed { // без отступа — заголовок блока или его конец
+			f := strings.Fields(trimmed)
+			current = ""
+			if len(f) == 2 && f[0] == "interface" {
+				current = f[1]
+			}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		if trimmed == "ip global" || strings.HasPrefix(trimmed, "ip global ") {
+			out = append(out, current)
+			current = "" // одного признака на блок достаточно
+		}
+	}
+	return out
 }
 
 // policyTunIPGlobalPresent ищет `ip global` ВНУТРИ блока своего интерфейса:
@@ -75,18 +131,74 @@ func policyTunIPGlobalPresent(lines []string, ndmsName string) bool {
 	return false
 }
 
-// policyTunIngressSpec собирает желаемое состояние ingress-заворота для
-// policy-tun: только маршрутная половина (NoDNAT) — своего резолвера в режиме
-// нет, перехватывать DNS некуда. Единый источник для enable и reconcile.
-func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface string, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
+// policyTunIngressSpec собирает желаемое состояние перехвата и заворота для
+// policy-tun. Второе значение false означает «пропустить тик»: набор марок
+// прочитать не удалось, и трактовать это как «политик нет» нельзя — снятие
+// правил на каждой икоте RCI открывало бы окно резолвинга мимо туннеля.
+//
+// Единый источник для enable и reconcile.
+func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface, ndmsName string, sr storage.SingboxRouterSettings) (FakeIPIngressSpec, bool) {
 	if iface == "" {
-		return FakeIPIngressSpec{}
+		return FakeIPIngressSpec{}, true
 	}
-	return FakeIPIngressSpec{
+	spec := FakeIPIngressSpec{
 		TunIface: iface,
-		NoDNAT:   true,
+		Tag:      PolicyTunDNSTag,
 		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
 	}
+
+	// Аварийный выход: явно исключённый порт 53 отключает перехват целиком.
+	// Bypass задаётся диапазонами, поэтому проверяется вхождение, а не
+	// равенство.
+	//
+	// В tproxy bypass-порты пер-протокольные (RETURN'ы ставятся раздельно: в
+	// AWGM-TPROXY по UDP, в AWGM-REDIRECT по TCP). Здесь выключатель
+	// СОЗНАТЕЛЬНО грубее: 53 в любом из двух списков гасит перехват ОБОИХ
+	// протоколов. Причина — сам перехват 53-го неделим: на усечённый ответ
+	// клиент переспрашивает по TCP, и половинчатый перехват дал бы резолвинг,
+	// зависящий от размера ответа (часть имён через туннель, часть мимо, и
+	// ответы могут расходиться).
+	//
+	// NoDNAT ОБЯЗАТЕЛЕН во всех ветках без TunDNS: без него active() читает
+	// такой спек как неактивный и EnsureFakeIPIngress сносит заворот ЦЕЛИКОМ,
+	// вместе с маршрутной половиной, которая от DNS не зависит.
+	if bypassUDP, bypassTCP, err := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts); err == nil &&
+		(portRangesContain(bypassUDP, 53) || portRangesContain(bypassTCP, 53)) {
+		spec.NoDNAT = true
+		return spec, true
+	}
+
+	tunDNS, err := DeriveTunDNS(resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr4)
+	if err != nil {
+		// Маршрутную половину заворота сохраняем: она от DNS не зависит.
+		s.appLog.Warn("policy-tun-ingress", iface, "derive tun DNS: "+err.Error())
+		spec.NoDNAT = true
+		return spec, true
+	}
+	if s.deps.Policies == nil {
+		spec.NoDNAT = true
+		return spec, true
+	}
+	exits, err := s.deps.Policies.ListPolicyExits(ctx, ndmsName)
+	if err != nil {
+		s.appLog.Warn("policy-tun-ingress", iface, "список политик: "+err.Error())
+		return FakeIPIngressSpec{}, false
+	}
+	spec.TunDNS = tunDNS
+	for _, e := range exits {
+		spec.Marks = append(spec.Marks, e.Mark)
+	}
+	return spec, true
+}
+
+// portRangesContain — вхождение порта в набор диапазонов bypass.
+func portRangesContain(ranges []PortRange, port int) bool {
+	for _, pr := range ranges {
+		if port >= pr.From && port <= pr.To {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcilePolicyTun — арм policy-tun в Reconcile (диспатч в начале Reconcile).
@@ -137,6 +249,28 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
 	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
+	// Провижинен и жив, но tun-инбаунда в слоте нет — состояние НЕДОДЕЛАНО, и
+	// само оно не заживёт. Так выглядит краш между удержанием интерфейса и
+	// записью персиста: выключение успело вырезать инбаунд (шаг 4), персист
+	// остался Provisioned=true, а NDMS-объект пережил и down, и снятие адресов —
+	// значит live истинен, полного re-provision никто не запустит, и heal ниже
+	// вернёт только маршруты с permit. Адрес, up и инбаунд не вернёт НИКТО.
+	//
+	// Признак взят из НАШЕГО файла (applied-конфиг слота), а не из
+	// running-config: его форму мы задаём сами, и она не зависит от NDMS.
+	// Гасим гард идемпотентности через персист и переустанавливаем режим целиком.
+	if !s.policyTunInboundPresent() {
+		s.appLog.Warn("policy-tun-reconcile", iface,
+			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
+		if e := s.deps.Settings.SetPolicyTunState(&storage.PolicyTunState{
+			Index: st.Index, NATSegments: st.NATSegments,
+		}); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
+		}
+		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
+		return s.enableLocked(ctx, false)
+	}
+
 	// Запаркованный слот 20 — дрейф независимо от жизни процесса: enable
 	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
 	// merged-конфиге нет tun-инбаунда.
@@ -170,7 +304,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).
 	// Реап, идущий в Reconcile первым, наш заворот в этом режиме не трогает —
 	// см. ReapOrphanedFakeIPTun.
-	s.ensureFakeIPIngress(ctx, s.policyTunIngressSpec(ctx, iface, sr))
+	if spec, ok := s.policyTunIngressSpec(ctx, iface, ndmsName, sr); ok {
+		s.ensureFakeIPIngress(ctx, spec)
+	}
 
 	s.restoreRevokedPolicyTunNAT(ctx, sr, st, iface)
 	s.reconcilePolicyTunNAT(ctx, sr, st, iface)
@@ -201,7 +337,8 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 
 	v4, v6 := policyTunDefaultRoutePresent(lines, ndmsName)
 	global := policyTunIPGlobalPresent(lines, ndmsName)
-	healthy := v4 && global && policyTunPermitted(lines, ndmsName) && (!wantV6 || v6)
+	permitted := policyTunPermitted(lines, ndmsName, sr.PolicyName)
+	healthy := v4 && global && permitted && (!wantV6 || v6)
 	if !healthy {
 		// По кэшу всё плохо — перечитываем и решаем по свежим данным: иначе
 		// починка мимо нас (пользователь в веб-морде) выглядела бы дрейфом и
@@ -210,6 +347,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		if fresh, ferr := s.deps.RunningConfig.Lines(ctx); ferr == nil {
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
+			permitted = policyTunPermitted(fresh, ndmsName, sr.PolicyName)
 		}
 	}
 
@@ -221,6 +359,10 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 				"ip global пропал у "+ndmsName+" — интерфейс не был виден в политиках, восстановлен (drift-heal)")
 		}
 	}
+	// Permit-ассерт: включение доставить его повторно не может — оно no-op'ится
+	// по гарду provisioned+live, поэтому отказ RCI при включении и смена
+	// PolicyName на работающем режиме чинятся только здесь.
+	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
 	if s.deps.DefaultRoute == nil {
 		return
 	}
@@ -238,6 +380,39 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
 		}
 	}
+}
+
+// policyTunInboundPresent сообщает, есть ли tun-инбаунд в applied-конфиге
+// слота 20. Ошибка чтения трактуется как «есть»: «не знаем» ≠ «пропал», а
+// цена ложного срабатывания — полный re-provision живого режима.
+func (s *ServiceImpl) policyTunInboundPresent() bool {
+	cfg, err := s.loadAppliedRouterConfig()
+	if err != nil || cfg == nil {
+		return true
+	}
+	return len(filterPolicyTunInbound(cfg.Inbounds)) != len(cfg.Inbounds)
+}
+
+// ensurePolicyTunPermit разрешает наш интерфейс выходом целевой политики
+// (sr.PolicyName) — без этого режим поднят, а трафик членов политики в туннель
+// не заходит.
+//
+// permitted — ответ «уже разрешён?» из running-config: идемпотентность держится
+// на чтении перед записью, а не на поведении NDMS (повторный order=0 в непустой
+// политике переставляет список выходов). Цена — permit, стоящий не первым, мы
+// не двигаем: расстановку пользователя не перебиваем.
+//
+// Best-effort: отказ RCI логируется и НЕ валит подъём режима — permit доставит
+// drift-heal на следующем тике.
+func (s *ServiceImpl) ensurePolicyTunPermit(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string, permitted bool) {
+	if permitted || sr.PolicyName == "" || s.deps.Policies == nil {
+		return
+	}
+	if e := s.deps.Policies.PermitInterface(ctx, sr.PolicyName, ndmsName, 0); e != nil {
+		s.appLog.Warn("policy-tun", iface, "permit "+ndmsName+" в политике "+sr.PolicyName+": "+e.Error())
+		return
+	}
+	s.appLog.Info("policy-tun", iface, ndmsName+" разрешён выходом политики "+sr.PolicyName+" (order 0)")
 }
 
 // reconcilePolicyTunQoS применяет runtime-изменения классов QoS — единственный

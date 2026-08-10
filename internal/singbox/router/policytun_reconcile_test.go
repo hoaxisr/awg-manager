@@ -3,9 +3,13 @@ package router
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -17,6 +21,7 @@ import (
 
 type fakeRunningConfig struct {
 	lines       []string
+	fresh       []string // если задано — что отдаёт чтение ПОСЛЕ инвалидации (протухший кэш)
 	reads       int
 	invalidated int
 }
@@ -26,7 +31,12 @@ func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
 	return f.lines, nil
 }
 
-func (f *fakeRunningConfig) InvalidateAll() { f.invalidated++ }
+func (f *fakeRunningConfig) InvalidateAll() {
+	f.invalidated++
+	if f.fresh != nil {
+		f.lines = f.fresh
+	}
+}
 
 // healthyPolicyTunRC — running-config провижининга «всё на месте»: дефолты
 // v4/v6 на tun, `ip global` в блоке интерфейса, permit в политике.
@@ -64,6 +74,110 @@ func provisionPolicyTunForReconcile(t *testing.T, h *policyTunEnableHarness) sto
 // Парсеры running-config
 // ---------------------------------------------------------------------------
 
+// Форма элементов массива `message`, снятая с живого роутера (2026-08-10) ТЕМ
+// ЖЕ каналом, которым ходит продукт: `GET /rci/show/running-config`
+// (`transport/client.go:224-234` → `query/runningconfig.go:39-49`). Вывод
+// `ndmc` для этой цели негоден: CLI форматирует сам, и его отступы — свойство
+// CLI, а не данных.
+//
+// ЗНАЧЕНИЯ вымышленные: описания политик пользователя в репозитории не нужны.
+// Тесту нужна форма строк, а не чужая конфигурация.
+//
+// Что здесь зафиксировано, кроме самих строк:
+//   - ведущие пробелы тела блока RCI СОХРАНЯЕТ — на этом стоит весь блочный
+//     разбор («строка с отступом = тело»);
+//   - `!` приходит отдельным элементом без отступа, то есть закрывает блок;
+//   - служебная шапка `! $$$ …` и пустые строки идут в том же массиве;
+//   - ЗАПРЕТ печатается той же тройкой слов, что и разрешение:
+//     `no permit global <iface>`. Поиск подстрокой принимал бы его за
+//     разрешение — продукт не ставил бы permit, и режим оставался бы молча
+//     мёртвым.
+var liveRouterPolicyRC = []string{
+	"! $$$ Agent: http/rci",
+	"! $$$ Model: Router Model",
+	"",
+	"ip policy Policy0",
+	"    description Policy_A",
+	"    permit global Wireguard1",
+	"    no permit global PPPoE0",
+	"    no permit global Wireguard5",
+	"    no permit global Wireguard6",
+	"!",
+	"ip policy Policy1",
+	"    description Policy_B",
+	"    permit global PPPoE0",
+	"    no permit global Wireguard1",
+	"    no permit global Wireguard5",
+	"    no permit global Wireguard6",
+	"    standalone",
+	"!",
+}
+
+func TestPolicyTunPermitted_LiveRouterConfig(t *testing.T) {
+	cases := []struct {
+		iface, policy string
+		want          bool
+	}{
+		{"Wireguard1", "Policy0", true},  // разрешён в целевой
+		{"Wireguard1", "Policy1", false}, // в целевой он ЗАПРЕЩЁН (`no permit`)
+		{"PPPoE0", "Policy0", false},     // запрещён здесь, разрешён в соседней
+		{"PPPoE0", "Policy1", true},      // разрешён в целевой
+		{"Wireguard5", "Policy0", false}, // только запрет
+		{"Wireguard6", "Policy1", false}, // запрещён в обеих политиках
+		{"Wireguard5", "", false},        // политика не выбрана: разрешения нет нигде
+		{"Wireguard1", "", true},         // политика не выбрана: разрешён хоть где-то
+		{"OpkgTun0", "Policy0", false},   // нас в конфиге ещё нет
+		{"Wireguard1", "Policy9", false}, // целевой политики не существует
+	}
+	for _, c := range cases {
+		if got := policyTunPermitted(liveRouterPolicyRC, c.iface, c.policy); got != c.want {
+			t.Errorf("policyTunPermitted(%q, %q) = %v, want %v", c.iface, c.policy, got, c.want)
+		}
+	}
+}
+
+// Форма строк снята с RCI живых роутеров (2026-08-10), но ЗНАЧЕНИЯ здесь
+// вымышленные: в конфигурации роутера соседствуют идентификаторы
+// аутентификации, названия VPN-провайдеров и реальные адреса, и в репозитории
+// им не место. Тесту нужна форма, а не чужие данные.
+//
+// Главное, что зафиксировано: `ip global <приоритет>` — строка в теле блока, и
+// стоит она НЕ ТОЛЬКО у провайдера, но и у каждого VPN-выхода. Поэтому цель
+// static-NAT не одна.
+func TestGlobalEgressInterfaces_LiveRouterConfig(t *testing.T) {
+	lines := []string{
+		"interface PPPoE0",
+		"    security-level public",
+		"    ip mtu 1492",
+		"    ip access-group _WEBADMIN_PPPoE0 in",
+		"    ip global 32767",
+		"!",
+		"interface Wireguard0",
+		"    description \"VPN A\"",
+		"    security-level public",
+		"    ip address 10.0.0.2 255.255.255.255",
+		"    ip global 12287",
+		"!",
+		"interface Wireguard1",
+		"    description \"VPN B\"",
+		"    security-level public",
+		"    ip address 10.0.1.2 255.255.255.255",
+		"    ip global 6143",
+		"!",
+		// Домашний сегмент: адресация есть, `ip global` нет — выходом наружу
+		// не является и целью static-NAT быть не может.
+		"interface Home",
+		"    security-level private",
+		"    ip address 192.168.1.1 255.255.255.0",
+		"!",
+	}
+	got := globalEgressInterfaces(lines)
+	want := []string{"PPPoE0", "Wireguard0", "Wireguard1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("globalEgressInterfaces = %v, want %v", got, want)
+	}
+}
+
 func TestPolicyTunRunningConfigParsers(t *testing.T) {
 	lines := []string{
 		"ip route default OpkgTun0",
@@ -74,11 +188,52 @@ func TestPolicyTunRunningConfigParsers(t *testing.T) {
 	if !v4 || !v6 {
 		t.Fatalf("routes: v4=%v v6=%v", v4, v6)
 	}
-	if !policyTunPermitted(lines, "OpkgTun0") {
+	if !policyTunPermitted(lines, "OpkgTun0", "Policy0") {
 		t.Fatal("permit not found")
 	}
-	if policyTunPermitted(lines, "OpkgTun1") {
+	if policyTunPermitted(lines, "OpkgTun1", "Policy0") {
 		t.Fatal("false positive OpkgTun1 (префикс-ловушка)")
+	}
+	// Разрешение в чужой политике целевую не покрывает.
+	if policyTunPermitted(lines, "OpkgTun0", "Policy1") {
+		t.Fatal("permit в Policy0 не разрешение для Policy1")
+	}
+	// Политика не выбрана — годится любая.
+	if !policyTunPermitted(lines, "OpkgTun0", "") {
+		t.Fatal("без имени политики разрешение в любой должно засчитываться")
+	}
+	// Вне блока политики permit не бывает: те же слова в теле чужого блока
+	// разрешением не являются.
+	outside := []string{
+		"interface OpkgTun0", "    description permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(outside, "OpkgTun0", "") {
+		t.Fatal("false positive: permit вне блока ip policy")
+	}
+	// Внутри блока политики матч идёт с начала строки: те же слова в её
+	// description разрешением не являются.
+	inDescr := []string{
+		"ip policy Policy0", "    description permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(inDescr, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: слова permit global в description политики")
+	}
+	// Из блока обязан быть ВЫХОД: целевая политика пуста и стоит раньше чужой,
+	// разрешение в которой нашим не является.
+	targetFirst := []string{
+		"ip policy Policy0", "!",
+		"ip policy Policy1", "    permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(targetFirst, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: разрешение из блока, следующего за целевым")
+	}
+	// Снятое разрешение разрешением не является: RCI хранит исторические
+	// `no …`-строки (см. policies.go), и первым токеном правила идёт `no`.
+	revoked := []string{
+		"ip policy Policy0", "    no permit global OpkgTun0", "!",
+	}
+	if policyTunPermitted(revoked, "OpkgTun0", "Policy0") {
+		t.Fatal("false positive: снятое разрешение (no permit)")
 	}
 	if v4x, _ := policyTunDefaultRoutePresent([]string{"ip route default OpkgTun01"}, "OpkgTun0"); v4x {
 		t.Fatal("false positive: OpkgTun01 не должен матчить OpkgTun0")
@@ -308,6 +463,175 @@ func TestReconcilePolicyTun_EnsuresIngress(t *testing.T) {
 	}
 }
 
+// Краш между удержанием интерфейса и записью персиста: на диске Provisioned
+// остался истиной, интерфейс жив (NDMS-объект переживает и down, и снятие
+// адресов), а tun-инбаунд выключение уже вырезало. Такое состояние не
+// самозаживает: enable no-op'ится по гарду provisioned+live, а heal возвращает
+// только маршруты и permit — адрес, up и инбаунд не возвращает никто, и режим
+// числится включённым при мёртвом трафике. Тик обязан это переустановить.
+func TestReconcilePolicyTun_ReprovisionsWhenTunInboundGone(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun0")
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	// Ровно то, что делает шаг 4 выключения: инбаунд вырезан из слота 20.
+	cfg, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	cfg.Inbounds = filterPolicyTunInbound(cfg.Inbounds)
+	if err := h.svc.persistConfigDirect(context.Background(), cfg); err != nil {
+		t.Fatalf("persistConfigDirect: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	// Переустановка — это адрес и подъём интерфейса; их не делает ни один heal.
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") || !h.log.has("InterfaceUp:OpkgTun0") {
+		t.Errorf("недоделанное состояние обязано переустанавливаться: %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 {
+		t.Errorf("PolicyTun persist = %+v, want provisioned index 0", st)
+	}
+	after, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig (after): %v", err)
+	}
+	if len(filterPolicyTunInbound(after.Inbounds)) == len(after.Inbounds) {
+		t.Error("tun-инбаунд обязан вернуться в слот")
+	}
+}
+
+// Конфиг слота не прочитался — «не знаем» ≠ «инбаунд пропал»: цена ложного
+// срабатывания здесь полный re-provision живого режима.
+func TestReconcilePolicyTun_NoReprovisionWhenConfigUnreadable(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if err := os.WriteFile(filepath.Join(h.dir, "20-router.json"), []byte("{{{ не json"), 0644); err != nil {
+		t.Fatalf("write broken config: %v", err)
+	}
+	h.log.calls = nil
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("нечитаемый конфиг не повод переустанавливать режим: %v", h.log.calls)
+	}
+}
+
+// Обратное: инбаунд на месте — тик ничего не переустанавливает. Иначе штатный
+// рестарт sing-box уходил бы в полный re-provision каждые 30 с.
+func TestReconcilePolicyTun_NoReprovisionWhenInboundPresent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("здоровое состояние переустанавливать нельзя: %v", h.log.calls)
+	}
+}
+
+// Permit пропал (или не встал при включении: отказ RCI повторное включение не
+// ретраит — оно no-op'ится по гарду provisioned+live) → drift-heal доставляет его.
+func TestReconcilePolicyTun_PermitsWhenMissing(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil // permit включения в счёт не идёт
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "!",
+	}}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	want := []string{"Policy0:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
+	}
+}
+
+// Permit на месте → drift-heal его не переставляет: order=0 каждый тик тасовал
+// бы список выходов политики.
+func TestReconcilePolicyTun_NoPermitWhenPresent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("стоящий permit не должен переставляться, получено %v", pol.permits)
+	}
+}
+
+// Permit стоит в ЧУЖОЙ политике: для целевой это не разрешение — устройства
+// сидят в ней, а выхода у неё нет. Разрешением где угодно детект
+// удовлетворяться не имеет права, иначе режим молча мёртв (и смена PolicyName
+// на работающем режиме не доезжает никогда).
+func TestReconcilePolicyTun_PermitsWhenOtherPolicyPermitted(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy1")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+		"ip policy Policy1", "!",
+	}}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	want := []string{"Policy1:OpkgTun0:0"}
+	if !reflect.DeepEqual(pol.permits, want) {
+		t.Errorf("permits = %v, want %v", pol.permits, want)
+	}
+}
+
+// Кэш running-config протух: permit пользователь поставил мимо нас. Свежее
+// чтение обязано пересчитать и permitted — иначе heal слал бы order=0 каждый
+// тик, переставляя список выходов политики.
+func TestReconcilePolicyTun_NoPermitAfterStaleCacheRefresh(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	pol.permits = nil
+	h.svc.deps.RunningConfig = &fakeRunningConfig{
+		lines: []string{ // по кэшу permit'а нет
+			"interface OpkgTun0", "    ip global 65500", "!",
+			"ip route default OpkgTun0",
+			"ipv6 route default OpkgTun0",
+			"ip policy Policy0", "!",
+		},
+		fresh: healthyPolicyTunRC("OpkgTun0"), // а на роутере он уже стоит
+	}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if len(pol.permits) != 0 {
+		t.Errorf("решение о permit обязано приниматься по свежему конфигу, получено %v", pol.permits)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // QoS: единственный netfilter режима — DSCP-диспатч. UpdateSettings
 // завершается Reconcile'ом, поэтому runtime-изменения классов применяются тут.
@@ -534,6 +858,40 @@ func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 	}
 }
 
+func TestReap_PolicyTunKeepsOwnDNATRules(t *testing.T) {
+	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
+	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetPolicyTunState: %v", err)
+	}
+	rec := &ingressRecorder{
+		natDump: "-P PREROUTING ACCEPT\n" +
+			"-A PREROUTING -i nwg3 -p udp --dport 53 -m comment --comment " + FakeIPIngressTag + " -j DNAT --to-destination 172.18.0.2:53\n" +
+			"-A PREROUTING -m connmark --mark 0xffffaab -p udp --dport 53 -m comment --comment " + PolicyTunDNSTag + " -j DNAT --to-destination 172.18.0.2:53\n",
+		ruleDump: ruleDumpFor("nwg3"),
+	}
+	svc := newTestService(t, Deps{Settings: store, IPTables: rec.tables()})
+
+	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, PolicyTunDNSTag) {
+			t.Fatalf("реап снёс правило policy-tun: %s", joined)
+		}
+	}
+	removedFakeIP := false
+	for _, call := range rec.ipt {
+		joined := strings.Join(call, " ")
+		if strings.Contains(joined, "-D PREROUTING") && strings.Contains(joined, FakeIPIngressTag) {
+			removedFakeIP = true
+		}
+	}
+	if !removedFakeIP {
+		t.Errorf("протухший DNAT прежнего fakeip обязан сниматься: %v", rec.ipt)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Готовность: carrier tun, без DNS-инпутов fakeip
 // ---------------------------------------------------------------------------
@@ -642,6 +1000,36 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	}
 }
 
+// Permit стоит в чужой политике: для статуса это «не разрешён», и сообщение
+// обязано назвать целевую — иначе пользователь смотрит на живой permit и не
+// понимает, о чём issue.
+func TestGetStatus_PolicyTunUnboundNamesTargetPolicy(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.withPolicy(t, "Policy1")
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ip policy Policy0", "    permit global OpkgTun0", "!",
+	}}
+
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	iss := issueOfKind(st.Issues, issuePolicyTunUnbound)
+	if iss == nil {
+		t.Fatalf("permit в чужой политике не разрешение — ожидался issue: %+v", st.Issues)
+	}
+	if !strings.Contains(iss.Message, "Policy1") {
+		t.Errorf("сообщение должно называть целевую политику: %q", iss.Message)
+	}
+}
+
 func issueOfKind(issues []Issue, kind string) *Issue {
 	for i := range issues {
 		if issues[i].Kind == kind {
@@ -694,5 +1082,111 @@ func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
 	}
 	if st.PolicyTunSourcePreserve == nil || !*st.PolicyTunSourcePreserve {
 		t.Errorf("PolicyTunSourcePreserve = %v, want true при записанных сегментах", st.PolicyTunSourcePreserve)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Спек ingress-заворота policy-tun: марки политик + перехват DNS
+// ---------------------------------------------------------------------------
+
+func newServiceWithExits(t *testing.T, exits []query.PolicyDefaultExit, err error) *ServiceImpl {
+	t.Helper()
+	return newTestService(t, Deps{
+		Policies:  &fakeAccessPolicyProvider{exits: exits, exitsErr: err},
+		FakeIPTun: FakeIPTunParams{TunAddr4: "172.18.0.1/30"},
+	})
+}
+
+func TestPolicyTunIngressSpecMarksAndDNS(t *testing.T) {
+	s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{})
+	if !ok {
+		t.Fatal("спек обязан быть применим")
+	}
+	if spec.Tag != PolicyTunDNSTag {
+		t.Errorf("Tag = %q, want %q", spec.Tag, PolicyTunDNSTag)
+	}
+	if spec.NoDNAT {
+		t.Error("NoDNAT в policy-tun больше не выставляется")
+	}
+	if spec.TunDNS != "172.18.0.2" {
+		t.Errorf("TunDNS = %q", spec.TunDNS)
+	}
+	if len(spec.Marks) != 1 || spec.Marks[0] != "0xffffaab" {
+		t.Errorf("Marks = %v", spec.Marks)
+	}
+}
+
+func TestPolicyTunIngressSpecSkipsTickOnRCIError(t *testing.T) {
+	s := newServiceWithExits(t, nil, errors.New("rci timeout"))
+	if _, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{}); ok {
+		t.Error("ошибка чтения марок обязана давать skip, а не пустой спек")
+	}
+}
+
+func TestPolicyTunIngressSpecEmptyOnNoPolicies(t *testing.T) {
+	s := newServiceWithExits(t, nil, nil)
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", storage.SingboxRouterSettings{})
+	if !ok {
+		t.Fatal("успешно прочитанный пустой набор — это применимый спек")
+	}
+	if len(spec.Marks) != 0 || spec.dnatHalf() {
+		t.Error("без политик перехвата быть не должно")
+	}
+}
+
+func TestPolicyTunIngressSpecHonorsBypass53(t *testing.T) {
+	// Выключатель неделим по протоколам: перехват ставится и на udp, и на tcp,
+	// поэтому 53 в bypass-списке ЛЮБОГО протокола гасит его целиком.
+	// Формат bypass — "PORT-PORT UDP|TCP" (parseExtraPorts, presets.go:157).
+	for _, extra := range []string{"50-60 UDP", "53 TCP"} {
+		t.Run(extra, func(t *testing.T) {
+			s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+			sr := storage.SingboxRouterSettings{BypassExtraPorts: extra}
+			spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
+			if !ok {
+				t.Fatal("спек применим")
+			}
+			if spec.dnatHalf() {
+				t.Error("53 в bypass — перехвата быть не должно")
+			}
+			// Маршрутная половина заворота обязана уцелеть: без NoDNAT active()
+			// прочитал бы спек как неактивный и снёс бы ingress-заворот целиком.
+			if !spec.NoDNAT {
+				t.Error("NoDNAT не выставлен — заворот будет снесён вместе с перехватом")
+			}
+		})
+	}
+}
+
+func TestPolicyTunIngressSpecKeepsRouteHalfWithoutTunDNS(t *testing.T) {
+	// Адрес DNS туннеля не вычисляется (битый TunAddr4) — перехвата нет, но
+	// маршрутная половина заворота обязана остаться применимой.
+	s := newTestService(t, Deps{
+		Policies:  &fakeAccessPolicyProvider{},
+		FakeIPTun: FakeIPTunParams{TunAddr4: "не-адрес"},
+	})
+	sr := storage.SingboxRouterSettings{}
+	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
+	if !ok {
+		t.Fatal("спек применим")
+	}
+	if !spec.NoDNAT {
+		t.Error("NoDNAT не выставлен при невычислимом адресе DNS")
+	}
+	if spec.dnatHalf() {
+		t.Error("перехват без адреса DNS невозможен")
+	}
+}
+
+func TestPortRangesContain(t *testing.T) {
+	ranges := []PortRange{{From: 50, To: 60}, {From: 443, To: 443}}
+	for _, c := range []struct {
+		port int
+		want bool
+	}{{53, true}, {50, true}, {60, true}, {49, false}, {61, false}, {443, true}, {80, false}} {
+		if got := portRangesContain(ranges, c.port); got != c.want {
+			t.Errorf("portRangesContain(%d) = %v, want %v", c.port, got, c.want)
+		}
 	}
 }

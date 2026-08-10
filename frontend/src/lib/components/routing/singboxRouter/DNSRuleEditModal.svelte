@@ -11,6 +11,7 @@
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import type { SingboxRouterDNSRule, SingboxRouterDNSServer, SingboxRouterRuleSet } from '$lib/types';
 	import { dnsServerSubtitle } from '$lib/components/sb-router/dnsServerDetourDisplay';
+	import { isDnsAddressFilterRuleSet } from '$lib/components/sb-router/emptyStateActions';
 
 	interface Props {
 		rule?: SingboxRouterDNSRule;
@@ -68,7 +69,7 @@
 	// svelte-ignore state_referenced_locally
 	let ruleSetTags = $state<string[]>(rule?.rule_set ?? []);
 	const ruleSetOptions = $derived<ChipOption[]>(
-		availableRuleSets.map((rs) => ({
+		availableRuleSets.filter((rs) => !isDnsAddressFilterRuleSet(rs.tag, availableRuleSets)).map((rs) => ({
 			value: rs.tag,
 			label: rs.tag,
 			usedCount: ruleSetUsage?.get(rs.tag) ?? 0,

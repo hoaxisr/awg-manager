@@ -18,21 +18,50 @@ import (
 //
 // Порядок (каждый шаг best-effort, teardown НИКОГДА не прерывается на ошибке —
 // полуразобранный policy-tun хуже доведённого до конца):
-//  1. восстановление записанного NAT сегментов (source-preserve) — ПЕРВЫМ;
+//  0. снять netfilter.d-хук перехвата DNS — до любых RCI-мутаций И до гарда
+//     «нет персиста»: в той ветке снимать его больше некому;
+//  1. восстановление записанного NAT сегментов (source-preserve);
 //  2. снять NDMS-дефолт (v4+v6) с tun, пока интерфейс ещё жив: клиенты политики
 //     сразу уезжают на WAN, а не в дыру;
 //  3. снять ingress-заворот (ip rule iif + таблица 700);
 //  4. конфиг слота 20: выкинуть tun-инбаунд и запарковать слот (+ оверлей QoS),
 //     затем безусловный IPTables.Uninstall;
-//  5. снести OpkgTun; ТОЛЬКО при успехе очистить персист — иначе сироту
-//     добирает ReapOrphanedFakeIPTun (как у fakeip);
+//  5. удержать OpkgTun (снять ACL, положить, снять адреса) — интерфейс и его
+//     индекс переживают выключение: к имени привязан permit в политике;
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
 	st := settings.PolicyTun
 
+	// (0) Хук перехвата DNS сносим ПЕРВЫМ и ДО гарда «нет персиста». Две
+	// причины:
+	//   - ниже идут RCI-мутации (возврат NAT сегментов, снятие дефолта) и
+	//     teardown интерфейса, каждая способна спровоцировать перестройку
+	//     firewall, а живой хук вернул бы правила перехвата;
+	//   - в ветке без персиста (откат enable успел записать файл, но снёс
+	//     персист) снимать хук больше НЕКОМУ: реап в этом режиме трогает
+	//     только чужой, fakeip-тег, — файл жил бы вечно, возвращая DNAT в
+	//     снесённый туннель.
+	// Идемпотентно: файла нет — no-op, RCI не трогается.
+	if s.deps.IPTables != nil {
+		s.deps.IPTables.RemovePolicyTunDNSHook()
+	}
+
 	// Ничего не провижинилось (или персист уже очищен) → идемпотентно: только
 	// флаг выключения. NDMS не трогаем.
+	//
+	// Слот 20 при этом паркуем: reconcile зовёт Disable, пока слот активен, и
+	// без парковки гард возвращал бы «сделано», ничего не сделав, — тик
+	// повторял бы Disable вечно. Раньше «не провижинен при живом слоте» было
+	// экзотикой, теперь Provisioned=false — штатное состояние выключенного
+	// режима (интерфейс удержан).
 	if st == nil || !st.Provisioned {
+		if s.deps.Orch != nil && s.routerSlotEnabled() {
+			if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+				s.appLog.Warn("policy-tun-disable", "", "disable slot: "+err.Error())
+			} else {
+				s.notifyRoutingSlotsChanged()
+			}
+		}
 		settings.SingboxRouter.Enabled = false
 		if err := s.deps.Settings.Save(settings); err != nil {
 			return err
@@ -48,9 +77,11 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —
 	// teardown не прерывается (персист чистится только при успешном delete, так
 	// что провал повторится реапом).
+	natRestored := true
 	if len(st.NATSegments) > 0 {
 		if err := s.restorePolicyTunNAT(ctx, st.NATSegments); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "restore segment NAT: "+err.Error())
+			natRestored = false
 		}
 	}
 
@@ -105,11 +136,34 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
-	// (5) Снести интерфейс. Персист очищаем ТОЛЬКО при успешном delete: иначе
-	// сирота осталась бы неотслеживаемой, а так её добирает reap.
-	if err := s.teardownOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-		if err := s.deps.Settings.SetPolicyTunState(nil); err != nil {
-			s.appLog.Warn("policy-tun-disable", iface, "clear policy-tun persist: "+err.Error())
+	// (5) Удержать интерфейс: индекс закреплён за режимом, потому что permit в
+	// политике доступа привязан к имени. Персист переписываем ТОЛЬКО при успехе
+	// — иначе Provisioned остаётся истиной и выключение повторится следующим
+	// тиком (адрес на месте = nginx-цикл ndm жив).
+	//
+	// КРАШ-ОКНО между удержанием и записью персиста: демон умер здесь — на диске
+	// Enabled=true, Provisioned=true, а интерфейс положен, без адресов и без
+	// tun-инбаунда (его вырезал шаг 4). Сам по себе выход из этого состояния
+	// закрылся вместе с удалением интерфейса: NDMS-объект переживает и down, и
+	// снятие адресов, поэтому live[Index] истинен и полного re-provision никто
+	// не запускает, а drift-heal вернул бы только маршруты и permit.
+	//
+	// Закрывает окно ассерт в enabled-ветке reconcile: «провижинен и жив, но
+	// tun-инбаунда в слоте нет» → переустановка режима целиком
+	// (policyTunInboundPresent).
+	//
+	// Запись о прежнем NAT сегментов переживает выключение, если восстановить
+	// его не удалось: она единственный след того, каким он был до нас.
+	// Автоматического повтора у неё НЕТ — в выключенном состоянии
+	// reconcilePolicyTun выходит рано; запись отработает на следующем включении,
+	// смене режима или реапе.
+	if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
+		held := &storage.PolicyTunState{Index: st.Index}
+		if !natRestored {
+			held.NATSegments = st.NATSegments
+		}
+		if err := s.deps.Settings.SetPolicyTunState(held); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
 		}
 	}
 

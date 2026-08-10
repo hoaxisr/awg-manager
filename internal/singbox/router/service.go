@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -48,7 +49,7 @@ type Service interface {
 	// PolicyTunNATPreview returns the router segments with their current NAT
 	// mode — the editable "what will change" preview behind the policy-tun
 	// source-preserve toggle.
-	PolicyTunNATPreview(ctx context.Context) ([]NATSegmentInfo, error)
+	PolicyTunNATPreview(ctx context.Context) (NATPreview, error)
 
 	SetRouteFinal(ctx context.Context, tag string) error
 
@@ -234,6 +235,15 @@ type AccessPolicyProvider interface {
 	ListDevicesForPolicy(ctx context.Context, policyName string) ([]PolicyDevice, error)
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
 	CreatePolicy(ctx context.Context, description string) (PolicyInfo, error)
+	// ListPolicyExits — политики, чей дефолт ведёт в iface (policy-tun:
+	// источник connmark для перехвата DNS; политика там задаётся в NDMS,
+	// а не в настройках, поэтому sr.PolicyName непригоден).
+	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
+	// PermitInterface разрешает интерфейс как выход политики. order —
+	// позиция с нуля; policy-tun ставит 0, потому что туннель обязан стать
+	// дефолтным выходом политики (в непустой политике order=0 вставляет в
+	// начало и сдвигает прежние — это цель, а не побочный эффект).
+	PermitInterface(ctx context.Context, policyName, iface string, order int) error
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned
@@ -364,6 +374,10 @@ type Deps struct {
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
 
+	// Segments отдаёт описание и адресацию сегментов для предпоказа
+	// source-preserve: без них пользователь выбирает сегменты по системным
+	// именам вслепую. Optional — nil оставляет системные имена.
+	Segments SegmentDetails
 	// DefaultRoute паркует NDMS-дефолт (v4/v6) на policy-tun интерфейс.
 	// Optional — nil в тестах; wired в cmd/awg-manager на *RouteCommands.
 	DefaultRoute DefaultRouteProvider

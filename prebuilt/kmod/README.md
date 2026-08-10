@@ -43,13 +43,13 @@ timing ranges RekeyAfterTime / RekeyTimeout / RejectAfterTime / KeepaliveTimeout
 / MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. They need
 awg3-capable modules **and** an awg3-capable `awg` tool (see `../bin/README.md`).
 
-Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260731-04**
+Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260805**
 (AWG 3.0 landed on master via PR #192; the `feat/awg3` branch no longer exists).
 The kernel floor is 3.10, so no shipped model regresses.
 
 The recipe and the patch stack live in `kmod/amneziawg/` in this repo; copy that
 directory to `keenetic-sdk/package/kernel/amneziawg/` and build there. The stock
-tree does **not** build against 4.9-ndm as is, and three upstream bugs are fatal
+tree does **not** build against 4.9-ndm as is, and four upstream bugs are fatal
 on it:
 
 | Patch | Why |
@@ -60,6 +60,7 @@ on it:
 | 017 | Jmin is never checked against Jmax, so the junk packet size can run past the jmax-sized buffer |
 | 018 | `wg_set_device()` calls `awg_has_header_protection(wg)` before the `IS_ERR(wg)` check, taking a rwsem inside an ERR_PTR |
 | 019 | `wg_newlink()` never initialises `header_protection.lock`, and a zeroed rwsem kills every MIPS target on the first `awg setconf` |
+| 021 | the crypt workers call `cond_resched()` inside the SIMD region, so an arm64 worker can sleep with NEON still held |
 
 019 is the one that put mipsel routers in a boot loop while aarch64 was fine:
 MIPS builds use `CONFIG_RWSEM_GENERIC_SPINLOCK`, where `__down_read()` reads a
@@ -67,7 +68,16 @@ zeroed `wait_list` as "has waiters" and dereferences NULL, while
 `CONFIG_RWSEM_XCHGADD_ALGORITHM` on aarch64 reads the same zeroes as an unlocked
 rwsem. All three bugs are reproduced on a KN-1810 stand, each against a build
 that carries the patch and one that does not. Upstream has none of them fixed as
-of -04.
+of 3.0.20260805.
+
+021 is the arm64 counterpart: `CONFIG_PREEMPT_COUNT` is not set on 4.9-ndm, so
+the `preempt_disable()` inside `kernel_neon_begin()` is a bare `barrier()` and
+the worker really does sleep with `kernel_neon_busy` set. The next NEON user on
+that CPU — IPsec ESP through cryptd — dies on `BUG_ON(!may_use_simd())`. Two
+NC-1812 carrying an ESP tunnel next to a busy AmneziaWG interface rebooted every
+5-6 hours; with the patch both ran 48 hours clean. The stock keenetic
+`wireguard.ko` holds NEON just as long but has no `cond_resched()` in the
+region, which is why only our module shows this.
 
 The -02 tag carries three fixes we reported: I4/I5 no longer overwrite the I1
 junk spec, the inverted RekeyTimeout test is corrected, and a header protection
@@ -91,7 +101,7 @@ this on our side.
 2. Drop the awg3 `awg` tool into `../bin/` (see that README).
 3. Set `ExpectedKmodVersion` in `internal/sys/kmod/download.go` to the module's
    own version string, the one `modinfo` reports and the one that ends up in
-   `/sys/module/amneziawg/version` (`3.0.20260731-04` for this batch). Any change
+   `/sys/module/amneziawg/version` (`3.0.20260805` for this batch). Any change
    to the string makes installed routers re-copy the modules, and keeping it
    equal to the real version means `kernelModuleVersion` and
    `kernelModuleLoadedVersion` in system info agree once the router reboots.

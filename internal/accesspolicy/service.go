@@ -1,6 +1,10 @@
 package accesspolicy
 
-import "context"
+import (
+	"context"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+)
 
 // Service defines operations on Keenetic NDMS access policies.
 type Service interface {
@@ -45,4 +49,9 @@ type Service interface {
 	// named policy (e.g. "0xffffaaa"). Returns query.ErrPolicyMarkNotFound
 	// if the policy is absent or has no mark.
 	GetPolicyMark(ctx context.Context, policyName string) (string, error)
+
+	// ListPolicyExits returns the policies whose default route exits via
+	// iface, with their NDMS marks. policy-tun uses it to find the connmarks
+	// whose DNS must be hijacked.
+	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
 }

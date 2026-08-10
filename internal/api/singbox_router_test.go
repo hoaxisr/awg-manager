@@ -91,8 +91,8 @@ func (m *mockRouterSvc) ListBindableInterfaces(ctx context.Context) ([]router.WA
 func (m *mockRouterSvc) ListIngressEligibleInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return nil, nil
 }
-func (m *mockRouterSvc) PolicyTunNATPreview(ctx context.Context) ([]router.NATSegmentInfo, error) {
-	return m.natPreview, m.natPreviewErr
+func (m *mockRouterSvc) PolicyTunNATPreview(ctx context.Context) (router.NATPreview, error) {
+	return router.NATPreview{Segments: m.natPreview}, m.natPreviewErr
 }
 func (m *mockRouterSvc) ListRules(ctx context.Context) ([]router.Rule, error) { return nil, nil }
 func (m *mockRouterSvc) AddRule(ctx context.Context, rule router.Rule) error  { return nil }
