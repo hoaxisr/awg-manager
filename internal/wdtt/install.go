@@ -25,7 +25,7 @@ type ArchSpecs struct {
 }
 
 const PinnedClientVersion = "1.4.2-awgm"
-const PinnedServerVersion = "1.4.2-awgm"
+const PinnedServerVersion = "1.4.3-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
 // После scripts/build-wdtt-client.sh обновить SHA256/Size ниже и залить на repo.hoaxisr.ru.
@@ -44,7 +44,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "ba150d7d28d69359ae4793f90a40c2883403db0570d1ba9bfe1c528cc2642e9c", Size: 8126626,
+			SHA256: "8fbd9391a350a1ac95cb1f1cc8de556f9c97d1d08d74eaf6fafffed4c398cea9", Size: 8126626,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет

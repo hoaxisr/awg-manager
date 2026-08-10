@@ -12,7 +12,94 @@ PATCH_DIR = pathlib.Path(__file__).resolve().parent
 SRC_RAW = PATCH_DIR.parent / "server_raw.go"
 
 
+def is_v14_monolith(text: str) -> bool:
+    """SpaceNeuroX v1.4+ ships listen-raw/direct and rawRouter in server.go."""
+    return 'listenRaw := flag.String("listen-raw"' in text
+
+
 def patch_server_go(text: str) -> str:
+    if is_v14_monolith(text):
+        return patch_server_go_v14(text)
+    return patch_server_go_legacy(text)
+
+
+def patch_server_go_v14(text: str) -> str:
+    if "var wgIfaceName" not in text:
+        text = re.sub(
+            r"\nconst \(\n\twgIfaceName\s+=\s+\"wdtt0\"\n",
+            '\nvar wgIfaceName = "wdtt0"\n\nconst (\n',
+            text,
+            count=1,
+        )
+
+    if "flagNoNAT" not in text:
+        text = text.replace(
+            '\tdnsFlag := flag.String("dns", "8.8.8.8", "DNS серверы для клиентов")\n\tflag.Parse()',
+            '\tdnsFlag := flag.String("dns", "8.8.8.8", "DNS серверы для клиентов")\n'
+            '\tflagNoNAT := flag.Bool("no-nat", false, "skip iptables/nft NAT (awg-manager на роутере)")\n'
+            '\tflagWGIface := flag.String("wg-iface", "", "userspace WG iface (opkgtunN для Keenetic)")\n'
+            '\tflagNatIface := flag.String("nat-if", "", "egress interface for MASQUERADE")\n'
+            '\tflag.Parse()',
+        )
+        text = text.replace(
+            "\tdns = *dnsFlag\n\n\tlog.SetFlags",
+            "\tdns = *dnsFlag\n"
+            "\tkeeneticNoNAT = *flagNoNAT\n"
+            "\tkeeneticNatIface = strings.TrimSpace(*flagNatIface)\n"
+            "\tif n := strings.TrimSpace(*flagWGIface); n != \"\" {\n"
+            "\t\twgIfaceName = n\n"
+            "\t}\n\n"
+            "\tlog.SetFlags",
+        )
+
+    if "keeneticNoNAT" not in text.split("setupFullConeNAT", 1)[1][:400]:
+        text = text.replace(
+            "func setupFullConeNAT(wgIface string) error {\n\tlog.Println(\"[NAT]",
+            "func setupFullConeNAT(wgIface string) error {\n\tif keeneticNoNAT {\n"
+            "\t\tlog.Println(\"[NAT] пропуск (-no-nat)\")\n"
+            "\t\tnatType = \"disabled (-no-nat)\"\n"
+            "\t\treturn nil\n"
+            "\t}\n\tlog.Println(\"[NAT]",
+            1,
+        )
+
+    nat_ext = (
+        "\textIface := getDefaultInterface()\n"
+        "\tlog.Printf(\"[NAT] Внешний: %s\", extIface)"
+    )
+    nat_ext_new = (
+        "\textIface := keeneticNatIface\n"
+        "\tif extIface == \"\" {\n"
+        "\t\textIface = getDefaultInterface()\n"
+        "\t}\n"
+        "\tlog.Printf(\"[NAT] Внешний: %s\", extIface)"
+    )
+    if nat_ext in text:
+        text = text.replace(nat_ext, nat_ext_new, 1)
+
+    raw_nat = "func setupRawNAT(rawIface string) error {\n\textIface := getDefaultInterface()"
+    raw_nat_new = (
+        "func setupRawNAT(rawIface string) error {\n"
+        "\tif keeneticNoNAT {\n"
+        "\t\tlog.Println(\"[RAW-NAT] пропуск (-no-nat)\")\n"
+        "\t\tsetupForwardRules(rawIface)\n"
+        "\t\treturn nil\n"
+        "\t}\n"
+        "\textIface := keeneticNatIface\n"
+        "\tif extIface == \"\" {\n"
+        "\t\textIface = getDefaultInterface()\n"
+        "\t}"
+    )
+    if raw_nat in text:
+        text = text.replace(raw_nat, raw_nat_new, 1)
+
+    text = patch_stats_active_devices(text)
+    text = patch_dtls_idle_timeout(text)
+    text = patch_get_next_ip_skip_gateway(text)
+    return text
+
+
+def patch_server_go_legacy(text: str) -> str:
     if "flagListenDirect" not in text:
         text = re.sub(
             r"\nconst \(\n\twgIfaceName\s+=\s+\"wdtt0\"\n",
@@ -175,7 +262,7 @@ def patch_listen_wrapped_batch(text: str) -> str:
         '\t}'
     )
     if old not in text:
-        raise SystemExit("listenWrapped batch patch: anchor not found in server.go")
+        return text
     return text.replace(old, new, 1)
 
 
@@ -286,17 +373,23 @@ def main() -> int:
     server_go = ROOT / "server.go"
     if not server_go.exists():
         raise SystemExit(f"server.go not found in {ROOT}")
-    server_go.write_text(patch_server_go(server_go.read_text(encoding="utf-8")), encoding="utf-8")
+    original = server_go.read_text(encoding="utf-8")
+    patched = patch_server_go(original)
+    server_go.write_text(patched, encoding="utf-8")
+    write_keenetic_globals(ROOT / "keenetic.go")
+
+    if is_v14_monolith(original):
+        print(f"patched v1.4 monolith in {ROOT} (keenetic flags; upstream raw/direct + pacer)")
+        return 0
 
     shutil.copy2(PATCH_DIR / "server_direct.go", ROOT / "server_direct.go")
-    write_keenetic_globals(ROOT / "keenetic.go")
 
     if not SRC_RAW.exists():
         raise SystemExit(f"missing {SRC_RAW}")
     raw = adapt_server_raw(SRC_RAW.read_text(encoding="utf-8"))
     (ROOT / "server_raw.go").write_text(raw, encoding="utf-8")
 
-    print(f"patched monolith in {ROOT} (direct + raw + keenetic flags)")
+    print(f"patched legacy monolith in {ROOT} (direct + raw + keenetic flags)")
     return 0
 
 

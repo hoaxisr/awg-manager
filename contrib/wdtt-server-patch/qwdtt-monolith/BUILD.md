@@ -9,7 +9,9 @@
 | `-no-nat` / `-nat-if` | NAT на роутере (awg-manager) |
 | `-wg-iface` | OpkgTun для NDMS |
 
-База: коммит **`2dd5d37f18a0`** (go build info APK qWDTT 1.4) + `server_direct.go` + `server_raw.go` + `apply-keenetic.py`.
+База: коммит **`afe989b`** (SpaceNeuroX v1.4 + RAW downlink pacer) + keenetic flags через `apply-keenetic.py`.
+
+Upstream v1.4 уже содержит `-listen-direct`, `-listen-raw`, `rawRouter` и `pacer.go` — отдельные `server_raw.go`/`server_direct.go` не нужны.
 
 БД сервера: **`passwords.json`** в `-config-dir` (awg-manager пишет его перед стартом).
 

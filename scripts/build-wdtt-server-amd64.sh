@@ -19,7 +19,7 @@ fi
 OUT_DIR="$PROJECT_ROOT/build/wdtt"
 SOURCE="${WDTT_SERVER_SOURCE:-qwdtt-monolith}"
 ILDARMAGA_TAG="${ILDARMAGA_TAG:-v1.4.62}"
-SNX_COMMIT="${SNX_COMMIT:-2dd5d37f18a0}"
+SNX_COMMIT="${SNX_COMMIT:-afe989b}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
