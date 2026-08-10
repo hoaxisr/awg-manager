@@ -120,6 +120,37 @@ func TestDeleteClientForgetsBackoff(t *testing.T) {
 	}
 }
 
+// I2: рестарт по relayBad не должен игнорировать backoff — если предыдущий
+// health-рестарт уже исчерпал окно, новый рестарт на этом тике не происходит
+// (обрыв живых DTLS-потоков рестартом на каждом тике недопустим).
+func TestSuperviseRelayBadGatedByBackoff(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	defer s.Stop()
+	proc := s.clientProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &past
+
+	s.SetRelayProbe(fakeRelayProbe{ok: map[string]bool{"awg0": false}}) // проба всегда падает
+	s.SetLinkedTunnelResolver(fakeLinkedTunnels{iface: "awg0", ok: true})
+
+	before := proc.Status().StartedAt
+	s.startBackoff.Fail(clientHealthKey(DefaultInstanceID), time.Now())
+
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes; i++ {
+		s.superviseEnabled(ctx)
+	}
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("backoff-отказ должен был запретить рестарт по relayBad")
+	}
+}
+
 func TestSuperviseEnabledSkipsDisabled(t *testing.T) {
 	s := enabledClientService(t, "127.0.0.1:56000")
 	cfg, err := s.GetConfig()

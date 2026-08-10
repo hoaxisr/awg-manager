@@ -24,7 +24,15 @@ type LinkedTunnelResolver interface {
 // clientRelayUnhealthy: linked-туннель не проходит HTTP-check — типично после
 // рестарта awg-manager на сервере: freeturn-client на клиенте жив, локальный WG
 // handshake есть, но DTLS-реле до сервера мёртвое.
-func clientRelayUnhealthy(probe RelayProbe, tunnels LinkedTunnelResolver, clientID string, st ProcessStatus, now time.Time) bool {
+//
+// Тот же linked-туннель параллельно мониторит pingcheck своим независимым
+// контуром; наш рестарт касается только ft-client (не туннеля), а затухание
+// повторов на обеих сторонах — через backoff (см. supervisor.go), полного
+// дедупа контуров нет.
+//
+// ctx — родитель супервизорного тика: при остановке демона/отмене тика проба
+// обязана выйти вместе с ним, а не досиживать свои 8 с.
+func clientRelayUnhealthy(ctx context.Context, probe RelayProbe, tunnels LinkedTunnelResolver, clientID string, st ProcessStatus, now time.Time) bool {
 	if probe == nil || tunnels == nil {
 		return false
 	}
@@ -38,7 +46,7 @@ func clientRelayUnhealthy(probe RelayProbe, tunnels LinkedTunnelResolver, client
 	if !ok || iface == "" {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	return !probe.ProbeInterface(ctx, iface)
+	return !probe.ProbeInterface(probeCtx, iface)
 }

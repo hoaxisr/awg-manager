@@ -52,6 +52,7 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.clientHealth.reset(c.ID)
 			s.clientStall.reset(c.ID)
 			s.startBackoff.Forget(key)
+			s.startBackoff.Forget(clientHealthKey(c.ID))
 			continue
 		}
 		proc := s.clientProcs.get(c.ID)
@@ -79,40 +80,70 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		s.startBackoff.Success(key)
 		peerBad := clientPeerUnhealthy(st, now)
 		ndmsBad := clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
-		relayBad := clientRawRelayUnhealthy(c.Config, s.relayProbe, s.ifaceChecker, st, now)
+		relayBad := clientRawRelayUnhealthy(ctx, c.Config, s.relayProbe, s.ifaceChecker, st, now)
 		if ndmsBad && !peerBad {
-			if _, err := s.reconcileClientRawNDMS(ctx, c.ID, c.Config); err == nil {
-				st = proc.Status()
-				ndmsBad = clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
-			} else if err := s.restartClientInstance(c.ID); err != nil {
+			// Reconcile — первая (дешёвая) попытка лечения: поднять OpkgTun без
+			// рестарта wt-client. Рестарт — эскалация ниже, если интерфейс не
+			// ожил.
+			reconciled, rerr := s.reconcileClientRawNDMS(ctx, c.ID, c.Config)
+			switch {
+			case rerr != nil:
 				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: "+err.Error())
+					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: "+rerr.Error())
 				}
-			} else if s.appLog != nil {
-				s.appLog.Info("health", c.ID, "клиент перезапущен: OpkgTun down")
+			case !reconciled:
+				// Пустой RawClientIP и т.п. — reconcile ничего не сделал; это
+				// не должно молча сходить за успех.
+				if s.appLog != nil {
+					s.appLog.Warn("health", c.ID, "OpkgTun reconcile: пропущен, нет условий для восстановления")
+				}
 			}
-			s.clientHealth.reset(c.ID)
-			s.clientStall.reset(c.ID)
-			continue
+			st = proc.Status()
+			ndmsBad = clientRawNDMSUnhealthy(c.Config, s.ifaceChecker, st, now)
+			if !ndmsBad {
+				s.clientHealth.reset(c.ID)
+				s.clientStall.reset(c.ID)
+				continue
+			}
+			// Не ожил — страйк той же механики, что peerBad/relayBad, ниже.
 		}
-		if s.clientHealth.note(c.ID, peerBad || ndmsBad || relayBad) {
+		unhealthy := peerBad || ndmsBad || relayBad
+		if s.clientHealth.note(c.ID, unhealthy) {
+			healthKey := clientHealthKey(c.ID)
+			if !s.startBackoff.Allow(healthKey, now) {
+				continue
+			}
+			// Порог страйков выбит повторно после предыдущего health-рестарта —
+			// само по себе это значит, что лечение не удержалось. Считаем это
+			// неудачей backoff'а независимо от того, стартует ли процесс
+			// технически: иначе рестарт при неисправимой причине (мёртвый
+			// check-URL, окончательно упавший OpkgTun) повторялся бы каждые
+			// ~3.5 мин без роста паузы.
+			s.startBackoff.Fail(healthKey, now)
+			reason := "peer недоступен"
+			switch {
+			case relayBad && !peerBad && !ndmsBad:
+				reason = "raw-туннель не проходит проверку связи"
+			case ndmsBad && !peerBad:
+				reason = "OpkgTun интерфейс down"
+			}
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "peer недоступен, перезапуск: "+err.Error())
+					s.appLog.Warn("health", c.ID, reason+", перезапуск: "+err.Error())
 				}
 			} else if s.appLog != nil {
-				reason := "peer недоступен"
-				switch {
-				case relayBad && !peerBad && !ndmsBad:
-					reason = "raw-туннель не проходит проверку связи"
-				case ndmsBad && !peerBad:
-					reason = "OpkgTun интерфейс down"
-				}
 				s.appLog.Info("health", c.ID, "клиент перезапущен: "+reason)
 			}
 			s.clientHealth.reset(c.ID)
 			s.clientStall.reset(c.ID)
 			continue
+		}
+		if !unhealthy && st.StartedAt != nil && now.Sub(*st.StartedAt) >= clientHealthGrace {
+			// Health-предикаты чисты, и с последнего старта прошло достаточно,
+			// чтобы все они (NDMS/relay grace короче) дали реальный сигнал, а
+			// не молчали «ещё рано». Это настоящее выздоровление — обнулять
+			// backoff можно.
+			s.startBackoff.Success(clientHealthKey(c.ID))
 		}
 		if s.clientStall.note(c.ID, clientRelayStalled(st, now)) {
 			if err := s.restartClientInstance(c.ID); err != nil {
@@ -161,3 +192,9 @@ func newStartBackoff() *proxysup.Backoff {
 
 func clientKey(id string) string { return "client:" + id }
 func serverKey(id string) string { return "server:" + id }
+
+// clientHealthKey — отдельное пространство ключей backoff для health-рестартов
+// (peerBad/ndmsBad-эскалация/relayBad), отдельное от clientKey: тот сбрасывается
+// безусловно на каждом тике с живым процессом (см. Success(key) выше) и стёр бы
+// health-backoff раньше, чем он успеет отработать.
+func clientHealthKey(id string) string { return "health-client:" + id }

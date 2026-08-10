@@ -49,8 +49,8 @@ type Service struct {
 	serverHealth *healthTracker
 	startBackoff *proxysup.Backoff
 
-	relayProbe     RelayProbe
-	linkedTunnels  LinkedTunnelResolver
+	relayProbe    RelayProbe
+	linkedTunnels LinkedTunnelResolver
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.

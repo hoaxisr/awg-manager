@@ -19,7 +19,10 @@ type RelayProbe interface {
 // clientRawRelayUnhealthy: raw OpkgTun поднят, но трафик через интерфейс не
 // проходит — типично после рестарта awg-manager на сервере (relay на той
 // стороне сброшен, клиентский wdtt-client и opkgtun ещё «живы»).
-func clientRawRelayUnhealthy(cfg ClientConfig, probe RelayProbe, checker InterfaceChecker, st ProcessStatus, now time.Time) bool {
+//
+// ctx — родитель супервизорного тика: при остановке демона/отмене тика проба
+// обязана выйти вместе с ним, а не досиживать свои 8 с.
+func clientRawRelayUnhealthy(ctx context.Context, cfg ClientConfig, probe RelayProbe, checker InterfaceChecker, st ProcessStatus, now time.Time) bool {
 	if probe == nil || cfg.UsesWireGuard() || !cfg.usesNDMSOpkgTun() {
 		return false
 	}
@@ -33,7 +36,7 @@ func clientRawRelayUnhealthy(cfg ClientConfig, probe RelayProbe, checker Interfa
 	if checker == nil || !checker.InterfaceOperUp(iface) {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	return !probe.ProbeInterface(ctx, iface)
+	return !probe.ProbeInterface(probeCtx, iface)
 }

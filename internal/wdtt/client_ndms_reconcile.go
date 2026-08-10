@@ -33,7 +33,10 @@ func (s *Service) reconcileClientRawNDMS(ctx context.Context, id string, cfg Cli
 	}
 	s.notifyClientRouteStart(ctx, id, iface)
 	s.restoreOpkgPolicyPermits(ctx, id, cfg)
-	if s.appLog != nil {
+	// Лог «восстановлен» — только если перечитка реально подтвердила operUp;
+	// иначе это ложный сигнал успеха при живом-но-не-поднявшемся интерфейсе
+	// (супервизор сам перечитает статус и заэскалирует в рестарт).
+	if s.appLog != nil && s.ifaceChecker != nil && s.ifaceChecker.InterfaceOperUp(iface) {
 		s.appLog.Info("start", id, "OpkgTun восстановлен (rawClientIp="+cfg.RawClientIP+")")
 	}
 	return true, nil

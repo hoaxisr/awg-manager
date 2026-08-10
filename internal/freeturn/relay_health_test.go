@@ -29,23 +29,24 @@ func TestClientRelayUnhealthy(t *testing.T) {
 	probe := fakeRelayProbe{ok: map[string]bool{"opkgtun10": false}}
 	tunnels := fakeLinkedTunnels{iface: "opkgtun10", ok: true}
 
-	if !clientRelayUnhealthy(probe, tunnels, "default", st, time.Now()) {
+	ctx := context.Background()
+	if !clientRelayUnhealthy(ctx, probe, tunnels, "default", st, time.Now()) {
 		t.Fatal("expected unhealthy when relay probe fails")
 	}
 
 	probe.ok["opkgtun10"] = true
-	if clientRelayUnhealthy(probe, tunnels, "default", st, time.Now()) {
+	if clientRelayUnhealthy(ctx, probe, tunnels, "default", st, time.Now()) {
 		t.Fatal("expected healthy when relay probe ok")
 	}
 
 	fresh := time.Now().Add(-30 * time.Second)
 	st.StartedAt = &fresh
 	probe.ok["opkgtun10"] = false
-	if clientRelayUnhealthy(probe, tunnels, "default", st, time.Now()) {
+	if clientRelayUnhealthy(ctx, probe, tunnels, "default", st, time.Now()) {
 		t.Fatal("expected healthy during relay grace")
 	}
 
-	if clientRelayUnhealthy(nil, tunnels, "default", st, time.Now()) {
+	if clientRelayUnhealthy(ctx, nil, tunnels, "default", st, time.Now()) {
 		t.Fatal("nil probe must not trigger restart")
 	}
 }
