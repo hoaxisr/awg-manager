@@ -2,6 +2,7 @@ package freeturn
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxysup"
@@ -60,10 +61,22 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
 		// Лечится обычным стартом — process.Start усыновляет такой процесс.
 		if !st.Running || st.StartedAt == nil {
+			// F6: StartClientInstance этого клиента уже идёт где-то ещё (API —
+			// процесс мог не успеть пройти proc.Start, st.Running всё ещё false)
+			// — не запускать параллельный старт.
+			if s.clientStartInFlight(c.ID) {
+				continue
+			}
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}
 			if err := s.StartClientInstance(c.ID); err != nil {
+				// ErrClientStartInFlight — TryLock проиграл гонку со стартом того
+				// же клиента откуда-то ещё: это не провал старта, жечь backoff-окно
+				// не за что.
+				if errors.Is(err, ErrClientStartInFlight) {
+					continue
+				}
 				s.startBackoff.Fail(key, now)
 				if s.appLog != nil {
 					s.appLog.Warn("supervisor", c.ID, "перезапуск клиента: "+err.Error())
@@ -83,6 +96,14 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		if s.clientHealth.note(c.ID, unhealthy) {
 			healthKey := clientHealthKey(c.ID)
 			if !s.startBackoff.Allow(healthKey, now) {
+				continue
+			}
+			// F6: клиент сам мид-флайт стартует (StartClientInstance где-то ещё
+			// в процессе — API или сам супервизор) — не гонять рестарт
+			// параллельно тому же старту. Страйк уже учтён note() выше и
+			// остаётся накопленным, backoff-окно не трогаем — переоценим на
+			// следующем тике.
+			if s.clientStartInFlight(c.ID) {
 				continue
 			}
 			// Сам факт повторного выбивания порога после предыдущего

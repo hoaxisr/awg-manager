@@ -57,6 +57,66 @@ type Service struct {
 	matchMu  sync.Mutex
 	matchKey string
 	matchVal bool
+
+	// clientStarts — per-client счётчик стартов в полёте (симметрично
+	// wdtt.Service.clientStarts, F6): даёт супервизору дешёвый совещательный
+	// fast-path, чтобы скипнуть тик без сжигания backoff-окна. Совещательный
+	// (TOCTOU: окно между проверкой и стартом открыто) — жёсткая сериализация
+	// самого старта обеспечивается clientStartLocks (TryLock внутри
+	// StartClientInstance).
+	clientStartMu    sync.Mutex
+	clientStarts     map[string]int
+	clientStartLocks map[string]*sync.Mutex
+}
+
+// ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
+// где-то ещё (TryLock не взят); возвращается без запуска процесса.
+var ErrClientStartInFlight = errors.New("старт клиента уже выполняется")
+
+// tryLockClientStart — жёсткая per-client сериализация StartClientInstance:
+// второй конкурентный вызов для того же id не блокируется, а сразу получает
+// отказ. unlock должен вызываться defer'ом сразу после успешного захвата.
+func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
+	s.clientStartMu.Lock()
+	if s.clientStartLocks == nil {
+		s.clientStartLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.clientStartLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.clientStartLocks[id] = l
+	}
+	s.clientStartMu.Unlock()
+	if !l.TryLock() {
+		return nil, false
+	}
+	return l.Unlock, true
+}
+
+func (s *Service) beginClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts == nil {
+		s.clientStarts = make(map[string]int)
+	}
+	s.clientStarts[id]++
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) endClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts[id] > 0 {
+		s.clientStarts[id]--
+		if s.clientStarts[id] == 0 {
+			delete(s.clientStarts, id)
+		}
+	}
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) clientStartInFlight(id string) bool {
+	s.clientStartMu.Lock()
+	defer s.clientStartMu.Unlock()
+	return s.clientStarts[id] > 0
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
@@ -499,6 +559,20 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 }
 
 func (s *Service) StartClientInstance(id string) error {
+	// Жёсткая сериализация (F6, симметрично wdtt): второй конкурентный старт
+	// этого же id не гоняется с первым, а сразу отказывает.
+	unlock, ok := s.tryLockClientStart(id)
+	if !ok {
+		return ErrClientStartInFlight
+	}
+	defer unlock()
+
+	// Per-client in-flight guard (F6): супервизор проверяет clientStartInFlight
+	// перед health-эскалацией, чтобы не гоняться со StartClientInstance этого
+	// же клиента, запущенным откуда-то ещё (API, сам супервизор).
+	s.beginClientStart(id)
+	defer s.endClientStart(id)
+
 	cfg, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err

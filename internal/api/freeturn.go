@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -188,6 +189,10 @@ func (h *FreeTurnHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.StartClient(); err != nil {
+		if errors.Is(err, freeturn.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FREETURN_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
@@ -598,6 +603,10 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := h.svc.StartClientInstance(id); err != nil {
+		if errors.Is(err, freeturn.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FREETURN_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}

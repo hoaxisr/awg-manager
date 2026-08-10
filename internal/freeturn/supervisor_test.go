@@ -285,6 +285,66 @@ func TestSuperviseTrueRecoveryClearsBackoffOnlyAfterGrace(t *testing.T) {
 	}
 }
 
+// M2 (симметрично wdtt, F6): основная ветка супервизора («процесс мёртв или
+// без StartedAt») обязана уважать per-client guard — иначе, пока API-старт
+// этого же клиента ещё не дошёл до proc.Start (st.Running всё ещё false),
+// тик супервизора запустил бы параллельный StartClientInstance.
+func TestSuperviseSkipsDeadClientStartWhileOwnStartInFlight(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+	defer s.Stop()
+
+	s.beginClientStart(DefaultInstanceID) // старт этого клиента уже идёт (например, через API)
+	s.superviseEnabled(context.Background())
+	s.endClientStart(DefaultInstanceID)
+
+	if running, _ := s.clientProcs.get(DefaultInstanceID).IsRunning(); running {
+		t.Fatal("супервизор не должен был запускать клиента параллельно его собственному in-flight старту")
+	}
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип по in-flight не должен тратить backoff-окно старта")
+	}
+}
+
+// F6 (симметрично wdtt): пока клиент сам мид-флайт стартует (например, через
+// API), эскалация в restartClientInstance должна придерживаться — иначе
+// StartClientInstance гоняется параллельно самому себе. Страйки при этом
+// продолжают копиться, а backoff-окно скип не должен тратить.
+func TestSuperviseEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	defer s.Stop()
+	proc := s.clientProcs.get(DefaultInstanceID)
+	sleepSeam(proc)
+	if err := s.StartClientInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * clientHealthGrace)
+	proc.startedAt = &past
+
+	s.SetRelayProbe(fakeRelayProbe{ok: map[string]bool{"awg0": false}}) // проба всегда падает
+	s.SetLinkedTunnelResolver(fakeLinkedTunnels{iface: "awg0", ok: true})
+
+	before := proc.Status().StartedAt
+
+	s.beginClientStart(DefaultInstanceID) // симулируем идущий собственный старт
+	ctx := context.Background()
+	for i := 0; i < clientHealthStrikes+2; i++ {
+		s.superviseEnabled(ctx)
+	}
+	s.endClientStart(DefaultInstanceID)
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("рестарт не должен был случиться, пока идёт собственный старт клиента")
+	}
+	if strikes := s.clientHealth.strikes[DefaultInstanceID]; strikes < clientHealthStrikes {
+		t.Fatalf("страйки должны продолжать копиться несмотря на скип эскалации, strikes=%d", strikes)
+	}
+	if !s.startBackoff.Allow(clientHealthKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип эскалации по in-flight не должен тратить backoff-окно")
+	}
+}
+
 func TestSuperviseEnabledSkipsDisabled(t *testing.T) {
 	s := enabledClientService(t, "127.0.0.1:56000")
 	cfg, err := s.GetConfig()
