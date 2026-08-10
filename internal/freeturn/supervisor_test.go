@@ -107,6 +107,37 @@ func TestStartServerKeepsBackoff(t *testing.T) {
 	}
 }
 
+// W3+ B: пользователь чинит конфиг сервера через публичный UpdateServerInstance
+// (API PUT) после серии health-эскалаций — ждать оставшееся окно
+// health-backoff (до 15 мин) он не должен, симметрично клиентскому
+// TestUpdateConfigClearsBackoff. Внутренний путь (StartServerInstance зовёт
+// UpdateServerInstance сам для нормализации listen) health-backoff трогать не
+// должен — иначе окно обнулялось бы на каждой попытке супервизора, симметрично
+// TestStartServerKeepsBackoff (там про serverKey, здесь про serverHealthKey).
+func TestUpdateServerInstancePublicClearsHealthBackoffInternalDoesNot(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	now := time.Now()
+
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), now)
+	if err := s.UpdateServerInstance(DefaultInstanceID, validServerCfg()); err != nil {
+		t.Fatal(err)
+	}
+	if !s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), now) {
+		t.Fatal("публичный UpdateServerInstance должен снимать health-backoff")
+	}
+
+	sleepSeam(s.serverProcs.get(DefaultInstanceID))
+	s.startBackoff.Fail(serverHealthKey(DefaultInstanceID), now)
+	if err := s.StartServerInstance(DefaultInstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if s.startBackoff.Allow(serverHealthKey(DefaultInstanceID), now) {
+		t.Fatal("внутренний путь (StartServerInstance) не должен снимать health-backoff")
+	}
+}
+
 // F3: DeleteClient обязан забывать не только стартовый backoff (clientKey), но
 // и health-backoff (clientHealthKey), заведённый этим раундом.
 func TestDeleteClientForgetsBackoff(t *testing.T) {

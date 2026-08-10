@@ -161,7 +161,27 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	return s.store.Save(full)
 }
 
+// UpdateServerInstance — публичный путь (вызывается API на PUT). В отличие от
+// updateServerInstanceInternal, после успешного апдейта сбрасывает и стартовый,
+// и health-backoff: пользователь чинит конфиг сервера руками — ждать
+// оставшееся окно backoff (до 15 мин после серии эскалаций) до следующей
+// попытки супервизора не нужно. У внутреннего пути такого Forget нет — см.
+// его комментарий.
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	if err := s.updateServerInstanceInternal(id, cfg); err != nil {
+		return err
+	}
+	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	return nil
+}
+
+// updateServerInstanceInternal — тело апдейта без сброса backoff. Вызывается
+// и публичным UpdateServerInstance, и StartServerInstance (тот зовёт его сам
+// для нормализации listen на каждой попытке супервизора) — если бы backoff
+// сбрасывался здесь, окно стиралось бы на каждой попытке и рост до 15 минут
+// переставал работать ровно там, где он нужнее всего.
+func (s *Service) updateServerInstanceInternal(id string, cfg ServerConfig) error {
 	s.mu.Lock()
 	full, err := s.store.Load()
 	if err != nil {
@@ -178,10 +198,6 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
 	cfg.Enabled = prevCfg.Enabled
-	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
-	// StartServerInstance сам зовёт этот метод для нормализации listen, и сброс
-	// стирал бы окно на каждой попытке супервизора — рост до 15 минут переставал
-	// работать ровно там, где он нужнее всего.
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -533,7 +549,7 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.UpdateServerInstance(id, inst.Config); err != nil {
+	if err := s.updateServerInstanceInternal(id, inst.Config); err != nil {
 		return err
 	}
 	inst, err = s.serverInstance(id)
