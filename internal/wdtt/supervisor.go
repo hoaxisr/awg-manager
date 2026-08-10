@@ -63,6 +63,12 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 		// рестарт демона: лога и телеметрии по нему нет, health-надзор слеп.
 		// Лечится обычным стартом — process.Start усыновляет такой процесс.
 		if !st.Running || st.StartedAt == nil {
+			// F6: StartClientInstance этого клиента уже идёт где-то ещё (API —
+			// процесс мог не успеть пройти proc.Start, st.Running всё ещё false)
+			// — не запускать параллельный старт.
+			if s.clientStartInFlight(c.ID) {
+				continue
+			}
 			if !s.startBackoff.Allow(key, now) {
 				continue
 			}

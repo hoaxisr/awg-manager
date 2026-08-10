@@ -78,7 +78,12 @@ func killPIDFile(path string, binaries []string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if childproc.IsAlive(pid) {
-		_ = childproc.KillGroup(pid)
+		// До 3 с прошло между первой проверкой владельца и этим моментом — pid
+		// мог успеть освободиться и достаться другому процессу. Не глушим,
+		// если он больше не наш.
+		if childproc.MatchesAnyBinary(pid, binaries...) {
+			_ = childproc.KillGroup(pid)
+		}
 	}
 	_ = os.Remove(path)
 }

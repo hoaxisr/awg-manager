@@ -7,22 +7,27 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // TestKillPIDFile_ForeignProcess_NoSignal воспроизводит сценарий из отчёта:
 // после ребута pid из протухшего pidfile мог достаться постороннему процессу.
 // killPIDFile не должен слать ему сигналы — только убрать файл.
+//
+// Тест сам родитель sleep — если бы killPIDFile всё-таки послал сигнал,
+// процесс стал бы зомби (IsAlive на зомби == true, kill(pid,0) не различает
+// живой процесс и незареапленный труп), поэтому проверяем факт получения
+// сигнала через cmd.Wait() в горутине, а не через IsAlive.
 func TestKillPIDFile_ForeignProcess_NoSignal(t *testing.T) {
 	cmd := exec.Command("/bin/sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("cannot spawn sleep: %v", err)
 	}
 	pid := cmd.Process.Pid
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
 	defer func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-done
 	}()
 
 	dir := t.TempDir()
@@ -33,8 +38,10 @@ func TestKillPIDFile_ForeignProcess_NoSignal(t *testing.T) {
 
 	killPIDFile(path, wdttBinaryNames)
 
-	if !childproc.IsAlive(pid) {
-		t.Fatal("посторонний процесс (sleep) не должен быть убит")
+	select {
+	case <-done:
+		t.Fatal("посторонний процесс (sleep) получил сигнал и завершился")
+	case <-time.After(300 * time.Millisecond):
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("протухший pidfile должен быть удалён")

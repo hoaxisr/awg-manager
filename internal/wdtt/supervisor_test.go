@@ -403,6 +403,66 @@ func TestSuperviseEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
 	}
 }
 
+// L3/F6: тот же per-client guard должен придерживать и эскалацию по застою
+// входящего трафика (stall-ветка) — рестарт по clientStall не должен
+// гоняться параллельно собственному старту клиента.
+func TestSuperviseStallEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
+	s, proc := enabledRawClientService(t, "10.70.0.5")
+	defer s.Stop()
+	s.SetInterfaceChecker(fakeIfaceChecker{
+		exists: map[string]bool{"opkgtun18": true},
+		operUp: map[string]bool{"opkgtun18": true},
+	})
+	for _, line := range strings.Split(stalledStatsLog(), "\n") {
+		if line != "" {
+			proc.logTail.WriteLine(line)
+		}
+	}
+	past := time.Now().Add(-2 * clientHealthGrace) // застой предикат сам требует clientHealthGrace
+	proc.startedAt = &past
+
+	before := proc.Status().StartedAt
+
+	s.beginClientStart(DefaultInstanceID) // симулируем идущий собственный старт
+	ctx := context.Background()
+	for i := 0; i < clientStallStrikes+2; i++ {
+		s.superviseEnabled(ctx)
+	}
+	s.endClientStart(DefaultInstanceID)
+
+	after := proc.Status().StartedAt
+	if after == nil || before == nil || !after.Equal(*before) {
+		t.Fatal("рестарт по застою не должен был случиться, пока идёт собственный старт клиента")
+	}
+	if strikes := s.clientStall.strikes[DefaultInstanceID]; strikes < clientStallStrikes {
+		t.Fatalf("страйки застоя должны продолжать копиться несмотря на скип эскалации, strikes=%d", strikes)
+	}
+	if !s.startBackoff.Allow(clientStallKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип эскалации по in-flight не должен тратить backoff-окно")
+	}
+}
+
+// M2: основная ветка супервизора («процесс мёртв или без StartedAt») тоже
+// обязана уважать per-client guard — иначе, пока API-старт этого же
+// клиента ещё не дошёл до proc.Start (st.Running всё ещё false), тик
+// супервизора запустил бы параллельный StartClientInstance.
+func TestSuperviseSkipsDeadClientStartWhileOwnStartInFlight(t *testing.T) {
+	s := enabledClientService(t, "127.0.0.1:56000")
+	sleepSeam(s.clientProcs.get(DefaultInstanceID))
+	defer s.Stop()
+
+	s.beginClientStart(DefaultInstanceID) // старт этого клиента уже идёт (например, через API)
+	s.superviseEnabled(context.Background())
+	s.endClientStart(DefaultInstanceID)
+
+	if running, _ := s.clientProcs.get(DefaultInstanceID).IsRunning(); running {
+		t.Fatal("супервизор не должен был запускать клиента параллельно его собственному in-flight старту")
+	}
+	if !s.startBackoff.Allow(clientKey(DefaultInstanceID), time.Now()) {
+		t.Fatal("скип по in-flight не должен тратить backoff-окно старта")
+	}
+}
+
 // I4: reconcile гоняет пачку RCI-команд (~10-13), не мгновенно. Если
 // пользователь успел нажать «стоп» (Enabled=false) за это время, результат
 // reconcile не должен трогать backoff/страйки клиента — тот же паттерн, что
