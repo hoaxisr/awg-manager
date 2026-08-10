@@ -74,12 +74,14 @@ func provisionPolicyTunForReconcile(t *testing.T, h *policyTunEnableHarness) sto
 // Парсеры running-config
 // ---------------------------------------------------------------------------
 
-// Дословные элементы массива `message` из ответа живого роутера (Netcraze
-// Ultra, NDMS 2.06.1, 2026-08-10) — снято ТЕМ ЖЕ каналом, которым ходит
-// продукт: `GET http://127.0.0.1:79/rci/show/running-config`
+// Форма элементов массива `message`, снятая с живого роутера (2026-08-10) ТЕМ
+// ЖЕ каналом, которым ходит продукт: `GET /rci/show/running-config`
 // (`transport/client.go:224-234` → `query/runningconfig.go:39-49`). Вывод
 // `ndmc` для этой цели негоден: CLI форматирует сам, и его отступы — свойство
 // CLI, а не данных.
+//
+// ЗНАЧЕНИЯ вымышленные: описания политик пользователя в репозитории не нужны.
+// Тесту нужна форма строк, а не чужая конфигурация.
 //
 // Что здесь зафиксировано, кроме самих строк:
 //   - ведущие пробелы тела блока RCI СОХРАНЯЕТ — на этом стоит весь блочный
@@ -92,17 +94,17 @@ func provisionPolicyTunForReconcile(t *testing.T, h *policyTunEnableHarness) sto
 //     мёртвым.
 var liveRouterPolicyRC = []string{
 	"! $$$ Agent: http/rci",
-	"! $$$ Model: Netcraze Ultra",
+	"! $$$ Model: Router Model",
 	"",
 	"ip policy Policy0",
-	"    description IoT_VPN",
+	"    description Policy_A",
 	"    permit global Wireguard1",
 	"    no permit global PPPoE0",
 	"    no permit global Wireguard5",
 	"    no permit global Wireguard6",
 	"!",
 	"ip policy Policy1",
-	"    description North_Korea",
+	"    description Policy_B",
 	"    permit global PPPoE0",
 	"    no permit global Wireguard1",
 	"    no permit global Wireguard5",
@@ -131,6 +133,48 @@ func TestPolicyTunPermitted_LiveRouterConfig(t *testing.T) {
 		if got := policyTunPermitted(liveRouterPolicyRC, c.iface, c.policy); got != c.want {
 			t.Errorf("policyTunPermitted(%q, %q) = %v, want %v", c.iface, c.policy, got, c.want)
 		}
+	}
+}
+
+// Форма строк снята с RCI живых роутеров (2026-08-10), но ЗНАЧЕНИЯ здесь
+// вымышленные: в конфигурации роутера соседствуют идентификаторы
+// аутентификации, названия VPN-провайдеров и реальные адреса, и в репозитории
+// им не место. Тесту нужна форма, а не чужие данные.
+//
+// Главное, что зафиксировано: `ip global <приоритет>` — строка в теле блока, и
+// стоит она НЕ ТОЛЬКО у провайдера, но и у каждого VPN-выхода. Поэтому цель
+// static-NAT не одна.
+func TestGlobalEgressInterfaces_LiveRouterConfig(t *testing.T) {
+	lines := []string{
+		"interface PPPoE0",
+		"    security-level public",
+		"    ip mtu 1492",
+		"    ip access-group _WEBADMIN_PPPoE0 in",
+		"    ip global 32767",
+		"!",
+		"interface Wireguard0",
+		"    description \"VPN A\"",
+		"    security-level public",
+		"    ip address 10.0.0.2 255.255.255.255",
+		"    ip global 12287",
+		"!",
+		"interface Wireguard1",
+		"    description \"VPN B\"",
+		"    security-level public",
+		"    ip address 10.0.1.2 255.255.255.255",
+		"    ip global 6143",
+		"!",
+		// Домашний сегмент: адресация есть, `ip global` нет — выходом наружу
+		// не является и целью static-NAT быть не может.
+		"interface Home",
+		"    security-level private",
+		"    ip address 192.168.1.1 255.255.255.0",
+		"!",
+	}
+	got := globalEgressInterfaces(lines)
+	want := []string{"PPPoE0", "Wireguard0", "Wireguard1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("globalEgressInterfaces = %v, want %v", got, want)
 	}
 }
 

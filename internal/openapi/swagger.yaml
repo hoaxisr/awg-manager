@@ -4195,22 +4195,30 @@ definitions:
         example: fakeip-tun
         type: string
     type: object
+  api.SingboxRouterNATEgressDTO:
+    properties:
+      label:
+        example: Провайдер
+        type: string
+      name:
+        example: PPPoE0
+        type: string
+    type: object
   api.SingboxRouterNATPreviewData:
     properties:
+      egresses:
+        description: |-
+          Egresses — выходы, на которых подмена адреса СОХРАНИТСЯ (туда встанет
+          static-NAT). Их несколько: `ip static` — общероутерная настройка, и
+          правило вешается на каждый интерфейс с `ip global`. Пусто, когда выходы
+          определить нельзя.
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATEgressDTO'
+        type: array
       segments:
         items:
           $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
         type: array
-      wanLabel:
-        example: Провайдер
-        type: string
-      wanName:
-        description: |-
-          WANName/WANLabel — выход, на котором подмена адреса СОХРАНИТСЯ (туда
-          встанет static-NAT). Пустые, когда выход определить нельзя: режим уже
-          включён и дефолт припаркован на нашем tun.
-        example: PPPoE0
-        type: string
     type: object
   api.SingboxRouterNATPreviewResponse:
     properties:

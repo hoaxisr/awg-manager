@@ -198,16 +198,22 @@ export interface PolicyTunNATSegmentInfo {
 	subnet?: string;
 }
 
+/** Выход роутера, на котором подмена адреса сохранится (туда встанет static). */
+export interface PolicyTunNATEgress {
+	name: string;
+	label?: string;
+}
+
 /**
- * Предпоказ source-preserve: сегменты и ВЫХОД, на котором подмена адреса
+ * Предпоказ source-preserve: сегменты и ВЫХОДЫ, на которых подмена адреса
  * сохранится. Без второй половины экран не отвечает на главный вопрос —
- * между чем и чем подмена снимается.
+ * между чем и чем подмена снимается. Выходов несколько: `ip static` —
+ * общероутерная настройка, правило встаёт на каждый интерфейс с `ip global`.
  */
 export interface PolicyTunNATPreview {
 	segments: PolicyTunNATSegmentInfo[];
-	/** Пусто, когда выход определить нельзя: режим уже включён. */
-	wanName?: string;
-	wanLabel?: string;
+	/** Пусто, когда выходы определить нельзя. */
+	egresses?: PolicyTunNATEgress[];
 }
 
 /**

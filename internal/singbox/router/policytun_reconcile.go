@@ -70,6 +70,44 @@ func policyTunPermitted(lines []string, ndmsName, policyName string) bool {
 	return false
 }
 
+// globalEgressInterfaces собирает интерфейсы, которые МОГУТ быть выходом
+// наружу: те, у кого в блоке есть `ip global`. Порядок — как в конфиге.
+//
+// Почему не выходы политики: `ip static <Seg> <iface>` — общероутерная
+// настройка, а не свойство политики. Правило SNAT вешается на выходной
+// интерфейс и срабатывает для любого трафика сегмента, ушедшего в него, — хоть
+// по политике, хоть мимо неё. Привязка целей к составу политики оставила бы
+// без SNAT ровно те пути, которыми ходят устройства вне её.
+//
+// Собственные OpkgTun отсеивает вызывающий: они выход, но SNAT в них — тот
+// самый маскарад, от которого опция и спасает.
+func globalEgressInterfaces(lines []string) []string {
+	var out []string
+	current := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if line == trimmed { // без отступа — заголовок блока или его конец
+			f := strings.Fields(trimmed)
+			current = ""
+			if len(f) == 2 && f[0] == "interface" {
+				current = f[1]
+			}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		if trimmed == "ip global" || strings.HasPrefix(trimmed, "ip global ") {
+			out = append(out, current)
+			current = "" // одного признака на блок достаточно
+		}
+	}
+	return out
+}
+
 // policyTunIPGlobalPresent ищет `ip global` ВНУТРИ блока своего интерфейса:
 // running-config блочный (заголовок без отступа, тело с отступом, `!` — конец),
 // и та же строка под чужим интерфейсом нашей не является. Без `ip global`

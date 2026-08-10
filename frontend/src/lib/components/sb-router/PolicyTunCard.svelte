@@ -14,6 +14,7 @@
   import PolicyCombobox from './PolicyCombobox.svelte';
   import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type {
+    PolicyTunNATEgress,
     PolicyTunNATSegmentInfo,
     SingboxRouterSettings,
     SingboxRouterStatus,
@@ -25,6 +26,8 @@
     onPatch: (patch: Partial<SingboxRouterSettings>) => void | Promise<void>;
   }
   let { cfg, status, onPatch }: Props = $props();
+
+  const EXIT_WORDS = ['выходе', 'выходах', 'выходах'] as const;
 
   const iface = $derived(status?.policyTunIface ?? '');
   const ndmsName = $derived(status?.policyTunNdmsName ?? '');
@@ -49,12 +52,12 @@
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let selected = $state<string[]>([]);
-  // Выход, на котором подмена адреса СОХРАНИТСЯ: static-NAT ставится на пару
-  // «сегмент → этот выход», а к туннелю записи нет — на этом опция и держится.
-  let wanName = $state('');
-  let wanLabel = $state('');
+  // Выходы, на которых подмена адреса СОХРАНИТСЯ: static-NAT ставится на пару
+  // «сегмент → выход», а к туннелю записи нет — на этом опция и держится.
+  // Выходов несколько: правило вешается на каждый интерфейс роутера, через
+  // который сеть может уйти наружу, а не только на текущий выход в интернет.
+  let egresses = $state<PolicyTunNATEgress[]>([]);
 
-  const wanTitle = $derived(wanLabel || wanName || 'Интернет');
   const tunName = $derived(ndmsName || 'туннель sing-box');
 
   async function openPicker() {
@@ -65,8 +68,7 @@
     try {
       const data = await api.getPolicyTunNATPreview();
       preview = data.segments ?? [];
-      wanName = data.wanName ?? '';
-      wanLabel = data.wanLabel ?? '';
+      egresses = data.egresses ?? [];
       // Уже выбранное пользователем важнее умолчания; на первом включении
       // предвыбираем сегменты за динамическим NAT — именно их маскарад скрывает
       // адреса клиентов от sing-box.
@@ -241,22 +243,28 @@
           <span class="dest-tech">{tunName}</span>
           <span class="dest-note">адреса устройств — правила и статистика по клиентам работают</span>
         </div>
-        <div class="dest">
-          <span class="dest-name">{wanTitle}</span>
-          {#if wanName && wanName !== wanTitle}
-            <span class="dest-tech">{wanName}</span>
-          {/if}
-          <span class="dest-note">адрес роутера — как и было, интернет не меняется</span>
-        </div>
+        {#each egresses as eg (eg.name)}
+          <div class="dest">
+            <span class="dest-name">{eg.label || eg.name}</span>
+            {#if eg.label}
+              <span class="dest-tech">{eg.name}</span>
+            {/if}
+            <span class="dest-note">адрес роутера — как и было</span>
+          </div>
+        {:else}
+          <div class="dest">
+            <span class="dest-name">Выходы в интернет</span>
+            <span class="dest-note">адрес роутера — как и было</span>
+          </div>
+        {/each}
       </div>
     </div>
 
     <p class="hint hint-warning">
       Меняется способ выхода отмеченных сетей в интернет: <b>проверьте проброс портов и UPnP</b>,
       они настраиваются отдельно.
-      {#if wanName}
-        Адрес подменяется только на выходе <b>{wanName}</b>; если у сети есть другие выходы в
-        интернет, трафик к ним пойдёт с адресом устройства и может не вернуться.
+      {#if egresses.length > 0}
+        Подмена сохраняется на {pluralize(egresses.length, EXIT_WORDS)}, перечисленных справа.
       {/if}
     </p>
   {/if}

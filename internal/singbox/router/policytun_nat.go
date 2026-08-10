@@ -34,17 +34,23 @@ type NATSegmentInfo struct {
 	Subnet    string `json:"subnet,omitempty"`
 }
 
+// NATEgress — выход роутера, на котором подмена адреса сохранится: туда встанет
+// `ip static`. Label пуст, когда NDMS не дал описания.
+type NATEgress struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+}
+
 // NATPreview — всё, что экран «Сохранять адреса клиентов» показывает до
-// включения: сами сегменты и ВЫХОД, на котором подмена адреса сохранится.
-// Без второй половины пользователь видит только «какие сети выбрать» и не
-// видит, между чем и чем подмена снимается.
+// включения: сами сегменты и ВЫХОДЫ, на которых подмена сохранится. Без второй
+// половины пользователь видит только «какие сети выбрать» и не видит, между чем
+// и чем подмена снимается.
 //
-// WANName пуст, когда выход определить нельзя (режим уже включён — дефолт
-// припаркован на нашем tun).
+// Egresses пуст, когда выходы определить нельзя (running-config не прочитался,
+// а дефолт уже припаркован на нашем tun).
 type NATPreview struct {
 	Segments []NATSegmentInfo
-	WANName  string
-	WANLabel string
+	Egresses []NATEgress
 }
 
 // SegmentInfo — то, что NDMS знает о сегменте помимо его имени.
@@ -98,18 +104,18 @@ func (s *ServiceImpl) PolicyTunNATPreview(ctx context.Context) (NATPreview, erro
 	}
 	out := NATPreview{Segments: segs}
 
-	// Выход, на который встанет static — best-effort: при уже включённом режиме
-	// дефолт припаркован на нашем tun, и резолвер честно отвергает такой ответ
-	// (см. resolvePolicyTunWAN). Тогда экран назовёт выход обобщённо, а не
-	// соврёт именем нашего же туннеля.
-	if s.deps.DefaultGateway != nil {
-		if wan, werr := s.resolvePolicyTunWAN(ctx); werr == nil {
-			out.WANName = wan
+	// Выходы, на которые встанет static — те же, что применит apply. Best-effort:
+	// молчащий RCI оставит список пустым, и экран назовёт выход обобщённо, а не
+	// соврёт числом или именем.
+	if targets, terr := s.policyTunSNATTargets(ctx); terr == nil {
+		for _, name := range targets {
+			e := NATEgress{Name: name}
 			if s.deps.Segments != nil {
-				if info, ierr := s.deps.Segments.SegmentInfo(ctx, wan); ierr == nil {
-					out.WANLabel = info.Label
+				if info, ierr := s.deps.Segments.SegmentInfo(ctx, name); ierr == nil {
+					e.Label = info.Label
 				}
 			}
+			out.Egresses = append(out.Egresses, e)
 		}
 	}
 	return out, nil
@@ -219,7 +225,7 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 	if s.deps.SegmentNAT == nil || s.deps.NATState == nil || s.deps.DefaultGateway == nil {
 		return nil, fmt.Errorf("policy-tun source-preserve: deps not wired")
 	}
-	wan, err := s.resolvePolicyTunWAN(ctx)
+	targets, err := s.policyTunSNATTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +256,12 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 				return nil, fmt.Errorf("policy-tun source-preserve: no ip nat %s: %w", seg, err)
 			}
 		}
-		if err := s.deps.SegmentNAT.SetStaticNAT(ctx, seg, wan); err != nil {
-			return nil, fmt.Errorf("policy-tun source-preserve: ip static %s %s: %w", seg, wan, err)
+		// По записи на КАЖДЫЙ выход политики: SNAT нужен там, куда трафик
+		// сегмента реально уходит, а не только на WAN по дефолтному маршруту.
+		for _, target := range targets {
+			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, seg, target); err != nil {
+				return nil, fmt.Errorf("policy-tun source-preserve: ip static %s %s: %w", seg, target, err)
+			}
 		}
 		if was, ok := recordedBefore[seg]; ok {
 			// Запись старше живого скана — возвращаем её (в том числе в rollback
@@ -266,6 +276,42 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 		})
 	}
 	return recorded, nil
+}
+
+// policyTunSNATTargets отдаёт выходы, на которых сегментам нужен static-NAT:
+// ВСЕ интерфейсы с `ip global`, кроме наших OpkgTun.
+//
+// Не один WAN по дефолтному маршруту: `ip static` — общероутерная настройка,
+// правило SNAT вешается на выходной интерфейс и срабатывает для любого
+// трафика сегмента, ушедшего в него. Сегмент, у которого сняли маскарад,
+// теряет подмену адреса на КАЖДОМ выходе сразу, поэтому вернуть её надо на
+// каждом — иначе к невзятому выходу трафик уйдёт с приватным адресом
+// источника и не вернётся.
+//
+// Не выходы политики: устройства сегмента могут ходить и мимо неё, а состав
+// политики меняется без всякого пересчёта static-NAT.
+//
+// Список пуст (running-config не прочитался, `ip global` нигде не нашёлся) →
+// прежнее поведение: единственная цель — WAN по дефолту.
+func (s *ServiceImpl) policyTunSNATTargets(ctx context.Context) ([]string, error) {
+	var exits []string
+	if s.deps.RunningConfig != nil {
+		if lines, err := s.deps.RunningConfig.Lines(ctx); err == nil {
+			for _, e := range globalEgressInterfaces(lines) {
+				if !isOpkgTunName(e) {
+					exits = append(exits, e)
+				}
+			}
+		}
+	}
+	if len(exits) > 0 {
+		return exits, nil
+	}
+	wan, err := s.resolvePolicyTunWAN(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []string{wan}, nil
 }
 
 // resolvePolicyTunWAN отдаёт NDMS-имя WAN для static-NAT по живому дефолту.

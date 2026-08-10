@@ -258,8 +258,7 @@ func (h *SingboxRouterHandler) PolicyTunNATPreview(w http.ResponseWriter, r *htt
 	}
 	response.Success(w, map[string]any{
 		"segments": preview.Segments,
-		"wanName":  preview.WANName,
-		"wanLabel": preview.WANLabel,
+		"egresses": preview.Egresses,
 	})
 }
 

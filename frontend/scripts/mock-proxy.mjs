@@ -6289,10 +6289,14 @@ const server = http.createServer(async (req, res) => {
 					{ name: 'Wireguard1', mode: 'dynamic', subnet: '172.16.6.0/24' },
 					{ name: 'IoT', mode: 'none', label: 'Умный дом', subnet: '192.168.3.0/24' },
 				],
-				// Выход, на котором подмена адреса сохранится (static-NAT ставится
-				// на пару «сегмент → этот выход»).
-				wanName: 'PPPoE0',
-				wanLabel: 'Провайдер',
+				// Выходы, на которых подмена адреса сохранится: static-NAT встаёт на
+				// КАЖДЫЙ интерфейс роутера с `ip global`, а не только на текущий
+				// выход в интернет.
+				egresses: [
+					{ name: 'PPPoE0', label: 'Провайдер' },
+					{ name: 'Wireguard0', label: 'VPN A' },
+					{ name: 'Wireguard1' },
+				],
 			},
 		});
 		return;

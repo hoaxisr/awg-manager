@@ -247,6 +247,58 @@ func TestPolicyTunNATPreview_StaticWinsOverDynamic(t *testing.T) {
 // Apply
 // ---------------------------------------------------------------------------
 
+// Static-NAT нужен на КАЖДОМ выходе роутера, а не только на WAN по дефолтному
+// маршруту: `ip static` — общероутерная настройка, её правило вешается на
+// выходной интерфейс. Сняв с сегмента маскарад, мы лишили его подмены адреса
+// сразу на всех выходах, поэтому вернуть её надо на каждом — иначе к невзятому
+// выходу трафик уйдёт с приватным адресом и не вернётся.
+func TestApplySourcePreserve_StaticOnEveryGlobalEgress(t *testing.T) {
+	log := &callLog{}
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}},
+	}, &recSegmentNAT{log: log}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface PPPoE0", "    ip global 700", "!",
+		"interface Wireguard1", "    ip global 65500", "!",
+		// Без `ip global` — выходом наружу не является (домашний сегмент).
+		"interface Home", "    ip address 192.168.1.1 255.255.255.0", "!",
+		// Наш туннель — выход, но SNAT в него это ровно тот маскарад, от
+		// которого опция и спасает.
+		"interface OpkgTun0", "    ip global 65500", "!",
+	}}
+
+	if _, err := svc.applyPolicyTunSourcePreserve(context.Background(), []string{"Home"}, nil); err != nil {
+		t.Fatalf("applyPolicyTunSourcePreserve: %v", err)
+	}
+
+	if !log.has("SetStaticNAT:Home:PPPoE0") || !log.has("SetStaticNAT:Home:Wireguard1") {
+		t.Errorf("static обязан встать на каждый global-выход: %v", log.calls)
+	}
+	if log.has("SetStaticNAT:Home:Home") {
+		t.Errorf("интерфейс без ip global выходом наружу не является: %v", log.calls)
+	}
+	if log.has("SetStaticNAT:Home:OpkgTun0") {
+		t.Errorf("SNAT в собственный туннель — то, от чего опция спасает: %v", log.calls)
+	}
+}
+
+// Выходы прочитать не удалось (running-config не подключён или пуст) —
+// остаётся прежнее поведение: один WAN по дефолтному маршруту.
+func TestApplySourcePreserve_FallsBackToDefaultWAN(t *testing.T) {
+	log := &callLog{}
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}},
+	}, &recSegmentNAT{log: log}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{"system", "    hostname keenetic", "!"}}
+
+	if _, err := svc.applyPolicyTunSourcePreserve(context.Background(), []string{"Home"}, nil); err != nil {
+		t.Fatalf("applyPolicyTunSourcePreserve: %v", err)
+	}
+	if !log.has("SetStaticNAT:Home:PPPoE0") {
+		t.Errorf("без global-выходов цель — WAN по дефолту: %v", log.calls)
+	}
+}
+
 // Apply записывает ИСХОДНОЕ состояние каждого сегмента и переводит его на
 // static-NAT в WAN: `no ip nat` только для dynamic (у static его нет, у none
 // не было никогда).
