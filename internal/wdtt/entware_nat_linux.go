@@ -68,15 +68,6 @@ func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, mode, wan
 	return true
 }
 
-// entwareNATPresent kept for tests; checks single iface/CIDR only.
-func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
-	cfg := ServerConfig{RelayMode: ConnModeWG, WgIface: wgIface}
-	if wgIface == DefaultRawServerIface {
-		cfg = ServerConfig{RelayMode: ConnModeRaw}
-	}
-	return entwareNATPresentForServer(ctx, cfg, "full", wanDev)
-}
-
 // masqueradeMatchArgs — match-часть SNAT-правила для одного плана.
 // full: `-s CIDR ! -o <client-iface>` — NAT на любом egress: fwmark-таблицы
 // (HR, политики) шлют клиентов в разные интерфейсы, привязка к одному -o

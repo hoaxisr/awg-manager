@@ -28,3 +28,6 @@ func removePanelUser(_, _, _ string) error { return errPanelUsersUnsupported }
 func restorePanelUsers(_, _ string, _ []ServerClient) ([]ServerClient, error) {
 	return nil, nil
 }
+
+// panel.db на этих арках недоступна — чистить нечего.
+func purgeGatewayIPDevices(string) (int, error) { return 0, nil }

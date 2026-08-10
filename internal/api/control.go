@@ -99,6 +99,10 @@ func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, 
 		opErr = h.wdttCtl.StopClientInstance(clientID)
 	}
 	if opErr != nil {
+		if start && errors.Is(opErr, wdtt.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, opErr.Error(), "WDTT_CLIENT_START_IN_FLIGHT")
+			return true
+		}
 		code := "START_FAILED"
 		if !start {
 			code = "STOP_FAILED"

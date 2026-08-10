@@ -175,7 +175,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			}
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, reason+", перезапуск: "+err.Error())
+					if errors.Is(err, ErrClientStartInFlight) {
+						s.appLog.Info("health", c.ID, "перезапуск пропущен: старт клиента уже выполняется")
+					} else {
+						s.appLog.Warn("health", c.ID, reason+", перезапуск: "+err.Error())
+					}
 				}
 			} else if s.appLog != nil {
 				s.appLog.Info("health", c.ID, "клиент перезапущен: "+reason)
@@ -214,7 +218,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 			s.startBackoff.Fail(stallKey, now)
 			if err := s.restartClientInstance(c.ID); err != nil {
 				if s.appLog != nil {
-					s.appLog.Warn("health", c.ID, "входящий трафик встал, перезапуск: "+err.Error())
+					if errors.Is(err, ErrClientStartInFlight) {
+						s.appLog.Info("health", c.ID, "перезапуск пропущен: старт клиента уже выполняется")
+					} else {
+						s.appLog.Warn("health", c.ID, "входящий трафик встал, перезапуск: "+err.Error())
+					}
 				}
 			} else if s.appLog != nil {
 				s.appLog.Info("health", c.ID, "клиент перезапущен: нет входящего трафика")
