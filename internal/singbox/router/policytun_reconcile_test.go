@@ -72,6 +72,66 @@ func provisionPolicyTunForReconcile(t *testing.T, h *policyTunEnableHarness) sto
 // Парсеры running-config
 // ---------------------------------------------------------------------------
 
+// Дословные элементы массива `message` из ответа живого роутера (Netcraze
+// Ultra, NDMS 2.06.1, 2026-08-10) — снято ТЕМ ЖЕ каналом, которым ходит
+// продукт: `GET http://127.0.0.1:79/rci/show/running-config`
+// (`transport/client.go:224-234` → `query/runningconfig.go:39-49`). Вывод
+// `ndmc` для этой цели негоден: CLI форматирует сам, и его отступы — свойство
+// CLI, а не данных.
+//
+// Что здесь зафиксировано, кроме самих строк:
+//   - ведущие пробелы тела блока RCI СОХРАНЯЕТ — на этом стоит весь блочный
+//     разбор («строка с отступом = тело»);
+//   - `!` приходит отдельным элементом без отступа, то есть закрывает блок;
+//   - служебная шапка `! $$$ …` и пустые строки идут в том же массиве;
+//   - ЗАПРЕТ печатается той же тройкой слов, что и разрешение:
+//     `no permit global <iface>`. Поиск подстрокой принимал бы его за
+//     разрешение — продукт не ставил бы permit, и режим оставался бы молча
+//     мёртвым.
+var liveRouterPolicyRC = []string{
+	"! $$$ Agent: http/rci",
+	"! $$$ Model: Netcraze Ultra",
+	"",
+	"ip policy Policy0",
+	"    description IoT_VPN",
+	"    permit global Wireguard1",
+	"    no permit global PPPoE0",
+	"    no permit global Wireguard5",
+	"    no permit global Wireguard6",
+	"!",
+	"ip policy Policy1",
+	"    description North_Korea",
+	"    permit global PPPoE0",
+	"    no permit global Wireguard1",
+	"    no permit global Wireguard5",
+	"    no permit global Wireguard6",
+	"    standalone",
+	"!",
+}
+
+func TestPolicyTunPermitted_LiveRouterConfig(t *testing.T) {
+	cases := []struct {
+		iface, policy string
+		want          bool
+	}{
+		{"Wireguard1", "Policy0", true},  // разрешён в целевой
+		{"Wireguard1", "Policy1", false}, // в целевой он ЗАПРЕЩЁН (`no permit`)
+		{"PPPoE0", "Policy0", false},     // запрещён здесь, разрешён в соседней
+		{"PPPoE0", "Policy1", true},      // разрешён в целевой
+		{"Wireguard5", "Policy0", false}, // только запрет
+		{"Wireguard6", "Policy1", false}, // запрещён в обеих политиках
+		{"Wireguard5", "", false},        // политика не выбрана: разрешения нет нигде
+		{"Wireguard1", "", true},         // политика не выбрана: разрешён хоть где-то
+		{"OpkgTun0", "Policy0", false},   // нас в конфиге ещё нет
+		{"Wireguard1", "Policy9", false}, // целевой политики не существует
+	}
+	for _, c := range cases {
+		if got := policyTunPermitted(liveRouterPolicyRC, c.iface, c.policy); got != c.want {
+			t.Errorf("policyTunPermitted(%q, %q) = %v, want %v", c.iface, c.policy, got, c.want)
+		}
+	}
+}
+
 func TestPolicyTunRunningConfigParsers(t *testing.T) {
 	lines := []string{
 		"ip route default OpkgTun0",
