@@ -87,6 +87,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 		iface := cfg.kernelServerIface()
 		mode := normalizeNatMode(cfg.NatMode)
 		if mode == "none" {
+			removeWdttForwardNetfilterHook()
 			continue
 		}
 		wanDev := ""

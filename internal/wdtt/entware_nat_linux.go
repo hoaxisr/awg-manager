@@ -103,6 +103,7 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	}
 	if mode == "none" {
 		removeEntwareNATForServer(ctx, cfg)
+		removeWdttForwardNetfilterHook()
 		return nil
 	}
 	// Убрать entware с ifaces, которые больше не в плане (OpkgTun → NDMS для WG).
@@ -255,7 +256,9 @@ func wdttNetfilterHookScript(spec wdttNetfilterSpec) string {
 	}
 	for _, plan := range spec.Masq {
 		match := strings.Join(masqueradeMatchArgs(plan, spec.MasqMode, spec.MasqStaticWAN), " ")
-		fmt.Fprintf(&b, "run -t nat -C POSTROUTING %s || run -t nat -I POSTROUTING 1 %s\n", match, match)
+		fmt.Fprintf(&b, "if has_if %q; then\n", plan.Iface)
+		fmt.Fprintf(&b, "  run -t nat -C POSTROUTING %s || run -t nat -I POSTROUTING 1 %s\n", match, match)
+		b.WriteString("fi\n")
 	}
 	b.WriteString(";;\nmangle)\n")
 	if mark := strings.TrimSpace(spec.RawPolicyMark); mark != "" {
