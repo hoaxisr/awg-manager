@@ -157,6 +157,7 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 			}
 		} else {
 			removeEntwareNATForServer(ctx, cfg)
+			removeWdttForwardNetfilterHook()
 		}
 
 		segments := cfg.LanSegments

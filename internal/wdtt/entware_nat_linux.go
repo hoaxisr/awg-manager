@@ -102,6 +102,9 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 		return nil
 	}
 	if mode == "none" {
+		// Живые вызовы (access.go applyServerAccess, nat_reconcile.go) отсекают
+		// mode=="none" ДО этой функции и сами зовут removeWdttForwardNetfilterHook —
+		// эта ветка defensive, на случай будущих call-site'ов без такого отсева.
 		removeEntwareNATForServer(ctx, cfg)
 		removeWdttForwardNetfilterHook()
 		return nil
