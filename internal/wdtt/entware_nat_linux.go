@@ -52,7 +52,20 @@ func entwareNATPresentForServer(ctx context.Context, cfg ServerConfig, mode, wan
 		}
 		wanDev = dev
 	}
-	return masqueradeOutDev(natOut) == wanDev
+	for _, plan := range plans {
+		want := strings.Join(masqueradeMatchArgs(plan, mode, wanDev), " ")
+		found := false
+		for _, line := range strings.Split(natOut, "\n") {
+			if strings.Contains(line, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // entwareNATPresent kept for tests; checks single iface/CIDR only.
@@ -64,20 +77,20 @@ func entwareNATPresent(ctx context.Context, wgIface, wanDev string) bool {
 	return entwareNATPresentForServer(ctx, cfg, "full", wanDev)
 }
 
-// masqueradeOutDev returns the `-o <dev>` of the AWGM_WDTT MASQUERADE rule.
-func masqueradeOutDev(natOut string) string {
-	for _, line := range strings.Split(natOut, "\n") {
-		if !strings.Contains(line, entwareNATComment) {
-			continue
-		}
-		fields := strings.Fields(line)
-		for i, f := range fields {
-			if f == "-o" && i+1 < len(fields) {
-				return fields[i+1]
-			}
-		}
+// masqueradeMatchArgs — match-часть SNAT-правила для одного плана.
+// full: `-s CIDR ! -o <client-iface>` — NAT на любом egress: fwmark-таблицы
+// (HR, политики) шлют клиентов в разные интерфейсы, привязка к одному -o
+// оставляла остальные пути без SNAT (PR #697, F8).
+// ponytail: клиент→LAN тоже маскарадится (br0) — осознанно: LAN-устройствам
+// не нужен маршрут в клиентский пул; убрать, если понадобятся честные src.
+// internet-only: жёсткий `-o <staticWAN>` — NAT только в выбранный WAN.
+func masqueradeMatchArgs(plan entwareNATPlan, mode, staticWANDev string) []string {
+	if normalizeNatMode(mode) == "internet-only" && strings.TrimSpace(staticWANDev) != "" {
+		return []string{"-s", plan.CIDR, "-o", staticWANDev,
+			"-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"}
 	}
-	return ""
+	return []string{"-s", plan.CIDR, "!", "-o", plan.Iface,
+		"-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"}
 }
 
 func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDev string) error {
@@ -107,11 +120,11 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	}
 	extIface := strings.TrimSpace(wanDev)
 	if extIface == "" {
-		var err error
-		extIface, err = defaultWANDev(ctx)
-		if err != nil {
+		dev, err := defaultWANDev(ctx)
+		if err != nil && mode == "internet-only" {
 			return err
 		}
+		extIface = dev
 	}
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 
@@ -124,10 +137,11 @@ func applyEntwareNATForServer(ctx context.Context, cfg ServerConfig, mode, wanDe
 	setupEntwareMSSClamp(ctx, activeCIDRs...)
 
 	flushEntwareMasquerade(ctx)
-	for _, cidr := range activeCIDRs {
-		if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
-			"-s", cidr, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
-			return fmt.Errorf("MASQUERADE %s via %s: %w", cidr, extIface, err)
+	for _, plan := range plans {
+		args := append([]string{"-t", "nat", "-I", "POSTROUTING", "1"},
+			masqueradeMatchArgs(plan, mode, extIface)...)
+		if err := iptables.Run(ctx, args...); err != nil {
+			return fmt.Errorf("MASQUERADE %s: %w", plan.CIDR, err)
 		}
 	}
 	return nil
@@ -157,9 +171,10 @@ func applyEntwareNAT(ctx context.Context, wgIface, mode, wanDev, peerCIDR string
 		setupEntwareForward(ctx, wgIface)
 		setupEntwareMSSClamp(ctx, peerCIDR)
 		flushEntwareMasquerade(ctx)
-		if err := iptables.Run(ctx, "-t", "nat", "-I", "POSTROUTING", "1",
-			"-s", peerCIDR, "-o", extIface, "-m", "comment", "--comment", entwareNATComment, "-j", "MASQUERADE"); err != nil {
-			return fmt.Errorf("MASQUERADE %s via %s: %w", peerCIDR, extIface, err)
+		args := append([]string{"-t", "nat", "-I", "POSTROUTING", "1"},
+			masqueradeMatchArgs(entwareNATPlan{Iface: wgIface, CIDR: peerCIDR}, mode, extIface)...)
+		if err := iptables.Run(ctx, args...); err != nil {
+			return fmt.Errorf("MASQUERADE %s: %w", peerCIDR, err)
 		}
 		return nil
 	}
