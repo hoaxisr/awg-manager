@@ -3,10 +3,25 @@ package router
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание policy-tun.
+// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
+// интерфейсу переписал бы его настройки.
+func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName string) bool {
+	if s.deps.OpkgTunScan == nil {
+		return false
+	}
+	ids, err := s.deps.OpkgTunScan(ctx, policyTunDescription)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(ids, ndmsName)
+}
 
 // enablePolicyTun provisions the policy-tun path: persist index → create a
 // PUBLIC + `ip global` OpkgTun (so NDMS lists it as a policy exit) → addr/mtu/up
@@ -66,11 +81,22 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Prefer the persisted index while it is free: the user pins permits in the
 	// NDMS policy to a concrete OpkgTun name, and silently renaming the exit on
 	// every enable would break them.
+	//
+	// Занятый персистом индекс тоже наш, если на нём висит НАШ интерфейс:
+	// выключение его больше не удаляет, а удерживает (holdOpkgTun). Без этой
+	// ветки удержание оборачивалось бы дрейфом хуже прежнего — номер занят,
+	// аллокатор берёт следующий, permit в политике остаётся на прежнем имени.
+	// Владение доказывается описанием; скан не подключён — «не знаем» ≠ «наш».
 	idx := 0
-	if prev != nil && !live[prev.Index] {
+	switch {
+	case prev != nil && !live[prev.Index]:
 		idx = prev.Index
-	} else if idx, err = allocateFakeIPIndex(live); err != nil {
-		return fmt.Errorf("enable policy-tun: allocate index: %w", err)
+	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index)):
+		idx = prev.Index
+	default:
+		if idx, err = allocateFakeIPIndex(live); err != nil {
+			return fmt.Errorf("enable policy-tun: allocate index: %w", err)
+		}
 	}
 	// Two names per index: NDMS RCI takes the CamelCase ndmsName, the kernel
 	// (sing-box config, ip flush, /sys carrier) sees the lowercase iface.
@@ -151,6 +177,13 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// отвалился во время waitForSingbox) — иначе NDMS-вызовы отката no-op'ятся
 	// с context.Canceled и OpkgTun остаётся с настроенным адресом (nginx-loop,
 	// см. teardownOpkgTun).
+	//
+	// ОСОЗНАННАЯ ПОТЕРЯ: откат УДАЛЯЕТ интерфейс, даже если включение его не
+	// создавало, а переиспользовало удержанный. Номер не теряется (персист цел,
+	// следующее включение возьмёт его же), теряется идентичность интерфейса —
+	// переживает ли пересоздание permit в политике, не проверено. Откат также
+	// не снимает уже поставленный нами permit: DenyInterface мог бы снять
+	// разрешение, которое пользователь дал интерфейсу сознательно.
 	rbCtx := context.WithoutCancel(ctx)
 	push(func() {
 		_ = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
@@ -308,11 +341,29 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		})
 	}
 
-	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box»: тот
-	// же механизм, что у fakeip (issue #678), но без перехвата DNS — своего
-	// резолвера в policy-tun нет. Best-effort (см. ensureFakeIPIngress): без
-	// заворота режим работает, просто трафик таких серверов идёт мимо политики.
-	s.ensureFakeIPIngress(ctx, s.policyTunIngressSpec(ctx, iface, sr))
+	// Разрешаем tun выходом целевой политики. ПОСЛЕ подъёма интерфейса и
+	// парковки дефолта: permit имени, под которым интерфейса ещё нет, NDMS
+	// может отвергнуть, а разрешение до готовности sing-box увело бы трафик
+	// членов политики в туннель без читателя.
+	//
+	// Откат уже поставленный permit НЕ снимает (осознанно: DenyInterface мог бы
+	// снять разрешение, поставленное пользователем).
+	permitted := false
+	if s.deps.RunningConfig != nil {
+		if lines, e := s.deps.RunningConfig.Lines(ctx); e == nil {
+			permitted = policyTunPermitted(lines, ndmsName, sr.PolicyName)
+		}
+	}
+	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
+
+	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box» плюс
+	// перехват DNS у членов политики: тот же механизм, что у fakeip (issue
+	// #678). Best-effort (см. ensureFakeIPIngress): без заворота режим
+	// работает, просто трафик таких серверов идёт мимо политики. Неприменимый
+	// спек (марки не прочитались) пропускаем — их починит drift-heal.
+	if spec, ok := s.policyTunIngressSpec(ctx, iface, ndmsName, sr); ok {
+		s.ensureFakeIPIngress(ctx, spec)
+	}
 	push(func() {
 		// Откат обязан снять и заворот: иначе `ip rule iif` пережил бы удаление
 		// tun и увёл трафик ingress-серверов в несуществующий интерфейс.

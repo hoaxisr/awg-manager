@@ -1512,7 +1512,13 @@ const api_SingboxRouterIssueDTO: v.GenericSchema = v.looseObject({
 	tag: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxRouterNATEgressDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
 const api_SingboxRouterNATPreviewData: v.GenericSchema = v.looseObject({
+	egresses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterNATEgressDTO)))),
 	segments: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterNATSegmentDTO)))),
 });
 
@@ -1522,9 +1528,11 @@ const api_SingboxRouterNATPreviewResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_SingboxRouterNATSegmentDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
 	mode: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	staticWan: v.optional(v.nullable(v.string())),
+	subnet: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxRouterOutboundDTO: v.GenericSchema = v.looseObject({

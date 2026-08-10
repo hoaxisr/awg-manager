@@ -219,6 +219,28 @@ export interface PolicyTunNATSegmentInfo {
 	name: string;
 	mode: 'dynamic' | 'static' | 'none';
 	staticWan?: string;
+	/** Описание сегмента из NDMS. Пусто, если не задано. */
+	label?: string;
+	/** Подсеть сегмента, напр. "192.168.1.0/24". Пусто, если адресации нет. */
+	subnet?: string;
+}
+
+/** Выход роутера, на котором подмена адреса сохранится (туда встанет static). */
+export interface PolicyTunNATEgress {
+	name: string;
+	label?: string;
+}
+
+/**
+ * Предпоказ source-preserve: сегменты и ВЫХОДЫ, на которых подмена адреса
+ * сохранится. Без второй половины экран не отвечает на главный вопрос —
+ * между чем и чем подмена снимается. Выходов несколько: `ip static` —
+ * общероутерная настройка, правило встаёт на каждый интерфейс с `ip global`.
+ */
+export interface PolicyTunNATPreview {
+	segments: PolicyTunNATSegmentInfo[];
+	/** Пусто, когда выходы определить нельзя. */
+	egresses?: PolicyTunNATEgress[];
 }
 
 /**

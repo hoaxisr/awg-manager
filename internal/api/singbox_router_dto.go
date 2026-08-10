@@ -312,12 +312,28 @@ type SingboxRouterNATSegmentDTO struct {
 	Name      string `json:"name" example:"Home"`
 	Mode      string `json:"mode" example:"dynamic" enums:"dynamic,static,none"`
 	StaticWAN string `json:"staticWan,omitempty" example:"PPPoE0"`
+	// Label — описание сегмента из NDMS, Subnet — его подсеть. Пустые, когда
+	// NDMS описания не дал или адресации у сегмента нет.
+	Label  string `json:"label,omitempty" example:"Домашняя сеть"`
+	Subnet string `json:"subnet,omitempty" example:"192.168.1.0/24"`
+}
+
+// SingboxRouterNATEgressDTO mirrors router.NATEgress — выход роутера, на
+// котором подмена адреса сохранится.
+type SingboxRouterNATEgressDTO struct {
+	Name  string `json:"name" example:"PPPoE0"`
+	Label string `json:"label,omitempty" example:"Провайдер"`
 }
 
 // SingboxRouterNATPreviewData is the payload of
 // GET /singbox/router/policy-tun/nat-preview.
 type SingboxRouterNATPreviewData struct {
 	Segments []SingboxRouterNATSegmentDTO `json:"segments"`
+	// Egresses — выходы, на которых подмена адреса СОХРАНИТСЯ (туда встанет
+	// static-NAT). Их несколько: `ip static` — общероутерная настройка, и
+	// правило вешается на каждый интерфейс с `ip global`. Пусто, когда выходы
+	// определить нельзя.
+	Egresses []SingboxRouterNATEgressDTO `json:"egresses,omitempty"`
 }
 
 // SingboxRouterNATPreviewResponse is the envelope for

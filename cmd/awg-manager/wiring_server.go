@@ -343,6 +343,7 @@ func (a *app) setupRouter() {
 		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
 		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
 		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
 		RunningConfig: a.ndmsQueries.RunningConfig,
 		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
 		// *RouteStore satisfies DefaultGatewayResolver directly.

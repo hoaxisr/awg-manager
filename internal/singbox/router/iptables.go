@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,11 @@ var (
 	// rebuild. ipsets live in RAM, so it is the only way the set survives a
 	// reboot: the netfilter.d hook restores it before any iptables-restore.
 	bypassSavePath = "/opt/etc/awg-manager/singbox/bypass.ipset"
+	// netfilterPolicyTunDNSHookPath — хук перехвата DNS в policy-tun.
+	// Отдельный от 50-го: тот в этом режиме существует только под классы
+	// QoS, его детектор завязан на цепочку AWGM-REDIRECT (которой без QoS
+	// нет) и он гейтится на pidof sing-box, что несовместимо с fail-closed.
+	netfilterPolicyTunDNSHookPath = "/opt/etc/ndm/netfilter.d/52-awgm-policytun-dns.sh"
 )
 
 // bypassSetName is the ipset holding the geoip bypass ranges — aliased from
@@ -742,17 +748,21 @@ type persistFn func(input string) error
 type persistRulesFn func(combined, mangle, nat string) error
 
 type IPTables struct {
-	restoreNoflush   restoreNoflushFn
-	runIPTables      runFn
-	runIPTablesOut   runOutFn
-	runIP            runFn
-	runIPOut         runOutFn
-	persistRules     persistRulesFn
-	persistHook      func(includeBlackhole bool) error
-	cleanupHook      func()
-	persistBlackhole persistFn
-	cleanupBlackhole func()
-	runCtClean       func(ctx context.Context)
+	restoreNoflush restoreNoflushFn
+	runIPTables    runFn
+	runIPTablesOut runOutFn
+	runIP          runFn
+	runIPOut       runOutFn
+	persistRules   persistRulesFn
+	persistHook    func(includeBlackhole bool) error
+	cleanupHook    func()
+	// persistPolicyTunDNSHook / cleanupPolicyTunDNSHook — доставка и снос
+	// хука перехвата DNS в policy-tun.
+	persistPolicyTunDNSHook func(script string) error
+	cleanupPolicyTunDNSHook func()
+	persistBlackhole        persistFn
+	cleanupBlackhole        func()
+	runCtClean              func(ctx context.Context)
 }
 
 func NewIPTables() *IPTables {
@@ -774,9 +784,13 @@ func NewIPTables() *IPTables {
 			}
 			return result.Stdout, nil
 		},
-		persistRules:     writeNetfilterRulesFiles,
-		persistHook:      writeNetfilterHook,
-		cleanupHook:      removeNetfilterRulesFile,
+		persistRules: writeNetfilterRulesFiles,
+		persistHook:  writeNetfilterHook,
+		cleanupHook:  removeNetfilterRulesFile,
+
+		persistPolicyTunDNSHook: writePolicyTunDNSHook,
+		cleanupPolicyTunDNSHook: removePolicyTunDNSHook,
+
 		persistBlackhole: writeNetfilterBlackholeRulesFile,
 		cleanupBlackhole: removeNetfilterBlackholeRulesFile,
 		runCtClean: func(ctx context.Context) {
@@ -928,6 +942,78 @@ func writeNetfilterHook(includeBlackhole bool) error {
 		return err
 	}
 	return storage.AtomicWritePerm(netfilterCtCleanPath, []byte(ctCleanScript()), 0755)
+}
+
+// policyTunDNSHookScript рендерит хук восстановления перехвата DNS в
+// policy-tun. Pure (без I/O) — как и netfilterHookScript, чтобы тест мог
+// проверить шелл через `sh -n`.
+//
+// Правила выписаны по одному на строку, без циклов по списку: BusyBox sh не
+// умеет массивов, а склейка селекторов в строку с последующим разбиением по
+// словам развалилась бы на первом же значении с пробелом.
+//
+// Гейта `pidof sing-box` НЕТ сознательно (спека §7.3): нет движка — трафик
+// этой политики работать не должен, и DNS в том числе. Не «забытая проверка».
+func policyTunDNSHookScript(spec FakeIPIngressSpec) string {
+	var rules strings.Builder
+	for _, sel := range spec.dnatSelectors() {
+		for _, proto := range []string{"udp", "tcp"} {
+			fmt.Fprintf(&rules,
+				"/opt/sbin/iptables -w -t nat -I PREROUTING 1 %s -p %s --dport 53 -m comment --comment %s -j DNAT --to-destination %s || ok=0\n",
+				strings.Join(sel, " "), proto, PolicyTunDNSTag, net.JoinHostPort(spec.TunDNS, "53"))
+		}
+	}
+	return fmt.Sprintf(`#!/bin/sh
+# awg-manager: восстановление перехвата DNS в policy-tun после перестройки
+# firewall ndm. Инверсия проверки $type — как в остальных хуках: при пустом
+# $type в какой-нибудь прошивке положительная проверка молча убила бы хук.
+[ "$type" = "ip6tables" ] && exit 0
+[ "$table" = "nat" ] || exit 0
+# Преднагрузка модулей: в policy-tun БЕЗ классов QoS полного хука
+# 50-awgm-tproxy.sh не существует, а он единственный, кто их грузит.
+KREL="$(uname -r)"
+for mod in xt_comment xt_connmark; do
+  grep -q "^${mod} " /proc/modules 2>/dev/null && continue
+  [ -f "/lib/modules/${KREL}/${mod}.ko" ] && insmod "/lib/modules/${KREL}/${mod}.ko" 2>/dev/null || true
+done
+# Guard от дублей: событие nat приходит и без фактического wipe, а вставка
+# идёт -I PREROUTING 1.
+/opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null | grep -q %[1]s && exit 0
+ok=1
+%[2]sif [ "$ok" = 1 ]; then
+  logger -t awgm-policytun-dns "restored policy DNS hijack"
+else
+  logger -t awgm-policytun-dns "FAILED to restore policy DNS hijack"
+fi
+exit 0
+`, PolicyTunDNSTag, rules.String())
+}
+
+// writePolicyTunDNSHook пишет хук ТОЛЬКО при отличии от лежащего на диске.
+// Сравнение по содержимому — весь механизм отслеживания изменений: набор
+// марок меняется в NDMS без нашего участия, и запись «один раз на enable»
+// оставила бы навсегда протухший файл.
+func writePolicyTunDNSHook(script string) error {
+	// Сверяем И содержимое, И права: файл со сбитым снаружи режимом NDMS
+	// молча не исполнит, а по одному лишь совпадению байтов мы бы его не
+	// переписали.
+	if st, err := os.Stat(netfilterPolicyTunDNSHookPath); err == nil && st.Mode().Perm() == 0755 {
+		if cur, rerr := os.ReadFile(netfilterPolicyTunDNSHookPath); rerr == nil && string(cur) == script {
+			return nil
+		}
+	}
+	return storage.AtomicWritePerm(netfilterPolicyTunDNSHookPath, []byte(script), 0755)
+}
+
+func removePolicyTunDNSHook() {
+	_ = os.Remove(netfilterPolicyTunDNSHookPath)
+}
+
+// RemovePolicyTunDNSHook снимает файл хука перехвата DNS. Идемпотентно.
+func (it *IPTables) RemovePolicyTunDNSHook() {
+	if it.cleanupPolicyTunDNSHook != nil {
+		it.cleanupPolicyTunDNSHook()
+	}
 }
 
 // netfilterHookScript renders the netfilter.d hook with all placeholders

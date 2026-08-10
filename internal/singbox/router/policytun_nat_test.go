@@ -150,14 +150,75 @@ func TestPolicyTunNATPreview_ClassifiesSegments(t *testing.T) {
 		},
 	}, &recSegmentNAT{log: &callLog{}}, &fakeGateway{name: "PPPoE0"})
 
-	got, err := svc.PolicyTunNATPreview(context.Background())
+	preview, err := svc.PolicyTunNATPreview(context.Background())
 	if err != nil {
 		t.Fatalf("PolicyTunNATPreview: %v", err)
 	}
+	got := preview.Segments
 	want := []NATSegmentInfo{
 		{Name: "Home", Mode: natModeDynamic},
 		{Name: "Guest", Mode: natModeStatic, StaticWAN: "PPPoE0"},
 	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("preview = %+v, want %+v", got, want)
+	}
+}
+
+// fakeSegmentDetails отдаёт описание и адресацию сегмента по NDMS-имени.
+type fakeSegmentDetails struct {
+	byName map[string]SegmentInfo
+	err    error
+}
+
+func (f *fakeSegmentDetails) SegmentInfo(_ context.Context, ndmsName string) (SegmentInfo, error) {
+	if f.err != nil {
+		return SegmentInfo{}, f.err
+	}
+	return f.byName[ndmsName], nil
+}
+
+// Сегмент показывается пользователю человеческим именем и подсетью: системные
+// `Home`/`Wireguard1` он видит только в веб-морде роутера, а выбирать вслепую
+// ему предстоит то, у чего меняется способ выхода в интернет.
+func TestPolicyTunNATPreview_EnrichesWithLabelAndSubnet(t *testing.T) {
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}, {Interface: "Wireguard1"}},
+	}, &recSegmentNAT{log: &callLog{}}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.Segments = &fakeSegmentDetails{byName: map[string]SegmentInfo{
+		"Home":       {Label: "Домашняя сеть", Address: "192.168.1.1", Mask: "255.255.255.0"},
+		"Wireguard1": {Label: "", Address: "172.16.6.1", Mask: "255.255.255.0"},
+	}}
+
+	preview, err := svc.PolicyTunNATPreview(context.Background())
+	if err != nil {
+		t.Fatalf("PolicyTunNATPreview: %v", err)
+	}
+	got := preview.Segments
+	want := []NATSegmentInfo{
+		{Name: "Home", Mode: natModeDynamic, Label: "Домашняя сеть", Subnet: "192.168.1.0/24"},
+		// Без описания подписи нет — системное имя фронт покажет и так, а
+		// выдумывать за NDMS человеческое имя мы не станем.
+		{Name: "Wireguard1", Mode: natModeDynamic, Subnet: "172.16.6.0/24"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("preview = %+v, want %+v", got, want)
+	}
+}
+
+// Описание — украшение, а не данные: отказ NDMS не должен валить предпоказ, без
+// которого опцию вообще не включить.
+func TestPolicyTunNATPreview_SurvivesDetailsFailure(t *testing.T) {
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}},
+	}, &recSegmentNAT{log: &callLog{}}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.Segments = &fakeSegmentDetails{err: errors.New("injected: ndms")}
+
+	preview, err := svc.PolicyTunNATPreview(context.Background())
+	if err != nil {
+		t.Fatalf("отказ описаний не должен валить предпоказ: %v", err)
+	}
+	got := preview.Segments
+	want := []NATSegmentInfo{{Name: "Home", Mode: natModeDynamic}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview = %+v, want %+v", got, want)
 	}
@@ -171,10 +232,11 @@ func TestPolicyTunNATPreview_StaticWinsOverDynamic(t *testing.T) {
 		static: []query.StaticNATEntry{{Interface: "Home", ToInterface: "ISP"}},
 	}, &recSegmentNAT{log: &callLog{}}, &fakeGateway{name: "ISP"})
 
-	got, err := svc.PolicyTunNATPreview(context.Background())
+	preview, err := svc.PolicyTunNATPreview(context.Background())
 	if err != nil {
 		t.Fatalf("PolicyTunNATPreview: %v", err)
 	}
+	got := preview.Segments
 	want := []NATSegmentInfo{{Name: "Home", Mode: natModeStatic, StaticWAN: "ISP"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview = %+v, want %+v", got, want)
@@ -184,6 +246,58 @@ func TestPolicyTunNATPreview_StaticWinsOverDynamic(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Apply
 // ---------------------------------------------------------------------------
+
+// Static-NAT нужен на КАЖДОМ выходе роутера, а не только на WAN по дефолтному
+// маршруту: `ip static` — общероутерная настройка, её правило вешается на
+// выходной интерфейс. Сняв с сегмента маскарад, мы лишили его подмены адреса
+// сразу на всех выходах, поэтому вернуть её надо на каждом — иначе к невзятому
+// выходу трафик уйдёт с приватным адресом и не вернётся.
+func TestApplySourcePreserve_StaticOnEveryGlobalEgress(t *testing.T) {
+	log := &callLog{}
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}},
+	}, &recSegmentNAT{log: log}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface PPPoE0", "    ip global 700", "!",
+		"interface Wireguard1", "    ip global 65500", "!",
+		// Без `ip global` — выходом наружу не является (домашний сегмент).
+		"interface Home", "    ip address 192.168.1.1 255.255.255.0", "!",
+		// Наш туннель — выход, но SNAT в него это ровно тот маскарад, от
+		// которого опция и спасает.
+		"interface OpkgTun0", "    ip global 65500", "!",
+	}}
+
+	if _, err := svc.applyPolicyTunSourcePreserve(context.Background(), []string{"Home"}, nil); err != nil {
+		t.Fatalf("applyPolicyTunSourcePreserve: %v", err)
+	}
+
+	if !log.has("SetStaticNAT:Home:PPPoE0") || !log.has("SetStaticNAT:Home:Wireguard1") {
+		t.Errorf("static обязан встать на каждый global-выход: %v", log.calls)
+	}
+	if log.has("SetStaticNAT:Home:Home") {
+		t.Errorf("интерфейс без ip global выходом наружу не является: %v", log.calls)
+	}
+	if log.has("SetStaticNAT:Home:OpkgTun0") {
+		t.Errorf("SNAT в собственный туннель — то, от чего опция спасает: %v", log.calls)
+	}
+}
+
+// Выходы прочитать не удалось (running-config не подключён или пуст) —
+// остаётся прежнее поведение: один WAN по дефолтному маршруту.
+func TestApplySourcePreserve_FallsBackToDefaultWAN(t *testing.T) {
+	log := &callLog{}
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}},
+	}, &recSegmentNAT{log: log}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{"system", "    hostname keenetic", "!"}}
+
+	if _, err := svc.applyPolicyTunSourcePreserve(context.Background(), []string{"Home"}, nil); err != nil {
+		t.Fatalf("applyPolicyTunSourcePreserve: %v", err)
+	}
+	if !log.has("SetStaticNAT:Home:PPPoE0") {
+		t.Errorf("без global-выходов цель — WAN по дефолту: %v", log.calls)
+	}
+}
 
 // Apply записывает ИСХОДНОЕ состояние каждого сегмента и переводит его на
 // static-NAT в WAN: `no ip nat` только для dynamic (у static его нет, у none

@@ -4136,8 +4136,26 @@ definitions:
         example: fakeip-tun
         type: string
     type: object
+  api.SingboxRouterNATEgressDTO:
+    properties:
+      label:
+        example: Провайдер
+        type: string
+      name:
+        example: PPPoE0
+        type: string
+    type: object
   api.SingboxRouterNATPreviewData:
     properties:
+      egresses:
+        description: |-
+          Egresses — выходы, на которых подмена адреса СОХРАНИТСЯ (туда встанет
+          static-NAT). Их несколько: `ip static` — общероутерная настройка, и
+          правило вешается на каждый интерфейс с `ip global`. Пусто, когда выходы
+          определить нельзя.
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATEgressDTO'
+        type: array
       segments:
         items:
           $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
@@ -4153,6 +4171,12 @@ definitions:
     type: object
   api.SingboxRouterNATSegmentDTO:
     properties:
+      label:
+        description: |-
+          Label — описание сегмента из NDMS, Subnet — его подсеть. Пустые, когда
+          NDMS описания не дал или адресации у сегмента нет.
+        example: Домашняя сеть
+        type: string
       mode:
         enum:
         - dynamic
@@ -4165,6 +4189,9 @@ definitions:
         type: string
       staticWan:
         example: PPPoE0
+        type: string
+      subnet:
+        example: 192.168.1.0/24
         type: string
     type: object
   api.SingboxRouterOutboundDTO:

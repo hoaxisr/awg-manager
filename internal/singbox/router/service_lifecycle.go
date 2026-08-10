@@ -157,9 +157,13 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		owned = fakeIPNDMSName(st.Index)
 	}
 
-	// То же для policy-tun: свой персист, своё NDMS-описание.
+	// То же для policy-tun: свой персист, своё NDMS-описание. Гейта на
+	// Provisioned тут НЕТ, в отличие от fakeip: выключение policy-tun интерфейс
+	// не удаляет, а удерживает вместе с индексом (holdOpkgTun), и удержанный
+	// интерфейс — наш, а не сирота. Владение здесь = наличие персиста; отменяет
+	// его смена режима (ветка ниже сносит интерфейс и чистит персист).
 	ownedPolicy := ""
-	if st := settings.PolicyTun; st != nil && st.Provisioned {
+	if st := settings.PolicyTun; st != nil {
 		ownedPolicy = fakeIPNDMSName(st.Index)
 	}
 
@@ -214,13 +218,15 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// EnsureFakeIPIngress с пустым spec трогает правила только если они есть.
 	//
 	// В policy-tun полный свип НЕДОПУСТИМ: там заворот СВОЙ (ip rule iif +
-	// таблица 700, без DNAT), а реап идёт в Reconcile первым — свип сносил бы
-	// его на каждом тике, и enable/reconcile ставили бы заново (churn) или не
-	// ставили вовсе (enable no-op'ится на provisioned+live). Снимаем только
-	// DNAT-половину: policy-tun её не ставит, а протухшая от fakeip ломала бы
-	// DNS клиентов (ensure с NoDNAT правила DNAT не трогает вовсе).
+	// таблица 700), а реап идёт в Reconcile первым — свип сносил бы его на
+	// каждом тике, и enable/reconcile ставили бы заново (churn) или не ставили
+	// вовсе (enable no-op'ится на provisioned+live). Снимаем только ЧУЖОЙ,
+	// fakeip-тег: протухший от fakeip DNAT ломал бы DNS клиентов, а правила
+	// перехвата policy-tun (PolicyTunDNSTag) ставит и чинит ensure этого же
+	// режима — снос их здесь дал бы churn каждые 30 секунд с окном резолвинга
+	// мимо туннеля внутри каждого тика.
 	if sr.RoutingMode == statePolicyTun {
-		s.removeFakeIPIngressDNAT(ctx)
+		s.removeFakeIPIngressDNAT(ctx, FakeIPIngressTag)
 	} else {
 		s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{})
 	}
@@ -1183,18 +1189,22 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			fakeIPTunAddr = addr
 		}
 	}
-	// policy-tun: интерфейс поднят, но не разрешён ни в одной политике доступа —
-	// технически всё живо, а трафик клиентов в tun не заходит. Это ручной шаг
-	// пользователя (permit + привязка устройств), поэтому warning с подсказкой.
+	// policy-tun: интерфейс поднят, но не разрешён выходом целевой политики —
+	// технически всё живо, а трафик клиентов в tun не заходит. Продукт ставит
+	// permit сам, так что issue означает отказ RCI или правку мимо нас.
 	// Без строк running-config (dep не подключён / чтение упало) issue не
 	// собирается: «не знаем» ≠ «не разрешено».
 	if sr.Enabled && policyTunNDMSName != "" && len(policyTunLines) > 0 &&
-		!policyTunPermitted(policyTunLines, policyTunNDMSName) {
+		!policyTunPermitted(policyTunLines, policyTunNDMSName, sr.PolicyName) {
+		where := "ни в одной политике доступа"
+		if sr.PolicyName != "" {
+			where = "в политике " + sr.PolicyName
+		}
 		issues = append(issues, Issue{
 			Severity: "warning",
 			Kind:     issuePolicyTunUnbound,
-			Message: fmt.Sprintf("%s не разрешён ни в одной политике доступа — трафик клиентов не направляется; "+
-				"разрешите интерфейс в политике и привяжите устройства", policyTunNDMSName),
+			Message: fmt.Sprintf("%s не разрешён %s — трафик клиентов не направляется; "+
+				"разрешение ставится автоматически, проверьте политику в NDMS", policyTunNDMSName, where),
 		})
 	}
 	// policy-tun: имена интерфейса нужны пользователю ДО того, как режим станет
