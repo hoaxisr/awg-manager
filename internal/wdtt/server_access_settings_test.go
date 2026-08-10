@@ -34,7 +34,7 @@ func TestSetServerNATMode_NoOpWhenSame(t *testing.T) {
 func TestSetServerPolicy_UnknownPolicy(t *testing.T) {
 	dir := t.TempDir()
 	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
-	s.SetNDMSPolicyRouting(nil, fakePolicyLister{policies: []ndms.Policy{{Name: "Policy0"}}}, nil)
+	s.SetNDMSPolicyRouting(nil, fakeServerPolicyLister{policies: []ndms.Policy{{Name: "Policy0"}}}, nil)
 	if _, err := s.GetConfig(); err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestSetServerPolicy_UnknownPolicy(t *testing.T) {
 	}
 }
 
-type fakePolicyLister struct {
+type fakeServerPolicyLister struct {
 	policies []ndms.Policy
 }
 
-func (f fakePolicyLister) List(context.Context) ([]ndms.Policy, error) {
+func (f fakeServerPolicyLister) List(context.Context) ([]ndms.Policy, error) {
 	return f.policies, nil
 }
