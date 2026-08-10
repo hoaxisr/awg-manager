@@ -783,20 +783,26 @@ func TestPolicyTunIngressSpecEmptyOnNoPolicies(t *testing.T) {
 }
 
 func TestPolicyTunIngressSpecHonorsBypass53(t *testing.T) {
-	s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+	// Выключатель неделим по протоколам: перехват ставится и на udp, и на tcp,
+	// поэтому 53 в bypass-списке ЛЮБОГО протокола гасит его целиком.
 	// Формат bypass — "PORT-PORT UDP|TCP" (parseExtraPorts, presets.go:157).
-	sr := storage.SingboxRouterSettings{BypassExtraPorts: "50-60 UDP"}
-	spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
-	if !ok {
-		t.Fatal("спек применим")
-	}
-	if spec.dnatHalf() {
-		t.Error("53 внутри bypass-диапазона 50-60 — перехвата быть не должно")
-	}
-	// Маршрутная половина заворота обязана уцелеть: без NoDNAT active()
-	// прочитал бы спек как неактивный и снёс бы ingress-заворот целиком.
-	if !spec.NoDNAT {
-		t.Error("NoDNAT не выставлен — заворот будет снесён вместе с перехватом")
+	for _, extra := range []string{"50-60 UDP", "53 TCP"} {
+		t.Run(extra, func(t *testing.T) {
+			s := newServiceWithExits(t, []query.PolicyDefaultExit{{Name: "Policy1", Mark: "0xffffaab"}}, nil)
+			sr := storage.SingboxRouterSettings{BypassExtraPorts: extra}
+			spec, ok := s.policyTunIngressSpec(context.Background(), "opkgtun3", "OpkgTun3", sr)
+			if !ok {
+				t.Fatal("спек применим")
+			}
+			if spec.dnatHalf() {
+				t.Error("53 в bypass — перехвата быть не должно")
+			}
+			// Маршрутная половина заворота обязана уцелеть: без NoDNAT active()
+			// прочитал бы спек как неактивный и снёс бы ingress-заворот целиком.
+			if !spec.NoDNAT {
+				t.Error("NoDNAT не выставлен — заворот будет снесён вместе с перехватом")
+			}
+		})
 	}
 }
 

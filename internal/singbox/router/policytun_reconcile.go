@@ -91,14 +91,23 @@ func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface, ndmsName 
 		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
 	}
 
-	// Аварийный выход, паритет с tproxy: явно исключённый порт 53 отключает
-	// перехват целиком (в tproxy это RETURN до правила --dport 53). Bypass
-	// задаётся диапазонами, поэтому проверяется вхождение, а не равенство.
+	// Аварийный выход: явно исключённый порт 53 отключает перехват целиком.
+	// Bypass задаётся диапазонами, поэтому проверяется вхождение, а не
+	// равенство.
+	//
+	// В tproxy bypass-порты пер-протокольные (RETURN'ы ставятся раздельно: в
+	// AWGM-TPROXY по UDP, в AWGM-REDIRECT по TCP). Здесь выключатель
+	// СОЗНАТЕЛЬНО грубее: 53 в любом из двух списков гасит перехват ОБОИХ
+	// протоколов. Причина — сам перехват 53-го неделим: на усечённый ответ
+	// клиент переспрашивает по TCP, и половинчатый перехват дал бы резолвинг,
+	// зависящий от размера ответа (часть имён через туннель, часть мимо, и
+	// ответы могут расходиться).
 	//
 	// NoDNAT ОБЯЗАТЕЛЕН во всех ветках без TunDNS: без него active() читает
 	// такой спек как неактивный и EnsureFakeIPIngress сносит заворот ЦЕЛИКОМ,
 	// вместе с маршрутной половиной, которая от DNS не зависит.
-	if bypassUDP, _, err := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts); err == nil && portRangesContain(bypassUDP, 53) {
+	if bypassUDP, bypassTCP, err := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts); err == nil &&
+		(portRangesContain(bypassUDP, 53) || portRangesContain(bypassTCP, 53)) {
 		spec.NoDNAT = true
 		return spec, true
 	}
