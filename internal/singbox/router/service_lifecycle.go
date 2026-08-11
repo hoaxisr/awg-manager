@@ -1218,12 +1218,14 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			policyTunIface = fakeIPIfaceName(settings.PolicyTun.Index)
 			policyTunNDMS = fakeIPNDMSName(settings.PolicyTun.Index)
 		}
-		// ПРИМЕНЁННОЕ, а не желаемое: static-NAT ставится только при подъёме
-		// режима, и записи в персисте — единственный след того, что он реально
-		// применён. Вживую опция лишь СНИМАЕТСЯ (restoreRevokedPolicyTunNAT),
-		// поэтому включение вживую честно расходится с настройками до
-		// перезапуска режима — на этом расхождении фронт строит подсказку.
-		sp := settings != nil && settings.PolicyTun != nil && len(settings.PolicyTun.NATSegments) > 0
+		// ПРИМЕНЁННОЕ, а не желаемое: записи персиста — единственный след того,
+		// что static-NAT реально доехал до роутера. Сравнение ПОСЕГМЕНТНОЕ:
+		// длина не видит, что к уже применённому набору дописали сегмент, и
+		// расхождение оставалось бы без подсказки до перезапуска режима.
+		sp := false
+		if settings != nil && settings.PolicyTun != nil {
+			sp = policyTunNATApplied(sr.PolicyTunNATSegments, settings.PolicyTun.NATSegments)
+		}
 		policyTunSourcePreserve = &sp
 	}
 	return Status{

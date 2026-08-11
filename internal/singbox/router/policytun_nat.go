@@ -26,12 +26,19 @@ const (
 // видит только в веб-морде роутера, а выбирать ему предстоит то, у чего
 // меняется способ выхода в интернет. Пустые, когда NDMS описания не дал или
 // адресации у сегмента нет.
+// Masq — СЫРОЙ признак `ip nat <Seg>`, не выводимый из Mode: `ip static`
+// перекрывает динамику в Mode (так это показывает пользователю CLI-мануал),
+// но сама строка `ip nat` при этом остаётся в конфиге и продолжает маскарадить
+// путь в туннель. Судить о том, снимать ли маскарад, можно только по Masq —
+// иначе сегмент с обеими строками сверка считала бы вечно неприменённым и
+// дёргала бы RCI каждый тик. Наружу не отдаётся: предпоказу хватает Mode.
 type NATSegmentInfo struct {
 	Name      string `json:"name"`
 	Mode      string `json:"mode"`
 	StaticWAN string `json:"staticWan,omitempty"`
 	Label     string `json:"label,omitempty"`
 	Subnet    string `json:"subnet,omitempty"`
+	Masq      bool   `json:"-"`
 }
 
 // NATEgress — выход роутера, на котором подмена адреса сохранится: туда встанет
@@ -102,7 +109,7 @@ func (s *ServiceImpl) PolicyTunNATPreview(ctx context.Context) (NATPreview, erro
 	if err != nil {
 		return NATPreview{}, err
 	}
-	out := NATPreview{Segments: segs}
+	out := NATPreview{Segments: s.dropEgressSegments(ctx, segs)}
 
 	// Выходы, на которые встанет static — те же, что применит apply. Best-effort:
 	// молчащий RCI оставит список пустым, и экран назовёт выход обобщённо, а не
@@ -150,7 +157,7 @@ func (s *ServiceImpl) scanSegmentNAT(ctx context.Context) ([]NATSegmentInfo, err
 			continue
 		}
 		idx[e.Interface] = len(out)
-		out = append(out, NATSegmentInfo{Name: e.Interface, Mode: natModeDynamic})
+		out = append(out, NATSegmentInfo{Name: e.Interface, Mode: natModeDynamic, Masq: true})
 	}
 	for _, e := range static {
 		if e.Interface == "" || e.ToInterface == "" || isOpkgTunName(e.Interface) {
@@ -158,6 +165,8 @@ func (s *ServiceImpl) scanSegmentNAT(ctx context.Context) ([]NATSegmentInfo, err
 		}
 		info := NATSegmentInfo{Name: e.Interface, Mode: natModeStatic, StaticWAN: e.ToInterface}
 		if i, ok := idx[e.Interface]; ok {
+			// Mode перекрываем, Masq — нет: строка `ip nat` никуда не делась.
+			info.Masq = out[i].Masq
 			out[i] = info
 			continue
 		}
@@ -166,6 +175,40 @@ func (s *ServiceImpl) scanSegmentNAT(ctx context.Context) ([]NATSegmentInfo, err
 	}
 	s.labelSegments(ctx, out)
 	return out, nil
+}
+
+// dropEgressSegments убирает из предпоказа интерфейсы с `ip global` — это
+// ВЫХОДЫ наружу (WAN, клиентские VPN-туннели), а не сети клиентов. `ip nat
+// PPPoE0` в конфиге роутера описывает трансляцию самого WAN, и снятие его нашей
+// галкой — выстрел в интернет роутера; предлагать такое в списке «чьи адреса
+// сохранить» нельзя.
+//
+// Только предпоказ: живой скан для apply остаётся полным, иначе сегмент,
+// выбранный до этой правки, потерял бы своё исходное состояние в записи.
+// Running-config молчит → фильтровать нечем, показываем как раньше.
+func (s *ServiceImpl) dropEgressSegments(ctx context.Context, segs []NATSegmentInfo) []NATSegmentInfo {
+	if s.deps.RunningConfig == nil {
+		return segs
+	}
+	lines, err := s.deps.RunningConfig.Lines(ctx)
+	if err != nil {
+		return segs
+	}
+	egress := map[string]bool{}
+	for _, name := range globalEgressInterfaces(lines) {
+		egress[name] = true
+	}
+	if len(egress) == 0 {
+		return segs
+	}
+	out := make([]NATSegmentInfo, 0, len(segs))
+	for _, seg := range segs {
+		if egress[seg.Name] {
+			continue
+		}
+		out = append(out, seg)
+	}
+	return out
 }
 
 // labelSegments дополняет строки предпоказа описанием и подсетью. Best-effort:
@@ -191,6 +234,47 @@ func (s *ServiceImpl) labelSegments(ctx context.Context, segs []NATSegmentInfo) 
 // WAN-целью static-NAT быть не могут.
 func isOpkgTunName(name string) bool {
 	return strings.HasPrefix(name, "OpkgTun")
+}
+
+// staticNATCoverage отдаёт живые `ip static` в виде «сегмент → множество
+// выходов». Нужен сверке: наличие ЗАПИСИ о сегменте не означает, что static
+// доехал до роутера (apply пишет запись до мутации, чтобы полуприменённое не
+// пропало), поэтому судить о применённости можно только по живому конфигу.
+func (s *ServiceImpl) staticNATCoverage(ctx context.Context) (map[string]map[string]bool, error) {
+	live, err := s.deps.NATState.ListStaticNAT(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list ip static: %w", err)
+	}
+	out := map[string]map[string]bool{}
+	for _, e := range live {
+		if e.Interface == "" || e.ToInterface == "" {
+			continue
+		}
+		if out[e.Interface] == nil {
+			out[e.Interface] = map[string]bool{}
+		}
+		out[e.Interface][e.ToInterface] = true
+	}
+	return out, nil
+}
+
+// policyTunNATApplied сообщает, что source-preserve доехал до КАЖДОГО желаемого
+// сегмента. Пустой want — опция выключена: применять нечего, и «применено» тут
+// сказать не о чем.
+func policyTunNATApplied(want []string, recorded []storage.PolicyTunNATSegment) bool {
+	if len(want) == 0 {
+		return false
+	}
+	have := make(map[string]bool, len(recorded))
+	for _, rec := range recorded {
+		have[rec.Name] = true
+	}
+	for _, name := range want {
+		if !have[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // mergePolicyTunNATRecords дополняет prior записями recorded, НЕ затирая уже
@@ -221,6 +305,9 @@ func mergePolicyTunNATRecords(prior, recorded []storage.PolicyTunNATSegment) []s
 //
 // Ошибка любого шага фейлит apply целиком: вызывающий enable откатывает работу
 // push-rollback'ом, а полуприменённый source-preserve хуже невключённого.
+// Вместе с ошибкой возвращаются записи о сегментах, до которых apply дошёл, —
+// вызывающий обязан сохранить/откатить их, иначе мутация останется на роутере
+// невидимой для восстановления.
 func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []string, known []storage.PolicyTunNATSegment) ([]storage.PolicyTunNATSegment, error) {
 	if s.deps.SegmentNAT == nil || s.deps.NATState == nil || s.deps.DefaultGateway == nil {
 		return nil, fmt.Errorf("policy-tun source-preserve: deps not wired")
@@ -249,31 +336,40 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 		if ok {
 			mode = info.Mode
 		}
+		if info.Masq {
+			// Строка `ip nat` есть — значит снимать её нам, и восстанавливать
+			// потом тоже её, даже если Mode перекрыт чужим `ip static`.
+			// Известная неточность: собственный static такого сегмента вернуть
+			// нечем, PriorStaticWAN при dynamic не читается.
+			mode = natModeDynamic
+		}
+		// Запись ДО мутации: сегмент, у которого маскарад уже сняли, а static
+		// доставить не успели, обязан быть виден восстановлению.
+		if was, ok := recordedBefore[seg]; ok {
+			// Запись старше живого скана — возвращаем её (в том числе в rollback
+			// вызывающего, иначе откат вернул бы сегмент на НАШ static-NAT).
+			recorded = append(recorded, was)
+		} else {
+			recorded = append(recorded, storage.PolicyTunNATSegment{
+				Name:           seg,
+				PriorMode:      mode,
+				PriorStaticWAN: info.StaticWAN,
+			})
+		}
 		if mode == natModeDynamic {
 			// Снимаем маскарад ТОЛЬКО у динамических: у static его нет, а у
 			// none снимать нечего.
 			if err := s.deps.SegmentNAT.RemoveSegmentNAT(ctx, seg); err != nil {
-				return nil, fmt.Errorf("policy-tun source-preserve: no ip nat %s: %w", seg, err)
+				return recorded, fmt.Errorf("policy-tun source-preserve: no ip nat %s: %w", seg, err)
 			}
 		}
 		// По записи на КАЖДЫЙ выход политики: SNAT нужен там, куда трафик
 		// сегмента реально уходит, а не только на WAN по дефолтному маршруту.
 		for _, target := range targets {
 			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, seg, target); err != nil {
-				return nil, fmt.Errorf("policy-tun source-preserve: ip static %s %s: %w", seg, target, err)
+				return recorded, fmt.Errorf("policy-tun source-preserve: ip static %s %s: %w", seg, target, err)
 			}
 		}
-		if was, ok := recordedBefore[seg]; ok {
-			// Запись старше живого скана — возвращаем её (в том числе в rollback
-			// вызывающего, иначе откат вернул бы сегмент на НАШ static-NAT).
-			recorded = append(recorded, was)
-			continue
-		}
-		recorded = append(recorded, storage.PolicyTunNATSegment{
-			Name:           seg,
-			PriorMode:      mode,
-			PriorStaticWAN: info.StaticWAN,
-		})
 	}
 	return recorded, nil
 }
@@ -388,8 +484,7 @@ func (s *ServiceImpl) restorePolicyTunNAT(ctx context.Context, recorded []storag
 //
 // Направление «снять» WAN-резолва не требует (см. restorePolicyTunNAT: наш
 // `ip static` снимается по живому скану), поэтому работает и при дефолте,
-// припаркованном на tun. Обратное направление (включение вживую) остаётся за
-// перезапуском режима.
+// припаркованном на tun. Обратное направление — за reconcilePolicyTunNAT.
 //
 // Анти-churn: записи вычищаются из персиста ТОЛЬКО после успешного
 // восстановления, и следующий тик уже не находит отозванных.
@@ -435,20 +530,25 @@ func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage
 	}
 }
 
-// reconcilePolicyTunNAT — drift-heal source-preserve: сегмент вернулся на
-// динамический `ip nat` мимо нас (сброс настроек NDMS, ручная правка), то есть
-// sing-box снова видит клиентов маскарадом. Повторно применяем ТОЛЬКО уехавшие
-// сегменты; записанные ранее исходные состояния не переписываем (иначе
-// «пользователь держал none» превратилось бы в «держал dynamic»).
+// reconcilePolicyTunNAT доводит source-preserve до желаемого состояния, покрывая
+// оба расхождения:
 //
-// Дрейф — это «мы применяли, а оно откатилось», поэтому кандидаты берутся из
-// ЗАПИСЕЙ персиста, а не из желаемого списка настроек. Сегмент без записи apply
-// никогда не видел (галку/сегмент добавили вживую) — в этом режиме применение
-// живёт только в подъёме режима, и трогать его здесь значило бы тихо применять
-// включение под лживым Warn о дрейфе.
+//   - НЕ ПРИМЕНЁН: сегмент есть в настройках, а записи apply о нём нет — галку
+//     или сам сегмент добавили при работающем режиме. UpdateSettings ничего не
+//     применяет, он завершается Reconcile'ом, и применение живёт здесь;
+//   - ДРЕЙФ: сегмент с записью вернулся на динамический `ip nat` мимо нас
+//     (сброс настроек NDMS, ручная правка), то есть sing-box снова видит
+//     клиентов маскарадом.
 //
-// WAN резолвится по дефолту, который в этом режиме уже на tun, — тогда чинить
-// нечем, и мы честно предупреждаем вместо SNAT в собственный tun.
+// Записанные ранее исходные состояния не переписываем (иначе «пользователь
+// держал none» превратилось бы в «держал dynamic») — за это отвечает параметр
+// known у apply и mergePolicyTunNATRecords на выходе.
+//
+// Целями SNAT служат все `ip global` роутера кроме наших OpkgTun
+// (policyTunSNATTargets), а они от дефолтного маршрута не зависят — поэтому
+// применение вживую работает и при дефолте, уже припаркованном на tun. Резолв
+// WAN по дефолту остаётся лишь запасным путём для молчащего running-config: там
+// чинить нечем, и мы честно предупреждаем вместо SNAT в собственный tun.
 func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.SingboxRouterSettings, st *storage.PolicyTunState, iface string) {
 	if !sr.PolicyTunSourcePreserve || len(sr.PolicyTunNATSegments) == 0 ||
 		s.deps.NATState == nil || s.deps.SegmentNAT == nil || st == nil {
@@ -459,28 +559,78 @@ func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.Sing
 		s.appLog.Warn("policy-tun-reconcile", iface, "scan segment NAT: "+err.Error())
 		return
 	}
-	modes := map[string]string{}
+	// Сырой маскарад, а не Mode: сегмент с обеими строками (`ip nat` + чужой
+	// `ip static`) в Mode выглядит статикой, но маскарад у него жив.
+	masq := map[string]bool{}
 	for _, info := range scan {
-		modes[info.Name] = info.Mode
+		masq[info.Name] = info.Masq
+	}
+	targets, err := s.policyTunSNATTargets(ctx)
+	if err != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, "выходы для static-NAT: "+err.Error())
+		return
+	}
+	covered, err := s.staticNATCoverage(ctx)
+	if err != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, err.Error())
+		return
+	}
+	// Судим по ЖИВОМУ состоянию, а не по наличию записи: запись пишется до
+	// мутации, и после сбойного apply она есть, а маскарад уже снят и static
+	// ещё не доставлен. Классификация по записи оставила бы такой сегмент без
+	// трансляции навсегда — ни pending, ни drifted.
+	needsApply := func(seg string) bool {
+		if masq[seg] {
+			return true // маскарад жив
+		}
+		for _, target := range targets {
+			if !covered[seg][target] {
+				return true // static доехал не до всех выходов
+			}
+		}
+		return false
 	}
 	applied := map[string]bool{}
 	for _, rec := range st.NATSegments {
 		applied[rec.Name] = true
 	}
-	var drifted []string
+	// Разделены только ради журнала: пользователю важно отличить «включили и
+	// применилось» от «кто-то откатил наше применение». Дрейфом считаем лишь то,
+	// что мы точно применяли: запись есть, наши static на месте — и поверх них
+	// вернулся маскарад. Сегмент без наших static мы просто не доделали, и Warn
+	// о чужой правке там был бы ложью.
+	var pending, drifted []string
 	for _, seg := range sr.PolicyTunNATSegments {
-		if applied[seg] && modes[seg] == natModeDynamic {
-			drifted = append(drifted, seg)
+		if !needsApply(seg) {
+			continue
 		}
+		if applied[seg] && len(covered[seg]) > 0 && masq[seg] {
+			drifted = append(drifted, seg)
+			continue
+		}
+		pending = append(pending, seg)
 	}
-	if len(drifted) == 0 {
+	if len(pending) == 0 && len(drifted) == 0 {
 		return
 	}
-	s.appLog.Warn("policy-tun-reconcile", iface,
-		"сегменты вернулись на динамический NAT мимо нас — применяем source-preserve повторно: "+strings.Join(drifted, ", "))
-	// Персист не трогаем: дрейфовать может только уже записанный сегмент, а его
-	// исходное состояние apply возвращает нам же (см. параметр known).
-	if _, err := s.applyPolicyTunSourcePreserve(ctx, drifted, st.NATSegments); err != nil {
-		s.appLog.Warn("policy-tun-reconcile", iface, "re-apply source-preserve: "+err.Error())
+	if len(pending) > 0 {
+		s.appLog.Info("policy-tun-reconcile", iface,
+			"применяем source-preserve к сегментам: "+strings.Join(pending, ", "))
+	}
+	if len(drifted) > 0 {
+		s.appLog.Warn("policy-tun-reconcile", iface,
+			"сегменты вернулись на динамический NAT мимо нас — применяем source-preserve повторно: "+strings.Join(drifted, ", "))
+	}
+	recorded, err := s.applyPolicyTunSourcePreserve(ctx, append(pending, drifted...), st.NATSegments)
+	// Персист пишем ДО проверки ошибки: сегменты, до которых apply дошёл,
+	// изменены на роутере, и без записи их не вернул бы ни teardown, ни revoke.
+	if merged := mergePolicyTunNATRecords(st.NATSegments, recorded); len(merged) != len(st.NATSegments) {
+		st.NATSegments = merged
+		if perr := s.deps.Settings.SetPolicyTunState(st); perr != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "persist nat segments: "+perr.Error())
+		}
+	}
+	if err != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, "apply source-preserve: "+err.Error())
 	}
 }
