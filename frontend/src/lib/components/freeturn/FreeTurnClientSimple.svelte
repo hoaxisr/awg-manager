@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Dropdown } from '$lib/components/ui';
+	import { Button, Input, Dropdown, Toggle } from '$lib/components/ui';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
@@ -447,6 +447,7 @@
 					</div>
 					<Input label="Listen" bind:value={client.listen} placeholder="127.0.0.1:9000" />
 					<Input label="URL подписки (-sub)" bind:value={client.sub} />
+					<Toggle label="Bond (-bond)" checked={!!client.bond} onchange={(v) => (client.bond = v)} />
 					{#if displayWgConf}
 						<WgConfExportPanel
 							wgConf={displayWgConf}

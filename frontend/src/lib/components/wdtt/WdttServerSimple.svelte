@@ -664,6 +664,7 @@
 					}}
 				/>
 				{#if isExpert}
+					<Input label="Config dir (-config-dir)" bind:value={server.configDir} placeholder="/opt/etc/wdtt-server" />
 					<Input label="Admin ID (-admin-id)" bind:value={server.adminId} placeholder="Telegram admin" />
 					<SensitiveInput label="Bot token (-bot-token)" bind:value={server.botToken} />
 				{/if}
