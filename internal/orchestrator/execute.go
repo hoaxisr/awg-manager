@@ -341,7 +341,22 @@ func (o *Orchestrator) executeReconcileNativeWG(ctx context.Context, action Acti
 
 	info := o.nwgOp.GetState(ctx, stored)
 	if info.State == tunnel.StateRunning && info.HasHandshake {
-		o.appLog.Info("reconcile", action.Tunnel, "NativeWG already running with handshake — skip restart")
+		// Рестарт пропускаем, но слот в ядре надо усыновить: менеджер
+		// модуля свежий и пустой, а слот жив (awg_proxy.ko не выгружался).
+		// Без усыновления не зарегистрирован endpoint-страж — защиты от
+		// протухшего DDNS-адреса на этом пути нет, — а RemoveTunnel при
+		// следующей остановке становится no-op, и слот остаётся в ядре
+		// навсегда (#702). Гейт по supportsASC не нужен: действие выдаётся
+		// только не-ASC-прошивкам (decideBoot).
+		//
+		// Ошибка усыновления не валит действие: это путь «туннель и так
+		// работает», ронять его нельзя.
+		if err := o.nwgOp.RestoreKmodTunnel(ctx, stored); err != nil {
+			o.appLog.Warn("reconcile", action.Tunnel,
+				"NativeWG already running with handshake — skip restart, but kmod slot adoption failed: "+err.Error())
+			return nil
+		}
+		o.appLog.Info("reconcile", action.Tunnel, "NativeWG already running with handshake — skip restart, kmod slot adopted")
 		return nil
 	}
 
