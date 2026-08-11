@@ -62,6 +62,11 @@ type Service struct {
 	wgIfaceFlagKnown bool
 	wgIfaceFlagOK    bool
 
+	// Кеш сверки бинарей с пином (см. binariesMatchSpecs).
+	matchMu  sync.Mutex
+	matchKey string
+	matchVal bool
+
 	// opkgStarts — счётчик стартов серверов в полёте. Между созданием
 	// OpkgTun и запуском процесса reap увидел бы «владельца нет» и снёс
 	// интерфейс из-под старта.

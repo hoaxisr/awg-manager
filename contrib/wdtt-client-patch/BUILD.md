@@ -42,10 +42,11 @@ Workers 2..N: uplink IP без GETCONF (как APK libclient.so)
 ./scripts/build-wdtt-client.sh
 ./scripts/build-wdtt-server.sh
 python3 scripts/update-wdtt-pins.py
-BUNDLE_WDTT=1 ./scripts/build-ipk.sh 2.16.5+r19 aarch64-3.10
+# залить build/wdtt/* на repo.hoaxisr.ru/wt/ — иначе пин указывает в пустоту
+./scripts/build-ipk.sh 2.16.5+r19 aarch64-3.10
 ```
 
-`BUNDLE_WDTT=1` кладёт `wdtt-client` + `wdtt-server` прямо в IPK (`/opt/bin/`) — для тестов на Keenetic без зеркала.
+В IPK бинари не кладутся: awg-manager скачивает их с зеркала по пину `internal/wdtt/install.go` и сверяет SHA256. Бинарь, оказавшийся в `/opt/bin` мимо этого пути, установленным не считается — UI предложит поставить пин.
 
 ## awg-manager
 
