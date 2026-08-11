@@ -156,7 +156,7 @@ func TestPolicyTunNATPreview_ClassifiesSegments(t *testing.T) {
 	}
 	got := preview.Segments
 	want := []NATSegmentInfo{
-		{Name: "Home", Mode: natModeDynamic},
+		{Name: "Home", Mode: natModeDynamic, Masq: true},
 		{Name: "Guest", Mode: natModeStatic, StaticWAN: "PPPoE0"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -195,10 +195,10 @@ func TestPolicyTunNATPreview_EnrichesWithLabelAndSubnet(t *testing.T) {
 	}
 	got := preview.Segments
 	want := []NATSegmentInfo{
-		{Name: "Home", Mode: natModeDynamic, Label: "Домашняя сеть", Subnet: "192.168.1.0/24"},
+		{Name: "Home", Mode: natModeDynamic, Masq: true, Label: "Домашняя сеть", Subnet: "192.168.1.0/24"},
 		// Без описания подписи нет — системное имя фронт покажет и так, а
 		// выдумывать за NDMS человеческое имя мы не станем.
-		{Name: "Wireguard1", Mode: natModeDynamic, Subnet: "172.16.6.0/24"},
+		{Name: "Wireguard1", Mode: natModeDynamic, Masq: true, Subnet: "172.16.6.0/24"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview = %+v, want %+v", got, want)
@@ -218,14 +218,15 @@ func TestPolicyTunNATPreview_SurvivesDetailsFailure(t *testing.T) {
 		t.Fatalf("отказ описаний не должен валить предпоказ: %v", err)
 	}
 	got := preview.Segments
-	want := []NATSegmentInfo{{Name: "Home", Mode: natModeDynamic}}
+	want := []NATSegmentInfo{{Name: "Home", Mode: natModeDynamic, Masq: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview = %+v, want %+v", got, want)
 	}
 }
 
-// `ip static` приоритетнее `ip nat` (CLI-мануал §3.83): сегмент в обоих
-// списках — уже static, и снимать с него `ip nat` нам незачем.
+// `ip static` приоритетнее `ip nat` (CLI-мануал §3.83), и в предпоказе сегмент
+// в обоих списках показывается как static. Но строка `ip nat` при этом жива и
+// продолжает маскарадить путь в туннель — это и держит Masq: снимать её нам.
 func TestPolicyTunNATPreview_StaticWinsOverDynamic(t *testing.T) {
 	svc := natTestService(t, &fakeNATState{
 		nat:    []query.NATEntry{{Interface: "Home"}},
@@ -237,7 +238,7 @@ func TestPolicyTunNATPreview_StaticWinsOverDynamic(t *testing.T) {
 		t.Fatalf("PolicyTunNATPreview: %v", err)
 	}
 	got := preview.Segments
-	want := []NATSegmentInfo{{Name: "Home", Mode: natModeStatic, StaticWAN: "ISP"}}
+	want := []NATSegmentInfo{{Name: "Home", Mode: natModeStatic, StaticWAN: "ISP", Masq: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview = %+v, want %+v", got, want)
 	}
@@ -710,10 +711,10 @@ func TestPolicyTunEnable_ReprovisionKeepsRecordedNAT(t *testing.T) {
 	}
 }
 
-// Сегмент, к которому apply никогда не применялся (галку/сегмент добавили
-// вживую), в динамическом NAT — это НЕ дрейф: применение живёт только в подъёме
-// режима. Ноль мутаций и ни одного предупреждения о дрейфе.
-func TestPolicyTunReconcile_IgnoresSegmentWithoutRecord(t *testing.T) {
+// Сегмент дописали в список при работающем режиме: применение живёт в
+// reconcile, поэтому перезапуска ждать не надо. Дрейфом это не называется —
+// сегмент не «вернулся», его ещё не применяли.
+func TestPolicyTunReconcile_AppliesSegmentAddedLive(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	state := armSourcePreserve(t, h, []string{"Home"})
 	provisionPolicyTunForDisable(t, h)
@@ -727,17 +728,162 @@ func TestPolicyTunReconcile_IgnoresSegmentWithoutRecord(t *testing.T) {
 	if err := h.svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got := natCalls(h.log); len(got) != 0 {
-		t.Errorf("сегмент без записи apply трогать нельзя, got %v", got)
+	want := []string{"RemoveSegmentNAT:Guest", "SetStaticNAT:Guest:PPPoE0"}
+	if got := natCalls(h.log); !reflect.DeepEqual(got, want) {
+		t.Errorf("NAT calls = %v, want %v", got, want)
 	}
 	for _, e := range rec.entries {
 		if strings.Contains(e, "вернулись на динамический NAT") {
 			t.Errorf("ложное предупреждение о дрейфе: %q", e)
 		}
 	}
+	// Без записи в персисте teardown не вернул бы сегменту его маскарад.
 	st := h.loadPolicyTun(t)
-	want := []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
+	wantSegs := []storage.PolicyTunNATSegment{
+		{Name: "Home", PriorMode: natModeDynamic},
+		{Name: "Guest", PriorMode: natModeDynamic},
+	}
+	if st == nil || !reflect.DeepEqual(st.NATSegments, wantSegs) {
+		t.Errorf("persist NATSegments = %+v, want %+v", st, wantSegs)
+	}
+}
+
+// Apply упал на середине набора: сегменты, до которых он дошёл, УЖЕ изменены на
+// роутере — их записи обязаны попасть в персист, иначе восстанавливать будет
+// нечего и маскарад к ним не вернётся никогда.
+func TestPolicyTunReconcile_PersistsPartiallyAppliedOnError(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	state := armSourcePreserve(t, h, []string{"Home"})
+	provisionPolicyTunForDisable(t, h)
+
+	state.nat = append(state.nat, query.NATEntry{Interface: "Guest"})
+	setSourcePreserve(t, h, true, []string{"Home", "Guest"})
+	// Маскарад с Guest снять успели, static доставить — нет.
+	h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: state, failAt: "SetStaticNAT"}
+
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !h.log.has("RemoveSegmentNAT:Guest") {
+		t.Fatalf("сегмент не мутировали — тест не про то: %v", h.log.calls)
+	}
+	st := h.loadPolicyTun(t)
+	want := []storage.PolicyTunNATSegment{
+		{Name: "Home", PriorMode: natModeDynamic},
+		{Name: "Guest", PriorMode: natModeDynamic},
+	}
 	if st == nil || !reflect.DeepEqual(st.NATSegments, want) {
 		t.Errorf("persist NATSegments = %+v, want %+v", st, want)
+	}
+}
+
+// После неудачного apply сегмент остаётся в промежуточном состоянии: маскарад
+// сняли, static не доставили. Запись в персисте уже есть, но состояние на
+// роутере не желаемое — следующий тик обязан доделать. Иначе сегмент навсегда
+// остаётся без трансляции: в не-tun выходы его клиенты уходят с приватным
+// адресом источника и ответа не получают.
+func TestPolicyTunReconcile_RetriesAfterPartialApply(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	state := armSourcePreserve(t, h, []string{"Home"})
+	provisionPolicyTunForDisable(t, h)
+
+	state.nat = append(state.nat, query.NATEntry{Interface: "Guest"})
+	setSourcePreserve(t, h, true, []string{"Home", "Guest"})
+	h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: state, failAt: "SetStaticNAT"}
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile (сбойный тик): %v", err)
+	}
+	if !h.log.has("RemoveSegmentNAT:Guest") {
+		t.Fatalf("маскарад не сняли — тест не про то: %v", h.log.calls)
+	}
+
+	// RCI выздоровел.
+	h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: state}
+	h.log.calls = nil
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile (здоровый тик): %v", err)
+	}
+	if !h.log.has("SetStaticNAT:Guest:PPPoE0") {
+		t.Errorf("сверка обязана доделать полуприменённый сегмент, got %v", h.log.calls)
+	}
+}
+
+// Сегмент держит `ip nat` и собственный `ip static` одновременно — так бывает,
+// NDMS обе строки допускает. В предпоказе он выглядит статикой, но маскарад у
+// него жив и путь в туннель переписывает, значит снимать его нам. Второй тик
+// обязан быть тихим: иначе сверка считала бы сегмент вечно неприменённым и
+// ходила бы в RCI каждые несколько секунд.
+func TestPolicyTunReconcile_RemovesMasqUnderForeignStatic(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	state := armSourcePreserve(t, h, []string{"Home"})
+	provisionPolicyTunForDisable(t, h)
+
+	state.nat = append(state.nat, query.NATEntry{Interface: "Guest"})
+	state.static = append(state.static, query.StaticNATEntry{Interface: "Guest", ToInterface: "PPPoE0"})
+	setSourcePreserve(t, h, true, []string{"Home", "Guest"})
+
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !h.log.has("RemoveSegmentNAT:Guest") {
+		t.Errorf("маскарад под чужой статикой обязан быть снят: %v", h.log.calls)
+	}
+	// Восстанавливать такой сегмент надо на `ip nat` — его мы и сняли.
+	st := h.loadPolicyTun(t)
+	var guest *storage.PolicyTunNATSegment
+	for i := range st.NATSegments {
+		if st.NATSegments[i].Name == "Guest" {
+			guest = &st.NATSegments[i]
+		}
+	}
+	if guest == nil || guest.PriorMode != natModeDynamic {
+		t.Errorf("PriorMode Guest = %+v, want dynamic", guest)
+	}
+
+	h.log.calls = nil
+	if err := h.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile (второй тик): %v", err)
+	}
+	if got := natCalls(h.log); len(got) != 0 {
+		t.Errorf("состояние уже желаемое — тик обязан быть тихим, got %v", got)
+	}
+}
+
+// Индикатор «применено» — посегментный: набор дополнили, значит применено НЕ всё.
+func TestPolicyTunNATApplied_ComparesPerSegment(t *testing.T) {
+	recorded := []storage.PolicyTunNATSegment{{Name: "Home"}}
+	if policyTunNATApplied([]string{"Home", "Guest"}, recorded) {
+		t.Error("дописанный сегмент без записи — это не «применено»")
+	}
+	if !policyTunNATApplied([]string{"Home"}, recorded) {
+		t.Error("совпавший набор обязан считаться применённым")
+	}
+	if policyTunNATApplied(nil, recorded) {
+		t.Error("опция выключена — применять нечего")
+	}
+}
+
+// `ip nat PPPoE0` описывает трансляцию самого WAN: в списке «чьи адреса
+// сохранить» такого интерфейса быть не должно — снятие маскарада с него
+// оставило бы роутер без интернета.
+func TestPolicyTunNATPreview_DropsGlobalEgressInterfaces(t *testing.T) {
+	svc := natTestService(t, &fakeNATState{
+		nat: []query.NATEntry{{Interface: "Home"}, {Interface: "PPPoE0"}, {Interface: "Wireguard1"}},
+	}, &recSegmentNAT{log: &callLog{}}, &fakeGateway{name: "PPPoE0"})
+	svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface PPPoE0",
+		"    ip global",
+		"interface Wireguard1",
+		"    ip global",
+		"interface Home",
+		"    ip address 10.10.10.1 255.255.255.0",
+	}}
+
+	got, err := svc.PolicyTunNATPreview(context.Background())
+	if err != nil {
+		t.Fatalf("PolicyTunNATPreview: %v", err)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Name != "Home" {
+		t.Errorf("segments = %+v, want только Home", got.Segments)
 	}
 }

@@ -302,9 +302,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// их восстанавливает teardown/реап.
 	if sr.PolicyTunSourcePreserve && len(sr.PolicyTunNATSegments) > 0 {
 		var recorded []storage.PolicyTunNATSegment
-		if recorded, err = s.applyPolicyTunSourcePreserve(ctx, sr.PolicyTunNATSegments, ptState.NATSegments); err != nil {
-			return fmt.Errorf("enable policy-tun: %w", err)
-		}
+		recorded, err = s.applyPolicyTunSourcePreserve(ctx, sr.PolicyTunNATSegments, ptState.NATSegments)
+		// Откат регистрируем ДО проверки ошибки: apply отдаёт записи и о
+		// сегментах, до которых успел дойти, а полуприменённые обязаны вернуться.
 		push(func() {
 			if e := s.restorePolicyTunNAT(rbCtx, recorded); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "restore segment NAT: "+e.Error())
@@ -314,8 +314,15 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// выбывших из желаемого списка, обязаны дожить до восстановления в
 		// restoreRevokedPolicyTunNAT — иначе их static-NAT остался бы навсегда.
 		ptState.NATSegments = mergePolicyTunNATRecords(ptState.NATSegments, recorded)
-		if err = s.deps.Settings.SetPolicyTunState(ptState); err != nil {
-			return fmt.Errorf("enable policy-tun: persist nat segments: %w", err)
+		// Персист ДО проверки ошибки, как в сверке: откат выше может и сам упасть
+		// (RCI, уронивший apply, обычно роняет и его), и тогда запись — всё, что
+		// помнит исходный режим сегмента. Provisioned/Index уже в персисте (см.
+		// выше), так что записями мы не утверждаем ничего нового о провижининге.
+		if perr := s.deps.Settings.SetPolicyTunState(ptState); perr != nil {
+			return fmt.Errorf("enable policy-tun: persist nat segments: %w", perr)
+		}
+		if err != nil {
+			return fmt.Errorf("enable policy-tun: %w", err)
 		}
 	}
 
