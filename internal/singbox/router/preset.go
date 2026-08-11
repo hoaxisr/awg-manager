@@ -138,22 +138,33 @@ func hasRuleSet(existing []RuleSet, tag string) bool {
 	return false
 }
 
+// ruleEqual reports whether applying the preset would duplicate an existing
+// rule. A rule the user extended with their own addresses is stored as
+// logical(or) (normalizeAddressOrRule), so the tags are compared through its
+// flat view — otherwise re-applying a preset onto an already-customized rule
+// silently appends a second copy. A rule carrying narrowing matchers does NOT
+// flatten and is therefore not a duplicate: it covers less than the preset.
 func ruleEqual(a, b Rule) bool {
-	if a.Action != b.Action {
+	if a.Action != b.Action || a.Outbound != b.Outbound {
 		return false
 	}
-	if a.Outbound != b.Outbound {
+	tagsA, tagsB := comparableRuleSetTags(a), comparableRuleSetTags(b)
+	if len(tagsA) != len(tagsB) {
 		return false
 	}
-	if len(a.RuleSet) != len(b.RuleSet) {
-		return false
-	}
-	for i := range a.RuleSet {
-		if a.RuleSet[i] != b.RuleSet[i] {
+	for i := range tagsA {
+		if tagsA[i] != tagsB[i] {
 			return false
 		}
 	}
 	return true
+}
+
+func comparableRuleSetTags(r Rule) []string {
+	if flat, ok := addressOrBranches(r); ok {
+		return flat.RuleSet
+	}
+	return r.RuleSet
 }
 
 func actionFor(target string) string {

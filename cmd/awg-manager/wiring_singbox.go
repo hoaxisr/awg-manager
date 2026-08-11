@@ -83,6 +83,10 @@ func (a *app) setupSingbox() {
 	if err != nil {
 		a.bootLog.Warn("ruleset-fork-migration", "", err.Error())
 	}
+	addressOrMigrated, err := router.MigrateAddressOrRules(singboxConfigDir)
+	if err != nil {
+		a.bootLog.Warn("address-or-migration", "", err.Error())
+	}
 	a.sbOrch = singboxorch.New(singboxConfigDir, a.singboxOp.Process())
 	a.sbOrch.SetLogger(func(level, msg string) {
 		switch level {
@@ -147,9 +151,10 @@ func (a *app) setupSingbox() {
 	// рестарт awgm sing-box иначе держит старые (заблокированные) URL в памяти
 	// до случайного reload по другому поводу. Холодный старт (процесс не
 	// запущен) прочитает новые файлы сам — reload не нужен.
-	if ruleSetURLsMigrated {
+	// То же и для нормализации правил «пресет ИЛИ свои адреса» (#699).
+	if ruleSetURLsMigrated || addressOrMigrated {
 		if running, _ := a.singboxOp.IsRunning(); running {
-			a.bootLog.Info("ruleset-fork-migration", "", "rule-set URL мигрированы — перечитываем конфиг живого sing-box")
+			a.bootLog.Info("ruleset-fork-migration", "", "правила/URL мигрированы — перечитываем конфиг живого sing-box")
 			if err := a.sbOrch.ReloadNow(); err != nil {
 				a.bootLog.Warn("ruleset-fork-migration", "reload", err.Error())
 			}

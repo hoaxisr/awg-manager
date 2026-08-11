@@ -10,6 +10,7 @@
 		type SegmentedOption,
 	} from '$lib/components/ui';
 	import type { SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
+	import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 	import type { OutboundGroup } from './outboundOptions';
 
 	interface Props {
@@ -45,6 +46,12 @@
 		onSave,
 	}: Props = $props();
 
+	// Правило «пресет ИЛИ свои адреса» хранится логической формой — редактор
+	// работает с её плоским видом, иначе поля откроются пустыми и сохранение
+	// сотрёт содержимое веток.
+	const flat = (r: SingboxRouterRule | undefined): SingboxRouterRule | undefined =>
+		r ? flattenRouterRule(r) : undefined;
+
 	const outboundDropdownOptions = $derived<DropdownOption[]>([
 		{ value: '', label: '— выберите —' },
 		...outboundOptions.flatMap((g) =>
@@ -53,13 +60,13 @@
 	]);
 
 	// svelte-ignore state_referenced_locally
-	let domainSuffixStr = $state((rule?.domain_suffix ?? []).join('\n'));
+	let domainSuffixStr = $state((flat(rule)?.domain_suffix ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let ipCidrStr = $state((rule?.ip_cidr ?? []).join('\n'));
+	let ipCidrStr = $state((flat(rule)?.ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let sourceIpCidrStr = $state((rule?.source_ip_cidr ?? []).join('\n'));
+	let sourceIpCidrStr = $state((flat(rule)?.source_ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let ruleSetTags = $state<string[]>(rule?.rule_set ?? initialRuleSetTags ?? []);
+	let ruleSetTags = $state<string[]>(flat(rule)?.rule_set ?? initialRuleSetTags ?? []);
 	const ruleSetOptions = $derived<ChipOption[]>(
 		availableRuleSets.map((rs) => ({
 			value: rs.tag,
@@ -68,13 +75,15 @@
 		})),
 	);
 	// svelte-ignore state_referenced_locally
-	let portStr = $state((rule?.port ?? []).join(', '));
+	let portStr = $state((flat(rule)?.port ?? []).join(', '));
 	// L4 matcher: empty = any (omit from JSON). Expert-only; simple mode treats
 	// network as a complex field and won't open this editor for such rules.
 	type NetworkFilter = '' | 'tcp' | 'udp';
 	// svelte-ignore state_referenced_locally
 	let network = $state<NetworkFilter>(
-		rule?.network === 'tcp' || rule?.network === 'udp' ? rule.network : '',
+		flat(rule)?.network === 'tcp' || flat(rule)?.network === 'udp'
+			? (flat(rule)!.network as NetworkFilter)
+			: '',
 	);
 
 	// svelte-ignore state_referenced_locally
@@ -108,15 +117,16 @@
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
-		if (rule) {
-			initialDomainSuffixStr = (rule.domain_suffix ?? []).join('\n');
-			initialIpCidrStr = (rule.ip_cidr ?? []).join('\n');
-			initialSourceIpCidrStr = (rule.source_ip_cidr ?? []).join('\n');
-			initialRuleSetTagsSnapshot = [...(rule.rule_set ?? [])];
-			initialPortStr = (rule.port ?? []).join(', ');
-			initialNetwork = rule.network === 'tcp' || rule.network === 'udp' ? rule.network : '';
-			initialAction = rule.action === 'reject' ? 'reject' : 'route';
-			initialOutbound = rule.outbound ?? '';
+		const src = flat(rule);
+		if (src) {
+			initialDomainSuffixStr = (src.domain_suffix ?? []).join('\n');
+			initialIpCidrStr = (src.ip_cidr ?? []).join('\n');
+			initialSourceIpCidrStr = (src.source_ip_cidr ?? []).join('\n');
+			initialRuleSetTagsSnapshot = [...(src.rule_set ?? [])];
+			initialPortStr = (src.port ?? []).join(', ');
+			initialNetwork = src.network === 'tcp' || src.network === 'udp' ? src.network : '';
+			initialAction = src.action === 'reject' ? 'reject' : 'route';
+			initialOutbound = src.outbound ?? '';
 		} else {
 			initialDomainSuffixStr = '';
 			initialIpCidrStr = '';
@@ -145,6 +155,26 @@
 	function parseLines(text: string): string[] {
 		return text.split('\n').map((s) => s.trim()).filter(Boolean);
 	}
+
+	// Условия правила, для которых в форме нет поля. Они переносятся при
+	// сохранении как есть (см. carried в save), поэтому форма обязана о них
+	// сказать: иначе она выглядит полнее правила, чем оно есть.
+	// Логическое правило, которое flattenRouterRule не узнал (чужая форма из
+	// импорта или ручной правки): форма его не показывает и при сохранении
+	// заменит собой. Молчать об этом нельзя — уничтожение чужой структуры
+	// должно быть осознанным решением, а не побочным эффектом «Сохранить».
+	const unflattenedLogical = $derived(flat(rule)?.type === 'logical');
+
+	const hiddenMatchers = $derived.by(() => {
+		const src = flat(rule);
+		if (!src) return [];
+		const out: string[] = [];
+		if (src.domain?.length) out.push(`точные домены: ${src.domain.join(', ')}`);
+		if (src.protocol) out.push(`прикладной протокол: ${src.protocol}`);
+		if (src.ip_is_private) out.push('только локальные адреса назначения');
+		if (src.inbound?.length) out.push(`вход: ${src.inbound.join(', ')}`);
+		return out;
+	});
 
 	const domainsCount = $derived(parseLines(domainSuffixStr).length);
 	const ipsCount = $derived(parseLines(ipCidrStr).length);
@@ -180,16 +210,31 @@
 				return;
 			}
 
+			const src = flat(rule);
+			// Матчеры, которых нет в форме, редактор обязан перенести как есть:
+			// правило пересобирается с нуля, поэтому всё непоказанное иначе
+			// молча пропадает. Так теряются точные домены, прикладной протокол,
+			// признак локальной сети и привязка ко входу — из импортированного
+			// конфига любое из этого прилетает запросто.
+			const carried: SingboxRouterRule = {
+				domain: src?.domain?.length ? src.domain : undefined,
+				protocol: src?.protocol || undefined,
+				ip_is_private: src?.ip_is_private ? true : undefined,
+				inbound: src?.inbound?.length ? src.inbound : undefined,
+			};
+
 			let built: SingboxRouterRule;
-			if (matchersOnly && rule) {
+			if (matchersOnly && src) {
 				built = {
+					...carried,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
-					action: rule.action === 'reject' ? 'reject' : 'route',
-					outbound: rule.action === 'reject' ? undefined : rule.outbound,
+					action: src.action === 'reject' ? 'reject' : 'route',
+					outbound: src.action === 'reject' ? undefined : src.outbound,
 				};
 			} else {
 				built = {
+					...carried,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
 					source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,
@@ -216,6 +261,22 @@
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
+		{#if unflattenedLogical}
+			<div class="warn">
+				Это правило со вложенной логической структурой, которую форма не показывает.
+				Сохранение <b>заменит</b> её тем, что введено здесь. Чтобы изменить правило,
+				не потеряв структуру, правьте его в редакторе конфигурации.
+			</div>
+		{/if}
+
+		{#if hiddenMatchers.length}
+			<div class="warn">
+				В правиле есть условия, которых нет в этой форме — они сохранятся без изменений:
+				{#each hiddenMatchers as m, i (m)}<code>{m}</code>{#if i < hiddenMatchers.length - 1}{', '}{/if}{/each}.
+				Изменить их можно в экспертном редакторе конфигурации.
+			</div>
+		{/if}
+
 		<div class="section-label">Matchers (минимум один)</div>
 
 		<label class="field">
@@ -268,7 +329,8 @@
 					allowOrphans
 				/>
 				<div class="hint">
-					Готовые наборы (geosite/geoip). Для своих доменов и подсетей используйте поля выше.
+					Готовые наборы (geosite/geoip). Для своих доменов и подсетей используйте поля выше —
+					правило сработает по набору <b>или</b> по вашим адресам.
 				</div>
 			</div>
 

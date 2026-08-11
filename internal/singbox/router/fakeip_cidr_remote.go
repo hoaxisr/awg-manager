@@ -127,13 +127,23 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 	// тогда его CIDR безопасны независимо от мержимости набора (см. ниже).
 	standalone := map[string]bool{}
 	for _, r := range cfg.Route.Rules {
-		if !loopSafeProxyRule(r) {
+		flat, isOr := addressOrBranches(r)
+		switch {
+		case isOr:
+			// Нормализованная форма: ветка rule_set совпадает сама по себе,
+			// собственные адреса правила ей не условие → standalone.
+			if !isProxyRoute(r) {
+				continue
+			}
+		case loopSafeProxyRule(r):
+			flat = r
+		default:
 			continue
 		}
-		for _, tag := range r.RuleSet {
+		for _, tag := range flat.RuleSet {
 			if rs, ok := byTag[tag]; ok && rs.Type == "remote" && rs.URL != "" {
 				want[tag] = rs
-				if len(r.IPCIDR) == 0 {
+				if isOr || len(flat.IPCIDR) == 0 {
 					standalone[tag] = true
 				}
 			}

@@ -179,6 +179,41 @@ func ownIPCIDRLoopSafe(r Rule, byTag map[string]RuleSet) bool {
 	return false
 }
 
+// addressOrBranches recognizes the shape normalizeAddressOrRule produces —
+// logical(or) over exactly two branches, one carrying only rule_set tags and
+// the other only destination-address matchers — and returns the flat
+// equivalent. Each branch matches on its own there, so a by-IP packet to
+// either side is guaranteed to proxy: no mergeability gate needed, unlike the
+// flat rule_set+ip_cidr form. ok=false for any other shape (including the
+// logical(and) wrapper a narrowing matcher produces — that one CAN miss).
+func addressOrBranches(r Rule) (Rule, bool) {
+	if r.Type != "logical" || r.Mode != "or" || len(r.Rules) != 2 {
+		return Rule{}, false
+	}
+	sets, addrs := r.Rules[0], r.Rules[1]
+	if len(sets.RuleSet) == 0 || !onlyMatchers(sets, func(x *Rule) { x.RuleSet = nil }) {
+		return Rule{}, false
+	}
+	if !onlyMatchers(addrs, func(x *Rule) {
+		x.Domain, x.DomainSuffix, x.IPCIDR, x.IPIsPrivate = nil, nil, nil, nil
+	}) {
+		return Rule{}, false
+	}
+	return Rule{
+		RuleSet: sets.RuleSet, Domain: addrs.Domain,
+		DomainSuffix: addrs.DomainSuffix, IPCIDR: addrs.IPCIDR,
+	}, true
+}
+
+// onlyMatchers reports whether clearing the listed matcher fields leaves the
+// rule without any matcher at all. Expressed through hasAnyMatcher so a matcher
+// field added to Rule later is accounted for here without an edit.
+func onlyMatchers(r Rule, clear func(*Rule)) bool {
+	rest := r
+	clear(&rest)
+	return !rest.hasAnyMatcher()
+}
+
 // desiredTunCIDRs returns the deduped, normalized dst ip_cidr values that proxy
 // route-rules select — directly via ip_cidr and via referenced inline/managed-local
 // rule-sets — split into v4 and v6. These get specific NDMS routes to the tun.
@@ -204,6 +239,20 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 		}
 	}
 	for _, r := range cfg.Route.Rules {
+		if flat, isOr := addressOrBranches(r); isOr {
+			if !isProxyRoute(r) {
+				continue
+			}
+			for _, c := range flat.IPCIDR {
+				add(c)
+			}
+			for _, tag := range flat.RuleSet {
+				for _, c := range ruleSetCIDRs(byTag[tag]) {
+					add(c)
+				}
+			}
+			continue
+		}
 		if !loopSafeProxyRule(r) {
 			continue
 		}

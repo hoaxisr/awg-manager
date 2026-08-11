@@ -268,6 +268,28 @@ describe('extractMatcherChips', () => {
     expect(chips).toEqual([{ kind: 'ip', label: '10.0.0.0/8', mono: true }]);
   });
 
+  it('нормализованное «пресет ИЛИ свои адреса» показывает обе стороны', () => {
+    const chips = extractMatcherChips(
+      {
+        type: 'logical',
+        mode: 'or',
+        rules: [{ rule_set: ['geosite-discord'] }, { ip_cidr: ['66.22.192.0/18'] }],
+        action: 'route',
+        outbound: 'vpn',
+      },
+      noRulesets,
+    );
+    expect(chips).toEqual([
+      { kind: 'ip', label: '66.22.192.0/18', mono: true },
+      {
+        kind: 'ruleset',
+        label: 'geosite-discord',
+        rulesetTag: 'geosite-discord',
+        rulesetType: undefined,
+      },
+    ]);
+  });
+
   it('source_ip_cidr → src chips with mono', () => {
     const chips = extractMatcherChips({ source_ip_cidr: ['192.168.1.0/24'] }, noRulesets);
     expect(chips).toEqual([{ kind: 'src', label: '192.168.1.0/24', mono: true }]);

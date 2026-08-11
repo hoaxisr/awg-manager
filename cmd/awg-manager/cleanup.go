@@ -164,6 +164,9 @@ func runCleanup(dataDir string) {
 	if _, err := singbox.MigrateRuleSetURLsToFork(cleanupSingboxConfigDir); err != nil {
 		bootLog.Warn("ruleset-fork-migration", "", err.Error())
 	}
+	if _, err := router.MigrateAddressOrRules(cleanupSingboxConfigDir); err != nil {
+		bootLog.Warn("address-or-migration", "", err.Error())
+	}
 	cleanupSbOrch := singboxorch.New(cleanupSingboxConfigDir, singboxOp.Process())
 	for _, meta := range singboxorch.KnownSlots() {
 		if err := cleanupSbOrch.Register(meta); err != nil {

@@ -10,8 +10,9 @@
 // тегу, чтобы usage сходился на строке самого inline-набора.
 
 import { displayRuleSetTag } from '$lib/utils/singboxInlineRules';
+import { ruleSetTagsOf } from '$lib/utils/routerRuleShape';
 
-type WithRuleSet = { rule_set?: string[] };
+type WithRuleSet = { rule_set?: string[]; rules?: WithRuleSet[] };
 
 export interface RuleSetUsageRef {
 	/** 1-based номера DNS-правил, ссылающихся на тег. */
@@ -46,8 +47,8 @@ export function computeRuleSetUsageRefs(
 		base: number,
 	): void => {
 		for (let i = 0; i < rules.length; i++) {
-			const tags = rules[i].rule_set;
-			if (!tags?.length) continue;
+			const tags = ruleSetTagsOf(rules[i]);
+			if (!tags.length) continue;
 			const seen = new Set<string>();
 			for (const raw of tags) {
 				const tag = displayRuleSetTag(raw);

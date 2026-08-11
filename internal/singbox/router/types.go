@@ -103,7 +103,11 @@ type Rule struct {
 	// the class outbound; user rules may use it too.
 	Inbound []string `json:"inbound,omitempty"`
 	// IPIsPrivate, when set, matches packets whose destination is an
-	// RFC1918/loopback/link-local/CGNAT/multicast address. Pointer so
+	// RFC1918/loopback/link-local/multicast/unspecified address — the
+	// negation of sing's N.IsPublicAddr. CGNAT (100.64/10) is NOT among
+	// them: netip.Addr.IsPrivate() says public, so a CGNAT destination does
+	// not match (the fakeip route gate excludes it separately, see
+	// excludedAddr). Pointer so
 	// the zero value (unset) stays out of JSON — `{"ip_is_private":false}`
 	// would change sing-box semantics. System rule from EnsureSystemRules
 	// uses `*IPIsPrivate = true` as defense-in-depth: even when iptables

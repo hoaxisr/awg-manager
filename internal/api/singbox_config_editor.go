@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
 // SingboxConfigEditorHandler — эксперт-редактор конфигурации sing-box.
@@ -108,6 +110,27 @@ func splitUserValidationDTO(res orchestrator.ValidationResult) (errs, warns []Ro
 		}
 	}
 	return errs, warns
+}
+
+// addressOrWarnings flags hand-authored rules that mix a rule_set with the
+// rule's own destination addresses. sing-box ANDs the two unless the set holds
+// exactly one destination-only rule, so such a rule matches almost nothing
+// (issue #699). The slots we generate get this rewritten into logical(or)
+// automatically; the expert slot is the user's own text, so we warn instead of
+// rewriting it behind their back.
+func addressOrWarnings(raw []byte) []RouterValidationErrorDTO {
+	var out []RouterValidationErrorDTO
+	for _, idx := range router.FlatAddressOrRuleIndexes(raw) {
+		out = append(out, RouterValidationErrorDTO{
+			Slot:   string(orchestrator.SlotUser),
+			Kind:   "rule-set-with-own-addresses",
+			InRule: fmt.Sprintf("route.rules[%d]", idx),
+			Message: "правило требует совпадения И по rule_set, И по собственным domain/ip_cidr одновременно — " +
+				"sing-box объединит их через ИЛИ только если в наборе ровно одно адресное правило. " +
+				"Разнесите на два правила или запишите logical(or)",
+		})
+	}
+	return out
 }
 
 // UserConfigEnableRequest is the body of POST /singbox/config/user/enable.
@@ -343,6 +366,7 @@ func (h *SingboxConfigEditorHandler) CheckUserConfig(w http.ResponseWriter, r *h
 	}
 	out := UserConfigCheckResponse{Ok: res.Ok()}
 	out.Errors, out.Warnings = splitUserValidationDTO(res)
+	out.Warnings = append(out.Warnings, addressOrWarnings(raw)...)
 	response.Success(w, out)
 }
 
@@ -378,6 +402,9 @@ func (h *SingboxConfigEditorHandler) ApplyUserConfig(w http.ResponseWriter, r *h
 	// файл в active/ — немедленный SetEnabled ниже (внутри debounce-окна
 	// reload) убирает возможный устаревший дубль из disabled/ и выравнивает
 	// enabled-карту с диском.
+	// Черновик читаем ДО применения: после коммита он уже удалён, а advisory
+	// по его содержимому нужно вернуть вместе с результатом.
+	draft, _ := h.orch.LoadDraft(orchestrator.SlotUser)
 	res, err := h.orch.ApplyDraft(orchestrator.SlotUser)
 	if errors.Is(err, orchestrator.ErrNoDraft) {
 		response.ErrorWithStatus(w, http.StatusConflict, "no draft to apply", "NO_DRAFT")
@@ -401,6 +428,7 @@ func (h *SingboxConfigEditorHandler) ApplyUserConfig(w http.ResponseWriter, r *h
 	h.log.Info("user-config-apply", "90-user.json", "user config draft applied")
 	out := UserConfigApplyResponse{Ok: true}
 	_, out.Warnings = splitUserValidationDTO(res)
+	out.Warnings = append(out.Warnings, addressOrWarnings(draft)...)
 	response.Success(w, out)
 }
 

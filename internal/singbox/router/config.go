@@ -124,12 +124,40 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 		remove[t] = struct{}{}
 	}
 	if force {
-		for i := range c.Route.Rules {
-			removeRuleSetRefsInRule(&c.Route.Rules[i], remove)
+		// A rule left without a single matcher must GO, not stay: sing-box
+		// treats a matcher-less rule as "matches everything"
+		// (abstractDefaultRule.Match returns true on an empty item list), so
+		// «пресет → VPN» whose set was force-deleted would quietly start
+		// routing ALL traffic into that outbound. The rule existed for the
+		// set alone; without it there is nothing left to keep.
+		keptRules := make([]Rule, 0, len(c.Route.Rules))
+		for _, r := range c.Route.Rules {
+			referenced := ruleReferencesAnyRuleSet(r, remove)
+			removeRuleSetRefsInRule(&r, remove)
+			r = collapseNestedRules(r)
+			// Выбрасываем ТОЛЬКО то, что осиротила эта операция: правило без
+			// матчеров, не связанное с удаляемым набором, — чужое решение
+			// (и в DNS matcher-less catch-all вообще легитимен).
+			if referenced && !r.hasAnyMatcher() && !isSystemRule(r) {
+				continue
+			}
+			keptRules = append(keptRules, r)
 		}
-		for i := range c.DNS.Rules {
-			c.DNS.Rules[i].RuleSet = removeRuleSetRefs(c.DNS.Rules[i].RuleSet, remove)
+		c.Route.Rules = keptRules
+
+		keptDNS := make([]DNSRule, 0, len(c.DNS.Rules))
+		for _, r := range c.DNS.Rules {
+			// removeRuleSetRefs фильтрует на месте (tags[:0]) — звать её
+			// можно ровно один раз, длину считаем до вызова.
+			before := len(r.RuleSet)
+			r.RuleSet = removeRuleSetRefs(r.RuleSet, remove)
+			referenced := len(r.RuleSet) != before
+			if referenced && !dnsRuleHasMatcher(r) {
+				continue
+			}
+			keptDNS = append(keptDNS, r)
 		}
+		c.DNS.Rules = keptDNS
 	}
 	filtered := make([]RuleSet, 0, len(c.Route.RuleSet))
 	for _, rs := range c.Route.RuleSet {
@@ -165,6 +193,43 @@ func removeRuleSetRefsInRule(r *Rule, remove map[string]struct{}) {
 	}
 }
 
+// collapseNestedRules drops logical branches left without a single matcher and
+// unwraps a logical rule down to its last surviving branch. A force rule-set
+// delete strips tags out of nested branches (removeRuleSetRefsInRule), and the
+// branch of a normalized rule holds nothing but that tag — leaving `{}` behind
+// would cost the whole slot: sing-box rejects a config with an empty sub-rule
+// (DefaultHeadlessRule.IsValid → "missing conditions"), not just that rule.
+//
+// The surviving branch inherits the parent's action so the rule keeps routing
+// where it did — the shape shrinks, the intent does not.
+func collapseNestedRules(r Rule) Rule {
+	if len(r.Rules) == 0 {
+		return r
+	}
+	kept := make([]Rule, 0, len(r.Rules))
+	for _, nested := range r.Rules {
+		nested = collapseNestedRules(nested)
+		if !nested.hasAnyMatcher() {
+			continue
+		}
+		kept = append(kept, nested)
+	}
+	r.Rules = kept
+	if r.Type != "logical" {
+		return r
+	}
+	switch len(kept) {
+	case 0:
+		r.Type, r.Mode, r.Rules = "", "", nil
+	case 1:
+		only := kept[0]
+		only.Action, only.Outbound = r.Action, r.Outbound
+		only.UDPTimeout, only.AwgmManaged = r.UDPTimeout, r.AwgmManaged
+		return only
+	}
+	return r
+}
+
 func removeRuleSetRefs(tags []string, remove map[string]struct{}) []string {
 	if len(tags) == 0 {
 		return nil
@@ -187,6 +252,28 @@ type ruleSetRefIndices struct {
 	dns   []int
 }
 
+// ruleSetTagsInRule collects every rule_set tag the rule references, including
+// the ones sitting in nested logical branches (normalizeAddressOrRule puts them
+// there). Readers that only look at the top-level RuleSet field go blind on a
+// normalized rule — the set then looks orphaned to the issue detector, its
+// artifacts look unreferenced to the GC, and deleting it is not blocked.
+func ruleSetTagsInRule(r Rule, out []string) []string {
+	out = append(out, r.RuleSet...)
+	for _, nested := range r.Rules {
+		out = ruleSetTagsInRule(nested, out)
+	}
+	return out
+}
+
+func ruleReferencesAnyRuleSet(r Rule, want map[string]struct{}) bool {
+	for _, tag := range ruleSetTagsInRule(r, nil) {
+		if _, ok := want[tag]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices {
 	want := make(map[string]struct{}, len(tags))
 	for _, t := range tags {
@@ -194,11 +281,8 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 	}
 	var out ruleSetRefIndices
 	for i, r := range c.Route.Rules {
-		for _, rsTag := range r.RuleSet {
-			if _, ok := want[rsTag]; ok {
-				out.route = append(out.route, i)
-				break
-			}
+		if ruleReferencesAnyRuleSet(r, want) {
+			out.route = append(out.route, i)
 		}
 	}
 	for i, r := range c.DNS.Rules {
@@ -212,6 +296,73 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 	return out
 }
 
+// normalizeAddressOrRule rewrites a flat rule that mixes a rule_set with the
+// rule's OWN destination-address matchers (domain / domain_suffix / ip_cidr)
+// into an explicit `logical(or)`.
+//
+// Why: sing-box folds a rule_set into the referencing rule's destination-address
+// group ONLY when the set holds exactly one destination-only rule (mergeableRuleIn,
+// route/rule/rule_item_rule_set.go). Any other set — and four of the presets we
+// ship are exactly that, discord-full/telegram/roblox/whatsapp carry two rules —
+// is matched separately and only after the rule's own matchers already hit, i.e.
+// as an AND. A rule reading "preset OR my subnets" then matches almost nothing:
+// a domain from the preset fails the ip_cidr half, an IP from the subnets fails
+// the preset half (issue #699).
+//
+// The destination-address branch carries every matcher sing-box puts in that
+// group: domain, domain_suffix, ip_cidr AND ip_is_private — the last one lands
+// in destinationIPCIDRItems (fork route/rule/rule_default.go:154), so it is
+// OR-ed with the addresses, not AND-ed against them.
+//
+// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr) keep
+// their AND meaning: they move into a sibling branch of an outer
+// `logical(and)`. Action/outbound stay on the outer rule — nested branches
+// carry matchers only.
+//
+// Idempotent: an already-logical rule is returned untouched.
+func normalizeAddressOrRule(r Rule) Rule {
+	if r.Type != "" || len(r.RuleSet) == 0 {
+		return r
+	}
+	// Only a TRUE ip_is_private counts as a matcher: `"ip_is_private": false`
+	// is sing-box's way of writing "no such condition", and a branch holding
+	// nothing else would come out empty — which costs the whole slot
+	// ("missing conditions" rejects the config, not just the rule).
+	private := r.IPIsPrivate != nil && *r.IPIsPrivate
+	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 && !private {
+		return r
+	}
+
+	addressBranch := Rule{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR}
+	if private {
+		addressBranch.IPIsPrivate = r.IPIsPrivate
+	}
+	addressOr := Rule{Type: "logical", Mode: "or", Rules: []Rule{
+		{RuleSet: r.RuleSet},
+		addressBranch,
+	}}
+
+	narrowing := Rule{
+		SourceIPCIDR: r.SourceIPCIDR,
+		Port:         r.Port,
+		Protocol:     r.Protocol,
+		Inbound:      r.Inbound,
+		Network:      r.Network,
+	}
+
+	out := r
+	out.RuleSet, out.Domain, out.DomainSuffix, out.IPCIDR = nil, nil, nil, nil
+	out.SourceIPCIDR, out.Port, out.Protocol, out.Inbound = nil, nil, "", nil
+	out.Network, out.IPIsPrivate = "", nil
+	out.Type, out.Mode = "logical", "or"
+	out.Rules = addressOr.Rules
+	if narrowing.hasAnyMatcher() {
+		out.Mode = "and"
+		out.Rules = []Rule{narrowing, addressOr}
+	}
+	return out
+}
+
 func (c *RouterConfig) AddRule(r Rule) error {
 	if !r.hasAnyMatcher() && r.Action != "sniff" && r.Action != "hijack-dns" {
 		return ErrInvalidMatchers
@@ -219,7 +370,7 @@ func (c *RouterConfig) AddRule(r Rule) error {
 	if err := validateRule(r); err != nil {
 		return err
 	}
-	c.Route.Rules = append(c.Route.Rules, r)
+	c.Route.Rules = append(c.Route.Rules, normalizeAddressOrRule(r))
 	return nil
 }
 
@@ -233,7 +384,7 @@ func (c *RouterConfig) UpdateRule(index int, r Rule) error {
 	if err := validateRule(r); err != nil {
 		return err
 	}
-	c.Route.Rules[index] = r
+	c.Route.Rules[index] = normalizeAddressOrRule(r)
 	return nil
 }
 
@@ -354,8 +505,9 @@ func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
 	// hijack-dns rule, whether it was just prepended or already present.
 	if !hasPrivateBypass {
 		// Defense-in-depth: any packet that slips into sing-box with a
-		// private destination (RFC1918, loopback, link-local, CGNAT,
-		// multicast) goes `direct` instead of falling through to
+		// private destination (RFC1918, loopback, link-local, multicast —
+		// CGNAT is NOT one of them, see Rule.IPIsPrivate) goes `direct`
+		// instead of falling through to
 		// `final: proxy`. Matters specifically for non-policy DNS that
 		// the `hijack-dns` side-effect transparent listener picks up
 		// from router LAN IPs — those packets arrive without TPROXY
@@ -831,10 +983,19 @@ func isProxyIface(name string) bool {
 	return strings.HasPrefix(n, "t2s") || strings.HasPrefix(n, "proxy")
 }
 
+// hasAnyMatcher reports whether the rule constrains anything at all. A rule
+// with no matcher is not inert — sing-box matches EVERY connection with it
+// (abstractDefaultRule.Match returns true on an empty item list) — so callers
+// use this to refuse creating one and to drop one left behind.
+//
+// `ip_is_private: false` deliberately does NOT count: that is sing-box's way
+// of writing "no such condition", and treating it as a matcher would let a
+// rule survive force-delete as an unconditional catch-all.
 func (r Rule) hasAnyMatcher() bool {
-	return len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 || len(r.SourceIPCIDR) > 0 ||
+	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 ||
+		len(r.SourceIPCIDR) > 0 ||
 		len(r.Port) > 0 || len(r.RuleSet) > 0 || r.Protocol != "" || len(r.Rules) > 0 ||
-		r.IPIsPrivate != nil || len(r.Inbound) > 0 || r.Network != ""
+		(r.IPIsPrivate != nil && *r.IPIsPrivate) || len(r.Inbound) > 0 || r.Network != ""
 }
 
 // isSystemUDPTimeoutRule reports whether r is the system route-options rule that

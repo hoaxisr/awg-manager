@@ -256,11 +256,15 @@ export interface RouterPolicy {
 }
 
 export interface SingboxRouterRule {
+	// Exact-domain matcher. Sits in the same sing-box matcher as
+	// domain_suffix (destination-address group) — the two are OR-ed.
+	domain?: string[];
 	domain_suffix?: string[];
 	ip_cidr?: string[];
 	source_ip_cidr?: string[];
 	port?: number[];
 	rule_set?: string[];
+	inbound?: string[];
 	protocol?: string;
 	// When true, matches packets whose destination is private (RFC1918,
 	// loopback, link-local, CGNAT, multicast). System ip_is_private
@@ -277,6 +281,12 @@ export interface SingboxRouterRule {
 	network?: string;
 	// `udp_timeout` route option carried by the system `route-options` rule.
 	udp_timeout?: string;
+	// A `logical` rule combines its nested `rules` by `mode`. The backend
+	// stores «пресет ИЛИ свои адреса» in this form (see flattenRouterRule):
+	// sing-box would otherwise AND a rule_set with the rule's own addresses
+	// and the rule would match almost nothing.
+	type?: string;
+	mode?: string;
 	rules?: SingboxRouterRule[];
 }
 
