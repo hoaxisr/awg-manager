@@ -109,6 +109,50 @@ func TestSetPermitAllACL_SequenceAndDuplicateTolerance(t *testing.T) {
 	}
 }
 
+// SetPermitAllACLv6/RemovePermitAllACLv6: у NDMS под IPv6 ОТДЕЛЬНОЕ пространство
+// списков — `ipv6 access-list` + `ipv6 access-group`, имя то же (форма снята с
+// живого роутера 2026-08-11). Порядок и толерантность к дублю — как у v4.
+func TestSetPermitAllACLv6_SequenceAndDuplicateTolerance(t *testing.T) {
+	cmds, poster := newACLTestCommands(nestedACLError("a duplicate was found for the rule being set."))
+	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("SetPermitAllACLv6 (duplicate permit): %v", err)
+	}
+	want := []string{
+		"ipv6 access-list _WEBADMIN_OpkgTun0 permit ipv6 ::/0 ::/0",
+		"interface OpkgTun0 ipv6 access-group _WEBADMIN_OpkgTun0 in",
+		"ipv6 access-list _WEBADMIN_OpkgTun0 auto-delete",
+	}
+	if len(poster.parses) != len(want) {
+		t.Fatalf("parses: want %d, got %d: %v", len(want), len(poster.parses), poster.parses)
+	}
+	for i, w := range want {
+		if poster.parses[i] != w {
+			t.Errorf("parse[%d]: got %q, want %q", i, poster.parses[i], w)
+		}
+	}
+}
+
+// Снятие v6-пары: unbind + удаление списка. Обе команды идут ВСЕГДА — снятие
+// best-effort, и провал unbind не должен оставлять список висеть.
+func TestRemovePermitAllACLv6_UnbindsAndRemoves(t *testing.T) {
+	cmds, poster := newACLTestCommands(nil)
+	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("RemovePermitAllACLv6: %v", err)
+	}
+	want := []string{
+		"no interface OpkgTun0 ipv6 access-group _WEBADMIN_OpkgTun0 in",
+		"no ipv6 access-list _WEBADMIN_OpkgTun0",
+	}
+	if len(poster.parses) != len(want) {
+		t.Fatalf("parses: want %d, got %d: %v", len(want), len(poster.parses), poster.parses)
+	}
+	for i, w := range want {
+		if poster.parses[i] != w {
+			t.Errorf("parse[%d]: got %q, want %q", i, poster.parses[i], w)
+		}
+	}
+}
+
 // НЕ-duplicate провал permit — жёсткая ошибка SetPermitAllACL: guard
 // толерирует только дубль, реальная ошибка не должна проглатываться (ревью).
 func TestSetPermitAllACL_RealPermitErrorFails(t *testing.T) {

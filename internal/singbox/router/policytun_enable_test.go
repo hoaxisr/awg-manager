@@ -740,3 +740,27 @@ func TestPolicyTunEnable_IngressWithoutDNAT(t *testing.T) {
 		t.Errorf("netfilter в policy-tun не трогается: %v", rec.ipt)
 	}
 }
+
+// v6-разрешение — отдельная сущность NDMS (`ipv6 access-list`/`ipv6
+// access-group`), v4-ACL его не покрывает. Ставится ПОСЛЕ v6-адреса: сначала у
+// интерфейса появляется v6, потом разрешение на него.
+func TestPolicyTunEnable_PermitACLv6FollowsAddress(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.FakeIPPool6 = "fdfe:dcba:9876::/48"
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	ndmsName := fakeIPNDMSName(0)
+	if !h.log.has("SetPermitACLv6:" + ndmsName) {
+		t.Fatalf("v6-разрешение не поставлено: %v", h.log.calls)
+	}
+	mustOrderCalls(t, h.log, "SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetPermitACLv6:"+ndmsName)
+}
