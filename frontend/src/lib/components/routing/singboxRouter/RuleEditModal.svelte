@@ -156,6 +156,20 @@
 		return text.split('\n').map((s) => s.trim()).filter(Boolean);
 	}
 
+	// Условия правила, для которых в форме нет поля. Они переносятся при
+	// сохранении как есть (см. carried в save), поэтому форма обязана о них
+	// сказать: иначе она выглядит полнее правила, чем оно есть.
+	const hiddenMatchers = $derived.by(() => {
+		const src = flat(rule);
+		if (!src) return [];
+		const out: string[] = [];
+		if (src.domain?.length) out.push(`точные домены: ${src.domain.join(', ')}`);
+		if (src.protocol) out.push(`прикладной протокол: ${src.protocol}`);
+		if (src.ip_is_private) out.push('только локальные адреса назначения');
+		if (src.inbound?.length) out.push(`вход: ${src.inbound.join(', ')}`);
+		return out;
+	});
+
 	const domainsCount = $derived(parseLines(domainSuffixStr).length);
 	const ipsCount = $derived(parseLines(ipCidrStr).length);
 	const sourceIPsCount = $derived(parseLines(sourceIpCidrStr).length);
@@ -241,6 +255,14 @@
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
+		{#if hiddenMatchers.length}
+			<div class="warn">
+				В правиле есть условия, которых нет в этой форме — они сохранятся без изменений:
+				{#each hiddenMatchers as m, i (m)}<code>{m}</code>{#if i < hiddenMatchers.length - 1}{', '}{/if}{/each}.
+				Изменить их можно в экспертном редакторе конфигурации.
+			</div>
+		{/if}
+
 		<div class="section-label">Matchers (минимум один)</div>
 
 		<label class="field">

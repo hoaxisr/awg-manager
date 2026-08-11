@@ -40,6 +40,36 @@ describe('RuleEditModal', () => {
 		expect(saved.domain_suffix).toEqual(['example.com']);
 	});
 
+	it('называет условия, которых нет в форме', () => {
+		const rule: SingboxRouterRule = {
+			domain: ['exact.host'],
+			domain_suffix: ['example.com'],
+			protocol: 'tls',
+			ip_is_private: true,
+			inbound: ['tproxy-in'],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, { props: { ...baseProps, rule, onSave: vi.fn() } });
+
+		expect(screen.getByText(/условия, которых нет в этой форме/i)).toBeTruthy();
+		expect(screen.getByText('точные домены: exact.host')).toBeTruthy();
+		expect(screen.getByText('прикладной протокол: tls')).toBeTruthy();
+		expect(screen.getByText('только локальные адреса назначения')).toBeTruthy();
+		expect(screen.getByText('вход: tproxy-in')).toBeTruthy();
+	});
+
+	it('у обычного правила предупреждения нет', () => {
+		render(RuleEditModal, {
+			props: {
+				...baseProps,
+				rule: { domain_suffix: ['example.com'], action: 'route', outbound: 'vpn' },
+				onSave: vi.fn(),
+			},
+		});
+		expect(screen.queryByText(/условия, которых нет в этой форме/i)).toBeNull();
+	});
+
 	it('логическую форму «набор ИЛИ свои адреса» показывает и сохраняет плоской', async () => {
 		const onSave = vi.fn();
 		const rule: SingboxRouterRule = {
