@@ -280,24 +280,33 @@ func TestNwgDelta_NonWarmupFirstPoll_EmitsInitial(t *testing.T) {
 	}
 }
 
+// countRestarts подставляет стаб вместо фасадного счётчика: считать рестарты
+// монитору не положено, он только сообщает о них.
+func countRestarts(m *nwgMonitor) *int {
+	seen := new(int)
+	m.onFruitlessRestart = func(string) int { *seen++; return *seen }
+	return seen
+}
+
 // Рестарты интерфейса силами NDMS должны считаться: до #702 наружу
 // отдавалась константа, и пользователь видел «рестартов ноль».
 func TestNwgDelta_RestartCountGrows(t *testing.T) {
 	buf := NewLogBuffer()
 	defer buf.Stop()
 	m := newTestNwgMonitor(buf)
+	seen := countRestarts(m)
 
 	m.processDelta(0, 5, "pass", true) // базовая линия: туннель живой
 	m.processDelta(3, 5, "fail", true) // копятся отказы
 	m.processDelta(0, 0, "fail", true) // NDMS перезапустил: счётчики обнулены
-	if m.restarts() != 1 {
-		t.Fatalf("после первого рестарта restarts() = %d, want 1", m.restarts())
+	if *seen != 1 {
+		t.Fatalf("после первого рестарта зафиксировано %d, want 1", *seen)
 	}
 
 	m.processDelta(3, 0, "fail", true) // снова отказы
 	m.processDelta(0, 0, "fail", true) // снова рестарт
-	if m.restarts() != 2 {
-		t.Fatalf("после второго рестарта restarts() = %d, want 2", m.restarts())
+	if *seen != 2 {
+		t.Fatalf("после второго рестарта зафиксировано %d, want 2", *seen)
 	}
 }
 
@@ -306,11 +315,45 @@ func TestNwgDelta_RestartCountStableWhileHealthy(t *testing.T) {
 	buf := NewLogBuffer()
 	defer buf.Stop()
 	m := newTestNwgMonitor(buf)
+	seen := countRestarts(m)
 
 	m.processDelta(0, 5, "pass", true)
 	m.processDelta(0, 9, "pass", true)
-	if m.restarts() != 0 {
-		t.Fatalf("на живом туннеле restarts() = %d, want 0", m.restarts())
+	if *seen != 0 {
+		t.Fatalf("на живом туннеле зафиксировано %d рестартов, want 0", *seen)
+	}
+}
+
+// Серия живёт в фасаде и переживает пересоздание монитора, а restartDetected —
+// нет. Успешная проверка обязана обнулять серию и у нового монитора, который
+// про прошлый рестарт ничего не знает (#702).
+func TestNwgDelta_SuccessResetsSeriesAfterMonitorRecreate(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+
+	series := new(int)
+	wire := func(m *nwgMonitor) {
+		m.onFruitlessRestart = func(string) int { *series++; return *series }
+		m.onCheckSuccess = func(string) { *series = 0 }
+	}
+
+	m := newTestNwgMonitor(buf)
+	wire(m)
+	m.processDelta(0, 5, "pass", true)
+	m.processDelta(3, 5, "fail", true)
+	m.processDelta(0, 0, "fail", true) // рестарт NDMS: серия = 1
+	if *series != 1 {
+		t.Fatalf("серия после рестарта = %d, want 1", *series)
+	}
+
+	// Монитор пересоздан не эскалацией, а сохранением настроек мониторинга:
+	// restartDetected потерян, серия в фасаде — нет.
+	m2 := newTestNwgMonitor(buf)
+	wire(m2)
+	m2.processDelta(0, 0, "fail", true) // базовая линия нового монитора
+	m2.processDelta(0, 2, "pass", true) // туннель ожил
+	if *series != 0 {
+		t.Fatalf("после успешной проверки серия = %d, want 0", *series)
 	}
 }
 

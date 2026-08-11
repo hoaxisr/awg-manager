@@ -63,18 +63,6 @@ type nwgMonitor struct {
 	// successful check after restart.
 	restartDetected bool
 
-	// restartCount counts NDMS-initiated interface restarts seen by THIS
-	// monitor instance. It resets together with the monitor, which
-	// startNwgMonitor recreates on reconnect and on monitoring setting
-	// changes, so it is not what the user sees: the counter shown in the UI
-	// lives in the Facade maps and survives monitor recreation (#702).
-	//
-	// Synchronisation: the Facade's nwgMonMu guards the monitor map, not
-	// monitor fields. restartDetected is read without a lock too
-	// (facade.go); there is no per-monitor field lock — restarts() follows
-	// that existing precedent deliberately.
-	restartCount int
-
 	// restarter performs a full tunnel restart (Stop+Start through the
 	// tunnel service). nil when escalation is not wired.
 	restarter func(context.Context, string) error
@@ -90,11 +78,6 @@ type nwgMonitor struct {
 	// canEscalate is the Facade's backoff gate; on approval it records the
 	// time itself.
 	canEscalate func(tunnelID string) bool
-}
-
-// restarts returns the number of interface restarts seen by this monitor.
-func (m *nwgMonitor) restarts() int {
-	return m.restartCount
 }
 
 // maybeEscalate restarts the whole tunnel when consecutive NDMS restarts
@@ -219,7 +202,6 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 
 		if countersZeroed && (boundTransition || counterReset) {
 			m.restartDetected = true
-			m.restartCount++
 			series := 0
 			if m.onFruitlessRestart != nil {
 				series = m.onFruitlessRestart(m.tunnelID)
@@ -244,6 +226,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	successDelta := successCount - m.prevSuccess
 	if successDelta < 0 {
 		successDelta = successCount
+	}
+
+	// Any fresh successful check clears the fruitless-restart series, even
+	// when restartDetected is false: the series lives in the Facade and
+	// survives monitor recreation, while restartDetected does not. Without
+	// this, a monitor recreated between the NDMS restart and the recovery
+	// (settings save, manual restart) would leave a stale series behind and
+	// escalate one restart too early (#702). Must key off the delta, not the
+	// raw successCount — that one keeps a stale non-zero value throughout a
+	// failure streak.
+	if successDelta > 0 && m.onCheckSuccess != nil {
+		m.onCheckSuccess(m.tunnelID)
 	}
 
 	// NDMS can report a transient startup mix where, in one poll window,
