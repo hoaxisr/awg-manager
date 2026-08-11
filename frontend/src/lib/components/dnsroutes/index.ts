@@ -8,3 +8,4 @@ export { default as ServiceIcon } from './ServiceIcon.svelte';
 export { default as LetterIconTile } from './LetterIconTile.svelte';
 export { default as IconPickerModal } from './IconPickerModal.svelte';
 export { default as NdmsPolicyHintBanner } from './NdmsPolicyHintBanner.svelte';
+export { default as NdmsDisclaimerBanner } from './NdmsDisclaimerBanner.svelte';
