@@ -98,6 +98,73 @@ func TestNormalizeAddressOrRule(t *testing.T) {
 	}
 }
 
+// Страховка от тихого регресса: normalizeAddressOrRule — ЗАКРЫТОЕ
+// перечисление полей Rule. Матчер, забытый при добавлении нового поля,
+// останется на внешнем logical-правиле, а sing-box отвергает такое правило
+// вместе со ВСЕМ слотом («unknown field»): движок не знает матчеров на
+// логическом правиле. Тест перебирает поля Rule рефлексией и требует, чтобы
+// после нормализации на внешнем правиле не осталось ничего, кроме
+// служебных полей.
+func TestNormalizeAddressOrRule_AllMatchersRouted(t *testing.T) {
+	// Поля, которым МЕСТО на внешнем правиле логической формы.
+	outerOnly := map[string]bool{
+		"Type": true, "Mode": true, "Rules": true,
+		"Action": true, "Outbound": true, "UDPTimeout": true, "AwgmManaged": true,
+	}
+
+	base := Rule{RuleSet: []string{"geosite-x"}, IPCIDR: []string{"1.2.3.0/24"},
+		Action: "route", Outbound: "vpn"}
+	rt := reflect.TypeOf(base)
+
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		if outerOnly[field.Name] {
+			continue
+		}
+		in := base
+		setNonZero(t, &in, field.Name)
+
+		got := normalizeAddressOrRule(in)
+		if got.Type != "logical" {
+			t.Errorf("%s: правило перестало нормализоваться", field.Name)
+			continue
+		}
+		outer := got
+		outer.Type, outer.Mode, outer.Rules = "", "", nil
+		outer.Action, outer.Outbound, outer.UDPTimeout, outer.AwgmManaged = "", "", "", ""
+		if outer.hasAnyMatcher() {
+			t.Errorf("%s: матчер остался на внешнем logical-правиле (%+v) — sing-box отвергнет весь слот; "+
+				"добавьте поле в адресную или сужающую ветку normalizeAddressOrRule", field.Name, outer)
+		}
+	}
+}
+
+// setNonZero проставляет полю правила ненулевое значение подходящего типа.
+func setNonZero(t *testing.T, r *Rule, name string) {
+	t.Helper()
+	v := reflect.ValueOf(r).Elem().FieldByName(name)
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Slice:
+		switch v.Type().Elem().Kind() {
+		case reflect.String:
+			v.Set(reflect.ValueOf([]string{"x"}))
+		case reflect.Int:
+			v.Set(reflect.ValueOf([]int{443}))
+		default:
+			t.Fatalf("%s: неизвестный тип элемента среза %s — допишите setNonZero", name, v.Type())
+		}
+	case reflect.Ptr:
+		if v.Type().Elem().Kind() != reflect.Bool {
+			t.Fatalf("%s: неизвестный тип указателя %s — допишите setNonZero", name, v.Type())
+		}
+		v.Set(reflect.ValueOf(boolPtr(true)))
+	default:
+		t.Fatalf("%s: неизвестный вид поля %s — допишите setNonZero", name, v.Kind())
+	}
+}
+
 func TestAddAndUpdateRuleNormalize(t *testing.T) {
 	c := &RouterConfig{}
 	flat := Rule{RuleSet: []string{"geosite-discord"}, IPCIDR: []string{"66.22.192.0/18"},
@@ -201,6 +268,76 @@ func TestNormalizeAddressOrRule_IgnoresFalseIPIsPrivate(t *testing.T) {
 	}
 	if got.Rules[1].IPIsPrivate != nil {
 		t.Errorf("false-условие уехало в ветку: %+v", got.Rules[1])
+	}
+}
+
+// force-удаление трогает только то, что осиротило само: чужое правило без
+// матчеров — не наше решение (в DNS matcher-less catch-all вообще норма).
+func TestDeleteRuleSetForce_KeepsUnrelatedMatcherlessRules(t *testing.T) {
+	c := &RouterConfig{}
+	if err := c.AddRuleSet(RuleSet{Tag: "geosite-x", Type: "remote", URL: "https://x/y.srs", Format: "binary"}); err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+	c.Route.Rules = []Rule{
+		{RuleSet: []string{"geosite-x"}, Action: "route", Outbound: "vpn"},
+		{Action: "route", Outbound: "direct"}, // чужой catch-all, набора не касался
+	}
+	c.DNS.Rules = []DNSRule{
+		{RuleSet: []string{"geosite-x"}, Server: "remote"},
+		{Server: "local"}, // DNS catch-all
+	}
+
+	if err := c.DeleteRuleSet("geosite-x", true); err != nil {
+		t.Fatalf("DeleteRuleSet: %v", err)
+	}
+	if len(c.Route.Rules) != 1 || c.Route.Rules[0].Outbound != "direct" {
+		t.Errorf("route-правила: %+v", c.Route.Rules)
+	}
+	if len(c.DNS.Rules) != 1 || c.DNS.Rules[0].Server != "local" {
+		t.Errorf("DNS-правила: %+v", c.DNS.Rules)
+	}
+}
+
+// Повторное применение пресета к правилу, которое пользователь дополнил
+// своими адресами, не должно плодить дубликат: набор и outbound те же.
+func TestApplyPresetToConfig_NoDuplicateOnCustomizedRule(t *testing.T) {
+	c := &RouterConfig{}
+	preset := Preset{
+		ID:       "discord",
+		RuleSets: []RuleRef{{Tag: "geosite-discord", URL: "https://x/discord.srs"}},
+		Rules:    []RuleLink{{RuleSetRef: "geosite-discord", ActionTarget: "tunnel"}},
+	}
+	if err := ApplyPresetToConfig(c, preset, "vpn"); err != nil {
+		t.Fatalf("ApplyPresetToConfig: %v", err)
+	}
+	if len(c.Route.Rules) != 1 {
+		t.Fatalf("после первого применения: %+v", c.Route.Rules)
+	}
+
+	// Пользователь дописал свои подсети — правило стало логическим.
+	if err := c.UpdateRule(0, Rule{RuleSet: []string{"geosite-discord"},
+		IPCIDR: []string{"66.22.192.0/18"}, Action: "route", Outbound: "vpn"}); err != nil {
+		t.Fatalf("UpdateRule: %v", err)
+	}
+
+	if err := ApplyPresetToConfig(c, preset, "vpn"); err != nil {
+		t.Fatalf("повторное применение: %v", err)
+	}
+	if len(c.Route.Rules) != 1 {
+		t.Errorf("пресет продублировал кастомизированное правило: %+v", c.Route.Rules)
+	}
+
+	// А правило, суженное портом, покрывает меньше пресета — оно не дубликат.
+	c2 := &RouterConfig{}
+	if err := c2.AddRule(Rule{RuleSet: []string{"geosite-discord"}, IPCIDR: []string{"66.22.192.0/18"},
+		Port: []int{443}, Action: "route", Outbound: "vpn"}); err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	if err := ApplyPresetToConfig(c2, preset, "vpn"); err != nil {
+		t.Fatalf("ApplyPresetToConfig: %v", err)
+	}
+	if len(c2.Route.Rules) != 2 {
+		t.Errorf("суженное правило приняли за дубликат пресета: %+v", c2.Route.Rules)
 	}
 }
 

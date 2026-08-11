@@ -2,6 +2,7 @@ import { api } from '$lib/api/client';
 import { singboxRouter } from '$lib/stores/singboxRouter';
 import type { SingboxRouterRule, SingboxRouterDNSRule, SingboxRouterRuleSet } from '$lib/types';
 import { resolveRuleSetByTag } from '$lib/utils/singboxInlineRules';
+import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 import type { CustomMatcherFields } from './addWizardStore';
 import type { TemplateGroup } from './templatesData';
 import type { SubmitResult } from './templatesActions';
@@ -144,7 +145,11 @@ export function isDnsAddressFilterRuleSet(
 
 function collectTunnelDomainMatchers(rules: SingboxRouterRule[], ruleSets: SingboxRouterRuleSet[]) {
   const rs = new Set<string>(), ds = new Set<string>();
-  for (const r of rules) {
+  for (const ruleIn of rules) {
+    // Правило «пресет ИЛИ свои адреса» хранится логической формой — без
+    // разворачивания его набор и домены не попадут в DNS-правило туннеля,
+    // и они начнут резолвиться мимо резолвера туннеля.
+    const r = flattenRouterRule(ruleIn);
     if (!r.outbound || r.outbound === 'direct' || r.action === 'reject') continue;
     for (const x of r.rule_set ?? []) {
       if (!isDnsAddressFilterRuleSet(x, ruleSets)) rs.add(x);

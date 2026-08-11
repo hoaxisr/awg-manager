@@ -132,9 +132,13 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 		// set alone; without it there is nothing left to keep.
 		keptRules := make([]Rule, 0, len(c.Route.Rules))
 		for _, r := range c.Route.Rules {
+			referenced := ruleReferencesAnyRuleSet(r, remove)
 			removeRuleSetRefsInRule(&r, remove)
 			r = collapseNestedRules(r)
-			if !r.hasAnyMatcher() && !isSystemRule(r) {
+			// Выбрасываем ТОЛЬКО то, что осиротила эта операция: правило без
+			// матчеров, не связанное с удаляемым набором, — чужое решение
+			// (и в DNS matcher-less catch-all вообще легитимен).
+			if referenced && !r.hasAnyMatcher() && !isSystemRule(r) {
 				continue
 			}
 			keptRules = append(keptRules, r)
@@ -143,8 +147,12 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 
 		keptDNS := make([]DNSRule, 0, len(c.DNS.Rules))
 		for _, r := range c.DNS.Rules {
+			// removeRuleSetRefs фильтрует на месте (tags[:0]) — звать её
+			// можно ровно один раз, длину считаем до вызова.
+			before := len(r.RuleSet)
 			r.RuleSet = removeRuleSetRefs(r.RuleSet, remove)
-			if !dnsRuleHasMatcher(r) {
+			referenced := len(r.RuleSet) != before
+			if referenced && !dnsRuleHasMatcher(r) {
 				continue
 			}
 			keptDNS = append(keptDNS, r)
@@ -975,11 +983,19 @@ func isProxyIface(name string) bool {
 	return strings.HasPrefix(n, "t2s") || strings.HasPrefix(n, "proxy")
 }
 
+// hasAnyMatcher reports whether the rule constrains anything at all. A rule
+// with no matcher is not inert — sing-box matches EVERY connection with it
+// (abstractDefaultRule.Match returns true on an empty item list) — so callers
+// use this to refuse creating one and to drop one left behind.
+//
+// `ip_is_private: false` deliberately does NOT count: that is sing-box's way
+// of writing "no such condition", and treating it as a matcher would let a
+// rule survive force-delete as an unconditional catch-all.
 func (r Rule) hasAnyMatcher() bool {
 	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 ||
 		len(r.SourceIPCIDR) > 0 ||
 		len(r.Port) > 0 || len(r.RuleSet) > 0 || r.Protocol != "" || len(r.Rules) > 0 ||
-		r.IPIsPrivate != nil || len(r.Inbound) > 0 || r.Network != ""
+		(r.IPIsPrivate != nil && *r.IPIsPrivate) || len(r.Inbound) > 0 || r.Network != ""
 }
 
 // isSystemUDPTimeoutRule reports whether r is the system route-options rule that

@@ -59,6 +59,37 @@ describe('RuleEditModal', () => {
 		expect(screen.getByText('вход: tproxy-in')).toBeTruthy();
 	});
 
+	it('предупреждает, что сохранение заменит нераспознанную вложенную структуру', () => {
+		const rule: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'or',
+			rules: [{ domain_suffix: ['a.com'] }, { domain_suffix: ['b.com'] }, { port: [443] }],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, { props: { ...baseProps, rule, onSave: vi.fn() } });
+		expect(screen.getByText(/вложенной логической структурой/i)).toBeTruthy();
+	});
+
+	it('у нашей логической формы такого предупреждения нет', () => {
+		const rule: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'or',
+			rules: [{ rule_set: ['geosite-discord'] }, { ip_cidr: ['66.22.192.0/18'] }],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, {
+			props: {
+				...baseProps,
+				rule,
+				availableRuleSets: [{ tag: 'geosite-discord', type: 'remote', url: 'https://x/y.srs' }],
+				onSave: vi.fn(),
+			},
+		});
+		expect(screen.queryByText(/вложенной логической структурой/i)).toBeNull();
+	});
+
 	it('у обычного правила предупреждения нет', () => {
 		render(RuleEditModal, {
 			props: {
