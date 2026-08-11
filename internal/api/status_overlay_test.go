@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -50,6 +51,11 @@ func TestOverlayPendingStatus_ASCBrokenStaysBroken(t *testing.T) {
 // TestDisplayStatus verifies the single UI-status point derives backend from
 // StateInfo, so list and detail (both routed through displayStatus) agree.
 func TestDisplayStatus(t *testing.T) {
+	// The cases below describe the non-ASC (kmod-proxy) overlay branch, so the
+	// firmware flag displayStatus reads must be off: drop any ndmsinfo store a
+	// neighbouring test may have installed instead of assuming it is empty.
+	ndmsinfo.Reset()
+
 	now := time.Unix(2000, 0)
 	future := now.Add(10 * time.Second)
 
