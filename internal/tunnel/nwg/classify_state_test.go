@@ -60,11 +60,22 @@ func TestClassifyNWGStateASCBrokenAfterTimeout(t *testing.T) {
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	base := NWGState{ConfLayer: "running", PeerOnline: false, LastHandshake: neverHandshake}
 
-	// Только что подняли — честное «запускается».
+	// Хендшейка не было ни разу и якоря времени нет вовсе — ровно то, что
+	// отдаёт роутер для недостижимого endpoint: link=down, connected="no",
+	// uptime отсутствует. Сломан; «подъём идёт прямо сейчас» знает только
+	// окно оркестратора, а не классификатор (#702).
+	nohs := base
+	nohs.Connected = ""
+	if got := classifyNWGState(nohs, true, nil, now); got != tunnel.StateBroken {
+		t.Fatalf("хендшейка не было и нет времени подъёма: ожидался Broken, получен %v", got)
+	}
+
+	// Свежий интерфейс без единого хендшейка — тоже сломан по той же причине:
+	// возраст интерфейса ничего не говорит о том, что подъём идёт сейчас.
 	fresh := base
 	fresh.Connected = now.Add(-30 * time.Second).Format(time.RFC3339)
-	if got := classifyNWGState(fresh, true, nil, now); got != tunnel.StateStarting {
-		t.Fatalf("свежий интерфейс: ожидался Starting, получен %v", got)
+	if got := classifyNWGState(fresh, true, nil, now); got != tunnel.StateBroken {
+		t.Fatalf("свежий интерфейс без хендшейка: ожидался Broken, получен %v", got)
 	}
 
 	// Поднят давно, хендшейка не было ни разу — сломан.
@@ -82,9 +93,10 @@ func TestClassifyNWGStateASCBrokenAfterTimeout(t *testing.T) {
 		t.Fatalf("протухший хендшейк: ожидался Broken, получен %v", got)
 	}
 
-	// Неизвестен момент подъёма — не гадаем, оставляем Starting.
+	// Хендшейк свежий, но неизвестен момент подъёма — не гадаем, Starting.
 	unknown := base
 	unknown.Connected = ""
+	unknown.LastHandshake = 30
 	if got := classifyNWGState(unknown, true, nil, now); got != tunnel.StateStarting {
 		t.Fatalf("без времени подъёма: ожидался Starting, получен %v", got)
 	}

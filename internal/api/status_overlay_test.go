@@ -39,12 +39,31 @@ func TestOverlayPendingStatus(t *testing.T) {
 	}
 }
 
-// An ASC tunnel stalled without a peer must show as broken, not "needs
-// start": it has no bring-up window to wait through (#702).
-func TestOverlayPendingStatus_ASCBrokenStaysBroken(t *testing.T) {
-	got := overlayPendingStatus(tunnel.StateBroken, "nativewg", true /*supportsASC*/, time.Time{}, time.Now())
-	if got != "broken" {
-		t.Fatalf("overlayPendingStatus = %q, want broken", got)
+// On the ASC path the classifier reports Broken for a tunnel that never
+// handshook (conf=running, silent peer, no handshake, no uptime — the payload
+// seen on the router), so the orchestrator bring-up window is the only thing
+// that can tell "coming up right now" from "stuck" — and outside that window
+// the tunnel is shown as broken, never as "needs start" (#702).
+func TestOverlayPendingStatus_ASC(t *testing.T) {
+	now := time.Unix(2000, 0)
+
+	cases := []struct {
+		name      string
+		quiescent time.Time
+		want      string
+	}{
+		{"bring-up window elapsed -> broken", now.Add(-10 * time.Second), "broken"},
+		{"inside bring-up window -> starting", now.Add(10 * time.Second), "starting"},
+		{"no bring-up this session -> broken", time.Time{}, "broken"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := overlayPendingStatus(tunnel.StateBroken, "nativewg", true /*supportsASC*/, tc.quiescent, now)
+			if got != tc.want {
+				t.Fatalf("overlayPendingStatus = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

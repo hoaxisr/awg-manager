@@ -651,10 +651,19 @@ func classifyNWGState(rci NWGState, supportsASC bool, hasProxySlot func(listenPo
 	}
 }
 
-// nwgStalled — интерфейс поднят дольше nwgBrokenAfter и всё это время без
-// живого пира. Неизвестный момент подъёма — не повод объявлять поломку:
-// оставляем прежнее «запускается».
+// nwgStalled — пир не отвечает, и это не похоже на нормальный подъём.
+// Два случая: хендшейка не было ни разу — либо интерфейс поднят дольше
+// nwgBrokenAfter и хендшейк за это время протух.
+//
+// Для «не было ни разу» якоря времени в RCI нет вовсе: у недостижимого
+// endpoint интерфейс не поднимается (link=down), поле connected приходит
+// флагом "no", а uptime отсутствует — ждать нечего и нечем. Окно подъёма
+// «прямо сейчас» держит оркестратор, и его учитывает overlay статуса в
+// api.overlayPendingStatus (#702).
 func nwgStalled(rci NWGState, now time.Time) bool {
+	if rci.LastHandshake >= neverHandshake {
+		return true
+	}
 	if rci.Connected == "" {
 		return false
 	}
