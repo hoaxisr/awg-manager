@@ -168,6 +168,14 @@
 		color: var(--color-text-secondary, var(--text-secondary));
 	}
 
+	.limits {
+		list-style: disc;
+	}
+
+	.quiz {
+		list-style: decimal;
+	}
+
 	.limits li,
 	.quiz li {
 		margin-bottom: 0.375rem;
