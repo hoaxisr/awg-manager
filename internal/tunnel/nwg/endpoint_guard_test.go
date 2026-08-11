@@ -350,6 +350,33 @@ func TestGuardSweep_V4RetriesAfterFailedPost(t *testing.T) {
 	}
 }
 
+// kmod-запись инертна: даже когда адрес за именем сменился, страж не
+// трогает ядро — там 127.0.0.1:<порт слота>, и wg set увёл бы трафик мимо
+// awg_proxy.ko (#702).
+func TestGuardSweep_ViaKmodEntryNeverTouchesKernel(t *testing.T) {
+	op := newGuardTestOperator()
+	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaKmod:  true,
+	})
+	calls := stubGuardWG(t, "PUB\t127.0.0.1:40001\n", nil)
+
+	op.guardSweep(context.Background())
+
+	if len(*calls) != 0 {
+		t.Fatalf("kmod-запись не должна доходить до wg set, получено %v", *calls)
+	}
+	entry, _ := op.guardGet("awg10")
+	if entry.endpoint != "198.51.100.1:51820" {
+		t.Fatalf("реестр kmod-записи двигать нельзя, стало %s", entry.endpoint)
+	}
+}
+
 func TestGuardModeForEndpoint(t *testing.T) {
 	cases := []struct {
 		name     string

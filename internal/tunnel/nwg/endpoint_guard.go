@@ -45,10 +45,11 @@ type guardEntry struct {
 	// kernel-endpoint своим значением при каждом переприменении —
 	// wg set проиграл бы ему гонку.
 	viaNDMS bool
-	// viaKmod — доводить адрес в слот awg_proxy.ko (proxy-прошивки).
-	// Ставится и обрабатывается в Task A2; здесь поле нужно, чтобы
-	// kmod-записи не двигали реестр до успешной доводки и не уходили в
-	// v6-ветку ядра.
+	// viaKmod — адресом владеет слот awg_proxy.ko (proxy-прошивки).
+	// Доводку в слот добавляет следующая задача; сейчас запись только
+	// инертна: sweep её пропускает и реестр по ней не двигает. Трогать
+	// ядро по такой записи НЕЛЬЗЯ — в kernel-endpoint'е стоит
+	// 127.0.0.1:<порт слота>, и wg set увёл бы трафик мимо прокси.
 	viaKmod bool
 }
 
@@ -195,6 +196,14 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			o.guardUpdateEndpoint(id, e.spec, expected)
 			o.appLog.Info("endpoint-guard", e.name,
 				fmt.Sprintf("%s сменил адрес — в NDMS выставлен %s", e.spec, expected))
+			continue
+		}
+		if e.viaKmod {
+			// Proxy-путь: адресом владеет слот awg_proxy.ko, а в
+			// kernel-endpoint'е стоит 127.0.0.1:<порт слота>. Перерезолв
+			// слота добавляет следующая задача; до неё запись обязана быть
+			// инертной — wg-ветка ниже поставила бы в ядро реальный адрес
+			// сервера и увела трафик мимо прокси, без обфускации.
 			continue
 		}
 		bin := wgToolLookup()
