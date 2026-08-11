@@ -503,8 +503,6 @@
 						{ value: 'udp', label: 'udp' },
 						{ value: 'tcp', label: 'tcp' }
 					]} />
-					<Input label="Clients file (-clients-file)" bind:value={server.clientsFile} />
-					<Toggle label="Debug (-debug)" checked={!!server.debug} onchange={(v) => (server.debug = v)} />
 				{/if}
 				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
 					{mainTabNext ? 'Далее' : 'Сохранить'}

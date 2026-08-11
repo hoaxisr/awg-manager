@@ -664,19 +664,8 @@
 					}}
 				/>
 				{#if isExpert}
-					<div class="wdtt-row wdtt-port-row">
-						<Input label="WG-порт (-wg-port)" type="number" value={wgPortStr} onchange={applyWgPort} />
-					</div>
-					<Input label="Config dir (-config-dir)" bind:value={server.configDir} placeholder="/opt/etc/wdtt-server" />
 					<Input label="Admin ID (-admin-id)" bind:value={server.adminId} placeholder="Telegram admin" />
 					<SensitiveInput label="Bot token (-bot-token)" bind:value={server.botToken} />
-					<Dropdown
-						label="Stats log (-stats-log)"
-						value={statsLogMode}
-						options={statsLogOptions}
-						onchange={(v: StatsLogMode) => (server.statsLog = v)}
-					/>
-					<Toggle label="Debug (-debug)" checked={!!server.debug} onchange={(v) => (server.debug = v)} />
 				{/if}
 		</section>
 		{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Dropdown, SegmentedControl, Toggle } from '$lib/components/ui';
+	import { Button, Input, Dropdown, SegmentedControl } from '$lib/components/ui';
 	import ProcessLogBox from '../freeturn/ProcessLogBox.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
 	import ProxyPanelTabs from '../proxy-panel/ProxyPanelTabs.svelte';
@@ -23,6 +23,14 @@
 		patchWgConfEndpoint
 	} from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
+	import {
+		activePeerForMode,
+		hydratePeerSlots,
+		setPeerRaw,
+		setPeerWg,
+		switchConnMode,
+		syncActivePeer
+	} from '$lib/utils/wdttPeerMode';
 	import type {
 		WdttClientConfig,
 		WdttImportPayload,
@@ -101,6 +109,12 @@
 	let wizardOpen = $state(false);
 
 	const isRawMode = $derived((client.connMode ?? 'wg') === 'raw');
+	const peerWgDisplay = $derived(client.peerWg?.trim() ?? (isRawMode ? '' : client.peer.trim()));
+	const peerRawDisplay = $derived(client.peerRaw?.trim() ?? (isRawMode ? client.peer.trim() : ''));
+
+	$effect(() => {
+		hydratePeerSlots(client);
+	});
 	const minWorkers = $derived(isRawMode ? 1 : 12);
 	const clampWorkers = (v: number) => Math.max(minWorkers, v || (isRawMode ? 1 : 24));
 	const rawNdmsIface = $derived(client.ndmsIface?.trim() || status?.ndmsIface?.trim() || '');
@@ -392,11 +406,21 @@
 		if (!canStart) return;
 		starting = true;
 		try {
+			syncActivePeer(client);
 			await onSave(client);
 			if (!running) await onToggle(true);
 		} finally {
 			starting = false;
 		}
+	}
+
+	function onConnModeChange(v: 'wg' | 'raw') {
+		switchConnMode(client, v);
+	}
+
+	function saveClient() {
+		syncActivePeer(client);
+		return onSave(client);
 	}
 </script>
 
@@ -475,7 +499,7 @@
 								{ value: 'wg', label: 'WG' },
 								{ value: 'raw', label: 'Raw' }
 							]}
-							onchange={(v) => (client.connMode = v)}
+							onchange={(v) => onConnModeChange(v)}
 						/>
 						<p class="wdtt-mode-hint">
 							{#if isRawMode}
@@ -485,7 +509,30 @@
 								WG — классический режим: wt-client выдаёт WireGuard-конфиг для AWG-туннеля.
 							{/if}
 						</p>
-						<Input bind:value={client.peer} placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'} />
+						{#if isExpert}
+							<Input
+								label="Peer WG (DTLS)"
+								value={peerWgDisplay}
+								placeholder="1.2.3.4:56002"
+								onchange={(v) => setPeerWg(client, v)}
+							/>
+							<Input
+								label="Peer Raw"
+								value={peerRawDisplay}
+								placeholder="1.2.3.4:56003"
+								onchange={(v) => setPeerRaw(client, v)}
+							/>
+						{:else}
+							<Input
+								value={client.peer}
+								placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'}
+								onchange={(v) => {
+									client.peer = v;
+									if (isRawMode) client.peerRaw = v;
+									else client.peerWg = v;
+								}}
+							/>
+						{/if}
 						<SensitiveInput label="Пароль" bind:value={client.password} />
 						<label class="wdtt-field">
 							<span>Listen (AWG Endpoint)</span>
@@ -555,7 +602,7 @@
 			{canStart}
 			showWizardButton={opsMode}
 			onOpenWizard={() => (wizardOpen = true)}
-			onSave={() => onSave(client)}
+			onSave={() => saveClient()}
 			onToggle={onToggle}
 		>
 			{#snippet metaExtra()}
@@ -612,9 +659,34 @@
 						{ value: 'wg', label: 'WG' },
 						{ value: 'raw', label: 'Raw' }
 					]}
-					onchange={(v) => (client.connMode = v)}
+					onchange={(v) => onConnModeChange(v)}
 				/>
-				<Input bind:value={client.peer} placeholder="peer host:port" />
+				{#if isExpert}
+					<div class="wdtt-peer-dual">
+						<Input
+							label="Peer WG (DTLS)"
+							value={peerWgDisplay}
+							placeholder="1.2.3.4:56002"
+							onchange={(v) => setPeerWg(client, v)}
+						/>
+						<Input
+							label="Peer Raw"
+							value={peerRawDisplay}
+							placeholder="1.2.3.4:56003"
+							onchange={(v) => setPeerRaw(client, v)}
+						/>
+					</div>
+				{:else}
+					<Input
+						value={client.peer}
+						placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'}
+						onchange={(v) => {
+							client.peer = v;
+							if (isRawMode) client.peerRaw = v;
+							else client.peerWg = v;
+						}}
+					/>
+				{/if}
 				<SensitiveInput label="Пароль" bind:value={client.password} />
 				<Input bind:value={client.listen} placeholder="127.0.0.1:9000" />
 				<Input bind:value={client.vkHashes} placeholder="VK-хеши" />
@@ -643,7 +715,6 @@
 						]} />
 					</div>
 					<Input label="URL подписки (-sub)" bind:value={client.sub} placeholder="https://…/_wdtt.json" />
-					<Toggle label="Debug (-debug)" checked={!!client.debug} onchange={(v) => (client.debug = v)} />
 					{#if displayWgConf && !isRawMode}
 						<WgConfExportPanel
 							wgConf={displayWgConf}
@@ -655,7 +726,7 @@
 					{/if}
 				{/if}
 				<div class="wdtt-actions">
-					<Button variant="secondary" disabled={!canSave || saving} onclick={() => onSave(client)}>Сохранить</Button>
+					<Button variant="secondary" disabled={!canSave || saving} onclick={() => saveClient()}>Сохранить</Button>
 					{#if onRevert}
 						<Button variant="ghost" onclick={onRevert}>Отменить</Button>
 					{/if}
@@ -759,6 +830,16 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
 		gap: 0.625rem;
+	}
+	.wdtt-peer-dual {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.625rem;
+	}
+	@media (max-width: 640px) {
+		.wdtt-peer-dual {
+			grid-template-columns: 1fr;
+		}
 	}
 	.wdtt-wg-hint {
 		margin: 0;

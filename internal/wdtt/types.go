@@ -25,6 +25,8 @@ type ClientConfig struct {
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
 	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
 	ConnMode string `json:"connMode,omitempty"`
+	PeerWg     string `json:"peerWg,omitempty"`  // VPS:DTLS when connMode=wg
+	PeerRaw    string `json:"peerRaw,omitempty"` // VPS:Raw when connMode=raw
 	Debug    bool   `json:"debug"`
 
 	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).

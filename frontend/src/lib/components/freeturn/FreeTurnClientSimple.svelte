@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Dropdown, Toggle } from '$lib/components/ui';
+	import { Button, Input, Dropdown } from '$lib/components/ui';
 	import ProcessLogBox from './ProcessLogBox.svelte';
 	import LinkParamsSummary from './LinkParamsSummary.svelte';
 	import ProxyInstanceStatusBar from '../proxy-panel/ProxyInstanceStatusBar.svelte';
@@ -402,7 +402,11 @@
 						</Button>
 					</div>
 				{/if}
-				<p class="ft-readonly">peer: <code>{client.peer}</code></p>
+				{#if isExpert}
+					<Input label="Peer (сервер FT)" bind:value={client.peer} placeholder="95.79.35.140:56000" />
+				{:else}
+					<p class="ft-readonly">peer: <code>{client.peer}</code></p>
+				{/if}
 				<textarea class="ft-simple-textarea" bind:value={client.links} rows="3"></textarea>
 				<div class="ft-simple-grid">
 					<Input
@@ -443,8 +447,6 @@
 					</div>
 					<Input label="Listen" bind:value={client.listen} placeholder="127.0.0.1:9000" />
 					<Input label="URL подписки (-sub)" bind:value={client.sub} />
-					<Toggle label="Bond (-bond)" checked={!!client.bond} onchange={(v) => (client.bond = v)} />
-					<Toggle label="Debug (-debug)" checked={!!client.debug} onchange={(v) => (client.debug = v)} />
 					{#if displayWgConf}
 						<WgConfExportPanel
 							wgConf={displayWgConf}
@@ -457,6 +459,41 @@
 							importingTunnel={importingWg}
 							importDisabled={!canImportWgTunnel}
 						/>
+					{/if}
+					{#if onImportManualWg || onImportWgTunnel}
+						<div class="ft-wg-manual">
+							<label class="ft-wg-conf-label" for="ft-wg-conf-expert">WG-конфиг клиента</label>
+							<textarea
+								id="ft-wg-conf-expert"
+								class="ft-simple-textarea"
+								bind:value={manualWgConf}
+								placeholder="[Interface]&#10;PrivateKey = …&#10;[Peer]&#10;…"
+								rows="8"
+							></textarea>
+							<div class="ft-import-row">
+								<label class="ft-file-label">
+									<input
+										type="file"
+										accept=".conf,text/plain"
+										class="ft-file-input"
+										onchange={(e) => {
+											const f = (e.currentTarget as HTMLInputElement).files?.[0];
+											if (f) void loadWgFile(f);
+										}}
+									/>
+									Загрузить .conf
+								</label>
+								<Button
+									variant="secondary"
+									size="sm"
+									loading={importingWg}
+									disabled={!manualWgConf.trim()}
+									onclick={applyManualWg}
+								>
+									Создать AWG-туннель
+								</Button>
+							</div>
+						</div>
 					{/if}
 				{/if}
 				<p class="ft-hint">
@@ -543,6 +580,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+	}
+	.ft-wg-conf-label {
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
 	}
 	.ft-file-label {
 		font-size: 0.75rem;

@@ -9,6 +9,7 @@
 	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
+	import { syncActivePeer } from '$lib/utils/wdttPeerMode';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import type {
@@ -154,9 +155,11 @@
 		const raw = c.connMode === 'raw';
 		const defaultWorkers = raw ? 24 : 24;
 		const workers = Math.max(raw ? 1 : 12, c.workers > 0 ? c.workers : defaultWorkers);
-		return {
+		const out: WdttClientConfig = {
 			...c,
 			peer: c.peer ?? '',
+			peerWg: c.peerWg ?? '',
+			peerRaw: c.peerRaw ?? '',
 			password: c.password ?? '',
 			vkHashes: c.vkHashes ?? '',
 			listen: c.listen || '127.0.0.1:9000',
@@ -169,6 +172,8 @@
 			connMode: c.connMode === 'raw' ? 'raw' : 'wg',
 			debug: !!c.debug
 		};
+		syncActivePeer(out);
+		return out;
 	}
 
 	function normalizeServer(s: WdttServerConfig): WdttServerConfig {
@@ -649,7 +654,11 @@
 			const c = selectedClient.config;
 			const oldPeer = savedClient?.config.peer ?? '';
 			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
-			if (payload.peer) c.peer = payload.peer;
+			if (payload.peer) {
+				c.peer = payload.peer;
+				if ((c.connMode ?? 'wg') === 'raw') c.peerRaw = payload.peer;
+				else c.peerWg = payload.peer;
+			}
 			if (payload.password) c.password = payload.password;
 			if (payload.vkHashes?.length) c.vkHashes = payload.vkHashes.join(',');
 			if (payload.workers && payload.workers > 0) c.workers = payload.workers;
