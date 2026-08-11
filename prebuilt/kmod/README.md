@@ -49,7 +49,7 @@ The kernel floor is 3.10, so no shipped model regresses.
 
 The recipe and the patch stack live in `kmod/amneziawg/` in this repo; copy that
 directory to `keenetic-sdk/package/kernel/amneziawg/` and build there. The stock
-tree does **not** build against 4.9-ndm as is, and four upstream bugs are fatal
+tree does **not** build against 4.9-ndm as is, and these upstream bugs are fatal
 on it:
 
 | Patch | Why |
@@ -61,6 +61,7 @@ on it:
 | 018 | `wg_set_device()` calls `awg_has_header_protection(wg)` before the `IS_ERR(wg)` check, taking a rwsem inside an ERR_PTR |
 | 019 | `wg_newlink()` never initialises `header_protection.lock`, and a zeroed rwsem kills every MIPS target on the first `awg setconf` |
 | 021 | the crypt workers call `cond_resched()` inside the SIMD region, so an arm64 worker can sleep with NEON still held |
+| 022 | the message type is matched without `le32_to_cpu()`, so a big endian target drops every packet it receives |
 
 019 is the one that put mipsel routers in a boot loop while aarch64 was fine:
 MIPS builds use `CONFIG_RWSEM_GENERIC_SPINLOCK`, where `__down_read()` reads a
@@ -78,6 +79,17 @@ NC-1812 carrying an ESP tunnel next to a busy AmneziaWG interface rebooted every
 5-6 hours; with the patch both ran 48 hours clean. The stock keenetic
 `wireguard.ko` holds NEON just as long but has no `cond_resched()` in the
 region, which is why only our module shows this.
+
+022 is the big endian counterpart, and it is total rather than intermittent:
+`awg_determine_type_and_padding()` matches the raw `__le32` type field against
+the host-order H1-H4 ranges without converting it, so an en7512 / en7516 router
+reads `01 00 00 00` as `0x01000000`, misses even the `{1,1}` default set in
+`wg_newlink()`, and drops every packet of every type. Kernel mode simply cannot
+work on KN-2010, KN-2110, KN-2112, KN-2410, KN-2510 and KN-3610 without this
+patch, whatever the configuration; NativeWG is unaffected, which is why the hole
+stayed invisible. On the little endian and aarch64 targets `le32_to_cpu()` is the
+identity, so their modules are unchanged and were not rebuilt. Fixed upstream on
+`feat/awg-3.1` (`d6d7342f`), unmerged as of v3.0.20260805; 022 is that hunk alone.
 
 The -02 tag carries three fixes we reported: I4/I5 no longer overwrite the I1
 junk spec, the inverted RekeyTimeout test is corrected, and a header protection
