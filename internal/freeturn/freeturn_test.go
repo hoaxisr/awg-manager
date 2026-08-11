@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -713,28 +712,6 @@ func TestInstallBinaries_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEnsureBundledInstall_RepairsNonExecutableBinaries(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("execute bit semantics differ on Windows")
-	}
-	dir := t.TempDir()
-	client := filepath.Join(dir, "freeturn-client")
-	server := filepath.Join(dir, "freeturn-server")
-	for _, p := range []string{client, server} {
-		if err := os.WriteFile(p, []byte("bin"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := NewService(dir, dir, client, server)
-	s.SetInstallSpecs(EmbeddedBinaries["aarch64-3.10"])
-
-	s.EnsureBundledInstall()
-
-	if !binaryPresent(client) || !binaryPresent(server) {
-		t.Fatal("EnsureBundledInstall must chmod bundled binaries executable")
-	}
-}
-
 func TestEffectiveInstalledVersion_PrefersSHAOverStaleVersionFile(t *testing.T) {
 	clientBody, serverBody := []byte("client-bin"), []byte("server-bin")
 	specs := ArchSpecs{
@@ -756,37 +733,6 @@ func TestEffectiveInstalledVersion_PrefersSHAOverStaleVersionFile(t *testing.T) 
 	installed, update := s.installStatusFields(PinnedVersion)
 	if installed != PinnedVersion || update {
 		t.Fatalf("stale version file must not trigger update: installed=%q update=%v", installed, update)
-	}
-
-	s.EnsureBundledInstall()
-	if s.readInstalledVersion() != PinnedVersion {
-		t.Fatalf("EnsureBundledInstall must rewrite version file, got %q", s.readInstalledVersion())
-	}
-}
-
-func TestEnsureBundledInstall_WritesVersionWhenBinariesPresent(t *testing.T) {
-	clientBody, serverBody := []byte("client-bin"), []byte("server-bin")
-	specs := ArchSpecs{
-		Client: BinarySpec{Version: PinnedVersion, URL: "https://x/client", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
-		Server: BinarySpec{Version: PinnedVersion, URL: "https://x/server", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
-	}
-	dl := &fakeDownloader{payload: map[string][]byte{"https://x/client": clientBody, "https://x/server": serverBody}}
-	s := newInstallService(t, dl, specs)
-	if err := s.InstallBinaries(context.Background()); err != nil {
-		t.Fatalf("InstallBinaries: %v", err)
-	}
-	if err := os.Remove(s.versionPath); err != nil {
-		t.Fatalf("remove version file: %v", err)
-	}
-
-	s.EnsureBundledInstall()
-
-	st := s.Status()
-	if st.InstalledVersion != PinnedVersion {
-		t.Fatalf("want installed version %q, got %q", PinnedVersion, st.InstalledVersion)
-	}
-	if st.UpdateAvailable {
-		t.Fatalf("bundled install must not show update: %+v", st)
 	}
 }
 

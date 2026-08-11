@@ -141,31 +141,6 @@ func fileFingerprint(path string) string {
 	return strconv.FormatInt(fi.ModTime().UnixNano(), 10) + "_" + strconv.FormatInt(fi.Size(), 10)
 }
 
-// EnsureBundledInstall fixes permissions on shipped binaries (IPK tar on
-// Windows may record them as 0644) and syncs freeturn-version.json from
-// on-disk SHA256 when bundled binaries are present.
-func (s *Service) EnsureBundledInstall() {
-	ensureExecutable(s.clientBin)
-	ensureExecutable(s.serverBin)
-	s.syncInstalledVersionFromBinaries()
-}
-
-func (s *Service) syncInstalledVersionFromBinaries() {
-	if !s.binariesOperational() {
-		return
-	}
-	ver := s.effectiveInstalledVersion()
-	if ver == "" {
-		return
-	}
-	if s.readInstalledVersion() == ver {
-		return
-	}
-	if err := s.writeInstalledVersion(ver); err != nil && s.appLog != nil {
-		s.appLog.Warn("install", "version-file", err.Error())
-	}
-}
-
 // ensureExecutable chmods path 0755 when a regular file exists but is not executable.
 func ensureExecutable(path string) {
 	st, err := os.Stat(path)
