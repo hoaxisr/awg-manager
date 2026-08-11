@@ -297,6 +297,18 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 			s.policyTunACLAsserted = true
 		}
 	}
+	// v6-разрешение — отдельной сущностью и со своим флагом: тот же апгрейд-путь
+	// (режим, поднятый версией без v6-ACL, его не имеет), но успех v4 не должен
+	// гасить ретрай упавшего v6. Гейт по адресу: на интерфейсе без v6 разрешать
+	// нечего.
+	if !s.policyTunACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
+		resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != "" {
+		if e := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); e != nil {
+			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl v6: "+e.Error())
+		} else {
+			s.policyTunACLv6Asserted = true
+		}
+	}
 
 	s.healPolicyTunNDMS(ctx, sr, iface, ndmsName)
 

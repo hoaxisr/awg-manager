@@ -209,6 +209,12 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable policy-tun: set ipv6 address: %w", err)
 		}
+		// v6-разрешение — ПОСЛЕ адреса: у NDMS под v6 отдельное пространство
+		// списков, и v4-ACL выше его не покрывает. Без него дефолт клиентов
+		// припаркован на tun, а v6 в него режет firewall — уйти в обход некуда.
+		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
+			return fmt.Errorf("enable policy-tun: permit acl v6: %w", err)
+		}
 	}
 	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable policy-tun: set mtu: %w", err)

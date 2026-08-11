@@ -120,6 +120,16 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			s.fakeipACLAsserted = true
 		}
 	}
+	// v6-разрешение — отдельная сущность NDMS и свой флаг: успех v4 не должен
+	// гасить ретрай упавшего v6. Гейт по адресу: без v6 разрешать нечего.
+	if !s.fakeipACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
+		resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != "" {
+		if nerr := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); nerr != nil {
+			s.appLog.Warn("fakeip-reconcile", iface, "permit acl v6: "+nerr.Error())
+		} else {
+			s.fakeipACLv6Asserted = true
+		}
+	}
 
 	// Re-add the pool routes ONLY on real drift (Fix B1): probe the v4 pool route
 	// with the same fakeIPPoolRoutePresent seam GetStatus uses; an AddStaticRoute

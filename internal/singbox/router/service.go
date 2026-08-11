@@ -489,6 +489,13 @@ type ServiceImpl struct {
 	// смена режима не съедала ассерт соседа). Доступ только из Reconcile.
 	policyTunACLAsserted bool
 
+	// *ACLv6Asserted — отдельные флаги v6-разрешения: у NDMS под IPv6 своё
+	// пространство списков, и v4-ассерт его не ставит. Свой флаг на каждый, а
+	// не общий с v4: иначе успех v4 гасил бы ретрай упавшего v6, и интерфейс
+	// молча остался бы без v6-разрешения до перезапуска режима.
+	fakeipACLv6Asserted    bool
+	policyTunACLv6Asserted bool
+
 	// blackholeActive tracks whether the fail-closed DROP chain is currently
 	// engaged (installed by reconcileInstalled while sing-box is dead and the
 	// PREROUTING interception jumps were wiped). It is removed the moment the
