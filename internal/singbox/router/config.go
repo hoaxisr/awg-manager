@@ -126,6 +126,7 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 	if force {
 		for i := range c.Route.Rules {
 			removeRuleSetRefsInRule(&c.Route.Rules[i], remove)
+			c.Route.Rules[i] = collapseNestedRules(c.Route.Rules[i])
 		}
 		for i := range c.DNS.Rules {
 			c.DNS.Rules[i].RuleSet = removeRuleSetRefs(c.DNS.Rules[i].RuleSet, remove)
@@ -163,6 +164,43 @@ func removeRuleSetRefsInRule(r *Rule, remove map[string]struct{}) {
 	for i := range r.Rules {
 		removeRuleSetRefsInRule(&r.Rules[i], remove)
 	}
+}
+
+// collapseNestedRules drops logical branches left without a single matcher and
+// unwraps a logical rule down to its last surviving branch. A force rule-set
+// delete strips tags out of nested branches (removeRuleSetRefsInRule), and the
+// branch of a normalized rule holds nothing but that tag — leaving `{}` behind
+// would cost the whole slot: sing-box rejects a config with an empty sub-rule
+// (DefaultHeadlessRule.IsValid → "missing conditions"), not just that rule.
+//
+// The surviving branch inherits the parent's action so the rule keeps routing
+// where it did — the shape shrinks, the intent does not.
+func collapseNestedRules(r Rule) Rule {
+	if len(r.Rules) == 0 {
+		return r
+	}
+	kept := make([]Rule, 0, len(r.Rules))
+	for _, nested := range r.Rules {
+		nested = collapseNestedRules(nested)
+		if !nested.hasAnyMatcher() {
+			continue
+		}
+		kept = append(kept, nested)
+	}
+	r.Rules = kept
+	if r.Type != "logical" {
+		return r
+	}
+	switch len(kept) {
+	case 0:
+		r.Type, r.Mode, r.Rules = "", "", nil
+	case 1:
+		only := kept[0]
+		only.Action, only.Outbound = r.Action, r.Outbound
+		only.UDPTimeout, only.AwgmManaged = r.UDPTimeout, r.AwgmManaged
+		return only
+	}
+	return r
 }
 
 func removeRuleSetRefs(tags []string, remove map[string]struct{}) []string {
@@ -244,9 +282,14 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 // a domain from the preset fails the ip_cidr half, an IP from the subnets fails
 // the preset half (issue #699).
 //
-// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr,
-// ip_is_private) keep their AND meaning: they move into a sibling branch of an
-// outer `logical(and)`. Action/outbound stay on the outer rule — nested branches
+// The destination-address branch carries every matcher sing-box puts in that
+// group: domain, domain_suffix, ip_cidr AND ip_is_private — the last one lands
+// in destinationIPCIDRItems (fork route/rule/rule_default.go:154), so it is
+// OR-ed with the addresses, not AND-ed against them.
+//
+// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr) keep
+// their AND meaning: they move into a sibling branch of an outer
+// `logical(and)`. Action/outbound stay on the outer rule — nested branches
 // carry matchers only.
 //
 // Idempotent: an already-logical rule is returned untouched.
@@ -254,13 +297,13 @@ func normalizeAddressOrRule(r Rule) Rule {
 	if r.Type != "" || len(r.RuleSet) == 0 {
 		return r
 	}
-	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 {
+	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 && r.IPIsPrivate == nil {
 		return r
 	}
 
 	addressOr := Rule{Type: "logical", Mode: "or", Rules: []Rule{
 		{RuleSet: r.RuleSet},
-		{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR},
+		{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR, IPIsPrivate: r.IPIsPrivate},
 	}}
 
 	narrowing := Rule{
@@ -269,7 +312,6 @@ func normalizeAddressOrRule(r Rule) Rule {
 		Protocol:     r.Protocol,
 		Inbound:      r.Inbound,
 		Network:      r.Network,
-		IPIsPrivate:  r.IPIsPrivate,
 	}
 
 	out := r

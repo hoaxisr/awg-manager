@@ -4,7 +4,10 @@ import type { SingboxRouterRule } from '$lib/types';
  * Матчеры, которые sing-box кладёт в группу «адрес назначения» — внутри
  * группы они OR-ятся. Зеркало destinationAddressKeys бэкенда.
  */
-const ADDRESS_KEYS = ['domain', 'domain_suffix', 'ip_cidr'] as const;
+const ADDRESS_KEYS = ['domain', 'domain_suffix', 'ip_cidr', 'ip_is_private'] as const;
+
+/** Матчеры, ограничивающие правило целиком, — сужающая ветка logical(and). */
+const NARROWING_KEYS = ['source_ip_cidr', 'port', 'protocol', 'inbound', 'network'] as const;
 
 /** Поля правила, не являющиеся матчерами: их наличие в ветке допустимо. */
 const NON_MATCHER_KEYS = new Set(['type', 'mode', 'action', 'outbound', 'udp_timeout']);
@@ -59,7 +62,12 @@ export function flattenRouterRule(rule: SingboxRouterRule): SingboxRouterRule {
 	if (rule.mode === 'and' && rule.rules.length === 2) {
 		const [narrowing, nested] = rule.rules;
 		const inner = flattenRouterRule(nested);
-		if (inner === nested || narrowing.type === 'logical') return rule;
+		if (inner === nested) return rule;
+		// Сужающая ветка обязана нести ТОЛЬКО сужающие матчеры. Адресный
+		// матчер или rule_set в ней означают чужую логическую форму: слить её
+		// в плоское правило нельзя — AND-условие стало бы OR-веткой, а
+		// совпадающий ключ вообще молча затёрся бы при спреде ниже.
+		if (!hasOnlyKeys(narrowing, NARROWING_KEYS)) return rule;
 		const { type: _t, mode: _m, rules: _r, ...outer } = rule;
 		return { ...outer, ...narrowing, ...inner };
 	}
@@ -71,9 +79,11 @@ export function flattenRouterRule(rule: SingboxRouterRule): SingboxRouterRule {
 
 	const { type: _type, mode: _mode, rules: _rules, ...rest } = rule;
 	const flat: SingboxRouterRule = { ...rest, rule_set: sets.rule_set };
-	for (const key of ADDRESS_KEYS) {
+	for (const key of ['domain', 'domain_suffix', 'ip_cidr'] as const) {
 		const values = addrs[key];
 		if (values?.length) flat[key] = values;
 	}
+	// ip_is_private тоже адресный матчер, но булев — под цикл выше не попадает.
+	if (addrs.ip_is_private) flat.ip_is_private = true;
 	return flat;
 }

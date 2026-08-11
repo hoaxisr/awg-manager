@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 // reload a surviving sing-box instead of waiting for an unrelated write.
 func MigrateAddressOrRules(configDir string) (bool, error) {
 	changed := false
+	var failures []error
 	for _, pat := range []string{
 		filepath.Join(configDir, "*.json"),
 		filepath.Join(configDir, "disabled", "*.json"),
@@ -46,12 +48,16 @@ func MigrateAddressOrRules(configDir string) (bool, error) {
 			}
 			fileChanged, err := migrateAddressOrRulesFile(p)
 			if err != nil {
-				return changed, err
+				// Один нечитаемый файл не должен оставить остальные слоты
+				// (в т.ч. pending/ и disabled/) с неисправленными правилами
+				// до следующего запуска — доходим до конца и рапортуем всё.
+				failures = append(failures, err)
+				continue
 			}
 			changed = changed || fileChanged
 		}
 	}
-	return changed, nil
+	return changed, errors.Join(failures...)
 }
 
 // userSlotFilename resolves the expert-editor slot's file name from the

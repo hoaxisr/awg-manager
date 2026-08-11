@@ -48,6 +48,57 @@ describe('flattenRouterRule', () => {
 		});
 	});
 
+	it('переносит ip_is_private из адресной ветки', () => {
+		const rule: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'or',
+			rules: [{ rule_set: ['geosite-x'] }, { ip_cidr: ['1.2.3.0/24'], ip_is_private: true }],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		expect(flattenRouterRule(rule)).toEqual({
+			rule_set: ['geosite-x'],
+			ip_cidr: ['1.2.3.0/24'],
+			ip_is_private: true,
+			action: 'route',
+			outbound: 'vpn',
+		});
+	});
+
+	it('не сливает logical(and), если сужающая ветка несёт адреса или набор', () => {
+		const addressInNarrowing: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'and',
+			rules: [
+				{ domain_suffix: ['x.com'] },
+				{
+					type: 'logical',
+					mode: 'or',
+					rules: [{ rule_set: ['a'] }, { ip_cidr: ['1.2.3.0/24'] }],
+				},
+			],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		expect(flattenRouterRule(addressInNarrowing)).toBe(addressInNarrowing);
+
+		const setInNarrowing: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'and',
+			rules: [
+				{ rule_set: ['other'], port: [443] },
+				{
+					type: 'logical',
+					mode: 'or',
+					rules: [{ rule_set: ['a'] }, { ip_cidr: ['1.2.3.0/24'] }],
+				},
+			],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		expect(flattenRouterRule(setInNarrowing)).toBe(setInNarrowing);
+	});
+
 	it('плоское правило возвращает как есть', () => {
 		const rule: SingboxRouterRule = { domain_suffix: ['a.com'], action: 'route', outbound: 'vpn' };
 		expect(flattenRouterRule(rule)).toBe(rule);

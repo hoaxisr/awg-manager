@@ -104,6 +104,56 @@ func TestInspect_InboundBlocksMatch(t *testing.T) {
 	}
 }
 
+// ip_is_private движок кладёт в группу адреса назначения, значит оно
+// OR-ится с ip_cidr и доменами, а не сужает правило.
+func TestInspect_IPIsPrivateJoinsAddressGroup(t *testing.T) {
+	yes := true
+	rules := []Rule{
+		{IPCIDR: []string{"8.8.8.0/24"}, IPIsPrivate: &yes, Action: "route", Outbound: "vpn"},
+	}
+
+	if got := Inspect(InspectInput{Domain: "192.168.1.5"}, rules, nil, "direct", "", nil); got.MatchedRule != 0 {
+		t.Errorf("приватный адрес: matched=%d, want 0", got.MatchedRule)
+	}
+	if got := Inspect(InspectInput{Domain: "8.8.8.8"}, rules, nil, "direct", "", nil); got.MatchedRule != 0 {
+		t.Errorf("публичный адрес из ip_cidr: matched=%d, want 0", got.MatchedRule)
+	}
+	if got := Inspect(InspectInput{Domain: "1.1.1.1"}, rules, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("публичный адрес вне ip_cidr: matched=%d, want -1", got.MatchedRule)
+	}
+}
+
+// Ветка логического правила, состоящая только из непроверяемых условий,
+// не должна обнулять всё правило: в плоской форме те же условия просто
+// игнорировались.
+func TestInspect_UnverifiableBranchDoesNotVeto(t *testing.T) {
+	rule := []Rule{{
+		Type: "logical", Mode: "and",
+		Rules: []Rule{
+			{SourceIPCIDR: []string{"192.168.1.0/24"}},
+			{IPCIDR: []string{"66.22.192.0/18"}},
+		},
+		Action: "route", Outbound: "vpn",
+	}}
+
+	if got := Inspect(InspectInput{Domain: "66.22.200.1"}, rule, nil, "direct", "", nil); got.MatchedRule != 0 {
+		t.Errorf("ветка source_ip_cidr не должна хоронить правило: matched=%d, want 0", got.MatchedRule)
+	}
+	if got := Inspect(InspectInput{Domain: "1.2.3.4"}, rule, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("адрес вне CIDR: matched=%d, want -1", got.MatchedRule)
+	}
+
+	// Правило, где проверять нечего вовсе, остаётся несовпавшим.
+	onlySource := []Rule{{
+		Type: "logical", Mode: "and",
+		Rules:  []Rule{{SourceIPCIDR: []string{"192.168.1.0/24"}}},
+		Action: "route", Outbound: "vpn",
+	}}
+	if got := Inspect(InspectInput{Domain: "66.22.200.1"}, onlySource, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("правило без проверяемых условий: matched=%d, want -1", got.MatchedRule)
+	}
+}
+
 // Точный `domain` инспектор раньше не вычислял вовсе — правило с одним лишь
 // этим матчером считалось пустым и пропускалось.
 func TestInspect_ExactDomainMatcher(t *testing.T) {

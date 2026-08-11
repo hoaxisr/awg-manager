@@ -27,6 +27,12 @@ type RuleMatchResult struct {
 	Outbound   string   `json:"outbound,omitempty"`
 	Conditions []string `json:"conditions,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
+	// notEvaluated marks a rule (or a logical branch) that carries nothing
+	// this inspector can judge — source_ip_cidr only, say. A flat rule like
+	// that has always been reported as no-match, but as a branch of a
+	// logical(and) it must not veto the siblings: before normalization the
+	// same condition sat next to the others and was simply ignored.
+	notEvaluated bool
 }
 
 // InspectResult is the public response of the inspector.
@@ -271,12 +277,20 @@ func evaluateLogicalRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		return out
 	}
 	matched := rule.Mode == "and"
+	judged := false
 	var hits []string
 	for i, nested := range rule.Rules {
 		sub := evaluateRule(input, parsedIP, nested, env, emit, ruleIndex, ruleTotal)
 		for _, c := range sub.Conditions {
 			out.Conditions = append(out.Conditions, fmt.Sprintf("ветка %d: %s", i+1, c))
 		}
+		if sub.notEvaluated {
+			// Ветка целиком из непроверяемых условий — не голосует.
+			// В mode=and иначе она обнулила бы всё правило, хотя те же
+			// условия в плоской форме просто игнорировались.
+			continue
+		}
+		judged = true
 		if sub.Matched {
 			hits = append(hits, fmt.Sprintf("%d", i+1))
 		}
@@ -285,6 +299,11 @@ func evaluateLogicalRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		} else {
 			matched = matched || sub.Matched
 		}
+	}
+	if !judged {
+		out.notEvaluated = true
+		out.Reason = "нечего проверять — пропущено"
+		return out
 	}
 	out.Matched = matched
 	switch {
@@ -325,6 +344,7 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 	var (
 		domainPart   partial
 		ipPart       partial
+		privatePart  partial
 		portPart     partial
 		networkPart  partial
 		protocolPart partial
@@ -446,6 +466,15 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		}
 	}
 
+	// IPIsPrivate belongs to the destination-address group too: sing-box puts
+	// its item in destinationIPCIDRItems (fork rule_default.go:154), so it is
+	// OR-ed with ip_cidr and the domain matchers, not AND-ed against them.
+	if rule.IPIsPrivate != nil && *rule.IPIsPrivate {
+		privatePart.present = true
+		out.Conditions = append(out.Conditions, "ip_is_private")
+		privatePart.hit = parsedIP != nil && !isPublicAddr(parsedIP)
+	}
+
 	// Port — if no input port given, mark present-but-not-evaluated
 	// so AND logic does not declare a match without verification.
 	if len(rule.Port) > 0 {
@@ -491,16 +520,23 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		out.Conditions = append(out.Conditions, fmt.Sprintf("protocol: %s (не проверяется — прикладной протокол определяет сниффер)", rule.Protocol))
 	}
 
-	// Destination-address group: domain* and ip_cidr are OR-ed. A rule_set
-	// standing next to the rule's OWN address matchers joins that group —
-	// such a rule is stored as logical(or) after normalization, and a flat
-	// one (imported, or written before the normalization existed) must read
-	// the same way so the inspector never contradicts the applied config.
+	// Destination-address group: domain*, ip_cidr and ip_is_private are OR-ed.
+	// A rule_set standing next to the rule's OWN address matchers joins that
+	// group: normalizeAddressOrRule stores such a rule as logical(or), so this
+	// is what the engine runs.
+	//
+	// A rule still flat here escaped normalization (hand-written slot, or a
+	// field our struct does not model, which the migration skips on purpose).
+	// We read it as OR anyway — that is what it becomes once normalized, and
+	// what the engine already does whenever the referenced set is mergeable,
+	// which holds for all but four of the sets we ship. With a non-mergeable
+	// set the engine ANDs it instead, and the inspector is optimistic there.
+	//
 	// A rule_set that is the rule's ONLY address matcher stays an
 	// independent condition.
 	addr := partial{
-		present: domainPart.present || ipPart.present,
-		hit:     domainPart.hit || ipPart.hit,
+		present: domainPart.present || ipPart.present || privatePart.present,
+		hit:     domainPart.hit || ipPart.hit || privatePart.hit,
 	}
 	if addr.present && ruleSetPart.present {
 		addr.hit = addr.hit || ruleSetPart.hit
@@ -514,6 +550,7 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 	anyPresent := addr.present || portPart.present || networkPart.present ||
 		protocolPart.present || inboundPart.present || ruleSetPart.present
 	if !anyPresent {
+		out.notEvaluated = true
 		out.Reason = "пустое правило — пропущено"
 		return out
 	}
@@ -533,6 +570,9 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		}
 		if ipPart.hit {
 			hits = append(hits, "ip_cidr")
+		}
+		if privatePart.hit {
+			hits = append(hits, "ip_is_private")
 		}
 		if portPart.hit {
 			hits = append(hits, "port")
@@ -562,6 +602,18 @@ func matchesDomainSuffix(domain, suffix string) bool {
 		return true
 	}
 	return strings.HasSuffix(domain, "."+suffix)
+}
+
+// isPublicAddr mirrors sing's N.IsPublicAddr, the predicate behind the
+// ip_is_private matcher: everything RFC1918 / loopback / multicast /
+// link-local / unspecified counts as private.
+func isPublicAddr(ip net.IP) bool {
+	return !(ip.IsPrivate() ||
+		ip.IsLoopback() ||
+		ip.IsMulticast() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsInterfaceLocalMulticast() ||
+		ip.IsUnspecified())
 }
 
 // cidrContains parses cidr (CIDR notation OR a bare IP literal) and
