@@ -2,6 +2,7 @@ package nwg
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -35,7 +36,7 @@ func TestClassifyNWGState(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := classifyNWGState(c.rci, c.supportsASC, c.hasSlot)
+			got := classifyNWGState(c.rci, c.supportsASC, c.hasSlot, time.Now())
 			if got != c.want {
 				t.Errorf("classifyNWGState = %v, want %v", got, c.want)
 			}
@@ -46,11 +47,45 @@ func TestClassifyNWGState(t *testing.T) {
 func TestClassifyNWGState_RunningSkipsSlotCheck(t *testing.T) {
 	called := false
 	probe := func(int) bool { called = true; return false }
-	got := classifyNWGState(NWGState{ConfLayer: "running", PeerOnline: true}, false, probe)
+	got := classifyNWGState(NWGState{ConfLayer: "running", PeerOnline: true}, false, probe, time.Now())
 	if got != tunnel.StateRunning {
 		t.Fatalf("got %v, want Running", got)
 	}
 	if called {
 		t.Error("hasProxySlot must NOT be called when peer is online")
+	}
+}
+
+func TestClassifyNWGStateASCBrokenAfterTimeout(t *testing.T) {
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	base := NWGState{ConfLayer: "running", PeerOnline: false, LastHandshake: neverHandshake}
+
+	// Только что подняли — честное «запускается».
+	fresh := base
+	fresh.Connected = now.Add(-30 * time.Second).Format(time.RFC3339)
+	if got := classifyNWGState(fresh, true, nil, now); got != tunnel.StateStarting {
+		t.Fatalf("свежий интерфейс: ожидался Starting, получен %v", got)
+	}
+
+	// Поднят давно, хендшейка не было ни разу — сломан.
+	stale := base
+	stale.Connected = now.Add(-10 * time.Minute).Format(time.RFC3339)
+	if got := classifyNWGState(stale, true, nil, now); got != tunnel.StateBroken {
+		t.Fatalf("залипший интерфейс: ожидался Broken, получен %v", got)
+	}
+
+	// Хендшейк был, но давно — тоже сломан.
+	old := base
+	old.Connected = now.Add(-10 * time.Minute).Format(time.RFC3339)
+	old.LastHandshake = int64((7 * time.Minute).Seconds())
+	if got := classifyNWGState(old, true, nil, now); got != tunnel.StateBroken {
+		t.Fatalf("протухший хендшейк: ожидался Broken, получен %v", got)
+	}
+
+	// Неизвестен момент подъёма — не гадаем, оставляем Starting.
+	unknown := base
+	unknown.Connected = ""
+	if got := classifyNWGState(unknown, true, nil, now); got != tunnel.StateStarting {
+		t.Fatalf("без времени подъёма: ожидался Starting, получен %v", got)
 	}
 }

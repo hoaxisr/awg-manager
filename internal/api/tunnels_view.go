@@ -8,6 +8,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
@@ -44,11 +45,12 @@ func stateToStatus(s tunnel.State) string {
 // broken — NDMS raised its WireGuard but awg-manager has not yet attached the
 // kmod proxy. quiescentUntil is the orchestrator's per-tunnel bring-up window
 // (zero if no bring-up was attempted this session). now is injected for tests.
-// Only non-ASC nwg ever produces StateBroken from classifyNWGState; kernel and
-// every non-Broken state pass through unchanged.
-func overlayPendingStatus(rawState tunnel.State, backend string, quiescentUntil, now time.Time) string {
+// The overlay only fits the kmod-proxy path: on ASC firmware there is no such
+// intermediate state, so a Broken there means an actually stalled tunnel and is
+// shown as is (#702). Kernel and every non-Broken state pass through unchanged.
+func overlayPendingStatus(rawState tunnel.State, backend string, supportsASC bool, quiescentUntil, now time.Time) string {
 	base := stateToStatus(rawState)
-	if backend != "nativewg" || rawState != tunnel.StateBroken {
+	if backend != "nativewg" || rawState != tunnel.StateBroken || supportsASC {
 		return base
 	}
 	if quiescentUntil.IsZero() {
@@ -64,9 +66,10 @@ func overlayPendingStatus(rawState tunnel.State, backend string, quiescentUntil,
 // the UI status string: it applies the boot-pending overlay (see
 // overlayPendingStatus), deriving backend from StateInfo so list and detail
 // stay consistent. quiescentUntil is the orchestrator bring-up window (zero
-// when unknown).
+// when unknown); the ASC flag comes from the firmware, as the overlay applies
+// to the kmod-proxy path only.
 func displayStatus(info tunnel.StateInfo, quiescentUntil, now time.Time) string {
-	return overlayPendingStatus(info.State, info.BackendType, quiescentUntil, now)
+	return overlayPendingStatus(info.State, info.BackendType, ndmsinfo.SupportsWireguardASC(), quiescentUntil, now)
 }
 
 // quiescentFor returns the orchestrator bring-up window for a tunnel, or zero

@@ -36,6 +36,11 @@ const (
 	resolveAttemptTimeout = 1500 * time.Millisecond
 )
 
+// nwgBrokenAfter — сколько интерфейс может стоять без живого пира, прежде
+// чем «запускается» превратится в «сломан». За это время NDMS-ping-check
+// успевает сделать несколько проверок и рестарт (#702).
+const nwgBrokenAfter = 5 * time.Minute
+
 // resolveRetryGap — пауза между попытками резолва. Var ради тестов
 // (failing-resolve сценарии не должны спать по 2×300ms).
 var resolveRetryGap = 300 * time.Millisecond
@@ -622,12 +627,17 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 // StateBroken when the config is incoherent — NDMS peer not pointing at 127.0.0.1
 // or no live kmod slot on the peer's remote-port — otherwise StateStarting.
 // hasProxySlot is only consulted on the proxy path with an offline peer.
-func classifyNWGState(rci NWGState, supportsASC bool, hasProxySlot func(listenPort int) bool) tunnel.State {
+// On the ASC path an offline peer stays Starting only while the interface is
+// young — see nwgStalled.
+func classifyNWGState(rci NWGState, supportsASC bool, hasProxySlot func(listenPort int) bool, now time.Time) tunnel.State {
 	switch {
 	case rci.ConfLayer == "running" && rci.PeerOnline:
 		return tunnel.StateRunning
 	case rci.ConfLayer == "running" && !rci.PeerOnline:
 		if supportsASC {
+			if nwgStalled(rci, now) {
+				return tunnel.StateBroken
+			}
 			return tunnel.StateStarting
 		}
 		if rci.PeerRemoteAddr != "127.0.0.1" || !hasProxySlot(rci.PeerRemotePort) {
@@ -639,6 +649,29 @@ func classifyNWGState(rci NWGState, supportsASC bool, hasProxySlot func(listenPo
 	default:
 		return tunnel.StateUnknown
 	}
+}
+
+// nwgStalled — интерфейс поднят дольше nwgBrokenAfter и всё это время без
+// живого пира. Неизвестный момент подъёма — не повод объявлять поломку:
+// оставляем прежнее «запускается».
+func nwgStalled(rci NWGState, now time.Time) bool {
+	if rci.Connected == "" {
+		return false
+	}
+	up, err := time.Parse(time.RFC3339, rci.Connected)
+	if err != nil {
+		return false
+	}
+	if now.Sub(up) < nwgBrokenAfter {
+		return false
+	}
+	if rci.LastHandshake >= 0 && rci.LastHandshake < neverHandshake {
+		// 0 — «хендшейк только что», а не «не было»: sentinel для «не было»
+		// один, neverHandshake. Граница >= 0, иначе свежий хендшейк
+		// проваливался бы в Broken вместе с отсутствующим.
+		return time.Duration(rci.LastHandshake)*time.Second >= nwgBrokenAfter
+	}
+	return true
 }
 
 // fetchInterfaceRCI reads the full interface object via batch POST — the
@@ -698,9 +731,10 @@ func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunn
 	// State (see classifyNWGState):
 	//   running & peer online                         -> Running
 	//   running & peer offline & proxy & incoherent   -> Broken
-	//   running & peer offline (coherent / ASC)        -> Starting
+	//   running & peer offline & ASC & stalled        -> Broken
+	//   running & peer offline (coherent / ASC young) -> Starting
 	//   disabled                                       -> Stopped
-	info.State = classifyNWGState(rciState, o.supportsASC(), o.hasProxySlot)
+	info.State = classifyNWGState(rciState, o.supportsASC(), o.hasProxySlot, time.Now())
 
 	return info
 }

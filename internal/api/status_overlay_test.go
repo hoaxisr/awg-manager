@@ -29,12 +29,21 @@ func TestOverlayPendingStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := overlayPendingStatus(tc.rawState, tc.backend, tc.quiescent, now)
+			got := overlayPendingStatus(tc.rawState, tc.backend, false /*supportsASC*/, tc.quiescent, now)
 			if got != tc.want {
 				t.Fatalf("overlayPendingStatus(%v, %q, q, now) = %q, want %q",
 					tc.rawState, tc.backend, got, tc.want)
 			}
 		})
+	}
+}
+
+// An ASC tunnel stalled without a peer must show as broken, not "needs
+// start": it has no bring-up window to wait through (#702).
+func TestOverlayPendingStatus_ASCBrokenStaysBroken(t *testing.T) {
+	got := overlayPendingStatus(tunnel.StateBroken, "nativewg", true /*supportsASC*/, time.Time{}, time.Now())
+	if got != "broken" {
+		t.Fatalf("overlayPendingStatus = %q, want broken", got)
 	}
 }
 
