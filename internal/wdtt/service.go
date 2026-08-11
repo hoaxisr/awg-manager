@@ -54,6 +54,10 @@ type Service struct {
 	policyMarks     NDMSPolicyMarkGetter
 	ingressEnsurer  IngressRefEnsurer
 
+	// После listen-repair доводит новый listen до Endpoint linked AWG-туннелей
+	// (не только в хранилище, но и на живом интерфейсе — см. api.SyncLinkedTunnelEndpoints).
+	linkedEndpointSync func(clientID, listen string) (int, error)
+
 	wgIfaceMu        sync.Mutex
 	wgIfaceFlagKnown bool
 	wgIfaceFlagOK    bool
@@ -179,6 +183,11 @@ func (s *Service) SetInterfaceChecker(c InterfaceChecker) {
 
 func (s *Service) SetRelayProbe(p RelayProbe) {
 	s.relayProbe = p
+}
+
+// SetLinkedEndpointSync wires AWG tunnel endpoint sync after listen-repair.
+func (s *Service) SetLinkedEndpointSync(fn func(clientID, listen string) (int, error)) {
+	s.linkedEndpointSync = fn
 }
 
 func (s *Service) SetInstallSpecs(specs ArchSpecs) {
@@ -442,32 +451,55 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
-func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+// repairClientListenPort разводит конфликтующие listen-порты клиентов.
+// changed говорит вызывающему, что порт сменился и linked-туннели надо
+// довести до нового endpoint — сам sync делается ВНЕ s.mu (он ходит в
+// хранилище туннелей и в ядро, держать под сервисным мьютексом нельзя).
+func (s *Service) repairClientListenPort(id string) (cfg ClientConfig, changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	idx := findClientIndex(full.Clients, id)
 	if idx < 0 {
-		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+		return ClientConfig{}, false, fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg := full.Clients[idx].Config
+	cfg = full.Clients[idx].Config
 	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if next == cfg.Listen {
-		return cfg, nil
+		return cfg, false, nil
 	}
 	cfg.Listen = next
 	full.Clients[idx].Config = cfg
 	if err := s.store.Save(full); err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	if s.appLog != nil {
 		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
 	}
-	return cfg, nil
+	return cfg, true, nil
+}
+
+// syncLinkedEndpoints доводит listen клиента до Endpoint linked AWG-туннелей.
+// Вызывать только вне s.mu.
+func (s *Service) syncLinkedEndpoints(id, listen string) {
+	if s.linkedEndpointSync == nil {
+		return
+	}
+	n, err := s.linkedEndpointSync(id, listen)
+	if s.appLog == nil {
+		return
+	}
+	if err != nil {
+		s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
+		return
+	}
+	if n > 0 {
+		s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+	}
 }
 
 func (s *Service) StartClientInstance(id string) error {
@@ -484,9 +516,12 @@ func (s *Service) StartClientInstance(id string) error {
 	// этого же клиента, запущенным откуда-то ещё (API, сам супервизор).
 	s.beginClientStart(id)
 	defer s.endClientStart(id)
-	cfg, err := s.repairClientListenPort(id)
+	cfg, listenChanged, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
+	}
+	if listenChanged {
+		s.syncLinkedEndpoints(id, cfg.Listen)
 	}
 	prevWorkers := cfg.Workers
 	cfg = normalizeClientConfig(cfg)
@@ -766,7 +801,7 @@ func normalizeClientConfig(cfg ClientConfig) ClientConfig {
 		cfg.VKAuthMode = DefaultClientConfig().VKAuthMode
 	}
 	cfg.ConnMode = normalizeConnMode(cfg.ConnMode)
-	return cfg
+	return normalizePeers(cfg)
 }
 
 func buildClientArgs(c ClientConfig, tunFdSock string) []string {
@@ -798,20 +833,15 @@ func buildClientArgs(c ClientConfig, tunFdSock string) []string {
 	return args
 }
 
-// appendVkAuthArgs мапит vkAuthMode awg-manager на флаги go_client (-vk-auth / -vk-anon-path).
+// appendVkAuthArgs мапит vkAuthMode awg-manager на -vk-auth-mode wt-client.
+// Старые бинари (mips/mipsel без qWDTT 1.4 patch) не знают -vk-auth/-vk-anon-path;
+// patched arm64 принимает -vk-auth-mode как alias (flags_compat.go).
 func appendVkAuthArgs(args *[]string, vkAuthMode string) {
 	mode := strings.ToLower(strings.TrimSpace(vkAuthMode))
-	switch mode {
-	case "", "vkcalls":
-		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "vkcalls")
-	case "legacy":
-		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "legacy")
-	case "anonymous", "account":
-		*args = append(*args, "-vk-auth", mode)
-	default:
-		// Старые профили с -vk-auth-mode; клиент понимает alias через flags_compat.go.
-		*args = append(*args, "-vk-auth-mode", mode)
+	if mode == "" {
+		mode = "vkcalls"
 	}
+	*args = append(*args, "-vk-auth-mode", mode)
 }
 
 func normalizeCaptchaMode(mode string) string {

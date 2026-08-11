@@ -13,6 +13,10 @@ export interface WdttClientConfig {
 	sub?: string;
 	/** wg — WireGuard + AWG-туннель; raw — без WG (быстрее, нужен raw-сервер) */
 	connMode?: 'wg' | 'raw';
+	/** Peer для режима WG (DTLS-порт); если пуст — используется peer. */
+	peerWg?: string;
+	/** Peer для режима Raw; если пуст — используется peer. */
+	peerRaw?: string;
 	debug?: boolean;
 	/** Raw client: OpkgTun17..49 для маршрутизации LAN (NAT — на wdtt-server) */
 	ndmsIface?: string;

@@ -59,7 +59,7 @@ func (h *WdttHandler) syncLinkedTunnelNames(ctx context.Context, clientID, clien
 	}, newName)
 }
 
-func (h *WdttHandler) syncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
+func (h *WdttHandler) SyncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
 	return syncLinkedAwgTunnelEndpoints(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
 		return tunnelLinkedToWdttClient(tun, clientID)
 	}, listen)

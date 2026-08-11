@@ -146,11 +146,19 @@ func (h *WdttHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request)
 			h.tunnelsHandler.publishTunnelList(r.Context())
 		}
 	}
-	response.Success(w, map[string]any{
+	resp := map[string]any{
 		"config":         cfg,
 		"deletedTunnels": deletedTunnels,
 		"tunnelErrors":   tunnelErrors,
-	})
+	}
+	if !peerChanged {
+		// Симметрично instance-ручке: UpdateClientConfig мог переназначить
+		// listen (ensureUniqueListenAddr), и endpoint linked-туннеля обязан
+		// пойти следом.
+		synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), wdtt.DefaultInstanceID, wdttClientListen(h.svc, wdtt.DefaultInstanceID))
+		appendLinkedTunnelSync(resp, synced, syncErrs)
+	}
+	response.Success(w, resp)
 }
 
 // GetStatus handles GET /api/wdtt/status.
@@ -187,7 +195,7 @@ func (h *WdttHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
-	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), wdtt.DefaultInstanceID, wdttClientListen(h.svc, wdtt.DefaultInstanceID))
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), wdtt.DefaultInstanceID, wdttClientListen(h.svc, wdtt.DefaultInstanceID))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), wdtt.DefaultInstanceID)
 	resp := clientStartStopResponse("client started", started, tunnelErrors)
 	appendLinkedTunnelSync(resp, synced, syncErrs)
@@ -390,7 +398,7 @@ func (h *WdttHandler) serveClientByID(w http.ResponseWriter, r *http.Request, id
 			"tunnelErrors":   tunnelErrors,
 		}
 		if !peerChanged {
-			synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
+			synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
 			appendLinkedTunnelSync(resp, synced, syncErrs)
 		}
 		response.Success(w, resp)
@@ -453,7 +461,7 @@ func (h *WdttHandler) startClientInstance(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "WDTT_CLIENT_START_FAILED")
 		return
 	}
-	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), id, wdttClientListen(h.svc, id))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
 	resp := clientStartStopResponse("client started", started, tunnelErrors)
 	appendLinkedTunnelSync(resp, synced, syncErrs)

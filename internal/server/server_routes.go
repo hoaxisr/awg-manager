@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
@@ -171,6 +173,13 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	// listen-repair внутри freeturn/wdtt переназначает порт клиента — Endpoint
+	// linked AWG-туннеля обязан пойти следом, и не только в хранилище: через
+	// handler правка доходит до живого интерфейса (tunnelService.Update) и до
+	// фронта (SSE).
+	s.wireLinkedEndpointSync(s.freeturnService, h.freeturnHandler.SyncLinkedTunnelEndpoints, "freeturn")
+	s.wireLinkedEndpointSync(s.wdttService, h.wdttHandler.SyncLinkedTunnelEndpoints, "wdtt")
 	h.tunnelsHandler.SetWdttListSource(s.wdttService)
 	h.controlHandler.SetWdttControl(s.tunnels, s.wdttService)
 
@@ -977,6 +986,35 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/awg3-endpoints/", h.guarded(s.awg3Handler.Handle))
 	}
 
+}
+
+// linkedEndpointSyncSetter реализуют freeturn.Service и wdtt.Service.
+// Отдельный узкий интерфейс вместо метода в api.FreeTurnService/api.WdttService:
+// те описывают ~35 методов и имеют полные моки в тестах, расширять их ради
+// одного сеттера дороже, чем проверить тип здесь.
+type linkedEndpointSyncSetter interface {
+	SetLinkedEndpointSync(func(clientID, listen string) (int, error))
+}
+
+func (s *Server) wireLinkedEndpointSync(
+	svc any,
+	sync func(ctx context.Context, clientID, listen string) ([]string, []string),
+	scope string,
+) {
+	setter, ok := svc.(linkedEndpointSyncSetter)
+	if !ok {
+		// Молчать нельзя: смена типа сервиса иначе тихо отключит sync, и
+		// endpoint снова начнёт отставать от listen после listen-repair.
+		s.appLog.Warn("wiring", scope, "сервис не умеет SetLinkedEndpointSync — endpoint linked-туннелей не синхронизируется")
+		return
+	}
+	setter.SetLinkedEndpointSync(func(clientID, listen string) (int, error) {
+		updated, errs := sync(context.Background(), clientID, listen)
+		if len(errs) > 0 {
+			return len(updated), errors.New(strings.Join(errs, "; "))
+		}
+		return len(updated), nil
+	})
 }
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).

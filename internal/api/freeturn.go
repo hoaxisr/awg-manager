@@ -144,6 +144,9 @@ func (h *FreeTurnHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Requ
 		response.InternalError(w, err.Error())
 		return
 	}
+	// Симметрично instance-ручке: UpdateClientConfig мог переназначить listen
+	// (ensureUniqueListenAddr), и endpoint linked-туннеля обязан пойти следом.
+	h.SyncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
 	response.Success(w, cfg)
 }
 
@@ -196,7 +199,7 @@ func (h *FreeTurnHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
-	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), freeturn.DefaultInstanceID)
 	resp := clientStartStopResponse("client started", started, tunnelErrors)
 	appendLinkedTunnelSync(resp, synced, syncErrs)
@@ -503,7 +506,7 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_UPDATE_FAILED")
 			return
 		}
-		h.syncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
+		h.SyncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 		response.Success(w, cfg)
 	case http.MethodPatch:
 		var req renameRequest
@@ -610,7 +613,7 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
-	synced, syncErrs := h.syncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
 	resp := clientStartStopResponse("client started", started, tunnelErrors)
 	appendLinkedTunnelSync(resp, synced, syncErrs)

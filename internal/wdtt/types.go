@@ -5,6 +5,7 @@ package wdtt
 import (
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type ClientConfig struct {
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
 	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
 	ConnMode string `json:"connMode,omitempty"`
+	PeerWg   string `json:"peerWg,omitempty"`  // VPS:DTLS для connMode=wg; Peer зеркалит активный слот (normalizePeers)
+	PeerRaw  string `json:"peerRaw,omitempty"` // VPS:Raw для connMode=raw
 	Debug    bool   `json:"debug"`
 
 	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).
@@ -35,6 +38,30 @@ type ClientConfig struct {
 
 	// PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются после рестарта awg-manager.
 	PolicyPermits []OpkgPolicyPermit `json:"policyPermits,omitempty"`
+}
+
+// normalizePeers держит инвариант «Peer = слот активного режима».
+//
+// Главнее Peer, а не слот: адрес приходит и от тех, кто про слоты не знает —
+// подписка, импорт ссылки, сторонний API-клиент, — и их свежий Peer не должен
+// откатываться протухшим слотом. Слот активного режима зеркалит Peer, слот
+// соседнего режима сохраняется нетронутым; пустой Peer восстанавливается из
+// слота (конфиги, созданные до появления слотов).
+//
+// Подставить адрес соседнего режима ПРИ переключении — работа формы: только
+// она знает, что режим меняет пользователь, а не приезжает из подписки.
+func normalizePeers(cfg ClientConfig) ClientConfig {
+	slot := &cfg.PeerWg
+	if !cfg.UsesWireGuard() {
+		slot = &cfg.PeerRaw
+	}
+	if peer := strings.TrimSpace(cfg.Peer); peer != "" {
+		cfg.Peer = peer
+		*slot = peer
+		return cfg
+	}
+	cfg.Peer = strings.TrimSpace(*slot)
+	return cfg
 }
 
 // OpkgPolicyPermit — permit global OpkgTun в одной политике (order как в NDMS).
