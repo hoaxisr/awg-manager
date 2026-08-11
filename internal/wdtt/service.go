@@ -811,20 +811,15 @@ func buildClientArgs(c ClientConfig, tunFdSock string) []string {
 	return args
 }
 
-// appendVkAuthArgs мапит vkAuthMode awg-manager на флаги go_client (-vk-auth / -vk-anon-path).
+// appendVkAuthArgs мапит vkAuthMode awg-manager на -vk-auth-mode wt-client.
+// Старые бинари (mips/mipsel без qWDTT 1.4 patch) не знают -vk-auth/-vk-anon-path;
+// patched arm64 принимает -vk-auth-mode как alias (flags_compat.go).
 func appendVkAuthArgs(args *[]string, vkAuthMode string) {
 	mode := strings.ToLower(strings.TrimSpace(vkAuthMode))
-	switch mode {
-	case "", "vkcalls":
-		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "vkcalls")
-	case "legacy":
-		*args = append(*args, "-vk-auth", "anonymous", "-vk-anon-path", "legacy")
-	case "anonymous", "account":
-		*args = append(*args, "-vk-auth", mode)
-	default:
-		// Старые профили с -vk-auth-mode; клиент понимает alias через flags_compat.go.
-		*args = append(*args, "-vk-auth-mode", mode)
+	if mode == "" {
+		mode = "vkcalls"
 	}
+	*args = append(*args, "-vk-auth-mode", mode)
 }
 
 func normalizeCaptchaMode(mode string) string {

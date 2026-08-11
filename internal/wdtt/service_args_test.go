@@ -7,11 +7,11 @@ func TestAppendVkAuthArgs(t *testing.T) {
 		in   string
 		want []string
 	}{
-		{"", []string{"-vk-auth", "anonymous", "-vk-anon-path", "vkcalls"}},
-		{"vkcalls", []string{"-vk-auth", "anonymous", "-vk-anon-path", "vkcalls"}},
-		{"legacy", []string{"-vk-auth", "anonymous", "-vk-anon-path", "legacy"}},
-		{"anonymous", []string{"-vk-auth", "anonymous"}},
-		{"account", []string{"-vk-auth", "account"}},
+		{"", []string{"-vk-auth-mode", "vkcalls"}},
+		{"vkcalls", []string{"-vk-auth-mode", "vkcalls"}},
+		{"legacy", []string{"-vk-auth-mode", "legacy"}},
+		{"anonymous", []string{"-vk-auth-mode", "anonymous"}},
+		{"account", []string{"-vk-auth-mode", "account"}},
 		{"custom", []string{"-vk-auth-mode", "custom"}},
 	}
 	for _, tc := range tests {
