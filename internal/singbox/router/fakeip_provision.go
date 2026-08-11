@@ -41,6 +41,12 @@ type OpkgTunProvisioner interface {
 	// NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS на tun-адрес.
 	SetPermitAllACL(ctx context.Context, name string) error
 	RemovePermitAllACL(ctx context.Context, name string) error
+	// SetPermitAllACLv6 / RemovePermitAllACLv6 — то же для IPv6: у NDMS под v6
+	// ОТДЕЛЬНОЕ пространство списков (`ipv6 access-list` + `ipv6 access-group`),
+	// и v4-разрешение его не покрывает. Ставится только когда у интерфейса есть
+	// v6-адрес — на интерфейсе без v6 разрешать нечего.
+	SetPermitAllACLv6(ctx context.Context, name string) error
+	RemovePermitAllACLv6(ctx context.Context, name string) error
 }
 
 // StaticRouteProvider manages NDMS auto static routes for the fakeip pool + reject route.

@@ -296,6 +296,11 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
 	}
+	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
+	// у интерфейса без v6 его и не было, «not found» тут норма.
+	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
+		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
+	}
 	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
 		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())
 	}
@@ -328,6 +333,11 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	// до успеха delete) и сирот от версий без ACL (ревью).
 	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
+	}
+	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
+	// у интерфейса без v6 его и не было, «not found» тут норма.
+	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
+		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
 	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
 		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())

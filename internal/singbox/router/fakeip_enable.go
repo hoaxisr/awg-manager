@@ -199,6 +199,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable fakeip-tun: set ipv6 address: %w", err)
 		}
+		// v6-разрешение — ПОСЛЕ адреса: v4-ACL выше v6-трафик не покрывает,
+		// у NDMS под него отдельное пространство списков.
+		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
+			return fmt.Errorf("enable fakeip-tun: permit acl v6: %w", err)
+		}
 	}
 	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set mtu: %w", err)

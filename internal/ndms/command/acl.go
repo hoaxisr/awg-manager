@@ -93,6 +93,67 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, name string) er
 	return c.ACLAutoDelete(ctx, acl)
 }
 
+// SetPermitAllACLv6 — v6-близнец SetPermitAllACL. У NDMS для IPv6 ОТДЕЛЬНОЕ
+// пространство списков: `ip access-group` v6-трафик не покрывает (verified на
+// роутере 2026-08-11), и интерфейс с v6-адресом без этой пары остаётся без
+// разрешения. Имя списка то же — пространства не пересекаются.
+//
+// Гранулярных v6-примитивов сознательно нет: единственный потребитель — вот эта
+// композиция, а managed-серверы работают только с v4.
+//
+// Порядок и толерантность те же, что у v4: permit → bind → auto-delete
+// (auto-delete работает только на привязанном списке), повторный permit NDMS
+// отклоняет как дубль без дублирования правила. Фраза отказа у v6 ТА ЖЕ, что у
+// v4 («a duplicate was found for the rule being set», stand-verified
+// 2026-08-11), хотя ident другой (Network::Ip6::Acl) — поэтому IsACLDuplicate
+// годится на оба протокола и отдельного матчера не нужно.
+func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) error {
+	acl := "_WEBADMIN_" + name
+	err := postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
+		"acl6 permit "+acl,
+		c.queries.RunningConfig.InvalidateAll,
+	)
+	if err != nil && !IsACLDuplicate(err) {
+		return err
+	}
+	if err := postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("interface %s ipv6 access-group %s in", name, acl)},
+		"acl6 bind "+acl,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll,
+	); err != nil {
+		return err
+	}
+	return postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s auto-delete", acl)},
+		"acl6 auto-delete "+acl,
+		c.queries.RunningConfig.InvalidateAll,
+	)
+}
+
+// RemovePermitAllACLv6 снимает v6-привязку и удаляет v6-список. Best-effort по
+// замыслу, как и v4-близнец: интерфейс мог быть уже удалён, а auto-delete —
+// каскадировать список.
+func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name string) error {
+	acl := "_WEBADMIN_" + name
+	unbindErr := postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("no interface %s ipv6 access-group %s in", name, acl)},
+		"acl6 unbind "+acl,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll,
+	)
+	removeErr := postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": "no ipv6 access-list " + acl},
+		"acl6 remove "+acl,
+		c.queries.RunningConfig.InvalidateAll,
+	)
+	if unbindErr != nil {
+		return unbindErr
+	}
+	return removeErr
+}
+
 // RemovePermitAllACL снимает привязку и удаляет `_WEBADMIN_<name>`.
 // Best-effort по замыслу: интерфейс может быть уже удалён, а auto-delete —
 // уже каскадировать список; ошибки возвращаются вызывающему для лога,
