@@ -41,6 +41,16 @@ type Facade struct {
 	nwgLatencyProbe func(context.Context, string) (int, string) // latency in ms, plus a note when unavailable
 	ctx             context.Context
 	cancel          context.CancelFunc
+
+	// NativeWG restart bookkeeping. It lives here, not in nwgMonitor: our own
+	// escalating restart goes through the orchestrator and ends in
+	// StartMonitoring, which recreates the monitor — per-monitor counters
+	// would die with it and the backoff would never hold (#702).
+	nwgStateMu        sync.Mutex
+	nwgRestarts       map[string]int // tunnelID → NDMS interface restarts in total
+	nwgFruitless      map[string]int // restarts in a row with no successful check
+	nwgLastEscalation map[string]time.Time
+	tunnelRestarter   func(context.Context, string) error
 }
 
 // NewFacade creates a unified ping-check facade.
@@ -48,12 +58,15 @@ type Facade struct {
 func NewFacade(custom *Service, tunnels *storage.AWGTunnelStore, nwgOp *nwg.OperatorNativeWG) *Facade {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Facade{
-		custom:      custom,
-		tunnels:     tunnels,
-		nwgOp:       nwgOp,
-		nwgMonitors: make(map[string]*nwgMonitor),
-		ctx:         ctx,
-		cancel:      cancel,
+		custom:            custom,
+		tunnels:           tunnels,
+		nwgOp:             nwgOp,
+		nwgMonitors:       make(map[string]*nwgMonitor),
+		nwgRestarts:       make(map[string]int),
+		nwgFruitless:      make(map[string]int),
+		nwgLastEscalation: make(map[string]time.Time),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 	if nwgOp != nil {
 		f.nwgSource = &nwgOpPollAdapter{op: nwgOp, tunnels: tunnels}
@@ -251,16 +264,50 @@ func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
 	return mon.restartDetected
 }
 
-// nwgRestartCount — сколько рестартов интерфейса зафиксировал монитор
-// туннеля. 0, если монитора нет.
+// nwgRestartCount returns how many NDMS interface restarts were recorded for
+// the tunnel. Kept in a Facade map so it survives monitor recreation. 0 for an
+// unknown tunnel.
 func (f *Facade) nwgRestartCount(tunnelID string) int {
-	f.nwgMonMu.RLock()
-	mon, ok := f.nwgMonitors[tunnelID]
-	f.nwgMonMu.RUnlock()
-	if !ok {
-		return 0
+	f.nwgStateMu.Lock()
+	defer f.nwgStateMu.Unlock()
+	return f.nwgRestarts[tunnelID]
+}
+
+// nwgNoteRestart records an NDMS-initiated interface restart and returns the
+// length of the current series of restarts with no successful check between
+// them.
+func (f *Facade) nwgNoteRestart(tunnelID string) int {
+	f.nwgStateMu.Lock()
+	defer f.nwgStateMu.Unlock()
+	f.nwgRestarts[tunnelID]++
+	f.nwgFruitless[tunnelID]++
+	return f.nwgFruitless[tunnelID]
+}
+
+// nwgNoteSuccess resets the series: the tunnel is alive again.
+func (f *Facade) nwgNoteSuccess(tunnelID string) {
+	f.nwgStateMu.Lock()
+	defer f.nwgStateMu.Unlock()
+	f.nwgFruitless[tunnelID] = 0
+}
+
+// nwgCanEscalate is the backoff gate. On approval it records the time and
+// resets the series so the next escalation is counted from scratch.
+func (f *Facade) nwgCanEscalate(tunnelID string) bool {
+	f.nwgStateMu.Lock()
+	defer f.nwgStateMu.Unlock()
+	if last, ok := f.nwgLastEscalation[tunnelID]; ok && time.Since(last) < nwgEscalateBackoff {
+		return false
 	}
-	return mon.restarts()
+	f.nwgLastEscalation[tunnelID] = time.Now()
+	f.nwgFruitless[tunnelID] = 0
+	return true
+}
+
+// SetTunnelRestarter sets the way to restart a tunnel as a whole. NativeWG
+// monitors need it to escalate when NDMS restarts do not help (#702).
+func (f *Facade) SetTunnelRestarter(fn func(context.Context, string) error) {
+	f.tunnelRestarter = fn
 }
 
 // nwgLatencyNote returns the monitor's explanation for an absent latency
@@ -305,6 +352,12 @@ func (f *Facade) startNwgMonitor(tunnelID, tunnelName string) {
 		bus:          f.bus,
 		stopCh:       make(chan struct{}),
 		triggerCh:    make(chan struct{}, 1),
+
+		allowRestart:       stored.PingCheck.Restart,
+		restarter:          f.tunnelRestarter,
+		onFruitlessRestart: f.nwgNoteRestart,
+		onCheckSuccess:     f.nwgNoteSuccess,
+		canEscalate:        f.nwgCanEscalate,
 	}
 
 	// Extract and stop the old monitor (if any) outside the lock
@@ -417,6 +470,9 @@ func (f *Facade) getNativeWGTunnelPingStatus(tunnelID string) TunnelPingInfo {
 	info := TunnelPingInfo{
 		FailCount:     status.FailCount,
 		FailThreshold: status.MaxFails,
+		// The tunnel card reads the counter from here; before #702 the
+		// field was never populated and users always saw zero.
+		RestartCount: f.nwgRestartCount(tunnelID),
 	}
 
 	switch {

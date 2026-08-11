@@ -1,7 +1,9 @@
 package pingcheck
 
 import (
+	"context"
 	"testing"
+	"time"
 )
 
 func newTestNwgMonitor(buf *LogBuffer) *nwgMonitor {
@@ -309,5 +311,110 @@ func TestNwgDelta_RestartCountStableWhileHealthy(t *testing.T) {
 	m.processDelta(0, 9, "pass", true)
 	if m.restarts() != 0 {
 		t.Fatalf("на живом туннеле restarts() = %d, want 0", m.restarts())
+	}
+}
+
+// Хелпер: серия считается в замыкании, backoff разрешает первую эскалацию
+// и запрещает последующие — ровно то, что делает фасад.
+func wireEscalationStubs(m *nwgMonitor) *int {
+	series := new(int)
+	escalated := false
+	m.onFruitlessRestart = func(string) int { *series++; return *series }
+	m.onCheckSuccess = func(string) { *series = 0 }
+	m.canEscalate = func(string) bool {
+		if escalated {
+			return false
+		}
+		escalated = true
+		*series = 0
+		return true
+	}
+	return series
+}
+
+// Три бесплодных рестарта NDMS подряд → один полный перезапуск (#702).
+func TestNwgDelta_EscalatesAfterFruitlessRestarts(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+	m.allowRestart = true
+	wireEscalationStubs(m)
+	restarted := make(chan string, 4)
+	m.restarter = func(_ context.Context, id string) error {
+		restarted <- id
+		return nil
+	}
+
+	m.processDelta(0, 5, "pass", true) // базовая линия
+	for i := 0; i < 3; i++ {
+		m.processDelta(3, 0, "fail", true) // отказы
+		m.processDelta(0, 0, "fail", true) // рестарт NDMS, успеха не было
+	}
+
+	select {
+	case id := <-restarted:
+		if id != m.tunnelID {
+			t.Fatalf("перезапущен не тот туннель: %s", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("эскалации не произошло")
+	}
+	select {
+	case id := <-restarted:
+		t.Fatalf("эскалация должна быть одна, пришла вторая: %s", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Между рестартами проверки проходят — туннель живой, лечить нечего.
+func TestNwgDelta_NoEscalationWhenChecksRecover(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+	m.allowRestart = true
+	wireEscalationStubs(m)
+	restarted := make(chan string, 4)
+	m.restarter = func(_ context.Context, id string) error {
+		restarted <- id
+		return nil
+	}
+
+	m.processDelta(0, 5, "pass", true)
+	for i := 0; i < 3; i++ {
+		m.processDelta(3, 5, "fail", true)
+		m.processDelta(0, 0, "fail", true)
+		m.processDelta(0, 1, "pass", true) // успех сбрасывает серию
+	}
+
+	select {
+	case id := <-restarted:
+		t.Fatalf("эскалации быть не должно, а туннель перезапустили: %s", id)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// Пользователь запретил лечить — не лечим ничем.
+func TestNwgDelta_NoEscalationWhenRestartDisabled(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+	m.allowRestart = false
+	wireEscalationStubs(m)
+	restarted := make(chan string, 4)
+	m.restarter = func(_ context.Context, id string) error {
+		restarted <- id
+		return nil
+	}
+
+	m.processDelta(0, 5, "pass", true)
+	for i := 0; i < 3; i++ {
+		m.processDelta(3, 0, "fail", true)
+		m.processDelta(0, 0, "fail", true)
+	}
+
+	select {
+	case id := <-restarted:
+		t.Fatalf("настройка выключена, а туннель перезапустили: %s", id)
+	case <-time.After(300 * time.Millisecond):
 	}
 }
