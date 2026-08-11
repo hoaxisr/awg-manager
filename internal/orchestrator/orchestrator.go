@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -59,6 +60,21 @@ type ClientRouteExecutor interface {
 	OnTunnelDelete(ctx context.Context, tunnelID string) error
 }
 
+// NativeWGExecutor is the interface for NativeWG operations.
+// Satisfied by *nwg.OperatorNativeWG.
+type NativeWGExecutor interface {
+	Start(ctx context.Context, stored *storage.AWGTunnel) error
+	Stop(ctx context.Context, stored *storage.AWGTunnel) error
+	Delete(ctx context.Context, stored *storage.AWGTunnel) error
+	SuspendProxy(ctx context.Context, stored *storage.AWGTunnel) error
+	RestoreKmodTunnel(ctx context.Context, stored *storage.AWGTunnel) error
+	GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo
+	ResolveActiveWAN(ctx context.Context, stored *storage.AWGTunnel) string
+	GetTrackedEndpointIP(tunnelID string) string
+	ConfigurePingCheck(ctx context.Context, stored *storage.AWGTunnel, cfg ndms.PingCheckConfig) error
+	RemovePingCheck(ctx context.Context, stored *storage.AWGTunnel) error
+}
+
 // Orchestrator centralizes ALL tunnel lifecycle decisions.
 // One brain: receives events, decides actions, executes them.
 type Orchestrator struct {
@@ -76,7 +92,7 @@ type Orchestrator struct {
 	// Executors (no decision logic, only execution)
 	store    *storage.AWGTunnelStore
 	kernelOp ops.Operator
-	nwgOp    *nwg.OperatorNativeWG
+	nwgOp    NativeWGExecutor
 	stateMgr state.Manager
 	wanModel *wan.Model
 
@@ -123,16 +139,22 @@ func New(
 	wanModel *wan.Model,
 	appLogger logging.AppLogger,
 ) *Orchestrator {
-	return &Orchestrator{
+	o := &Orchestrator{
 		state:    newState(),
 		store:    store,
 		kernelOp: kernelOp,
-		nwgOp:    nwgOp,
 		stateMgr: stateMgr,
 		wanModel: wanModel,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOrchestrator),
 		clock:    time.Now,
 	}
+	// Оператор приходит конкретным типом: nil-указатель, положенный в
+	// интерфейсное поле напрямую, дал бы «не-nil интерфейс» и превратил
+	// защитные проверки o.nwgOp == nil в панику.
+	if nwgOp != nil {
+		o.nwgOp = nwgOp
+	}
+	return o
 }
 
 // SetPingCheck sets the monitoring executor.

@@ -123,8 +123,18 @@ func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, stored *storage.A
 	return nil
 }
 
-// SyncPeer pushes the stored peer configuration to the NDMS interface.
-// This applies key/allowed-ips/keepalive/preshared-key from storage.
+// SyncPeer доводит до интерфейса NDMS сохранённые параметры пира:
+// ключ, allowed-ips, keepalive, preshared-key.
+//
+// Endpoint'ом функция распоряжается отдельно. Доменное имя в конфиг NDMS
+// не уходит НИКОГДА: роутер резолвит его сам и при неудаче молча не
+// поднимает интерфейс (#702). Наружу отдаётся только IP — свежерезолвенный
+// v4, либо заглушка вместо v6, который NDMS не принимает. Когда отдать
+// нечего (резолв не удался, адрес v6), endpoint из команды опускается и в
+// конфиге остаётся прежний, а актуальный адрес доводят wg set ниже, страж
+// endpoint'а или следующий Start. На прошивках без нативного WireGuard
+// (proxy-путь) endpoint не отправляется вовсе: в конфиге NDMS должен
+// стоять адрес слота awg_proxy.ko, и владеют им startProxy/SyncKmodSlot.
 //
 // previousPublicKey lets callers atomically replace the peer when the
 // public key changes (e.g. ReplaceConfig from a fresh .conf). If non-
@@ -146,6 +156,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	rciEndpoint := stored.Peer.Endpoint
 	kernelEndpoint, kernelV6 := canonicalV6Endpoint(stored.Peer.Endpoint)
 	v4Confirmed := false
+	resolvedV4 := "" // резолв hostname'а: и в RCI, и в реестр стража (#702)
 	if !kernelV6 {
 		host, ok := splitEndpointHost(stored.Peer.Endpoint)
 		switch {
@@ -163,14 +174,63 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 					kernelV6 = true
 				} else {
 					v4Confirmed = true
+					resolvedV4 = net.JoinHostPort(ip, strconv.Itoa(port))
+					rciEndpoint = resolvedV4
 				}
+			} else if !o.supportsASC() {
+				// Proxy-путь: endpoint в конфиге NDMS всё равно не наш —
+				// см. общее правило ниже. Неудача резолва здесь ничего
+				// не решает, ошибку не поднимаем.
+				rciEndpoint = ""
+			} else if previousPublicKey != "" && previousPublicKey != stored.Peer.PublicKey {
+				// Особый угол: ключ пира сменился, значит батч ниже
+				// УДАЛИТ старого пира (CmdWireguardPeerNo) и создаст
+				// нового. Опустить endpoint здесь нельзя — прежнего
+				// адреса не останется вовсе, пир будет без endpoint'а,
+				// и туннель умрёт до ручного вмешательства. Отдавать имя
+				// тоже нельзя (см. ниже). Единственный честный выход —
+				// не применять смену: handler fail-closed не сохранит
+				// storage, и пользователь увидит ошибку вместо тихой
+				// поломки.
+				return fmt.Errorf("sync peer: резолв %s не удался, смена ключа пира не применена: %w",
+					stored.Peer.Endpoint, err)
+			} else if e, guarded := o.guardGet(stored.ID); guarded && !e.viaNDMS && !e.viaKmod &&
+				e.spec != stored.Peer.Endpoint {
+				// v6-история: в конфиге NDMS лежит заглушка 127.0.0.1:1,
+				// а не рабочий адрес (запись v6-стража — единственное
+				// состояние, в котором она там стоит). Молча принять
+				// нерезолвимое имя значит оставить туннель мёртвым до
+				// ручного старта — отказываем, как и при смене ключа (#702).
+				// Отказ только на СМЕНУ endpoint'а: при прежнем spec это
+				// транзиентный сбой DNS, и ронять из-за него правку
+				// соседних полей пира нельзя.
+				return fmt.Errorf("sync peer: резолв %s не удался, а в конфиге NDMS заглушка v6 — смена endpoint не применена: %w",
+					stored.Peer.Endpoint, err)
+			} else {
+				// Резолв не удался, но ключ прежний — пир в конфиге NDMS
+				// останется вместе со своим endpoint'ом. Имя не отдаём:
+				// при неудаче собственного резолва NDMS молча не поднимает
+				// интерфейс, без единой строки в журнале роутера (#702).
+				// Пустой endpoint команда просто опустит
+				// (payloads.CmdWireguardPeer) — в конфиге останется
+				// прежний адрес, а актуальный доведёт страж или Start.
+				o.appLog.Warn("sync-peer", ndmsName,
+					"резолв "+stored.Peer.Endpoint+" не удался — endpoint в NDMS оставлен прежним: "+err.Error())
+				rciEndpoint = ""
 			}
-			// Ошибка резолва: ни v4, ни v6 не подтверждены — hostname
-			// уходит в RCI как раньше, судьба стража решается ниже.
 		}
 	}
 	if kernelV6 {
 		rciEndpoint = ndmsEndpointPlaceholder
+	}
+	// Proxy-путь: в конфиге NDMS обязан стоять 127.0.0.1:<порт слота>, а
+	// реальный адрес сервера живёт в слоте awg_proxy.ko. Endpoint'ом там
+	// владеют startProxy и SyncKmodSlot — SyncPeer его не трогает вовсе.
+	// Раньше сюда уходило доменное имя, и правка полей пира, которых нет
+	// в kmodShapingChanged (AllowedIPs, keepalive, preshared-key), уводила
+	// ядро слать хендшейки мимо прокси — без обфускации и без лечения.
+	if !o.supportsASC() {
+		rciEndpoint = ""
 	}
 	peerCfg := payloads.PeerConfig{
 		PublicKey: stored.Peer.PublicKey,
@@ -236,6 +296,29 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	// обновиться (устаревшая запись не просто восстановит старые значения:
 	// wg set по старому ключу ВОСКРЕШАЕТ удалённого RCI-батчем пира).
 	switch {
+	case kernelV6 && !o.supportsASC():
+		// Proxy-путь: v6-адрес живёт в слоте awg_proxy.ko (kmod умеет v6
+		// с 1.3.0), а не в ядре. Писать его через wg set значило бы гнать
+		// хендшейки мимо прокси — без обфускации. Endpoint в конфиге NDMS
+		// тоже не наш: там 127.0.0.1:<порт слота>. Делаем то же, что для
+		// v4 на этом пути — только освежаем запись стража (#702).
+		// endpoint — из текущей записи, не из свежего резолва: в слоте
+		// лежит прежний адрес, и запись «желаемого» навсегда увела бы
+		// sweep в «адрес не менялся» (та же ловушка, что в v4-ветке ниже).
+		// v6-литерал под стражем не держим — резолвить нечего, адрес
+		// доводят startProxy/SyncKmodSlot.
+		if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
+			o.guardUnregister(stored.ID)
+		} else if cur, ok := o.guardGet(stored.ID); ok && cur.spec == stored.Peer.Endpoint {
+			o.guardReplaceIfPresent(stored.ID, guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: cur.endpoint,
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaKmod:  true,
+			})
+		}
 	case kernelV6:
 		ifaceName := NewNWGNames(stored.NWGIndex).IfaceName
 		entry := guardEntry{
@@ -270,11 +353,64 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				fmt.Sprintf("endpoint теперь IPv6 — %s выставлен в ядро (%s), взят под endpoint-страж", kernelEndpoint, ifaceName))
 		}
 	case v4Confirmed:
-		// Туннель вернулся на v4 — endpoint'ом снова управляет NDMS
-		// (реальный адрес ушёл в RCI выше), стражу здесь делать нечего.
+		// ASC-only. На proxy-прошивках endpoint в конфиге NDMS обязан быть
+		// 127.0.0.1:<порт слота> (его держат SyncKmodSlot и RestoreKmodTunnel,
+		// operator.go:807/849) — страж, доводящий туда реальный адрес сервера,
+		// сломал бы proxy-туннель. Non-ASC вне объёма этого плана.
+		guard, viaNDMS := guardModeForEndpoint(stored.Peer.Endpoint, false)
+		if guard && !o.supportsASC() {
+			// Proxy-путь: за адресом следит режим viaKmod (Task A2), его
+			// ставит startProxy. Здесь только освежаем запись — ключ или
+			// имя могли смениться, а протухший spec в реестре заставил бы
+			// стража резолвить не тот домен. Снимать стража нельзя:
+			// SyncPeer вызывается при любой правке пира, и снятие оставило
+			// бы туннель без защиты до следующего startProxy.
+			// ВАЖНО: endpoint берём из текущей записи, а НЕ из свежего
+			// резолва. Свежий резолв здесь отражал бы желаемое, а не
+			// действительное: слот-то мы не трогали, в нём остался прежний
+			// адрес. Записав новый, мы бы навсегда увели sweep в «адрес не
+			// менялся» — слот никогда бы не пересобрался. Когда spec
+			// сменился, слот пересоберёт SyncKmodSlot в том же
+			// applyDiffNWG (kmodShapingChanged включает Endpoint), и он же
+			// зарегистрирует свежую запись.
+			cur, ok := o.guardGet(stored.ID)
+			if !ok || cur.spec != stored.Peer.Endpoint {
+				break
+			}
+			o.guardReplaceIfPresent(stored.ID, guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: cur.endpoint, // прежний резолв — он же в слоте
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaKmod:  true,
+			})
+			break
+		}
+		if guard && o.supportsASC() {
+			// Hostname→v4: адрес за именем может смениться, а NDMS
+			// хранит литерал — оставляем под стражем в режиме NDMS (#702).
+			entry := guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: resolvedV4, // резолв, НЕ rciEndpoint (там имя)
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaNDMS:  viaNDMS,
+			}
+			// Register безусловный — в отличие от v6-ветки выше, где он
+			// воскресил бы запись, снятую параллельным Stop/Delete, и страж
+			// начал бы делать wg set по мёртвому устройству. Здесь цена
+			// гонки другая: viaNDMS правит конфиг NDMS, а он у остановленного
+			// туннеля живёт и должен быть актуален. Delete снимает запись
+			// (operator.go:561-568), так что вечной она не станет.
+			o.guardRegister(stored.ID, entry)
+			break
+		}
+		// v4-литерал — резолвить нечего, стражу тут делать нечего.
 		if o.guardHas(stored.ID) {
 			o.guardUnregister(stored.ID)
-			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4 — endpoint-страж снят, адресом управляет NDMS")
+			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4-литерал — endpoint-страж снят, адресом управляет NDMS")
 		}
 	default:
 		// Резолв hostname'а не удался (или endpoint непригоден). Если ключ

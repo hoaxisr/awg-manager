@@ -820,7 +820,11 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	switch {
 	case s.nwgOperator != nil && s.isNativeWG(stored):
 		stateInfo := s.nwgOperator.GetState(ctx, stored)
-		wasNativeRunning = stateInfo.State == tunnel.StateRunning || stateInfo.State == tunnel.StateStarting
+		wasNativeRunning = stateInfo.State == tunnel.StateRunning ||
+			stateInfo.State == tunnel.StateStarting ||
+			// A stalled ASC tunnel is Broken now (#702), and replacing the
+			// .conf is exactly how it gets fixed — restart it too.
+			stateInfo.State == tunnel.StateBroken
 	case s.legacyOperator != nil:
 		stateInfo := s.state.GetState(ctx, tunnelID)
 		wasKernelRunning = stateInfo.State == tunnel.StateRunning || stateInfo.State == tunnel.StateStarting

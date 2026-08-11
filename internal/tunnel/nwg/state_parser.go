@@ -52,10 +52,11 @@ func parseRCIInterfaceResponse(data []byte) (NWGState, error) {
 	}
 
 	state := NWGState{
-		Exists:    true,
-		ConfLayer: iface.Summary.Layer.Conf,
-		LinkUp:    iface.Link == "up",
-		Connected: connectedAt,
+		Exists:        true,
+		ConfLayer:     iface.Summary.Layer.Conf,
+		LinkUp:        iface.Link == "up",
+		Connected:     connectedAt,
+		LastHandshake: neverHandshake, // нет peer-блока = хендшейка не было
 	}
 
 	if iface.WireGuard != nil {

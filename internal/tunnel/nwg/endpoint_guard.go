@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -39,6 +42,56 @@ type guardEntry struct {
 	endpoint string // последний известный резолв, каноническая форма host:port
 	spec     string // endpoint из конфига (hostname:port или литерал) — для перерезолва DDNS
 	name     string // NDMS-имя для логов
+	// viaNDMS — доводить адрес не в ядро, а в конфиг NDMS. Так для
+	// hostname→v4: владелец конфига здесь NDMS, и он переписывает
+	// kernel-endpoint своим значением при каждом переприменении —
+	// wg set проиграл бы ему гонку.
+	viaNDMS bool
+	// viaKmod — доводить адрес пересборкой слота awg_proxy.ko. Так на
+	// proxy-прошивках: в конфиге NDMS там 127.0.0.1:<порт слота>, а
+	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
+	// wg set увёл бы трафик мимо прокси, без обфускации.
+	viaKmod bool
+	// warnedNoV4 — адрес, о непригодности которого для NDMS уже
+	// предупредили (см. viaNDMS-ветку guardSweep). Без этой памяти
+	// предупреждение печаталось бы каждые guardInterval.
+	warnedNoV4 string
+}
+
+// guardModeForEndpoint решает, как страж следит за endpoint'ом:
+// v6 — доводкой в ядро (NDMS его не принимает), hostname→v4 — доводкой в
+// конфиг NDMS (адрес за именем может смениться, а NDMS хранит литерал),
+// v4-литерал — никак, резолвить нечего.
+func guardModeForEndpoint(endpoint string, kernelV6 bool) (guard, viaNDMS bool) {
+	if kernelV6 {
+		return true, false
+	}
+	host, ok := splitEndpointHost(endpoint)
+	if !ok || net.ParseIP(host) != nil {
+		return false, false
+	}
+	return true, true
+}
+
+// guardSyncKmodEntry ставит (или снимает) kmod-запись стража по текущему
+// endpoint'у туннеля. Следим за РЕАЛЬНЫМ адресом сервера: 127.0.0.1:<порт
+// слота> — внутренняя деталь, её держит SyncKmodSlot. Звать только оттуда,
+// где слот только что собран или подтверждён живым: там регистрация не
+// гонится со Stop и не воскрешает запись остановленного туннеля.
+func (o *OperatorNativeWG) guardSyncKmodEntry(stored *storage.AWGTunnel, endpointIP string, endpointPort int) {
+	if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
+		o.guardUnregister(stored.ID)
+		return
+	}
+	names := NewNWGNames(stored.NWGIndex)
+	o.guardRegister(stored.ID, guardEntry{
+		iface:    names.IfaceName,
+		pubkey:   stored.Peer.PublicKey,
+		endpoint: net.JoinHostPort(endpointIP, strconv.Itoa(endpointPort)),
+		spec:     stored.Peer.Endpoint,
+		name:     names.NDMSName,
+		viaKmod:  true,
+	})
 }
 
 func (o *OperatorNativeWG) guardRegister(id string, e guardEntry) {
@@ -92,6 +145,21 @@ func (o *OperatorNativeWG) guardUpdateEndpoint(id, spec, endpoint string) {
 	defer o.guardMu.Unlock()
 	if e, ok := o.guard[id]; ok && e.spec == spec {
 		e.endpoint = endpoint
+		// Реестр встал на годный адрес — прошлое предупреждение о
+		// непригодном больше не актуально.
+		e.warnedNoV4 = ""
+		o.guard[id] = e
+	}
+}
+
+// guardMarkWarnedNoV4 запоминает адрес, о непригодности которого для NDMS уже
+// сказано в журнале. Условия те же, что у guardUpdateEndpoint: запись на месте
+// и spec не сменился.
+func (o *OperatorNativeWG) guardMarkWarnedNoV4(id, spec, endpoint string) {
+	o.guardMu.Lock()
+	defer o.guardMu.Unlock()
+	if e, ok := o.guard[id]; ok && e.spec == spec {
+		e.warnedNoV4 = endpoint
 		o.guard[id] = e
 	}
 }
@@ -116,10 +184,6 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 		return
 	}
 
-	bin := wgToolLookup()
-	if bin == "" {
-		return
-	}
 	for id, e := range entries {
 		// Hostname-spec (DDNS): перерезолвить — адрес мог смениться, а
 		// kernel WG сам за чужим DNS не следит. Анти-флап: endpoint
@@ -133,13 +197,93 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 				if splitErr != nil || !ipInList(curHost, ips) {
 					if _, port, perr := net.SplitHostPort(e.spec); perr == nil {
 						fresh := net.JoinHostPort(pickEndpointIP(ips), port)
-						o.appLog.Info("endpoint-guard", e.name,
-							fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, expected))
+						prev := expected // для лога: «был» обязан печатать старое
 						expected = fresh
-						o.guardUpdateEndpoint(id, e.spec, fresh)
+						if !e.viaNDMS && !e.viaKmod {
+							// Только чистый v6-режим: сверка идёт с
+							// фактическим wg show, поэтому реестр можно
+							// двигать сразу — упавший wg set повторится на
+							// следующем проходе. У viaNDMS и viaKmod
+							// readback'а нет, они сверяются с самим реестром:
+							// преждевременная запись навсегда увела бы их в
+							// `continue` после первой же неудачи.
+							o.appLog.Info("endpoint-guard", e.name,
+								fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, prev))
+							o.guardUpdateEndpoint(id, e.spec, fresh)
+						}
 					}
 				}
 			}
+		}
+		if e.viaNDMS {
+			// v4: адрес живёт в конфиге NDMS. Команду шлём только на
+			// смену резолва — иначе каждый проход переписывал бы конфиг.
+			if expected == e.endpoint {
+				continue
+			}
+			// NDMS не принимает IPv6 в peer-командах (шапка sync.go): если у
+			// имени пропала A-запись и остался только AAAA, слать нечего —
+			// Post отвалится, реестр не сдвинется, и так каждый проход.
+			// Предупреждаем один раз на адрес; вернётся A-запись — страж
+			// увидит смену и доведёт её как обычно.
+			if !endpointIsIPv4(expected) {
+				if e.warnedNoV4 != expected {
+					o.appLog.Warn("endpoint-guard", e.name,
+						fmt.Sprintf("%s резолвится только в IPv6 (%s) — NDMS такой endpoint не принимает, адрес не обновлён", e.spec, expected))
+					o.guardMarkWarnedNoV4(id, e.spec, expected)
+				}
+				continue
+			}
+			// Перепроверка перед записью — паритет с v6-веткой ниже.
+			// Гонка со Stop/Delete/SyncPeer здесь опаснее, чем там:
+			// wg set правит эфемерное состояние ядра, а это — конфиг
+			// NDMS, который переживёт и рестарт, и ребут.
+			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
+				continue
+			}
+			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(e.name, e.pubkey, expected)); err != nil {
+				o.appLog.Warn("endpoint-guard", e.name, "обновление endpoint в NDMS не удалось: "+err.Error())
+				continue
+			}
+			// Реестр двигаем только после успеха: иначе неудачный Post
+			// потерял бы смену адреса до перезапуска демона.
+			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.appLog.Info("endpoint-guard", e.name,
+				fmt.Sprintf("%s сменил адрес — в NDMS выставлен %s", e.spec, expected))
+			continue
+		}
+		if e.viaKmod {
+			// Proxy-путь: адресом владеет слот awg_proxy.ko, а в
+			// kernel-endpoint'е стоит 127.0.0.1:<порт слота>. Слот
+			// пересобирается только на смену резолва — операция рвёт
+			// соединение (новый listen-порт), впустую её гонять нельзя.
+			if expected == e.endpoint {
+				continue
+			}
+			if o.tunnelLookup == nil {
+				continue
+			}
+			// Перепроверка перед дорогой операцией — как в двух ветках выше.
+			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
+				continue
+			}
+			stored, lookupErr := o.tunnelLookup(id)
+			if lookupErr != nil || stored == nil {
+				o.appLog.Warn("endpoint-guard", e.name, "туннель не найден в хранилище — слот не пересобран")
+				continue
+			}
+			if err := o.SyncKmodSlot(ctx, stored); err != nil {
+				o.appLog.Warn("endpoint-guard", e.name, "пересборка kmod-слота не удалась: "+err.Error())
+				continue
+			}
+			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.appLog.Info("endpoint-guard", e.name,
+				fmt.Sprintf("%s сменил адрес — kmod-слот пересобран на %s", e.spec, expected))
+			continue
+		}
+		bin := wgToolLookup()
+		if bin == "" {
+			continue
 		}
 		out, err := wgToolOutput(ctx, bin, "show", e.iface, "endpoints")
 		if err != nil {
@@ -204,6 +348,16 @@ func ipInList(ip string, ips []string) bool {
 		}
 	}
 	return false
+}
+
+// endpointIsIPv4 — в endpoint'е «host:port» стоит IPv4-литерал.
+func endpointIsIPv4(endpoint string) bool {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() != nil
 }
 
 // pickEndpointIP выбирает адрес из полного резолва с тем же предпочтением

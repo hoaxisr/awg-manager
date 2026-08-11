@@ -17,6 +17,15 @@ import (
 // TunnelStatus.LatencyNote.
 const LatencyNotAvailable = -1
 
+// Escalation: NDMS restarts the interface on its own, but its restart brings
+// the tunnel back up with the very same config. When that does not help
+// nwgEscalateAfter times in a row, we do what the user does by hand — a full
+// Stop+Start through the tunnel service (#702).
+const (
+	nwgEscalateAfter   = 3
+	nwgEscalateBackoff = 15 * time.Minute
+)
+
 // nwgPollSource abstracts NDMS polling for testability.
 type nwgPollSource interface {
 	PollPingCheck(ctx context.Context, tunnelID string) (*ndms.PingCheckProfileStatus, error)
@@ -39,12 +48,12 @@ type nwgMonitor struct {
 	wg        sync.WaitGroup
 
 	// Previous snapshot for delta calculation.
-	initialized  bool
-	prevFail     int
-	prevSuccess  int
-	prevStatus   string
-	prevBound    bool
-	lastLatency  int
+	initialized bool
+	prevFail    int
+	prevSuccess int
+	prevStatus  string
+	prevBound   bool
+	lastLatency int
 	// lastLatencyNote explains an absent measurement; empty when measured.
 	lastLatencyNote string
 	startupPhase    bool
@@ -53,6 +62,53 @@ type nwgMonitor struct {
 	// the tunnel interface (counters reset after failure). Cleared on first
 	// successful check after restart.
 	restartDetected bool
+
+	// restarter performs a full tunnel restart (Stop+Start through the
+	// tunnel service). nil when escalation is not wired.
+	restarter func(context.Context, string) error
+	// allowRestart mirrors stored.PingCheck.Restart — the user allowed us
+	// to touch the tunnel.
+	allowRestart bool
+	// onFruitlessRestart reports an NDMS restart with no successful check
+	// since the previous one and returns the length of the series.
+	// onCheckSuccess resets it. Both live in the Facade: our own restart
+	// recreates the monitor, so this state must NOT be a monitor field.
+	onFruitlessRestart func(tunnelID string) int
+	onCheckSuccess     func(tunnelID string)
+	// canEscalate is the Facade's backoff gate; on approval it records the
+	// time itself.
+	canEscalate func(tunnelID string) bool
+}
+
+// maybeEscalate restarts the whole tunnel when consecutive NDMS restarts
+// produced no successful check at all. The backoff is held by the Facade —
+// the state must survive monitor recreation caused by our own restart.
+func (m *nwgMonitor) maybeEscalate(series int) {
+	if !m.allowRestart || m.restarter == nil || m.canEscalate == nil {
+		return
+	}
+	if series < nwgEscalateAfter {
+		return
+	}
+	if !m.canEscalate(m.tunnelID) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := m.restarter(ctx, m.tunnelID); err != nil {
+			m.logBuffer.Add(LogEntry{
+				Timestamp: time.Now(), TunnelID: m.tunnelID, TunnelName: m.tunnelName,
+				Backend: "nativewg", Success: false, StateChange: "restart_failed",
+				Error: err.Error(),
+			})
+			return
+		}
+		m.logBuffer.Add(LogEntry{
+			Timestamp: time.Now(), TunnelID: m.tunnelID, TunnelName: m.tunnelName,
+			Backend: "nativewg", Success: true, StateChange: "escalated_restart",
+		})
+	}()
 }
 
 // publishLog publishes a log entry as an SSE event.
@@ -146,10 +202,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 
 		if countersZeroed && (boundTransition || counterReset) {
 			m.restartDetected = true
+			series := 0
+			if m.onFruitlessRestart != nil {
+				series = m.onFruitlessRestart(m.tunnelID)
+			}
+			m.maybeEscalate(series)
 		}
 		// Clear restart flag once NDMS reports first success after restart.
 		if m.restartDetected && successCount > 0 {
 			m.restartDetected = false
+			if m.onCheckSuccess != nil {
+				m.onCheckSuccess(m.tunnelID)
+			}
 		}
 	}
 
@@ -162,6 +226,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	successDelta := successCount - m.prevSuccess
 	if successDelta < 0 {
 		successDelta = successCount
+	}
+
+	// Any fresh successful check clears the fruitless-restart series, even
+	// when restartDetected is false: the series lives in the Facade and
+	// survives monitor recreation, while restartDetected does not. Without
+	// this, a monitor recreated between the NDMS restart and the recovery
+	// (settings save, manual restart) would leave a stale series behind and
+	// escalate one restart too early (#702). Must key off the delta, not the
+	// raw successCount — that one keeps a stale non-zero value throughout a
+	// failure streak.
+	if successDelta > 0 && m.onCheckSuccess != nil {
+		m.onCheckSuccess(m.tunnelID)
 	}
 
 	// NDMS can report a transient startup mix where, in one poll window,
