@@ -449,6 +449,7 @@
 	{:else}
 		<ProxyInstanceStatusBar
 			{running}
+			enabled={server.enabled ?? false}
 			meta={`listen :${listenPort}`}
 			{saving}
 			{starting}
