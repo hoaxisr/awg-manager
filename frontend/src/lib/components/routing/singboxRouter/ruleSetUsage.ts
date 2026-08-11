@@ -4,7 +4,9 @@
 // skip the rule being edited (otherwise its own rule_set would be counted
 // against itself).
 
-type WithRuleSet = { rule_set?: string[] };
+import { ruleSetTagsOf } from '$lib/utils/routerRuleShape';
+
+type WithRuleSet = { rule_set?: string[]; rules?: WithRuleSet[] };
 
 export function computeRuleSetUsage<T extends WithRuleSet>(
 	rules: readonly T[],
@@ -13,8 +15,7 @@ export function computeRuleSetUsage<T extends WithRuleSet>(
 	const m = new Map<string, number>();
 	for (let i = 0; i < rules.length; i++) {
 		if (i === excludeIndex) continue;
-		const tags = rules[i].rule_set;
-		if (!tags) continue;
+		const tags = ruleSetTagsOf(rules[i]);
 		for (const tag of tags) {
 			m.set(tag, (m.get(tag) ?? 0) + 1);
 		}

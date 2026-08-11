@@ -10,6 +10,7 @@
 		type SegmentedOption,
 	} from '$lib/components/ui';
 	import type { SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
+	import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 	import type { OutboundGroup } from './outboundOptions';
 
 	interface Props {
@@ -45,6 +46,12 @@
 		onSave,
 	}: Props = $props();
 
+	// Правило «пресет ИЛИ свои адреса» хранится логической формой — редактор
+	// работает с её плоским видом, иначе поля откроются пустыми и сохранение
+	// сотрёт содержимое веток.
+	const flat = (r: SingboxRouterRule | undefined): SingboxRouterRule | undefined =>
+		r ? flattenRouterRule(r) : undefined;
+
 	const outboundDropdownOptions = $derived<DropdownOption[]>([
 		{ value: '', label: '— выберите —' },
 		...outboundOptions.flatMap((g) =>
@@ -53,13 +60,13 @@
 	]);
 
 	// svelte-ignore state_referenced_locally
-	let domainSuffixStr = $state((rule?.domain_suffix ?? []).join('\n'));
+	let domainSuffixStr = $state((flat(rule)?.domain_suffix ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let ipCidrStr = $state((rule?.ip_cidr ?? []).join('\n'));
+	let ipCidrStr = $state((flat(rule)?.ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let sourceIpCidrStr = $state((rule?.source_ip_cidr ?? []).join('\n'));
+	let sourceIpCidrStr = $state((flat(rule)?.source_ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
-	let ruleSetTags = $state<string[]>(rule?.rule_set ?? initialRuleSetTags ?? []);
+	let ruleSetTags = $state<string[]>(flat(rule)?.rule_set ?? initialRuleSetTags ?? []);
 	const ruleSetOptions = $derived<ChipOption[]>(
 		availableRuleSets.map((rs) => ({
 			value: rs.tag,
@@ -68,13 +75,15 @@
 		})),
 	);
 	// svelte-ignore state_referenced_locally
-	let portStr = $state((rule?.port ?? []).join(', '));
+	let portStr = $state((flat(rule)?.port ?? []).join(', '));
 	// L4 matcher: empty = any (omit from JSON). Expert-only; simple mode treats
 	// network as a complex field and won't open this editor for such rules.
 	type NetworkFilter = '' | 'tcp' | 'udp';
 	// svelte-ignore state_referenced_locally
 	let network = $state<NetworkFilter>(
-		rule?.network === 'tcp' || rule?.network === 'udp' ? rule.network : '',
+		flat(rule)?.network === 'tcp' || flat(rule)?.network === 'udp'
+			? (flat(rule)!.network as NetworkFilter)
+			: '',
 	);
 
 	// svelte-ignore state_referenced_locally
@@ -108,15 +117,16 @@
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
-		if (rule) {
-			initialDomainSuffixStr = (rule.domain_suffix ?? []).join('\n');
-			initialIpCidrStr = (rule.ip_cidr ?? []).join('\n');
-			initialSourceIpCidrStr = (rule.source_ip_cidr ?? []).join('\n');
-			initialRuleSetTagsSnapshot = [...(rule.rule_set ?? [])];
-			initialPortStr = (rule.port ?? []).join(', ');
-			initialNetwork = rule.network === 'tcp' || rule.network === 'udp' ? rule.network : '';
-			initialAction = rule.action === 'reject' ? 'reject' : 'route';
-			initialOutbound = rule.outbound ?? '';
+		const src = flat(rule);
+		if (src) {
+			initialDomainSuffixStr = (src.domain_suffix ?? []).join('\n');
+			initialIpCidrStr = (src.ip_cidr ?? []).join('\n');
+			initialSourceIpCidrStr = (src.source_ip_cidr ?? []).join('\n');
+			initialRuleSetTagsSnapshot = [...(src.rule_set ?? [])];
+			initialPortStr = (src.port ?? []).join(', ');
+			initialNetwork = src.network === 'tcp' || src.network === 'udp' ? src.network : '';
+			initialAction = src.action === 'reject' ? 'reject' : 'route';
+			initialOutbound = src.outbound ?? '';
 		} else {
 			initialDomainSuffixStr = '';
 			initialIpCidrStr = '';
@@ -180,16 +190,23 @@
 				return;
 			}
 
+			const src = flat(rule);
+			// Точные домены редактор не показывает — переносим как есть, иначе
+			// пересборка правила молча их выбросит.
+			const domain = src?.domain?.length ? src.domain : undefined;
+
 			let built: SingboxRouterRule;
-			if (matchersOnly && rule) {
+			if (matchersOnly && src) {
 				built = {
+					domain,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
-					action: rule.action === 'reject' ? 'reject' : 'route',
-					outbound: rule.action === 'reject' ? undefined : rule.outbound,
+					action: src.action === 'reject' ? 'reject' : 'route',
+					outbound: src.action === 'reject' ? undefined : src.outbound,
 				};
 			} else {
 				built = {
+					domain,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
 					source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,
@@ -268,7 +285,8 @@
 					allowOrphans
 				/>
 				<div class="hint">
-					Готовые наборы (geosite/geoip). Для своих доменов и подсетей используйте поля выше.
+					Готовые наборы (geosite/geoip). Для своих доменов и подсетей используйте поля выше —
+					правило сработает по набору <b>или</b> по вашим адресам.
 				</div>
 			</div>
 

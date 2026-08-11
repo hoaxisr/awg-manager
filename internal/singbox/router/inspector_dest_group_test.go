@@ -1,0 +1,171 @@
+package router
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// Оракул issue #699. sing-box кладёт domain*/ip_cidr одного правила в общую
+// группу «адрес назначения» и OR-ит их внутри группы (route/rule/
+// rule_abstract.go:evaluateGroups в форке 1.14) — инспектор обязан это
+// повторять, иначе он объявляет рабочее правило нерабочим.
+func TestInspect_DestinationAddressGroupIsOR(t *testing.T) {
+	rules := []Rule{
+		{DomainSuffix: []string{"google.com"}, IPCIDR: []string{"8.8.8.0/24"}, Action: "route", Outbound: "vpn"},
+	}
+
+	byDomain := Inspect(InspectInput{Domain: "google.com"}, rules, nil, "direct", "", nil)
+	if byDomain.Destination != "vpn" || byDomain.MatchedRule != 0 {
+		t.Errorf("домен при непопадающем ip_cidr: dest=%q matched=%d, want vpn/0",
+			byDomain.Destination, byDomain.MatchedRule)
+	}
+
+	byIP := Inspect(InspectInput{Domain: "8.8.8.8"}, rules, nil, "direct", "", nil)
+	if byIP.Destination != "vpn" || byIP.MatchedRule != 0 {
+		t.Errorf("IP при непопадающем domain_suffix: dest=%q matched=%d, want vpn/0",
+			byIP.Destination, byIP.MatchedRule)
+	}
+
+	neither := Inspect(InspectInput{Domain: "example.org"}, rules, nil, "direct", "", nil)
+	if neither.Destination != "direct" || neither.MatchedRule != -1 {
+		t.Errorf("ни домен, ни IP: dest=%q matched=%d, want direct/-1",
+			neither.Destination, neither.MatchedRule)
+	}
+}
+
+// Матчеры вне группы адреса назначения (port/protocol) остаются AND —
+// OR не должен расползтись на всё правило.
+func TestInspect_NonAddressMatchersStayAND(t *testing.T) {
+	rules := []Rule{
+		{DomainSuffix: []string{"google.com"}, IPCIDR: []string{"8.8.8.0/24"}, Port: []int{443},
+			Action: "route", Outbound: "vpn"},
+	}
+
+	noPort := Inspect(InspectInput{Domain: "google.com"}, rules, nil, "direct", "", nil)
+	if noPort.MatchedRule != -1 {
+		t.Errorf("порт задан в правиле, но не во вводе: matched=%d, want -1", noPort.MatchedRule)
+	}
+
+	withPort := Inspect(InspectInput{Domain: "google.com", Port: 443}, rules, nil, "direct", "", nil)
+	if withPort.MatchedRule != 0 {
+		t.Errorf("домен+порт совпали: matched=%d, want 0", withPort.MatchedRule)
+	}
+
+	wrongPort := Inspect(InspectInput{Domain: "google.com", Port: 80}, rules, nil, "direct", "", nil)
+	if wrongPort.MatchedRule != -1 {
+		t.Errorf("порт не совпал: matched=%d, want -1", wrongPort.MatchedRule)
+	}
+}
+
+// Точный `domain` инспектор раньше не вычислял вовсе — правило с одним лишь
+// этим матчером считалось пустым и пропускалось.
+func TestInspect_ExactDomainMatcher(t *testing.T) {
+	rules := []Rule{
+		{Domain: []string{"google.com"}, Action: "route", Outbound: "vpn"},
+	}
+
+	exact := Inspect(InspectInput{Domain: "google.com"}, rules, nil, "direct", "", nil)
+	if exact.Destination != "vpn" || exact.MatchedRule != 0 {
+		t.Errorf("точный домен: dest=%q matched=%d, want vpn/0", exact.Destination, exact.MatchedRule)
+	}
+
+	sub := Inspect(InspectInput{Domain: "mail.google.com"}, rules, nil, "direct", "", nil)
+	if sub.MatchedRule != -1 {
+		t.Errorf("поддомен не обязан совпадать с точным domain: matched=%d, want -1", sub.MatchedRule)
+	}
+}
+
+// Логические правила — основная форма после нормализации «пресет + свои
+// адреса». Инспектор обязан их разбирать, иначе он видит «пустое правило».
+func TestInspect_LogicalRules(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "list.srs")
+	if err := os.WriteFile(tmp, []byte("x"), 0644); err != nil {
+		t.Fatalf("write tmp: %v", err)
+	}
+	origExec := ruleSetMatchExec
+	ruleSetMatchExec = func(_ string, args []string) (string, string, error) {
+		if len(args) > 0 && args[len(args)-1] == "google.com" {
+			return "", "match rules.\n", nil
+		}
+		return "", "", &fakeExitErr{}
+	}
+	defer func() { ruleSetMatchExec = origExec }()
+
+	ruleSets := []RuleSet{{Tag: "geosite-google", Type: "local", Path: tmp, Format: "binary"}}
+	orRule := []Rule{{
+		Type: "logical", Mode: "or",
+		Rules: []Rule{
+			{RuleSet: []string{"geosite-google"}},
+			{IPCIDR: []string{"66.22.192.0/18"}},
+		},
+		Action: "route", Outbound: "vpn",
+	}}
+
+	bySet := Inspect(InspectInput{Domain: "google.com"}, orRule, ruleSets, "direct", "/usr/bin/sing-box", nil)
+	if bySet.Destination != "vpn" || bySet.MatchedRule != 0 {
+		t.Errorf("ветка rule_set: dest=%q matched=%d, want vpn/0", bySet.Destination, bySet.MatchedRule)
+	}
+
+	byCIDR := Inspect(InspectInput{Domain: "66.22.200.1"}, orRule, ruleSets, "direct", "/usr/bin/sing-box", nil)
+	if byCIDR.Destination != "vpn" || byCIDR.MatchedRule != 0 {
+		t.Errorf("ветка ip_cidr: dest=%q matched=%d, want vpn/0", byCIDR.Destination, byCIDR.MatchedRule)
+	}
+
+	none := Inspect(InspectInput{Domain: "1.2.3.4"}, orRule, ruleSets, "direct", "/usr/bin/sing-box", nil)
+	if none.MatchedRule != -1 {
+		t.Errorf("ни одна ветка: matched=%d, want -1", none.MatchedRule)
+	}
+
+	andRule := []Rule{{
+		Type: "logical", Mode: "and",
+		Rules: []Rule{
+			{DomainSuffix: []string{"google.com"}},
+			{Port: []int{443}},
+		},
+		Action: "route", Outbound: "vpn",
+	}}
+	bothHit := Inspect(InspectInput{Domain: "google.com", Port: 443}, andRule, nil, "direct", "", nil)
+	if bothHit.MatchedRule != 0 {
+		t.Errorf("mode=and, обе ветки: matched=%d, want 0", bothHit.MatchedRule)
+	}
+	oneHit := Inspect(InspectInput{Domain: "google.com", Port: 80}, andRule, nil, "direct", "", nil)
+	if oneHit.MatchedRule != -1 {
+		t.Errorf("mode=and, одна ветка: matched=%d, want -1", oneHit.MatchedRule)
+	}
+}
+
+// Не нормализованное (импортированное или досталось от старой версии) плоское
+// правило «rule_set + свои адреса» инспектор показывает так же, как выглядит
+// его нормализованная форма — OR внутри группы адреса назначения.
+func TestInspect_FlatRuleSetWithOwnAddressesIsOR(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "list.srs")
+	if err := os.WriteFile(tmp, []byte("x"), 0644); err != nil {
+		t.Fatalf("write tmp: %v", err)
+	}
+	origExec := ruleSetMatchExec
+	ruleSetMatchExec = func(_ string, args []string) (string, string, error) {
+		if len(args) > 0 && args[len(args)-1] == "google.com" {
+			return "", "match rules.\n", nil
+		}
+		return "", "", &fakeExitErr{}
+	}
+	defer func() { ruleSetMatchExec = origExec }()
+
+	ruleSets := []RuleSet{{Tag: "geosite-google", Type: "local", Path: tmp, Format: "binary"}}
+	rules := []Rule{{
+		RuleSet: []string{"geosite-google"},
+		IPCIDR:  []string{"66.22.192.0/18"},
+		Action:  "route", Outbound: "vpn",
+	}}
+
+	bySet := Inspect(InspectInput{Domain: "google.com"}, rules, ruleSets, "direct", "/usr/bin/sing-box", nil)
+	if bySet.MatchedRule != 0 {
+		t.Errorf("набор совпал, свой CIDR нет: matched=%d, want 0", bySet.MatchedRule)
+	}
+
+	byCIDR := Inspect(InspectInput{Domain: "66.22.200.1"}, rules, ruleSets, "direct", "/usr/bin/sing-box", nil)
+	if byCIDR.MatchedRule != 0 {
+		t.Errorf("свой CIDR совпал, набор нет: matched=%d, want 0", byCIDR.MatchedRule)
+	}
+}

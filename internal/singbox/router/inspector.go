@@ -80,24 +80,29 @@ type inspectEnv struct {
 // against the input, and returns a result describing both the per-rule
 // decisions and the final destination outbound.
 //
-// Matcher semantics (AND across present matchers, mirroring sing-box):
-//   - DomainSuffix: input must be a domain; matches if any suffix is a
-//     tail of the input (case-insensitive).
-//   - IPCIDR: input must be an IP; matches if any CIDR contains it.
-//     Bare IPs (without /mask) are treated as /32 or /128 equivalents.
-//   - Port: matches if input.Port is in the list. When input.Port==0 we
-//     skip the matcher and record it as not evaluated — that is a
-//     "no input given" signal, not a match.
+// Matcher semantics mirror sing-box: matchers are grouped, groups are
+// ANDed, members of a group are ORed (route/rule/rule_abstract.go).
+//   - destination address group — Domain, DomainSuffix, IPCIDR, and a
+//     RuleSet standing next to any of them. Domain matches the input
+//     exactly, DomainSuffix matches it as a tail (both case-insensitive,
+//     domain input only); IPCIDR matches an IP input, bare IPs counting
+//     as /32 or /128. ANY member hitting satisfies the group — a rule
+//     listing both own domains and own subnets matches by either.
+//   - RuleSet as the rule's ONLY address matcher stays a condition of its
+//     own. `rule_set: [a, b]` is OR — any one of the listed sets matching
+//     makes it TRUE. The match itself is delegated to `sing-box rule-set
+//     match` shelled out via singboxBinary; when the binary is missing or
+//     the rule-set file cannot be obtained the matcher degrades to
+//     no-match and a note is appended so the user is not silently misled.
+//   - Port: its own group. Matches if input.Port is in the list. When
+//     input.Port==0 we skip the matcher and record it as not evaluated —
+//     that is a "no input given" signal, not a match.
 //   - Protocol: matches if equal to input.Protocol (case-insensitive).
 //     Empty input.Protocol skips the matcher.
-//   - RuleSet: a rule's `rule_set: [a, b]` is OR — any one of the listed
-//     rule sets matching makes the matcher TRUE. We delegate the actual
-//     match to `sing-box rule-set match` shelled out via singboxBinary.
-//     When the binary is missing or the rule-set file cannot be obtained
-//     the matcher degrades to no-match and a note is appended to the
-//     result so the user is not silently misled.
 //   - SourceIPCIDR: skipped (irrelevant for this inspector — there is no
 //     "source IP" in a manual probe).
+//   - logical rules (`type:"logical"`) recurse: every branch is evaluated
+//     and the results combined by Mode ("and" / "or").
 //
 // First terminal match (action == "route" with non-empty Outbound, or
 // action == "reject") wins. Non-terminal actions ("sniff", "hijack-dns")
@@ -241,6 +246,55 @@ func InspectWithProgress(input InspectInput, rules []Rule, ruleSets []RuleSet, f
 // is defensively treated as no-match — it would otherwise sweep every
 // query into a "match" bucket and confuse the UI.
 func evaluateRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEnv, emit InspectProgressFunc, ruleIndex, ruleTotal int) RuleMatchResult {
+	if rule.Type == "logical" {
+		return evaluateLogicalRule(input, parsedIP, rule, env, emit, ruleIndex, ruleTotal)
+	}
+	return evaluateDefaultRule(input, parsedIP, rule, env, emit, ruleIndex, ruleTotal)
+}
+
+// evaluateLogicalRule mirrors sing-box's abstractLogicalRule.Match: every
+// nested rule is evaluated against a private copy of the request and the
+// results are combined by Mode. Unlike sing-box we do NOT short-circuit —
+// the inspector's job is to explain every branch, not to be fast.
+func evaluateLogicalRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEnv, emit InspectProgressFunc, ruleIndex, ruleTotal int) RuleMatchResult {
+	out := RuleMatchResult{Action: rule.Action, Outbound: rule.Outbound}
+	if rule.Mode != "and" && rule.Mode != "or" {
+		out.Reason = fmt.Sprintf("логическое правило с непонятным mode %q — пропущено", rule.Mode)
+		return out
+	}
+	if len(rule.Rules) == 0 {
+		out.Reason = "логическое правило без веток — пропущено"
+		return out
+	}
+	matched := rule.Mode == "and"
+	var hits []string
+	for i, nested := range rule.Rules {
+		sub := evaluateRule(input, parsedIP, nested, env, emit, ruleIndex, ruleTotal)
+		for _, c := range sub.Conditions {
+			out.Conditions = append(out.Conditions, fmt.Sprintf("ветка %d: %s", i+1, c))
+		}
+		if sub.Matched {
+			hits = append(hits, fmt.Sprintf("%d", i+1))
+		}
+		if rule.Mode == "and" {
+			matched = matched && sub.Matched
+		} else {
+			matched = matched || sub.Matched
+		}
+	}
+	out.Matched = matched
+	switch {
+	case !matched:
+		out.Reason = "нет совпадения"
+	case rule.Mode == "and":
+		out.Reason = "совпали все ветки"
+	default:
+		out.Reason = "совпало по ветке: " + strings.Join(hits, ", ")
+	}
+	return out
+}
+
+func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEnv, emit InspectProgressFunc, ruleIndex, ruleTotal int) RuleMatchResult {
 	out := RuleMatchResult{
 		Action:   rule.Action,
 		Outbound: rule.Outbound,
@@ -260,7 +314,11 @@ func evaluateRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEn
 		out.Conditions = append(out.Conditions, fmt.Sprintf("inbound: %s (пропущено — вход недоступен для ручной проверки)", strings.Join(rule.Inbound, ", ")))
 	}
 
-	// Track each matcher's outcome. AND across present matchers.
+	// Track each matcher's outcome. Groups are ANDed between themselves;
+	// inside the destination-address group (domain / domain_suffix /
+	// ip_cidr) sing-box ORs the members — see evaluateGroups in the fork's
+	// route/rule/rule_abstract.go. A flat AND here would report a working
+	// rule as dead (issue #699).
 	type partial struct{ present, hit bool }
 	var (
 		domainPart   partial
@@ -336,16 +394,30 @@ func evaluateRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEn
 		}
 	}
 
-	// DomainSuffix
-	if len(rule.DomainSuffix) > 0 {
+	// Domain (exact) and DomainSuffix — one matcher in sing-box
+	// (NewDomainItem takes both lists), so one entry here too.
+	if len(rule.Domain) > 0 || len(rule.DomainSuffix) > 0 {
 		domainPart.present = true
-		out.Conditions = append(out.Conditions, fmt.Sprintf("domain_suffix: [%s]", strings.Join(rule.DomainSuffix, ", ")))
+		if len(rule.Domain) > 0 {
+			out.Conditions = append(out.Conditions, fmt.Sprintf("domain: [%s]", strings.Join(rule.Domain, ", ")))
+		}
+		if len(rule.DomainSuffix) > 0 {
+			out.Conditions = append(out.Conditions, fmt.Sprintf("domain_suffix: [%s]", strings.Join(rule.DomainSuffix, ", ")))
+		}
 		if parsedIP == nil {
 			lower := strings.ToLower(input.Domain)
-			for _, suffix := range rule.DomainSuffix {
-				if matchesDomainSuffix(lower, suffix) {
+			for _, d := range rule.Domain {
+				if lower == strings.ToLower(strings.TrimSpace(d)) {
 					domainPart.hit = true
 					break
+				}
+			}
+			for _, suffix := range rule.DomainSuffix {
+				if domainPart.hit {
+					break
+				}
+				if matchesDomainSuffix(lower, suffix) {
+					domainPart.hit = true
 				}
 			}
 		}
@@ -395,21 +467,34 @@ func evaluateRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEn
 		}
 	}
 
+	// Destination-address group: domain* and ip_cidr are OR-ed. A rule_set
+	// standing next to the rule's OWN address matchers joins that group —
+	// such a rule is stored as logical(or) after normalization, and a flat
+	// one (imported, or written before the normalization existed) must read
+	// the same way so the inspector never contradicts the applied config.
+	// A rule_set that is the rule's ONLY address matcher stays an
+	// independent condition.
+	addr := partial{
+		present: domainPart.present || ipPart.present,
+		hit:     domainPart.hit || ipPart.hit,
+	}
+	if addr.present && ruleSetPart.present {
+		addr.hit = addr.hit || ruleSetPart.hit
+		ruleSetPart.present = false
+	}
+
 	// Determine match: at least one matcher present, AND every present
-	// matcher must hit (or, for Port without input, be permissively
+	// group must hit (or, for Port without input, be permissively
 	// skipped — we explicitly do NOT count an unverifiable matcher as
 	// a hit, so an unverified port keeps the rule as no-match).
-	anyPresent := domainPart.present || ipPart.present || portPart.present || protocolPart.present || ruleSetPart.present
+	anyPresent := addr.present || portPart.present || protocolPart.present || ruleSetPart.present
 	if !anyPresent {
 		out.Reason = "пустое правило — пропущено"
 		return out
 	}
 
 	matched := true
-	if domainPart.present && !domainPart.hit {
-		matched = false
-	}
-	if ipPart.present && !ipPart.hit {
+	if addr.present && !addr.hit {
 		matched = false
 	}
 	if portPart.present && !portPart.hit {
@@ -426,7 +511,7 @@ func evaluateRule(input InspectInput, parsedIP net.IP, rule Rule, env *inspectEn
 	if matched {
 		var hits []string
 		if domainPart.hit {
-			hits = append(hits, "domain_suffix")
+			hits = append(hits, "domain")
 		}
 		if ipPart.hit {
 			hits = append(hits, "ip_cidr")

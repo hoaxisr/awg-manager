@@ -187,6 +187,28 @@ type ruleSetRefIndices struct {
 	dns   []int
 }
 
+// ruleSetTagsInRule collects every rule_set tag the rule references, including
+// the ones sitting in nested logical branches (normalizeAddressOrRule puts them
+// there). Readers that only look at the top-level RuleSet field go blind on a
+// normalized rule — the set then looks orphaned to the issue detector, its
+// artifacts look unreferenced to the GC, and deleting it is not blocked.
+func ruleSetTagsInRule(r Rule, out []string) []string {
+	out = append(out, r.RuleSet...)
+	for _, nested := range r.Rules {
+		out = ruleSetTagsInRule(nested, out)
+	}
+	return out
+}
+
+func ruleReferencesAnyRuleSet(r Rule, want map[string]struct{}) bool {
+	for _, tag := range ruleSetTagsInRule(r, nil) {
+		if _, ok := want[tag]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices {
 	want := make(map[string]struct{}, len(tags))
 	for _, t := range tags {
@@ -194,11 +216,8 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 	}
 	var out ruleSetRefIndices
 	for i, r := range c.Route.Rules {
-		for _, rsTag := range r.RuleSet {
-			if _, ok := want[rsTag]; ok {
-				out.route = append(out.route, i)
-				break
-			}
+		if ruleReferencesAnyRuleSet(r, want) {
+			out.route = append(out.route, i)
 		}
 	}
 	for i, r := range c.DNS.Rules {
@@ -212,6 +231,60 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 	return out
 }
 
+// normalizeAddressOrRule rewrites a flat rule that mixes a rule_set with the
+// rule's OWN destination-address matchers (domain / domain_suffix / ip_cidr)
+// into an explicit `logical(or)`.
+//
+// Why: sing-box folds a rule_set into the referencing rule's destination-address
+// group ONLY when the set holds exactly one destination-only rule (mergeableRuleIn,
+// route/rule/rule_item_rule_set.go). Any other set — and four of the presets we
+// ship are exactly that, discord-full/telegram/roblox/whatsapp carry two rules —
+// is matched separately and only after the rule's own matchers already hit, i.e.
+// as an AND. A rule reading "preset OR my subnets" then matches almost nothing:
+// a domain from the preset fails the ip_cidr half, an IP from the subnets fails
+// the preset half (issue #699).
+//
+// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr,
+// ip_is_private) keep their AND meaning: they move into a sibling branch of an
+// outer `logical(and)`. Action/outbound stay on the outer rule — nested branches
+// carry matchers only.
+//
+// Idempotent: an already-logical rule is returned untouched.
+func normalizeAddressOrRule(r Rule) Rule {
+	if r.Type != "" || len(r.RuleSet) == 0 {
+		return r
+	}
+	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 {
+		return r
+	}
+
+	addressOr := Rule{Type: "logical", Mode: "or", Rules: []Rule{
+		{RuleSet: r.RuleSet},
+		{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR},
+	}}
+
+	narrowing := Rule{
+		SourceIPCIDR: r.SourceIPCIDR,
+		Port:         r.Port,
+		Protocol:     r.Protocol,
+		Inbound:      r.Inbound,
+		Network:      r.Network,
+		IPIsPrivate:  r.IPIsPrivate,
+	}
+
+	out := r
+	out.RuleSet, out.Domain, out.DomainSuffix, out.IPCIDR = nil, nil, nil, nil
+	out.SourceIPCIDR, out.Port, out.Protocol, out.Inbound = nil, nil, "", nil
+	out.Network, out.IPIsPrivate = "", nil
+	out.Type, out.Mode = "logical", "or"
+	out.Rules = addressOr.Rules
+	if narrowing.hasAnyMatcher() {
+		out.Mode = "and"
+		out.Rules = []Rule{narrowing, addressOr}
+	}
+	return out
+}
+
 func (c *RouterConfig) AddRule(r Rule) error {
 	if !r.hasAnyMatcher() && r.Action != "sniff" && r.Action != "hijack-dns" {
 		return ErrInvalidMatchers
@@ -219,7 +292,7 @@ func (c *RouterConfig) AddRule(r Rule) error {
 	if err := validateRule(r); err != nil {
 		return err
 	}
-	c.Route.Rules = append(c.Route.Rules, r)
+	c.Route.Rules = append(c.Route.Rules, normalizeAddressOrRule(r))
 	return nil
 }
 
@@ -233,7 +306,7 @@ func (c *RouterConfig) UpdateRule(index int, r Rule) error {
 	if err := validateRule(r); err != nil {
 		return err
 	}
-	c.Route.Rules[index] = r
+	c.Route.Rules[index] = normalizeAddressOrRule(r)
 	return nil
 }
 
@@ -832,7 +905,8 @@ func isProxyIface(name string) bool {
 }
 
 func (r Rule) hasAnyMatcher() bool {
-	return len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 || len(r.SourceIPCIDR) > 0 ||
+	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 ||
+		len(r.SourceIPCIDR) > 0 ||
 		len(r.Port) > 0 || len(r.RuleSet) > 0 || r.Protocol != "" || len(r.Rules) > 0 ||
 		r.IPIsPrivate != nil || len(r.Inbound) > 0 || r.Network != ""
 }
