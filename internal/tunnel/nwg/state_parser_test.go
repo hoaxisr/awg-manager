@@ -134,6 +134,11 @@ func TestParseRCIResponse_NoPeers(t *testing.T) {
 	if state.PeerOnline {
 		t.Error("expected PeerOnline=false with no peers")
 	}
+	// Нет peer-блока — значит хендшейка не было ни разу: ноль прочитался бы
+	// как «хендшейк только что» и спрятал бы залипший туннель (#702).
+	if state.LastHandshake != neverHandshake {
+		t.Errorf("LastHandshake = %d, want %d (never)", state.LastHandshake, neverHandshake)
+	}
 }
 
 func TestParseRCIResponse_NoWireguardSection(t *testing.T) {

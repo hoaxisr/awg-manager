@@ -48,8 +48,7 @@ func QoSClassPorts(slot int) (tproxyPort, redirectPort int) {
 // shadowed or confused by hand-written lookalike rules. No persisted
 // `awgm_managed` marker anywhere: both 18-qos-routes.json and 20-router.json
 // are parsed by sing-box itself (config.d merge), and sing-box rejects
-// unknown rule fields — the selective-ip feature already learned that the
-// hard way (selectiveRoutesSlotNeedsHeal).
+// unknown rule fields.
 const (
 	qosTProxyTagPrefix   = "tproxy-qos-"
 	qosRedirectTagPrefix = "redirect-qos-"
@@ -132,10 +131,12 @@ func qosIPTablesSpecs(classes []qosClass) []QoSClassSpec {
 // ensureQoSInbounds convergent-syncs the per-class inbound pairs: every
 // active class gets a canonical tproxy (UDP) + redirect (TCP) inbound and
 // every stale qos-* inbound (class removed/disabled, port drifted) is
-// dropped. Mirrors ensureTProxyInbound's canonical shapes: 0.0.0.0 listen
-// (REDIRECT rewrites the packet destination to the LAN-bridge IP, a loopback
-// listener would RST), UDP-only tproxy with udp_fragment + the same effective
-// UDP timeout as tproxy-in, TCP redirect with tcp_fast_open. Rebuild instead
+// dropped. Mirrors ensureTProxyInbound's canonical shapes — tproxy on
+// 127.0.0.1 (TPROXY --on-ip; wildcard bind self-loops UDP, issue #689),
+// redirect on 0.0.0.0 (REDIRECT rewrites the packet destination to the
+// LAN-bridge IP, a loopback listener would RST) — UDP-only tproxy with
+// udp_fragment + the same effective UDP timeout as tproxy-in, TCP redirect
+// with tcp_fast_open. Rebuild instead
 // of patch-in-place: the whole spec is derived, so "drop all qos inbounds,
 // append the canonical list" is the simplest convergent form. Returns the
 // new slice and whether anything changed (callers on the reconcile path skip
@@ -156,7 +157,7 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]I
 		kept = append(kept, Inbound{
 			Type:        "tproxy",
 			Tag:         qosTProxyTag(c.DSCP),
-			Listen:      inboundListen,
+			Listen:      tproxyListen,
 			ListenPort:  c.TProxyPort,
 			Network:     "udp",
 			UDPFragment: true,
@@ -164,7 +165,7 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]I
 		}, Inbound{
 			Type:        "redirect",
 			Tag:         qosRedirectTag(c.DSCP),
-			Listen:      inboundListen,
+			Listen:      redirectListen,
 			ListenPort:  c.RedirectPort,
 			TCPFastOpen: true,
 		})

@@ -33,6 +33,18 @@ func Kill(pid int) error {
 	return proc.Kill()
 }
 
+// TerminateGroup delegates to Terminate: no process-group semantics on
+// non-Linux dev hosts (see the package doc comment above).
+func TerminateGroup(pid int) error {
+	return Terminate(pid)
+}
+
+// KillGroup delegates to Kill: no process-group semantics on non-Linux dev
+// hosts (see the package doc comment above).
+func KillGroup(pid int) error {
+	return Kill(pid)
+}
+
 // Signal is a no-op stub on non-Linux dev hosts.
 func Signal(_ int, _ syscall.Signal) error {
 	return nil

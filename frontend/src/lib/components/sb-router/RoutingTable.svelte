@@ -15,6 +15,7 @@
   import { Badge } from '$lib/components/ui';
   import { ChevronUp, ChevronDown, Edit3, Trash2 } from 'lucide-svelte';
   import { isSystemRule, mapRuleAction, resolveOutboundDisplay, systemRuleTooltip } from './adapters';
+  import { flattenRouterRule } from '$lib/utils/routerRuleShape';
   import OutboundTile from './OutboundTile.svelte';
   import type { OutboundDisplay } from './types';
 
@@ -65,8 +66,10 @@
     tooltip?: string;
   }
 
-  function compileMatchers(r: SingboxRouterRule): string {
+  function compileMatchers(ruleIn: SingboxRouterRule): string {
+    const r = flattenRouterRule(ruleIn);
     const parts: string[] = [];
+    if (r.network === 'tcp' || r.network === 'udp') parts.push(`network=${r.network}`);
     if (r.protocol) parts.push(`protocol=${r.protocol}`);
     if (r.domain_suffix?.length) {
       const head = r.domain_suffix[0];

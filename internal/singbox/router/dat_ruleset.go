@@ -182,6 +182,31 @@ func normalizeDatRuleSetInput(kind string, tags []string) (string, []string, err
 	return kind, clean, nil
 }
 
+// parseDatRuleSetURL recognizes a rule-set URL that points back at our own
+// dat-srs endpoint and extracts its kind/tags.
+func parseDatRuleSetURL(rawURL string) (kind string, tags []string, ok bool) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u == nil {
+		return "", nil, false
+	}
+	if !strings.HasSuffix(u.Path, "/dat-srs") && !strings.HasSuffix(u.Path, "dat-srs") {
+		return "", nil, false
+	}
+	kind = strings.ToLower(strings.TrimSpace(u.Query().Get("kind")))
+	if kind != "geosite" && kind != "geoip" {
+		return "", nil, false
+	}
+	tags = dedupeStrings(u.Query()["tag"])
+	if len(tags) == 0 {
+		return "", nil, false
+	}
+	return kind, tags, true
+}
+
+func datRuleSetBaseName(kind string, tags []string) string {
+	return safeRuleSetFilename(kind + "-" + strings.Join(tags, "-"))
+}
+
 func (s *ServiceImpl) datRuleSetDir() (string, error) {
 	configDir := ""
 	if s.deps.Orch != nil {

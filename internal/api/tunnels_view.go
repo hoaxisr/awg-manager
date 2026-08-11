@@ -8,8 +8,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // stateToStatus converts a tunnel State to the status string sent to the frontend.
@@ -39,33 +41,41 @@ func stateToStatus(s tunnel.State) string {
 }
 
 // overlayPendingStatus refines the display status for a NativeWG tunnel the RCI
-// classifier reports as Broken. During boot bring-up such a tunnel is not
-// broken — NDMS raised its WireGuard but awg-manager has not yet attached the
-// kmod proxy. quiescentUntil is the orchestrator's per-tunnel bring-up window
-// (zero if no bring-up was attempted this session). now is injected for tests.
-// Only non-ASC nwg ever produces StateBroken from classifyNWGState; kernel and
-// every non-Broken state pass through unchanged.
-func overlayPendingStatus(rawState tunnel.State, backend string, quiescentUntil, now time.Time) string {
+// classifier reports as Broken. The classifier cannot tell "coming up right
+// now" from "stuck": a tunnel that never handshook carries no timestamp to
+// measure from (the router reports link=down, connected="no" and no uptime at
+// all), so it is classified Broken from the first poll. The orchestrator's
+// per-tunnel bring-up window is the only source of "right now", hence the
+// overlay: inside the window the tunnel shows as starting, past it as broken.
+// quiescentUntil is that window (zero if no bring-up was attempted this daemon
+// session, e.g. right after a restart); now is injected for tests.
+// A zero window keeps its old kmod-proxy meaning on non-ASC firmware only —
+// NDMS raised the WireGuard interface but awg-manager has not attached the
+// proxy yet, which is "needs start", not a fault. On ASC there is no such
+// intermediate state, so a zero window leaves Broken as is (#702).
+// Kernel and every non-Broken state pass through unchanged.
+func overlayPendingStatus(rawState tunnel.State, backend string, supportsASC bool, quiescentUntil, now time.Time) string {
 	base := stateToStatus(rawState)
 	if backend != "nativewg" || rawState != tunnel.StateBroken {
 		return base
 	}
-	if quiescentUntil.IsZero() {
-		return stateToStatus(tunnel.StateNeedsStart) // bring-up not attempted yet
-	}
 	if now.Before(quiescentUntil) {
 		return stateToStatus(tunnel.StateStarting) // actively bringing up
 	}
-	return base // attempted, window elapsed, still broken (#183)
+	if quiescentUntil.IsZero() && !supportsASC {
+		return stateToStatus(tunnel.StateNeedsStart) // kmod proxy not attached yet
+	}
+	return base // window elapsed (#183), or nothing to wait for on ASC (#702)
 }
 
 // displayStatus is the single point that turns a tunnel's canonical state into
 // the UI status string: it applies the boot-pending overlay (see
 // overlayPendingStatus), deriving backend from StateInfo so list and detail
 // stay consistent. quiescentUntil is the orchestrator bring-up window (zero
-// when unknown).
+// when unknown); the ASC flag comes from the firmware, as the overlay treats a
+// missing window differently on the two paths.
 func displayStatus(info tunnel.StateInfo, quiescentUntil, now time.Time) string {
-	return overlayPendingStatus(info.State, info.BackendType, quiescentUntil, now)
+	return overlayPendingStatus(info.State, info.BackendType, ndmsinfo.SupportsWireguardASC(), quiescentUntil, now)
 }
 
 // quiescentFor returns the orchestrator bring-up window for a tunnel, or zero
@@ -222,6 +232,10 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 	for _, t := range tunnels {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
+		// WDTT Raw rows are appended below with live iface/status from wdtt.
+		if stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+			continue
+		}
 
 		awgVersion := "wg"
 		var endpoint, address string
@@ -335,6 +349,8 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 		items = append(items, item)
 	}
+
+	items = h.appendWdttRawListItems(ctx, items)
 
 	return items, nil
 }

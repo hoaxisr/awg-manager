@@ -6,12 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -425,6 +428,220 @@ func TestProcess_StartMissingBinary(t *testing.T) {
 	}
 }
 
+func TestProcess_StartRestartsOrphanPID(t *testing.T) {
+	dir := t.TempDir()
+	// Бинарь = /bin/sleep, чтобы /proc cmdline осиротевшего процесса совпал с
+	// нашим — иначе pid считается чужим (см. TestProcess_StartKeepsForeignPID).
+	p1 := newProcess("client", "/bin/sleep", dir)
+	p1.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sleep", "30")
+	}
+	if err := p1.Start(nil); err != nil {
+		t.Fatal(err)
+	}
+	orphanPID, _ := p1.readPID()
+
+	// Новый процесс awg-manager: тот же pidfile, startedAt не задан.
+	p2 := newProcess("client", "/bin/sleep", dir)
+	p2.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "echo adopted; sleep 30")
+	}
+	if err := p2.Start(nil); err != nil {
+		t.Fatalf("Start orphan: %v", err)
+	}
+	st := p2.Status()
+	if st.StartedAt == nil {
+		t.Fatal("want StartedAt after orphan restart")
+	}
+	if st.PID == orphanPID {
+		t.Fatalf("want new PID, still on orphan %d", orphanPID)
+	}
+	if !strings.Contains(st.Log, "adopted") {
+		t.Fatalf("want log from restarted process, got %q", st.Log)
+	}
+	if childproc.IsAlive(orphanPID) {
+		t.Fatal("осиротевший процесс должен быть остановлен")
+	}
+	_ = p2.Stop()
+}
+
+// Pid-файл лежит на флешке и переживает ребут: записанный PID мог достаться
+// постороннему процессу. Такой pid — не «наш прокси запущен», и убивать его
+// нельзя.
+func TestProcess_StartKeepsForeignPID(t *testing.T) {
+	foreign := exec.Command("/bin/sleep", "30")
+	if err := foreign.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = foreign.Process.Kill(); _ = foreign.Wait() }()
+
+	p := newProcess("client", "/opt/bin/freeturn-client", t.TempDir())
+	if err := p.writePID(foreign.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
+	if running, _ := p.IsRunning(); running {
+		t.Fatal("чужой pid не должен считаться запущенным прокси")
+	}
+	if err := p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if !childproc.IsAlive(foreign.Process.Pid) {
+		t.Fatal("Stop убил посторонний процесс")
+	}
+	if _, err := p.readPID(); err == nil {
+		t.Fatal("протухший pid-файл должен быть удалён")
+	}
+}
+
+// TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF — репро зомби-бага
+// (симметрично internal/wdtt): ребёнок форкает фонового хелпера (sleep 60),
+// унаследовавшего stderr, и сразу выходит. drainGrace (1с) < startupGrace
+// (1.5с), поэтому errCh на исправленном коде успевает раньше внешнего
+// грейса: Start() должен вернуть ошибку старта, а не ложный nil. Ещё
+// дискриминатор — реап процесса и самоисправление IsRunning().
+func TestProcess_ReapsHelperOrphan_DoesNotGateOnPipeEOF(t *testing.T) {
+	var capturedCmd *exec.Cmd
+	p := newProcess("client", "/bin/sh", t.TempDir())
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		capturedCmd = exec.Command("/bin/sh", "-c", "sleep 60 <&- >&2 2>&2 &\nexit 0")
+		return capturedCmd
+	}
+
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() { done <- result{p.Start(nil)} }()
+
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() не вернулся за 5с — жнец гейтится на EOF пайпов орфан-хелпера (зомби-баг)")
+	}
+
+	if capturedCmd == nil || capturedCmd.Process == nil {
+		t.Fatal("cmd.Process не установлен")
+	}
+	pid := capturedCmd.Process.Pid
+	// Хелпер (sleep 60) — сирота в той же группе (Setsid лидер = наш прямой
+	// ребёнок): -pid валит всю группу. Гигиена теста, не часть проверяемого
+	// поведения (фикс уже должен был убить группу сам через drainGrace-фолбэк).
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+
+	if r.err == nil || !strings.Contains(r.err.Error(), "exited during startup") {
+		t.Fatalf("want ошибку «exited during startup» быстро (drainGrace < startupGrace), got %v", r.err)
+	}
+
+	if state, ok := freeturnProcStatState(pid); ok && state == "Z" {
+		t.Fatalf("pid %d остался зомби сразу после возврата Start() — реап гейтится на EOF пайпов", pid)
+	}
+
+	notRunning := make(chan struct{})
+	go func() {
+		for {
+			if running, _ := p.IsRunning(); !running {
+				close(notRunning)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	select {
+	case <-notRunning:
+	case <-time.After(5 * time.Second):
+		t.Fatal("IsRunning() всё ещё true спустя 5с — не самоисправляется, пока жив орфан-хелпер (зомби-баг, супервизор не увидит смерть процесса)")
+	}
+}
+
+// TestProcess_FallbackBranch_KillsSurvivingHelperGroup — упрощённая версия
+// internal/wdtt.TestProcess_FallbackBranch_KillsSurvivingHelperGroup (код
+// Start() скопирован, сценарий и дискриминатор те же): ребёнок печатает pid
+// хелпера в stderr и сразу выходит; хелпер держит stderr дольше drainGrace,
+// поэтому фолбэк обязан убить всю группу (childproc.KillGroup).
+func TestProcess_FallbackBranch_KillsSurvivingHelperGroup(t *testing.T) {
+	var capturedCmd *exec.Cmd
+	p := newProcess("client", "/bin/sh", t.TempDir())
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		capturedCmd = exec.Command("/bin/sh", "-c",
+			"sleep 60 <&- >&2 2>&2 &\necho \"HELPERPID=$!\" >&2\nexit 0")
+		return capturedCmd
+	}
+
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() { done <- result{p.Start(nil)} }()
+
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start() не вернулся за 5с")
+	}
+	if r.err == nil || !strings.Contains(r.err.Error(), "exited during startup") {
+		t.Fatalf("want ошибку «exited during startup», got %v", r.err)
+	}
+
+	if capturedCmd == nil || capturedCmd.Process == nil {
+		t.Fatal("cmd.Process не установлен")
+	}
+	pid := capturedCmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) }) // страховка
+
+	log := p.Status().Log
+	const marker = "HELPERPID="
+	i := strings.Index(log, marker)
+	if i < 0 {
+		t.Fatalf("хвост stderr хелпера не попал в лог: %q", log)
+	}
+	helperPID, err := strconv.Atoi(strings.Fields(log[i+len(marker):])[0])
+	if err != nil {
+		t.Fatalf("не удалось распарсить HELPERPID из лога %q: %v", log, err)
+	}
+
+	// Не childproc.IsAlive: kill(pid,0) успешен и для зомби. И не голый
+	// /proc/pid/stat: реап сироты — дело внешнего субридера (init), не
+	// мгновенное, а pid к этому моменту мог быть переиспользован ДРУГИМ
+	// процессом (гонка на нагруженной машине, не признак незаконченного
+	// kill). MatchesBinary по cmdline: false и для зомби (cmdline пуст), и
+	// для чужого процесса — true только если ЖИВОЙ pid всё ещё "sleep".
+	//
+	// SIGKILL уже отправлен (KillGroup внутри Start() синхронно завершился
+	// до его возврата) — но доставка сигнала асинхронна: между kill() и
+	// фактическим уходом жертвы из «живого» состояния есть окно в
+	// миллисекунды (шире под нагрузкой). Поэтому — короткий bounded-poll, а
+	// не одна синхронная проверка сразу после возврата Start().
+	killed := make(chan struct{})
+	go func() {
+		for childproc.MatchesBinary(helperPID, "sleep") {
+			time.Sleep(20 * time.Millisecond)
+		}
+		close(killed)
+	}()
+	select {
+	case <-killed:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("хелпер (pid %d) всё ещё выполняется как sleep спустя 2с — group-kill не сработал", helperPID)
+	}
+}
+
+// freeturnProcStatState читает третье поле /proc/<pid>/stat (state).
+// Возвращает ok=false, если процесс уже не существует (тоже не зомби).
+func freeturnProcStatState(pid int) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", false
+	}
+	s := string(data)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return "", false
+	}
+	fields := strings.Fields(s[i+2:])
+	if len(fields) == 0 {
+		return "", false
+	}
+	return fields[0], true
+}
+
 func TestBinaryPresent(t *testing.T) {
 	if binaryPresent("/nonexistent/path") {
 		t.Error("missing path must be absent")
@@ -709,5 +926,34 @@ func TestDecodeLink_LegacyStdEncoding(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, p) {
 		t.Fatalf("legacy mismatch:\n got %+v\nwant %+v", got, p)
+	}
+}
+
+func TestDecodeLink_CompactURLFormat(t *testing.T) {
+	raw, _ := json.Marshal(map[string]string{
+		"url": "85.137.95.32:56000?obf-profile=rtpopus&obf-key=deadbeef&transport=tcp&n=8",
+	})
+	link := LinkScheme + base64.RawURLEncoding.EncodeToString(raw)
+	got, err := DecodeLink(link)
+	if err != nil {
+		t.Fatalf("DecodeLink: %v", err)
+	}
+	if got.Peer != "85.137.95.32:56000" {
+		t.Fatalf("peer = %q", got.Peer)
+	}
+	if got.Obf != "rtpopus" || got.Key != "deadbeef" || got.Transport != "tcp" || got.N != 8 {
+		t.Fatalf("got %+v", got)
+	}
+	if got.Provider != "vk" || got.V != 1 {
+		t.Fatalf("defaults: %+v", got)
+	}
+}
+
+func TestHasBundledWgConfig(t *testing.T) {
+	if HasBundledWgConfig("") || HasBundledWgConfig("[Interface]\n") {
+		t.Fatal("empty/stub must be false")
+	}
+	if !HasBundledWgConfig("[Interface]\nPrivateKey = abc\n") {
+		t.Fatal("real config must be true")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -39,6 +40,30 @@ func newTestGeoStore(t *testing.T) *GeoDataStore {
 	t.Helper()
 	tmp := t.TempDir()
 	return NewGeoDataStore(tmp)
+}
+
+// Колбэк изменения состава геофайлов — источник пересборки bypass-набора.
+func TestSetOnChange_FiresOnDelete(t *testing.T) {
+	store := newTestGeoStore(t)
+	path := filepath.Join(store.geoDir, "geoip.dat")
+	if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.entries = []GeoFileEntry{{Type: "geoip", Path: path}}
+	store.mu.Unlock()
+
+	fired := make(chan struct{}, 1)
+	store.SetOnChange(func() { fired <- struct{}{} })
+
+	if err := store.Delete(path); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("onChange не вызван после Delete")
+	}
 }
 
 func TestGeoDataStore_LogsDownloadAndUpdateRouteURLs(t *testing.T) {
@@ -776,5 +801,50 @@ func TestGeoDataStore_Recovery_RemovesBackupWhenOriginalExists(t *testing.T) {
 	}
 	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
 		t.Fatalf("backup artifact still exists: %v", err)
+	}
+}
+
+// TestGeoIPTagCounts_SumsAcrossFiles pins the budget-validation source: counts
+// are summed per tag across every tracked geoip file, keyed lower-case, with
+// geosite files ignored and unreadable files skipped.
+func TestGeoIPTagCounts_SumsAcrossFiles(t *testing.T) {
+	store := newTestGeoStore(t)
+
+	first := filepath.Join(store.geoDir, "geoip-1.dat")
+	if err := os.WriteFile(first, buildGeoDAT([][]byte{buildGeoEntry(1, "RU", 2, 2)}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(store.geoDir, "geoip-2.dat")
+	if err := os.WriteFile(second, buildGeoDAT([][]byte{
+		buildGeoEntry(1, "ru", 2, 3),
+		buildGeoEntry(1, "US", 2, 1),
+	}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	site := filepath.Join(store.geoDir, "geosite.dat")
+	if err := os.WriteFile(site, buildGeoDAT([][]byte{buildGeoEntry(1, "RU", 2, 7)}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(store.geoDir, "geoip-broken.dat")
+	if err := os.WriteFile(broken, []byte("not-a-dat"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store.entries = []GeoFileEntry{
+		{Type: "geoip", Path: first},
+		{Type: "geoip", Path: second},
+		{Type: "geosite", Path: site},
+		{Type: "geoip", Path: broken},
+	}
+
+	counts := store.GeoIPTagCounts()
+	if counts["ru"] != 5 {
+		t.Fatalf("want ru=5, got %v", counts)
+	}
+	if counts["us"] != 1 {
+		t.Fatalf("want us=1, got %v", counts)
+	}
+	if len(counts) != 2 {
+		t.Fatalf("unexpected tags: %v", counts)
 	}
 }

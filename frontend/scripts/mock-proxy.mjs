@@ -2003,6 +2003,10 @@ function moveMockRejectedToInfo(sub, memberTag) {
 // ── Wizard mock state ──────────────────────────────────────────
 let mockEngineRunning = false;
 let mockSBPolicyExists = false;
+// Применённый (а не желаемый) source-preserve policy-tun: бэкенд ставит
+// static-NAT при поднятии режима, поэтому включение вживую расходится с
+// настройками до перезапуска режима.
+let mockPolicyTunSourcePreserveApplied = false;
 
 // Sing-box router settings state. Defaults mirror what
 // storage.defaultSettings() produces on a fresh install — WANAutoDetect=true
@@ -2025,6 +2029,39 @@ let mockSBSettings = {
 	fakeipPool6: '3f80::/10',
 	fakeipMtu: 1500,
 	fakeipSourcePreserve: true,
+};
+
+// Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
+// чтобы cn+us+ru перебирали предел набора (262144) — превышение бюджета
+// в UI обхода по geoip проверяемо без роутера.
+const MOCK_GEO_TAGS = {
+	'/opt/etc/HydraRoute/geoip_GA.dat': [
+		{ name: 'ru', count: 48210 },
+		{ name: 'cn', count: 120340 },
+		{ name: 'us', count: 98765 },
+		{ name: 'telegram', count: 2140 },
+		{ name: 'discord', count: 860 },
+		{ name: 'cloudflare', count: 1980 },
+		{ name: 'private', count: 32 },
+	],
+	'/opt/etc/HydraRoute/geoip_antifilter.dat': [
+		{ name: 'ru', count: 3000 },
+		{ name: 'antifilter', count: 18400 },
+	],
+	'/opt/etc/HydraRoute/geosite_GA.dat': [],
+};
+
+// Состояние набора обхода AWGM-BYPASS (GET/POST /singbox/router/bypass-set/*).
+let mockBypassSet = {
+	available: true,
+	xtSetAvailable: true,
+	conntrackAvailable: false,
+	installing: false,
+	entryCount: 148223,
+	entryCountOK: true,
+	lastPopulate: new Date(Date.now() - 6 * 60_000).toISOString(),
+	lastError: '',
+	missingTags: [],
 };
 
 // ── Config editor (config.d slots) mock state ─────────────────────
@@ -4309,6 +4346,33 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === 'GET' && path === '/hydraroute/geo-tags') {
+		send(res, 200, {
+			success: true,
+			data: MOCK_GEO_TAGS[url.searchParams.get('path') ?? ''] ?? [],
+		});
+		return;
+	}
+
+	// Набор обхода AWGM-BYPASS: статус + установка пакетов. Состояние
+	// в памяти, чтобы кнопки установки давали видимый эффект в dev-mock.
+	if (req.method === 'GET' && path === '/singbox/router/bypass-set/status') {
+		send(res, 200, { success: true, data: mockBypassSet });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/bypass-set/install-deps') {
+		mockBypassSet = { ...mockBypassSet, available: true, xtSetAvailable: true };
+		send(res, 200, { success: true, data: mockBypassSet });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/singbox/router/bypass-set/install-conntrack') {
+		mockBypassSet = { ...mockBypassSet, conntrackAvailable: true };
+		send(res, 200, { success: true, data: mockBypassSet });
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/settings/update') {
 		let raw = '';
 		req.on('data', (c) => (raw += c));
@@ -5720,6 +5784,25 @@ const server = http.createServer(async (req, res) => {
 					});
 					return;
 				}
+				// Mirror backend ValidateSingboxRouterSettings: включённый
+				// source-preserve без сегментов — опция, которая ничего не делает;
+				// выключенный чистит протухший выбор.
+				if (payload.policyTunSourcePreserve && (payload.policyTunNatSegments ?? []).length === 0) {
+					send(res, 400, {
+						success: false,
+						error: {
+							code: 'INVALID_REQUEST',
+							message: 'policyTunSourcePreserve=true requires a non-empty policyTunNatSegments list',
+						},
+					});
+					return;
+				}
+				if (payload.policyTunSourcePreserve === false) {
+					payload.policyTunNatSegments = [];
+					// Снятие вживую бэкенд применяет на ближайшем тике (сегментам
+					// возвращается исходный NAT), включение — только перезапуском режима.
+					mockPolicyTunSourcePreserveApplied = false;
+				}
 				mockSBSettings = { ...mockSBSettings, ...payload };
 				send(res, 200, { success: true, data: { ok: true } });
 			} catch (e) {
@@ -6183,8 +6266,8 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === 'POST' && path === '/singbox/router/mode') {
 		const payload = await readJsonBody(req);
 		const to = payload && payload.mode;
-		if (to !== 'off' && to !== 'tproxy' && to !== 'fakeip-tun') {
-			send(res, 400, { success: false, error: 'invalid routing mode (want off|tproxy|fakeip-tun)', code: 'INVALID_MODE' });
+		if (to !== 'off' && to !== 'tproxy' && to !== 'fakeip-tun' && to !== 'policy-tun') {
+			send(res, 400, { success: false, error: 'invalid routing mode (want off|tproxy|fakeip-tun|policy-tun)', code: 'INVALID_MODE' });
 			return;
 		}
 		const from = mockEngineRunning ? (mockSBSettings.routingMode || 'tproxy') : 'off';
@@ -6197,6 +6280,10 @@ const server = http.createServer(async (req, res) => {
 		});
 		mockEngineRunning = to !== 'off';
 		mockSBSettings = { ...mockSBSettings, routingMode: to === 'off' ? mockSBSettings.routingMode : to, enabled: to !== 'off' };
+		// source-preserve применяется при поднятии режима (вживую бэкенд его
+		// только снимает) — фиксируем применённое значение здесь.
+		mockPolicyTunSourcePreserveApplied =
+			to === 'policy-tun' ? !!mockSBSettings.policyTunSourcePreserve : false;
 		send(res, 200, { success: true, data: { ok: true } });
 		return;
 	}
@@ -6209,9 +6296,10 @@ const server = http.createServer(async (req, res) => {
 				enabled: mockEngineRunning,
 				installed: true,
 				running: mockEngineRunning,
-				// Interception path live (chains + PREROUTING jumps). Only meaningful
-				// in tproxy mode; fakeip-tun drives its own badge via routingMode.
-				active: mockEngineRunning && routingMode === 'tproxy',
+				// Interception path live (chains + PREROUTING jumps) in tproxy; в
+				// policy-tun бэкенд считает active по running-config NDMS. fakeip-tun
+				// drives its own badge via routingMode.
+				active: mockEngineRunning && (routingMode === 'tproxy' || routingMode === 'policy-tun'),
 				version: '1.13.11',
 				configValid: true,
 				netfilterAvailable: true,
@@ -6224,6 +6312,51 @@ const server = http.createServer(async (req, res) => {
 				// fakeipEgressUp: global egress-health (Task 25). Default true. Flip to
 				// false here to demo the SegmentsDelivery «доставка DNS придержана» banner.
 				...(routingMode === 'fakeip-tun' ? { sourcePreserved: true, fakeipSourcePreserve: true, fakeipIface: 'opkgtun0', fakeipEgressUp: true } : {}),
+				// policy-tun: интерфейс режима + применённый source-preserve
+				// (указатель на бэкенде: absent = «неприменимо»). Замечание
+				// policy-tun-unbound держим, пока интерфейс не разрешён в политике —
+				// в моке всегда, чтобы вид с warning был доступен.
+				...(routingMode === 'policy-tun'
+					? {
+							policyTunIface: 'opkgtun0',
+							policyTunNdmsName: 'OpkgTun0',
+							policyTunSourcePreserve: mockPolicyTunSourcePreserveApplied,
+							issues: [
+								{
+									severity: 'warning',
+									kind: 'policy-tun-unbound',
+									message:
+										'Интерфейс OpkgTun0 не разрешён ни в одной политике доступа — трафик устройств в туннель не заходит',
+								},
+							],
+						}
+					: {}),
+			},
+		});
+		return;
+	}
+
+	// GET /singbox/router/policy-tun/nat-preview — сегменты роутера с текущим
+	// режимом NAT (предпоказ за тумблером source-preserve).
+	if (req.method === 'GET' && path === '/singbox/router/policy-tun/nat-preview') {
+		send(res, 200, {
+			success: true,
+			data: {
+				segments: [
+					{ name: 'Home', mode: 'dynamic', label: 'Домашняя сеть', subnet: '192.168.1.0/24' },
+					{ name: 'Guest', mode: 'static', staticWan: 'PPPoE0', label: 'Гостевая сеть', subnet: '192.168.2.0/24' },
+					// Без description в NDMS: фронт обязан показать системное имя.
+					{ name: 'Wireguard1', mode: 'dynamic', subnet: '172.16.6.0/24' },
+					{ name: 'IoT', mode: 'none', label: 'Умный дом', subnet: '192.168.3.0/24' },
+				],
+				// Выходы, на которых подмена адреса сохранится: static-NAT встаёт на
+				// КАЖДЫЙ интерфейс роутера с `ip global`, а не только на текущий
+				// выход в интернет.
+				egresses: [
+					{ name: 'PPPoE0', label: 'Провайдер' },
+					{ name: 'Wireguard0', label: 'VPN A' },
+					{ name: 'Wireguard1' },
+				],
 			},
 		});
 		return;

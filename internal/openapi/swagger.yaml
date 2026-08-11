@@ -449,6 +449,53 @@ definitions:
         example: 0
         type: integer
     type: object
+  api.BypassSetStatusData:
+    properties:
+      available:
+        description: Available reports whether the ipset binary is present on the
+          router.
+        type: boolean
+      conntrackAvailable:
+        description: |-
+          ConntrackAvailable reports whether the conntrack binary is present.
+          Without it a routing change applies only to new connections (existing
+          flows linger until they expire).
+        type: boolean
+      entryCount:
+        description: |-
+          EntryCount is the number of entries in the AWGM-BYPASS set after the
+          last populate. Meaningful only when EntryCountOK is true.
+        type: integer
+      entryCountOK:
+        description: |-
+          EntryCountOK reports whether EntryCount is a fact. False means the
+          counter could not be read — EntryCount=0 then does NOT mean «set empty».
+        type: boolean
+      installing:
+        description: Installing is true while an opkg install started here is running.
+        type: boolean
+      lastError:
+        description: LastError is the error message from the last failed populate,
+          or empty.
+        type: string
+      lastPopulate:
+        description: |-
+          LastPopulate is the RFC3339 timestamp of the last populate run, or
+          empty string when no populate has run yet.
+        type: string
+      missingTags:
+        description: |-
+          MissingTags lists the configured geoip tags that were not found in the
+          .dat files during the last populate.
+        items:
+          type: string
+        type: array
+      xtSetAvailable:
+        description: |-
+          XtSetAvailable reports whether the xt_set kernel module is loaded or
+          available as a .ko file (required for -m set iptables matching).
+        type: boolean
+    type: object
   api.ChangelogData:
     properties:
       entries:
@@ -2965,112 +3012,6 @@ definitions:
       state:
         type: string
     type: object
-  api.SelectiveCancelData:
-    properties:
-      cancelled:
-        description: |-
-          Cancelled is true when an active rebuild run was found and its
-          cancellation was requested; false when no rebuild was running.
-        type: boolean
-    type: object
-  api.SelectiveDomainMatcherRecordDTO:
-    properties:
-      cdn:
-        type: boolean
-      error:
-        type: string
-      kind:
-        type: string
-      matcher:
-        type: string
-      outbound:
-        type: string
-      queryHosts:
-        items:
-          type: string
-        type: array
-    type: object
-  api.SelectiveRebuildSnapshotDTO:
-    properties:
-      domainMatcherCount:
-        type: integer
-      domainResults:
-        items: {}
-        type: array
-      entryCount:
-        type: integer
-      lastCDNRefresh:
-        type: string
-      rebuiltAt:
-        type: string
-      staticCidrCount:
-        type: integer
-      staticCidrs:
-        items:
-          type: string
-        type: array
-    type: object
-  api.SelectiveSnapshotMatchersData:
-    properties:
-      limit:
-        type: integer
-      matchers:
-        items:
-          $ref: '#/definitions/api.SelectiveDomainMatcherRecordDTO'
-        type: array
-      offset:
-        type: integer
-      total:
-        type: integer
-    type: object
-  api.SelectiveStatusData:
-    properties:
-      available:
-        description: Available reports whether the ipset binary is present on the
-          router.
-        type: boolean
-      conntrackAvailable:
-        description: |-
-          ConntrackAvailable reports whether the conntrack binary is present.
-          Without it a routing change applies only to new connections (existing
-          flows linger until they expire).
-        type: boolean
-      enabled:
-        description: Enabled mirrors SingboxRouterSettings.SelectiveBypass.
-        type: boolean
-      entryCount:
-        description: |-
-          EntryCount is the current number of entries in the AWGM-SELECTIVE ipset.
-          0 when the set does not exist or is empty.
-        type: integer
-      installing:
-        description: Installing is true while opkg install ipset is running.
-        type: boolean
-      lastError:
-        description: LastError is the error message from the last failed rebuild,
-          or empty.
-        type: string
-      lastRebuild:
-        description: |-
-          LastRebuild is the RFC3339 timestamp of the last successful rebuild, or
-          empty string if no rebuild has run yet.
-        type: string
-      rebuilding:
-        description: |-
-          Rebuilding is true while an ipset rebuild is in flight (POST /rebuild
-          responds 202 and runs the rebuild in the background; completion is
-          delivered via the singbox-router:selective-status SSE event).
-        type: boolean
-      snapshot:
-        allOf:
-        - $ref: '#/definitions/api.SelectiveRebuildSnapshotDTO'
-        description: Snapshot is summary metadata from the last rebuild (no IP lists).
-      xtSetAvailable:
-        description: |-
-          XtSetAvailable reports whether the xt_set kernel module is loaded or
-          available as a .ko file (required for -m set iptables matching).
-        type: boolean
-    type: object
   api.ServerAddPeerRequestDTO:
     properties:
       description:
@@ -3579,6 +3520,9 @@ definitions:
         items:
           type: string
         type: array
+      managed:
+        example: keendns
+        type: string
       pattern:
         example: finland10*.discord.media
         type: string
@@ -4188,7 +4132,66 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
+        type: string
+    type: object
+  api.SingboxRouterNATEgressDTO:
+    properties:
+      label:
+        example: Провайдер
+        type: string
+      name:
+        example: PPPoE0
+        type: string
+    type: object
+  api.SingboxRouterNATPreviewData:
+    properties:
+      egresses:
+        description: |-
+          Egresses — выходы, на которых подмена адреса СОХРАНИТСЯ (туда встанет
+          static-NAT). Их несколько: `ip static` — общероутерная настройка, и
+          правило вешается на каждый интерфейс с `ip global`. Пусто, когда выходы
+          определить нельзя.
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATEgressDTO'
+        type: array
+      segments:
+        items:
+          $ref: '#/definitions/api.SingboxRouterNATSegmentDTO'
+        type: array
+    type: object
+  api.SingboxRouterNATPreviewResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterNATPreviewData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterNATSegmentDTO:
+    properties:
+      label:
+        description: |-
+          Label — описание сегмента из NDMS, Subnet — его подсеть. Пустые, когда
+          NDMS описания не дал или адресации у сегмента нет.
+        example: Домашняя сеть
+        type: string
+      mode:
+        enum:
+        - dynamic
+        - static
+        - none
+        example: dynamic
+        type: string
+      name:
+        example: Home
+        type: string
+      staticWan:
+        example: PPPoE0
+        type: string
+      subnet:
+        example: 192.168.1.0/24
         type: string
     type: object
   api.SingboxRouterOutboundDTO:
@@ -4611,13 +4614,23 @@ definitions:
           DNS/53). Bare IP is treated as /32. E.g. "203.0.113.0/24, 10.8.0.5".
         example: 203.0.113.0/24
         type: string
+      bypassGeoipTags:
+        description: |-
+          BypassGeoipTags lists geoip tags from the configured .dat files whose
+          CIDRs bypass sing-box entirely via the AWGM-BYPASS ipset (same full
+          bypass semantics as bypassExtraSubnets, ipset-backed because of scale).
+        example:
+        - geoip:ru
+        items:
+          type: string
+        type: array
       bypassPresets:
         description: |-
-          BypassPresets lists active named port-bypass presets.
+          BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (destination-IP 78.47.125.180, KeenDNS/CrazeDNS).
+          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
         example:
-        - l2tp
+        - keendns
         items:
           type: string
         type: array
@@ -4672,13 +4685,31 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunNatSegments:
+        description: |-
+          PolicyTunNATSegments — выбранные пользователем сегменты для
+          source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
+          Обнуляется бэкендом при policyTunSourcePreserve=false.
+        example:
+        - Home
+        items:
+          type: string
+        type: array
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve переводит выбранные сегменты на static-NAT в WAN,
+          чтобы sing-box видел реальные адреса клиентов, а не маскарад в tun.
+          Требует непустого policyTunNatSegments (иначе 400).
+        example: true
+        type: boolean
       qosClasses:
         description: |-
           QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
           outbounds. At most 8 classes; DSCP must be 0-63 and unique across
           classes; outbound is required; name is limited to 32 characters.
-          Only effective when routingMode is "tproxy" and xt_dscp is available
-          (see status.xtDscpAvailable). Empty = feature off.
+          Only effective when routingMode is "tproxy" or "policy-tun" (DSCP-only
+          hybrid) and xt_dscp is available (see status.xtDscpAvailable).
+          Empty = feature off.
         items:
           $ref: '#/definitions/api.SingboxRouterQoSClassDTO'
         type: array
@@ -4686,6 +4717,7 @@ definitions:
         enum:
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       snifferEnabled:
@@ -4791,6 +4823,24 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunIface:
+        description: |-
+          PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+          интерфейса. Заполнены при Enabled+Provisioned (ДО того как режим стал
+          active): по NDMS-имени пользователь разрешает интерфейс в политике
+          доступа. Пусто вне policy-tun и при выключенном движке.
+        example: opkgtun0
+        type: string
+      policyTunNdmsName:
+        example: OpkgTun0
+        type: string
+      policyTunSourcePreserve:
+        description: |-
+          PolicyTunSourcePreserve — применённый режим NAT сегментов (static-NAT
+          вместо маскарада). Указатель: отсутствует = «неприменимо» (не policy-tun
+          или движок выключен), false = «применимо и выключено».
+        example: true
+        type: boolean
       restartSuppressedUntil:
         description: |-
           RestartSuppressedUntil — RFC3339-время окончания паузы авто-перезапуска
@@ -4838,6 +4888,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       from:
@@ -4845,6 +4896,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: tproxy
         type: string
       step:
@@ -4854,6 +4906,7 @@ definitions:
         - "off"
         - tproxy
         - fakeip-tun
+        - policy-tun
         example: fakeip-tun
         type: string
       transitionId:
@@ -5541,7 +5594,7 @@ definitions:
         example: false
         type: boolean
       kernelModuleLoadedVersion:
-        example: 3.0.20260731
+        example: 3.0.20260805
         type: string
       kernelModuleModel:
         example: MT7981
@@ -6461,6 +6514,15 @@ definitions:
         example: 524288
         type: integer
     type: object
+  api.killListenerRequest:
+    properties:
+      host:
+        type: string
+      port:
+        type: integer
+      proto:
+        type: string
+    type: object
   api.serverEnabledRequest:
     properties:
       enabled:
@@ -6475,6 +6537,23 @@ definitions:
       password:
         type: string
       vkHash:
+        type: string
+    type: object
+  api.wdttSetLANSegmentsRequest:
+    properties:
+      segments:
+        items:
+          type: string
+        type: array
+    type: object
+  api.wdttSetNATModeRequest:
+    properties:
+      mode:
+        type: string
+    type: object
+  api.wdttSetPolicyRequest:
+    properties:
+      policy:
         type: string
     type: object
   diagnostics.DNSProxy:
@@ -6997,6 +7076,10 @@ definitions:
       captchaMode:
         description: '-captcha-mode: auto|rjs|wv (router default rjs)'
         type: string
+      connMode:
+        description: ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее;
+          нужен raw-сервер).
+        type: string
       debug:
         type: boolean
       deviceId:
@@ -7010,6 +7093,10 @@ definitions:
       listen:
         description: -listen, local UDP addr (default 127.0.0.1:9000)
         type: string
+      ndmsIface:
+        description: 'Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на
+          wdtt-server).'
+        type: string
       obfs:
         description: -obfs, audio|video
         type: string
@@ -7018,6 +7105,27 @@ definitions:
         type: string
       peer:
         description: -peer, VPS host:dtls_port
+        type: string
+      peerRaw:
+        description: VPS:Raw для connMode=raw
+        type: string
+      peerWg:
+        description: VPS:DTLS для connMode=wg; Peer зеркалит активный слот (normalizePeers)
+        type: string
+      policyPermits:
+        description: PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются
+          после рестарта awg-manager.
+        items:
+          $ref: '#/definitions/wdtt.OpkgPolicyPermit'
+        type: array
+      rawClientIp:
+        description: из RAWCONF VPS
+        type: string
+      rawClientMTU:
+        description: MTU из RAWCONF VPS
+        type: integer
+      rawIface:
+        description: kernel opkgtunN
         type: string
       sub:
         description: subscription URL (metadata only)
@@ -7070,6 +7178,8 @@ definitions:
     type: object
   wdtt.ImportPayload:
     properties:
+      connMode:
+        type: string
       deviceId:
         type: string
       listen:
@@ -7108,6 +7218,13 @@ definitions:
       subscription:
         $ref: '#/definitions/wdtt.SubscriptionPreview'
     type: object
+  wdtt.OpkgPolicyPermit:
+    properties:
+      name:
+        type: string
+      order:
+        type: integer
+    type: object
   wdtt.ProcessStatus:
     properties:
       binary:
@@ -7120,13 +7237,28 @@ definitions:
         type: string
       log:
         type: string
+      ndmsIface:
+        type: string
       pid:
         type: integer
+      rawClientIp:
+        type: string
+      rawIface:
+        type: string
       running:
         type: boolean
       startedAt:
         type: string
       wgConfig:
+        type: string
+    type: object
+  wdtt.ServerClient:
+    properties:
+      comment:
+        type: string
+      password:
+        type: string
+      vkHash:
         type: string
     type: object
   wdtt.ServerConfig:
@@ -7137,21 +7269,39 @@ definitions:
       botToken:
         description: -bot-token, optional Telegram bot
         type: string
+      clients:
+        description: |-
+          Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+          этого списка перед каждым стартом wdtt-server.
+        items:
+          $ref: '#/definitions/wdtt.ServerClient'
+        type: array
       configDir:
         description: -config-dir; empty → dataDir/wdtt/server/{id}
         type: string
       debug:
         type: boolean
+      directListen:
+        description: DirectListen — -listen-direct (WRAP без DTLS для WG). Пусто →
+          peer = DTLS-порт.
+        type: string
       enabled:
         type: boolean
       ingressEnabled:
-        description: sing-box ingress for iface:wgIface
+        description: sing-box ingress for iface:wgIface + wdttraw0
         type: boolean
       lanSegments:
         description: LAN bridge names
         items:
           type: string
         type: array
+      linkPeer:
+        description: |-
+          LinkPeer / LinkVKHashes — параметры последней сгенерированной ссылки,
+          чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
+        type: string
+      linkVkHashes:
+        type: string
       listen:
         description: -listen, DTLS (default 0.0.0.0:56002)
         type: string
@@ -7178,6 +7328,18 @@ definitions:
         type: string
       policy:
         description: NDMS hotspot policy or "none"
+        type: string
+      rawListen:
+        description: RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1
+          на том же host.
+        type: string
+      relayMode:
+        description: RelayMode — wg (WireGuard relay, совместимость) или raw (без
+          WG на сервере; нужен редеплой).
+        type: string
+      statsLog:
+        description: 'StatsLog — server.log (JSON каждые ~2 с): "ram" (default), "off",
+          "disk".'
         type: string
       wgIface:
         description: WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
@@ -11091,6 +11253,41 @@ paths:
       summary: Apply all device proxy instances
       tags:
       - device-proxy
+  /proxy/kill-listener:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Host, port, proto
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.killListenerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Kill process bound to local proxy listen port
+      tags:
+      - device-proxy
   /proxy/listen-choices:
     get:
       produces:
@@ -11111,6 +11308,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Device proxy listen choices
+      tags:
+      - device-proxy
+  /proxy/listener:
+    get:
+      parameters:
+      - description: Bind address (default 127.0.0.1)
+        in: query
+        name: host
+        type: string
+      - description: Listen port
+        in: query
+        name: port
+        required: true
+        type: integer
+      - description: tcp or udp (default udp)
+        in: query
+        name: proto
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Lookup local proxy listen port
       tags:
       - device-proxy
   /proxy/outbounds:
@@ -13546,6 +13779,91 @@ paths:
       summary: List bindable interfaces for direct outbounds
       tags:
       - singbox-router
+  /singbox/router/bypass-set/install-conntrack:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: already installing
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install conntrack-tools package
+      tags:
+      - singbox-router
+  /singbox/router/bypass-set/install-deps:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: already installing
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Install ipset package
+      tags:
+      - singbox-router
+  /singbox/router/bypass-set/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.BypassSetStatusData'
+              type: object
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Geoip bypass-set status
+      tags:
+      - singbox-router
   /singbox/router/disable:
     post:
       description: Stops the singbox-router engine and uninstalls iptables/policy
@@ -14432,7 +14750,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun):
+      description: 'Orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun):
         tears down the old mode then brings up the new one, with directional fail-closed
         rollback. Per-step progress is published as "singbox-router:transition" events
         on the existing GET /events SSE stream (see SingboxRouterTransitionData).
@@ -14740,6 +15058,33 @@ paths:
       security:
       - CookieAuth: []
       summary: Unbind device from singbox-router policy
+      tags:
+      - singbox-router
+  /singbox/router/policy-tun/nat-preview:
+    get:
+      description: Returns router segments with their current NAT mode (dynamic `ip
+        nat` / static `ip static <seg> <wan>` / none) — the editable "what will change"
+        preview behind the policy-tun source-preserve toggle. Port-forwarding `ip
+        static` entries (no to-interface) and the manager's own OpkgTun interfaces
+        are excluded.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterNATPreviewResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Preview policy-tun source-preserve segments
       tags:
       - singbox-router
   /singbox/router/presets/apply:
@@ -15332,161 +15677,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router ruleset
-      tags:
-      - singbox-router
-  /singbox/router/selective/install-conntrack:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-      security:
-      - CookieAuth: []
-      summary: Install conntrack-tools package
-      tags:
-      - singbox-router
-  /singbox/router/selective/install-deps:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-        "409":
-          description: already installing
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Install ipset package
-      tags:
-      - singbox-router
-  /singbox/router/selective/rebuild:
-    post:
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: rebuild started (or already running); rebuilding reflects live
-            state
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-        "409":
-          description: sing-box config apply in progress
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: builder not configured
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Force ipset rebuild (asynchronous)
-      tags:
-      - singbox-router
-  /singbox/router/selective/rebuild/cancel:
-    post:
-      description: Requests cancellation of the in-flight selective ipset rebuild.
-        Returns cancelled=false when no rebuild is running (safe no-op). Completion
-        is delivered via the selective-progress/selective-status SSE events.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveCancelData'
-              type: object
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Cancel a running ipset rebuild
-      tags:
-      - singbox-router
-  /singbox/router/selective/snapshot/matchers:
-    get:
-      description: Returns a paginated slice of matcher records (DNS query hosts,
-        no IPs) from the NDJSON snapshot.
-      parameters:
-      - default: 0
-        description: Zero-based record offset
-        in: query
-        name: offset
-        type: integer
-      - default: 200
-        description: Page size (max 1000)
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveSnapshotMatchersData'
-              type: object
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: List domain matchers from last ipset rebuild
-      tags:
-      - singbox-router
-  /singbox/router/selective/status:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/api.SelectiveStatusData'
-              type: object
-      security:
-      - CookieAuth: []
-      summary: Selective-bypass status
       tags:
       - singbox-router
   /singbox/router/settings:
@@ -18460,6 +18650,30 @@ paths:
       summary: Update config, rename or delete a WDTT server instance
       tags:
       - wdtt
+  /wdtt/servers/{id}/lan-segments:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: LAN bridge names
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetLANSegmentsRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server LAN segments
+      tags:
+      - wdtt
   /wdtt/servers/{id}/link:
     post:
       consumes:
@@ -18489,6 +18703,54 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Generate a wdtt:// / qwdtt:// share link for a server instance
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/nat:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: NAT mode
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetNATModeRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server NAT mode
+      tags:
+      - wdtt
+  /wdtt/servers/{id}/policy:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy name or none
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.wdttSetPolicyRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Set WDTT server IP policy
       tags:
       - wdtt
   /wdtt/servers/{id}/start:

@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // writeConfigFile writes config content to file.
@@ -186,6 +187,11 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+		response.Success(w, h.buildWdttRawResponse(stored))
 		return
 	}
 
@@ -356,6 +362,28 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.store.Get(id)
 	if err != nil {
 		response.Error(w, "tunnel not found", "NOT_FOUND")
+		return
+	}
+
+	if existing.Backend == wdtt.BackendWdttRaw {
+		updated := *existing
+		if req.ConnectivityCheck != nil {
+			updated.ConnectivityCheck = req.ConnectivityCheck
+			if updated.ConnectivityCheck.Method == "" {
+				updated.ConnectivityCheck.Method = "http"
+			}
+		}
+		if req.Name != "" {
+			updated.Name = req.Name
+		}
+		h.syncWdttRawLiveFields(&updated)
+		if err := h.store.Save(&updated); err != nil {
+			response.Error(w, err.Error(), "UPDATE_FAILED")
+			return
+		}
+		h.log.Info("update", updated.Name, "WDTT raw metadata updated")
+		h.publishTunnelList(r.Context())
+		response.Success(w, h.buildWdttRawResponse(&updated))
 		return
 	}
 
@@ -550,6 +578,25 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+		tunnelName := stored.Name
+		if err := h.store.Delete(id); err != nil {
+			response.Error(w, err.Error(), "DELETE_FAILED")
+			return
+		}
+		if h.traffic != nil {
+			h.traffic.Clear(id)
+		}
+		h.log.Info("delete", tunnelName, "WDTT raw registry entry removed")
+		h.publishTunnelList(r.Context())
+		response.Success(w, map[string]interface{}{
+			"success":  true,
+			"tunnelId": id,
+			"verified": true,
+		})
 		return
 	}
 

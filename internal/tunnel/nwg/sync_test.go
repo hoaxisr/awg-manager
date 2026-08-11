@@ -3,6 +3,7 @@ package nwg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,8 +56,9 @@ func newSyncTestOperator(t *testing.T, srvURL string) *OperatorNativeWG {
 	t.Helper()
 	sem := transport.NewSemaphore(2)
 	return &OperatorNativeWG{
-		transport: transport.NewWithURL(srvURL, sem),
-		appLog:    logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
+		transport:   transport.NewWithURL(srvURL, sem),
+		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
+		supportsASC: func() bool { return true }, // ASC — путь по умолчанию в тестах
 	}
 }
 
@@ -81,6 +83,86 @@ func TestSyncPeer_NoPreviousKey_OnlyAddsPeer(t *testing.T) {
 	}
 	if strings.Contains(cs.bodies[0], `"no":true`) {
 		t.Errorf("batch must not contain peer-no command when previousPublicKey is empty:\n%s", cs.bodies[0])
+	}
+}
+
+// Доменный endpoint не должен доезжать до конфига NDMS: при неудаче
+// резолва NDMS молча не поднимает интерфейс (#702).
+func TestSyncPeer_HostnameGoesToNDMSResolved(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
+
+	stored := &storage.AWGTunnel{
+		NWGIndex: 5,
+		Peer: storage.AWGPeer{
+			PublicKey: "newkey0000000000000000000000000000000000000=",
+			Endpoint:  "vpn.example.com:51820",
+		},
+	}
+	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+		t.Fatalf("SyncPeer: %v", err)
+	}
+
+	joined := strings.Join(cs.bodies, "\n")
+	if strings.Contains(joined, "vpn.example.com") {
+		t.Fatalf("в конфиг NDMS ушло доменное имя: %s", joined)
+	}
+	if !strings.Contains(joined, "203.0.113.9:51820") {
+		t.Fatalf("резолвнутый адрес в NDMS не ушёл: %s", joined)
+	}
+}
+
+// Резолв не удался — endpoint не трогаем совсем: прежний литерал в
+// конфиге NDMS лучше имени, которое NDMS может не поднять.
+func TestSyncPeer_ResolveFailureLeavesEndpointUntouched(t *testing.T) {
+	stubResolveGap(t)
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.resolveFn = func(string) (string, int, error) { return "", 0, errors.New("i/o timeout") }
+
+	stored := &storage.AWGTunnel{
+		NWGIndex: 5,
+		Peer: storage.AWGPeer{
+			PublicKey: "newkey0000000000000000000000000000000000000=",
+			Endpoint:  "vpn.example.com:51820",
+		},
+	}
+	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+		t.Fatalf("SyncPeer: %v", err)
+	}
+
+	joined := strings.Join(cs.bodies, "\n")
+	if strings.Contains(joined, "vpn.example.com") {
+		t.Fatalf("при неудачном резолве имя всё равно ушло в NDMS: %s", joined)
+	}
+	if strings.Contains(joined, `"endpoint"`) {
+		t.Fatalf("endpoint не должен присутствовать в команде вовсе: %s", joined)
+	}
+}
+
+// На proxy-прошивке endpoint'ом в NDMS владеет kmod-слот: SyncPeer не
+// должен присылать туда ни имя, ни адрес сервера.
+func TestSyncPeer_ProxyFirmwareLeavesEndpointToKmod(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.supportsASC = func() bool { return false }
+	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
+
+	stored := &storage.AWGTunnel{
+		NWGIndex: 5,
+		Peer: storage.AWGPeer{
+			PublicKey: "newkey0000000000000000000000000000000000000=",
+			Endpoint:  "vpn.example.com:51820",
+		},
+	}
+	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+		t.Fatalf("SyncPeer: %v", err)
+	}
+
+	joined := strings.Join(cs.bodies, "\n")
+	if strings.Contains(joined, "vpn.example.com") || strings.Contains(joined, "203.0.113.9") {
+		t.Fatalf("на proxy-пути endpoint в NDMS не наш, а он ушёл: %s", joined)
 	}
 }
 

@@ -161,6 +161,18 @@ const api_BootStatusResponse: v.GenericSchema = v.looseObject({
 	remainingSeconds: v.optional(v.nullable(v.number())),
 });
 
+const api_BypassSetStatusData: v.GenericSchema = v.looseObject({
+	available: v.optional(v.nullable(v.boolean())),
+	conntrackAvailable: v.optional(v.nullable(v.boolean())),
+	entryCount: v.optional(v.nullable(v.number())),
+	entryCountOK: v.optional(v.nullable(v.boolean())),
+	installing: v.optional(v.nullable(v.boolean())),
+	lastError: v.optional(v.nullable(v.string())),
+	lastPopulate: v.optional(v.nullable(v.string())),
+	missingTags: v.optional(v.nullable(v.array(v.string()))),
+	xtSetAvailable: v.optional(v.nullable(v.boolean())),
+});
+
 const api_ChangelogData: v.GenericSchema = v.looseObject({
 	entries: v.optional(v.nullable(v.array(v.lazy(() => api_ChangelogEntryDTO)))),
 });
@@ -1164,49 +1176,6 @@ const api_SaveStatusDTO: v.GenericSchema = v.looseObject({
 	state: v.optional(v.nullable(v.string())),
 });
 
-const api_SelectiveCancelData: v.GenericSchema = v.looseObject({
-	cancelled: v.optional(v.nullable(v.boolean())),
-});
-
-const api_SelectiveDomainMatcherRecordDTO: v.GenericSchema = v.looseObject({
-	cdn: v.optional(v.nullable(v.boolean())),
-	error: v.optional(v.nullable(v.string())),
-	kind: v.optional(v.nullable(v.string())),
-	matcher: v.optional(v.nullable(v.string())),
-	outbound: v.optional(v.nullable(v.string())),
-	queryHosts: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_SelectiveRebuildSnapshotDTO: v.GenericSchema = v.looseObject({
-	domainMatcherCount: v.optional(v.nullable(v.number())),
-	domainResults: v.optional(v.nullable(v.array(v.unknown()))),
-	entryCount: v.optional(v.nullable(v.number())),
-	lastCDNRefresh: v.optional(v.nullable(v.string())),
-	rebuiltAt: v.optional(v.nullable(v.string())),
-	staticCidrCount: v.optional(v.nullable(v.number())),
-	staticCidrs: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_SelectiveSnapshotMatchersData: v.GenericSchema = v.looseObject({
-	limit: v.optional(v.nullable(v.number())),
-	matchers: v.optional(v.nullable(v.array(v.lazy(() => api_SelectiveDomainMatcherRecordDTO)))),
-	offset: v.optional(v.nullable(v.number())),
-	total: v.optional(v.nullable(v.number())),
-});
-
-const api_SelectiveStatusData: v.GenericSchema = v.looseObject({
-	available: v.optional(v.nullable(v.boolean())),
-	conntrackAvailable: v.optional(v.nullable(v.boolean())),
-	enabled: v.optional(v.nullable(v.boolean())),
-	entryCount: v.optional(v.nullable(v.number())),
-	installing: v.optional(v.nullable(v.boolean())),
-	lastError: v.optional(v.nullable(v.string())),
-	lastRebuild: v.optional(v.nullable(v.string())),
-	rebuilding: v.optional(v.nullable(v.boolean())),
-	snapshot: v.optional(v.nullable(v.lazy(() => api_SelectiveRebuildSnapshotDTO))),
-	xtSetAvailable: v.optional(v.nullable(v.boolean())),
-});
-
 const api_ServerListenChangeData: v.GenericSchema = v.looseObject({
 	boundAddrs: v.optional(v.nullable(v.array(v.string()))),
 	confirmDeadline: v.optional(v.nullable(v.string())),
@@ -1368,6 +1337,7 @@ const api_SingboxDNSLookupResponse: v.GenericSchema = v.looseObject({
 
 const api_SingboxDNSRewriteDTO: v.GenericSchema = v.looseObject({
 	ips: v.optional(v.nullable(v.array(v.string()))),
+	managed: v.optional(v.nullable(v.string())),
 	pattern: v.optional(v.nullable(v.string())),
 });
 
@@ -1542,6 +1512,29 @@ const api_SingboxRouterIssueDTO: v.GenericSchema = v.looseObject({
 	tag: v.optional(v.nullable(v.string())),
 });
 
+const api_SingboxRouterNATEgressDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
+const api_SingboxRouterNATPreviewData: v.GenericSchema = v.looseObject({
+	egresses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterNATEgressDTO)))),
+	segments: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterNATSegmentDTO)))),
+});
+
+const api_SingboxRouterNATPreviewResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxRouterNATPreviewData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SingboxRouterNATSegmentDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	staticWan: v.optional(v.nullable(v.string())),
+	subnet: v.optional(v.nullable(v.string())),
+});
+
 const api_SingboxRouterOutboundDTO: v.GenericSchema = v.looseObject({
 	bind_interface: v.optional(v.nullable(v.string())),
 	default: v.optional(v.nullable(v.string())),
@@ -1663,6 +1656,7 @@ const api_SingboxRouterRulesListResponse: v.GenericSchema = v.looseObject({
 const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	bypassExtraPorts: v.optional(v.nullable(v.string())),
 	bypassExtraSubnets: v.optional(v.nullable(v.string())),
+	bypassGeoipTags: v.optional(v.nullable(v.array(v.string()))),
 	bypassPresets: v.optional(v.nullable(v.array(v.string()))),
 	deviceMode: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
@@ -1673,6 +1667,8 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	fakeipStack: v.optional(v.nullable(v.string())),
 	ingressInterfaces: v.optional(v.nullable(v.array(v.string()))),
 	policyName: v.optional(v.nullable(v.string())),
+	policyTunNatSegments: v.optional(v.nullable(v.array(v.string()))),
+	policyTunSourcePreserve: v.optional(v.nullable(v.boolean())),
 	qosClasses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterQoSClassDTO)))),
 	routingMode: v.optional(v.nullable(v.string())),
 	snifferEnabled: v.optional(v.nullable(v.boolean())),
@@ -1707,6 +1703,9 @@ const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	policyExists: v.optional(v.nullable(v.boolean())),
 	policyMark: v.optional(v.nullable(v.string())),
 	policyName: v.optional(v.nullable(v.string())),
+	policyTunIface: v.optional(v.nullable(v.string())),
+	policyTunNdmsName: v.optional(v.nullable(v.string())),
+	policyTunSourcePreserve: v.optional(v.nullable(v.boolean())),
 	restartSuppressedUntil: v.optional(v.nullable(v.string())),
 	ruleCount: v.optional(v.nullable(v.number())),
 	ruleSetCount: v.optional(v.nullable(v.number())),
@@ -2562,14 +2561,22 @@ const presets_SingboxEngine: v.GenericSchema = v.looseObject({
 
 const wdtt_ClientConfig: v.GenericSchema = v.looseObject({
 	captchaMode: v.optional(v.nullable(v.string())),
+	connMode: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
 	deviceId: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	fingerprint: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
+	ndmsIface: v.optional(v.nullable(v.string())),
 	obfs: v.optional(v.nullable(v.string())),
 	password: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+	peerRaw: v.optional(v.nullable(v.string())),
+	peerWg: v.optional(v.nullable(v.string())),
+	policyPermits: v.optional(v.nullable(v.array(v.lazy(() => wdtt_OpkgPolicyPermit)))),
+	rawClientIp: v.optional(v.nullable(v.string())),
+	rawClientMTU: v.optional(v.nullable(v.number())),
+	rawIface: v.optional(v.nullable(v.string())),
 	sub: v.optional(v.nullable(v.string())),
 	vkAuthMode: v.optional(v.nullable(v.string())),
 	vkHashes: v.optional(v.nullable(v.string())),
@@ -2589,6 +2596,7 @@ const wdtt_Config: v.GenericSchema = v.looseObject({
 });
 
 const wdtt_ImportPayload: v.GenericSchema = v.looseObject({
+	connMode: v.optional(v.nullable(v.string())),
 	deviceId: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
@@ -2611,26 +2619,44 @@ const wdtt_LinkDecodeResult: v.GenericSchema = v.looseObject({
 	subscription: v.optional(v.nullable(v.lazy(() => wdtt_SubscriptionPreview))),
 });
 
+const wdtt_OpkgPolicyPermit: v.GenericSchema = v.looseObject({
+	name: v.optional(v.nullable(v.string())),
+	order: v.optional(v.nullable(v.number())),
+});
+
 const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	binary: v.optional(v.nullable(v.string())),
 	binaryPresent: v.optional(v.nullable(v.boolean())),
 	dtlsConnections: v.optional(v.nullable(v.number())),
 	lastError: v.optional(v.nullable(v.string())),
 	log: v.optional(v.nullable(v.string())),
+	ndmsIface: v.optional(v.nullable(v.string())),
 	pid: v.optional(v.nullable(v.number())),
+	rawClientIp: v.optional(v.nullable(v.string())),
+	rawIface: v.optional(v.nullable(v.string())),
 	running: v.optional(v.nullable(v.boolean())),
 	startedAt: v.optional(v.nullable(v.string())),
 	wgConfig: v.optional(v.nullable(v.string())),
 });
 
+const wdtt_ServerClient: v.GenericSchema = v.looseObject({
+	comment: v.optional(v.nullable(v.string())),
+	password: v.optional(v.nullable(v.string())),
+	vkHash: v.optional(v.nullable(v.string())),
+});
+
 const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	adminId: v.optional(v.nullable(v.string())),
 	botToken: v.optional(v.nullable(v.string())),
+	clients: v.optional(v.nullable(v.array(v.lazy(() => wdtt_ServerClient)))),
 	configDir: v.optional(v.nullable(v.string())),
 	debug: v.optional(v.nullable(v.boolean())),
+	directListen: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	ingressEnabled: v.optional(v.nullable(v.boolean())),
 	lanSegments: v.optional(v.nullable(v.array(v.string()))),
+	linkPeer: v.optional(v.nullable(v.string())),
+	linkVkHashes: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	natIface: v.optional(v.nullable(v.string())),
 	natMode: v.optional(v.nullable(v.string())),
@@ -2639,6 +2665,9 @@ const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	openFirewall: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	policy: v.optional(v.nullable(v.string())),
+	rawListen: v.optional(v.nullable(v.string())),
+	relayMode: v.optional(v.nullable(v.string())),
+	statsLog: v.optional(v.nullable(v.string())),
 	wgIface: v.optional(v.nullable(v.string())),
 	wgPort: v.optional(v.nullable(v.number())),
 });
@@ -2754,6 +2783,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /proxy/instance/runtime": v.lazy(() => api_ProxyRuntimeResponse),
 	"GET /proxy/instances": v.lazy(() => api_ProxyInstancesResponse),
 	"GET /proxy/listen-choices": v.lazy(() => api_ProxyListenChoicesResponse),
+	"GET /proxy/listener": v.lazy(() => api_APIEnvelope),
 	"GET /proxy/outbounds": v.lazy(() => api_ProxyOutboundsResponse),
 	"GET /proxy/runtime": v.lazy(() => api_ProxyRuntimeResponse),
 	"GET /routing/access-policies": v.lazy(() => api_AccessPoliciesListResponse),
@@ -2794,6 +2824,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxInboundsResponse))),
 })]),
 	"GET /singbox/router/bindable-interfaces": v.lazy(() => api_SingboxRouterWANInterfacesListResponse),
+	"GET /singbox/router/bypass-set/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
 	"GET /singbox/router/dns/chain-preset": v.lazy(() => api_SingboxDNSChainPresetResponse),
 	"GET /singbox/router/dns/globals": v.lazy(() => api_SingboxDNSGlobalsResponse),
 	"GET /singbox/router/dns/rewrites/list": v.lazy(() => api_SingboxDNSRewritesListResponse),
@@ -2807,6 +2840,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/outbounds/list": v.lazy(() => api_SingboxRouterOutboundsListResponse),
 	"GET /singbox/router/policies": v.lazy(() => api_SingboxRouterPoliciesListResponse),
 	"GET /singbox/router/policy-devices": v.lazy(() => api_SingboxRouterPolicyDevicesListResponse),
+	"GET /singbox/router/policy-tun/nat-preview": v.lazy(() => api_SingboxRouterNATPreviewResponse),
 	"GET /singbox/router/presets/list": v.lazy(() => api_SingboxRouterPresetsListResponse),
 	"GET /singbox/router/proxies/list": v.intersect([v.lazy(() => api_OkResponse), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SingboxProxiesListResponse))),
@@ -2814,12 +2848,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/router/rules/list": v.lazy(() => api_SingboxRouterRulesListResponse),
 	"GET /singbox/router/rulesets/dat-url": v.lazy(() => api_SingboxRouterDatRuleSetURLResponse),
 	"GET /singbox/router/rulesets/list": v.lazy(() => api_SingboxRouterRuleSetsListResponse),
-	"GET /singbox/router/selective/snapshot/matchers": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveSnapshotMatchersData))),
-})]),
-	"GET /singbox/router/selective/status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
 	"GET /singbox/router/settings": v.lazy(() => api_SingboxRouterSettingsResponse),
 	"GET /singbox/router/staging": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_RouterStagingStatusResponse))),
@@ -2942,6 +2970,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxy/apply": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/instance/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
 	"POST /proxy/instances/apply": v.lazy(() => api_APIEnvelope),
+	"POST /proxy/kill-listener": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
 	"POST /routing/refresh": v.lazy(() => api_RoutingRefreshResponse),
 	"POST /server/listen/change": v.lazy(() => api_ServerListenChangeResponse),
@@ -2990,6 +3019,12 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/fakeip/config/rulesets/update": v.lazy(() => api_OkResponse),
 	"POST /singbox/install": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/ndms-proxy": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/router/bypass-set/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
+	"POST /singbox/router/bypass-set/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
+})]),
 	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
@@ -3030,18 +3065,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/rulesets/bulk-detour": v.lazy(() => api_SingboxRouterBulkUpdatedResponse),
 	"POST /singbox/router/rulesets/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/rulesets/update": v.lazy(() => api_OkResponse),
-	"POST /singbox/router/selective/install-conntrack": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/rebuild": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveStatusData))),
-})]),
-	"POST /singbox/router/selective/rebuild/cancel": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_SelectiveCancelData))),
-})]),
 	"POST /singbox/router/settings": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/apply": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/staging/discard": v.lazy(() => api_OkResponse),
@@ -3105,7 +3128,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /wdtt/server/start": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/server/stop": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/servers": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/lan-segments": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/servers/{id}/link": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/nat": v.lazy(() => api_APIEnvelope),
+	"POST /wdtt/servers/{id}/policy": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/servers/{id}/start": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/servers/{id}/stop": v.lazy(() => api_APIEnvelope),
 	"POST /wdtt/servers/{id}/users": v.lazy(() => api_APIEnvelope),

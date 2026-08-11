@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +22,8 @@ import (
 //   - The informal freeturn-entware-installer format (install.sh's
 //     generator.cgi): standard base64 alphabet, padding stripped
 //     (JS btoa().replace(/=+$/, '')), fields v/provider/peer/obf/key/mtu/wg.
+//   - The compact freeturn v2 share format: {"url":"host:port?obf-profile=…"}
+//     with CLI flag names in the query string (no bundled wg when omitted).
 //
 // EncodeLink (our own "generate link" button) emits the upstream format so
 // links we produce are consumable by the real client binary/app too; the
@@ -86,6 +90,22 @@ func StripWGConfMTU(conf string) string {
 	return strings.Join(out, "\n")
 }
 
+// HasBundledWgConfig reports whether a freeturn link carries a usable WG client
+// config (not just an empty [Interface] stub).
+func HasBundledWgConfig(wg string) bool {
+	wg = strings.TrimSpace(wg)
+	if wg == "" {
+		return false
+	}
+	upper := strings.ToUpper(wg)
+	return strings.Contains(upper, "PRIVATEKEY")
+}
+
+type linkWire struct {
+	LinkPayload
+	URL string `json:"url,omitempty"`
+}
+
 func DecodeLink(link string) (LinkPayload, error) {
 	var p LinkPayload
 	body := strings.TrimSpace(link)
@@ -106,8 +126,125 @@ func DecodeLink(link string) (LinkPayload, error) {
 	if err != nil {
 		return p, fmt.Errorf("не удалось декодировать base64: %w", err)
 	}
-	if err := json.Unmarshal(raw, &p); err != nil {
+	var wire linkWire
+	if err := json.Unmarshal(raw, &wire); err != nil {
 		return p, fmt.Errorf("не удалось разобрать JSON: %w", err)
 	}
+	p = wire.LinkPayload
+	if u := strings.TrimSpace(wire.URL); u != "" {
+		mergeURLFormat(&p, u)
+	}
+	if p.V == 0 {
+		p.V = 1
+	}
+	if strings.TrimSpace(p.Provider) == "" {
+		p.Provider = "vk"
+	}
 	return p, nil
+}
+
+func mergeURLFormat(p *LinkPayload, compact string) {
+	hostPort, query, _ := strings.Cut(compact, "?")
+	if p.Peer == "" {
+		p.Peer = strings.TrimSpace(hostPort)
+	}
+	if query == "" {
+		return
+	}
+	vals, err := url.ParseQuery(query)
+	if err != nil {
+		return
+	}
+	setIfEmpty := func(dst *string, keys ...string) {
+		if strings.TrimSpace(*dst) != "" {
+			return
+		}
+		for _, k := range keys {
+			if v := strings.TrimSpace(vals.Get(k)); v != "" {
+				*dst = v
+				return
+			}
+		}
+	}
+	setIfEmpty(&p.Obf, "obf-profile", "obf")
+	setIfEmpty(&p.Key, "obf-key", "key")
+	setIfEmpty(&p.Transport, "transport")
+	setIfEmpty(&p.Mode, "mode")
+	setIfEmpty(&p.ClientID, "client-id", "cid")
+	setIfEmpty(&p.Listen, "listen")
+	setIfEmpty(&p.DNSMode, "dns-mode", "dns")
+	setIfEmpty(&p.DNSServers, "dns-servers", "dnss")
+	setIfEmpty(&p.Name, "name")
+	setIfEmpty(&p.WG, "wg")
+	if p.WG != "" {
+		p.WG = decodeMaybeBase64WG(p.WG)
+	}
+	if p.N == 0 {
+		if n, ok := intQuery(vals, "n"); ok {
+			p.N = n
+		}
+	}
+	if p.StreamsPerCred == 0 {
+		if spc, ok := intQuery(vals, "streams-per-cred", "spc"); ok {
+			p.StreamsPerCred = spc
+		}
+	}
+	if p.MTU == 0 {
+		if mtu, ok := intQuery(vals, "mtu"); ok {
+			p.MTU = mtu
+		}
+	}
+	if !p.Bond {
+		if b, ok := boolQuery(vals, "bond"); ok {
+			p.Bond = b
+		}
+	}
+	if !p.ManualCaptcha {
+		if m, ok := boolQuery(vals, "manual-captcha", "mcap"); ok {
+			p.ManualCaptcha = m
+		}
+	}
+	setIfEmpty(&p.Provider, "provider")
+}
+
+func intQuery(vals url.Values, keys ...string) (int, bool) {
+	for _, k := range keys {
+		raw := strings.TrimSpace(vals.Get(k))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func boolQuery(vals url.Values, keys ...string) (bool, bool) {
+	for _, k := range keys {
+		raw := strings.ToLower(strings.TrimSpace(vals.Get(k)))
+		switch raw {
+		case "1", "true", "yes", "on":
+			return true, true
+		case "0", "false", "no", "off":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func decodeMaybeBase64WG(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "[") {
+		return raw
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		if dec, err := enc.DecodeString(raw); err == nil {
+			if s := strings.TrimSpace(string(dec)); s != "" {
+				return s
+			}
+		}
+	}
+	return raw
 }

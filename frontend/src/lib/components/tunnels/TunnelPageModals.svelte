@@ -45,7 +45,11 @@
 	onclose={() => { ctx.referencedDetails = null; ctx.referencedTunnelName = ''; }}
 />
 
-<AddTunnelWizard bind:open={ctx.createModalOpen} preselect={ctx.wizardPreselect} />
+<AddTunnelWizard
+	bind:open={ctx.createModalOpen}
+	preselect={ctx.wizardPreselect}
+	onAwg3={ctx.awg3Visible ? ctx.openAwg3Import : undefined}
+/>
 
 <Modal
 	open={ctx.pendingSubscriptionDelete !== null}

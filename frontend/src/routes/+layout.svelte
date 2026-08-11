@@ -19,6 +19,7 @@
 	} from '$lib/stores/tunnelDashboardPrefs';
 	import { settingsSectionIconMode } from '$lib/stores/settingsSectionIconMode';
 	import { serviceLetterIcons } from '$lib/stores/serviceLetterIcons';
+	import { showSummary } from '$lib/stores/showSummary';
 	import { auth, isAuthenticated, isLoading } from '$lib/stores/auth';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
@@ -44,7 +45,6 @@
 	import { loadPresetCatalog } from '$lib/stores/presets';
 	import { donateModalOpen, openDonateModal, closeDonateModal } from '$lib/stores/donateModal';
 	import { outboundReferenced } from '$lib/stores/outboundReferenced';
-	import { selectiveBypass } from '$lib/stores/selectiveBypass';
 	import TunnelReferencedModal from '$lib/components/tunnels/TunnelReferencedModal.svelte';
 	import { TriangleAlert } from 'lucide-svelte';
 	import DevelopFeedbackFab from '$lib/components/layout/DevelopFeedbackFab.svelte';
@@ -250,10 +250,6 @@
 			onSingboxRouterRules: singboxRouter.applyRules,
 			onSingboxRouterRuleSets: singboxRouter.applyRuleSets,
 			onSingboxRouterOutbounds: singboxRouter.applyOutbounds,
-
-			// Selective-bypass rebuild progress and status.
-			onSingboxRouterSelectiveProgress: (data) => selectiveBypass.applyProgress(data),
-			onSingboxRouterSelectiveStatus: (data) => selectiveBypass.applyStatus(data),
 		});
 	}
 
@@ -378,6 +374,7 @@
 		compactLayout.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
+		showSummary.init();
 		tunnelDashboardMode.init();
 		tunnelDashboardLayout.init();
 		tunnelDashboardView.init();

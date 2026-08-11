@@ -58,7 +58,6 @@
 	import {
 		CircleArrowDown,
 		Lock,
-		Network,
 		CloudDownload,
 		ScrollText,
 		Activity,
@@ -712,6 +711,7 @@ $effect(() => {
 		<div class="settings-layout">
 		<div class="settings-grid">
 			<aside class="settings-left">
+				<div class="settings-left-sticky">
 				<SystemInfoGrid
 					{systemInfo}
 					usageLevel={settings.usageLevel}
@@ -743,6 +743,7 @@ $effect(() => {
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
 				/>
+				</div>
 			</aside>
 
 			<main class="settings-right">
@@ -811,12 +812,6 @@ $effect(() => {
 							/>
 						</div>
 					{/if}
-					</div>
-				</div>
-
-				<div class="settings-block">
-					<div class="card">
-					<SettingsSectionLabel label="HTTP-сервер" icon={Network} tone="blue" header />
 					<HttpServerCard />
 					</div>
 				</div>
@@ -1011,11 +1006,11 @@ $effect(() => {
 					<ExperimentalSettingsCard />
 				{/if}
 				{/if}
-			</main>
-		</div>
 
-		<div class="settings-block" id="settings-backup">
-			<BackupRestoreCard />
+				<div class="settings-block" id="settings-backup">
+					<BackupRestoreCard />
+				</div>
+			</main>
 		</div>
 
 		<div class="settings-block" id="settings-actions">
@@ -1145,7 +1140,7 @@ $effect(() => {
 		display: grid;
 		grid-template-columns: 360px 1fr;
 		gap: var(--settings-gap);
-		align-items: start;
+		align-items: stretch;
 	}
 
 	.settings-left,
@@ -1153,12 +1148,19 @@ $effect(() => {
 		display: flex;
 		flex-direction: column;
 		gap: var(--settings-gap);
+		min-width: 0;
 	}
 
-	.settings-left {
+	/* Parent stretches with the grid; sticky lives on the inner block so
+	   the sidebar stays pinned for the whole right column, then leaves
+	   with the grid (Actions / footer below). No nested scroll. */
+	.settings-left-sticky {
+		display: flex;
+		flex-direction: column;
+		gap: var(--settings-gap);
 		position: sticky;
-		top: 1rem;
-		align-self: start;
+		top: calc(56px + 0.75rem);
+		width: 100%;
 	}
 
 	.modal-text {
@@ -1501,7 +1503,7 @@ $effect(() => {
 		.settings-grid {
 			grid-template-columns: 1fr;
 		}
-		.settings-left {
+		.settings-left-sticky {
 			position: static;
 		}
 	}

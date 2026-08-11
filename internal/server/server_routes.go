@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
@@ -21,36 +23,37 @@ import (
 // нужные единственной секции). Порядок вызова секций в registerRoutes
 // сохраняет исходный порядок регистрации.
 type routeHandlers struct {
-	appLog              *logging.Service
-	authHandler         *api.AuthHandler
-	tunnelsHandler      *api.TunnelsHandler
-	controlHandler      *api.ControlHandler
-	testingHandler      *api.TestingHandler
-	systemHandler       *api.SystemHandler
-	settingsHandler     *api.SettingsHandler
-	importHandler       *api.ImportHandler
-	wanHandler          *api.WANHandler
-	pingCheckHandler    *api.PingCheckHandler
-	freeturnHandler     *api.FreeTurnHandler
-	wdttHandler         *api.WdttHandler
-	loggingHandler      *api.LoggingHandler
-	externalHandler     *api.ExternalTunnelsHandler
-	updateHandler       *api.UpdateHandler
-	dnsRouteHandler     *api.DNSRouteHandler
-	diagRunner          *diagnostics.Runner
-	diagHandler         *api.DiagnosticsHandler
-	connectionsService  *connections.Service
-	connectionsHandler  *api.ConnectionsHandler
-	signatureHandler    *api.SignatureHandler
-	terminalHandler     *api.TerminalHandler
-	eventsHandler       *api.EventsHandler
-	hookHandler         *api.HookHandler
-	staticRouteHandler  *api.StaticRouteHandler
-	systemTunnelHandler *api.SystemTunnelsHandler
-	serverHandler       *api.ServersHandler
-	managedHandler      *api.ManagedServerHandler
-	accessPolicyHandler *api.AccessPolicyHandler
-	crHandler           *api.ClientRouteHandler
+	appLog               *logging.Service
+	authHandler          *api.AuthHandler
+	tunnelsHandler       *api.TunnelsHandler
+	controlHandler       *api.ControlHandler
+	testingHandler       *api.TestingHandler
+	systemHandler        *api.SystemHandler
+	settingsHandler      *api.SettingsHandler
+	importHandler        *api.ImportHandler
+	wanHandler           *api.WANHandler
+	pingCheckHandler     *api.PingCheckHandler
+	freeturnHandler      *api.FreeTurnHandler
+	wdttHandler          *api.WdttHandler
+	proxyListenerHandler *api.ProxyListenerHandler
+	loggingHandler       *api.LoggingHandler
+	externalHandler      *api.ExternalTunnelsHandler
+	updateHandler        *api.UpdateHandler
+	dnsRouteHandler      *api.DNSRouteHandler
+	diagRunner           *diagnostics.Runner
+	diagHandler          *api.DiagnosticsHandler
+	connectionsService   *connections.Service
+	connectionsHandler   *api.ConnectionsHandler
+	signatureHandler     *api.SignatureHandler
+	terminalHandler      *api.TerminalHandler
+	eventsHandler        *api.EventsHandler
+	hookHandler          *api.HookHandler
+	staticRouteHandler   *api.StaticRouteHandler
+	systemTunnelHandler  *api.SystemTunnelsHandler
+	serverHandler        *api.ServersHandler
+	managedHandler       *api.ManagedServerHandler
+	accessPolicyHandler  *api.AccessPolicyHandler
+	crHandler            *api.ClientRouteHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
@@ -170,6 +173,17 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.wdttHandler.SetLinkedTunnelCleanup(s.tunnels, s.tunnelService)
 	h.wdttHandler.SetTunnelsHandler(h.tunnelsHandler)
+
+	// listen-repair внутри freeturn/wdtt переназначает порт клиента — Endpoint
+	// linked AWG-туннеля обязан пойти следом, и не только в хранилище: через
+	// handler правка доходит до живого интерфейса (tunnelService.Update) и до
+	// фронта (SSE).
+	s.wireLinkedEndpointSync(s.freeturnService, h.freeturnHandler.SyncLinkedTunnelEndpoints, "freeturn")
+	s.wireLinkedEndpointSync(s.wdttService, h.wdttHandler.SyncLinkedTunnelEndpoints, "wdtt")
+	h.tunnelsHandler.SetWdttListSource(s.wdttService)
+	h.controlHandler.SetWdttControl(s.tunnels, s.wdttService)
+
+	h.proxyListenerHandler = api.NewProxyListenerHandler(s.freeturnService, s.wdttService)
 
 	// Auth middleware helper
 	h.guarded = s.authMiddleware.RequireAuthFunc
@@ -395,6 +409,9 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", h.guarded(h.pingCheckHandler.RemoveTunnelPingCheck))
 
 	// FreeTurn (protected)
+	mux.HandleFunc("/api/proxy/listener", h.guarded(h.proxyListenerHandler.GetListener))
+	mux.HandleFunc("/api/proxy/kill-listener", h.guarded(h.proxyListenerHandler.KillListener))
+
 	mux.HandleFunc("/api/freeturn/config", h.guarded(h.freeturnHandler.GetConfig))
 	mux.HandleFunc("/api/freeturn/client/config", h.guarded(h.freeturnHandler.UpdateClientConfig))
 	mux.HandleFunc("/api/freeturn/server/config", h.guarded(h.freeturnHandler.UpdateServerConfig))
@@ -836,6 +853,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/wan-interfaces", h.guarded(rh.ListWANInterfaces))
 		mux.HandleFunc("/api/singbox/router/bindable-interfaces", h.guarded(rh.ListBindableInterfaces))
 		mux.HandleFunc("/api/singbox/router/ingress-eligible-interfaces", h.guarded(rh.ListIngressEligibleInterfaces))
+		mux.HandleFunc("/api/singbox/router/policy-tun/nat-preview", h.guarded(rh.PolicyTunNATPreview))
 		mux.HandleFunc("/api/singbox/router/policy-devices", h.guarded(rh.ListPolicyDevices))
 		mux.HandleFunc("/api/singbox/router/policy-devices/bind", h.guarded(rh.BindDevice))
 		mux.HandleFunc("/api/singbox/router/policy-devices/unbind", h.guarded(rh.UnbindDevice))
@@ -873,14 +891,11 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/staging/discard", h.guarded(rh.PostStagingDiscard))
 	}
 
-	if s.selectiveHandler != nil {
-		sh := s.selectiveHandler
-		mux.HandleFunc("/api/singbox/router/selective/status", h.guarded(sh.GetStatus))
-		mux.HandleFunc("/api/singbox/router/selective/snapshot/matchers", h.guarded(sh.GetSnapshotMatchers))
-		mux.HandleFunc("/api/singbox/router/selective/install-deps", h.guarded(sh.InstallDeps))
-		mux.HandleFunc("/api/singbox/router/selective/install-conntrack", h.guarded(sh.InstallConntrack))
-		mux.HandleFunc("/api/singbox/router/selective/rebuild", h.guarded(sh.Rebuild))
-		mux.HandleFunc("/api/singbox/router/selective/rebuild/cancel", h.guarded(sh.CancelRebuild))
+	if s.bypassSetHandler != nil {
+		bh := s.bypassSetHandler
+		mux.HandleFunc("/api/singbox/router/bypass-set/status", h.guarded(bh.GetStatus))
+		mux.HandleFunc("/api/singbox/router/bypass-set/install-deps", h.guarded(bh.InstallDeps))
+		mux.HandleFunc("/api/singbox/router/bypass-set/install-conntrack", h.guarded(bh.InstallConntrack))
 	}
 
 	if s.singboxFakeIPConfigHandler != nil {
@@ -971,6 +986,35 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/awg3-endpoints/", h.guarded(s.awg3Handler.Handle))
 	}
 
+}
+
+// linkedEndpointSyncSetter реализуют freeturn.Service и wdtt.Service.
+// Отдельный узкий интерфейс вместо метода в api.FreeTurnService/api.WdttService:
+// те описывают ~35 методов и имеют полные моки в тестах, расширять их ради
+// одного сеттера дороже, чем проверить тип здесь.
+type linkedEndpointSyncSetter interface {
+	SetLinkedEndpointSync(func(clientID, listen string) (int, error))
+}
+
+func (s *Server) wireLinkedEndpointSync(
+	svc any,
+	sync func(ctx context.Context, clientID, listen string) ([]string, []string),
+	scope string,
+) {
+	setter, ok := svc.(linkedEndpointSyncSetter)
+	if !ok {
+		// Молчать нельзя: смена типа сервиса иначе тихо отключит sync, и
+		// endpoint снова начнёт отставать от listen после listen-repair.
+		s.appLog.Warn("wiring", scope, "сервис не умеет SetLinkedEndpointSync — endpoint linked-туннелей не синхронизируется")
+		return
+	}
+	setter.SetLinkedEndpointSync(func(clientID, listen string) (int, error) {
+		updated, errs := sync(context.Background(), clientID, listen)
+		if len(errs) > 0 {
+			return len(updated), errors.New(strings.Join(errs, "; "))
+		}
+		return len(updated), nil
+	})
 }
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).

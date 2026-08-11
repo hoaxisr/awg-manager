@@ -6,26 +6,37 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 )
 
-func serverListenPortSpec(cfg ServerConfig) (listenfirewall.PortSpec, bool) {
+func serverFirewallPortSpecs(cfg ServerConfig) []listenfirewall.PortSpec {
 	if !listenfirewall.OpenEnabled(cfg.OpenFirewall) {
-		return listenfirewall.PortSpec{}, false
+		return nil
 	}
-	port, ok := listenfirewall.WANListenPort(cfg.Listen)
-	if !ok {
-		return listenfirewall.PortSpec{}, false
+	var specs []listenfirewall.PortSpec
+	add := func(addr string) {
+		port, ok := listenfirewall.WANListenPort(addr)
+		if !ok {
+			return
+		}
+		specs = append(specs, listenfirewall.PortSpec{Port: port, Proto: "udp"})
 	}
-	return listenfirewall.PortSpec{Port: port, Proto: "udp"}, true
+	add(cfg.Listen)
+	add(cfg.EffectiveRawListen())
+	if direct := cfg.EffectiveDirectListen(); direct != "" && direct != cfg.Listen {
+		add(direct)
+	}
+	return listenfirewall.MergePortSpecs(specs)
 }
 
 func applyServerListenFirewall(ctx context.Context, cfg ServerConfig) error {
-	if spec, ok := serverListenPortSpec(cfg); ok {
-		return listenfirewall.Apply(ctx, spec.Port, spec.Proto)
+	for _, spec := range serverFirewallPortSpecs(cfg) {
+		if err := listenfirewall.Apply(ctx, spec.Port, spec.Proto); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func removeServerListenFirewall(ctx context.Context, cfg ServerConfig) {
-	if spec, ok := serverListenPortSpec(cfg); ok {
+	for _, spec := range serverFirewallPortSpecs(cfg) {
 		listenfirewall.Remove(ctx, spec.Port, spec.Proto)
 	}
 }
@@ -41,15 +52,53 @@ func (s *Service) RunningServerListenPorts() []listenfirewall.PortSpec {
 		if !s.serverProcs.get(srv.ID).Status().Running {
 			continue
 		}
-		if spec, ok := serverListenPortSpec(srv.Config); ok {
-			out = append(out, spec)
-		}
+		out = append(out, serverFirewallPortSpecs(srv.Config)...)
 	}
 	return listenfirewall.MergePortSpecs(out)
 }
 
+func serverFirewallConfigChanged(prev, next ServerConfig) bool {
+	return prev.Listen != next.Listen ||
+		prev.RawListen != next.RawListen ||
+		prev.DirectListen != next.DirectListen ||
+		prev.RelayMode != next.RelayMode ||
+		!openFirewallEqual(prev.OpenFirewall, next.OpenFirewall)
+}
+
+// serverProcessConfigChanged — поля, требующие перезапуска wdtt-server (qWDTT слушает raw+direct одновременно).
+func serverProcessConfigChanged(prev, next ServerConfig) bool {
+	return prev.Listen != next.Listen ||
+		prev.RawListen != next.RawListen ||
+		prev.DirectListen != next.DirectListen ||
+		prev.WgPort != next.WgPort ||
+		prev.WgIface != next.WgIface ||
+		prev.Password != next.Password ||
+		prev.ConfigDir != next.ConfigDir
+}
+
+func serverAccessConfigChanged(prev, next ServerConfig) bool {
+	return prev.NatMode != next.NatMode ||
+		prev.Policy != next.Policy ||
+		prev.RelayMode != next.RelayMode ||
+		prev.NdmsIface != next.NdmsIface ||
+		prev.WgIface != next.WgIface ||
+		!stringSliceEqual(prev.LanSegments, next.LanSegments)
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Service) syncServerListenFirewall(ctx context.Context, id string, prev, next ServerConfig) {
-	if prev.Listen != next.Listen || !openFirewallEqual(prev.OpenFirewall, next.OpenFirewall) {
+	if serverFirewallConfigChanged(prev, next) {
 		removeServerListenFirewall(ctx, prev)
 	}
 	if s.serverProcs.get(id).Status().Running {
@@ -61,4 +110,16 @@ func (s *Service) syncServerListenFirewall(ctx context.Context, id string, prev,
 
 func openFirewallEqual(a, b *bool) bool {
 	return listenfirewall.OpenEnabled(a) == listenfirewall.OpenEnabled(b)
+}
+
+// serverListenPortSpec kept for callers that only need the DTLS port.
+func serverListenPortSpec(cfg ServerConfig) (listenfirewall.PortSpec, bool) {
+	if !listenfirewall.OpenEnabled(cfg.OpenFirewall) {
+		return listenfirewall.PortSpec{}, false
+	}
+	port, ok := listenfirewall.WANListenPort(cfg.Listen)
+	if !ok {
+		return listenfirewall.PortSpec{}, false
+	}
+	return listenfirewall.PortSpec{Port: port, Proto: "udp"}, true
 }

@@ -49,6 +49,33 @@ func newCacheTestService(t *testing.T, mgr *countingState, ttl time.Duration) *S
 	return s
 }
 
+func TestFetchRawStateByID_SkipsWdttRawBackend(t *testing.T) {
+	mgr := &countingState{}
+	s := newCacheTestService(t, mgr, 2*time.Second)
+	if err := s.store.Save(&storage.AWGTunnel{
+		ID:      "wdttraw-default",
+		Name:    "WDTT Raw",
+		Backend: "wdtt-raw",
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := s.fetchRawStateByID(context.Background(), "wdttraw-default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != tunnel.StateRunning {
+		t.Fatalf("state = %v, want running", info.State)
+	}
+	if info.BackendType != "wdtt-raw" {
+		t.Fatalf("backendType = %q, want wdtt-raw", info.BackendType)
+	}
+	if got := mgr.calls.Load(); got != 0 {
+		t.Fatalf("manager calls = %d, want 0 (wdtt-raw must not query kernel state)", got)
+	}
+}
+
 func TestStateCache_SingleFlightCoalesces(t *testing.T) {
 	mgr := &countingState{delay: 50 * time.Millisecond}
 	s := newCacheTestService(t, mgr, 2*time.Second)

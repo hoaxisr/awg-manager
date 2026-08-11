@@ -546,6 +546,18 @@ func (km *KmodManager) HasSlotListening(listenPort int) bool {
 	return hasSlotListeningInList(string(data), listenPort)
 }
 
+// SupportsIPv6 сообщает, понимает ли загруженный awg_proxy.ko эндпоинты
+// вида "[v6]:port" (см. kmodVersionIPv6). Тот же предикат стоит гейтом
+// внутри addFreshLocked, но там он срабатывает уже ПОСЛЕ того, как
+// вызывающий снял прежний слот; отдельный публичный вид нужен, чтобы
+// проверить осуществимость пересборки до сноса живого слота.
+func (km *KmodManager) SupportsIPv6() bool {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	loaded := km.readVersionLocked()
+	return loaded != "" && semver.Compare(loaded, kmodVersionIPv6) >= 0
+}
+
 // IsLoaded checks if /proc/awg_proxy/version exists.
 func (km *KmodManager) IsLoaded() bool {
 	km.mu.Lock()

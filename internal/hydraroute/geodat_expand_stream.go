@@ -43,7 +43,7 @@ func streamTagLines(path, wantTag, kind string, parseItem itemParser, emit func(
 		return err
 	}
 	if !found {
-		return fmt.Errorf("%s tag %q not found in %s", kind, wantTag, path)
+		return fmt.Errorf("%s tag %q not found in %s: %w", kind, wantTag, path, ErrGeoTagNotFound)
 	}
 	return nil
 }

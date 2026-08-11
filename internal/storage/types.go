@@ -75,6 +75,10 @@ type Settings struct {
 	// mode (see FakeIPState). Pointer so it's absent from JSON when never
 	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
 	FakeIP *FakeIPState `json:"fakeip,omitempty"`
+	// PolicyTun is backend-managed operational state for sing-box policy-tun
+	// mode (see PolicyTunState). Pointer so it's absent from JSON when never
+	// provisioned; nil = not provisioned. Written ONLY via SetPolicyTunState.
+	PolicyTun *PolicyTunState `json:"policyTun,omitempty"`
 	// DNSChainPreset is backend-managed state of the sing-box 1.14 DNS-chain
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
@@ -109,6 +113,23 @@ type FakeIPState struct {
 	Inet6Range  string `json:"inet6Range,omitempty"`
 }
 
+// PolicyTunNATSegment — записанное ИСХОДНОЕ NAT-состояние сегмента перед
+// применением source-preserve, чтобы teardown восстановил именно его, а не
+// безусловный `ip nat`. PriorMode: "dynamic" | "static" | "none".
+type PolicyTunNATSegment struct {
+	Name           string `json:"name"`
+	PriorMode      string `json:"priorMode"`
+	PriorStaticWAN string `json:"priorStaticWan,omitempty"`
+}
+
+// PolicyTunState — backend-managed состояние policy-tun (зеркало FakeIPState).
+// Пишется ТОЛЬКО lifecycle'ом (Enable/Disable/reap) через SetPolicyTunState.
+type PolicyTunState struct {
+	Provisioned bool                  `json:"provisioned,omitempty"`
+	Index       int                   `json:"index,omitempty"`
+	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
 type DownloadSettings struct {
 	RouteTag  string `json:"routeTag"`            // default: "direct"
 	RouteKind string `json:"routeKind,omitempty"` // default: "direct"
@@ -124,7 +145,8 @@ type SingboxRouterSettings struct {
 	DeviceMode string `json:"deviceMode,omitempty"`
 	// RoutingMode selects the sing-box routing path:
 	// "tproxy" (default) keeps the historical TPROXY/REDIRECT behavior;
-	// "fakeip-tun" routes via a fake-IP DNS pool + tun device.
+	// "fakeip-tun" routes via a fake-IP DNS pool + tun device;
+	// "policy-tun" captures traffic via an NDMS access policy + tun device.
 	RoutingMode    string `json:"routingMode,omitempty"`
 	SnifferEnabled bool   `json:"snifferEnabled"`
 	// WANAutoDetect is the discriminator for the WAN-binding mode.
@@ -144,9 +166,11 @@ type SingboxRouterSettings struct {
 	// system-names don't. The UI layer translates between the two.
 	// Only meaningful when WANAutoDetect == false.
 	WANInterface string `json:"wanInterface,omitempty"`
-	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT.
-	// Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-	// (destination-IP 78.47.125.180, KeenDNS/CrazeDNS). nil/[] = nothing excluded.
+	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT
+	// (port-based) or to drive related behaviour. Valid values: "l2tp", "ntp",
+	// "netbios-smb" (ports), "keendns" (managed DNS rewrite of the router's
+	// own KeenDNS/CrazeDNS FQDN → LAN IP — not an iptables CIDR). Default for
+	// fresh installs and post-v33 migrations includes "keendns".
 	BypassPresets []string `json:"bypassPresets,omitempty"`
 	// BypassExtraPorts is a user-supplied comma-separated list of extra port
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
@@ -157,6 +181,11 @@ type SingboxRouterSettings struct {
 	// целиком мимо sing-box (включая DNS/53). Голый IP трактуется как /32.
 	// Парсится в момент генерации правил. Пусто = нет исключений.
 	BypassExtraSubnets string `json:"bypassExtraSubnets,omitempty"`
+	// BypassGeoIPTags — geoip-теги из настроенных .dat, чьи CIDR уходят в WAN
+	// мимо sing-box через ipset AWGM-BYPASS (та же семантика полного обхода,
+	// что у BypassExtraSubnets, но масштаб geoip требует ipset вместо
+	// дискретных правил). Пусто — набора и правила нет.
+	BypassGeoIPTags []string `json:"bypassGeoipTags,omitempty"`
 	// IngressInterfaces — ref'ы интерфейсов, чей ingress-трафик заворачивается
 	// в sing-box. Формат: "managed:Wireguard3" (резолвится в kernel-имя на
 	// сборке спека) или "iface:nwg5" (kernel-имя как есть). Пусто = выключено.
@@ -189,14 +218,6 @@ type SingboxRouterSettings struct {
 	// умолчанию (DefaultUDPTimeout, 5m). Увеличение помогает играм и другим
 	// UDP-приложениям, которые могут молчать дольше и терять сессию.
 	UDPTimeout string `json:"udpTimeout,omitempty"`
-	// SelectiveBypass, when true, installs an iptables -m set guard in front
-	// of the TPROXY/REDIRECT catch-all rules so only traffic whose destination
-	// IP is present in the AWGM-SELECTIVE ipset reaches sing-box. All other
-	// traffic bypasses sing-box entirely (RETURN → WAN). The ipset is built
-	// from ip_cidr matchers and resolved domain_suffix/domain entries across
-	// all active router rules and their rule sets. Only meaningful when
-	// RoutingMode == "tproxy" and ipset + xt_set are available on the router.
-	SelectiveBypass bool `json:"selectiveBypass,omitempty"`
 	// QoSClasses lists DSCP-based QoS traffic classes (issue #371). Each
 	// enabled class gets its own iptables `-m dscp` dispatch (mangle TPROXY +
 	// nat REDIRECT), a dedicated pair of sing-box inbounds and a managed route
@@ -206,17 +227,13 @@ type SingboxRouterSettings struct {
 	// non-empty. Empty slice = feature off; no schema migration needed (the
 	// zero value is the correct default, same as BypassPresets).
 	QoSClasses []SingboxQoSClass `json:"qosClasses,omitempty"`
-}
-
-// SelectiveActive reports whether селективный перехват реально действует:
-// движок включён, режим tproxy (пустой RoutingMode нормализуется в tproxy)
-// и флаг SelectiveBypass взведён. В режиме fakeip-tun взведённый флаг —
-// валидное «спящее» состояние (router.validateSelectiveBypassSettings) и
-// активности НЕ означает: пересборки ipset и включение слота
-// 19-selective-routes.json на него реагировать не должны (#564).
-func (sr SingboxRouterSettings) SelectiveActive() bool {
-	return sr.Enabled && sr.SelectiveBypass &&
-		(sr.RoutingMode == "" || sr.RoutingMode == "tproxy")
+	// PolicyTunSourcePreserve: в режиме policy-tun переводить выбранные сегменты
+	// на static-NAT (no ip nat + ip static → WAN), чтобы sing-box видел реальные
+	// LAN-source (иначе маскарад: все клиенты = tun-адрес). Default false.
+	PolicyTunSourcePreserve bool `json:"policyTunSourcePreserve,omitempty"`
+	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
+	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
+	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
 }
 
 // SingboxQoSClass is one DSCP-based QoS traffic class routed to a dedicated
@@ -392,9 +409,11 @@ type AWGTunnel struct {
 	ResolvedEndpointIP string                   `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
 	ActiveWAN          string                   `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
 	StartedAt          string                   `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
-	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "" (legacy=kernel)
+	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
 	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
 	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
+	RawKernelIface     string                   `json:"rawKernelIface,omitempty"`     // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
+	RawNdmsIface       string                   `json:"rawNdmsIface,omitempty"`       // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
 	NWGIndex           int                      `json:"nwgIndex"`                     // Wireguard{N} index, nativewg only (0 is valid!)
 	CreatedAt          string                   `json:"createdAt"`
 	Interface          AWGInterface             `json:"interface"`

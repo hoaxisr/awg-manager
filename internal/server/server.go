@@ -118,7 +118,7 @@ type Server struct {
 	singboxConfigEditorHandler *api.SingboxConfigEditorHandler
 	singboxInboundsHandler     *api.SingboxInboundsHandler
 	singboxProxiesHandler      *api.SingboxProxiesHandler
-	selectiveHandler           *api.SelectiveHandler
+	bypassSetHandler           *api.BypassSetHandler
 	awgOutboundsHandler        *api.AWGOutboundsHandler
 	subscriptionHandler        *api.SubscriptionHandler
 	dnsRewritesHandler         *api.DNSRewritesHandler
@@ -380,10 +380,10 @@ func (s *Server) SetSingboxProxiesHandler(h *api.SingboxProxiesHandler) {
 	s.singboxProxiesHandler = h
 }
 
-// SetSelectiveHandler wires the selective-bypass handler so
-// /api/singbox/router/selective/* routes can be registered.
-func (s *Server) SetSelectiveHandler(h *api.SelectiveHandler) {
-	s.selectiveHandler = h
+// SetBypassSetHandler wires the geoip bypass-set handler so
+// /api/singbox/router/bypass-set/* routes can be registered.
+func (s *Server) SetBypassSetHandler(h *api.BypassSetHandler) {
+	s.bypassSetHandler = h
 }
 
 // SetSubscriptionHandler wires the VPN subscription CRUD handler so the

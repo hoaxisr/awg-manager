@@ -30,6 +30,7 @@ import type {
 } from './types';
 import { detectService } from './serviceDetection';
 import { resolveRuleSetDisplayType } from '$lib/utils/ruleSetType';
+import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 import { formatIpCidrForList } from '$lib/utils/singboxInlineRules';
 import { COMPOSITE_OUTBOUND_TYPES, resolveCompositeOutboundView } from './compositeOutboundDisplay';
 import {
@@ -208,15 +209,21 @@ export function resolveOutboundDisplay(
 /* ─── Matcher chip extraction ───────────────────────────────────────── */
 
 export function extractMatcherChips(
-  rule: SingboxRouterRule,
+  ruleIn: SingboxRouterRule,
   rulesetLabels: Record<string, string>,
   ruleSets: SingboxRouterRuleSet[] = [],
 ): MatcherChip[] {
+  // Правило «пресет ИЛИ свои адреса» хранится логической формой — без
+  // разворачивания его матчеры лежат уровнем ниже и карточка выходит пустой.
+  const rule = flattenRouterRule(ruleIn);
   const chips: MatcherChip[] = [];
   const rulesetTypes = new Map(
     ruleSets.filter((rs) => rs.tag).map((rs) => [rs.tag, resolveRuleSetDisplayType(rs)] as const),
   );
 
+  for (const d of rule.domain ?? []) {
+    chips.push({ kind: 'domain', label: d });
+  }
   for (const d of rule.domain_suffix ?? []) {
     chips.push({ kind: 'domain', label: d });
   }
@@ -238,6 +245,9 @@ export function extractMatcherChips(
       rulesetTag: displayTag,
       rulesetType: resolved ? rulesetTypes.get(resolved.tag) : rulesetTypes.get(rs),
     });
+  }
+  if (rule.network === 'tcp' || rule.network === 'udp') {
+    chips.push({ kind: 'protocol', label: rule.network.toUpperCase() });
   }
   if (rule.protocol) {
     chips.push({ kind: 'protocol', label: rule.protocol });

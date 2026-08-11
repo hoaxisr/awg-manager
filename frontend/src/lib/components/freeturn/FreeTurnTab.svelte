@@ -9,6 +9,7 @@
 		FreeTurnClientInstance,
 		FreeTurnConfig,
 		FreeTurnGenerateLinkResult,
+		FreeTurnLinkPayload,
 		FreeTurnServerConfig,
 		FreeTurnServerInstance,
 		FreeTurnStatus
@@ -16,7 +17,8 @@
 	import InstanceBar from './InstanceBar.svelte';
 	import FreeTurnClientSimple from './FreeTurnClientSimple.svelte';
 	import FreeTurnServerSimple from './FreeTurnServerSimple.svelte';
-	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
+	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
+	import { linkedTunnelListenPort, patchWgConfEndpoint, freeturnLinkHasWg } from '$lib/utils/serverPeerOptions';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 
@@ -35,6 +37,7 @@
 	let selectedServerId = $state('default');
 
 	let importing = $state(false);
+	let importingWg = $state(false);
 	let installing = $state(false);
 
 	let genProvider = $state('vk');
@@ -234,7 +237,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить клиент');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 
@@ -250,7 +253,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить сервер');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 
@@ -364,8 +367,32 @@
 		return `${base} FT`.slice(0, 60);
 	}
 
-	async function applyImportLink(link: string) {
-		if (!link.trim() || !selectedClient || !config) return;
+	async function importManualWg(wg: string) {
+		if (!selectedClient || !config) return;
+		importingWg = true;
+		try {
+			const portForTunnel = linkedTunnelListenPort(selectedClient.config.listen);
+			if (portForTunnel == null) {
+				notifications.error('Не удалось определить listen-порт клиента для AWG-туннеля');
+				return;
+			}
+			const wgForImport = patchWgConfEndpoint(wg.trim(), portForTunnel);
+			const tunnel = await api.importConfig(
+				wgForImport,
+				freeturnTunnelName(selectedClient.name),
+				undefined,
+				selectedClientId
+			);
+			notifications.success(`Создан туннель «${tunnel.name}» (Endpoint 127.0.0.1:${portForTunnel})`);
+		} catch (e) {
+			notifications.error('Не удалось создать туннель: ' + errText(e));
+		} finally {
+			importingWg = false;
+		}
+	}
+
+	async function applyImportLink(link: string): Promise<FreeTurnLinkPayload | null> {
+		if (!link.trim() || !selectedClient || !config) return null;
 		importing = true;
 		try {
 			const payload = await api.decodeFreeTurnLink(link.trim());
@@ -387,7 +414,7 @@
 			if (payload.dns === 'plain' || payload.dns === 'doh' || payload.dns === 'auto') {
 				c.dnsMode = payload.dns;
 			}
-			const wg = payload.wg?.trim() ? payload.wg : null;
+			const wg = freeturnLinkHasWg(payload.wg) ? payload.wg!.trim() : null;
 
 			let msg = 'Ссылка распознана, поля заполнены — не забудьте сохранить';
 			if (payload.cid) {
@@ -414,11 +441,15 @@
 				} catch (e) {
 					notifications.error('Поля заполнены, но не удалось создать туннель из конфига: ' + errText(e));
 				}
+			} else {
+				msg += '. В ссылке нет WireGuard-конфига — вставьте клиентский .conf ниже для AWG-туннеля';
 			}
 			await saveClientConfig(c);
 			notifications.success(msg);
+			return payload;
 		} catch (e) {
 			notifications.error('Не удалось разобрать ссылку: ' + errText(e));
+			return null;
 		} finally {
 			importing = false;
 		}
@@ -469,6 +500,7 @@
 				id: c.id,
 				name: c.name,
 				running: st?.running,
+				autostart: c.config.enabled,
 				startedAt: st?.startedAt,
 				pid: st?.pid,
 				dtlsConnections: st?.dtlsConnections,
@@ -483,6 +515,7 @@
 				id: s.id,
 				name: s.name,
 				running: st?.running,
+				autostart: s.config.enabled,
 				startedAt: st?.startedAt,
 				pid: st?.pid,
 				binaryPresent: st?.binaryPresent
@@ -500,6 +533,8 @@
 	urlParam="ft"
 	defaultTab="client"
 />
+
+<ProxyPanelModeToggle />
 
 {#if loading}
 	<div class="ft-loading">Загрузка…</div>
@@ -558,6 +593,9 @@
 				onSave={saveClientConfig}
 				onToggle={(on) => toggleClientInstance(selectedClientId, on)}
 				onImportLink={applyImportLink}
+				onImportManualWg={importManualWg}
+				onImportWgTunnel={importManualWg}
+				{importingWg}
 			/>
 		{:else}
 			<p class="ft-empty-hint">Нет выбранного клиента. Нажмите «+ Добавить», чтобы создать новый.</p>

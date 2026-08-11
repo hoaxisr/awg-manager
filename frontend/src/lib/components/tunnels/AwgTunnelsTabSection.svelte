@@ -26,6 +26,7 @@
 	import { awgManagedStatusDot } from '$lib/utils/statusDot';
 	import { awgPingStatusNote, awgShowConnectivityRow, awgRecoveringVisual, awgToggleTint } from '$lib/utils/awgPingStatus';
 	import { Eye, EyeOff, Upload, Download, Server } from 'lucide-svelte';
+	import { showSummary } from '$lib/stores/showSummary';
 	import type { AwgTabContext } from './awgTabContext';
 
 	let { ctx }: { ctx: AwgTabContext } = $props();
@@ -187,7 +188,7 @@
 		</div>
 	</div>
 	{/if}
-	{#if !ctx.dashboardOn}
+	{#if !ctx.dashboardOn && $showSummary}
 		<div class="awg-summary-row">
 			<StatStrip>
 				<Stat

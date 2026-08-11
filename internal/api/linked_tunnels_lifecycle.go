@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 type linkedTunnelPredicate func(storage.AWGTunnel) bool
@@ -156,4 +158,76 @@ func clientStartStopResponse(message string, tunnelIDs []string, tunnelErrors []
 		resp["tunnelErrors"] = tunnelErrors
 	}
 	return resp
+}
+
+func appendLinkedTunnelSync(resp map[string]any, synced []string, syncErrs []string) {
+	if len(synced) > 0 {
+		resp["syncedTunnelEndpoints"] = synced
+	}
+	if len(syncErrs) > 0 {
+		if existing, ok := resp["tunnelErrors"].([]string); ok {
+			resp["tunnelErrors"] = append(existing, syncErrs...)
+		} else {
+			resp["tunnelErrors"] = syncErrs
+		}
+	}
+}
+
+// localEndpointFromListen maps proxy client listen (127.0.0.1:9001) to AWG Peer.Endpoint.
+func localEndpointFromListen(listen string) (string, bool) {
+	port, ok := freeturn.LocalListenPort(listen)
+	if !ok || port <= 0 {
+		if p := wdtt.ListenPortFromAddr(listen); p > 0 {
+			port = p
+		} else {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port), true
+}
+
+// syncLinkedAwgTunnelEndpoints updates linked AWG tunnels when proxy listen port changes.
+func syncLinkedAwgTunnelEndpoints(
+	ctx context.Context,
+	store *storage.AWGTunnelStore,
+	svc TunnelService,
+	th *TunnelsHandler,
+	pred linkedTunnelPredicate,
+	listen string,
+) (updated []string, errs []string) {
+	want, ok := localEndpointFromListen(listen)
+	if !ok || store == nil {
+		return nil, nil
+	}
+	tunnels, err := listLinkedAwgTunnels(store, pred)
+	if err != nil {
+		return nil, []string{err.Error()}
+	}
+	for _, tun := range tunnels {
+		if strings.TrimSpace(tun.Peer.Endpoint) == want {
+			continue
+		}
+		existing, err := store.Get(tun.ID)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
+			continue
+		}
+		updatedStored := *existing
+		updatedStored.Peer.Endpoint = want
+		if svc != nil {
+			if err := svc.Update(ctx, existing, &updatedStored); err != nil {
+				errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
+				continue
+			}
+		}
+		if err := store.Save(&updatedStored); err != nil {
+			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
+			continue
+		}
+		updated = append(updated, tun.ID)
+	}
+	if th != nil && len(updated) > 0 {
+		th.publishTunnelList(ctx)
+	}
+	return updated, errs
 }

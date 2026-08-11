@@ -12,6 +12,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/procport"
+	"github.com/hoaxisr/awg-manager/internal/proxysup"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -43,11 +45,82 @@ type Service struct {
 
 	listenPortChecker LocalListenPortChecker
 
+	clientHealth *healthTracker
+	serverHealth *healthTracker
+	startBackoff *proxysup.Backoff
+
+	relayProbe    RelayProbe
+	linkedTunnels LinkedTunnelResolver
+
+	// После listen-repair доводит новый listen до Endpoint linked AWG-туннелей
+	// (не только в хранилище, но и на живом интерфейсе — см. api.SyncLinkedTunnelEndpoints).
+	linkedEndpointSync func(clientID, listen string) (int, error)
+
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
 	matchMu  sync.Mutex
 	matchKey string
 	matchVal bool
+
+	// clientStarts — per-client счётчик стартов в полёте (симметрично
+	// wdtt.Service.clientStarts, F6): даёт супервизору дешёвый совещательный
+	// fast-path, чтобы скипнуть тик без сжигания backoff-окна. Совещательный
+	// (TOCTOU: окно между проверкой и стартом открыто) — жёсткая сериализация
+	// самого старта обеспечивается clientStartLocks (TryLock внутри
+	// StartClientInstance).
+	clientStartMu    sync.Mutex
+	clientStarts     map[string]int
+	clientStartLocks map[string]*sync.Mutex
+}
+
+// ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
+// где-то ещё (TryLock не взят); возвращается без запуска процесса.
+var ErrClientStartInFlight = errors.New("старт клиента уже выполняется")
+
+// tryLockClientStart — жёсткая per-client сериализация StartClientInstance:
+// второй конкурентный вызов для того же id не блокируется, а сразу получает
+// отказ. unlock должен вызываться defer'ом сразу после успешного захвата.
+func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
+	s.clientStartMu.Lock()
+	if s.clientStartLocks == nil {
+		s.clientStartLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.clientStartLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.clientStartLocks[id] = l
+	}
+	s.clientStartMu.Unlock()
+	if !l.TryLock() {
+		return nil, false
+	}
+	return l.Unlock, true
+}
+
+func (s *Service) beginClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts == nil {
+		s.clientStarts = make(map[string]int)
+	}
+	s.clientStarts[id]++
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) endClientStart(id string) {
+	s.clientStartMu.Lock()
+	if s.clientStarts[id] > 0 {
+		s.clientStarts[id]--
+		if s.clientStarts[id] == 0 {
+			delete(s.clientStarts, id)
+		}
+	}
+	s.clientStartMu.Unlock()
+}
+
+func (s *Service) clientStartInFlight(id string) bool {
+	s.clientStartMu.Lock()
+	defer s.clientStartMu.Unlock()
+	return s.clientStarts[id] > 0
 }
 
 // SetLogger wires the UI-visible journal (nil-safe scoped logger).
@@ -58,6 +131,19 @@ func (s *Service) SetLogger(appLogger logging.AppLogger) {
 // SetListenPortChecker wires external localhost listen ports (AWG tunnel endpoints, etc.).
 func (s *Service) SetListenPortChecker(c LocalListenPortChecker) {
 	s.listenPortChecker = c
+}
+
+func (s *Service) SetRelayProbe(p RelayProbe) {
+	s.relayProbe = p
+}
+
+func (s *Service) SetLinkedTunnelResolver(r LinkedTunnelResolver) {
+	s.linkedTunnels = r
+}
+
+// SetLinkedEndpointSync wires AWG tunnel endpoint sync after listen-repair.
+func (s *Service) SetLinkedEndpointSync(fn func(clientID, listen string) (int, error)) {
+	s.linkedEndpointSync = fn
 }
 
 func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
@@ -95,13 +181,16 @@ func (s *Service) reservedServerPortsExcept(id string) map[int]bool {
 // NewService wires up config storage and process managers per instance id.
 func NewService(dataDir, runtimeDir, clientBin, serverBin string) *Service {
 	return &Service{
-		store:       NewStore(dataDir),
-		dataDir:     dataDir,
-		clientBin:   clientBin,
-		serverBin:   serverBin,
-		versionPath: filepath.Join(dataDir, "freeturn-version.json"),
-		clientProcs: newProcessRegistry("client", clientBin, runtimeDir),
-		serverProcs: newProcessRegistry("server", serverBin, runtimeDir),
+		store:        NewStore(dataDir),
+		dataDir:      dataDir,
+		clientBin:    clientBin,
+		serverBin:    serverBin,
+		versionPath:  filepath.Join(dataDir, "freeturn-version.json"),
+		clientProcs:  newProcessRegistry("client", clientBin, runtimeDir),
+		serverProcs:  newProcessRegistry("server", serverBin, runtimeDir),
+		clientHealth: newHealthTracker(),
+		serverHealth: newHealthTracker(),
+		startBackoff: newStartBackoff(),
 	}
 }
 
@@ -131,11 +220,37 @@ func (s *Service) UpdateClientInstance(id string, cfg ClientConfig) error {
 	listens := clientListenAddresses(full.Clients)
 	cfg.Listen = ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	cfg.Platform = normalizePlatform(cfg.Platform)
+	// Enabled — только Start/Stop; UI при сохранении часто шлёт stale false.
+	cfg.Enabled = full.Clients[idx].Config.Enabled
 	full.Clients[idx].Config = cfg
+	// Правка конфига могла устранить причину отказа (порт, ключ, peer) —
+	// не заставляем ждать окно backoff до следующей попытки супервизора.
+	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
 	return s.store.Save(full)
 }
 
+// UpdateServerInstance — публичный путь (вызывается API на PUT). В отличие от
+// updateServerInstanceInternal, после успешного апдейта сбрасывает и стартовый,
+// и health-backoff: пользователь чинит конфиг сервера руками — ждать
+// оставшееся окно backoff (до 15 мин после серии эскалаций) до следующей
+// попытки супервизора не нужно. У внутреннего пути такого Forget нет — см.
+// его комментарий.
 func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
+	if err := s.updateServerInstanceInternal(id, cfg); err != nil {
+		return err
+	}
+	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	return nil
+}
+
+// updateServerInstanceInternal — тело апдейта без сброса backoff. Вызывается
+// и публичным UpdateServerInstance, и StartServerInstance (тот зовёт его сам
+// для нормализации listen на каждой попытке супервизора) — если бы backoff
+// сбрасывался здесь, окно стиралось бы на каждой попытке и рост до 15 минут
+// переставал работать ровно там, где он нужнее всего.
+func (s *Service) updateServerInstanceInternal(id string, cfg ServerConfig) error {
 	s.mu.Lock()
 	full, err := s.store.Load()
 	if err != nil {
@@ -150,6 +265,8 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) error {
 	prevCfg := full.Servers[idx].Config
 	listens := serverListenAddresses(full.Servers)
 	cfg.Listen = ensureUniqueServerListenAddr(listens, idx, cfg.Listen, s.reservedServerPortsExcept(id), 56000, 56100)
+	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
+	cfg.Enabled = prevCfg.Enabled
 	full.Servers[idx].Config = cfg
 	saveErr := s.store.Save(full)
 	running := s.serverProcs.get(id).Status().Running
@@ -226,6 +343,9 @@ func (s *Service) DeleteClient(id string) error {
 	}
 	full.Clients = append(full.Clients[:idx], full.Clients[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(clientKey(id))
+	s.startBackoff.Forget(clientHealthKey(id))
+	s.clientHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
@@ -245,12 +365,17 @@ func (s *Service) DeleteServer(id string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("сервер %q не найден", id)
 	}
+	cfg := full.Servers[idx].Config
 	full.Servers = append(full.Servers[:idx], full.Servers[idx+1:]...)
 	saveErr := s.store.Save(full)
+	s.startBackoff.Forget(serverKey(id))
+	s.startBackoff.Forget(serverHealthKey(id))
+	s.serverHealth.reset(id)
 	s.mu.Unlock()
 	// Блокирующий Stop (kill до ~3с) — вне s.mu, чтобы не сериализовать
 	// прочие RMW-методы и boot-ResumeEnabled на время убийства процесса.
 	_ = s.serverProcs.get(id).Stop()
+	removeServerListenFirewall(context.Background(), cfg)
 	return saveErr
 }
 
@@ -366,17 +491,25 @@ func (s *Service) statusLocked() Status {
 		RouterClock:      clock.Now.Format("2006-01-02 15:04:05") + " " + clock.ZoneName,
 	}
 	for _, c := range cfg.Clients {
+		ps := s.clientProcs.get(c.ID).Status()
+		ps.LastError = procport.EnrichBindError(ps.LastError, c.Config.Listen, procport.ProtoUDP)
 		st.Clients = append(st.Clients, InstanceStatus{
 			ID:     c.ID,
 			Name:   c.Name,
-			Status: s.clientProcs.get(c.ID).Status(),
+			Status: ps,
 		})
 	}
 	for _, srv := range cfg.Servers {
+		ps := s.serverProcs.get(srv.ID).Status()
+		proto := procport.ProtoUDP
+		if strings.EqualFold(strings.TrimSpace(srv.Config.Mode), "tcp") {
+			proto = procport.ProtoTCP
+		}
+		ps.LastError = procport.EnrichBindError(ps.LastError, srv.Config.Listen, proto)
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,
-			Status: s.serverProcs.get(srv.ID).Status(),
+			Status: ps,
 		})
 	}
 	if cs := instanceStatusByID(st.Clients, DefaultInstanceID); cs != nil {
@@ -406,38 +539,78 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
-func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+// repairClientListenPort разводит конфликтующие listen-порты клиентов.
+// changed говорит вызывающему, что порт сменился и linked-туннели надо
+// довести до нового endpoint — сам sync делается ВНЕ s.mu (он ходит в
+// хранилище туннелей и в ядро, держать под сервисным мьютексом нельзя).
+func (s *Service) repairClientListenPort(id string) (cfg ClientConfig, changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	idx := findClientIndex(full.Clients, id)
 	if idx < 0 {
-		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+		return ClientConfig{}, false, fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg := full.Clients[idx].Config
+	cfg = full.Clients[idx].Config
 	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if next == cfg.Listen {
-		return cfg, nil
+		return cfg, false, nil
 	}
 	cfg.Listen = next
 	full.Clients[idx].Config = cfg
 	if err := s.store.Save(full); err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	if s.appLog != nil {
 		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
 	}
-	return cfg, nil
+	return cfg, true, nil
+}
+
+// syncLinkedEndpoints доводит listen клиента до Endpoint linked AWG-туннелей.
+// Вызывать только вне s.mu.
+func (s *Service) syncLinkedEndpoints(id, listen string) {
+	if s.linkedEndpointSync == nil {
+		return
+	}
+	n, err := s.linkedEndpointSync(id, listen)
+	if s.appLog == nil {
+		return
+	}
+	if err != nil {
+		s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
+		return
+	}
+	if n > 0 {
+		s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+	}
 }
 
 func (s *Service) StartClientInstance(id string) error {
-	cfg, err := s.repairClientListenPort(id)
+	// Жёсткая сериализация (F6, симметрично wdtt): второй конкурентный старт
+	// этого же id не гоняется с первым, а сразу отказывает.
+	unlock, ok := s.tryLockClientStart(id)
+	if !ok {
+		return ErrClientStartInFlight
+	}
+	defer unlock()
+
+	// Per-client in-flight guard (F6): супервизор проверяет clientStartInFlight
+	// перед health-эскалацией, чтобы не гоняться со StartClientInstance этого
+	// же клиента, запущенным откуда-то ещё (API, сам супервизор).
+	s.beginClientStart(id)
+	defer s.endClientStart(id)
+
+	cfg, listenChanged, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
+	}
+	if listenChanged {
+		s.syncLinkedEndpoints(id, cfg.Listen)
 	}
 	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")
@@ -485,7 +658,7 @@ func (s *Service) StartServerInstance(id string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.UpdateServerInstance(id, inst.Config); err != nil {
+	if err := s.updateServerInstanceInternal(id, inst.Config); err != nil {
 		return err
 	}
 	inst, err = s.serverInstance(id)
@@ -504,6 +677,9 @@ func (s *Service) StartServerInstance(id string) error {
 	if err := applyServerListenFirewall(context.Background(), inst.Config); err != nil && s.appLog != nil {
 		s.appLog.Warn("firewall", id, "INPUT для listen-порта: "+err.Error())
 	}
+	if err := s.setServerEnabled(id, true); err != nil && s.appLog != nil {
+		s.appLog.Warn("start", id, "не удалось сохранить enabled: "+err.Error())
+	}
 	return nil
 }
 
@@ -517,7 +693,11 @@ func (s *Service) StopServerInstance(id string) error {
 		return err
 	}
 	removeServerListenFirewall(context.Background(), inst.Config)
-	return s.serverProcs.get(id).Stop()
+	err = s.serverProcs.get(id).Stop()
+	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
+		s.appLog.Warn("stop", id, "не удалось сбросить enabled: "+e.Error())
+	}
+	return err
 }
 
 func (s *Service) ServerConfigForLink(id string) (ServerConfig, error) {
@@ -540,10 +720,9 @@ func (s *Service) Stop() {
 	s.serverProcs.stopAll()
 }
 
-// ResumeEnabled стартует всех клиентов с Enabled==true (авторитетный флаг
-// «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
+// ResumeEnabled стартует всех клиентов и серверов с Enabled==true (авторитетный
+// флаг «должен работать»). Вызывается на бооте в горутине. Ошибки логирует и
 // продолжает; идемпотентно (повторный старт живого процесса — no-op).
-// Серверы вне scope: блэкхол linked-туннеля — клиентская проблема.
 func (s *Service) ResumeEnabled() {
 	full, err := s.store.Load()
 	if err != nil {
@@ -557,7 +736,15 @@ func (s *Service) ResumeEnabled() {
 			continue
 		}
 		if err := s.StartClientInstance(c.ID); err != nil && s.appLog != nil {
-			s.appLog.Warn("resume", c.ID, "автостарт не удался: "+err.Error())
+			s.appLog.Warn("resume", c.ID, "автостарт клиента не удался: "+err.Error())
+		}
+	}
+	for _, srv := range full.Servers {
+		if !srv.Config.Enabled {
+			continue
+		}
+		if err := s.StartServerInstance(srv.ID); err != nil && s.appLog != nil {
+			s.appLog.Warn("resume", srv.ID, "автостарт сервера не удался: "+err.Error())
 		}
 	}
 }
@@ -580,6 +767,24 @@ func (s *Service) setClientEnabled(id string, enabled bool) error {
 		return nil
 	}
 	full.Clients[idx].Config.Enabled = enabled
+	return s.store.Save(full)
+}
+
+func (s *Service) setServerEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	full, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	idx := findServerIndex(full.Servers, id)
+	if idx < 0 {
+		return fmt.Errorf("сервер %q не найден", id)
+	}
+	if full.Servers[idx].Config.Enabled == enabled {
+		return nil
+	}
+	full.Servers[idx].Config.Enabled = enabled
 	return s.store.Save(full)
 }
 

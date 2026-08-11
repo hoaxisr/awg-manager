@@ -83,6 +83,33 @@ func TestHotspotStore_List_SkipsEntriesWithEmptyMAC(t *testing.T) {
 	}
 }
 
+func TestHotspotStore_List_KeepsOfflineZeroIP(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(hotspotPath, `{
+		"host": [
+			{"ip": "0.0.0.0", "mac": "aa:bb:cc:dd:ee:01", "name": "tv", "active": false, "link": "down"},
+			{"ip": "192.168.1.10", "mac": "aa:bb:cc:dd:ee:02", "name": "phone", "active": true, "link": "up"}
+		]
+	}`)
+	s := NewHotspotStore(fg, NopLogger())
+
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len: want 2, got %d (%#v)", len(got), got)
+	}
+	byMAC := map[string]ndms.Device{}
+	for _, d := range got {
+		byMAC[d.MAC] = d
+	}
+	tv := byMAC["aa:bb:cc:dd:ee:01"]
+	if tv.Active || tv.IP != "" || tv.Name != "tv" {
+		t.Errorf("offline zero-IP: want inactive empty IP name=tv, got %#v", tv)
+	}
+}
+
 func TestHotspotStore_InvalidateAllForcesRefetch(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(hotspotPath, sampleHotspotJSON)

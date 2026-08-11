@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
@@ -30,7 +31,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
-	"github.com/hoaxisr/awg-manager/internal/singbox/router/selective"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -261,6 +262,7 @@ func (a *app) setupDeviceProxy() {
 		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
+	a.wdttService.EnsureBundledInstall()
 	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
 	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
 	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
@@ -312,7 +314,7 @@ func (a *app) setupDeviceProxy() {
 }
 
 // setupRouter builds the sing-box router service with its adapters,
-// selective bypass, subscription scheduler/handler and the remaining
+// the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
 func (a *app) setupRouter() {
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
@@ -333,13 +335,21 @@ func (a *app) setupRouter() {
 		IngressResolver:        &routerIngressResolverAdapter{store: a.ndmsQueries.Interfaces},
 		PresetCatalog:          a.presetCatalog,
 		GeoData:                a.geoDataStore,
+		GeoTagCounts:           a.geoDataStore,
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{
 			store: a.ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
 		},
-		OpkgTunScan: opkgTunScanner(a.ndmsQueries.Interfaces),
+		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
+		RunningConfig: a.ndmsQueries.RunningConfig,
+		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		// *RouteStore satisfies DefaultGatewayResolver directly.
+		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {
 			p := router.DefaultFakeIPTunParams()
 			p.CachePath = singbox.DefaultCacheDBPath()
@@ -358,50 +368,15 @@ func (a *app) setupRouter() {
 			}
 		},
 	})
-	// Wire selective-bypass builder. The adapter wraps selective.Builder with the
-	// router service's live config so reconcileInstalled can trigger an ipset
-	// rebuild with a single Rebuild(ctx) call.
-	selectiveGeo := selective.GeoPaths{}
-	if geoCfg, err := hydraroute.ReadConfig(); err == nil {
-		selectiveGeo.GeoSite = geoCfg.GeoSiteFiles
-		selectiveGeo.GeoIP = geoCfg.GeoIPFiles
-	}
+	a.routerSvc = routerSvc
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.
-	selective.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective))
-	selectiveBuilder := selective.NewBuilder(selective.BuilderConfig{
-		ConfigDir:       a.singboxOp.ConfigDir(),
-		DNSSource:       a.ndmsQueries.DNSProxyStatus,
-		Log:             logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective),
-		Bus:             a.eventBus,
-		Geo:             selectiveGeo,
-		OpenRuleSetJSON: routerSvc.OpenSelectiveRuleSetJSON,
-	})
-	selectiveAdapter := router.NewSelectiveBuilderAdapter(routerSvc, selectiveBuilder)
-	routerSvc.SetSelectiveBuilder(selectiveAdapter)
-	a.srv.SetSelectiveHandler(api.NewSelectiveHandler(
-		a.settingsStore,
-		a.singboxOp.ConfigDir(),
-		selectiveAdapter,
-		selectiveBuilder,
-		a.loggingService,
-	))
-	selectiveCDNRefresh := selective.StartCDNRefreshLoop(
-		selective.CDNRefreshInterval,
-		func() bool {
-			st, err := a.settingsStore.Load()
-			if err != nil {
-				return false
-			}
-			// SelectiveActive: в fakeip-режиме взведённый флаг — «спящий»,
-			// фоновый CDN-refresh не должен трогать ipset и слот 19 (#564).
-			return st.SingboxRouter.SelectiveActive()
-		},
-		selectiveAdapter.RefreshCDN,
-		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSelective),
-	)
-	_ = selectiveCDNRefresh // stopped via process exit; no explicit Stop on shutdown today
+	bypassset.SetHealthLogger(logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubBypassSet))
+	// Содержимое bypass-набора выведено из .dat-файлов: их обновление/удаление
+	// обязано пересобирать набор (сам триггер — no-op вне tproxy и без тегов).
+	a.geoDataStore.SetOnChange(routerSvc.TriggerBypassSetPopulate)
+	a.srv.SetBypassSetHandler(api.NewBypassSetHandler(routerSvc, a.loggingService))
 
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.
@@ -541,6 +516,7 @@ func (a *app) setupRouter() {
 	a.srv.AddShutdownHook(subSched.Stop)
 
 	if a.wdttService != nil && a.ndmsCommands != nil {
+		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
 		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
 		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
 			store: a.ndmsQueries.Interfaces,
@@ -549,6 +525,18 @@ func (a *app) setupRouter() {
 		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
 		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
 		a.wdttService.SetRouterReconciler(routerSvc)
+		a.wdttService.SetClientRouteHooks(a.clientRouteService)
+		a.wdttService.SetNDMSPolicyRouting(
+			a.ndmsCommands.Policies,
+			a.ndmsQueries.Policies,
+			policyMarks,
+		)
+		a.wdttService.SetPolicyMarkGetter(policyMarks)
+		a.wdttService.SetIngressRefEnsurer(&wdttIngressEnsurer{
+			settings: a.settingsStore,
+			router:   routerSvc,
+		})
+		a.accessPolicySvc.SetOpkgPolicyRouteSyncer(a.wdttService)
 	}
 
 }
@@ -564,6 +552,23 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
+	// keendns preset → managed DNS rewrite (own FQDN → LAN), not iptables
+	// /32 for 78.47.125.180 (that IP is shared with every other KeenDNS host).
+	if a.routerSvc != nil {
+		a.routerSvc.SetKeenDNSPreset(
+			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
+			keenDNSLANAdapter{},
+			dnsRewriteSvc,
+		)
+		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
+		// SetKeenDNSPreset и мог увидеть nil-syncer. В горутине и с ctx —
+		// синхронный вызов ходит в NDMS и до 30с держал бы a.serve().
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			a.routerSvc.SyncKeenDNSRewrites(ctx)
+		}()
+	}
 
 	// Boot status: 0 = booting, 1 = done. Used by /api/system/info.
 	a.srv.SetBootStatusFunc(func() bool { return atomic.LoadInt32(&a.bootDone) == 0 })
@@ -621,6 +626,14 @@ func (a *app) setupShutdown() {
 	a.monitoringService.Start(a.shutdownCtx)
 	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
 	a.wdttService.StartNATReconciler(a.shutdownCtx)
+	// Супервизор гейтится теми же условиями, что и автостарт прокси-клиентов:
+	// boot-фазы (NDMS/WAN/DNS) и маркер post-restore. Без гейта его первый тик
+	// поднимал бы клиентов раньше резолвера и вопреки восстановлению из архива.
+	proxyReady := func() bool {
+		return atomic.LoadInt32(&a.bootDone) == 1 && !backup.HasPostRestoreMarker(a.dataDir)
+	}
+	a.freeturnService.StartSupervisor(a.shutdownCtx, proxyReady)
+	a.wdttService.StartSupervisor(a.shutdownCtx, proxyReady)
 	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
 	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
 		var out []listenfirewall.PortSpec

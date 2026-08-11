@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -143,6 +144,9 @@ func (h *FreeTurnHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Requ
 		response.InternalError(w, err.Error())
 		return
 	}
+	// Симметрично instance-ручке: UpdateClientConfig мог переназначить listen
+	// (ensureUniqueListenAddr), и endpoint linked-туннеля обязан пойти следом.
+	h.SyncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
 	response.Success(w, cfg)
 }
 
@@ -188,11 +192,18 @@ func (h *FreeTurnHandler) StartClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.StartClient(); err != nil {
+		if errors.Is(err, freeturn.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FREETURN_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), freeturn.DefaultInstanceID, freeturnClientListen(h.svc, freeturn.DefaultInstanceID))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), freeturn.DefaultInstanceID)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // StopClient handles POST /api/freeturn/client/stop.
@@ -495,6 +506,7 @@ func (h *FreeTurnHandler) serveClientByID(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "FREETURN_CLIENT_UPDATE_FAILED")
 			return
 		}
+		h.SyncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 		response.Success(w, cfg)
 	case http.MethodPatch:
 		var req renameRequest
@@ -594,11 +606,18 @@ func (h *FreeTurnHandler) startClientInstance(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := h.svc.StartClientInstance(id); err != nil {
+		if errors.Is(err, freeturn.ErrClientStartInFlight) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FREETURN_CLIENT_START_IN_FLIGHT")
+			return
+		}
 		response.Error(w, err.Error(), "FREETURN_CLIENT_START_FAILED")
 		return
 	}
+	synced, syncErrs := h.SyncLinkedTunnelEndpoints(r.Context(), id, freeturnClientListen(h.svc, id))
 	started, tunnelErrors := h.startLinkedAwgTunnels(r.Context(), id)
-	response.Success(w, clientStartStopResponse("client started", started, tunnelErrors))
+	resp := clientStartStopResponse("client started", started, tunnelErrors)
+	appendLinkedTunnelSync(resp, synced, syncErrs)
+	response.Success(w, resp)
 }
 
 // stopClientInstance handles POST /api/freeturn/clients/{id}/stop.

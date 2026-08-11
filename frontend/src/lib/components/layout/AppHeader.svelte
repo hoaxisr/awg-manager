@@ -254,9 +254,11 @@
 			{/if}
 
 			{#if authenticated && !authDisabled}
-				<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
-					<LogOut size={16} aria-hidden="true" />
-				</IconButton>
+				<span class="logout-desktop">
+					<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
+						<LogOut size={16} aria-hidden="true" />
+					</IconButton>
+				</span>
 			{/if}
 
 			{#if authenticated}
@@ -293,6 +295,18 @@
 					onclick={closeMobileMenu}>{prettyMobileLabel(item.label)}</a
 				>
 			{/each}
+			{#if !authDisabled}
+				<button
+					type="button"
+					class="mobile-nav-link mobile-logout"
+					onclick={() => {
+						closeMobileMenu();
+						onLogout();
+					}}
+				>
+					Выйти
+				</button>
+			{/if}
 		</nav>
 	{/if}
 </header>
@@ -376,6 +390,7 @@
 		gap: 0.375rem;
 		justify-self: end;
 		flex-shrink: 0;
+		overflow: visible;
 	}
 
 	.user-chip {
@@ -553,7 +568,7 @@
 			right: 0;
 			background: var(--color-bg-secondary);
 			border-bottom: 1px solid var(--color-border);
-			padding: 0.5rem 0;
+			padding: 0;
 			z-index: var(--z-drawer);
 			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 		}
@@ -579,6 +594,28 @@
 			color: var(--color-accent);
 			background: var(--color-accent-tint);
 			border-left: 3px solid var(--color-accent);
+		}
+
+		.logout-desktop {
+			display: none;
+		}
+
+		.mobile-logout {
+			appearance: none;
+			background: transparent;
+			width: 100%;
+			text-align: left;
+			cursor: pointer;
+			color: var(--color-error);
+			/* не трогаем border-left — тот же 3px-запас, что у остальных пунктов */
+			border-top: none;
+			border-right: none;
+			border-bottom: none;
+		}
+
+		.mobile-logout:hover {
+			color: var(--color-error);
+			background: var(--color-error-tint);
 		}
 	}
 

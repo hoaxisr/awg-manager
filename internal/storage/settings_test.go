@@ -51,6 +51,9 @@ func TestSettingsStore_LoadDefault(t *testing.T) {
 	if !settings.SingboxRouter.SnifferEnabled {
 		t.Error("SingboxRouter.SnifferEnabled = false, want true")
 	}
+	if len(settings.SingboxRouter.BypassPresets) != 1 || settings.SingboxRouter.BypassPresets[0] != "keendns" {
+		t.Errorf("SingboxRouter.BypassPresets = %v, want [keendns]", settings.SingboxRouter.BypassPresets)
+	}
 	if settings.Download.RouteTag != "direct" {
 		t.Errorf("Download.RouteTag = %q, want direct", settings.Download.RouteTag)
 	}
@@ -714,6 +717,54 @@ func TestSetFakeIPState_Persists(t *testing.T) {
 	got, _ := s.Load()
 	if got.FakeIP == nil || !got.FakeIP.Provisioned || got.FakeIP.Index != 2 {
 		t.Fatalf("fakeip state not persisted: %+v", got.FakeIP)
+	}
+}
+
+// TestSetPolicyTunState_PersistsAndClears mirrors TestSetFakeIPState_PersistsAndClears
+// for the policy-tun single-writer setter.
+func TestSetPolicyTunState_PersistsAndClears(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := &PolicyTunState{
+		Provisioned: true,
+		Index:       3,
+		NATSegments: []PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}},
+	}
+	if err := store.SetPolicyTunState(want); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	fresh := NewSettingsStore(tmpDir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if s.PolicyTun == nil {
+		t.Fatalf("PolicyTun = nil after set, want %+v", want)
+	}
+	if !s.PolicyTun.Provisioned || s.PolicyTun.Index != 3 || len(s.PolicyTun.NATSegments) != 1 ||
+		s.PolicyTun.NATSegments[0] != want.NATSegments[0] {
+		t.Errorf("persisted = %+v, want %+v", *s.PolicyTun, *want)
+	}
+
+	if err := fresh.SetPolicyTunState(nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	cleared := NewSettingsStore(tmpDir)
+	c, err := cleared.Load()
+	if err != nil {
+		t.Fatalf("reload after clear: %v", err)
+	}
+	if c.PolicyTun != nil {
+		t.Errorf("PolicyTun = %+v after clear, want nil", *c.PolicyTun)
+	}
+
+	if err := (&SettingsStore{}).SetPolicyTunState(want); err == nil {
+		t.Error("SetPolicyTunState on unloaded store: want error, got nil")
 	}
 }
 

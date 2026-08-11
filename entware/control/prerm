@@ -28,6 +28,24 @@ if [ -x /opt/bin/awg-manager ]; then
     /opt/bin/awg-manager --cleanup 2>&1 || true
 fi
 
+# Хук перехвата DNS policy-tun переживает удаление пакета и продолжает
+# реассертить DNAT в туннель, которого больше нет: он единственный из наших
+# хуков без внешнего файла-гейта (правила зашиты в него самого), поэтому
+# no-op'ом после удаления не становится. Снимаем ЯВНО, вместе с правилами.
+# Идёт ПОСЛЕ остановки демона: живой демон вернул бы их на ближайшей сверке.
+POLICYTUN_HOOK=/opt/etc/ndm/netfilter.d/52-awgm-policytun-dns.sh
+if [ -f "$POLICYTUN_HOOK" ]; then
+    echo "Removing policy-tun DNS hook..."
+    rm -f "$POLICYTUN_HOOK"
+fi
+if [ -x /opt/sbin/iptables ]; then
+    /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null \
+        | grep -- 'AWGM-POLICYTUN-DNS' \
+        | sed 's/-A PREROUTING/-D PREROUTING/' \
+        | tr -d '"' \
+        | while IFS= read -r line; do /opt/sbin/iptables -w -t nat $line 2>/dev/null; done
+fi
+
 echo ""
 echo "=============================================="
 echo "  awg-manager has been removed."

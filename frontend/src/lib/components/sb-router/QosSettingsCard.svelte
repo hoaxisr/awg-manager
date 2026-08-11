@@ -4,7 +4,8 @@
   через тот же auto-save пайплайн, что и остальные настройки дровера
   (onPatch → applyPatch → mergeAndSaveSettings → PUT /singbox/router/settings).
 
-  Семантика: работает только в режиме TProxy (не fakeip-tun); трафик с меткой
+  Семантика: работает в режимах TProxy и «Политики + tun» (DSCP-перехват —
+  единственный netfilter policy-tun), но не в fakeip-tun; трафик с меткой
   DSCP N уходит в outbound класса, минуя остальные правила маршрутизации.
 -->
 <script lang="ts">
@@ -49,7 +50,8 @@
 
   // mock-api / легаси-payload без qosClasses → пустой список (undefined-safe).
   const classes = $derived(draft ?? normalizeQosClasses(cfg.qosClasses));
-  // Классы применимы только в TProxy; отсутствующий routingMode = легаси tproxy.
+  // Классы применимы в TProxy и «Политики + tun»; в fakeip-tun netfilter-перехвата
+  // нет. Отсутствующий routingMode = легаси tproxy.
   const locked = $derived((cfg.routingMode ?? 'tproxy') === 'fakeip-tun');
   // Строго false: undefined (мок/старый бэкенд) — неизвестно, баннер не показываем.
   const xtDscpMissing = $derived(status?.xtDscpAvailable === false);
@@ -144,7 +146,7 @@
   </p>
 
   {#if locked}
-    <p class="hint locked-hint">Доступно только в режиме TProxy.</p>
+    <p class="hint locked-hint">Недоступно в режиме FakeIP.</p>
   {:else}
     {#if xtDscpMissing}
       <IssueRow tone="warning" text="Модуль ядра xt_dscp недоступен — правила DSCP не будут применены" />

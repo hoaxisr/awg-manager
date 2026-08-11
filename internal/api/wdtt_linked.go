@@ -26,15 +26,19 @@ func tunnelLinkedToWdttClient(tun storage.AWGTunnel, clientID string) bool {
 	return strings.TrimSpace(tun.WdttClientID) == clientID
 }
 
+func tunnelLinkedAwgOnly(tun storage.AWGTunnel, clientID string) bool {
+	return tunnelLinkedToWdttClient(tun, clientID) && tun.Backend != wdtt.BackendWdttRaw
+}
+
 func (h *WdttHandler) startLinkedAwgTunnels(ctx context.Context, clientID string) ([]string, []string) {
 	return startLinkedAwgTunnels(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
-		return tunnelLinkedToWdttClient(tun, clientID)
+		return tunnelLinkedAwgOnly(tun, clientID)
 	})
 }
 
 func (h *WdttHandler) stopLinkedAwgTunnels(ctx context.Context, clientID string) ([]string, []string) {
 	return stopLinkedAwgTunnels(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
-		return tunnelLinkedToWdttClient(tun, clientID)
+		return tunnelLinkedAwgOnly(tun, clientID)
 	})
 }
 
@@ -55,6 +59,25 @@ func (h *WdttHandler) syncLinkedTunnelNames(ctx context.Context, clientID, clien
 	}, newName)
 }
 
+func (h *WdttHandler) SyncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
+	return syncLinkedAwgTunnelEndpoints(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
+		return tunnelLinkedToWdttClient(tun, clientID)
+	}, listen)
+}
+
+func wdttClientListen(svc WdttService, id string) string {
+	cfg, err := svc.GetConfig()
+	if err != nil {
+		return ""
+	}
+	for _, c := range cfg.Clients {
+		if c.ID == id {
+			return strings.TrimSpace(c.Config.Listen)
+		}
+	}
+	return ""
+}
+
 func (h *WdttHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID string) (deleted []string, errs []string) {
 	if h.awgStore == nil || h.tunnelSvc == nil || strings.TrimSpace(clientID) == "" {
 		return nil, nil
@@ -65,6 +88,14 @@ func (h *WdttHandler) deleteLinkedAwgTunnels(ctx context.Context, clientID strin
 	}
 	for _, tun := range tunnels {
 		if !tunnelLinkedToWdttClient(tun, clientID) {
+			continue
+		}
+		if tun.Backend == wdtt.BackendWdttRaw {
+			if err := h.awgStore.Delete(tun.ID); err != nil {
+				errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
+			} else {
+				deleted = append(deleted, tun.ID)
+			}
 			continue
 		}
 		if err := h.tunnelSvc.Delete(ctx, tun.ID); err != nil {

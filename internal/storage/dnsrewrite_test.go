@@ -72,6 +72,30 @@ func TestDNSRewriteStoreMoveForward(t *testing.T) {
 	}
 }
 
+func TestDNSRewriteStoreReplaceManaged(t *testing.T) {
+	s := NewDNSRewriteStore(filepath.Join(t.TempDir(), "dns-rewrites.json"))
+	_ = s.Add(dnsrewrite.DNSRewrite{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}})
+	if err := s.ReplaceManaged(dnsrewrite.ManagedKeenDNS, []dnsrewrite.DNSRewrite{
+		{Pattern: "home.netcraze.pro", IPs: []string{"192.168.1.1"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := s.List()
+	// Managed лежат в хвосте: индексы пользовательских записей не должны
+	// ехать от появления/снятия managed-набора.
+	if len(list) != 2 || list[1].Managed != dnsrewrite.ManagedKeenDNS ||
+		list[0].Pattern != "nas.lan" || list[1].Pattern != "home.netcraze.pro" {
+		t.Fatalf("after upsert: %+v", list)
+	}
+	if err := s.ReplaceManaged(dnsrewrite.ManagedKeenDNS, nil); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.List()
+	if len(list) != 1 || list[0].Pattern != "nas.lan" {
+		t.Fatalf("after clear: %+v", list)
+	}
+}
+
 func TestDNSRewriteStorePersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dns-rewrites.json")
 	s1 := NewDNSRewriteStore(path)

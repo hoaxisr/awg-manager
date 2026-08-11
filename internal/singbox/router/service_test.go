@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,10 @@ type fakeAccessPolicyProvider struct {
 	createErr     error
 	assignCalls   int
 	unassignCalls int
+	exits         []query.PolicyDefaultExit
+	exitsErr      error
+	permits       []string // "<политика>:<интерфейс>:<order>" в порядке вызовов
+	permitErr     error
 }
 
 func (f *fakeAccessPolicyProvider) GetPolicyMark(_ context.Context, _ string) (string, error) {
@@ -51,6 +56,13 @@ func (f *fakeAccessPolicyProvider) ListPolicies(_ context.Context) ([]PolicyInfo
 func (f *fakeAccessPolicyProvider) CreatePolicy(_ context.Context, _ string) (PolicyInfo, error) {
 	return f.createReturn, f.createErr
 }
+func (f *fakeAccessPolicyProvider) ListPolicyExits(_ context.Context, _ string) ([]query.PolicyDefaultExit, error) {
+	return f.exits, f.exitsErr
+}
+func (f *fakeAccessPolicyProvider) PermitInterface(_ context.Context, name, iface string, order int) error {
+	f.permits = append(f.permits, fmt.Sprintf("%s:%s:%d", name, iface, order))
+	return f.permitErr
+}
 
 // fakeWANIPCollector is a test double for WANIPCollector.
 type fakeWANIPCollector struct {
@@ -71,7 +83,7 @@ func newStubIPTables(restoreRecorder func(context.Context, string) error) *IPTab
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          func(_ context.Context, _ ...string) error { return nil },
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 }
@@ -517,244 +529,6 @@ func TestUpdateSettings_MalformedSubnet_RejectedBeforeSaveAndInstall(t *testing.
 	}
 }
 
-func TestUpdateSettings_SelectiveBypassRejectedWhenFinalNotDirect(t *testing.T) {
-	svc, _ := newOrchedTestService(t)
-	cfg := NewEmptyConfig()
-	cfg.Route.Final = "my-vpn"
-	cfg.Outbounds = append(cfg.Outbounds, Outbound{Tag: "my-vpn", Type: "direct"})
-	if err := svc.persistConfig(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	err := svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		SelectiveBypass: true,
-	})
-	if err == nil {
-		t.Fatal("expected UpdateSettings to reject selectiveBypass when route.final is not direct")
-	}
-	if !strings.Contains(err.Error(), "selectiveBypass") {
-		t.Errorf("error should mention selectiveBypass, got %q", err.Error())
-	}
-	all, err := svc.deps.Settings.Load()
-	if err != nil {
-		t.Fatalf("settingsStore.Load: %v", err)
-	}
-	if all.SingboxRouter.SelectiveBypass {
-		t.Error("selectiveBypass must not be persisted when validation fails")
-	}
-}
-
-// #486: селективный перехват, включённый в tproxy, вне tproxy СПИТ и не
-// должен блокировать несвязанные изменения настроек в fakeip-режиме —
-// в частности переключение TCP/IP-стека.
-func TestUpdateSettings_FakeIPStackChangeAllowedWithDormantSelective(t *testing.T) {
-	svc, _ := newOrchedTestService(t)
-
-	// Наследие tproxy: selectiveBypass уже включён в персисте.
-	all, err := svc.deps.Settings.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	all.SingboxRouter.SelectiveBypass = true
-	all.SingboxRouter.RoutingMode = "fakeip-tun"
-	if err := svc.deps.Settings.Save(all); err != nil {
-		t.Fatal(err)
-	}
-
-	// Репро issue: фронт мержит патч стека с текущими настройками и шлёт
-	// полный объект, включая унаследованный selectiveBypass=true.
-	err = svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		RoutingMode:     "fakeip-tun",
-		SelectiveBypass: true,
-		FakeIPStack:     "system",
-	})
-	if err != nil {
-		t.Fatalf("stack switch must not be blocked by dormant selectiveBypass: %v", err)
-	}
-
-	saved, err := svc.deps.Settings.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.SingboxRouter.FakeIPStack != "system" {
-		t.Errorf("fakeipStack not persisted: %q", saved.SingboxRouter.FakeIPStack)
-	}
-	if !saved.SingboxRouter.SelectiveBypass {
-		t.Error("dormant selectiveBypass must survive the settings update (не сбрасывается молча)")
-	}
-}
-
-// #486 (обратная сторона): ВКЛЮЧИТЬ селективный перехват, находясь вне
-// tproxy, по-прежнему нельзя — dormant-послабление касается только уже
-// включённого флага.
-func TestUpdateSettings_SelectiveEnableRejectedOutsideTproxy(t *testing.T) {
-	svc, _ := newOrchedTestService(t)
-
-	err := svc.UpdateSettings(context.Background(), storage.SingboxRouterSettings{
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		RoutingMode:     "fakeip-tun",
-		SelectiveBypass: true,
-	})
-	if err == nil {
-		t.Fatal("expected enabling selectiveBypass outside tproxy to be rejected")
-	}
-	if !strings.Contains(err.Error(), "tproxy") {
-		t.Errorf("error should mention tproxy, got %q", err.Error())
-	}
-	saved, err := svc.deps.Settings.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.SingboxRouter.SelectiveBypass {
-		t.Error("selectiveBypass must not be persisted when enable is rejected")
-	}
-}
-
-func TestSetRouteFinal_DisablesSelectiveBypass(t *testing.T) {
-	singbox := newTestSingbox(t)
-	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
-		PolicyName:      "Policy0",
-		SelectiveBypass: true,
-	})
-	svc := &ServiceImpl{
-		deps: Deps{
-			Singbox:  singbox,
-			Settings: settingsStore,
-			IPTables: newStubIPTables(func(_ context.Context, _ string) error { return nil }),
-			SubscriptionComposites: NewSubscriptionCompositesAdapter(
-				&fakeSubscriptionSource{tags: []string{"sub-test"}},
-			),
-		},
-	}
-	cfg := NewEmptyConfig()
-	if err := svc.persistConfig(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.SetRouteFinal(context.Background(), "sub-test"); err != nil {
-		t.Fatalf("SetRouteFinal(sub-test): %v", err)
-	}
-	all, err := settingsStore.Load()
-	if err != nil {
-		t.Fatalf("settingsStore.Load: %v", err)
-	}
-	if all.SingboxRouter.SelectiveBypass {
-		t.Error("expected selectiveBypass disabled after setting route.final to non-direct")
-	}
-}
-
-func TestReconcileInstalled_SelectiveSelfHealWhenFinalNotDirect(t *testing.T) {
-	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
-		Enabled:         true,
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		SelectiveBypass: true,
-	})
-	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
-	svc, _ := newOrchedTestService(t)
-	svc.deps.Settings = settingsStore
-	svc.deps.Policies = &fakeAccessPolicyProvider{mark: "0xffffaaa"}
-	svc.deps.IPTables = ipt
-	svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
-	svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
-	svc.currentSelectiveBypass = true
-	// Ready engine so reconcile's iptables install (which updates
-	// currentSelectiveBypass) runs — it now gates on singboxReady (safety-3).
-	svc.deps.Singbox = newReadyTestSingbox(t)
-
-	// The incompatible config must be APPLIED (not a pending draft): the
-	// self-heal judges only what is actually running.
-	cfg := NewEmptyConfig()
-	cfg.Route.Final = "my-vpn"
-	cfg.Outbounds = append(cfg.Outbounds, Outbound{Tag: "my-vpn", Type: "direct"})
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouter, data); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
-		Enabled:         true,
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		SelectiveBypass: true,
-	}); err != nil {
-		t.Fatalf("reconcileInstalled: %v", err)
-	}
-	all, err := settingsStore.Load()
-	if err != nil {
-		t.Fatalf("settingsStore.Load: %v", err)
-	}
-	if all.SingboxRouter.SelectiveBypass {
-		t.Error("expected self-heal to disable selectiveBypass in settings")
-	}
-	if svc.currentSelectiveBypass {
-		t.Error("expected currentSelectiveBypass=false after self-heal reconcile")
-	}
-}
-
-func TestReconcileInstalled_SelectiveSelfHealIgnoresStagedDraft(t *testing.T) {
-	settingsStore := newTestSettingsStore(t, storage.SingboxRouterSettings{
-		Enabled:         true,
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		SelectiveBypass: true,
-	})
-	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
-	svc, _ := newOrchedTestService(t)
-	svc.deps.Settings = settingsStore
-	svc.deps.Policies = &fakeAccessPolicyProvider{mark: "0xffffaaa"}
-	svc.deps.IPTables = ipt
-	svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
-	svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
-	svc.currentSelectiveBypass = true
-
-	// APPLIED config is compatible (final=direct)…
-	applied := NewEmptyConfig()
-	appliedData, err := json.Marshal(applied)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.deps.Orch.SaveSilent(orchestrator.SlotRouter, appliedData); err != nil {
-		t.Fatal(err)
-	}
-	// …while a still-discardable STAGED draft is not. The self-heal must
-	// not act on the draft — the user may never apply it.
-	draft := NewEmptyConfig()
-	draft.Route.Final = "my-vpn"
-	draft.Outbounds = append(draft.Outbounds, Outbound{Tag: "my-vpn", Type: "direct"})
-	draftData, err := json.Marshal(draft)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, draftData); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
-		Enabled:         true,
-		PolicyName:      "Policy0",
-		WANAutoDetect:   true,
-		SelectiveBypass: true,
-	}); err != nil {
-		t.Fatalf("reconcileInstalled: %v", err)
-	}
-	all, err := settingsStore.Load()
-	if err != nil {
-		t.Fatalf("settingsStore.Load: %v", err)
-	}
-	if !all.SingboxRouter.SelectiveBypass {
-		t.Error("staged draft must not trigger the self-heal: selectiveBypass was disabled")
-	}
-}
-
 // TestReconcileInstalled_MalformedSubnet_RejectedBeforeInstall guards the second
 // Install entry point. reconcileInstalled re-Normalizes the settings it is
 // handed (e.g. a hand-edited settings.json read from disk), so a malformed
@@ -971,7 +745,7 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
 		persistRules: func(_, _, _ string) error { return nil },
-		persistHook:  func() error { return nil },
+		persistHook:  func(bool) error { return nil },
 		cleanupHook:  func() {},
 	}
 	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
@@ -1020,7 +794,7 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 		},
 		runIP:        func(_ context.Context, _ ...string) error { return nil },
 		persistRules: func(_, _, _ string) error { return nil },
-		persistHook:  func() error { return nil },
+		persistHook:  func(bool) error { return nil },
 		cleanupHook:  func() {},
 	}
 	svc := &ServiceImpl{
@@ -2265,5 +2039,14 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 	ftun.RoutingMode = "fakeip-tun"
 	if _, err := NormalizeSingboxRouterSettings(ftun); err != nil {
 		t.Errorf("fakeip-tun should be valid: %v", err)
+	}
+	ptun := base
+	ptun.RoutingMode = "policy-tun"
+	got, err = NormalizeSingboxRouterSettings(ptun)
+	if err != nil {
+		t.Errorf("policy-tun should be valid: %v", err)
+	}
+	if got.RoutingMode != "policy-tun" {
+		t.Errorf("policy-tun mode = %q, want policy-tun", got.RoutingMode)
 	}
 }

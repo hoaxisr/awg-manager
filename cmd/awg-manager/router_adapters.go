@@ -12,15 +12,21 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-// Compile-time guarantee that routerAccessPolicyAdapter satisfies
-// router.AccessPolicyProvider — catches interface drift at the
-// declaration line instead of at the wiring callsite in main.go.
-var _ router.AccessPolicyProvider = (*routerAccessPolicyAdapter)(nil)
+// Compile-time guarantees that the adapters satisfy their router-side
+// interfaces — catches interface drift at the declaration line instead
+// of at the wiring callsite in main.go.
+var (
+	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
+	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
+	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+)
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
 // into router.AccessPolicyProvider. main.go owns this projection so
@@ -32,6 +38,14 @@ type routerAccessPolicyAdapter struct {
 
 func (a *routerAccessPolicyAdapter) GetPolicyMark(ctx context.Context, name string) (string, error) {
 	return a.svc.GetPolicyMark(ctx, name)
+}
+
+func (a *routerAccessPolicyAdapter) ListPolicyExits(ctx context.Context, iface string) ([]ndmsquery.PolicyDefaultExit, error) {
+	return a.svc.ListPolicyExits(ctx, iface)
+}
+
+func (a *routerAccessPolicyAdapter) PermitInterface(ctx context.Context, name, iface string, order int) error {
+	return a.svc.PermitInterface(ctx, name, iface, order)
 }
 
 func (a *routerAccessPolicyAdapter) AssignDevice(ctx context.Context, mac, name string) error {
@@ -186,6 +200,34 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 // method-signature drift at this declaration line.
 var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
 
+// Compile-time satisfaction for the directly-wired policy-tun deps: все три
+// реализуют router-интерфейсы структурно, без адаптера.
+var (
+	_ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
+	_ router.SegmentNATProvider   = (*ndmscommand.NATCommands)(nil)
+	_ router.RunningConfigReader  = (*ndmsquery.RunningConfigStore)(nil)
+	// WAN-цель static-NAT в source-preserve — интерфейс дефолтного маршрута.
+	_ router.DefaultGatewayResolver = (*ndmsquery.RouteStore)(nil)
+)
+
+var _ router.NATStateReader = (*routerNATStateAdapter)(nil)
+
+// routerNATStateAdapter сводит два независимых стора (/show/rc/ip/nat и
+// /show/rc/ip/static) в один router-контракт: имена List разводятся, чтобы
+// одна структура могла отдать оба списка.
+type routerNATStateAdapter struct {
+	nat    *ndmsquery.NATStore
+	static *ndmsquery.StaticNATStore
+}
+
+func (a *routerNATStateAdapter) ListNAT(ctx context.Context) ([]ndmsquery.NATEntry, error) {
+	return a.nat.List(ctx)
+}
+
+func (a *routerNATStateAdapter) ListStaticNAT(ctx context.Context) ([]ndmsquery.StaticNATEntry, error) {
+	return a.static.List(ctx)
+}
+
 var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 
 // routerStaticRouteAdapter translates router.StaticRouteSpec (router-local
@@ -259,6 +301,27 @@ func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string
 	}
 	iface, err := a.store.Get(ctx, ndmsName)
 	return err == nil && iface != nil
+}
+
+var _ wdtt.NDMSPolicyTableGetter = (*policyTableAdapter)(nil)
+var _ wdtt.NDMSPolicyMarkGetter = (*policyTableAdapter)(nil)
+
+type policyTableAdapter struct {
+	marks *ndmsquery.PolicyMarkStore
+}
+
+func (a *policyTableAdapter) GetPolicyMark(ctx context.Context, policyName string) (string, error) {
+	if a.marks == nil {
+		return "", fmt.Errorf("policy mark store not wired")
+	}
+	return a.marks.Get(ctx, policyName)
+}
+
+func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string) (int, error) {
+	if a.marks == nil {
+		return 0, fmt.Errorf("policy mark store not wired")
+	}
+	return a.marks.Table4(ctx, policyName)
 }
 
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
@@ -410,4 +473,81 @@ func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, err
 		return "", fmt.Errorf("managed service not available")
 	}
 	return a.svc.DefaultGatewayNDMSInterface(ctx)
+}
+
+// keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
+type keenDNSDomainAdapter struct {
+	store *ndmsquery.KeenDNSStore
+}
+
+func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	info, err := a.store.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if info == nil || !info.Enabled {
+		return "", nil
+	}
+	return info.Domain, nil
+}
+
+// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
+type keenDNSLANAdapter struct{}
+
+func (keenDNSLANAdapter) LANIPv4() string {
+	return netif.FirstIPv4(storage.DefaultInterface)
+}
+
+var _ wdtt.IngressRefEnsurer = (*wdttIngressEnsurer)(nil)
+
+type wdttIngressEnsurer struct {
+	settings *storage.SettingsStore
+	router   wdtt.RouterReconciler
+}
+
+func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wgKernelIface string) error {
+	if e.settings == nil {
+		return nil
+	}
+	settings, err := e.settings.Load()
+	if err != nil {
+		return err
+	}
+	next, changed := wdtt.EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface)
+	if !changed {
+		return nil
+	}
+	settings.SingboxRouter.IngressInterfaces = next
+	if err := e.settings.Save(settings); err != nil {
+		return err
+	}
+	if e.router != nil {
+		return e.router.Reconcile(ctx)
+	}
+	return nil
+}
+
+// routerSegmentDetailsAdapter отдаёт router описание и адресацию сегмента по
+// NDMS-имени: экран source-preserve показывает сети человеку, а системные
+// `Home`/`Wireguard1` он знает только по веб-морде роутера.
+type routerSegmentDetailsAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
+
+func (a *routerSegmentDetailsAdapter) SegmentInfo(ctx context.Context, ndmsName string) (router.SegmentInfo, error) {
+	iface, err := a.store.Get(ctx, ndmsName)
+	if err != nil {
+		return router.SegmentInfo{}, err
+	}
+	if iface == nil {
+		return router.SegmentInfo{}, nil
+	}
+	return router.SegmentInfo{
+		Label:   iface.Description,
+		Address: iface.Address,
+		Mask:    iface.Mask,
+	}, nil
 }

@@ -5,6 +5,7 @@ package wdtt
 import (
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -23,7 +24,50 @@ type ClientConfig struct {
 	CaptchaMode string `json:"captchaMode"`          // -captcha-mode: auto|rjs|wv (router default rjs)
 	VKAuthMode  string `json:"vkAuthMode,omitempty"` // -vk-auth-mode
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
-	Debug       bool   `json:"debug"`
+	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
+	ConnMode string `json:"connMode,omitempty"`
+	PeerWg   string `json:"peerWg,omitempty"`  // VPS:DTLS для connMode=wg; Peer зеркалит активный слот (normalizePeers)
+	PeerRaw  string `json:"peerRaw,omitempty"` // VPS:Raw для connMode=raw
+	Debug    bool   `json:"debug"`
+
+	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).
+	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTun17..49
+	RawIface     string `json:"rawIface,omitempty"`     // kernel opkgtunN
+	RawClientIP  string `json:"rawClientIp,omitempty"`  // из RAWCONF VPS
+	RawClientMTU int    `json:"rawClientMTU,omitempty"` // MTU из RAWCONF VPS
+
+	// PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются после рестарта awg-manager.
+	PolicyPermits []OpkgPolicyPermit `json:"policyPermits,omitempty"`
+}
+
+// normalizePeers держит инвариант «Peer = слот активного режима».
+//
+// Главнее Peer, а не слот: адрес приходит и от тех, кто про слоты не знает —
+// подписка, импорт ссылки, сторонний API-клиент, — и их свежий Peer не должен
+// откатываться протухшим слотом. Слот активного режима зеркалит Peer, слот
+// соседнего режима сохраняется нетронутым; пустой Peer восстанавливается из
+// слота (конфиги, созданные до появления слотов).
+//
+// Подставить адрес соседнего режима ПРИ переключении — работа формы: только
+// она знает, что режим меняет пользователь, а не приезжает из подписки.
+func normalizePeers(cfg ClientConfig) ClientConfig {
+	slot := &cfg.PeerWg
+	if !cfg.UsesWireGuard() {
+		slot = &cfg.PeerRaw
+	}
+	if peer := strings.TrimSpace(cfg.Peer); peer != "" {
+		cfg.Peer = peer
+		*slot = peer
+		return cfg
+	}
+	cfg.Peer = strings.TrimSpace(*slot)
+	return cfg
+}
+
+// OpkgPolicyPermit — permit global OpkgTun в одной политике (order как в NDMS).
+type OpkgPolicyPermit struct {
+	Name  string `json:"name"`
+	Order int    `json:"order"`
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -34,6 +78,7 @@ func DefaultClientConfig() ClientConfig {
 		Fingerprint: "chrome",
 		CaptchaMode: "rjs",
 		VKAuthMode:  "vkcalls",
+		ConnMode:    ConnModeWG,
 	}
 }
 
@@ -61,30 +106,71 @@ type ServerConfig struct {
 	NatStaticWAN   string   `json:"natStaticWan,omitempty"`   // persisted WAN for internet-only teardown
 	Policy         string   `json:"policy"`                   // NDMS hotspot policy or "none"
 	LanSegments    []string `json:"lanSegments,omitempty"`    // LAN bridge names
-	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface
+	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface + wdttraw0
 
 	// OpenFirewall opens the DTLS listen port in Keenetic INPUT (iptables).
 	// nil / omitted → true (WAN relay works out of the box).
 	OpenFirewall *bool `json:"openFirewall,omitempty"`
 
+	// RelayMode — wg (WireGuard relay, совместимость) или raw (без WG на сервере; нужен редеплой).
+	RelayMode string `json:"relayMode,omitempty"`
+	// RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1 на том же host.
+	RawListen string `json:"rawListen,omitempty"`
+	// DirectListen — -listen-direct (WRAP без DTLS для WG). Пусто → peer = DTLS-порт.
+	DirectListen string `json:"directListen,omitempty"`
+
 	// NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован в роутере.
 	NdmsIface string `json:"ndmsIface,omitempty"`
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
 	WgIface string `json:"wgIface,omitempty"`
+
+	// Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+	// этого списка перед каждым стартом wdtt-server.
+	Clients []ServerClient `json:"clients,omitempty"`
+
+	// LinkPeer / LinkVKHashes — параметры последней сгенерированной ссылки,
+	// чтобы wdtt:// восстанавливалась без повторного ввода WAN-адреса.
+	LinkPeer     string `json:"linkPeer,omitempty"`
+	LinkVKHashes string `json:"linkVkHashes,omitempty"`
+
+	// StatsLog — server.log (JSON каждые ~2 с): "ram" (default), "off", "disk".
+	StatsLog string `json:"statsLog,omitempty"`
+}
+
+// ServerClient is one WDTT client identity stored in wdtt.json.
+type ServerClient struct {
+	Password string `json:"password"`
+	Comment  string `json:"comment,omitempty"`
+	VkHash   string `json:"vkHash,omitempty"`
 }
 
 const (
 	DefaultWdttIface   = "wdtt0"
 	DefaultWdttAddress = "10.66.66.1"
 	DefaultWdttMask    = "255.255.255.0"
+	// DefaultWdttServerGateway* — NDMS OpkgTun: шлюз в сети пула клиентов monolith
+	// (10.66.0.0/16). Совпадение сети интерфейса с пулом обязательно: NDMS
+	// NAT/policy/ACL кроют только сеть интерфейса (PR #697, F2). 10.66.0.1 не
+	// достаётся клиентам: reserveGatewayIPInDevices держит слот в passwords.json
+	// (старый бинарь), getNextIP-патч скипает оба шлюза (новый бинарь).
+	DefaultWdttServerGatewayAddr = "10.66.0.1"
+	DefaultWdttServerGatewayMask = "255.255.0.0"
+	DefaultRawServerIface        = "wdttraw0"
+	DefaultRawServerAddr         = "10.70.66.1"
+	DefaultRawServerMask         = "255.255.0.0"
+	DefaultRawClientTun          = "wdtturn0"
+	DefaultRawClientMask         = "255.255.255.255"
+	// DefaultWdttClientPoolCIDR — пул qWDTT monolith (getNextIP → 10.66.0.x).
+	DefaultWdttClientPoolCIDR = "10.66.0.0/16"
 )
 
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
-		Listen:  "0.0.0.0:56002",
-		WgPort:  56001,
-		NatMode: "full",
-		Policy:  "none",
+		Listen:    "0.0.0.0:56002",
+		WgPort:    56001,
+		NatMode:   "full",
+		Policy:    "none",
+		RelayMode: ConnModeWG,
 	}
 }
 
@@ -133,6 +219,9 @@ type ProcessStatus struct {
 	LastError       string     `json:"lastError,omitempty"`
 	Log             string     `json:"log,omitempty"`
 	WgConfig        string     `json:"wgConfig,omitempty"`
+	RawClientIP     string     `json:"rawClientIp,omitempty"`
+	RawIface        string     `json:"rawIface,omitempty"`
+	NdmsIface       string     `json:"ndmsIface,omitempty"`
 	DtlsConnections int        `json:"dtlsConnections,omitempty"`
 	Binary          string     `json:"binary"`
 	BinaryPresent   bool       `json:"binaryPresent"`
@@ -189,17 +278,21 @@ type ImportPayload struct {
 	SubURL   string   `json:"subUrl,omitempty"`
 	DeviceID string   `json:"deviceId,omitempty"`
 	WG       string   `json:"wg,omitempty"` // optional bundled WireGuard client config
+	ConnMode string   `json:"connMode,omitempty"`
 }
 
-// wdttPeerCIDR — сеть пиров в нормализованном виде (10.66.66.0/24).
-// iptables -S печатает именно её, поэтому сравнение вывода с
-// DefaultWdttAddress+"/24" (10.66.66.1/24) не совпадало никогда.
-func wdttPeerCIDR() string {
-	_, n, err := net.ParseCIDR(DefaultWdttAddress + "/" + maskBits(DefaultWdttMask))
+// wgServerPeerCIDR — подсеть клиентов qWDTT monolith (10.66.0.x, не 10.66.66.x).
+func wgServerPeerCIDR() string {
+	_, n, err := net.ParseCIDR(DefaultWdttClientPoolCIDR)
 	if err != nil {
-		return DefaultWdttAddress + "/24"
+		return "10.66.0.0/16"
 	}
 	return n.String()
+}
+
+// wdttPeerCIDR — alias для entware NAT/MSS/LAN (monolith client pool).
+func wdttPeerCIDR() string {
+	return wgServerPeerCIDR()
 }
 
 func maskBits(mask string) string {

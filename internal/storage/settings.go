@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 32
+	CurrentSchemaVersion        = 33
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -188,6 +188,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 32 {
 			s.migrateToV32(&settings)
 		}
+		if settings.SchemaVersion < 33 {
+			s.migrateToV33(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -273,6 +276,9 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
+			// KeenDNS/CrazeDNS: managed DNS rewrite of own FQDN → LAN
+			// (not iptables /32 for the shared cloud IP).
+			BypassPresets: []string{"keendns"},
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -530,6 +536,19 @@ func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
 		return fmt.Errorf("settings not loaded")
 	}
 	s.settings.FakeIP = st
+	return s.saveUnlocked(s.settings)
+}
+
+// SetPolicyTunState atomically persists the policy-tun operational state under
+// the store lock (single-writer pattern; the lifecycle is the only writer). Pass
+// nil to clear (mode left/teardown). Mirrors SetFakeIPState.
+func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.PolicyTun = st
 	return s.saveUnlocked(s.settings)
 }
 

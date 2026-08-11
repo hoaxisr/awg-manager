@@ -40,11 +40,14 @@ func newTestFacade(t *testing.T, source nwgPollSource) (*Facade, *storage.AWGTun
 		custom: &Service{
 			logBuffer: lb,
 		},
-		tunnels:     tunnels,
-		nwgSource:   source,
-		nwgMonitors: make(map[string]*nwgMonitor),
-		ctx:         ctx,
-		cancel:      cancel,
+		tunnels:           tunnels,
+		nwgSource:         source,
+		nwgMonitors:       make(map[string]*nwgMonitor),
+		nwgRestarts:       make(map[string]int),
+		nwgFruitless:      make(map[string]int),
+		nwgLastEscalation: make(map[string]time.Time),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 	return f, tunnels
 }
@@ -259,5 +262,56 @@ func TestNwgCardStatus_WarmupVsRealStates(t *testing.T) {
 					c.status, c.failCount, c.successCount, c.bound, c.restartDetected, got, c.want)
 			}
 		})
+	}
+}
+
+// Счётчик рестартов доезжает до статуса как есть, а не константой (#702).
+// Живёт он в картах фасада, а не в мониторе: монитор пересоздаётся.
+func TestFacade_NwgRestartCountReported(t *testing.T) {
+	f, _ := newTestFacade(t, nil)
+
+	f.nwgNoteRestart("nwg-1")
+	f.nwgNoteRestart("nwg-1")
+
+	if got := f.nwgRestartCount("nwg-1"); got != 2 {
+		t.Fatalf("nwgRestartCount = %d, want 2", got)
+	}
+	if got := f.nwgRestartCount("нет-такого"); got != 0 {
+		t.Fatalf("для незнакомого туннеля = %d, want 0", got)
+	}
+}
+
+// Состояние эскалации живёт в фасаде и переживает пересоздание монитора
+// нашим же перезапуском туннеля (#702).
+func TestFacade_EscalationStateSurvivesMonitorRecreate(t *testing.T) {
+	f, _ := newTestFacade(t, nil)
+
+	if got := f.nwgNoteRestart("nwg-1"); got != 1 {
+		t.Fatalf("серия после первого рестарта = %d, want 1", got)
+	}
+	if !f.nwgCanEscalate("nwg-1") {
+		t.Fatal("первая эскалация должна быть разрешена")
+	}
+	if f.nwgCanEscalate("nwg-1") {
+		t.Fatal("вторая эскалация подряд должна быть запрещена backoff'ом")
+	}
+	if got := f.nwgRestartCount("nwg-1"); got != 1 {
+		t.Fatalf("счётчик рестартов = %d, want 1", got)
+	}
+}
+
+// Успешная проверка обнуляет серию, а общий счётчик рестартов — нет.
+func TestFacade_NwgNoteSuccessResetsSeriesOnly(t *testing.T) {
+	f, _ := newTestFacade(t, nil)
+
+	f.nwgNoteRestart("nwg-1")
+	f.nwgNoteRestart("nwg-1")
+	f.nwgNoteSuccess("nwg-1")
+
+	if got := f.nwgNoteRestart("nwg-1"); got != 1 {
+		t.Fatalf("серия после успеха = %d, want 1", got)
+	}
+	if got := f.nwgRestartCount("nwg-1"); got != 3 {
+		t.Fatalf("общий счётчик = %d, want 3", got)
 	}
 }

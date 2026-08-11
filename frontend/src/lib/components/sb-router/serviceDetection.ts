@@ -14,6 +14,7 @@
 import { isPresetIconResolvable } from '$lib/utils/resolve-icon-slug';
 import type { CatalogPreset, SingboxRouterPreset, SingboxRouterRule } from '$lib/types';
 import { displayRuleSetTag } from '$lib/utils/singboxInlineRules';
+import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 
 function suffixMatches(domain: string, suffix: string): boolean {
   const d = domain.toLowerCase();
@@ -148,10 +149,11 @@ export function detectServiceKey(
 }
 
 export function detectService(
-  rule: SingboxRouterRule,
+  ruleIn: SingboxRouterRule,
   routerPresets?: SingboxRouterPreset[],
   catalog: CatalogPreset[] = [],
 ): DetectedService {
+  const rule = flattenRouterRule(ruleIn);
   const sets = rule.rule_set ?? [];
   if (sets.length > 0) {
     const fromRuleSet = detectFromRuleSets(sets, catalog, routerPresets);

@@ -102,6 +102,12 @@ export class WdttClient extends FreeturnClient {
 		});
 	}
 
+	async ensureWdttRawTunnel(id: string): Promise<WdttEnsureWgResult> {
+		return this.request<WdttEnsureWgResult>(`/wdtt/clients/${encodeURIComponent(id)}/ensure-raw-tunnel`, {
+			method: 'POST'
+		});
+	}
+
 	async refreshWdttSubscription(id: string): Promise<{
 		instance: WdttClientInstance;
 		payload: WdttImportPayload;
@@ -116,6 +122,30 @@ export class WdttClient extends FreeturnClient {
 		const res = await this.request<{ config: WdttServerConfig }>(
 			`/wdtt/servers/${encodeURIComponent(id)}`,
 			{ method: 'PUT', body: JSON.stringify(config) }
+		);
+		return { config: res.config };
+	}
+
+	async setWdttServerNATMode(id: string, mode: 'full' | 'internet-only' | 'none'): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/nat`,
+			{ method: 'POST', body: JSON.stringify({ mode }) }
+		);
+		return { config: res.config };
+	}
+
+	async setWdttServerPolicy(id: string, policy: string): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/policy`,
+			{ method: 'POST', body: JSON.stringify({ policy }) }
+		);
+		return { config: res.config };
+	}
+
+	async setWdttServerLANSegments(id: string, segments: string[]): Promise<WdttSaveServerResult> {
+		const res = await this.request<{ config: WdttServerConfig }>(
+			`/wdtt/servers/${encodeURIComponent(id)}/lan-segments`,
+			{ method: 'POST', body: JSON.stringify({ segments }) }
 		);
 		return { config: res.config };
 	}

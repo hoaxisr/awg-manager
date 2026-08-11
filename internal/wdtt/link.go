@@ -140,7 +140,7 @@ func EncodeLinkWithClientPort(peer string, wgPort int, password string, vkHashes
 }
 
 // EncodeQwdttLink builds qwdtt:// for qWDTT/Android — явный port=9000 в query.
-func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int) (string, error) {
+func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string) (string, error) {
 	peer = normalizePeer(strings.TrimSpace(peer))
 	password = strings.TrimSpace(password)
 	if peer == "" {
@@ -167,6 +167,9 @@ func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clie
 	}
 	q.Set("port", strconv.Itoa(clientListenPort))
 	q.Set("workers", strconv.Itoa(workers))
+	if mode := normalizeConnMode(connMode); mode == ConnModeRaw {
+		q.Set("mode", mode)
+	}
 	if n := strings.TrimSpace(name); n != "" {
 		q.Set("name", n)
 	}
@@ -302,6 +305,7 @@ func parseQwdttURI(link string) (ImportPayload, error) {
 		Listen:   listen,
 		DeviceID: firstQuery(q, "deviceId", "device-id", "did"),
 		SubURL:   normalizeSubURL(firstQuery(q, "sub", "subUrl", "sub_url")),
+		ConnMode: firstQuery(q, "mode", "connMode", "relayMode"),
 	}, nil
 }
 
@@ -358,6 +362,7 @@ func mapJSONProfile(raw map[string]interface{}) (ImportPayload, error) {
 		DeviceID: firstStr(raw, "deviceId", "device_id", "did"),
 		SubURL:   normalizeSubURL(firstStr(raw, "sub", "subUrl", "sub_url")),
 		WG:       firstStr(raw, "wg", "conf", "config"),
+		ConnMode: firstStr(raw, "mode", "connMode", "relayMode"),
 	}, nil
 }
 
@@ -637,7 +642,12 @@ func ApplyImport(cfg ClientConfig, p ImportPayload) ClientConfig {
 	if p.DeviceID != "" {
 		cfg.DeviceID = p.DeviceID
 	}
+	if p.ConnMode != "" {
+		cfg.ConnMode = normalizeConnMode(p.ConnMode)
+	}
 	// Enabled = «пользователь запустил»; импорт сам по себе не запуск, поэтому
 	// флаг здесь не трогаем (иначе автостарт на бооте поднял бы неготовый клиент).
-	return cfg
+	// normalizePeers — здесь, а не только в normalizeClientConfig: обновление
+	// подписки сохраняет конфиг напрямую, мимо Update*-методов.
+	return normalizePeers(cfg)
 }

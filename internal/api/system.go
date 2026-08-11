@@ -60,7 +60,7 @@ type SystemInfoData struct {
 	KernelModuleLoaded          bool                          `json:"kernelModuleLoaded" example:"false"`
 	KernelModuleModel           string                        `json:"kernelModuleModel" example:"MT7981"`
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
-	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.0.20260731"`
+	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.0.20260805"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
 	ActiveBackend               string                        `json:"activeBackend" example:"nativewg"`
 	RouterIP                    string                        `json:"routerIP" example:"192.168.1.1"`

@@ -47,30 +47,51 @@ func TestBuildBlackholeRestoreInput_PolicyMark(t *testing.T) {
 	}
 }
 
-// Selective mode + bypass ports: the blackhole must mirror the interception
-// chain's RETURN set — the selective-set guard (so only the selective subset is
-// dropped, not the whole of the user's traffic) and the user's bypass UDP/TCP
-// ports (so deliberately-excluded traffic goes direct, not dropped).
-func TestBuildBlackholeRestoreInput_SelectiveAndBypassPorts(t *testing.T) {
+// Bypass ports: the blackhole must mirror the interception chain's RETURN set —
+// the user's bypass UDP/TCP ports (so deliberately-excluded traffic goes
+// direct, not dropped).
+func TestBuildBlackholeRestoreInput_BypassPorts(t *testing.T) {
 	got := buildBlackholeRestoreInput(RestoreInputSpec{
 		PolicyMark:     "0xff",
-		SelectiveIPSet: true,
 		BypassUDPPorts: []PortRange{{51820, 51820}},
 		BypassTCPPorts: []PortRange{{22, 22}},
 	})
 	must := []string{
 		"-A " + BlackholeChain + " -p udp --dport 51820 -j RETURN",
 		"-A " + BlackholeChain + " -p tcp --dport 22 -j RETURN",
-		"-A " + BlackholeChain + " -m set ! --match-set " + selectiveSetName + " dst -j RETURN",
 	}
 	for _, s := range must {
 		if !strings.Contains(got, s) {
 			t.Errorf("blackhole blob missing %q\n---\n%s", s, got)
 		}
 	}
-	// The selective guard and every port RETURN must still precede the DROP.
+	// Every port RETURN must still precede the DROP.
 	if strings.Index(got, "-j DROP") < strings.LastIndex(got, "-j RETURN") {
-		t.Error("DROP must be after the selective guard and bypass-port RETURNs")
+		t.Error("DROP must be after the bypass-port RETURNs")
+	}
+}
+
+// geoip-bypass: адреса из AWGM-BYPASS уходят прямо и при живом движке, так что
+// мёртвый движок их тем более не должен дропать — RETURN рядом с
+// пользовательскими bypass-CIDR и строго до терминального DROP.
+func TestBuildBlackholeRestoreInput_BypassGeoIPSetReturn(t *testing.T) {
+	got := buildBlackholeRestoreInput(RestoreInputSpec{
+		PolicyMark:     "0xff",
+		BypassCIDRs:    []string{"192.168.50.0/24"},
+		BypassGeoIPSet: true,
+	})
+
+	setIdx := strings.Index(got, "-A "+BlackholeChain+" -m set --match-set "+bypassSetName+" dst -j RETURN")
+	userIdx := strings.Index(got, "-A "+BlackholeChain+" -d 192.168.50.0/24 -j RETURN")
+	dropIdx := strings.Index(got, "-A "+BlackholeChain+" -j DROP")
+	if setIdx == -1 || userIdx == -1 || dropIdx == -1 {
+		t.Fatalf("setIdx=%d userIdx=%d dropIdx=%d\n%s", setIdx, userIdx, dropIdx, got)
+	}
+	if setIdx < userIdx {
+		t.Errorf("set rule (%d) must follow user bypass CIDRs (%d)", setIdx, userIdx)
+	}
+	if setIdx > dropIdx {
+		t.Errorf("set rule (%d) must precede the terminal DROP (%d)", setIdx, dropIdx)
 	}
 }
 
@@ -145,7 +166,7 @@ func TestRemoveBlackhole_CleansUp(t *testing.T) {
 // The netfilter.d hook must gain a dead-engine branch that re-asserts the
 // blackhole, and an alive-engine scrub that removes any stale blackhole.
 func TestNetfilterHookScript_BlackholeFailClosed(t *testing.T) {
-	s := netfilterHookScript()
+	s := netfilterHookScript(true)
 	if !strings.Contains(s, netfilterBlackholePath) {
 		t.Error("hook missing blackhole rules path (dead-engine restore)")
 	}

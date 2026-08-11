@@ -6,8 +6,6 @@
 	import { EmptyState } from '$lib/components/layout';
 	import { TunnelToolbarViewRow } from '$lib/components/tunnels';
 	import Awg3TunnelCard from './Awg3TunnelCard.svelte';
-	import Awg3ImportModal from './Awg3ImportModal.svelte';
-	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { pluralForm, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import type { Awg3Tunnel } from '$lib/types';
@@ -24,6 +22,8 @@
 		// Дашборд-режим (секции по типу) прячет тулбар и передаёт уже
 		// отфильтрованный список — как SingboxTunnelsTabSection при dashboardOn.
 		showToolbar?: boolean;
+		/** Opens page-level AWG3 import modal (single Escape owner). */
+		onImport?: () => void;
 	}
 
 	let {
@@ -35,9 +35,8 @@
 		layoutMode = $bindable(),
 		autoDelayCheckNonce,
 		showToolbar = true,
+		onImport,
 	}: Props = $props();
-
-	let importOpen = $state(false);
 
 	const filtered = $derived.by(() => {
 		// Без тулбара поле поиска скрыто, а список приходит уже отфильтрованным.
@@ -52,6 +51,10 @@
 	const searchEmpty = $derived(tunnels.length > 0 && filtered.length === 0);
 
 	const cardLayout = $derived<SingboxLayoutMode>(renderMode === 'list-card' ? 'list' : layout);
+
+	function openImport(): void {
+		onImport?.();
+	}
 </script>
 
 {#if showToolbar && tunnels.length > 0}
@@ -79,7 +82,7 @@
 					/>
 				{/snippet}
 			</TunnelToolbarViewRow>
-			<Button variant="primary" size="md" onclick={() => (importOpen = true)} iconBefore={importIcon}>
+			<Button variant="primary" size="md" onclick={openImport} iconBefore={importIcon}>
 				Импортировать
 			</Button>
 		</div>
@@ -101,7 +104,7 @@
 		<Waypoints aria-hidden="true" />
 	{/snippet}
 	{#snippet emptyAction()}
-		<Button variant="primary" size="md" onclick={() => (importOpen = true)} iconBefore={importIcon}>
+		<Button variant="primary" size="md" onclick={openImport} iconBefore={importIcon}>
 			Импортировать
 		</Button>
 	{/snippet}
@@ -153,12 +156,6 @@
 		<p class="tunnel-list-empty">Ничего не найдено</p>
 	{/if}
 {/if}
-
-<Awg3ImportModal
-	open={importOpen}
-	onclose={() => (importOpen = false)}
-	onimported={() => void awg3Tunnels.refetch()}
-/>
 
 <style>
 	.tunnels-toolbar {

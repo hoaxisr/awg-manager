@@ -14,9 +14,11 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -44,6 +46,11 @@ type Service interface {
 	// ListIngressEligibleInterfaces returns interfaces eligible for
 	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
 	ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
+
+	// PolicyTunNATPreview returns the router segments with their current NAT
+	// mode — the editable "what will change" preview behind the policy-tun
+	// source-preserve toggle.
+	PolicyTunNATPreview(ctx context.Context) (NATPreview, error)
 
 	SetRouteFinal(ctx context.Context, tag string) error
 
@@ -229,6 +236,15 @@ type AccessPolicyProvider interface {
 	ListDevicesForPolicy(ctx context.Context, policyName string) ([]PolicyDevice, error)
 	ListPolicies(ctx context.Context) ([]PolicyInfo, error)
 	CreatePolicy(ctx context.Context, description string) (PolicyInfo, error)
+	// ListPolicyExits — политики, чей дефолт ведёт в iface (policy-tun:
+	// источник connmark для перехвата DNS; политика там задаётся в NDMS,
+	// а не в настройках, поэтому sr.PolicyName непригоден).
+	ListPolicyExits(ctx context.Context, iface string) ([]query.PolicyDefaultExit, error)
+	// PermitInterface разрешает интерфейс как выход политики. order —
+	// позиция с нуля; policy-tun ставит 0, потому что туннель обязан стать
+	// дефолтным выходом политики (в непустой политике order=0 вставляет в
+	// начало и сдвигает прежние — это цель, а не побочный эффект).
+	PermitInterface(ctx context.Context, policyName, iface string, order int) error
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned
@@ -337,6 +353,10 @@ type Deps struct {
 	// exec'ing iptables.
 	XtDscpProbe func(context.Context) bool
 	GeoData     GeoTagExpander
+	// GeoTagCounts даёт суммарные размеры geoip-тегов для бюджет-валидации
+	// BypassGeoIPTags и список .dat для наполнения набора обхода. Optional —
+	// nil в тестах; при nil бюджет не проверяется, а наполнение отдаёт ошибку.
+	GeoTagCounts GeoIPTagCounter
 	// OpkgTun provisions the fakeip-tun kernel interface via NDMS.
 	// Optional — nil in tests; wired in cmd/awg-manager to
 	// *ndmscommand.InterfaceCommands. Consumed by Slice 1D Enable.
@@ -359,16 +379,26 @@ type Deps struct {
 	// wired in cmd/awg-manager. Consumed by Slice 1D Enable.
 	FakeIPTun FakeIPTunParams
 
-	// SelectiveBuilder handles ipset population for the selective-bypass
-	// feature. When non-nil and SingboxRouterSettings.SelectiveBypass is
-	// true, reconcileInstalled calls Rebuild after every iptables install
-	// that changes rules/rule-sets. When nil the feature is disabled.
-	SelectiveBuilder SelectiveBuilder
-
-	// NDMSDNSSource provides fallback DNS server addresses (NDMS router
-	// upstreams) for the selective-bypass domain resolver. Optional — nil
-	// means only sing-box DNS servers and the system resolver are used.
-	NDMSDNSSource SelectiveDNSSource
+	// Segments отдаёт описание и адресацию сегментов для предпоказа
+	// source-preserve: без них пользователь выбирает сегменты по системным
+	// именам вслепую. Optional — nil оставляет системные имена.
+	Segments SegmentDetails
+	// DefaultRoute паркует NDMS-дефолт (v4/v6) на policy-tun интерфейс.
+	// Optional — nil в тестах; wired в cmd/awg-manager на *RouteCommands.
+	DefaultRoute DefaultRouteProvider
+	// SegmentNAT управляет NAT сегментов (`ip nat` / `ip static`) в
+	// policy-tun. Optional — nil в тестах; wired на *NATCommands.
+	SegmentNAT SegmentNATProvider
+	// RunningConfig читает /show/running-config для сверки дрейфа
+	// policy-tun. Optional — nil в тестах; wired на *RunningConfigStore.
+	RunningConfig RunningConfigReader
+	// NATState — структурированное состояние NAT для той же сверки.
+	// Optional — nil в тестах; wired через адаптер над NAT/StaticNAT-сторами.
+	NATState NATStateReader
+	// DefaultGateway отдаёт NDMS-имя WAN (интерфейс дефолтного маршрута) —
+	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
+	// *query.RouteStore.
+	DefaultGateway DefaultGatewayResolver
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -395,7 +425,10 @@ func (a *routerLoggerAdapter) Info(msg string) {
 type ServiceImpl struct {
 	deps   Deps
 	appLog *logging.ScopedLogger
-	mu     sync.Mutex
+	// bypassLog — журнал набора обхода (подгруппа «Набор обхода»), чтобы итоги
+	// наполнения не терялись в общем потоке singbox-router.
+	bypassLog *logging.ScopedLogger
+	mu        sync.Mutex
 	// transitionMu serializes SwitchRoutingMode calls. It is DISTINCT from mu:
 	// Enable/Disable (which SwitchRoutingMode composes) take mu themselves, so
 	// holding mu across the whole switch would self-deadlock.
@@ -409,7 +442,34 @@ type ServiceImpl struct {
 	currentBypassPresets        []string
 	currentBypassExtraPorts     string
 	currentBypassExtraSubnets   string
+	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
 	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+
+	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
+	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
+	// взводят bypassRerunPending.
+	bypassPopulating atomic.Bool
+	// bypassRerunPending — триггер, пришедший во время наполнения: по его
+	// завершении прогон повторяется один раз с актуальными тегами.
+	bypassRerunPending atomic.Bool
+	// Итог последнего наполнения bypass-набора (под mu). bypassCountOK
+	// различает подтверждённый ноль и «счётчик получить не удалось» — пустой
+	// набор и неизвестный размер не одно и то же.
+	bypassEntryCount   int
+	bypassCountOK      bool
+	bypassLastPopulate time.Time
+	bypassLastError    string
+	bypassMissingTags  []string
+	// populateBypassSet — шов наполнения для тестов (nil = bypassset.Populate).
+	populateBypassSet func(ctx context.Context, tags []string) (bypassset.PopulateResult, error)
+	// teardownBypassSetFn — шов сноса набора для тестов (nil = реальный снос).
+	teardownBypassSetFn func(ctx context.Context)
+
+	// Однократные зачистки наследия выпиленного селектива: файлы + managed-
+	// правила на старте, ipset'ы AWGM-SELECTIVE(-STG) — после первой установки
+	// правил (до неё набор ещё занят старыми правилами).
+	legacySelectiveOnce    sync.Once
+	legacySelectiveSetOnce sync.Once
 
 	// netfilterStateKnown tracks whether we know for certain that the
 	// installed iptables rules match the current desired state. It starts
@@ -425,14 +485,15 @@ type ServiceImpl struct {
 	// (сериализован transitionMu).
 	fakeipACLAsserted bool
 
+	// policyTunACLAsserted — тот же one-shot флаг для policy-tun (свой, чтобы
+	// смена режима не съедала ассерт соседа). Доступ только из Reconcile.
+	policyTunACLAsserted bool
+
 	// blackholeActive tracks whether the fail-closed DROP chain is currently
 	// engaged (installed by reconcileInstalled while sing-box is dead and the
 	// PREROUTING interception jumps were wiped). It is removed the moment the
 	// engine recovers. Guarded by s.mu, like the other current* install state.
 	blackholeActive bool
-
-	// selective tracking
-	currentSelectiveBypass bool // last-applied value of SelectiveBypass
 
 	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
 	// ports only — the class outbound lives in sing-box config, not in
@@ -441,7 +502,7 @@ type ServiceImpl struct {
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.
-	// See applyQoSRoutesSlot (mirrors selectiveBuilderAdapter.lastApplyFailed).
+	// См. applyQoSRoutesSlot.
 	qosApplyFailed atomic.Bool
 
 	// xtDscpState tracks the last observed xt_dscp availability for
@@ -456,6 +517,18 @@ type ServiceImpl struct {
 	inspectCacheOnce sync.Once
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
+
+	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
+	// setupListen after the router service) — под keenDNSMu, потому что
+	// startup-Reconcile читает их из своей горутины уже во время wiring.
+	keenDNSMu sync.Mutex
+	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
+	// не писать один и тот же warn на каждом тике Reconcile.
+	keenDNSWarnState string
+	keenDNSDomain    KeenDNSDomainProvider
+	keenDNSLAN       LANIPv4Provider
+	keenDNSSync      KeenDNSRewriteSyncer
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -471,13 +544,11 @@ func NewService(d Deps) *ServiceImpl {
 	// the current version. No-op when the file is absent — Install
 	// creates it on first Enable.
 	refreshNetfilterHookIfPresent()
-	return &ServiceImpl{deps: d, appLog: appLog}
-}
-
-// SetSelectiveBuilder wires the selective-bypass builder post-construction.
-// Called after NewService because the adapter needs a *ServiceImpl reference.
-func (s *ServiceImpl) SetSelectiveBuilder(b SelectiveBuilder) {
-	s.deps.SelectiveBuilder = b
+	return &ServiceImpl{
+		deps:      d,
+		appLog:    appLog,
+		bypassLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubBypassSet),
+	}
 }
 
 func (s *ServiceImpl) routerConfigPath() string {

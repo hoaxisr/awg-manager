@@ -10,7 +10,7 @@
         DnsRouteImportModal,
         DnsRoutePresetModal,
         IconPickerModal,
-        NdmsPolicyHintBanner,
+        NdmsDisclaimerBanner,
     } from '$lib/components/dnsroutes';
     import { exportRoutes, downloadJson } from '$lib/utils/dns-export';
     import { buildRoutingTunnelDropdownOptions } from '$lib/utils/routingTunnelOptions';
@@ -341,7 +341,7 @@
         <p>Для DNS-маршрутизации требуется прошивка OS5 или <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
     </div>
 {:else}
-<NdmsPolicyHintBanner {isOS5} />
+<NdmsDisclaimerBanner {isOS5} />
 <div class="section-header">
     {#if !dnsSelectionMode}
         <span class="section-summary">

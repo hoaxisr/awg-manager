@@ -112,12 +112,33 @@ const TPROXY_DISABLE_STEPS: UIStepDef[] = [
 	{ milestone: 'ready', title: 'Проверка готовности', detail: 'маршрутизация выключена' },
 ];
 
+// policy-tun bring-up (off|tproxy|fakeip-tun → policy-tun). Тот же порядок
+// милстоунов, что у fakeip (provision:current до Enable), но без DNS-части:
+// перехват делает политика доступа NDMS, а не наши правила.
+const POLICY_TUN_ENABLE_STEPS: UIStepDef[] = [
+	{ milestone: 'teardown', title: 'Снят предыдущий режим', detail: 'прежний перехват/маршруты убраны (если были)' },
+	{ milestone: 'provision', title: 'Интерфейс OpkgTun создан', detail: 'ip global · разрешён в списке доступа' },
+	{ milestone: 'provision', title: 'Дефолт-маршрут NDMS припаркован', detail: 'v4 (+v6) на интерфейс режима' },
+	{ milestone: 'provision', title: 'config.json записан', detail: 'tun inbound · правила маршрутизации' },
+	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем tun-inbound' },
+	{ milestone: 'ready', title: 'Проверка готовности', detail: 'интерфейс поднят · маршруты на месте' },
+];
+const POLICY_TUN_DISABLE_STEPS: UIStepDef[] = [
+	{ milestone: 'teardown', title: 'Снят policy-tun', detail: 'исходный NAT сегментов восстановлен' },
+	{ milestone: 'provision', title: 'Дефолт-маршрут снят, интерфейс удалён', detail: 'OpkgTun убран · sing-box перестроен' },
+	{ milestone: 'readiness', title: 'Перезапуск sing-box', detail: 'ожидаем inbounds' },
+	{ milestone: 'ready', title: 'Проверка готовности', detail: 'предыдущий режим восстановлен' },
+];
+
 /** The predefined definitions for a transition direction (no derived state). */
 export function stepDefsFor(from: FakeIPMode, to: FakeIPMode): UIStepDef[] {
 	if (to === 'fakeip-tun') return ENABLE_STEPS;       // rich fakeip bring-up (unchanged)
+	if (to === 'policy-tun') return POLICY_TUN_ENABLE_STEPS;
 	if (to === 'tproxy') return TPROXY_ENABLE_STEPS;    // tproxy bring-up
 	// to === 'off': teardown of the source mode.
-	return from === 'tproxy' ? TPROXY_DISABLE_STEPS : DISABLE_STEPS;
+	if (from === 'tproxy') return TPROXY_DISABLE_STEPS;
+	if (from === 'policy-tun') return POLICY_TUN_DISABLE_STEPS;
+	return DISABLE_STEPS;
 }
 
 function rank(m: Milestone): number {

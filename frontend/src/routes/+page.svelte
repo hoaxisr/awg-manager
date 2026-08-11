@@ -704,26 +704,76 @@
 		return value === 'cards' || value === 'compact' || value === 'list';
 	}
 
-	const tunnelTabs = $derived(
+	// AWG | Sing-box ▾ (Туннели / Подписки / WG endpoints) | FreeTurn · WDTT
+	const showSingboxTunnelTabs = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
+	const singboxMenuChildren = $derived(
 		[
-			{ id: 'awg', label: 'AWG', badge: awgList.length + systemList.length },
-			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'singbox', label: 'Sing-box туннели', badge: singboxTunnelsList.length }
+			showSingboxTunnelTabs
+				? { id: 'singbox', label: 'Туннели', badge: singboxTunnelsList.length }
 				: null,
-			isSectionVisible($usageLevel, 'singboxTunnels')
-				? { id: 'subscriptions', label: 'Sing-box подписки', badge: subscriptionsList.length }
+			showSingboxTunnelTabs
+				? { id: 'subscriptions', label: 'Подписки', badge: subscriptionsList.length }
 				: null,
 			awg3Visible ? { id: 'awg3', label: 'WG endpoints', badge: awg3List.length } : null,
-			isSectionVisible($usageLevel, 'freeturn')
-				? { id: 'freeturn', label: 'FreeTurn' }
-				: null,
-			isSectionVisible($usageLevel, 'wdtt') ? { id: 'wdtt', label: 'WDTT' } : null,
-		].filter((t): t is { id: string; label: string; badge?: number } => t !== null),
+		].filter((c): c is { id: string; label: string; badge: number } => c !== null),
 	);
+	const singboxTabCluster = $derived(singboxMenuChildren.length > 0);
+	const tunnelTabs = $derived(
+		(
+			[
+				{ id: 'awg', label: 'AmneziaWG', badge: awgList.length + systemList.length },
+				singboxTabCluster
+					? {
+							id: singboxMenuChildren[0].id,
+							label: 'Sing-box',
+							separatorBefore: true,
+							children: singboxMenuChildren,
+						}
+					: null,
+				isSectionVisible($usageLevel, 'freeturn')
+					? {
+							id: 'freeturn',
+							label: 'FreeTurn',
+							separatorBefore: singboxTabCluster,
+						}
+					: null,
+				isSectionVisible($usageLevel, 'wdtt')
+					? {
+							id: 'wdtt',
+							label: 'WDTT',
+							separatorBefore:
+								singboxTabCluster && !isSectionVisible($usageLevel, 'freeturn'),
+						}
+					: null,
+			] as ({
+				id: string;
+				label: string;
+				badge?: number;
+				separatorBefore?: boolean;
+				children?: { id: string; label: string; badge?: number }[];
+			} | null)[]
+		).filter(
+			(
+				t,
+			): t is {
+				id: string;
+				label: string;
+				badge?: number;
+				separatorBefore?: boolean;
+				children?: { id: string; label: string; badge?: number }[];
+			} => t !== null,
+		),
+	);
+
+	function tunnelTabLeafIds(
+		tab: (typeof tunnelTabs)[number],
+	): string[] {
+		return tab.children?.map((c) => c.id) ?? [tab.id];
+	}
 
 	// Auto-switch off sing-box tab if it becomes hidden (basic mode).
 	$effect(() => {
-		if (!tunnelTabs.find((t) => t.id === activeTab)) {
+		if (!tunnelTabs.some((t) => tunnelTabLeafIds(t).includes(activeTab))) {
 			activeTab = 'awg';
 		}
 	});
@@ -1636,6 +1686,8 @@
 		get createModalOpen() { return createModalOpen; },
 		set createModalOpen(v) { createModalOpen = v; },
 		get wizardPreselect() { return wizardPreselect; },
+		openAwg3Import,
+		get awg3Visible() { return awg3Visible; },
 		get pendingSubscriptionDelete() { return pendingSubscriptionDelete; },
 		set pendingSubscriptionDelete(v) { pendingSubscriptionDelete = v; },
 		get deletingSubscription() { return deletingSubscription; },
@@ -1740,6 +1792,7 @@
 				{handleSingboxTunnelSortChange}
 				{openSingboxDetail}
 				{openWizard}
+				openAwg3Import={awg3Visible ? openAwg3Import : undefined}
 			/>
 		{/if}
 
@@ -1796,6 +1849,7 @@
 				showGridListToggle={showSingboxGridListToggle}
 				showToolbar={!dashboardOn}
 				autoDelayCheckNonce={singboxAutoDelayCheckNonce}
+				onImport={openAwg3Import}
 				bind:searchQuery={awg3TunnelsSearchQuery}
 				bind:layoutMode={awg3TunnelsLayoutMode}
 			/>
@@ -1832,9 +1886,8 @@
 
 <TunnelPageModals ctx={pageModalsCtx} />
 
-{#if dashboardOn}
-	<!-- Только в дашборде: в табах импорт открывает секционная модалка, а лишний
-	     экземпляр Modal держит глобальный обработчик Escape. -->
+{#if awg3Visible}
+	<!-- Импорт AWG3: из меню «Создать», empty-state и вкладки WG endpoints. -->
 	<Awg3ImportModal
 		open={awg3ImportOpen}
 		onclose={() => (awg3ImportOpen = false)}

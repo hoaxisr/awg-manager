@@ -134,10 +134,10 @@ func TestInspect(t *testing.T) {
 			wantType:  "ip",
 		},
 		{
-			name:  "AND across domain_suffix + protocol → matches when both hit",
+			name:  "AND across domain_suffix + network → matches when both hit",
 			input: InspectInput{Domain: "google.com", Protocol: "tcp"},
 			rules: []Rule{
-				{DomainSuffix: []string{"google.com"}, Protocol: "tcp", Action: "route", Outbound: "vpn"},
+				{DomainSuffix: []string{"google.com"}, Network: "tcp", Action: "route", Outbound: "vpn"},
 			},
 			final:     "direct",
 			wantDest:  "vpn",
@@ -145,10 +145,10 @@ func TestInspect(t *testing.T) {
 			wantType:  "domain",
 		},
 		{
-			name:  "AND across domain_suffix + protocol → fails when protocol mismatch",
+			name:  "AND across domain_suffix + network → fails when network mismatch",
 			input: InspectInput{Domain: "google.com", Protocol: "udp"},
 			rules: []Rule{
-				{DomainSuffix: []string{"google.com"}, Protocol: "tcp", Action: "route", Outbound: "vpn"},
+				{DomainSuffix: []string{"google.com"}, Network: "tcp", Action: "route", Outbound: "vpn"},
 			},
 			final:     "direct",
 			wantDest:  "direct",

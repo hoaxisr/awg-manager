@@ -18,7 +18,7 @@ import type {
 	SingboxRouterTransitionStep,
 } from '$lib/types';
 
-export type FakeIPMode = 'off' | 'tproxy' | 'fakeip-tun';
+export type FakeIPMode = 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
 
 export interface FakeIPTransitionState {
 	transitionId: string;

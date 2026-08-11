@@ -42,6 +42,11 @@ func (s *ServiceImpl) fetchRawStateByID(ctx context.Context, tunnelID string) (t
 	if err != nil || stored == nil {
 		return tunnel.StateInfo{State: tunnel.StateUnknown}, nil
 	}
+	// WDTT Raw registry rows are metadata-only; they must not hit the kernel
+	// state matrix (wdttraw-* IDs map to OpkgTun0 via extractTunnelNum).
+	if stored.Backend == "wdtt-raw" {
+		return wdttRawKernelState(stored), nil
+	}
 	if s.nwgOperator != nil && s.isNativeWG(stored) {
 		return s.nwgOperator.GetState(fctx, stored), nil
 	}

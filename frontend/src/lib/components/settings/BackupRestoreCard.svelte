@@ -146,31 +146,21 @@
 
 <style>
 	.backup-card {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
+		position: relative;
 	}
 
 	.backup-lead {
 		margin: 0;
+		padding-bottom: 0.875rem;
+		border-bottom: 1px solid var(--border);
 		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
+		color: var(--text-muted);
 		line-height: 1.45;
 	}
 
-	.setting-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding-top: 0.25rem;
-	}
-
-	.setting-description {
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		line-height: 1.4;
+	/* File input is the last child — keep row padding like other cards. */
+	.backup-card > .setting-row:last-of-type {
+		padding-bottom: 0;
 	}
 
 	.setting-description code {

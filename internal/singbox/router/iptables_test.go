@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func newFakeExec() *fakeExec {
 // The netfilter.d hook runs on the live router on every NDMS reload — a
 // syntax error would break on each reload. Validate the generated shell.
 func TestNetfilterHookScript_ValidShell(t *testing.T) {
-	script := netfilterHookScript()
+	script := netfilterHookScript(true)
 
 	cmd := exec.Command("sh", "-n")
 	cmd.Stdin = strings.NewReader(script)
@@ -104,6 +105,54 @@ func TestNetfilterHookScript_ValidShell(t *testing.T) {
 	}
 	if !strings.Contains(script, "grep -qE -- '-[jg] "+RedirectChain+"($| )'") {
 		t.Error("hook missing nat jump-presence gate")
+	}
+}
+
+// Пре-шаг восстановления набора AWGM-BYPASS: без него iptables-restore с
+// `-m set` падает ЦЕЛИКОМ (включая fail-closed blackhole), пока набора нет
+// после ребута. Гейт по пустоте обязателен — NDMS дёргает хук до 18-21 раза
+// за один flap.
+func TestNetfilterHookScript_BypassPreStep(t *testing.T) {
+	script := netfilterHookScript(true)
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated netfilter.d hook is not valid sh: %v\n%s", err, out)
+	}
+
+	for _, want := range []string{
+		"ipset create " + bypassSetName + " hash:net maxelem 262144 family inet",
+		"ipset restore -exist",
+		bypassSavePath,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("hook missing %q", want)
+		}
+	}
+
+	// Гейт по успеху `create` БЕЗ -exist: create с -exist никогда не падает,
+	// и restore лил бы на каждый вызов хука (перезаливка живого набора).
+	// Счётчик записей для гейта не годится — ядра Keenetic на protocol 6 его
+	// не печатают.
+	if strings.Contains(script, "family inet -exist") {
+		t.Error("bypass pre-step must NOT use `create ... -exist` (gate needs create to fail on a live set)")
+	}
+	if strings.Contains(script, "Number of entries") {
+		t.Error("bypass pre-step must not gate on entry count (absent on Keenetic ipset protocol 6)")
+	}
+
+	// Пре-шаг — ДО любого iptables-restore, иначе он бесполезен.
+	preIdx := strings.Index(script, "ipset create "+bypassSetName)
+	restoreIdx := strings.Index(script, "/opt/sbin/iptables-restore")
+	if preIdx == -1 || restoreIdx == -1 || preIdx > restoreIdx {
+		t.Fatalf("bypass pre-step (%d) must precede the first iptables-restore (%d)", preIdx, restoreIdx)
+	}
+
+	// Всё тело пре-шага — под гейтом наличия save-файла: нет файла → no-op.
+	gate := strings.Index(script, "[ -f "+strconv.Quote(bypassSavePath)+" ]")
+	if gate == -1 || gate > preIdx {
+		t.Fatalf("bypass pre-step must sit inside a `[ -f %s ]` gate (gate=%d)", bypassSavePath, gate)
 	}
 }
 
@@ -422,7 +471,7 @@ func TestWriteNetfilterHookContainsPidofGuard(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, err := os.ReadFile(netfilterHookPath)
@@ -448,7 +497,7 @@ func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, err := os.ReadFile(netfilterHookPath)
@@ -458,9 +507,24 @@ func TestWriteNetfilterHookPreloadsModules(t *testing.T) {
 	body := string(data)
 
 	// The hook must contain the module preload loop with all known modules.
-	for _, mod := range []string{"xt_TPROXY", "xt_comment", "xt_mark", "xt_connmark", "xt_conntrack", "xt_pkttype"} {
-		if !strings.Contains(body, mod) {
-			t.Errorf("hook missing module preload entry for %q:\n%s", mod, body)
+	// Проверяем именно строку цикла: упоминание модуля где-то ещё в скрипте
+	// (в правиле или комментарии) прерольным не является. xt_set обязателен —
+	// без него iptables-restore правила `-m set --match-set AWGM-BYPASS`
+	// падает ЦЕЛИКОМ (вместе с fail-closed blackhole) до первого Install
+	// демона, то есть ровно после ребута, где пре-шаг и восстанавливает набор.
+	var loopLine string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "for mod in ") {
+			loopLine = line
+			break
+		}
+	}
+	if loopLine == "" {
+		t.Fatalf("hook has no module preload loop:\n%s", body)
+	}
+	for _, mod := range []string{"xt_TPROXY", "xt_comment", "xt_mark", "xt_connmark", "xt_conntrack", "xt_pkttype", "xt_set"} {
+		if !strings.Contains(loopLine, mod) {
+			t.Errorf("hook missing module preload entry for %q in %q", mod, loopLine)
 		}
 	}
 	// insmod path must use /lib/modules/${KREL}
@@ -480,7 +544,7 @@ func TestWriteNetfilterHookHasScrub(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = orig, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, _ := os.ReadFile(netfilterHookPath)
@@ -563,7 +627,7 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 		runIPTables:    rec.runIPTables,
 		runIP:          rec.runIP,
 		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func() error { return nil },
+		persistHook:    func(bool) error { return nil },
 		cleanupHook:    func() {},
 	}
 	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
@@ -1247,7 +1311,7 @@ func TestWriteNetfilterHook_IngressScrub(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(dir, "awgm-ctclean.sh")
 	defer func() { netfilterHookPath, netfilterCtCleanPath = old, oldCt }()
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	data, _ := os.ReadFile(netfilterHookPath)
@@ -1324,93 +1388,74 @@ func TestBuildRestoreInput_BypassCIDRs(t *testing.T) {
 	}
 }
 
-func TestBuildRestoreInput_SelectiveIPSet_AddsGuardRules(t *testing.T) {
+// geoip-bypass набор AWGM-BYPASS: правило `-m set` стоит РЯДОМ с
+// пользовательскими bypass-CIDR — сразу после них и ДО перехвата :53 в mangle
+// и до catch-all в nat. Семантика полного обхода, включая DNS.
+func TestBuildRestoreInput_BypassGeoIPSetRule(t *testing.T) {
 	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
+		MatchAll:       true,
+		BypassCIDRs:    []string{"203.0.113.0/24"},
+		BypassGeoIPSet: true,
 	}
-	out := buildRestoreInput(spec)
+	rule := " -m set --match-set " + bypassSetName + " dst -j RETURN"
 
-	mangleGuard := fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName)
-	natGuard := fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName)
-
-	if !strings.Contains(out, mangleGuard) {
-		t.Errorf("mangle chain missing selective guard rule\ngot:\n%s", out)
+	mangle := buildMangleRestoreInput(spec)
+	setIdx := strings.Index(mangle, "-A "+ChainName+rule)
+	userIdx := strings.Index(mangle, "-A "+ChainName+" -d 203.0.113.0/24 -j RETURN")
+	dnsIdx := strings.Index(mangle, "-A "+ChainName+" -p udp --dport 53 -j TPROXY")
+	if setIdx == -1 || userIdx == -1 || dnsIdx == -1 {
+		t.Fatalf("mangle: setIdx=%d userIdx=%d dnsIdx=%d\n%s", setIdx, userIdx, dnsIdx, mangle)
 	}
-	if !strings.Contains(out, natGuard) {
-		t.Errorf("nat chain missing selective guard rule\ngot:\n%s", out)
+	if setIdx < userIdx {
+		t.Errorf("mangle: set rule (%d) must follow user bypass CIDRs (%d)", setIdx, userIdx)
+	}
+	if setIdx > dnsIdx {
+		t.Errorf("mangle: set rule (%d) must precede DNS intercept (%d)", setIdx, dnsIdx)
+	}
+
+	nat := buildNatRestoreInput(spec)
+	natSetIdx := strings.Index(nat, "-A "+RedirectChain+rule)
+	natUserIdx := strings.Index(nat, "-A "+RedirectChain+" -d 203.0.113.0/24 -j RETURN")
+	natCatchIdx := strings.Index(nat, fmt.Sprintf("-A %s -p tcp -j REDIRECT --to-ports %d", RedirectChain, RedirectPort))
+	if natSetIdx == -1 || natUserIdx == -1 || natCatchIdx == -1 {
+		t.Fatalf("nat: setIdx=%d userIdx=%d catchIdx=%d\n%s", natSetIdx, natUserIdx, natCatchIdx, nat)
+	}
+	if natSetIdx < natUserIdx {
+		t.Errorf("nat: set rule (%d) must follow user bypass CIDRs (%d)", natSetIdx, natUserIdx)
+	}
+	if natSetIdx > natCatchIdx {
+		t.Errorf("nat: set rule (%d) must precede catch-all REDIRECT (%d)", natSetIdx, natCatchIdx)
 	}
 }
 
-func TestBuildRestoreInput_SelectiveIPSet_Disabled_NoGuardRules(t *testing.T) {
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: false,
-	}
-	out := buildRestoreInput(spec)
-
-	if strings.Contains(out, "--match-set") {
-		t.Errorf("unexpected selective guard rule when SelectiveIPSet=false\ngot:\n%s", out)
+// Выключенный набор не должен оставлять в правилах ни одного упоминания
+// AWGM-BYPASS: иначе iptables-restore падает целиком, пока набора нет.
+func TestBuildRestoreInput_NoBypassGeoIPSetRuleWhenOff(t *testing.T) {
+	spec := RestoreInputSpec{MatchAll: true, BypassCIDRs: []string{"203.0.113.0/24"}}
+	out := buildRestoreInput(spec) + buildBlackholeRestoreInput(spec)
+	if strings.Contains(out, bypassSetName) {
+		t.Errorf("rules must not mention %s when the feature is off:\n%s", bypassSetName, out)
 	}
 }
 
-func TestBuildRestoreInput_SelectiveIPSet_GuardAfterDNS(t *testing.T) {
-	// The selective guard must appear AFTER the DNS intercept rule so that
-	// DNS (port 53) is always intercepted regardless of ipset membership.
-	// This ensures that the hijack-dns action keeps working even when
-	// selective mode is on.
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
-	}
-	out := buildRestoreInput(spec)
-
-	dnsIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp --dport 53 -j TPROXY", ChainName))
-	guardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName))
-	catchAllIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp -j TPROXY", ChainName))
-
-	if dnsIdx == -1 || guardIdx == -1 || catchAllIdx == -1 {
-		t.Fatalf("missing rule(s): dns=%d guard=%d catchAll=%d\n%s", dnsIdx, guardIdx, catchAllIdx, out)
-	}
-	if guardIdx < dnsIdx {
-		t.Errorf("selective guard (%d) must appear AFTER DNS intercept (%d)", guardIdx, dnsIdx)
-	}
-	if guardIdx > catchAllIdx {
-		t.Errorf("selective guard (%d) must appear BEFORE catch-all TPROXY (%d)", guardIdx, catchAllIdx)
+// policy-tun (DSCPOnly) вне скоупа: основной трафик идёт в tun NDMS-политикой,
+// цепочки несут лишь bypass и dscp-диспатч — правила с `-m set` там нет.
+func TestBuildRestoreInput_DSCPOnlyHasNoBypassGeoIPSetRule(t *testing.T) {
+	spec := RestoreInputSpec{MatchAll: true, DSCPOnly: true, BypassGeoIPSet: true}
+	out := buildMangleRestoreInput(spec) + buildNatRestoreInput(spec)
+	if strings.Contains(out, bypassSetName) {
+		t.Errorf("DSCPOnly chains must not mention %s:\n%s", bypassSetName, out)
 	}
 }
 
-func TestBuildRestoreInput_SelectiveIPSet_NatTCPDNSBeforeGuard(t *testing.T) {
-	// In the nat chain the TCP/53 REDIRECT must appear BEFORE the selective
-	// guard: resolver IPs are typically not in AWGM-SELECTIVE, so a guard-first
-	// order would RETURN DNS-over-TCP (and truncated-UDP retries) straight to
-	// the real upstream, leaking real IPs of proxied domains past hijack-dns.
-	spec := RestoreInputSpec{
-		PolicyMark:     "0xffffaaa",
-		SelectiveIPSet: true,
-	}
-	out := buildRestoreInput(spec)
-
-	dnsIdx := strings.Index(out, fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT", RedirectChain))
-	guardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName))
-
-	if dnsIdx == -1 || guardIdx == -1 {
-		t.Fatalf("missing rule(s): tcpDNS=%d guard=%d\n%s", dnsIdx, guardIdx, out)
-	}
-	if dnsIdx > guardIdx {
-		t.Errorf("nat TCP/53 REDIRECT (%d) must appear BEFORE selective guard (%d)", dnsIdx, guardIdx)
-	}
-}
-
-func TestBuildRestoreInput_NoSelective_NoNatTCPDNSRule(t *testing.T) {
-	// Without the selective guard AND without QoS classes the catch-all
-	// REDIRECT covers TCP/53 — the chain must stay a literal port of SKeen's
-	// add_redirect_rules.
+func TestBuildRestoreInput_NoQoS_NoNatTCPDNSRule(t *testing.T) {
+	// Without QoS classes the catch-all REDIRECT covers TCP/53 — the chain
+	// must stay a literal port of SKeen's add_redirect_rules.
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
 	out := buildRestoreInput(spec)
 
 	if strings.Contains(out, fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT", RedirectChain)) {
-		t.Errorf("unexpected TCP/53 rule without SelectiveIPSet/QoS\ngot:\n%s", out)
+		t.Errorf("unexpected TCP/53 rule without QoS\ngot:\n%s", out)
 	}
 }
 
@@ -1525,30 +1570,6 @@ func TestBuildRestoreInput_QoSClasses_OrderingWithinNat(t *testing.T) {
 	}
 }
 
-func TestBuildRestoreInput_QoSClasses_AfterSelectiveGuard(t *testing.T) {
-	// Selective mode narrows what enters sing-box; QoS classifies WITHIN that
-	// scope. Both chains: guard first, then the DSCP dispatch.
-	spec := qosTestSpec()
-	spec.SelectiveIPSet = true
-	out := buildRestoreInput(spec)
-
-	mangleGuardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", ChainName, selectiveSetName))
-	mangleQoSIdx := strings.Index(out, "-A AWGM-TPROXY -p udp -m dscp --dscp 46")
-	natGuardIdx := strings.Index(out, fmt.Sprintf("-A %s -m set ! --match-set %s dst -j RETURN", RedirectChain, selectiveSetName))
-	natQoSIdx := strings.Index(out, "-A AWGM-REDIRECT -p tcp -m dscp --dscp 46")
-
-	if mangleGuardIdx == -1 || mangleQoSIdx == -1 || natGuardIdx == -1 || natQoSIdx == -1 {
-		t.Fatalf("missing rule(s): mGuard=%d mQoS=%d nGuard=%d nQoS=%d\n%s",
-			mangleGuardIdx, mangleQoSIdx, natGuardIdx, natQoSIdx, out)
-	}
-	if mangleQoSIdx < mangleGuardIdx {
-		t.Errorf("mangle QoS rule (%d) must come AFTER selective guard (%d)", mangleQoSIdx, mangleGuardIdx)
-	}
-	if natQoSIdx < natGuardIdx {
-		t.Errorf("nat QoS rule (%d) must come AFTER selective guard (%d)", natQoSIdx, natGuardIdx)
-	}
-}
-
 func TestBuildRestoreInput_NoQoSClasses_NoDscpRules(t *testing.T) {
 	out := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa"})
 	if strings.Contains(out, "-m dscp") {
@@ -1557,7 +1578,7 @@ func TestBuildRestoreInput_NoQoSClasses_NoDscpRules(t *testing.T) {
 }
 
 func TestWriteNetfilterHookPreloadsXtDscp(t *testing.T) {
-	body := netfilterHookScript()
+	body := netfilterHookScript(true)
 	if !strings.Contains(body, "xt_dscp") {
 		t.Errorf("hook preload loop missing xt_dscp:\n%s", body)
 	}
@@ -1610,25 +1631,6 @@ func TestBuildRestoreInput_QoS_NatTCPDNSCarveOutBeforeClassRules(t *testing.T) {
 	udpQoSIdx := strings.Index(out, fmt.Sprintf("-A %s -p udp -m dscp --dscp 46", ChainName))
 	if udpDNSIdx == -1 || udpQoSIdx == -1 || udpDNSIdx > udpQoSIdx {
 		t.Errorf("mangle UDP/53 intercept (%d) must precede the class rules (%d)", udpDNSIdx, udpQoSIdx)
-	}
-}
-
-// TestBuildRestoreInput_QoSWithSelective_SingleTCPDNSIntercept: the selective
-// guard already emits the identical TCP/53 intercept ahead of the guard; the
-// QoS block must not duplicate it.
-func TestBuildRestoreInput_QoSWithSelective_SingleTCPDNSIntercept(t *testing.T) {
-	spec := qosTestSpec()
-	spec.SelectiveIPSet = true
-	out := buildRestoreInput(spec)
-
-	dnsRule := fmt.Sprintf("-A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", RedirectChain, RedirectPort)
-	if n := strings.Count(out, dnsRule); n != 1 {
-		t.Fatalf("expected exactly one TCP/53 intercept with selective+QoS, got %d:\n%s", n, out)
-	}
-	dnsIdx := strings.Index(out, dnsRule)
-	qosIdx := strings.Index(out, fmt.Sprintf("-A %s -p tcp -m dscp --dscp 46", RedirectChain))
-	if dnsIdx > qosIdx {
-		t.Errorf("TCP/53 intercept (%d) must precede the class rules (%d)", dnsIdx, qosIdx)
 	}
 }
 
@@ -1710,36 +1712,21 @@ func TestIsXtDscpAvailable_PositiveResultCachedForever(t *testing.T) {
 	}
 }
 
-// Issue #490: keendns-пресет (destination-IP) должен долетать до всех трёх
-// цепочек ранним `-d <ip> -j RETURN` — ДО DNS-перехвата в mangle и до
-// catch-all в nat, ровно как ручные bypassExtraSubnets.
-func TestBuildRestoreInput_KeenDNSPresetCIDR(t *testing.T) {
+// Issue #490 (updated): keendns is no longer an iptables CIDR preset —
+// it drives managed DNS rewrites. resolveBypassCIDRs must not emit the
+// shared cloud IP (would hijack every foreign *.netcraze.pro on LAN).
+func TestBuildRestoreInput_KeenDNSPresetNoCIDR(t *testing.T) {
 	cidrs, err := resolveBypassCIDRs([]string{"keendns"}, "")
 	if err != nil {
 		t.Fatalf("resolveBypassCIDRs: %v", err)
 	}
+	if len(cidrs) != 0 {
+		t.Fatalf("keendns must not contribute BypassCIDRs, got %v", cidrs)
+	}
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa", BypassCIDRs: cidrs}
-
 	out := buildRestoreInput(spec)
-	ret := "-d 78.47.125.180/32 -j RETURN"
-	tproxyRet := "-A " + ChainName + " " + ret
-	redirectRet := "-A " + RedirectChain + " " + ret
-	if !strings.Contains(out, tproxyRet) {
-		t.Errorf("TPROXY chain missing keendns bypass: %s", out)
-	}
-	if !strings.Contains(out, redirectRet) {
-		t.Errorf("REDIRECT chain missing keendns bypass: %s", out)
-	}
-	// RETURN стоит раньше DNS-перехвата — иначе DNS к роутеру на этом IP
-	// всё равно уходил бы в sing-box.
-	dnsIntercept := strings.Index(out, "--dport 53 -j TPROXY")
-	if bypassIdx := strings.Index(out, tproxyRet); dnsIntercept >= 0 && bypassIdx > dnsIntercept {
-		t.Errorf("keendns bypass must precede DNS intercept: bypass@%d, dns@%d", bypassIdx, dnsIntercept)
-	}
-
-	bh := buildBlackholeRestoreInput(spec)
-	if !strings.Contains(bh, "-A "+BlackholeChain+" "+ret) {
-		t.Errorf("blackhole chain missing keendns bypass: %s", bh)
+	if strings.Contains(out, "78.47.125.180") {
+		t.Errorf("iptables must not hardcode KeenDNS cloud IP from keendns preset:\n%s", out)
 	}
 }
 
@@ -1785,7 +1772,7 @@ func TestBuildRestoreInput_SplitPerTable(t *testing.T) {
 // not tear down the working nat chain and vice versa. The full rebuild stays
 // as fallback for the upgrade window when per-table files don't exist yet.
 func TestNetfilterHookScript_PerTableFastHeal(t *testing.T) {
-	s := netfilterHookScript()
+	s := netfilterHookScript(true)
 	for _, w := range []string{
 		netfilterMangleRulesPath,
 		netfilterNatRulesPath,
@@ -1824,6 +1811,24 @@ func TestCtCleanScript_ValidShellAndScope(t *testing.T) {
 	if strings.Contains(s, "-p tcp") {
 		t.Errorf("ctclean must never evict TCP flows:\n%s", s)
 	}
+	// Issue #684: the PPE flush must be guarded by a live TPROXY jump (flushing
+	// into an absent jump re-teaches the same flows) and by node writability
+	// (non-MTK platforms have no such node), and must sit BEFORE the conntrack
+	// tool check — the flows it heals carry no NAT to look up.
+	flush := strings.Index(s, "ppe_flush")
+	if flush < 0 {
+		t.Fatalf("ctclean missing PPE flush:\n%s", s)
+	}
+	if ct := strings.Index(s, `[ -x "$CT" ]`); ct >= 0 && flush > ct {
+		t.Errorf("PPE flush must run before the conntrack-tool gate:\n%s", s)
+	}
+	guard := s[:flush]
+	if !strings.Contains(guard, "-[jg] "+ChainName) {
+		t.Errorf("PPE flush must be gated on a live TPROXY jump:\n%s", s)
+	}
+	if !strings.Contains(s, "[ -w /proc/sys/net/hwnat/ppe_flush ]") {
+		t.Errorf("PPE flush must be gated on node writability:\n%s", s)
+	}
 }
 
 func TestWriteNetfilterHook_WritesCtCleanScript(t *testing.T) {
@@ -1833,7 +1838,7 @@ func TestWriteNetfilterHook_WritesCtCleanScript(t *testing.T) {
 	netfilterCtCleanPath = filepath.Join(tmp, "awgm-ctclean.sh")
 	t.Cleanup(func() { netfilterHookPath, netfilterCtCleanPath = origHook, origCt })
 
-	if err := writeNetfilterHook(); err != nil {
+	if err := writeNetfilterHook(true); err != nil {
 		t.Fatalf("writeNetfilterHook: %v", err)
 	}
 	fi, err := os.Stat(netfilterCtCleanPath)
@@ -1864,7 +1869,7 @@ func TestInstall_PersistsPerTableRulesAndRunsCtClean(t *testing.T) {
 			persisted = [3]string{combined, mangle, nat}
 			return nil
 		},
-		persistHook: func() error { return nil },
+		persistHook: func(bool) error { return nil },
 		runCtClean:  func(_ context.Context) { order = append(order, "ctclean") },
 	}
 	spec := RestoreInputSpec{PolicyMark: "0xffffaaa"}
@@ -1979,7 +1984,7 @@ exit 0
 			os.WriteFile(filepath.Join(bin, "pidof"), []byte("#!/bin/sh\nexit 0\n"), 0755) // sing-box alive
 			os.WriteFile(filepath.Join(bin, "logger"), []byte("#!/bin/sh\nexit 0\n"), 0755)
 
-			script := strings.ReplaceAll(netfilterHookScript(), "/opt/sbin/", bin+"/")
+			script := strings.ReplaceAll(netfilterHookScript(true), "/opt/sbin/", bin+"/")
 			cmd := exec.Command("sh", "-c", script)
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "type=iptables", "table=mangle")
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -2009,5 +2014,148 @@ exit 0
 				t.Errorf("ctclean invoked = %v, want %v\nlog:\n%s", ctCleanSeen, tc.wantCtClean, data)
 			}
 		})
+	}
+}
+
+// Режим policy-tun (DSCPOnly): netfilter нужен ТОЛЬКО для QoS-DSCP-классов —
+// основной трафик уходит NDMS-политикой в tun. Ни catch-all, ни перехвата DNS
+// на основные порты быть не должно: этих инбаундов в режиме просто нет.
+func TestBuildRestoreInput_DSCPOnly(t *testing.T) {
+	spec := RestoreInputSpec{
+		DSCPOnly: true, MatchAll: true,
+		WANIPs:      []string{"1.2.3.4/32"},
+		BypassCIDRs: []string{"203.0.113.0/24"},
+		QoSClasses:  []QoSClassSpec{{DSCP: 34, TProxyPort: 51281, RedirectPort: 51301}},
+	}
+	mangle := buildMangleRestoreInput(spec)
+	nat := buildNatRestoreInput(spec)
+	// НЕТ catch-all и НЕТ перехвата DNS на основной порт
+	for _, banned := range []string{
+		"-p udp -j TPROXY --on-port 51271",
+		"--dport 53 -j TPROXY",
+		"-p tcp -j REDIRECT --to-ports 51272",
+		"--dport 53 -j REDIRECT",
+	} {
+		if strings.Contains(mangle+nat, banned) {
+			t.Errorf("dscp-only must not contain %q", banned)
+		}
+	}
+	// DNS вообще не входит в QoS-диспатчинг: ранний RETURN в обеих цепочках
+	if !strings.Contains(mangle, "-A "+ChainName+" -p udp --dport 53 -j RETURN") {
+		t.Error("mangle: no dns return")
+	}
+	if !strings.Contains(nat, "-A "+RedirectChain+" -p tcp --dport 53 -j RETURN") {
+		t.Error("nat: no dns return")
+	}
+	// DSCP-правила и bypass на месте, jump MatchAll
+	if !strings.Contains(mangle, "-m dscp --dscp 34 -j TPROXY --on-port 51281") {
+		t.Error("mangle: no dscp rule")
+	}
+	if !strings.Contains(nat, "-m dscp --dscp 34 -j REDIRECT --to-ports 51301") {
+		t.Error("nat: no dscp rule")
+	}
+	if !strings.Contains(mangle, "-d 10.0.0.0/8 -j RETURN") || !strings.Contains(mangle, "-d 1.2.3.4/32 -j RETURN") {
+		t.Error("mangle: builtin bypass/WANIP missing")
+	}
+	if !strings.Contains(mangle, "-A PREROUTING -m conntrack ! --ctstate INVALID -j "+ChainName) {
+		t.Error("mangle: no MatchAll jump")
+	}
+	// пользовательский bypass раньше dscp
+	if strings.Index(mangle, "203.0.113.0/24") > strings.Index(mangle, "--dscp 34") {
+		t.Error("user bypass after dscp")
+	}
+}
+
+func TestPolicyTunDNSHookScriptShellValid(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: "172.18.0.2", Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab"}, Ifaces: []string{"opkgtun17"},
+	}
+	script := policyTunDNSHookScript(spec)
+
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sh -n: %v\n%s\n---\n%s", err, out, script)
+	}
+
+	for _, want := range []string{
+		`[ "$table" = "nat" ] || exit 0`,
+		"-m connmark --mark 0xffffaab -p udp --dport 53",
+		"-m connmark --mark 0xffffaab -p tcp --dport 53",
+		"-i opkgtun17 -p udp --dport 53",
+		"--comment " + PolicyTunDNSTag,
+		"--to-destination 172.18.0.2:53",
+		"xt_comment",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("в хуке нет %q", want)
+		}
+	}
+	// Гейта на живость движка быть НЕ должно: решение fail-closed (спека §7.3).
+	if strings.Contains(script, "pidof sing-box") {
+		t.Error("хук гейтится на pidof sing-box — это ломает fail-closed")
+	}
+}
+
+func TestPolicyTunDNSHookScriptStableAcrossCalls(t *testing.T) {
+	spec := FakeIPIngressSpec{
+		TunIface: "opkgtun0", TunDNS: "172.18.0.2", Tag: PolicyTunDNSTag,
+		Marks: []string{"0xffffaab", "0xffffaac"},
+	}
+	if policyTunDNSHookScript(spec) != policyTunDNSHookScript(spec) {
+		t.Error("рендер не детерминирован")
+	}
+}
+
+func TestWritePolicyTunDNSHookSkipsIdenticalContent(t *testing.T) {
+	dir := t.TempDir()
+	prev := netfilterPolicyTunDNSHookPath
+	netfilterPolicyTunDNSHookPath = filepath.Join(dir, "52-awgm-policytun-dns.sh")
+	t.Cleanup(func() { netfilterPolicyTunDNSHookPath = prev })
+
+	script := "#!/bin/sh\nexit 0\n"
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("первая запись: %v", err)
+	}
+	st1, err := os.Stat(netfilterPolicyTunDNSHookPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if st1.Mode().Perm() != 0755 {
+		t.Errorf("права %v, хотели 0755", st1.Mode().Perm())
+	}
+
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("повторная запись: %v", err)
+	}
+	st2, _ := os.Stat(netfilterPolicyTunDNSHookPath)
+	if st1.ModTime() != st2.ModTime() {
+		t.Error("файл переписан при неизменном содержимом")
+	}
+
+	// Сбитые снаружи права обязаны чиниться, даже когда байты совпадают.
+	if err := os.Chmod(netfilterPolicyTunDNSHookPath, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := writePolicyTunDNSHook(script); err != nil {
+		t.Fatalf("запись при сбитых правах: %v", err)
+	}
+	st3, _ := os.Stat(netfilterPolicyTunDNSHookPath)
+	if st3.Mode().Perm() != 0755 {
+		t.Errorf("права не восстановлены: %v", st3.Mode().Perm())
+	}
+
+	if err := writePolicyTunDNSHook(script + "# tail\n"); err != nil {
+		t.Fatalf("запись изменённого: %v", err)
+	}
+	got, _ := os.ReadFile(netfilterPolicyTunDNSHookPath)
+	if !strings.HasSuffix(string(got), "# tail\n") {
+		t.Error("изменённое содержимое не записалось")
+	}
+
+	removePolicyTunDNSHook()
+	if _, err := os.Stat(netfilterPolicyTunDNSHookPath); !os.IsNotExist(err) {
+		t.Error("файл не снят")
 	}
 }

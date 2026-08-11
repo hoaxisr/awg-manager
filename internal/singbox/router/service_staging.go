@@ -37,7 +37,6 @@ func (s *ServiceImpl) StagingStatus(ctx context.Context) StagingStatus {
 // success it emits "singbox.router.staging" + "singbox.router.rules" SSE
 // invalidations.
 func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.ValidationResult, error) {
-	_ = s.healLegacySelectiveRoutesSlotIfNeeded(ctx)
 	res, err := s.deps.Orch.ApplyDraft(orchestrator.SlotRouter)
 	if err == nil && res.Ok() {
 		// A staged rule-set delete/rename is final now — reap the orphaned

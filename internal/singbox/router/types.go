@@ -43,8 +43,19 @@ type Status struct {
 	FakeIPDns string `json:"fakeipDns,omitempty"`
 	// FakeIPTunAddr is the fakeip-tun gateway address (the tun /30 host, e.g.
 	// "172.18.0.1"); "" when not in fakeip-tun mode. Read-only, for display.
-	FakeIPTunAddr string  `json:"fakeipTunAddr,omitempty"`
-	Issues        []Issue `json:"issues,omitempty"`
+	FakeIPTunAddr string `json:"fakeipTunAddr,omitempty"`
+	// PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
+	// интерфейса ("opkgtun0" / "OpkgTun0"). Заполняются при Enabled+Provisioned,
+	// ДО того как режим стал active: имя OpkgTun нужно пользователю, чтобы
+	// разрешить интерфейс в политике доступа. Пусто при Enabled=false.
+	PolicyTunIface    string `json:"policyTunIface,omitempty"`
+	PolicyTunNDMSName string `json:"policyTunNdmsName,omitempty"`
+	// PolicyTunSourcePreserve — ПРИМЕНЁННЫЙ режим NAT сегментов (static-NAT
+	// вместо маскарада), а не эхо настроек: применение живёт в подъёме режима,
+	// вживую опция только снимается. Указатель: nil = «поле неприменимо» (не
+	// policy-tun или движок выключен), false = «применимо и выключено».
+	PolicyTunSourcePreserve *bool   `json:"policyTunSourcePreserve,omitempty"`
+	Issues                  []Issue `json:"issues,omitempty"`
 	// LastError is the last sing-box fatal/exit reason, populated only when
 	// the engine is enabled but not active (СБОЙ). Empty otherwise.
 	LastError string `json:"lastError,omitempty"`
@@ -92,7 +103,11 @@ type Rule struct {
 	// the class outbound; user rules may use it too.
 	Inbound []string `json:"inbound,omitempty"`
 	// IPIsPrivate, when set, matches packets whose destination is an
-	// RFC1918/loopback/link-local/CGNAT/multicast address. Pointer so
+	// RFC1918/loopback/link-local/multicast/unspecified address — the
+	// negation of sing's N.IsPublicAddr. CGNAT (100.64/10) is NOT among
+	// them: netip.Addr.IsPrivate() says public, so a CGNAT destination does
+	// not match (the fakeip route gate excludes it separately, see
+	// excludedAddr). Pointer so
 	// the zero value (unset) stays out of JSON — `{"ip_is_private":false}`
 	// would change sing-box semantics. System rule from EnsureSystemRules
 	// uses `*IPIsPrivate = true` as defense-in-depth: even when iptables
@@ -115,8 +130,9 @@ type Rule struct {
 	// no outbound, so this and Action are the only fields it sets.
 	UDPTimeout string `json:"udp_timeout,omitempty"`
 	// AwgmManaged marks auto-generated route rules owned by AWG Manager.
-	// "selective-ip" rules map resolved domain IPs to proxy outbounds for
-	// selective TPROXY mode; they are replaced on each ipset rebuild.
+	// The only value still seen in the wild is the legacy "selective-ip" of
+	// the removed selective-TPROXY feature: such rules are stripped from the
+	// applied config by the one-shot startup cleanup.
 	AwgmManaged string `json:"awgm_managed,omitempty"`
 }
 

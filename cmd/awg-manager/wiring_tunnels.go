@@ -16,6 +16,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
+	"github.com/hoaxisr/awg-manager/internal/proxyhealth"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -70,6 +71,9 @@ func (a *app) setupTunnels() {
 
 	// Create NativeWG operator
 	a.nwgOp = nwg.NewOperator(a.ndmsQueries, a.ndmsCommands, a.ndmsTransportClient, a.loggingService)
+	// Endpoint-стражу нужна свежая запись туннеля: пересборка kmod-слота на
+	// новый адрес идёт по актуальным ключам, а не по снимку из реестра.
+	a.nwgOp.SetTunnelLookup(a.awgStore.Get)
 
 	// Load awg_proxy.ko if firmware < 5.1 Alpha 4
 	if !ndmsinfo.SupportsWireguardASC() {
@@ -211,6 +215,22 @@ func (a *app) setupServices() {
 		FreeTurn:               a.freeturnService,
 		IncludeFreeTurnClients: true,
 	})
+	relayProbe := &proxyhealth.HTTPRelayProbe{
+		CheckURL: func() string {
+			if a.settingsStore == nil {
+				return ""
+			}
+			st, err := a.settingsStore.Load()
+			if err != nil || st == nil {
+				return ""
+			}
+			return st.ConnectivityCheckURL
+		},
+	}
+	linkedTunnels := &proxyhealth.AWGLinkedTunnelResolver{Store: a.awgStore}
+	a.freeturnService.SetRelayProbe(relayProbe)
+	a.freeturnService.SetLinkedTunnelResolver(linkedTunnels)
+	a.wdttService.SetRelayProbe(relayProbe)
 	a.deferOnExit(a.freeturnService.Stop)
 	a.deferOnExit(a.wdttService.Stop)
 
@@ -219,6 +239,11 @@ func (a *app) setupServices() {
 	a.pingCheckFacade.SetNativeWGLatencyProbe(func(ctx context.Context, tunnelID string) (int, string) {
 		res, err := a.testService.CheckConnectivity(ctx, tunnelID)
 		return pingcheck.LatencyFromConnectivity(res, err)
+	})
+	// Escalation path for NativeWG monitoring: when NDMS restarts of the
+	// interface do not help, restart the tunnel the same way the user would.
+	a.pingCheckFacade.SetTunnelRestarter(func(ctx context.Context, tunnelID string) error {
+		return a.tunnelService.Restart(ctx, tunnelID)
 	})
 
 	// monitoringService is constructed below after systemTunnelSvc is wired,

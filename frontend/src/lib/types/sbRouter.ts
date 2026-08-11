@@ -11,7 +11,7 @@ export interface SingboxRouterSettings {
 	 * derivation. Served by GET /singbox/router/settings (omitempty; absent on
 	 * legacy payloads → treat as 'tproxy'). NOT on the status endpoint.
 	 */
-	routingMode?: 'tproxy' | 'fakeip-tun';
+	routingMode?: 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	snifferEnabled: boolean;
 	// WAN-binding discriminator (mirrors backend storage):
 	//   wanAutoDetect=true  + wanInterface=""    → sing-box auto_detect_interface
@@ -22,6 +22,11 @@ export interface SingboxRouterSettings {
 	bypassPresets?: string[];
 	bypassExtraPorts?: string;
 	bypassExtraSubnets?: string;
+	/**
+	 * Geoip-теги из настроенных .dat-файлов, чьи CIDR целиком обходят sing-box
+	 * через ipset AWGM-BYPASS (та же семантика, что bypassExtraSubnets).
+	 */
+	bypassGeoipTags?: string[];
 	ingressInterfaces?: string[];
 	// fakeip-tun engine settings (user-editable; round-trip via GET/PUT
 	// /singbox/router/settings). Defaults mirror DefaultFakeIPTunParams:
@@ -40,15 +45,19 @@ export interface SingboxRouterSettings {
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
 	udpTimeout?: string;
 	/**
-	 * When true, only traffic matching the AWGM-SELECTIVE ipset reaches sing-box.
-	 * All other traffic bypasses sing-box entirely (goes straight to WAN).
-	 * Requires ipset binary and xt_set kernel module on the router.
+	 * policy-tun: перевести выбранные сегменты на static-NAT, чтобы sing-box
+	 * видел реальные адреса клиентов вместо адреса tun-шлюза. Требует непустого
+	 * policyTunNatSegments (бэкенд иначе отвечает 400); при false бэкенд сам
+	 * обнуляет список.
 	 */
-	selectiveBypass?: boolean;
+	policyTunSourcePreserve?: boolean;
+	/** Сегменты, выбранные для source-preserve (см. GET .../policy-tun/nat-preview). */
+	policyTunNatSegments?: string[];
 	/**
 	 * QoS/DSCP routing classes (issue #371). Traffic marked with class DSCP is
-	 * routed to the class outbound, trumping other route rules. Works only in
-	 * routingMode 'tproxy' (not fakeip-tun). Max 8 classes; dscp 0–63 unique;
+	 * routed to the class outbound, trumping other route rules. Works in
+	 * routingMode 'tproxy' and 'policy-tun' (DSCP-перехват — единственный
+	 * netfilter policy-tun); не работает в 'fakeip-tun'. Max 8 classes; dscp 0–63 unique;
 	 * name ≤ 32 chars; outbound = any valid outbound tag. Omitempty on the
 	 * wire → absent on legacy/mock payloads (treat undefined as []).
 	 */
@@ -64,6 +73,34 @@ export interface SingboxQosClass {
 	/** Outbound tag the marked traffic is routed to. */
 	outbound: string;
 	enabled: boolean;
+}
+
+/**
+ * Состояние набора обхода AWGM-BYPASS (GET /singbox/router/bypass-set/status).
+ * Зеркало api.BypassSetStatusData.
+ */
+export interface BypassSetStatus {
+	/** Бинарь ipset есть на роутере. */
+	available: boolean;
+	/** Модуль xt_set загружен или доступен .ko (нужен для `-m set`). */
+	xtSetAvailable: boolean;
+	/** Бинарь conntrack есть: без него правки бьют только по новым соединениям. */
+	conntrackAvailable: boolean;
+	/** Идёт установка пакета, запущенная через install-эндпоинты. */
+	installing: boolean;
+	/** Записей в наборе после последнего наполнения; факт только при entryCountOK. */
+	entryCount: number;
+	/**
+	 * entryCount — факт. false значит «размер набора неизвестен», и entryCount=0
+	 * в этом случае НЕ равно «набор пуст» (в UI — «н/д»).
+	 */
+	entryCountOK: boolean;
+	/** RFC3339-время последнего наполнения; пусто — наполнения не было. */
+	lastPopulate?: string;
+	/** Ошибка последнего наполнения; пусто — ошибок нет. */
+	lastError?: string;
+	/** Выбранные теги, не найденные в .dat при последнем наполнении. */
+	missingTags?: string[];
 }
 
 // WAN interface for the sing-box router WAN-binding picker. `name` is
@@ -124,6 +161,18 @@ export interface SingboxRouterStatus {
 	fakeipDns?: string;
 	/** Адрес tun-шлюза (хост /30, e.g. «172.18.0.1») в режиме fakeip-tun. */
 	fakeipTunAddr?: string;
+	/**
+	 * Kernel-имя tun-интерфейса режима policy-tun (e.g. "opkgtun0"). Пусто вне
+	 * policy-tun и при выключенном движке.
+	 */
+	policyTunIface?: string;
+	/** NDMS-имя того же интерфейса (e.g. "OpkgTun0") — так он виден в политиках доступа. */
+	policyTunNdmsName?: string;
+	/**
+	 * Применённый режим NAT сегментов (static-NAT вместо маскарада). Отсутствует
+	 * = «неприменимо» (не policy-tun / движок выключен), а не «выключено».
+	 */
+	policyTunSourcePreserve?: boolean;
 	issues?: SingboxRouterIssue[];
 	/** Последняя fatal-причина sing-box; непусто только при «СБОЙ» (enabled && !active). */
 	lastError?: string;
@@ -153,12 +202,45 @@ export interface SingboxRouterTransitionStep {
 
 export interface SingboxRouterTransitionData {
 	transitionId: string;
-	from: 'off' | 'tproxy' | 'fakeip-tun';
-	to: 'off' | 'tproxy' | 'fakeip-tun';
+	from: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
+	to: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	step: SingboxRouterTransitionStep;
 	done?: boolean;
-	finalState?: 'off' | 'tproxy' | 'fakeip-tun';
+	finalState?: 'off' | 'tproxy' | 'fakeip-tun' | 'policy-tun';
 	error?: string;
+}
+
+/**
+ * Один сегмент роутера в предпоказе source-preserve (policy-tun).
+ * Источник: GET /api/singbox/router/policy-tun/nat-preview.
+ * staticWan заполнен только при mode==='static'.
+ */
+export interface PolicyTunNATSegmentInfo {
+	name: string;
+	mode: 'dynamic' | 'static' | 'none';
+	staticWan?: string;
+	/** Описание сегмента из NDMS. Пусто, если не задано. */
+	label?: string;
+	/** Подсеть сегмента, напр. "192.168.1.0/24". Пусто, если адресации нет. */
+	subnet?: string;
+}
+
+/** Выход роутера, на котором подмена адреса сохранится (туда встанет static). */
+export interface PolicyTunNATEgress {
+	name: string;
+	label?: string;
+}
+
+/**
+ * Предпоказ source-preserve: сегменты и ВЫХОДЫ, на которых подмена адреса
+ * сохранится. Без второй половины экран не отвечает на главный вопрос —
+ * между чем и чем подмена снимается. Выходов несколько: `ip static` —
+ * общероутерная настройка, правило встаёт на каждый интерфейс с `ip global`.
+ */
+export interface PolicyTunNATPreview {
+	segments: PolicyTunNATSegmentInfo[];
+	/** Пусто, когда выходы определить нельзя. */
+	egresses?: PolicyTunNATEgress[];
 }
 
 /**
@@ -174,11 +256,15 @@ export interface RouterPolicy {
 }
 
 export interface SingboxRouterRule {
+	// Exact-domain matcher. Sits in the same sing-box matcher as
+	// domain_suffix (destination-address group) — the two are OR-ed.
+	domain?: string[];
 	domain_suffix?: string[];
 	ip_cidr?: string[];
 	source_ip_cidr?: string[];
 	port?: number[];
 	rule_set?: string[];
+	inbound?: string[];
 	protocol?: string;
 	// When true, matches packets whose destination is private (RFC1918,
 	// loopback, link-local, CGNAT, multicast). System ip_is_private
@@ -195,6 +281,12 @@ export interface SingboxRouterRule {
 	network?: string;
 	// `udp_timeout` route option carried by the system `route-options` rule.
 	udp_timeout?: string;
+	// A `logical` rule combines its nested `rules` by `mode`. The backend
+	// stores «пресет ИЛИ свои адреса» in this form (see flattenRouterRule):
+	// sing-box would otherwise AND a rule_set with the rule's own addresses
+	// and the rule would match almost nothing.
+	type?: string;
+	mode?: string;
 	rules?: SingboxRouterRule[];
 }
 
@@ -482,6 +574,8 @@ export interface SingboxRouterDNSChainPreset {
 export interface SingboxRouterDNSRewrite {
 	pattern: string;
 	ips: string[];
+	/** Non-empty when owned by a preset (e.g. keendns). */
+	managed?: string;
 }
 
 // #endregion
@@ -620,81 +714,3 @@ export interface CatalogPreset {
 
 // #endregion
 
-// ─────────────────────────────────────────────
-// #region Selective Bypass (TProxy ipset feature)
-// ─────────────────────────────────────────────
-
-/**
- * Status of the selective-bypass feature.
- * Returned by GET /api/singbox/router/selective/status.
- */
-export interface SelectiveDomainResolveResult {
-	matcher: string;
-	kind: 'domain' | 'suffix';
-	queryHosts: string[];
-	/** @deprecated IPs are no longer returned — use entryCount on snapshot. */
-	ips?: string[];
-	cdn?: boolean;
-	error?: string;
-	outbound?: string;
-}
-
-export interface SelectiveDomainMatcherRecord {
-	matcher: string;
-	kind: 'domain' | 'suffix';
-	queryHosts: string[];
-	cdn?: boolean;
-	error?: string;
-	outbound?: string;
-}
-
-export interface SelectiveRebuildSnapshot {
-	rebuiltAt: string;
-	staticCidrs: string[];
-	domainResults: SelectiveDomainResolveResult[];
-	entryCount: number;
-	staticCidrCount?: number;
-	domainMatcherCount?: number;
-	lastCDNRefresh?: string;
-}
-
-export interface SelectiveStatus {
-	/** True when the ipset binary is present on the router (/opt/sbin/ipset etc). */
-	available: boolean;
-	/** True when the xt_set kernel module is loaded or available as .ko. */
-	xtSetAvailable: boolean;
-	/** True when the conntrack binary is present. Without it a full rebuild
-	 *  only affects new connections; background CDN refresh never flushes conntrack. */
-	conntrackAvailable: boolean;
-	/** True while `opkg install ipset` is running. */
-	installing: boolean;
-	/** Mirrors SingboxRouterSettings.selectiveBypass. */
-	enabled: boolean;
-	/** True while an ipset rebuild is running. POST /selective/rebuild отвечает
-	 *  202 сразу (data = статус с rebuilding: true); завершение приходит по SSE
-	 *  singbox-router:selective-progress / selective-status. */
-	rebuilding?: boolean;
-	/** Current number of entries in AWGM-SELECTIVE ipset. 0 when set doesn't exist. */
-	entryCount: number;
-	/** RFC3339 timestamp of the last successful rebuild. Empty if never rebuilt. */
-	lastRebuild?: string;
-	/** Error message from the last failed rebuild. Empty on success. */
-	lastError?: string;
-	/** Last successful rebuild: static CIDRs + domain→IP mapping. */
-	snapshot?: SelectiveRebuildSnapshot;
-}
-
-/**
- * Progress update during an ipset rebuild.
- * Delivered via SSE event "singbox-router:selective-progress".
- */
-export interface SelectiveProgress {
-	phase: 'collecting' | 'resolving' | 'populating' | 'done' | 'error';
-	message: string;
-	current: number;
-	total: number;
-	matcher?: string;
-	queryHost?: string;
-}
-
-// #endregion

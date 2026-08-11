@@ -336,8 +336,12 @@ html[data-layout-compact='true'] .page-container {
   padding: 0;
 }
 
+/* height: auto обязателен: overflow-x:hidden на body делает его скролл-контейнером
+   (used overflow-y становится auto), и при height:100% страница прокручивается
+   внутри body, а корневой скроллер пуст — мобильный Chrome ломает на этом
+   скрытие адресной строки и overscroll (#701). */
 html, body {
-  height: 100%;
+  height: auto;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
@@ -347,7 +351,7 @@ html, body {
 }
 
 #app {
-  min-height: 100%;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }

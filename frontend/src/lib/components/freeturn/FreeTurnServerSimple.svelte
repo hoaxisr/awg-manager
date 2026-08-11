@@ -19,6 +19,10 @@
 	import { guide, finalizeGuide } from '$lib/utils/proxyWizardGuides';
 	import { obfOptions } from './options';
 	import { obfProfileHints, randomObfKeyHex } from './obfHints';
+	import { setListenPort, listenPortNumber } from '$lib/utils/listenPortUtils';
+	import ListenPortKillButton from '../proxy-panel/ListenPortKillButton.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { proxyPanelMode } from '../proxy-panel/modeStore';
 	import type { FreeTurnLinkPayload, FreeTurnProcessStatus, FreeTurnServerConfig } from '$lib/types';
 	import type { LogInstanceItem } from './LogInstanceSwitcher.svelte';
 
@@ -95,13 +99,16 @@
 	let opsTab = $state<ServerTab>('main');
 	let quickActive = $state('wg');
 	let keeneticPeerSelected = $state(false);
+	let wizardOpen = $state(false);
 
-	const listenPort = $derived.by(() => {
-		const listen = server.listen?.trim() ?? '';
-		if (!listen) return '56000';
-		const idx = listen.lastIndexOf(':');
-		return idx >= 0 ? listen.slice(idx + 1) : listen;
-	});
+	const listenPort = $derived.by(() => String(listenPortNumber(server.listen ?? '', 56000)));
+
+	function applyListenPort(portStr: string) {
+		const port = Math.max(1, Math.min(65535, Number(portStr) || 56000));
+		server.listen = setListenPort(server.listen || '0.0.0.0:56000', port, '0.0.0.0');
+	}
+
+	const serverListenProto = $derived((server.mode === 'tcp' ? 'tcp' : 'udp') as 'tcp' | 'udp');
 
 	const step1Done = $derived(!!server.connect.trim());
 	const step2Done = $derived(step1Done && !!server.listen.trim());
@@ -121,9 +128,12 @@
 			running,
 			startedAt: status?.startedAt,
 			enabled: server.enabled,
-			generatedLink
+			generatedLink,
+			setupComplete: step1Done && obfReady
 		})
 	);
+	const isExpert = $derived($proxyPanelMode === 'expert');
+	const showWizard = $derived((!opsMode && !isExpert) || (opsMode && wizardOpen));
 
 	const quickItems = $derived<QuickStartItem[]>([
 		{ id: 'wg', label: 'WireGuard · obf', done: wgStepDone },
@@ -218,13 +228,11 @@
 		if (!wgStepDone && quickActive !== 'wg') quickActive = 'wg';
 	});
 
-	/** Запущенный сервер: сразу «Раздача» (при возврате на страницу или смене инстанса). */
+	/** Запущенный сервер: «Раздача» при смене инстанса, кроме вкладки «Журнал». */
 	$effect(() => {
 		serverInstanceId;
-		// Только на смену инстанса: иначе рестарт сервера (running false→true из
-		// поллинга) утаскивал бы пользователя с других вкладок.
 		untrack(() => {
-			if (opsMode && running) opsTab = 'links';
+			if (opsMode && running && opsTab !== 'log') opsTab = 'links';
 		});
 	});
 
@@ -318,6 +326,7 @@
 			if (!running) await onToggle(true);
 			if (await generateLinkNow()) {
 				quickActive = 'launch';
+				opsTab = 'links';
 				notifications.success('Сервер запущен, ссылка freeturn:// готова');
 			}
 		} finally {
@@ -334,14 +343,18 @@
 <div class="ft-simple-wrap">
 	<p class="ft-simple-lead">FreeTurn-сервер: WG-пир → obf → ссылка freeturn:// для клиентов.</p>
 
-	{#if !opsMode}
+	{#if showWizard}
 		<ProxyQuickStart
 			items={quickItems}
 			activeId={quickActive}
 			progress={`Прогресс ${quickDoneCount}/${quickItems.length}`}
 			meta={`listen :${listenPort}`}
 			onSelect={(id) => (quickActive = id)}
+			onBack={opsMode ? () => (wizardOpen = false) : undefined}
 		>
+			{#snippet metaExtra()}
+				<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
+			{/snippet}
 			{#snippet content(stepId)}
 				{#if stepId === 'wg'}
 					<ProxyQuickStartStep
@@ -369,7 +382,7 @@
 						{#if obfHint}
 							<p class="ft-hint">{obfHint}</p>
 						{/if}
-						<Input label="Ключ (-obf-key)" type="password" bind:value={server.obfKey} placeholder="64 hex" />
+						<SensitiveInput label="Ключ (-obf-key)" bind:value={server.obfKey} placeholder="64 hex" />
 						<Button variant="ghost" size="sm" onclick={() => (server.obfKey = randomObfKeyHex())}>
 							Сгенерировать ключ
 						</Button>
@@ -380,6 +393,13 @@
 								server.openFirewall = v;
 								await onSave(server);
 							}}
+						/>
+						<Input
+							label="Listen-порт сервера (-listen)"
+							type="number"
+							value={listenPort}
+							onchange={applyListenPort}
+							hint="Хост 0.0.0.0 задаётся автоматически; меняется только порт WAN"
 						/>
 					</ProxyQuickStartStep>
 				{:else}
@@ -435,6 +455,8 @@
 			{canSave}
 			{canStart}
 			saveLabel={statusSaveLabel}
+			showWizardButton={opsMode}
+			onOpenWizard={() => (wizardOpen = true)}
 			onSave={mainTabNext ? saveAndGoToLinks : saveOnly}
 			onToggle={onToggle}
 		/>
@@ -456,8 +478,17 @@
 					}}
 				/>
 				<Dropdown label="Obf profile" bind:value={server.obfProfile} options={obfOptions} />
-				<Input type="password" bind:value={server.obfKey} />
-				<p class="ft-readonly"><code>{server.listen || '0.0.0.0:56000'}</code></p>
+				<SensitiveInput label="Obf key" bind:value={server.obfKey} placeholder="64 hex" />
+				<p class="ft-readonly">
+					Listen: <code>{server.listen || '0.0.0.0:56000'}</code>
+					<ListenPortKillButton listen={server.listen || `0.0.0.0:${listenPort}`} proto={serverListenProto} defaultHost="0.0.0.0" />
+				</p>
+				<Input
+					label="Listen-порт сервера"
+					type="number"
+					value={listenPort}
+					onchange={applyListenPort}
+				/>
 				<Toggle
 					label="Firewall"
 					checked={server.openFirewall !== false}
@@ -466,6 +497,13 @@
 						await onSave(server);
 					}}
 				/>
+				{#if isExpert}
+					<Input label="Connect (-connect)" bind:value={server.connect} placeholder="peer:port для WG" />
+					<Dropdown label="Mode (-mode)" bind:value={server.mode} options={[
+						{ value: 'udp', label: 'udp' },
+						{ value: 'tcp', label: 'tcp' }
+					]} />
+				{/if}
 				<Button variant="secondary" disabled={!canSave} loading={saving} onclick={saveAndGoToLinks}>
 					{mainTabNext ? 'Далее' : 'Сохранить'}
 				</Button>
@@ -513,6 +551,9 @@
 					{selectedInstanceId}
 					{onSelectInstance}
 				/>
+				{#if !running && server.debug}
+					<p class="ft-debug-hint">Сохраните настройки и запустите сервер — флаг -debug применяется при старте процесса.</p>
+				{/if}
 			</section>
 		{/if}
 	{/if}

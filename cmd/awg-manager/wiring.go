@@ -12,7 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -49,6 +48,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // app is the composition root of the daemon: every subsystem constructed by
@@ -147,6 +147,7 @@ type app struct {
 	subGroupStore       *subscription.GroupStore
 	awgoutboundsSvc     *awgoutbounds.ServiceImpl
 	deviceProxySvc      *deviceproxy.Service
+	routerSvc           *router.ServiceImpl
 	routerScheduler     *router.Scheduler
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service

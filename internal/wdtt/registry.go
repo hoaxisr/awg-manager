@@ -1,6 +1,9 @@
 package wdtt
 
-import "sync"
+import (
+	"path/filepath"
+	"sync"
+)
 
 type processRegistry struct {
 	role       string // "client" or "server"
@@ -12,6 +15,10 @@ type processRegistry struct {
 
 func newProcessRegistry(role, binary, runtimeDir string) *processRegistry {
 	return &processRegistry{role: role, binary: binary, runtimeDir: runtimeDir}
+}
+
+func (r *processRegistry) sockPath(name string) string {
+	return filepath.Join(r.runtimeDir, name)
 }
 
 func (r *processRegistry) get(id string) *process {

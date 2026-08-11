@@ -173,6 +173,13 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		}
 	}
 
+	// (3b) Снять ingress-заворот (issue #678) ДО остановки движка и удаления
+	// интерфейса: иначе клиенты ingress-серверов остались бы с default в
+	// мёртвый tun и перехватом DNS на несуществующий адрес. Идемпотентно.
+	if s.deps.IPTables != nil {
+		s.deps.IPTables.RemoveFakeIPIngress(ctx)
+	}
+
 	// (4) Stop sing-box (move 21-fakeip.json under disabled/). Legacy (no orch):
 	// skip — there is no in-place inbound to strip for fakeip-tun. Best-effort.
 	if s.deps.Orch != nil {
@@ -267,6 +274,40 @@ func (s *ServiceImpl) scheduleFakeIPDrain(poolNet4, poolMask4, ndmsName string) 
 			s.appLog.Warn("fakeip-disable", ndmsName, "remove drain reject route: "+err.Error())
 		}
 	})
+}
+
+// holdOpkgTun — выключение БЕЗ удаления интерфейса: индекс закреплён за
+// режимом, потому что permit в политике доступа привязан к имени OpkgTun<N>, и
+// удаление заставило бы следующее включение взять другой номер, оставив
+// разрешение висеть на несуществующем.
+//
+// Адреса снимаются обязательно: стенд 2026-07-15 показал, что nginx-цикл ndm
+// вызывает именно СКОНФИГУРИРОВАННЫЙ `ip address` без kernel-адреса, а не сам
+// интерфейс — снятие адреса убивало цикл мгновенно.
+//
+// ACL продукта (`_WEBADMIN_<name>`) снимаем сами: каскада от delete здесь больше
+// нет. К permit пользователя в политике этот ACL отношения не имеет.
+//
+// Ошибку возвращает ТОЛЬКО снятие v4-адреса: он ставится при каждом успешном
+// включении, поэтому отказ — настоящая поломка, и выключение обязано
+// повториться. Отказ на v6 провалом не считается: v6-адреса могло не быть
+// вовсе, а вечный ретрай выключения хуже незакрытого v6.
+func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) error {
+	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
+		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
+	}
+	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
+		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())
+	}
+	err := s.deps.OpkgTun.ClearAddress(ctx, ndmsName)
+	if err != nil {
+		s.appLog.Warn(scope, ndmsName, "clear address: "+err.Error())
+	}
+	// Снимаем в любом случае: провал v4 не повод оставить v6 висеть.
+	if e := s.deps.OpkgTun.ClearIPv6Address(ctx, ndmsName); e != nil {
+		s.appLog.Debug(scope, ndmsName, "clear ipv6 address: "+e.Error())
+	}
+	return err
 }
 
 // teardownOpkgTun best-effort сносит NDMS OpkgTun: down → delete; при провале

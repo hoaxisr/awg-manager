@@ -49,6 +49,9 @@ type mockRouterSvc struct {
 	// dnsRuleErr, when set, is returned by AddDNSRule/UpdateDNSRule so the
 	// DNS-preset error mapping (reserved tag vs managed rule) can be asserted.
 	dnsRuleErr error
+	// natPreview / natPreviewErr feed the policy-tun source-preserve preview.
+	natPreview    []router.NATSegmentInfo
+	natPreviewErr error
 }
 
 func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
@@ -87,6 +90,9 @@ func (m *mockRouterSvc) ListBindableInterfaces(ctx context.Context) ([]router.WA
 }
 func (m *mockRouterSvc) ListIngressEligibleInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return nil, nil
+}
+func (m *mockRouterSvc) PolicyTunNATPreview(ctx context.Context) (router.NATPreview, error) {
+	return router.NATPreview{Segments: m.natPreview}, m.natPreviewErr
 }
 func (m *mockRouterSvc) ListRules(ctx context.Context) ([]router.Rule, error) { return nil, nil }
 func (m *mockRouterSvc) AddRule(ctx context.Context, rule router.Rule) error  { return nil }
@@ -302,6 +308,40 @@ func TestRouterPutSettings_RoundTripsQoSClasses(t *testing.T) {
 	}
 }
 
+// PUT settings декодируется прямо в storage.SingboxRouterSettings (маппинга
+// DTO нет — DTO существует только как swagger-зеркало), поэтому регресс имён
+// json-тегов ловится только сквозным PUT→GET.
+func TestRouterPutSettings_RoundTripsPolicyTunSourcePreserve(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"routingMode":"policy-tun",`+
+			`"policyTunSourcePreserve":true,"policyTunNatSegments":["Home","Guest"]}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT: want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !svc.settings.PolicyTunSourcePreserve {
+		t.Errorf("policyTunSourcePreserve not decoded: %+v", svc.settings)
+	}
+	if got := svc.settings.PolicyTunNATSegments; len(got) != 2 || got[0] != "Home" || got[1] != "Guest" {
+		t.Errorf("policyTunNatSegments round-trip mismatch: %+v", got)
+	}
+
+	getRR := httptest.NewRecorder()
+	h.GetSettings(getRR, httptest.NewRequest(http.MethodGet, "/api/singbox/router/settings", nil))
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET: want 200, got %d (body: %s)", getRR.Code, getRR.Body.String())
+	}
+	body := getRR.Body.String()
+	for _, want := range []string{`"policyTunSourcePreserve":true`, `"policyTunNatSegments":["Home","Guest"]`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET body missing %s: %s", want, body)
+		}
+	}
+}
+
 func TestRouterSwitchMode_CallsService(t *testing.T) {
 	svc := &mockRouterSvc{}
 	h := newMockRouterHandler(svc)
@@ -321,6 +361,28 @@ func TestRouterSwitchMode_CallsService(t *testing.T) {
 	}
 	if got := svc.switchedTarget(); got != "fakeip-tun" {
 		t.Errorf("svc.SwitchRoutingMode target = %q want fakeip-tun", got)
+	}
+}
+
+func TestRouterSwitchMode_PolicyTun(t *testing.T) {
+	svc := &mockRouterSvc{}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/mode",
+		strings.NewReader(`{"mode":"policy-tun"}`))
+	rr := httptest.NewRecorder()
+	h.SwitchMode(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.switchedTarget() == "policy-tun" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := svc.switchedTarget(); got != "policy-tun" {
+		t.Errorf("svc.SwitchRoutingMode target = %q want policy-tun", got)
 	}
 }
 
@@ -863,6 +925,48 @@ func TestListBindableInterfaces_Returns200WithData(t *testing.T) {
 	}
 	if len(env.Data) != 1 || env.Data[0].Name != "ipsec0" {
 		t.Errorf("unexpected data: %+v", env.Data)
+	}
+}
+
+func TestPolicyTunNATPreview_Returns200WithSegments(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{natPreview: []router.NATSegmentInfo{
+		{Name: "Home", Mode: "dynamic"},
+		{Name: "Guest", Mode: "static", StaticWAN: "PPPoE0"},
+	}})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/policy-tun/nat-preview", nil)
+	rr := httptest.NewRecorder()
+	h.PolicyTunNATPreview(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Segments []struct {
+				Name      string `json:"name"`
+				Mode      string `json:"mode"`
+				StaticWAN string `json:"staticWan"`
+			} `json:"segments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v (body: %s)", err, rr.Body.String())
+	}
+	segs := env.Data.Segments
+	if len(segs) != 2 || segs[0].Name != "Home" || segs[0].Mode != "dynamic" ||
+		segs[1].StaticWAN != "PPPoE0" {
+		t.Errorf("unexpected segments: %+v", segs)
+	}
+}
+
+// Пустой список обязан приезжать как [], а не null: фронт рисует по нему
+// редактируемый предпоказ.
+func TestPolicyTunNATPreview_EmptyIsArray(t *testing.T) {
+	h := newMockRouterHandler(&mockRouterSvc{})
+	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/policy-tun/nat-preview", nil)
+	rr := httptest.NewRecorder()
+	h.PolicyTunNATPreview(rr, req)
+	if !strings.Contains(rr.Body.String(), `"segments":[]`) {
+		t.Errorf("empty preview must serialise as []: %s", rr.Body.String())
 	}
 }
 

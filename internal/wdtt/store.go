@@ -62,6 +62,13 @@ func copyConfig(cfg Config) Config {
 	}
 	if cfg.Servers != nil {
 		cfg.Servers = append([]ServerInstance(nil), cfg.Servers...)
+		// Вложенный срез клиентов делил бы backing array с кэшем: правка
+		// списка мутировала бы кэш до Save и гонялась бы с читателями.
+		for i := range cfg.Servers {
+			if list := cfg.Servers[i].Config.Clients; list != nil {
+				cfg.Servers[i].Config.Clients = append([]ServerClient(nil), list...)
+			}
+		}
 	}
 	return cfg
 }

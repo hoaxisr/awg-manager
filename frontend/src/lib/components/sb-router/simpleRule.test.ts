@@ -134,7 +134,7 @@ describe('classifyRuleSimplicity — сложные', () => {
 
   it('domain (exact) на rule (неизвестное поле)', () => {
     expect(
-      classifyRuleSimplicity({ domain: ['exact.host'] } as SingboxRouterRule, ruleSets).simple,
+      classifyRuleSimplicity({ domain: ['exact.host'] }, ruleSets).simple,
     ).toBe(false);
   });
 
@@ -152,7 +152,7 @@ describe('classifyRuleSimplicity — сложные', () => {
   it('logical rule (type/mode/rules)', () => {
     expect(
       classifyRuleSimplicity(
-        { type: 'logical', mode: 'or', rules: [{ domain_suffix: ['x.com'] }], outbound: 'warp' } as SingboxRouterRule,
+        { type: 'logical', mode: 'or', rules: [{ domain_suffix: ['x.com'] }], outbound: 'warp' },
         ruleSets,
       ).simple,
     ).toBe(false);

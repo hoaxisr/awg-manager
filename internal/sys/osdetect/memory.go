@@ -23,8 +23,8 @@ const MidMemoryThresholdMB = 700
 // highTierMemLimit — мягкий потолок для >=700MB моделей. До #562 они не
 // тюнились вовсе, и аллокационный шторм (sparse NUL-дыра proc-лога)
 // доезжал до 90%+ ОЗУ роутера прежде чем вмешивался kernel OOM killer.
-// 256MiB — сильно выше идла (~30-60MB) и легитимных пиков selective
-// (~100-150MB): GC-трэша в нормальной работе нет, GOGC не трогаем.
+// 256MiB — сильно выше идла (~30-60MB) и легитимных пиков пересборки
+// ipset-набора (~100-150MB): GC-трэша в нормальной работе нет, GOGC не трогаем.
 const highTierMemLimit = "256MiB"
 
 var (
@@ -65,7 +65,7 @@ func GetGCEnv(disableMemorySaving bool) []string {
 // The <200MB tiers are the historical ones (unchanged). The >=700MB tier is
 // a roomy GOMEMLIMIT-only safety net (#562, см. highTierMemLimit). The 200–700MB tier
 // exists because 256–512MB routers previously ran with GOGC=100 and NO
-// GOMEMLIMIT at all: a selective-ipset rebuild over a huge rule list could
+// GOMEMLIMIT at all: an ipset rebuild over a huge geoip tag could
 // balloon the heap until the kernel OOM killer fired (observed in the field:
 // anon-rss 311MB on a 512MB device). GOMEMLIMIT=96MiB is a SOFT limit chosen
 // well above the daemon's ~30-60MB idle heap — normal operation never

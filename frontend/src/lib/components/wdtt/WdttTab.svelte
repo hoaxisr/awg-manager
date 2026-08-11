@@ -6,8 +6,10 @@
 	import { ProcessAlerts, Tabs } from '$lib/components/ui';
 	import WdttClientSimple from './WdttClientSimple.svelte';
 	import WdttServerSimple from './WdttServerSimple.svelte';
+	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
+	import { setPeer } from '$lib/utils/wdttPeerMode';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import type {
@@ -56,12 +58,17 @@
 	const statusPoll = createSelfReschedulingPoll(loadStatus);
 	// Не реактивны (в шаблоне не читаются) — дедуп/кулдаун авто-ensure в поллинге.
 	let wgEnsureSettled = new Set<string>();
+	let rawEnsureSettled = new Set<string>();
 	const wgEnsureCooldown = new Map<string, number>();
+	const rawEnsureCooldown = new Map<string, number>();
 	let ensuringWg = $state(false);
+	let importingWgTunnel = $state(false);
 	let refreshingSub = $state(false);
 	let subscriptionTick = $state(0);
 	/** Сбрасывает локальный UI импорта/подписки после удаления клиента (id «default» не меняется). */
 	let clientUiEpoch = $state(0);
+	let clientPanelTab = $state<'setup' | 'log'>('setup');
+	let serverPanelTab = $state<'main' | 'links' | 'network' | 'log'>('main');
 
 	const selectedClient = $derived(
 		config
@@ -77,9 +84,11 @@
 					null)
 			: null
 	);
+	// ?. на массивах: ответ без clients/servers (усечённый статус, мок) иначе
+	// роняет вычисление, и вкладка перестаёт реагировать на переключение.
 	const clientStatus = $derived(
 		status
-			? (status.clients.find((c) => c.id === selectedClientId)?.status ?? status.client)
+			? (status.clients?.find((c) => c.id === selectedClientId)?.status ?? status.client)
 			: undefined
 	);
 	const selectedServer = $derived(
@@ -98,17 +107,18 @@
 	);
 	const serverStatus = $derived(
 		status
-			? (status.servers.find((s) => s.id === selectedServerId)?.status ?? status.server)
+			? (status.servers?.find((s) => s.id === selectedServerId)?.status ?? status.server)
 			: undefined
 	);
 
 	const clientBarItems = $derived(
 		(config ? config.clients : []).map((c: WdttClientInstance) => {
-			const st = status?.clients.find((s) => s.id === c.id)?.status ?? status?.client;
+			const st = status?.clients?.find((s) => s.id === c.id)?.status ?? status?.client;
 			return {
 				id: c.id,
 				name: c.name,
 				running: st?.running,
+				autostart: c.config.enabled,
 				startedAt: st?.startedAt,
 				pid: st?.pid,
 				dtlsConnections: st?.dtlsConnections,
@@ -119,11 +129,12 @@
 
 	const serverBarItems = $derived(
 		(config ? config.servers : []).map((s: WdttServerInstance) => {
-			const st = status?.servers.find((x) => x.id === s.id)?.status ?? status?.server;
+			const st = status?.servers?.find((x) => x.id === s.id)?.status ?? status?.server;
 			return {
 				id: s.id,
 				name: s.name,
 				running: st?.running,
+				autostart: s.config.enabled,
 				startedAt: st?.startedAt,
 				pid: st?.pid,
 				dtlsConnections: st?.dtlsConnections,
@@ -141,20 +152,27 @@
 	}
 
 	function normalizeClient(c: WdttClientConfig): WdttClientConfig {
-		return {
+		const raw = c.connMode === 'raw';
+		const defaultWorkers = raw ? 24 : 24;
+		const workers = Math.max(raw ? 1 : 12, c.workers > 0 ? c.workers : defaultWorkers);
+		const out: WdttClientConfig = {
 			...c,
 			peer: c.peer ?? '',
+			peerWg: c.peerWg ?? '',
+			peerRaw: c.peerRaw ?? '',
 			password: c.password ?? '',
 			vkHashes: c.vkHashes ?? '',
 			listen: c.listen || '127.0.0.1:9000',
-			workers: c.workers > 0 ? c.workers : 24,
+			workers,
 			obfs: c.obfs || 'audio',
 			fingerprint: c.fingerprint || 'chrome',
 			captchaMode: c.captchaMode || 'rjs',
 			deviceId: c.deviceId ?? '',
 			sub: c.sub ?? '',
+			connMode: c.connMode === 'raw' ? 'raw' : 'wg',
 			debug: !!c.debug
 		};
+		return out;
 	}
 
 	function normalizeServer(s: WdttServerConfig): WdttServerConfig {
@@ -170,6 +188,8 @@
 			policy: s.policy || 'none',
 			lanSegments: s.lanSegments ?? [],
 			ingressEnabled: !!s.ingressEnabled,
+			relayMode: s.relayMode === 'raw' ? 'raw' : 'wg',
+			rawListen: s.rawListen ?? '',
 			debug: !!s.debug
 		};
 	}
@@ -200,6 +220,9 @@
 			if (!norm.servers.some((s) => s.id === selectedServerId)) {
 				selectedServerId = norm.servers[0]?.id ?? 'default';
 			}
+			const srv = norm.servers.find((s) => s.id === selectedServerId) ?? norm.servers[0];
+			if (!genPeer) genPeer = srv?.config.linkPeer ?? '';
+			if (!genVKHashes) genVKHashes = srv?.config.linkVkHashes ?? '';
 		} catch (e) {
 			loadError = errText(e);
 			notifications.error('WDTT: ' + loadError);
@@ -209,9 +232,37 @@
 	async function loadStatus() {
 		try {
 			status = await api.getWdttStatus();
-			await maybeEnsureWgFromLog();
+			await Promise.all([maybeEnsureWgFromLog(), maybeEnsureRawFromStatus()]);
 		} catch {
 			// polling — молча
+		}
+	}
+
+	async function maybeEnsureRawFromStatus() {
+		if (!status || ensuringWg) return;
+		const id = selectedClientId;
+		if (rawEnsureSettled.has(id)) return;
+		const clientCfg = config?.clients.find((c) => c.id === id)?.config;
+		if (clientCfg?.connMode !== 'raw') return;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
+		if (!st?.running) return;
+		if (!st.rawIface?.trim() && !st.ndmsIface?.trim()) return;
+		const now = Date.now();
+		if (now - (rawEnsureCooldown.get(id) ?? 0) < 20000) return;
+		rawEnsureCooldown.set(id, now);
+		ensuringWg = true;
+		try {
+			const result = await api.ensureWdttRawTunnel(id);
+			if (result.created) {
+				rawEnsureSettled.add(id);
+				notifications.success(result.message ?? `WDTT Raw «${result.tunnelName}» в AWG-туннелях`);
+			} else if (result.tunnelId) {
+				rawEnsureSettled.add(id);
+			}
+		} catch (e) {
+			notifications.error('WDTT Raw в AWG: ' + errText(e));
+		} finally {
+			ensuringWg = false;
 		}
 	}
 
@@ -219,7 +270,9 @@
 		if (!status || ensuringWg) return;
 		const id = selectedClientId;
 		if (wgEnsureSettled.has(id)) return;
-		const st = status.clients.find((c) => c.id === id)?.status ?? status.client;
+		const clientCfg = config?.clients.find((c) => c.id === id)?.config;
+		if (clientCfg?.connMode === 'raw') return;
+		const st = status.clients?.find((c) => c.id === id)?.status ?? status.client;
 		if (!st?.running) return;
 		const wg = st.wgConfig?.trim();
 		if (!wg) return;
@@ -339,6 +392,10 @@
 		try {
 			if (on) {
 				wgEnsureSettled.delete(id);
+				const inst = config?.clients.find((c) => c.id === id);
+				if (inst) {
+					await saveClientConfig(inst.config, { silent: true });
+				}
 				await api.startWdttClientInstance(id);
 				notifications.success('WDTT клиент запущен');
 			} else {
@@ -348,7 +405,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить клиент');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 
@@ -420,6 +477,15 @@
 		if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(cfg);
 	}
 
+	async function applyServerAccessConfig(id: string, cfg: WdttServerConfig) {
+		const norm = normalizeServer(cfg);
+		patchServerInConfig(id, norm);
+		if (savedConfig) {
+			const sidx = savedConfig.servers.findIndex((s) => s.id === id);
+			if (sidx >= 0) savedConfig.servers[sidx].config = structuredClone(norm);
+		}
+	}
+
 	async function saveServerConfig(cfg: WdttServerConfig) {
 		if (!selectedServer) return;
 		saving = true;
@@ -462,7 +528,7 @@
 		} catch (e) {
 			notifications.error(errText(e) || 'Не удалось переключить сервер');
 		} finally {
-			await loadStatus();
+			await Promise.all([loadConfig(), loadStatus()]);
 		}
 	}
 
@@ -500,6 +566,25 @@
 		}
 	}
 
+	// peer и VK-хеши ссылки живут в конфиге сервера: без них основную ссылку
+	// после перезагрузки страницы пришлось бы собирать по памяти.
+	async function persistLinkParams(peer: string, vkHashes: string[], forClient: boolean) {
+		if (!selectedServer) return;
+		const current = selectedServer.config;
+		// Хеши клиента — его личные: в серверные параметры идут только те,
+		// с которыми собрана ссылка на основном пароле.
+		const hashes = forClient ? (current.linkVkHashes ?? '') : vkHashes.join(',');
+		if ((current.linkPeer ?? '') === peer && (current.linkVkHashes ?? '') === hashes) return;
+		const id = selectedServer.id;
+		const cfg = { ...$state.snapshot(current), linkPeer: peer, linkVkHashes: hashes };
+		try {
+			const result = await api.updateWdttServerInstance(id, cfg);
+			patchServerInConfig(id, normalizeServer(result.config));
+		} catch {
+			// не критично: ссылка уже показана, параметры допишутся при сохранении
+		}
+	}
+
 	async function generateServerLink(
 		peer: string,
 		vkHashes: string[],
@@ -517,12 +602,44 @@
 			generatedLink = result.link;
 			genPeer = result.peer;
 			generatedLinkQwdtt = result.linkQwdtt ?? '';
+			void persistLinkParams(result.peer, vkHashes, !!opts?.password);
 			return result;
 		} catch (e) {
 			notifications.error('Не удалось сгенерировать ссылку: ' + errText(e));
 			return null;
 		} finally {
 			generating = false;
+		}
+	}
+
+	async function importWgTunnelFromConf(wgRaw: string, tunnelLabel?: string) {
+		if (!selectedClient || !config) return;
+		const c = selectedClient.config;
+		if ((c.connMode ?? 'wg') === 'raw') {
+			notifications.info('Raw-режим — AWG-туннель не нужен');
+			return;
+		}
+		const port = linkedTunnelListenPort(c.listen);
+		if (port == null) {
+			notifications.error('Укажите listen (127.0.0.1:порт) перед импортом WG');
+			return;
+		}
+		importingWgTunnel = true;
+		try {
+			const wg = patchWgConfEndpoint(wgRaw.trim(), port);
+			const tunnel = await api.importConfig(
+				wg,
+				wdttTunnelName(tunnelLabel || selectedClient.name),
+				undefined,
+				undefined,
+				selectedClientId
+			);
+			wgEnsureSettled.delete(selectedClientId);
+			notifications.success(`AWG-туннель «${tunnel.name}» создан (Endpoint 127.0.0.1:${port})`);
+		} catch (e) {
+			notifications.error('Не удалось создать AWG-туннель: ' + errText(e));
+		} finally {
+			importingWgTunnel = false;
 		}
 	}
 
@@ -536,7 +653,7 @@
 			const c = selectedClient.config;
 			const oldPeer = savedClient?.config.peer ?? '';
 			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
-			if (payload.peer) c.peer = payload.peer;
+			if (payload.peer) setPeer(c, payload.peer);
 			if (payload.password) c.password = payload.password;
 			if (payload.vkHashes?.length) c.vkHashes = payload.vkHashes.join(',');
 			if (payload.workers && payload.workers > 0) c.workers = payload.workers;
@@ -545,6 +662,9 @@
 			if (payload.listen && !subUrl && listenPort == null) c.listen = payload.listen;
 			if (subUrl) c.sub = subUrl;
 			if (payload.deviceId) c.deviceId = payload.deviceId;
+			if (payload.connMode === 'raw' || payload.connMode === 'wg') {
+				c.connMode = payload.connMode;
+			}
 
 			const clientName = meta?.clientName?.trim();
 			if (clientName && clientName !== selectedClient.name) {
@@ -565,7 +685,8 @@
 			if (subUrl) msg += ' (URL подписки сохранён)';
 
 			const wg = payload.wg?.trim();
-			if (wg) {
+			const useWgTunnel = (c.connMode ?? 'wg') !== 'raw';
+			if (wg && useWgTunnel) {
 				try {
 					const portForTunnel =
 						listenPort ?? linkedTunnelListenPort(c.listen, payload.listen);
@@ -657,12 +778,15 @@
 		}}
 	/>
 
+	<ProxyPanelModeToggle />
+
 	{#if activeTab === 'client'}
 	<InstanceBar
 		items={clientBarItems}
 		selectedId={selectedClientId}
 		onSelect={(id) => {
 			selectedClientId = id;
+			clientPanelTab = 'setup';
 			wgEnsureSettled.delete(id);
 		}}
 		onToggle={toggleClientInstance}
@@ -682,6 +806,7 @@
 				{importing}
 				instances={clientBarItems}
 				selectedInstanceId={selectedClientId}
+				bind:opsTab={clientPanelTab}
 				onSelectInstance={(id) => {
 					selectedClientId = id;
 					wgEnsureSettled.delete(id);
@@ -695,6 +820,8 @@
 				subscriptionTick={subscriptionTick}
 				onEnsureWg={ensureWgManual}
 				ensuringWg={ensuringWg}
+				onImportWgTunnel={importWgTunnelFromConf}
+				importingWgTunnel={importingWgTunnel}
 			/>
 		{/key}
 	{:else}
@@ -707,6 +834,7 @@
 		showDtls={false}
 		onSelect={(id) => {
 			selectedServerId = id;
+			serverPanelTab = 'main';
 		}}
 		onToggle={toggleServerInstance}
 		onAdd={canAddWdttServer ? addServer : undefined}
@@ -729,10 +857,12 @@
 				bind:genVKHashes
 				instances={serverBarItems}
 				selectedInstanceId={selectedServerId}
+				bind:opsTab={serverPanelTab}
 				onSelectInstance={(id) => {
 					selectedServerId = id;
 				}}
 				onSave={saveServerConfig}
+				onAccessUpdated={(cfg) => applyServerAccessConfig(selectedServerId, cfg)}
 				onToggle={(on) => toggleServerInstance(selectedServerId, on)}
 				onGenerate={generateServerLink}
 			/>

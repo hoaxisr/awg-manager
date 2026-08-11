@@ -1,4 +1,4 @@
-// Package heavyop serializes memory-heavy sing-box work (ipset rebuild, config apply).
+// Package heavyop serializes memory-heavy sing-box work (config apply/reload).
 package heavyop
 
 import (
@@ -6,14 +6,15 @@ import (
 	"sync"
 )
 
-// Gate ensures selective ipset rebuild and sing-box config apply/reload do not run concurrently.
+// Gate ensures memory-heavy sing-box operations do not run concurrently.
 // Channel-backed (not sync.Mutex) so acquisition can be bounded by a context.
 type Gate struct {
 	once sync.Once
 	ch   chan struct{}
 }
 
-// Default is the process-wide gate shared by orchestrator reload and selective rebuild.
+// Default is the process-wide gate shared by the orchestrator reload and the
+// router's direct config apply.
 var Default Gate
 
 func (g *Gate) sem() chan struct{} {
