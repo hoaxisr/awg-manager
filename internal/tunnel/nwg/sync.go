@@ -123,8 +123,18 @@ func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, stored *storage.A
 	return nil
 }
 
-// SyncPeer pushes the stored peer configuration to the NDMS interface.
-// This applies key/allowed-ips/keepalive/preshared-key from storage.
+// SyncPeer доводит до интерфейса NDMS сохранённые параметры пира:
+// ключ, allowed-ips, keepalive, preshared-key.
+//
+// Endpoint'ом функция распоряжается отдельно. Доменное имя в конфиг NDMS
+// не уходит НИКОГДА: роутер резолвит его сам и при неудаче молча не
+// поднимает интерфейс (#702). Наружу отдаётся только IP — свежерезолвенный
+// v4, либо заглушка вместо v6, который NDMS не принимает. Когда отдать
+// нечего (резолв не удался, адрес v6), endpoint из команды опускается и в
+// конфиге остаётся прежний, а актуальный адрес доводят wg set ниже, страж
+// endpoint'а или следующий Start. На прошивках без нативного WireGuard
+// (proxy-путь) endpoint не отправляется вовсе: в конфиге NDMS должен
+// стоять адрес слота awg_proxy.ko, и владеют им startProxy/SyncKmodSlot.
 //
 // previousPublicKey lets callers atomically replace the peer when the
 // public key changes (e.g. ReplaceConfig from a fresh .conf). If non-

@@ -116,6 +116,7 @@ func TestSyncPeer_HostnameGoesToNDMSResolved(t *testing.T) {
 // Резолв не удался — endpoint не трогаем совсем: прежний литерал в
 // конфиге NDMS лучше имени, которое NDMS может не поднять.
 func TestSyncPeer_ResolveFailureLeavesEndpointUntouched(t *testing.T) {
+	stubResolveGap(t)
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
 	op.resolveFn = func(string) (string, int, error) { return "", 0, errors.New("i/o timeout") }

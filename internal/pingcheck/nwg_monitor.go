@@ -48,12 +48,12 @@ type nwgMonitor struct {
 	wg        sync.WaitGroup
 
 	// Previous snapshot for delta calculation.
-	initialized  bool
-	prevFail     int
-	prevSuccess  int
-	prevStatus   string
-	prevBound    bool
-	lastLatency  int
+	initialized bool
+	prevFail    int
+	prevSuccess int
+	prevStatus  string
+	prevBound   bool
+	lastLatency int
 	// lastLatencyNote explains an absent measurement; empty when measured.
 	lastLatencyNote string
 	startupPhase    bool
