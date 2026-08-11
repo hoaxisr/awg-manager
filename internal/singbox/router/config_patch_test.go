@@ -192,23 +192,25 @@ func TestRuleSetDeleteWithReferences(t *testing.T) {
 	if len(cfg.Route.RuleSet) != 0 {
 		t.Error("rule_set should be empty after force delete")
 	}
-	if len(cfg.Route.Rules) != 2 {
-		t.Fatalf("route rules should remain after force delete, got %+v", cfg.Route.Rules)
+	// Правило, для которого удалённый набор был ЕДИНСТВЕННЫМ условием,
+	// обязано исчезнуть вместе с ним. Оставить его нельзя: правило без
+	// матчеров sing-box матчит всем трафиком (abstractDefaultRule.Match
+	// возвращает true на пустом списке условий), то есть «пресет → VPN»
+	// после force-удаления тихо увёл бы в туннель вообще всё.
+	if len(cfg.Route.Rules) != 1 {
+		t.Fatalf("правило без оставшихся условий должно быть удалено, got %+v", cfg.Route.Rules)
 	}
-	if len(cfg.Route.Rules[0].RuleSet) != 0 {
-		t.Fatalf("deleted tag should be removed from route rule, got %+v", cfg.Route.Rules[0].RuleSet)
+	if len(cfg.Route.Rules[0].RuleSet) != 1 || cfg.Route.Rules[0].RuleSet[0] != "geosite-openai" {
+		t.Fatalf("unrelated route rule_set refs should remain, got %+v", cfg.Route.Rules[0].RuleSet)
 	}
-	if len(cfg.Route.Rules[1].RuleSet) != 1 || cfg.Route.Rules[1].RuleSet[0] != "geosite-openai" {
-		t.Fatalf("unrelated route rule_set refs should remain, got %+v", cfg.Route.Rules[1].RuleSet)
+	if cfg.Route.Rules[0].Outbound != "awg11" {
+		t.Fatalf("выжить должно именно второе правило, got %+v", cfg.Route.Rules[0])
 	}
-	if len(cfg.DNS.Rules) != 2 {
-		t.Fatalf("dns rules should remain after force delete, got %+v", cfg.DNS.Rules)
+	if len(cfg.DNS.Rules) != 1 {
+		t.Fatalf("DNS-правило без оставшихся условий должно быть удалено, got %+v", cfg.DNS.Rules)
 	}
-	if len(cfg.DNS.Rules[0].RuleSet) != 0 {
-		t.Fatalf("deleted tag should be removed from dns rule, got %+v", cfg.DNS.Rules[0].RuleSet)
-	}
-	if len(cfg.DNS.Rules[1].RuleSet) != 1 || cfg.DNS.Rules[1].RuleSet[0] != "geosite-openai" {
-		t.Fatalf("unrelated dns rule_set refs should remain, got %+v", cfg.DNS.Rules[1].RuleSet)
+	if len(cfg.DNS.Rules[0].RuleSet) != 1 || cfg.DNS.Rules[0].RuleSet[0] != "geosite-openai" {
+		t.Fatalf("unrelated dns rule_set refs should remain, got %+v", cfg.DNS.Rules[0].RuleSet)
 	}
 }
 

@@ -33,6 +33,18 @@ func TestDesiredTunCIDRs_NormalizedAddressOrRule(t *testing.T) {
 			wantV4:   []string{"203.0.113.0/24", "198.51.100.0/24"},
 		},
 		{
+			// ip_is_private живёт в той же адресной ветке; собственный
+			// публичный CIDR по-прежнему матчит правило сам по себе.
+			name: "or{набор | свой ip_cidr + ip_is_private} → маршруты остаются",
+			rules: []Rule{normalizeAddressOrRule(Rule{
+				Action: "route", Outbound: "proxy",
+				RuleSet: []string{"mixed"}, IPCIDR: []string{"203.0.113.0/24"},
+				IPIsPrivate: boolPtr(true),
+			})},
+			ruleSets: []RuleSet{mixed},
+			wantV4:   []string{"203.0.113.0/24", "198.51.100.0/24"},
+		},
+		{
 			name: "or{набор | свой домен} → CIDR только из набора",
 			rules: []Rule{normalizeAddressOrRule(Rule{
 				Action: "route", Outbound: "proxy",

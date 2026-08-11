@@ -156,6 +156,54 @@ func TestDeleteRuleSetForce_CollapsesEmptyBranch(t *testing.T) {
 	}
 }
 
+// Правило, державшееся на одном наборе, после force-удаления обязано
+// исчезнуть: правило без матчеров матчит ВЕСЬ трафик, то есть «пресет →
+// VPN» увёл бы в туннель всё подряд.
+func TestDeleteRuleSetForce_DropsRuleLeftWithoutMatchers(t *testing.T) {
+	c := &RouterConfig{}
+	if err := c.AddRuleSet(RuleSet{Tag: "geosite-x", Type: "remote", URL: "https://x/y.srs", Format: "binary"}); err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+	c.EnsureSystemRules(true)
+	systemCount := len(c.Route.Rules)
+	if err := c.AddRule(Rule{RuleSet: []string{"geosite-x"}, Action: "route", Outbound: "vpn"}); err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	if err := c.DeleteRuleSet("geosite-x", true); err != nil {
+		t.Fatalf("DeleteRuleSet: %v", err)
+	}
+	if len(c.Route.Rules) != systemCount {
+		t.Fatalf("правило без матчеров осталось: %+v", c.Route.Rules)
+	}
+	for _, r := range c.Route.Rules {
+		if !r.hasAnyMatcher() && !isSystemRule(r) {
+			t.Errorf("правило без матчеров матчит весь трафик: %+v", r)
+		}
+	}
+}
+
+// `"ip_is_private": false` в sing-box означает «условия нет». Нормализовать
+// по нему нельзя: ветка вышла бы пустой, а пустая ветка заставляет sing-box
+// отвергнуть ВЕСЬ слот.
+func TestNormalizeAddressOrRule_IgnoresFalseIPIsPrivate(t *testing.T) {
+	no := false
+	in := Rule{RuleSet: []string{"geosite-x"}, IPIsPrivate: &no, Action: "route", Outbound: "vpn"}
+	if got := normalizeAddressOrRule(in); got.Type != "" {
+		t.Errorf("правило нормализовано по пустому условию: %+v", got)
+	}
+
+	// Вместе с настоящим адресом — нормализуем, но false в ветку не тащим.
+	withCIDR := Rule{RuleSet: []string{"geosite-x"}, IPCIDR: []string{"1.2.3.0/24"},
+		IPIsPrivate: &no, Action: "route", Outbound: "vpn"}
+	got := normalizeAddressOrRule(withCIDR)
+	if got.Type != "logical" || len(got.Rules) != 2 {
+		t.Fatalf("не нормализовано: %+v", got)
+	}
+	if got.Rules[1].IPIsPrivate != nil {
+		t.Errorf("false-условие уехало в ветку: %+v", got.Rules[1])
+	}
+}
+
 func hasEmptyNestedRule(r Rule) bool {
 	for _, nested := range r.Rules {
 		if !nested.hasAnyMatcher() {

@@ -194,7 +194,9 @@ func addressOrBranches(r Rule) (Rule, bool) {
 	if len(sets.RuleSet) == 0 || !onlyMatchers(sets, func(x *Rule) { x.RuleSet = nil }) {
 		return Rule{}, false
 	}
-	if !onlyMatchers(addrs, func(x *Rule) { x.Domain, x.DomainSuffix, x.IPCIDR = nil, nil, nil }) {
+	if !onlyMatchers(addrs, func(x *Rule) {
+		x.Domain, x.DomainSuffix, x.IPCIDR, x.IPIsPrivate = nil, nil, nil, nil
+	}) {
 		return Rule{}, false
 	}
 	return Rule{

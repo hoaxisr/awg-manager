@@ -124,13 +124,32 @@ func (c *RouterConfig) DeleteRuleSet(tag string, force bool) error {
 		remove[t] = struct{}{}
 	}
 	if force {
-		for i := range c.Route.Rules {
-			removeRuleSetRefsInRule(&c.Route.Rules[i], remove)
-			c.Route.Rules[i] = collapseNestedRules(c.Route.Rules[i])
+		// A rule left without a single matcher must GO, not stay: sing-box
+		// treats a matcher-less rule as "matches everything"
+		// (abstractDefaultRule.Match returns true on an empty item list), so
+		// «пресет → VPN» whose set was force-deleted would quietly start
+		// routing ALL traffic into that outbound. The rule existed for the
+		// set alone; without it there is nothing left to keep.
+		keptRules := make([]Rule, 0, len(c.Route.Rules))
+		for _, r := range c.Route.Rules {
+			removeRuleSetRefsInRule(&r, remove)
+			r = collapseNestedRules(r)
+			if !r.hasAnyMatcher() && !isSystemRule(r) {
+				continue
+			}
+			keptRules = append(keptRules, r)
 		}
-		for i := range c.DNS.Rules {
-			c.DNS.Rules[i].RuleSet = removeRuleSetRefs(c.DNS.Rules[i].RuleSet, remove)
+		c.Route.Rules = keptRules
+
+		keptDNS := make([]DNSRule, 0, len(c.DNS.Rules))
+		for _, r := range c.DNS.Rules {
+			r.RuleSet = removeRuleSetRefs(r.RuleSet, remove)
+			if !dnsRuleHasMatcher(r) {
+				continue
+			}
+			keptDNS = append(keptDNS, r)
 		}
+		c.DNS.Rules = keptDNS
 	}
 	filtered := make([]RuleSet, 0, len(c.Route.RuleSet))
 	for _, rs := range c.Route.RuleSet {
@@ -297,13 +316,22 @@ func normalizeAddressOrRule(r Rule) Rule {
 	if r.Type != "" || len(r.RuleSet) == 0 {
 		return r
 	}
-	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 && r.IPIsPrivate == nil {
+	// Only a TRUE ip_is_private counts as a matcher: `"ip_is_private": false`
+	// is sing-box's way of writing "no such condition", and a branch holding
+	// nothing else would come out empty — which costs the whole slot
+	// ("missing conditions" rejects the config, not just the rule).
+	private := r.IPIsPrivate != nil && *r.IPIsPrivate
+	if len(r.Domain) == 0 && len(r.DomainSuffix) == 0 && len(r.IPCIDR) == 0 && !private {
 		return r
 	}
 
+	addressBranch := Rule{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR}
+	if private {
+		addressBranch.IPIsPrivate = r.IPIsPrivate
+	}
 	addressOr := Rule{Type: "logical", Mode: "or", Rules: []Rule{
 		{RuleSet: r.RuleSet},
-		{Domain: r.Domain, DomainSuffix: r.DomainSuffix, IPCIDR: r.IPCIDR, IPIsPrivate: r.IPIsPrivate},
+		addressBranch,
 	}}
 
 	narrowing := Rule{
@@ -469,8 +497,9 @@ func (c *RouterConfig) EnsureSystemRules(snifferEnabled bool) {
 	// hijack-dns rule, whether it was just prepended or already present.
 	if !hasPrivateBypass {
 		// Defense-in-depth: any packet that slips into sing-box with a
-		// private destination (RFC1918, loopback, link-local, CGNAT,
-		// multicast) goes `direct` instead of falling through to
+		// private destination (RFC1918, loopback, link-local, multicast —
+		// CGNAT is NOT one of them, see Rule.IPIsPrivate) goes `direct`
+		// instead of falling through to
 		// `final: proxy`. Matters specifically for non-policy DNS that
 		// the `hijack-dns` side-effect transparent listener picks up
 		// from router LAN IPs — those packets arrive without TPROXY
