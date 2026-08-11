@@ -53,6 +53,26 @@ type nwgMonitor struct {
 	// the tunnel interface (counters reset after failure). Cleared on first
 	// successful check after restart.
 	restartDetected bool
+
+	// restartCount — сколько рестартов интерфейса силами NDMS
+	// зафиксировано с запуска монитора. Растёт там же, где взводится
+	// restartDetected: до #702 наружу отдавалась константа 1, и
+	// пользователь видел «рестартов ноль» при работающих рестартах.
+	//
+	// Счётчик обнуляется вместе с монитором: startNwgMonitor пересоздаёт
+	// его на reconnect и при смене настроек мониторинга, так что карточка
+	// периодически показывает сброс в ноль. Перенос в карты фасада — B2.
+	//
+	// Синхронизация: nwgMonMu в фасаде защищает карту мониторов, а не их
+	// поля. restartDetected так же читается без лока (facade.go), лока
+	// полей монитора не существует — restarts() намеренно повторяет
+	// существующий прецедент, это не недосмотр.
+	restartCount int
+}
+
+// restarts — число зафиксированных рестартов интерфейса.
+func (m *nwgMonitor) restarts() int {
+	return m.restartCount
 }
 
 // publishLog publishes a log entry as an SSE event.
@@ -146,6 +166,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 
 		if countersZeroed && (boundTransition || counterReset) {
 			m.restartDetected = true
+			m.restartCount++
 		}
 		// Clear restart flag once NDMS reports first success after restart.
 		if m.restartDetected && successCount > 0 {

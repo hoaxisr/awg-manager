@@ -194,9 +194,7 @@ func (f *Facade) getNativeWGStatuses() []TunnelStatus {
 			// UI can distinguish "monitoring enabled but tunnel not running"
 			// from "alive and checking".
 			ts.Status = nwgCardStatus(status.Status, status.FailCount, status.SuccessCount, status.Bound, f.isNwgRestartDetected(t.ID))
-			if ts.Status == "recovering" {
-				ts.RestartCount = 1
-			}
+			ts.RestartCount = f.nwgRestartCount(t.ID)
 			ts.LatencyNote = f.nwgLatencyNote(t.ID)
 		}
 
@@ -251,6 +249,18 @@ func (f *Facade) isNwgRestartDetected(tunnelID string) bool {
 		return false
 	}
 	return mon.restartDetected
+}
+
+// nwgRestartCount — сколько рестартов интерфейса зафиксировал монитор
+// туннеля. 0, если монитора нет.
+func (f *Facade) nwgRestartCount(tunnelID string) int {
+	f.nwgMonMu.RLock()
+	mon, ok := f.nwgMonitors[tunnelID]
+	f.nwgMonMu.RUnlock()
+	if !ok {
+		return 0
+	}
+	return mon.restarts()
 }
 
 // nwgLatencyNote returns the monitor's explanation for an absent latency

@@ -261,3 +261,21 @@ func TestNwgCardStatus_WarmupVsRealStates(t *testing.T) {
 		})
 	}
 }
+
+// Счётчик рестартов доезжает до статуса как есть, а не константой (#702).
+func TestFacade_NwgRestartCountReported(t *testing.T) {
+	f, _ := newTestFacade(t, nil)
+
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	mon := newTestNwgMonitor(buf)
+	mon.restartCount = 2
+	f.nwgMonitors["nwg-1"] = mon
+
+	if got := f.nwgRestartCount("nwg-1"); got != 2 {
+		t.Fatalf("nwgRestartCount = %d, want 2", got)
+	}
+	if got := f.nwgRestartCount("нет-такого"); got != 0 {
+		t.Fatalf("для отсутствующего монитора = %d, want 0", got)
+	}
+}

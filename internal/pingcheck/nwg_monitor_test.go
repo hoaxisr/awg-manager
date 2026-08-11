@@ -277,3 +277,37 @@ func TestNwgDelta_NonWarmupFirstPoll_EmitsInitial(t *testing.T) {
 		t.Fatalf("healthy first poll must emit 1 initial entry, got %d", buf.Len())
 	}
 }
+
+// Рестарты интерфейса силами NDMS должны считаться: до #702 наружу
+// отдавалась константа, и пользователь видел «рестартов ноль».
+func TestNwgDelta_RestartCountGrows(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	m.processDelta(0, 5, "pass", true) // базовая линия: туннель живой
+	m.processDelta(3, 5, "fail", true) // копятся отказы
+	m.processDelta(0, 0, "fail", true) // NDMS перезапустил: счётчики обнулены
+	if m.restarts() != 1 {
+		t.Fatalf("после первого рестарта restarts() = %d, want 1", m.restarts())
+	}
+
+	m.processDelta(3, 0, "fail", true) // снова отказы
+	m.processDelta(0, 0, "fail", true) // снова рестарт
+	if m.restarts() != 2 {
+		t.Fatalf("после второго рестарта restarts() = %d, want 2", m.restarts())
+	}
+}
+
+// Успешные проверки счётчик не трогают.
+func TestNwgDelta_RestartCountStableWhileHealthy(t *testing.T) {
+	buf := NewLogBuffer()
+	defer buf.Stop()
+	m := newTestNwgMonitor(buf)
+
+	m.processDelta(0, 5, "pass", true)
+	m.processDelta(0, 9, "pass", true)
+	if m.restarts() != 0 {
+		t.Fatalf("на живом туннеле restarts() = %d, want 0", m.restarts())
+	}
+}
