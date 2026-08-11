@@ -741,7 +741,15 @@
 						</Button>
 					{/if}
 				</div>
-				<ProcessLogBox log={status?.log} {routerClock} {instances} {selectedInstanceId} {onSelectInstance} />
+				<ProcessLogBox
+					log={status?.log}
+					{routerClock}
+					bind:debug={client.debug}
+					showDebugToggle
+					{instances}
+					{selectedInstanceId}
+					{onSelectInstance}
+				/>
 			</section>
 		{/if}
 	{/if}
