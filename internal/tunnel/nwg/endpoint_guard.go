@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -45,11 +47,10 @@ type guardEntry struct {
 	// kernel-endpoint своим значением при каждом переприменении —
 	// wg set проиграл бы ему гонку.
 	viaNDMS bool
-	// viaKmod — адресом владеет слот awg_proxy.ko (proxy-прошивки).
-	// Доводку в слот добавляет следующая задача; сейчас запись только
-	// инертна: sweep её пропускает и реестр по ней не двигает. Трогать
-	// ядро по такой записи НЕЛЬЗЯ — в kernel-endpoint'е стоит
-	// 127.0.0.1:<порт слота>, и wg set увёл бы трафик мимо прокси.
+	// viaKmod — доводить адрес пересборкой слота awg_proxy.ko. Так на
+	// proxy-прошивках: в конфиге NDMS там 127.0.0.1:<порт слота>, а
+	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
+	// wg set увёл бы трафик мимо прокси, без обфускации.
 	viaKmod bool
 }
 
@@ -66,6 +67,27 @@ func guardModeForEndpoint(endpoint string, kernelV6 bool) (guard, viaNDMS bool) 
 		return false, false
 	}
 	return true, true
+}
+
+// guardSyncKmodEntry ставит (или снимает) kmod-запись стража по текущему
+// endpoint'у туннеля. Следим за РЕАЛЬНЫМ адресом сервера: 127.0.0.1:<порт
+// слота> — внутренняя деталь, её держит SyncKmodSlot. Звать только оттуда,
+// где слот только что собран или подтверждён живым: там регистрация не
+// гонится со Stop и не воскрешает запись остановленного туннеля.
+func (o *OperatorNativeWG) guardSyncKmodEntry(stored *storage.AWGTunnel, endpointIP string, endpointPort int) {
+	if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
+		o.guardUnregister(stored.ID)
+		return
+	}
+	names := NewNWGNames(stored.NWGIndex)
+	o.guardRegister(stored.ID, guardEntry{
+		iface:    names.IfaceName,
+		pubkey:   stored.Peer.PublicKey,
+		endpoint: net.JoinHostPort(endpointIP, strconv.Itoa(endpointPort)),
+		spec:     stored.Peer.Endpoint,
+		name:     names.NDMSName,
+		viaKmod:  true,
+	})
 }
 
 func (o *OperatorNativeWG) guardRegister(id string, e guardEntry) {
@@ -162,7 +184,7 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 							// Только чистый v6-режим: сверка идёт с
 							// фактическим wg show, поэтому реестр можно
 							// двигать сразу — упавший wg set повторится на
-							// следующем проходе. У viaNDMS и viaKmod (Task A2)
+							// следующем проходе. У viaNDMS и viaKmod
 							// readback'а нет, они сверяются с самим реестром:
 							// преждевременная запись навсегда увела бы их в
 							// `continue` после первой же неудачи.
@@ -200,10 +222,31 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 		}
 		if e.viaKmod {
 			// Proxy-путь: адресом владеет слот awg_proxy.ko, а в
-			// kernel-endpoint'е стоит 127.0.0.1:<порт слота>. Перерезолв
-			// слота добавляет следующая задача; до неё запись обязана быть
-			// инертной — wg-ветка ниже поставила бы в ядро реальный адрес
-			// сервера и увела трафик мимо прокси, без обфускации.
+			// kernel-endpoint'е стоит 127.0.0.1:<порт слота>. Слот
+			// пересобирается только на смену резолва — операция рвёт
+			// соединение (новый listen-порт), впустую её гонять нельзя.
+			if expected == e.endpoint {
+				continue
+			}
+			if o.tunnelLookup == nil {
+				continue
+			}
+			// Перепроверка перед дорогой операцией — как в двух ветках выше.
+			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
+				continue
+			}
+			stored, lookupErr := o.tunnelLookup(id)
+			if lookupErr != nil || stored == nil {
+				o.appLog.Warn("endpoint-guard", e.name, "туннель не найден в хранилище — слот не пересобран")
+				continue
+			}
+			if err := o.SyncKmodSlot(ctx, stored); err != nil {
+				o.appLog.Warn("endpoint-guard", e.name, "пересборка kmod-слота не удалась: "+err.Error())
+				continue
+			}
+			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.appLog.Info("endpoint-guard", e.name,
+				fmt.Sprintf("%s сменил адрес — kmod-слот пересобран на %s", e.spec, expected))
 			continue
 		}
 		bin := wgToolLookup()

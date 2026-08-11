@@ -71,6 +71,11 @@ type OperatorNativeWG struct {
 	// hasProxySlot reports a live kmod proxy slot on a listen port. Default:
 	// kmod.HasSlotListening; overridable in tests.
 	hasProxySlot func(listenPort int) bool
+
+	// tunnelLookup отдаёт свежую запись туннеля по ID. Нужен стражу на
+	// proxy-пути: пересборка слота обязана идти по актуальным ключам и
+	// параметрам обфускации, а не по снимку времён регистрации (#702).
+	tunnelLookup func(tunnelID string) (*storage.AWGTunnel, error)
 }
 
 // NewOperator creates a new NativeWG operator.
@@ -91,6 +96,11 @@ func NewOperator(queries *query.Queries, commands *command.Commands, tr *transpo
 // SetHookNotifier sets the hook notifier for registering expected NDMS hooks.
 func (o *OperatorNativeWG) SetHookNotifier(hn tunnel.HookNotifier) {
 	o.hookNotifier = hn
+}
+
+// SetTunnelLookup задаёт доступ к хранилищу туннелей.
+func (o *OperatorNativeWG) SetTunnelLookup(fn func(tunnelID string) (*storage.AWGTunnel, error)) {
+	o.tunnelLookup = fn
 }
 
 // Create creates a NativeWG tunnel in NDMS.
@@ -499,6 +509,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		return fmt.Errorf("start proxy: %w", err)
 	}
 
+	// Слот собран, туннель поднят — берём адрес сервера под стража.
+	o.guardSyncKmodEntry(stored, endpointIP, endpointPort)
+
 	viaInfo := ""
 	if stored.ISPInterface != "" {
 		viaInfo = " via " + stored.ISPInterface
@@ -520,6 +533,12 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	// 1. Remove kmod proxy entry (socket is dead after WAN down anyway).
 	// Module stays loaded — only the tunnel entry is removed.
 	_ = o.kmod.RemoveTunnel(stored.ID)
+
+	// Слота больше нет — стражу нечего доводить. Оставленная запись при
+	// смене адреса пересобрала бы слот и переписала конфиг NDMS, нарушив
+	// инвариант приостановки; возобновление идёт через Start → startProxy,
+	// который зарегистрирует запись заново.
+	o.guardUnregister(stored.ID)
 
 	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
@@ -820,6 +839,11 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 		o.appLog.Warn("restore-kmod", names.NDMSName, "failed to update endpoint to "+proxyEndpoint+": "+err.Error())
 	}
 
+	// Страж обязан пережить рестарт демона: работающий proxy-туннель
+	// поднимается этим путём, а не startProxy, и без регистрации защита от
+	// протухшего DDNS-адреса жила бы до первого рестарта awgm (#702).
+	o.guardSyncKmodEntry(stored, endpointIP, endpointPort)
+
 	return nil
 }
 
@@ -843,9 +867,26 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 	if err != nil {
 		return fmt.Errorf("resolve endpoint: %w", err)
 	}
+
+	// IPv6 на старом kmod не поставится (гейт в addFreshLocked). Уронить
+	// живой слот ради заведомо провальной пересборки нельзя.
+	if strings.Contains(endpointIP, ":") && !o.kmod.SupportsIPv6() {
+		return fmt.Errorf("sync kmod slot: IPv6-endpoint %s требует awg_proxy.ko >= %s", endpointIP, kmodVersionIPv6)
+	}
+
 	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)
 	if err != nil {
 		return fmt.Errorf("build kmod config: %w", err)
+	}
+
+	names := NewNWGNames(stored.NWGIndex)
+
+	// Слот старого адреса иначе останется в ядре: addFreshLocked снимает
+	// только совпадающий по ключу (EEXIST), а при смене адреса ключ
+	// другой. km.tunnels перезапишется новой записью, и RemoveTunnel уже
+	// не найдёт старый слот — при флапающем DDNS так съедаются все 16.
+	if err := o.kmod.RemoveTunnel(stored.ID); err != nil {
+		o.appLog.Warn("sync-kmod-slot", names.NDMSName, "снятие прежнего слота не удалось: "+err.Error())
 	}
 
 	result, err := o.kmod.AddTunnel(stored.ID, kmodCfg)
@@ -855,11 +896,16 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 
 	// listen port likely changed on rebuild — push it to NDMS so the
 	// kernel WG peer points at the new local proxy.
-	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
 	if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
 		o.appLog.Warn("sync-kmod-slot", names.NDMSName, "update peer endpoint to "+proxyEndpoint+": "+err.Error())
 	}
+
+	// Слот только что собран — значит туннель жив, и регистрация стража
+	// здесь безопасна (в отличие от безусловной регистрации на путях, где
+	// возможна гонка со Stop). Это единственное место, где запись
+	// появляется при правке endpoint'а с литерала на доменное имя.
+	o.guardSyncKmodEntry(stored, endpointIP, endpointPort)
 
 	o.appLog.Info("sync-kmod-slot", names.NDMSName, fmt.Sprintf("slot rebuilt → 127.0.0.1:%d", result.ListenPort))
 	return nil

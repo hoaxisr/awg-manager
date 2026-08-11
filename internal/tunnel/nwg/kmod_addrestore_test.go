@@ -309,6 +309,30 @@ func TestRestoreTunnel_AdoptDiscardsCallerCfg(t *testing.T) {
 	}
 }
 
+// Смена адреса не должна оставлять слот прежнего адреса в ядре (#702).
+func TestSyncKmodSlot_RemovesPreviousSlotOnAddressChange(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+
+	cfg := defaultCfg()
+	cfg.EndpointIP, cfg.EndpointPort = "198.51.100.1", 51820
+	if _, err := km.AddTunnel("awg10", cfg); err != nil {
+		t.Fatalf("первый add: %v", err)
+	}
+
+	// Адрес сменился — вызывающая сторона обязана снять прежний слот.
+	if err := km.RemoveTunnel("awg10"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	cfg.EndpointIP = "203.0.113.9"
+	if _, err := km.AddTunnel("awg10", cfg); err != nil {
+		t.Fatalf("второй add: %v", err)
+	}
+
+	if strings.Contains(stub.listBody, "198.51.100.1:51820") {
+		t.Fatalf("слот прежнего адреса остался в ядре:\n%s", stub.listBody)
+	}
+}
+
 // --- errnoPathErr wraps a syscall errno so errors.Is(err, syscall.EEXIST)
 // works the same way it does in real *os.PathError from os.WriteFile. ----
 
