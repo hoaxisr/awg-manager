@@ -828,8 +828,6 @@
 				<ProcessLogBox
 					log={status?.log}
 					title="Лог процесса (stdout)"
-					bind:debug={server.debug}
-					showDebugToggle
 					{instances}
 					{selectedInstanceId}
 					{onSelectInstance}
