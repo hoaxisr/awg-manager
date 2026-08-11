@@ -286,6 +286,29 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	// обновиться (устаревшая запись не просто восстановит старые значения:
 	// wg set по старому ключу ВОСКРЕШАЕТ удалённого RCI-батчем пира).
 	switch {
+	case kernelV6 && !o.supportsASC():
+		// Proxy-путь: v6-адрес живёт в слоте awg_proxy.ko (kmod умеет v6
+		// с 1.3.0), а не в ядре. Писать его через wg set значило бы гнать
+		// хендшейки мимо прокси — без обфускации. Endpoint в конфиге NDMS
+		// тоже не наш: там 127.0.0.1:<порт слота>. Делаем то же, что для
+		// v4 на этом пути — только освежаем запись стража (#702).
+		// endpoint — из текущей записи, не из свежего резолва: в слоте
+		// лежит прежний адрес, и запись «желаемого» навсегда увела бы
+		// sweep в «адрес не менялся» (та же ловушка, что в v4-ветке ниже).
+		// v6-литерал под стражем не держим — резолвить нечего, адрес
+		// доводят startProxy/SyncKmodSlot.
+		if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
+			o.guardUnregister(stored.ID)
+		} else if cur, ok := o.guardGet(stored.ID); ok && cur.spec == stored.Peer.Endpoint {
+			o.guardReplaceIfPresent(stored.ID, guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: cur.endpoint,
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaKmod:  true,
+			})
+		}
 	case kernelV6:
 		ifaceName := NewNWGNames(stored.NWGIndex).IfaceName
 		entry := guardEntry{

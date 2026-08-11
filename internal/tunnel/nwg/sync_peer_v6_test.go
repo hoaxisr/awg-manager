@@ -347,6 +347,37 @@ func TestSyncPeer_EmptyEndpointSkipsResolve(t *testing.T) {
 	}
 }
 
+// На proxy-прошивке v6-адрес живёт в kmod-слоте: SyncPeer не должен
+// писать его в ядро и не должен брать туннель под v6-стража (#702).
+func TestSyncPeer_ProxyFirmwareV6DoesNotBypassKmod(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.supportsASC = func() bool { return false }
+	calls := stubGuardWG(t, "", nil) // wg set не должен вызываться вовсе
+
+	stored := &storage.AWGTunnel{
+		NWGIndex: 5,
+		Peer: storage.AWGPeer{
+			PublicKey: "newkey0000000000000000000000000000000000000=",
+			Endpoint:  "[2001:db8::1]:51820",
+		},
+	}
+	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+		t.Fatalf("SyncPeer: %v", err)
+	}
+
+	if len(*calls) != 0 {
+		t.Fatalf("на proxy-пути wg set в обход прокси недопустим: %v", *calls)
+	}
+	if entry, ok := op.guardGet(stored.ID); ok && !entry.viaKmod {
+		t.Fatalf("на proxy-пути страж обязан быть в режиме kmod: %+v", entry)
+	}
+	joined := strings.Join(cs.bodies, "\n")
+	if strings.Contains(joined, "127.0.0.1:1") {
+		t.Fatalf("заглушка 127.0.0.1:1 затирает порт слота: %s", joined)
+	}
+}
+
 // v6-туннель + нерезолвимое имя: смена endpoint отвергается, иначе в
 // конфиге NDMS осталась бы заглушка 127.0.0.1:1 и мёртвый туннель (#702).
 func TestSyncPeer_V6ToUnresolvableHostnameRejected(t *testing.T) {
