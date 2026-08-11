@@ -612,6 +612,7 @@
 	{:else}
 		<ProxyInstanceStatusBar
 			{running}
+			enabled={server.enabled ?? false}
 			meta={statusMeta}
 			{saving}
 			{starting}
