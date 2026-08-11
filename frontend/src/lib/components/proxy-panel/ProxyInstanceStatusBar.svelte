@@ -4,6 +4,8 @@
 
 	interface Props {
 		running?: boolean;
+		/** Флаг «должен работать»: инстанс поднимает супервизор, даже если процесс падает. */
+		enabled?: boolean;
 		meta?: string;
 		metaExtra?: Snippet;
 		saving?: boolean;
@@ -20,6 +22,7 @@
 
 	let {
 		running = false,
+		enabled = false,
 		meta = '',
 		metaExtra,
 		saving = false,
@@ -38,7 +41,9 @@
 <div class="proxy-status-bar">
 	<div class="proxy-status-left">
 		<span class="proxy-status-dot" class:running aria-hidden="true"></span>
-		<span class="proxy-status-label">{running ? 'Запущен' : 'Остановлен'}</span>
+		<span class="proxy-status-label">
+			{running ? 'Запущен' : enabled ? 'Не запускается' : 'Остановлен'}
+		</span>
 		{#if meta}
 			<span class="proxy-status-meta">{meta}</span>
 		{/if}
@@ -60,13 +65,16 @@
 			</Button>
 		{/if}
 		{#if onToggle}
-			{#if running}
-				<Button variant="danger" size="sm" disabled={starting} onclick={() => onToggle(false)}>
-					Остановить
-				</Button>
-			{:else}
+			{#if !running}
 				<Button variant="primary" size="sm" loading={starting} disabled={!canStart} onclick={() => onToggle(true)}>
 					Запустить
+				</Button>
+			{/if}
+			<!-- «Остановить» доступна и при упавшем процессе: пока стоит enabled,
+			     супервизор поднимает инстанс заново, и снять этот флаг больше нечем. -->
+			{#if running || enabled}
+				<Button variant="danger" size="sm" disabled={starting} onclick={() => onToggle(false)}>
+					Остановить
 				</Button>
 			{/if}
 		{/if}

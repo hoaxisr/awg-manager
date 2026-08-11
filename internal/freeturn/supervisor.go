@@ -155,6 +155,11 @@ func (s *Service) superviseEnabled(ctx context.Context) {
 				continue
 			}
 			if err := s.StartServerInstance(srv.ID); err != nil {
+				// Старт этого сервера уже идёт (API или прошлый тик) — не провал
+				// старта, backoff-окно жечь не за что.
+				if errors.Is(err, ErrServerStartInFlight) {
+					continue
+				}
 				s.startBackoff.Fail(key, now)
 				if s.appLog != nil {
 					s.appLog.Warn("supervisor", srv.ID, "перезапуск сервера: "+err.Error())

@@ -177,6 +177,11 @@ func (s *Service) StartServer() error {
 }
 
 func (s *Service) StartServerInstance(id string) error {
+	unlock, ok := s.tryLockServerStart(id)
+	if !ok {
+		return ErrServerStartInFlight
+	}
+	defer unlock()
 	inst, err := s.serverInstance(id)
 	if err != nil {
 		return err
@@ -286,6 +291,10 @@ func (s *Service) StopServer() error {
 }
 
 func (s *Service) StopServerInstance(id string) error {
+	// Ждём идущий старт этого сервера: иначе он допишет Enabled=true после нас,
+	// и супервизор поднимет сервер, который пользователь только что выключил.
+	unlock := s.lockServerStart(id)
+	defer unlock()
 	inst, err := s.serverInstance(id)
 	if err != nil {
 		return err

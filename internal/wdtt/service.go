@@ -83,6 +83,11 @@ type Service struct {
 	clientStartMu    sync.Mutex
 	clientStarts     map[string]int
 	clientStartLocks map[string]*sync.Mutex
+
+	// serverStartLocks — то же для серверов: старт тянет NDMS/RCI и живёт
+	// секунды, а флаг Enabled оба пути пишут последним действием.
+	serverStartMu    sync.Mutex
+	serverStartLocks map[string]*sync.Mutex
 }
 
 // ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
@@ -95,7 +100,27 @@ var ErrClientStartInFlight = errors.New("старт клиента уже вып
 // супервизора). unlock должен вызываться defer'ом сразу после успешного
 // захвата.
 func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
+	l := s.clientStartLock(id)
+	if !l.TryLock() {
+		return nil, false
+	}
+	return l.Unlock, true
+}
+
+// lockClientStart — тот же лок, но с ожиданием: для остановки, которая обязана
+// состояться, а не отступить. Без него стоп, попавший в окно идущего старта,
+// снимал Enabled раньше, чем старт дописывал его обратно в true, — клиент
+// оставался «включённым» вопреки решению пользователя, и супервизор поднимал
+// его снова.
+func (s *Service) lockClientStart(id string) (unlock func()) {
+	l := s.clientStartLock(id)
+	l.Lock()
+	return l.Unlock
+}
+
+func (s *Service) clientStartLock(id string) *sync.Mutex {
 	s.clientStartMu.Lock()
+	defer s.clientStartMu.Unlock()
 	if s.clientStartLocks == nil {
 		s.clientStartLocks = make(map[string]*sync.Mutex)
 	}
@@ -104,11 +129,41 @@ func (s *Service) tryLockClientStart(id string) (unlock func(), ok bool) {
 		l = &sync.Mutex{}
 		s.clientStartLocks[id] = l
 	}
-	s.clientStartMu.Unlock()
+	return l
+}
+
+// ErrServerStartInFlight — StartServerInstance этого сервера уже выполняется
+// где-то ещё; возвращается без какой-либо RCI-работы.
+var ErrServerStartInFlight = errors.New("старт сервера уже выполняется")
+
+// tryLockServerStart / lockServerStart — серверный аналог клиентских локов:
+// старт отступает (супервизор попробует на следующем тике), стоп ждёт.
+func (s *Service) tryLockServerStart(id string) (unlock func(), ok bool) {
+	l := s.serverStartLock(id)
 	if !l.TryLock() {
 		return nil, false
 	}
 	return l.Unlock, true
+}
+
+func (s *Service) lockServerStart(id string) (unlock func()) {
+	l := s.serverStartLock(id)
+	l.Lock()
+	return l.Unlock
+}
+
+func (s *Service) serverStartLock(id string) *sync.Mutex {
+	s.serverStartMu.Lock()
+	defer s.serverStartMu.Unlock()
+	if s.serverStartLocks == nil {
+		s.serverStartLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.serverStartLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.serverStartLocks[id] = l
+	}
+	return l
 }
 
 func (s *Service) beginOpkgStart() {
@@ -677,6 +732,9 @@ func (s *Service) StopClient() error {
 }
 
 func (s *Service) StopClientInstance(id string) error {
+	// Ждём идущий старт этого клиента: иначе он допишет Enabled=true после нас.
+	unlock := s.lockClientStart(id)
+	defer unlock()
 	inst, err := s.clientInstance(id)
 	if err != nil {
 		return err
