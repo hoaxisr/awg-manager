@@ -601,7 +601,6 @@ func (s *Service) StartClientInstance(id string) error {
 	if err := validateObfKey(cfg.ObfProfile, cfg.ObfKey); err != nil {
 		return err
 	}
-	freeStaleClientListenPort(s.clientBin, cfg.Listen)
 	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
 		return err
 	}

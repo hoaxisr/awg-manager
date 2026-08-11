@@ -571,7 +571,6 @@ func (s *Service) StartClientInstance(id string) error {
 		}
 	}
 
-	freeStaleClientListenPort(s.clientBin, cfg.Listen)
 	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg, tunFdSock)); err != nil {
 		if isRaw {
 			_ = s.teardownClientOpkgTun(ctx, cfg)
