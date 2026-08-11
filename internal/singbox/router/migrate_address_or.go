@@ -76,17 +76,26 @@ func userSlotFilename() string {
 // a rule_set with the rule's own destination addresses — the shape sing-box
 // ANDs into near-uselessness (issue #699). Used to warn about hand-authored
 // configs, which we deliberately do not rewrite.
+// Rules are decoded one by one: sing-box accepts both a scalar and an array
+// for protocol / network / inbound (badoption.Listable) and a string range for
+// port, none of which our Rule models. Decoding the whole array at once let a
+// single such rule — canonical in the docs the expert slot is written from —
+// silently drop the advisory for every rule in the file.
 func FlatAddressOrRuleIndexes(data []byte) []int {
 	var cfg struct {
 		Route struct {
-			Rules []Rule `json:"rules"`
+			Rules []json.RawMessage `json:"rules"`
 		} `json:"route"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil
 	}
 	var out []int
-	for i, r := range cfg.Route.Rules {
+	for i, raw := range cfg.Route.Rules {
+		var r Rule
+		if err := json.Unmarshal(raw, &r); err != nil {
+			continue
+		}
 		if r.Type == "" && normalizeAddressOrRule(r).Type != "" {
 			out = append(out, i)
 		}

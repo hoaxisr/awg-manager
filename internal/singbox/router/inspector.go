@@ -203,12 +203,16 @@ func InspectWithProgress(input InspectInput, rules []Rule, ruleSets []RuleSet, f
 					emit(InspectProgress{Phase: "terminal_match", Message: fmt.Sprintf("Найдено финальное правило #%d → reject", i), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 				}
 			}
-		case "sniff", "hijack-dns":
+		case "sniff", "hijack-dns", "route-options", "resolve":
 			if emit != nil {
 				emit(InspectProgress{Phase: "non_terminal_match", Message: fmt.Sprintf("Нефинальное совпадение в правиле #%d", i), RuleIndex: intPtr(i), RuleTotal: intPtr(len(rules))})
 			}
 			// Non-terminal: matched but does not set Destination; walk
-			// continues so a later rule (or final) can claim it.
+			// continues so a later rule (or final) can claim it. The system
+			// UDP-timeout rule (`route-options` + network:udp) sits in every
+			// router's prefix and matches every UDP probe — treating it as
+			// terminal made the inspector answer "DIRECT" for all of them and
+			// hid every user rule behind it.
 		default:
 			// Unknown action — be conservative, treat as terminal route
 			// on the rule's outbound to surface it in the UI.

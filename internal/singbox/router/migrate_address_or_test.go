@@ -121,6 +121,33 @@ func TestMigrateAddressOrRules_SkipsUserSlot(t *testing.T) {
 	}
 }
 
+// В sing-box protocol/network/inbound — Listable: и скаляр, и массив
+// валидны, а документация показывает массивную форму, так что в ручном
+// слоте она встречается сплошь. Разбор конфига целиком спотыкался на таком
+// правиле и гасил предупреждения по ВСЕМУ файлу.
+func TestFlatAddressOrRuleIndexes_TolerantParsing(t *testing.T) {
+	raw := []byte(`{"route":{"rules":[
+	  {"protocol":["dns"],"outbound":"direct"},
+	  {"rule_set":["geosite-x"],"ip_cidr":["1.2.3.0/24"],"outbound":"vpn"},
+	  {"port":["50000:50100"],"outbound":"direct"},
+	  {"rule_set":["geosite-y"],"domain_suffix":["a.com"],"outbound":"vpn"}
+	]}}`)
+	got := FlatAddressOrRuleIndexes(raw)
+	want := []int{1, 3}
+	if len(got) != len(want) {
+		t.Fatalf("FlatAddressOrRuleIndexes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FlatAddressOrRuleIndexes = %v, want %v", got, want)
+		}
+	}
+
+	if idx := FlatAddressOrRuleIndexes([]byte(`{"route":{"rules":"мусор"}}`)); idx != nil {
+		t.Errorf("битые правила: %v, want nil", idx)
+	}
+}
+
 func TestMigrateAddressOrRules_MissingDir(t *testing.T) {
 	changed, err := MigrateAddressOrRules(filepath.Join(t.TempDir(), "nope"))
 	if err != nil {

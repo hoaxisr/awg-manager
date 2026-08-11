@@ -104,6 +104,27 @@ func TestInspect_InboundBlocksMatch(t *testing.T) {
 	}
 }
 
+// Системное правило UDP-таймаута (`route-options`) стоит в префиксе КАЖДОГО
+// роутера и совпадает по network=udp. Оно ничего не маршрутизирует — движок
+// продолжает обход, — поэтому инспектор не имеет права объявлять его
+// финальным: иначе любая UDP-проверка утыкается в него и отчитывается
+// «DIRECT», затеняя все пользовательские правила.
+func TestInspect_RouteOptionsIsNotTerminal(t *testing.T) {
+	rules := []Rule{
+		{Action: "sniff"},
+		{Action: "route-options", Network: "udp", UDPTimeout: "5m"},
+		{DomainSuffix: []string{"google.com"}, Action: "route", Outbound: "vpn"},
+	}
+
+	got := Inspect(InspectInput{Domain: "google.com", Protocol: "udp"}, rules, nil, "direct", "", nil)
+	if got.MatchedRule != 2 || got.Destination != "vpn" {
+		t.Errorf("UDP-проверка: matched=%d dest=%q, want 2/vpn", got.MatchedRule, got.Destination)
+	}
+	if !got.Matches[1].Matched {
+		t.Errorf("правило route-options обязано отчитаться совпадением по network: %+v", got.Matches[1])
+	}
+}
+
 // ip_is_private движок кладёт в группу адреса назначения, значит оно
 // OR-ится с ip_cidr и доменами, а не сужает правило.
 func TestInspect_IPIsPrivateJoinsAddressGroup(t *testing.T) {
