@@ -111,14 +111,13 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 	confData := config.GenerateForExport(stored)
 
 	// NDMS RCI-импорт отвергает IPv6-endpoint в .conf («"WireguardN": invalid
-	// endpoint format») и создание падает целиком. Endpoint на этапе create —
-	// временный: Start переставляет его в любом случае (127.0.0.1:proxy у
-	// kmod-пути, реальный у нативного ASC). Для v6 подменяем строку Endpoint
-	// заглушкой; v4 и hostname NDMS принимает — оставляем как есть.
-	if EndpointHostIsIPv6(stored.Peer.Endpoint) {
-		confData = replaceConfEndpointLine(confData, ndmsEndpointPlaceholder)
-		o.appLog.Info("create", stored.Name,
-			"IPv6 endpoint: импорт .conf с endpoint-заглушкой (NDMS не принимает v6 в импорте), реальный endpoint выставит Start")
+	// endpoint format») и создание падает целиком, а доменное имя он принимает,
+	// но при неудаче своего резолва молча не поднимает интерфейс (#702).
+	// Endpoint на этапе create в любом случае временный: Start переставляет его
+	// (127.0.0.1:proxy у kmod-пути, реальный у нативного ASC).
+	if ep := o.importConfEndpoint(stored); ep != "" {
+		confData = replaceConfEndpointLine(confData, ep)
+		o.appLog.Info("create", stored.Name, "импорт .conf с endpoint "+ep+" вместо "+stored.Peer.Endpoint)
 	}
 
 	// Import via RCI — NDMS creates the interface and parses all params.

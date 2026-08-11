@@ -4,6 +4,8 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // ndmsEndpointPlaceholder — endpoint-заглушка для NDMS: RCI не принимает
@@ -93,6 +95,37 @@ func splitEndpointHost(addr string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// importConfEndpoint возвращает адрес, которым надо подменить строку
+// `Endpoint` в .conf'е перед RCI-импортом; "" — оставить как есть.
+//
+// Доменное имя в конфиг NDMS не отдаём (#702): туннель, созданный и ни разу
+// не запущенный, демон после ребута не поднимает (decideBoot пропускает
+// !Enabled) — интерфейс поднимет сам NDMS, а при неудаче СВОЕГО резолва он
+// молча не поднимает его вовсе, без единой строки в журнале роутера.
+// IPv6 (литерал или результат резолва) NDMS в импорте отвергает целиком
+// («invalid endpoint format») — для него заглушка, реальный адрес выставит
+// Start. Резолв не удался — оставляем имя: туннель ещё ни разу не работал,
+// прежнего адреса не существует.
+func (o *OperatorNativeWG) importConfEndpoint(stored *storage.AWGTunnel) string {
+	if EndpointHostIsIPv6(stored.Peer.Endpoint) {
+		return ndmsEndpointPlaceholder
+	}
+	host, ok := splitEndpointHost(stored.Peer.Endpoint)
+	if !ok || net.ParseIP(host) != nil {
+		return "" // пустой/мусорный endpoint или v4-литерал — резолвить нечего
+	}
+	ip, port, err := o.resolveEndpointWithFallback(stored)
+	if err != nil {
+		o.appLog.Warn("create", stored.Name,
+			"резолв "+stored.Peer.Endpoint+" не удался, в .conf уходит имя: "+err.Error())
+		return ""
+	}
+	if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
+		return ndmsEndpointPlaceholder
+	}
+	return net.JoinHostPort(ip, strconv.Itoa(port))
 }
 
 // replaceConfEndpointLine переписывает строку `Endpoint = ...` в секции

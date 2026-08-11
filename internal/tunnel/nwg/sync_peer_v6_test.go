@@ -146,10 +146,13 @@ func TestSyncPeer_V6ToV4LiteralUnregistersGuard(t *testing.T) {
 	}
 }
 
-// Резолв hostname'а упал, а параметры пира изменились: устаревший реестр
-// стража снимается (wg set по старому ключу воскресил бы удалённого пира).
-// Hostname уходит в RCI как раньше.
-func TestSyncPeer_ResolveFailedChangedPeerDropsStaleGuard(t *testing.T) {
+// Резолв hostname'а упал, а ключ пира сменился: батч УДАЛИЛ бы старого пира
+// и создал нового, а адреса для него нет — прежний ушёл бы вместе со старым
+// пиром, а имя отдавать нельзя (NDMS при неудаче своего резолва молча не
+// поднимает интерфейс, #702). Смену не применяем вовсе: ошибка наружу,
+// handler fail-closed не сохранит storage. В NDMS остаётся прежний пир,
+// поэтому реестр стража с OLDKEY не устарел — снимать его нечего.
+func TestSyncPeer_ResolveFailedChangedKeyRejectsSync(t *testing.T) {
 	stubResolveGap(t)
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
@@ -163,18 +166,22 @@ func TestSyncPeer_ResolveFailedChangedPeerDropsStaleGuard(t *testing.T) {
 		NWGIndex: 5,
 		Peer:     storage.AWGPeer{PublicKey: "NEWKEY", Endpoint: "vpn.example.com:51820"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, "OLDKEY"); err != nil {
-		t.Fatalf("SyncPeer: %v", err)
+	err := op.SyncPeer(context.Background(), stored, "OLDKEY")
+	if err == nil {
+		t.Fatal("смена ключа пира без резолвнутого endpoint'а должна отвергаться")
+	}
+	if !strings.Contains(err.Error(), "смена ключа пира не применена") {
+		t.Fatalf("неожиданная ошибка: %v", err)
 	}
 
-	if !strings.Contains(strings.Join(cs.bodies, "\n"), "vpn.example.com:51820") {
-		t.Fatalf("hostname must reach RCI unchanged on resolve failure:\n%s", strings.Join(cs.bodies, "\n"))
+	if len(cs.bodies) != 0 {
+		t.Fatalf("в NDMS ничего уходить не должно:\n%s", strings.Join(cs.bodies, "\n"))
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("wg set must not run on resolve failure: %v", *calls)
 	}
-	if op.guardHas("awg20") {
-		t.Fatal("stale guard entry must be unregistered when peer changed and resolve failed")
+	if !op.guardHas("awg20") {
+		t.Fatal("пир в NDMS не менялся — реестр стража снимать нельзя")
 	}
 }
 

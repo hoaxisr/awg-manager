@@ -146,6 +146,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 	rciEndpoint := stored.Peer.Endpoint
 	kernelEndpoint, kernelV6 := canonicalV6Endpoint(stored.Peer.Endpoint)
 	v4Confirmed := false
+	resolvedV4 := "" // резолв hostname'а: и в RCI, и в реестр стража (#702)
 	if !kernelV6 {
 		host, ok := splitEndpointHost(stored.Peer.Endpoint)
 		switch {
@@ -163,14 +164,51 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 					kernelV6 = true
 				} else {
 					v4Confirmed = true
+					resolvedV4 = net.JoinHostPort(ip, strconv.Itoa(port))
+					rciEndpoint = resolvedV4
 				}
+			} else if !o.supportsASC() {
+				// Proxy-путь: endpoint в конфиге NDMS всё равно не наш —
+				// см. общее правило ниже. Неудача резолва здесь ничего
+				// не решает, ошибку не поднимаем.
+				rciEndpoint = ""
+			} else if previousPublicKey != "" && previousPublicKey != stored.Peer.PublicKey {
+				// Особый угол: ключ пира сменился, значит батч ниже
+				// УДАЛИТ старого пира (CmdWireguardPeerNo) и создаст
+				// нового. Опустить endpoint здесь нельзя — прежнего
+				// адреса не останется вовсе, пир будет без endpoint'а,
+				// и туннель умрёт до ручного вмешательства. Отдавать имя
+				// тоже нельзя (см. ниже). Единственный честный выход —
+				// не применять смену: handler fail-closed не сохранит
+				// storage, и пользователь увидит ошибку вместо тихой
+				// поломки.
+				return fmt.Errorf("sync peer: резолв %s не удался, смена ключа пира не применена: %w",
+					stored.Peer.Endpoint, err)
+			} else {
+				// Резолв не удался, но ключ прежний — пир в конфиге NDMS
+				// останется вместе со своим endpoint'ом. Имя не отдаём:
+				// при неудаче собственного резолва NDMS молча не поднимает
+				// интерфейс, без единой строки в журнале роутера (#702).
+				// Пустой endpoint команда просто опустит
+				// (payloads.CmdWireguardPeer) — в конфиге останется
+				// прежний адрес, а актуальный доведёт страж или Start.
+				o.appLog.Warn("sync-peer", ndmsName,
+					"резолв "+stored.Peer.Endpoint+" не удался — endpoint в NDMS оставлен прежним: "+err.Error())
+				rciEndpoint = ""
 			}
-			// Ошибка резолва: ни v4, ни v6 не подтверждены — hostname
-			// уходит в RCI как раньше, судьба стража решается ниже.
 		}
 	}
 	if kernelV6 {
 		rciEndpoint = ndmsEndpointPlaceholder
+	}
+	// Proxy-путь: в конфиге NDMS обязан стоять 127.0.0.1:<порт слота>, а
+	// реальный адрес сервера живёт в слоте awg_proxy.ko. Endpoint'ом там
+	// владеют startProxy и SyncKmodSlot — SyncPeer его не трогает вовсе.
+	// Раньше сюда уходило доменное имя, и правка полей пира, которых нет
+	// в kmodShapingChanged (AllowedIPs, keepalive, preshared-key), уводила
+	// ядро слать хендшейки мимо прокси — без обфускации и без лечения.
+	if !o.supportsASC() {
+		rciEndpoint = ""
 	}
 	peerCfg := payloads.PeerConfig{
 		PublicKey: stored.Peer.PublicKey,

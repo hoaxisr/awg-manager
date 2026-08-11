@@ -1,6 +1,7 @@
 package nwg
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -123,5 +124,66 @@ func TestReplaceConfEndpointLine_PeerSectionOnly(t *testing.T) {
 	}
 	if !strings.Contains(patched, "[Peer]\nPublicKey = k\nEndpoint = "+ndmsEndpointPlaceholder) {
 		t.Fatalf("[Peer] Endpoint must be substituted:\n%s", patched)
+	}
+}
+
+// Что уходит в строку Endpoint при RCI-импорте .conf. Доменное имя туда
+// попадать не должно: туннель, созданный и ни разу не запущенный, поднимает
+// после ребута сам NDMS, а при неудаче СВОЕГО резолва он молча не поднимает
+// интерфейс — ни ошибки, ни строки в журнале (#702).
+func TestImportConfEndpoint(t *testing.T) {
+	stubResolveGap(t)
+	cases := []struct {
+		name     string
+		endpoint string
+		resolve  func(string) (string, int, error)
+		want     string
+	}{
+		{
+			name:     "v4-литерал — подменять нечего",
+			endpoint: "1.2.3.4:51820",
+			want:     "",
+		},
+		{
+			name:     "v6-литерал — заглушка (импорт с v6 падает целиком)",
+			endpoint: "[2a02::1]:51820",
+			want:     ndmsEndpointPlaceholder,
+		},
+		{
+			name:     "hostname → v4: в .conf уходит адрес",
+			endpoint: "vpn.example.com:51820",
+			resolve:  func(string) (string, int, error) { return "203.0.113.9", 51820, nil },
+			want:     "203.0.113.9:51820",
+		},
+		{
+			name:     "hostname → v6: заглушка, реальный endpoint выставит Start",
+			endpoint: "vpn.example.com:51820",
+			resolve:  func(string) (string, int, error) { return "2a02:6b8::feed:ff", 51820, nil },
+			want:     ndmsEndpointPlaceholder,
+		},
+		{
+			name:     "резолв упал — оставляем имя, прежнего адреса не существует",
+			endpoint: "vpn.example.com:51820",
+			resolve:  func(string) (string, int, error) { return "", 0, context.DeadlineExceeded },
+			want:     "",
+		},
+		{
+			name:     "пустой endpoint — резолвить нечего",
+			endpoint: "",
+			resolve: func(string) (string, int, error) {
+				t.Fatal("резолвер не должен вызываться")
+				return "", 0, nil
+			},
+			want: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			op := newTestOperator(c.resolve)
+			stored := &storage.AWGTunnel{ID: "awg1", Peer: storage.AWGPeer{Endpoint: c.endpoint}}
+			if got := op.importConfEndpoint(stored); got != c.want {
+				t.Fatalf("importConfEndpoint(%q) = %q, want %q", c.endpoint, got, c.want)
+			}
+		})
 	}
 }
