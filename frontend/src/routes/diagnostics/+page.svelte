@@ -1,14 +1,16 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { TunnelListItem, SingboxTunnel, Subscription } from '$lib/types';
 	import type { DiagnosticsTargetSeed } from '$lib/stores/diagnostics';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { Tabs } from '$lib/components/ui';
+	import { readTabParam, writeTabParam } from '$lib/utils/tabUrlSync';
 	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { settings, usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import ConnectionsTab from './ConnectionsTab.svelte';
 	import ChecksTab from './ChecksTab.svelte';
 	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
@@ -19,7 +21,7 @@
 	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns';
 
 	function initialDiagnosticsTab(): ActiveTab {
-		const tab = $page.url.searchParams.get('tab');
+		const tab = readTabParam();
 
 		if (tab === 'monitoring') return 'monitoring';
 		if (tab === 'connections') return 'connections';
@@ -43,7 +45,12 @@
 	}
 
 	let activeTab = $state<ActiveTab>(initialDiagnosticsTab());
+	let tabUrlConsumed = $state(false);
 	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
+
+	function isDiagnosticsTab(id: string): id is ActiveTab {
+		return diagnosticsTabs.some((t) => t.id === id);
+	}
 
 	const diagnosticsTabs = $derived.by((): { id: ActiveTab; label: string }[] => {
 		const base: { id: ActiveTab; label: string }[] = [
@@ -65,20 +72,36 @@
 	$effect(() => {
 		// Пока настройки не загружены usageLevel имеет fallback 'advanced'
 		// и guard может преждевременно сбросить awgConfig на logs + вычистить URL.
-		// Ждём загрузки settings — Tabs сам восстановит вкладку из URL.
+		// Ждём загрузки settings — inbound sync восстановит вкладку из URL.
 		if ($settings === null) return;
 		if ($usageLevel === 'expert') return;
 		if (activeTab === 'awgConfig' || activeTab === 'dns') {
 			activeTab = 'logs';
 		}
-		const tab = $page.url.searchParams.get('tab');
+		const tab = readTabParam();
 		if (tab === 'awgConfig' || tab === 'dns') {
-			const url = new URL($page.url);
-			url.searchParams.delete('tab');
-			const q = url.searchParams.toString();
-			const target = url.pathname + (q ? `?${q}` : '') + url.hash;
-			void goto(target, { replaceState: true, keepFocus: true, noScroll: true });
+			writeTabParam('logs', { defaultTab: 'logs' });
 		}
+	});
+
+	$effect(() => {
+		const fromUrl = $page.url.searchParams.get('tab');
+		if (fromUrl == null) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (fromUrl === untrack(() => activeTab)) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (!isDiagnosticsTab(fromUrl)) return;
+		tabUrlConsumed = true;
+		activeTab = fromUrl;
+	});
+
+	$effect(() => {
+		if (!tabUrlConsumed) return;
+		writeTabParam(activeTab, { defaultTab: 'logs' });
 	});
 
 	// Legacy URL sanitizer — rewrite ?tab=tests / ?tab=dnscheck (which used
@@ -173,13 +196,13 @@
 <PageContainer width="full">
 	<PageHeader title="Инструменты" />
 
-	<Tabs
-		tabs={diagnosticsTabs}
-		active={activeTab}
-		onchange={(id) => (activeTab = id as ActiveTab)}
-		urlParam="tab"
-		defaultTab="logs"
-	/>
+	{#if !isSidebarNavActive($usageLevel, $layoutMode)}
+		<Tabs
+			tabs={diagnosticsTabs}
+			active={activeTab}
+			onchange={(id) => (activeTab = id as ActiveTab)}
+		/>
+	{/if}
 
 	{#if activeTab === 'logs'}
 		<!-- Журнал — только действия приложения; логи sing-box смотрятся на своих

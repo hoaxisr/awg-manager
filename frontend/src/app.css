@@ -277,6 +277,7 @@ html.light, [data-theme="light"] {
   --layout-gutter-y-top: var(--layout-gutter-y);
   --layout-gutter-y-bottom: var(--layout-gutter-y);
   --header-gutter-x: 1.25rem;
+  --sidebar-width: 240px;
 
   /* ─── sb-router redesign aliases (design tokens.css mapping) ─── */
   /* (--bg-*, --text-*, --border*, --accent, --accent-hover, --success/error/warning/info
@@ -347,6 +348,7 @@ html, body {
 }
 
 #app {
+  height: 100%;
   min-height: 100%;
   display: flex;
   flex-direction: column;

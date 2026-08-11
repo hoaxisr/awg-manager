@@ -5,7 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
-	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
+	import { layoutMode, isCompactLayoutActive, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import {
 		tunnelDashboardLayout,
 		tunnelDashboardMode,
@@ -57,7 +57,7 @@
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
 	import { Modal } from '$lib/components/ui';
-	import { AppHeader } from '$lib/components/layout';
+	import { AppHeader, AppSidebar } from '$lib/components/layout';
 	import '../app.css';
 
 	let { children }: { children: Snippet } = $props();
@@ -340,7 +340,7 @@
 	// Sync usage level and compact layout to <html> for gutter tokens.
 	$effect(() => {
 		document.documentElement.setAttribute('data-usage-level', $usageLevel);
-		const compact = isCompactLayoutActive($usageLevel, $compactLayout);
+		const compact = isCompactLayoutActive($usageLevel, $layoutMode);
 		document.documentElement.setAttribute('data-layout-compact', compact ? 'true' : 'false');
 	});
 
@@ -371,7 +371,7 @@
 
 	onMount(async () => {
 		theme.init();
-		compactLayout.init();
+		layoutMode.init();
 		settingsSectionIconMode.init();
 		serviceLetterIcons.init();
 		showSummary.init();
@@ -429,9 +429,14 @@
 	{#if !$isAuthenticated && $page.url.pathname !== '/terms'}
 		<LoginForm />
 	{:else}
-		<main class="main">
-			{@render children()}
-		</main>
+		<div class="app-body">
+			{#if $isAuthenticated && isSidebarNavActive($usageLevel, $layoutMode)}
+				<AppSidebar bind:mobileOpen={mobileMenuOpen} />
+			{/if}
+			<main class="main">
+				{@render children()}
+			</main>
+		</div>
 
 		<div class="toast-container">
 			{#if $notifications.length > 1}
@@ -534,11 +539,22 @@
 		to { transform: rotate(360deg); }
 	}
 
+	.app-body {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		width: 100%;
+		overflow: hidden;
+	}
+
 	.main {
 		flex: 1;
+		min-width: 0;
 		width: 100%;
 		display: flex;
 		flex-direction: column;
+		overflow-x: hidden;
+		overflow-y: auto;
 	}
 
 	/* v2.8.2: колонка контента 960px, боковые поля 1rem (компактная ширина). */

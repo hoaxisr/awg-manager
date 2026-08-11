@@ -21,19 +21,20 @@
 	import {
 		TrafficSparkline,
 		Badge,
-		Tabs,
 		Toggle,
 		StatusDot,
 		Stat,
 		StatStrip,
 		LayoutViewToggle,
 		TableSortHeader,
+		Tabs,
 	} from '$lib/components/ui';
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
@@ -43,6 +44,7 @@
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
+	import { writeTabParam } from '$lib/utils/tabUrlSync';
 	import type { DashboardFlatContext } from '$lib/components/tunnels/dashboardFlatContext';
 	import type { TunnelPageModalsContext } from '$lib/components/tunnels/tunnelPageModalsContext';
 	import {
@@ -553,6 +555,7 @@
 
 	// Tabs
 	let activeTab = $state<TunnelTab>('awg');
+	let tabUrlConsumed = $state(false);
 	let awgViewMode = $state<AwgTunnelViewMode>('compact');
 	let awgViewModeReady = false;
 	let isAwgMobile = $state(readTunnelMobileLayout());
@@ -776,6 +779,31 @@
 		if (!tunnelTabs.some((t) => tunnelTabLeafIds(t).includes(activeTab))) {
 			activeTab = 'awg';
 		}
+	});
+
+	// ?tab= sync (replaces Tabs urlParam when horizontal chips are in the sidebar).
+	$effect(() => {
+		if (dashboardOn) {
+			tabUrlConsumed = true;
+			return;
+		}
+		const fromUrl = $page.url.searchParams.get('tab');
+		if (fromUrl == null) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (fromUrl === untrack(() => activeTab)) {
+			tabUrlConsumed = true;
+			return;
+		}
+		if (!tunnelTabs.some((t) => tunnelTabLeafIds(t).includes(fromUrl))) return;
+		tabUrlConsumed = true;
+		activeTab = fromUrl as TunnelTab;
+	});
+
+	$effect(() => {
+		if (dashboardOn || !tabUrlConsumed) return;
+		writeTabParam(activeTab, { defaultTab: 'awg' });
 	});
 
 	onMount(() => {
@@ -1710,10 +1738,6 @@
 	<WelcomeBanner />
 	{#if loading}
 		<div aria-hidden="true">
-			{#if !dashboardOn}
-				<!-- полоса на месте Tabs -->
-				<div class="skeleton" style="height: 2rem; width: 260px; margin-bottom: 14px;"></div>
-			{/if}
 			{#if !dashboardOn && awgViewMode === 'list' && !isAwgMobile}
 				<!-- desktop-таблица: строки-полоски (mobile list рендерится карточками — ветка ниже) -->
 				<div class="skel-table">
@@ -1745,13 +1769,11 @@
 	{:else}
 		{#if dashboardOn}
 			<DashboardFlatSection ctx={dashboardFlatCtx} />
-		{:else}
+		{:else if !isSidebarNavActive($usageLevel, $layoutMode)}
 			<Tabs
 				tabs={tunnelTabs}
 				active={activeTab}
 				onchange={(id) => (activeTab = id as TunnelTab)}
-				urlParam="tab"
-				defaultTab="awg"
 			/>
 		{/if}
 

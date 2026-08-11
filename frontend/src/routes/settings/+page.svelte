@@ -702,8 +702,8 @@ $effect(() => {
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Настройки" />
 	{#if loading}
+		<PageHeader title="Настройки" />
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
@@ -712,6 +712,7 @@ $effect(() => {
 		<div class="settings-grid">
 			<aside class="settings-left">
 				<div class="settings-left-sticky">
+				<PageHeader title="Настройки" />
 				<SystemInfoGrid
 					{systemInfo}
 					usageLevel={settings.usageLevel}
@@ -1151,6 +1152,11 @@ $effect(() => {
 		min-width: 0;
 	}
 
+	/* Align right column with left content under the title, not with «Настройки». */
+	.settings-right {
+		padding-top: calc(1.5rem * 1.2 + var(--settings-gap));
+	}
+
 	/* Parent stretches with the grid; sticky lives on the inner block so
 	   the sidebar stays pinned for the whole right column, then leaves
 	   with the grid (Actions / footer below). No nested scroll. */
@@ -1159,8 +1165,14 @@ $effect(() => {
 		flex-direction: column;
 		gap: var(--settings-gap);
 		position: sticky;
-		top: calc(56px + 0.75rem);
+		/* Scroll container is <main>, not the viewport — don't offset for AppHeader. */
+		top: 0.75rem;
 		width: 100%;
+	}
+
+	.settings-left-sticky :global(.page-header) {
+		margin-bottom: 0;
+		min-height: calc(1.5rem * 1.2);
 	}
 
 	.modal-text {
@@ -1505,6 +1517,9 @@ $effect(() => {
 		}
 		.settings-left-sticky {
 			position: static;
+		}
+		.settings-right {
+			padding-top: 0;
 		}
 	}
 

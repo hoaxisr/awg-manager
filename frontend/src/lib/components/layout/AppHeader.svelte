@@ -5,10 +5,11 @@
 	import BrandLogoMark from './BrandLogoMark.svelte';
 	import NotificationCenter from './NotificationCenter.svelte';
 	import { usageLevel } from '$lib/stores/settings';
+	import { layoutMode, isSidebarNavActive } from '$lib/stores/layoutMode';
 	import type { ThemeState } from '$lib/stores/theme';
 	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
-	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal, ChevronRight } from 'lucide-svelte';
+	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal } from 'lucide-svelte';
 
 	type NavItem = {
 		section: Section;
@@ -136,6 +137,8 @@
 	/** Для Neo вторая ветка визуально тёмная, но `mode` остаётся dark ради color-scheme — в шапке показываем legacyMode */
 	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
 
+	const sidebarActive = $derived(isSidebarNavActive($usageLevel, $layoutMode));
+
 	const onSettingsPage = $derived($page.url.pathname.startsWith('/settings'));
 	const versionClickableOnSettings = $derived(
 		onSettingsPage && ($usageLevel === 'expert' || hasUpdate),
@@ -162,7 +165,11 @@
 </script>
 
 <header class="app-header" class:unauthenticated={!authenticated}>
-	<div class="header-inner">
+	<div
+		class="header-inner"
+		class:classic={!sidebarActive}
+		class:sidebar-mode={sidebarActive}
+	>
 		<div class="brand-group">
 			<a href="/" class="brand" aria-label="AWG Manager" onclick={closeMobileMenu}>
 				<BrandLogoMark />
@@ -212,7 +219,7 @@
 			{/if}
 		</div>
 
-		{#if authenticated}
+		{#if authenticated && !sidebarActive}
 			<nav class="nav" aria-label="Главная навигация">
 				<LegacyTabs value={currentRoute} onChange={navigate} variant="underline">
 					{#each visibleItems as item (item.section)}
@@ -220,7 +227,7 @@
 					{/each}
 				</LegacyTabs>
 			</nav>
-		{:else}
+		{:else if !authenticated && !sidebarActive}
 			<div class="nav-spacer"></div>
 		{/if}
 
@@ -254,11 +261,17 @@
 			{/if}
 
 			{#if authenticated && !authDisabled}
-				<span class="logout-desktop">
+				{#if sidebarActive}
 					<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
 						<LogOut size={16} aria-hidden="true" />
 					</IconButton>
-				</span>
+				{:else}
+					<span class="logout-desktop">
+						<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
+							<LogOut size={16} aria-hidden="true" />
+						</IconButton>
+					</span>
+				{/if}
 			{/if}
 
 			{#if authenticated}
@@ -279,7 +292,7 @@
 		</div>
 	</div>
 
-	{#if mobileMenuOpen && authenticated}
+	{#if mobileMenuOpen && authenticated && !sidebarActive}
 		<button
 			type="button"
 			class="mobile-backdrop"
@@ -321,14 +334,23 @@
 	}
 
 	.header-inner {
-		max-width: 1120px;
-		margin: 0 auto;
 		padding: 0 var(--header-gutter-x);
 		height: 56px;
-		display: grid;
-		grid-template-columns: auto 1fr auto;
 		align-items: center;
 		gap: 1rem;
+	}
+
+	.header-inner.sidebar-mode {
+		width: 100%;
+		display: flex;
+		justify-content: space-between;
+	}
+
+	.header-inner.classic {
+		max-width: 1120px;
+		margin: 0 auto;
+		display: grid;
+		grid-template-columns: auto 1fr auto;
 	}
 
 	.brand-group {
@@ -388,9 +410,12 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
-		justify-self: end;
 		flex-shrink: 0;
 		overflow: visible;
+	}
+
+	.header-inner.classic .user-tools {
+		justify-self: end;
 	}
 
 	.user-chip {
@@ -486,7 +511,6 @@
 		}
 	}
 
-	/* Hamburger — hidden on desktop */
 	.hamburger {
 		display: none;
 		width: 28px;
@@ -527,20 +551,8 @@
 	}
 
 	@media (max-width: 1050px) {
-		.nav {
-			display: none;
-		}
-
-		.nav-spacer {
-			display: none;
-		}
-
 		.hamburger {
 			display: inline-flex;
-		}
-
-		.header-inner {
-			grid-template-columns: minmax(0, 1fr) auto;
 		}
 
 		.brand-group {
@@ -548,6 +560,18 @@
 		}
 
 		.app-header.unauthenticated .wordmark {
+			display: none;
+		}
+
+		.header-inner.classic {
+			grid-template-columns: minmax(0, 1fr) auto;
+		}
+
+		.nav {
+			display: none;
+		}
+
+		.nav-spacer {
 			display: none;
 		}
 
@@ -607,7 +631,6 @@
 			text-align: left;
 			cursor: pointer;
 			color: var(--color-error);
-			/* не трогаем border-left — тот же 3px-запас, что у остальных пунктов */
 			border-top: none;
 			border-right: none;
 			border-bottom: none;
