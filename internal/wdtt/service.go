@@ -54,6 +54,8 @@ type Service struct {
 	policyMarks     NDMSPolicyMarkGetter
 	ingressEnsurer  IngressRefEnsurer
 
+	linkedEndpointReconcile func() (int, error)
+
 	wgIfaceMu        sync.Mutex
 	wgIfaceFlagKnown bool
 	wgIfaceFlagOK    bool
@@ -179,6 +181,10 @@ func (s *Service) SetInterfaceChecker(c InterfaceChecker) {
 
 func (s *Service) SetRelayProbe(p RelayProbe) {
 	s.relayProbe = p
+}
+
+func (s *Service) SetLinkedEndpointReconcile(fn func() (int, error)) {
+	s.linkedEndpointReconcile = fn
 }
 
 func (s *Service) SetInstallSpecs(specs ArchSpecs) {
@@ -467,6 +473,13 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 	if s.appLog != nil {
 		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
 	}
+	if s.linkedEndpointReconcile != nil {
+		if n, err := s.linkedEndpointReconcile(); err != nil && s.appLog != nil {
+			s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
+		} else if n > 0 && s.appLog != nil {
+			s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+		}
+	}
 	return cfg, nil
 }
 
@@ -558,6 +571,7 @@ func (s *Service) StartClientInstance(id string) error {
 		}
 	}
 
+	freeStaleClientListenPort(s.clientBin, cfg.Listen)
 	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg, tunFdSock)); err != nil {
 		if isRaw {
 			_ = s.teardownClientOpkgTun(ctx, cfg)

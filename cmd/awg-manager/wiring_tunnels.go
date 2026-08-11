@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -227,7 +228,12 @@ func (a *app) setupServices() {
 	linkedTunnels := &proxyhealth.AWGLinkedTunnelResolver{Store: a.awgStore}
 	a.freeturnService.SetRelayProbe(relayProbe)
 	a.freeturnService.SetLinkedTunnelResolver(linkedTunnels)
+	reconcileLinked := func() (int, error) {
+		return backup.ReconcileLinkedEndpoints(a.dataDir, a.awgStore)
+	}
+	a.freeturnService.SetLinkedEndpointReconcile(reconcileLinked)
 	a.wdttService.SetRelayProbe(relayProbe)
+	a.wdttService.SetLinkedEndpointReconcile(reconcileLinked)
 	a.deferOnExit(a.freeturnService.Stop)
 	a.deferOnExit(a.wdttService.Stop)
 

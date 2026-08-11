@@ -52,6 +52,9 @@ type Service struct {
 	relayProbe    RelayProbe
 	linkedTunnels LinkedTunnelResolver
 
+	// После listen-repair синхронизирует endpoint linked AWG-туннелей.
+	linkedEndpointReconcile func() (int, error)
+
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
 	matchMu  sync.Mutex
@@ -135,6 +138,11 @@ func (s *Service) SetRelayProbe(p RelayProbe) {
 
 func (s *Service) SetLinkedTunnelResolver(r LinkedTunnelResolver) {
 	s.linkedTunnels = r
+}
+
+// SetLinkedEndpointReconcile wires AWG tunnel endpoint sync after listen-repair.
+func (s *Service) SetLinkedEndpointReconcile(fn func() (int, error)) {
+	s.linkedEndpointReconcile = fn
 }
 
 func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
@@ -555,6 +563,13 @@ func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
 	if s.appLog != nil {
 		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
 	}
+	if s.linkedEndpointReconcile != nil {
+		if n, err := s.linkedEndpointReconcile(); err != nil && s.appLog != nil {
+			s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
+		} else if n > 0 && s.appLog != nil {
+			s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+		}
+	}
 	return cfg, nil
 }
 
@@ -586,6 +601,7 @@ func (s *Service) StartClientInstance(id string) error {
 	if err := validateObfKey(cfg.ObfProfile, cfg.ObfKey); err != nil {
 		return err
 	}
+	freeStaleClientListenPort(s.clientBin, cfg.Listen)
 	if err := s.clientProcs.get(id).Start(buildClientArgs(cfg)); err != nil {
 		return err
 	}
