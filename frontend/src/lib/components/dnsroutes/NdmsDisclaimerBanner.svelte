@@ -71,7 +71,7 @@
 		<div class="ndms-ack" role="note">
 			<CircleCheck size={16} />
 			<span>Ограничения NDMS-маршрутизации приняты</span>
-			<button class="ack-link" onclick={() => (reopened = true)}>Показать</button>
+			<button type="button" class="ack-link" onclick={() => (reopened = true)}>Показать</button>
 		</div>
 	{:else}
 		<div class="ndms-disclaimer" role="note">
@@ -88,6 +88,7 @@
 							<div class="options">
 								{#each q.options as opt, k}
 									<button
+										type="button"
 										class="option"
 										class:correct={answers[i] === k && k === q.correct}
 										class:wrong={answers[i] === k && k !== q.correct}

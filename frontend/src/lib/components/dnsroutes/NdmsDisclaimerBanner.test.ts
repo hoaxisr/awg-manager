@@ -44,4 +44,12 @@ describe('NdmsDisclaimerBanner', () => {
 		expect(screen.getByText(/Ограничения NDMS-маршрутизации приняты/i)).toBeTruthy();
 		expect(screen.queryByRole('button', { name: /проверить себя/i })).toBeNull();
 	});
+
+	it('«Показать» разворачивает список ограничений без повторного квиза', async () => {
+		localStorage.setItem(KEY, '1');
+		render(NdmsDisclaimerBanner, { isOS5: true });
+		await fireEvent.click(screen.getByRole('button', { name: /Показать/i }));
+		expect(screen.getByText(/Политика по умолчанию/i)).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /проверить себя/i })).toBeNull();
+	});
 });
