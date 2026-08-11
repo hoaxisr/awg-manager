@@ -376,6 +376,7 @@
 	{:else}
 		<ProxyInstanceStatusBar
 			{running}
+			enabled={client.enabled ?? false}
 			meta={`listen ${listenMeta}`}
 			{saving}
 			{starting}
