@@ -32,11 +32,12 @@ export function syncActivePeer(c: WdttClientConfig): void {
 
 /** Switch WG/Raw and restore the peer saved for each mode. */
 export function switchConnMode(c: WdttClientConfig, next: ConnMode): void {
+	hydratePeerSlots(c);
 	const prev = modeOf(c);
-	if (prev === 'wg') c.peerWg = c.peer.trim();
-	else c.peerRaw = c.peer.trim();
+	if (prev === 'wg') c.peerWg = activePeerForMode(c);
+	else c.peerRaw = activePeerForMode(c);
 	c.connMode = next;
-	c.peer = next === 'raw' ? c.peerRaw?.trim() || c.peer : c.peerWg?.trim() || c.peer;
+	c.peer = activePeerForMode(c);
 }
 
 export function setPeerWg(c: WdttClientConfig, value: string): void {

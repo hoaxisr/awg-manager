@@ -7106,6 +7106,12 @@ definitions:
       peer:
         description: -peer, VPS host:dtls_port
         type: string
+      peerRaw:
+        description: VPS:Raw when connMode=raw
+        type: string
+      peerWg:
+        description: VPS:DTLS when connMode=wg
+        type: string
       policyPermits:
         description: PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются
           после рестарта awg-manager.
