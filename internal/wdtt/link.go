@@ -647,5 +647,7 @@ func ApplyImport(cfg ClientConfig, p ImportPayload) ClientConfig {
 	}
 	// Enabled = «пользователь запустил»; импорт сам по себе не запуск, поэтому
 	// флаг здесь не трогаем (иначе автостарт на бооте поднял бы неготовый клиент).
-	return cfg
+	// normalizePeers — здесь, а не только в normalizeClientConfig: обновление
+	// подписки сохраняет конфиг напрямую, мимо Update*-методов.
+	return normalizePeers(cfg)
 }

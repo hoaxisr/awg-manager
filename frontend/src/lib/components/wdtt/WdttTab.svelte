@@ -9,7 +9,7 @@
 	import ProxyPanelModeToggle from '../proxy-panel/ProxyPanelModeToggle.svelte';
 	import { linkedTunnelListenPort, patchWgConfEndpoint } from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
-	import { syncActivePeer } from '$lib/utils/wdttPeerMode';
+	import { setPeer } from '$lib/utils/wdttPeerMode';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import type {
@@ -172,7 +172,6 @@
 			connMode: c.connMode === 'raw' ? 'raw' : 'wg',
 			debug: !!c.debug
 		};
-		syncActivePeer(out);
 		return out;
 	}
 
@@ -654,11 +653,7 @@
 			const c = selectedClient.config;
 			const oldPeer = savedClient?.config.peer ?? '';
 			const listenPort = linkedTunnelListenPort(selectedClient.config.listen);
-			if (payload.peer) {
-				c.peer = payload.peer;
-				if ((c.connMode ?? 'wg') === 'raw') c.peerRaw = payload.peer;
-				else c.peerWg = payload.peer;
-			}
+			if (payload.peer) setPeer(c, payload.peer);
 			if (payload.password) c.password = payload.password;
 			if (payload.vkHashes?.length) c.vkHashes = payload.vkHashes.join(',');
 			if (payload.workers && payload.workers > 0) c.workers = payload.workers;

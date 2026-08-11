@@ -801,7 +801,7 @@ func normalizeClientConfig(cfg ClientConfig) ClientConfig {
 		cfg.VKAuthMode = DefaultClientConfig().VKAuthMode
 	}
 	cfg.ConnMode = normalizeConnMode(cfg.ConnMode)
-	return cfg
+	return normalizePeers(cfg)
 }
 
 func buildClientArgs(c ClientConfig, tunFdSock string) []string {

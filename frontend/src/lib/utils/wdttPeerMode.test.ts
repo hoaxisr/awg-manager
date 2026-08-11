@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WdttClientConfig } from '$lib/types';
-import {
-	activePeerForMode,
-	hydratePeerSlots,
-	switchConnMode,
-	syncActivePeer
-} from './wdttPeerMode';
+import { setPeer, setPeerRaw, setPeerWg, switchConnMode } from './wdttPeerMode';
 
 function cfg(partial: Partial<WdttClientConfig> = {}): WdttClientConfig {
 	return {
@@ -22,26 +17,34 @@ function cfg(partial: Partial<WdttClientConfig> = {}): WdttClientConfig {
 }
 
 describe('wdttPeerMode', () => {
-	it('switchConnMode preserves separate WG and Raw peers', () => {
+	it('переключение режима возвращает адрес, введённый для этого режима', () => {
 		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
-		hydratePeerSlots(c);
 		switchConnMode(c, 'raw');
-		c.peerRaw = '1.1.1.1:56003';
+		setPeer(c, '1.1.1.1:56003');
+
 		switchConnMode(c, 'wg');
 		expect(c.peer).toBe('1.1.1.1:56002');
 		switchConnMode(c, 'raw');
 		expect(c.peer).toBe('1.1.1.1:56003');
 	});
 
-	it('syncActivePeer writes active mode peer', () => {
-		const c = cfg({
-			connMode: 'raw',
-			peer: 'legacy:56002',
-			peerRaw: '1.1.1.1:56003',
-			peerWg: '1.1.1.1:56002'
-		});
-		syncActivePeer(c);
-		expect(c.peer).toBe('1.1.1.1:56003');
-		expect(activePeerForMode(c)).toBe('1.1.1.1:56003');
+	it('пустой слот даёт пустое поле, а не адрес соседнего режима', () => {
+		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
+		switchConnMode(c, 'raw');
+		expect(c.peer).toBe('');
+		expect(c.peerWg).toBe('1.1.1.1:56002');
+	});
+
+	it('правка активного слота уходит и в peer — иначе бэкенд её затрёт', () => {
+		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
+		setPeerWg(c, '2.2.2.2:56002');
+		expect(c.peer).toBe('2.2.2.2:56002');
+	});
+
+	it('правка неактивного слота peer не трогает', () => {
+		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
+		setPeerRaw(c, '1.1.1.1:56003');
+		expect(c.peer).toBe('1.1.1.1:56002');
+		expect(c.peerRaw).toBe('1.1.1.1:56003');
 	});
 });

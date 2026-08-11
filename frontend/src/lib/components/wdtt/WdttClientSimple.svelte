@@ -23,14 +23,7 @@
 		patchWgConfEndpoint
 	} from '$lib/utils/serverPeerOptions';
 	import { peersEqual } from '$lib/utils/wdttPeer';
-	import {
-		activePeerForMode,
-		hydratePeerSlots,
-		setPeerRaw,
-		setPeerWg,
-		switchConnMode,
-		syncActivePeer
-	} from '$lib/utils/wdttPeerMode';
+	import { setPeer, setPeerRaw, setPeerWg, switchConnMode } from '$lib/utils/wdttPeerMode';
 	import type {
 		WdttClientConfig,
 		WdttImportPayload,
@@ -109,12 +102,8 @@
 	let wizardOpen = $state(false);
 
 	const isRawMode = $derived((client.connMode ?? 'wg') === 'raw');
-	const peerWgDisplay = $derived(client.peerWg?.trim() ?? (isRawMode ? '' : client.peer.trim()));
-	const peerRawDisplay = $derived(client.peerRaw?.trim() ?? (isRawMode ? client.peer.trim() : ''));
-
-	$effect(() => {
-		hydratePeerSlots(client);
-	});
+	const peerWgDisplay = $derived(isRawMode ? (client.peerWg ?? '') : client.peer);
+	const peerRawDisplay = $derived(isRawMode ? client.peer : (client.peerRaw ?? ''));
 	const minWorkers = $derived(isRawMode ? 1 : 12);
 	const clampWorkers = (v: number) => Math.max(minWorkers, v || (isRawMode ? 1 : 24));
 	const rawNdmsIface = $derived(client.ndmsIface?.trim() || status?.ndmsIface?.trim() || '');
@@ -406,7 +395,6 @@
 		if (!canStart) return;
 		starting = true;
 		try {
-			syncActivePeer(client);
 			await onSave(client);
 			if (!running) await onToggle(true);
 		} finally {
@@ -416,11 +404,6 @@
 
 	function onConnModeChange(v: 'wg' | 'raw') {
 		switchConnMode(client, v);
-	}
-
-	function saveClient() {
-		syncActivePeer(client);
-		return onSave(client);
 	}
 </script>
 
@@ -514,23 +497,19 @@
 								label="Peer WG (DTLS)"
 								value={peerWgDisplay}
 								placeholder="1.2.3.4:56002"
-								onchange={(v) => setPeerWg(client, v)}
+								oninput={(v) => setPeerWg(client, v)}
 							/>
 							<Input
 								label="Peer Raw"
 								value={peerRawDisplay}
 								placeholder="1.2.3.4:56003"
-								onchange={(v) => setPeerRaw(client, v)}
+								oninput={(v) => setPeerRaw(client, v)}
 							/>
 						{:else}
 							<Input
 								value={client.peer}
 								placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'}
-								onchange={(v) => {
-									client.peer = v;
-									if (isRawMode) client.peerRaw = v;
-									else client.peerWg = v;
-								}}
+								oninput={(v) => setPeer(client, v)}
 							/>
 						{/if}
 						<SensitiveInput label="Пароль" bind:value={client.password} />
@@ -602,7 +581,7 @@
 			{canStart}
 			showWizardButton={opsMode}
 			onOpenWizard={() => (wizardOpen = true)}
-			onSave={() => saveClient()}
+			onSave={() => onSave(client)}
 			onToggle={onToggle}
 		>
 			{#snippet metaExtra()}
@@ -667,24 +646,20 @@
 							label="Peer WG (DTLS)"
 							value={peerWgDisplay}
 							placeholder="1.2.3.4:56002"
-							onchange={(v) => setPeerWg(client, v)}
+							oninput={(v) => setPeerWg(client, v)}
 						/>
 						<Input
 							label="Peer Raw"
 							value={peerRawDisplay}
 							placeholder="1.2.3.4:56003"
-							onchange={(v) => setPeerRaw(client, v)}
+							oninput={(v) => setPeerRaw(client, v)}
 						/>
 					</div>
 				{:else}
 					<Input
 						value={client.peer}
 						placeholder={isRawMode ? '1.2.3.4:56003' : '1.2.3.4:56002'}
-						onchange={(v) => {
-							client.peer = v;
-							if (isRawMode) client.peerRaw = v;
-							else client.peerWg = v;
-						}}
+						oninput={(v) => setPeer(client, v)}
 					/>
 				{/if}
 				<SensitiveInput label="Пароль" bind:value={client.password} />
@@ -726,7 +701,7 @@
 					{/if}
 				{/if}
 				<div class="wdtt-actions">
-					<Button variant="secondary" disabled={!canSave || saving} onclick={() => saveClient()}>Сохранить</Button>
+					<Button variant="secondary" disabled={!canSave || saving} onclick={() => onSave(client)}>Сохранить</Button>
 					{#if onRevert}
 						<Button variant="ghost" onclick={onRevert}>Отменить</Button>
 					{/if}
