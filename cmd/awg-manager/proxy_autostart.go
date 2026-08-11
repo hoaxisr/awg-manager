@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/backup"
@@ -18,17 +17,8 @@ func (a *app) resumeEnabledProxyClients(reason string) {
 		return
 	}
 	a.bootLog.Info("startup", "", "proxy autostart: "+reason)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		a.freeturnService.ResumeEnabled()
-	}()
-	go func() {
-		defer wg.Done()
-		a.wdttService.ResumeEnabled()
-	}()
-	wg.Wait()
+	go a.freeturnService.ResumeEnabled()
+	go a.wdttService.ResumeEnabled()
 }
 
 // scheduleProxyClientAutostart откладывает автостарт до готовности WAN/NDMS и
@@ -44,19 +34,18 @@ func (a *app) scheduleProxyClientAutostart(trigger string) {
 		case <-time.After(dnsSettle):
 		}
 		a.resumeEnabledProxyClients(trigger)
-		a.reconcileLinkedEndpoints(trigger + "-post-autostart")
 		select {
 		case <-a.shutdownCtx.Done():
 			return
 		case <-time.After(30 * time.Second):
 		}
 		a.resumeEnabledProxyClients(trigger + "-retry")
-		a.reconcileLinkedEndpoints(trigger + "-retry-post-autostart")
 	}()
 }
 
 // reconcileLinkedEndpoints синхронизирует Endpoint linked-туннелей с listen
-// прокси-клиентов из конфига (listen-repair мог сменить порт при автостарте).
+// прокси-клиентов. Один вызов на бут: listen назначается при создании клиента,
+// а не при старте процесса, поэтому повторять после автостарта незачем.
 func (a *app) reconcileLinkedEndpoints(scope string) {
 	n, err := backup.ReconcileLinkedEndpoints(a.dataDir, a.awgStore)
 	if a.bootLog == nil {

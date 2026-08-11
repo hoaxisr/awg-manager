@@ -230,8 +230,8 @@ func (a *app) startBootSequence() {
 
 			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
 			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
-			// reconcile endpoint'ов — после listen-repair внутри scheduleProxyClientAutostart.
 			a.scheduleProxyClientAutostart("cold-boot")
+			a.reconcileLinkedEndpoints("startup")
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -264,6 +264,7 @@ func (a *app) startBootSequence() {
 		if backup.ConsumePostRestoreMarker(a.dataDir) {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
+			a.reconcileLinkedEndpoints("post-restore")
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
 			a.scheduleProxyClientAutostart("post-restore")
@@ -278,6 +279,7 @@ func (a *app) startBootSequence() {
 		// Как на cold-boot: DNS/backend WG могут быть ещё не готовы сразу после
 		// opkg upgrade; отложенный автостарт с повторами надёжнее мгновенного resume.
 		a.scheduleProxyClientAutostart("daemon-restart")
+		a.reconcileLinkedEndpoints("startup")
 	}
 
 }

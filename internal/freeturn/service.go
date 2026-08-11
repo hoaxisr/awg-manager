@@ -52,8 +52,9 @@ type Service struct {
 	relayProbe    RelayProbe
 	linkedTunnels LinkedTunnelResolver
 
-	// После listen-repair синхронизирует endpoint linked AWG-туннелей.
-	linkedEndpointReconcile func() (int, error)
+	// После listen-repair доводит новый listen до Endpoint linked AWG-туннелей
+	// (не только в хранилище, но и на живом интерфейсе — см. api.SyncLinkedTunnelEndpoints).
+	linkedEndpointSync func(clientID, listen string) (int, error)
 
 	// Кеш binariesMatchSpecs: сверка хеширует оба бинаря (~21 МБ), а
 	// статус опрашивается раз в 2 секунды, пока открыта вкладка.
@@ -140,9 +141,9 @@ func (s *Service) SetLinkedTunnelResolver(r LinkedTunnelResolver) {
 	s.linkedTunnels = r
 }
 
-// SetLinkedEndpointReconcile wires AWG tunnel endpoint sync after listen-repair.
-func (s *Service) SetLinkedEndpointReconcile(fn func() (int, error)) {
-	s.linkedEndpointReconcile = fn
+// SetLinkedEndpointSync wires AWG tunnel endpoint sync after listen-repair.
+func (s *Service) SetLinkedEndpointSync(fn func(clientID, listen string) (int, error)) {
+	s.linkedEndpointSync = fn
 }
 
 func (s *Service) occupiedLocalListenPorts(selfClientID string) map[int]bool {
@@ -538,39 +539,55 @@ func (s *Service) StartClient() error {
 	return s.StartClientInstance(DefaultInstanceID)
 }
 
-func (s *Service) repairClientListenPort(id string) (ClientConfig, error) {
+// repairClientListenPort разводит конфликтующие listen-порты клиентов.
+// changed говорит вызывающему, что порт сменился и linked-туннели надо
+// довести до нового endpoint — сам sync делается ВНЕ s.mu (он ходит в
+// хранилище туннелей и в ядро, держать под сервисным мьютексом нельзя).
+func (s *Service) repairClientListenPort(id string) (cfg ClientConfig, changed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	full, err := s.store.Load()
 	if err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	idx := findClientIndex(full.Clients, id)
 	if idx < 0 {
-		return ClientConfig{}, fmt.Errorf("клиент %q не найден", id)
+		return ClientConfig{}, false, fmt.Errorf("клиент %q не найден", id)
 	}
 	listens := clientListenAddresses(full.Clients)
-	cfg := full.Clients[idx].Config
+	cfg = full.Clients[idx].Config
 	next := ensureUniqueListenAddr(listens, idx, cfg.Listen, s.occupiedLocalListenPorts(id), 9000, 9200)
 	if next == cfg.Listen {
-		return cfg, nil
+		return cfg, false, nil
 	}
 	cfg.Listen = next
 	full.Clients[idx].Config = cfg
 	if err := s.store.Save(full); err != nil {
-		return ClientConfig{}, err
+		return ClientConfig{}, false, err
 	}
 	if s.appLog != nil {
 		s.appLog.Info("listen-repair", id, "listen переназначен на "+next)
 	}
-	if s.linkedEndpointReconcile != nil {
-		if n, err := s.linkedEndpointReconcile(); err != nil && s.appLog != nil {
-			s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
-		} else if n > 0 && s.appLog != nil {
-			s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
-		}
+	return cfg, true, nil
+}
+
+// syncLinkedEndpoints доводит listen клиента до Endpoint linked AWG-туннелей.
+// Вызывать только вне s.mu.
+func (s *Service) syncLinkedEndpoints(id, listen string) {
+	if s.linkedEndpointSync == nil {
+		return
 	}
-	return cfg, nil
+	n, err := s.linkedEndpointSync(id, listen)
+	if s.appLog == nil {
+		return
+	}
+	if err != nil {
+		s.appLog.Warn("listen-repair", id, "sync linked endpoints: "+err.Error())
+		return
+	}
+	if n > 0 {
+		s.appLog.Info("listen-repair", id, fmt.Sprintf("synced %d linked tunnel endpoint(s)", n))
+	}
 }
 
 func (s *Service) StartClientInstance(id string) error {
@@ -588,9 +605,12 @@ func (s *Service) StartClientInstance(id string) error {
 	s.beginClientStart(id)
 	defer s.endClientStart(id)
 
-	cfg, err := s.repairClientListenPort(id)
+	cfg, listenChanged, err := s.repairClientListenPort(id)
 	if err != nil {
 		return err
+	}
+	if listenChanged {
+		s.syncLinkedEndpoints(id, cfg.Listen)
 	}
 	if cfg.Peer == "" {
 		return errors.New("укажите адрес сервера (-peer)")

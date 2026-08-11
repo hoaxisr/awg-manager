@@ -48,7 +48,7 @@ func (h *FreeTurnHandler) syncLinkedTunnelNames(ctx context.Context, clientID, c
 	}, newName)
 }
 
-func (h *FreeTurnHandler) syncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
+func (h *FreeTurnHandler) SyncLinkedTunnelEndpoints(ctx context.Context, clientID, listen string) ([]string, []string) {
 	return syncLinkedAwgTunnelEndpoints(ctx, h.awgStore, h.tunnelSvc, h.tunnelsHandler, func(tun storage.AWGTunnel) bool {
 		return tunnelLinkedToFreeTurnClient(tun, clientID)
 	}, listen)
