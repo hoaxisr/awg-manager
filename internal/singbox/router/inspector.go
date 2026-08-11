@@ -97,8 +97,12 @@ type inspectEnv struct {
 //   - Port: its own group. Matches if input.Port is in the list. When
 //     input.Port==0 we skip the matcher and record it as not evaluated —
 //     that is a "no input given" signal, not a match.
-//   - Protocol: matches if equal to input.Protocol (case-insensitive).
-//     Empty input.Protocol skips the matcher.
+//   - Network: the L4 matcher, compared against input.Protocol — the probe
+//     input named "protocol" carries tcp/udp and nothing else.
+//   - Protocol / Inbound: recorded but never counted as a hit. The sniffed
+//     application protocol and the listener tag cannot be supplied by a
+//     manual probe, so a rule requiring them stays a no-match (the same
+//     conservative line the port matcher takes without an input port).
 //   - SourceIPCIDR: skipped (irrelevant for this inspector — there is no
 //     "source IP" in a manual probe).
 //   - logical rules (`type:"logical"`) recurse: every branch is evaluated
@@ -306,27 +310,32 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		out.Conditions = append(out.Conditions, fmt.Sprintf("source_ip_cidr: %s (пропущено — нет источника)", strings.Join(rule.SourceIPCIDR, ", ")))
 	}
 
-	// Inbound (listener tag) is likewise unknowable for a manual probe —
-	// record it but never count it as a hit, so managed QoS-DSCP rules
-	// (inbound-only matchers) don't sweep every inspected query into their
-	// class outbound.
-	if len(rule.Inbound) > 0 {
-		out.Conditions = append(out.Conditions, fmt.Sprintf("inbound: %s (пропущено — вход недоступен для ручной проверки)", strings.Join(rule.Inbound, ", ")))
-	}
-
 	// Track each matcher's outcome. Groups are ANDed between themselves;
 	// inside the destination-address group (domain / domain_suffix /
 	// ip_cidr) sing-box ORs the members — see evaluateGroups in the fork's
 	// route/rule/rule_abstract.go. A flat AND here would report a working
 	// rule as dead (issue #699).
+	//
+	// Matchers a manual probe cannot supply (inbound, protocol) are recorded
+	// as present-but-unverified, which keeps the rule a no-match: the same
+	// conservative line the port matcher already takes when no port is given.
+	// Claiming a hit instead would sweep every query into, say, a managed
+	// QoS-DSCP rule that only matches its own listener.
 	type partial struct{ present, hit bool }
 	var (
 		domainPart   partial
 		ipPart       partial
 		portPart     partial
+		networkPart  partial
 		protocolPart partial
+		inboundPart  partial
 		ruleSetPart  partial
 	)
+
+	if len(rule.Inbound) > 0 {
+		inboundPart.present = true
+		out.Conditions = append(out.Conditions, fmt.Sprintf("inbound: %s (не проверяется — вход недоступен при ручной проверке)", strings.Join(rule.Inbound, ", ")))
+	}
 
 	// rule_set: a rule's `rule_set: [a, b]` is OR — any one matching
 	// makes the matcher TRUE. We probe each tag in turn and stop on the
@@ -458,13 +467,28 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		}
 	}
 
-	// Protocol
+	// Network — the L4 matcher, and the one the probe's "protocol" input
+	// actually carries: the API accepts only tcp/udp there
+	// (validateInspectParams). Skipping it let a udp-only rule report a
+	// match for a TCP probe.
+	if rule.Network != "" {
+		networkPart.present = true
+		if input.Protocol == "" {
+			out.Conditions = append(out.Conditions, fmt.Sprintf("network: %s (пропущено — протокол не задан)", rule.Network))
+		} else {
+			out.Conditions = append(out.Conditions, fmt.Sprintf("network: %s", rule.Network))
+			networkPart.hit = strings.EqualFold(rule.Network, input.Protocol)
+		}
+	}
+
+	// Protocol is the SNIFFED application protocol (tls / http / quic / dns
+	// / …), not L4 — sing-box fills it from the sniffer, and a manual probe
+	// has no sniffer. Comparing it against the tcp/udp input (as this did)
+	// both missed real app-protocol rules and claimed a match for the
+	// nonsensical `protocol: "tcp"`, which sing-box itself never matches.
 	if rule.Protocol != "" {
 		protocolPart.present = true
-		out.Conditions = append(out.Conditions, fmt.Sprintf("protocol: %s", rule.Protocol))
-		if input.Protocol != "" && strings.EqualFold(rule.Protocol, input.Protocol) {
-			protocolPart.hit = true
-		}
+		out.Conditions = append(out.Conditions, fmt.Sprintf("protocol: %s (не проверяется — прикладной протокол определяет сниффер)", rule.Protocol))
 	}
 
 	// Destination-address group: domain* and ip_cidr are OR-ed. A rule_set
@@ -487,24 +511,18 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 	// group must hit (or, for Port without input, be permissively
 	// skipped — we explicitly do NOT count an unverifiable matcher as
 	// a hit, so an unverified port keeps the rule as no-match).
-	anyPresent := addr.present || portPart.present || protocolPart.present || ruleSetPart.present
+	anyPresent := addr.present || portPart.present || networkPart.present ||
+		protocolPart.present || inboundPart.present || ruleSetPart.present
 	if !anyPresent {
 		out.Reason = "пустое правило — пропущено"
 		return out
 	}
 
 	matched := true
-	if addr.present && !addr.hit {
-		matched = false
-	}
-	if portPart.present && !portPart.hit {
-		matched = false
-	}
-	if protocolPart.present && !protocolPart.hit {
-		matched = false
-	}
-	if ruleSetPart.present && !ruleSetPart.hit {
-		matched = false
+	for _, group := range []partial{addr, portPart, networkPart, protocolPart, inboundPart, ruleSetPart} {
+		if group.present && !group.hit {
+			matched = false
+		}
 	}
 
 	out.Matched = matched
@@ -519,8 +537,8 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 		if portPart.hit {
 			hits = append(hits, "port")
 		}
-		if protocolPart.hit {
-			hits = append(hits, "protocol")
+		if networkPart.hit {
+			hits = append(hits, "network")
 		}
 		if ruleSetPart.hit {
 			hits = append(hits, "rule_set")

@@ -191,14 +191,22 @@
 			}
 
 			const src = flat(rule);
-			// Точные домены редактор не показывает — переносим как есть, иначе
-			// пересборка правила молча их выбросит.
-			const domain = src?.domain?.length ? src.domain : undefined;
+			// Матчеры, которых нет в форме, редактор обязан перенести как есть:
+			// правило пересобирается с нуля, поэтому всё непоказанное иначе
+			// молча пропадает. Так теряются точные домены, прикладной протокол,
+			// признак локальной сети и привязка ко входу — из импортированного
+			// конфига любое из этого прилетает запросто.
+			const carried: SingboxRouterRule = {
+				domain: src?.domain?.length ? src.domain : undefined,
+				protocol: src?.protocol || undefined,
+				ip_is_private: src?.ip_is_private ? true : undefined,
+				inbound: src?.inbound?.length ? src.inbound : undefined,
+			};
 
 			let built: SingboxRouterRule;
 			if (matchersOnly && src) {
 				built = {
-					domain,
+					...carried,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
 					action: src.action === 'reject' ? 'reject' : 'route',
@@ -206,7 +214,7 @@
 				};
 			} else {
 				built = {
-					domain,
+					...carried,
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
 					source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,

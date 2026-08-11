@@ -58,6 +58,52 @@ func TestInspect_NonAddressMatchersStayAND(t *testing.T) {
 	}
 }
 
+// Ввод «protocol» снаружи принимает только tcp/udp (validateInspectParams),
+// то есть это L4 — сопоставлять его надо с rule.network. Пока этого не было,
+// udp-правило отчитывалось совпадением на TCP-проверке.
+func TestInspect_NetworkMatcher(t *testing.T) {
+	rules := []Rule{
+		{DomainSuffix: []string{"google.com"}, Network: "udp", Action: "route", Outbound: "vpn"},
+	}
+
+	if got := Inspect(InspectInput{Domain: "google.com", Protocol: "udp"}, rules, nil, "direct", "", nil); got.MatchedRule != 0 {
+		t.Errorf("udp-правило на udp-проверке: matched=%d, want 0", got.MatchedRule)
+	}
+	if got := Inspect(InspectInput{Domain: "google.com", Protocol: "tcp"}, rules, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("udp-правило на tcp-проверке: matched=%d, want -1", got.MatchedRule)
+	}
+	if got := Inspect(InspectInput{Domain: "google.com"}, rules, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("udp-правило без протокола во вводе: matched=%d, want -1", got.MatchedRule)
+	}
+}
+
+// protocol — прикладной протокол от сниффера, ручной проверкой он не
+// задаётся. Ни сравнивать его с tcp/udp, ни считать совпавшим нельзя.
+func TestInspect_SniffedProtocolIsUnverifiable(t *testing.T) {
+	tls := []Rule{{DomainSuffix: []string{"google.com"}, Protocol: "tls", Action: "route", Outbound: "vpn"}}
+	if got := Inspect(InspectInput{Domain: "google.com", Protocol: "tcp"}, tls, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("правило по tls: matched=%d, want -1", got.MatchedRule)
+	}
+
+	// Раньше такое правило «совпадало» при вводе tcp, хотя движок его не
+	// исполняет никогда: значения tcp/udp в protocol у sing-box нет.
+	bogus := []Rule{{DomainSuffix: []string{"google.com"}, Protocol: "tcp", Action: "route", Outbound: "vpn"}}
+	if got := Inspect(InspectInput{Domain: "google.com", Protocol: "tcp"}, bogus, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("правило protocol=tcp: matched=%d, want -1", got.MatchedRule)
+	}
+}
+
+// inbound недоступен ручной проверке — правило с ним не может отчитаться
+// совпадением по остальным условиям.
+func TestInspect_InboundBlocksMatch(t *testing.T) {
+	rules := []Rule{
+		{DomainSuffix: []string{"google.com"}, Inbound: []string{"tproxy-qos-1"}, Action: "route", Outbound: "vpn"},
+	}
+	if got := Inspect(InspectInput{Domain: "google.com"}, rules, nil, "direct", "", nil); got.MatchedRule != -1 {
+		t.Errorf("правило с inbound: matched=%d, want -1", got.MatchedRule)
+	}
+}
+
 // Точный `domain` инспектор раньше не вычислял вовсе — правило с одним лишь
 // этим матчером считалось пустым и пропускалось.
 func TestInspect_ExactDomainMatcher(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -16,7 +17,10 @@ import (
 // rule stays broken until the user happens to re-save it by hand.
 //
 // Sweeps ALL *.json across active, disabled/ and pending/ the same way
-// MigrateRuleSetURLsToFork does: rules live in more than one slot.
+// MigrateRuleSetURLsToFork does: rules live in more than one slot. The one
+// exception is the expert editor's slot — its content is authored by hand and
+// owned by the user, so we do not rewrite it behind their back; the editor
+// warns about such a rule instead (FlatAddressOrRuleIndexes).
 //
 // Rewriting goes through a generic map so fields our structs do not model
 // survive; a rule that would lose a key in the typed round-trip is left
@@ -37,6 +41,9 @@ func MigrateAddressOrRules(configDir string) (bool, error) {
 			return changed, fmt.Errorf("glob %s: %w", pat, err)
 		}
 		for _, p := range matches {
+			if filepath.Base(p) == userSlotFilename() {
+				continue
+			}
 			fileChanged, err := migrateAddressOrRulesFile(p)
 			if err != nil {
 				return changed, err
@@ -45,6 +52,40 @@ func MigrateAddressOrRules(configDir string) (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+// userSlotFilename resolves the expert-editor slot's file name from the
+// orchestrator registry instead of hardcoding it, so a rename cannot silently
+// turn the hand-authored slot back into a migration target.
+func userSlotFilename() string {
+	for _, meta := range orchestrator.KnownSlots() {
+		if meta.Slot == orchestrator.SlotUser {
+			return meta.Filename
+		}
+	}
+	return ""
+}
+
+// FlatAddressOrRuleIndexes returns the route.rules[] indexes of rules that mix
+// a rule_set with the rule's own destination addresses — the shape sing-box
+// ANDs into near-uselessness (issue #699). Used to warn about hand-authored
+// configs, which we deliberately do not rewrite.
+func FlatAddressOrRuleIndexes(data []byte) []int {
+	var cfg struct {
+		Route struct {
+			Rules []Rule `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	var out []int
+	for i, r := range cfg.Route.Rules {
+		if r.Type == "" && normalizeAddressOrRule(r).Type != "" {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func migrateAddressOrRulesFile(path string) (bool, error) {

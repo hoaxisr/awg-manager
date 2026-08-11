@@ -87,6 +87,40 @@ func TestMigrateAddressOrRules(t *testing.T) {
 	}
 }
 
+// Слот эксперт-редактора пишется руками и принадлежит пользователю —
+// миграция не имеет права переписывать его текст.
+func TestMigrateAddressOrRules_SkipsUserSlot(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"route":{"rules":[{"rule_set":["geosite-x"],"ip_cidr":["1.2.3.0/24"],"outbound":"vpn"}]}}`
+	path := filepath.Join(dir, "90-user.json")
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := MigrateAddressOrRules(dir)
+	if err != nil {
+		t.Fatalf("MigrateAddressOrRules: %v", err)
+	}
+	if changed {
+		t.Error("changed = true — миграция тронула пользовательский слот")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != body {
+		t.Errorf("90-user.json переписан:\n%s", raw)
+	}
+
+	if idx := FlatAddressOrRuleIndexes([]byte(body)); len(idx) != 1 || idx[0] != 0 {
+		t.Errorf("FlatAddressOrRuleIndexes = %v, want [0]", idx)
+	}
+	normalized := `{"route":{"rules":[{"type":"logical","mode":"or","rules":[{"rule_set":["geosite-x"]},{"ip_cidr":["1.2.3.0/24"]}],"outbound":"vpn"}]}}`
+	if idx := FlatAddressOrRuleIndexes([]byte(normalized)); len(idx) != 0 {
+		t.Errorf("нормализованное правило попало в предупреждения: %v", idx)
+	}
+}
+
 func TestMigrateAddressOrRules_MissingDir(t *testing.T) {
 	changed, err := MigrateAddressOrRules(filepath.Join(t.TempDir(), "nope"))
 	if err != nil {

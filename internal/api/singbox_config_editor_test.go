@@ -490,6 +490,60 @@ func TestConfigEditor_CheckAndApply_SurfaceWarnings(t *testing.T) {
 	}
 }
 
+// Правило «rule_set + собственные адреса» в ручном слоте не переписывается —
+// вместо этого check и apply возвращают advisory (issue #699).
+func TestConfigEditor_WarnsOnRuleSetWithOwnAddresses(t *testing.T) {
+	h, o, _ := newEditorHandler(t)
+	userBody := `{"route":{"rule_set":[
+	  {"tag":"geosite-x","type":"remote","format":"binary","url":"https://example.test/x.srs"},
+	  {"tag":"geosite-y","type":"remote","format":"binary","url":"https://example.test/y.srs"}
+	],"rules":[
+	  {"rule_set":["geosite-x"],"ip_cidr":["1.2.3.0/24"],"outbound":"direct"},
+	  {"rule_set":["geosite-y"],"outbound":"direct"}
+	]}}`
+
+	rec := httptest.NewRecorder()
+	h.CheckUserConfig(rec, httptest.NewRequest(http.MethodPost, "/api/singbox/config/user/check",
+		strings.NewReader(userBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check status %d: %s", rec.Code, rec.Body.String())
+	}
+	var data UserConfigCheckResponse
+	decodeEnvelope(t, rec.Body.Bytes(), &data)
+	var got []RouterValidationErrorDTO
+	for _, w := range data.Warnings {
+		if w.Kind == "rule-set-with-own-addresses" {
+			got = append(got, w)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("ожидалось ровно одно предупреждение, получено %+v", data.Warnings)
+	}
+	if got[0].InRule != "route.rules[0]" {
+		t.Errorf("InRule = %q, want route.rules[0]", got[0].InRule)
+	}
+
+	if err := o.SaveDraft(orchestrator.SlotUser, []byte(userBody)); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.ApplyUserConfig(rec, httptest.NewRequest(http.MethodPost, "/api/singbox/config/user/apply", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status %d: %s", rec.Code, rec.Body.String())
+	}
+	var applyData UserConfigApplyResponse
+	decodeEnvelope(t, rec.Body.Bytes(), &applyData)
+	found := false
+	for _, w := range applyData.Warnings {
+		if w.Kind == "rule-set-with-own-addresses" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("apply не вернул предупреждение: %+v", applyData.Warnings)
+	}
+}
+
 func TestConfigEditor_Discard(t *testing.T) {
 	h, o, _ := newEditorHandler(t)
 	if err := o.SaveDraft(orchestrator.SlotUser, []byte(`{}`)); err != nil {
