@@ -31,8 +31,10 @@ echo ">>> wdtt-server (arm64, listen-raw)"
 echo ">>> update internal/wdtt/install.go pins"
 python3 "$SCRIPT_DIR/update-wdtt-pins.py"
 
-echo ">>> awg-manager IPK (BUNDLE_WDTT=1)"
-export BUNDLE_WDTT=1
+echo ">>> ВАЖНО: залейте build/wdtt/* на repo.hoaxisr.ru/wt/ до установки IPK —"
+echo "    в пакет бинари не кладутся, awg-manager скачает их по пину install.go."
+
+echo ">>> awg-manager IPK"
 if [[ "$ARCH" == "all" ]]; then
   "$SCRIPT_DIR/build-ipk.sh" "$IPK_VERSION" all
 else

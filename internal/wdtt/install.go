@@ -145,6 +145,12 @@ func (s *Service) installStatusFields(installVersion string) (installedVersion s
 	if s.installSpecs.serverSupported() && !binaryPresent(s.serverBin) {
 		return installedVersion, true
 	}
+	// Бинарь на диске не тот, что в пине (протухший бандл, ручная подмена):
+	// версия из wdtt-version.json ему не принадлежит, поэтому не выдаём её за
+	// установленную и зовём поставить пин.
+	if !s.binariesMatchSpecs() {
+		return "", true
+	}
 	if installedVersion == "" {
 		return installedVersion, true
 	}

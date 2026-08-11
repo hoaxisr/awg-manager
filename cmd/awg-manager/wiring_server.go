@@ -249,7 +249,6 @@ func (a *app) setupDeviceProxy() {
 		a.freeturnService.SetInstallSpecs(specs)
 		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
 	}
-	a.freeturnService.EnsureBundledInstall()
 	a.wdttService.SetLogger(a.loggingService)
 	if a.managedService != nil {
 		a.wdttService.SetAccessManager(&wdttAccessAdapter{
@@ -262,7 +261,6 @@ func (a *app) setupDeviceProxy() {
 		a.wdttService.SetInstallSpecs(specs)
 		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
 	}
-	a.wdttService.EnsureBundledInstall()
 	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
 	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
 	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
