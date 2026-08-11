@@ -352,6 +352,66 @@ func TestGuardSweep_V4RetriesAfterFailedPost(t *testing.T) {
 	}
 }
 
+// У имени осталась только AAAA-запись: NDMS IPv6 в peer-командах не
+// принимает, слать нечего. Молчим и на повторных проходах — иначе бесплодный
+// Post и предупреждение в журнале повторялись бы каждые guardInterval (#702).
+func TestGuardSweep_V4SkipsIPv6OnlyResolve(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	_ = stubGuardLookup(t, []string{"2a02::feed"}, nil)
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaNDMS:  true,
+	})
+
+	op.guardSweep(context.Background())
+	op.guardSweep(context.Background())
+
+	if len(cs.bodies) != 0 {
+		t.Fatalf("IPv6 в NDMS слать нельзя, ушло %d команд: %v", len(cs.bodies), cs.bodies)
+	}
+	entry, _ := op.guardGet("awg10")
+	if entry.endpoint != "198.51.100.1:51820" {
+		t.Fatalf("реестр обязан остаться на последнем годном адресе, стало %s", entry.endpoint)
+	}
+}
+
+// Продолжение: у имени снова появилась A-запись — страж видит это как смену
+// адреса и доводит его в NDMS, а не остаётся замолчавшим навсегда.
+func TestGuardSweep_V4RecoversAfterIPv6OnlyPeriod(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	_ = stubGuardLookup(t, []string{"2a02::feed"}, nil)
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820",
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaNDMS:  true,
+	})
+	op.guardSweep(context.Background())
+
+	// A-запись вернулась (вместе с AAAA — типичный dual-stack).
+	_ = stubGuardLookup(t, []string{"203.0.113.9", "2a02::feed"}, nil)
+	op.guardSweep(context.Background())
+
+	if len(cs.bodies) != 1 {
+		t.Fatalf("ожидалась одна RCI-команда, получено %d: %v", len(cs.bodies), cs.bodies)
+	}
+	if !strings.Contains(cs.bodies[0], "203.0.113.9:51820") {
+		t.Fatalf("в NDMS ушёл не тот endpoint: %s", cs.bodies[0])
+	}
+	entry, _ := op.guardGet("awg10")
+	if entry.endpoint != "203.0.113.9:51820" {
+		t.Fatalf("реестр стража не обновлён: %+v", entry)
+	}
+}
+
 // kmod-запись никогда не доходит до ядра: там 127.0.0.1:<порт слота>, и
 // wg set увёл бы трафик мимо awg_proxy.ko. Лукапа туннеля у оператора нет
 // (страж без доступа к хранилищу) — пересобирать слот не по чему, значит

@@ -52,6 +52,10 @@ type guardEntry struct {
 	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
 	// wg set увёл бы трафик мимо прокси, без обфускации.
 	viaKmod bool
+	// warnedNoV4 — адрес, о непригодности которого для NDMS уже
+	// предупредили (см. viaNDMS-ветку guardSweep). Без этой памяти
+	// предупреждение печаталось бы каждые guardInterval.
+	warnedNoV4 string
 }
 
 // guardModeForEndpoint решает, как страж следит за endpoint'ом:
@@ -141,6 +145,21 @@ func (o *OperatorNativeWG) guardUpdateEndpoint(id, spec, endpoint string) {
 	defer o.guardMu.Unlock()
 	if e, ok := o.guard[id]; ok && e.spec == spec {
 		e.endpoint = endpoint
+		// Реестр встал на годный адрес — прошлое предупреждение о
+		// непригодном больше не актуально.
+		e.warnedNoV4 = ""
+		o.guard[id] = e
+	}
+}
+
+// guardMarkWarnedNoV4 запоминает адрес, о непригодности которого для NDMS уже
+// сказано в журнале. Условия те же, что у guardUpdateEndpoint: запись на месте
+// и spec не сменился.
+func (o *OperatorNativeWG) guardMarkWarnedNoV4(id, spec, endpoint string) {
+	o.guardMu.Lock()
+	defer o.guardMu.Unlock()
+	if e, ok := o.guard[id]; ok && e.spec == spec {
+		e.warnedNoV4 = endpoint
 		o.guard[id] = e
 	}
 }
@@ -200,6 +219,19 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			// v4: адрес живёт в конфиге NDMS. Команду шлём только на
 			// смену резолва — иначе каждый проход переписывал бы конфиг.
 			if expected == e.endpoint {
+				continue
+			}
+			// NDMS не принимает IPv6 в peer-командах (шапка sync.go): если у
+			// имени пропала A-запись и остался только AAAA, слать нечего —
+			// Post отвалится, реестр не сдвинется, и так каждый проход.
+			// Предупреждаем один раз на адрес; вернётся A-запись — страж
+			// увидит смену и доведёт её как обычно.
+			if !endpointIsIPv4(expected) {
+				if e.warnedNoV4 != expected {
+					o.appLog.Warn("endpoint-guard", e.name,
+						fmt.Sprintf("%s резолвится только в IPv6 (%s) — NDMS такой endpoint не принимает, адрес не обновлён", e.spec, expected))
+					o.guardMarkWarnedNoV4(id, e.spec, expected)
+				}
 				continue
 			}
 			// Перепроверка перед записью — паритет с v6-веткой ниже.
@@ -316,6 +348,16 @@ func ipInList(ip string, ips []string) bool {
 		}
 	}
 	return false
+}
+
+// endpointIsIPv4 — в endpoint'е «host:port» стоит IPv4-литерал.
+func endpointIsIPv4(endpoint string) bool {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() != nil
 }
 
 // pickEndpointIP выбирает адрес из полного резолва с тем же предпочтением
