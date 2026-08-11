@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -39,6 +40,31 @@ type guardEntry struct {
 	endpoint string // последний известный резолв, каноническая форма host:port
 	spec     string // endpoint из конфига (hostname:port или литерал) — для перерезолва DDNS
 	name     string // NDMS-имя для логов
+	// viaNDMS — доводить адрес не в ядро, а в конфиг NDMS. Так для
+	// hostname→v4: владелец конфига здесь NDMS, и он переписывает
+	// kernel-endpoint своим значением при каждом переприменении —
+	// wg set проиграл бы ему гонку.
+	viaNDMS bool
+	// viaKmod — доводить адрес в слот awg_proxy.ko (proxy-прошивки).
+	// Ставится и обрабатывается в Task A2; здесь поле нужно, чтобы
+	// kmod-записи не двигали реестр до успешной доводки и не уходили в
+	// v6-ветку ядра.
+	viaKmod bool
+}
+
+// guardModeForEndpoint решает, как страж следит за endpoint'ом:
+// v6 — доводкой в ядро (NDMS его не принимает), hostname→v4 — доводкой в
+// конфиг NDMS (адрес за именем может смениться, а NDMS хранит литерал),
+// v4-литерал — никак, резолвить нечего.
+func guardModeForEndpoint(endpoint string, kernelV6 bool) (guard, viaNDMS bool) {
+	if kernelV6 {
+		return true, false
+	}
+	host, ok := splitEndpointHost(endpoint)
+	if !ok || net.ParseIP(host) != nil {
+		return false, false
+	}
+	return true, true
 }
 
 func (o *OperatorNativeWG) guardRegister(id string, e guardEntry) {
@@ -116,10 +142,6 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 		return
 	}
 
-	bin := wgToolLookup()
-	if bin == "" {
-		return
-	}
 	for id, e := range entries {
 		// Hostname-spec (DDNS): перерезолвить — адрес мог смениться, а
 		// kernel WG сам за чужим DNS не следит. Анти-флап: endpoint
@@ -133,13 +155,51 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 				if splitErr != nil || !ipInList(curHost, ips) {
 					if _, port, perr := net.SplitHostPort(e.spec); perr == nil {
 						fresh := net.JoinHostPort(pickEndpointIP(ips), port)
-						o.appLog.Info("endpoint-guard", e.name,
-							fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, expected))
+						prev := expected // для лога: «был» обязан печатать старое
 						expected = fresh
-						o.guardUpdateEndpoint(id, e.spec, fresh)
+						if !e.viaNDMS && !e.viaKmod {
+							// Только чистый v6-режим: сверка идёт с
+							// фактическим wg show, поэтому реестр можно
+							// двигать сразу — упавший wg set повторится на
+							// следующем проходе. У viaNDMS и viaKmod (Task A2)
+							// readback'а нет, они сверяются с самим реестром:
+							// преждевременная запись навсегда увела бы их в
+							// `continue` после первой же неудачи.
+							o.appLog.Info("endpoint-guard", e.name,
+								fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, prev))
+							o.guardUpdateEndpoint(id, e.spec, fresh)
+						}
 					}
 				}
 			}
+		}
+		if e.viaNDMS {
+			// v4: адрес живёт в конфиге NDMS. Команду шлём только на
+			// смену резолва — иначе каждый проход переписывал бы конфиг.
+			if expected == e.endpoint {
+				continue
+			}
+			// Перепроверка перед записью — паритет с v6-веткой ниже.
+			// Гонка со Stop/Delete/SyncPeer здесь опаснее, чем там:
+			// wg set правит эфемерное состояние ядра, а это — конфиг
+			// NDMS, который переживёт и рестарт, и ребут.
+			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
+				continue
+			}
+			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(e.name, e.pubkey, expected)); err != nil {
+				o.appLog.Warn("endpoint-guard", e.name, "обновление endpoint в NDMS не удалось: "+err.Error())
+				continue
+			}
+			// Реестр двигаем только после успеха: иначе неудачный Post
+			// потерял бы смену адреса до перезапуска демона.
+			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.appLog.Info("endpoint-guard", e.name,
+				fmt.Sprintf("%s сменил адрес — в NDMS выставлен %s", e.spec, expected))
+			continue
+		}
+		bin := wgToolLookup()
+		if bin == "" {
+			continue
 		}
 		out, err := wgToolOutput(ctx, bin, "show", e.iface, "endpoints")
 		if err != nil {

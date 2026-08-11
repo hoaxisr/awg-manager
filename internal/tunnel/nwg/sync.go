@@ -308,11 +308,64 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				fmt.Sprintf("endpoint теперь IPv6 — %s выставлен в ядро (%s), взят под endpoint-страж", kernelEndpoint, ifaceName))
 		}
 	case v4Confirmed:
-		// Туннель вернулся на v4 — endpoint'ом снова управляет NDMS
-		// (реальный адрес ушёл в RCI выше), стражу здесь делать нечего.
+		// ASC-only. На proxy-прошивках endpoint в конфиге NDMS обязан быть
+		// 127.0.0.1:<порт слота> (его держат SyncKmodSlot и RestoreKmodTunnel,
+		// operator.go:807/849) — страж, доводящий туда реальный адрес сервера,
+		// сломал бы proxy-туннель. Non-ASC вне объёма этого плана.
+		guard, viaNDMS := guardModeForEndpoint(stored.Peer.Endpoint, false)
+		if guard && !o.supportsASC() {
+			// Proxy-путь: за адресом следит режим viaKmod (Task A2), его
+			// ставит startProxy. Здесь только освежаем запись — ключ или
+			// имя могли смениться, а протухший spec в реестре заставил бы
+			// стража резолвить не тот домен. Снимать стража нельзя:
+			// SyncPeer вызывается при любой правке пира, и снятие оставило
+			// бы туннель без защиты до следующего startProxy.
+			// ВАЖНО: endpoint берём из текущей записи, а НЕ из свежего
+			// резолва. Свежий резолв здесь отражал бы желаемое, а не
+			// действительное: слот-то мы не трогали, в нём остался прежний
+			// адрес. Записав новый, мы бы навсегда увели sweep в «адрес не
+			// менялся» — слот никогда бы не пересобрался. Когда spec
+			// сменился, слот пересоберёт SyncKmodSlot в том же
+			// applyDiffNWG (kmodShapingChanged включает Endpoint), и он же
+			// зарегистрирует свежую запись.
+			cur, ok := o.guardGet(stored.ID)
+			if !ok || cur.spec != stored.Peer.Endpoint {
+				break
+			}
+			o.guardReplaceIfPresent(stored.ID, guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: cur.endpoint, // прежний резолв — он же в слоте
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaKmod:  true,
+			})
+			break
+		}
+		if guard && o.supportsASC() {
+			// Hostname→v4: адрес за именем может смениться, а NDMS
+			// хранит литерал — оставляем под стражем в режиме NDMS (#702).
+			entry := guardEntry{
+				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
+				pubkey:   stored.Peer.PublicKey,
+				endpoint: resolvedV4, // резолв, НЕ rciEndpoint (там имя)
+				spec:     stored.Peer.Endpoint,
+				name:     ndmsName,
+				viaNDMS:  viaNDMS,
+			}
+			// Register безусловный — в отличие от v6-ветки выше, где он
+			// воскресил бы запись, снятую параллельным Stop/Delete, и страж
+			// начал бы делать wg set по мёртвому устройству. Здесь цена
+			// гонки другая: viaNDMS правит конфиг NDMS, а он у остановленного
+			// туннеля живёт и должен быть актуален. Delete снимает запись
+			// (operator.go:561-568), так что вечной она не станет.
+			o.guardRegister(stored.ID, entry)
+			break
+		}
+		// v4-литерал — резолвить нечего, стражу тут делать нечего.
 		if o.guardHas(stored.ID) {
 			o.guardUnregister(stored.ID)
-			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4 — endpoint-страж снят, адресом управляет NDMS")
+			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4-литерал — endpoint-страж снят, адресом управляет NDMS")
 		}
 	default:
 		// Резолв hostname'а не удался (или endpoint непригоден). Если ключ

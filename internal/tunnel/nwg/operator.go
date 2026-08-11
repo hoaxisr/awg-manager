@@ -410,6 +410,18 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		})
 		o.appLog.Info("start", names.NDMSName,
 			fmt.Sprintf("IPv6 endpoint %s выставлен в ядро через wg set %s (RCI NDMS v6 не принимает); endpoint-страж следит за сбросами NDMS", realEndpoint, names.IfaceName))
+	} else if guard, viaNDMS := guardModeForEndpoint(stored.Peer.Endpoint, false); guard {
+		// Hostname→v4: endpoint в конфиге NDMS — литерал, и NDMS его
+		// никогда не перерезолвит. Страж следит за сменой адреса за
+		// именем и доводит его в конфиг (#702).
+		o.guardRegister(stored.ID, guardEntry{
+			iface:    names.IfaceName,
+			pubkey:   pubkey,
+			endpoint: realEndpoint,
+			spec:     stored.Peer.Endpoint,
+			name:     names.NDMSName,
+			viaNDMS:  viaNDMS,
+		})
 	} else {
 		o.guardUnregister(stored.ID)
 	}

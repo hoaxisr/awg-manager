@@ -2,6 +2,8 @@ package nwg
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -247,6 +249,128 @@ func TestGuardUpdateEndpoint_StaleTargetsIgnored(t *testing.T) {
 	op.guardUpdateEndpoint("awg20", "b.example.com:51820", "[2a02::feed]:51820")
 	if op.guardHas("awg20") {
 		t.Fatal("update must not resurrect an unregistered entry")
+	}
+}
+
+// v4-запись: адрес за именем сменился — страж доводит его не в ядро, а в
+// конфиг NDMS, потому что на этом пути конфигом владеет NDMS (#702).
+func TestGuardSweep_V4UpdatesNDMSEndpoint(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
+	// wg-инструмент недоступен: v4-путь обязан работать без него.
+	origLookup := wgToolLookup
+	wgToolLookup = func() string { return "" }
+	t.Cleanup(func() { wgToolLookup = origLookup })
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaNDMS:  true,
+	})
+
+	op.guardSweep(context.Background())
+
+	if len(cs.bodies) != 1 {
+		t.Fatalf("ожидалась одна RCI-команда, получено %d: %v", len(cs.bodies), cs.bodies)
+	}
+	if !strings.Contains(cs.bodies[0], "203.0.113.9:51820") {
+		t.Fatalf("в NDMS ушёл не тот endpoint: %s", cs.bodies[0])
+	}
+	if !strings.Contains(cs.bodies[0], "Wireguard3") {
+		t.Fatalf("команда адресована не тому интерфейсу: %s", cs.bodies[0])
+	}
+	entry, _ := op.guardGet("awg10")
+	if entry.endpoint != "203.0.113.9:51820" {
+		t.Fatalf("реестр стража не обновлён: %+v", entry)
+	}
+}
+
+// Анти-флап на v4-пути: текущий адрес всё ещё в резолве — ротация записей
+// не повод переписывать конфиг NDMS.
+func TestGuardSweep_V4RoundRobinNoFlap(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	_ = stubGuardLookup(t, []string{"203.0.113.9", "198.51.100.1"}, nil)
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820",
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaNDMS:  true,
+	})
+
+	op.guardSweep(context.Background())
+
+	if len(cs.bodies) != 0 {
+		t.Fatalf("при живом адресе команд быть не должно, получено %v", cs.bodies)
+	}
+}
+
+// Неудачная запись в NDMS не должна терять смену адреса: реестр остаётся
+// со старым значением, и следующий проход повторяет команду.
+func TestGuardSweep_V4RetriesAfterFailedPost(t *testing.T) {
+	var fail bool = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	op := newSyncTestOperator(t, srv.URL)
+	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
+	op.guardRegister("awg10", guardEntry{
+		iface:    "nwg1",
+		pubkey:   "PUB",
+		endpoint: "198.51.100.1:51820",
+		spec:     "vpn.example.com:51820",
+		name:     "Wireguard3",
+		viaNDMS:  true,
+	})
+
+	op.guardSweep(context.Background())
+
+	entry, _ := op.guardGet("awg10")
+	if entry.endpoint != "198.51.100.1:51820" {
+		t.Fatalf("после неудачного Post реестр не должен меняться, стало %s", entry.endpoint)
+	}
+
+	fail = false
+	op.guardSweep(context.Background())
+
+	entry, _ = op.guardGet("awg10")
+	if entry.endpoint != "203.0.113.9:51820" {
+		t.Fatalf("повторный проход должен довести адрес, стало %s", entry.endpoint)
+	}
+}
+
+func TestGuardModeForEndpoint(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		kernelV6 bool
+		guard    bool
+		viaNDMS  bool
+	}{
+		{"v6 в ядро", "[2001:db8::1]:51820", true, true, false},
+		{"hostname через NDMS", "vpn.example.com:51820", false, true, true},
+		{"v4-литерал без стража", "203.0.113.1:51820", false, false, false},
+		{"пустой endpoint", "", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			guard, viaNDMS := guardModeForEndpoint(tc.endpoint, tc.kernelV6)
+			if guard != tc.guard || viaNDMS != tc.viaNDMS {
+				t.Fatalf("guardModeForEndpoint(%q, %v) = (%v, %v), want (%v, %v)",
+					tc.endpoint, tc.kernelV6, guard, viaNDMS, tc.guard, tc.viaNDMS)
+			}
+		})
 	}
 }
 
