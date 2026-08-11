@@ -163,12 +163,14 @@
 	.quiz {
 		margin: 0 0 0.75rem;
 		padding-left: 1.25rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
 		font-size: 0.8125rem;
 		line-height: 1.45;
 		color: var(--color-text-secondary, var(--text-secondary));
+	}
+
+	.limits li,
+	.quiz li {
+		margin-bottom: 0.375rem;
 	}
 
 	.question {
@@ -187,8 +189,8 @@
 		font-size: 0.8125rem;
 		text-align: left;
 		color: var(--color-text-primary, var(--text-primary));
-		background: var(--surface-2, transparent);
-		border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+		background: var(--color-bg-secondary, var(--bg-secondary));
+		border: 1px solid var(--color-border, var(--border));
 		border-radius: var(--radius-sm, 6px);
 		cursor: pointer;
 	}
@@ -199,14 +201,14 @@
 	}
 
 	.option.wrong {
-		border-color: var(--color-danger, var(--danger));
-		color: var(--color-danger, var(--danger));
+		border-color: var(--color-error, var(--error));
+		color: var(--color-error, var(--error));
 	}
 
 	.explain {
 		margin: 0.5rem 0 0;
 		font-size: 0.8125rem;
-		color: var(--color-danger, var(--danger));
+		color: var(--color-error, var(--error));
 	}
 
 	.sources {
@@ -227,7 +229,7 @@
 	.ack-link {
 		padding: 0;
 		font-size: inherit;
-		color: var(--color-primary, var(--primary));
+		color: var(--color-accent, var(--accent));
 		background: none;
 		border: none;
 		cursor: pointer;
