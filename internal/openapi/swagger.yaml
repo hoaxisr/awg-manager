@@ -7107,10 +7107,10 @@ definitions:
         description: -peer, VPS host:dtls_port
         type: string
       peerRaw:
-        description: VPS:Raw when connMode=raw
+        description: VPS:Raw для connMode=raw
         type: string
       peerWg:
-        description: VPS:DTLS when connMode=wg
+        description: VPS:DTLS для connMode=wg; Peer зеркалит активный слот (normalizePeers)
         type: string
       policyPermits:
         description: PolicyPermits — политики, где OpkgTun разрешён; восстанавливаются

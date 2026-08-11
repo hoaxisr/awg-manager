@@ -26,12 +26,9 @@ type ClientConfig struct {
 	Sub         string `json:"sub,omitempty"`        // subscription URL (metadata only)
 	// ConnMode — wg (WireGuard + AWG-туннель) или raw (без WG, быстрее; нужен raw-сервер).
 	ConnMode string `json:"connMode,omitempty"`
-	// PeerWg/PeerRaw — адрес сервера для каждого режима: у raw и wg разные
-	// порты, и переключение режима не должно стирать адрес соседнего.
-	// Peer — зеркало активного слота, его читают запуск бинаря и подписка.
-	PeerWg  string `json:"peerWg,omitempty"`  // VPS:DTLS для connMode=wg
-	PeerRaw string `json:"peerRaw,omitempty"` // VPS:Raw для connMode=raw
-	Debug   bool   `json:"debug"`
+	PeerWg   string `json:"peerWg,omitempty"`  // VPS:DTLS для connMode=wg; Peer зеркалит активный слот (normalizePeers)
+	PeerRaw  string `json:"peerRaw,omitempty"` // VPS:Raw для connMode=raw
+	Debug    bool   `json:"debug"`
 
 	// Raw client: OpkgTun17..49 в NDMS (маршрутизация LAN; NAT — на wdtt-server).
 	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTun17..49
