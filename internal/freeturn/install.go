@@ -44,16 +44,16 @@ const releaseBase = "http://repo.hoaxisr.ru/ft/" + PinnedVersion + "/"
 // на зеркало кладём ровно артефакты релиза.
 var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "bdfb09d29eb3a0c5d512b6fce486abd06f230f3696ad079a8474446bae531fbf", Size: 14811298},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "baba111ed0a2464be7e68f1b28560a35580b3dae125ba26f667119c7732f15b7", Size: 6160546},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-arm64", SHA256: "2741732a27300a3d53de97b91c104f19e679047159d055ac8e1268b0f20bf4b0", Size: 14811298},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-arm64", SHA256: "e4b36d1c33a9a6caa8c56a802e004c35aa5e4fbd3b7811accdbf20a836f18b90", Size: 6160546},
 	},
 	"mipsel-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "4e71514c7cfc140e560d5ba1222083b54bbd436147364022eff1cfe32da12e74", Size: 16711873},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "f0c0ad49e13da7146e1d270c186f1677b785dcd126c44f13500f42900a832d5c", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "a758e201a50a2e455708fe91b8a2d6ca7f65e9d8d1be7440026964e77048a38c", Size: 16777409},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "4f37e99ac1f4c4f71d256afe607df8b2d94e92832e9c90f058a2fa29f3e23691", Size: 7012545},
 	},
 	"mips-3.4": {
-		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "dd7ede5f479f4e4a6f389558ed0fabf2808ff3bc329e899a35064a0c4f3d2f16", Size: 16777409},
-		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "4aa77cbf5a742a2d98fc16b86e9e5ce54c7b5c8534af983f0dcb1b9122028a96", Size: 7012545},
+		Client: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-client-linux-mips-softfloat", SHA256: "d305762131f8b6e51bd161436a1158cdda96fb9fd9d3654b0899a4c69963eede", Size: 16777409},
+		Server: BinarySpec{Version: PinnedVersion, URL: releaseBase + "ft-server-linux-mips-softfloat", SHA256: "451a3ced68f3a93bc1b023e4c11be21315faf3585fec06503823848627524703", Size: 7012545},
 	},
 }
 
