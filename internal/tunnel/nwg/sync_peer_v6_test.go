@@ -2,6 +2,7 @@ package nwg
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -343,5 +344,33 @@ func TestSyncPeer_EmptyEndpointSkipsResolve(t *testing.T) {
 	}
 	if resolves != 0 || len(*calls) != 0 {
 		t.Fatalf("empty endpoint: resolves=%d wg=%v, want 0/none", resolves, *calls)
+	}
+}
+
+// v6-туннель + нерезолвимое имя: смена endpoint отвергается, иначе в
+// конфиге NDMS осталась бы заглушка 127.0.0.1:1 и мёртвый туннель (#702).
+func TestSyncPeer_V6ToUnresolvableHostnameRejected(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.resolveFn = func(string) (string, int, error) { return "", 0, errors.New("i/o timeout") }
+	op.guardRegister("awg10", guardEntry{
+		iface: "nwg5", pubkey: "PUB", endpoint: "[2001:db8::1]:51820",
+		spec: "[2001:db8::1]:51820", name: "Wireguard5",
+	})
+
+	stored := &storage.AWGTunnel{
+		NWGIndex: 5,
+		Peer: storage.AWGPeer{
+			PublicKey: "PUB",
+			Endpoint:  "vpn.example.com:51820", // сменили на имя, оно не резолвится
+		},
+	}
+	stored.ID = "awg10"
+
+	if err := op.SyncPeer(context.Background(), stored, ""); err == nil {
+		t.Fatal("смена endpoint при мёртвом резолве и заглушке в NDMS должна отвергаться")
+	}
+	if len(cs.bodies) != 0 {
+		t.Fatalf("батч не должен уходить: %v", cs.bodies)
 	}
 }

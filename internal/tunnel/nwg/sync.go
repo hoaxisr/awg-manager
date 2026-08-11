@@ -184,6 +184,18 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				// поломки.
 				return fmt.Errorf("sync peer: резолв %s не удался, смена ключа пира не применена: %w",
 					stored.Peer.Endpoint, err)
+			} else if e, guarded := o.guardGet(stored.ID); guarded && !e.viaNDMS && !e.viaKmod &&
+				e.spec != stored.Peer.Endpoint {
+				// v6-история: в конфиге NDMS лежит заглушка 127.0.0.1:1,
+				// а не рабочий адрес (запись v6-стража — единственное
+				// состояние, в котором она там стоит). Молча принять
+				// нерезолвимое имя значит оставить туннель мёртвым до
+				// ручного старта — отказываем, как и при смене ключа (#702).
+				// Отказ только на СМЕНУ endpoint'а: при прежнем spec это
+				// транзиентный сбой DNS, и ронять из-за него правку
+				// соседних полей пира нельзя.
+				return fmt.Errorf("sync peer: резолв %s не удался, а в конфиге NDMS заглушка v6 — смена endpoint не применена: %w",
+					stored.Peer.Endpoint, err)
 			} else {
 				// Резолв не удался, но ключ прежний — пир в конфиге NDMS
 				// останется вместе со своим endpoint'ом. Имя не отдаём:
