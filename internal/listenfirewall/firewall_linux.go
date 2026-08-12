@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -109,45 +110,84 @@ func listManaged(ctx context.Context) []PortSpec {
 	if err != nil {
 		return nil
 	}
+	return parseManaged(out)
+}
+
+// parseManaged выбирает из вывода `iptables -S INPUT` правила, которые ставили
+// мы. Владение определяется формой, потому что метку `-m comment` Apply не
+// пишет вовсе: на Keenetic xt_comment часто не загружен (#666).
+func parseManaged(out string) []PortSpec {
 	var specs []PortSpec
 	seen := map[string]struct{}{}
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		proto := ""
-		port := 0
-		isAccept := false
-		hasComment := strings.Contains(line, Comment)
-		for i, f := range fields {
-			if f == "-p" && i+1 < len(fields) {
-				proto = fields[i+1]
-			}
-			if f == "--dport" && i+1 < len(fields) {
-				fmt.Sscanf(fields[i+1], "%d", &port)
-			}
-			if f == "ACCEPT" {
-				isAccept = true
-			}
+		spec, ok := bareListenRule(fields)
+		if !ok && strings.Contains(line, Comment) {
+			// Правило с нашей меткой — наше однозначно, какой бы формы ни
+			// было: его писала версия, где xt_comment был доступен.
+			spec, ok = commentedListenRule(fields)
 		}
-		if !isAccept || port <= 0 || proto == "" {
+		if !ok {
 			continue
 		}
-		if !hasComment && !strings.Contains(line, "-j ACCEPT") {
-			continue
-		}
-		if !hasComment {
-			// Only track bare ACCEPT rules we reconcile (top-of-chain dport rules).
-			if !strings.Contains(line, "-m "+proto) {
-				continue
-			}
-		}
-		key := portKey(port, proto)
-		if _, ok := seen[key]; ok {
+		key := portKey(spec.Port, spec.Proto)
+		if _, dup := seen[key]; dup {
 			continue
 		}
 		seen[key] = struct{}{}
-		specs = append(specs, PortSpec{Port: port, Proto: proto})
+		specs = append(specs, spec)
 	}
 	return specs
+}
+
+// bareListenRule распознаёт РОВНО ту форму, что печатает `iptables -S` для
+// правила из Apply: `-A INPUT -p <proto> -m <proto> --dport <N> -j ACCEPT`.
+// Единственный лишний токен (-i, -s, второй -m, диапазон портов) снимает
+// признание: такие правила ставит не AWG Manager, а NDM и прочие пакеты, и
+// трогать их нельзя — раньше сверка считала их своими, впустую гоняла на них
+// удаление каждый тик и могла снести одноимённое правило без уточнений.
+func bareListenRule(fields []string) (PortSpec, bool) {
+	const wantLen = 10 // -A INPUT -p udp -m udp --dport 500 -j ACCEPT
+	if len(fields) != wantLen {
+		return PortSpec{}, false
+	}
+	proto := fields[3]
+	if fields[0] != "-A" || fields[1] != "INPUT" ||
+		fields[2] != "-p" || fields[4] != "-m" || fields[5] != proto ||
+		fields[6] != "--dport" || fields[8] != "-j" || fields[9] != "ACCEPT" {
+		return PortSpec{}, false
+	}
+	port, err := strconv.Atoi(fields[7])
+	if err != nil || port <= 0 {
+		return PortSpec{}, false
+	}
+	return PortSpec{Port: port, Proto: normalizeProto(proto)}, true
+}
+
+// commentedListenRule достаёт proto/port из ACCEPT-правила INPUT свободной
+// формы. Зовётся только для строк с нашей меткой, поэтому нестрогость здесь
+// безопасна.
+func commentedListenRule(fields []string) (PortSpec, bool) {
+	if len(fields) < 2 || fields[0] != "-A" || fields[1] != "INPUT" {
+		return PortSpec{}, false
+	}
+	proto := ""
+	port := 0
+	isAccept := false
+	for i, f := range fields {
+		switch {
+		case f == "-p" && i+1 < len(fields):
+			proto = fields[i+1]
+		case f == "--dport" && i+1 < len(fields):
+			port, _ = strconv.Atoi(fields[i+1])
+		case f == "-j" && i+1 < len(fields) && fields[i+1] == "ACCEPT":
+			isAccept = true
+		}
+	}
+	if !isAccept || port <= 0 || proto == "" {
+		return PortSpec{}, false
+	}
+	return PortSpec{Port: port, Proto: normalizeProto(proto)}, true
 }
 
 func portKey(port int, proto string) string {
