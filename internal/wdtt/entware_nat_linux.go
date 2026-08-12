@@ -192,8 +192,12 @@ func wdttNetfilterHookScript(spec wdttNetfilterSpec) string {
 	b.WriteString("case \"$table\" in\nfilter)\n")
 	for _, iface := range forwardIfaces {
 		fmt.Fprintf(&b, "if has_if %q; then\n", iface)
-		fmt.Fprintf(&b, "  run -C FORWARD -i %q -j ACCEPT || run -I FORWARD 1 -i %q -j ACCEPT\n", iface, iface)
-		fmt.Fprintf(&b, "  run -C FORWARD -o %q -j ACCEPT || run -I FORWARD 1 -o %q -j ACCEPT\n", iface, iface)
+		// Форма — из entwareForwardMatch: хук и Go-код обязаны ставить,
+		// проверять и сносить одно и то же правило.
+		for _, dir := range []string{"-i", "-o"} {
+			match := strings.Join(entwareForwardMatch(dir, fmt.Sprintf("%q", iface)), " ")
+			fmt.Fprintf(&b, "  run -C FORWARD %s || run -I FORWARD 1 %s\n", match, match)
+		}
 		b.WriteString("fi\n")
 	}
 	for _, d := range spec.DNS {
@@ -293,8 +297,11 @@ func removeEntwareNATIfaces(ctx context.Context, ifaces ...string) {
 			continue
 		}
 		for i := 0; i < 5; i++ {
-			_ = iptables.Run(ctx, "-D", "FORWARD", "-i", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
-			_ = iptables.Run(ctx, "-D", "FORWARD", "-o", iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT")
+			for _, dir := range []string{"-i", "-o"} {
+				for _, spec := range entwareForwardDeleteSpecs(dir, iface) {
+					_ = iptables.Run(ctx, append([]string{"-D", "FORWARD"}, spec...)...)
+				}
+			}
 		}
 		removeWdttDNSRules(ctx, iface)
 	}
@@ -390,6 +397,31 @@ func entwareForwardIfacesPresent(fwdOut string, ifaces []string) bool {
 	return len(ifaces) > 0
 }
 
+// entwareForwardMatch — спека правила FORWARD accept: одна на вставку, проверку
+// и снос. Единая точка не ради красоты: с 2.17.0 эти три формы разъехались
+// (вставка и проверка стали голыми, снос остался на помеченной) — и снос
+// перестал удалять хоть что-нибудь, оставляя `-i <iface> -j ACCEPT` в FORWARD
+// навсегда после каждой остановки сервера.
+//
+// Метки `-m comment` здесь нет и не нужно: правило адресовано НАШЕМУ интерфейсу
+// (wdttraw0 / opkgtunN), чужих правил на нём не бывает — имя интерфейса и есть
+// признак владения. Тем же держится и цепочка awgm_wdtt_mangle ниже.
+// ponytail: имя интерфейса как признак владения; метка понадобится, только если
+// правило когда-нибудь станет адресовать общий ресурс вместо своего интерфейса.
+func entwareForwardMatch(dir, ifaceToken string) []string {
+	return []string{dir, ifaceToken, "-j", "ACCEPT"}
+}
+
+// entwareForwardDeleteSpecs — все формы, которыми мы когда-либо ставили это
+// правило: текущая и помеченная из версий ≤2.16.x. Снос обязан покрывать обе,
+// иначе апгрейд оставляет старую форму в FORWARD навсегда.
+func entwareForwardDeleteSpecs(dir, iface string) [][]string {
+	return [][]string{
+		entwareForwardMatch(dir, iface),
+		{dir, iface, "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT"},
+	}
+}
+
 func entwareForwardRulePresent(ctx context.Context, dir, iface string) bool {
 	iface = strings.TrimSpace(iface)
 	if iface == "" {
@@ -400,7 +432,8 @@ func entwareForwardRulePresent(ctx context.Context, dir, iface string) bool {
 	default:
 		return false
 	}
-	return iptables.Run(ctx, "-C", "FORWARD", dir, iface, "-j", "ACCEPT") == nil
+	return iptables.Run(ctx, append([]string{"-C", "FORWARD"},
+		entwareForwardMatch(dir, iface)...)...) == nil
 }
 
 func ensureEntwareForwardRule(ctx context.Context, dir, iface string) error {
@@ -411,8 +444,8 @@ func ensureEntwareForwardRule(ctx context.Context, dir, iface string) error {
 	if entwareForwardRulePresent(ctx, dir, iface) {
 		return nil
 	}
-	// Без -m comment: на Keenetic xt_comment для FORWARD часто не ставится (#666).
-	if err := iptables.Run(ctx, "-I", "FORWARD", "1", dir, iface, "-j", "ACCEPT"); err != nil {
+	if err := iptables.Run(ctx, append([]string{"-I", "FORWARD", "1"},
+		entwareForwardMatch(dir, iface)...)...); err != nil {
 		return fmt.Errorf("FORWARD %s %s: %w", dir, iface, err)
 	}
 	return nil
@@ -479,8 +512,10 @@ func setupEntwareMSSClamp(ctx context.Context, peerCIDRs ...string) {
 	_ = iptables.Run(ctx, "-t", "mangle", "-F", entwareMSSChain)
 	for _, peerCIDR := range cidrs {
 		for _, spec := range []string{"-s", "-d"} {
-			// Без -m comment: на Keenetic xt_comment часто не загружен (#666),
-			// правило молча не ставится — ручной fix пользователей идёт без comment.
+			// Без -m comment намеренно: правила живут в НАШЕЙ цепочке
+			// awgm_wdtt_mangle, которую мы же создаём (-N) и сносим (-F/-X).
+			// Имя цепочки и есть признак владения — метка не добавила бы
+			// ничего, а сверка (entwareMSSPresentAll) читает -S этой цепочки.
 			_ = iptables.Run(ctx, "-t", "mangle", "-A", entwareMSSChain,
 				spec, peerCIDR, "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN",
 				"-j", "TCPMSS", "--clamp-mss-to-pmtu")

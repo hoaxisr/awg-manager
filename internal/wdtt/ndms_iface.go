@@ -177,6 +177,11 @@ func (s *Service) opkgTunExists(ctx context.Context, ndmsName string) bool {
 // Отдельно от opkgTunExists намеренно: тот при неподключённом чекере отвечает
 // «нет» (create нужен), а пропускать по этому же ответу teardown нельзя —
 // деградировавшая обвязка перестала бы убирать за собой вообще.
+//
+// Булев ответ чекера не отличает «нет» от «спросить не удалось» (адаптер над
+// InterfaceStore отдаёт false и на ошибку bootstrap). Пропуск в этом случае
+// безопасен: при лежащем RCI мутации teardown всё равно провалились бы, а
+// защёлки тут нет — следующий тик спросит заново.
 func (s *Service) opkgTunKnownAbsent(ctx context.Context, ndmsName string) bool {
 	return s.opkgExist != nil && !s.opkgExist.OpkgTunExists(ctx, ndmsName)
 }
