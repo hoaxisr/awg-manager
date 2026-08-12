@@ -24,6 +24,7 @@
 
 	let bindables = $state<SingboxRouterWANInterface[]>([]);
 	let loading = $state(true);
+	let error = $state('');
 
 	onMount(() => {
 		void api
@@ -31,8 +32,9 @@
 			.then((list) => {
 				bindables = list;
 			})
-			.catch(() => {
+			.catch((err) => {
 				bindables = [];
+				error = err.message || 'Ошибка загрузки списка интерфейсов';
 			})
 			.finally(() => {
 				loading = false;
@@ -54,19 +56,12 @@
 	bind:value
 	{options}
 	{disabled}
+	{hint}
 	fullWidth
 	placeholder={loading ? 'Загрузка интерфейсов…' : '— по умолчанию —'}
+	error={error}
 	onchange={(v) => onchange?.(v)}
 />
-{#if hint}
-	<p class="bind-hint">{hint}</p>
-{/if}
 
 <style>
-	.bind-hint {
-		margin: 6px 0 0;
-		font-size: 12px;
-		line-height: 1.45;
-		color: var(--text-muted);
-	}
 </style>

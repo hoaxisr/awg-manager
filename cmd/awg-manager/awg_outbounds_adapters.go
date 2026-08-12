@@ -265,6 +265,10 @@ func (a *routerSingboxTunnelEditor) UpdateTunnelOutbound(ctx context.Context, ta
 	return a.op.UpdateTunnel(ctx, tag, outbound)
 }
 
+func (a *routerSingboxTunnelEditor) UpdateTunnelOutbounds(ctx context.Context, updates map[string]json.RawMessage) error {
+	return a.op.UpdateTunnels(ctx, updates)
+}
+
 func (a *routerSingboxTunnelEditor) IsSingboxTunnelTag(ctx context.Context, tag string) bool {
 	tunnels, err := a.op.ListTunnels(ctx)
 	if err != nil {

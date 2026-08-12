@@ -4,7 +4,7 @@
 	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
-	import type { SingboxRouterOutbound, SingboxRouterWANInterface } from '$lib/types';
+	import type { SingboxRouterOutbound } from '$lib/types';
 	import type { OutboundGroup } from './outboundOptions';
 	import { isSubscriptionOutbound } from '$lib/components/sb-router/outboundLabel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -45,17 +45,7 @@
 	// svelte-ignore state_referenced_locally
 	let bindInterface = $state(outbound?.bind_interface ?? '');
 	let egressBind = $state(outbound?.egress_bind ?? '');
-	let bindables = $state<SingboxRouterWANInterface[]>([]);
-	let bindablesLoading = $state(true);
-	$effect(() => {
-		void api.singboxRouterListBindableInterfaces()
-			.then((l) => { bindables = l; })
-			.catch(() => { bindables = []; })
-			.finally(() => { bindablesLoading = false; });
-	});
-	const bindableOptions = $derived<DropdownOption[]>(
-		bindables.map((i) => ({ value: i.name, label: `${i.label} · ${i.name}${i.up ? '' : ' (down)'}` }))
-	);
+
 
 	let busy = $state(false);
 	let error = $state('');
@@ -341,13 +331,10 @@
 
 		{#if type === 'direct'}
 			<div class="field">
-				<div class="lbl">Интерфейс</div>
-				<Dropdown
+				<BindInterfacePicker
 					bind:value={bindInterface}
-					options={bindableOptions}
-					placeholder={bindablesLoading ? 'Загрузка интерфейсов…' : bindables.length === 0 ? 'Нет доступных интерфейсов' : '— выбрать интерфейс —'}
-					disabled={bindablesLoading || bindables.length === 0}
-					fullWidth
+					label="Интерфейс"
+					hint=""
 				/>
 			</div>
 		{/if}

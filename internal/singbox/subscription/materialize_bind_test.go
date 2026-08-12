@@ -1,13 +1,14 @@
 package subscription
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
 
 func TestMaterializeMemberOutbound(t *testing.T) {
 	raw := []byte(`{"type":"vless","server":"1.2.3.4","server_port":443}`)
-	got := materializeMemberOutbound(raw, "sub-abc-def", "eth3")
+	got := materializeMemberOutbound(context.Background(), nil, raw, "sub-abc-def", "eth3")
 	var ob map[string]any
 	if err := json.Unmarshal(got, &ob); err != nil {
 		t.Fatal(err)
@@ -19,7 +20,7 @@ func TestMaterializeMemberOutbound(t *testing.T) {
 		t.Fatalf("bind_interface = %v", ob["bind_interface"])
 	}
 
-	cleared := materializeMemberOutbound(got, "sub-abc-def", "")
+	cleared := materializeMemberOutbound(context.Background(), nil, got, "sub-abc-def", "")
 	var clearedOb map[string]any
 	if err := json.Unmarshal(cleared, &clearedOb); err != nil {
 		t.Fatal(err)

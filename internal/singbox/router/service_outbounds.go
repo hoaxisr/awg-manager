@@ -176,8 +176,14 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound, egre
 	}); err != nil {
 		return err
 	}
+	
 	if !strings.EqualFold(o.Type, "direct") {
-		return s.applyCompositeEgressBind(ctx, o, egressBind)
+		if err := s.validateEgressBindConflicts(o.Tag, o.Outbounds, egressBind); err != nil {
+			return err
+		}
+	}
+	if !strings.EqualFold(o.Type, "direct") {
+		return s.applyCompositeEgressBind(ctx, nil, o.Outbounds, o.Tag, egressBind)
 	}
 	return nil
 }
@@ -192,6 +198,17 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 			return err
 		}
 	}
+	
+	var oldMembers []string
+	if cfg, err := s.loadRouterConfig(); err == nil && cfg != nil {
+		for _, o := range cfg.CompositeOutbounds() {
+			if o.Tag == tag {
+				oldMembers = o.Outbounds
+				break
+			}
+		}
+	}
+	
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
@@ -199,6 +216,12 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		return c.UpdateCompositeOutbound(tag, o)
 	}); err != nil {
 		return err
+	}
+	
+	if egressBind != nil && !strings.EqualFold(o.Type, "direct") {
+		if err := s.validateEgressBindConflicts(tag, o.Outbounds, *egressBind); err != nil {
+			return err
+		}
 	}
 	// A rename rewrites config references (renameOutboundReferences inside
 	// UpdateCompositeOutbound); mirror it for the settings-side QoS classes.
@@ -215,7 +238,7 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		tag = newTag
 	}
 	if !strings.EqualFold(o.Type, "direct") && egressBind != nil {
-		return s.applyCompositeEgressBind(ctx, o, *egressBind)
+		return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, *egressBind)
 	}
 	return nil
 }
@@ -228,10 +251,27 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 			return fmt.Errorf("%w: %q referenced by %s", ErrOutboundReferenced, tag, strings.Join(refs, ", "))
 		}
 	}
+	var oldMembers []string
+	if cfg, err := s.loadRouterConfig(); err == nil && cfg != nil {
+		for _, o := range cfg.CompositeOutbounds() {
+			if o.Tag == tag {
+				oldMembers = o.Outbounds
+				break
+			}
+		}
+	}
+	
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) }); err != nil {
 		return err
 	}
-	_ = s.deleteCompositeEgressBind(tag)
+	
+	// Clear bind from all members
+	if len(oldMembers) > 0 {
+		_ = s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
+	} else {
+		_ = s.deleteCompositeEgressBind(tag)
+	}
+
 	if force {
 		// Force-delete DISABLES (not deletes) referencing classes so the UI
 		// shows them off instead of silently losing user configuration.

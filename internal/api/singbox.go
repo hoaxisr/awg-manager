@@ -128,6 +128,7 @@ type SingboxHandler struct {
 	settingsStore   *storage.SettingsStore
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
 	routerRefs      tunnelservice.RouterRefChecker
+	bindValidator   func(ctx context.Context, name string) error
 }
 
 // ndmsProxyToggler — узкий интерфейс для чтения текущего значения
@@ -163,8 +164,13 @@ func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndms
 }
 
 // SetSettingsStore wires global settings for connectivity checks.
-func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
-	h.settingsStore = settings
+func (h *SingboxHandler) SetSettingsStore(s *storage.SettingsStore) {
+	h.settingsStore = s
+}
+
+// SetBindValidator wires the router's validateBindInterface for direct API tunnel saves.
+func (h *SingboxHandler) SetBindValidator(validator func(ctx context.Context, name string) error) {
+	h.bindValidator = validator
 }
 
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
@@ -614,6 +620,19 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "tag required")
 		return
 	}
+	
+	if h.bindValidator != nil {
+		var peek struct {
+			BindInterface string `json:"bind_interface"`
+		}
+		if err := json.Unmarshal(body.Outbound, &peek); err == nil && peek.BindInterface != "" {
+			if err := h.bindValidator(r.Context(), peek.BindInterface); err != nil {
+				response.BadRequest(w, fmt.Sprintf("invalid bind_interface: %v", err))
+				return
+			}
+		}
+	}
+
 	h.log.Info("single-update", tag, "requested via API")
 	if err := h.op.UpdateTunnel(r.Context(), tag, body.Outbound); err != nil {
 		response.InternalError(w, err.Error())

@@ -51,7 +51,69 @@ func (f *fakeTunnelEditor) UpdateTunnelOutbound(_ context.Context, tag string, o
 	return nil
 }
 
+func (f *fakeTunnelEditor) UpdateTunnelOutbounds(_ context.Context, updates map[string]json.RawMessage) error {
+	for tag, out := range updates {
+		f.updated[tag] = out
+		f.tags[tag] = out
+	}
+	return nil
+}
+
 func (f *fakeTunnelEditor) IsSingboxTunnelTag(_ context.Context, tag string) bool {
 	_, ok := f.tags[tag]
 	return ok
 }
+
+func TestApplyCompositeEgressBind(t *testing.T) {
+	editor := &fakeTunnelEditor{
+		tags: map[string]json.RawMessage{
+			"t1": json.RawMessage(`{"type":"socks","tag":"t1","server":"1.2.3.4"}`),
+			"t2": json.RawMessage(`{"type":"socks","tag":"t2","server":"2.2.2.2","bind_interface":"eth0"}`),
+			"t3": json.RawMessage(`{"type":"socks","tag":"t3","server":"3.3.3.3"}`),
+		},
+		updated: make(map[string]json.RawMessage),
+	}
+
+	svc := &ServiceImpl{deps: Deps{SingboxTunnelsEditor: editor}}
+	
+	// Set initial bind to 'eth1' on members 't1' and 't2'
+	// 't3' is a new member being added, 't2' is an existing member, 't1' is being removed.
+	err := svc.applyCompositeEgressBind(context.Background(), []string{"t1", "t2"}, []string{"t2", "t3"}, "group1", "eth1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify t1 (removed) had bind cleared
+	if out1, ok := editor.updated["t1"]; !ok {
+		t.Errorf("t1 should be updated (bind cleared)")
+	} else {
+		var ob map[string]any
+		json.Unmarshal(out1, &ob)
+		if _, hasBind := ob["bind_interface"]; hasBind {
+			t.Errorf("t1 bind_interface should be cleared")
+		}
+	}
+
+	// Verify t2 (kept) had bind updated to eth1
+	if out2, ok := editor.updated["t2"]; !ok {
+		t.Errorf("t2 should be updated")
+	} else {
+		var ob map[string]any
+		json.Unmarshal(out2, &ob)
+		if ob["bind_interface"] != "eth1" {
+			t.Errorf("t2 bind_interface = %v, want eth1", ob["bind_interface"])
+		}
+	}
+
+	// Verify t3 (added) had bind updated to eth1
+	if out3, ok := editor.updated["t3"]; !ok {
+		t.Errorf("t3 should be updated")
+	} else {
+		var ob map[string]any
+		json.Unmarshal(out3, &ob)
+		if ob["bind_interface"] != "eth1" {
+			t.Errorf("t3 bind_interface = %v, want eth1", ob["bind_interface"])
+		}
+	}
+}
+

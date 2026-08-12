@@ -91,15 +91,17 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 		return
 	}
 	o := router.Outbound{
-		Type:          body.Outbound.Type,
-		Tag:           body.Outbound.Tag,
-		BindInterface: body.Outbound.BindInterface,
-		Outbounds:     body.Outbound.Outbounds,
-		URL:           body.Outbound.URL,
-		Interval:      body.Outbound.Interval,
-		Tolerance:     body.Outbound.Tolerance,
-		Default:       body.Outbound.Default,
-		Strategy:      body.Outbound.Strategy,
+		Type:           body.Outbound.Type,
+		Tag:            body.Outbound.Tag,
+		BindInterface:  body.Outbound.BindInterface,
+		Outbounds:      body.Outbound.Outbounds,
+		URL:            body.Outbound.URL,
+		Interval:       body.Outbound.Interval,
+		Tolerance:      body.Outbound.Tolerance,
+		Default:        body.Outbound.Default,
+		Strategy:       body.Outbound.Strategy,
+		Server:         body.Outbound.Server,
+		DomainResolver: body.Outbound.DomainResolver,
 	}
 	if err := h.svc.UpdateCompositeOutbound(r.Context(), body.Tag, o, body.EgressBind); err != nil {
 		h.handleErr(w, "request", err)

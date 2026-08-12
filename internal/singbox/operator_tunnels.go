@@ -426,30 +426,40 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 
 // UpdateTunnel replaces outbound JSON, reloads.
 func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.RawMessage) error {
+	return o.UpdateTunnels(ctx, map[string]json.RawMessage{tag: outbound})
+}
+
+// UpdateTunnels replaces multiple outbound JSONs, reloads once.
+func (o *Operator) UpdateTunnels(ctx context.Context, updates map[string]json.RawMessage) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	if o.runtimeLogger != nil {
-		o.runtimeLogger.Info("single-update", tag, "start")
+		o.runtimeLogger.Info("batch-update", fmt.Sprintf("%d tunnels", len(updates)), "start")
 	}
 	cfg, err := o.loadConfig()
 	if err != nil {
 		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("single-update", tag, "load config failed: "+err.Error())
+			o.runtimeLogger.Error("batch-update", "", "load config failed: "+err.Error())
 		}
 		return err
 	}
-	if err := cfg.UpdateTunnel(tag, outbound); err != nil {
-		if o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("single-update", tag, "update outbound failed: "+err.Error())
+	for tag, outbound := range updates {
+		if err := cfg.UpdateTunnel(tag, outbound); err != nil {
+			if o.runtimeLogger != nil {
+				o.runtimeLogger.Warn("batch-update", tag, "update outbound failed: "+err.Error())
+			}
+			return err
 		}
-		return err
 	}
 	if err := o.applyConfig(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("single-update", tag, "apply config failed: "+err.Error())
+			o.runtimeLogger.Error("batch-update", "", "apply config failed: "+err.Error())
 		}
 		return err
 	}
 	if o.runtimeLogger != nil {
-		o.runtimeLogger.Info("single-update", tag, "done")
+		o.runtimeLogger.Info("batch-update", "", "done")
 	}
 	return nil
 }
