@@ -84,6 +84,11 @@
         Замените <code class="mono">app.exe</code> на имя исполняемого файла программы,
         чей трафик нужно пометить.
       </p>
+      <p class="hint">
+        В версиях Pro, Enterprise и Education настроить DSCP-метки можно через
+        редактор локальной групповой политики (<code class="mono">gpedit.msc</code>)
+        → Конфигурация компьютера → Конфигурация Windows → QoS на основе политики.
+      </p>
     </section>
 
     <section class="block">
