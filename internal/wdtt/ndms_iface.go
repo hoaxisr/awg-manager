@@ -173,6 +173,19 @@ func (s *Service) opkgTunExists(ctx context.Context, ndmsName string) bool {
 	return s.opkgExist.OpkgTunExists(ctx, ndmsName)
 }
 
+// opkgTunKnownAbsent — «чекер подключён и говорит, что интерфейса нет».
+// Отдельно от opkgTunExists намеренно: тот при неподключённом чекере отвечает
+// «нет» (create нужен), а пропускать по этому же ответу teardown нельзя —
+// деградировавшая обвязка перестала бы убирать за собой вообще.
+//
+// Булев ответ чекера не отличает «нет» от «спросить не удалось» (адаптер над
+// InterfaceStore отдаёт false и на ошибку bootstrap). Пропуск в этом случае
+// безопасен: при лежащем RCI мутации teardown всё равно провалились бы, а
+// защёлки тут нет — следующий тик спросит заново.
+func (s *Service) opkgTunKnownAbsent(ctx context.Context, ndmsName string) bool {
+	return s.opkgExist != nil && !s.opkgExist.OpkgTunExists(ctx, ndmsName)
+}
+
 // prepareNDMSOpkgTun registers OpkgTun in NDMS before wdtt-server creates the
 // kernel iface. Адрес здесь НЕ выставляется намеренно: интерфейс со
 // сконфигурированным `ip address`, но без kernel-адреса вгоняет ndm в
@@ -235,6 +248,16 @@ func (s *Service) teardownServerOpkgTun(ctx context.Context, cfg ServerConfig) e
 // интерфейс НИКОГДА не должен остаться с настроенным адресом без kernel-адреса.
 func (s *Service) teardownOpkgTunByName(ctx context.Context, ndmsName, scope string) error {
 	if s.ndmsIfaces == nil || strings.TrimSpace(ndmsName) == "" {
+		return nil
+	}
+	// Интерфейса в NDMS нет — сносить нечего, и звать RCI нельзя: `interface
+	// <name> up false` создаёт интерфейс по обращению (create-on-reference,
+	// см. тот же довод у singbox/router.teardownOpkgTun), а следующая команда
+	// его сносит — ifdestroyed-хук на пустом месте. Для выключенного сервера
+	// реап зовёт teardown каждые 15 с вечно, и без этой проверки цикл
+	// «создали-снесли» крутит 4 RCI-мутации, флеш-сейв и полную инвалидацию
+	// кэшей NDMS на каждом тике.
+	if s.opkgTunKnownAbsent(ctx, ndmsName) {
 		return nil
 	}
 	if err := s.ndmsIfaces.RemovePermitAllACL(ctx, ndmsName); err != nil && s.appLog != nil {

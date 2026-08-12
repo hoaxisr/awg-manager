@@ -170,7 +170,6 @@ const api_BypassSetStatusData: v.GenericSchema = v.looseObject({
 	lastError: v.optional(v.nullable(v.string())),
 	lastPopulate: v.optional(v.nullable(v.string())),
 	missingTags: v.optional(v.nullable(v.array(v.string()))),
-	xtSetAvailable: v.optional(v.nullable(v.boolean())),
 });
 
 const api_ChangelogData: v.GenericSchema = v.looseObject({

@@ -490,11 +490,6 @@ definitions:
         items:
           type: string
         type: array
-      xtSetAvailable:
-        description: |-
-          XtSetAvailable reports whether the xt_set kernel module is loaded or
-          available as a .ko file (required for -m set iptables matching).
-        type: boolean
     type: object
   api.ChangelogData:
     properties:
