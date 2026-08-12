@@ -1538,6 +1538,7 @@ const api_SingboxRouterNATSegmentDTO: v.GenericSchema = v.looseObject({
 const api_SingboxRouterOutboundDTO: v.GenericSchema = v.looseObject({
 	bind_interface: v.optional(v.nullable(v.string())),
 	default: v.optional(v.nullable(v.string())),
+	egress_bind: v.optional(v.nullable(v.string())),
 	interval: v.optional(v.nullable(v.string())),
 	outbounds: v.optional(v.nullable(v.array(v.string()))),
 	source: v.optional(v.nullable(v.string())),
@@ -1851,6 +1852,7 @@ const api_SubgroupsResponseEnvelope: v.GenericSchema = v.looseObject({
 
 const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 	activeMember: v.optional(v.nullable(v.string())),
+	bindInterface: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	excludedMembers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionMemberDTO)))),
 	excludedTags: v.optional(v.nullable(v.array(v.string()))),

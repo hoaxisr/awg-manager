@@ -142,10 +142,15 @@ func (s *ServiceImpl) ListCompositeOutbounds(ctx context.Context) ([]CompositeOu
 	if err != nil {
 		return nil, err
 	}
+	binds := s.compositeEgressBinds()
 	own := cfg.CompositeOutbounds()
 	out := make([]CompositeOutboundView, 0, len(own))
 	for _, o := range own {
-		out = append(out, CompositeOutboundView{Outbound: o, Source: "router"})
+		view := CompositeOutboundView{Outbound: o, Source: "router"}
+		if binds != nil {
+			view.EgressBind = binds[o.Tag]
+		}
+		out = append(out, view)
 	}
 	if s.deps.SubscriptionComposites != nil {
 		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
@@ -155,23 +160,35 @@ func (s *ServiceImpl) ListCompositeOutbounds(ctx context.Context) ([]CompositeOu
 	return out, nil
 }
 
-func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound) error {
+func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error {
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
+	} else if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
+		return err
 	}
-	return s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
+	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.AddCompositeOutbound(o)
-	})
+	}); err != nil {
+		return err
+	}
+	if !strings.EqualFold(o.Type, "direct") {
+		return s.applyCompositeEgressBind(ctx, o, egressBind)
+	}
+	return nil
 }
 
-func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
+func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error {
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
+			return err
+		}
+	} else if egressBind != nil {
+		if err := validateBindInterfaceOptional(ctx, s, *egressBind); err != nil {
 			return err
 		}
 	}
@@ -189,6 +206,16 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		if err := s.renameQoSClassOutbound(tag, newTag); err != nil {
 			s.appLog.Warn("qos-classes", tag, "rename outbound in QoS classes: "+err.Error())
 		}
+		if binds := s.compositeEgressBinds(); binds != nil {
+			if prev, ok := binds[tag]; ok {
+				_ = s.setCompositeEgressBind(newTag, prev)
+				_ = s.deleteCompositeEgressBind(tag)
+			}
+		}
+		tag = newTag
+	}
+	if !strings.EqualFold(o.Type, "direct") && egressBind != nil {
+		return s.applyCompositeEgressBind(ctx, o, *egressBind)
 	}
 	return nil
 }
@@ -204,6 +231,7 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) }); err != nil {
 		return err
 	}
+	_ = s.deleteCompositeEgressBind(tag)
 	if force {
 		// Force-delete DISABLES (not deletes) referencing classes so the UI
 		// shows them off instead of silently losing user configuration.

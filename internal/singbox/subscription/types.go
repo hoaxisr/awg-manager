@@ -87,6 +87,8 @@ type Subscription struct {
 	Enabled          bool                   `json:"enabled"`
 	Mode             SubscriptionMode       `json:"mode,omitempty"`    // "" treated as ModeSelector for back-compat
 	URLTest          *URLTestConfig         `json:"urlTest,omitempty"` // populated when Mode == ModeURLTest
+	// BindInterface — kernel iface for dialing all member outbounds (modem/WAN/Wi‑Fi).
+	BindInterface string `json:"bindInterface,omitempty"`
 }
 
 // IsInline reports whether the subscription's content is paste-supplied
@@ -148,6 +150,7 @@ type CreateInput struct {
 	ExcludedKeys  []string         // суффиксы тегов из превью (suffixOf, узкий или расширенный) для исключения на первичном refresh
 	FilterInclude string           // regex-фильтр «включать только» (валидируется в Service.Create)
 	FilterExclude string           // regex-фильтр «исключать» (валидируется в Service.Create)
+	BindInterface string           // egress kernel iface for all members; "" = default route
 }
 
 // UpdatePatch is partial update; nil pointers mean "leave as-is".
@@ -161,6 +164,7 @@ type UpdatePatch struct {
 	URLTest       *URLTestConfig // overwrites stored URLTest when non-nil
 	FilterInclude *string        // regex-фильтр «включать только»; "" = снять фильтр
 	FilterExclude *string        // regex-фильтр «исключать»; "" = снять фильтр
+	BindInterface *string        // egress kernel iface; "" clears bind
 }
 
 // RefreshResult is the outcome of a single refresh cycle.

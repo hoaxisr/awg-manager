@@ -221,6 +221,10 @@ type Outbound struct {
 type CompositeOutboundView struct {
 	Outbound
 	Source string `json:"source"`
+	// EgressBind — kernel iface propagated to sing-box tunnel members when
+	// this composite is selector/urltest (#709). Stored in settings, not in
+	// 20-router.json.
+	EgressBind string `json:"egress_bind,omitempty"`
 }
 
 type Inbound struct {

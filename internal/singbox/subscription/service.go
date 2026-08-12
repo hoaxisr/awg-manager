@@ -89,6 +89,8 @@ type Service struct {
 	// мьютексы Service и нельзя выполнять сетевой I/O (fetch подписки идёт
 	// до applyDiff, вне txMu).
 	txMu sync.Mutex
+	// bindValidator — optional catalog check for BindInterface (#709).
+	bindValidator BindInterfaceValidator
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
@@ -100,6 +102,9 @@ func NewService(store *Store, mutator ConfigMutator) *Service {
 // the subscription (ProxyIndex stays -1); SyncProxies (re-)creates them
 // when the toggle is turned back on.
 func (s *Service) SetNDMSProxyEnabled(fn func() bool) { s.ndmsProxyEnabled = fn }
+
+// SetBindInterfaceValidator wires router bindable-interface validation.
+func (s *Service) SetBindInterfaceValidator(v BindInterfaceValidator) { s.bindValidator = v }
 
 func (s *Service) proxyEnabled() bool {
 	if s.ndmsProxyEnabled == nil {
@@ -277,6 +282,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	// Regex-фильтры валидируются до создания строки в store: битый шаблон
 	// не должен попасть на диск (refreshLocked падал бы на каждом refresh).
 	if _, err := CompileMemberFilter(in.FilterInclude, in.FilterExclude); err != nil {
+		return nil, fmt.Errorf("subscription: %w", err)
+	}
+	if err := validateBindInterfaceOptional(ctx, s.bindValidator, in.BindInterface); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)
 	}
 	// Serialize the whole Create: allocation scans-without-reserve, so two
@@ -725,7 +733,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		if skip(n.Tag, n.Out.Label) {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
-		jsonWithTag := replaceTag(n.Out.Outbound, n.Tag)
+		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -735,7 +743,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
 			continue
 		}
-		jsonWithTag := replaceTag(e.Out.Outbound, e.Tag)
+		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -934,6 +942,15 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		filterChanged = newInclude != current.FilterInclude || newExclude != current.FilterExclude
 	}
+	bindChanged := false
+	prevBind := current.BindInterface
+	if patch.BindInterface != nil {
+		newBind := strings.TrimSpace(*patch.BindInterface)
+		if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
+			return nil, fmt.Errorf("subscription: %w", err)
+		}
+		bindChanged = newBind != current.BindInterface
+	}
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
 	sub, err := s.store.Update(id, patch)
 	if err != nil {
@@ -944,19 +961,28 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// принудительный re-parse сохранённого paste-тела (обход short-circuit).
 	// refresh сам пересобирает group outbound, поэтому mode-ветка ниже
 	// в этом случае не нужна.
-	if filterChanged {
-		if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
-			// Компенсация: новый фильтр уже записан в store, но
+	if filterChanged || bindChanged {
+		forceReparse := sub.IsInline() && (filterChanged || bindChanged)
+		if _, err := s.refreshLockedOpts(context.Background(), id, forceReparse); err != nil {
+			// Компенсация: новый фильтр/интерфейс уже записан в store, но
 			// ре-материализация не удалась (фильтр скрывает всё, URL
 			// недоступен). Оставить его — значит ронять каждый плановый
-			// refresh той же ошибкой. Возвращаем прежнюю пару фильтров
+			// refresh той же ошибкой. Возвращаем прежние значения
 			// и отдаём ошибку — клиент видит, что сохранение не прошло.
-			if _, rbErr := s.store.Update(id, UpdatePatch{FilterInclude: &prevInclude, FilterExclude: &prevExclude}); rbErr != nil {
-				s.logWarn("subscription-update", id, "failed to restore previous filters after failed refresh: "+rbErr.Error())
-			} else {
-				s.logWarn("subscription-update", id, "filter change rolled back (refresh failed): "+err.Error())
+			rb := UpdatePatch{}
+			if filterChanged {
+				rb.FilterInclude = &prevInclude
+				rb.FilterExclude = &prevExclude
 			}
-			return sub, fmt.Errorf("subscription: применение фильтра: %w", err)
+			if bindChanged {
+				rb.BindInterface = &prevBind
+			}
+			if _, rbErr := s.store.Update(id, rb); rbErr != nil {
+				s.logWarn("subscription-update", id, "failed to restore previous settings after failed refresh: "+rbErr.Error())
+			} else {
+				s.logWarn("subscription-update", id, "settings change rolled back (refresh failed): "+err.Error())
+			}
+			return sub, fmt.Errorf("subscription: применение настроек: %w", err)
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
@@ -1197,7 +1223,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, replaceTag(out.Outbound, tag)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}

@@ -909,6 +909,9 @@ definitions:
     type: object
   api.CreateSubscriptionRequest:
     properties:
+      bindInterface:
+        example: eth3
+        type: string
       enabled:
         example: true
         type: boolean
@@ -4202,6 +4205,9 @@ definitions:
       default:
         example: awg-vpn0
         type: string
+      egress_bind:
+        example: eth3
+        type: string
       interval:
         example: 3m
         type: string
@@ -5235,6 +5241,9 @@ definitions:
       activeMember:
         example: sub-demo-001
         type: string
+      bindInterface:
+        example: eth3
+        type: string
       enabled:
         example: true
         type: boolean
@@ -6238,6 +6247,10 @@ definitions:
     type: object
   api.UpdateSubscriptionRequest:
     properties:
+      bindInterface:
+        description: '"" clears egress bind'
+        example: eth3
+        type: string
       enabled:
         type: boolean
       filterExclude:

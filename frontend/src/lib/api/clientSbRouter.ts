@@ -150,16 +150,22 @@ export class SbRouterClient extends SingboxClient {
 	}
 
 	async singboxRouterAddOutbound(o: SingboxRouterOutbound): Promise<void> {
+		const { egress_bind, ...outbound } = o;
 		await this.request('/singbox/router/outbounds/add', {
 			method: 'POST',
-			body: JSON.stringify(o),
+			body: JSON.stringify({ ...outbound, egress_bind }),
 		});
 	}
 
 	async singboxRouterUpdateOutbound(tag: string, o: SingboxRouterOutbound): Promise<void> {
+		const { egress_bind, ...outbound } = o;
+		const body: Record<string, unknown> = { tag, outbound };
+		if (egress_bind !== undefined) {
+			body.egress_bind = egress_bind;
+		}
 		await this.request('/singbox/router/outbounds/update', {
 			method: 'POST',
-			body: JSON.stringify({ tag, outbound: o }),
+			body: JSON.stringify(body),
 		});
 	}
 

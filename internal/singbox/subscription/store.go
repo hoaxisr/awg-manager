@@ -194,6 +194,7 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		Enabled:          in.Enabled,
 		FilterInclude:    in.FilterInclude,
 		FilterExclude:    in.FilterExclude,
+		BindInterface:    in.BindInterface,
 		SelectorTag:      "sub-" + short,
 		InboundTag:       "sub-" + short + "-in",
 		ProxyIndex:       -1,
@@ -281,6 +282,9 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		if patch.FilterExclude != nil {
 			sub.FilterExclude = *patch.FilterExclude
+		}
+		if patch.BindInterface != nil {
+			sub.BindInterface = *patch.BindInterface
 		}
 		return nil
 	})

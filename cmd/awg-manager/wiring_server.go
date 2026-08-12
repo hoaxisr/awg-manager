@@ -326,6 +326,7 @@ func (a *app) setupRouter() {
 		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
 		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
+		SingboxTunnelsEditor:   &routerSingboxTunnelEditor{op: a.singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
 		Orch:                   a.sbOrch,
 		WANInterfaces:          &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces},
@@ -367,6 +368,7 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
+	a.subSvc.SetBindInterfaceValidator(subscriptionBindValidator{router: routerSvc})
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.

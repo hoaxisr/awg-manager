@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -248,6 +249,43 @@ func (a *routerSingboxTunnelAdapter) ListTunnelTags(ctx context.Context) ([]stri
 		}
 	}
 	return out, nil
+}
+
+// routerSingboxTunnelEditor patches sing-box tunnel outbounds for composite
+// egress bind (#709).
+type routerSingboxTunnelEditor struct {
+	op *singbox.Operator
+}
+
+func (a *routerSingboxTunnelEditor) GetTunnelOutbound(ctx context.Context, tag string) (json.RawMessage, error) {
+	return a.op.GetTunnel(ctx, tag)
+}
+
+func (a *routerSingboxTunnelEditor) UpdateTunnelOutbound(ctx context.Context, tag string, outbound json.RawMessage) error {
+	return a.op.UpdateTunnel(ctx, tag, outbound)
+}
+
+func (a *routerSingboxTunnelEditor) IsSingboxTunnelTag(ctx context.Context, tag string) bool {
+	tunnels, err := a.op.ListTunnels(ctx)
+	if err != nil {
+		return false
+	}
+	for _, t := range tunnels {
+		if t.Tag == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// subscriptionBindValidator bridges router bindable-interface validation
+// into the subscription service (#709).
+type subscriptionBindValidator struct {
+	router *router.ServiceImpl
+}
+
+func (v subscriptionBindValidator) ValidateBindInterface(ctx context.Context, name string) error {
+	return v.router.ValidateBindInterface(ctx, name)
 }
 
 // monitoringSingboxTunnelAdapter projects sing-box tunnels into the

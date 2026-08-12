@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button, Dropdown, SegmentedControl, type DropdownOption } from '$lib/components/ui';
+	import BindInterfacePicker from '$lib/components/singbox/BindInterfacePicker.svelte';
 	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
@@ -43,6 +44,7 @@
 	let defaultOutbound = $state(outbound?.default ?? '');
 	// svelte-ignore state_referenced_locally
 	let bindInterface = $state(outbound?.bind_interface ?? '');
+	let egressBind = $state(outbound?.egress_bind ?? '');
 	let bindables = $state<SingboxRouterWANInterface[]>([]);
 	let bindablesLoading = $state(true);
 	$effect(() => {
@@ -68,6 +70,7 @@
 	let initialTolerance = $state(50);
 	let initialDefaultOutbound = $state('');
 	let initialBind = $state('');
+	let initialEgressBind = $state('');
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
@@ -80,6 +83,7 @@
 			initialTolerance = outbound.tolerance ?? 50;
 			initialDefaultOutbound = outbound.default ?? '';
 			initialBind = outbound.bind_interface ?? '';
+			initialEgressBind = outbound.egress_bind ?? '';
 		} else {
 			initialType = 'urltest';
 			initialTag = '';
@@ -89,6 +93,7 @@
 			initialTolerance = 50;
 			initialDefaultOutbound = '';
 			initialBind = '';
+			initialEgressBind = '';
 		}
 	});
 
@@ -108,7 +113,8 @@
 			interval !== initialInterval ||
 			tolerance !== initialTolerance ||
 			defaultOutbound !== initialDefaultOutbound ||
-			bindInterface !== initialBind
+			bindInterface !== initialBind ||
+			egressBind !== initialEgressBind
 		);
 	});
 
@@ -201,6 +207,7 @@
 				} else {
 					built.default = defaultOutbound || members[0];
 				}
+				built.egress_bind = egressBind.trim();
 			}
 
 			await onSave(built);
@@ -317,6 +324,16 @@
 						placeholder={members.length === 0 ? 'Сначала добавьте участников' : '— выбрать —'}
 						disabled={members.length === 0}
 						fullWidth
+					/>
+				</div>
+			{/if}
+
+			{#if !isSubscription}
+				<div class="field">
+					<BindInterfacePicker
+						bind:value={egressBind}
+						label="Исходящий интерфейс (members)"
+						hint="Принудительно dial'ит sing-box туннели-участники через выбранный uplink. Для подписок настройте bind в карточке подписки."
 					/>
 				</div>
 			{/if}
