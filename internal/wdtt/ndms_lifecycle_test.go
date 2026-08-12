@@ -197,6 +197,64 @@ func TestReapSkipsWhileStartInFlight(t *testing.T) {
 	}
 }
 
+// fakeOpkgExist — заглушка чекера существования OpkgTun в NDMS.
+type fakeOpkgExist struct {
+	exists bool
+	calls  []string
+}
+
+func (f *fakeOpkgExist) OpkgTunExists(_ context.Context, name string) bool {
+	f.calls = append(f.calls, name)
+	return f.exists
+}
+
+// Выключенный пользователем сервер остаётся в конфиге навсегда, а его процесс
+// не запущен — под условие реапа он подходит на каждом тике. Без проверки
+// существования teardown каждые 15 с гонял 4 RCI-мутации, флеш-сейв и полную
+// инвалидацию кэшей NDMS, а `interface <name> up false` создавал интерфейс по
+// обращению, чтобы следующая команда его снесла: отсюда поток ifdestroyed-хуков
+// от интерфейса, которого в NDMS нет.
+func TestReapSkipsOpkgTunAbsentInNDMS(t *testing.T) {
+	svc, fake := newNDMSTestService(t)
+	exist := &fakeOpkgExist{exists: false}
+	svc.SetOpkgTunExistChecker(exist)
+	full, err := svc.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Servers = append(full.Servers, ServerInstance{ID: "srv1", Config: ndmsServerConfig()})
+	if err := svc.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.reapOrphanOpkgTuns(context.Background())
+	if len(fake.calls) != 0 {
+		t.Fatalf("reap трогал несуществующий интерфейс: %v", fake.calls)
+	}
+	if len(exist.calls) == 0 {
+		t.Fatal("чекер существования не спрошен")
+	}
+}
+
+// Обратная половина: интерфейс в NDMS есть, владельца нет — снос обязан идти.
+func TestReapRemovesOpkgTunPresentInNDMS(t *testing.T) {
+	svc, fake := newNDMSTestService(t)
+	svc.SetOpkgTunExistChecker(&fakeOpkgExist{exists: true})
+	full, err := svc.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Servers = append(full.Servers, ServerInstance{ID: "srv1", Config: ndmsServerConfig()})
+	if err := svc.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.reapOrphanOpkgTuns(context.Background())
+	if fake.index("delete OpkgTun17") < 0 {
+		t.Fatalf("живая сирота не снята: %v", fake.calls)
+	}
+}
+
 func TestWdttPeerCIDRIsNormalizedNetwork(t *testing.T) {
 	// iptables -S печатает сеть, а не адрес с маской: несовпадение делало
 	// entwareLANPresent вечно ложным, и ресинк переписывал правила каждые 15 с.
