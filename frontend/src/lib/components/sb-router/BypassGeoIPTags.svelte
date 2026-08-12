@@ -200,10 +200,6 @@
         >
           {installing === 'ipset' ? 'Установка…' : 'Установить ipset'}
         </Button>
-      {:else if status && !status.xtSetAvailable}
-        <p class="hint warn">
-          Модуль <code class="mono">xt_set</code> недоступен — правило обхода по набору не встанет.
-        </p>
       {/if}
 
       {#if status && !status.conntrackAvailable}
