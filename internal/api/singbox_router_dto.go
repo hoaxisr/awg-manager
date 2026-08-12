@@ -227,6 +227,9 @@ type SingboxRouterOutboundDTO struct {
 	Default       string   `json:"default,omitempty" example:"awg-vpn0"`
 	Strategy      string   `json:"strategy,omitempty" example:"prefer_ipv4"`
 	Source        string   `json:"source" example:"router" enums:"router,subscription"`
+	// EgressBind — kernel iface propagated to sing-box tunnel members for
+	// selector/urltest groups (#709). Stored in settings, not in 20-router.json.
+	EgressBind string `json:"egress_bind,omitempty" example:"eth3"`
 }
 
 // SingboxRouterOutboundsListResponse is the envelope for GET /singbox/router/outbounds/list.
@@ -435,8 +438,9 @@ type SingboxRouterRuleSetDeleteRequest struct {
 
 // SingboxRouterOutboundUpdateRequest is the body for POST /singbox/router/outbounds/update.
 type SingboxRouterOutboundUpdateRequest struct {
-	Tag      string                   `json:"tag" example:"my-selector"`
-	Outbound SingboxRouterOutboundDTO `json:"outbound"`
+	Tag        string                   `json:"tag" example:"my-selector"`
+	Outbound   SingboxRouterOutboundDTO `json:"outbound"`
+	EgressBind *string                  `json:"egress_bind,omitempty" example:"eth3"`
 }
 
 // SingboxRouterOutboundDeleteRequest is the body for POST /singbox/router/outbounds/delete.
