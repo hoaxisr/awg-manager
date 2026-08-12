@@ -139,8 +139,10 @@ func listManaged(ctx context.Context) []PortSpec {
 }
 
 // parseManaged выбирает из вывода `iptables -S INPUT` правила, которые ставили
-// мы. Владение определяется формой, потому что метку `-m comment` Apply не
-// пишет вовсе: на Keenetic xt_comment часто не загружен (#666).
+// мы. Два признака владения, по убыванию надёжности: наша метка (её пишет Apply
+// основным путём) и — для голых правил — точная форма. Голые правила приходят
+// только с пути отката Apply и от версий до метки; форма для них единственный
+// признак, поэтому она проверяется строго.
 func parseManaged(out string) []PortSpec {
 	var specs []PortSpec
 	seen := map[string]struct{}{}
@@ -149,7 +151,7 @@ func parseManaged(out string) []PortSpec {
 		spec, ok := bareListenRule(fields)
 		if !ok && strings.Contains(line, Comment) {
 			// Правило с нашей меткой — наше однозначно, какой бы формы ни
-			// было: его писала версия, где xt_comment был доступен.
+			// было, поэтому разбор здесь нестрогий.
 			spec, ok = commentedListenRule(fields)
 		}
 		if !ok {
