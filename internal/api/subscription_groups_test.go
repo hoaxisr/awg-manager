@@ -294,6 +294,45 @@ func TestSubscriptionHandler_GetStream_CarriesFilterFields(t *testing.T) {
 	}
 }
 
+func TestSubscriptionHandler_GetStream_CarriesBindInterface(t *testing.T) {
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := subscription.NewService(store, noopMutator{})
+	h := NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true})
+
+	sub, err := svc.Create(context.Background(), subscription.CreateInput{
+		Label:         "x",
+		Inline:        "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#Keep",
+		Enabled:       true,
+		BindInterface: "eth3",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.GetStream(rr, httptest.NewRequest(http.MethodGet, "/get-stream?id="+sub.ID, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stream status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+
+	_, metaData, ok := strings.Cut(body, "event: meta\ndata: ")
+	if !ok {
+		t.Fatalf("no meta event: %s", body)
+	}
+	metaData, _, _ = strings.Cut(metaData, "\n")
+	var meta SubscriptionMetaDTO
+	if err := json.Unmarshal([]byte(metaData), &meta); err != nil {
+		t.Fatalf("unmarshal meta: %v (%s)", err, metaData)
+	}
+	if meta.BindInterface != "eth3" {
+		t.Errorf("meta.bindInterface=%q want eth3", meta.BindInterface)
+	}
+}
+
 // TestSubscriptionDTO_FilterFields — filterInclude/filterExclude/filteredMembers
 // доезжают до DTO подписки.
 func TestSubscriptionDTO_FilterFields(t *testing.T) {

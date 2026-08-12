@@ -319,6 +319,7 @@ type SubscriptionMetaDTO struct {
 	InfoItems       []SubscriptionInfoItemDTO `json:"infoItems"`
 	FilterInclude   string                    `json:"filterInclude,omitempty"`
 	FilterExclude   string                    `json:"filterExclude,omitempty"`
+	BindInterface   string                    `json:"bindInterface,omitempty" example:"eth3"`
 }
 
 // SubscriptionStreamMemberDTO wraps a single member with its index for
@@ -390,6 +391,7 @@ func buildSubscriptionMetaDTO(s subscription.Subscription, ndmsProxyEnabled bool
 		InfoItems:       infoItemsToDTO(s.InfoItems),
 		FilterInclude:   s.FilterInclude,
 		FilterExclude:   s.FilterExclude,
+		BindInterface:   s.BindInterface,
 	}
 }
 
