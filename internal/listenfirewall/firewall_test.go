@@ -46,3 +46,27 @@ func TestMergePortSpecs(t *testing.T) {
 		t.Fatalf("expected 2 unique specs, got %d", len(got))
 	}
 }
+
+// Холостой тик (ни один прокси-сервер не работает) восстанавливать нечего:
+// правила сами не появляются, а сверка стоит вызовов iptables. Снос делается
+// один раз на переход в простой, дальше тик пропускается целиком — и снова
+// оживает, как только появился хоть один порт.
+func TestSkipIdleTick(t *testing.T) {
+	ports := []PortSpec{{Port: 500, Proto: "udp"}}
+	tests := []struct {
+		name      string
+		desired   []PortSpec
+		idleSwept bool
+		want      bool
+	}{
+		{"первый холостой тик сносит", nil, false, false},
+		{"второй холостой тик пропускается", nil, true, true},
+		{"есть порты — сверка обязательна", ports, true, false},
+		{"есть порты, простоя не было", ports, false, false},
+	}
+	for _, tt := range tests {
+		if got := skipIdleTick(tt.desired, tt.idleSwept); got != tt.want {
+			t.Errorf("%s: skipIdleTick = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

@@ -39,7 +39,10 @@ func ensureRawServerPolicyMarkRule(ctx context.Context, iface, mark string) erro
 	if rawServerMarkRulePresent(ctx, iface, mark) {
 		return nil
 	}
-	// Без -m comment: на Keenetic xt_comment часто не загружен (#666).
+	// Без -m comment намеренно: правило адресовано НАШЕМУ интерфейсу
+	// (wdttraw0) — имя интерфейса и есть признак владения, как у FORWARD accept
+	// и цепочки awgm_wdtt_mangle. Снос ниже реплеит -S и удаляет по напечатанной
+	// спеке, поэтому обе формы (с меткой и без) он снимает одинаково.
 	if err := iptables.Run(ctx, "-t", "mangle", "-I", "PREROUTING", "1",
 		"-i", iface, "-j", "MARK", "--set-xmark", mark+"/0xffffffff"); err != nil {
 		return fmt.Errorf("MARK %s on %s: %w", mark, iface, err)
