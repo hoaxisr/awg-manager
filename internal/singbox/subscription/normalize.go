@@ -103,6 +103,12 @@ func splitLines(b []byte) []string {
 		}
 		links := splitShareURLs(p, shareURLStartPlain)
 		if len(links) == 0 {
+			lower := strings.ToLower(p)
+			if vlink.IsTrustTunnelConnectURL(p) ||
+				strings.HasPrefix(lower, "tt://") ||
+				vlink.IsTrustTunnelRawPayload(p) {
+				out = append(out, p)
+			}
 			continue
 		}
 		for _, link := range links {

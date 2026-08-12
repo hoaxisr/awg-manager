@@ -25,11 +25,12 @@ import (
 // supportedSingboxTypes is the set of outbound types we accept as members.
 // Mirrors Clash policy: vless, trojan, shadowsocks, hysteria2.
 var supportedSingboxTypes = map[string]bool{
-	"vless":       true,
-	"trojan":      true,
-	"shadowsocks": true,
-	"hysteria2":   true,
-	"mieru":       true,
+	"vless":        true,
+	"trojan":       true,
+	"shadowsocks":  true,
+	"hysteria2":    true,
+	"mieru":        true,
+	"trusttunnel":  true,
 }
 
 // servicedSingboxTypes is the set of outbound types that are infrastructural
