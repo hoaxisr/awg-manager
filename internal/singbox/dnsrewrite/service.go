@@ -138,27 +138,31 @@ func (s *Service) Resync() error {
 }
 
 // SyncManagedKeenDNS приводит managed-набор пресета keendns в соответствие с
-// (domain, lanIP): точный FQDN, *.FQDN и порталы локального доступа → lanIP.
-// Пустой domain или lanIP = снести managed-записи. Единственный контракт —
-// «набор равен аргументам», решение «а надо ли вообще трогать» принимает
-// вызывающий (router.syncKeenDNSRewrites бережёт last-good при флапе NDMS).
+// (domain, ips): точный FQDN, *.FQDN и порталы локального доступа → ips.
+// Пустой domain или пустой список = снести managed-записи. Единственный
+// контракт — «набор равен аргументам», решение «а надо ли вообще трогать»
+// принимает вызывающий (router.syncKeenDNSRewrites бережёт last-good при
+// флапе NDMS).
+//
+// ips — то, что роутер сам отдаёт по этому имени своей статической записью,
+// а не LAN-адрес: подмена на LAN ломала доступ к морде роутера по имени
+// KeenDNS (issue #729).
 //
 // Идемпотентна и БЕЗ побочных эффектов, если набор уже совпадает: Reconcile
 // зовёт её каждые 30с, а любая запись — это writeAtomic двух файлов на флеш,
 // пересборка слота и SSE-инвалидация у фронта.
-func (s *Service) SyncManagedKeenDNS(domain, lanIP string) error {
+func (s *Service) SyncManagedKeenDNS(domain string, ips []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	domain = strings.TrimSuffix(domain, ".")
-	lanIP = strings.TrimSpace(lanIP)
 
 	var items []DNSRewrite
-	if domain != "" && lanIP != "" {
+	if domain != "" && len(ips) > 0 {
 		patterns := append([]string{domain, "*." + domain}, keenDNSPortalDomains...)
 		items = make([]DNSRewrite, 0, len(patterns))
 		for _, p := range patterns {
-			r := DNSRewrite{Pattern: p, IPs: []string{lanIP}, Managed: ManagedKeenDNS}
+			r := DNSRewrite{Pattern: p, IPs: slices.Clone(ips), Managed: ManagedKeenDNS}
 			if _, err := compileRewrite(r); err != nil {
 				return err
 			}

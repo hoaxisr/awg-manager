@@ -239,6 +239,45 @@ func isSimpleToken(s string) bool {
 	return true
 }
 
+// StaticIPv4For возвращает IPv4-адреса, которые роутер сам отдаёт для host
+// своими статическими записями (static_a во ВСЕХ профилях ndnproxy, дедуп со
+// стабильным порядком). Сравнение имени регистронезависимое, хвостовая точка
+// не учитывается.
+//
+// Нужно пресету keendns: для домена KeenDNS роутер заводит запись на общий
+// адрес сервиса, и клиентам из политики надо отдавать именно её, а не
+// придумывать свой ответ. AAAA сознательно не отдаём — обход в iptables у нас
+// только IPv4 (см. syncKeenDNSRewrites).
+func StaticIPv4For(proxies []DNSProxy, host string) []string {
+	want := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if want == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	for _, p := range proxies {
+		for _, r := range p.Static {
+			if r.Type != "A" {
+				continue
+			}
+			if strings.TrimSuffix(strings.ToLower(r.Host), ".") != want {
+				continue
+			}
+			ip := net.ParseIP(r.Value)
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			v := ip.String()
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // parseStatic parses "static_a = host ip flag" / "static_aaaa = host ip flag".
 func parseStatic(line string) (DNSStaticRecord, bool) {
 	typ := "A"

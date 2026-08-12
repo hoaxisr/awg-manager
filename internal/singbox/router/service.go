@@ -443,6 +443,7 @@ type ServiceImpl struct {
 	currentBypassExtraPorts     string
 	currentBypassExtraSubnets   string
 	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
+	currentKeenDNSCIDRs         []string // last-installed CIDR обхода пресета keendns (адрес с роутера, не из настроек)
 	currentIngress              []string // last-installed резолвленные ingress kernel-имена
 
 	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
@@ -525,7 +526,8 @@ type ServiceImpl struct {
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
 
-	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Optional keendns-preset → managed DNS rewrite (own FQDN → адрес из
+	// статической записи роутера) плюс обход этого адреса мимо sing-box.
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
 	// setupListen after the router service) — под keenDNSMu, потому что
 	// startup-Reconcile читает их из своей горутины уже во время wiring.
@@ -534,8 +536,14 @@ type ServiceImpl struct {
 	// не писать один и тот же warn на каждом тике Reconcile.
 	keenDNSWarnState string
 	keenDNSDomain    KeenDNSDomainProvider
-	keenDNSLAN       LANIPv4Provider
+	keenDNSAddr      KeenDNSAddrProvider
 	keenDNSSync      KeenDNSRewriteSyncer
+	// Кэш статических записей роутера (см. keenDNSAddrTTL) и производный от
+	// него список CIDR обхода, который уезжает в RestoreInputSpec.
+	keenDNSAddrHost    string
+	keenDNSAddrIPs     []string
+	keenDNSAddrAt      time.Time
+	keenDNSBypassCIDRs []string
 }
 
 func NewService(d Deps) *ServiceImpl {

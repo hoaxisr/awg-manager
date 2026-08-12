@@ -4623,7 +4623,8 @@ definitions:
         description: |-
           BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
+          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → адрес роутера,
+          плюс обход этого адреса). Default includes "keendns".
         example:
         - keendns
         items:

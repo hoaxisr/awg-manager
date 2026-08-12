@@ -169,8 +169,9 @@ type SingboxRouterSettings struct {
 	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT
 	// (port-based) or to drive related behaviour. Valid values: "l2tp", "ntp",
 	// "netbios-smb" (ports), "keendns" (managed DNS rewrite of the router's
-	// own KeenDNS/CrazeDNS FQDN → LAN IP — not an iptables CIDR). Default for
-	// fresh installs and post-v33 migrations includes "keendns".
+	// own KeenDNS/CrazeDNS FQDN → адрес из статической записи роутера + обход
+	// этого адреса мимо sing-box). Default for fresh installs and post-v33
+	// migrations includes "keendns".
 	BypassPresets []string `json:"bypassPresets,omitempty"`
 	// BypassExtraPorts is a user-supplied comma-separated list of extra port
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").

@@ -8,8 +8,8 @@ import (
 )
 
 // ManagedKeenDNS marks rewrites owned by the keendns bypass preset
-// (own FQDN → LAN IP). User CRUD must not invent this value; SyncManaged
-// upserts/removes these entries.
+// (own FQDN → адрес из статической записи роутера). User CRUD must not
+// invent this value; SyncManaged upserts/removes these entries.
 const ManagedKeenDNS = "keendns"
 
 // keenDNSPortalDomains — порталы локального доступа Keenetic/Netcraze. Их
