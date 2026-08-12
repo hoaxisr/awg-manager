@@ -17,9 +17,6 @@ import (
 type BypassSetStatusData struct {
 	// Available reports whether the ipset binary is present on the router.
 	Available bool `json:"available"`
-	// XtSetAvailable reports whether the xt_set kernel module is loaded or
-	// available as a .ko file (required for -m set iptables matching).
-	XtSetAvailable bool `json:"xtSetAvailable"`
 	// ConntrackAvailable reports whether the conntrack binary is present.
 	// Without it a routing change applies only to new connections (existing
 	// flows linger until they expire).
@@ -110,7 +107,6 @@ func (h *BypassSetHandler) statusData() BypassSetStatusData {
 	}
 	return BypassSetStatusData{
 		Available:          bypassset.IsIPSetAvailable(),
-		XtSetAvailable:     bypassset.IsXtSetAvailable(),
 		ConntrackAvailable: bypassset.IsConntrackAvailable(),
 		Installing:         h.installing.Load(),
 		EntryCount:         entryCount,
