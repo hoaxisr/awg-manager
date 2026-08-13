@@ -60,6 +60,7 @@ describe('WdttServerUsers', () => {
 		render(WdttServerUsers, { props: { serverInstanceId: 'default', serverMainPassword: MAIN } });
 
 		await waitFor(() => expect(screen.getByText('Клиент Иван')).toBeTruthy());
-		expect(screen.getByText(/panel\.db сейчас недоступна/)).toBeTruthy();
+		expect(screen.getByText(/panel\.db недоступна/)).toBeTruthy();
+		expect(screen.getByText(/WireGuard \/ Raw/)).toBeTruthy();
 	});
 });
