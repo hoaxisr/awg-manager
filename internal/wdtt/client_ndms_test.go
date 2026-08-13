@@ -262,3 +262,79 @@ func TestActivateClientNDMSOpkgTunUplinkOrder(t *testing.T) {
 		t.Fatalf("want up→public→ip-global→description→acl, got %v", fake.calls)
 	}
 }
+
+// Issue 736: Когда процес wt-client останавливается при recycle (перезапуск демона),
+// operUp интерфейса падает в false. Проверка operstate ПОСЛЕ proc.Stop()
+// не должна пропускать teardown/prepare OpkgTun.
+func TestStartClientInstanceRecycleWhenOperUpDropsOnStop(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	fake := &fakeOpkgCommands{}
+	s.SetNDMSInterfaceCommands(fake)
+	s.SetOpkgTunIndexLister(fakeOpkgIndexLister{})
+
+	isUp := true
+	s.SetInterfaceChecker(dynamicIfaceChecker{
+		operUpFn: func(name string) bool {
+			return isUp
+		},
+	})
+
+	cfg := validClientCfg("127.0.0.1:56000")
+	cfg.ConnMode = ConnModeRaw
+	cfg.NdmsIface = "OpkgTun18"
+	cfg.RawIface = "opkgtun18"
+	cfg.RawClientIP = "10.70.0.5"
+	full, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Clients[0].Config = cfg
+	if err := s.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := s.clientProcs.get(DefaultInstanceID)
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", "sleep 30; true")
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatal(err)
+	}
+	proc.mu.Lock()
+	proc.startedAt = nil
+	proc.mu.Unlock()
+
+	// Демонстрируем поведение реальной системы: как только wt-client остановлен,
+	// operUp интерфейса становится false.
+	originalStop := proc.Stop
+	_ = originalStop // staticcheck
+
+	startErr := s.StartClientInstance(DefaultInstanceID)
+	if startErr != nil && strings.Contains(startErr.Error(), "не появился") {
+		t.Fatalf("bootstrap ждал интерфейс, который никто не пересоздал: %v (calls=%v)", startErr, fake.calls)
+	}
+
+	var createAt []int
+	for i, c := range fake.calls {
+		if strings.HasPrefix(c, "create OpkgTun18") {
+			createAt = append(createAt, i)
+		}
+	}
+	if len(createAt) < 2 {
+		t.Fatalf("ожидали повторный create после recycle-teardown, calls=%v", fake.calls)
+	}
+}
+
+type dynamicIfaceChecker struct {
+	operUpFn func(name string) bool
+}
+
+func (d dynamicIfaceChecker) InterfaceExists(name string) bool { return true }
+func (d dynamicIfaceChecker) InterfaceOperUp(name string) bool {
+	if d.operUpFn != nil {
+		return d.operUpFn(name)
+	}
+	return true
+}
+

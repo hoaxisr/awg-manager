@@ -635,7 +635,8 @@ func (s *Service) StartClientInstance(id string) error {
 	if isRaw && cfg.usesNDMSOpkgTun() {
 		st := s.clientProcs.get(id).Status()
 		if st.Running {
-			recycle := st.StartedAt == nil || !rawClientNDMSReady(cfg, s.ifaceChecker)
+			wasReady := rawClientNDMSReady(cfg, s.ifaceChecker)
+			recycle := st.StartedAt == nil || !wasReady
 			if !recycle {
 				if _, ok := s.clientProcs.get(id).lastRawConf(); !ok {
 					recycle = true
@@ -643,7 +644,7 @@ func (s *Service) StartClientInstance(id string) error {
 			}
 			if recycle {
 				_ = s.clientProcs.get(id).Stop()
-				if rawClientNDMSReady(cfg, s.ifaceChecker) {
+				if wasReady || s.opkgTunExists(ctx, cfg.ndmsAccessIface()) {
 					_ = s.teardownClientOpkgTun(ctx, cfg)
 					// teardown снёс OpkgTun целиком; prepare выше отработал ДО
 					// него — без повторного вызова bootstrapRawClient ждёт
