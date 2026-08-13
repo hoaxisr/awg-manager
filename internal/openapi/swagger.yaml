@@ -5598,7 +5598,7 @@ definitions:
         example: false
         type: boolean
       kernelModuleLoadedVersion:
-        example: 3.0.20260805
+        example: 3.1.20260812
         type: string
       kernelModuleModel:
         example: MT7981

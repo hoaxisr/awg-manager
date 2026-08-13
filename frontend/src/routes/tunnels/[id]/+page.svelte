@@ -17,7 +17,7 @@
 	import AwgConfigAnalyzer from '$lib/components/diagnostics/AwgConfigAnalyzer.svelte';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
-	import { supportsAwg3 } from '$lib/utils/backendAvailability';
+	import { supportsAwg3, supportsAwg31 } from '$lib/utils/backendAvailability';
 	import { Network, Route, Router, Server, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
@@ -423,6 +423,7 @@
 						errors={$errors}
 						{hints}
 						awg3={tunnel?.backend !== 'nativewg' && supportsAwg3(systemInfo?.kernelModuleLoadedVersion)}
+						awg31={tunnel?.backend !== 'nativewg' && supportsAwg31(systemInfo?.kernelModuleLoadedVersion)}
 					/>
 				</div>
 
