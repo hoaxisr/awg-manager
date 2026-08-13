@@ -670,6 +670,38 @@ export class SystemClient extends TunnelsClient {
 		});
 	}
 
+	async systemFilesRename(from: string, to: string): Promise<void> {
+		await this.request('/system/files/rename', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async systemFilesCopy(from: string, to: string): Promise<void> {
+		await this.request('/system/files/copy', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async systemFilesChmod(path: string, mode: string): Promise<void> {
+		await this.request('/system/files/chmod', {
+			method: 'POST',
+			body: JSON.stringify({ path, mode }),
+		});
+	}
+
+	async systemFilesChecksum(path: string, algo: 'md5' | 'sha256' = 'md5'): Promise<{
+		path: string;
+		checksum: string;
+		algo: string;
+		info: SystemFileEntry;
+	}> {
+		return this.request(
+			`/system/files/checksum?path=${encodeURIComponent(path)}&algo=${encodeURIComponent(algo)}`,
+		);
+	}
+
 	async systemServicesList(): Promise<SystemServiceItem[]> {
 		return this.request('/system/services/list');
 	}

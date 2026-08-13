@@ -227,6 +227,84 @@ func (h *SystemToolsHandler) FilesRename(w http.ResponseWriter, r *http.Request)
 	response.Success(w, nil)
 }
 
+type filesCopyRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// POST /api/system/files/copy
+func (h *SystemToolsHandler) FilesCopy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req filesCopyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if err := h.files.Copy(req.From, req.To); err != nil {
+		h.filesError(w, err)
+		return
+	}
+	h.log.Info("copy", req.From, fmt.Sprintf("copy -> %s", req.To))
+	response.Success(w, nil)
+}
+
+type filesChmodRequest struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+}
+
+// POST /api/system/files/chmod
+func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req filesChmodRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if err := h.files.Chmod(req.Path, req.Mode); err != nil {
+		h.filesError(w, err)
+		return
+	}
+	h.log.Info("chmod", req.Path, req.Mode)
+	response.Success(w, nil)
+}
+
+// GET /api/system/files/checksum?path=&algo=md5|sha256
+func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	path := r.URL.Query().Get("path")
+	algo := r.URL.Query().Get("algo")
+	sum, info, err := h.files.Checksum(path, algo)
+	if err != nil {
+		h.filesError(w, err)
+		return
+	}
+	response.Success(w, map[string]interface{}{
+		"path":     info.Path,
+		"checksum": sum,
+		"algo":     algo,
+		"info":     info,
+	})
+}
+
 // GET /api/system/files/download?path=
 func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

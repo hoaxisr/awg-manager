@@ -23,6 +23,10 @@ var DefaultRoots = []Root{
 	{Path: "/opt/etc", Label: "Entware /opt/etc"},
 	{Path: "/opt/var/log", Label: "Logs"},
 	{Path: "/opt/bin", Label: "Binaries", ReadOnly: true},
+	{Path: "/opt/var", Label: "Entware /opt/var"},
+	{Path: "/opt", Label: "Entware /opt"},
+	{Path: "/tmp", Label: "Temp"},
+	{Path: "/", Label: "Filesystem /", ReadOnly: true},
 }
 
 // Sandbox resolves and validates paths against configured roots.
@@ -78,6 +82,9 @@ func (s *Sandbox) ResolveWrite(requested string) (abs string, err error) {
 }
 
 func pathWithin(path, root string) bool {
+	if root == "/" {
+		return filepath.IsAbs(path)
+	}
 	if path == root {
 		return true
 	}
