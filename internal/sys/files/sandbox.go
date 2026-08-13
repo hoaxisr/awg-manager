@@ -1,0 +1,86 @@
+package files
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+var ErrPathDenied = errors.New("path not allowed")
+
+// Root describes one allowed directory tree for the file manager.
+type Root struct {
+	Path     string
+	ReadOnly bool
+	Label    string
+}
+
+// DefaultRoots — Entware paths safe for remote editing from AWG Manager UI.
+var DefaultRoots = []Root{
+	{Path: "/opt/etc/awg-manager", Label: "AWG Manager"},
+	{Path: "/opt/etc", Label: "Entware /opt/etc"},
+	{Path: "/opt/var/log", Label: "Logs"},
+	{Path: "/opt/bin", Label: "Binaries", ReadOnly: true},
+}
+
+// Sandbox resolves and validates paths against configured roots.
+type Sandbox struct {
+	roots []Root
+}
+
+func NewSandbox(roots []Root) *Sandbox {
+	if len(roots) == 0 {
+		roots = DefaultRoots
+	}
+	normalized := make([]Root, 0, len(roots))
+	for _, r := range roots {
+		p := filepath.Clean(r.Path)
+		normalized = append(normalized, Root{Path: p, ReadOnly: r.ReadOnly, Label: r.Label})
+	}
+	return &Sandbox{roots: normalized}
+}
+
+func (s *Sandbox) Roots() []Root { return append([]Root(nil), s.roots...) }
+
+// Resolve returns the absolute path if it lies inside an allowed root.
+func (s *Sandbox) Resolve(requested string) (abs string, root Root, err error) {
+	if strings.TrimSpace(requested) == "" {
+		if len(s.roots) == 0 {
+			return "", Root{}, ErrPathDenied
+		}
+		root = s.roots[0]
+		return root.Path, root, nil
+	}
+	clean := filepath.Clean(requested)
+	if !filepath.IsAbs(clean) {
+		return "", Root{}, fmt.Errorf("path must be absolute")
+	}
+	for _, r := range s.roots {
+		if pathWithin(clean, r.Path) {
+			return clean, r, nil
+		}
+	}
+	return "", Root{}, ErrPathDenied
+}
+
+// ResolveWrite is Resolve plus read-only root check for mutating ops.
+func (s *Sandbox) ResolveWrite(requested string) (abs string, err error) {
+	abs, root, err := s.Resolve(requested)
+	if err != nil {
+		return "", err
+	}
+	if root.ReadOnly {
+		return "", fmt.Errorf("read-only root: %s", root.Path)
+	}
+	return abs, nil
+}
+
+func pathWithin(path, root string) bool {
+	if path == root {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(path, root+sep)
+}

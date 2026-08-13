@@ -632,4 +632,168 @@ export class SystemClient extends TunnelsClient {
 	// #endregion
 
 
+	// ─────────────────────────────────────────────
+	// #region System tools (expert)
+	// ─────────────────────────────────────────────
+
+	async systemFilesRoots(): Promise<SystemFileRoot[]> {
+		return this.request('/system/files/roots');
+	}
+
+	async systemFilesList(path = ''): Promise<{ path: string; entries: SystemFileEntry[] }> {
+		const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+		return this.request(`/system/files/list${qs}`);
+	}
+
+	async systemFilesRead(path: string): Promise<{ path: string; content: string; info: SystemFileEntry }> {
+		return this.request(`/system/files/read?path=${encodeURIComponent(path)}`);
+	}
+
+	async systemFilesWrite(path: string, content: string): Promise<void> {
+		await this.request('/system/files/write', {
+			method: 'POST',
+			body: JSON.stringify({ path, content }),
+		});
+	}
+
+	async systemFilesMkdir(path: string): Promise<void> {
+		await this.request('/system/files/mkdir', {
+			method: 'POST',
+			body: JSON.stringify({ path }),
+		});
+	}
+
+	async systemFilesRemove(path: string): Promise<void> {
+		await this.request('/system/files/remove', {
+			method: 'POST',
+			body: JSON.stringify({ path }),
+		});
+	}
+
+	async systemServicesList(): Promise<SystemServiceItem[]> {
+		return this.request('/system/services/list');
+	}
+
+	async systemServicesAction(script: string, action: 'start' | 'stop' | 'restart' | 'status'): Promise<{
+		output: string;
+		ok: boolean;
+		error?: string;
+	}> {
+		return this.request('/system/services/action', {
+			method: 'POST',
+			body: JSON.stringify({ script, action }),
+		});
+	}
+
+	async systemOpkgInstalled(): Promise<SystemOpkgPackage[]> {
+		return this.request('/system/opkg/installed');
+	}
+
+	async systemOpkgUpgradable(): Promise<SystemOpkgPackage[]> {
+		return this.request('/system/opkg/upgradable');
+	}
+
+	async systemOpkgSearch(q: string): Promise<SystemOpkgPackage[]> {
+		return this.request(`/system/opkg/search?q=${encodeURIComponent(q)}`);
+	}
+
+	async systemOpkgUpdate(): Promise<{ output: string }> {
+		return this.request('/system/opkg/update', { method: 'POST', body: '{}' });
+	}
+
+	async systemOpkgUpgrade(packages?: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/upgrade', {
+			method: 'POST',
+			body: JSON.stringify({ packages: packages ?? [] }),
+		});
+	}
+
+	async systemOpkgInstall(packages: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/install', {
+			method: 'POST',
+			body: JSON.stringify({ packages }),
+		});
+	}
+
+	async systemOpkgRemove(packages: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/remove', {
+			method: 'POST',
+			body: JSON.stringify({ packages }),
+		});
+	}
+
+	async systemOpkgAvailable(params: {
+		q?: string;
+		offset?: number;
+		limit?: number;
+	} = {}): Promise<{ items: SystemOpkgPackage[]; total: number; offset: number; limit: number }> {
+		const sp = new URLSearchParams();
+		if (params.q) sp.set('q', params.q);
+		if (params.offset != null) sp.set('offset', String(params.offset));
+		if (params.limit != null) sp.set('limit', String(params.limit));
+		const qs = sp.toString();
+		return this.request(`/system/opkg/available${qs ? '?' + qs : ''}`);
+	}
+
+	async systemFilesUpload(path: string, file: File): Promise<{ path: string }> {
+		const form = new FormData();
+		form.append('path', path);
+		form.append('file', file);
+		const res = await fetch(`${this.baseUrl}/system/files/upload`, {
+			method: 'POST',
+			credentials: 'same-origin',
+			body: form,
+			signal: this.abortController.signal,
+		});
+		if (res.status === 401) {
+			this.onUnauthorized?.();
+			throw new Error('Сессия истекла');
+		}
+		const body = (await res.json()) as { success?: boolean; data?: { path: string }; message?: string };
+		if (!res.ok || body.success === false) {
+			throw new Error(body.message || 'Не удалось загрузить файл');
+		}
+		return body.data ?? { path: '' };
+	}
+
+	systemFilesDownloadUrl(path: string): string {
+		return `${this.baseUrl}/system/files/download?path=${encodeURIComponent(path)}`;
+	}
+
+	// #endregion
+
 }
+
+export type SystemFileRoot = {
+	path: string;
+	label: string;
+	readOnly: boolean;
+};
+
+export type SystemFileEntry = {
+	name: string;
+	path: string;
+	isDir: boolean;
+	size: number;
+	mode: string;
+	modTime: string;
+};
+
+export type SystemServiceItem = {
+	name: string;
+	script: string;
+	enabled: boolean;
+	running: boolean;
+	statusText: string;
+	logPath?: string;
+	managed: boolean;
+	managedHint?: string;
+};
+
+export type SystemOpkgPackage = {
+	name: string;
+	version: string;
+	upgradeVersion?: string;
+	description?: string;
+	installedAt?: string;
+};

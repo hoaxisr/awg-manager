@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { PageContainer } from '$lib/components/layout';
 	import { Button } from '$lib/components/ui';
 	import { TerminalInstall, TerminalView, TerminalCredentialsBar } from '$lib/components/terminal';
 	import type { TerminalStatus } from '$lib/types';
@@ -12,9 +11,15 @@
 		type TerminalAutoLogin,
 	} from '$lib/utils/terminalCredentials';
 
+	interface Props {
+		compact?: boolean;
+	}
+
+	let { compact = false }: Props = $props();
+
 	type PageState = 'loading' | 'not-installed' | 'starting' | 'active' | 'session-busy' | 'error';
 
-	let pageState: PageState = $state('loading');
+	let pageState = $state<PageState>('loading');
 	let installing = $state(false);
 	let installError: string | null = $state(null);
 	let autoLogin = $state<Pick<TerminalAutoLogin, 'login' | 'password'> | null>(null);
@@ -65,7 +70,7 @@
 			await api.terminalStart();
 			pageState = 'active';
 		} catch (e) {
-			notifications.error('Не удалось запустить терминал: ' + (errorMessage(e, '')));
+			notifications.error('Не удалось запустить терминал: ' + errorMessage(e, ''));
 			pageState = 'error';
 		}
 	}
@@ -84,85 +89,54 @@
 	}
 </script>
 
-<svelte:head>
-	<title>Терминал — AWG Manager</title>
-</svelte:head>
+<div class="system-terminal" class:compact>
+	{#if !compact}
+		<TerminalCredentialsBar onchange={(v) => (autoLogin = v)} />
+	{/if}
 
-{#if pageState === 'loading' || pageState === 'starting'}
-	<PageContainer>
-		<div class="terminal-loading">
-			<div class="spinner"></div>
-			<p>{pageState === 'loading' ? 'Проверка...' : 'Запуск терминала...'}</p>
-		</div>
-	</PageContainer>
-{:else if pageState === 'not-installed'}
-	<PageContainer>
+	{#if pageState === 'loading' || pageState === 'starting'}
+		<p class="muted">Запуск терминала…</p>
+	{:else if pageState === 'not-installed'}
 		<TerminalInstall {installing} error={installError} oninstall={handleInstall} />
-	</PageContainer>
-{:else if pageState === 'session-busy'}
-	<PageContainer>
-		<div class="terminal-loading">
-			<p>Терминал уже открыт в другой вкладке</p>
-			<Button variant="primary" size="md" onclick={checkStatus}>Повторить</Button>
-		</div>
-	</PageContainer>
-{:else if pageState === 'active'}
-	<div class="terminal-page">
-		<div class="terminal-stack">
-			<TerminalCredentialsBar onchange={(v) => (autoLogin = v)} />
+	{:else if pageState === 'session-busy'}
+		<p>Терминал уже открыт в другой вкладке.</p>
+		<Button variant="secondary" onclick={checkStatus}>Проверить снова</Button>
+	{:else if pageState === 'active'}
+		<div class="term-wrap" class:compact>
 			<TerminalView
 				{autoLogin}
-				compact={false}
+				{compact}
 				onclose={handleTerminalClose}
 				onerror={handleTerminalError}
 				onreconnect={handleTerminalReconnect}
 			/>
 		</div>
-	</div>
-{:else}
-	<PageContainer>
-		<div class="terminal-loading">
-			<p>Ошибка подключения к терминалу</p>
-			<Button variant="primary" size="md" onclick={checkStatus}>Повторить</Button>
-		</div>
-	</PageContainer>
-{/if}
+	{:else}
+		<p>Не удалось запустить терминал.</p>
+		<Button variant="secondary" onclick={checkStatus}>Повторить</Button>
+	{/if}
+</div>
 
 <style>
-	.terminal-page {
-		height: calc(100vh - var(--header-height, 56px));
-		padding: 0.75rem;
-		box-sizing: border-box;
-	}
-	.terminal-stack {
+	.system-terminal {
+		min-height: 420px;
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
-		height: 100%;
-		min-height: 0;
 	}
-	.terminal-stack :global(.mac-window) {
-		flex: 1;
-		min-height: 0;
+	.system-terminal.compact {
+		min-height: 240px;
 	}
-	.terminal-loading {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		height: 60vh;
-		gap: 1rem;
-		color: var(--text-secondary);
+	.term-wrap {
+		height: min(70vh, 560px);
+		border: 1px solid var(--border-subtle, #333);
+		border-radius: 8px;
+		overflow: hidden;
 	}
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-primary);
-		border-top-color: var(--accent-primary);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
+	.term-wrap.compact {
+		height: min(40vh, 320px);
 	}
-	@keyframes spin {
-		to { transform: rotate(360deg); }
+	.muted {
+		opacity: 0.7;
 	}
 </style>

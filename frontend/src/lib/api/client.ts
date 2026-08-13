@@ -5,6 +5,12 @@ import { Awg3Client } from './clientAwg3';
 
 export { ApiGatewayError } from './clientCore';
 export type { TrafficPeriod } from './clientCore';
+export type {
+	SystemFileRoot,
+	SystemFileEntry,
+	SystemServiceItem,
+	SystemOpkgPackage,
+} from './clientSystem';
 
 class ApiClient extends Awg3Client {}
 
