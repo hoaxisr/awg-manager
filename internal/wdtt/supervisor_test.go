@@ -353,8 +353,8 @@ func TestSuperviseReconcileNotBlockedByOtherClientStart(t *testing.T) {
 	s, _ := enabledRawClientService(t, "10.70.0.5")
 	defer s.Stop()
 	s.SetInterfaceChecker(fakeIfaceChecker{
-		exists: map[string]bool{"opkgtun18": true},
-		operUp: map[string]bool{"opkgtun18": false}, // ndmsBad
+		exists: map[string]bool{"opkgtun18": false},
+		operUp: map[string]bool{"opkgtun18": false},
 	})
 	fake, ok := s.ndmsIfaces.(*fakeOpkgCommands)
 	if !ok {
@@ -378,7 +378,7 @@ func TestSuperviseEscalationHeldBackWhileOwnStartInFlight(t *testing.T) {
 	s, proc := enabledRawClientService(t, "10.70.0.5")
 	defer s.Stop()
 	s.SetInterfaceChecker(fakeIfaceChecker{
-		exists: map[string]bool{"opkgtun18": true},
+		exists: map[string]bool{"opkgtun18": false},
 		operUp: map[string]bool{"opkgtun18": false}, // ndmsBad всегда
 	})
 
@@ -471,7 +471,7 @@ func TestSuperviseReconcileIgnoresResultAfterUserStop(t *testing.T) {
 	s, _ := enabledRawClientService(t, "10.70.0.5")
 	defer s.Stop()
 	s.SetInterfaceChecker(fakeIfaceChecker{
-		exists: map[string]bool{"opkgtun18": true},
+		exists: map[string]bool{"opkgtun18": false},
 		operUp: map[string]bool{"opkgtun18": false},
 	})
 	// Пользователь жмёт «стоп» ровно во время RCI-пачки reconcile.

@@ -267,6 +267,30 @@ type PanelUsersStatus struct {
 	Users       []PanelUserEntry `json:"users"`
 }
 
+// ServerDeviceEntry is one row in passwords.json devices (WG or Raw tab).
+type ServerDeviceEntry struct {
+	DeviceID        string `json:"deviceId"`
+	IP              string `json:"ip,omitempty"`
+	RawIP           string `json:"rawIp,omitempty"`
+	Comment         string `json:"comment,omitempty"`
+	PasswordComment string `json:"passwordComment,omitempty"`
+	Reserved        bool   `json:"reserved,omitempty"`
+	Active          bool   `json:"active,omitempty"`
+	ActiveKnown     bool   `json:"activeKnown,omitempty"`
+	DownBytes       int64  `json:"downBytes,omitempty"`
+	UpBytes         int64  `json:"upBytes,omitempty"`
+}
+
+// ServerDevicesStatus is returned by the server devices API.
+type ServerDevicesStatus struct {
+	PasswordsJSONPath string              `json:"passwordsJsonPath,omitempty"`
+	Mode              string              `json:"mode"`
+	ServerRunning     bool                `json:"serverRunning"`
+	ActiveDeviceCount int                 `json:"activeDeviceCount,omitempty"`
+	StatsActive       int                 `json:"statsActive,omitempty"`
+	Devices           []ServerDeviceEntry `json:"devices"`
+}
+
 // ImportPayload is the normalized result of wdtt://, qwdtt:// or subscription import.
 type ImportPayload struct {
 	Name     string   `json:"name,omitempty"`

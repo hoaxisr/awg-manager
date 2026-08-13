@@ -209,4 +209,70 @@ export class WdttClient extends FreeturnClient {
 			{ method: 'DELETE' }
 		);
 	}
+
+	async getWdttServerDevices(
+		serverId: string,
+		mode: 'wg' | 'raw'
+	): Promise<import('$lib/types').WdttServerDevicesStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/devices?mode=${encodeURIComponent(mode)}`
+		);
+	}
+
+	async addWdttServerDevice(
+		serverId: string,
+		body: {
+			deviceId: string;
+			mode: 'wg' | 'raw';
+			ip?: string;
+			rawIp?: string;
+			comment?: string;
+		}
+	): Promise<import('$lib/types').WdttServerDevicesStatus> {
+		return this.request(`/wdtt/servers/${encodeURIComponent(serverId)}/devices`, {
+			method: 'POST',
+			body: JSON.stringify(body)
+		});
+	}
+
+	async updateWdttServerDevice(
+		serverId: string,
+		deviceId: string,
+		body: {
+			mode: 'wg' | 'raw';
+			ip?: string;
+			rawIp?: string;
+			comment?: string;
+		}
+	): Promise<import('$lib/types').WdttServerDevicesStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/devices/${encodeURIComponent(deviceId)}`,
+			{
+				method: 'PATCH',
+				body: JSON.stringify(body)
+			}
+		);
+	}
+
+	async unbindWdttServerDevice(
+		serverId: string,
+		deviceId: string,
+		mode: 'wg' | 'raw'
+	): Promise<import('$lib/types').WdttServerDevicesStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/devices/${encodeURIComponent(deviceId)}/unbind?mode=${encodeURIComponent(mode)}`,
+			{ method: 'POST', body: JSON.stringify({ mode }) }
+		);
+	}
+
+	async removeWdttServerDevice(
+		serverId: string,
+		deviceId: string,
+		mode: 'wg' | 'raw'
+	): Promise<import('$lib/types').WdttServerDevicesStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/devices/${encodeURIComponent(deviceId)}?mode=${encodeURIComponent(mode)}`,
+			{ method: 'DELETE' }
+		);
+	}
 }

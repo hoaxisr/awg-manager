@@ -94,6 +94,7 @@ def patch_server_go_v14(text: str) -> str:
         text = text.replace(raw_nat, raw_nat_new, 1)
 
     text = patch_stats_active_devices(text)
+    text = patch_stats_active_ids(text)
     text = patch_dtls_idle_timeout(text)
     text = patch_get_next_ip_skip_gateway(text)
     return text
@@ -187,6 +188,7 @@ def patch_server_go_legacy(text: str) -> str:
 
     text = patch_listen_wrapped_batch(text)
     text = patch_stats_active_devices(text)
+    text = patch_stats_active_ids(text)
     text = patch_dtls_idle_timeout(text)
     text = patch_get_next_ip_skip_gateway(text)
     return text
@@ -216,6 +218,59 @@ def patch_stats_active_devices(text: str) -> str:
     if old not in text:
         return text
     return text.replace(old, new)
+
+
+def patch_stats_active_ids(text: str) -> str:
+    """server.log JSON: список device_id с активной сессией для awg-manager UI."""
+    if "active_ids" in text and "activeIDs" in text:
+        return text
+
+    variants = [
+        {
+            "anchor": "\t\t\tstatsJSON, _ := json.Marshal(map[string]interface{}{",
+            "inject": (
+                "\t\t\tactiveIDs := make([]string, 0, len(activeDevices))\n"
+                "\t\t\tactiveDevicesMu.Lock()\n"
+                "\t\t\tfor id := range activeDevices {\n"
+                "\t\t\t\tactiveIDs = append(activeIDs, id)\n"
+                "\t\t\t}\n"
+                "\t\t\tactiveDevicesMu.Unlock()\n\n"
+                "\t\t\tstatsJSON, _ := json.Marshal(map[string]interface{}{"
+            ),
+            "old": '\t\t\t\t"devices":   numDevices,\n\t\t\t\t"timestamp":',
+            "new": (
+                '\t\t\t\t"devices":   numDevices,\n'
+                '\t\t\t\t"active_ids":  activeIDs,\n'
+                '\t\t\t\t"timestamp":'
+            ),
+        },
+        {
+            "anchor": "\tstatsJSON, _ := json.Marshal(map[string]interface{}{",
+            "inject": (
+                "\tactiveIDs := make([]string, 0, len(activeDevices))\n"
+                "\tactiveDevicesMu.Lock()\n"
+                "\tfor id := range activeDevices {\n"
+                "\t\tactiveIDs = append(activeIDs, id)\n"
+                "\t}\n"
+                "\tactiveDevicesMu.Unlock()\n\n"
+                "\tstatsJSON, _ := json.Marshal(map[string]interface{}{"
+            ),
+            "old": '\t\t"devices": numDevices,\n\t\t"timestamp":',
+            "new": (
+                '\t\t"devices": numDevices,\n'
+                '\t\t"active_ids": activeIDs,\n'
+                '\t\t"timestamp":'
+            ),
+        },
+    ]
+    for v in variants:
+        if v["anchor"] not in text:
+            continue
+        text = text.replace(v["anchor"], v["inject"], 1)
+        if v["old"] in text:
+            return text.replace(v["old"], v["new"], 1)
+        return text
+    return text
 
 
 def patch_dtls_idle_timeout(text: str) -> str:

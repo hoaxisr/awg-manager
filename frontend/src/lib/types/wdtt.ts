@@ -170,3 +170,25 @@ export interface WdttPanelUsersStatus {
 	available: boolean;
 	users: WdttPanelUserEntry[];
 }
+
+export interface WdttServerDeviceEntry {
+	deviceId: string;
+	ip?: string;
+	rawIp?: string;
+	comment?: string;
+	passwordComment?: string;
+	reserved?: boolean;
+	active?: boolean;
+	activeKnown?: boolean;
+	downBytes?: number;
+	upBytes?: number;
+}
+
+export interface WdttServerDevicesStatus {
+	passwordsJsonPath?: string;
+	mode: 'wg' | 'raw';
+	serverRunning?: boolean;
+	activeDeviceCount?: number;
+	statsActive?: number;
+	devices: WdttServerDeviceEntry[];
+}

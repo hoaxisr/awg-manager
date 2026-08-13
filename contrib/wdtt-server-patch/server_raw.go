@@ -536,6 +536,10 @@ func runRawServer(ctx context.Context, cfg ServerConfig, listenAddr string) erro
 	log.Printf("[RAW] TUN %s поднят (%s), MTU %d", tunName, rawServerCIDR, rawMTU)
 	log.Printf("   RAW (без WireGuard, без DTLS): %s", listenAddr)
 
+	dbMutex.Lock()
+	syncRawDeviceIPsFromDBLocked()
+	dbMutex.Unlock()
+
 	router := newRawRouter(tunDev, tunName)
 	go router.downlinkLoop(ctx)
 
@@ -653,20 +657,51 @@ func cleanupRawNAT() {
 }
 
 func allocRawIP(deviceID string) string {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	return allocRawIPLocked(deviceID)
+}
+
+func allocRawIPLocked(deviceID string) string {
+	syncRawDeviceIPsFromDBLocked()
+
+	if dev := db.Devices[deviceID]; dev != nil {
+		if ip := strings.TrimSpace(dev.RawIP); ip != "" {
+			rawDeviceIPs.Store(deviceID, ip)
+			return ip
+		}
+	}
 	if v, ok := rawDeviceIPs.Load(deviceID); ok {
 		if ip, _ := v.(string); ip != "" {
 			return ip
 		}
 	}
-	ip := nextFreeRawIP()
+	ip := nextFreeRawIPLocked()
 	if ip == "" {
 		return ""
 	}
 	rawDeviceIPs.Store(deviceID, ip)
+	if dev := db.Devices[deviceID]; dev != nil {
+		dev.RawIP = ip
+	} else {
+		db.Devices[deviceID] = &ClientDevice{DeviceID: deviceID, RawIP: ip}
+	}
+	saveDB()
 	return ip
 }
 
-func nextFreeRawIP() string {
+func syncRawDeviceIPsFromDBLocked() {
+	for id, dev := range db.Devices {
+		if dev == nil {
+			continue
+		}
+		if ip := strings.TrimSpace(dev.RawIP); ip != "" {
+			rawDeviceIPs.Store(id, ip)
+		}
+	}
+}
+
+func nextFreeRawIPLocked() string {
 	used := make(map[string]bool)
 	rawDeviceIPs.Range(func(_, v any) bool {
 		if ip, ok := v.(string); ok && ip != "" {
@@ -674,6 +709,14 @@ func nextFreeRawIP() string {
 		}
 		return true
 	})
+	for _, dev := range db.Devices {
+		if dev == nil {
+			continue
+		}
+		if ip := strings.TrimSpace(dev.RawIP); ip != "" {
+			used[ip] = true
+		}
+	}
 	for i := 2; i <= 250; i++ {
 		ip := fmt.Sprintf("%s%d", rawIPPrefix, i)
 		if !used[ip] {
@@ -681,6 +724,12 @@ func nextFreeRawIP() string {
 		}
 	}
 	return ""
+}
+
+func nextFreeRawIP() string {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	return nextFreeRawIPLocked()
 }
 
 func buildRawConf(clientIP string) string {

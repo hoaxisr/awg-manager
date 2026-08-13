@@ -63,8 +63,8 @@ func TestReconcileClientRawNDMSUsesPersistedMTU(t *testing.T) {
 	fake := &fakeOpkgCommands{}
 	svc.SetNDMSInterfaceCommands(fake)
 	svc.SetInterfaceChecker(fakeIfaceChecker{
-		exists: map[string]bool{"opkgtun18": true},
-		operUp: map[string]bool{"opkgtun18": false}, // reconcile требует down-интерфейс
+		exists: map[string]bool{"opkgtun18": false},
+		operUp: map[string]bool{"opkgtun18": false}, // reconcile требует missing-интерфейс
 	})
 
 	proc := svc.clientProcs.get(DefaultInstanceID)

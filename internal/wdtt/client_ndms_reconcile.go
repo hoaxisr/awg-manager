@@ -15,7 +15,7 @@ func (s *Service) reconcileClientRawNDMS(ctx context.Context, id string, cfg Cli
 		return false, nil
 	}
 	iface := cfg.kernelRawIface()
-	if s.ifaceChecker != nil && s.ifaceChecker.InterfaceOperUp(iface) {
+	if s.ifaceChecker != nil && s.ifaceChecker.InterfaceExists(iface) {
 		return false, nil
 	}
 	if !s.clientProcs.get(id).Status().Running {
@@ -37,10 +37,10 @@ func (s *Service) reconcileClientRawNDMS(ctx context.Context, id string, cfg Cli
 	}
 	s.notifyClientRouteStart(ctx, id, iface)
 	s.restoreOpkgPolicyPermits(ctx, id, cfg)
-	// Лог «восстановлен» — только если перечитка реально подтвердила operUp;
+	// Лог «восстановлен» — только если перечитка реально подтвердила Exists;
 	// иначе это ложный сигнал успеха при живом-но-не-поднявшемся интерфейсе
 	// (супервизор сам перечитает статус и заэскалирует в рестарт).
-	if s.appLog != nil && s.ifaceChecker != nil && s.ifaceChecker.InterfaceOperUp(iface) {
+	if s.appLog != nil && s.ifaceChecker != nil && s.ifaceChecker.InterfaceExists(iface) {
 		s.appLog.Info("start", id, "OpkgTun восстановлен (rawClientIp="+cfg.RawClientIP+")")
 	}
 	return true, nil
@@ -53,5 +53,5 @@ func rawClientNDMSReady(cfg ClientConfig, checker InterfaceChecker) bool {
 	if checker == nil {
 		return false
 	}
-	return checker.InterfaceOperUp(cfg.kernelRawIface())
+	return checker.InterfaceExists(cfg.kernelRawIface())
 }

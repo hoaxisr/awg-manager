@@ -161,6 +161,8 @@ func (h *WdttHandler) ServeServers(w http.ResponseWriter, r *http.Request) {
 		h.setServerLANSegments(w, r, id)
 	case len(sub) >= 1 && sub[0] == "users":
 		h.serveServerPanelUsers(w, r, id, sub[1:])
+	case len(sub) >= 1 && sub[0] == "devices":
+		h.serveServerDevices(w, r, id, sub[1:])
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}
@@ -225,6 +227,100 @@ func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		response.Success(w, st)
+	default:
+		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
+	}
+}
+
+type wdttServerDeviceAddRequest struct {
+	DeviceID string `json:"deviceId"`
+	IP       string `json:"ip,omitempty"`
+	RawIP    string `json:"rawIp,omitempty"`
+	Comment  string `json:"comment,omitempty"`
+	Mode     string `json:"mode"`
+}
+
+type wdttServerDeviceUpdateRequest struct {
+	IP      string `json:"ip,omitempty"`
+	RawIP   string `json:"rawIp,omitempty"`
+	Comment string `json:"comment,omitempty"`
+	Mode    string `json:"mode"`
+	Unbind  bool   `json:"unbind,omitempty"`
+}
+
+// serveServerDevices handles GET/POST /devices and PATCH/DELETE /devices/{deviceId}.
+func (h *WdttHandler) serveServerDevices(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
+	switch {
+	case len(sub) == 0:
+		switch r.Method {
+		case http.MethodGet:
+			mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+			st, err := h.svc.ListServerDevices(serverID, mode)
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_SERVER_DEVICES_FAILED")
+				return
+			}
+			response.Success(w, st)
+		case http.MethodPost:
+			var req wdttServerDeviceAddRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				response.Error(w, "invalid request body", "BAD_REQUEST")
+				return
+			}
+			st, err := h.svc.AddServerDevice(serverID, wdtt.AddServerDeviceInput(req))
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_SERVER_DEVICE_ADD_FAILED")
+				return
+			}
+			response.Success(w, st)
+		default:
+			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		}
+	case len(sub) == 2 && sub[1] == "unbind":
+		if r.Method != http.MethodPost {
+			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			return
+		}
+		var req wdttServerDeviceUpdateRequest
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		req.Unbind = true
+		if req.Mode == "" {
+			req.Mode = strings.TrimSpace(r.URL.Query().Get("mode"))
+		}
+		st, err := h.svc.UpdateServerDevice(serverID, sub[0], wdtt.UpdateServerDeviceInput(req))
+		if err != nil {
+			response.Error(w, err.Error(), "WDTT_SERVER_DEVICE_UNBIND_FAILED")
+			return
+		}
+		response.Success(w, st)
+	case len(sub) == 1:
+		deviceID := sub[0]
+		switch r.Method {
+		case http.MethodPatch, http.MethodPut:
+			var req wdttServerDeviceUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				response.Error(w, "invalid request body", "BAD_REQUEST")
+				return
+			}
+			st, err := h.svc.UpdateServerDevice(serverID, deviceID, wdtt.UpdateServerDeviceInput(req))
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_SERVER_DEVICE_UPDATE_FAILED")
+				return
+			}
+			response.Success(w, st)
+		case http.MethodDelete:
+			mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+			st, err := h.svc.RemoveServerDevice(serverID, deviceID, mode)
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_SERVER_DEVICE_DELETE_FAILED")
+				return
+			}
+			response.Success(w, st)
+		default:
+			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		}
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}

@@ -40,11 +40,11 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
-			SHA256: "6f82bfd0b5851b1c61398d80ea4665575ba570c5dd641997194b25aef17f6e83", Size: 15401122,
+			SHA256: "ce92e19370809f12fe9746e156a33cb6292daa5269879b1ef163c9bcf4c166f7", Size: 15335586,
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "b639505b9952485bc16e9e3d43d6503975a878b0b18aba3fa5269953b61fd000", Size: 8126626,
+			SHA256: "1ddf6881e56cf03ef4a433d397a79bc16927d14fe634173412e19c10671ada5e", Size: 8126626,
 		},
 	},
 	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
@@ -53,13 +53,13 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "0af429515d65f7f844c3d24f0ec052c6b27cb65f6a9ef70e6ebdeb9f39782b7d", Size: 17563841,
+			SHA256: "b02e73825c10210155458edf211857b551b8a5e4e7a6b1d586045a1ca5a3cf24", Size: 17563841,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "8b4d2d838c696f91b771507c2992ba62d9b1f2993fad32ef396d5b53b976906e", Size: 17563841,
+			SHA256: "cb4d03dee627833dcd919aab3c360a9528e35203c5b746f4eb09825f363214e7", Size: 17563841,
 		},
 	},
 }

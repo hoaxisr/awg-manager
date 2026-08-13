@@ -347,6 +347,10 @@ func (s *Service) SetNDMSInterfaceCommands(c NDMSOpkgTunCommands) {
 	s.ndmsIfaces = c
 }
 
+func (s *Service) SetNDMSPeerLister(l NDMSPeerLister) {
+	s.ndmsPeers = l
+}
+
 func (s *Service) SetOpkgTunIndexLister(l OpkgTunIndexLister) {
 	s.opkgIndices = l
 }

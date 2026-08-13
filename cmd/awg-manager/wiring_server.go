@@ -521,6 +521,7 @@ func (a *app) setupRouter() {
 			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, "wdtt"),
 		})
 		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
+		a.wdttService.SetNDMSPeerLister(&wdttNDMSPeerAdapter{peers: a.ndmsQueries.Peers})
 		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
 		a.wdttService.SetRouterReconciler(routerSvc)
 		a.wdttService.SetClientRouteHooks(a.clientRouteService)

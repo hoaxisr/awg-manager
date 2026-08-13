@@ -303,6 +303,32 @@ func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string
 	return err == nil && iface != nil
 }
 
+var _ wdtt.NDMSPeerLister = (*wdttNDMSPeerAdapter)(nil)
+
+type wdttNDMSPeerAdapter struct {
+	peers *ndmsquery.PeerStore
+}
+
+func (a *wdttNDMSPeerAdapter) ListPeers(ctx context.Context, ndmsIface string) ([]wdtt.NDMSPeerActivity, error) {
+	if a.peers == nil {
+		return nil, nil
+	}
+	ps, err := a.peers.GetPeers(ctx, ndmsIface)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]wdtt.NDMSPeerActivity, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, wdtt.NDMSPeerActivity{
+			PublicKey:               p.PublicKey,
+			Online:                  p.Online,
+			LastHandshakeSecondsAgo: p.LastHandshakeSecondsAgo,
+			Enabled:                 p.Enabled,
+		})
+	}
+	return out, nil
+}
+
 var _ wdtt.NDMSPolicyTableGetter = (*policyTableAdapter)(nil)
 var _ wdtt.NDMSPolicyMarkGetter = (*policyTableAdapter)(nil)
 

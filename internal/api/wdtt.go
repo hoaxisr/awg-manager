@@ -45,6 +45,10 @@ type WdttService interface {
 	ListServerPanelUsers(serverID string) (wdtt.PanelUsersStatus, error)
 	AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (wdtt.PanelUsersStatus, error)
 	RemoveServerPanelUser(serverID, password string) (wdtt.PanelUsersStatus, error)
+	ListServerDevices(serverID, mode string) (wdtt.ServerDevicesStatus, error)
+	AddServerDevice(serverID string, in wdtt.AddServerDeviceInput) (wdtt.ServerDevicesStatus, error)
+	UpdateServerDevice(serverID, deviceID string, in wdtt.UpdateServerDeviceInput) (wdtt.ServerDevicesStatus, error)
+	RemoveServerDevice(serverID, deviceID, mode string) (wdtt.ServerDevicesStatus, error)
 }
 
 type WdttHandler struct {

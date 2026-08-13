@@ -18,9 +18,10 @@ type passwordsJSON struct {
 }
 
 type passwordsJSONUser struct {
-	Comment  string `json:"comment,omitempty"`
-	VkHash   string `json:"vk_hash,omitempty"`
-	DeviceID string `json:"device_id,omitempty"`
+	Comment   string   `json:"comment,omitempty"`
+	VkHash    string   `json:"vk_hash,omitempty"`
+	DeviceID  string   `json:"device_id,omitempty"`
+	DeviceIDs []string `json:"device_ids,omitempty"`
 }
 
 type passwordsJSONDevice struct {

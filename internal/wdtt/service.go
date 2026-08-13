@@ -43,6 +43,7 @@ type Service struct {
 	accessMgr       AccessManager
 	ifaceChecker    InterfaceChecker
 	ndmsIfaces      NDMSOpkgTunCommands
+	ndmsPeers       NDMSPeerLister
 	opkgIndices     OpkgTunIndexLister
 	opkgExist       OpkgTunExistChecker
 	opkgScan        func(ctx context.Context, description string) ([]string, error)
@@ -635,7 +636,8 @@ func (s *Service) StartClientInstance(id string) error {
 	if isRaw && cfg.usesNDMSOpkgTun() {
 		st := s.clientProcs.get(id).Status()
 		if st.Running {
-			recycle := st.StartedAt == nil || !rawClientNDMSReady(cfg, s.ifaceChecker)
+			wasReady := rawClientNDMSReady(cfg, s.ifaceChecker)
+			recycle := st.StartedAt == nil || !wasReady
 			if !recycle {
 				if _, ok := s.clientProcs.get(id).lastRawConf(); !ok {
 					recycle = true
@@ -643,7 +645,7 @@ func (s *Service) StartClientInstance(id string) error {
 			}
 			if recycle {
 				_ = s.clientProcs.get(id).Stop()
-				if rawClientNDMSReady(cfg, s.ifaceChecker) {
+				if wasReady || s.opkgTunExists(ctx, cfg.ndmsAccessIface()) {
 					_ = s.teardownClientOpkgTun(ctx, cfg)
 					// teardown снёс OpkgTun целиком; prepare выше отработал ДО
 					// него — без повторного вызова bootstrapRawClient ждёт
@@ -723,10 +725,10 @@ func (s *Service) bootstrapRawClient(ctx context.Context, id string, cfg ClientC
 	}
 	s.notifyClientRouteStart(ctx, id, cfg.kernelRawIface())
 	s.restoreOpkgPolicyPermits(ctx, id, cfg)
-	if s.ifaceChecker != nil && !s.ifaceChecker.InterfaceOperUp(kernelIface) {
+	if s.ifaceChecker != nil && !s.ifaceChecker.InterfaceExists(kernelIface) {
 		_ = s.clientProcs.get(id).Stop()
 		_ = s.teardownClientOpkgTun(ctx, cfg)
-		return fmt.Errorf("интерфейс %s operstate down после bootstrap", kernelIface)
+		return fmt.Errorf("интерфейс %s не найден после bootstrap", kernelIface)
 	}
 	return nil
 }
