@@ -203,14 +203,23 @@ func parseWdttURI(link string) (ImportPayload, error) {
 	if !strings.HasPrefix(link, SchemeWdtt) {
 		return ImportPayload{}, fmt.Errorf("ожидается wdtt://")
 	}
-	payload := strings.TrimPrefix(link, SchemeWdtt)
 	name := "Server"
-	if hash := strings.Index(payload, "#"); hash >= 0 {
-		if n := strings.TrimSpace(payload[hash+1:]); n != "" {
+	if hash := strings.Index(link, "#"); hash >= 0 {
+		if n := strings.TrimSpace(link[hash+1:]); n != "" {
 			name = n
 		}
-		payload = payload[:hash]
+		link = link[:hash]
 	}
+	u, err := url.Parse(link)
+	if err == nil && strings.EqualFold(u.Host, "connect") {
+		p, err := wdttConnectQueryToPayload(u)
+		if err != nil {
+			return ImportPayload{}, err
+		}
+		p.Name = pickName(p.Name, name)
+		return p, nil
+	}
+	payload := strings.TrimPrefix(link, SchemeWdtt)
 	if looksColonWdtt(payload) {
 		return colonWdttToPayload(payload, name)
 	}
@@ -219,6 +228,51 @@ func parseWdttURI(link string) (ImportPayload, error) {
 		return p, nil
 	}
 	return colonWdttToPayload(payload, name)
+}
+
+// wdttConnectQueryToPayload parses WDTT-Plus share links:
+// wdtt://connect?v=1&host=…&dtls=…&wg=…&local=…&password=…&hashes=…
+func wdttConnectQueryToPayload(u *url.URL) (ImportPayload, error) {
+	q := u.Query()
+	host := firstQuery(q, "host", "ip", "server")
+	pass := firstQuery(q, "password", "pass")
+	if host == "" || pass == "" {
+		return ImportPayload{}, fmt.Errorf("wdtt://connect: нужны host и password")
+	}
+	dtls := firstQuery(q, "dtls", "dtls_port", "server_port")
+	peer := host
+	if dtls != "" {
+		if !isDigits(dtls) {
+			return ImportPayload{}, fmt.Errorf("wdtt://connect: некорректный dtls")
+		}
+		peer = host + ":" + dtls
+	} else {
+		peer = normalizePeer(host)
+	}
+	hashes := splitHashes(firstQuery(q, "hashes", "vk", "vkHashes", "hash"))
+	workers := 18
+	if w := firstQuery(q, "workers", "workersPerHash"); w != "" {
+		if n, err := strconv.Atoi(w); err == nil && n > 0 {
+			workers = n
+		}
+	}
+	listen := ""
+	if port := firstQuery(q, "local", "port", "listenPort"); port != "" {
+		if _, err := strconv.Atoi(port); err == nil {
+			listen = "127.0.0.1:" + port
+		}
+	}
+	return ImportPayload{
+		Name:     firstQuery(q, "name"),
+		Peer:     peer,
+		Password: pass,
+		VKHashes: hashes,
+		Workers:  workers,
+		Listen:   listen,
+		DeviceID: firstQuery(q, "deviceId", "device-id", "did"),
+		SubURL:   normalizeSubURL(firstQuery(q, "sub", "subUrl", "sub_url")),
+		ConnMode: firstQuery(q, "mode", "connMode", "relayMode"),
+	}, nil
 }
 
 func looksColonWdtt(payload string) bool {
