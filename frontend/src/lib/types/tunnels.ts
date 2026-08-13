@@ -31,6 +31,9 @@ export interface AWGInterface {
 	rejectAfterTime?: string;
 	keepaliveTimeout?: string;
 	maxHandshakeAttempts?: string;
+	// AWG 3.1 device flags (module 3.1+).
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
 }
 
 export interface AWGPeer {
@@ -202,6 +205,10 @@ export interface ASCParamsExtended extends ASCParamsBase {
 	rejectAfterTime?: string;
 	keepaliveTimeout?: string;
 	maxHandshakeAttempts?: string;
+	// AWG 3.1 device flags (kernel mode, module 3.1+). RandomTrailers is not
+	// negotiated on the wire and has to be on at both ends.
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
 }
 
 export type ASCParams = ASCParamsBase | ASCParamsExtended;

@@ -1122,3 +1122,114 @@ func assertNotContains(t *testing.T, s, substr string) {
 		t.Errorf("output should not contain %q:\n%s", substr, s)
 	}
 }
+
+// --- AWG 3.1 boolean device flags ---
+
+func TestGenerate_AWG31Flags(t *testing.T) {
+	cases := map[string]struct {
+		obf     storage.AWGObfuscation
+		want    []string
+		notWant []string
+	}{
+		"both off": {
+			obf:     storage.AWGObfuscation{},
+			notWant: []string{"RandomTrailers", "DisableCookies"},
+		},
+		"trailers on": {
+			obf:     storage.AWGObfuscation{RandomTrailers: true},
+			want:    []string{"RandomTrailers = on"},
+			notWant: []string{"DisableCookies"},
+		},
+		"cookies disabled": {
+			obf:     storage.AWGObfuscation{DisableCookies: true},
+			want:    []string{"DisableCookies = on"},
+			notWant: []string{"RandomTrailers"},
+		},
+		"both on": {
+			obf:  storage.AWGObfuscation{RandomTrailers: true, DisableCookies: true},
+			want: []string{"RandomTrailers = on", "DisableCookies = on"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tunnel := &storage.AWGTunnel{
+				Interface: storage.AWGInterface{
+					PrivateKey:     "aPrivateKey123=",
+					Address:        "10.0.0.2/32",
+					AWGObfuscation: tc.obf,
+				},
+				Peer: storage.AWGPeer{PublicKey: "aPublicKey456="},
+			}
+			got := Generate(tunnel)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected %q in:\n%s", want, got)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(got, notWant) {
+					t.Fatalf("expected no %q in:\n%s", notWant, got)
+				}
+			}
+		})
+	}
+}
+
+// TestParse_AWG31FlagsOffIsAbsent pins that "off" reads as not set. The kernel
+// puts both flags into every device dump unconditionally, so `awg showconf`
+// always prints them, and importing that output must not turn a plain tunnel
+// into an awg3 one — the same trap awg3Range already guards for "0".
+func TestParse_AWG31Flags(t *testing.T) {
+	cases := map[string]struct {
+		line string
+		want bool
+	}{
+		"on":      {"RandomTrailers = on", true},
+		"On":      {"RandomTrailers = On", true},
+		"numeric": {"RandomTrailers = 1", true},
+		"off":     {"RandomTrailers = off", false},
+		"zero":    {"RandomTrailers = 0", false},
+		"absent":  {"", false},
+		"garbage": {"RandomTrailers = maybe", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			conf := "[Interface]\nPrivateKey = aPrivateKey123=\nAddress = 10.0.0.2/32\n" +
+				tc.line + "\n\n[Peer]\nPublicKey = aPublicKey456=\nEndpoint = 1.2.3.4:51820\nAllowedIPs = 0.0.0.0/0\n"
+			tunnel, err := Parse(conf)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tunnel.Interface.RandomTrailers != tc.want {
+				t.Fatalf("RandomTrailers = %v, want %v", tunnel.Interface.RandomTrailers, tc.want)
+			}
+		})
+	}
+}
+
+func TestParse_AWG31DisableCookies(t *testing.T) {
+	conf := "[Interface]\nPrivateKey = aPrivateKey123=\nAddress = 10.0.0.2/32\n" +
+		"DisableCookies = on\n\n[Peer]\nPublicKey = aPublicKey456=\nEndpoint = 1.2.3.4:51820\nAllowedIPs = 0.0.0.0/0\n"
+	tunnel, err := Parse(conf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !tunnel.Interface.DisableCookies {
+		t.Fatal("DisableCookies = on did not parse")
+	}
+}
+
+// TestClassifyAWGVersion_AWG31Flags keeps a showconf round-trip of a plain
+// tunnel classified as plain: both flags printed as off must leave it alone.
+func TestClassifyAWGVersion_AWG31Flags(t *testing.T) {
+	plain := &storage.AWGInterface{}
+	if got := ClassifyAWGVersion(plain); got == "awg3" {
+		t.Fatalf("an interface with both flags off classified as %q", got)
+	}
+	withFlag := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{RandomTrailers: true},
+	}
+	if got := ClassifyAWGVersion(withFlag); got != "awg3" {
+		t.Fatalf("RandomTrailers on classified as %q, want awg3", got)
+	}
+}

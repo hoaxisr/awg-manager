@@ -6,8 +6,8 @@
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { notifications } from '$lib/stores/notifications';
 	import { SettingsSectionLabel } from '$lib/components/settings';
-	import { Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
-	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck } from 'lucide-svelte';
+	import { Button, Dropdown, FieldHint, Toggle, type DropdownOption } from '$lib/components/ui';
+	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck, Shuffle } from 'lucide-svelte';
 
 	const MAX_SIGNATURE_BYTES = 4096;
 
@@ -20,6 +20,7 @@
 		params = $bindable(),
 		extended = undefined,
 		awg3 = false,
+		awg31 = false,
 		mtu = 1280,
 		errors = {},
 		hints = AWG_PARAM_HINTS,
@@ -30,6 +31,7 @@
 		params: ASCParams;
 		extended?: boolean;
 		awg3?: boolean;
+		awg31?: boolean;
 		mtu?: number;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
@@ -371,6 +373,42 @@
 			{/each}
 		</section>
 	{/if}
+
+	{#if awg31}
+		{@const ext31 = params as ASCParamsExtended}
+		<section class="card param-section">
+			<SettingsSectionLabel label="AmneziaWG 3.1" icon={Shuffle} tone="purple" header />
+			<p class="group-desc">
+				Параметры версии 3.1. Требуют модуля ядра 3.1 и на этом роутере, и на стороне сервера.
+			</p>
+
+			<div class="toggle-stack">
+				<div class="toggle-item">
+					<Toggle
+						checked={ext31.randomTrailers ?? false}
+						onchange={(v) => (ext31.randomTrailers = v)}
+						label="RandomTrailers — случайные хвосты"
+						hint="Добивает пакеты случайным числом лишних байт"
+					/>
+					<p class="toggle-note">
+						Включать обязательно на обоих концах: согласования по проводу у этого параметра
+						нет, и при включении на одной стороне туннель молча не поднимется. Заметно
+						увеличивает исходящий трафик и снижает скорость.
+					</p>
+				</div>
+
+				<div class="toggle-item">
+					<Toggle
+						checked={ext31.disableCookies ?? false}
+						onchange={(v) => (ext31.disableCookies = v)}
+						label="DisableCookies — не отвечать cookie"
+						hint="Не отвечать служебным пакетом-подтверждением под нагрузкой"
+					/>
+					<p class="toggle-note">Односторонний, совместимость не ломает.</p>
+				</div>
+			</div>
+		</section>
+	{/if}
 </div>
 
 <style>
@@ -383,6 +421,19 @@
 	.param-section {
 		background: var(--color-settings-surface-bg);
 		overflow: visible;
+	}
+
+	.toggle-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.toggle-note {
+		margin: 0.35rem 0 0;
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		color: var(--color-text-muted, #6b7280);
 	}
 
 	.param-section :global(.settings-section-label.header) {
