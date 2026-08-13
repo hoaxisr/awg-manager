@@ -8,7 +8,7 @@ import (
 
 const (
 	// ExpectedKmodVersion is the kernel module version expected by this build.
-	ExpectedKmodVersion = "3.0.20260805"
+	ExpectedKmodVersion = "3.1.20260812"
 
 	// versionFile is the filename that stores the on-disk module version.
 	versionFile = "amneziawg.version"
