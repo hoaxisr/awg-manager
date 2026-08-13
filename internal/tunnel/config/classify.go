@@ -62,5 +62,6 @@ func hasAnyAWG3Param(iface *storage.AWGInterface) bool {
 	return iface.HeaderProtectionKey != "" || iface.ContentPaddingAddition != "" ||
 		iface.RekeyAfterTime != "" || iface.RekeyTimeout != "" ||
 		iface.RejectAfterTime != "" || iface.KeepaliveTimeout != "" ||
-		iface.MaxHandshakeAttempts != ""
+		iface.MaxHandshakeAttempts != "" ||
+		iface.RandomTrailers || iface.DisableCookies
 }

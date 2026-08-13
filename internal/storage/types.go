@@ -469,6 +469,15 @@ type AWGObfuscation struct {
 	RejectAfterTime        string `json:"rejectAfterTime,omitempty"`
 	KeepaliveTimeout       string `json:"keepaliveTimeout,omitempty"`
 	MaxHandshakeAttempts   string `json:"maxHandshakeAttempts,omitempty"`
+	// AWG 3.1 device flags. Booleans rather than the string ranges above: the
+	// value is binary and off equals the device default, so omitempty alone
+	// keeps an untouched tunnel byte-identical in the store file.
+	//
+	// RandomTrailers is not negotiated on the wire — a 3.0 peer drops the
+	// lengthened handshakes on its length check without a word, so both ends
+	// have to run 3.1.
+	RandomTrailers bool `json:"randomTrailers,omitempty"`
+	DisableCookies bool `json:"disableCookies,omitempty"`
 }
 
 // AWGInterface contains AmneziaWG interface configuration.
