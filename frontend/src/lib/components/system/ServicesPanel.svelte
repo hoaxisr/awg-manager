@@ -117,7 +117,9 @@
 		variant="danger"
 		busy={acting === pendingAction.item.script}
 		onClose={() => (pendingAction = null)}
-		onConfirm={() => pendingAction && runAction(pendingAction.item, pendingAction.action)}
+		onConfirm={() => {
+			if (pendingAction) void runAction(pendingAction.item, pendingAction.action);
+		}}
 	/>
 {/if}
 
@@ -135,7 +137,7 @@
 	.head-row { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
 	.name { font-weight: 600; }
 	.script, .hint, .status-hint { font-size: 0.78rem; opacity: 0.75; margin-top: 0.15rem; word-break: break-word; }
-	.status-hint { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+	.status-hint { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 	.badge-running { color: var(--success, #22c55e); font-weight: 600; }
 	.badge-stopped { color: var(--muted-text, #888); font-weight: 600; }
 	.actions { display: flex; flex-wrap: nowrap; gap: 0.25rem; justify-content: flex-end; }

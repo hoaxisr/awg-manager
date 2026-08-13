@@ -70,7 +70,7 @@
 	let autoLoginCtl = $state(createTerminalAutoLogin(sendTerminalInput, null));
 	let historyEnabled = $state(loadTerminalHistoryEnabled());
 	let historyCommands = $state(loadTerminalCommands());
-	let historyWidth = $state(loadTerminalHistoryWidth(compact ? 170 : HISTORY_DEFAULT_WIDTH));
+	let historyWidth = $state(loadTerminalHistoryWidth(HISTORY_DEFAULT_WIDTH));
 	let resizingHistory = $state(false);
 	let resizeRaf = 0;
 	let cmdTracker = createCommandLineTracker((command) => {

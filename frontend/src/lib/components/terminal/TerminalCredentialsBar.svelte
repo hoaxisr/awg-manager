@@ -87,7 +87,7 @@
 	<div class="form">
 		<label>
 			<span>Логин</span>
-			<input bind:value={login} autocomplete="username" placeholder="root" />
+			<input type="text" bind:value={login} autocomplete="username" placeholder="root" />
 		</label>
 		<label>
 			<span>Пароль</span>
