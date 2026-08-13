@@ -40,6 +40,10 @@ type Awg3TunnelDTO struct {
 	RejectAfterTime      string `json:"rejectAfterTime,omitempty" example:"180"`
 	KeepaliveTimeout     string `json:"keepaliveTimeout,omitempty" example:"25"`
 	MaxHandshakeAttempts string `json:"maxHandshakeAttempts,omitempty" example:"5"`
+	// AWG 3.1 device flags, read-only like the timers above. RandomTrailers is
+	// not negotiated on the wire and needs 3.1 on both ends.
+	RandomTrailers bool `json:"randomTrailers,omitempty" example:"true"`
+	DisableCookies bool `json:"disableCookies,omitempty" example:"true"`
 }
 
 // Awg3ImportRequest is the POST /awg3-endpoints body: a human-readable tag and
@@ -411,6 +415,8 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 		RejectAfterTime      string `json:"reject_after_time"`
 		KeepaliveTimeout     string `json:"keepalive_timeout"`
 		MaxHandshakeAttempts string `json:"max_handshake_attempts"`
+		RandomTrailers       bool   `json:"random_trailers"`
+		DisableCookies       bool   `json:"disable_cookies"`
 	}
 	_ = json.Unmarshal(rec.Endpoint, &shape)
 
@@ -431,6 +437,8 @@ func awg3RecordToDTO(rec awg3endpoint.Record) Awg3TunnelDTO {
 		RejectAfterTime:      shape.RejectAfterTime,
 		KeepaliveTimeout:     shape.KeepaliveTimeout,
 		MaxHandshakeAttempts: shape.MaxHandshakeAttempts,
+		RandomTrailers:       shape.RandomTrailers,
+		DisableCookies:       shape.DisableCookies,
 	}
 }
 

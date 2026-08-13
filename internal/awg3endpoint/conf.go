@@ -15,6 +15,7 @@ const (
 	kNum                       // целое → JSON number
 	kRange                     // целое или диапазон "min-max" → JSON string
 	kAddrCIDR                  // список CIDR (split ','), достраиваем /32|/128
+	kBool                      // on|число → JSON true; off и мусор поле не выставляют
 	kIgnore                    // известный ключ, но в endpoint не нужен
 )
 
@@ -51,6 +52,8 @@ var ifaceFields = map[string]field{
 	"keepalivetimeout":       {"keepalive_timeout", kStr},
 	"maxhandshakeattempts":   {"max_handshake_attempts", kStr},
 	"headerprotectionkey":    {"header_protection_key", kStr},
+	"randomtrailers":         {"random_trailers", kBool},
+	"disablecookies":         {"disable_cookies", kBool},
 	// известные, но в endpoint не нужны:
 	"dns":        {"", kIgnore},
 	"listenport": {"", kIgnore},
@@ -175,6 +178,19 @@ func assign(section string, dst map[string]any, key, val string) error {
 		} else {
 			dst[f.json] = val
 		}
+	case kBool:
+		// Выставляем поле только для включённого состояния. Выключенное —
+		// умолчание устройства, а `awg showconf` печатает эти два ключа
+		// ВСЕГДА (ядро кладёт их в дамп безусловно), поэтому пробрасывать
+		// "off" значило бы протаскивать в endpoint мусор на каждом импорте.
+		//
+		// Литерал именно булев true, а не строка "on": endpoint отдаёт
+		// значение движку через UAPI, где его читает strconv.ParseBool,
+		// который "on" не понимает. В .conf наоборот on/off — там parse_bool
+		// из amneziawg-tools, который не понимает "true".
+		if confBool(val) {
+			dst[f.json] = true
+		}
 	case kAddrCIDR:
 		var out []string
 		for _, part := range strings.Split(val, ",") {
@@ -254,4 +270,16 @@ func splitEndpoint(s string) (string, int, error) {
 		return "", 0, fmt.Errorf("невалидный порт в Endpoint %q: %w", s, err)
 	}
 	return s[:i], port, nil
+}
+
+// confBool разбирает булев ключ AWG 3.1 из .conf так же, как parse_bool в
+// amneziawg-tools: "on" без учёта регистра либо ненулевое число. Всё
+// остальное — включая "off", пустую строку и мусор — считается выключенным.
+func confBool(value string) bool {
+	v := strings.TrimSpace(value)
+	if strings.EqualFold(v, "on") {
+		return true
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	return err == nil && n != 0
 }
