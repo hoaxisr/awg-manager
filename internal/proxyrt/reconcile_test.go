@@ -116,6 +116,19 @@ func (g *growingResource) Apply(context.Context, Step) error {
 
 func (g *growingResource) RecheckAfter() time.Duration { return 0 }
 
+// strayRole возвращает ресурс, чей план ссылается на чужой идентификатор.
+type strayResource struct{ id ResourceID }
+
+func (s *strayResource) ID() ResourceID { return s.id }
+func (s *strayResource) Observe(context.Context) (Observation, error) {
+	return Observation{Known: true}, nil
+}
+func (s *strayResource) Plan(Observation) []Step {
+	return []Step{{Resource: "нет-такого", Op: "set", Reason: "дефект роли"}}
+}
+func (s *strayResource) Apply(context.Context, Step) error { return nil }
+func (s *strayResource) RecheckAfter() time.Duration       { return 0 }
+
 type staticRole struct{ res []Resource }
 
 func (s staticRole) Resources(Intent, any, Observations) []Resource { return s.res }
@@ -228,6 +241,25 @@ func TestReconcileCanceledContextIsNotStuck(t *testing.T) {
 	}
 	if phase == PhaseStuck {
 		t.Fatal("отмена контекста не должна публиковаться как затык")
+	}
+}
+
+func TestReconcileStrayStepIsFailedNotSilent(t *testing.T) {
+	rec := NewReconciler(staticRole{res: []Resource{&strayResource{id: "a"}}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentEnabled)
+
+	if phase != PhaseFailed {
+		t.Fatalf("фаза %q, ожидали failed: шаг на несуществующий ресурс не должен теряться", phase)
+	}
+	var found bool
+	for _, st := range res.States {
+		if st.ID == "нет-такого" && st.Status == StatusFailed && st.Error != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("состояния не содержат объяснения потерянного шага: %+v", res.States)
 	}
 }
 

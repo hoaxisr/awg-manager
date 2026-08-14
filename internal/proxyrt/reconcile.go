@@ -25,17 +25,17 @@ type Result struct {
 }
 
 type Reconciler struct {
-	role Role
-	cfg  any
-	max  int
+	role      Role
+	cfg       any
+	maxPasses int
 }
 
 func NewReconciler(role Role, cfg any, opts ReconcileOpts) *Reconciler {
-	max := opts.MaxPasses
-	if max <= 0 {
-		max = defaultMaxPasses
+	maxPasses := opts.MaxPasses
+	if maxPasses <= 0 {
+		maxPasses = defaultMaxPasses
 	}
-	return &Reconciler{role: role, cfg: cfg, max: max}
+	return &Reconciler{role: role, cfg: cfg, maxPasses: maxPasses}
 }
 
 // Run гоняет проходы до неподвижной точки.
@@ -55,7 +55,7 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 			res.Stop = StopCanceled
 			break
 		}
-		if res.Passes >= r.max {
+		if res.Passes >= r.maxPasses {
 			res.Stop = StopCeiling
 			break
 		}
@@ -97,7 +97,16 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 		for _, s := range fresh {
 			rs, ok := byID[s.Resource]
 			if !ok {
-				continue
+				// План сослался на ресурс, которого нет в декларации: дефект
+				// роли. Молча пропустить шаг нельзя — он не применится и нигде
+				// не всплывёт.
+				res.States = append(res.States, ResourceState{
+					ID:     s.Resource,
+					Status: StatusFailed,
+					Error:  "шаг ссылается на ресурс, отсутствующий в декларации роли",
+				})
+				failed = true
+				break
 			}
 			applied[StepKey(s)] = true
 			if err := rs.Apply(ctx, s); err != nil {
