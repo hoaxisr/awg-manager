@@ -40,6 +40,13 @@ func NewSweeper(sc Scanner, rm Remover, alloc *Allocator, labels []string) *Swee
 //
 // Скан упал — не сносим ничего: «не знаем» не равно «наш и лишний».
 //
+// Метка каждой записи перепроверяется по своему же списку: довод «сканер вернул
+// только наше» верен ровно до бага в сканере, а цена бага здесь — снесённый
+// чужой интерфейс роутера.
+//
+// Отмена контекста прекращает сносы и отказом уборки не считается — так же,
+// как отмена отделена от отказа в цикле реконсиляции и воркере.
+//
 // Решение о списке принимается под локом аллокатора, а сами сносы идут вне
 // его: снос — это RCI-вызовы на секунды, и держать на них общий лок значит
 // остановить выделение номеров всем инстансам сразу.
@@ -49,10 +56,15 @@ func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string
 		return nil, err
 	}
 
+	ours := make(map[string]bool, len(s.labels))
+	for _, l := range s.labels {
+		ours[l] = true
+	}
+
 	var doomed []OwnedResource
 	s.alloc.WithLock(func() {
 		for _, r := range found {
-			if !declared[r.Name] {
+			if ours[r.Label] && !declared[r.Name] {
 				doomed = append(doomed, r)
 			}
 		}
@@ -61,6 +73,9 @@ func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string
 	var removed []string
 	var firstErr error
 	for _, r := range doomed {
+		if ctx.Err() != nil {
+			break
+		}
 		if rmErr := s.rm.Remove(ctx, r); rmErr != nil {
 			if firstErr == nil {
 				firstErr = rmErr

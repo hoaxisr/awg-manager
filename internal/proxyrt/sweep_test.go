@@ -22,9 +22,16 @@ type fakeRemover struct {
 	removed []string
 	delay   time.Duration
 	err     error
+	entered chan struct{} // сигнал «я внутри Remove», до задержки
 }
 
 func (f *fakeRemover) Remove(_ context.Context, r OwnedResource) error {
+	if f.entered != nil {
+		select {
+		case f.entered <- struct{}{}:
+		default:
+		}
+	}
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -105,7 +112,7 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 	// остановить выделение номеров всем инстансам.
 	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
 	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
-	rm := &fakeRemover{delay: 150 * time.Millisecond}
+	rm := &fakeRemover{delay: 150 * time.Millisecond, entered: make(chan struct{}, 1)}
 	sw := NewSweeper(sc, rm, alloc, []string{"L"})
 
 	done := make(chan struct{})
@@ -114,7 +121,9 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 		sw.Sweep(context.Background(), map[string]bool{})
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	// Ждём сигнал «снос начался», а не спим наугад: сон дал бы ложный зелёный,
+	// если планировщик задержит старт горутины дольше сна.
+	<-rm.entered
 	start := time.Now()
 	if _, err := alloc.AllocIndex("inst1", 0, map[int]bool{}); err != nil {
 		t.Fatal(err)
@@ -123,4 +132,55 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 		t.Fatalf("выделение номера ждало лок %v — уборщик держит его на время сносов", waited)
 	}
 	<-done
+}
+
+func TestSweepIgnoresForeignLabel(t *testing.T) {
+	// Страховка от бага в сканере: цена ошибки — снесённый чужой интерфейс
+	// роутера, поэтому метку проверяем сами, а не только доверяем сканеру.
+	sc := fakeScanner{out: []OwnedResource{
+		{Label: "AWGM WDTT client", Name: "OpkgTun19"},
+		{Label: "Чужая метка", Name: "OpkgTun20"},
+	}}
+	rm := &fakeRemover{}
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"})
+
+	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "OpkgTun19" {
+		t.Fatalf("удалено %v, ожидали только OpkgTun19", removed)
+	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if len(rm.removed) != 1 || rm.removed[0] != "OpkgTun19" {
+		t.Fatalf("снос чужого ресурса: %v", rm.removed)
+	}
+}
+
+func TestSweepStopsOnCanceledContext(t *testing.T) {
+	// Отмена — не отказ уборки: пакет уже отделяет одно от другого в цикле и
+	// воркере. Прекращаем сносы и не считаем это провалом.
+	sc := fakeScanner{out: []OwnedResource{
+		{Label: "L", Name: "OpkgTun19"},
+		{Label: "L", Name: "OpkgTun20"},
+	}}
+	rm := &fakeRemover{}
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	removed, err := sw.Sweep(ctx, map[string]bool{})
+	if err != nil {
+		t.Fatalf("отмена не должна приезжать как отказ уборки: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("при отменённом контексте сносить нельзя, удалено %v", removed)
+	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if len(rm.removed) != 0 {
+		t.Fatalf("Remove звался при отменённом контексте: %v", rm.removed)
+	}
 }
