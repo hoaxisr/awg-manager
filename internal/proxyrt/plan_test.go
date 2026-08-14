@@ -149,3 +149,29 @@ func TestStepKeyDistinguishesArgs(t *testing.T) {
 		t.Fatal("одинаковые шаги обязаны совпадать по ключу")
 	}
 }
+
+func TestStepKeyIsInjectiveWithSeparatorsInData(t *testing.T) {
+	// Имена политик доступа приходят от пользователя и могут содержать
+	// разделители ключа. Разные шаги обязаны остаться разными.
+	//
+	// Пара подобрана так, чтобы сырая склейка дала одну строку: подделанный
+	// ключ обязан сортироваться ПОСЛЕ настоящего (zone > policy), иначе
+	// сортировка ключей развела бы шаги сама и подделка не сработала бы.
+	a := Step{Resource: "r", Op: "permit", Args: map[string]string{"policy": "home|zone=lan"}}
+	b := Step{Resource: "r", Op: "permit", Args: map[string]string{"policy": "home", "zone": "lan"}}
+
+	if StepKey(a) == StepKey(b) {
+		t.Fatalf("ключи склеились: %q", StepKey(a))
+	}
+}
+
+func TestStepKeyIsInjectiveWithSeparatorsInOp(t *testing.T) {
+	// Тот же трюк уровнем выше: разделитель внутри Op не должен притворяться
+	// границей между Op и первым аргументом.
+	a := Step{Resource: "r", Op: "permit|policy=lan"}
+	b := Step{Resource: "r", Op: "permit", Args: map[string]string{"policy": "lan"}}
+
+	if StepKey(a) == StepKey(b) {
+		t.Fatalf("ключи склеились: %q", StepKey(a))
+	}
+}

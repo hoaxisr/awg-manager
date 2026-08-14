@@ -2,6 +2,7 @@ package proxyrt
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -63,11 +64,18 @@ func Plan(res []Resource, obs Observations) ([]Step, []ResourceState) {
 // StepKey — устойчивый ключ шага. По нему цикл понимает, применял ли он уже
 // этот шаг в текущем прогоне. Аргументы входят в ключ: «поставить адрес X» и
 // «поставить адрес Y» — разные шаги, и второй обязан примениться.
+//
+// Кодирование самоограничивающее: все переменные части проходят через
+// strconv.Quote. В аргументы попадают имена политик доступа, то есть
+// произвольный пользовательский текст, и сырая склейка позволяла разделителям
+// внутри данных притвориться разделителями структуры. Цена коллизии высока:
+// два разных шага сочлись бы одним, и второй цикл молча пропустил бы как
+// «уже применённый» — запрошенное изменение тихо не выполнилось бы.
 func StepKey(s Step) string {
 	var b strings.Builder
-	b.WriteString(string(s.Resource))
+	b.WriteString(strconv.Quote(string(s.Resource)))
 	b.WriteByte('|')
-	b.WriteString(s.Op)
+	b.WriteString(strconv.Quote(s.Op))
 	if len(s.Args) == 0 {
 		return b.String()
 	}
@@ -78,9 +86,9 @@ func StepKey(s Step) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		b.WriteByte('|')
-		b.WriteString(k)
+		b.WriteString(strconv.Quote(k))
 		b.WriteByte('=')
-		b.WriteString(s.Args[k])
+		b.WriteString(strconv.Quote(s.Args[k]))
 	}
 	return b.String()
 }
