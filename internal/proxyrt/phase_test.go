@@ -46,6 +46,11 @@ func TestDerivePhase(t *testing.T) {
 			IntentEnabled, nil, true, StopNone, PhaseSettled},
 		{"ненаблюдаемый ресурс при исчерпанном потолке — затык, а не ожидание",
 			IntentEnabled, []ResourceState{ok, unknown}, false, StopCeiling, PhaseStuck},
+		// Отмена до первого прохода: шагов ещё нет, значит план пуст, и клаузу
+		// StopCanceled не подпирает !planEmpty. Без неё отменённый прогон
+		// объявляется достигнутым.
+		{"отмена при пустом плане — не «достигнуто»",
+			IntentEnabled, []ResourceState{ok}, true, StopCanceled, PhaseWaiting},
 	}
 
 	for _, c := range cases {
