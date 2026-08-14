@@ -115,6 +115,41 @@ func TestPlanNeverObservedResourceIsUnknown(t *testing.T) {
 	}
 }
 
+func TestPlanNotKnownBlocksTail(t *testing.T) {
+	a := &fakeResource{id: "a", obs: Observation{Known: false}, steps: []Step{step("a", "create")}}
+	b := &fakeResource{id: "b", obs: Observation{Known: true}, steps: []Step{step("b", "up")}}
+
+	steps, states := Plan([]Resource{a, b}, observeAllForTest(a, b))
+
+	if len(steps) != 0 {
+		t.Fatalf("шагов быть не должно, получили %v", steps)
+	}
+	if states[0].Status != StatusUnknown || states[0].Error == "" {
+		t.Fatalf("a: %+v, ожидали unknown с причиной", states[0])
+	}
+	if states[1].Status != StatusBlocked {
+		t.Fatalf("b: статус %q, ожидали blocked", states[1].Status)
+	}
+}
+
+func TestPlanNeverObservedBlocksTail(t *testing.T) {
+	// Первый ресурс не наблюдался вовсе, второй наблюдался и требует шаг.
+	a := &fakeResource{id: "a", obs: Observation{Known: true}, steps: []Step{step("a", "create")}}
+	b := &fakeResource{id: "b", obs: Observation{Known: true}, steps: []Step{step("b", "up")}}
+
+	steps, states := Plan([]Resource{a, b}, observeAllForTest(b)) // наблюдали только b
+
+	if len(steps) != 0 {
+		t.Fatalf("шагов быть не должно, получили %v", steps)
+	}
+	if states[0].Status != StatusUnknown || states[0].Error == "" {
+		t.Fatalf("a: %+v, ожидали unknown с причиной", states[0])
+	}
+	if states[1].Status != StatusBlocked {
+		t.Fatalf("b: статус %q, ожидали blocked", states[1].Status)
+	}
+}
+
 func TestPlanFailedResourceBlocksTail(t *testing.T) {
 	a := &fakeResource{id: "a", obs: Observation{Known: true}}
 	b := &fakeResource{id: "b", obs: Observation{Known: true}, steps: []Step{step("b", "up")}}
@@ -147,6 +182,20 @@ func TestStepKeyDistinguishesArgs(t *testing.T) {
 	}
 	if StepKey(a) != StepKey(c) {
 		t.Fatal("одинаковые шаги обязаны совпадать по ключу")
+	}
+}
+
+func TestStepKeyStableAcrossMapOrder(t *testing.T) {
+	a := Step{Resource: "r", Op: "set", Args: map[string]string{"x": "1", "y": "2"}}
+	b := Step{Resource: "r", Op: "set", Args: map[string]string{"y": "2", "x": "1"}}
+
+	// Значения захватываем: повторный вызов StepKey в сообщении заново обошёл
+	// бы карту и мог напечатать две одинаковые строки на реальном падении.
+	for i := 0; i < 50; i++ {
+		ka, kb := StepKey(a), StepKey(b)
+		if ka != kb {
+			t.Fatalf("ключ зависит от порядка обхода карты: %q против %q", ka, kb)
+		}
 	}
 }
 
