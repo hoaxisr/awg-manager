@@ -63,9 +63,32 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 
 		obs := NewObservations()
 		resources := r.role.Resources(intent, r.cfg, obs)
+		dup := ResourceID("")
 		for _, rs := range resources {
+			id := rs.ID()
+			if _, twice := obs.m[id]; twice {
+				dup = id
+				break
+			}
 			o, err := rs.Observe(ctx)
-			obs.Put(rs.ID(), o, err)
+			obs.Put(id, o, err)
+		}
+		if dup != "" {
+			// Два ресурса с одним идентификатором — дефект роли, и он опаснее
+			// постороннего шага: наблюдение одного затирается другим, а шаг
+			// одного исполняет ЧУЖОЙ объект, то есть правило уезжает в чужую
+			// политику. Прерываем ДО применения: побочных эффектов не будет
+			// вовсе, а наружу уедет отказ с причиной, а не здоровое ожидание.
+			//
+			// Хватает одной проверки на первом списке: состав ресурсов по
+			// контракту Role стабилен для пары (intent, cfg).
+			res.Steps = nil
+			res.States = []ResourceState{{
+				ID:     dup,
+				Status: StatusFailed,
+				Error:  "идентификатор ресурса объявлен в роли дважды",
+			}}
+			break
 		}
 		// Второй вызов: желаемое может зависеть от наблюдений — адрес
 		// интерфейса вычисляется из состояния процесса.

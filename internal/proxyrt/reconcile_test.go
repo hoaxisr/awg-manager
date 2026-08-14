@@ -299,6 +299,35 @@ func TestReconcileStrayStepIsFailedNotSilent(t *testing.T) {
 	}
 }
 
+func TestReconcileDuplicateResourceIDIsFailedNotSilent(t *testing.T) {
+	// Два ресурса с одним идентификатором — дефект роли опаснее постороннего
+	// шага: наблюдение первого затирается вторым, а шаг первого исполняет ЧУЖОЙ
+	// объект. На роутере это правило, уехавшее в чужую политику, — и наружу при
+	// этом уезжало здоровое «ожидание».
+	first := &statefulResource{id: "same", want: "первый"}
+	second := &statefulResource{id: "same", want: "второй"}
+	rec := NewReconciler(staticRole{res: []Resource{first, second}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentEnabled)
+
+	if phase != PhaseFailed {
+		t.Fatalf("фаза %q, ожидали failed: коллизия идентификаторов обязана быть громкой", phase)
+	}
+	if first.applies != 0 || second.applies != 0 {
+		t.Fatalf("применений первый=%d второй=%d, ожидали 0: до чужого объекта дело доходить не должно",
+			first.applies, second.applies)
+	}
+	var found bool
+	for _, st := range res.States {
+		if st.ID == "same" && st.Status == StatusFailed && st.Error != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("состояния не называют коллизию идентификаторов: %+v", res.States)
+	}
+}
+
 func TestReconcileAppliesEachStepOnceOnMixedRole(t *testing.T) {
 	// Роль из двух ресурсов: один сходится сразу, второй ждёт внешнего
 	// эффекта. На проходе 2 план УЖЕ ИЗМЕНИЛСЯ (остался только async-шаг),
