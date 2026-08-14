@@ -272,3 +272,14 @@ func TestNewSweeperPanicsWithoutLabels(t *testing.T) {
 	}()
 	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), nil, noIndex)
 }
+
+func TestNewSweeperPanicsWithoutIndexOf(t *testing.T) {
+	// nil-разборщик компилируется и падает только на пути уборки — между
+	// решением о сносе и сносами. Отказ обязан быть в конструкторе.
+	defer func() {
+		if recover() == nil {
+			t.Fatal("ожидали панику на nil-разборщике имени")
+		}
+	}()
+	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, nil)
+}
