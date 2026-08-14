@@ -143,21 +143,21 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 	}
 
 	cases := []struct {
-		name          string
-		intent        Intent
-		res           Result
-		phase         Phase
-		secondIntent  Intent
-		secondRes     Result
-		secondPhase   Phase
-		whyMustPubish string
+		name           string
+		intent         Intent
+		res            Result
+		phase          Phase
+		secondIntent   Intent
+		secondRes      Result
+		secondPhase    Phase
+		whyMustPublish string
 	}{
 		{
 			name: "сменилось намерение", intent: IntentEnabled, res: base, phase: PhaseWaiting,
 			secondIntent: IntentDeleted, secondRes: base, secondPhase: PhaseWaiting,
 			// У DerivePhase ветки для deleted нет, поэтому фаза совпадает:
 			// отличить enabled от deleted может только сравнение намерения.
-			whyMustPubish: "enabled → deleted при совпавшей фазе",
+			whyMustPublish: "enabled → deleted при совпавшей фазе",
 		},
 		{
 			name: "сменился текст отказа ресурса", intent: IntentEnabled, res: base, phase: PhaseWaiting,
@@ -166,7 +166,7 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 				Steps:  base.Steps,
 				States: []ResourceState{{ID: "a", Status: StatusFailed, Error: "интерфейс не найден"}},
 			},
-			whyMustPubish: "та же фаза, другая причина отказа",
+			whyMustPublish: "та же фаза, другая причина отказа",
 		},
 		{
 			name: "сменились аргументы шага", intent: IntentEnabled, res: base, phase: PhaseWaiting,
@@ -175,7 +175,52 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 				Steps:  []Step{{Resource: "a", Op: "set", Args: map[string]string{"address": "10.70.0.6"}, Reason: "расхождение"}},
 				States: base.States,
 			},
-			whyMustPubish: "та же причина шага, другой адрес",
+			whyMustPublish: "та же причина шага, другой адрес",
+		},
+		{
+			// Detail сравнивается только потому, что ResourceState сличается
+			// целой структурой. Подслучай держит это свойство: попольное
+			// сравнение без Detail молча потеряет текст наблюдения.
+			name: "сменился Detail ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper up"}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper down"}},
+			},
+			whyMustPublish: "тот же статус, другой текст наблюдения",
+		},
+		{
+			// Список ресурсов вырос. Сравнение идёт циклом по ПРЕДЫДУЩЕМУ
+			// состоянию, поэтому без проверки длин общий префикс совпадёт, а
+			// новый хвост никто не осмотрит: изменение пропадёт молча, паники
+			// не будет.
+			name: "ресурсов стало больше", intent: IntentEnabled, res: Result{
+				States: []ResourceState{{ID: "a", Status: StatusOK}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				States: []ResourceState{{ID: "a", Status: StatusOK}, {ID: "b", Status: StatusDrift}},
+			},
+			whyMustPublish: "первый ресурс не изменился, добавился второй",
+		},
+		{
+			// То же для плана: прибавился шаг в хвост.
+			name: "в плане прибавился шаг", intent: IntentEnabled, res: Result{
+				Steps:  []Step{{Resource: "a", Op: "create", Reason: "нужно создать"}},
+				States: base.States,
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps: []Step{
+					{Resource: "a", Op: "create", Reason: "нужно создать"},
+					{Resource: "b", Op: "up", Reason: "интерфейс не поднят"},
+				},
+				States: base.States,
+			},
+			whyMustPublish: "первый шаг не изменился, добавился второй",
 		},
 	}
 
@@ -188,7 +233,7 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			st.Update("inst1", c.secondIntent, c.secondRes, c.secondPhase)
 
 			if len(pub.events) != 2 {
-				t.Fatalf("публикаций %d, ожидали 2: %s", len(pub.events), c.whyMustPubish)
+				t.Fatalf("публикаций %d, ожидали 2: %s", len(pub.events), c.whyMustPublish)
 			}
 		})
 	}
