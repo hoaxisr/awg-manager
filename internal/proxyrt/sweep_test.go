@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// noIndex — разборщик «номер неизвестен»: ресурс рассматривается только по
+// declared, как было до появления консультации с аллокатором.
+func noIndex(string) (int, bool) { return 0, false }
+
 type fakeScanner struct {
 	out []OwnedResource
 	err error
@@ -49,7 +53,7 @@ func TestSweepRemovesOnlyUndeclared(t *testing.T) {
 	}}
 	rm := &fakeRemover{}
 	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}),
-		[]string{"AWGM WDTT client", "AWGM WDTT"})
+		[]string{"AWGM WDTT client", "AWGM WDTT"}, noIndex)
 
 	removed, err := sw.Sweep(context.Background(), map[string]bool{"OpkgTun18": true, "OpkgTun20": true})
 	if err != nil {
@@ -65,7 +69,7 @@ func TestSweepNeverRemovesDeclared(t *testing.T) {
 	// таймеру. Выключенный инстанс продолжает объявлять свои ресурсы.
 	sc := fakeScanner{out: []OwnedResource{{Label: "AWGM WDTT client", Name: "OpkgTun18"}}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"})
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
 
 	removed, err := sw.Sweep(context.Background(), map[string]bool{"OpkgTun18": true})
 	if err != nil {
@@ -80,7 +84,7 @@ func TestSweepFailedScanRemovesNothing(t *testing.T) {
 	// «Не знаем» не равно «наш и лишний». Скан упал — не сносим ничего.
 	sc := fakeScanner{err: errors.New("rci недоступен")}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"})
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
 
 	removed, err := sw.Sweep(context.Background(), map[string]bool{})
 	if err == nil {
@@ -96,7 +100,7 @@ func TestSweepFailedScanRemovesNothing(t *testing.T) {
 func TestSweepReportsRemoveError(t *testing.T) {
 	sc := fakeScanner{out: []OwnedResource{{Label: "AWGM WDTT client", Name: "OpkgTun19"}}}
 	rm := &fakeRemover{err: errors.New("rci отказал")}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"})
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
 
 	removed, err := sw.Sweep(context.Background(), map[string]bool{})
 	if err == nil {
@@ -113,7 +117,7 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
 	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
 	rm := &fakeRemover{delay: 150 * time.Millisecond, entered: make(chan struct{}, 1)}
-	sw := NewSweeper(sc, rm, alloc, []string{"L"})
+	sw := NewSweeper(sc, rm, alloc, []string{"L"}, noIndex)
 
 	done := make(chan struct{})
 	go func() {
@@ -142,7 +146,7 @@ func TestSweepIgnoresForeignLabel(t *testing.T) {
 		{Label: "Чужая метка", Name: "OpkgTun20"},
 	}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"})
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
 
 	removed, err := sw.Sweep(context.Background(), map[string]bool{})
 	if err != nil {
@@ -166,7 +170,7 @@ func TestSweepStopsOnCanceledContext(t *testing.T) {
 		{Label: "L", Name: "OpkgTun20"},
 	}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"})
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, noIndex)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -183,4 +187,88 @@ func TestSweepStopsOnCanceledContext(t *testing.T) {
 	if len(rm.removed) != 0 {
 		t.Fatalf("Remove звался при отменённом контексте: %v", rm.removed)
 	}
+}
+
+func TestSweepSpareResourceHeldByAllocator(t *testing.T) {
+	// Инстанс получил номер и создал интерфейс, но объявиться ещё не успел:
+	// declared его не содержит. Сносить нельзя — иначе уборщик уничтожает
+	// только что созданный интерфейс.
+	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
+	if _, err := alloc.AllocIndex("inst1", 19, map[int]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
+	rm := &fakeRemover{}
+	sw := NewSweeper(sc, rm, alloc, []string{"L"}, func(n string) (int, bool) {
+		if n == "OpkgTun19" {
+			return 19, true
+		}
+		return 0, false
+	})
+
+	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("снесён закреплённый номер: %v", removed)
+	}
+}
+
+func TestSweepRemovesUnheldResourceWithKnownIndex(t *testing.T) {
+	// Обратная сторона предыдущего: номер разобран, но ни за кем не закреплён —
+	// сирота, сносим. Иначе консультация с аллокатором выключила бы уборку.
+	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
+	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
+	rm := &fakeRemover{}
+	sw := NewSweeper(sc, rm, alloc, []string{"L"}, func(n string) (int, bool) {
+		if n == "OpkgTun19" {
+			return 19, true
+		}
+		return 0, false
+	})
+
+	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "OpkgTun19" {
+		t.Fatalf("удалено %v, ожидали OpkgTun19: номер ни за кем не закреплён", removed)
+	}
+}
+
+func TestSweepCanceledRemoveIsNotFailure(t *testing.T) {
+	// Отмена, вернувшаяся из самого Remove, — не отказ уборки: прекращаем и
+	// молчим, как и при отмене, замеченной до вызова.
+	sc := fakeScanner{out: []OwnedResource{
+		{Label: "L", Name: "OpkgTun19"},
+		{Label: "L", Name: "OpkgTun20"},
+	}}
+	rm := &fakeRemover{err: context.Canceled}
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, noIndex)
+
+	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	if err != nil {
+		t.Fatalf("отмена из Remove не должна приезжать как отказ уборки: %v", err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("отменённый снос не считается удалённым: %v", removed)
+	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if len(rm.removed) != 1 {
+		t.Fatalf("после отмены сносы обязаны прекратиться, а не идти дальше: %v", rm.removed)
+	}
+}
+
+func TestNewSweeperPanicsWithoutLabels(t *testing.T) {
+	// Уборщик — единственный путь удаления. Конструктор без меток означал бы
+	// вечное накопление сирот без единого сигнала: это ошибка программирования,
+	// а не режим работы.
+	defer func() {
+		if recover() == nil {
+			t.Fatal("ожидали панику на пустом списке меток")
+		}
+	}()
+	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), nil, noIndex)
 }

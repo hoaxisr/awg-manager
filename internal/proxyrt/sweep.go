@@ -1,6 +1,9 @@
 package proxyrt
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // OwnedResource — ресурс роутера, помеченный нашей меткой владения.
 type OwnedResource struct {
@@ -20,18 +23,30 @@ type Remover interface {
 	Remove(ctx context.Context, r OwnedResource) error
 }
 
+// IndexOf разбирает имя ресурса в номер. Передаётся вызывающим: движок не
+// знает про именование NDMS. Вернул false — номер неизвестен, ресурс
+// рассматривается только по declared.
+type IndexOf func(name string) (int, bool)
+
 // Sweeper удаляет то, что помечено нашей меткой, но не объявлено ни одним
 // живым инстансом. Это единственный путь удаления ресурсов: воркеры инстансов
 // ничего не сносят.
 type Sweeper struct {
-	sc     Scanner
-	rm     Remover
-	alloc  *Allocator
-	labels []string
+	sc      Scanner
+	rm      Remover
+	alloc   *Allocator
+	labels  []string
+	indexOf IndexOf
 }
 
-func NewSweeper(sc Scanner, rm Remover, alloc *Allocator, labels []string) *Sweeper {
-	return &Sweeper{sc: sc, rm: rm, alloc: alloc, labels: labels}
+// NewSweeper паникует на пустом списке меток: уборщик — единственный путь
+// удаления, и без меток он молча не удалял бы ничего никогда, накапливая сирот.
+// Это ошибка программирования, а не режим работы.
+func NewSweeper(sc Scanner, rm Remover, alloc *Allocator, labels []string, indexOf IndexOf) *Sweeper {
+	if len(labels) == 0 {
+		panic("proxyrt: NewSweeper без меток владения — уборщик не удалял бы ничего")
+	}
+	return &Sweeper{sc: sc, rm: rm, alloc: alloc, labels: labels, indexOf: indexOf}
 }
 
 // Sweep сносит невостребованное. declared — имена ресурсов, объявленных живыми
@@ -50,6 +65,12 @@ func NewSweeper(sc Scanner, rm Remover, alloc *Allocator, labels []string) *Swee
 // Решение о списке принимается под локом аллокатора, а сами сносы идут вне
 // его: снос — это RCI-вызовы на секунды, и держать на них общий лок значит
 // остановить выделение номеров всем инстансам сразу.
+//
+// Под локом решение консультирует held аллокатора: ресурс приговаривается,
+// только если он не в declared И его номер не закреплён ни за кем. Иначе
+// остаётся гонка, ради которой лок и заявлен: инстанс получил номер и создал
+// интерфейс, а declared собран вызывающим до того, как инстанс успел
+// объявиться, — и свежесозданный интерфейс был бы снесён.
 func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string, error) {
 	found, err := s.sc.Scan(ctx, s.labels)
 	if err != nil {
@@ -62,11 +83,15 @@ func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string
 	}
 
 	var doomed []OwnedResource
-	s.alloc.WithLock(func() {
+	s.alloc.WithLock(func(isHeld func(int) bool) {
 		for _, r := range found {
-			if ours[r.Label] && !declared[r.Name] {
-				doomed = append(doomed, r)
+			if !ours[r.Label] || declared[r.Name] {
+				continue
 			}
+			if idx, ok := s.indexOf(r.Name); ok && isHeld(idx) {
+				continue // номер закреплён за живым владельцем
+			}
+			doomed = append(doomed, r)
 		}
 	})
 
@@ -77,6 +102,11 @@ func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string
 			break
 		}
 		if rmErr := s.rm.Remove(ctx, r); rmErr != nil {
+			// Отмена — не отказ уборки, откуда бы она ни пришла: и из состояния
+			// контекста, и возвратом из самого Remove.
+			if ctx.Err() != nil || errors.Is(rmErr, context.Canceled) {
+				break
+			}
 			if firstErr == nil {
 				firstErr = rmErr
 			}
