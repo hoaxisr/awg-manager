@@ -140,9 +140,12 @@ func TestWorkerSkipsPublishOnCanceledContext(t *testing.T) {
 // blockingResource виснет в наблюдении, пока его не отпустят либо не отменят
 // контекст. Уважение контекста в Observe и делает границу Stop настоящей.
 type blockingResource struct {
-	mu      sync.Mutex
-	runs    int
-	id      ResourceID
+	mu   sync.Mutex
+	runs int
+	id   ResourceID
+	// skip — сколько первых наблюдений пропустить свободно. Нужен, чтобы
+	// повесить ресурс не на первом проходе, а на втором.
+	skip    int
 	once    sync.Once
 	entered chan struct{}
 	release chan struct{}
@@ -153,7 +156,11 @@ func (b *blockingResource) ID() ResourceID { return b.id }
 func (b *blockingResource) Observe(ctx context.Context) (Observation, error) {
 	b.mu.Lock()
 	b.runs++
+	n := b.runs
 	b.mu.Unlock()
+	if n <= b.skip {
+		return Observation{Known: true}, nil
+	}
 	b.once.Do(func() { close(b.entered) })
 	select {
 	case <-b.release:
@@ -210,6 +217,34 @@ func TestWorkerDoesNotPublishWhenCanceledDuringObserve(t *testing.T) {
 	defer mu.Unlock()
 	if len(phases) != 0 {
 		t.Fatalf("опубликованы фазы %v — выключение не должно оставлять следа", phases)
+	}
+}
+
+func TestWorkerDoesNotPublishWhenCanceledOnSecondPass(t *testing.T) {
+	// Проход 1 применяет шаг async-ресурса. На проходе 2 отмена ловится в
+	// наблюдении второго ресурса, план повторяется, свежих шагов нет — выход
+	// StopAwaiting. Публиковать при выключении нельзя и на этом пути.
+	async := &asyncResource{id: "async"}
+	slow := &blockingResource{id: "slow", skip: 1, entered: make(chan struct{}), release: make(chan struct{})}
+	rec := NewReconciler(staticRole{res: []Resource{async, slow}}, nil, ReconcileOpts{})
+
+	var mu sync.Mutex
+	var phases []Phase
+	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
+		mu.Lock()
+		phases = append(phases, p)
+		mu.Unlock()
+	})
+
+	w.Start(context.Background())
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	<-slow.entered
+	w.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(phases) != 0 {
+		t.Fatalf("опубликованы фазы %v — выключение не должно оставлять следа ни на одном пути выхода", phases)
 	}
 }
 
