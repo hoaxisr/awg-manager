@@ -140,8 +140,7 @@ func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken st
 	return doc, sanitized, nil
 }
 
-// syncPasswordsJSON writes passwords.json for qWDTT monolith wdtt-server.
-// ildarmaga ignores this file; safe to write alongside panel.db.
+// syncPasswordsJSON writes passwords.json — the auth source of wdtt-server.
 func syncPasswordsJSON(configDir, mainPassword, adminID, botToken string, clients []ServerClient) error {
 	dir := strings.TrimSpace(configDir)
 	if dir == "" {

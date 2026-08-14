@@ -27,12 +27,15 @@ type ArchSpecs struct {
 const PinnedClientVersion = "1.4.4-awgm"
 const PinnedServerVersion = "1.4.4-awgm"
 
+// Порядок выпуска обоих бинарей: тег в форке hoaxisr/proxy-turn-vk-android →
+// сборка в GitHub Actions → релиз с checksums.txt → зеркало repo.hoaxisr.ru
+// забирает релиз само → пины ниже обновляются из checksums.txt:
+// scripts/update-wdtt-pins.py --client-tag ... --server-tag ...
+
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
-// После scripts/build-wdtt-client.sh обновить SHA256/Size ниже и залить на repo.hoaxisr.ru.
 const releaseBase = "http://repo.hoaxisr.ru/wt/" + PinnedClientVersion + "/"
 
-// serverReleaseBase — patched wdtt-server (-no-nat, -wg-iface) for Keenetic/awg-manager.
-// После scripts/build-wdtt-server.sh обновить SHA256/Size и залить бинарь на зеркало.
+// serverReleaseBase — wdtt-server из форка (монолит с Keenetic-флагами).
 const serverReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + PinnedServerVersion + "/"
 
 // EmbeddedBinaries maps the awg-manager build arch to pinned wdtt assets.
@@ -47,9 +50,8 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 			SHA256: "b639505b9952485bc16e9e3d43d6503975a878b0b18aba3fa5269953b61fd000", Size: 8126626,
 		},
 	},
-	// mipsel/mips — только клиент: апстримовый pkg/paneldb тянет
-	// modernc.org/sqlite → modernc.org/libc, где нет этих архитектур,
-	// поэтому wdtt-server под них не собирается (contrib/wdtt-server-patch/BUILD.md).
+	// mipsel/mips — пока только клиент: серверные бинари в релизе есть,
+	// но пины ждут прогона на mips-железе.
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
