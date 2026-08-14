@@ -91,9 +91,11 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	// Мьютекс защищает карту, а не содержимое слайсов. Правка выданного слайса
 	// на месте — например, сортировка ресурсов в ручке API — не должна доезжать
 	// до хранилища: это порча состояния и гонка, невидимая для -race в пакете.
+	// Шаг несёт непустую карту: копия одного слайса оставила бы Args общей, и
+	// правка аргумента прошла бы в хранилище сквозь «копию».
 	st := NewStateStore(&fakePublisher{}, fixedNow)
 	res := Result{
-		Steps:  []Step{{Resource: "a", Op: "create", Reason: "нужно"}},
+		Steps:  []Step{{Resource: "a", Op: "create", Args: map[string]string{"address": "10.70.0.5"}, Reason: "нужно"}},
 		States: []ResourceState{{ID: "a", Status: StatusOK}},
 	}
 	st.Update("inst1", IntentEnabled, res, PhaseWaiting)
@@ -101,6 +103,8 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	got, _ := st.Get("inst1")
 	got.Resources[0].Status = StatusFailed
 	got.LastPlan[0].Op = "destroy"
+	got.LastPlan[0].Args["address"] = "10.70.0.99"
+	got.LastPlan[0].Args["добавленный"] = "мусор"
 
 	again, _ := st.Get("inst1")
 	if again.Resources[0].Status != StatusOK {
@@ -109,11 +113,84 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	if again.LastPlan[0].Op != "create" {
 		t.Fatalf("правка выданного плана дошла до хранилища: %+v", again.LastPlan[0])
 	}
+	if again.LastPlan[0].Args["address"] != "10.70.0.5" {
+		t.Fatalf("правка аргумента дошла до хранилища: %+v", again.LastPlan[0].Args)
+	}
+	if len(again.LastPlan[0].Args) != 1 {
+		t.Fatalf("в хранилище прибавился чужой аргумент: %+v", again.LastPlan[0].Args)
+	}
 
 	list := st.List()
 	list[0].Resources[0].Status = StatusFailed
-	if third, _ := st.Get("inst1"); third.Resources[0].Status != StatusOK {
+	list[0].LastPlan[0].Args["address"] = "10.70.0.77"
+	third, _ := st.Get("inst1")
+	if third.Resources[0].Status != StatusOK {
 		t.Fatalf("правка списка дошла до хранилища: %+v", third.Resources[0])
+	}
+	if third.LastPlan[0].Args["address"] != "10.70.0.5" {
+		t.Fatalf("правка аргумента через List дошла до хранилища: %+v", third.LastPlan[0].Args)
+	}
+}
+
+// TestStateStorePublishesOnAnyPublicChange закрывает оставшиеся ветки
+// sameState. Предикат несёт ограничение «публикация только при изменении»:
+// выпавшая ветка означает изменение публичного состояния, которое фронт не
+// увидит до следующего непохожего прогона.
+func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
+	base := Result{
+		Steps:  []Step{{Resource: "a", Op: "set", Args: map[string]string{"address": "10.70.0.5"}, Reason: "расхождение"}},
+		States: []ResourceState{{ID: "a", Status: StatusFailed, Error: "политика не найдена"}},
+	}
+
+	cases := []struct {
+		name          string
+		intent        Intent
+		res           Result
+		phase         Phase
+		secondIntent  Intent
+		secondRes     Result
+		secondPhase   Phase
+		whyMustPubish string
+	}{
+		{
+			name: "сменилось намерение", intent: IntentEnabled, res: base, phase: PhaseWaiting,
+			secondIntent: IntentDeleted, secondRes: base, secondPhase: PhaseWaiting,
+			// У DerivePhase ветки для deleted нет, поэтому фаза совпадает:
+			// отличить enabled от deleted может только сравнение намерения.
+			whyMustPubish: "enabled → deleted при совпавшей фазе",
+		},
+		{
+			name: "сменился текст отказа ресурса", intent: IntentEnabled, res: base, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusFailed, Error: "интерфейс не найден"}},
+			},
+			whyMustPubish: "та же фаза, другая причина отказа",
+		},
+		{
+			name: "сменились аргументы шага", intent: IntentEnabled, res: base, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  []Step{{Resource: "a", Op: "set", Args: map[string]string{"address": "10.70.0.6"}, Reason: "расхождение"}},
+				States: base.States,
+			},
+			whyMustPubish: "та же причина шага, другой адрес",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pub := &fakePublisher{}
+			st := NewStateStore(pub, fixedNow)
+
+			st.Update("inst1", c.intent, c.res, c.phase)
+			st.Update("inst1", c.secondIntent, c.secondRes, c.secondPhase)
+
+			if len(pub.events) != 2 {
+				t.Fatalf("публикаций %d, ожидали 2: %s", len(pub.events), c.whyMustPubish)
+			}
+		})
 	}
 }
 
