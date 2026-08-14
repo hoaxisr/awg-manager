@@ -46,6 +46,7 @@ type StopReason string
 
 const (
 	// StopNone — стопор не сработал: цикл дошёл до пустого плана либо ещё идёт.
+	// На путях отказа причина остановки не выставляется — её несёт фаза.
 	StopNone     StopReason = ""
 	StopAwaiting StopReason = "awaiting" // новых шагов нет, ждём эффекта применённых
 	StopCeiling  StopReason = "ceiling"  // исчерпан потолок проходов

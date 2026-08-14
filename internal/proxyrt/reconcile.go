@@ -93,7 +93,9 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 		for _, rs := range resources {
 			byID[rs.ID()] = rs
 		}
-		failed := false
+		// abort прерывает весь прогон. Причин две: отказ применения и отмена
+		// контекста, и это разные вещи — см. ветку ошибки ниже.
+		abort := false
 		for _, s := range fresh {
 			rs, ok := byID[s.Resource]
 			if !ok {
@@ -105,20 +107,29 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 					Status: StatusFailed,
 					Error:  "шаг ссылается на ресурс, отсутствующий в декларации роли",
 				})
-				failed = true
+				abort = true
 				break
 			}
 			applied[StepKey(s)] = true
 			if err := rs.Apply(ctx, s); err != nil {
+				if ctx.Err() != nil {
+					// Ресурс уважает контекст и вернул причину отмены. Это не
+					// его отказ, а наше выключение: пометить ресурс failed
+					// значило бы оставлять след «отказ» после каждого
+					// shutdown с незавершённым применением.
+					res.Stop = StopCanceled
+					abort = true
+					break
+				}
 				// Отказ шага не разрушает: помечаем ресурс, хвост цепочки
 				// блокируется пересчётом плана, соседи не трогаются.
 				obs.MarkFailed(s.Resource, err.Error())
 				_, res.States = Plan(resources, obs)
-				failed = true
+				abort = true
 				break
 			}
 		}
-		if failed {
+		if abort {
 			break
 		}
 	}
@@ -127,15 +138,15 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 
 // minRecheck — наименьший ненулевой период подстраховочной сверки.
 func minRecheck(res []Resource) time.Duration {
-	var min time.Duration
+	var best time.Duration
 	for _, r := range res {
 		d := r.RecheckAfter()
 		if d <= 0 {
 			continue
 		}
-		if min == 0 || d < min {
-			min = d
+		if best == 0 || d < best {
+			best = d
 		}
 	}
-	return min
+	return best
 }

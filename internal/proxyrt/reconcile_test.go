@@ -129,9 +129,45 @@ func (s *strayResource) Plan(Observation) []Step {
 func (s *strayResource) Apply(context.Context, Step) error { return nil }
 func (s *strayResource) RecheckAfter() time.Duration       { return 0 }
 
+// cancelingResource уважает контекст: его Apply отменяет переданный контекст и
+// возвращает причину отмены — так ведёт себя ресурс при выключении демона.
+type cancelingResource struct {
+	id     ResourceID
+	cancel context.CancelFunc
+}
+
+func (c *cancelingResource) ID() ResourceID { return c.id }
+func (c *cancelingResource) Observe(context.Context) (Observation, error) {
+	return Observation{Known: true}, nil
+}
+func (c *cancelingResource) Plan(Observation) []Step {
+	return []Step{{Resource: c.id, Op: "create", Reason: "нужно создать"}}
+}
+func (c *cancelingResource) Apply(ctx context.Context, _ Step) error {
+	c.cancel()
+	return ctx.Err()
+}
+func (c *cancelingResource) RecheckAfter() time.Duration { return 0 }
+
 type staticRole struct{ res []Resource }
 
 func (s staticRole) Resources(Intent, any, Observations) []Resource { return s.res }
+
+// unstableRole нарушает контракт: второй ресурс появляется только во втором
+// вызове Resources, когда наблюдения уже собраны.
+type unstableRole struct {
+	first  Resource
+	second Resource
+}
+
+func (u unstableRole) Resources(_ Intent, _ any, obs Observations) []Resource {
+	if _, err := obs.Get(u.first.ID()); err == nil {
+		if o, _ := obs.Get(u.first.ID()); o.Known {
+			return []Resource{u.first, u.second}
+		}
+	}
+	return []Resource{u.first}
+}
 
 func TestReconcileConvergesInTwoPasses(t *testing.T) {
 	r := &statefulResource{id: "a", want: "up"}
@@ -260,6 +296,81 @@ func TestReconcileStrayStepIsFailedNotSilent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("состояния не содержат объяснения потерянного шага: %+v", res.States)
+	}
+}
+
+func TestReconcileAppliesEachStepOnceOnMixedRole(t *testing.T) {
+	// Роль из двух ресурсов: один сходится сразу, второй ждёт внешнего
+	// эффекта. На проходе 2 план УЖЕ ИЗМЕНИЛСЯ (остался только async-шаг),
+	// но свежих шагов в нём нет — значит выходим, а не применяем второй раз.
+	// Реализация, сравнивающая планы целиком, здесь применит async дважды.
+	async := &asyncResource{id: "async"}
+	sync := &statefulResource{id: "sync", want: "up"}
+	rec := NewReconciler(staticRole{res: []Resource{async, sync}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentEnabled)
+
+	if async.applies != 1 {
+		t.Fatalf("async применён %d раз, ожидали ровно 1", async.applies)
+	}
+	if res.Stop != StopAwaiting {
+		t.Fatalf("стопор %q, ожидали awaiting", res.Stop)
+	}
+	if res.Passes != 2 {
+		t.Fatalf("проходов %d, ожидали 2", res.Passes)
+	}
+	if phase != PhaseWaiting {
+		t.Fatalf("фаза %q, ожидали waiting", phase)
+	}
+}
+
+func TestReconcileUnstableRoleCompositionStallsVisibly(t *testing.T) {
+	// Документирует последствие нарушения контракта Role: ресурс, не
+	// попавший в список ДО наблюдения, получает unknown с причиной и
+	// инстанс остаётся в waiting. Это не желаемое поведение, а зафиксированная
+	// цена нарушения — чтобы её нашли по тесту, а не по зависшему роутеру.
+	a := &statefulResource{id: "a", want: "up", current: "up"}
+	b := &statefulResource{id: "b", want: "up"}
+	rec := NewReconciler(unstableRole{first: a, second: b}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentEnabled)
+
+	if b.applies != 0 {
+		t.Fatalf("b применён %d раз — контракт нарушен, но шаг прошёл?", b.applies)
+	}
+	if phase != PhaseWaiting {
+		t.Fatalf("фаза %q, ожидали waiting", phase)
+	}
+	var sawUnknown bool
+	for _, st := range res.States {
+		if st.ID == "b" && st.Status == StatusUnknown && st.Error != "" {
+			sawUnknown = true
+		}
+	}
+	if !sawUnknown {
+		t.Fatalf("причина, по которой b не наблюдался, не видна: %+v", res.States)
+	}
+}
+
+func TestReconcileCancelDuringApplyIsNotFailure(t *testing.T) {
+	// Выключение демона застаёт применение на середине. Ресурс честно вернул
+	// причину отмены — это не его отказ, и следа «failed» остаться не должно.
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &cancelingResource{id: "a", cancel: cancel}
+	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(ctx, IntentEnabled)
+
+	if res.Stop != StopCanceled {
+		t.Fatalf("стопор %q, ожидали canceled", res.Stop)
+	}
+	if phase == PhaseFailed {
+		t.Fatal("выключение демона не должно оставлять след отказа")
+	}
+	for _, st := range res.States {
+		if st.Status == StatusFailed {
+			t.Fatalf("ресурс помечен отказавшим при отмене: %+v", st)
+		}
 	}
 }
 
