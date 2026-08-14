@@ -222,6 +222,37 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			},
 			whyMustPublish: "первый шаг не изменился, добавился второй",
 		},
+		{
+			// Обратное направление, и оно опаснее роста: циклы идут по более
+			// длинному ПРЕДЫДУЩЕМУ состоянию, поэтому проверка длин здесь не
+			// только ловит изменение, но и держит границу слайса. Условие,
+			// ловящее лишь рост, дало бы index out of range прямо в Update.
+			name: "ресурсов стало меньше", intent: IntentEnabled, res: Result{
+				States: []ResourceState{{ID: "a", Status: StatusOK}, {ID: "b", Status: StatusDrift}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				States: []ResourceState{{ID: "a", Status: StatusOK}},
+			},
+			whyMustPublish: "первый ресурс не изменился, второй исчез",
+		},
+		{
+			// То же для плана, и это штатный путь: «есть шаги» переходит в
+			// «пусто» при каждом уходе инстанса в settled.
+			name: "в плане шагов стало меньше", intent: IntentEnabled, res: Result{
+				Steps: []Step{
+					{Resource: "a", Op: "create", Reason: "нужно создать"},
+					{Resource: "b", Op: "up", Reason: "интерфейс не поднят"},
+				},
+				States: base.States,
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  []Step{{Resource: "a", Op: "create", Reason: "нужно создать"}},
+				States: base.States,
+			},
+			whyMustPublish: "первый шаг не изменился, второй исчез",
+		},
 	}
 
 	for _, c := range cases {
