@@ -1,6 +1,7 @@
 package proxyrt
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +17,77 @@ func (f *fakePublisher) Publish(eventType string, data any) {
 }
 
 func fixedNow() time.Time { return time.Unix(1700000000, 0).UTC() }
+
+// gatedPublisher задерживает ПЕРВУЮ публикацию до команды теста и записывает
+// порядок, в котором состояния доехали до шины.
+type gatedPublisher struct {
+	mu      sync.Mutex
+	calls   int
+	order   []Phase
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedPublisher) Publish(_ string, data any) {
+	g.mu.Lock()
+	g.calls++
+	first := g.calls == 1
+	g.mu.Unlock()
+	if first {
+		close(g.entered)
+		<-g.release
+	}
+	g.mu.Lock()
+	g.order = append(g.order, data.(InstanceState).Phase)
+	g.mu.Unlock()
+}
+
+func TestStateStoreKeepsPublicationOrder(t *testing.T) {
+	// Два писателя по одному инстансу — воркер и ручка API, снимающая инстанс, —
+	// обязаны разложить события на шине в том же порядке, в каком состояния легли
+	// в хранилище. Иначе старое состояние опубликуется после нового, и фронт
+	// застрянет на протухшем до следующего изменения.
+	pub := &gatedPublisher{entered: make(chan struct{}), release: make(chan struct{})}
+	st := NewStateStore(pub, fixedNow)
+
+	first := Result{States: []ResourceState{{ID: "a", Status: StatusDrift}}}
+	second := Result{States: []ResourceState{{ID: "a", Status: StatusOK}}}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		st.Update("inst1", IntentEnabled, first, PhaseWaiting)
+	}()
+	<-pub.entered // первый писатель внутри публикации, его состояние уже в хранилище
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		st.Update("inst1", IntentEnabled, second, PhaseSettled)
+	}()
+
+	// Окно, за которое второй писатель обогнал бы первого, будь публикация вне
+	// лока порядка.
+	time.Sleep(50 * time.Millisecond)
+	close(pub.release)
+	wg.Wait()
+
+	pub.mu.Lock()
+	order := append([]Phase(nil), pub.order...)
+	pub.mu.Unlock()
+
+	if len(order) != 2 {
+		t.Fatalf("публикаций %d, ожидали 2: %v", len(order), order)
+	}
+	if order[0] != PhaseWaiting || order[1] != PhaseSettled {
+		t.Fatalf("порядок публикаций %v — новое состояние уехало на шину раньше старого", order)
+	}
+	stored, _ := st.Get("inst1")
+	if stored.Phase != order[1] {
+		t.Fatalf("в хранилище %q, а последняя публикация %q", stored.Phase, order[1])
+	}
+}
 
 func TestStateStoreUpdatePublishesOnChange(t *testing.T) {
 	pub := &fakePublisher{}
@@ -132,10 +204,6 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	}
 }
 
-// TestStateStorePublishesOnAnyPublicChange закрывает оставшиеся ветки
-// sameState. Предикат несёт ограничение «публикация только при изменении»:
-// выпавшая ветка означает изменение публичного состояния, которое фронт не
-// увидит до следующего непохожего прогона.
 func TestStateStoreUpdateHandsOutCopy(t *testing.T) {
 	// Возвращаемое из Update — та же выдача наружу, что Get и List: ручка apply
 	// из плана 5 отдаст его вызывающему. Правка на месте не должна доезжать до
@@ -165,6 +233,10 @@ func TestStateStoreUpdateHandsOutCopy(t *testing.T) {
 	}
 }
 
+// TestStateStorePublishesOnAnyPublicChange закрывает оставшиеся ветки
+// sameState. Предикат несёт ограничение «публикация только при изменении»:
+// выпавшая ветка означает изменение публичного состояния, которое фронт не
+// увидит до следующего непохожего прогона.
 func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 	base := Result{
 		Steps:  []Step{{Resource: "a", Op: "set", Args: map[string]string{"address": "10.70.0.5"}, Reason: "расхождение"}},
