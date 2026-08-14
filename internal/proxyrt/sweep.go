@@ -43,15 +43,18 @@ type Sweeper struct {
 // удаления, и без меток он молча не удалял бы ничего никогда, накапливая сирот.
 // Это ошибка программирования, а не режим работы.
 //
-// По той же причине паникует и на nil-разборщике имени: без него Sweep упал бы
-// уже посреди уборки, между решением о сносе и самими сносами, а не при сборке
-// движка.
+// По той же причине паникует и на nil-разборщике имени и nil-аллокаторе: без
+// них Sweep упал бы уже посреди уборки, между решением о сносе и самими
+// сносами, а не при сборке движка.
 func NewSweeper(sc Scanner, rm Remover, alloc *Allocator, labels []string, indexOf IndexOf) *Sweeper {
 	if len(labels) == 0 {
 		panic("proxyrt: NewSweeper без меток владения — уборщик не удалял бы ничего")
 	}
 	if indexOf == nil {
 		panic("proxyrt: NewSweeper без разборщика имени в номер — Sweep упал бы посреди уборки")
+	}
+	if alloc == nil {
+		panic("proxyrt: NewSweeper без аллокатора — решение о сносе принимается под его локом")
 	}
 	return &Sweeper{sc: sc, rm: rm, alloc: alloc, labels: labels, indexOf: indexOf}
 }

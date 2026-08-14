@@ -19,10 +19,14 @@ type Publisher interface {
 // изменения. Фаза здесь не вычисляется — она приходит из цикла, второго
 // источника правды не заводим.
 type StateStore struct {
-	mu  sync.RWMutex
-	m   map[string]InstanceState
-	pub Publisher
-	now func() time.Time
+	// pubMu задаёт порядок публикаций и берётся ПЕРЕД mu. Отдельным локом, а не
+	// расширением mu: держать лок состояния на время колбэка подписчиков —
+	// приглашение к взаимоблокировке, если подписчик позовёт Get.
+	pubMu sync.Mutex
+	mu    sync.RWMutex
+	m     map[string]InstanceState
+	pub   Publisher
+	now   func() time.Time
 }
 
 func NewStateStore(pub Publisher, now func() time.Time) *StateStore {
@@ -33,7 +37,17 @@ func NewStateStore(pub Publisher, now func() time.Time) *StateStore {
 }
 
 // Update кладёт новое состояние и публикует его, если оно изменилось.
+//
+// Порядок публикаций строгий: события уходят на шину в том же порядке, в каком
+// состояния легли в хранилище. Это держится на pubMu, который берётся первым и
+// не отпускается до конца вызова. Без него два одновременных Update по одному
+// инстансу — воркер и ручка API, снимающая инстанс, — могли бы опубликовать
+// новое состояние раньше старого, и фронт застрял бы на протухшем до следующего
+// события.
 func (s *StateStore) Update(id string, intent Intent, res Result, phase Phase) InstanceState {
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+
 	st := InstanceState{
 		ID:        id,
 		Intent:    intent,
@@ -59,23 +73,59 @@ func (s *StateStore) Get(id string) (InstanceState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	st, ok := s.m[id]
-	return st, ok
+	if !ok {
+		return InstanceState{}, false
+	}
+	return clone(st), true
 }
 
 func (s *StateStore) List() []InstanceState {
 	s.mu.RLock()
 	out := make([]InstanceState, 0, len(s.m))
 	for _, st := range s.m {
-		out = append(out, st)
+		out = append(out, clone(st))
 	}
 	s.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
+// clone отвязывает выдаваемое состояние от хранимого. Мьютекс защищает карту, а
+// не содержимое слайсов: правка на месте — сортировка ресурсов в ручке API —
+// портила бы хранилище и давала гонку данных, которую -race внутри пакета не
+// видит.
+//
+// Args копируется тоже: копия одного слайса оставила бы карту общей, то есть
+// защиту, которой нет.
+func clone(st InstanceState) InstanceState {
+	if st.Resources != nil {
+		st.Resources = append([]ResourceState(nil), st.Resources...)
+	}
+	if st.LastPlan != nil {
+		steps := append([]Step(nil), st.LastPlan...)
+		for i := range steps {
+			if steps[i].Args == nil {
+				continue
+			}
+			args := make(map[string]string, len(steps[i].Args))
+			for k, v := range steps[i].Args {
+				args[k] = v
+			}
+			steps[i].Args = args
+		}
+		st.LastPlan = steps
+	}
+	return st
+}
+
 // sameState сравнивает всё, кроме отметки времени: она меняется каждый прогон
 // и сама по себе поводом для публикации не является. Step содержит карту и
 // потому несравним через ==, поэтому идём по полям.
+//
+// Причина шага сравнивается отдельно от StepKey: ключ намеренно кодирует только
+// Resource/Op/Args — этого хватает на вопрос «этот шаг уже применяли», но здесь
+// вопрос другой, «изменилось ли то, что видит пользователь», а причина ему
+// показывается.
 func sameState(a, b InstanceState) bool {
 	if a.Intent != b.Intent || a.Phase != b.Phase {
 		return false
@@ -89,6 +139,9 @@ func sameState(a, b InstanceState) bool {
 		}
 	}
 	for i := range a.LastPlan {
+		if a.LastPlan[i].Reason != b.LastPlan[i].Reason {
+			return false
+		}
 		if StepKey(a.LastPlan[i]) != StepKey(b.LastPlan[i]) {
 			return false
 		}

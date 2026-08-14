@@ -283,3 +283,14 @@ func TestNewSweeperPanicsWithoutIndexOf(t *testing.T) {
 	}()
 	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, nil)
 }
+
+func TestNewSweeperPanicsWithoutAllocator(t *testing.T) {
+	// Та же болезнь: nil компилируется, а разыменование случается посреди Sweep,
+	// на консультации held. Отказ обязан быть в конструкторе.
+	defer func() {
+		if recover() == nil {
+			t.Fatal("ожидали панику на nil-аллокаторе")
+		}
+	}()
+	NewSweeper(fakeScanner{}, &fakeRemover{}, nil, []string{"L"}, noIndex)
+}

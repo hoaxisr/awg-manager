@@ -69,6 +69,54 @@ func TestStateStorePublishesWhenPhaseChanges(t *testing.T) {
 	}
 }
 
+func TestStateStorePublishesWhenStepReasonChanges(t *testing.T) {
+	// StepKey кодирует только Resource/Op/Args — этого хватает, чтобы понять
+	// «шаг уже применяли», но не хватает для вопроса «изменилось ли то, что
+	// видит пользователь»: причина шага показывается ему.
+	pub := &fakePublisher{}
+	st := NewStateStore(pub, fixedNow)
+
+	first := Result{Steps: []Step{{Resource: "a", Op: "create", Reason: "нужно создать"}}}
+	second := Result{Steps: []Step{{Resource: "a", Op: "create", Reason: "восстановление после сноса"}}}
+
+	st.Update("inst1", IntentEnabled, first, PhaseWaiting)
+	st.Update("inst1", IntentEnabled, second, PhaseWaiting)
+
+	if len(pub.events) != 2 {
+		t.Fatalf("публикаций %d, ожидали 2: причина шага изменилась", len(pub.events))
+	}
+}
+
+func TestStateStoreHandsOutCopies(t *testing.T) {
+	// Мьютекс защищает карту, а не содержимое слайсов. Правка выданного слайса
+	// на месте — например, сортировка ресурсов в ручке API — не должна доезжать
+	// до хранилища: это порча состояния и гонка, невидимая для -race в пакете.
+	st := NewStateStore(&fakePublisher{}, fixedNow)
+	res := Result{
+		Steps:  []Step{{Resource: "a", Op: "create", Reason: "нужно"}},
+		States: []ResourceState{{ID: "a", Status: StatusOK}},
+	}
+	st.Update("inst1", IntentEnabled, res, PhaseWaiting)
+
+	got, _ := st.Get("inst1")
+	got.Resources[0].Status = StatusFailed
+	got.LastPlan[0].Op = "destroy"
+
+	again, _ := st.Get("inst1")
+	if again.Resources[0].Status != StatusOK {
+		t.Fatalf("правка выданного слайса ресурсов дошла до хранилища: %+v", again.Resources[0])
+	}
+	if again.LastPlan[0].Op != "create" {
+		t.Fatalf("правка выданного плана дошла до хранилища: %+v", again.LastPlan[0])
+	}
+
+	list := st.List()
+	list[0].Resources[0].Status = StatusFailed
+	if third, _ := st.Get("inst1"); third.Resources[0].Status != StatusOK {
+		t.Fatalf("правка списка дошла до хранилища: %+v", third.Resources[0])
+	}
+}
+
 func TestStateStoreGetAndList(t *testing.T) {
 	st := NewStateStore(&fakePublisher{}, fixedNow)
 	st.Update("b", IntentEnabled, Result{}, PhaseSettled)
