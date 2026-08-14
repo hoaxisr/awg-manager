@@ -40,6 +40,35 @@ func observeAllForTest(rs ...Resource) Observations {
 	return obs
 }
 
+func TestObservationsGetTellsWhenObservationIsUsable(t *testing.T) {
+	// Наблюдение читают роли: желаемое значение одного ресурса вычисляется из
+	// наблюдения другого. Ответ обязан различать «вот факт» и «опираться нельзя»,
+	// иначе роль примет решение по слепому наблюдению.
+	obs := NewObservations()
+	obs.Put("known", Observation{Known: true, Detail: "up"}, nil)
+	obs.Put("broken", Observation{}, errors.New("RCI недоступен"))
+	obs.Put("blind", Observation{Known: false}, nil)
+	obs.Put("failed", Observation{Known: true}, nil)
+	obs.MarkFailed("failed", "политика не найдена")
+
+	cases := []struct {
+		id     ResourceID
+		usable bool
+		why    string
+	}{
+		{"known", true, "наблюдение получено"},
+		{"broken", false, "наблюдатель вернул ошибку"},
+		{"blind", false, "наблюдатель вернул «не смотрел»"},
+		{"failed", false, "применение к ресурсу отказало"},
+		{"нет-такого", false, "ресурс не наблюдался в этом проходе"},
+	}
+	for _, c := range cases {
+		if _, ok := obs.Get(c.id); ok != c.usable {
+			t.Fatalf("%s: пригодность %v, ожидали %v (%s)", c.id, ok, c.usable, c.why)
+		}
+	}
+}
+
 func TestPlanEmptyWhenObservedAndSatisfied(t *testing.T) {
 	a := &fakeResource{id: "a", obs: Observation{Known: true, Exists: true}}
 	b := &fakeResource{id: "b", obs: Observation{Known: true, Exists: true}}

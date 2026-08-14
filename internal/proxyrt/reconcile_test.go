@@ -161,10 +161,8 @@ type unstableRole struct {
 }
 
 func (u unstableRole) Resources(_ Intent, _ any, obs Observations) []Resource {
-	if _, err := obs.Get(u.first.ID()); err == nil {
-		if o, _ := obs.Get(u.first.ID()); o.Known {
-			return []Resource{u.first, u.second}
-		}
+	if _, ok := obs.Get(u.first.ID()); ok {
+		return []Resource{u.first, u.second}
 	}
 	return []Resource{u.first}
 }

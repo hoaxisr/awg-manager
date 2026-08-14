@@ -66,6 +66,10 @@ type Step struct {
 //
 // Known=false означает «не смотрели» и обязано читаться как unknown, а не как
 // «ресурса нет»: иначе слепое наблюдение породит create.
+//
+// Exists и Attrs — данные для самого ресурса и его роли: по ним Plan решает
+// «создать или поправить». Движок их не смотрит, он читает только Known и
+// Detail.
 type Observation struct {
 	Known  bool
 	Exists bool
