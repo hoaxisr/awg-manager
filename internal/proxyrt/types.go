@@ -11,8 +11,10 @@ type ResourceID string
 type Status string
 
 const (
-	StatusOK      Status = "ok"      // фактическое совпадает с желаемым
-	StatusDrift   Status = "drift"   // расхождение, для которого есть шаги
+	StatusOK Status = "ok" // фактическое совпадает с желаемым
+	// StatusDrift — расхождение, для которого есть шаги. Инвариант: drift
+	// означает, что для ресурса есть шаги, то есть план не пуст.
+	StatusDrift   Status = "drift"
 	StatusBlocked Status = "blocked" // предшественник в цепочке не пришёл в норму
 	StatusUnknown Status = "unknown" // наблюдение недоступно; шагов не порождает
 	StatusFailed  Status = "failed"  // применение отказало с объяснимой причиной
@@ -43,7 +45,8 @@ const (
 type StopReason string
 
 const (
-	StopNone     StopReason = ""         // цикл дошёл до пустого плана
+	// StopNone — стопор не сработал: цикл дошёл до пустого плана либо ещё идёт.
+	StopNone     StopReason = ""
 	StopAwaiting StopReason = "awaiting" // новых шагов нет, ждём эффекта применённых
 	StopCeiling  StopReason = "ceiling"  // исчерпан потолок проходов
 	StopCanceled StopReason = "canceled" // отменён контекст: выключение демона

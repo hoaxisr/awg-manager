@@ -36,6 +36,14 @@ func TestDerivePhase(t *testing.T) {
 			IntentEnabled, []ResourceState{ok}, false, StopCanceled, PhaseWaiting},
 		{"план не пуст, стопор не сработал — ещё сходимся",
 			IntentEnabled, []ResourceState{ok}, false, StopNone, PhaseWaiting},
+		{"отказ ресурса информативнее исчерпанного потолка",
+			IntentEnabled, []ResourceState{failed}, false, StopCeiling, PhaseFailed},
+		{"выключен — disabled перекрывает даже потолок",
+			IntentDisabled, []ResourceState{ok}, false, StopCeiling, PhaseDisabled},
+		{"blocked без failed — не достигнуто, а ожидание",
+			IntentEnabled, []ResourceState{ok, blocked}, true, StopNone, PhaseWaiting},
+		{"инстанс без ресурсов и без плана — достигнуто",
+			IntentEnabled, nil, true, StopNone, PhaseSettled},
 	}
 
 	for _, c := range cases {

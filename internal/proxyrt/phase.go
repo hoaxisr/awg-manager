@@ -4,25 +4,30 @@ package proxyrt
 // правды о состоянии не заводим.
 //
 // Порядок проверок важен. `disabled` — намерение, оно перекрывает всё.
-// Потолок проходов — приговор цикла. `failed` важнее `unknown`: объяснимый
-// отказ информативнее, чем «не посмотрели». Отмена контекста намеренно НЕ
-// становится затыком — иначе каждое выключение демона публиковало бы stuck.
+// Состояние ресурсов важнее приговора цикла: `failed` объясняет, ПОЧЕМУ проходы
+// упёрлись в потолок, и потому идёт выше `ceiling`. `failed` важнее `unknown`:
+// объяснимый отказ информативнее, чем «не посмотрели». `blocked` читается как
+// `unknown` — обе означают «не сделано», и ни одна не даёт права на settled.
+// Отмена контекста намеренно НЕ становится затыком — иначе каждое выключение
+// демона публиковало бы stuck.
 func DerivePhase(intent Intent, res []ResourceState, planEmpty bool, stop StopReason) Phase {
 	if intent == IntentDisabled {
 		return PhaseDisabled
 	}
+	pending := false
+	for _, r := range res {
+		switch r.Status {
+		case StatusFailed:
+			return PhaseFailed
+		case StatusUnknown, StatusBlocked:
+			pending = true
+		}
+	}
+	if pending {
+		return PhaseWaiting
+	}
 	if stop == StopCeiling {
 		return PhaseStuck
-	}
-	for _, r := range res {
-		if r.Status == StatusFailed {
-			return PhaseFailed
-		}
-	}
-	for _, r := range res {
-		if r.Status == StatusUnknown {
-			return PhaseWaiting
-		}
 	}
 	if !planEmpty || stop == StopAwaiting || stop == StopCanceled {
 		return PhaseWaiting
