@@ -133,6 +133,14 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 			break
 		}
 	}
+	// Отмена могла случиться в любом месте прохода, в том числе внутри
+	// наблюдения — самого долгого шага. Причина остановки обязана это отражать,
+	// иначе воркер опубликует ложное состояние вместо тихого выключения:
+	// наблюдение вернёт ctx.Err(), ресурс станет unknown, план опустеет, и
+	// выход получится штатным со StopNone.
+	if ctx.Err() != nil && res.Stop == StopNone {
+		res.Stop = StopCanceled
+	}
 	return res, DerivePhase(intent, res.States, len(res.Steps) == 0, res.Stop)
 }
 

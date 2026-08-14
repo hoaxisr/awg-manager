@@ -59,20 +59,20 @@ func TestWorkerSerializesEvents(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		w.Post(Event{Kind: EventBoot, Instance: "inst1"})
 	}
-	// Дождаться первого прогона: Stop новой работы не начинает, поэтому
-	// утверждать что-либо о прогонах можно лишь после того, как воркер
-	// действительно проснулся.
+	// Дождаться первого ОПУБЛИКОВАННОГО состояния. Stop новой работы не
+	// начинает и прерывает идущую, а прерванный прогон ничего не публикует —
+	// значит утверждать что-либо можно лишь после полностью завершённого.
 	deadline := time.After(2 * time.Second)
 	for {
-		r.mu.Lock()
-		started := r.runs > 0
-		r.mu.Unlock()
-		if started {
+		mu.Lock()
+		published := len(phases) > 0
+		mu.Unlock()
+		if published {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatal("воркер не проснулся за 2 секунды")
+			t.Fatal("воркер не опубликовал состояние за 2 секунды")
 		case <-time.After(time.Millisecond):
 		}
 	}
@@ -140,6 +140,8 @@ func TestWorkerSkipsPublishOnCanceledContext(t *testing.T) {
 // blockingResource виснет в наблюдении, пока его не отпустят либо не отменят
 // контекст. Уважение контекста в Observe и делает границу Stop настоящей.
 type blockingResource struct {
+	mu      sync.Mutex
+	runs    int
 	id      ResourceID
 	once    sync.Once
 	entered chan struct{}
@@ -149,6 +151,9 @@ type blockingResource struct {
 func (b *blockingResource) ID() ResourceID { return b.id }
 
 func (b *blockingResource) Observe(ctx context.Context) (Observation, error) {
+	b.mu.Lock()
+	b.runs++
+	b.mu.Unlock()
 	b.once.Do(func() { close(b.entered) })
 	select {
 	case <-b.release:
@@ -181,6 +186,94 @@ func TestWorkerStopInterruptsInFlightReconcile(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop не вернулся за 2 секунды — идущая реконсиляция не прерывается")
+	}
+}
+
+func TestWorkerDoesNotPublishWhenCanceledDuringObserve(t *testing.T) {
+	slow := &blockingResource{id: "a", entered: make(chan struct{}), release: make(chan struct{})}
+	rec := NewReconciler(staticRole{res: []Resource{slow}}, nil, ReconcileOpts{})
+
+	var mu sync.Mutex
+	var phases []Phase
+	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
+		mu.Lock()
+		phases = append(phases, p)
+		mu.Unlock()
+	})
+
+	w.Start(context.Background())
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	<-slow.entered
+	w.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(phases) != 0 {
+		t.Fatalf("опубликованы фазы %v — выключение не должно оставлять следа", phases)
+	}
+}
+
+func TestWorkerCoalescesQueuedEvents(t *testing.T) {
+	// Схлопывание закрепляем защёлкой: пока первое наблюдение висит, копим
+	// будильники, и все они обязаны слиться в ОДИН прогон. Порога runs <= 5 для
+	// этого мало — пять событий без схлопывания дают ровно пять прогонов.
+	r := &blockingResource{id: "a", entered: make(chan struct{}), release: make(chan struct{})}
+	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
+	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+
+	w.Start(context.Background())
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	<-r.entered // первый прогон висит в наблюдении
+
+	for i := 0; i < 4; i++ {
+		w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	}
+	close(r.release)
+
+	// Дождаться прогона, который разгребает очередь.
+	deadline := time.After(2 * time.Second)
+	for {
+		r.mu.Lock()
+		runs := r.runs
+		r.mu.Unlock()
+		if runs >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("прогонов %d — воркер не разгрёб очередь", runs)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	// Окно на лишние прогоны: без схлопывания четыре события дали бы ещё
+	// четыре, и после снятой защёлки все они укладываются в микросекунды.
+	time.Sleep(50 * time.Millisecond)
+	w.Stop()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.runs > 2 {
+		t.Fatalf("прогонов %d, ожидали не больше двух — схлопывание не работает", r.runs)
+	}
+}
+
+func TestWorkerStopBeforeStartDoesNotRun(t *testing.T) {
+	// Stop успел раньше Start: он уже вернулся, решив, что ждать некого, и
+	// контекст не отменял. Поднимать горутину после этого нельзя — она прогонит
+	// реконсиляцию с живым контекстом за спиной у остановившего.
+	r := &probeResource{id: "a"}
+	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
+	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Stop()
+	w.Start(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.runs != 0 {
+		t.Fatalf("прогонов %d после остановки, ожидали 0", r.runs)
 	}
 }
 
