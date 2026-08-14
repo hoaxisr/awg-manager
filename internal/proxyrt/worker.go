@@ -15,12 +15,11 @@ const queueDepth = 8
 // Worker — единственный обработчик мутаций одного инстанса. Последовательность
 // достигается конструкцией, а не набором локов и защёлок.
 type Worker struct {
-	id      string
 	rec     *Reconciler
 	intent  func() Intent
 	onState func(Result, Phase)
 
-	ch        chan Event
+	ch        chan EventKind
 	startOnce sync.Once
 	stopOnce  sync.Once
 	done      chan struct{}
@@ -35,13 +34,16 @@ type Worker struct {
 
 // intent — функция, а не значение: намерение живёт в хранилище конфига и
 // меняется параллельно с работой воркера, поэтому читается на каждом прогоне.
-func NewWorker(id string, rec *Reconciler, intent func() Intent, onState func(Result, Phase)) *Worker {
+//
+// Идентификатора инстанса у воркера нет: его знает вызывающий — он держит карту
+// «инстанс → воркер» и замыкает идентификатор в onState. Заводить второй
+// экземпляр имени незачем.
+func NewWorker(rec *Reconciler, intent func() Intent, onState func(Result, Phase)) *Worker {
 	return &Worker{
-		id:      id,
 		rec:     rec,
 		intent:  intent,
 		onState: onState,
-		ch:      make(chan Event, queueDepth),
+		ch:      make(chan EventKind, queueDepth),
 		done:    make(chan struct{}),
 		closed:  make(chan struct{}),
 	}
@@ -88,7 +90,7 @@ func (w *Worker) Start(ctx context.Context) {
 					// пробуждения раздваивается и схлопывание не работает для
 					// подстраховочных сверок.
 					recheck = nil
-					w.Post(Event{Kind: EventRecheck, Instance: w.id})
+					w.Post(EventRecheck)
 				case <-w.ch:
 					w.coalesce()
 					recheck = w.runOnce(wctx)
@@ -136,14 +138,14 @@ func (w *Worker) runOnce(ctx context.Context) <-chan time.Time {
 //
 // false означает «воркер остановлен» либо «очередь полна» — во втором случае
 // прогон и так предстоит.
-func (w *Worker) Post(e Event) bool {
+func (w *Worker) Post(kind EventKind) bool {
 	select {
 	case <-w.closed:
 		return false
 	default:
 	}
 	select {
-	case w.ch <- e:
+	case w.ch <- kind:
 		return true
 	default:
 		return false

@@ -46,7 +46,7 @@ func TestWorkerSerializesEvents(t *testing.T) {
 
 	var mu sync.Mutex
 	var phases []Phase
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
 		mu.Lock()
 		phases = append(phases, p)
 		mu.Unlock()
@@ -57,7 +57,7 @@ func TestWorkerSerializesEvents(t *testing.T) {
 	w.Start(ctx)
 
 	for i := 0; i < 5; i++ {
-		w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+		w.Post(EventBoot)
 	}
 	// Дождаться первого ОПУБЛИКОВАННОГО состояния. Stop новой работы не
 	// начинает и прерывает идущую, а прерванный прогон ничего не публикует —
@@ -107,14 +107,14 @@ func publishedState(t *testing.T, intent func() Intent) InstanceState {
 	t.Helper()
 	rec := NewReconciler(staticRole{res: []Resource{&probeResource{id: "a"}}}, nil, ReconcileOpts{})
 	store := NewStateStore(&fakePublisher{}, fixedNow)
-	w := NewWorker("inst1", rec, intent, func(res Result, ph Phase) {
+	w := NewWorker(rec, intent, func(res Result, ph Phase) {
 		store.Update("inst1", res, ph)
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w.Start(ctx)
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	defer w.Stop()
 
 	deadline := time.After(2 * time.Second)
@@ -154,13 +154,13 @@ func TestWorkerWithoutIntentAccessorStaysDisabled(t *testing.T) {
 
 func TestWorkerPostAfterStopReturnsFalse(t *testing.T) {
 	rec := NewReconciler(staticRole{res: nil}, nil, ReconcileOpts{})
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w.Start(ctx)
 	w.Stop()
 
-	if w.Post(Event{Kind: EventBoot, Instance: "inst1"}) {
+	if w.Post(EventBoot) {
 		t.Fatal("после остановки события приниматься не должны")
 	}
 }
@@ -170,7 +170,7 @@ func TestWorkerSkipsPublishOnCanceledContext(t *testing.T) {
 	rec := NewReconciler(staticRole{res: []Resource{&probeResource{id: "a"}}}, nil, ReconcileOpts{})
 	var calls int
 	var mu sync.Mutex
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -179,7 +179,7 @@ func TestWorkerSkipsPublishOnCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w.Start(ctx)
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	w.Stop()
 
 	mu.Lock()
@@ -232,10 +232,10 @@ func TestWorkerStopInterruptsInFlightReconcile(t *testing.T) {
 	// Гашение одного инстанса не должно ждать конца длинного RCI-раунда.
 	slow := &blockingResource{id: "a", entered: make(chan struct{}), release: make(chan struct{})}
 	rec := NewReconciler(staticRole{res: []Resource{slow}}, nil, ReconcileOpts{})
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
 
 	w.Start(context.Background())
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	<-slow.entered // реконсиляция началась и висит в наблюдении
 
 	done := make(chan struct{})
@@ -254,14 +254,14 @@ func TestWorkerDoesNotPublishWhenCanceledDuringObserve(t *testing.T) {
 
 	var mu sync.Mutex
 	var phases []Phase
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
 		mu.Lock()
 		phases = append(phases, p)
 		mu.Unlock()
 	})
 
 	w.Start(context.Background())
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	<-slow.entered
 	w.Stop()
 
@@ -282,14 +282,14 @@ func TestWorkerDoesNotPublishWhenCanceledOnSecondPass(t *testing.T) {
 
 	var mu sync.Mutex
 	var phases []Phase
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(_ Result, p Phase) {
 		mu.Lock()
 		phases = append(phases, p)
 		mu.Unlock()
 	})
 
 	w.Start(context.Background())
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	<-slow.entered
 	w.Stop()
 
@@ -306,14 +306,14 @@ func TestWorkerCoalescesQueuedEvents(t *testing.T) {
 	// этого мало — пять событий без схлопывания дают ровно пять прогонов.
 	r := &blockingResource{id: "a", entered: make(chan struct{}), release: make(chan struct{})}
 	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
 
 	w.Start(context.Background())
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	<-r.entered // первый прогон висит в наблюдении
 
 	for i := 0; i < 4; i++ {
-		w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+		w.Post(EventBoot)
 	}
 	close(r.release)
 
@@ -350,9 +350,9 @@ func TestWorkerStopBeforeStartDoesNotRun(t *testing.T) {
 	// реконсиляцию с живым контекстом за спиной у остановившего.
 	r := &probeResource{id: "a"}
 	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
 
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 	w.Stop()
 	w.Start(context.Background())
 
@@ -368,12 +368,12 @@ func TestWorkerArmsRecheckTimer(t *testing.T) {
 	// Ресурс просит подстраховочную сверку — воркер обязан сам себя разбудить.
 	r := &probeResource{id: "a", recheck: 20 * time.Millisecond}
 	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
-	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w.Start(ctx)
-	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	w.Post(EventBoot)
 
 	deadline := time.After(2 * time.Second)
 	for {
@@ -390,4 +390,53 @@ func TestWorkerArmsRecheckTimer(t *testing.T) {
 		}
 	}
 	w.Stop()
+}
+
+func TestWorkerRecheckWakesThroughQueue(t *testing.T) {
+	// Таймер подстраховки будит воркер тем же путём, что и все прочие источники:
+	// кладёт будильник в очередь, а не зовёт прогон мимо неё. Иначе путь
+	// пробуждения раздваивается, схлопывание для подстраховочных сверок не
+	// работает, а EventRecheck становится мёртвой константой.
+	//
+	// Проба забирает будильник из очереди сама: пока она ждёт на приёме, отправка
+	// из ветки таймера отдаёт значение прямо ей — воркер в этот момент из своего
+	// select уже вышел. Мимо очереди в неё ничего не попадёт вовсе.
+	r := &probeResource{id: "a", recheck: 20 * time.Millisecond}
+	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
+	w := NewWorker(rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.Start(ctx)
+	w.Post(EventBoot)
+
+	// Дождаться конца первого прогона: иначе проба перехватит собственный boot.
+	deadline := time.After(2 * time.Second)
+	for {
+		r.mu.Lock()
+		runs := r.runs
+		r.mu.Unlock()
+		if runs >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("первый прогон не состоялся за 2 секунды")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	for {
+		select {
+		case kind := <-w.ch:
+			if kind == EventRecheck {
+				w.Stop()
+				return
+			}
+			// Свой же boot, если воркер не успел его забрать: ждём дальше.
+		case <-time.After(3 * time.Second):
+			w.Stop()
+			t.Fatal("будильник подстраховки в очередь не попал — таймер зовёт прогон мимо неё")
+		}
+	}
 }
