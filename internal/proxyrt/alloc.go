@@ -25,47 +25,65 @@ type IndexRange struct {
 type Allocator struct {
 	mu   sync.Mutex
 	rng  IndexRange
-	held map[int]bool
+	held map[int]string // номер → идентификатор владельца
 }
 
 func NewAllocator(r IndexRange) *Allocator {
-	return &Allocator{rng: r, held: make(map[int]bool)}
+	return &Allocator{rng: r, held: make(map[int]string)}
 }
 
-// AllocIndex выдаёт номер. pinned — ранее закреплённый за инстансом номер: его
-// стоит вернуть, пока он свободен, потому что пользователь мог сослаться на имя
-// интерфейса в permit'ах политики. taken — номера, занятые снаружи.
-func (a *Allocator) AllocIndex(pinned int, taken map[int]bool) (int, error) {
+// AllocIndex выдаёт номер инстансу owner. pinned — ранее закреплённый за
+// инстансом номер: его стоит вернуть, пока он свободен, потому что пользователь
+// мог сослаться на имя интерфейса в permit'ах политики. taken — номера, занятые
+// снаружи.
+//
+// Идемпотентна: повторный вызов с тем же owner и pinned возвращает тот же
+// номер, потому что собственный захват не считается занятым. Без этого
+// закрепление работало бы наоборот — второй проход реконсиляции сменил бы имя
+// интерфейса и порвал permit'ы пользователя.
+func (a *Allocator) AllocIndex(owner string, pinned int, taken map[int]bool) (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	free := func(i int) bool { return !a.held[i] && !taken[i] }
+	free := func(i int) bool {
+		h, ok := a.held[i]
+		return (!ok || h == owner) && !taken[i]
+	}
 
 	if pinned >= a.rng.Min && pinned <= a.rng.Max && free(pinned) {
-		a.held[pinned] = true
+		a.held[pinned] = owner
 		return pinned, nil
 	}
 	for i := a.rng.Min; i <= a.rng.Max; i++ {
 		if free(i) {
-			a.held[i] = true
+			a.held[i] = owner
 			return i, nil
 		}
 	}
 	return 0, ErrNoFreeIndex
 }
 
-// Release возвращает номер в оборот. Зовётся только при intent=deleted:
-// выключенный инстанс держит свой номер, чтобы permit'ы пользователя не
+// Release освобождает все номера владельца. Зовётся только при удалении
+// инстанса: выключенный инстанс держит номер, чтобы permit'ы пользователя не
 // повисли на чужом имени.
-func (a *Allocator) Release(idx int) {
+//
+// Освобождение именно по владельцу, а не по номеру: иначе остался бы способ
+// освободить чужой номер.
+func (a *Allocator) Release(owner string) {
 	a.mu.Lock()
-	delete(a.held, idx)
+	for idx, h := range a.held {
+		if h == owner {
+			delete(a.held, idx)
+		}
+	}
 	a.mu.Unlock()
 }
 
 // WithLock выполняет f под тем же локом, что и выделение номеров. Нужен
 // уборщику: решение «этот ресурс лишний» и выделение номера не должны идти
 // одновременно.
+//
+// Лок не реентрантен: вызов AllocIndex или Release внутри f — дедлок.
 func (a *Allocator) WithLock(f func()) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

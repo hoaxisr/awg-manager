@@ -2,6 +2,7 @@ package proxyrt
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -9,7 +10,7 @@ import (
 func TestAllocIndexPrefersPinnedWhenFree(t *testing.T) {
 	a := NewAllocator(IndexRange{Min: 17, Max: 49})
 
-	got, err := a.AllocIndex(23, map[int]bool{})
+	got, err := a.AllocIndex("inst1", 23, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +22,7 @@ func TestAllocIndexPrefersPinnedWhenFree(t *testing.T) {
 func TestAllocIndexSkipsTaken(t *testing.T) {
 	a := NewAllocator(IndexRange{Min: 17, Max: 49})
 
-	got, err := a.AllocIndex(0, map[int]bool{17: true, 18: true})
+	got, err := a.AllocIndex("inst1", 0, map[int]bool{17: true, 18: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +34,7 @@ func TestAllocIndexSkipsTaken(t *testing.T) {
 func TestAllocIndexPinnedButTakenFallsBack(t *testing.T) {
 	a := NewAllocator(IndexRange{Min: 17, Max: 49})
 
-	got, err := a.AllocIndex(17, map[int]bool{17: true})
+	got, err := a.AllocIndex("inst1", 17, map[int]bool{17: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestAllocIndexPinnedButTakenFallsBack(t *testing.T) {
 func TestAllocIndexExhausted(t *testing.T) {
 	a := NewAllocator(IndexRange{Min: 17, Max: 18})
 
-	if _, err := a.AllocIndex(0, map[int]bool{17: true, 18: true}); !errors.Is(err, ErrNoFreeIndex) {
+	if _, err := a.AllocIndex("inst1", 0, map[int]bool{17: true, 18: true}); !errors.Is(err, ErrNoFreeIndex) {
 		t.Fatalf("ошибка %v, ожидали ErrNoFreeIndex", err)
 	}
 }
@@ -53,15 +54,66 @@ func TestAllocIndexExhausted(t *testing.T) {
 func TestAllocIndexReleaseReturnsToPool(t *testing.T) {
 	a := NewAllocator(IndexRange{Min: 17, Max: 17})
 
-	if _, err := a.AllocIndex(0, map[int]bool{}); err != nil {
+	if _, err := a.AllocIndex("inst1", 0, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocIndex(0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
+	if _, err := a.AllocIndex("inst2", 0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
 		t.Fatal("занятый номер не должен выдаваться дважды")
 	}
-	a.Release(17)
-	if _, err := a.AllocIndex(0, map[int]bool{}); err != nil {
+	a.Release("inst1")
+	if _, err := a.AllocIndex("inst2", 0, map[int]bool{}); err != nil {
 		t.Fatalf("после освобождения номер обязан выдаваться: %v", err)
+	}
+}
+
+func TestAllocIndexIsIdempotentForSameOwner(t *testing.T) {
+	// Повторный проход реконсиляции не должен менять номер интерфейса:
+	// на имя OpkgTunN ссылаются permit'ы пользователя в политиках.
+	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+
+	first, err := a.AllocIndex("inst1", 23, map[int]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.AllocIndex("inst1", 23, map[int]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("номер сменился с %d на %d при повторном выделении тому же владельцу", first, second)
+	}
+}
+
+func TestAllocIndexDoesNotGiveOthersHeldNumber(t *testing.T) {
+	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+	mine, _ := a.AllocIndex("inst1", 17, map[int]bool{})
+	other, err := a.AllocIndex("inst2", 17, map[int]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == mine {
+		t.Fatalf("номер %d выдан двум владельцам", mine)
+	}
+}
+
+func TestAllocIndexReleaseFreesAllOwnerNumbers(t *testing.T) {
+	// Release по владельцу, а не по номеру: иначе остаётся способ освободить
+	// чужой номер. Владелец мог удержать несколько номеров.
+	a := NewAllocator(IndexRange{Min: 17, Max: 18})
+
+	if _, err := a.AllocIndex("inst1", 17, map[int]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AllocIndex("inst1", 18, map[int]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	a.Release("inst2") // чужой владелец ничего не освобождает
+	if _, err := a.AllocIndex("inst3", 0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
+		t.Fatal("Release чужого владельца не должен освобождать номера")
+	}
+	a.Release("inst1")
+	if _, err := a.AllocIndex("inst3", 17, map[int]bool{}); err != nil {
+		t.Fatalf("после освобождения владельца номера обязаны выдаваться: %v", err)
 	}
 }
 
@@ -76,10 +128,11 @@ func TestAllocIndexConcurrentGivesDistinct(t *testing.T) {
 	seen := map[int]bool{}
 
 	for i := 0; i < n; i++ {
+		owner := fmt.Sprintf("inst%d", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, err := a.AllocIndex(0, map[int]bool{})
+			idx, err := a.AllocIndex(owner, 0, map[int]bool{})
 			if err != nil {
 				t.Error(err)
 				return

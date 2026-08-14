@@ -116,7 +116,7 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 	start := time.Now()
-	if _, err := alloc.AllocIndex(0, map[int]bool{}); err != nil {
+	if _, err := alloc.AllocIndex("inst1", 0, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
 	if waited := time.Since(start); waited > 100*time.Millisecond {
