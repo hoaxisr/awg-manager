@@ -31,16 +31,20 @@ export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
 go mod tidy
 
 build_one() {
-  local goarch="$1" out="$2"
-  echo "  GOARCH=${goarch} -> ${out}"
-  CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -trimpath -ldflags="-s -w" \
+  local goarch="$1" out="$2" gomips="${3:-}"
+  echo "  GOARCH=${goarch}${gomips:+ GOMIPS=$gomips} -> ${out}"
+  CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" GOMIPS="$gomips" go build -trimpath -ldflags="-s -w" \
     -o "$OUT_DIR/$out" .
 }
 
 build_one arm64 wt-client-linux-arm64
-# softfloat ABI for Entware mipsel/mips routers
-build_one mipsle wt-client-linux-mipsle-softfloat
-build_one mips wt-client-linux-mips-softfloat
+# softfloat ABI for Entware mipsel/mips routers.
+# ВНИМАНИЕ: до 2026-08-14 GOMIPS здесь не выставлялся, и на зеркале лежали
+# hardfloat-бинари под softfloat-именем (доказано совпадением с пинами
+# internal/wdtt/install.go). Первая сборка с этой правкой меняет ABI —
+# пины обязаны обновиться, и нужен прогон на mips-железе.
+build_one mipsle wt-client-linux-mipsle-softfloat softfloat
+build_one mips wt-client-linux-mips-softfloat softfloat
 
 echo
 echo "SHA256 / size (вписать в internal/wdtt/install.go):"
