@@ -26,7 +26,7 @@ func TestDerivePhase(t *testing.T) {
 			IntentEnabled, []ResourceState{ok, failed}, true, StopNone, PhaseFailed},
 		{"failed важнее unknown",
 			IntentEnabled, []ResourceState{unknown, failed}, true, StopNone, PhaseFailed},
-		{"blocked сам по себе фазу не задаёт — её задаёт причина",
+		{"failed важнее blocked: причина информативнее следствия",
 			IntentEnabled, []ResourceState{failed, blocked}, true, StopNone, PhaseFailed},
 		{"применили, эффекта ждём — это waiting, не затык",
 			IntentEnabled, []ResourceState{ok}, false, StopAwaiting, PhaseWaiting},
@@ -44,6 +44,8 @@ func TestDerivePhase(t *testing.T) {
 			IntentEnabled, []ResourceState{ok, blocked}, true, StopNone, PhaseWaiting},
 		{"инстанс без ресурсов и без плана — достигнуто",
 			IntentEnabled, nil, true, StopNone, PhaseSettled},
+		{"ненаблюдаемый ресурс при исчерпанном потолке — затык, а не ожидание",
+			IntentEnabled, []ResourceState{ok, unknown}, false, StopCeiling, PhaseStuck},
 	}
 
 	for _, c := range cases {
