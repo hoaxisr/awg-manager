@@ -3,6 +3,7 @@ package proxyrt
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,11 +20,17 @@ type Worker struct {
 	intent  func() Intent
 	onState func(Result, Phase)
 
-	ch       chan Event
-	stopOnce sync.Once
-	done     chan struct{}
-	closed   chan struct{}
-	started  bool
+	ch        chan Event
+	startOnce sync.Once
+	stopOnce  sync.Once
+	done      chan struct{}
+	closed    chan struct{}
+	// started атомарен: Start и Stop зовут из разных горутин — инстансы
+	// поднимает одна, гасит другая.
+	started atomic.Bool
+	// wcancel отменяет собственный контекст воркера, производный от того, что
+	// дали в Start. Нужен, чтобы Stop мог прервать идущую реконсиляцию.
+	wcancel context.CancelFunc
 }
 
 // intent — функция, а не значение: намерение живёт в хранилище конфига и
@@ -40,26 +47,41 @@ func NewWorker(id string, rec *Reconciler, intent func() Intent, onState func(Re
 	}
 }
 
+// Start поднимает единственную горутину воркера. Повторный вызов — безвредный
+// no-op: инвариант «воркер один на инстанс» держится конструкцией, а не
+// договорённостью вызывающего.
 func (w *Worker) Start(ctx context.Context) {
-	w.started = true
-	go func() {
-		defer close(w.done)
-		var recheck <-chan time.Time
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-w.closed:
-				w.drainAndRun(ctx)
-				return
-			case <-recheck:
-				recheck = w.runOnce(ctx)
-			case <-w.ch:
-				w.coalesce()
-				recheck = w.runOnce(ctx)
+	w.startOnce.Do(func() {
+		wctx, cancel := context.WithCancel(ctx)
+		w.wcancel = cancel
+		w.started.Store(true)
+		go func() {
+			defer close(w.done)
+			var recheck <-chan time.Time
+			for {
+				select {
+				case <-wctx.Done():
+					return
+				case <-w.closed:
+					// Остановка не начинает новой работы: недобранные будильники
+					// теряются осознанно. Реконсиляция идемпотентна и смотрит на
+					// факт, поэтому следующий старт наверстает всё сам, а Stop
+					// не превращается в ещё один RCI-раунд.
+					return
+				case <-recheck:
+					// Таймер идёт тем же путём, что и прочие источники:
+					// будильник в очередь, а не вызов мимо неё. Иначе путь
+					// пробуждения раздваивается и схлопывание не работает для
+					// подстраховочных сверок.
+					recheck = nil
+					w.Post(Event{Kind: EventRecheck, Instance: w.id})
+				case <-w.ch:
+					w.coalesce()
+					recheck = w.runOnce(wctx)
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // coalesce забирает из очереди все накопившиеся будильники: один прогон
@@ -74,19 +96,12 @@ func (w *Worker) coalesce() {
 	}
 }
 
-func (w *Worker) drainAndRun(ctx context.Context) {
-	select {
-	case <-w.ch:
-		w.coalesce()
-		w.runOnce(ctx)
-	default:
-	}
-}
-
 // runOnce гоняет реконсиляцию и возвращает канал таймера подстраховки, если
 // его попросил хоть один ресурс.
 func (w *Worker) runOnce(ctx context.Context) <-chan time.Time {
-	intent := IntentEnabled
+	// Без источника намерения — fail-closed: воркер, которому забыли передать
+	// аксессор, не должен применять изменения к живой системе.
+	intent := IntentDisabled
 	if w.intent != nil {
 		intent = w.intent()
 	}
@@ -120,10 +135,18 @@ func (w *Worker) Post(e Event) bool {
 
 // Stop закрывает приём событий и ждёт завершения. Вызов без предшествующего
 // Start возвращает управление сразу: ждать некого.
+//
+// Отмена собственного контекста прерывает идущую реконсиляцию: Run вернётся со
+// StopCanceled, публикация состояния пропустится. Без этого гашение одного
+// инстанса при живом демоне ждало бы конца RCI-раунда. Граница держится на том,
+// что ресурсы уважают контекст в Observe и Apply.
 func (w *Worker) Stop() {
 	w.stopOnce.Do(func() { close(w.closed) })
-	if !w.started {
+	if !w.started.Load() {
 		return
+	}
+	if w.wcancel != nil {
+		w.wcancel()
 	}
 	<-w.done
 }

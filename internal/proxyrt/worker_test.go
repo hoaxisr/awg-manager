@@ -59,6 +59,23 @@ func TestWorkerSerializesEvents(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		w.Post(Event{Kind: EventBoot, Instance: "inst1"})
 	}
+	// Дождаться первого прогона: Stop новой работы не начинает, поэтому
+	// утверждать что-либо о прогонах можно лишь после того, как воркер
+	// действительно проснулся.
+	deadline := time.After(2 * time.Second)
+	for {
+		r.mu.Lock()
+		started := r.runs > 0
+		r.mu.Unlock()
+		if started {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("воркер не проснулся за 2 секунды")
+		case <-time.After(time.Millisecond):
+		}
+	}
 	w.Stop()
 
 	r.mu.Lock()
@@ -117,6 +134,53 @@ func TestWorkerSkipsPublishOnCanceledContext(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 0 {
 		t.Fatalf("публикаций %d, ожидали 0 при отменённом контексте", calls)
+	}
+}
+
+// blockingResource виснет в наблюдении, пока его не отпустят либо не отменят
+// контекст. Уважение контекста в Observe и делает границу Stop настоящей.
+type blockingResource struct {
+	id      ResourceID
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingResource) ID() ResourceID { return b.id }
+
+func (b *blockingResource) Observe(ctx context.Context) (Observation, error) {
+	b.once.Do(func() { close(b.entered) })
+	select {
+	case <-b.release:
+		return Observation{Known: true}, nil
+	case <-ctx.Done():
+		return Observation{}, ctx.Err()
+	}
+}
+
+func (b *blockingResource) Plan(Observation) []Step { return nil }
+
+func (b *blockingResource) Apply(context.Context, Step) error { return nil }
+
+func (b *blockingResource) RecheckAfter() time.Duration { return 0 }
+
+func TestWorkerStopInterruptsInFlightReconcile(t *testing.T) {
+	// Гашение одного инстанса не должно ждать конца длинного RCI-раунда.
+	slow := &blockingResource{id: "a", entered: make(chan struct{}), release: make(chan struct{})}
+	rec := NewReconciler(staticRole{res: []Resource{slow}}, nil, ReconcileOpts{})
+	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
+
+	w.Start(context.Background())
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	<-slow.entered // реконсиляция началась и висит в наблюдении
+
+	done := make(chan struct{})
+	go func() { w.Stop(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop не вернулся за 2 секунды — идущая реконсиляция не прерывается")
 	}
 }
 
