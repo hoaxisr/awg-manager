@@ -111,9 +111,30 @@ func TestAllocIndexReleaseFreesAllOwnerNumbers(t *testing.T) {
 	if _, err := a.AllocIndex("inst3", 0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
 		t.Fatal("Release чужого владельца не должен освобождать номера")
 	}
+
 	a.Release("inst1")
+	// Освободиться обязаны ОБА номера владельца, а не первый попавшийся:
+	// два разных новых владельца должны получить номер каждый.
 	if _, err := a.AllocIndex("inst3", 17, map[int]bool{}); err != nil {
-		t.Fatalf("после освобождения владельца номера обязаны выдаваться: %v", err)
+		t.Fatalf("после освобождения владельца номер 17 обязан выдаваться: %v", err)
+	}
+	if _, err := a.AllocIndex("inst4", 18, map[int]bool{}); err != nil {
+		t.Fatalf("Release освободил только часть номеров владельца: 18 занят, %v", err)
+	}
+}
+
+func TestAllocIndexOwnNumberInTakenBreaksPinning(t *testing.T) {
+	// Документирует цену нарушения контракта taken: собственный номер,
+	// попавший в taken, читается как чужой, и закрепление ломается.
+	// Это не желаемое поведение, а зафиксированное следствие.
+	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+
+	got, err := a.AllocIndex("inst1", 23, map[int]bool{23: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == 23 {
+		t.Fatal("контракт taken изменился — обнови докстроку и этот тест")
 	}
 }
 
