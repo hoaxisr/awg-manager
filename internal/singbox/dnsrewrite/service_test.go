@@ -56,7 +56,7 @@ func TestSyncManagedKeenDNS_UpsertsAndClears(t *testing.T) {
 	store := &fakeStore{items: []DNSRewrite{{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}}}}
 	svc := NewService(store, orch, nil)
 
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	// В СТОРЕ managed лежат в хвосте — чтобы их появление/снятие не сдвигало
@@ -82,7 +82,7 @@ func TestSyncManagedKeenDNS_UpsertsAndClears(t *testing.T) {
 		t.Error("slot should stay enabled")
 	}
 
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
+	if err := svc.SyncManagedKeenDNS("", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.items) != 1 || store.items[0].Pattern != "nas.lan" {
@@ -97,11 +97,11 @@ func TestSyncManagedKeenDNS_IdempotentNoWrite(t *testing.T) {
 	store := &fakeStore{}
 	svc := NewService(store, newFakeOrch(), nil)
 
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+		if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,17 +110,17 @@ func TestSyncManagedKeenDNS_IdempotentNoWrite(t *testing.T) {
 	}
 
 	// Смена LAN IP — реальное изменение, запись обязана произойти.
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.2.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.181"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.replaceCalls != 2 {
 		t.Fatalf("ReplaceManaged calls = %d, want 2 after LAN IP change", store.replaceCalls)
 	}
 	// И снос пустого набора при уже пустом сторе тоже не должен писать.
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
+	if err := svc.SyncManagedKeenDNS("", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
+	if err := svc.SyncManagedKeenDNS("", nil); err != nil {
 		t.Fatal(err)
 	}
 	if store.replaceCalls != 3 {
@@ -135,7 +135,7 @@ func TestFlushCompilesManagedFirst(t *testing.T) {
 	store := &fakeStore{items: []DNSRewrite{{Pattern: "*.pro", IPs: []string{"10.0.0.5"}}}}
 	svc := NewService(store, orch, nil)
 
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.items[0].Pattern != "*.pro" {
@@ -164,11 +164,11 @@ func TestSyncManagedKeenDNS_RetriesAfterFailedFlush(t *testing.T) {
 	store := &fakeStore{}
 	svc := NewService(store, orch, nil)
 
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err == nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err == nil {
 		t.Fatal("flush failure must surface")
 	}
 	orch.saveErr = nil
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := orch.saved[SlotName]; !ok {
@@ -176,7 +176,7 @@ func TestSyncManagedKeenDNS_RetriesAfterFailedFlush(t *testing.T) {
 	}
 	// А дальше — снова no-op.
 	calls := store.replaceCalls
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	if store.replaceCalls != calls {
@@ -206,7 +206,7 @@ func TestSyncManagedKeenDNS_NoDomainClears(t *testing.T) {
 		{Pattern: "x.lan", IPs: []string{"1.1.1.1"}, Managed: ManagedKeenDNS},
 	}}
 	svc := NewService(store, newFakeOrch(), nil)
-	if err := svc.SyncManagedKeenDNS("", "192.168.1.1"); err != nil {
+	if err := svc.SyncManagedKeenDNS("", []string{"78.47.125.180"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.items) != 0 {

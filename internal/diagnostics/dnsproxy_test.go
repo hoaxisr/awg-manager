@@ -230,3 +230,32 @@ func TestParseDoHComment_URLVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticIPv4For(t *testing.T) {
+	proxies, _ := ParseDNSProxy(loadSample(t))
+	cases := []struct {
+		name string
+		host string
+		want []string
+	}{
+		{"точное имя", "host1.example.net", []string{"203.0.113.10"}},
+		{"регистр и хвостовая точка", "HOST1.Example.Net.", []string{"203.0.113.10"}},
+		{"дедуп по всем профилям", "awgm-dnscheck.test", []string{"10.10.10.1"}},
+		{"только AAAA — не наш случай", "host5.example.ru", nil},
+		{"имени нет", "нет.такого", nil},
+		{"пустой host", "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StaticIPv4For(proxies, tc.host)
+			if len(got) != len(tc.want) {
+				t.Fatalf("StaticIPv4For(%q) = %v, want %v", tc.host, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("StaticIPv4For(%q) = %v, want %v", tc.host, got, tc.want)
+				}
+			}
+		})
+	}
+}

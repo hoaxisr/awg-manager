@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -13,7 +14,6 @@ import (
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
@@ -25,7 +25,7 @@ import (
 var (
 	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
 	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
-	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+	_ router.KeenDNSAddrProvider   = keenDNSAddrAdapter{}
 )
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
@@ -494,11 +494,26 @@ func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error
 	return info.Domain, nil
 }
 
-// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
-type keenDNSLANAdapter struct{}
+// keenDNSAddrAdapter отдаёт IPv4 из статических DNS-записей самого роутера
+// (/show/dns-proxy). Именно их роутер сообщает своим клиентам по имени
+// KeenDNS, и именно их мы зеркалим клиентам из политики (issue #729).
+type keenDNSAddrAdapter struct {
+	store *ndmsquery.DNSProxyStatusStore
+}
 
-func (keenDNSLANAdapter) LANIPv4() string {
-	return netif.FirstIPv4(storage.DefaultInterface)
+func (a keenDNSAddrAdapter) KeenDNSAddrs(ctx context.Context, host string) ([]string, error) {
+	if a.store == nil {
+		return nil, nil
+	}
+	raw, err := a.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	proxies, err := diagnostics.ParseDNSProxy(raw)
+	if err != nil {
+		return nil, err
+	}
+	return diagnostics.StaticIPv4For(proxies, host), nil
 }
 
 var _ wdtt.IngressRefEnsurer = (*wdttIngressEnsurer)(nil)

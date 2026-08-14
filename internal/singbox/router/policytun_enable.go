@@ -418,7 +418,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			return err
 		}
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
 		if err = s.deps.IPTables.Install(ctx, RestoreInputSpec{
 			DSCPOnly:       true,
 			MatchAll:       true,

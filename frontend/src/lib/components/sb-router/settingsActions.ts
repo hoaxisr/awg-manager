@@ -14,7 +14,7 @@ export const BYPASS_PRESETS: readonly BypassPresetMeta[] = [
   { id: 'netbios-smb', label: 'NetBIOS / SMB', desc: 'UDP 137/138, TCP 139/445' },
   // Не порты/CIDR: свой KeenDNS/CrazeDNS FQDN → DNS rewrite на LAN IP.
   // Чужие *.netcraze.pro / *.keenetic.pro не трогаем (общий cloud IP).
-  { id: 'keendns', label: 'KeenDNS / CrazeDNS', desc: 'свой домен → LAN (DNS-перезапись)' },
+  { id: 'keendns', label: 'KeenDNS / CrazeDNS', desc: 'свой домен → адрес роутера, мимо sing-box' },
 ];
 
 export async function mergeAndSaveSettings(

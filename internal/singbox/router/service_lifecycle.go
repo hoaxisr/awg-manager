@@ -704,7 +704,8 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+	keenDNSCIDRs := s.keenDNSBypass()
+	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
 
 	// QoS iptables dispatch — graceful degradation: when xt_dscp support is
 	// missing the DSCP rules are skipped (feature-off) with a warning, NEVER
@@ -768,6 +769,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	s.currentBypassPresets = sr.BypassPresets
 	s.currentBypassExtraPorts = sr.BypassExtraPorts
 	s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+	s.currentKeenDNSCIDRs = keenDNSCIDRs
 	s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 	s.currentIngress = ingress
 	s.currentQoSClasses = qosSpecs
@@ -1306,6 +1308,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.currentBypassPresets = nil
 	s.currentBypassExtraPorts = ""
 	s.currentBypassExtraSubnets = ""
+	s.currentKeenDNSCIDRs = nil
 	s.currentIngress = nil
 	s.currentQoSClasses = nil
 	s.netfilterStateKnown = false
@@ -1531,6 +1534,11 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	bypassPresetsChanged := !slices.Equal(s.currentBypassPresets, sr.BypassPresets)
 	bypassExtraChanged := s.currentBypassExtraPorts != sr.BypassExtraPorts
 	bypassSubnetsChanged := s.currentBypassExtraSubnets != sr.BypassExtraSubnets
+	// Адрес KeenDNS приходит с роутера, а не из настроек: без своего флага
+	// его появление (первый успешный запрос после старта) или смена не дали
+	// бы переустановки правил, и обход доехал бы только по ручному Enable.
+	keenDNSCIDRs := s.keenDNSBypass()
+	keenDNSCIDRsChanged := !slices.Equal(s.currentKeenDNSCIDRs, keenDNSCIDRs)
 	// Смена состава geoip-тегов меняет и наличие правила `--match-set`
 	// (пусто ↔ непусто), и содержимое набора — переустанавливаем правила и
 	// пересобираем набор ниже.
@@ -1614,7 +1622,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	wantBlackhole := jumpsMissing && engineDown
 	if wantBlackhole {
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
 		// Mirror the real interception spec's exclusions (bypass ports) so the
 		// blackhole drops EXACTLY what would have been proxied — not the user's
 		// bypass ports.
@@ -1647,7 +1655,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		// Реальный перехват в мёртвый порт всё равно не восстанавливаем.
 		jumpsMissing = false
 	}
-	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || bypassGeoTagsChanged || qosChanged
+	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || bypassGeoTagsChanged || qosChanged || keenDNSCIDRsChanged
 
 	// Движок не готов интерсептить (мёртв или inbound-сокеты не привязаны) —
 	// НЕ ставим iptables ни по какому триггеру (#221): REDIRECT/TPROXY в
@@ -1672,7 +1680,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		}
 
 		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
+		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
 		// Набор должен существовать до правила `--match-set` (см. Enable).
 		if len(sr.BypassGeoIPTags) > 0 {
 			s.ensureBypassSetExists(ctx)
@@ -1699,6 +1707,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		s.currentBypassPresets = sr.BypassPresets
 		s.currentBypassExtraPorts = sr.BypassExtraPorts
 		s.currentBypassExtraSubnets = sr.BypassExtraSubnets
+		s.currentKeenDNSCIDRs = keenDNSCIDRs
 		s.currentBypassGeoIPTags = sr.BypassGeoIPTags
 		s.currentIngress = ingress
 		s.currentQoSClasses = qosSpecs
