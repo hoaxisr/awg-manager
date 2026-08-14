@@ -15,6 +15,12 @@ type ReconcileOpts struct {
 
 // Result — что цикл сделал за вызов.
 type Result struct {
+	// Intent — намерение, по которому цикл считал фазу. Едет вместе с
+	// результатом, чтобы вызывающий не перечитывал его третий раз после прогона
+	// и не публиковал пару, которой цикл не считал: намерение к моменту возврата
+	// уже могло смениться, а фронт красит инстанс по намерению и объясняет по
+	// фазе.
+	Intent Intent
 	Steps  []Step
 	States []ResourceState
 	Stop   StopReason
@@ -47,7 +53,7 @@ func NewReconciler(role Role, cfg any, opts ReconcileOpts) *Reconciler {
 // горячий цикл, если внешний актор откатывает наши правила — повторяемость
 // через события ловит backoff инстанса, а не эвристика внутри цикла.
 func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
-	var res Result
+	res := Result{Intent: intent}
 	applied := make(map[string]bool)
 
 	for {

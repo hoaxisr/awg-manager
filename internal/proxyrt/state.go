@@ -38,6 +38,11 @@ func NewStateStore(pub Publisher, now func() time.Time) *StateStore {
 
 // Update кладёт новое состояние и публикует его, если оно изменилось.
 //
+// Намерение берётся из результата прогона, отдельным аргументом не приходит:
+// пара «намерение + фаза» обязана быть той же, по которой цикл считал. Читать
+// намерение заново после прогона значит публиковать пару, которой не было:
+// {disabled, settled} либо {enabled, disabled}.
+//
 // Переданные слайсы хранилище кладёт к себе как есть, копии на входе не делает:
 // на mipsel копия каждого прогона не окупается. Поэтому требование к
 // вызывающему: ни шаги и состояния ресурсов, ни КАРТЫ Step.Args после возврата
@@ -51,13 +56,13 @@ func NewStateStore(pub Publisher, now func() time.Time) *StateStore {
 // инстансу — воркер и ручка API, снимающая инстанс, — могли бы опубликовать
 // новое состояние раньше старого, и фронт застрял бы на протухшем до следующего
 // события.
-func (s *StateStore) Update(id string, intent Intent, res Result, phase Phase) InstanceState {
+func (s *StateStore) Update(id string, res Result, phase Phase) InstanceState {
 	s.pubMu.Lock()
 	defer s.pubMu.Unlock()
 
 	st := InstanceState{
 		ID:        id,
-		Intent:    intent,
+		Intent:    res.Intent,
 		Phase:     phase,
 		Resources: res.States,
 		LastPlan:  res.Steps,

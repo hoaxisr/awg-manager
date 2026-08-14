@@ -328,6 +328,30 @@ func TestReconcileDuplicateResourceIDIsFailedNotSilent(t *testing.T) {
 	}
 }
 
+func TestReconcileResultCarriesIntent(t *testing.T) {
+	// Фаза считается по намерению, значит намерение обязано ехать наружу вместе с
+	// ней. Иначе вызывающий перечитывает намерение ТРЕТИЙ раз, уже после прогона,
+	// и публикует пару, которой цикл не считал: {disabled, settled} или
+	// {enabled, disabled}. Фронт красит инстанс по намерению, а объясняет по фазе
+	// — на экране получилось бы противоречие.
+	r := &statefulResource{id: "a", want: "up"}
+	rec := NewReconciler(staticRole{res: []Resource{r}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentDisabled)
+
+	if res.Intent != IntentDisabled {
+		t.Fatalf("намерение в результате %q, считали по %q", res.Intent, IntentDisabled)
+	}
+	if phase != PhaseDisabled {
+		t.Fatalf("фаза %q, ожидали disabled", phase)
+	}
+
+	res, _ = rec.Run(context.Background(), IntentEnabled)
+	if res.Intent != IntentEnabled {
+		t.Fatalf("намерение в результате %q, считали по %q", res.Intent, IntentEnabled)
+	}
+}
+
 func TestReconcileAppliesEachStepOnceOnMixedRole(t *testing.T) {
 	// Роль из двух ресурсов: один сходится сразу, второй ждёт внешнего
 	// эффекта. На проходе 2 план УЖЕ ИЗМЕНИЛСЯ (остался только async-шаг),

@@ -57,14 +57,14 @@ func TestStateStoreKeepsPublicationOrder(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		st.Update("inst1", IntentEnabled, first, PhaseWaiting)
+		st.Update("inst1", first, PhaseWaiting)
 	}()
 	<-pub.entered // первый писатель внутри публикации, его состояние уже в хранилище
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		st.Update("inst1", IntentEnabled, second, PhaseSettled)
+		st.Update("inst1", second, PhaseSettled)
 	}()
 
 	// Окно, за которое второй писатель обогнал бы первого, будь публикация вне
@@ -97,7 +97,7 @@ func TestStateStoreUpdatePublishesOnChange(t *testing.T) {
 		Steps:  []Step{{Resource: "a", Op: "create", Reason: "нужно"}},
 		States: []ResourceState{{ID: "a", Status: StatusOK}},
 	}
-	got := st.Update("inst1", IntentEnabled, res, PhaseSettled)
+	got := st.Update("inst1", res, PhaseSettled)
 
 	if got.Phase != PhaseSettled || got.ID != "inst1" {
 		t.Fatalf("состояние собрано неверно: %+v", got)
@@ -120,8 +120,8 @@ func TestStateStoreDoesNotRepublishIdenticalState(t *testing.T) {
 	st := NewStateStore(pub, fixedNow)
 	res := Result{States: []ResourceState{{ID: "a", Status: StatusOK}}}
 
-	st.Update("inst1", IntentEnabled, res, PhaseSettled)
-	st.Update("inst1", IntentEnabled, res, PhaseSettled)
+	st.Update("inst1", res, PhaseSettled)
+	st.Update("inst1", res, PhaseSettled)
 
 	if len(pub.events) != 1 {
 		t.Fatalf("публикаций %d, ожидали 1 — повтор не публикуется", len(pub.events))
@@ -133,8 +133,8 @@ func TestStateStorePublishesWhenPhaseChanges(t *testing.T) {
 	st := NewStateStore(pub, fixedNow)
 	res := Result{States: []ResourceState{{ID: "a", Status: StatusOK}}}
 
-	st.Update("inst1", IntentEnabled, res, PhaseWaiting)
-	st.Update("inst1", IntentEnabled, res, PhaseSettled)
+	st.Update("inst1", res, PhaseWaiting)
+	st.Update("inst1", res, PhaseSettled)
 
 	if len(pub.events) != 2 {
 		t.Fatalf("публикаций %d, ожидали 2: фаза изменилась", len(pub.events))
@@ -151,8 +151,8 @@ func TestStateStorePublishesWhenStepReasonChanges(t *testing.T) {
 	first := Result{Steps: []Step{{Resource: "a", Op: "create", Reason: "нужно создать"}}}
 	second := Result{Steps: []Step{{Resource: "a", Op: "create", Reason: "восстановление после сноса"}}}
 
-	st.Update("inst1", IntentEnabled, first, PhaseWaiting)
-	st.Update("inst1", IntentEnabled, second, PhaseWaiting)
+	st.Update("inst1", first, PhaseWaiting)
+	st.Update("inst1", second, PhaseWaiting)
 
 	if len(pub.events) != 2 {
 		t.Fatalf("публикаций %d, ожидали 2: причина шага изменилась", len(pub.events))
@@ -170,7 +170,7 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 		Steps:  []Step{{Resource: "a", Op: "create", Args: map[string]string{"address": "10.70.0.5"}, Reason: "нужно"}},
 		States: []ResourceState{{ID: "a", Status: StatusOK}},
 	}
-	st.Update("inst1", IntentEnabled, res, PhaseWaiting)
+	st.Update("inst1", res, PhaseWaiting)
 
 	got, _ := st.Get("inst1")
 	got.Resources[0].Status = StatusFailed
@@ -215,7 +215,7 @@ func TestStateStoreUpdateHandsOutCopy(t *testing.T) {
 		Steps:  []Step{{Resource: "a", Op: "create", Args: map[string]string{"address": "10.70.0.5"}, Reason: "нужно"}},
 		States: []ResourceState{{ID: "a", Status: StatusOK}},
 	}
-	got := st.Update("inst1", IntentEnabled, res, PhaseWaiting)
+	got := st.Update("inst1", res, PhaseWaiting)
 
 	got.Resources[0].Status = StatusFailed
 	got.LastPlan[0].Op = "destroy"
@@ -361,8 +361,10 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			pub := &fakePublisher{}
 			st := NewStateStore(pub, fixedNow)
 
-			st.Update("inst1", c.intent, c.res, c.phase)
-			st.Update("inst1", c.secondIntent, c.secondRes, c.secondPhase)
+			first, second := c.res, c.secondRes
+			first.Intent, second.Intent = c.intent, c.secondIntent
+			st.Update("inst1", first, c.phase)
+			st.Update("inst1", second, c.secondPhase)
 
 			if len(pub.events) != 2 {
 				t.Fatalf("публикаций %d, ожидали 2: %s", len(pub.events), c.whyMustPublish)
@@ -373,8 +375,8 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 
 func TestStateStoreGetAndList(t *testing.T) {
 	st := NewStateStore(&fakePublisher{}, fixedNow)
-	st.Update("b", IntentEnabled, Result{}, PhaseSettled)
-	st.Update("a", IntentDisabled, Result{}, PhaseDisabled)
+	st.Update("b", Result{Intent: IntentEnabled}, PhaseSettled)
+	st.Update("a", Result{Intent: IntentDisabled}, PhaseDisabled)
 
 	if _, ok := st.Get("a"); !ok {
 		t.Fatal("инстанс a не найден")

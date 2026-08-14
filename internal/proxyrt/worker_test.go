@@ -100,6 +100,58 @@ func TestWorkerSerializesEvents(t *testing.T) {
 	}
 }
 
+// publishedState гоняет воркер до первого опубликованного состояния и отдаёт
+// то, что легло в хранилище. Ровно этот путь пройдёт план 5: прогон → onState →
+// StateStore → шина.
+func publishedState(t *testing.T, intent func() Intent) InstanceState {
+	t.Helper()
+	rec := NewReconciler(staticRole{res: []Resource{&probeResource{id: "a"}}}, nil, ReconcileOpts{})
+	store := NewStateStore(&fakePublisher{}, fixedNow)
+	w := NewWorker("inst1", rec, intent, func(res Result, ph Phase) {
+		store.Update("inst1", res, ph)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.Start(ctx)
+	w.Post(Event{Kind: EventBoot, Instance: "inst1"})
+	defer w.Stop()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if st, ok := store.Get("inst1"); ok {
+			return st
+		}
+		select {
+		case <-deadline:
+			t.Fatal("воркер не опубликовал состояние за 2 секунды")
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func TestWorkerPublishesIntentPairFromRun(t *testing.T) {
+	// Наружу обязана уехать та же пара «намерение + фаза», по которой цикл
+	// считал. Иначе вызывающему пришлось бы перечитать намерение после прогона, и
+	// на шину попала бы пара, которой не было: фронт красит инстанс по намерению,
+	// а объясняет по фазе.
+	st := publishedState(t, func() Intent { return IntentEnabled })
+
+	if st.Intent != IntentEnabled || st.Phase != PhaseSettled {
+		t.Fatalf("наружу уехала пара {%q, %q}, ожидали {enabled, settled}", st.Intent, st.Phase)
+	}
+}
+
+func TestWorkerWithoutIntentAccessorStaysDisabled(t *testing.T) {
+	// Воркеру забыли передать источник намерения. Fail-closed: живую систему без
+	// намерения не трогаем, а наружу едет честное «выключено», а не «достигнуто».
+	st := publishedState(t, nil)
+
+	if st.Intent != IntentDisabled || st.Phase != PhaseDisabled {
+		t.Fatalf("наружу уехала пара {%q, %q}, ожидали {disabled, disabled}", st.Intent, st.Phase)
+	}
+}
+
 func TestWorkerPostAfterStopReturnsFalse(t *testing.T) {
 	rec := NewReconciler(staticRole{res: nil}, nil, ReconcileOpts{})
 	w := NewWorker("inst1", rec, func() Intent { return IntentEnabled }, func(Result, Phase) {})
