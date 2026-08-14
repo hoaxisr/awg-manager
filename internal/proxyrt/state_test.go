@@ -136,6 +136,35 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 // sameState. Предикат несёт ограничение «публикация только при изменении»:
 // выпавшая ветка означает изменение публичного состояния, которое фронт не
 // увидит до следующего непохожего прогона.
+func TestStateStoreUpdateHandsOutCopy(t *testing.T) {
+	// Возвращаемое из Update — та же выдача наружу, что Get и List: ручка apply
+	// из плана 5 отдаст его вызывающему. Правка на месте не должна доезжать до
+	// хранилища, и цена здесь выше, чем гонка: испорченное хранимое состояние
+	// совпадёт со следующим НАСТОЯЩИМ прогоном, sameState подавит публикацию, и
+	// фронт застрянет на протухшей картине навсегда.
+	st := NewStateStore(&fakePublisher{}, fixedNow)
+	res := Result{
+		Steps:  []Step{{Resource: "a", Op: "create", Args: map[string]string{"address": "10.70.0.5"}, Reason: "нужно"}},
+		States: []ResourceState{{ID: "a", Status: StatusOK}},
+	}
+	got := st.Update("inst1", IntentEnabled, res, PhaseWaiting)
+
+	got.Resources[0].Status = StatusFailed
+	got.LastPlan[0].Op = "destroy"
+	got.LastPlan[0].Args["address"] = "10.70.0.99"
+
+	stored, _ := st.Get("inst1")
+	if stored.Resources[0].Status != StatusOK {
+		t.Fatalf("правка ресурсов из возврата Update дошла до хранилища: %+v", stored.Resources[0])
+	}
+	if stored.LastPlan[0].Op != "create" {
+		t.Fatalf("правка плана из возврата Update дошла до хранилища: %+v", stored.LastPlan[0])
+	}
+	if stored.LastPlan[0].Args["address"] != "10.70.0.5" {
+		t.Fatalf("правка аргумента из возврата Update дошла до хранилища: %+v", stored.LastPlan[0].Args)
+	}
+}
+
 func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 	base := Result{
 		Steps:  []Step{{Resource: "a", Op: "set", Args: map[string]string{"address": "10.70.0.5"}, Reason: "расхождение"}},
