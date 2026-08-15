@@ -131,13 +131,28 @@ func reclaimPath(path string) error {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil
 	case errors.Is(err, syscall.ECONNREFUSED):
-		// Сокет протухший: слушателя нет, файл остался.
+		// Отказ в соединении даёт не только протухший сокет: connect(2)
+		// отвечает им и на обычный файл, и на каталог по этому пути. Снимаем
+		// только сокет, всё остальное — fail-closed: удалять чужое мы не
+		// вправе, а единственной защитой были бы права каталога, то есть
+		// внешнее обстоятельство. Lstat, а не Stat: по символической ссылке
+		// снос уехал бы за пределы каталога.
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("по пути %s лежит не сокет (%s)", path, fi.Mode().Type())
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
 	default:
-		// В том числе слишком длинный путь (EINVAL) и не-сокет по пути:
+		// В том числе слишком длинный путь (EINVAL) и отказ доступа:
 		// fail-closed, потому что связь с менеджером иначе не состоится.
 		return fmt.Errorf("проба %s: %w", path, err)
 	}

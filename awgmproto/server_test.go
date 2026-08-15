@@ -608,10 +608,11 @@ func TestAttachTunWithoutIfaceIsBadRequest(t *testing.T) {
 	if h.attaches != 0 {
 		t.Fatal("обвязку позвали без имени интерфейса")
 	}
-	// Пояснение проверяется дословно не из любви к тексту: без этой ветки
-	// дескриптор всё равно отвергнет VerifyTunFD, и по одному коду отказа
-	// пропажу проверки не увидеть — менеджер получит жалобу на TUNGETIFF
-	// вместо «в команде нет имени интерфейса».
+	// Тест держится за формулировку отказа, и это осознанно: другой
+	// наблюдаемой разницы нет. Без этой ветки дескриптор всё равно отвергнет
+	// VerifyTunFD с тем же кодом bad-request, и пропажу проверки видно только
+	// по тексту — менеджер получит жалобу на TUNGETIFF вместо «в команде нет
+	// имени интерфейса». Переформулировали сообщение — правьте и тест.
 	if !strings.Contains(resp.Error, "без имени интерфейса") {
 		t.Fatalf("отказ не называет причину: %q", resp.Error)
 	}
@@ -619,8 +620,8 @@ func TestAttachTunWithoutIfaceIsBadRequest(t *testing.T) {
 }
 
 // TestAttachTunWithoutFDNamesTheReason — то же про отсутствующий дескриптор:
-// код bad-request дала бы и проверка VerifyTunFD над fd=-1, поэтому саму
-// ветку держит только пояснение.
+// код bad-request дала бы и проверка VerifyTunFD над fd=-1, поэтому саму ветку
+// держит только пояснение, и тест держится за его формулировку.
 func TestAttachTunWithoutFDNamesTheReason(t *testing.T) {
 	_, path := startServer(t, &fakeHandler{})
 	c := dialTest(t, path)
@@ -859,4 +860,45 @@ func TestOversizeStateIsReportedNotAnswered(t *testing.T) {
 		t.Fatalf("непохожая жалоба на длинный ответ: %q", got[0])
 	}
 	assertSilent(t, c.uc)
+}
+
+// TestListenRefusesRegularFileAtPath — по пути сокета лежит обычный файл.
+// connect(2) отвечает на него ECONNREFUSED — тем же, чем на протухший сокет, —
+// поэтому без проверки типа он был бы снесён. Чужое не удаляем: отказ.
+func TestListenRefusesRegularFileAtPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	if err := os.WriteFile(path, []byte("не наш файл"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Listen(ServerConfig{Path: path, Handler: &fakeHandler{}}); err == nil {
+		t.Fatal("слушатель занял путь, на котором лежит обычный файл")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("посторонний файл снесён пробой: %v", err)
+	}
+	if string(body) != "не наш файл" {
+		t.Fatalf("посторонний файл изменён: %q", body)
+	}
+}
+
+// TestListenRefusesDirectoryAtPath — то же про каталог: пустой каталог
+// os.Remove снимает молча, а connect(2) на него тоже отвечает ECONNREFUSED.
+func TestListenRefusesDirectoryAtPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Listen(ServerConfig{Path: path, Handler: &fakeHandler{}}); err == nil {
+		t.Fatal("слушатель занял путь, на котором лежит каталог")
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("каталог снесён пробой: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Fatalf("по пути больше не каталог: %s", fi.Mode().Type())
+	}
 }
