@@ -176,6 +176,15 @@ jobs:
           go tool cover -func=coverage.out | tee coverage.txt
           go tool cover -html=coverage.out -o coverage.html
 
+      - name: Run awgmproto module tests
+        # awgmproto — вложенный модуль со своим go.mod: в `go test ./...` из
+        # корня он НЕ попадает, поэтому у него отдельный шаг. Библиотеку тянут
+        # три чужих репозитория, и её тесты обязаны идти в CI, а не только
+        # локально. Гонки здесь профильные: слушатель пишет из нескольких
+        # горутин.
+        working-directory: awgmproto
+        run: go test ./... -count=1 -race
+
       - name: Upload backend coverage
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

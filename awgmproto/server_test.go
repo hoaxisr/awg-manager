@@ -847,8 +847,9 @@ func TestOversizeFrameIsNotExecuted(t *testing.T) {
 // TestOversizeStateIsReportedNotAnswered — ответ, который не влезает в кадр,
 // уходит в журнал обвязки, а менеджеру не приходит ничего. Это осознанная
 // цена: пропущенный ответ менеджер разберёт по таймауту (§5.1), а порезанный
-// кадр разъехался бы с потоком. Достижим случай только через wg-конфиг в
-// state — единственное поле без потолка длины.
+// кадр разъехался бы с потоком. Полей без потолка длины несколько: wg-конфиг
+// в state (взят здесь), last_error — его у freeturn заполняет обвязка — и
+// message в push error.
 func TestOversizeStateIsReportedNotAnswered(t *testing.T) {
 	h := &fakeHandler{st: State{WG: &WGState{Config: strings.Repeat("x", maxLine)}}}
 	path, errs := startServerWithErrors(t, h)
@@ -1091,4 +1092,112 @@ func openTunFDs(t *testing.T) int {
 		}
 	}
 	return n
+}
+
+// TestHelloIsFirstUnderConcurrentPush — hello первым кадром при push'ах,
+// летящих непрерывно. Прежний порядок (публикация владельца в одной горутине,
+// отправка hello в другой) проваливал это подавляющим большинством прогонов, и
+// по §5.4 менеджер обязан такое соединение отвергнуть без ретрая.
+func TestHelloIsFirstUnderConcurrentPush(t *testing.T) {
+	srv, path := startServer(t, &fakeHandler{st: State{PID: 4821}})
+
+	stop := make(chan struct{})
+	var pusher sync.WaitGroup
+	pusher.Add(1)
+	go func() {
+		defer pusher.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				srv.Push(Event{Event: EventAddress, Address: "10.70.0.5", MTU: 1300})
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		pusher.Wait()
+	}()
+
+	for i := range 300 {
+		c := dialTest(t, path)
+		k, m := c.mustNext()
+		if k != KindEvent || m.(Event).Event != EventHello {
+			t.Fatalf("итерация %d: первым кадром пришло %v %+v", i, k, m)
+		}
+		_ = c.uc.Close()
+	}
+}
+
+// TestFailedHelloDropsConnection — не отправив hello, соединение брать нельзя:
+// менеджеру нечем убедиться, что он попал к своему процессу. Соединение
+// закрывается, причина уходит в журнал обвязки.
+func TestFailedHelloDropsConnection(t *testing.T) {
+	// Отпечаток сверх потолка кадра — способ уронить отправку hello
+	// детерминированно, не трогая сокет.
+	h := &fakeHandler{st: State{ConfigHash: strings.Repeat("x", maxLine)}}
+	path, errs := startServerWithErrors(t, h)
+
+	c, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := c.Read(buf); !errors.Is(err, io.EOF) {
+		t.Fatalf("ожидали закрытие соединения без hello, получили %v", err)
+	}
+	if got := waitErr(t, errs); !strings.Contains(got[0], "превышает потолок") {
+		t.Fatalf("непохожая жалоба на неотправленный hello: %q", got[0])
+	}
+}
+
+// TestResponseEchoesRequestID — ответ несёт id своего запроса: менеджер
+// сопоставляет ответы по нему и чужой игнорирует (§5.1).
+func TestResponseEchoesRequestID(t *testing.T) {
+	_, path := startServer(t, &fakeHandler{})
+	c := dialTest(t, path)
+	c.hello()
+
+	for _, tc := range []struct {
+		id  uint64
+		cmd string
+	}{
+		{7, CmdDetachTun},
+		{9, CmdAttachTun},
+		{11, "stats"},
+		{13, CmdState},
+	} {
+		c.send(Request{ID: tc.id, Cmd: tc.cmd}, -1)
+		_, m := c.mustNext()
+		if resp := m.(Response); resp.ID != tc.id {
+			t.Fatalf("на запрос %q с id=%d ответ пришёл с id=%d", tc.cmd, tc.id, resp.ID)
+		}
+	}
+}
+
+// TestEvictedConnectionClosesFD — единственная ветка, где утечь может
+// настоящий tun-дескриптор: команду вытесненного соединения не исполняют, но
+// приехавший с ней дескриптор закрыть обязаны.
+func TestEvictedConnectionClosesFD(t *testing.T) {
+	s, c, _ := evictionFixture(t, &fakeHandler{})
+	c.evicted.Store(true)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	fd, err := unix.Dup(int(w.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+
+	s.dispatch(c, []byte(`{"v":1,"id":1,"cmd":"attach-tun","iface":"opkgtun18"}`), fd)
+
+	assertClosed(t, r)
 }

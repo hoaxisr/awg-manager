@@ -52,8 +52,16 @@ var ErrNotSupported = &Error{Code: CodeNotSupported, Msg: "команда неп
 
 // Handler — то, что обвязка форка обязана уметь. Реализация роли, у которой
 // нет TUN, возвращает из обеих tun-команд ErrNotSupported.
+//
+// РЕАЛИЗАЦИЯ ОБЯЗАНА БЫТЬ ПОТОКОБЕЗОПАСНОЙ. Библиотека сериализует между собой
+// только команды (см. execMu), и этого недостаточно: State() зовётся ещё и на
+// приёме соединения — из цикла accept, параллельно уже исполняющейся команде
+// другого соединения. Плюс сама обвязка меняет своё состояние из рабочих
+// горутин процесса, а Server.Push зовёт из них же. Обвязка без собственного
+// мьютекса ловит гонку детектором.
 type Handler interface {
-	// State — снимок без побочных эффектов.
+	// State — снимок без побочных эффектов. Может быть вызван в любой момент,
+	// в том числе одновременно с исполнением команды.
 	State() State
 	// AttachTun принимает УЖЕ проверенный дескриптор нужного интерфейса.
 	// Проверка живёт в библиотеке, а не в обвязках, чтобы четыре бинаря
@@ -81,10 +89,14 @@ type Server struct {
 	cfg ServerConfig
 	ln  *net.UnixListener
 
-	// execMu сериализует исполнение команд поверх ВСЕХ соединений: новый
+	// execMu сериализует исполнение КОМАНД поверх ВСЕХ соединений: новый
 	// владелец не начнёт свою первую команду, пока не завершилась чужая
 	// незаконченная. Аборта на середине нет намеренно — решение всё равно
 	// принимается по последующему state.
+	//
+	// Чего он НЕ сериализует, и это часть контракта Handler: State() для hello
+	// зовётся из цикла accept мимо execMu, параллельно исполняющейся команде.
+	// Собственная синхронизация обвязки обязательна.
 	execMu sync.Mutex
 
 	mu     sync.Mutex
@@ -174,8 +186,28 @@ func (s *Server) Serve() {
 // Точка вытеснения — момент accept: старое соединение помечается вытесненным
 // атомарно, ДО отправки hello новому. Новое обслуживается, не дожидаясь ни
 // отправки evicted, ни закрытия старого.
+//
+// hello — первый кадр соединения ПО КОНСТРУКЦИИ (§5.4), а не по удаче: пока он
+// не записан, соединение не лежит в s.cur, и Push его не находит. Прежний
+// порядок (публикация владельца в одной горутине, отправка hello — в другой)
+// давал менеджеру первым кадром обычный push подавляющим большинством
+// прогонов, а по спеке такое соединение менеджер обязан отвергнуть без ретрая.
+//
+// Цена решения названа прямо: пока hello собирается и пишется, владельца нет —
+// Push в это окно теряется. Это законно (push — будильник, менеджер всё равно
+// спрашивает state сразу после hello) и предпочтительнее, чем кадр не в том
+// порядке. Второй расход — цикл accept на это время занят: Handler.State() и
+// запись hello происходят в нём. Звать State() под s.mu было бы хуже:
+// небыстрый снимок заблокировал бы Push и Close всему серверу.
 func (s *Server) adopt(uc *net.UnixConn) {
 	nc := &conn{uc: uc, fc: NewFrameConn(uc)}
+
+	// State() — вне всех замков сервера.
+	st := s.cfg.Handler.State()
+	hello := Event{
+		V: Version, Event: EventHello, Impl: s.cfg.Impl, Role: s.cfg.Role, Instance: s.cfg.Instance,
+		PID: st.PID, ConfigHash: st.ConfigHash, BinarySHA256: st.BinarySHA256,
+	}
 
 	s.mu.Lock()
 	if s.closed {
@@ -184,20 +216,39 @@ func (s *Server) adopt(uc *net.UnixConn) {
 		return
 	}
 	old := s.cur
-	s.cur = nc
+	// Владельца снимаем сразу: до публикации нового Push адресата не находит.
+	s.cur = nil
 	s.mu.Unlock()
 
 	if old != nil {
 		old.evict()
 	}
 
+	if err := nc.send(hello, writeTimeout); err != nil {
+		s.report(err)
+		_ = uc.Close()
+		return
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = uc.Close()
+		return
+	}
+	s.cur = nc
+	// Add — под тем же замком, что и проверка closed: иначе Close успевал бы
+	// уйти в Wait между проверкой и Add, а это паника «WaitGroup misuse».
 	s.wg.Add(1)
+	s.mu.Unlock()
+
 	go func() {
 		defer s.wg.Done()
 		s.serveConn(nc)
 	}()
 }
 
+// serveConn читает команды соединения, которому hello уже отправлен.
 func (s *Server) serveConn(c *conn) {
 	defer func() {
 		_ = c.uc.Close()
@@ -208,18 +259,6 @@ func (s *Server) serveConn(c *conn) {
 		}
 		s.mu.Unlock()
 	}()
-
-	// hello — первым сообщением: по нему менеджер убеждается, что подключился
-	// к своему инстансу, а не к чужому.
-	st := s.cfg.Handler.State()
-	hello := Event{
-		V: Version, Event: EventHello, Impl: s.cfg.Impl, Role: s.cfg.Role, Instance: s.cfg.Instance,
-		PID: st.PID, ConfigHash: st.ConfigHash, BinarySHA256: st.BinarySHA256,
-	}
-	if err := c.send(hello, writeTimeout); err != nil {
-		s.report(err)
-		return
-	}
 
 	for {
 		line, fd, err := c.fc.ReadFrame()

@@ -92,6 +92,9 @@ jobs:
         with:
           go-version: 1.26.4
       - run: go test ./...
+      # Вложенный модуль в `./...` из корня не попадает — свой прогон.
+      - working-directory: awgmproto
+        run: go test ./... -count=1
       - working-directory: frontend
         run: |
           npm ci
