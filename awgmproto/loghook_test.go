@@ -1,9 +1,11 @@
 package awgmproto
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -54,5 +56,138 @@ func TestLogTruncatesOnCap(t *testing.T) {
 	}
 	if st.Size() == 0 {
 		t.Fatal("после усечения запись должна продолжаться")
+	}
+}
+
+func TestLogCapIsExact(t *testing.T) {
+	// Потолок — «превысил», а не «достиг»: проверка на точном значении, иначе
+	// сдвиг предиката на единицу (> вместо >=) переживает набор целиком —
+	// прогон с крупными строками просто усекает на строку раньше.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	if _, err := lg.Write(make([]byte, LogCapBytes-1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lg.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() != LogCapBytes {
+		t.Fatalf("ровно потолок (%d) усечён до %d — усечение сработало раньше времени", LogCapBytes, st.Size())
+	}
+
+	if _, err := lg.Write([]byte("y")); err != nil {
+		t.Fatal(err)
+	}
+	st, err = os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() != 1 {
+		t.Fatalf("байт сверх потолка дал %d байт — ожидалось усечение и запись с нуля", st.Size())
+	}
+}
+
+func TestLogWritesFromZeroAfterCap(t *testing.T) {
+	// Без O_APPEND смещение переживает Truncate(0): следующая запись уходит на
+	// старое смещение, а голова файла становится дырой из нулевых байтов.
+	// Размер при этом снова перевалит за потолок, но диагноз будет ложный —
+	// «усечение не работает», — а настоящий вред в другом: читатели журнала
+	// (детект капчи, разбор рукопожатий) получают мегабайт NUL перед строками.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	if _, err := lg.Write(make([]byte, LogCapBytes)); err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte("строка после усечения\n")
+	if _, err := lg.Write(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, marker) {
+		t.Fatalf("после усечения в журнале %d байт, начало %q — запись ушла не с нуля", len(data), data[:min(len(data), 32)])
+	}
+}
+
+func TestLogWriteIsSerialized(t *testing.T) {
+	// Пишущих в журнал несколько: вывод самого процесса и обвязка. Без замка
+	// учёт размера теряет обновления, потолок уползает вверх, а гонку видно
+	// только под -race — то есть в обычном прогоне дефект молчит.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	line := []byte(strings.Repeat("z", 4095) + "\n")
+	const writers, each = 8, 64
+	done := make(chan error, writers)
+	for range writers {
+		go func() {
+			for range each {
+				if _, err := lg.Write(line); err != nil {
+					done <- err
+					return
+				}
+			}
+			done <- nil
+		}()
+	}
+	for range writers {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() > LogCapBytes {
+		t.Fatalf("журнал %d байт при потолке %d — учёт размера потерял записи", st.Size(), LogCapBytes)
+	}
+}
+
+func TestLogFdIsTheJournal(t *testing.T) {
+	// Этот дескриптор наследуют хелперы, которых процесс порождает сам. Ошибись
+	// он — их вывод уедет в /dev/null (менеджер отдаёт процессу именно его)
+	// вместе с маркерами, которые читают предикаты здоровья. Симптома нет:
+	// туннель работает, журнал пишется, исчезают только чужие строки.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	marker := []byte("вывод хелпера\n")
+	if _, err := syscall.Write(int(lg.Fd()), marker); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, marker) {
+		t.Fatalf("через Fd() в журнал попало %q, ожидалось %q", data, marker)
 	}
 }
