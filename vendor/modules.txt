@@ -19,6 +19,9 @@ github.com/enfein/mieru/v3/pkg/metrics/metricspb
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
+# github.com/hoaxisr/awg-manager/awgmproto v0.1.0
+## explicit; go 1.25.0
+github.com/hoaxisr/awg-manager/awgmproto
 # github.com/mattn/go-isatty v0.0.20
 ## explicit; go 1.15
 github.com/mattn/go-isatty
