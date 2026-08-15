@@ -281,15 +281,180 @@ func TestLinkDropsConnectionAfterDoubleTimeout(t *testing.T) {
 }
 
 // TestLinkRejectsForeignProcess — hello сверяется, а не принимается на веру.
-// На сокете клиента отвечает сервер: это постоянный отказ, а не повод ретраить.
+// Это постоянный отказ, а не повод ретраить.
+//
+// Каждый случай расходится РОВНО по одному полю. Подставной процесс, который
+// расходится сразу по двум, ловится соседней сверкой, и исчезновение одной из
+// трёх остаётся незамеченным: проверено мутацией — снятие сверки impl при
+// расхождении и по impl, и по role тесты переживали.
 func TestLinkRejectsForeignProcess(t *testing.T) {
+	cases := []struct{ name, impl, role, instance string }{
+		{"impl", "wdtt-server", "client", "default"},
+		{"role", "wt-client", "server", "default"},
+		{"instance", "wt-client", "client", "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "c.sock")
+			startProcessAs(t, path, tc.impl, tc.role, tc.instance,
+				awgmproto.State{Role: tc.role, PID: os.Getpid()})
+
+			l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
+			if _, err := l.State(context.Background()); !errors.Is(err, ErrForeignProcess) {
+				t.Fatalf("чужой процесс принят за свой: %v", err)
+			}
+		})
+	}
+}
+
+// TestLinkSilentProcessFailsNotHangs — процесс принял соединение и молчит.
+//
+// Ожидание hello обязано быть ограничено сроком ВСЕГДА, иначе наблюдение
+// повисает навсегда: воркер инстанса встаёт без единого симптома, и ни stuck,
+// ни StopAwaiting движка этого не видят. Срок в самом тесте обязателен — без
+// него провал выглядел бы зависанием прогона, а не отказом теста.
+func TestLinkSilentProcessFailsNotHangs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.sock")
-	startProcessAs(t, path, "wdtt-server", "server", "default",
-		awgmproto.State{Role: "server", PID: os.Getpid()})
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var mu sync.Mutex
+	var accepted []net.Conn
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range accepted {
+			_ = c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Соединение держим открытым и не пишем ни байта.
+			mu.Lock()
+			accepted = append(accepted, c)
+			mu.Unlock()
+		}
+	}()
 
 	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
-	if _, err := l.State(context.Background()); !errors.Is(err, ErrForeignProcess) {
-		t.Fatalf("чужой процесс принят за свой: %v", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.State(context.Background())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("молчащий процесс обязан давать отказ")
+		}
+		if !errors.Is(err, ErrNoSocket) {
+			t.Fatalf("ожидали отказ подключения, получили %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("State завис: ожидание hello не ограничено сроком")
+	}
+}
+
+// TestLinkKeepsConnOnCallerDeadline — истёкший срок ВЫЗЫВАЮЩЕГО не повод
+// объявлять живое соединение мёртвым.
+//
+// Иначе наблюдение с дедлайном короче CallTimeout рвало бы исправную связь на
+// каждом прогоне и переподключалось на ровном месте.
+func TestLinkKeepsConnOnCallerDeadline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	startProcess(t, path, awgmproto.State{Role: "client", Instance: "default", PID: os.Getpid()})
+	sink := &eventSink{}
+	l := newLink(t, path, sink, func(int, string) bool { return true })
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	l.mu.Lock()
+	before := l.cur
+	l.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	if _, err := l.State(ctx); err == nil {
+		t.Fatal("истёкший срок вызывающего обязан давать отказ")
+	}
+
+	l.mu.Lock()
+	after := l.cur
+	l.mu.Unlock()
+	if after != before {
+		t.Fatal("здоровое соединение снято с поста по нетерпению вызывающего")
+	}
+	if sink.hasDetail("разорвано") {
+		t.Fatal("разрыв объявлен на пустом месте")
+	}
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatalf("связь не пережила нетерпеливый вызов: %v", err)
+	}
+}
+
+// serveRaw отдаёт первому подключившемуся заранее заготовленные байты.
+func serveRaw(t *testing.T, path string, payload []byte) {
+	t.Helper()
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = c.Write(payload)
+		time.Sleep(time.Second)
+	}()
+}
+
+// TestDialRejectsFirstFrameNotHello — соединение, где первым кадром пришёл не
+// hello, менеджер обязан отвергнуть (§5.4). Библиотека шлёт hello первым по
+// конструкции, но полагаться на чужую конструкцию здесь нельзя: сокет мог
+// открыть кто угодно.
+func TestDialRejectsFirstFrameNotHello(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	line, err := awgmproto.EncodeLine(awgmproto.Event{
+		V: awgmproto.Version, Event: awgmproto.EventAddress, Address: "10.70.0.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveRaw(t, path, line)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Dial(ctx, path); err == nil {
+		t.Fatal("соединение без hello принято")
+	} else if !strings.Contains(err.Error(), "не hello") {
+		t.Fatalf("отказ без внятной причины: %v", err)
+	}
+}
+
+// TestDialRejectsOverlongFrame — ReadFrame МОЖЕТ отдать кадр длиннее потолка,
+// если перевод строки приехал в том же чтении, что и перебор. Ловит это
+// DecodeLine, и клиент обязан на таком кадре отказать, а не принять его.
+func TestDialRejectsOverlongFrame(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	line := []byte(`{"v":1,"event":"hello","impl":"wt-client","role":"client","instance":"` +
+		strings.Repeat("x", 70*1024) + `"}` + "\n")
+	serveRaw(t, path, line)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Dial(ctx, path); err == nil {
+		t.Fatalf("кадр в %d байт принят", len(line))
+	} else if !strings.Contains(err.Error(), "потолок") {
+		t.Fatalf("отказ не про длину кадра: %v", err)
 	}
 }
 
@@ -352,7 +517,11 @@ func startMuteProcess(t *testing.T, path string) *muteProcess {
 }
 
 func TestSocketPathRejectsBadInstance(t *testing.T) {
-	cases := []string{"", "с пробелом", "точка.точка", strings.Repeat("a", 33)}
+	// "a.b" отдельным случаем: "точка.точка" отбраковывается по кириллице, и
+	// разрешение точки тесты переживало — проверено мутацией. Точка при этом
+	// значима: InstanceFromPath срезает один суффикс ".sock", и идентификатор с
+	// точкой разъезжается с тем, что менеджер собрал.
+	cases := []string{"", "с пробелом", "точка.точка", "a.b", "a/b", strings.Repeat("a", 33)}
 	for _, id := range cases {
 		if _, err := SocketPath("/tmp/awgm", "wt-client", "client", id); err == nil {
 			t.Fatalf("идентификатор %q принят", id)

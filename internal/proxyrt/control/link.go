@@ -163,7 +163,11 @@ func (l *Link) State(ctx context.Context) (awgmproto.State, error) {
 	st, err := l.callState(ctx, c)
 	if errors.Is(err, context.DeadlineExceeded) {
 		st, err = l.callState(ctx, c)
-		if errors.Is(err, context.DeadlineExceeded) {
+		// ctx.Err() == nil — срок вышел НАШ (CallTimeout), а не вызывающего.
+		// Без этой оговорки истёкший ctx наблюдения неотличим от двойного
+		// таймаута, и drop снимает с поста исправное соединение: связь
+		// пересоздавалась бы на каждом нетерпеливом прогоне.
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			// Второй таймаут подряд — соединение мёртвое (§5.1). Без этого
 			// зависший процесс с открытым сокетом навсегда оставался бы
 			// «подключённым»: cur жив, переподключаться некуда, died не
@@ -237,7 +241,7 @@ func (l *Link) connect(ctx context.Context) (*Client, error) {
 
 	deadline := time.Now().Add(l.opts.ConnectDeadline)
 	for {
-		c, err := l.opts.Dial(ctx, l.opts.Path)
+		c, err := l.dial(ctx)
 		if err == nil {
 			return l.adopt(c)
 		}
@@ -246,11 +250,15 @@ func (l *Link) connect(ctx context.Context) (*Client, error) {
 		}
 		// «Ещё не создал» против «умер»: мёртвый pid — сразу мёртв, 20 секунд
 		// не ждать.
+		//
+		// Причина последней неудачи едет в тексте отказа: без неё «процесс не
+		// открыл управляющий сокет» врал бы про процесс, который сокет открыл,
+		// соединение принял и замолчал.
 		if pid := l.knownPID(); pid > 0 && !l.alive(pid) {
-			return nil, ErrNoSocket
+			return nil, fmt.Errorf("%w: pid %d мёртв (%v)", ErrNoSocket, pid, err)
 		}
 		if time.Now().After(deadline) {
-			return nil, ErrNoSocket
+			return nil, fmt.Errorf("%w: %v", ErrNoSocket, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -258,6 +266,20 @@ func (l *Link) connect(ctx context.Context) (*Client, error) {
 		case <-time.After(l.opts.RetryEvery):
 		}
 	}
+}
+
+// dial поднимает соединение под СВОИМ сроком.
+//
+// Срок обязан стоять всегда, а не только когда вызывающий передал ctx с
+// дедлайном: Dial ждёт hello чтением из сокета, и процесс, который соединение
+// принял и замолчал, подвесил бы наблюдение навсегда. Это худший вид отказа для
+// движка — воркер инстанса встаёт целиком, и симптома «ошибка» нет, есть
+// тишина, неотличимая от долгой работы: ни stuck, ни StopAwaiting её не видят.
+// Гарантию даёт связь, а не её пользователь.
+func (l *Link) dial(ctx context.Context) (*Client, error) {
+	dctx, cancel := context.WithTimeout(ctx, l.opts.CallTimeout)
+	defer cancel()
+	return l.opts.Dial(dctx, l.opts.Path)
 }
 
 // checkHello сверяет представление процесса с ожидаемым.
