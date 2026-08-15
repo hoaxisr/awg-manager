@@ -1,6 +1,12 @@
 package awgmproto
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"os"
+	"testing"
+)
 
 func TestConfigHashNormalizesDashes(t *testing.T) {
 	// Процесс берёт имена из пакета flag (без дефисов), менеджер — из своего
@@ -68,6 +74,66 @@ func TestConfigHashDashValueNeedsEqualsForm(t *testing.T) {
 	spaced := ConfigHash([]string{"-offset", "-1"})
 	if withEquals == spaced {
 		t.Fatal("пробельная форма со значением-дефисом разобралась как пара — так не бывает")
+	}
+}
+
+func TestConfigHashSeparatesNameFromValue(t *testing.T) {
+	// Разделитель \x00 после имени И после значения. Без него разные наборы
+	// склеиваются в одну строку и дают один отпечаток — дефект тихий: не
+	// вечный перезапуск (код на обеих сторонах один), а ПРОПУЩЕННОЕ изменение
+	// конфигурации, то есть перезапуск не случится там, где должен.
+	cases := []struct {
+		name string
+		a, b []string
+	}{
+		{
+			// Без разделителя после имени обе пары дают "abc".
+			name: "разделитель после имени",
+			a:    []string{"-ab", "c"},
+			b:    []string{"-a", "bc"},
+		},
+		{
+			// Без разделителя после значения обе пары дают "a\x00bcd\x00e".
+			name: "разделитель после значения",
+			a:    []string{"-a", "b", "-cd", "e"},
+			b:    []string{"-a", "bc", "-d", "e"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, other := ConfigHash(tc.a), ConfigHash(tc.b); got == other {
+				t.Fatalf("разные наборы дали один отпечаток %s — пары склеены без разделителя", got)
+			}
+		})
+	}
+}
+
+func TestBinarySHA256MatchesExecutable(t *testing.T) {
+	// Страж от вырождения: без него подмена тела на возврат пустой строки
+	// переживает весь набор, а поле binary_sha256 молча становится
+	// «неизвестно» у всех четырёх ролей сразу.
+	got, err := BinarySHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		t.Fatal(err)
+	}
+	want := hex.EncodeToString(h.Sum(nil))
+
+	if got != want {
+		t.Fatalf("сумма не совпала с суммой самого бинаря:\n%s\n%s", got, want)
 	}
 }
 
