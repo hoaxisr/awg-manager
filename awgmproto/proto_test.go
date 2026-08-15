@@ -166,6 +166,34 @@ func TestEncodeLineCapIsExact(t *testing.T) {
 	}
 }
 
+func TestDecodeLineCapIsExact(t *testing.T) {
+	// Вторая половина того же инварианта, что и в TestEncodeLineCapIsExact:
+	// кадр ровно в потолок законен и обязан РАЗОБРАТЬСЯ, на байт длиннее —
+	// отвергнуться. Без проверки на точной границе `>` подменяется на `>=`
+	// незаметно, и разбор отвергал бы кадр, который наш же EncodeLine считает
+	// легальным. Кадр здесь без завершающего перевода строки: ReadFrame отдаёт
+	// DecodeLine именно такой.
+	const head = `{"v":1,"event":"error","message":"`
+	const tail = `"}`
+
+	exact := head + strings.Repeat("a", maxLine-len(head)-len(tail)) + tail
+	if len(exact) != maxLine {
+		t.Fatalf("набивка посчитана неверно: кадр %d байт, ожидали %d", len(exact), maxLine)
+	}
+	kind, _, err := DecodeLine([]byte(exact))
+	if err != nil {
+		t.Fatalf("кадр ровно в потолок отвергнут при разборе: %v", err)
+	}
+	if kind != KindEvent {
+		t.Fatalf("вид %v, ожидали %v", kind, KindEvent)
+	}
+
+	over := head + strings.Repeat("a", maxLine-len(head)-len(tail)+1) + tail
+	if _, _, err := DecodeLine([]byte(over)); err == nil {
+		t.Fatal("кадр на байт длиннее потолка разобран молча")
+	}
+}
+
 func TestDecodeLineRejectsOversize(t *testing.T) {
 	huge := `{"v":1,"event":"error","message":"` + strings.Repeat("a", 70*1024) + `"}`
 	if _, _, err := DecodeLine([]byte(huge)); err == nil {
