@@ -49,9 +49,120 @@ func TestDecodeLineDistinguishesKinds(t *testing.T) {
 }
 
 func TestDecodeLineRejectsWrongMajor(t *testing.T) {
-	// Несовпадение мажора — отказ, а не попытка разобрать как есть.
-	if _, _, err := DecodeLine([]byte(`{"v":2,"id":1,"cmd":"state"}`)); err == nil {
-		t.Fatal("ожидали отказ по версии протокола")
+	// Несовпадение мажора — отказ, а не попытка разобрать как есть. Проверяются
+	// обе стороны от текущей версии и её отсутствие: гейт, написанный как
+	// `probe.V > Version`, отвергал бы только версию сверху, а кадр вообще без
+	// поля `v` принимал бы за первую — тогда как Global Constraints требуют
+	// поле `v` в КАЖДОМ сообщении, а несовпадение мажора считают отказом.
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"версия выше нашей", `{"v":2,"id":1,"cmd":"state"}`},
+		{"версия ниже нашей", `{"v":0,"id":1,"cmd":"state"}`},
+		{"поля v нет вовсе", `{"id":1,"cmd":"state"}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := DecodeLine([]byte(c.in)); err == nil {
+				t.Fatal("ожидали отказ по версии протокола")
+			}
+		})
+	}
+}
+
+func TestDecodeLineKeepsResponseFields(t *testing.T) {
+	// Вида ответа мало: решение менеджер принимает по code и error (§5.1), а
+	// шаг реконсиляции связывает с командой по id. Кадр здесь ЛИТЕРАЛЬНЫЙ, а не
+	// собранный EncodeLine: round-trip переживает переименование тега, потому
+	// что обе стороны меняются вместе, а провод — нет.
+	kind, msg, err := DecodeLine([]byte(
+		`{"v":1,"id":7,"ok":false,"code":"busy","error":"дескриптор уже прикреплён"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != KindResponse {
+		t.Fatalf("вид %v, ожидали %v", kind, KindResponse)
+	}
+	resp, ok := msg.(Response)
+	if !ok {
+		t.Fatalf("разобрано в %T, ожидали Response", msg)
+	}
+	if resp.ID != 7 {
+		t.Fatalf("id %d, ожидали 7 — ответ не свяжется со своей командой", resp.ID)
+	}
+	if resp.OK {
+		t.Fatal("отказ разобран как успех")
+	}
+	if resp.Code != CodeBusy {
+		t.Fatalf("код %q, ожидали %q — менеджер потерял причину отказа", resp.Code, CodeBusy)
+	}
+	if resp.Error != "дескриптор уже прикреплён" {
+		t.Fatalf("пояснение %q — в журнал уедет не то", resp.Error)
+	}
+}
+
+func TestDecodeLineKeepsStateFields(t *testing.T) {
+	// Тот же довод, что и в TestDecodeLineKeepsResponseFields, но для вложенного
+	// снимка: он приезжает с провода, и его теги обязаны совпадать с §5.2
+	// побуквенно.
+	_, msg, err := DecodeLine([]byte(`{"v":1,"id":3,"ok":true,"state":{"role":"server",` +
+		`"instance":"default","pid":42,"config_hash":"aa","binary_sha256":"bb",` +
+		`"uptime_s":11,"last_error":"","listen":{"dtls":56000,"direct":0,"raw":0},` +
+		`"clients":0}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, ok := msg.(Response)
+	if !ok {
+		t.Fatalf("разобрано в %T, ожидали Response", msg)
+	}
+	if resp.State == nil {
+		t.Fatal("снимок состояния потерян при разборе")
+	}
+	st := resp.State
+	if st.Role != "server" || st.Instance != "default" || st.PID != 42 {
+		t.Fatalf("опознание процесса разобрано неверно: %+v", st)
+	}
+	if st.ConfigHash != "aa" || st.BinarySHA256 != "bb" {
+		t.Fatalf("отпечатки разобраны неверно: %+v", st)
+	}
+	if st.UptimeS != 11 {
+		t.Fatalf("uptime_s %d, ожидали 11", st.UptimeS)
+	}
+	if st.Listen == nil || st.Listen.DTLS != 56000 || st.Listen.Direct != 0 || st.Listen.Raw != 0 {
+		t.Fatalf("listen разобран неверно: %+v", st.Listen)
+	}
+	if st.Clients == nil {
+		t.Fatal("ноль клиентов разобран как «неизвестно»")
+	}
+	if *st.Clients != 0 {
+		t.Fatalf("clients %d, ожидали 0", *st.Clients)
+	}
+}
+
+func TestEncodeLineCapIsExact(t *testing.T) {
+	// Потолок обязан проверяться, и проверяться строго по «больше»: кадр ровно
+	// в потолок законен и обязан уехать, кадр на байт длиннее — нет. Проверка
+	// на точной границе ловит и снятый потолок, и подмену `>` на `>=`.
+	probe, err := EncodeLine(Event{V: Version, Event: EventError, Message: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overhead := len(probe) - 1 // всё, кроме единственного байта сообщения
+
+	line, err := EncodeLine(Event{V: Version, Event: EventError,
+		Message: strings.Repeat("a", maxLine-overhead)})
+	if err != nil {
+		t.Fatalf("кадр ровно в потолок отвергнут: %v", err)
+	}
+	if len(line) != maxLine {
+		t.Fatalf("длина кадра %d, ожидали ровно %d", len(line), maxLine)
+	}
+
+	if _, err := EncodeLine(Event{V: Version, Event: EventError,
+		Message: strings.Repeat("a", maxLine-overhead+1)}); err == nil {
+		t.Fatal("кадр на байт длиннее потолка закодирован молча")
 	}
 }
 
