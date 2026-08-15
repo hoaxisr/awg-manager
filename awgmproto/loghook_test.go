@@ -126,10 +126,68 @@ func TestLogWritesFromZeroAfterCap(t *testing.T) {
 	}
 }
 
+func TestLogKeepsWritesAfterCap(t *testing.T) {
+	// Счётчик обязан обнуляться вместе с файлом. Оставшись на потолке, он
+	// заставит усекать файл ПЕРЕД КАЖДОЙ записью: в журнале всегда ровно одна
+	// последняя строка. Симптома нет — файл есть, пишется, туннель жив, — а
+	// trafficStalled (десять последних выборок), детект капчи и разбор
+	// рукопожатий читают однострочный файл. Проверка ОДНОЙ записи после
+	// усечения (TestLogWritesFromZeroAfterCap) этого не видит.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	if _, err := lg.Write(make([]byte, LogCapBytes)); err != nil {
+		t.Fatal(err)
+	}
+	want := ""
+	for _, line := range []string{"первая\n", "вторая\n", "третья\n"} {
+		if _, err := lg.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+		want += line
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("после усечения журнал = %q, ожидались все строки %q", data, want)
+	}
+}
+
+func TestOpenLogIsPrivate(t *testing.T) {
+	// Журнал лежит в общем /tmp, и в него попадает всё, что печатает процесс.
+	// Режим задан кодом; закрепляем, чтобы расширение доступа не проехало
+	// молча вместе с правкой флагов открытия.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("журнал создан с режимом %04o, ожидалось 0600", perm)
+	}
+}
+
 func TestLogWriteIsSerialized(t *testing.T) {
 	// Пишущих в журнал несколько: вывод самого процесса и обвязка. Без замка
-	// учёт размера теряет обновления, потолок уползает вверх, а гонку видно
-	// только под -race — то есть в обычном прогоне дефект молчит.
+	// учёт размера теряет обновления и потолок уползает вверх.
+	//
+	// Гонять ТОЛЬКО под -race (он в «Воротах плана» постоянно). Без -race тест
+	// декоративен: под мутантом со снятым замком его утверждение остаётся
+	// истинным, и мутант проходит. Вся ценность — детерминированная
+	// конкуренция для детектора, поэтому убирать -race из прогона нельзя.
 	path := filepath.Join(t.TempDir(), "a.log")
 	lg, err := OpenLog(path)
 	if err != nil {
