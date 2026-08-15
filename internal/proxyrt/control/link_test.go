@@ -3,10 +3,12 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
+
+	"golang.org/x/sys/unix"
 )
 
 // fakeProcess — дочерний процесс в тестах: настоящий слушатель протокола.
@@ -418,6 +422,173 @@ func serveRaw(t *testing.T, path string, payload []byte) {
 	}()
 }
 
+// TestLinkRejectsProtocolVersionWithoutRetries — несовпадение мажора
+// терминально (§4, §5.4).
+//
+// Отказ обязан прийти СРАЗУ и своим классом. Если он падает в общий цикл
+// ретраев, наверх уезжает «связь не установлена» после всего окна — то есть
+// «ещё не поднялся» там, где процесс говорит на другом языке и не поднимется
+// никогда, и план 3 разветвится не туда.
+func TestLinkRejectsProtocolVersionWithoutRetries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	serveRaw(t, path, []byte(
+		`{"v":2,"event":"hello","impl":"wt-client","role":"client","instance":"default"}`+"\n"))
+
+	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
+	start := time.Now()
+	_, err := l.State(context.Background())
+	if !errors.Is(err, ErrProtocolVersion) {
+		t.Fatalf("ожидали отказ по версии протокола, получили %v", err)
+	}
+	if errors.Is(err, ErrNoSocket) {
+		t.Fatal("несовпадение мажора уехало как временная неготовность связи")
+	}
+	// Окно ретраев у теста 300 мс: без терминальной ветки отказ пришёл бы
+	// позже него, а не сразу.
+	if el := time.Since(start); el > 100*time.Millisecond {
+		t.Fatalf("отказ занял %v: несовпадение мажора ретраилось", el)
+	}
+}
+
+// TestLinkTunCommandsTravel — путь передачи дескриптора: единственное место
+// протокола с SCM_RIGHTS.
+//
+// Проверяется не согласие клиента с самим собой, а то, что дескриптор доехал до
+// ЧУЖОГО конца: процессу отвечает библиотека, и её отказ по TUNGETIFF возможен
+// только если fd действительно пришёл. Отказ «attach-tun без дескриптора»
+// означал бы обратное — они различимы по тексту, и в этом весь смысл проверки.
+func TestLinkTunCommandsTravel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	startProcess(t, path, awgmproto.State{Role: "client", Instance: "default", PID: os.Getpid()})
+	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	err = l.AttachTun(context.Background(), "opkgtun18", r)
+	if err == nil {
+		t.Fatal("не-tun дескриптор принят")
+	}
+	var pe *awgmproto.Error
+	if !errors.As(err, &pe) || pe.Code != awgmproto.CodeBadRequest {
+		t.Fatalf("ожидали bad-request, получили %v", err)
+	}
+	if !strings.Contains(err.Error(), "TUNGETIFF") {
+		t.Fatalf("дескриптор до процесса не доехал (отказ не про ioctl): %v", err)
+	}
+
+	// detach у fakeProcess неприменим — код роли обязан доехать как есть.
+	err = l.DetachTun(context.Background())
+	if !errors.As(err, &pe) || pe.Code != awgmproto.CodeNotSupported {
+		t.Fatalf("ожидали not-supported, получили %v", err)
+	}
+}
+
+// tunNSChildEnv — маркер дочернего прогона: тот же тестовый бинарь в своих
+// user+net namespace, где TUNSETIFF разрешён без прав на машине. Приём и
+// помощники ниже — те же, что в awgmproto/fd_test.go; копия нужна потому, что
+// это другой модуль и помощники в нём неэкспортируемые.
+const tunNSChildEnv = "AWGM_CONTROL_TEST_TUN_NS_CHILD"
+
+// TestLinkAttachTunHandsFDOver — положительный путь: настоящий tun доезжает до
+// процесса, и тот докладывает о нём в state.
+//
+// Без настоящего дескриптора этот путь не исполняется ничем: библиотека
+// проверяет fd ioctl'ом до вызова обвязки, поэтому любой суррогат упирается в
+// отказ, и слот обвязки остаётся непройденным.
+func TestLinkAttachTunHandsFDOver(t *testing.T) {
+	if os.Getenv(tunNSChildEnv) == "" && !tunCreatable() {
+		rerunInUserNS(t)
+		return
+	}
+	fd, err := openTestTun("awgmctl0", unix.IFF_TUN|unix.IFF_NO_PI)
+	if err != nil {
+		t.Skipf("tun создать не удалось (%v): положительный путь не проверен", err)
+	}
+	f := os.NewFile(uintptr(fd), "awgmctl0")
+	defer f.Close()
+
+	path := filepath.Join(t.TempDir(), "c.sock")
+	startProcess(t, path, awgmproto.State{Role: "client", Instance: "default", PID: os.Getpid()})
+	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
+
+	if err := l.AttachTun(context.Background(), "awgmctl0", f); err != nil {
+		t.Fatalf("законный дескриптор не доехал: %v", err)
+	}
+	st, err := l.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Tun == nil || !st.Tun.Attached || st.Tun.Iface != "awgmctl0" {
+		t.Fatalf("процесс дескриптор не принял: %+v", st.Tun)
+	}
+
+	// Имя из сообщения сверяется с именем у ядра, а не берётся на веру.
+	if err := l.AttachTun(context.Background(), "awgmctl1", f); err == nil {
+		t.Fatal("дескриптор чужого интерфейса принят")
+	}
+}
+
+// openTestTun создаёт tun с заданными флагами.
+func openTestTun(name string, flags uint16) (int, error) {
+	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR, 0)
+	if err != nil {
+		return -1, err
+	}
+	ifr, err := unix.NewIfreq(name)
+	if err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	ifr.SetUint16(flags)
+	if err := unix.IoctlIfreq(fd, unix.TUNSETIFF, ifr); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	return fd, nil
+}
+
+func tunCreatable() bool {
+	fd, err := openTestTun("awgmctlprobe0", unix.IFF_TUN|unix.IFF_NO_PI)
+	if err != nil {
+		return false
+	}
+	_ = unix.Close(fd)
+	return true
+}
+
+// rerunInUserNS перезапускает этот же тест в своих user+net namespace: там мы
+// root, TUNSETIFF разрешён, а интерфейс умирает вместе с namespace и машину не
+// пачкает. Нет прав или самого unshare — тест честно пропускается, а не
+// притворяется пройденным.
+func rerunInUserNS(t *testing.T) {
+	t.Helper()
+	unshare, err := exec.LookPath("unshare")
+	if err != nil {
+		t.Skip("TUNSETIFF запрещён и unshare не найден: передача дескриптора не проверена")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(unshare, "-Urn", self, "-test.run=^"+t.Name()+"$", "-test.v")
+	cmd.Env = append(os.Environ(), tunNSChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case !bytes.Contains(out, []byte("=== RUN")):
+		t.Skipf("подпроцесс в user namespace не стартовал (%v): %s", err, out)
+	case bytes.Contains(out, []byte("--- SKIP")):
+		t.Skipf("подпроцесс пропустил проверку: %s", out)
+	case err != nil:
+		t.Fatalf("прогон в user namespace провалился (%v):\n%s", err, out)
+	}
+	t.Logf("проверено в user namespace:\n%s", out)
+}
+
 // TestDialRejectsFirstFrameNotHello — соединение, где первым кадром пришёл не
 // hello, менеджер обязан отвергнуть (§5.4). Библиотека шлёт hello первым по
 // конструкции, но полагаться на чужую конструкцию здесь нельзя: сокет мог
@@ -518,13 +689,21 @@ func startMuteProcess(t *testing.T, path string) *muteProcess {
 
 func TestSocketPathRejectsBadInstance(t *testing.T) {
 	// "a.b" отдельным случаем: "точка.точка" отбраковывается по кириллице, и
-	// разрешение точки тесты переживало — проверено мутацией. Точка при этом
-	// значима: InstanceFromPath срезает один суффикс ".sock", и идентификатор с
-	// точкой разъезжается с тем, что менеджер собрал.
+	// разрешение точки тесты переживало — проверено мутацией. Сам запрет точки
+	// нужен потому, что §3 задаёт закрытый набор [A-Za-z0-9_-], и держится он
+	// не на разборе имени: round-trip через InstanceFromPath точку переживает
+	// (проверено), а вот набор — единственное, что не даёт идентификатору
+	// притащить в имя файла что попало.
 	cases := []string{"", "с пробелом", "точка.точка", "a.b", "a/b", strings.Repeat("a", 33)}
 	for _, id := range cases {
 		if _, err := SocketPath("/tmp/awgm", "wt-client", "client", id); err == nil {
 			t.Fatalf("идентификатор %q принят", id)
+		}
+		// Журнал живёт по тому же правилу: имя собирает тот же код, и щель в
+		// нём означала бы, что негодный идентификатор всё равно доедет до имени
+		// файла — просто другого.
+		if _, err := LogPath("/tmp/awgm", "wt-client", "client", id); err == nil {
+			t.Fatalf("LogPath принял идентификатор %q", id)
 		}
 	}
 	got, err := SocketPath("/tmp/awgm", "wt-client", "client", "default")
@@ -533,6 +712,18 @@ func TestSocketPathRejectsBadInstance(t *testing.T) {
 	}
 	if got != "/tmp/awgm/wt-client-client-default.sock" {
 		t.Fatalf("путь сокета: %s", got)
+	}
+	got, err = LogPath("/tmp/awgm", "wt-client", "client", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/tmp/awgm/wt-client-client-default.log" {
+		t.Fatalf("путь журнала: %s", got)
+	}
+	// Предел sun_path — про сокет и только про него. Журналу длина безразлична,
+	// и распространить проверку на него значило бы запретить законный путь.
+	if _, err := LogPath("/tmp/"+strings.Repeat("d", 100), "wt-client", "client", "default"); err != nil {
+		t.Fatalf("длинный путь журнала отвергнут: %v", err)
 	}
 }
 

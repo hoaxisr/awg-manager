@@ -8,6 +8,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -27,6 +28,15 @@ const eventQueue = 16
 
 // ErrClosed — соединение больше не живо.
 var ErrClosed = errors.New("управляющее соединение закрыто")
+
+// ErrProtocolVersion — процесс говорит на другой мажорной версии протокола.
+//
+// Отдельный класс, а не «кадр не разобран»: по §4 это отказ без деградации и
+// БЕЗ ретраев. Смешавшись с «сокета ещё нет», он давал бы окно бессмысленных
+// переподключений и, главное, приезжал бы наверх как «процесс не открыл
+// управляющий сокет» — то есть как временная неготовность там, где инстанс не
+// поднимется никогда.
+var ErrProtocolVersion = errors.New("несовместимая мажорная версия протокола")
 
 // Client — одно соединение к управляющему сокету процесса.
 type Client struct {
@@ -77,6 +87,14 @@ func Dial(ctx context.Context, path string) (*Client, error) {
 		return nil, fmt.Errorf("%s: hello не прочитан: %w", path, err)
 	}
 	_ = uc.SetReadDeadline(time.Time{})
+	// Версию смотрим ДО общего разбора: DecodeLine возвращает несовпадение
+	// мажора обычной ошибкой, неотличимой от мусора в кадре, а различать их
+	// обязан менеджер — реакция разная (§4).
+	if v, ok := frameVersion(line); ok && v != awgmproto.Version {
+		_ = uc.Close()
+		return nil, fmt.Errorf("%w: процесс говорит на версии %d, менеджер на %d",
+			ErrProtocolVersion, v, awgmproto.Version)
+	}
 	kind, msg, err := awgmproto.DecodeLine(line)
 	if err != nil {
 		_ = uc.Close()
@@ -249,6 +267,20 @@ func (c *Client) fail(err error) {
 		c.err = err
 	}
 	c.mu.Unlock()
+}
+
+// frameVersion достаёт из кадра одно поле v, не разбирая остального.
+//
+// Указатель, а не int: кадр без поля v — это мусор, а не «версия ноль», и
+// отвечать за него должен общий разбор.
+func frameVersion(line []byte) (int, bool) {
+	var probe struct {
+		V *int `json:"v"`
+	}
+	if err := json.Unmarshal(line, &probe); err != nil || probe.V == nil {
+		return 0, false
+	}
+	return *probe.V, true
 }
 
 func closeFD(fd int) {
