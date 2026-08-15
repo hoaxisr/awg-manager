@@ -3,10 +3,12 @@
 package awgmproto
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -901,4 +903,192 @@ func TestListenRefusesDirectoryAtPath(t *testing.T) {
 	if !fi.IsDir() {
 		t.Fatalf("по пути больше не каталог: %s", fi.Mode().Type())
 	}
+}
+
+// Положительный путь attach-tun и busy из §5.3.
+//
+// Настоящий tun-дескриптор в тестах получить МОЖНО: `unshare -Urn` даёт
+// обычному пользователю CAP_NET_ADMIN в собственном сетевом namespace, и
+// TUNSETIFF там проходит (замерено: флаги 0x1001, IFF_TUN|IFF_NO_PI). Поэтому
+// оба теста ниже перезапускают сами себя в новом namespace и аккуратно
+// пропускаются там, где его не поднять.
+
+const srvTunNSEnv = "AWGM_SERVER_TEST_NETNS"
+
+// srvReexecInNetNS перезапускает текущий тест в новом user+net namespace.
+// Возвращает true родителю: тело теста бежит только в потомке.
+func srvReexecInNetNS(t *testing.T) bool {
+	t.Helper()
+	if os.Getenv(srvTunNSEnv) == "1" {
+		return false
+	}
+	unshareBin, err := exec.LookPath("unshare")
+	if err != nil {
+		t.Skip("нет unshare(1): настоящий tun в этой среде не создать")
+	}
+	cmd := exec.Command(unshareBin, "-Urn", os.Args[0],
+		"-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(os.Environ(), srvTunNSEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case bytes.Contains(out, []byte("--- SKIP")):
+		t.Skipf("в новом namespace тест пропущен:\n%s", out)
+	case err != nil && !bytes.Contains(out, []byte("--- FAIL")):
+		// Namespace не поднялся вовсе: sysctl запрещает, ядро без userns.
+		t.Skipf("новый namespace не поднялся, проверять негде: %v\n%s", err, out)
+	case err != nil:
+		t.Fatalf("тест в user+net namespace не прошёл:\n%s", out)
+	case !bytes.Contains(out, []byte("--- PASS: "+t.Name())):
+		// Без этой проверки родитель зеленел бы и от «no tests to run»:
+		// прогон в потомке молча выродился бы в ничто.
+		t.Fatalf("в потомке тест не выполнялся:\n%s", out)
+	}
+	return true
+}
+
+// srvOpenTun создаёт tun теми же флагами, какими его открывает менеджер
+// (internal/wdtt/tun_fd_linux.go, openTunFD): IFF_TUN|IFF_NO_PI, неблокирующий.
+func srvOpenTun(t *testing.T, name string) *os.File {
+	t.Helper()
+	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("/dev/net/tun не открыть: %v", err)
+	}
+	ifr, err := unix.NewIfreq(name)
+	if err != nil {
+		_ = unix.Close(fd)
+		t.Fatal(err)
+	}
+	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
+	if err := unix.IoctlIfreq(fd, unix.TUNSETIFF, ifr); err != nil {
+		_ = unix.Close(fd)
+		t.Skipf("TUNSETIFF %s: %v", name, err)
+	}
+	if err := unix.SetNonblock(fd, true); err != nil {
+		_ = unix.Close(fd)
+		t.Fatal(err)
+	}
+	return os.NewFile(uintptr(fd), name)
+}
+
+// tunHandler — обвязка, которая спрашивает ядро о доставшемся ей дескрипторе:
+// это единственный способ убедиться, что до неё доехал именно названный tun, а
+// не какой-нибудь ещё номер дескриптора.
+type tunHandler struct {
+	mu          sync.Mutex
+	attaches    int
+	iface       string
+	kernelIface string
+	kernelErr   error
+}
+
+func (h *tunHandler) State() State { return State{Role: "client"} }
+
+func (h *tunHandler) AttachTun(iface string, f *os.File) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.attaches++
+	h.iface = iface
+	ifr, err := unix.NewIfreq("")
+	if err == nil {
+		if err = unix.IoctlIfreq(int(f.Fd()), unix.TUNGETIFF, ifr); err == nil {
+			h.kernelIface = ifr.Name()
+		}
+	}
+	h.kernelErr = err
+	_ = f.Close()
+	return nil
+}
+
+func (h *tunHandler) DetachTun() error { return nil }
+
+// TestAttachTunAcceptsRealTun — положительный путь: настоящий tun доезжает до
+// обвязки живым и под своим именем, ответ ok.
+func TestAttachTunAcceptsRealTun(t *testing.T) {
+	if srvReexecInNetNS(t) {
+		return
+	}
+	const iface = "awgmsrv0"
+	h := &tunHandler{}
+	_, path := startServer(t, h)
+	c := dialTest(t, path)
+	c.hello()
+
+	tun := srvOpenTun(t, iface)
+	c.send(Request{ID: 1, Cmd: CmdAttachTun, Iface: iface}, int(tun.Fd()))
+	_ = tun.Close() // отдали менеджерской стороной, свою копию закрыли
+
+	_, m := c.mustNext()
+	if resp := m.(Response); !resp.OK {
+		t.Fatalf("настоящий tun отвергнут: %+v", resp)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.attaches != 1 {
+		t.Fatalf("обвязку позвали %d раз", h.attaches)
+	}
+	if h.iface != iface {
+		t.Fatalf("обвязке назвали интерфейс %q вместо %q", h.iface, iface)
+	}
+	if h.kernelErr != nil {
+		t.Fatalf("обвязке достался нерабочий дескриптор: %v", h.kernelErr)
+	}
+	if h.kernelIface != iface {
+		t.Fatalf("ядро видит на дескрипторе %q, а менеджер называл %q", h.kernelIface, iface)
+	}
+}
+
+// TestAttachTunBusyClosesFD — §5.3: при отказе обвязки (busy — «дескриптор уже
+// прикреплён») слушатель обязан закрыть ПОЛУЧЕННЫЙ дескриптор. Утечку видно по
+// интерфейсу: пока жива хоть одна копия дескриптора, tun не исчезает.
+func TestAttachTunBusyClosesFD(t *testing.T) {
+	if srvReexecInNetNS(t) {
+		return
+	}
+	const iface = "awgmsrv1"
+	h := &fakeHandler{attachErr: Errf(CodeBusy, "дескриптор уже прикреплён")}
+	_, path := startServer(t, h)
+	c := dialTest(t, path)
+	c.hello()
+
+	tun := srvOpenTun(t, iface)
+	if _, err := net.InterfaceByName(iface); err != nil {
+		t.Fatalf("tun не поднялся: %v", err)
+	}
+	if n := openTunFDs(t); n != 1 {
+		t.Fatalf("до передачи открытых копий дескриптора %d, ожидали 1", n)
+	}
+	c.send(Request{ID: 1, Cmd: CmdAttachTun, Iface: iface}, int(tun.Fd()))
+	_ = tun.Close()
+
+	_, m := c.mustNext()
+	resp := m.(Response)
+	if resp.OK || resp.Code != CodeBusy {
+		t.Fatalf("ожидали busy, получили %+v", resp)
+	}
+	// Своя копия закрыта, обвязка при ошибке дескриптор не трогает — значит
+	// открытых копий не осталось ни одной. Считаем их прямо, а не по тому,
+	// исчез ли интерфейс: у os.File есть финализатор, и утёкший дескриптор
+	// рано или поздно закрыл бы сборщик мусора, замаскировав утечку.
+	if n := openTunFDs(t); n != 0 {
+		t.Fatalf("отвергнутый дескриптор не закрыт слушателем: открытых копий %d", n)
+	}
+}
+
+// openTunFDs считает открытые процессом дескрипторы /dev/net/tun. Слушатель
+// живёт в том же процессе, что и тест, поэтому утечка видна напрямую.
+func openTunFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		link, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
+		if err == nil && link == "/dev/net/tun" {
+			n++
+		}
+	}
+	return n
 }
