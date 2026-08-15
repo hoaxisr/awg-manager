@@ -72,6 +72,11 @@ func TestFlagValueReadsBothForms(t *testing.T) {
 	if got := FlagValue(args, "нет-такого"); got != "" {
 		t.Fatalf("отсутствующий флаг: %q", got)
 	}
+	// Следующий аргумент — сам флаг, а не значение: иначе переключатель на
+	// последнем месте «съел» бы соседа, и обвязка прочла бы имя флага как порт.
+	if got := FlagValue([]string{"-no-nat", "-listen", ":56002"}, "no-nat"); got != "" {
+		t.Fatalf("соседний флаг принят за значение: %q", got)
+	}
 }
 
 func TestInstanceFromPath(t *testing.T) {

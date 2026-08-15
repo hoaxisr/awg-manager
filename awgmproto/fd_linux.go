@@ -146,6 +146,12 @@ func checkTunIfreq(gotIface string, flags uint16, wantIface string) error {
 		// каждый пакет на четыре байта — тот же тихий блэкхол.
 		return fmt.Errorf("ожидали tun %s без packet info, в флагах нет IFF_NO_PI (0x%04x)", wantIface, flags)
 	}
+	if flags&unix.IFF_VNET_HDR != 0 {
+		// Контракт §5.3 требует дескриптор БЕЗ virtio-заголовка. Отказ тот же,
+		// что у packet info, и такой же тихий: перед каждым пакетом едет
+		// заголовок virtio_net_hdr, процесс читает его как начало IP-пакета.
+		return fmt.Errorf("ожидали tun %s без virtio-заголовка, в флагах есть IFF_VNET_HDR (0x%04x)", wantIface, flags)
+	}
 	if gotIface != wantIface {
 		return fmt.Errorf("ожидали tun %s, получили %s", wantIface, gotIface)
 	}

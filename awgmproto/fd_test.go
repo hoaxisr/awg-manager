@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ func TestCheckTunIfreq(t *testing.T) {
 		{"tap вместо tun", want, unix.IFF_TAP | unix.IFF_NO_PI, "tap"},
 		{"без IFF_NO_PI", want, unix.IFF_TUN, "IFF_NO_PI"},
 		{"без IFF_TUN", want, unix.IFF_NO_PI, "IFF_TUN"},
+		{"с IFF_VNET_HDR", want, unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_VNET_HDR, "IFF_VNET_HDR"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -49,6 +51,103 @@ func TestCheckTunIfreq(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tunNSChildEnv — маркер дочернего прогона: тот же тестовый бинарь, запущенный
+// в своих user+net namespace, где TUNSETIFF разрешён без прав на машине.
+const tunNSChildEnv = "AWGM_TEST_TUN_NS_CHILD"
+
+func TestVerifyTunFDOnRealTun(t *testing.T) {
+	// Положительный путь VerifyTunFD (сам ioctl, а не разбор ответа) иначе не
+	// исполняется ничем: checkTunIfreq зовётся напрямую, а единственный тест с
+	// настоящим дескриптором — отрицательный. Здесь же ловится IFF_VNET_HDR:
+	// ядро отдаёт такой дескриптор охотно, а контракт §5.3 его запрещает.
+	if os.Getenv(tunNSChildEnv) == "" && !tunCreatable() {
+		rerunInUserNS(t)
+		return
+	}
+
+	fd, err := openTestTun("awgmtun0", unix.IFF_TUN|unix.IFF_NO_PI)
+	if err != nil {
+		t.Skipf("tun создать не удалось (%v): положительный путь не проверен", err)
+	}
+	defer unix.Close(fd)
+
+	if err := VerifyTunFD(fd, "awgmtun0"); err != nil {
+		t.Fatalf("законный tun отвергнут: %v", err)
+	}
+	if err := VerifyTunFD(fd, "awgmtun1"); err == nil {
+		t.Fatal("имя интерфейса взято из сообщения, а не у ядра: чужое имя принято")
+	}
+
+	vfd, err := openTestTun("awgmtun2", unix.IFF_TUN|unix.IFF_NO_PI|unix.IFF_VNET_HDR)
+	if err != nil {
+		t.Skipf("tun с IFF_VNET_HDR создать не удалось: %v", err)
+	}
+	defer unix.Close(vfd)
+	err = VerifyTunFD(vfd, "awgmtun2")
+	if err == nil {
+		t.Fatal("дескриптор с virtio-заголовком принят: перед каждым пакетом поедет virtio_net_hdr")
+	}
+	if !strings.Contains(err.Error(), "IFF_VNET_HDR") {
+		t.Fatalf("в объяснении нет IFF_VNET_HDR: %v", err)
+	}
+}
+
+// openTestTun создаёт tun с заданными флагами и возвращает его дескриптор.
+func openTestTun(name string, flags uint16) (int, error) {
+	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR, 0)
+	if err != nil {
+		return -1, err
+	}
+	ifr, err := unix.NewIfreq(name)
+	if err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	ifr.SetUint16(flags)
+	if err := unix.IoctlIfreq(fd, unix.TUNSETIFF, ifr); err != nil {
+		_ = unix.Close(fd)
+		return -1, err
+	}
+	return fd, nil
+}
+
+func tunCreatable() bool {
+	fd, err := openTestTun("awgmprobe0", unix.IFF_TUN|unix.IFF_NO_PI)
+	if err != nil {
+		return false
+	}
+	_ = unix.Close(fd)
+	return true
+}
+
+// rerunInUserNS перезапускает этот же тест в своих user+net namespace: там мы
+// root, TUNSETIFF разрешён, а созданный интерфейс умирает вместе с namespace и
+// машину не пачкает. Нет прав на namespace или самого unshare — тест честно
+// пропускается, а не притворяется пройденным.
+func rerunInUserNS(t *testing.T) {
+	t.Helper()
+	unshare, err := exec.LookPath("unshare")
+	if err != nil {
+		t.Skip("TUNSETIFF запрещён и unshare не найден: положительный путь VerifyTunFD не проверен")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(unshare, "-Urn", self, "-test.run=^"+t.Name()+"$", "-test.v")
+	cmd.Env = append(os.Environ(), tunNSChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case !bytes.Contains(out, []byte("=== RUN")):
+		t.Skipf("подпроцесс в user namespace не стартовал (%v): %s", err, out)
+	case bytes.Contains(out, []byte("--- SKIP")):
+		t.Skipf("подпроцесс пропустил проверку: %s", out)
+	case err != nil:
+		t.Fatalf("прогон в user namespace провалился (%v):\n%s", err, out)
+	}
+	t.Logf("проверено в user namespace:\n%s", out)
 }
 
 func TestReadFrameCapIsExact(t *testing.T) {
@@ -89,6 +188,43 @@ func TestReadFrameCapIsExact(t *testing.T) {
 			t.Fatalf("ошибка не про потолок: %v", err)
 		}
 	})
+}
+
+func TestReadFrameKeepsPreviousLine(t *testing.T) {
+	// Кадр отдаётся вызывающему копией. Верни ReadFrame срез внутреннего
+	// буфера — сдвиг остатка затрёт уже отданную строку прямо под руками
+	// разборщика, и увидим мы это как «битый JSON» в чужом кадре. Двух кадров
+	// в одном чтении достаточно: остаток переезжает в начало того же массива.
+	const (
+		frame1 = `{"v":1,"id":1,"cmd":"aaaaa"}`
+		frame2 = `{"v":1,"id":2,"cmd":"bbbbb"}`
+	)
+	left, right := fdTestPair(t)
+	go func() {
+		_, _ = right.Write([]byte(frame1 + "\n" + frame2 + "\n"))
+	}()
+
+	fc := NewFrameConn(left)
+	first, _, err := fc.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Сверка с ЛИТЕРАЛОМ, а не со снимком: сдвиг остатка происходит внутри той
+	// же ReadFrame, до возврата, поэтому снимок «до и после» затирания не
+	// увидел бы — он взялся бы уже с испорченной строки.
+	if string(first) != frame1 {
+		t.Fatalf("первый кадр = %q, ожидали %q: отдан срез внутреннего буфера", first, frame1)
+	}
+	second, _, err := fc.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != frame2 {
+		t.Fatalf("второй кадр = %q, ожидали %q", second, frame2)
+	}
+	if string(first) != frame1 {
+		t.Fatalf("первый кадр затёрт вторым: %q", first)
+	}
 }
 
 func TestFrameConnFDQueue(t *testing.T) {

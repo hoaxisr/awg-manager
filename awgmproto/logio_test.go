@@ -3,11 +3,15 @@
 package awgmproto
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -86,6 +90,135 @@ func TestEnforceCapKeepsFileAtCap(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnforceCapResetsCounter(t *testing.T) {
+	// EnforceCap обязан обнулить и счётчик записей. Оставшись на потолке, он
+	// заставит СЛЕДУЮЩУЮ запись через Log.Write усечь файл заново — и снесёт
+	// строки, которые к тому моменту написали в журнал наследники через
+	// унаследованный дескриптор. Симптома нет: файл есть, пишется, туннель жив.
+	path := filepath.Join(t.TempDir(), "a.log")
+	lg, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lg.Close()
+
+	raw, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+
+	if _, err := lg.Write(make([]byte, LogCapBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := lg.EnforceCap(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := raw.Write([]byte("хвост наследника\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lg.Write([]byte("наша строка\n")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "хвост наследника\nнаша строка\n" {
+		t.Fatalf("журнал = %q: после EnforceCap счётчик не обнулён, запись усекла чужие строки", data)
+	}
+}
+
+// sigpipeChildEnv — режим дочернего прогона: тот же тестовый бинарь ломает
+// себе stdout и пишет в него.
+const sigpipeChildEnv = "AWGM_TEST_SIGPIPE_CHILD"
+
+func TestIgnoreSIGPIPEKeepsProcessAlive(t *testing.T) {
+	// §2 спеки: запись в закрытый stdout не должна убивать процесс — иначе
+	// усыновляемый умрёт через секунды после смерти менеджера, ровно в том
+	// сценарии, ради которого протокол и пишется. В своём процессе это не
+	// проверить: диспозиция сигнала одна на весь тестовый бинарь, а промах
+	// убил бы сам прогон. Поэтому подпроцесс.
+	switch os.Getenv(sigpipeChildEnv) {
+	case "ignore":
+		sigpipeChild(true)
+	case "plain":
+		sigpipeChild(false)
+	}
+
+	// Контроль: без IgnoreSIGPIPE процесс обязан умереть от сигнала. Без этой
+	// половины положительный случай ничего не доказывает — вдруг SIGPIPE и так
+	// никого не убивает на этой машине.
+	ps := runSigpipeChild(t, "plain")
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	if !ok {
+		t.Fatalf("непонятный статус подпроцесса: %v", ps)
+	}
+	if !ws.Signaled() || ws.Signal() != syscall.SIGPIPE {
+		t.Fatalf("без IgnoreSIGPIPE процесс обязан умереть от SIGPIPE, а он завершился как %v", ps)
+	}
+
+	ps = runSigpipeChild(t, "ignore")
+	if code := ps.ExitCode(); code != sigpipeChildEPIPE {
+		t.Fatalf("с IgnoreSIGPIPE ожидали выход %d (запись вернула EPIPE), получили %v", sigpipeChildEPIPE, ps)
+	}
+}
+
+// Коды выхода подпроцесса.
+const (
+	sigpipeChildEPIPE = 7 // запись вернула EPIPE — процесс жив
+	sigpipeChildWrote = 8 // запись прошла или дала другую ошибку
+	sigpipeChildSetup = 9 // подготовить сломанный stdout не удалось
+)
+
+func sigpipeChild(ignore bool) {
+	if ignore {
+		IgnoreSIGPIPE()
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		os.Exit(sigpipeChildSetup)
+	}
+	if err := unix.Dup3(int(w.Fd()), 1, 0); err != nil {
+		os.Exit(sigpipeChildSetup)
+	}
+	_ = w.Close()
+	// Читающий конец закрыт — stdout сломан ровно так же, как у усыновлённого
+	// процесса после смерти менеджера.
+	_ = r.Close()
+	// Писать обязательно через os.Stdout: убивает процесс не ядро, а проверка
+	// epipecheck в пакете os, и она смотрит на объект файла, а не на номер
+	// дескриптора. Форки печатают через fmt.Printf, то есть ровно сюда.
+	if _, err := os.Stdout.Write([]byte("проверка\n")); errors.Is(err, syscall.EPIPE) {
+		os.Exit(sigpipeChildEPIPE)
+	}
+	os.Exit(sigpipeChildWrote)
+}
+
+func runSigpipeChild(t *testing.T, mode string) *os.ProcessState {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "-test.run=^TestIgnoreSIGPIPEKeepsProcessAlive$")
+	cmd.Env = append(os.Environ(), sigpipeChildEnv+"="+mode)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	_ = cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatalf("подпроцесс не запустился: %s", errBuf.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code == sigpipeChildSetup {
+		t.Fatalf("подпроцесс не смог сломать себе stdout: %s", errBuf.String())
+	}
+	return cmd.ProcessState
 }
 
 func TestWatchCapEnforcesAndStops(t *testing.T) {
