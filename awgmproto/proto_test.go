@@ -28,6 +28,11 @@ func TestDecodeLineDistinguishesKinds(t *testing.T) {
 	}{
 		{"запрос — есть cmd", `{"v":1,"id":3,"cmd":"state"}`, KindRequest},
 		{"ответ — есть ok", `{"v":1,"id":3,"ok":true}`, KindResponse},
+		// Отказной кадр §5.1/§5.3 — самая частая форма ответа, и опознаваться он
+		// обязан по НАЛИЧИЮ поля ok, а не по его истинности. Наивная проба с
+		// `bool` вместо `*bool` разбирает этот кадр как «ни то, ни другое, ни
+		// третье», и менеджер теряет код ошибки.
+		{"ответ об отказе — ok:false", `{"v":1,"id":3,"ok":false,"code":"busy"}`, KindResponse},
 		{"push — есть event и нет id", `{"v":1,"event":"hello"}`, KindEvent},
 	}
 	for _, c := range cases {
