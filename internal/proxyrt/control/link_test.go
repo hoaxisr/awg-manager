@@ -542,4 +542,41 @@ func TestSocketPathRejectsOverlongPath(t *testing.T) {
 	if _, err := SocketPath(dir, "wt-client", "client", "default"); err == nil {
 		t.Fatal("путь длиннее sun_path принят")
 	}
+
+	// Граница — на точном значении, а не «заведомо большим» путём: случай выше
+	// бьёт по 135 байтам и мутанта > → >= не заметит, а тот начал бы отвергать
+	// законный путь ровно в 107 байт. Предел проверен ядром: bind на 107 байт
+	// проходит, на 108 даёт EINVAL.
+	//
+	// Длина набирается из фактической, а не зашита числом: имя файла инстанса
+	// собирает сам пакет, и подгонять его руками значит проверять свою
+	// арифметику вместо чужой границы.
+	name := "wt-client-client-default.sock"
+	cases := []struct {
+		total  int
+		accept bool
+	}{
+		{maxSunPath, true},
+		{maxSunPath + 1, false},
+	}
+	for _, tc := range cases {
+		// путь = dir + "/" + name, dir = "/" + d…d
+		d := "/" + strings.Repeat("d", tc.total-len(name)-2)
+		if got := len(d) + 1 + len(name); got != tc.total {
+			t.Fatalf("собрали путь в %d байт вместо %d", got, tc.total)
+		}
+		path, err := SocketPath(d, "wt-client", "client", "default")
+		if tc.accept {
+			if err != nil {
+				t.Fatalf("законный путь в %d байт отвергнут: %v", tc.total, err)
+			}
+			if len(path) != tc.total {
+				t.Fatalf("путь собрался в %d байт вместо %d", len(path), tc.total)
+			}
+			continue
+		}
+		if err == nil {
+			t.Fatalf("путь в %d байт принят", tc.total)
+		}
+	}
 }
