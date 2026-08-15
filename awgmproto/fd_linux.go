@@ -133,7 +133,10 @@ func VerifyTunFD(fd int, iface string) error {
 }
 
 // checkTunIfreq — чистая проверка ответа ядра. Отделена от ioctl ради
-// тестируемости: создать tun в тестах нельзя без CAP_NET_ADMIN.
+// тестируемости: так набор флагов проверяется таблицей, без прав и без
+// устройства. Настоящий tun в тестах тоже создаётся — под `unshare -Urn`, где
+// TUNSETIFF разрешён (см. TestVerifyTunFDOnRealTun); пропускается такой тест
+// только там, где запрещены user namespace.
 func checkTunIfreq(gotIface string, flags uint16, wantIface string) error {
 	if flags&unix.IFF_TAP != 0 {
 		return fmt.Errorf("ожидали tun %s, получили tap %s", wantIface, gotIface)
