@@ -77,6 +77,13 @@
 		return row.autostart ? 'автоподключение · остановлен' : 'остановлен';
 	}
 
+	// EX-55 / SH-83 — та же строка, что в модалке удаления: у раздачи своя.
+	function deleteLabel(row: ProxyInstanceRow): string {
+		return row.role === 'server'
+			? `Удалить раздачу «${row.name}»?`
+			: `Удалить инстанс «${row.name}»?`;
+	}
+
 	// LS-10..LS-12. У WDTT режим есть всегда: connMode клиента / relayMode сервера.
 	function protocolBadge(row: ProxyInstanceRow): string {
 		if (row.protocol === 'freeturn') return 'FreeTurn';
@@ -135,7 +142,7 @@
 								controlled
 								size="sm"
 								label=""
-								ariaLabel="{row.name}: {row.state === 'running' ? 'остановить' : 'запустить'}"
+								ariaLabel="{row.state === 'running' ? 'Остановить' : 'Запустить'} {row.name}"
 							/>
 						</span>
 						<button
@@ -154,8 +161,8 @@
 						<button
 							type="button"
 							class="row-action danger"
-							aria-label="Удалить инстанс «{row.name}»?"
-							title="Удалить инстанс «{row.name}»?"
+							aria-label={deleteLabel(row)}
+							title={deleteLabel(row)}
 							onclick={() => ondelete(row)}
 						>
 							<X size={14} />

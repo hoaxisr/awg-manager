@@ -33,10 +33,13 @@
 		onConfirm,
 		onClose,
 	}: Props = $props();
+
+	// Пустое сообщение = вопроса в заголовке достаточно; тело модалки при этом
+	// не рендерится совсем, иначе его паддинг оставляет пустую полосу.
+	const hasBody = $derived(Boolean(message || filePath || secondary));
 </script>
 
-<Modal {open} {title} size="sm" onclose={onClose}>
-	<!-- Пустое сообщение = вопроса в заголовке достаточно; пустой абзац оставлял дыру. -->
+{#snippet body()}
 	{#if message}
 		<p class="confirm-message">{message}</p>
 	{/if}
@@ -47,6 +50,9 @@
 	{#if secondary}
 		<p class="confirm-secondary">{secondary}</p>
 	{/if}
+{/snippet}
+
+<Modal {open} {title} size="sm" onclose={onClose} children={hasBody ? body : undefined}>
 	{#snippet actions()}
 		<Button variant="secondary" size="md" onclick={onClose} disabled={busy}>
 			{cancelLabel}

@@ -51,10 +51,10 @@
 		}
 	});
 
-	const tabs = $derived([
-		{ id: 'exit', label: 'Выход', badge: exits.length },
-		{ id: 'share', label: 'Раздача', badge: shares.length },
-	]);
+	const tabs = [
+		{ id: 'exit', label: 'Выход' },
+		{ id: 'share', label: 'Раздача' },
+	];
 
 	const binaries = $derived([
 		{
@@ -214,8 +214,15 @@
 			notifications.success(`AWG-туннелей удалено: ${deleted.length} — перезапустите клиент`);
 		}
 		if (errors?.length) {
-			notifications.error(`Не удалось удалить туннели: ${errors.join(', ')}`);
+			notifications.error(`Не удалось удалить туннели: ${tunnelErrorNames(errors).join(', ')}`);
 		}
+	}
+
+	// TS-03 просит имена туннелей, а бэкенд отдаёт строку «Имя (id): ошибка»
+	// (`internal/api/wdtt_linked.go:95`) — отрезаем хвост с id и текстом ошибки.
+	// Строка без этого хвоста (сбой чтения хранилища) остаётся как есть.
+	function tunnelErrorNames(errors: string[]): string[] {
+		return errors.map((e) => e.replace(/ \([^)]*\): [\s\S]*$/, '').trim()).filter(Boolean);
 	}
 </script>
 
