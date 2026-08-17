@@ -328,9 +328,11 @@ func (p *process) Status() ProcessStatus {
 		st.PID = pid
 		st.StartedAt = p.startedAt
 		// Живой процесс без startedAt — унаследованный pid-файл (pidIsOurs
-		// подтвердил его по /proc cmdline). Ровно это условие поднимает
-		// супервизор на перезапуск, и наружу оно уходит отдельным признаком:
-		// вычислять «running && !startedAt» на фронте — хрупко.
+		// подтвердил его по /proc cmdline). Клиентский цикл супервизора
+		// поднимает по этому условию перезапуск; серверный смотрит только на
+		// IsRunning и осиротевший сервер не трогает. Наружу условие уходит
+		// отдельным признаком: вычислять «running && !startedAt» на фронте —
+		// хрупко.
 		// startInFlight отсекает своего ребёнка в окне startupGrace: у него
 		// startedAt тоже пуст, но унаследованным он не является.
 		st.OrphanedPID = p.startedAt == nil && !p.startInFlight
