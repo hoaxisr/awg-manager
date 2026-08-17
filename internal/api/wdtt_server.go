@@ -106,7 +106,7 @@ type WdttGenerateLinkRequest struct {
 	Peer     string   `json:"peer,omitempty"`
 	VKHashes []string `json:"vkHashes,omitempty"`
 	Name     string   `json:"name,omitempty"`
-	Password string   `json:"password,omitempty"` // per-client password from panel.db; empty → server password
+	Password string   `json:"password,omitempty"` // server client password from passwords.json; empty → server password
 }
 
 // CreateServer handles POST /api/wdtt/servers.
@@ -160,51 +160,51 @@ func (h *WdttHandler) ServeServers(w http.ResponseWriter, r *http.Request) {
 	case len(sub) == 1 && sub[0] == "lan-segments":
 		h.setServerLANSegments(w, r, id)
 	case len(sub) >= 1 && sub[0] == "users":
-		h.serveServerPanelUsers(w, r, id, sub[1:])
+		h.serveServerClients(w, r, id, sub[1:])
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}
 }
 
-type wdttPanelUserAddRequest struct {
+type wdttServerClientAddRequest struct {
 	Password     string `json:"password,omitempty"`
 	Comment      string `json:"comment,omitempty"`
 	VkHash       string `json:"vkHash,omitempty"`
 	MainPassword string `json:"mainPassword,omitempty"`
 }
 
-// serveServerPanelUsers handles GET/POST/DELETE /api/wdtt/servers/{id}/users[/{password}].
+// serveServerClients handles GET/POST/DELETE /api/wdtt/servers/{id}/users[/{password}].
 //
-//	@Summary	List, add or delete WDTT client passwords stored in panel.db
+//	@Summary	List, add or delete WDTT server client passwords stored in passwords.json
 //	@Tags		wdtt
 //	@Accept		json
-//	@Param		id			path		string					true	"Server instance id"
-//	@Param		password	path		string					false	"Client password to delete"
-//	@Param		request		body		wdttPanelUserAddRequest	false	"New client password"
+//	@Param		id			path		string						true	"Server instance id"
+//	@Param		password	path		string						false	"Client password to delete"
+//	@Param		request		body		wdttServerClientAddRequest	false	"New client password"
 //	@Success	200			{object}	APIEnvelope
 //	@Failure	400			{object}	APIErrorEnvelope
 //	@Failure	500			{object}	APIErrorEnvelope
 //	@Router		/wdtt/servers/{id}/users [get]
 //	@Router		/wdtt/servers/{id}/users [post]
 //	@Router		/wdtt/servers/{id}/users/{password} [delete]
-func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
+func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request, serverID string, sub []string) {
 	switch {
 	case len(sub) == 0:
 		switch r.Method {
 		case http.MethodGet:
-			st, err := h.svc.ListServerPanelUsers(serverID)
+			st, err := h.svc.ListServerClients(serverID)
 			if err != nil {
 				response.Error(w, err.Error(), "WDTT_PANEL_USERS_FAILED")
 				return
 			}
 			response.Success(w, st)
 		case http.MethodPost:
-			var req wdttPanelUserAddRequest
+			var req wdttServerClientAddRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				response.Error(w, "invalid request body", "BAD_REQUEST")
 				return
 			}
-			st, err := h.svc.AddServerPanelUser(serverID, req.Password, req.Comment, req.VkHash, req.MainPassword)
+			st, err := h.svc.AddServerClient(serverID, req.Password, req.Comment, req.VkHash, req.MainPassword)
 			if err != nil {
 				response.Error(w, err.Error(), "WDTT_PANEL_USER_ADD_FAILED")
 				return
@@ -219,7 +219,7 @@ func (h *WdttHandler) serveServerPanelUsers(w http.ResponseWriter, r *http.Reque
 			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 			return
 		}
-		st, err := h.svc.RemoveServerPanelUser(serverID, password)
+		st, err := h.svc.RemoveServerClient(serverID, password)
 		if err != nil {
 			response.Error(w, err.Error(), "WDTT_PANEL_USER_DELETE_FAILED")
 			return

@@ -1,0 +1,505 @@
+package wdtt
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// newServerClientsService поднимает сервис с одним сервером и созданным
+// config-dir: фикстуры passwords.json пишутся туда напрямую.
+func newServerClientsService(t *testing.T, mainPassword string) (*Service, string) {
+	t.Helper()
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg := DefaultServerConfig()
+	cfg.Password = mainPassword
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfgDir, err := s.serverConfigDir(DefaultInstanceID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfgDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return s, cfgDir
+}
+
+func serverClientPasswordByComment(t *testing.T, st ServerClientsStatus, comment string) string {
+	t.Helper()
+	for _, u := range st.Users {
+		if u.Comment == comment {
+			return u.Password
+		}
+	}
+	t.Fatalf("абонент с именем %q не найден: %+v", comment, st.Users)
+	return ""
+}
+
+func hasServerClientEntry(st ServerClientsStatus, password string) bool {
+	for _, u := range st.Users {
+		if u.Password == password {
+			return true
+		}
+	}
+	return false
+}
+
+func configServerClients(t *testing.T, s *Service) []ServerClient {
+	t.Helper()
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inst.Config.Clients
+}
+
+func configHasServerClient(t *testing.T, s *Service, password string) bool {
+	t.Helper()
+	for _, c := range configServerClients(t, s) {
+		if c.Password == password {
+			return true
+		}
+	}
+	return false
+}
+
+func fileHasServerClient(t *testing.T, cfgDir, password string) bool {
+	t.Helper()
+	doc, err := loadPasswordsJSON(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ok := doc.Passwords[password]
+	return ok
+}
+
+func TestListServerClients_MainPasswordIsNotAClient(t *testing.T) {
+	main := "mainpass0000000000000000"
+	s, _ := newServerClientsService(t, main)
+	if _, err := s.AddServerClient(DefaultInstanceID, "", "Иван", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasServerClientEntry(st, main) {
+		t.Fatalf("главный пароль в списке абонентов: %+v", st.Users)
+	}
+	if serverClientPasswordByComment(t, st, "Иван") == "" {
+		t.Fatalf("абонент пропал: %+v", st.Users)
+	}
+}
+
+func TestListServerClients_ShowsDeactivatedFromFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	if _, err := s.AddServerClient(DefaultInstanceID, "client1", "Иван", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords:    map[string]passwordsJSONUser{"client1": {IsDeactivated: true}},
+	})
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Available {
+		t.Fatalf("passwords.json прочитан, ожидался available=true: %+v", st)
+	}
+	for _, u := range st.Users {
+		if u.Password == "client1" {
+			if !u.IsDeactivated {
+				t.Fatalf("признак деактивации не поднят: %+v", u)
+			}
+			return
+		}
+	}
+	t.Fatalf("абонент потерян: %+v", st.Users)
+}
+
+func TestListServerClients_ShowsExpired(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	if _, err := s.AddServerClient(DefaultInstanceID, "client1", "Иван", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {ExpiresAt: time.Now().Add(-time.Hour).Unix()},
+		},
+	})
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range st.Users {
+		if u.Password == "client1" {
+			if !u.IsExpired {
+				t.Fatalf("просроченный абонент показан рабочим: %+v", u)
+			}
+			return
+		}
+	}
+	t.Fatalf("просроченный абонент пропал из списка: %+v", st.Users)
+}
+
+func TestListServerClients_AdoptsUnknownFileEntries(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	expires := time.Now().Add(24 * time.Hour).Unix()
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords: map[string]passwordsJSONUser{
+			"legacy1": {Label: "Из бота", VkHash: "vk9", ExpiresAt: expires},
+		},
+	})
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasServerClientEntry(st, "legacy1") {
+		t.Fatalf("запись файла не усыновлена в список: %+v", st.Users)
+	}
+	if got := serverClientPasswordByComment(t, st, "Из бота"); got != "legacy1" {
+		t.Fatalf("имя взято не из label: %+v", st.Users)
+	}
+	for _, c := range configServerClients(t, s) {
+		if c.Password != "legacy1" {
+			continue
+		}
+		if c.Comment != "Из бота" || c.VkHash != "vk9" {
+			t.Fatalf("личность абонента не перенесена в wdtt.json: %+v", c)
+		}
+		if c.ExpiresAt != expires {
+			t.Fatalf("срок не перенесён в wdtt.json: %d, ожидался %d", c.ExpiresAt, expires)
+		}
+		return
+	}
+	t.Fatalf("абонент не попал в wdtt.json: %+v", configServerClients(t, s))
+}
+
+func TestListServerClients_SurvivesMissingFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	// Абонент кладётся в конфиг напрямую: passwords.json не должно существовать.
+	if err := s.putServerClient(DefaultInstanceID, ServerClient{Password: "client1", Comment: "Иван"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(passwordsJSONPath(cfgDir)); !os.IsNotExist(err) {
+		t.Fatalf("файла быть не должно: %v", err)
+	}
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatalf("список обязан отдаваться без passwords.json: %v", err)
+	}
+	if st.Available {
+		t.Fatalf("файла нет, ожидался available=false: %+v", st)
+	}
+	if !hasServerClientEntry(st, "client1") {
+		t.Fatalf("список из wdtt.json пуст: %+v", st.Users)
+	}
+}
+
+func TestAddServerClient_RejectsPasswordEqualToEffectiveMain(t *testing.T) {
+	// Пароль сервера ещё НЕ сохранён: эффективный главный приезжает аргументом.
+	s, cfgDir := newServerClientsService(t, "")
+	const main = "future-main-pass00000000"
+	if _, err := s.AddServerClient(DefaultInstanceID, main, "Иван", "", main); err == nil {
+		t.Fatal("ожидался отказ: пароль абонента равен эффективному главному")
+	}
+	if len(configServerClients(t, s)) != 0 {
+		t.Fatalf("абонент остался в wdtt.json: %+v", configServerClients(t, s))
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Config.Password != "" {
+		t.Fatalf("пароль сервера сохранён вопреки отказу: %q", inst.Config.Password)
+	}
+	if _, err := os.Stat(passwordsJSONPath(cfgDir)); !os.IsNotExist(err) {
+		t.Fatalf("passwords.json записан вопреки отказу: %v", err)
+	}
+}
+
+func TestAddServerClient_WritesConfigAndFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	st, err := s.AddServerClient(DefaultInstanceID, "client1", "Иван", "vk1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasServerClientEntry(st, "client1") {
+		t.Fatalf("ответ ручки без абонента: %+v", st.Users)
+	}
+	if !configHasServerClient(t, s, "client1") {
+		t.Fatalf("абонент не сохранён в wdtt.json: %+v", configServerClients(t, s))
+	}
+	doc, err := loadPasswordsJSON(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := doc.Passwords["client1"]
+	if !ok {
+		t.Fatalf("абонент не записан в passwords.json: %#v", doc.Passwords)
+	}
+	if entry.Label != "Иван" || entry.VkHash != "vk1" {
+		t.Fatalf("личность абонента не доехала до файла: %#v", entry)
+	}
+}
+
+func TestRemoveServerClient_DropsClientAndItsDevice(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	for _, p := range []string{"client1", "client2"} {
+		if _, err := s.AddServerClient(DefaultInstanceID, p, p, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {DeviceIDs: []string{"d1"}},
+			"client2": {DeviceIDs: []string{"d2"}},
+		},
+		Devices: map[string]any{
+			"d1": map[string]any{"ip": "10.66.0.2"},
+			"d2": map[string]any{"ip": "10.66.0.3"},
+		},
+	})
+	if _, err := s.RemoveServerClient(DefaultInstanceID, "client1"); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := loadPasswordsJSON(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Passwords["client1"]; ok {
+		t.Fatalf("удалённый абонент остался в файле: %#v", doc.Passwords)
+	}
+	if _, ok := doc.Devices["d1"]; ok {
+		t.Fatalf("устройство удалённого абонента осталось: %#v", doc.Devices)
+	}
+	if _, ok := doc.Passwords["client2"]; !ok {
+		t.Fatalf("второй абонент потерян: %#v", doc.Passwords)
+	}
+	if _, ok := doc.Devices["d2"]; !ok {
+		t.Fatalf("устройство второго абонента снято: %#v", doc.Devices)
+	}
+}
+
+func TestRemoveServerClient_DoesNotResurrectViaAdoption(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	for _, p := range []string{"client1", "client2"} {
+		if _, err := s.AddServerClient(DefaultInstanceID, p, p, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := s.RemoveServerClient(DefaultInstanceID, "client1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasServerClientEntry(st, "client1") {
+		t.Fatalf("удалённый абонент вернулся в ответ ручки: %+v", st.Users)
+	}
+	if configHasServerClient(t, s, "client1") {
+		t.Fatalf("удалённый абонент воскрешён в wdtt.json: %+v", configServerClients(t, s))
+	}
+	if fileHasServerClient(t, cfgDir, "client1") {
+		t.Fatal("удалённый абонент остался в passwords.json")
+	}
+	if !configHasServerClient(t, s, "client2") || !fileHasServerClient(t, cfgDir, "client2") {
+		t.Fatal("второй абонент задет удалением")
+	}
+}
+
+func TestAddServerClient_AdoptsBeforeWritingFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords:    map[string]passwordsJSONUser{"legacy1": {Label: "Из бота"}},
+	})
+	if _, err := s.AddServerClient(DefaultInstanceID, "client1", "Иван", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !fileHasServerClient(t, cfgDir, "legacy1") {
+		t.Fatal("абонент бота вычеркнут из passwords.json записью файла до усыновления")
+	}
+	if !configHasServerClient(t, s, "legacy1") {
+		t.Fatalf("абонент бота не усыновлён: %+v", configServerClients(t, s))
+	}
+	if !fileHasServerClient(t, cfgDir, "client1") {
+		t.Fatal("новый абонент не записан в файл")
+	}
+}
+
+// Форма сервера отдаёт конфиг целиком снапшотом времени загрузки страницы, а
+// абоненты правятся отдельной ручкой: сохранение настроек не должно их терять.
+func TestUpdateServerInstanceKeepsClients(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	st, err := s.AddServerClient(DefaultInstanceID, "", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPass := serverClientPasswordByComment(t, st, "Иван")
+
+	stale := DefaultServerConfig() // без Clients — ровно то, что лежало в форме
+	stale.Password = "mainpass0000000000000000"
+	stale.NatMode = "internet-only"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, stale); err != nil {
+		t.Fatal(err)
+	}
+	if !configHasServerClient(t, s, clientPass) {
+		t.Fatalf("абоненты потеряны при сохранении настроек: %+v", configServerClients(t, s))
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Config.NatMode != "internet-only" {
+		t.Fatalf("остальные поля не применились: %+v", inst.Config)
+	}
+}
+
+func TestAddServerClient_RejectsOccupiedPassword(t *testing.T) {
+	cases := []struct {
+		name      string
+		expiresAt int64
+		add       string
+		wantText  string
+	}{
+		{
+			name:      "просроченный",
+			expiresAt: time.Now().Add(-time.Hour).Unix(),
+			add:       "client1",
+			wantText:  "просроченному",
+		},
+		{
+			// Пароль подаётся С ПРОБЕЛАМИ: без нормализации входа сравнение не
+			// совпадёт и отказ не сработает.
+			name:      "живой",
+			expiresAt: time.Now().Add(time.Hour).Unix(),
+			add:       "  client1  ",
+			wantText:  "живым",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+			// Абонент лежит В КОНФИГЕ: иначе усыновление законно правит
+			// wdtt.json до отказа и «ничего не изменилось» станет ложным по
+			// причине, к отказу отношения не имеющей.
+			if err := s.putServerClient(DefaultInstanceID, ServerClient{
+				Password: "client1", Comment: "Занято", ExpiresAt: tc.expiresAt,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(s.store.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, addErr := s.AddServerClient(DefaultInstanceID, tc.add, "Второй", "", "")
+			if addErr == nil {
+				t.Fatal("ожидался отказ: пароль занят")
+			}
+			if !strings.Contains(addErr.Error(), tc.wantText) {
+				t.Fatalf("текст отказа = %q, ожидалось упоминание %q", addErr.Error(), tc.wantText)
+			}
+			after, err := os.ReadFile(s.store.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatalf("wdtt.json изменён отказом:\nбыло %s\nстало %s", before, after)
+			}
+			if _, err := os.Stat(passwordsJSONPath(cfgDir)); !os.IsNotExist(err) {
+				t.Fatalf("passwords.json записан вопреки отказу: %v", err)
+			}
+		})
+	}
+}
+
+func TestAdoptServerClientsFromFile_SkipsMainPassword(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, cfgDir := newServerClientsService(t, main)
+	// Такую запись создаёт admin-API форка; усыновление её обязано пропустить.
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: main,
+		Passwords:    map[string]passwordsJSONUser{main: {Label: "самострел"}},
+	})
+	clients, err := s.adoptServerClientsFromFile(DefaultInstanceID, cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range clients {
+		if c.Password == main {
+			t.Fatalf("главный пароль усыновлён абонентом: %+v", clients)
+		}
+	}
+	if configHasServerClient(t, s, main) {
+		t.Fatalf("главный пароль попал в wdtt.json: %+v", configServerClients(t, s))
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, inst.Config); err != nil {
+		t.Fatalf("сохранение конфига сломано усыновлением главного пароля: %v", err)
+	}
+}
+
+// Гонка «удаление против конкурентного чтения»: файл пишется последним, и
+// чтение, попавшее в окно между вычёркиванием и записью, усыновило бы
+// удалённого обратно из ещё не переписанного passwords.json.
+func TestServerClients_ConcurrentListDoesNotResurrect(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		victim := fmt.Sprintf("victim%02d", i)
+		if _, err := s.AddServerClient(DefaultInstanceID, victim, "Жертва", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		var (
+			wg      sync.WaitGroup
+			start   = make(chan struct{})
+			opErr   error
+			opErrMu sync.Mutex
+		)
+		fail := func(err error) {
+			opErrMu.Lock()
+			if opErr == nil {
+				opErr = err
+			}
+			opErrMu.Unlock()
+		}
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.RemoveServerClient(DefaultInstanceID, victim); err != nil {
+				fail(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.ListServerClients(DefaultInstanceID); err != nil {
+				fail(err)
+			}
+		}()
+		close(start)
+		wg.Wait()
+		if opErr != nil {
+			t.Fatalf("round %d: %v", i, opErr)
+		}
+		if configHasServerClient(t, s, victim) {
+			t.Fatalf("round %d: удалённый абонент воскрешён в wdtt.json", i)
+		}
+		if fileHasServerClient(t, cfgDir, victim) {
+			t.Fatalf("round %d: удалённый абонент остался в passwords.json", i)
+		}
+	}
+}

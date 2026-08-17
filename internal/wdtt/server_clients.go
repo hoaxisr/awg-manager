@@ -1,0 +1,363 @@
+package wdtt
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"slices"
+	"strings"
+	"time"
+)
+
+// loadServerClientEntries читает живые записи passwords.json. Второе значение —
+// «файл есть и разобран»; отсутствие файла ошибкой не является.
+func loadServerClientEntries(configDir string) (map[string]passwordsJSONUser, bool, error) {
+	if _, err := os.Stat(passwordsJSONPath(configDir)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	doc, err := loadPasswordsJSON(configDir)
+	if err != nil {
+		return nil, false, err
+	}
+	return doc.Passwords, true, nil
+}
+
+// mergeServerClients собирает список для UI: состав из wdtt.json, признаки —
+// из passwords.json и из запомненного срока.
+func mergeServerClients(clients []ServerClient, file map[string]passwordsJSONUser, available bool, now time.Time) ServerClientsStatus {
+	// Срок считается ТЕМ ЖЕ предикатом, что и запись файла: непросроченные — это
+	// ровно те, кого вернул UsableServerClients. Главный пароль ему не передаём:
+	// в списке абонентов его нет, а отсев по нему исказил бы признак «истёк».
+	usable := make(map[string]struct{}, len(clients))
+	for _, c := range UsableServerClients(clients, "", now) {
+		usable[c.Password] = struct{}{}
+	}
+	out := ServerClientsStatus{Available: available, Users: []ServerClientEntry{}}
+	for _, c := range clients {
+		pass := strings.TrimSpace(c.Password)
+		if pass == "" {
+			continue
+		}
+		e := ServerClientEntry{
+			Password: pass,
+			Comment:  strings.TrimSpace(c.Comment),
+			VkHash:   strings.TrimSpace(c.VkHash),
+		}
+		if live, ok := file[pass]; ok {
+			e.IsDeactivated = live.IsDeactivated
+			if e.Comment == "" {
+				e.Comment = strings.TrimSpace(live.Label)
+			}
+			if e.VkHash == "" {
+				e.VkHash = strings.TrimSpace(live.VkHash)
+			}
+		}
+		if _, ok := usable[pass]; !ok {
+			e.IsExpired = true
+		}
+		out.Users = append(out.Users, e)
+	}
+	return out
+}
+
+// adoptServerClientsFromFile переносит в wdtt.json записи passwords.json,
+// которых конфиг ещё не знает (абоненты телеграм-бота), и подтягивает срок
+// действия для уже известных. Возвращает АКТУАЛЬНЫЙ список абонентов.
+//
+// Зовётся первым действием на всех трёх путях — старт, добавление, удаление, —
+// и это не стиль, а требование: усыновление ПОСЛЕ мутации вернуло бы из ещё не
+// переписанного файла ровно того абонента, которого мутация только что удалила,
+// и удаление стало бы no-op.
+func (s *Service) adoptServerClientsFromFile(serverID, cfgDir string) ([]ServerClient, error) {
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return nil, err
+	}
+	file, _, err := loadServerClientEntries(cfgDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(file) == 0 {
+		return inst.Config.Clients, nil
+	}
+	main := strings.TrimSpace(inst.Config.Password)
+	return s.updateServerClients(serverID, func(list []ServerClient) ([]ServerClient, bool) {
+		known := make(map[string]int, len(list))
+		for i, c := range list {
+			known[strings.TrimSpace(c.Password)] = i
+		}
+		changed := false
+		// Порядок обхода фиксирован: карта отдаёт ключи вразнобой, а список
+		// абонентов уезжает в wdtt.json и виден в UI.
+		for _, pass := range slices.Sorted(maps.Keys(file)) {
+			entry := file[pass]
+			pass = strings.TrimSpace(pass)
+			// Запись, равную главному паролю, создаёт admin-API форка. Усыновить
+			// её нельзя: после этого validateServerMainPassword валила бы КАЖДЫЙ
+			// UpdateServerInstance, включая путь старта.
+			if pass == "" || pass == main {
+				continue
+			}
+			if i, ok := known[pass]; ok {
+				// У известного обновляем только срок и только ненулевой:
+				// админ мог продлить доступ через admin-API форка.
+				if entry.ExpiresAt != 0 && list[i].ExpiresAt != entry.ExpiresAt {
+					list[i].ExpiresAt = entry.ExpiresAt
+					changed = true
+				}
+				continue
+			}
+			known[pass] = len(list)
+			list = append(list, ServerClient{
+				Password:  pass,
+				Comment:   strings.TrimSpace(entry.Label),
+				VkHash:    strings.TrimSpace(entry.VkHash),
+				ExpiresAt: entry.ExpiresAt,
+			})
+			changed = true
+		}
+		return list, changed
+	})
+}
+
+// writeServerClientsFile переписывает passwords.json по переданному списку.
+// Второе значение — «вычищены устройства с IP шлюза».
+//
+// В журнал этот признак НЕ идёт, и это осознанно: reserveGatewayIPInDevices сама
+// кладёт в devices запись с IP шлюза, а sanitizePasswordsDevices на следующем
+// заходе ровно её и снимает — со второй записи файла признак истинен всегда
+// (проверено прогоном, задача 1). Предупреждение на каждой записи не сообщало бы
+// ничего. Цена: настоящее снятие клиентского устройства с IP шлюза тоже проходит
+// молча; отличить его от нашего же резерва по одному биту невозможно, а второе
+// место, считающее «что именно вычищено», плодить незачем.
+func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConfig, clients []ServerClient) (bool, error) {
+	return syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
+}
+
+// syncServerClientsOnStart — цикл абонентов на пути старта: усыновить и
+// переписать passwords.json. Замок берётся здесь, ВНУТРИ serverStartLock
+// (порядок захвата однонаправленный): старт бежит из супервизора сам по себе, и
+// его цикл обязан быть сериализован с ручками так же, как они сериализованы
+// между собой.
+func (s *Service) syncServerClientsOnStart(serverID, cfgDir string, cfg ServerConfig) error {
+	unlock := s.lockServerClients(serverID)
+	defer unlock()
+	clients, err := s.adoptServerClientsFromFile(serverID, cfgDir)
+	if err != nil {
+		return err
+	}
+	_, err = s.writeServerClientsFile(serverID, cfgDir, cfg, clients)
+	return err
+}
+
+// ListServerClients отдаёт абонентов сервера: состав из wdtt.json, живые
+// признаки — из passwords.json. Список не пустеет, даже если файла нет: это и
+// есть смысл единственного источника правды.
+func (s *Service) ListServerClients(serverID string) (ServerClientsStatus, error) {
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	cfgDir, err := s.serverConfigDir(serverID, inst.Config)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	// Замок берёт и GET: без него чтение, попавшее между вычёркиванием абонента
+	// из wdtt.json и перезаписью файла, усыновит удалённого обратно.
+	unlock := s.lockServerClients(serverID)
+	defer unlock()
+	clients := inst.Config.Clients
+	if adopted, err := s.adoptServerClientsFromFile(serverID, cfgDir); err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("clients", serverID, "записи passwords.json не усыновлены: "+err.Error())
+		}
+	} else {
+		clients = adopted
+	}
+	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+}
+
+// AddServerClient заводит отдельного абонента сервера.
+func (s *Service) AddServerClient(serverID, password, comment, vkHash, mainPassword string) (ServerClientsStatus, error) {
+	// Нормализация входа — ПЕРВЫМ ДЕЛОМ, до всех проверок и любой записи: иначе
+	// " pass1 " обойдёт отказ на занятом пароле (в списке пароли уже подрезаны),
+	// а " <главный> " проскочит сравнение с главным и будет валить каждый
+	// UpdateServerInstance через validateServerMainPassword.
+	password = strings.TrimSpace(password)
+	comment = strings.TrimSpace(comment)
+	vkHash = strings.TrimSpace(vkHash)
+	mainPassword = strings.TrimSpace(mainPassword)
+
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	// Эффективный главный пароль: сохранённый, а при пустом — присланный формой.
+	// Сверять с inst.Config.Password нельзя: на пустом сервере проверка
+	// пропустила бы пароль абонента, равный тому, который мы через несколько
+	// строк сделаем главным.
+	main := strings.TrimSpace(inst.Config.Password)
+	if main == "" {
+		main = mainPassword
+	}
+	if main == "" {
+		return ServerClientsStatus{}, fmt.Errorf("сначала задайте пароль сервера")
+	}
+	cfgDir, err := s.serverConfigDir(serverID, inst.Config)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+
+	// Замок снимается ДО побочного эффекта и до сбора ответа: UpdateServerInstance
+	// под ним звать нельзя (нереентрантный s.mu плюс собственный цикл абонентов
+	// в задаче 4).
+	unlock := s.lockServerClients(serverID)
+	status, addErr := s.addServerClientLocked(serverID, cfgDir, inst.Config, main, password, comment, vkHash)
+	unlock()
+	if addErr != nil {
+		return ServerClientsStatus{}, addErr
+	}
+	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
+	// абонента: иначе первым сработал бы инвариант непустоты и завёл бы
+	// автоматического абонента рядом с заказанным.
+	if strings.TrimSpace(inst.Config.Password) == "" {
+		cfg := inst.Config
+		cfg.Password = main
+		if _, err := s.UpdateServerInstance(serverID, cfg); err != nil {
+			return ServerClientsStatus{}, err
+		}
+	}
+	return status, nil
+}
+
+// addServerClientLocked — цикл добавления под уже взятым lockServerClients:
+// усыновить → проверить → изменить wdtt.json → записать файл.
+func (s *Service) addServerClientLocked(serverID, cfgDir string, cfg ServerConfig, main, password, comment, vkHash string) (ServerClientsStatus, error) {
+	clients, err := s.adoptServerClientsFromFile(serverID, cfgDir)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if password == "" {
+		if password, err = randomClientPassword(); err != nil {
+			return ServerClientsStatus{}, err
+		}
+	}
+	// Все проверки — до единой записи.
+	if password == main {
+		return ServerClientsStatus{}, fmt.Errorf("используйте основной пароль сервера или сгенерируйте отдельный")
+	}
+	if err := serverClientPasswordFree(clients, password, time.Now()); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if err := validateServerMainPassword(main, clients); err != nil {
+		return ServerClientsStatus{}, err
+	}
+
+	if err := s.putServerClient(serverID, ServerClient{Password: password, Comment: comment, VkHash: vkHash}); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	clients, err = s.serverClients(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	// Файл пишем с ЭФФЕКТИВНЫМ главным паролем: сохранить его в конфиг мы ещё
+	// не успели, а предикат пригодности сверяется именно с ним.
+	fileCfg := cfg
+	fileCfg.Password = main
+	if _, err := s.writeServerClientsFile(serverID, cfgDir, fileCfg, clients); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+}
+
+// RemoveServerClient удаляет одного абонента сервера.
+func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsStatus, error) {
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return ServerClientsStatus{}, fmt.Errorf("пароль абонента не задан")
+	}
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if password == strings.TrimSpace(inst.Config.Password) {
+		return ServerClientsStatus{}, fmt.Errorf("нельзя удалить основной пароль сервера")
+	}
+	cfgDir, err := s.serverConfigDir(serverID, inst.Config)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+
+	unlock := s.lockServerClients(serverID)
+	defer unlock()
+	// Усыновление — ПЕРВЫМ действием. После вычёркивания оно вернуло бы
+	// удалённого абонента из ещё не переписанного файла, и удаление стало бы
+	// no-op.
+	if _, err := s.adoptServerClientsFromFile(serverID, cfgDir); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if err := s.dropServerClient(serverID, password); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	clients, err := s.serverClients(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if _, err := s.writeServerClientsFile(serverID, cfgDir, inst.Config, clients); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+}
+
+// serverClients — актуальный список абонентов из wdtt.json.
+func (s *Service) serverClients(serverID string) ([]ServerClient, error) {
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return nil, err
+	}
+	return inst.Config.Clients, nil
+}
+
+// serverClientsStatus накладывает на список живые признаки из passwords.json.
+// Зовётся под уже взятым замком; отдельного захвата здесь нет — иначе хвост
+// ручки под defer unlock() дал бы самодедлок.
+func (s *Service) serverClientsStatus(serverID, cfgDir string, clients []ServerClient) ServerClientsStatus {
+	file, available, err := loadServerClientEntries(cfgDir)
+	if err != nil && s.appLog != nil {
+		s.appLog.Warn("clients", serverID, "passwords.json не прочитан: "+err.Error())
+	}
+	return mergeServerClients(clients, file, available, time.Now())
+}
+
+// serverClientPasswordFree отказывает на ЛЮБОМ уже занятом пароле, двумя
+// текстами. Занять пароль просроченного абонента нельзя: putServerClient молча
+// замещает запись, обнулив нашу память о сроке, а мерж всё равно запишет в файл
+// старый expires_at — сервер после SIGHUP отвергнет всех. Занять пароль живого
+// нельзя по тому же классу, но тише: перезаведение бот-пароля со сроком делает
+// временный доступ бессрочным.
+func serverClientPasswordFree(clients []ServerClient, password string, now time.Time) error {
+	for _, c := range clients {
+		if strings.TrimSpace(c.Password) != password {
+			continue
+		}
+		if c.ExpiresAt != 0 && c.ExpiresAt <= now.Unix() {
+			return fmt.Errorf("пароль принадлежит просроченному абоненту, задайте новый")
+		}
+		return fmt.Errorf("пароль занят живым абонентом")
+	}
+	return nil
+}
+
+func randomClientPassword() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}

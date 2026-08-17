@@ -92,6 +92,14 @@ type Service struct {
 	// секунды, а флаг Enabled оба пути пишут последним действием.
 	serverStartMu    sync.Mutex
 	serverStartLocks map[string]*sync.Mutex
+
+	// serverClientsLocks — пер-инстансный замок цикла абонентов
+	// (усыновить → изменить → записать passwords.json). Отдельный от
+	// serverStartLocks намеренно: старт держит свой замок секундами (ждёт
+	// появления интерфейсов), и добавление абонента не должно на это время
+	// вставать.
+	serverClientsMu    sync.Mutex
+	serverClientsLocks map[string]*sync.Mutex
 }
 
 // ErrClientStartInFlight — StartClientInstance этого клиента уже выполняется
@@ -166,6 +174,34 @@ func (s *Service) serverStartLock(id string) *sync.Mutex {
 	if !exists {
 		l = &sync.Mutex{}
 		s.serverStartLocks[id] = l
+	}
+	return l
+}
+
+// lockServerClients сериализует весь цикл абонентов сервера: и обе мутирующие
+// ручки, и чтение с усыновлением, и путь старта. Файл пишется последним, и
+// конкурентное чтение, попавшее между вычёркиванием абонента из wdtt.json и
+// перезаписью passwords.json, усыновило бы удалённого обратно.
+//
+// Порядок захвата с serverStartLock ОДНОНАПРАВЛЕННЫЙ: StartServerInstance берёт
+// serverStartLock, а этот замок — внутри него; ни одна операция над абонентами
+// serverStartLock не берёт вовсе.
+func (s *Service) lockServerClients(id string) (unlock func()) {
+	l := s.serverClientsLock(id)
+	l.Lock()
+	return l.Unlock
+}
+
+func (s *Service) serverClientsLock(id string) *sync.Mutex {
+	s.serverClientsMu.Lock()
+	defer s.serverClientsMu.Unlock()
+	if s.serverClientsLocks == nil {
+		s.serverClientsLocks = make(map[string]*sync.Mutex)
+	}
+	l, exists := s.serverClientsLocks[id]
+	if !exists {
+		l = &sync.Mutex{}
+		s.serverClientsLocks[id] = l
 	}
 	return l
 }

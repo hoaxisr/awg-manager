@@ -124,7 +124,7 @@ type ServerConfig struct {
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
 	WgIface string `json:"wgIface,omitempty"`
 
-	// Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+	// Clients — абоненты сервера. Источник правды: passwords.json собирается из
 	// этого списка перед каждым стартом wdtt-server.
 	Clients []ServerClient `json:"clients,omitempty"`
 
@@ -256,22 +256,25 @@ type Status struct {
 	RouterClock      string `json:"routerClock,omitempty"`
 }
 
-// PanelUserEntry is one WDTT client password row from panel.db.
-type PanelUserEntry struct {
+// ServerClientEntry — один абонент сервера: личность из wdtt.json,
+// живые признаки — из passwords.json.
+type ServerClientEntry struct {
 	Password      string `json:"password"`
 	Comment       string `json:"comment,omitempty"`
 	VkHash        string `json:"vkHash,omitempty"`
-	IsMain        bool   `json:"isMain"`
 	IsDeactivated bool   `json:"isDeactivated"`
-	DeviceCount   int    `json:"deviceCount"`
-	LastSeenAt    int64  `json:"lastSeenAt,omitempty"`
+	// IsExpired — срок, назначенный сервером, истёк. Такой абонент в
+	// passwords.json не пишется и подключиться не может; в списке он остаётся,
+	// чтобы пользователь понимал, почему доступ пропал.
+	IsExpired bool `json:"isExpired"`
 }
 
-// PanelUsersStatus is returned by the panel users API.
-type PanelUsersStatus struct {
-	PanelDBPath string           `json:"panelDbPath,omitempty"`
-	Available   bool             `json:"available"`
-	Users       []PanelUserEntry `json:"users"`
+// ServerClientsStatus is returned by the server clients API.
+type ServerClientsStatus struct {
+	// Available — passwords.json прочитан. Пусто до первого старта сервера:
+	// список при этом всё равно отдаётся, из wdtt.json.
+	Available bool                `json:"available"`
+	Users     []ServerClientEntry `json:"users"`
 }
 
 // ImportPayload is the normalized result of wdtt://, qwdtt:// or subscription import.

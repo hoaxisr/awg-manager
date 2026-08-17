@@ -114,14 +114,14 @@ func (s *stubWdttForImport) StartServerInstance(string) error      { return nil 
 func (s *stubWdttForImport) StopServerInstance(string) error       { return nil }
 func (s *stubWdttForImport) InstallBinaries(context.Context) error { return nil }
 func (s *stubWdttForImport) Stop()                                 {}
-func (s *stubWdttForImport) ListServerPanelUsers(string) (wdtt.PanelUsersStatus, error) {
-	return wdtt.PanelUsersStatus{}, nil
+func (s *stubWdttForImport) ListServerClients(string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
 }
-func (s *stubWdttForImport) AddServerPanelUser(string, string, string, string, string) (wdtt.PanelUsersStatus, error) {
-	return wdtt.PanelUsersStatus{}, nil
+func (s *stubWdttForImport) AddServerClient(string, string, string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
 }
-func (s *stubWdttForImport) RemoveServerPanelUser(string, string) (wdtt.PanelUsersStatus, error) {
-	return wdtt.PanelUsersStatus{}, nil
+func (s *stubWdttForImport) RemoveServerClient(string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
 }
 
 func TestImportHandler_patchImportContentForLinkedClient_UsesFreeTurnListen(t *testing.T) {

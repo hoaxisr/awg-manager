@@ -42,9 +42,9 @@ type WdttService interface {
 	StopServerInstance(id string) error
 	InstallBinaries(ctx context.Context) error
 	Stop()
-	ListServerPanelUsers(serverID string) (wdtt.PanelUsersStatus, error)
-	AddServerPanelUser(serverID, password, comment, vkHash, mainPassword string) (wdtt.PanelUsersStatus, error)
-	RemoveServerPanelUser(serverID, password string) (wdtt.PanelUsersStatus, error)
+	ListServerClients(serverID string) (wdtt.ServerClientsStatus, error)
+	AddServerClient(serverID, password, comment, vkHash, mainPassword string) (wdtt.ServerClientsStatus, error)
+	RemoveServerClient(serverID, password string) (wdtt.ServerClientsStatus, error)
 }
 
 type WdttHandler struct {

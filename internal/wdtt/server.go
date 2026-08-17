@@ -60,19 +60,6 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	if saveErr != nil {
 		return ServerConfig{}, saveErr
 	}
-	// Синхронно: пароль обязан лежать в panel.db к моменту ответа, иначе
-	// пользователь успевает нажать «Запустить» с ещё не записанным паролем и
-	// клиенты не аутентифицируются. Запись мелкая — одна строка в локальном
-	// SQLite. Раньше это была fire-and-forget горутина с проглоченной
-	// ошибкой: провал записи оставался невидимым, а в тестах она дописывала
-	// panel.db в уже удаляемый t.TempDir().
-	if pwd := strings.TrimSpace(savedCfg.Password); pwd != "" {
-		if cfgDir, dirErr := s.serverConfigDir(id, savedCfg); dirErr == nil {
-			if err := syncPanelMainPassword(cfgDir, pwd, savedCfg.Clients); err != nil && s.appLog != nil {
-				s.appLog.Warn("panel", id, "пароль сервера не записан в panel.db: "+err.Error())
-			}
-		}
-	}
 	if running {
 		restart := serverProcessConfigChanged(prevCfg, savedCfg)
 		go func(prev, saved ServerConfig, id string, restart bool) {
@@ -221,16 +208,11 @@ func (s *Service) StartServerInstance(id string) error {
 		}
 		return fmt.Errorf("config-dir: %w", err)
 	}
-	// panel.db собираем из wdtt.json до старта: сервер на старте перечитывает
-	// её в память, а при ошибке чтения затирает своим пустым состоянием.
-	s.restoreServerPanelUsers(id, cfgDir, cfg)
-	if n, err := purgeGatewayIPDevices(cfgDir); err != nil && s.appLog != nil {
-		s.appLog.Warn("panel", id, "очистка устройств с IP шлюза: "+err.Error())
-	} else if n > 0 && s.appLog != nil {
-		s.appLog.Warn("panel", id, fmt.Sprintf("удалено %d устройств с IP %s — клиент перерегистрируется", n, DefaultWdttServerGatewayAddr))
-	}
-	if _, err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, cfg.Clients); err != nil && s.appLog != nil {
-		s.appLog.Warn("panel", id, "passwords.json не записан: "+err.Error())
+	// passwords.json собираем из wdtt.json до старта: сервер читает его в
+	// память на старте. Усыновление идёт первым — иначе абоненты, заведённые
+	// мимо менеджера (телеграм-бот), вычёркивались бы из файла.
+	if err := s.syncServerClientsOnStart(id, cfgDir, cfg); err != nil && s.appLog != nil {
+		s.appLog.Warn("clients", id, "passwords.json не записан: "+err.Error())
 	}
 	if err := redirectServerStatsLog(cfgDir, id, cfg.StatsLog); err != nil && s.appLog != nil {
 		s.appLog.Warn("stats-log", id, "server.log redirect: "+err.Error())
@@ -336,10 +318,6 @@ func (s *Service) serverInstance(id string) (ServerInstance, error) {
 	return full.Servers[idx], nil
 }
 
-func panelDBPath(configDir string) string {
-	return filepath.Join(strings.TrimSpace(configDir), "panel.db")
-}
-
 func (s *Service) serverConfigDir(id string, cfg ServerConfig) (string, error) {
 	if dir := strings.TrimSpace(cfg.ConfigDir); dir != "" {
 		return dir, nil
@@ -396,39 +374,6 @@ func (s *Service) dropServerClient(id, password string) error {
 		return list, false
 	})
 	return err
-}
-
-// adoptServerClients переносит в wdtt.json клиентов, известных только panel.db
-// (установки до появления списка в конфиге, правки через телеграм-бота).
-func (s *Service) adoptServerClients(id string, extra []ServerClient) []ServerClient {
-	if len(extra) == 0 {
-		return nil
-	}
-	list, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
-		// Идемпотентно: два параллельных списка усыновляют один и тот же
-		// набор строк, дубликат в конфиге был бы виден в UI.
-		known := make(map[string]bool, len(list))
-		for _, c := range list {
-			known[c.Password] = true
-		}
-		changed := false
-		for _, c := range extra {
-			if c.Password == "" || known[c.Password] {
-				continue
-			}
-			known[c.Password] = true
-			list = append(list, c)
-			changed = true
-		}
-		return list, changed
-	})
-	if err != nil {
-		if s.appLog != nil {
-			s.appLog.Warn("panel", id, "клиенты из panel.db не сохранены в конфиг: "+err.Error())
-		}
-		return nil
-	}
-	return list
 }
 
 func (s *Service) setServerEnabled(id string, enabled bool) error {

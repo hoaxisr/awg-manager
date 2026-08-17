@@ -71,11 +71,13 @@ func TestUpdateServerInstance_RejectsMainPasswordSameAsClient(t *testing.T) {
 	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.AddServerPanelUser(DefaultInstanceID, "", "Иван", "", "")
+	st, err := s.AddServerClient(DefaultInstanceID, "", "Иван", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientPass := st.Users[1].Password
+	// Выбираем по имени: главного пароля в списке больше нет, а порядок и число
+	// записей задаются составом конфига.
+	clientPass := serverClientPasswordByComment(t, st, "Иван")
 	if _, err := s.UpdateServerInstance(DefaultInstanceID, ServerConfig{Password: clientPass}); err == nil {
 		t.Fatal("ожидалась ошибка: пароль сервера совпадает с паролем клиента")
 	}
