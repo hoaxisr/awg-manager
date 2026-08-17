@@ -434,6 +434,29 @@ const MOCK_AWG_TUNNELS = [
 		connectivityCheck: { method: 'http' },
 		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 0 },
 	},
+	{
+		// Туннель WDTT-клиента в режиме WG: Endpoint смотрит в listen клиента
+		// (127.0.0.1:9000) — по нему деталь «Выход» и находит карточку.
+		id: 'wdtt-tunnel-default',
+		name: 'Клиент wdtt',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: false,
+		endpoint: '127.0.0.1:9000',
+		address: '10.66.0.2/32',
+		interfaceName: 'awg7',
+		ndmsName: 'Wireguard8',
+		rxBytes: 9_112_334,
+		txBytes: 2_004_112,
+		lastHandshake: new Date(Date.now() - 30_000).toISOString(),
+		awgVersion: 'wg',
+		mtu: 1420,
+		startedAt: new Date(Date.now() - 6_120_000).toISOString(),
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
 ];
 
 /** AWG tunnels where monitoring self-check is down while status stays running or broken. */
@@ -2407,7 +2430,12 @@ const mockAccessPolicies = [
 		description: 'home',
 		isStandard: true,
 		standalone: false,
-		interfaces: [mockPolicyInterfaceRef('awg-demo-1', 0)],
+		// OpkgTun19 — raw-интерфейс wdtt-клиента «Унаследованный»: деталь «Выход»
+		// читает членство обратным поиском по этому списку (EX-11).
+		interfaces: [
+			mockPolicyInterfaceRef('awg-demo-1', 0),
+			{ name: 'OpkgTun19', label: 'Унаследованный', order: 1 },
+		],
 		deviceCount: 1,
 	},
 	{
@@ -3291,11 +3319,15 @@ function createInitialMockWdtt() {
 				},
 			},
 			{
+				// Упавший процесс: lastError у остановленного даёт «не запускается»
+				// в списке (LS-06), в строке состояния (RB-02) и блок EX-01 в детали.
 				id: 'wdtt-2',
 				name: 'Резерв',
 				running: false,
 				pid: 15877,
 				startedAt: null,
+				lastError:
+					'dial udp backup.wdtt.example:56000: connect: connection refused\nexit status 1',
 				config: {
 					enabled: false,
 					listen: '127.0.0.1:9001',
@@ -3544,6 +3576,8 @@ function mockWdttProcessStatus(inst) {
 					dtlsConnections: 3,
 				}
 			: { log: '08:51:30 [info] process stopped' }),
+		// Ошибка последнего запуска живёт, пока процесс не работает.
+		...(!inst.running && inst.lastError ? { lastError: inst.lastError } : {}),
 		ndmsIface: inst.config.ndmsIface || undefined,
 		rawIface: inst.config.rawIface || undefined,
 		rawClientIp: inst.config.rawClientIp || undefined,
@@ -5871,7 +5905,12 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/routing/access-policies') {
+	// Один и тот же handler бэкенда зарегистрирован на два адреса
+	// (server_routes.go:604 и :627): страница «Прокси» читает короткий.
+	if (
+		req.method === 'GET' &&
+		(path === '/routing/access-policies' || path === '/access-policies')
+	) {
 		send(res, 200, { success: true, data: mockAccessPolicies });
 		return;
 	}
@@ -7759,6 +7798,66 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Кто слушает порт: GET /proxy/listener — секция «Освобождение порта».
+	// Занятым считаем порт работающего инстанса, остальные свободны.
+	if (req.method === 'GET' && path === '/proxy/listener') {
+		const host = url.searchParams.get('host') ?? '127.0.0.1';
+		const port = Number(url.searchParams.get('port') ?? 0);
+		const proto = url.searchParams.get('proto') ?? 'udp';
+		const wdttOwner = mockWdtt.clients.find(
+			(i) => i.running && Number((i.config.listen ?? '').split(':').pop()) === port,
+		);
+		const ftOwner = mockFreeturn.clients.find(
+			(i) => i.running && Number((i.config.listen ?? '').split(':').pop()) === port,
+		);
+		const owner = wdttOwner ?? ftOwner;
+		sendData(res, {
+			open: !!owner,
+			...(owner ? { pid: owner.pid, comm: wdttOwner ? 'wdtt-client' : 'ft-client' } : {}),
+			proto,
+			host,
+			port,
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/proxy/kill-listener') {
+		readRequestText(req).then((raw) => {
+			try {
+				const body = raw ? JSON.parse(raw) : {};
+				sendData(res, { message: `порт ${body.port} освобождён (mock)`, pid: 0 });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	// Ожидание подтверждения VK: GET /freeturn/captcha/status
+	// (internal/freeturn/captcha.go — обзор по всем клиентам; секция детали
+	// рендерится только на waiting/queued).
+	if (req.method === 'GET' && path === '/freeturn/captcha/status') {
+		const owner = mockFreeturn.clients[0];
+		sendData(res, {
+			portOpen: true,
+			ownerClientId: owner?.id,
+			ownerName: owner?.name,
+			clients: mockFreeturn.clients.map((i, idx) => ({
+				clientId: i.id,
+				clientName: i.name,
+				waiting: idx === 0,
+				active: idx === 0,
+				queued: idx === 1,
+				canOpen: idx === 0,
+				url: idx === 0 ? `/api/freeturn/clients/${i.id}/captcha/` : undefined,
+				pendingStreams: idx === 0 ? 2 : 1,
+				// Второй инстанс стоит в очереди: порт капчи занят соседом.
+				portContention: idx === 1,
+			})),
+		});
+		return;
+	}
+
 	// Создание инстанса (v2): POST /freeturn/clients | /freeturn/servers
 	{
 		const m = req.method === 'POST' && /^\/freeturn\/(clients|servers)$/.exec(path);
@@ -8094,6 +8193,7 @@ const server = http.createServer(async (req, res) => {
 			}
 			inst.running = action === 'start';
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			if (inst.running) inst.lastError = '';
 			sendData(res, { message: `wdtt client ${id}: ${action} (mock)` });
 			return;
 		}
@@ -8119,6 +8219,35 @@ const server = http.createServer(async (req, res) => {
 				tunnelId: `wdtt-tunnel-${id}`,
 				tunnelName: `${inst.name} wdtt`,
 				message: 'Туннель уже привязан (mock)',
+			});
+			return;
+		}
+	}
+
+	// Запись WDTT Raw в AWG-туннелях: POST /wdtt/clients/{id}/ensure-raw-tunnel
+	// (internal/api/wdtt_raw_tunnel.go:14 — та же форма ответа, что у ensure-wg).
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/ensure-raw-tunnel$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+				});
+				return;
+			}
+			if ((inst.config.connMode ?? 'wg') !== 'raw') {
+				sendData(res, { created: false, message: 'Режим WG: используйте ensure-wg-tunnel' });
+				return;
+			}
+			// Запись уже есть — created:false, иначе авто-ensure долбил бы POST.
+			sendData(res, {
+				created: false,
+				tunnelId: `wdttraw-${id}`,
+				tunnelName: `${inst.name} raw`,
+				message: 'Запись WDTT Raw в AWG-туннелях обновлена',
 			});
 			return;
 		}
