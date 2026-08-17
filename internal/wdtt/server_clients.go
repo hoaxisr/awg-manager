@@ -132,19 +132,22 @@ func (s *Service) adoptServerClientsFromFile(serverID, cfgDir string) ([]ServerC
 // writeServerClientsFile переписывает passwords.json по переданному списку.
 // Второе значение — «вычищены устройства с IP шлюза».
 //
-// В журнал этот признак НЕ идёт, и это осознанно: reserveGatewayIPInDevices сама
-// кладёт в devices запись с IP шлюза, а sanitizePasswordsDevices на следующем
-// заходе ровно её и снимает — со второй записи файла признак истинен всегда
-// (проверено прогоном, задача 1). Предупреждение на каждой записи не сообщало бы
-// ничего. Цена: настоящее снятие клиентского устройства с IP шлюза тоже проходит
-// молча; отличить его от нашего же резерва по одному биту невозможно, а второе
-// место, считающее «что именно вычищено», плодить незачем.
+// Признак идёт в журнал: sanitizePasswordsDevices пропускает НАШ резерв
+// (gatewayReserveDeviceID), поэтому истинным он становится только на настоящем
+// снятии — у абонента отобрали адрес шлюза, и его устройство переподключится за
+// свободным. Раньше бит был вырожден собственным резервом, и сообщение
+// печаталось бы на каждой записи файла.
 func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConfig, clients []ServerClient) (bool, error) {
 	clients, err := s.ensureUsableServerClient(serverID, cfg, clients)
 	if err != nil {
 		return false, err
 	}
-	return syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
+	sanitized, err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
+	if err == nil && sanitized && s.appLog != nil {
+		s.appLog.Warn("server-clients", serverID,
+			"из passwords.json сняты устройства с IP шлюза: абонент переподключится и получит свободный адрес")
+	}
+	return sanitized, err
 }
 
 // ensureUsableServerClient — вторая опора инварианта, между усыновлением и

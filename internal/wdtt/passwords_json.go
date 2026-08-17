@@ -120,13 +120,20 @@ func sanitizePasswordsDevices(devices map[string]any) (map[string]any, bool) {
 	for id, entry := range devices {
 		dev := deviceAddrsFromPasswordsEntry(entry)
 		if dev.IP == DefaultWdttServerGatewayAddr || dev.RawIP == DefaultRawServerGatewayAddr {
-			changed = true
+			// Свой резерв снимаем молча: его кладёт reserveGatewayIPInDevices
+			// на каждой записи файла, и без этого исключения признак был бы
+			// истинен всегда — то есть не значил бы ничего.
+			changed = changed || id != gatewayReserveDeviceID
 			continue
 		}
 		out[id] = entry
 	}
 	return out, changed
 }
+
+// gatewayReserveDeviceID — идентификатор НАШЕЙ записи-резерва в devices. Не
+// устройство абонента: владельца у неё нет по построению.
+const gatewayReserveDeviceID = "__awgm_gateway_reserved__"
 
 // reserveGatewayIPInDevices marks 10.66.0.1 as used so legacy wdtt-server getNextIP
 // skips the OpkgTun gateway before the server binary is rebuilt.
@@ -139,8 +146,7 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 			return devices
 		}
 	}
-	const reserveID = "__awgm_gateway_reserved__"
-	devices[reserveID] = map[string]any{
+	devices[gatewayReserveDeviceID] = map[string]any{
 		"ip":      DefaultWdttServerGatewayAddr,
 		"comment": "awg-manager gateway reservation",
 	}

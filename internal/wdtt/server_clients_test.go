@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 // newServerClientsService поднимает сервис с одним сервером и созданным
@@ -1236,4 +1238,59 @@ func TestServerClients_AutoClientIsNamedAndUnlimited(t *testing.T) {
 			t.Fatalf("в файле у автоматического абонента срок %d", entry.ExpiresAt)
 		}
 	})
+}
+
+// recordingAppLogger собирает сообщения журнала для проверки, что настоящая
+// чистка устройств слышна.
+type recordingAppLogger struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (l *recordingAppLogger) AppLog(_ logging.Level, _, _, _, _, message string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.messages = append(l.messages, message)
+}
+
+func (l *recordingAppLogger) contains(sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, m := range l.messages {
+		if strings.Contains(m, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestWriteServerClientsFile_LogsRealGatewayPurge сторожит сам факт
+// журналирования: снятие устройства абонента с IP шлюза обязано быть слышно, а
+// собственный резерв — нет. Мутация «убрать вызов appLog» роняет первую
+// половину, мутация «журналировать всегда» — вторую.
+func TestWriteServerClientsFile_LogsRealGatewayPurge(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "adminpass")
+	log := &recordingAppLogger{}
+	s.SetLogger(log)
+
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "adminpass",
+		Passwords:    map[string]passwordsJSONUser{},
+		Devices:      map[string]any{"dev-abonenta": map[string]any{"ip": DefaultWdttServerGatewayAddr}},
+	})
+	cfg := serverConfigOf(t, s, DefaultInstanceID)
+	if _, err := s.writeServerClientsFile(DefaultInstanceID, cfgDir, cfg, []ServerClient{{Password: "abonent1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !log.contains("устройства с IP шлюза") {
+		t.Fatalf("настоящая чистка прошла молча: %v", log.messages)
+	}
+
+	log.messages = nil
+	if _, err := s.writeServerClientsFile(DefaultInstanceID, cfgDir, cfg, []ServerClient{{Password: "abonent1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if log.contains("устройства с IP шлюза") {
+		t.Fatalf("свой резерв попал в журнал: %v", log.messages)
+	}
 }

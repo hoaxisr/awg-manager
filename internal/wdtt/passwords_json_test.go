@@ -139,6 +139,51 @@ func TestSyncPasswordsJSON_CreatesOwnerOnlyFile(t *testing.T) {
 	}
 }
 
+// TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation сторожит СМЫСЛ
+// признака: «вычищено» обязано означать снятие устройства АБОНЕНТА с IP шлюза.
+// Собственный резерв (gatewayReserveDeviceID) кладётся при каждой записи файла и
+// снимается при следующей — без исключения для него бит истинен всегда, то есть
+// не несёт информации, и журналировать его нельзя (ровно этим он был выключен в
+// задаче 2). Мутация «считать и свой резерв» роняет второй прогон.
+func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
+	dir := t.TempDir()
+	clients := []ServerClient{{Password: "client1"}}
+
+	first, err := syncPasswordsJSON(dir, "main", "", "", clients)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first {
+		t.Fatal("первая запись: sanitized = true на пустом файле")
+	}
+	// Со второй записи в файле лежит наш резерв — и только он.
+	for i := 2; i <= 3; i++ {
+		got, err := syncPasswordsJSON(dir, "main", "", "", clients)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got {
+			t.Fatalf("запись %d: sanitized = true при неизменном наборе — бит вырожден собственным резервом", i)
+		}
+	}
+
+	// Контроль: настоящее устройство абонента на IP шлюза бит поднимает —
+	// исключение сделано для одного идентификатора, а не для адреса.
+	doc, err := loadPasswordsJSON(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Devices["dev-abonenta"] = map[string]any{"ip": DefaultWdttServerGatewayAddr}
+	writePasswordsFixture(t, dir, doc)
+	got, err := syncPasswordsJSON(dir, "main", "", "", clients)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("устройство абонента с IP шлюза снято молча: сигнал потерян")
+	}
+}
+
 // writePasswordsFixture кладёт в dir passwords.json с заданным содержимым.
 func writePasswordsFixture(t *testing.T, dir string, doc passwordsJSON) {
 	t.Helper()
