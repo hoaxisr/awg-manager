@@ -11,6 +11,13 @@ func NormalizeSubscriptionURL(rawURL string) (string, bool) {
 	trimmed := strings.TrimSpace(rawURL)
 	lower := strings.ToLower(trimmed)
 
+	// happ://crypt/, happ://crypt2/, happ://crypt3/, happ://crypt4/
+	if IsHappCryptLink(trimmed) {
+		if decrypted, err := DecryptHappLink(trimmed); err == nil && decrypted != "" {
+			return decrypted, true
+		}
+	}
+
 	// clash://install-config?url=... or clashmeta://install-config?url=...
 	if strings.HasPrefix(lower, "clash://install-config") || strings.HasPrefix(lower, "clashmeta://install-config") {
 		if u, err := url.Parse(trimmed); err == nil {

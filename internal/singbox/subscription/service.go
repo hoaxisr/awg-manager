@@ -1596,11 +1596,13 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 
 // DetectedProfile describes the automatically probed headers profile for a URL.
 type DetectedProfile struct {
-	Kind        string   `json:"kind"`
-	Headers     []Header `json:"headers"`
-	HeadersText string   `json:"headersText"`
-	Label       string   `json:"label"`
-	ServerCount int      `json:"serverCount"`
+	Kind         string   `json:"kind"`
+	DecryptedURL string   `json:"decryptedUrl,omitempty"`
+	IsEncrypted  bool     `json:"isEncrypted,omitempty"`
+	Headers      []Header `json:"headers"`
+	HeadersText  string   `json:"headersText"`
+	Label        string   `json:"label"`
+	ServerCount  int      `json:"serverCount"`
 }
 
 func randomHex(n int) string {
@@ -1620,6 +1622,15 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 			ServerCount: 0,
 		}, nil
 	}
+
+	isEnc := IsHappCryptLink(rawUrl)
+	decryptedURL := ""
+	if isEnc {
+		if dec, err := DecryptHappLink(rawUrl); err == nil && dec != "" {
+			decryptedURL = dec
+		}
+	}
+
 	fetchURL, _ := RewriteForRaw(rawUrl)
 
 	candidates := []struct {
@@ -1696,21 +1707,34 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 			for _, h := range hdrs {
 				lines = append(lines, fmt.Sprintf("%s: %s", h.Name, h.Value))
 			}
+			label := cand.label
+			if isEnc {
+				label = "HAPP Crypt (расшифровано: " + cand.label + ")"
+			}
 			return DetectedProfile{
-				Kind:        cand.kind,
-				Headers:     hdrs,
-				HeadersText: strings.Join(lines, "\n"),
-				Label:       cand.label,
-				ServerCount: len(parts.Valid),
+				Kind:         cand.kind,
+				DecryptedURL: decryptedURL,
+				IsEncrypted:  isEnc,
+				Headers:      hdrs,
+				HeadersText:  strings.Join(lines, "\n"),
+				Label:        label,
+				ServerCount:  len(parts.Valid),
 			}, nil
 		}
 	}
 
+	label := "sing-box (по умолчанию)"
+	if isEnc {
+		label = "HAPP Crypt (расшифровано)"
+	}
+
 	return DetectedProfile{
-		Kind:        "singbox",
-		HeadersText: "User-Agent: sing-box/v1.14.20",
-		Label:       "sing-box (по умолчанию)",
-		ServerCount: 0,
+		Kind:         "singbox",
+		DecryptedURL: decryptedURL,
+		IsEncrypted:  isEnc,
+		HeadersText:  "User-Agent: sing-box/v1.14.20",
+		Label:        label,
+		ServerCount:  0,
 	}, nil
 }
 

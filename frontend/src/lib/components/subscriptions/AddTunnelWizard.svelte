@@ -124,6 +124,10 @@
 				if (target) return target;
 			} catch {}
 		}
+		if (lower.startsWith('happ://crypt')) {
+			return s;
+		}
+
 		for (const scheme of ['happ://', 'sub://', 'singbox://', 'sing-box://', 'v2ray://', 'sn://', 'ss://']) {
 			if (lower.startsWith(scheme)) {
 				const after = s.slice(scheme.length);
@@ -146,7 +150,13 @@
 		if (detectTimer) clearTimeout(detectTimer);
 		detectedNotice = '';
 		const clean = cleanSubscriptionUrl(targetUrl);
-		if (!clean.startsWith('http://') && !clean.startsWith('https://')) return;
+		if (
+			!clean.startsWith('http://') &&
+			!clean.startsWith('https://') &&
+			!clean.startsWith('happ://crypt')
+		) {
+			return;
+		}
 
 		detectingHeaders = true;
 		detectTimer = setTimeout(async () => {
@@ -154,14 +164,20 @@
 				const res = await api.detectSubscriptionHeaders(clean);
 				if (res && res.serverCount > 0) {
 					headersText = res.headersText;
-					detectedNotice = `✨ Распознано: ${res.label} (серверов: ${res.serverCount})`;
+					if (res.isEncrypted) {
+						detectedNotice = `🔓 Зашифрованная ссылка расшифрована! ${res.label} (найдено серверов: ${res.serverCount})`;
+					} else {
+						detectedNotice = `✨ Распознано: ${res.label} (найдено серверов: ${res.serverCount})`;
+					}
+				} else if (res && res.isEncrypted && res.decryptedUrl) {
+					detectedNotice = `🔓 Зашифрованная ссылка расшифрована в: ${res.decryptedUrl}`;
 				}
 			} catch (e) {
 				// silent fallback
 			} finally {
 				detectingHeaders = false;
 			}
-		}, 300);
+		}, 250);
 	}
 
 	function reset(): void {
@@ -537,16 +553,16 @@
 						placeholder="https://provider.example/sub/abc или happ://..."
 					/>
 					{#if detectingHeaders}
-						<span class="hint" style="color: var(--accent-primary, #3b82f6);">
-							🔍 Проверяем тип подписки...
-						</span>
+						<div class="detect-badge detect-loading">
+							<span>🔍</span> <span>Расшифровываем и проверяем тип подписки...</span>
+						</div>
 					{:else if detectedNotice}
-						<span class="hint" style="color: var(--success, #10b981); font-weight: 500;">
-							{detectedNotice}
-						</span>
+						<div class="detect-badge detect-success">
+							<span>{detectedNotice}</span>
+						</div>
 					{:else}
 						<span class="hint">
-							Поддерживаются ссылки HTTPS, HAPP (happ://), Clash, V2Ray/Xray JSON, Sing-box JSON.
+							Поддерживаются ссылки HTTPS, зашифрованные HAPP (happ://crypt), Clash, V2Ray/Xray, Sing-box.
 						</span>
 					{/if}
 				</label>
@@ -850,6 +866,27 @@
 		background: var(--color-bg-secondary, var(--color-bg-primary));
 		border: 1px dashed var(--color-border);
 		border-radius: 4px;
+	}
+	.detect-badge {
+		margin-top: 0.35rem;
+		padding: 0.35rem 0.6rem;
+		border-radius: 0.375rem;
+		font-size: 0.8125rem;
+		line-height: 1.35;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.detect-loading {
+		background: rgba(59, 130, 246, 0.08);
+		color: var(--color-primary, #3b82f6);
+		border: 1px solid rgba(59, 130, 246, 0.25);
+	}
+	.detect-success {
+		background: rgba(16, 185, 129, 0.1);
+		color: var(--color-success, #10b981);
+		border: 1px solid rgba(16, 185, 129, 0.3);
+		font-weight: 500;
 	}
 	@media (max-width: 480px) {
 		.mode-grid { grid-template-columns: 1fr; }
