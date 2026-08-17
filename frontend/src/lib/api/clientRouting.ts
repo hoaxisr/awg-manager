@@ -135,6 +135,14 @@ export class RoutingClient extends ServersClient {
 	// #region Access Policies — CRUD, devices, interfaces
 	// ─────────────────────────────────────────────
 
+	/**
+	 * Состав политик целиком: отдельной ручки «в какой политике этот интерфейс»
+	 * у бэкенда нет, обратное членство ищется по этому списку.
+	 */
+	async listAccessPolicies(): Promise<AccessPolicy[]> {
+		return this.request<AccessPolicy[]>('/access-policies');
+	}
+
 	async createAccessPolicy(description: string): Promise<AccessPolicy> {
 		return this.request('/access-policies/create', {
 			method: 'POST',

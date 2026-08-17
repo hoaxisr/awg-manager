@@ -10,9 +10,20 @@
 		proto?: 'udp' | 'tcp';
 		defaultHost?: string;
 		compact?: boolean;
+		/**
+		 * chip — старая форма рядом с метой панели; section — строка секции
+		 * «Освобождение порта» страницы «Прокси» (EX-47/EX-48, SH-70/SH-71).
+		 */
+		variant?: 'chip' | 'section';
 	}
 
-	let { listen, proto = 'udp', defaultHost = '127.0.0.1', compact = true }: Props = $props();
+	let {
+		listen,
+		proto = 'udp',
+		defaultHost = '127.0.0.1',
+		compact = true,
+		variant = 'chip'
+	}: Props = $props();
 
 	let loading = $state(false);
 	let killing = $state(false);
@@ -68,7 +79,18 @@
 	});
 </script>
 
-{#if parsed}
+{#if parsed && variant === 'section'}
+	<div class="kill-row">
+		{#if open && pid}
+			<span class="kill-text">Порт {parsed.port} занят процессом {comm} (PID {pid})</span>
+		{:else}
+			<span class="kill-text">Порт {parsed.port} — свободен</span>
+		{/if}
+		<Button variant="secondary" size="sm" loading={killing} disabled={!open || !pid} onclick={kill}>
+			Освободить порт
+		</Button>
+	</div>
+{:else if parsed}
 	<span class="listen-kill" class:compact>
 		{#if loading}
 			<span class="listen-kill-hint">…</span>
@@ -104,6 +126,20 @@
 	.listen-kill-hint {
 		font-size: 0.6875rem;
 		font-family: var(--font-mono);
+		color: var(--color-text-secondary);
+	}
+
+	.kill-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin-top: 0.5rem;
+	}
+
+	.kill-text {
+		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 	}
 </style>

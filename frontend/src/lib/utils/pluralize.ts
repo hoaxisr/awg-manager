@@ -28,6 +28,7 @@ export const TUNNEL_WORDS = ['туннель', 'туннеля', 'туннеле
 export const ERROR_WORDS = ['ошибка', 'ошибки', 'ошибок'] as const satisfies PluralWords;
 export const DEVICE_WORDS = ['устройство', 'устройства', 'устройств'] as const satisfies PluralWords;
 export const CONNECTION_WORDS = ['соединение', 'соединения', 'соединений'] as const satisfies PluralWords;
+export const STREAM_WORDS = ['поток', 'потока', 'потоков'] as const satisfies PluralWords;
 export const POLICY_WORDS = ['политика', 'политики', 'политик'] as const satisfies PluralWords;
 export const SUBSCRIPTION_WORDS = ['подписка', 'подписки', 'подписок'] as const satisfies PluralWords;
 export const REWRITE_WORDS = ['перезапись', 'перезаписи', 'перезаписей'] as const satisfies PluralWords;

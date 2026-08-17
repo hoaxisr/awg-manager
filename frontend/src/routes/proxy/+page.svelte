@@ -4,12 +4,34 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
 	import { Card, ConfirmModal, Tabs } from '$lib/components/ui';
-	import { BinaryStrip, InstanceList, RunBar, exitRows, shareRows } from '$lib/components/proxy';
+	import {
+		BinaryStrip,
+		ExitDetail,
+		InstanceList,
+		RunBar,
+		binaryStripItems,
+		deleteProxyInstance,
+		exitInstance,
+		exitRows,
+		renameProxyInstance,
+		reportDeletedTunnels,
+		revertExitInstance,
+		saveExitInstance,
+		shareRows,
+		toggleProxyInstance,
+	} from '$lib/components/proxy';
 	import type { ProxyInstanceRow } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { formatUptime } from '$lib/components/freeturn/uptime';
 	import { errText } from '$lib/utils/errorMessage';
-	import type { FreeTurnConfig, FreeTurnStatus, WdttConfig, WdttStatus } from '$lib/types';
+	import type {
+		AccessPolicy,
+		FreeTurnConfig,
+		FreeTurnStatus,
+		TunnelListItem,
+		WdttConfig,
+		WdttStatus,
+	} from '$lib/types';
 
 	type TabId = 'exit' | 'share';
 
@@ -21,6 +43,12 @@
 	let ftConfig = $state<FreeTurnConfig | null>(null);
 	let wdttStatus = $state<WdttStatus | null>(null);
 	let ftStatus = $state<FreeTurnStatus | null>(null);
+	// Копия последнего загруженного конфига — источник «Отменить» (EX-24).
+	let savedWdttConfig = $state<WdttConfig | null>(null);
+	let savedFtConfig = $state<FreeTurnConfig | null>(null);
+	let policies = $state<AccessPolicy[]>([]);
+	let tunnels = $state<TunnelListItem[]>([]);
+	let savingExit = $state(false);
 
 	let selectedExitKey = $state<string | null>(null);
 	let selectedShareKey = $state<string | null>(null);
@@ -37,6 +65,21 @@
 	const shares = $derived(shareRows(sources));
 
 	const selectedExit = $derived(exits.find((r) => r.key === selectedExitKey) ?? null);
+	const exitWdttClient = $derived(
+		selectedExit?.protocol === 'wdtt'
+			? wdttConfig?.clients.find((c) => c.id === selectedExit.id)?.config
+			: undefined,
+	);
+	const exitFtClient = $derived(
+		selectedExit?.protocol === 'freeturn'
+			? ftConfig?.clients.find((c) => c.id === selectedExit.id)?.config
+			: undefined,
+	);
+	const exitStatus = $derived(
+		selectedExit?.protocol === 'wdtt'
+			? wdttStatus?.clients?.find((c) => c.id === selectedExit.id)?.status
+			: ftStatus?.clients?.find((c) => c.id === selectedExit?.id)?.status,
+	);
 	const selectedShare = $derived(shares.find((r) => r.key === selectedShareKey) ?? null);
 	const selected = $derived(activeTab === 'exit' ? selectedExit : selectedShare);
 	const wizardOpen = $derived(activeTab === 'exit' ? exitWizard : shareWizard);
@@ -56,43 +99,14 @@
 		{ id: 'share', label: 'Раздача' },
 	];
 
-	const binaries = $derived([
-		{
-			name: 'wdtt',
-			binaryPresent: wdttStatus?.client.binaryPresent === true,
-			installAvailable: wdttStatus?.installAvailable === true,
-			installing: installing === 'wdtt' || wdttStatus?.installing === true,
-			updateAvailable: wdttStatus?.updateAvailable === true,
-			installedVersion: wdttStatus?.installedVersion,
-			installVersion: wdttStatus?.installVersion,
-			oninstall: () => install('wdtt'),
-		},
-		{
-			name: 'freeturn',
-			binaryPresent: ftStatus?.client.binaryPresent === true,
-			installAvailable: ftStatus?.installAvailable === true,
-			installing: installing === 'freeturn' || ftStatus?.installing === true,
-			updateAvailable: ftStatus?.updateAvailable === true,
-			installedVersion: ftStatus?.installedVersion,
-			installVersion: ftStatus?.installVersion,
-			oninstall: () => install('freeturn'),
-		},
-	]);
+	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
 
-	// RB-06 / RB-07: порты раздачи приезжают вместе с деталью «Раздача».
-	const detailMeta = $derived.by(() => {
-		const row = selected;
-		if (!row) return '';
-		const listen =
-			row.role === 'client' && row.protocol === 'wdtt'
-				? wdttConfig?.clients.find((x) => x.id === row.id)?.config.listen
-				: row.role === 'client'
-					? ftConfig?.clients.find((x) => x.id === row.id)?.config.listen
-					: undefined;
-		return [listen, formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : '']
+	// RB-07: порты раздачи приезжают вместе с деталью «Раздача» (задача 5).
+	const shareMeta = $derived(
+		[formatUptime(selectedShare?.startedAt), selectedShare?.pid ? `PID ${selectedShare.pid}` : '']
 			.filter(Boolean)
-			.join(' · ');
-	});
+			.join(' · '),
+	);
 
 	// ─── Загрузка и поллинг.
 
@@ -104,8 +118,26 @@
 
 	async function loadConfigs() {
 		const [w, f] = await Promise.all([api.getWdttConfig(), api.getFreeTurnConfig()]);
+		savedWdttConfig = structuredClone(w);
+		savedFtConfig = structuredClone(f);
 		wdttConfig = w;
 		ftConfig = f;
+	}
+
+	// Каталог для секции «Куда идёт трафик»: политики (обратное членство) и
+	// туннели (карточка связанного AWG). Вторичен — сбой не гасит страницу.
+	async function loadCatalog() {
+		try {
+			const [p, t] = await Promise.all([api.listAccessPolicies(), api.getTunnelsAll()]);
+			policies = p;
+			tunnels = t.tunnels ?? [];
+		} catch {
+			/* каталог вторичен */
+		}
+	}
+
+	async function reloadAll() {
+		await Promise.all([loadConfigs(), loadStatuses(), loadCatalog()]);
 	}
 
 	const statusPoll = createSelfReschedulingPoll(async () => {
@@ -118,7 +150,7 @@
 
 	onMount(async () => {
 		try {
-			await Promise.all([loadConfigs(), loadStatuses()]);
+			await Promise.all([loadConfigs(), loadStatuses(), loadCatalog()]);
 		} catch (e) {
 			loadError = errText(e);
 		} finally {
@@ -151,19 +183,7 @@
 	async function toggleInstance(row: ProxyInstanceRow, on: boolean) {
 		withBusy(row.key, true);
 		try {
-			if (row.protocol === 'wdtt' && row.role === 'client') {
-				if (on) await api.startWdttClientInstance(row.id);
-				else await api.stopWdttClientInstance(row.id);
-			} else if (row.protocol === 'wdtt') {
-				if (on) await api.startWdttServerInstance(row.id);
-				else await api.stopWdttServerInstance(row.id);
-			} else if (row.role === 'client') {
-				if (on) await api.startFreeTurnClient(row.id);
-				else await api.stopFreeTurnClient(row.id);
-			} else {
-				if (on) await api.startFreeTurnServer(row.id);
-				else await api.stopFreeTurnServer(row.id);
-			}
+			await toggleProxyInstance(row, on);
 			await Promise.all([loadConfigs(), loadStatuses()]);
 		} catch (e) {
 			notifications.error(errText(e));
@@ -172,12 +192,47 @@
 		}
 	}
 
+	/**
+	 * Сохранение параметров клиента: правки во время запроса не затираются
+	 * (W-22), смена адреса сервера останавливает клиент (W-27), работающему
+	 * после сохранения — просьба перезапустить (TS-04).
+	 */
+	async function saveExit() {
+		const row = selectedExit;
+		const inst = exitInstance(row, wdttConfig, ftConfig);
+		const saved = exitInstance(row, savedWdttConfig, savedFtConfig);
+		if (!row || !inst) return;
+		savingExit = true;
+		try {
+			const res = await saveExitInstance(row, inst, saved?.config.peer ?? '');
+			reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
+			if (row.state === 'running' && res.peerChanged) await toggleInstance(row, false);
+			else if (row.state === 'running') {
+				notifications.info('Перезапустите клиент, чтобы изменения применились');
+			}
+			await loadStatuses();
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			savingExit = false;
+		}
+	}
+
+	function revertExit() {
+		revertExitInstance(
+			exitInstance(selectedExit, wdttConfig, ftConfig),
+			exitInstance(selectedExit, savedWdttConfig, savedFtConfig),
+		);
+	}
+
+	async function saveAndStartExit() {
+		await saveExit();
+		if (selectedExit) await toggleInstance(selectedExit, true);
+	}
+
 	async function renameInstance(row: ProxyInstanceRow, name: string) {
 		try {
-			if (row.protocol === 'wdtt' && row.role === 'client') await api.renameWdttClient(row.id, name);
-			else if (row.protocol === 'wdtt') await api.renameWdttServer(row.id, name);
-			else if (row.role === 'client') await api.renameFreeTurnClient(row.id, name);
-			else await api.renameFreeTurnServer(row.id, name);
+			await renameProxyInstance(row, name);
 			await Promise.all([loadConfigs(), loadStatuses()]);
 		} catch (e) {
 			notifications.error(errText(e));
@@ -189,17 +244,8 @@
 		if (!row) return;
 		deleting = true;
 		try {
-			if (row.protocol === 'wdtt' && row.role === 'client') {
-				const res = await api.deleteWdttClient(row.id);
-				reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
-			} else if (row.protocol === 'wdtt') {
-				await api.deleteWdttServer(row.id);
-			} else if (row.role === 'client') {
-				const res = await api.deleteFreeTurnClient(row.id);
-				reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
-			} else {
-				await api.deleteFreeTurnServer(row.id);
-			}
+			const res = await deleteProxyInstance(row);
+			reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
 			deleteTarget = null;
 			await Promise.all([loadConfigs(), loadStatuses()]);
 		} catch (e) {
@@ -207,22 +253,6 @@
 		} finally {
 			deleting = false;
 		}
-	}
-
-	function reportDeletedTunnels(deleted?: string[], errors?: string[]) {
-		if (deleted?.length) {
-			notifications.success(`AWG-туннелей удалено: ${deleted.length} — перезапустите клиент`);
-		}
-		if (errors?.length) {
-			notifications.error(`Не удалось удалить туннели: ${tunnelErrorNames(errors).join(', ')}`);
-		}
-	}
-
-	// TS-03 просит имена туннелей, а бэкенд отдаёт строку «Имя (id): ошибка»
-	// (`internal/api/wdtt_linked.go:95`) — отрезаем хвост с id и текстом ошибки.
-	// Строка без этого хвоста (сбой чтения хранилища) остаётся как есть.
-	function tunnelErrorNames(errors: string[]): string[] {
-		return errors.map((e) => e.replace(/ \([^)]*\): [\s\S]*$/, '').trim()).filter(Boolean);
 	}
 </script>
 
@@ -246,41 +276,32 @@
 
 		<div class="split">
 			<aside class="rail">
-				{#if activeTab === 'exit'}
-					<InstanceList
-						title="Инстансы выхода"
-						rows={exits}
-						selectedKey={selectedExitKey}
-						addLabel="Вывести трафик"
-						emptyText="Выведите трафик роутера наружу"
-						{busyKeys}
-						onselect={(r) => {
+				<InstanceList
+					title={activeTab === 'exit' ? 'Инстансы выхода' : 'Инстансы раздачи'}
+					rows={activeTab === 'exit' ? exits : shares}
+					selectedKey={activeTab === 'exit' ? selectedExitKey : selectedShareKey}
+					addLabel={activeTab === 'exit' ? 'Вывести трафик' : 'Настроить раздачу'}
+					emptyText={activeTab === 'exit'
+						? 'Выведите трафик роутера наружу'
+						: 'Раздайте выход другим устройствам'}
+					{busyKeys}
+					onselect={(r) => {
+						if (activeTab === 'exit') {
 							selectedExitKey = r.key;
 							exitWizard = false;
-						}}
-						onadd={() => (exitWizard = true)}
-						ontoggle={toggleInstance}
-						onrename={renameInstance}
-						ondelete={(r) => (deleteTarget = r)}
-					/>
-				{:else}
-					<InstanceList
-						title="Инстансы раздачи"
-						rows={shares}
-						selectedKey={selectedShareKey}
-						addLabel="Настроить раздачу"
-						emptyText="Раздайте выход другим устройствам"
-						{busyKeys}
-						onselect={(r) => {
+						} else {
 							selectedShareKey = r.key;
 							shareWizard = false;
-						}}
-						onadd={() => (shareWizard = true)}
-						ontoggle={toggleInstance}
-						onrename={renameInstance}
-						ondelete={(r) => (deleteTarget = r)}
-					/>
-				{/if}
+						}
+					}}
+					onadd={() => {
+						if (activeTab === 'exit') exitWizard = true;
+						else shareWizard = true;
+					}}
+					ontoggle={toggleInstance}
+					onrename={renameInstance}
+					ondelete={(r) => (deleteTarget = r)}
+				/>
 			</aside>
 
 			<main class="detail">
@@ -303,8 +324,30 @@
 							}}>← К списку</button
 						>
 					</Card>
+				{:else if activeTab === 'exit' && selectedExit}
+					<!-- Локальное состояние детали не переживает смену инстанса (W-13). -->
+					{#key selectedExit.key}
+						<ExitDetail
+							row={selectedExit}
+							status={exitStatus}
+							wdttClient={exitWdttClient}
+							ftClient={exitFtClient}
+							routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+							{policies}
+							{tunnels}
+							saving={savingExit}
+							busy={busyKeys.includes(selectedExit.key)}
+							onstart={() => selectedExit && toggleInstance(selectedExit, true)}
+							onstop={() => selectedExit && toggleInstance(selectedExit, false)}
+							onwizard={() => (exitWizard = true)}
+							onsave={saveExit}
+							onrevert={revertExit}
+							onsaveandstart={saveAndStartExit}
+							onreload={reloadAll}
+						/>
+					{/key}
 				{:else if selected}
-					<!-- Секции детали — задачи 3 и 5; каркас несёт только строку состояния. -->
+					<!-- Секции детали «Раздача» — задача 5; каркас несёт строку состояния. -->
 					<Card>
 						{#snippet header()}
 							<div class="detail-head">
@@ -313,7 +356,7 @@
 						{/snippet}
 						<RunBar
 							state={selected.state}
-							meta={detailMeta}
+							meta={shareMeta}
 							busy={busyKeys.includes(selected.key)}
 							onstart={() => toggleInstance(selected, true)}
 							onstop={() => toggleInstance(selected, false)}
