@@ -36,7 +36,10 @@
 </script>
 
 <Modal {open} {title} size="sm" onclose={onClose}>
-	<p class="confirm-message">{message}</p>
+	<!-- Пустое сообщение = вопроса в заголовке достаточно; пустой абзац оставлял дыру. -->
+	{#if message}
+		<p class="confirm-message">{message}</p>
+	{/if}
 	{#if filePath}
 		<p class="confirm-file-label">Файл на диске</p>
 		<code class="confirm-file-path">{filePath}</code>
