@@ -352,7 +352,12 @@ func (p *process) lastRawConfLocked() (RawConfPayload, bool) {
 	return p.lastRawConfPayload, true
 }
 
+// lastRawConf — вход извне: замок берёт он, а не lastRawConfLocked (та зовётся
+// из Status уже под замком). Поле пишет drain из своей горутины, так что чтение
+// без замка — настоящая гонка, а не формальность.
 func (p *process) lastRawConf() (RawConfPayload, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.lastRawConfLocked()
 }
 

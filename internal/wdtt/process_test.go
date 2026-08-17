@@ -2,6 +2,7 @@ package wdtt
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -9,6 +10,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -470,5 +472,52 @@ func waitForGroupHelper(t *testing.T, pidFile string, leaderPID int, timeout tim
 			t.Fatalf("помощник не появился в группе %d за %s — предпосылка теста не выполнена", leaderPID, timeout)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestLastRawConf_ReadsUnderLock — репро гонки: drain пишет lastRawConfPayload
+// из своей горутины, а lastRawConf читает поле из чужой (waitForClientRawConf,
+// пул статусов сервиса). Без замка -race ловит запись/чтение; тест нужен именно
+// потому, что в проде конкурирующих вызывающих мало и гонка не воспроизводится
+// сама. Мутация «снять p.mu.Lock() в lastRawConf» роняет тест под -race.
+func TestLastRawConf_ReadsUnderLock(t *testing.T) {
+	p := newProcess("test", "", t.TempDir())
+	pr, pw := io.Pipe()
+
+	done := make(chan struct{})
+	go func() {
+		p.drain(pr)
+		close(done)
+	}()
+
+	stop := make(chan struct{})
+	readers := sync.WaitGroup{}
+	for i := 0; i < 2; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					p.lastRawConf()
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 200; i++ {
+		if _, err := fmt.Fprintf(pw, "RAWCONF|10.70.0.%d|1.1.1.1|1300\n", i%200+2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = pw.Close()
+	<-done
+	close(stop)
+	readers.Wait()
+
+	if conf, ok := p.lastRawConf(); !ok || conf.ClientIP == "" {
+		t.Fatalf("конфиг не сохранён: %+v ok=%v", conf, ok)
 	}
 }
