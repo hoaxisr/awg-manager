@@ -23,11 +23,7 @@
 			href: '/',
 			label: 'ТУННЕЛИ',
 			matches: (p) =>
-				p === '/' ||
-				p.startsWith('/tunnels') ||
-				p.startsWith('/system-tunnels') ||
-				p.startsWith('/freeturn') ||
-				p.startsWith('/wdtt'),
+				p === '/' || p.startsWith('/tunnels') || p.startsWith('/system-tunnels'),
 		},
 		{
 			section: 'servers',
@@ -40,6 +36,14 @@
 			href: '/routing',
 			label: 'МАРШРУТИЗАЦИЯ',
 			matches: (p) => p.startsWith('/routing'),
+		},
+		{
+			section: 'proxy',
+			href: '/proxy',
+			label: 'ПРОКСИ',
+			// /freeturn и /wdtt — редиректы на /proxy; матчер снят с «ТУННЕЛЕЙ».
+			matches: (p) =>
+				p.startsWith('/proxy') || p.startsWith('/freeturn') || p.startsWith('/wdtt'),
 		},
 		{
 			section: 'diagnostics',

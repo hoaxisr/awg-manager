@@ -600,8 +600,8 @@
 	const showSingboxSections = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
 	// FreeTurn существует только табом; в dashboard-режиме вход — кнопка
 	// тулбара, раскрывающая панель под дашбордом (#585).
-	const freeturnAvailable = $derived(isSectionVisible($usageLevel, 'freeturn'));
-	const wdttAvailable = $derived(isSectionVisible($usageLevel, 'wdtt'));
+	const freeturnAvailable = $derived(isSectionVisible($usageLevel, 'proxy'));
+	const wdttAvailable = $derived(isSectionVisible($usageLevel, 'proxy'));
 	let dashboardFreeturnOpen = $state(false);
 	let dashboardFreeturnEl: HTMLElement | null = $state(null);
 	function toggleDashboardFreeturn() {
@@ -730,19 +730,19 @@
 							children: singboxMenuChildren,
 						}
 					: null,
-				isSectionVisible($usageLevel, 'freeturn')
+				isSectionVisible($usageLevel, 'proxy')
 					? {
 							id: 'freeturn',
 							label: 'FreeTurn',
 							separatorBefore: singboxTabCluster,
 						}
 					: null,
-				isSectionVisible($usageLevel, 'wdtt')
+				isSectionVisible($usageLevel, 'proxy')
 					? {
 							id: 'wdtt',
 							label: 'WDTT',
 							separatorBefore:
-								singboxTabCluster && !isSectionVisible($usageLevel, 'freeturn'),
+								singboxTabCluster && !isSectionVisible($usageLevel, 'proxy'),
 						}
 					: null,
 			] as ({

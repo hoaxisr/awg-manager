@@ -23,8 +23,7 @@ export type Section =
 	| 'diagnostics'
 	| 'settings'
 	| 'terminal'
-	| 'freeturn'
-	| 'wdtt';
+	| 'proxy';
 
 export type RoutingSubTab =
 	| 'accessPolicies'
@@ -46,8 +45,7 @@ const SECTION_MIN_LEVEL: Record<Section, UsageLevel> = {
 	subscriptions: 'advanced',
 	monitoring: 'advanced',
 	terminal: 'advanced',
-	freeturn: 'advanced',
-	wdtt: 'advanced',
+	proxy: 'advanced',
 };
 
 const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
@@ -128,8 +126,13 @@ export function pathToSection(pathname: string): Section | null {
 	if (pathname.startsWith('/diagnostics') || pathname.startsWith('/logs')) return 'diagnostics';
 	if (pathname.startsWith('/settings')) return 'settings';
 	if (pathname.startsWith('/terminal')) return 'terminal';
-	if (pathname.startsWith('/freeturn')) return 'freeturn';
-	if (pathname.startsWith('/wdtt')) return 'wdtt';
+	// Старые адреса — редиректы на /proxy, гейт у них общий.
+	if (
+		pathname.startsWith('/proxy') ||
+		pathname.startsWith('/freeturn') ||
+		pathname.startsWith('/wdtt')
+	)
+		return 'proxy';
 	return null;
 }
 
@@ -144,6 +147,5 @@ export const SECTION_LABELS: Record<Section, string> = {
 	diagnostics: 'Инструменты',
 	settings: 'Настройки',
 	terminal: 'Терминал',
-	freeturn: 'FreeTurn',
-	wdtt: 'WDTT',
+	proxy: 'Прокси',
 };

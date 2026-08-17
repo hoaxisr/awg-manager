@@ -3,6 +3,6 @@
 	import { goto } from '$app/navigation';
 
 	onMount(() => {
-		goto('/?tab=wdtt', { replaceState: true });
+		goto('/proxy?tab=exit', { replaceState: true });
 	});
 </script>
