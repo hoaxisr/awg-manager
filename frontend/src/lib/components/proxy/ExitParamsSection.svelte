@@ -8,14 +8,21 @@
 	import DetailSection from './DetailSection.svelte';
 
 	interface Props {
+		/** Редактируемая копия конфига детали — правится на месте. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
 		saving?: boolean;
-		onsave: () => Promise<void> | void;
+		onsave: () => void;
 		onrevert: () => void;
 	}
 
-	let { wdttClient, ftClient, saving = false, onsave, onrevert }: Props = $props();
+	let {
+		wdttClient = $bindable(),
+		ftClient = $bindable(),
+		saving = false,
+		onsave,
+		onrevert,
+	}: Props = $props();
 </script>
 
 <DetailSection title="Параметры">
@@ -82,10 +89,4 @@
 		gap: 0.75rem;
 	}
 
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.75rem;
-	}
 </style>

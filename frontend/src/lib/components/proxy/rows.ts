@@ -43,10 +43,19 @@ export interface ProxyInstanceRow {
 type ProcessStatus = WdttProcessStatus | FreeTurnProcessStatus;
 type InstanceStatus = { id: string; name: string; status: ProcessStatus };
 
-/** «Не запускается» (LS-06, RB-02) — остановлен с ошибкой последнего запуска. */
-function runState(s: ProcessStatus): ProxyRunState {
+/**
+ * «Не запускается» (LS-06, RB-02) — процесс должен работать, но не работает.
+ *
+ * Судит `enabled` конфига, а не `lastError`: бэкенд снимает Enabled только на
+ * явный стоп пользователя (`internal/wdtt/service.go:803`,
+ * `internal/freeturn/service.go:702`), а по нему же поднимает клиента
+ * супервизор — это и есть «должен работать». `lastError` живёт в памяти
+ * процесса и переживает стоп упавшего инстанса (`process.Stop` его не
+ * трогает), так что сам по себе состоянием не является.
+ */
+function runState(s: ProcessStatus, enabled: boolean): ProxyRunState {
 	if (s.running) return 'running';
-	return s.lastError ? 'error' : 'stopped';
+	return enabled ? 'error' : 'stopped';
 }
 
 function toRow(
@@ -63,7 +72,7 @@ function toRow(
 		protocol,
 		role,
 		name: inst.name,
-		state: runState(s),
+		state: runState(s, autostart),
 		autostart,
 		pid: s.pid,
 		startedAt: s.startedAt,

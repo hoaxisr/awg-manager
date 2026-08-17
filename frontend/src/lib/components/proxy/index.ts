@@ -11,8 +11,8 @@ export { default as RunBar } from './RunBar.svelte';
 export { default as SubscriptionSection } from './SubscriptionSection.svelte';
 export { binaryStripItems } from './binaries';
 export { reportDeletedTunnels, tunnelErrorNames } from './deleteNotice';
-export { exitInstance, revertExitInstance, saveExitInstance } from './exitConfig';
-export type { ExitInstance, ExitSaveResult } from './exitConfig';
+export { exitInstance, normalizeExitConfigs, saveExitInstance } from './exitConfig';
+export type { ExitConfig, ExitInstance, ExitSaveResult } from './exitConfig';
 export {
 	deleteProxyInstance,
 	renameProxyInstance,

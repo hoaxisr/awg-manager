@@ -1,12 +1,16 @@
 // Связанный AWG-туннель клиента прокси.
 //
-// Бэкенд помнит связь полем `wdttClientId`/`freeTurnClientId`, но отдаёт его
-// только в карточке одного туннеля (`GET /tunnels/get`); в списке
-// (`/tunnels/all`, `internal/api/tunnels_view.go:listItems`) поля нет — это
-// находка задачи 3. Пока поля в списке нет, туннель ищется по инварианту
-// режима WG, который менеджер сам и держит: Endpoint туннеля равен
-// локальному порту клиента (EX-10, `internal/api/wdtt.go:400-403` — при смене
-// порта endpoint'ы связанных туннелей подтягиваются).
+// Связь помнит бэкенд полем `wdttClientId`, и с коммита «api: отдавать
+// wdttClientId в списке туннелей» оно приходит в списке
+// (`internal/api/tunnels_view.go`, `TunnelListItemDTO.WdttClientID`) — это и
+// есть источник правды.
+//
+// Endpoint-эвристика оставлена фоллбэком: у туннелей, созданных до появления
+// поля, оно пустое, а у FreeTurn-клиента в списке нет и самого поля (бэкенд
+// отдаёт `freeTurnClientId` только в карточке туннеля). Инвариант держит сам
+// менеджер: Endpoint туннеля равен локальному порту клиента (EX-10,
+// `internal/api/wdtt.go:400-403` — при смене порта endpoint'ы связанных
+// туннелей подтягиваются).
 
 import type { TunnelListItem } from '$lib/types';
 
@@ -20,11 +24,16 @@ export function listenPort(listen?: string): string | null {
 	return /^\d+$/.test(port) ? port : null;
 }
 
-/** Туннель, чей Endpoint смотрит в локальный порт клиента. */
+/** Туннель клиента: по `wdttClientId`, иначе по локальному порту. */
 export function findLinkedTunnel(
 	tunnels: TunnelListItem[],
 	listen?: string,
+	wdttClientId?: string,
 ): TunnelListItem | null {
+	if (wdttClientId) {
+		const linked = tunnels.find((t) => t.wdttClientId === wdttClientId);
+		if (linked) return linked;
+	}
 	const port = listenPort(listen);
 	if (!port) return null;
 	for (const t of tunnels) {

@@ -19,17 +19,20 @@ type PolicyMembership = {
  * только целиком. Запрещённый интерфейс (`no permit`) в политике числится, но
  * трафик через неё не идёт — членством не считается. Интерфейс может стоять
  * в нескольких политиках; побеждает первая по порядку ответа.
+ *
+ * Возвращается политика целиком: показывать пользователю нужно её описание, а
+ * не внутреннее NDMS-имя (`description || name`, как на «Маршрутизации»).
  */
-export function findPolicyForInterface(
-	policies: PolicyMembership[],
+export function findPolicyForInterface<P extends PolicyMembership>(
+	policies: P[],
 	ifaceName: string
-): string | null {
+): P | null {
 	const wanted = ifaceName.trim().toLowerCase();
 	if (!wanted) return null;
 	for (const policy of policies) {
 		for (const iface of policy.interfaces ?? []) {
 			// Регистр имени: в конфигурации попадается legacy-написание opkgtunN.
-			if (!iface.denied && iface.name.toLowerCase() === wanted) return policy.name;
+			if (!iface.denied && iface.name.toLowerCase() === wanted) return policy;
 		}
 	}
 	return null;

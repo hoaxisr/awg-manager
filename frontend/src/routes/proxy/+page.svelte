@@ -13,14 +13,14 @@
 		deleteProxyInstance,
 		exitInstance,
 		exitRows,
+		normalizeExitConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
-		revertExitInstance,
 		saveExitInstance,
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
-	import type { ProxyInstanceRow } from '$lib/components/proxy';
+	import type { ExitConfig, ProxyInstanceRow } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { formatUptime } from '$lib/components/freeturn/uptime';
 	import { errText } from '$lib/utils/errorMessage';
@@ -43,9 +43,6 @@
 	let ftConfig = $state<FreeTurnConfig | null>(null);
 	let wdttStatus = $state<WdttStatus | null>(null);
 	let ftStatus = $state<FreeTurnStatus | null>(null);
-	// Копия последнего загруженного конфига — источник «Отменить» (EX-24).
-	let savedWdttConfig = $state<WdttConfig | null>(null);
-	let savedFtConfig = $state<FreeTurnConfig | null>(null);
 	let policies = $state<AccessPolicy[]>([]);
 	let tunnels = $state<TunnelListItem[]>([]);
 	let savingExit = $state(false);
@@ -116,10 +113,11 @@
 		ftStatus = f;
 	}
 
+	// Конфиги страницы — это состояние сервера: их правит только загрузка и
+	// ответ на сохранение. Правки пользователя живут в копии внутри детали.
 	async function loadConfigs() {
 		const [w, f] = await Promise.all([api.getWdttConfig(), api.getFreeTurnConfig()]);
-		savedWdttConfig = structuredClone(w);
-		savedFtConfig = structuredClone(f);
+		normalizeExitConfigs(w, f);
 		wdttConfig = w;
 		ftConfig = f;
 	}
@@ -193,41 +191,31 @@
 	}
 
 	/**
-	 * Сохранение параметров клиента: правки во время запроса не затираются
-	 * (W-22), смена адреса сервера останавливает клиент (W-27), работающему
-	 * после сохранения — просьба перезапустить (TS-04).
+	 * Сохранение параметров клиента: смена адреса сервера останавливает клиент
+	 * (W-27), работающему после сохранения — просьба перезапустить (TS-04).
+	 * Возвращает конфиг сервера после записи; null — не сохранилось, и деталь
+	 * по нему не запускает клиента (EX-32).
 	 */
-	async function saveExit() {
+	async function saveExit(config: ExitConfig): Promise<ExitConfig | null> {
 		const row = selectedExit;
 		const inst = exitInstance(row, wdttConfig, ftConfig);
-		const saved = exitInstance(row, savedWdttConfig, savedFtConfig);
-		if (!row || !inst) return;
+		if (!row || !inst) return null;
 		savingExit = true;
 		try {
-			const res = await saveExitInstance(row, inst, saved?.config.peer ?? '');
+			const res = await saveExitInstance(row, inst, config);
 			reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
 			if (row.state === 'running' && res.peerChanged) await toggleInstance(row, false);
 			else if (row.state === 'running') {
 				notifications.info('Перезапустите клиент, чтобы изменения применились');
 			}
 			await loadStatuses();
+			return res.config;
 		} catch (e) {
 			notifications.error(errText(e));
+			return null;
 		} finally {
 			savingExit = false;
 		}
-	}
-
-	function revertExit() {
-		revertExitInstance(
-			exitInstance(selectedExit, wdttConfig, ftConfig),
-			exitInstance(selectedExit, savedWdttConfig, savedFtConfig),
-		);
-	}
-
-	async function saveAndStartExit() {
-		await saveExit();
-		if (selectedExit) await toggleInstance(selectedExit, true);
 	}
 
 	async function renameInstance(row: ProxyInstanceRow, name: string) {
@@ -341,8 +329,6 @@
 							onstop={() => selectedExit && toggleInstance(selectedExit, false)}
 							onwizard={() => (exitWizard = true)}
 							onsave={saveExit}
-							onrevert={revertExit}
-							onsaveandstart={saveAndStartExit}
 							onreload={reloadAll}
 						/>
 					{/key}

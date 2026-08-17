@@ -43,12 +43,19 @@ describe('findPolicyForInterface', () => {
 	];
 
 	it('находит политику по NDMS-имени интерфейса', () => {
-		expect(findPolicyForInterface(policies, 'OpkgTun17')).toBe('Policy0');
-		expect(findPolicyForInterface(policies, 'OpkgTun18')).toBe('HydraRoute');
+		expect(findPolicyForInterface(policies, 'OpkgTun17')?.name).toBe('Policy0');
+		expect(findPolicyForInterface(policies, 'OpkgTun18')?.name).toBe('HydraRoute');
+	});
+
+	it('отдаёт политику целиком — подпись берётся из description', () => {
+		const described = [
+			{ name: 'Policy0', description: 'home', interfaces: [{ name: 'OpkgTun17', order: 0 }] }
+		];
+		expect(findPolicyForInterface(described, 'OpkgTun17')?.description).toBe('home');
 	});
 
 	it('не различает регистр имени интерфейса', () => {
-		expect(findPolicyForInterface(policies, 'opkgtun17')).toBe('Policy0');
+		expect(findPolicyForInterface(policies, 'opkgtun17')?.name).toBe('Policy0');
 	});
 
 	it('запрещённый интерфейс членством не считается', () => {

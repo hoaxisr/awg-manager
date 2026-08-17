@@ -9,6 +9,7 @@
 	import KillPortSection from './KillPortSection.svelte';
 
 	interface Props {
+		/** Редактируемая копия конфига детали — правится на месте. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
 		/** Raw: отдельный AWG-туннель не нужен — блока WG-конфига нет (W-29). */
@@ -25,8 +26,8 @@
 	}
 
 	let {
-		wdttClient,
-		ftClient,
+		wdttClient = $bindable(),
+		ftClient = $bindable(),
 		raw = false,
 		wgConf = '',
 		ports,
@@ -121,13 +122,6 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-text-secondary);
-	}
-
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.5rem;
 	}
 
 	.manual-conf {

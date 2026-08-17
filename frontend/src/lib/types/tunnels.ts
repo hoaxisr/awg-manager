@@ -124,6 +124,8 @@ export interface TunnelListItem {
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';
 	connectivityCheck?: ConnectivityCheckConfig;
+	/** id WDTT-клиента, для которого создан туннель (пусто у прочих). */
+	wdttClientId?: string;
 	pingCheck: {
 		status: 'alive' | 'recovering' | 'disabled';
 		restartCount: number;

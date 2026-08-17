@@ -1,4 +1,5 @@
-// Сохранение и откат параметров клиента «Выхода».
+// Конфиг клиента «Выхода»: приведение ответа бэкенда к плотному виду и
+// сохранение.
 //
 // Снимок конфига берётся через JSON: конфиг инстанса и так JSON-тело запроса,
 // а модуль остаётся обычным .ts — рун (`$state.snapshot`) здесь не нужно.
@@ -6,25 +7,86 @@
 import { api } from '$lib/api/client';
 import { peersEqual } from '$lib/utils/wdttPeer';
 import type {
+	FreeTurnClientConfig,
 	FreeTurnClientInstance,
 	FreeTurnConfig,
+	WdttClientConfig,
 	WdttClientInstance,
 	WdttConfig,
 } from '$lib/types';
 import type { ProxyInstanceRow } from './rows';
 
+export type ExitConfig = WdttClientConfig | FreeTurnClientConfig;
+export type ExitInstance = WdttClientInstance | FreeTurnClientInstance;
+
 export interface ExitSaveResult {
+	/** Конфиг, лежащий на сервере после сохранения. */
+	config: ExitConfig;
 	/** Адрес сервера сменился — работающий клиент останавливается (W-27). */
 	peerChanged: boolean;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
 }
 
-export type ExitInstance = WdttClientInstance | FreeTurnClientInstance;
-
-function clone<T>(value: T): T {
+export function cloneConfig<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
 }
+
+// ─── Плотный конфиг.
+//
+// Поля с `omitempty` (`internal/wdtt/types.go`, `internal/freeturn/types.go`)
+// бэкенд не сериализует, и пустая строка приезжает как отсутствующий ключ.
+// `bind:value={cfg.sub}` на `undefined` бросает `props_invalid_value`: Input и
+// Dropdown объявляют значение как `$bindable('')`, а Svelte 5 запрещает
+// биндить undefined к пропу с fallback'ом. Поэтому optional-строки
+// заполняются один раз — сразу после ответа бэкенда, а не `?? ''` у каждого
+// поля формы.
+//
+// `connMode` в списки не входит намеренно: это не строка, а режим ('wg'|'raw'),
+// и '' для него — не «пусто», а поломка семантики.
+
+const WDTT_OPTIONAL_STRINGS: readonly (keyof WdttClientConfig)[] = [
+	'deviceId',
+	'vkAuthMode',
+	'sub',
+	'peerWg',
+	'peerRaw',
+	'ndmsIface',
+	'rawIface',
+	'rawClientIp',
+];
+
+const FT_OPTIONAL_STRINGS: readonly (keyof FreeTurnClientConfig)[] = [
+	'links',
+	'turnHost',
+	'obfKey',
+	'dnsServers',
+	'clientId',
+	'sub',
+];
+
+function fillStrings<T extends object>(cfg: T, keys: readonly (keyof T)[]): T {
+	for (const key of keys) {
+		if (cfg[key] === undefined) (cfg as Record<string, unknown>)[key as string] = '';
+	}
+	return cfg;
+}
+
+export function normalizeWdttClientConfig(cfg: WdttClientConfig): WdttClientConfig {
+	return fillStrings(cfg, WDTT_OPTIONAL_STRINGS);
+}
+
+export function normalizeFreeTurnClientConfig(cfg: FreeTurnClientConfig): FreeTurnClientConfig {
+	return fillStrings(cfg, FT_OPTIONAL_STRINGS);
+}
+
+/** Конфиги страницы — на месте, сразу после загрузки. */
+export function normalizeExitConfigs(wdtt: WdttConfig, ft: FreeTurnConfig): void {
+	for (const inst of wdtt.clients) normalizeWdttClientConfig(inst.config);
+	for (const inst of ft.clients) normalizeFreeTurnClientConfig(inst.config);
+}
+
+// ─── Сохранение.
 
 /** Инстанс выбранной строки в конфиге своего протокола. */
 export function exitInstance(
@@ -39,34 +101,31 @@ export function exitInstance(
 }
 
 /**
- * W-22: ответ бэкенда ложится в рабочий конфиг, только если пользователь не
- * правил поля во время запроса — иначе его правки были бы затёрты.
+ * Сохранение конфига инстанса. Конфиг страницы всегда равен состоянию сервера:
+ * в него ложится ответ бэкенда, а правки пользователя живут в редактируемой
+ * копии детали (W-22). Отсюда же честный W-27: `peerChanged` сравнивает адрес
+ * до и после записи, а не протухший снимок.
  */
 export async function saveExitInstance(
 	row: ProxyInstanceRow,
 	inst: ExitInstance,
-	savedPeer: string,
+	config: ExitConfig,
 ): Promise<ExitSaveResult> {
+	const before = inst.config.peer;
 	if (row.protocol === 'wdtt') {
-		const wdtt = inst as WdttClientInstance;
-		const sent = clone(wdtt.config);
-		const res = await api.updateWdttClientInstance(row.id, sent);
-		if (JSON.stringify(wdtt.config) === JSON.stringify(sent)) wdtt.config = res.config;
+		const res = await api.updateWdttClientInstance(row.id, config as WdttClientConfig);
+		const saved = normalizeWdttClientConfig(res.config);
+		(inst as WdttClientInstance).config = saved;
 		return {
-			peerChanged: !peersEqual(savedPeer, res.config.peer),
+			config: saved,
+			peerChanged: !peersEqual(before, saved.peer),
 			deletedTunnels: res.deletedTunnels,
 			tunnelErrors: res.tunnelErrors,
 		};
 	}
-	const ft = inst as FreeTurnClientInstance;
-	const sent = clone(ft.config);
-	const cfg = await api.updateFreeTurnClientInstance(row.id, sent);
-	if (JSON.stringify(ft.config) === JSON.stringify(sent)) ft.config = cfg;
-	return { peerChanged: !peersEqual(savedPeer, cfg.peer) };
-}
-
-/** EX-24 «Отменить» — возврат к последнему загруженному конфигу. */
-export function revertExitInstance(inst?: ExitInstance, saved?: ExitInstance): void {
-	if (!inst || !saved) return;
-	(inst as WdttClientInstance).config = clone(saved.config) as WdttClientInstance['config'];
+	const saved = normalizeFreeTurnClientConfig(
+		await api.updateFreeTurnClientInstance(row.id, config as FreeTurnClientConfig),
+	);
+	(inst as FreeTurnClientInstance).config = saved;
+	return { config: saved, peerChanged: !peersEqual(before, saved.peer) };
 }

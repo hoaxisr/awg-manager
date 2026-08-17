@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Деталь вкладки «Выход» — одна колонка секций сверху вниз (ia.md §2.2).
-	// Конфиг инстанса правится на месте: владелец конфига и его сохранения —
-	// страница, здесь живут композиция секций и автоповедения клиента.
+	// Конфиг с прихода страницы — состояние сервера; правит пользователь
+	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
+	// она владеет конфигами и статусами.
 	import { untrack } from 'svelte';
 	import { Badge, Card, FieldHint } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
@@ -25,13 +26,15 @@
 	import LogSection from './LogSection.svelte';
 	import RunBar from './RunBar.svelte';
 	import SubscriptionSection from './SubscriptionSection.svelte';
+	import { allowEnsure, markEnsured } from './ensureGuard';
+	import { cloneConfig, type ExitConfig } from './exitConfig';
 	import { findLinkedTunnel, listenPort } from './linkedTunnel';
 	import type { ProxyInstanceRow } from './rows';
 
 	interface Props {
 		row: ProxyInstanceRow;
 		status?: WdttProcessStatus | FreeTurnProcessStatus;
-		/** Конфиг выбранного инстанса — ровно один из двух. */
+		/** Конфиг выбранного инстанса на сервере — ровно один из двух. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
 		routerClock?: string;
@@ -42,9 +45,8 @@
 		onstart: () => void;
 		onstop: () => void;
 		onwizard?: () => void;
-		onsave: () => Promise<void> | void;
-		onrevert: () => void;
-		onsaveandstart: () => Promise<void> | void;
+		/** Сохранение: конфиг сервера после записи или null, если не сохранилось. */
+		onsave: (config: ExitConfig) => Promise<ExitConfig | null>;
 		onreload: () => Promise<void> | void;
 	}
 
@@ -62,10 +64,15 @@
 		onstop,
 		onwizard,
 		onsave,
-		onrevert,
-		onsaveandstart,
 		onreload,
 	}: Props = $props();
+
+	// Редактируемая копия конфига. Поллинг и перезагрузки страницы обновляют
+	// prop-конфиг, а несохранённые правки живут здесь и не затираются (W-22).
+	// Копия создаётся вместе с деталью, а деталь пересоздаётся при смене
+	// инстанса ({#key} на странице, W-13).
+	let wdttDraft = $state(untrack(() => (wdttClient ? cloneConfig(wdttClient) : undefined)));
+	let ftDraft = $state(untrack(() => (ftClient ? cloneConfig(ftClient) : undefined)));
 
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
 	const raw = $derived(row.mode === 'raw');
@@ -90,12 +97,17 @@
 	// Правило имён ia.md §1.0: на странице NDMS-имя, kernel-имя — под (i).
 	const rawNdms = $derived(wdttStatus?.ndmsIface?.trim() || wdttClient?.ndmsIface?.trim() || '');
 	const rawKernel = $derived(wdttStatus?.rawIface?.trim() || wdttClient?.rawIface?.trim() || '');
-	const tunnel = $derived(raw ? null : findLinkedTunnel(tunnels, listen));
+	const tunnel = $derived(
+		raw ? null : findLinkedTunnel(tunnels, listen, row.protocol === 'wdtt' ? row.id : undefined),
+	);
 
 	// Политика читается обратным поиском по составу политик: поля политики
 	// в конфиге инстанса нет и не заводится (ia.md §2.2 п.4).
 	const policyIface = $derived(raw ? rawNdms : (tunnel?.ndmsName ?? ''));
 	const policy = $derived(policyIface ? findPolicyForInterface(policies, policyIface) : null);
+	// Имя политики — как на «Маршрутизации» (accesspolicy/PolicyTable.svelte):
+	// NDMS-имя Policy0 в веб-интерфейсе роутера пользователю не показывают.
+	const policyLabel = $derived(policy ? policy.description || policy.name : '');
 
 	const rawHint = $derived(
 		'Режим Raw: клиент поднимает свой интерфейс, отдельный AWG-туннель не нужен. ' +
@@ -103,38 +115,62 @@
 			(rawKernel ? ` Kernel-имя: ${rawKernel}.` : ''),
 	);
 
+	// ─── Сохранение и откат правок.
+
+	async function save(): Promise<boolean> {
+		const draft = wdttDraft ?? ftDraft;
+		if (!draft) return false;
+		const sent = cloneConfig(draft);
+		const stored = await onsave(sent);
+		if (!stored) return false;
+		// W-22: ответ ложится в копию, только если пользователь не правил поля
+		// во время запроса — иначе его правки были бы затёрты.
+		if (JSON.stringify(draft) === JSON.stringify(sent)) {
+			if (wdttDraft) wdttDraft = cloneConfig(stored) as WdttClientConfig;
+			else ftDraft = cloneConfig(stored) as FreeTurnClientConfig;
+		}
+		return true;
+	}
+
+	/** EX-24 «Отменить» — возврат к тому, что лежит на сервере. */
+	function revert() {
+		if (wdttClient) wdttDraft = cloneConfig(wdttClient);
+		else if (ftClient) ftDraft = cloneConfig(ftClient);
+	}
+
+	/** EX-32: клиент стартует только после успешного сохранения. */
+	async function saveAndStart() {
+		if (await save()) onstart();
+	}
+
 	// ─── Автоповедения клиента (W-19, W-20): туннель заводится сам.
 
 	let tunnelBusy = $state(false);
-	let ensuring = false;
-	const settled = new Set<string>();
-	const cooldown = new Map<string, number>();
 
 	async function ensureTunnel(manual = false) {
-		if (row.protocol !== 'wdtt' || ensuring) return;
+		// tunnelBusy держит и реентрантность: второй запрос ждать нечего.
+		if (row.protocol !== 'wdtt' || tunnelBusy) return;
 		const id = row.id;
-		if (manual) cooldown.delete(id);
-		else if (settled.has(id)) return;
-		const now = Date.now();
-		// Кулдаун 20 с: на ошибке id не помечается settled, иначе поллинг
-		// долбил бы POST (и тост) каждые две секунды.
-		if (!manual && now - (cooldown.get(id) ?? 0) < 20000) return;
-		cooldown.set(id, now);
-		ensuring = true;
+		if (!allowEnsure(id, manual)) return;
 		tunnelBusy = true;
 		try {
 			const res = raw ? await api.ensureWdttRawTunnel(id) : await api.ensureWdttWgTunnel(id);
 			if (res.created) {
-				settled.add(id);
-				notifications.success(`Создан туннель «${res.tunnelName ?? ''}»`);
+				markEnsured(id);
+				// TS-01 — про туннель из журнала (режим WG). В raw заводится
+				// запись «WDTT Raw», а не туннель, и говорит о ней бэкенд.
+				if (raw) {
+					if (res.message) notifications.success(res.message);
+				} else {
+					notifications.success(`Создан туннель «${res.tunnelName ?? ''}»`);
+				}
 				await onreload();
 			} else if (res.tunnelId) {
-				settled.add(id);
+				markEnsured(id);
 			}
 		} catch (e) {
 			notifications.error(errText(e));
 		} finally {
-			ensuring = false;
 			tunnelBusy = false;
 		}
 	}
@@ -157,7 +193,7 @@
 				row.protocol === 'freeturn' ? row.id : undefined,
 				row.protocol === 'wdtt' ? row.id : undefined,
 			);
-			settled.add(row.id);
+			markEnsured(row.id);
 			notifications.success(`Создан туннель «${tun.name}»`);
 			await onreload();
 		} catch (e) {
@@ -217,7 +253,8 @@
 					<code>{rawNdms}</code>
 					<FieldHint text={rawHint} ariaLabel="Подсказка: интерфейс клиента" />
 				</div>
-			{:else if tunnel}
+			{:else if tunnel && row.protocol === 'wdtt'}
+				<!-- EX-09/EX-10 — строка режима WG, а режим есть только у WDTT. -->
 				<div class="line-row">
 					<span class="line-label">AWG-туннель:</span>
 					<a class="link" href={`/tunnels/${tunnel.id}`}>{tunnel.name}<ExternalLink size={12} /></a>
@@ -229,8 +266,8 @@
 			{/if}
 			<div class="line-row">
 				<span class="line-label">Политика доступа:</span>
-				{#if policy}
-					<Badge size="sm" variant="success">{policy}</Badge>
+				{#if policyLabel}
+					<Badge size="sm" variant="success">{policyLabel}</Badge>
 				{:else}
 					<Badge size="sm" variant="muted">не заведён в политику</Badge>
 				{/if}
@@ -243,24 +280,32 @@
 		</DetailSection>
 	{/if}
 
-	<ExitParamsSection {wdttClient} {ftClient} {saving} {onsave} {onrevert} />
+	<ExitParamsSection
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
+		{saving}
+		onsave={save}
+		onrevert={revert}
+	/>
 
-	{#if row.protocol === 'freeturn'}
+	<!-- Поллинг капчи не крутится у остановленного клиента: подтверждать
+	     нечего, пока потоки не поднимаются. -->
+	{#if row.protocol === 'freeturn' && running}
 		<CaptchaSection clientId={row.id} />
 	{/if}
 
-	{#if wdttClient?.sub?.trim()}
+	{#if wdttDraft?.sub?.trim()}
 		<SubscriptionSection
 			instanceId={row.id}
-			client={wdttClient}
-			{onsaveandstart}
+			bind:client={wdttDraft}
+			onsaveandstart={saveAndStart}
 			{onreload}
 		/>
 	{/if}
 
 	<AdvancedSection
-		{wdttClient}
-		{ftClient}
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
 		{raw}
 		wgConf={wdttStatus?.wgConfig ?? ''}
 		ports={listen ? [{ listen }] : []}
@@ -273,9 +318,9 @@
 		log={status?.log}
 		{routerClock}
 		showDebug={row.protocol === 'freeturn'}
-		debug={ftClient?.debug ?? false}
+		debug={ftDraft?.debug ?? false}
 		ondebug={(on) => {
-			if (ftClient) ftClient.debug = on;
+			if (ftDraft) ftDraft.debug = on;
 		}}
 	/>
 </Card>

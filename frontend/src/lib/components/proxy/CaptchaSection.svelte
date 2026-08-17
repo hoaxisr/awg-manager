@@ -66,11 +66,4 @@
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
 	}
-
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.75rem;
-	}
 </style>

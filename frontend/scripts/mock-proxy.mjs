@@ -435,8 +435,8 @@ const MOCK_AWG_TUNNELS = [
 		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 0 },
 	},
 	{
-		// Туннель WDTT-клиента в режиме WG: Endpoint смотрит в listen клиента
-		// (127.0.0.1:9000) — по нему деталь «Выход» и находит карточку.
+		// Туннель FreeTurn-клиента: id клиента бэкенд в списке не отдаёт, связь
+		// ищется по Endpoint (127.0.0.1:9005 = listen клиента) — фоллбэк.
 		id: 'ft-tunnel-default',
 		name: 'Клиент FT',
 		type: 'amneziawg',
@@ -458,12 +458,15 @@ const MOCK_AWG_TUNNELS = [
 		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
 	},
 	{
+		// Туннель WDTT-клиента в режиме WG. Связь помнит бэкенд —
+		// wdttClientId в списке (internal/api/tunnels_dto.go).
 		id: 'wdtt-tunnel-default',
 		name: 'Клиент wdtt',
 		type: 'amneziawg',
 		status: 'running',
 		enabled: true,
 		defaultRoute: false,
+		wdttClientId: 'default',
 		endpoint: '127.0.0.1:9000',
 		address: '10.66.0.2/32',
 		interfaceName: 'awg7',
@@ -3342,16 +3345,18 @@ function createInitialMockWdtt() {
 					workers: 24,
 					obfs: 'audio',
 					fingerprint: 'chrome',
-					deviceId: '',
+					// deviceId/sub не заданы намеренно: бэкенд их не сериализует
+					// (omitempty), и форма обязана переживать их отсутствие.
 					captchaMode: 'rjs',
 					vkAuthMode: 'auto',
-					sub: '',
 					debug: false,
 				},
 			},
 			{
-				// Упавший процесс: lastError у остановленного даёт «не запускается»
-				// в списке (LS-06), в строке состояния (RB-02) и блок EX-01 в детали.
+				// Упавший процесс: enabled (должен работать) + не работает даёт
+				// «не запускается» в списке (LS-06), в строке состояния (RB-02) и
+				// блок EX-01 в детали. Явный «Остановить» снимет enabled — и
+				// строка станет «Остановлен».
 				id: 'wdtt-2',
 				name: 'Резерв',
 				running: false,
@@ -3360,7 +3365,7 @@ function createInitialMockWdtt() {
 				lastError:
 					'dial udp backup.wdtt.example:56000: connect: connection refused\nexit status 1',
 				config: {
-					enabled: false,
+					enabled: true,
 					listen: '127.0.0.1:9001',
 					peer: 'backup.wdtt.example:56000',
 					password: 'reserve-password',
@@ -3393,10 +3398,8 @@ function createInitialMockWdtt() {
 					workers: 12,
 					obfs: 'audio',
 					fingerprint: 'chrome',
-					deviceId: '',
 					captchaMode: 'rjs',
 					vkAuthMode: 'auto',
-					sub: '',
 					debug: false,
 					connMode: 'raw',
 					ndmsIface: 'OpkgTun19',
@@ -7973,6 +7976,8 @@ const server = http.createServer(async (req, res) => {
 			}
 			inst.running = action === 'start';
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			// Enabled — как у бэкенда (internal/freeturn/service.go:682,702).
+			inst.config.enabled = inst.running;
 			sendData(res, { message: `freeturn ${kind} ${id}: ${action} (mock)` });
 			return;
 		}
@@ -8225,6 +8230,9 @@ const server = http.createServer(async (req, res) => {
 			inst.running = action === 'start';
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
 			if (inst.running) inst.lastError = '';
+			// Enabled = «должен работать»: бэкенд снимает его на явный стоп и
+			// ставит по факту успешного старта (internal/wdtt/service.go:730,803).
+			inst.config.enabled = inst.running;
 			sendData(res, { message: `wdtt client ${id}: ${action} (mock)` });
 			return;
 		}

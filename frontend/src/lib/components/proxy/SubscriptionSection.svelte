@@ -15,15 +15,15 @@
 
 	interface Props {
 		instanceId: string;
-		/** Конфиг инстанса — профиль подписки применяется прямо в него. */
+		/** Редактируемая копия конфига — профиль применяется прямо в неё. */
 		client: WdttClientConfig;
-		/** Сохранить конфиг и запустить инстанс (владелец — страница). */
+		/** Сохранить конфиг и запустить инстанс (владелец — деталь). */
 		onsaveandstart: () => Promise<void> | void;
 		/** Перечитать конфиги после ручки обновления подписки. */
 		onreload: () => Promise<void> | void;
 	}
 
-	let { instanceId, client, onsaveandstart, onreload }: Props = $props();
+	let { instanceId, client = $bindable(), onsaveandstart, onreload }: Props = $props();
 
 	let profiles = $state<WdttImportPayload[]>([]);
 	let selected = $state(0);
@@ -135,12 +135,5 @@
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-primary);
 		color: var(--color-text-primary);
-	}
-
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.75rem;
 	}
 </style>
