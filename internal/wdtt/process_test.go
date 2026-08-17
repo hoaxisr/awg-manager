@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -250,6 +252,115 @@ func TestProcess_FallbackBranch_KillsSurvivingHelperGroup(t *testing.T) {
 	case <-killed:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("хелпер (pid %d) всё ещё выполняется как sleep спустя 2с — group-kill не сработал", helperPID)
+	}
+}
+
+// hupTrapScript — скрипт, дописывающий строку в маркер на каждый SIGHUP.
+// Цикл с коротким sleep, потому что trap в sh срабатывает только между
+// командами: с sleep 0.1 задержка доставки не превышает 100 мс.
+func hupTrapScript(mark string) string {
+	return "trap 'echo hup >> \"" + mark + "\"' HUP\nwhile :; do sleep 0.1; done"
+}
+
+// waitForHupCount ждёт, пока в маркере не окажется не меньше want строк.
+// Ожидание ограничено сроком: тест, который вместо падения виснет, бесполезен.
+func waitForHupCount(t *testing.T, mark string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		got := 0
+		if b, err := os.ReadFile(mark); err == nil {
+			got = len(strings.Fields(string(b)))
+		}
+		if got >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("маркер %s: получено SIGHUP %d, ожидалось не меньше %d", mark, got, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// watchOwnSIGHUP перехватывает SIGHUP, адресованный САМОМУ тестовому бинарю.
+// Нужен там, где мутант мог бы послать сигнал не туда: без перехвата дефолтная
+// диспозиция SIGHUP убила бы прогон, и отказ теста выглядел бы аварией
+// рантайма, а не провалом проверки.
+func watchOwnSIGHUP(t *testing.T) chan os.Signal {
+	t.Helper()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP)
+	t.Cleanup(func() { signal.Stop(ch) })
+	return ch
+}
+
+// TestProcessReload_SignalsOwnChild — целевая семантика: живой процесс получает
+// SIGHUP и остаётся жив (на железе это и есть «База паролей перезагружена»).
+func TestProcessReload_SignalsOwnChild(t *testing.T) {
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+	p := newTestProcess(t, hupTrapScript(mark))
+	if err := p.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Stop() })
+
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	waitForHupCount(t, mark, 1, 3*time.Second)
+
+	// Перезагрузка не должна подменять перезапуском: pid обязан остаться тем же.
+	running, pid := p.IsRunning()
+	if !running {
+		t.Fatal("процесс не пережил SIGHUP")
+	}
+	if err := p.Reload(); err != nil {
+		t.Fatalf("повторный Reload: %v", err)
+	}
+	waitForHupCount(t, mark, 2, 3*time.Second)
+	if _, pid2 := p.IsRunning(); pid2 != pid {
+		t.Fatalf("pid сменился после SIGHUP: было %d, стало %d", pid, pid2)
+	}
+}
+
+// TestProcessReload_DoesNotSignalForeignPID — pid-файл пережил ребут, и номер
+// достался постороннему процессу. Здесь «посторонний» — сам тестовый бинарь:
+// p.binary=/bin/sh, а тест — не sh, поэтому pidIsOurs обязан ответить «нет».
+func TestProcessReload_DoesNotSignalForeignPID(t *testing.T) {
+	ch := watchOwnSIGHUP(t)
+
+	p := newProcess("server", "/bin/sh", t.TempDir())
+	if err := p.writePID(os.Getpid()); err != nil {
+		t.Fatalf("writePID: %v", err)
+	}
+	if running, _ := p.IsRunning(); running {
+		t.Fatal("предпосылка теста нарушена: pidIsOurs признал чужой pid своим")
+	}
+
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload на чужом pid должен быть тихим no-op, got: %v", err)
+	}
+	select {
+	case sig := <-ch:
+		t.Fatalf("SIGHUP ушёл постороннему процессу по протухшему pid-файлу: %v", sig)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestProcessReload_StoppedServerIsNoop — pid-файла нет вовсе. Проверка «не
+// работает» обязана стоять ДО сигнала: без неё pid равен нулю, а kill(0, sig)
+// бьёт по всей группе процессов вызывающего.
+func TestProcessReload_StoppedServerIsNoop(t *testing.T) {
+	ch := watchOwnSIGHUP(t)
+
+	p := newProcess("server", "/bin/sh", t.TempDir())
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload остановленного сервера должен быть тихим no-op, got: %v", err)
+	}
+	select {
+	case sig := <-ch:
+		t.Fatalf("SIGHUP ушёл при отсутствии pid-файла (kill(0) бьёт по всей группе): %v", sig)
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 

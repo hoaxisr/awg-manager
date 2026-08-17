@@ -140,6 +140,20 @@ func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConf
 	return syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
 }
 
+// notifyServerClientsChanged просит живой сервер перечитать passwords.json.
+// Зовётся ТОЛЬКО после успешной записи файла: сигнал без изменившегося файла
+// заставил бы сервер перебирать пиры впустую, а после неудачной записи —
+// перечитать старое содержимое, выдав его за применённое.
+//
+// Отказ доставки не роняет ручку: абонент уже записан и в wdtt.json, и в файл,
+// и следующий старт сервера его подхватит; единственная потеря — применение
+// «прямо сейчас», и о ней надо сообщить в журнал, а не откатывать операцию.
+func (s *Service) notifyServerClientsChanged(serverID string) {
+	if err := s.serverProcs.get(serverID).Reload(); err != nil && s.appLog != nil {
+		s.appLog.Warn("clients", serverID, "перечитывание passwords.json: "+err.Error())
+	}
+}
+
 // syncServerClientsOnStart — цикл абонентов на пути старта: усыновить и
 // переписать passwords.json. Замок берётся здесь, ВНУТРИ serverStartLock
 // (порядок захвата однонаправленный): старт бежит из супервизора сам по себе, и
@@ -273,6 +287,7 @@ func (s *Service) addServerClientLocked(serverID, cfgDir string, cfg ServerConfi
 	if _, err := s.writeServerClientsFile(serverID, cfgDir, fileCfg, clients); err != nil {
 		return ServerClientsStatus{}, err
 	}
+	s.notifyServerClientsChanged(serverID)
 	return s.serverClientsStatus(serverID, cfgDir, clients), nil
 }
 
@@ -312,6 +327,7 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 	if _, err := s.writeServerClientsFile(serverID, cfgDir, inst.Config, clients); err != nil {
 		return ServerClientsStatus{}, err
 	}
+	s.notifyServerClientsChanged(serverID)
 	return s.serverClientsStatus(serverID, cfgDir, clients), nil
 }
 

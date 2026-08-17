@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -712,5 +714,82 @@ func TestServerClients_ConcurrentListDoesNotResurrect(t *testing.T) {
 		if fileHasServerClient(t, cfgDir, victim) {
 			t.Fatalf("round %d: удалённый абонент остался в passwords.json", i)
 		}
+	}
+}
+
+// TestServerClients_HandlersReloadRunningServer — окно между записью файла и
+// его применением. Обе ручки абонентов обязаны пнуть ЖИВОЙ процесс сервера:
+// без этого passwords.json меняется, а сервер продолжает работать со старым
+// набором wrap-ключей до ближайшего перезапуска.
+//
+// Процесс подменён shell-скриптом через тот же seam startCmd, что в
+// process_test.go; s.serverProcs.get отдаёт кэшированный экземпляр, поэтому
+// ручка пнёт ровно его.
+func TestServerClients_HandlersReloadRunningServer(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass")
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+
+	proc := s.serverProcs.get(DefaultInstanceID)
+	script := hupTrapScript(mark)
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", script)
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = proc.Stop() })
+
+	st, err := s.AddServerClient(DefaultInstanceID, "", "Абонент А", "", "")
+	if err != nil {
+		t.Fatalf("AddServerClient: %v", err)
+	}
+	waitForHupCount(t, mark, 1, 3*time.Second)
+
+	pass := serverClientPasswordByComment(t, st, "Абонент А")
+	if _, err := s.RemoveServerClient(DefaultInstanceID, pass); err != nil {
+		t.Fatalf("RemoveServerClient: %v", err)
+	}
+	waitForHupCount(t, mark, 2, 3*time.Second)
+}
+
+// TestServerClients_NoReloadWhenFileWriteFails — сигнал привязан к УСПЕШНОЙ
+// записи. Пнув сервер до неё, мы заставили бы его перечитать старый файл и
+// считать изменение применённым, хотя ручка вернула ошибку.
+//
+// Отказ записи делается правами каталога: passwords.json ещё не существует, а в
+// каталог 0500 его не создать. Уже существующий файл открылся бы на запись и
+// при закрытом каталоге — отсюда требование «до первой записи».
+func TestServerClients_NoReloadWhenFileWriteFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root игнорирует права каталога — отказ записи не воспроизвести")
+	}
+	s, cfgDir := newServerClientsService(t, "mainpass")
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+
+	proc := s.serverProcs.get(DefaultInstanceID)
+	script := hupTrapScript(mark)
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", script)
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = proc.Stop() })
+
+	if _, err := os.Stat(passwordsJSONPath(cfgDir)); !os.IsNotExist(err) {
+		t.Fatalf("предпосылка теста нарушена: passwords.json уже существует (%v)", err)
+	}
+	if err := os.Chmod(cfgDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	// Иначе уборка t.TempDir() не снесёт закрытый каталог.
+	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0700) })
+
+	if _, err := s.AddServerClient(DefaultInstanceID, "", "Абонент А", "", ""); err == nil {
+		t.Fatal("запись в закрытый каталог обязана вернуть ошибку")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if b, err := os.ReadFile(mark); err == nil && len(strings.Fields(string(b))) > 0 {
+		t.Fatalf("SIGHUP ушёл при неудачной записи passwords.json: %q", b)
 	}
 }

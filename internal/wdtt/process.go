@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -228,6 +229,18 @@ func (p *process) Stop() error {
 	p.startedAt = nil
 	p.mu.Unlock()
 	return nil
+}
+
+// Reload просит запущенный процесс перечитать конфигурацию (SIGHUP).
+// Сигнал уходит ТОЛЬКО своему процессу: pid берётся из pid-файла и проверяется
+// pidIsOurs — pid-файл переживает ребут, и после него номер мог достаться
+// постороннему. Сигнал по группе (-pid) не годится: в группе живут помощники.
+func (p *process) Reload() error {
+	running, pid := p.IsRunning()
+	if !running {
+		return nil
+	}
+	return childproc.Signal(pid, syscall.SIGHUP)
 }
 
 func (p *process) IsRunning() (bool, int) {
