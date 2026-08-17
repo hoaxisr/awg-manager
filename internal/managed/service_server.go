@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -255,52 +256,68 @@ func (s *Service) natStaticTargets(ctx context.Context) ([]string, error) {
 }
 
 // applyNATModeRaw applies a NAT mode via RCI (no storage write). Returns the
-// WAN interface a static-NAT rule was created on (empty for full/none) so the
-// caller can persist it for deterministic teardown. prevWAN — previously
-// persisted static WAN to remove in full/none; empty means the server was
+// list of exits a static-NAT rule was created on (nil for full/none) so the
+// caller can persist it for deterministic teardown. prevWANs — previously
+// persisted static exits to remove in full/none; empty means the server was
 // never in internet-only, so there is no static rule to remove and we skip
-// it (no speculative live-WAN lookup). Ignored in internet-only, which always
-// re-queries the live WAN. Reused by restore.
-func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
+// it (no speculative live-WAN lookup). In internet-only prevWANs are the
+// tail of the previous enable: targets are re-queried live, and whatever is
+// no longer among them gets removed. Reused by restore.
+func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string, prevWANs []string) ([]string, error) {
 	switch mode {
 	case "full":
 		if err := s.rciSetNAT(ctx, ifaceName, true); err != nil {
-			return "", fmt.Errorf("set NAT: %w", err)
+			return nil, fmt.Errorf("set NAT: %w", err)
 		}
-		if prevWAN != "" { // только если ранее реально ставили static (internet-only)
-			s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
+			s.removeStaticNATs(ctx, ifaceName, prevWANs)
 		}
-		return "", nil
+		return nil, nil
 	case "internet-only":
-		if s.queries == nil || s.queries.Routes == nil {
-			return "", fmt.Errorf("internet-only требует Routes-провайдер")
-		}
-		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
+		targets, err := s.natStaticTargets(ctx)
 		if err != nil {
-			return "", fmt.Errorf("internet-only требует WAN (нет дефолт-маршрута): %w", err)
+			return nil, err
 		}
 		// Static NAT ПЕРВЫМ: обычный NAT держится включённым до подтверждения
 		// static, поэтому сбой static никогда не оставляет iface вовсе без NAT.
-		if err := s.rciSetStaticNAT(ctx, ifaceName, wan, true); err != nil {
-			return "", fmt.Errorf("set static NAT: %w", err)
+		applied := make([]string, 0, len(targets))
+		rollback := func() {
+			for _, a := range applied {
+				if rbErr := s.rciSetStaticNAT(ctx, ifaceName, a, false); rbErr != nil {
+					s.log.Warn("internet-only rollback: remove static NAT failed", "error", rbErr, "interface", ifaceName, "target", a)
+				}
+			}
+		}
+		for _, t := range targets {
+			if err := s.rciSetStaticNAT(ctx, ifaceName, t, true); err != nil {
+				rollback()
+				return nil, fmt.Errorf("set static NAT (%s): %w", t, err)
+			}
+			applied = append(applied, t)
 		}
 		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
-			if rbErr := s.rciSetStaticNAT(ctx, ifaceName, wan, false); rbErr != nil { // откат только что добавленного static
-				s.log.Warn("internet-only rollback: remove static NAT failed", "error", rbErr, "interface", ifaceName)
-			}
-			return "", fmt.Errorf("disable NAT: %w", err)
+			rollback()
+			return nil, fmt.Errorf("disable NAT: %w", err)
 		}
-		return wan, nil
+		// Хвосты прошлого включения, не попавшие в новый список целей.
+		for _, w := range prevWANs {
+			if !slices.Contains(applied, w) {
+				if rbErr := s.rciSetStaticNAT(ctx, ifaceName, w, false); rbErr != nil {
+					s.log.Warn("internet-only: remove stale static NAT failed", "error", rbErr, "interface", ifaceName, "target", w)
+				}
+			}
+		}
+		return applied, nil
 	case "none":
 		if err := s.rciSetNAT(ctx, ifaceName, false); err != nil {
-			return "", fmt.Errorf("disable NAT: %w", err)
+			return nil, fmt.Errorf("disable NAT: %w", err)
 		}
-		if prevWAN != "" { // только если ранее реально ставили static (internet-only)
-			s.removeStaticNAT(ctx, ifaceName, prevWAN)
+		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
+			s.removeStaticNATs(ctx, ifaceName, prevWANs)
 		}
-		return "", nil
+		return nil, nil
 	default:
-		return "", fmt.Errorf("неизвестный NAT-режим: %q", mode)
+		return nil, fmt.Errorf("неизвестный NAT-режим: %q", mode)
 	}
 }
 
@@ -310,14 +327,15 @@ func (s *Service) SetNATMode(ctx context.Context, id, mode string) error {
 	if !ok {
 		return fmt.Errorf("managed server not found: %s", id)
 	}
-	wan, err := s.applyNATModeRaw(ctx, server.InterfaceName, mode, server.NATStaticWAN)
+	wans, err := s.applyNATModeRaw(ctx, server.InterfaceName, mode, server.StaticNATList())
 	if err != nil {
 		return err
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
 		sv.NATMode = mode
 		sv.NATEnabled = mode == "full"
-		sv.NATStaticWAN = wan
+		sv.NATStaticWANs = wans
+		sv.NATStaticWAN = "" // источник правды теперь список
 		return nil
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
@@ -326,23 +344,25 @@ func (s *Service) SetNATMode(ctx context.Context, id, mode string) error {
 	return nil
 }
 
-// removeStaticNAT снимает ip static для интерфейса. Использует storedWAN
-// (созданный при включении internet-only); если пуст — fallback на текущий
-// дефолт-WAN (back-compat для серверов без сохранённого WAN). Best-effort.
-func (s *Service) removeStaticNAT(ctx context.Context, ifaceName, storedWAN string) {
-	wan := storedWAN
-	if wan == "" {
+// removeStaticNATs снимает ip static для интерфейса по сохранённому списку;
+// пустой список — fallback на текущий дефолт-WAN (back-compat для серверов
+// без сохранённых выходов). Best-effort.
+func (s *Service) removeStaticNATs(ctx context.Context, ifaceName string, storedWANs []string) {
+	wans := storedWANs
+	if len(wans) == 0 {
 		if s.queries == nil || s.queries.Routes == nil {
 			return
 		}
-		var err error
-		wan, err = s.queries.Routes.GetDefaultGatewayInterface(ctx)
+		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
 		if err != nil || wan == "" {
 			return
 		}
+		wans = []string{wan}
 	}
-	if err := s.rciSetStaticNAT(ctx, ifaceName, wan, false); err != nil {
-		s.log.Warn("remove static NAT failed", "error", err, "interface", ifaceName)
+	for _, w := range wans {
+		if err := s.rciSetStaticNAT(ctx, ifaceName, w, false); err != nil {
+			s.log.Warn("remove static NAT failed", "error", err, "interface", ifaceName, "target", w)
+		}
 	}
 }
 
@@ -423,7 +443,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		}
 	}
 	if server.NATMode == "internet-only" {
-		s.removeStaticNAT(ctx, server.InterfaceName, server.NATStaticWAN)
+		s.removeStaticNATs(ctx, server.InterfaceName, server.StaticNATList())
 	}
 	if len(server.LANSegments) > 0 {
 		// Teardown-only ветка applyLANSegmentsRaw: unbind + remove ACL (best-effort).
