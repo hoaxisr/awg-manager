@@ -140,7 +140,7 @@
 
 	let detectingHeaders = $state(false);
 	let detectedNotice = $state('');
-	let detectTimer: any = null;
+	let detectTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function triggerDetectHeaders(targetUrl: string): void {
 		if (detectTimer) clearTimeout(detectTimer);

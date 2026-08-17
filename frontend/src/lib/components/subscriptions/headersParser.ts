@@ -69,6 +69,8 @@ export function generateV2rayNPreset(): string {
 	return `User-Agent: v2rayN/${v} (Windows NT 10.0; Win64; x64)`;
 }
 
+export type HeaderProfileKind = 'happ' | 'mihomo' | 'singbox' | 'v2rayn';
+
 export function detectHeaderProfileForUrl(rawUrl: string): HeaderProfileKind {
 	const lower = rawUrl.trim().toLowerCase();
 	if (!lower) return 'happ';
