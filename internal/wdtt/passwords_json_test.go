@@ -86,6 +86,11 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 	dir := t.TempDir()
 	existing := passwordsJSON{
 		MainPassword: "main",
+		// Владелец у "bad" обязателен: без него устройство снимает прополка
+		// сирот, и тест перестаёт сторожить сам sanitize.
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {DeviceIDs: []string{"bad"}},
+		},
 		Devices: map[string]any{
 			"bad": map[string]any{"ip": DefaultWdttServerGatewayAddr},
 		},
@@ -98,7 +103,7 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	sanitized, err := syncPasswordsJSON(dir, "main", "", "", nil)
+	sanitized, err := syncPasswordsJSON(dir, "main", "", "", []ServerClient{{Password: "client1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +119,23 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 	}
 	if deviceIPFromPasswordsEntry(out.Devices["__awgm_gateway_reserved__"]) != DefaultWdttServerGatewayAddr {
 		t.Fatalf("reservation missing: %#v", out.Devices)
+	}
+}
+
+// TestSyncPasswordsJSON_CreatesOwnerOnlyFile сторожит права СОЗДАВАЕМОГО файла:
+// в нём лежат пароли абонентов. Каталог обязан быть пустым — os.WriteFile права
+// уже существующего файла не меняет.
+func TestSyncPasswordsJSON_CreatesOwnerOnlyFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := syncPasswordsJSON(dir, "main", "", "", []ServerClient{{Password: "client1"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(passwordsJSONPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("права passwords.json = %04o, ожидалось 0600", perm)
 	}
 }
 
@@ -153,12 +175,15 @@ func TestUsableServerClients_SkipsEmptyMainAndExpired(t *testing.T) {
 
 func TestPreparePasswordsJSON_SkipsExpiredClient(t *testing.T) {
 	dir := t.TempDir()
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+	doc, _, err := preparePasswordsJSONForServer(dir, "  main  ", "", "", []ServerClient{
 		{Password: "dead", ExpiresAt: time.Now().Add(-time.Hour).Unix()},
 		{Password: "alive", ExpiresAt: time.Now().Add(time.Hour).Unix()},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if doc.MainPassword != "main" {
+		t.Fatalf("main_password = %q, ожидался подрезанный", doc.MainPassword)
 	}
 	if _, ok := doc.Passwords["dead"]; ok {
 		t.Fatalf("просроченный абонент попал в файл: %#v", doc.Passwords)
