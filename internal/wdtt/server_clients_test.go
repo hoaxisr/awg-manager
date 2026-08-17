@@ -1,6 +1,7 @@
 package wdtt
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -148,6 +149,36 @@ func TestListServerClients_ShowsExpired(t *testing.T) {
 		}
 	}
 	t.Fatalf("просроченный абонент пропал из списка: %+v", st.Users)
+}
+
+// Имя и хеш абонента, которых нет в wdtt.json, берутся из файла: у абонентов
+// бота личность живёт только там, и список не должен показывать их безымянными.
+func TestMergeServerClients_FallsBackToFileLabelAndVkHash(t *testing.T) {
+	st := mergeServerClients(
+		[]ServerClient{{Password: "client1"}},
+		map[string]passwordsJSONUser{"client1": {Label: "Из бота", VkHash: "vk9"}},
+		true,
+		time.Unix(1700000000, 0),
+	)
+	if len(st.Users) != 1 {
+		t.Fatalf("список = %+v", st.Users)
+	}
+	if st.Users[0].Comment != "Из бота" {
+		t.Fatalf("имя не подхвачено из label: %+v", st.Users[0])
+	}
+	if st.Users[0].VkHash != "vk9" {
+		t.Fatalf("vk_hash не подхвачен из файла: %+v", st.Users[0])
+	}
+	// Своё имя сильнее файла: его правит пользователь.
+	own := mergeServerClients(
+		[]ServerClient{{Password: "client1", Comment: "Иван", VkHash: "vk1"}},
+		map[string]passwordsJSONUser{"client1": {Label: "Из бота", VkHash: "vk9"}},
+		true,
+		time.Unix(1700000000, 0),
+	)
+	if own.Users[0].Comment != "Иван" || own.Users[0].VkHash != "vk1" {
+		t.Fatalf("файл затёр личность из wdtt.json: %+v", own.Users[0])
+	}
 }
 
 func TestListServerClients_AdoptsUnknownFileEntries(t *testing.T) {
@@ -344,6 +375,92 @@ func TestAdoptServerClientsFromFile_KeepsRememberedExpiry(t *testing.T) {
 		}
 	}
 	t.Fatalf("абонент пропал при усыновлении: %+v", clients)
+}
+
+// Пустой пароль абонента даёт сгенерированный: 32 hex-символа. Форма
+// проверяется, потому что этот пароль уезжает в ссылку и в passwords.json.
+func TestAddServerClient_GeneratesHexPassword(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	st, err := s.AddServerClient(DefaultInstanceID, "", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := serverClientPasswordByComment(t, st, "Иван")
+	if len(pass) != 32 {
+		t.Fatalf("длина пароля = %d, ожидалось 32 hex-символа: %q", len(pass), pass)
+	}
+	if _, err := hex.DecodeString(pass); err != nil {
+		t.Fatalf("пароль не hex: %q (%v)", pass, err)
+	}
+	if !fileHasServerClient(t, cfgDir, pass) {
+		t.Fatalf("сгенерированный пароль не доехал до файла: %q", pass)
+	}
+}
+
+// Имя и хеш тримятся на границе входа: непорезанные значения уехали бы и в
+// wdtt.json, и в passwords.json, а сравнивать их потом не с чем.
+func TestAddServerClient_TrimsCommentAndVkHash(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	if _, err := s.AddServerClient(DefaultInstanceID, "client1", "  Иван  ", "  vk1  ", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range configServerClients(t, s) {
+		if c.Password != "client1" {
+			continue
+		}
+		if c.Comment != "Иван" || c.VkHash != "vk1" {
+			t.Fatalf("вход не подрезан в wdtt.json: %+v", c)
+		}
+	}
+	doc, err := loadPasswordsJSON(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := doc.Passwords["client1"]; entry.Label != "Иван" || entry.VkHash != "vk1" {
+		t.Fatalf("вход не подрезан в passwords.json: %#v", entry)
+	}
+}
+
+// Обе плановые проверки удаления: пустой пароль и главный пароль сервера.
+// Главный пароль абонентом не является, и снимать его этой ручкой нельзя.
+func TestRemoveServerClient_RejectsEmptyAndMainPassword(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, _ := newServerClientsService(t, main)
+	if _, err := s.RemoveServerClient(DefaultInstanceID, "   "); err == nil {
+		t.Fatal("ожидался отказ: пароль абонента не задан")
+	}
+	_, err := s.RemoveServerClient(DefaultInstanceID, "  "+main+"  ")
+	if err == nil {
+		t.Fatal("ожидался отказ: удаление основного пароля сервера")
+	}
+	if !strings.Contains(err.Error(), "основной пароль") {
+		t.Fatalf("текст отказа = %q, ожидалось упоминание основного пароля", err.Error())
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Config.Password != main {
+		t.Fatalf("пароль сервера задет удалением: %q", inst.Config.Password)
+	}
+}
+
+// Граница ровно-в-эту-секунду у отказа на занятом пароле: расхождение с
+// UsableServerClients меняет ТОЛЬКО текст отказа (отказывают обе ветки), но
+// текст — единственное, что объясняет пользователю, почему пароль не взять.
+func TestServerClientPasswordFree_ExpiryBoundary(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clients := []ServerClient{{Password: "client1", ExpiresAt: now.Unix()}}
+	err := serverClientPasswordFree(clients, "client1", now)
+	if err == nil {
+		t.Fatal("ожидался отказ на занятом пароле")
+	}
+	if !strings.Contains(err.Error(), "просроченному") {
+		t.Fatalf("на границе секунды текст = %q, ожидался отказ про просроченного", err.Error())
+	}
+	if err := serverClientPasswordFree(clients, "client2", now); err != nil {
+		t.Fatalf("свободный пароль отвергнут: %v", err)
+	}
 }
 
 func TestRemoveServerClient_DropsClientAndItsDevice(t *testing.T) {
