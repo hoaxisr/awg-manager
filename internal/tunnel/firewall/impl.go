@@ -15,6 +15,9 @@ type ManagerImpl struct {
 	mssClamp    bool // Add TCP MSS clamping rules (kernel backend)
 	ndmsManaged bool // NDMS manages filter/nat rules (OS5 OpkgTun)
 	appLog      *logging.ScopedLogger
+
+	hookPath string // тестовый override; пусто — defaultHookPath
+	listPath string // тестовый override; пусто — defaultListPath
 }
 
 // New creates a new firewall manager.
@@ -47,6 +50,9 @@ func (m *ManagerImpl) AddRules(ctx context.Context, iface string) error {
 		m.appLog.Warn("add-rules", iface, fmt.Sprintf("iptables-restore failed: %v", err))
 		return fmt.Errorf("iptables-restore --noflush for %s: %w", iface, err)
 	}
+	if err := m.syncHookState(iface, true); err != nil {
+		m.appLog.Warn("add-rules", iface, fmt.Sprintf("netfilter hook state: %v", err))
+	}
 	return nil
 }
 
@@ -66,6 +72,10 @@ func (m *ManagerImpl) RemoveRules(ctx context.Context, iface string) error {
 				m.appLog.Warn("remove-rules", iface, fmt.Sprintf("Failed to delete rule %s/%s: %v", rules[i].Table, rules[i].Chain, err))
 			}
 		}
+	}
+
+	if err := m.syncHookState(iface, false); err != nil {
+		m.appLog.Warn("remove-rules", iface, fmt.Sprintf("netfilter hook state: %v", err))
 	}
 
 	return nil
