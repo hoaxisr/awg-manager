@@ -483,6 +483,9 @@ const MOCK_AWG_TUNNELS = [
 	},
 ];
 
+/** Счётчик импортированных туннелей: даёт им номер, а из него — NDMS-имя. */
+let mockImportSeq = 0;
+
 /** AWG tunnels where monitoring self-check is down while status stays running or broken. */
 const MOCK_AWG_SELF_CHECK_FAIL = new Set(['awg-demo-fin', 'awg-demo-5']);
 
@@ -3584,6 +3587,36 @@ function mockWdttReload(inst) {
 	return inst.running ? 'delivered' : 'serverStopped';
 }
 
+/** Первый свободный локальный порт 9000..9199 (wdtt/validate.go:87). */
+function mockNextLocalListen(instances) {
+	const used = new Set(
+		instances.map((i) => Number(String(i.config?.listen ?? '').split(':').pop())).filter(Boolean),
+	);
+	for (let port = 9000; port < 9200; port++) {
+		if (!used.has(port)) return `127.0.0.1:${port}`;
+	}
+	return '127.0.0.1:9100';
+}
+
+/**
+ * Raw-клиент регистрирует свой интерфейс в роутере при старте: менеджер
+ * выдаёт индекс из 17..49 и кладёт имена в статус. Без этого мастер не знает,
+ * какой интерфейс заводить в политику доступа.
+ */
+function mockAssignRawIface(inst) {
+	if (inst.config.connMode !== 'raw' || inst.config.ndmsIface) return;
+	const busy = new Set(
+		[...mockWdtt.clients, ...mockWdtt.servers]
+			.map((i) => Number(String(i.config?.ndmsIface ?? '').replace(/\D+/g, '')))
+			.filter(Boolean),
+	);
+	let idx = 17;
+	while (idx < 50 && busy.has(idx)) idx += 1;
+	inst.config.ndmsIface = `OpkgTun${idx}`;
+	inst.config.rawIface = `opkgtun${idx}`;
+	inst.config.rawClientIp = `10.66.66.${idx}`;
+}
+
 function mockWdttProcessStatus(inst) {
 	if (!inst) {
 		return {
@@ -4885,6 +4918,78 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Импорт .conf (internal/api/import.go:80). Мастер «Выхода» заводит им
+	// AWG-туннель клиента прокси; NDMS-имя выводится из id туннеля, как в
+	// tunnel.NewNames (awgN → OpkgTunN), поэтому доступно сразу после импорта.
+	if (req.method === 'POST' && path === '/import/conf') {
+		readRequestText(req).then((raw) => {
+			let body;
+			try {
+				body = JSON.parse(raw || '{}');
+			} catch (e) {
+				sendInvalidRequest(res, e);
+				return;
+			}
+			const content = String(body.content ?? '');
+			if (!content) {
+				sendBackendError(res, 'missing config content', 'MISSING_CONTENT');
+				return;
+			}
+			const link = {
+				freeTurnClientId: String(body.freeTurnClientId ?? '').trim(),
+				wdttClientId: String(body.wdttClientId ?? '').trim(),
+			};
+			// Повторный импорт для того же клиента заменяет его туннель.
+			const existing = MOCK_AWG_TUNNELS.find(
+				(t) =>
+					(link.wdttClientId && t.wdttClientId === link.wdttClientId) ||
+					(link.freeTurnClientId && t.freeTurnClientId === link.freeTurnClientId),
+			);
+			const num = existing ? Number(existing.id.replace(/\D+/g, '')) : 20 + ++mockImportSeq;
+			const item = existing ?? {
+				id: `awg${num}`,
+				type: 'amneziawg',
+				status: 'stopped',
+				enabled: false,
+				defaultRoute: false,
+				interfaceName: `opkgtun${num}`,
+				ndmsName: `OpkgTun${num}`,
+				awgVersion: 'awg3',
+				mtu: 1420,
+				backend: 'kernel',
+				connectivityCheck: { method: 'http' },
+				pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 3 },
+			};
+			item.name = String(body.name ?? '').trim() || `Импорт ${num}`;
+			item.endpoint = /Endpoint\s*=\s*(\S+)/i.exec(content)?.[1] ?? '';
+			item.address = /Address\s*=\s*(\S+)/i.exec(content)?.[1] ?? '10.0.0.2/32';
+			if (link.wdttClientId) item.wdttClientId = link.wdttClientId;
+			if (link.freeTurnClientId) item.freeTurnClientId = link.freeTurnClientId;
+			if (!existing) MOCK_AWG_TUNNELS.push(item);
+			sendData(res, {
+				id: item.id,
+				name: item.name,
+				type: 'awg',
+				enabled: item.enabled,
+				defaultRoute: item.defaultRoute,
+				ispInterface: '',
+				interfaceName: item.interfaceName,
+				ndmsName: item.ndmsName,
+				configPreview: content.slice(0, 400),
+				state: 'stopped',
+				interface: buildTunnelInterface(item),
+				peer: {
+					publicKey: mockPubkey(1),
+					presharedKey: '',
+					endpoint: item.endpoint,
+					allowedIPs: ['0.0.0.0/0', '::/0'],
+					persistentKeepalive: 25,
+				},
+			});
+		});
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/pingcheck/status') {
 		send(res, 200, { success: true, data: buildPingCheckStatus() });
 		return;
@@ -6130,6 +6235,47 @@ const server = http.createServer(async (req, res) => {
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
 			}
+		});
+		return;
+	}
+
+	// Заведение интерфейса в политику (accesspolicy.go:315). Мастер «Выхода»
+	// дописывает интерфейс в конец порядка политики; повторный permit того же
+	// интерфейса меняет только его order.
+	if (req.method === 'POST' && path === '/access-policies/permit') {
+		readRequestText(req).then((raw) => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch (e) {
+				sendInvalidRequest(res, e);
+				return;
+			}
+			const name = String(payload.name ?? '');
+			const iface = String(payload.interface ?? '');
+			if (!name) {
+				sendBackendError(res, 'missing name', 'MISSING_NAME');
+				return;
+			}
+			if (!iface) {
+				sendBackendError(res, 'missing interface', 'MISSING_INTERFACE');
+				return;
+			}
+			const policy = mockAccessPolicies.find((p) => p.name === name);
+			if (!policy) {
+				sendBackendError(res, `invalid policy name: ${name}`, 'PERMIT_FAILED', 500);
+				return;
+			}
+			const order = Number(payload.order ?? 0) || 0;
+			const existing = policy.interfaces.find((i) => i.name === iface);
+			if (existing) {
+				existing.order = order;
+				delete existing.denied;
+			} else {
+				policy.interfaces.push({ name: iface, label: iface, order });
+			}
+			policy.interfaces.sort((a, b) => a.order - b.order);
+			sendData(res, { ok: true });
 		});
 		return;
 	}
@@ -7910,7 +8056,26 @@ const server = http.createServer(async (req, res) => {
 						running: false,
 						pid: 20000 + n,
 						startedAt: null,
-						config: { ...structuredClone(template), enabled: false },
+						// У клиента бэкенд берёт DefaultClientConfig и свой listen
+						// (internal/freeturn/service.go:345); сервер оставляем как был.
+						config:
+							kind === 'client'
+								? {
+										enabled: false,
+										listen: mockNextLocalListen(mockFreeturn.clients),
+										peer: '',
+										provider: 'vk',
+										streams: 10,
+										transport: 'tcp',
+										mode: 'udp',
+										bond: false,
+										obfProfile: 'none',
+										streamsPerCred: 10,
+										platform: 'desktop',
+										dnsMode: 'auto',
+										debug: false,
+									}
+								: { ...structuredClone(template), enabled: false },
 					};
 					mockFreeturnList(kind).push(inst);
 					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
@@ -8164,14 +8329,28 @@ const server = http.createServer(async (req, res) => {
 				const body = raw ? JSON.parse(raw) : {};
 				mockWdtt.clientSeq += 1;
 				const n = mockWdtt.clientSeq;
-				const template = mockWdtt.clients[0]?.config ?? {};
 				const inst = {
 					id: `wdtt-${n}`,
 					name: body.name?.trim() || `Клиент ${n}`,
 					running: false,
 					pid: 20000 + n,
 					startedAt: null,
-					config: { ...structuredClone(template), enabled: false },
+					// DefaultClientConfig + nextClientListen (internal/wdtt/service.go:383):
+					// конфиг из запроса бэкенд не мержит, а порт назначает сам.
+					config: {
+						enabled: false,
+						listen: mockNextLocalListen(mockWdtt.clients),
+						peer: '',
+						password: '',
+						vkHashes: '',
+						workers: 24,
+						obfs: 'audio',
+						fingerprint: 'chrome',
+						captchaMode: 'rjs',
+						vkAuthMode: 'vkcalls',
+						connMode: 'wg',
+						debug: false,
+					},
 				};
 				mockWdtt.clients.push(inst);
 				sendData(res, { id: inst.id, name: inst.name, config: inst.config });
@@ -8229,7 +8408,10 @@ const server = http.createServer(async (req, res) => {
 			}
 			inst.running = action === 'start';
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
-			if (inst.running) inst.lastError = '';
+			if (inst.running) {
+				inst.lastError = '';
+				mockAssignRawIface(inst);
+			}
 			// Enabled = «должен работать»: бэкенд снимает его на явный стоп и
 			// ставит по факту успешного старта (internal/wdtt/service.go:730,803).
 			inst.config.enabled = inst.running;
