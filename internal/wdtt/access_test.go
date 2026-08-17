@@ -12,9 +12,9 @@ type stubAccessManager struct {
 	firewallPermitIface string
 }
 
-func (s *stubAccessManager) ApplyNATModeToInterface(context.Context, string, string, string) (string, error) {
+func (s *stubAccessManager) ApplyNATModeToInterface(context.Context, string, string, []string) ([]string, error) {
 	s.natCalls++
-	return "", nil
+	return nil, nil
 }
 func (s *stubAccessManager) ApplyPolicyToInterface(context.Context, string, string) error { return nil }
 func (s *stubAccessManager) ApplyLANSegmentsToInterface(context.Context, string, string, string, []string) error {

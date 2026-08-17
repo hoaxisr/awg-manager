@@ -269,9 +269,10 @@ type ManagedServer struct {
 	DNS           string   `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
 	MTU           int      `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
 	NATEnabled    bool     `json:"natEnabled,omitempty"`
-	NATMode       string   `json:"natMode,omitempty"`      // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
-	NATStaticWAN  string   `json:"natStaticWan,omitempty"` // WAN-iface (to-interface), на котором создан static NAT для internet-only; для детерминированного снятия
-	LANSegments   []string `json:"lanSegments,omitempty"`  // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
+	NATMode       string   `json:"natMode,omitempty"`       // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
+	NATStaticWAN  string   `json:"natStaticWan,omitempty"`  // WAN-iface (to-interface), на котором создан static NAT для internet-only; для детерминированного снятия
+	NATStaticWANs []string `json:"natStaticWans,omitempty"` // выходы (to-interface), на которых создан static NAT для internet-only; источник правды, NATStaticWAN — legacy
+	LANSegments   []string `json:"lanSegments,omitempty"`   // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
 	// PrivateKey is the server's WireGuard private key. Populated by
 	// Service.Create immediately after NDMS auto-generates the keypair,
 	// or by Service.MigratePrivateKeys on first boot after upgrade for
@@ -299,10 +300,34 @@ type ManagedServer struct {
 
 // ServerInterfaceMeta tracks AWG Manager metadata for built-in/marked servers.
 type ServerInterfaceMeta struct {
-	NATStaticWAN string `json:"natStaticWan,omitempty"` // WAN iface used by ip static
+	NATStaticWAN  string   `json:"natStaticWan,omitempty"`  // WAN iface used by ip static
+	NATStaticWANs []string `json:"natStaticWans,omitempty"` // выходы (to-interface), на которых создан static NAT для internet-only; источник правды, NATStaticWAN — legacy
 	// Endpoint is the host (IP or domain) embedded in generated client .conf
 	// files. Empty = resolve WAN IP at generation time.
 	Endpoint string `json:"endpoint,omitempty"`
+}
+
+// StaticNATList отдаёт выходы, на которых стоит наш static NAT: новое
+// поле-список, при его отсутствии — legacy одиночный WAN (записи до 2.18).
+func (m *ManagedServer) StaticNATList() []string {
+	if len(m.NATStaticWANs) > 0 {
+		return m.NATStaticWANs
+	}
+	if m.NATStaticWAN != "" {
+		return []string{m.NATStaticWAN}
+	}
+	return nil
+}
+
+// StaticNATList — см. ManagedServer.StaticNATList.
+func (m *ServerInterfaceMeta) StaticNATList() []string {
+	if len(m.NATStaticWANs) > 0 {
+		return m.NATStaticWANs
+	}
+	if m.NATStaticWAN != "" {
+		return []string{m.NATStaticWAN}
+	}
+	return nil
 }
 
 // ServerPeerSecret holds key material for a peer on a built-in/marked server.
