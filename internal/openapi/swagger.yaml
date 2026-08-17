@@ -6528,6 +6528,11 @@ definitions:
       proto:
         type: string
     type: object
+  api.renameRequest:
+    properties:
+      name:
+        type: string
+    type: object
   api.serverEnabledRequest:
     properties:
       enabled:
@@ -18923,6 +18928,42 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: List, add or delete WDTT server client passwords stored in passwords.json
+      tags:
+      - wdtt
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Server instance id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client password
+        in: path
+        name: password
+        required: true
+        type: string
+      - description: New client name
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.renameRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Rename one WDTT server client (subscriber)
       tags:
       - wdtt
   /wdtt/status:

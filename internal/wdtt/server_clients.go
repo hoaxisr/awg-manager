@@ -324,6 +324,91 @@ func (s *Service) addServerClientLocked(serverID, cfgDir string, cfg ServerConfi
 	return s.serverClientsStatus(serverID, cfgDir, clients), nil
 }
 
+// RenameServerClient меняет ИМЯ абонента и больше ничего: пароль, срок действия
+// и деактивация принадлежат другим операциям.
+//
+// passwords.json здесь НЕ переписывается и SIGHUP не шлётся: имя уезжает в файл
+// полем label, а по нему сервер никого не пускает и wrap-ключи не собирает.
+// Ближайшая штатная запись файла (добавление, удаление, старт) перенесёт новое
+// имя сама — preparePasswordsJSONForServer берёт label из Comment конфига,
+// когда тот непуст.
+func (s *Service) RenameServerClient(serverID, password, name string) (ServerClientsStatus, error) {
+	// Трим — первым делом и на обоих входах, как в AddServerClient: пароли в
+	// списке уже подрезаны, и " client1 " иначе не нашёлся бы вовсе.
+	password = strings.TrimSpace(password)
+	name = strings.TrimSpace(name)
+	if password == "" {
+		return ServerClientsStatus{}, fmt.Errorf("пароль абонента не задан")
+	}
+	// Пустое имя ОТКЛОНЯЕТСЯ, а не очищает: мерж переносит в файл только непустой
+	// Comment (ветки else там нет намеренно), а mergeServerClients при пустом
+	// Comment показывает label из файла — «очистка» вернула бы старое имя и
+	// выглядела бы как молча не применённая правка.
+	if name == "" {
+		return ServerClientsStatus{}, fmt.Errorf("имя абонента не задано")
+	}
+	inst, err := s.serverInstance(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	cfgDir, err := s.serverConfigDir(serverID, inst.Config)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+
+	unlock := s.lockServerClients(serverID)
+	defer unlock()
+	// Усыновление — первым действием, как у соседей: без него абонент, заведённый
+	// телеграм-ботом и лежащий пока только в passwords.json, получил бы «не
+	// найден», а конкурентное удаление соседа воскресило бы его из ещё не
+	// переписанного файла.
+	clients, err := s.adoptServerClientsFromFile(serverID, cfgDir)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	if !hasServerClientPassword(clients, password) {
+		return ServerClientsStatus{}, fmt.Errorf("абонент с таким паролем не найден")
+	}
+	if err := s.setServerClientComment(serverID, password, name); err != nil {
+		return ServerClientsStatus{}, err
+	}
+	clients, err = s.serverClients(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	// Ответ собирает serverClientsStatus — она замка не берёт, поэтому хвост под
+	// defer unlock() самодедлока не даёт. ListServerClients звать здесь нельзя
+	// именно поэтому.
+	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+}
+
+// setServerClientComment правит РОВНО Comment одной записи wdtt.json.
+// putServerClient тут не годится: он замещает запись целиком и стёр бы ExpiresAt
+// (нашу память об отозванном доступе) вместе с VkHash.
+func (s *Service) setServerClientComment(serverID, password, name string) error {
+	_, err := s.updateServerClients(serverID, func(list []ServerClient) ([]ServerClient, bool) {
+		for i, c := range list {
+			if strings.TrimSpace(c.Password) != password || c.Comment == name {
+				continue
+			}
+			list[i].Comment = name
+			return list, true
+		}
+		return list, false
+	})
+	return err
+}
+
+// hasServerClientPassword — членство по подрезанному паролю.
+func hasServerClientPassword(clients []ServerClient, password string) bool {
+	for _, c := range clients {
+		if strings.TrimSpace(c.Password) == password {
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveServerClient удаляет одного абонента сервера.
 func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsStatus, error) {
 	password = strings.TrimSpace(password)

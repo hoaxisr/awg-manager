@@ -44,6 +44,7 @@ type WdttService interface {
 	Stop()
 	ListServerClients(serverID string) (wdtt.ServerClientsStatus, error)
 	AddServerClient(serverID, password, comment, vkHash, mainPassword string) (wdtt.ServerClientsStatus, error)
+	RenameServerClient(serverID, password, name string) (wdtt.ServerClientsStatus, error)
 	RemoveServerClient(serverID, password string) (wdtt.ServerClientsStatus, error)
 }
 

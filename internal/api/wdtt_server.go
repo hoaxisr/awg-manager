@@ -216,19 +216,49 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 		}
 	case len(sub) == 1:
 		password := sub[0]
-		if r.Method != http.MethodDelete {
+		switch r.Method {
+		case http.MethodDelete:
+			st, err := h.svc.RemoveServerClient(serverID, password)
+			if err != nil {
+				response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_DELETE_FAILED")
+				return
+			}
+			response.Success(w, st)
+		case http.MethodPatch:
+			h.renameServerClient(w, r, serverID, password)
+		default:
 			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
-			return
 		}
-		st, err := h.svc.RemoveServerClient(serverID, password)
-		if err != nil {
-			response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_DELETE_FAILED")
-			return
-		}
-		response.Success(w, st)
 	default:
 		response.ErrorWithStatus(w, http.StatusNotFound, "Not found", "NOT_FOUND")
 	}
+}
+
+// renameServerClient handles PATCH /api/wdtt/servers/{id}/users/{password}.
+// Метод и форма тела — как у переименования самого инстанса (PATCH + renameRequest).
+//
+//	@Summary	Rename one WDTT server client (subscriber)
+//	@Tags		wdtt
+//	@Accept		json
+//	@Param		id			path		string			true	"Server instance id"
+//	@Param		password	path		string			true	"Client password"
+//	@Param		request		body		renameRequest	true	"New client name"
+//	@Success	200			{object}	APIEnvelope
+//	@Failure	400			{object}	APIErrorEnvelope
+//	@Failure	500			{object}	APIErrorEnvelope
+//	@Router		/wdtt/servers/{id}/users/{password} [patch]
+func (h *WdttHandler) renameServerClient(w http.ResponseWriter, r *http.Request, serverID, password string) {
+	var req renameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	st, err := h.svc.RenameServerClient(serverID, password, req.Name)
+	if err != nil {
+		response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_RENAME_FAILED")
+		return
+	}
+	response.Success(w, st)
 }
 
 // @Summary	Update config, rename or delete a WDTT server instance

@@ -120,6 +120,9 @@ func (s *stubWdttForImport) ListServerClients(string) (wdtt.ServerClientsStatus,
 func (s *stubWdttForImport) AddServerClient(string, string, string, string, string) (wdtt.ServerClientsStatus, error) {
 	return wdtt.ServerClientsStatus{}, nil
 }
+func (s *stubWdttForImport) RenameServerClient(string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
+}
 func (s *stubWdttForImport) RemoveServerClient(string, string) (wdtt.ServerClientsStatus, error) {
 	return wdtt.ServerClientsStatus{}, nil
 }

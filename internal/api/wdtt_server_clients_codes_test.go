@@ -25,6 +25,10 @@ func (s *failingWdttClients) AddServerClient(string, string, string, string, str
 	return wdtt.ServerClientsStatus{}, errors.New("boom")
 }
 
+func (s *failingWdttClients) RenameServerClient(string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, errors.New("boom")
+}
+
 func (s *failingWdttClients) RemoveServerClient(string, string) (wdtt.ServerClientsStatus, error) {
 	return wdtt.ServerClientsStatus{}, errors.New("boom")
 }
@@ -43,6 +47,7 @@ func TestServeServerClients_ErrorCodes(t *testing.T) {
 		{"список", http.MethodGet, nil, "", "WDTT_SERVER_CLIENTS_FAILED"},
 		{"добавление", http.MethodPost, nil, `{"password":"abonent1"}`, "WDTT_SERVER_CLIENT_ADD_FAILED"},
 		{"удаление", http.MethodDelete, []string{"abonent1"}, "", "WDTT_SERVER_CLIENT_DELETE_FAILED"},
+		{"переименование", http.MethodPatch, []string{"abonent1"}, `{"name":"Пётр"}`, "WDTT_SERVER_CLIENT_RENAME_FAILED"},
 	}
 	for _, tc := range cases {
 		h := &WdttHandler{svc: &failingWdttClients{}}
@@ -59,5 +64,38 @@ func TestServeServerClients_ErrorCodes(t *testing.T) {
 		if resp.Code != tc.want {
 			t.Fatalf("%s: код = %q, ожидался %q", tc.name, resp.Code, tc.want)
 		}
+	}
+}
+
+// recordingRenameWdtt запоминает аргументы переименования: у serverID, пароля и
+// имени один тип, и перепутанный порядок не поймает ни компилятор, ни проверка
+// кода отказа.
+type recordingRenameWdtt struct {
+	stubWdttForImport
+	serverID string
+	password string
+	name     string
+}
+
+func (s *recordingRenameWdtt) RenameServerClient(serverID, password, name string) (wdtt.ServerClientsStatus, error) {
+	s.serverID, s.password, s.name = serverID, password, name
+	return wdtt.ServerClientsStatus{Users: []wdtt.ServerClientEntry{{Password: password, Comment: name}}}, nil
+}
+
+// TestServeServers_PatchUserRenames — маршрут переименования абонента целиком,
+// от URL до аргументов сервиса: PATCH /api/wdtt/servers/{id}/users/{password}.
+func TestServeServers_PatchUserRenames(t *testing.T) {
+	svc := &recordingRenameWdtt{}
+	h := &WdttHandler{svc: svc}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/wdtt/servers/default/users/abonent1", strings.NewReader(`{"name":"Иван Петров"}`))
+
+	h.ServeServers(rec, req)
+
+	if svc.serverID != "default" || svc.password != "abonent1" || svc.name != "Иван Петров" {
+		t.Fatalf("сервис вызван с (%q, %q, %q)", svc.serverID, svc.password, svc.name)
+	}
+	if !strings.Contains(rec.Body.String(), "Иван Петров") {
+		t.Fatalf("ответ ручки не содержит нового имени: %s", rec.Body.String())
 	}
 }

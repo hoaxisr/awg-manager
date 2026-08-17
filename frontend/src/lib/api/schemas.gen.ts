@@ -2903,6 +2903,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"PATCH /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
+	"PATCH /wdtt/servers/{id}/users/{password}": v.lazy(() => api_APIEnvelope),
 	"POST /access-policies/assign": v.lazy(() => api_OkResponse),
 	"POST /access-policies/create": v.lazy(() => api_AccessPolicyResponse),
 	"POST /access-policies/description": v.lazy(() => api_OkResponse),

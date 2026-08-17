@@ -1301,3 +1301,242 @@ func TestWriteServerClientsFile_LogsRealGatewayPurge(t *testing.T) {
 		t.Fatalf("свой резерв попал в журнал: %v", log.messages)
 	}
 }
+
+// serverClientByPassword достаёт запись абонента из списка wdtt.json.
+func serverClientByPassword(t *testing.T, clients []ServerClient, password string) ServerClient {
+	t.Helper()
+	for _, c := range clients {
+		if c.Password == password {
+			return c
+		}
+	}
+	t.Fatalf("абонент с паролем %q не найден: %+v", password, clients)
+	return ServerClient{}
+}
+
+// serverClientEntryByPassword достаёт запись абонента из ответа ручки.
+func serverClientEntryByPassword(t *testing.T, st ServerClientsStatus, password string) ServerClientEntry {
+	t.Helper()
+	for _, u := range st.Users {
+		if u.Password == password {
+			return u
+		}
+	}
+	t.Fatalf("абонент с паролем %q не найден в ответе: %+v", password, st.Users)
+	return ServerClientEntry{}
+}
+
+// TestRenameServerClient_ChangesOnlyComment — переименование правит РОВНО имя.
+// Данные литеральные, и это не педантизм: срок действия — наша память об
+// отозванном доступе, vk_hash — привязка к VK; замещение записи целиком
+// (putServerClient) стёрло бы их молча, а сервер после ближайшей записи файла
+// принял бы просроченного как бессрочного.
+//
+// Здесь же проверяется, что ответ ручки несёт НОВОЕ имя: он собирается после
+// правки, а не из снимка, сделанного до неё.
+func TestRenameServerClient_ChangesOnlyComment(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	const expires = int64(4102444800) // 2100-01-01, заведомо живой
+	setServerClients(t, s, []ServerClient{
+		{Password: "client1", Comment: "Иван", VkHash: "vk1", ExpiresAt: expires},
+		{Password: "client2", Comment: "Пётр", VkHash: "vk2"},
+	})
+
+	st, err := s.RenameServerClient(DefaultInstanceID, "client1", "Иван Петров")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := serverClientByPassword(t, configServerClients(t, s), "client1")
+	if got.Comment != "Иван Петров" {
+		t.Fatalf("имя = %q, ожидалось «Иван Петров»", got.Comment)
+	}
+	if got.Password != "client1" || got.VkHash != "vk1" || got.ExpiresAt != expires {
+		t.Fatalf("переименование задело не только имя: %+v", got)
+	}
+	if other := serverClientByPassword(t, configServerClients(t, s), "client2"); other.Comment != "Пётр" || other.VkHash != "vk2" {
+		t.Fatalf("задет соседний абонент: %+v", other)
+	}
+	if entry := serverClientEntryByPassword(t, st, "client1"); entry.Comment != "Иван Петров" {
+		t.Fatalf("ответ ручки отдал имя %q, ожидалось «Иван Петров»: %+v", entry.Comment, st.Users)
+	}
+}
+
+// TestRenameServerClient_TrimsInput — трим на входе ручки. Пароли в списке
+// подрезаны, поэтому без трима " client1 " не нашёлся бы вовсе, а имя уехало бы
+// в wdtt.json и в label файла с пробелами по краям.
+func TestRenameServerClient_TrimsInput(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	setServerClients(t, s, []ServerClient{{Password: "client1", Comment: "Иван"}})
+
+	if _, err := s.RenameServerClient(DefaultInstanceID, "  client1  ", "  Иван Петров \t"); err != nil {
+		t.Fatal(err)
+	}
+	if got := serverClientByPassword(t, configServerClients(t, s), "client1"); got.Comment != "Иван Петров" {
+		t.Fatalf("имя = %q, ожидалось «Иван Петров» без пробелов", got.Comment)
+	}
+}
+
+// TestRenameServerClient_FindsClientWithUntrimmedPassword — пароль с пробелами
+// в самом wdtt.json (рукописная правка, старый конфиг). Членство и правка
+// обязаны сравнивать пароль ОДИНАКОВО: иначе абонент «найден», а имя молча не
+// меняется — ручка отвечает успехом, не сделав ничего.
+func TestRenameServerClient_FindsClientWithUntrimmedPassword(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	setServerClients(t, s, []ServerClient{{Password: "  client1  ", Comment: "Иван"}})
+
+	if _, err := s.RenameServerClient(DefaultInstanceID, "client1", "Иван Петров"); err != nil {
+		t.Fatal(err)
+	}
+	if got := serverClientByPassword(t, configServerClients(t, s), "  client1  "); got.Comment != "Иван Петров" {
+		t.Fatalf("имя = %q, ожидалось «Иван Петров»", got.Comment)
+	}
+}
+
+// TestRenameServerClient_RejectsEmptyAndUnknown — три отказа. Пустое имя
+// ОТКЛОНЯЕТСЯ намеренно: мерж переносит в passwords.json только непустой
+// Comment, а список при пустом Comment показывает label из файла — «очистка»
+// вернула бы старое имя и выглядела бы как молча не применённая правка.
+func TestRenameServerClient_RejectsEmptyAndUnknown(t *testing.T) {
+	cases := []struct {
+		name     string
+		password string
+		newName  string
+		want     string
+	}{
+		{"пустой пароль", "   ", "Иван", "пароль абонента не задан"},
+		{"пустое имя", "client1", "  ", "имя абонента не задано"},
+		{"несуществующий пароль", "client404", "Иван", "не найден"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newServerClientsService(t, "mainpass0000000000000000")
+			setServerClients(t, s, []ServerClient{{Password: "client1", Comment: "Иван"}})
+
+			_, err := s.RenameServerClient(DefaultInstanceID, tc.password, tc.newName)
+			if err == nil {
+				t.Fatal("отказа не последовало")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("текст отказа %q не содержит %q", err.Error(), tc.want)
+			}
+			if got := serverClientByPassword(t, configServerClients(t, s), "client1"); got.Comment != "Иван" {
+				t.Fatalf("отказавшая операция всё же переименовала: %+v", got)
+			}
+		})
+	}
+}
+
+// TestRenameServerClient_AdoptsBotClient — усыновление ПЕРВЫМ действием.
+// Абонент телеграм-бота лежит пока только в passwords.json; проверка членства
+// до усыновления ответила бы «не найден» на живого абонента, которого видно в
+// списке.
+func TestRenameServerClient_AdoptsBotClient(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	setServerClients(t, s, []ServerClient{{Password: "client1", Comment: "Иван"}})
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords:    map[string]passwordsJSONUser{"legacy1": {Label: "Из бота"}},
+	})
+
+	if _, err := s.RenameServerClient(DefaultInstanceID, "legacy1", "Абонент бота"); err != nil {
+		t.Fatal(err)
+	}
+	if got := serverClientByPassword(t, configServerClients(t, s), "legacy1"); got.Comment != "Абонент бота" {
+		t.Fatalf("абонент бота не переименован: %+v", got)
+	}
+}
+
+// TestRenameServerClient_DoesNotRewritePasswordsFile — имя серверу безразлично:
+// по label он никого не пускает и wrap-ключи из него не собирает. Поэтому
+// переименование НЕ переписывает passwords.json и не шлёт SIGHUP — новое имя
+// уедет в файл ближайшей штатной записью (добавление, удаление, старт).
+//
+// Цена названа прямо и проверяется здесь же: до той записи label в файле
+// СТАРЫЙ. Наружу это не видно — список берёт имя из wdtt.json, а label остаётся
+// запасным вариантом для абонентов, у которых своего имени нет.
+func TestRenameServerClient_DoesNotRewritePasswordsFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	setServerClients(t, s, []ServerClient{{Password: "client1", Comment: "Иван"}})
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords:    map[string]passwordsJSONUser{"client1": {Label: "Иван"}},
+	})
+	before, err := os.ReadFile(passwordsJSONPath(cfgDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := s.RenameServerClient(DefaultInstanceID, "client1", "Иван Петров")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.ReadFile(passwordsJSONPath(cfgDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("переименование переписало passwords.json:\nбыло:\n%s\nстало:\n%s", before, after)
+	}
+	if entry := serverClientEntryByPassword(t, st, "client1"); entry.Comment != "Иван Петров" {
+		t.Fatalf("список показал имя %q, а не новое: %+v", entry.Comment, st.Users)
+	}
+}
+
+// TestServerClients_ConcurrentRenameDoesNotResurrect — тот же класс, что у
+// конкурентного List: переименование берёт lockServerClients, потому что его
+// усыновление, попав между вычёркиванием абонента из wdtt.json и перезаписью
+// passwords.json, вернуло бы удалённого обратно из ещё не переписанного файла.
+func TestServerClients_ConcurrentRenameDoesNotResurrect(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	if _, err := s.AddServerClient(DefaultInstanceID, "keeper", "Хранитель", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		victim := fmt.Sprintf("victim%02d", i)
+		if _, err := s.AddServerClient(DefaultInstanceID, victim, "Жертва", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		var (
+			wg      sync.WaitGroup
+			start   = make(chan struct{})
+			opErr   error
+			opErrMu sync.Mutex
+		)
+		fail := func(err error) {
+			opErrMu.Lock()
+			if opErr == nil {
+				opErr = err
+			}
+			opErrMu.Unlock()
+		}
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.RemoveServerClient(DefaultInstanceID, victim); err != nil {
+				fail(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := s.RenameServerClient(DefaultInstanceID, "keeper", fmt.Sprintf("Хранитель %02d", i)); err != nil {
+				fail(err)
+			}
+		}()
+		close(start)
+		wg.Wait()
+		if opErr != nil {
+			t.Fatalf("round %d: %v", i, opErr)
+		}
+		if configHasServerClient(t, s, victim) {
+			t.Fatalf("round %d: удалённый абонент воскрешён в wdtt.json переименованием", i)
+		}
+		if fileHasServerClient(t, cfgDir, victim) {
+			t.Fatalf("round %d: удалённый абонент остался в passwords.json", i)
+		}
+	}
+}
