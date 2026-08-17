@@ -3,7 +3,7 @@ package wdtt
 import "testing"
 
 func TestWdttServerIngressRefs(t *testing.T) {
-	got := WdttServerIngressRefs("opkgtun17")
+	got := WdttServerIngressRefs("opkgtun17", "")
 	want := []string{"iface:opkgtun17", "iface:wdttraw0"}
 	if len(got) != len(want) {
 		t.Fatalf("refs = %v, want %v", got, want)
@@ -13,7 +13,7 @@ func TestWdttServerIngressRefs(t *testing.T) {
 			t.Fatalf("refs[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	got = WdttServerIngressRefs("")
+	got = WdttServerIngressRefs("", "")
 	if got[0] != "iface:wdtt0" {
 		t.Fatalf("default wg ref = %q", got[0])
 	}
@@ -21,7 +21,7 @@ func TestWdttServerIngressRefs(t *testing.T) {
 
 func TestEnsureWdttIngressRefs(t *testing.T) {
 	refs := []string{"iface:opkgtun17", "managed:Wireguard3"}
-	next, changed := EnsureWdttIngressRefs(refs, "opkgtun17")
+	next, changed := EnsureWdttIngressRefs(refs, "opkgtun17", "")
 	if !changed {
 		t.Fatal("expected change when raw ref missing")
 	}
@@ -32,7 +32,7 @@ func TestEnsureWdttIngressRefs(t *testing.T) {
 		t.Fatalf("must preserve unrelated refs: %v", next)
 	}
 
-	next, changed = EnsureWdttIngressRefs(next, "opkgtun17")
+	next, changed = EnsureWdttIngressRefs(next, "opkgtun17", "")
 	if changed {
 		t.Fatalf("already paired, changed again: %v", next)
 	}
@@ -40,7 +40,7 @@ func TestEnsureWdttIngressRefs(t *testing.T) {
 
 func TestRemoveWdttIngressRefs(t *testing.T) {
 	refs := []string{"iface:opkgtun17", "iface:wdttraw0", "iface:nwg3"}
-	next, changed := RemoveWdttIngressRefs(refs, "opkgtun17")
+	next, changed := RemoveWdttIngressRefs(refs, "opkgtun17", "")
 	if !changed {
 		t.Fatal("expected change")
 	}
@@ -59,4 +59,29 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// Переезд raw-половины в OpkgTun обязан не только добавить новую ссылку, но и
+// снять протухшую: iface:wdttraw0 указывал бы на интерфейс, которого больше
+// нет, и ingress sing-box слушал бы пустоту.
+func TestEnsureWdttIngressRefsDropsLegacyRawRef(t *testing.T) {
+	refs := []string{"iface:opkgtun17", "iface:wdttraw0", "managed:Wireguard3"}
+	next, changed := EnsureWdttIngressRefs(refs, "opkgtun17", "opkgtun18")
+	if !changed {
+		t.Fatalf("переезд не отражён: %v", next)
+	}
+	if containsString(next, "iface:wdttraw0") {
+		t.Fatalf("протухшая ссылка осталась: %v", next)
+	}
+	if !containsString(next, "iface:opkgtun18") {
+		t.Fatalf("новая raw-ссылка не добавлена: %v", next)
+	}
+	if !containsString(next, "managed:Wireguard3") {
+		t.Fatalf("чужая ссылка потеряна: %v", next)
+	}
+
+	next, changed = EnsureWdttIngressRefs(next, "opkgtun17", "opkgtun18")
+	if changed {
+		t.Fatalf("повторный проход снова что-то поменял: %v", next)
+	}
 }

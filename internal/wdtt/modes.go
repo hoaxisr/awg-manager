@@ -54,9 +54,19 @@ func (c ServerConfig) usesNDMSAccess() bool {
 	return c.usesNDMSOpkgTun()
 }
 
-// kernelServerIface — kernel TUN wdtt-server: opkgtunN/wdtt0 (WG). Raw — wdttraw0 отдельно.
+// kernelServerIface — kernel TUN wdtt-server: opkgtunN/wdtt0 (WG). Raw — kernelRawIface отдельно.
 func (c ServerConfig) kernelServerIface() string {
 	return c.kernelWGIface()
+}
+
+// kernelRawIface — kernel TUN raw-половины сервера: opkgtunN с бинарём, знающим
+// -raw-iface, иначе legacy wdttraw0. Имя обязано ходить через эту функцию
+// всюду, где по нему адресуются правила: iptables, policy-mark, ingress.
+func (c ServerConfig) kernelRawIface() string {
+	if iface := strings.TrimSpace(c.RawIface); iface != "" {
+		return iface
+	}
+	return DefaultRawServerIface
 }
 
 func (c ServerConfig) serverAccessAddress() string {
@@ -87,7 +97,7 @@ type entwareNATPlan struct {
 // serverEntwareNATPlans — legacy/full list (wdttraw0 + kernel WG).
 func (c ServerConfig) serverEntwareNATPlans() []entwareNATPlan {
 	return []entwareNATPlan{
-		{Iface: DefaultRawServerIface, CIDR: rawServerPeerCIDR()},
+		{Iface: c.kernelRawIface(), CIDR: rawServerPeerCIDR()},
 		{Iface: c.kernelWGIface(), CIDR: wgServerPeerCIDR()},
 	}
 }
@@ -95,7 +105,7 @@ func (c ServerConfig) serverEntwareNATPlans() []entwareNATPlan {
 // serverEntwareNATPlansForMode — entware там, где NDMS не покрывает (паритет managed AWG).
 // OpkgTun + NAT≠none: WG через NDMS NAT/policy на OpkgTun; entware только wdttraw0/raw.
 func (c ServerConfig) serverEntwareNATPlansForMode(mode string) []entwareNATPlan {
-	raw := entwareNATPlan{Iface: DefaultRawServerIface, CIDR: rawServerPeerCIDR()}
+	raw := entwareNATPlan{Iface: c.kernelRawIface(), CIDR: rawServerPeerCIDR()}
 	if c.usesNDMSAccess() && normalizeNatMode(mode) != "none" {
 		return []entwareNATPlan{raw}
 	}

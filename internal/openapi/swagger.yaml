@@ -7250,6 +7250,12 @@ definitions:
         type: string
       rawIface:
         type: string
+      rawNdmsIface:
+        description: |-
+          RawNdmsIface — NDMS-имя raw-интерфейса сервера. У клиента раздельных
+          имён нет (интерфейс один), у сервера их два, и в веб-морде роутера
+          человек ищет оба.
+        type: string
       running:
         type: boolean
       startedAt:
@@ -7301,6 +7307,13 @@ definitions:
         type: string
       enabled:
         type: boolean
+      exposeToPolicies:
+        description: |-
+          ExposeToPolicies показывает интерфейсы сервера роутеру как подключения:
+          security-level public + `ip global`. Выключено (по умолчанию) — private
+          без global, сервер остаётся внутренним интерфейсом. Применяется на
+          старте; смена на живом сервере вступает в силу с его перезапуска.
+        type: boolean
       ingressEnabled:
         description: sing-box ingress for iface:wgIface + wdttraw0
         type: boolean
@@ -7343,9 +7356,18 @@ definitions:
       policy:
         description: NDMS hotspot policy or "none"
         type: string
+      rawIface:
+        type: string
       rawListen:
         description: RawListen — -listen-raw (UDP, qWDTT 1.4+). Пусто → порт DTLS+1
           на том же host.
+        type: string
+      rawNdmsIface:
+        description: |-
+          RawNdmsIface / RawIface — второй интерфейс сервера (raw-IP без WireGuard).
+          Заводится только с бинарём, знающим -raw-iface: NDMS выводит тип
+          интерфейса из имени, и wdttraw0 зарегистрировать нельзя. Пусто → legacy
+          wdttraw0 вне NDMS, на одних iptables менеджера.
         type: string
       relayMode:
         description: RelayMode — wg (WireGuard relay, совместимость) или raw (без

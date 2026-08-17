@@ -72,6 +72,7 @@ func serverProcessConfigChanged(prev, next ServerConfig) bool {
 		prev.DirectListen != next.DirectListen ||
 		prev.WgPort != next.WgPort ||
 		prev.WgIface != next.WgIface ||
+		prev.RawIface != next.RawIface ||
 		prev.Password != next.Password ||
 		prev.ConfigDir != next.ConfigDir
 }
@@ -82,6 +83,8 @@ func serverAccessConfigChanged(prev, next ServerConfig) bool {
 		prev.RelayMode != next.RelayMode ||
 		prev.NdmsIface != next.NdmsIface ||
 		prev.WgIface != next.WgIface ||
+		prev.RawNdmsIface != next.RawNdmsIface ||
+		prev.RawIface != next.RawIface ||
 		!stringSliceEqual(prev.LanSegments, next.LanSegments)
 }
 

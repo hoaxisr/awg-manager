@@ -10,13 +10,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/iptables"
 )
 
-func applyRawServerPolicyMark(ctx context.Context, mark string) error {
+func applyRawServerPolicyMark(ctx context.Context, iface, mark string) error {
 	mark = strings.TrimSpace(mark)
 	if mark == "" {
-		removeRawServerPolicyMark(ctx)
+		removeRawServerPolicyMark(ctx, iface)
 		return nil
 	}
-	iface := DefaultRawServerIface
 	if rawServerMarkRulePresent(ctx, iface, mark) && rawServerConnmarkRulePresent(ctx, iface) {
 		return nil
 	}
@@ -29,7 +28,7 @@ func applyRawServerPolicyMark(ctx context.Context, mark string) error {
 		return err
 	}
 	if err := ensureRawServerPolicyMarkRule(ctx, iface, mark); err != nil {
-		removeRawServerPolicyMark(ctx)
+		removeRawServerPolicyMark(ctx, iface)
 		return err
 	}
 	return nil
@@ -73,8 +72,8 @@ func rawServerConnmarkRulePresent(ctx context.Context, iface string) bool {
 		"--save-mark", "--nfmask", "0xffffffff", "--ctmask", "0xffffffff") == nil
 }
 
-func removeRawServerPolicyMark(ctx context.Context) {
-	removeRawServerPolicyMarkRules(ctx, DefaultRawServerIface)
+func removeRawServerPolicyMark(ctx context.Context, iface string) {
+	removeRawServerPolicyMarkRules(ctx, iface)
 }
 
 func removeRawServerPolicyMarkRules(ctx context.Context, iface string) {
@@ -107,9 +106,8 @@ func removeRawServerPolicyMarkRules(ctx context.Context, iface string) {
 	}
 }
 
-func rawServerPolicyMarkPresent(ctx context.Context, mark string) bool {
+func rawServerPolicyMarkPresent(ctx context.Context, iface, mark string) bool {
 	mark = strings.TrimSpace(mark)
-	iface := DefaultRawServerIface
 	if mark == "" {
 		out, err := iptables.RunOutput(ctx, "-t", "mangle", "-S", "PREROUTING")
 		if err != nil {

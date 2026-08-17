@@ -156,7 +156,8 @@ type wdttNetfilterSpec struct {
 	Masq          []entwareNATPlan // nat: MASQUERADE (masqueradeMatchArgs)
 	MasqMode      string           // full | internet-only
 	MasqStaticWAN string           // для internet-only
-	RawPolicyMark string           // mangle: MARK+CONNMARK на wdttraw0; "" — не ставить
+	RawPolicyMark string           // mangle: MARK+CONNMARK на raw-интерфейсе; "" — не ставить
+	RawIface      string           // kernel-имя raw-интерфейса для RawPolicyMark
 }
 
 // wdttNetfilterSpecForServer собирает spec для cfg/mode/wanDev/rawMark —
@@ -169,7 +170,8 @@ func wdttNetfilterSpecForServer(cfg ServerConfig, mode, wanDev, rawMark string) 
 		MasqMode:      mode,
 		MasqStaticWAN: wanDev,
 		RawPolicyMark: rawMark,
-		DNS:           []wdttDNSSpec{{Iface: DefaultRawServerIface, Gateway: DefaultRawServerAddr}},
+		RawIface:      cfg.kernelRawIface(),
+		DNS:           []wdttDNSSpec{{Iface: cfg.kernelRawIface(), Gateway: DefaultRawServerAddr}},
 	}
 	if cfg.UsesWireGuardRelay() {
 		spec.DNS = append(spec.DNS, wdttDNSSpec{Iface: cfg.kernelServerIface(), Gateway: cfg.serverAccessAddress()})
@@ -226,7 +228,10 @@ func wdttNetfilterHookScript(spec wdttNetfilterSpec) string {
 	}
 	b.WriteString(";;\nmangle)\n")
 	if mark := strings.TrimSpace(spec.RawPolicyMark); mark != "" {
-		iface := DefaultRawServerIface
+		iface := strings.TrimSpace(spec.RawIface)
+		if iface == "" {
+			iface = DefaultRawServerIface
+		}
 		connCheck := fmt.Sprintf("-t mangle -C PREROUTING -i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)
 		markCheck := fmt.Sprintf("-t mangle -C PREROUTING -i %q -j MARK --set-xmark %s/0xffffffff", iface, mark)
 		connIns := fmt.Sprintf("-t mangle -I PREROUTING 1 -i %q -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff", iface)

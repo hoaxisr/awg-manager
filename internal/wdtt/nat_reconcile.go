@@ -173,7 +173,7 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 				}
 			}
 		}
-		if !rawServerPolicyMarkPresent(ctx, wantMark) {
+		if !rawServerPolicyMarkPresent(ctx, cfg.kernelRawIface(), wantMark) {
 			if _, err := s.applyRawServerPolicy(ctx, srv.ID, cfg); err != nil && s.appLog != nil {
 				s.appLog.Warn("policy-reconcile", srv.ID, err.Error())
 			}

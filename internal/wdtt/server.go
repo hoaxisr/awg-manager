@@ -160,7 +160,7 @@ func (s *Service) DeleteServer(id string) error {
 	kernelIface := inst.Config.kernelServerIface()
 	removeEntwareNATForServer(context.Background(), inst.Config)
 	removeEntwareLAN(context.Background(), kernelIface)
-	removeRawServerPolicyMark(context.Background())
+	removeRawServerPolicyMark(context.Background(), inst.Config.kernelRawIface())
 	_ = s.teardownServerOpkgTun(context.Background(), inst.Config)
 	removeServerListenFirewall(context.Background(), inst.Config)
 	return saveErr
@@ -254,12 +254,12 @@ func (s *Service) StartServerInstance(id string) error {
 		}
 		return err
 	}
-	if !waitForInterface(s.ifaceChecker, DefaultRawServerIface, 8*time.Second) {
+	if !waitForInterface(s.ifaceChecker, cfg.kernelRawIface(), 8*time.Second) {
 		_ = s.serverProcs.get(id).Stop()
 		if cfg.usesNDMSOpkgTun() {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 		}
-		return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server (raw)", DefaultRawServerIface)
+		return fmt.Errorf("интерфейс %s не появился после запуска wdtt-server (raw)", cfg.kernelRawIface())
 	}
 	if cfg.usesNDMSOpkgTun() {
 		kernelIface := cfg.kernelWGIface()
@@ -317,7 +317,7 @@ func (s *Service) StopServerInstance(id string) error {
 	err = s.serverProcs.get(id).Stop()
 	removeEntwareNATForServer(context.Background(), cfg)
 	removeEntwareLAN(context.Background(), kernelIface)
-	removeRawServerPolicyMark(context.Background())
+	removeRawServerPolicyMark(context.Background(), cfg.kernelRawIface())
 	removeServerListenFirewall(context.Background(), inst.Config)
 	_ = s.teardownServerOpkgTun(context.Background(), cfg)
 	if e := s.setServerEnabled(id, false); e != nil && s.appLog != nil {
@@ -479,6 +479,9 @@ func buildServerArgs(c ServerConfig) []string {
 	str("-nat-if", c.NatIface)
 	if iface := strings.TrimSpace(c.WgIface); iface != "" {
 		str("-wg-iface", iface)
+	}
+	if iface := strings.TrimSpace(c.RawIface); iface != "" {
+		str("-raw-iface", iface)
 	}
 	str("-listen-raw", c.EffectiveRawListen())
 	if direct := c.EffectiveDirectListen(); direct != "" && direct != c.Listen {

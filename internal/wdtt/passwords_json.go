@@ -35,7 +35,8 @@ type passwordsJSONUser struct {
 }
 
 type passwordsJSONDevice struct {
-	IP string `json:"ip"`
+	IP    string `json:"ip"`
+	RawIP string `json:"raw_ip,omitempty"`
 }
 
 func passwordsJSONPath(configDir string) string {
@@ -64,29 +65,52 @@ func loadPasswordsJSON(configDir string) (passwordsJSON, error) {
 	return doc, nil
 }
 
-func deviceIPFromPasswordsEntry(v any) string {
+// deviceAddrsFromPasswordsEntry достаёт оба адреса устройства: WG (ip) и raw
+// (raw_ip). Форма записи в файле бывает трёх видов — карта из чужого JSON,
+// наша структура и всё остальное через marshal/unmarshal.
+func deviceAddrsFromPasswordsEntry(v any) passwordsJSONDevice {
+	trim := func(d passwordsJSONDevice) passwordsJSONDevice {
+		d.IP = strings.TrimSpace(d.IP)
+		d.RawIP = strings.TrimSpace(d.RawIP)
+		return d
+	}
 	switch d := v.(type) {
 	case map[string]any:
+		var out passwordsJSONDevice
 		if ip, ok := d["ip"].(string); ok {
-			return strings.TrimSpace(ip)
+			out.IP = ip
 		}
+		if ip, ok := d["raw_ip"].(string); ok {
+			out.RawIP = ip
+		}
+		return trim(out)
 	case passwordsJSONDevice:
-		return strings.TrimSpace(d.IP)
+		return trim(d)
 	default:
 		b, err := json.Marshal(v)
 		if err != nil {
-			return ""
+			return passwordsJSONDevice{}
 		}
 		var dev passwordsJSONDevice
 		if json.Unmarshal(b, &dev) == nil {
-			return strings.TrimSpace(dev.IP)
+			return trim(dev)
 		}
 	}
-	return ""
+	return passwordsJSONDevice{}
 }
 
-// sanitizePasswordsDevices drops devices bound to the server gateway IP (10.66.0.1).
-// That address is local on opkgtunN; client traffic from it never forwards/NATs.
+func deviceIPFromPasswordsEntry(v any) string {
+	return deviceAddrsFromPasswordsEntry(v).IP
+}
+
+// sanitizePasswordsDevices drops devices bound to a server gateway IP:
+// 10.66.0.1 на WG-половине и 10.70.0.1 на raw. Оба адреса локальны на самом
+// интерфейсе — обратный трафик к ним не уходит в туннель, и абонент с таким
+// адресом молча без связи. Запись выбрасывается целиком (вместе с ключами):
+// устройство переподключится и получит свободный адрес.
+//
+// Условия «raw зарегистрирован в NDMS» здесь нет намеренно: 10.70.0.1 с этого
+// релиза зарезервирован всегда — его же пропускает getNextRawIP форка.
 func sanitizePasswordsDevices(devices map[string]any) (map[string]any, bool) {
 	if len(devices) == 0 {
 		return devices, false
@@ -94,7 +118,8 @@ func sanitizePasswordsDevices(devices map[string]any) (map[string]any, bool) {
 	out := make(map[string]any, len(devices))
 	changed := false
 	for id, entry := range devices {
-		if deviceIPFromPasswordsEntry(entry) == DefaultWdttServerGatewayAddr {
+		dev := deviceAddrsFromPasswordsEntry(entry)
+		if dev.IP == DefaultWdttServerGatewayAddr || dev.RawIP == DefaultRawServerGatewayAddr {
 			changed = true
 			continue
 		}

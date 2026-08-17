@@ -508,7 +508,7 @@ type wdttIngressEnsurer struct {
 	router   wdtt.RouterReconciler
 }
 
-func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wgKernelIface string) error {
+func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wgKernelIface, rawKernelIface string) error {
 	if e.settings == nil {
 		return nil
 	}
@@ -516,7 +516,7 @@ func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wg
 	if err != nil {
 		return err
 	}
-	next, changed := wdtt.EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface)
+	next, changed := wdtt.EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface, rawKernelIface)
 	if !changed {
 		return nil
 	}

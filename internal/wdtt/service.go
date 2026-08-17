@@ -62,9 +62,10 @@ type Service struct {
 	// пишется и читается только из горутины natReconcileLoop.
 	natIdleSwept bool
 
-	wgIfaceMu        sync.Mutex
-	wgIfaceFlagKnown bool
-	wgIfaceFlagOK    bool
+	// Кэш вывода `wdtt-server -h`: по нему проверяются флаги обвязки.
+	wgIfaceMu       sync.Mutex
+	serverHelpKnown bool
+	serverHelp      string
 
 	// Кеш сверки бинарей с пином (см. binariesMatchSpecs).
 	matchMu  sync.Mutex
@@ -518,6 +519,17 @@ func (s *Service) Status() Status {
 	for _, srv := range cfg.Servers {
 		ps := s.serverProcs.get(srv.ID).Status()
 		ps.LastError = procport.EnrichBindErrorMulti(ps.LastError, srv.Config.ServerListenAddrs(), procport.ProtoUDP)
+		// Имена интерфейсов сервера: NDMS-имена (их человек видит в веб-морде
+		// роутера) и kernel-имя raw-половины. Раньше статус отдавал их только
+		// клиентам, а UI печатал «wdttraw0» константой — то есть врал, как
+		// только интерфейс переехал в OpkgTun.
+		if srv.Config.usesNDMSOpkgTun() {
+			ps.NdmsIface = srv.Config.ndmsAccessIface()
+		}
+		if srv.Config.usesNDMSRawOpkgTun() {
+			ps.RawNdmsIface = srv.Config.ndmsRawIface()
+		}
+		ps.RawIface = srv.Config.kernelRawIface()
 		st.Servers = append(st.Servers, InstanceStatus{
 			ID:     srv.ID,
 			Name:   srv.Name,

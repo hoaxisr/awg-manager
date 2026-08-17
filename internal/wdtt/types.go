@@ -123,6 +123,18 @@ type ServerConfig struct {
 	NdmsIface string `json:"ndmsIface,omitempty"`
 	// WgIface — kernel WireGuard dev (opkgtunN); пусто → legacy wdtt0.
 	WgIface string `json:"wgIface,omitempty"`
+	// RawNdmsIface / RawIface — второй интерфейс сервера (raw-IP без WireGuard).
+	// Заводится только с бинарём, знающим -raw-iface: NDMS выводит тип
+	// интерфейса из имени, и wdttraw0 зарегистрировать нельзя. Пусто → legacy
+	// wdttraw0 вне NDMS, на одних iptables менеджера.
+	RawNdmsIface string `json:"rawNdmsIface,omitempty"`
+	RawIface     string `json:"rawIface,omitempty"`
+
+	// ExposeToPolicies показывает интерфейсы сервера роутеру как подключения:
+	// security-level public + `ip global`. Выключено (по умолчанию) — private
+	// без global, сервер остаётся внутренним интерфейсом. Применяется на
+	// старте; смена на живом сервере вступает в силу с его перезапуска.
+	ExposeToPolicies bool `json:"exposeToPolicies,omitempty"`
 
 	// Clients — абоненты сервера. Источник правды: passwords.json собирается из
 	// этого списка перед каждым стартом wdtt-server.
@@ -165,8 +177,15 @@ const (
 	DefaultRawServerIface        = "wdttraw0"
 	DefaultRawServerAddr         = "10.70.66.1"
 	DefaultRawServerMask         = "255.255.0.0"
-	DefaultRawClientTun          = "wdtturn0"
-	DefaultRawClientMask         = "255.255.255.255"
+	// DefaultRawServerGatewayAddr — адрес NDMS на raw-OpkgTun, паритет с
+	// 10.66.0.1 на WG-половине: свой адрес нужен, потому что 10.70.66.1 уже
+	// висит на интерфейсе от самого wdtt-server. Абоненту не достаётся —
+	// getNextRawIP форка его пропускает (флаг -raw-iface и пропуск приехали
+	// одним релизом), а записи старых устройств с этим адресом снимает
+	// sanitizePasswordsDevices.
+	DefaultRawServerGatewayAddr = "10.70.0.1"
+	DefaultRawClientTun         = "wdtturn0"
+	DefaultRawClientMask        = "255.255.255.255"
 	// DefaultWdttClientPoolCIDR — пул qWDTT monolith (getNextIP → 10.66.0.x).
 	DefaultWdttClientPoolCIDR = "10.66.0.0/16"
 )
@@ -220,18 +239,22 @@ type CreateServerInput struct {
 }
 
 type ProcessStatus struct {
-	Running         bool       `json:"running"`
-	PID             int        `json:"pid,omitempty"`
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	LastError       string     `json:"lastError,omitempty"`
-	Log             string     `json:"log,omitempty"`
-	WgConfig        string     `json:"wgConfig,omitempty"`
-	RawClientIP     string     `json:"rawClientIp,omitempty"`
-	RawIface        string     `json:"rawIface,omitempty"`
-	NdmsIface       string     `json:"ndmsIface,omitempty"`
-	DtlsConnections int        `json:"dtlsConnections,omitempty"`
-	Binary          string     `json:"binary"`
-	BinaryPresent   bool       `json:"binaryPresent"`
+	Running     bool       `json:"running"`
+	PID         int        `json:"pid,omitempty"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	LastError   string     `json:"lastError,omitempty"`
+	Log         string     `json:"log,omitempty"`
+	WgConfig    string     `json:"wgConfig,omitempty"`
+	RawClientIP string     `json:"rawClientIp,omitempty"`
+	RawIface    string     `json:"rawIface,omitempty"`
+	NdmsIface   string     `json:"ndmsIface,omitempty"`
+	// RawNdmsIface — NDMS-имя raw-интерфейса сервера. У клиента раздельных
+	// имён нет (интерфейс один), у сервера их два, и в веб-морде роутера
+	// человек ищет оба.
+	RawNdmsIface    string `json:"rawNdmsIface,omitempty"`
+	DtlsConnections int    `json:"dtlsConnections,omitempty"`
+	Binary          string `json:"binary"`
+	BinaryPresent   bool   `json:"binaryPresent"`
 }
 
 type InstanceStatus struct {

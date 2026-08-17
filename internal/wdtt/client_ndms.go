@@ -17,6 +17,9 @@ func configReservedOpkgIndices(full Config, skipServerID, skipClientID string) m
 		if idx, ok := parseOpkgTunIndex(srv.Config.NdmsIface); ok {
 			reserved[idx] = true
 		}
+		if idx, ok := parseOpkgTunIndex(srv.Config.RawNdmsIface); ok {
+			reserved[idx] = true
+		}
 	}
 	for _, cl := range full.Clients {
 		if cl.ID == skipClientID {

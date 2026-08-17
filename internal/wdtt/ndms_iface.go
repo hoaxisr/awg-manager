@@ -33,6 +33,10 @@ const (
 	wdttLegacyIndexMin  = 90
 	wdttOpkgDescription = "AWGM WDTT"
 	wdttOpkgMTU         = 1280
+	// Raw-половина сервера — отдельный OpkgTun: свой description (по нему реап
+	// находит бесхозные) и свой MTU (1300 у wdtt-server, rawMTU форка).
+	wdttRawOpkgDescription = "AWGM WDTT Raw"
+	wdttRawOpkgMTU         = 1300
 )
 
 // OpkgTunIndexLister reports occupied OpkgTun indices (kernel ∪ NDMS).
@@ -85,6 +89,26 @@ func (cfg ServerConfig) usesNDMSOpkgTun() bool {
 	return ok && strings.TrimSpace(cfg.WgIface) != "" && cfg.WgIface != DefaultWdttIface
 }
 
+func (cfg ServerConfig) ndmsRawIface() string {
+	return strings.TrimSpace(cfg.RawNdmsIface)
+}
+
+func (cfg ServerConfig) usesNDMSRawOpkgTun() bool {
+	_, ok := parseOpkgTunIndex(cfg.RawNdmsIface)
+	return ok && strings.TrimSpace(cfg.RawIface) != "" && cfg.RawIface != DefaultRawServerIface
+}
+
+// serverOpkgSecurityLevel — тумблер «использовать в политиках доступа».
+// private (по умолчанию) — сервер остаётся внутренним интерфейсом; public
+// вместе с `ip global` делает его подключением, видимым в приоритетах и
+// политиках роутера, и КАНДИДАТОМ В DEFAULT ROUTE со всеми последствиями.
+func (cfg ServerConfig) serverOpkgSecurityLevel() string {
+	if cfg.ExposeToPolicies {
+		return "public"
+	}
+	return "private"
+}
+
 func allocateWdttOpkgIndex(live map[int]bool) (int, error) {
 	return allocateWdttOpkgIndexFrom(live)
 }
@@ -93,28 +117,45 @@ func isLegacyWdttOpkgIndex(idx int) bool {
 	return idx >= wdttLegacyIndexMin
 }
 
-func (s *Service) serverSupportsWgIface(ctx context.Context) bool {
+// serverHelpText — кэш вывода `wdtt-server -h`. Один проб на все флаги: их
+// стало два (-wg-iface, -raw-iface), а запускать бинарь на каждый вопрос
+// незачем.
+func (s *Service) serverHelpText(ctx context.Context) (string, bool) {
 	s.wgIfaceMu.Lock()
 	defer s.wgIfaceMu.Unlock()
-	if s.wgIfaceFlagKnown {
-		return s.wgIfaceFlagOK
+	if s.serverHelpKnown {
+		return s.serverHelp, true
 	}
 	if strings.TrimSpace(s.serverBin) == "" {
-		return false
+		return "", false
 	}
 	out, err := probeBinaryHelp(ctx, s.serverBin)
 	if err != nil {
-		return false
+		return "", false
 	}
 	// Кэшируем только удачный проб: иначе первая попытка до установки бинаря
 	// намертво зафиксировала бы «флага нет» до рестарта демона.
-	s.wgIfaceFlagKnown = true
-	s.wgIfaceFlagOK = strings.Contains(out, "-wg-iface")
-	return s.wgIfaceFlagOK
+	s.serverHelpKnown = true
+	s.serverHelp = out
+	return out, true
 }
 
-// ensureServerOpkgIndex picks/persists OpkgTun index (NdmsIface/WgIface).
-// NDMS create/address happens later in prepareNDMSOpkgTun (после выделения).
+func (s *Service) serverSupportsWgIface(ctx context.Context) bool {
+	out, ok := s.serverHelpText(ctx)
+	return ok && strings.Contains(out, "-wg-iface")
+}
+
+// serverSupportsRawIface — без этого флага raw-интерфейс остаётся wdttraw0, а
+// имя не-OpkgTun формата NDMS зарегистрировать не может (тип интерфейса он
+// выводит из имени).
+func (s *Service) serverSupportsRawIface(ctx context.Context) bool {
+	out, ok := s.serverHelpText(ctx)
+	return ok && strings.Contains(out, "-raw-iface")
+}
+
+// ensureServerOpkgIndex picks/persists OpkgTun indices: WG (NdmsIface/WgIface)
+// и raw (RawNdmsIface/RawIface). NDMS create/address happens later in
+// prepareNDMSOpkgTun (после выделения).
 func (s *Service) ensureServerOpkgIndex(ctx context.Context, id string, cfg ServerConfig) (ServerConfig, error) {
 	// Сервер всегда поднимает WG + Raw (как qWDTT); OpkgTun нужен и в raw-режиме для NAT WG-клиентов.
 	if s.ndmsIfaces == nil || s.opkgIndices == nil {
@@ -135,33 +176,61 @@ func (s *Service) ensureServerOpkgIndex(ctx context.Context, id string, cfg Serv
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 			cfg.NdmsIface = ""
 			cfg.WgIface = ""
-		} else {
-			return cfg, nil
 		}
+	}
+	// Raw-половина заводится только вместе с WG: без -wg-iface вся обвязка
+	// NDMS выключена, и одинокий raw-OpkgTun остался бы без владельца.
+	needWG := !cfg.usesNDMSOpkgTun()
+	needRaw := !cfg.usesNDMSRawOpkgTun() && s.serverSupportsRawIface(ctx)
+	if !needWG && !needRaw {
+		return cfg, nil
 	}
 
 	live, err := s.opkgIndices.LiveOpkgTunIndices(ctx)
 	if err != nil {
 		return cfg, fmt.Errorf("list opkgtun indices: %w", err)
 	}
-	full, loadErr := s.store.Load()
-	if loadErr == nil {
-		live = mergeOpkgIndexMaps(live, configReservedOpkgIndices(full, id, ""))
+	reserved := map[int]bool{}
+	if full, loadErr := s.store.Load(); loadErr == nil {
+		reserved = configReservedOpkgIndices(full, id, "")
 	}
-	idx, err := allocateWdttOpkgIndex(live)
-	if err != nil {
-		return cfg, err
+	// Свои уже выделенные индексы — тоже занятые: configReservedOpkgIndices
+	// пропускает наш сервер целиком, и без этого raw получил бы индекс WG.
+	for _, name := range []string{cfg.NdmsIface, cfg.RawNdmsIface} {
+		if idx, ok := parseOpkgTunIndex(name); ok {
+			reserved[idx] = true
+		}
 	}
-	ndmsName := opkgTunNDMSName(idx)
-	kernelName := opkgTunKernelName(idx)
+	// mergeOpkgIndexMaps отдаёт НОВУЮ карту — дальше её можно править, не
+	// трогая ту, что вернул поставщик.
+	live = mergeOpkgIndexMaps(live, reserved)
 
-	cfg.NdmsIface = ndmsName
-	cfg.WgIface = kernelName
+	if needWG {
+		idx, err := allocateWdttOpkgIndex(live)
+		if err != nil {
+			return cfg, err
+		}
+		live[idx] = true
+		cfg.NdmsIface = opkgTunNDMSName(idx)
+		cfg.WgIface = opkgTunKernelName(idx)
+		if s.appLog != nil {
+			s.appLog.Info("ndms", id, fmt.Sprintf("выделен %s → %s", cfg.NdmsIface, cfg.WgIface))
+		}
+	}
+	if needRaw {
+		idx, err := allocateWdttOpkgIndex(live)
+		if err != nil {
+			return cfg, err
+		}
+		live[idx] = true
+		cfg.RawNdmsIface = opkgTunNDMSName(idx)
+		cfg.RawIface = opkgTunKernelName(idx)
+		if s.appLog != nil {
+			s.appLog.Info("ndms", id, fmt.Sprintf("выделен raw %s → %s", cfg.RawNdmsIface, cfg.RawIface))
+		}
+	}
 	if err := s.persistServerConfig(id, cfg); err != nil {
 		return cfg, err
-	}
-	if s.appLog != nil {
-		s.appLog.Info("ndms", id, fmt.Sprintf("выделен %s → %s", ndmsName, kernelName))
 	}
 	return cfg, nil
 }
@@ -193,19 +262,44 @@ func (s *Service) opkgTunKnownAbsent(ctx context.Context, ndmsName string) bool 
 // подвешивающий весь RCI на секунды (stand-verified 2026-07-15, PR #544).
 // Адрес ставит activateNDMSOpkgTun — уже после появления opkgtunN.
 //
-// security-level private, без `ip global`: это VPN-сервер, куда ломятся
-// доверенные пиры (паритет с managed.rciConfigureServer), а не аплинк.
+// security-level по умолчанию private, без `ip global`: это VPN-сервер, куда
+// ломятся доверенные пиры (паритет с managed.rciConfigureServer), а не аплинк.
+// Тумблер ExposeToPolicies меняет уровень на public — см. serverOpkgSecurityLevel.
+//
+// Интерфейсов у сервера два: WG (opkgtunN) и raw (opkgtunM), и оба заводятся
+// здесь.
 func (s *Service) prepareNDMSOpkgTun(ctx context.Context, cfg ServerConfig) error {
-	if !cfg.usesNDMSOpkgTun() || s.ndmsIfaces == nil {
+	if s.ndmsIfaces == nil {
 		return nil
 	}
-	ndmsName := cfg.ndmsAccessIface()
-	if !s.opkgTunExists(ctx, ndmsName) {
-		if err := s.ndmsIfaces.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, wdttOpkgDescription, "private"); err != nil {
-			return fmt.Errorf("create %s: %w", ndmsName, err)
+	level := cfg.serverOpkgSecurityLevel()
+	if cfg.usesNDMSOpkgTun() {
+		if err := s.prepareOpkgTunIface(ctx, cfg.ndmsAccessIface(), wdttOpkgDescription, wdttOpkgMTU, level); err != nil {
+			return err
 		}
 	}
-	if err := s.ndmsIfaces.SetMTU(ctx, ndmsName, wdttOpkgMTU); err != nil {
+	if cfg.usesNDMSRawOpkgTun() {
+		if err := s.prepareOpkgTunIface(ctx, cfg.ndmsRawIface(), wdttRawOpkgDescription, wdttRawOpkgMTU, level); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prepareOpkgTunIface — create-if-absent + уровень безопасности + MTU.
+// SetSecurityLevel зовётся только для уже существующего интерфейса: при
+// создании уровень задаётся сразу, лишняя RCI-мутация на каждом старте не
+// нужна. Для пережившего интерфейса она обязательна — иначе тумблер «в
+// политиках» не доехал бы до него никогда.
+func (s *Service) prepareOpkgTunIface(ctx context.Context, ndmsName, description string, mtu int, level string) error {
+	if !s.opkgTunExists(ctx, ndmsName) {
+		if err := s.ndmsIfaces.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, description, level); err != nil {
+			return fmt.Errorf("create %s: %w", ndmsName, err)
+		}
+	} else if err := s.ndmsIfaces.SetSecurityLevel(ctx, ndmsName, level); err != nil {
+		return fmt.Errorf("security-level %s %s: %w", level, ndmsName, err)
+	}
+	if err := s.ndmsIfaces.SetMTU(ctx, ndmsName, mtu); err != nil {
 		return fmt.Errorf("set mtu %s: %w", ndmsName, err)
 	}
 	return nil
@@ -213,15 +307,43 @@ func (s *Service) prepareNDMSOpkgTun(ctx context.Context, cfg ServerConfig) erro
 
 // activateNDMSOpkgTun applies ACL/address/up after kernel opkgtunN is live.
 func (s *Service) activateNDMSOpkgTun(ctx context.Context, cfg ServerConfig) error {
-	if !cfg.usesNDMSOpkgTun() || s.ndmsIfaces == nil {
+	if s.ndmsIfaces == nil {
 		return nil
 	}
-	ndmsName := cfg.ndmsAccessIface()
-	if err := s.ndmsIfaces.SetAddress(ctx, ndmsName, DefaultWdttServerGatewayAddr, DefaultWdttServerGatewayMask); err != nil {
+	if cfg.usesNDMSOpkgTun() {
+		ndmsName := cfg.ndmsAccessIface()
+		if err := s.activateOpkgTunIface(ctx, cfg, ndmsName, DefaultWdttServerGatewayAddr, DefaultWdttServerGatewayMask); err != nil {
+			return err
+		}
+		if err := cfg.ensureServerWgClientRoute(ctx); err != nil && s.appLog != nil {
+			s.appLog.Warn("ndms", ndmsName, "маршрут WG-клиентов: "+err.Error())
+		}
+	}
+	if cfg.usesNDMSRawOpkgTun() {
+		// Адрес свой, а не 10.70.66.1: тот уже висит на интерфейсе от самого
+		// wdtt-server. Сеть та же (10.70.0.0/16) — NDMS кроет NAT/policy/ACL
+		// только сеть интерфейса (PR #697, F2).
+		if err := s.activateOpkgTunIface(ctx, cfg, cfg.ndmsRawIface(), DefaultRawServerGatewayAddr, DefaultRawServerMask); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) activateOpkgTunIface(ctx context.Context, cfg ServerConfig, ndmsName, addr, mask string) error {
+	if err := s.ndmsIfaces.SetAddress(ctx, ndmsName, addr, mask); err != nil {
 		return fmt.Errorf("set address %s: %w", ndmsName, err)
 	}
 	if err := s.ndmsIfaces.InterfaceUp(ctx, ndmsName); err != nil {
 		return fmt.Errorf("iface up %s: %w", ndmsName, err)
+	}
+	if cfg.ExposeToPolicies {
+		// После address/up — как managed AWG (operator_os5) и raw-клиент, не до
+		// адреса. Обратной команды у нас нет: снятый тумблер убирает `ip global`
+		// только пересозданием интерфейса, то есть на стоп/старте сервера.
+		if err := s.ndmsIfaces.SetIPGlobal(ctx, ndmsName); err != nil {
+			return fmt.Errorf("ip global %s: %w", ndmsName, err)
+		}
 	}
 	// Permit-all ACL после address/up: applyServerAccess дублирует вызов, но
 	// первый assert здесь — до entware NAT/LAN в том же StartServerInstance.
@@ -230,17 +352,23 @@ func (s *Service) activateNDMSOpkgTun(ctx context.Context, cfg ServerConfig) err
 			s.appLog.Warn("ndms", ndmsName, "firewall permit пропущен: "+err.Error())
 		}
 	}
-	if err := cfg.ensureServerWgClientRoute(ctx); err != nil && s.appLog != nil {
-		s.appLog.Warn("ndms", ndmsName, "маршрут WG-клиентов: "+err.Error())
-	}
 	return nil
 }
 
+// teardownServerOpkgTun снимает ОБА интерфейса сервера. Единая точка намеренно:
+// вызовов у неё десяток (все ветки отказа старта, стоп, удаление, реап), и
+// «забыть raw» в одной из них — ровно тот класс утечки, которым болел FORWARD.
 func (s *Service) teardownServerOpkgTun(ctx context.Context, cfg ServerConfig) error {
-	if !cfg.usesNDMSOpkgTun() {
-		return nil
+	var firstErr error
+	if cfg.usesNDMSOpkgTun() {
+		firstErr = s.teardownOpkgTunByName(ctx, cfg.ndmsAccessIface(), "ndms")
 	}
-	return s.teardownOpkgTunByName(ctx, cfg.ndmsAccessIface(), "ndms")
+	if cfg.usesNDMSRawOpkgTun() {
+		if err := s.teardownOpkgTunByName(ctx, cfg.ndmsRawIface(), "ndms-raw"); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // teardownOpkgTunByName best-effort сносит OpkgTun: ACL → down → delete; при
@@ -298,9 +426,15 @@ func (s *Service) reapOrphanOpkgTuns(ctx context.Context) {
 		}
 		if s.serverProcs.get(srv.ID).Status().Running {
 			live[srv.Config.ndmsAccessIface()] = true
+			if srv.Config.usesNDMSRawOpkgTun() {
+				live[srv.Config.ndmsRawIface()] = true
+			}
 			continue
 		}
 		_ = s.teardownOpkgTunByName(ctx, srv.Config.ndmsAccessIface(), "wdtt-reap")
+		if srv.Config.usesNDMSRawOpkgTun() {
+			_ = s.teardownOpkgTunByName(ctx, srv.Config.ndmsRawIface(), "wdtt-reap")
+		}
 	}
 	for _, cl := range full.Clients {
 		if cl.Config.UsesWireGuard() || !cl.Config.usesNDMSOpkgTun() {
@@ -315,7 +449,7 @@ func (s *Service) reapOrphanOpkgTuns(ctx context.Context) {
 	if s.opkgScan == nil {
 		return
 	}
-	for _, desc := range []string{wdttOpkgDescription, wdttOpkgClientDescription} {
+	for _, desc := range []string{wdttOpkgDescription, wdttRawOpkgDescription, wdttOpkgClientDescription} {
 		ids, scanErr := s.opkgScan(ctx, desc)
 		if scanErr != nil {
 			continue

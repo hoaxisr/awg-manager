@@ -164,3 +164,26 @@ func TestEntwareForwardHookUsesSameForm(t *testing.T) {
 		t.Fatalf("вставка в хуке разошлась с формой Go-кода (%s):\n%s", match, script)
 	}
 }
+
+// Переезд raw-интерфейса в OpkgTun обязан доехать и до хука netfilter.d: он
+// переставляет правила после каждой перезаписи таблиц движком ndm, и правило
+// на несуществующем wdttraw0 просто не восстановит ни DNAT :53, ни policy-mark.
+func TestWdttNetfilterHookFollowsRawIfaceName(t *testing.T) {
+	cfg := ndmsServerConfig()
+	cfg.RawNdmsIface = "OpkgTun18"
+	cfg.RawIface = "opkgtun18"
+
+	spec := wdttNetfilterSpecForServer(cfg, "full", "eth3", "0x100")
+	script := wdttNetfilterHookScript(spec)
+	if strings.Contains(script, DefaultRawServerIface) {
+		t.Fatalf("в хуке осталось legacy-имя:\n%s", script)
+	}
+	for _, want := range []string{
+		`-i "opkgtun18" -p udp --dport 53 -j DNAT`,
+		`-i "opkgtun18" -j MARK --set-xmark 0x100`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("нет правила %q:\n%s", want, script)
+		}
+	}
+}
