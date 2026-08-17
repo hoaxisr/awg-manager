@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizePasswordsDevices_RemovesGatewayIP(t *testing.T) {
@@ -28,6 +31,11 @@ func TestPreparePasswordsJSONForServer_PreservesDevices(t *testing.T) {
 	dir := t.TempDir()
 	existing := passwordsJSON{
 		MainPassword: "main",
+		// Владелец обязателен: устройство без ссылки из device_ids — сирота,
+		// и прополка его снимает. Сохраняем устройства ЖИВЫХ абонентов.
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {DeviceIDs: []string{"dev1"}},
+		},
 		Devices: map[string]any{
 			"dev1": map[string]any{"ip": "10.66.0.3", "pub_key": "abc"},
 		},
@@ -90,8 +98,12 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := syncPasswordsJSON(dir, "main", "", "", nil); err != nil {
+	sanitized, err := syncPasswordsJSON(dir, "main", "", "", nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !sanitized {
+		t.Fatal("sanitized = false, устройство с IP шлюза не отмечено вычищенным")
 	}
 	out, err := loadPasswordsJSON(dir)
 	if err != nil {
@@ -102,5 +114,178 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 	}
 	if deviceIPFromPasswordsEntry(out.Devices["__awgm_gateway_reserved__"]) != DefaultWdttServerGatewayAddr {
 		t.Fatalf("reservation missing: %#v", out.Devices)
+	}
+}
+
+// writePasswordsFixture кладёт в dir passwords.json с заданным содержимым.
+func writePasswordsFixture(t *testing.T, dir string, doc passwordsJSON) {
+	t.Helper()
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordsJSONPath(dir), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUsableServerClients_SkipsEmptyMainAndExpired(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	got := UsableServerClients([]ServerClient{
+		{Password: ""},
+		{Password: "   "},
+		{Password: "  main  "},
+		{Password: "expired", ExpiresAt: now.Unix() - 1},
+		{Password: "edge", ExpiresAt: now.Unix()},
+		{Password: " forever "},
+		{Password: " timed ", ExpiresAt: now.Unix() + 1},
+	}, " main ", now)
+	if len(got) != 2 {
+		t.Fatalf("usable = %#v", got)
+	}
+	if got[0].Password != "forever" {
+		t.Fatalf("первый абонент = %q, ожидался подрезанный forever", got[0].Password)
+	}
+	if got[1].Password != "timed" {
+		t.Fatalf("второй абонент = %q, ожидался подрезанный timed", got[1].Password)
+	}
+}
+
+func TestPreparePasswordsJSON_SkipsExpiredClient(t *testing.T) {
+	dir := t.TempDir()
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+		{Password: "dead", ExpiresAt: time.Now().Add(-time.Hour).Unix()},
+		{Password: "alive", ExpiresAt: time.Now().Add(time.Hour).Unix()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Passwords["dead"]; ok {
+		t.Fatalf("просроченный абонент попал в файл: %#v", doc.Passwords)
+	}
+	if _, ok := doc.Passwords["alive"]; !ok {
+		t.Fatalf("живой абонент потерян: %#v", doc.Passwords)
+	}
+}
+
+func TestPreparePasswordsJSON_KeepsLiveFieldsOfExistingClient(t *testing.T) {
+	dir := t.TempDir()
+	expires := time.Now().Add(24 * time.Hour).Unix()
+	writePasswordsFixture(t, dir, passwordsJSON{
+		MainPassword: "main",
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {
+				Label:         "старое имя",
+				DeviceID:      "legacy",
+				DeviceIDs:     []string{"d1"},
+				MaxDevices:    3,
+				ExpiresAt:     expires,
+				DownBytes:     111,
+				UpBytes:       222,
+				VkHash:        "vk-from-server",
+				Ports:         "1,2,3",
+				IsDeactivated: true,
+			},
+			// Абонент бота: имени в нашем конфиге нет, и затирать его нечем.
+			"client2": {Label: "имя из бота"},
+		},
+	})
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+		{Password: "client1", Comment: "Иван"},
+		{Password: "client2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := doc.Passwords["client1"]
+	want := passwordsJSONUser{
+		Label:         "Иван",
+		DeviceID:      "legacy",
+		DeviceIDs:     []string{"d1"},
+		MaxDevices:    3,
+		ExpiresAt:     expires,
+		DownBytes:     111,
+		UpBytes:       222,
+		VkHash:        "vk-from-server",
+		Ports:         "1,2,3",
+		IsDeactivated: true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("живые поля не сохранены:\n получено %#v\n ожидалось %#v", got, want)
+	}
+	if label := doc.Passwords["client2"].Label; label != "имя из бота" {
+		t.Fatalf("label = %q, пустое имя в конфиге затёрло имя из файла", label)
+	}
+}
+
+func TestPreparePasswordsJSON_WritesLabelNotComment(t *testing.T) {
+	dir := t.TempDir()
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+		{Password: "client1", Comment: "Иван"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Смотрим на СЕРИАЛИЗОВАННЫЙ вид: подмену ключа сравнение полей не поймает.
+	// Сериализуем только записи абонентов — у резерва шлюза в devices свой
+	// ключ "comment", к контракту PasswordEntry отношения не имеющий.
+	data, err := json.Marshal(doc.Passwords)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"label":"Иван"`) {
+		t.Fatalf("имя абонента не в label: %s", data)
+	}
+	if strings.Contains(string(data), "comment") {
+		t.Fatalf("в записи абонента остался ключ comment: %s", data)
+	}
+}
+
+func TestPreparePasswordsJSON_DropsOrphanDevices(t *testing.T) {
+	dir := t.TempDir()
+	writePasswordsFixture(t, dir, passwordsJSON{
+		MainPassword: "main",
+		Passwords: map[string]passwordsJSONUser{
+			"client1": {DeviceIDs: []string{"d1"}, DeviceID: "d3"},
+		},
+		Devices: map[string]any{
+			"d1":                        map[string]any{"ip": "10.66.0.2"},
+			"d2":                        map[string]any{"ip": "10.66.0.4"},
+			"d3":                        map[string]any{"ip": "10.66.0.5"},
+			"__awgm_gateway_reserved__": map[string]any{"ip": DefaultWdttServerGatewayAddr},
+		},
+	})
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+		{Password: "client1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Devices["d2"]; ok {
+		t.Fatalf("ничьё устройство осталось: %#v", doc.Devices)
+	}
+	if _, ok := doc.Devices["d1"]; !ok {
+		t.Fatalf("устройство живого абонента снято: %#v", doc.Devices)
+	}
+	if _, ok := doc.Devices["d3"]; !ok {
+		t.Fatalf("устройство по legacy device_id снято: %#v", doc.Devices)
+	}
+	if deviceIPFromPasswordsEntry(doc.Devices["__awgm_gateway_reserved__"]) != DefaultWdttServerGatewayAddr {
+		t.Fatalf("резерв шлюза снят прополкой: %#v", doc.Devices)
+	}
+}
+
+func TestPreparePasswordsJSON_RemembersExpiryOverEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	expires := time.Now().Add(time.Hour).Unix()
+	// Записи в файле нет: её удалил янитор сервера.
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []ServerClient{
+		{Password: "client1", ExpiresAt: expires},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Passwords["client1"].ExpiresAt; got != expires {
+		t.Fatalf("expires_at = %d, ожидался запомненный срок %d", got, expires)
 	}
 }

@@ -142,6 +142,13 @@ type ServerClient struct {
 	Password string `json:"password"`
 	Comment  string `json:"comment,omitempty"`
 	VkHash   string `json:"vkHash,omitempty"`
+	// ExpiresAt — срок действия, назначенный САМИМ сервером (телеграм-бот и
+	// admin-API выдают пароли только со сроком). Ноль — бессрочный, так
+	// заводит абонентов менеджер. Поле хранится у нас, чтобы не снять срок с
+	// отозванного доступа: янитор форка удаляет истёкшую запись из
+	// passwords.json, и без этой памяти следующая синхронизация написала бы
+	// её заново с нулевым сроком.
+	ExpiresAt int64 `json:"expiresAt,omitempty"`
 }
 
 const (

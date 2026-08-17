@@ -229,7 +229,7 @@ func (s *Service) StartServerInstance(id string) error {
 	} else if n > 0 && s.appLog != nil {
 		s.appLog.Warn("panel", id, fmt.Sprintf("удалено %d устройств с IP %s — клиент перерегистрируется", n, DefaultWdttServerGatewayAddr))
 	}
-	if err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, cfg.Clients); err != nil && s.appLog != nil {
+	if _, err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, cfg.Clients); err != nil && s.appLog != nil {
 		s.appLog.Warn("panel", id, "passwords.json не записан: "+err.Error())
 	}
 	if err := redirectServerStatsLog(cfgDir, id, cfg.StatsLog); err != nil && s.appLog != nil {

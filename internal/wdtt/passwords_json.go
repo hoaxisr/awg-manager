@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // passwordsJSON mirrors SpaceNeuroX monolith passwords.json (minimal headless subset).
@@ -17,10 +18,20 @@ type passwordsJSON struct {
 	Devices      map[string]any               `json:"devices"`
 }
 
+// passwordsJSONUser повторяет PasswordEntry монолита (server.go форка).
+// Наши — только label и vk_hash; остальное принадлежит серверу, мы его
+// переносим как есть.
 type passwordsJSONUser struct {
-	Comment  string `json:"comment,omitempty"`
-	VkHash   string `json:"vk_hash,omitempty"`
-	DeviceID string `json:"device_id,omitempty"`
+	Label         string   `json:"label,omitempty"`
+	DeviceID      string   `json:"device_id"`
+	DeviceIDs     []string `json:"device_ids"`
+	MaxDevices    int      `json:"max_devices"`
+	ExpiresAt     int64    `json:"expires_at"`
+	DownBytes     int64    `json:"down_bytes"`
+	UpBytes       int64    `json:"up_bytes"`
+	VkHash        string   `json:"vk_hash,omitempty"`
+	Ports         string   `json:"ports,omitempty"`
+	IsDeactivated bool     `json:"is_deactivated,omitempty"`
 }
 
 type passwordsJSONDevice struct {
@@ -111,15 +122,80 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 	return devices
 }
 
+// UsableServerClients — абоненты, которых wdtt-server примет: непустой пароль,
+// не равный главному, не просроченный. Экспортирована намеренно: тем же
+// предикатом обязан пользоваться internal/api при выборе пароля для ссылки.
+//
+// Эта функция — единственное место, где такой отбор существует. Её результат
+// уезжает в passwords.json, и ровно из него сервер соберёт wrap-ключи
+// (refreshWrapKeysFromDBLocked, форк server.go:372-380, берёт только
+// непросроченные записи). Инвариант «у сервера есть абонент» обязан спрашивать
+// её же: «абонентов не ноль» и «ключей не ноль» — разные величины, и
+// расхождение между ними даёт log.Fatalf на старте сервера (форк
+// server.go:2711-2713).
+//
+// Пароль в результате уже подрезан: трим — здесь, и внутри конвейера больше
+// нигде, иначе ключ файла и ключ сравнения однажды разойдутся.
+func UsableServerClients(clients []ServerClient, mainPassword string, now time.Time) []ServerClient {
+	main := strings.TrimSpace(mainPassword)
+	out := make([]ServerClient, 0, len(clients))
+	for _, c := range clients {
+		pass := strings.TrimSpace(c.Password)
+		if pass == "" || pass == main {
+			continue
+		}
+		// Ноль — бессрочный; иначе сервер принимает запись, пока
+		// ExpiresAt > now (isPasswordExpired, форк server.go:460-468).
+		if c.ExpiresAt != 0 && c.ExpiresAt <= now.Unix() {
+			continue
+		}
+		c.Password = pass
+		out = append(out, c)
+	}
+	return out
+}
+
+// dropOrphanPasswordsDevices удаляет устройства, на которые не ссылается ни один
+// абонент: сервер таких сирот не чистит, а они мешают удалению абонента снять
+// его WG-пир — reloadDB снимает пир только у устройства, ИСЧЕЗНУВШЕГО из devices
+// (форк server.go:410-415). Резерв шлюза сюда не попадает: его ставят после
+// прополки.
+func dropOrphanPasswordsDevices(devices map[string]any, passwords map[string]passwordsJSONUser) map[string]any {
+	if len(devices) == 0 {
+		return devices
+	}
+	owned := make(map[string]struct{}, len(passwords))
+	for _, user := range passwords {
+		if user.DeviceID != "" {
+			owned[user.DeviceID] = struct{}{}
+		}
+		for _, id := range user.DeviceIDs {
+			if id != "" {
+				owned[id] = struct{}{}
+			}
+		}
+	}
+	out := make(map[string]any, len(devices))
+	for id, entry := range devices {
+		if _, ok := owned[id]; ok {
+			out[id] = entry
+		}
+	}
+	return out
+}
+
 // preparePasswordsJSONForServer merges wdtt.json clients with existing devices and
 // removes stale gateway-IP bindings before wdtt-server starts.
+//
+// Записи абонентов МЕРЖАТСЯ поверх лежащих в файле: is_deactivated, device_ids,
+// max_devices, expires_at, счётчики трафика и ports принадлежат серверу, наши —
+// только label и vk_hash.
 func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken string, clients []ServerClient) (passwordsJSON, bool, error) {
 	existing, err := loadPasswordsJSON(configDir)
 	if err != nil {
 		return passwordsJSON{}, false, err
 	}
 	devices, sanitized := sanitizePasswordsDevices(existing.Devices)
-	devices = reserveGatewayIPInDevices(devices)
 	doc := passwordsJSON{
 		MainPassword: strings.TrimSpace(mainPassword),
 		AdminID:      strings.TrimSpace(adminID),
@@ -127,35 +203,45 @@ func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken st
 		Passwords:    map[string]passwordsJSONUser{},
 		Devices:      devices,
 	}
-	for _, c := range clients {
-		pass := strings.TrimSpace(c.Password)
-		if pass == "" || pass == doc.MainPassword {
-			continue
+	for _, c := range UsableServerClients(clients, doc.MainPassword, time.Now()) {
+		entry := existing.Passwords[c.Password] // нулевая, если абонента ещё нет
+		if label := strings.TrimSpace(c.Comment); label != "" {
+			entry.Label = label
 		}
-		doc.Passwords[pass] = passwordsJSONUser{
-			Comment: strings.TrimSpace(c.Comment),
-			VkHash:  strings.TrimSpace(c.VkHash),
+		if vk := strings.TrimSpace(c.VkHash); vk != "" {
+			entry.VkHash = vk
 		}
+		if c.ExpiresAt != 0 {
+			// Наша память сильнее пустого файла: янитор форка удаляет истёкшую
+			// запись, и без этого отозванный доступ стал бы бессрочным. Ветки
+			// else здесь быть не должно.
+			entry.ExpiresAt = c.ExpiresAt
+		}
+		doc.Passwords[c.Password] = entry
 	}
+	// Порядок обязателен: прополка сирот — до резерва шлюза, иначе она снимет
+	// сам резерв (владельца у него нет по построению).
+	doc.Devices = reserveGatewayIPInDevices(dropOrphanPasswordsDevices(doc.Devices, doc.Passwords))
 	return doc, sanitized, nil
 }
 
 // syncPasswordsJSON writes passwords.json — the auth source of wdtt-server.
-func syncPasswordsJSON(configDir, mainPassword, adminID, botToken string, clients []ServerClient) error {
+// Второе значение — «вычищены устройства с IP шлюза», для журнала.
+func syncPasswordsJSON(configDir, mainPassword, adminID, botToken string, clients []ServerClient) (bool, error) {
 	dir := strings.TrimSpace(configDir)
 	if dir == "" {
-		return nil
+		return false, nil
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
+		return false, err
 	}
-	doc, _, err := preparePasswordsJSONForServer(dir, mainPassword, adminID, botToken, clients)
+	doc, sanitized, err := preparePasswordsJSONForServer(dir, mainPassword, adminID, botToken, clients)
 	if err != nil {
-		return err
+		return false, err
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return err
+		return sanitized, err
 	}
-	return os.WriteFile(passwordsJSONPath(dir), data, 0600)
+	return sanitized, os.WriteFile(passwordsJSONPath(dir), data, 0600)
 }
