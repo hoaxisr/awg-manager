@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
@@ -31,6 +32,41 @@ func NewRunningConfigStoreWithTTL(g Getter, log Logger, ttl time.Duration) *Runn
 // running-config domain rather than the generic "list".
 func (s *RunningConfigStore) Lines(ctx context.Context) ([]string, error) {
 	return s.ListStore.List(ctx)
+}
+
+// GlobalEgressInterfaces возвращает NDMS-имена интерфейсов, в блоке которых
+// есть `ip global` (кандидаты-выходы глобального роутинга), в порядке
+// появления в running-config. Формат блочный: заголовок `interface <Name>`
+// без отступа, тело с отступом; одного признака на блок достаточно.
+func (s *RunningConfigStore) GlobalEgressInterfaces(ctx context.Context) ([]string, error) {
+	lines, err := s.Lines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	current := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if line == trimmed { // без отступа — заголовок блока или его конец
+			f := strings.Fields(trimmed)
+			current = ""
+			if len(f) == 2 && f[0] == "interface" {
+				current = f[1]
+			}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		if trimmed == "ip global" || strings.HasPrefix(trimmed, "ip global ") {
+			out = append(out, current)
+			current = ""
+		}
+	}
+	return out, nil
 }
 
 type rcResp struct {
