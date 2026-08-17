@@ -241,7 +241,11 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 // поведение).
 func (s *Service) natStaticTargets(ctx context.Context) ([]string, error) {
 	if s.queries != nil && s.queries.RunningConfig != nil {
-		if exits, err := s.queries.RunningConfig.GlobalEgressInterfaces(ctx); err == nil && len(exits) > 0 {
+		exits, err := s.queries.RunningConfig.GlobalEgressInterfaces(ctx)
+		if err != nil {
+			s.log.Warn("static-NAT цели деградировали до одного WAN: running-config недоступен", "error", err)
+		}
+		if err == nil && len(exits) > 0 {
 			return exits, nil
 		}
 	}

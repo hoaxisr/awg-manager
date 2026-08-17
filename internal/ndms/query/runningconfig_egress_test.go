@@ -8,8 +8,6 @@ import (
 
 func TestGlobalEgressInterfaces(t *testing.T) {
 	fg := NewFakeGetter()
-	// Ключ и форма JSON — те же, что использует Lines(); скопировать из
-	// существующего теста RunningConfigStore. Содержимое:
 	fg.SetJSON("/show/running-config", `{"message":[
 		"interface PPPoE0",
 		"    description WAN",

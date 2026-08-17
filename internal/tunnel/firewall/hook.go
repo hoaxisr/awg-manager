@@ -115,8 +115,8 @@ func (m *ManagerImpl) ensureHookFile() error {
 	return os.Rename(tmp, path)
 }
 
-// hookScript генерирует тело netfilter.d-хука. Без I/O — чтобы тест мог
-// прогнать результат через `sh -n`.
+// hookScript генерирует тело netfilter.d-хука. Вынесено чистой функцией без
+// I/O, чтобы скрипт можно было проверять как значение.
 //
 // Проверка $type инвертирована («не ip6tables») — так же, как в хуках
 // sb-router (internal/singbox/router/iptables.go): при пустом $type в
