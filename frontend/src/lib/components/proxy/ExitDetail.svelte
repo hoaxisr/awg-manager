@@ -207,26 +207,26 @@
 		</div>
 	</DetailSection>
 
-	<DetailSection title="Куда идёт трафик">
-		{#if raw}
-			{#if rawNdms}
+	<!-- Секции нет, пока интерфейс клиента неизвестен: пустой заголовок ничего
+	     не сообщает, а обещать «не заведён в политику» не о чем. -->
+	{#if policyIface}
+		<DetailSection title="Куда идёт трафик">
+			{#if raw}
 				<div class="line-row">
 					<span class="line-label">В роутере:</span>
 					<code>{rawNdms}</code>
 					<FieldHint text={rawHint} ariaLabel="Подсказка: интерфейс клиента" />
 				</div>
+			{:else if tunnel}
+				<div class="line-row">
+					<span class="line-label">AWG-туннель:</span>
+					<a class="link" href={`/tunnels/${tunnel.id}`}>{tunnel.name}<ExternalLink size={12} /></a>
+					<FieldHint
+						text={`Режим WG: клиент получает WireGuard-конфиг, из него создан AWG-туннель с Endpoint 127.0.0.1:${port ?? ''}.`}
+						ariaLabel="Подсказка: AWG-туннель"
+					/>
+				</div>
 			{/if}
-		{:else if tunnel}
-			<div class="line-row">
-				<span class="line-label">AWG-туннель:</span>
-				<a class="link" href={`/tunnels/${tunnel.id}`}>{tunnel.name}<ExternalLink size={12} /></a>
-				<FieldHint
-					text={`Режим WG: клиент получает WireGuard-конфиг, из него создан AWG-туннель с Endpoint 127.0.0.1:${port ?? ''}.`}
-					ariaLabel="Подсказка: AWG-туннель"
-				/>
-			</div>
-		{/if}
-		{#if policyIface}
 			<div class="line-row">
 				<span class="line-label">Политика доступа:</span>
 				{#if policy}
@@ -240,8 +240,8 @@
 				/>
 				<a class="link" href="/routing">Маршрутизация<ExternalLink size={12} /></a>
 			</div>
-		{/if}
-	</DetailSection>
+		</DetailSection>
+	{/if}
 
 	<ExitParamsSection {wdttClient} {ftClient} {saving} {onsave} {onrevert} />
 

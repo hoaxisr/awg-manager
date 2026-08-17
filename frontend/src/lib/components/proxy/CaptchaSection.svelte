@@ -6,7 +6,7 @@
 	import { Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
-	import { pluralize, STREAM_WORDS } from '$lib/utils/pluralize';
+	import { pluralForm, STREAM_WORDS } from '$lib/utils/pluralize';
 	import type { FreeTurnCaptchaClientStatus } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 
@@ -50,7 +50,7 @@
 		title="Подтверждение VK"
 		hint="Пока подтверждение не пройдено, потоки не поднимаются. Капча открывается через менеджер, отдельного порта наружу не нужно."
 	>
-		<p class="line">Ожидает подтверждения: {streams} {pluralize(streams, STREAM_WORDS)}</p>
+		<p class="line">Ожидает подтверждения: {streams} {pluralForm(streams, STREAM_WORDS)}</p>
 		{#if entry?.portContention}
 			<p class="line">Порт капчи занят другим инстансом</p>
 		{/if}

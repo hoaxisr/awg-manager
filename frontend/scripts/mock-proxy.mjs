@@ -437,6 +437,27 @@ const MOCK_AWG_TUNNELS = [
 	{
 		// Туннель WDTT-клиента в режиме WG: Endpoint смотрит в listen клиента
 		// (127.0.0.1:9000) — по нему деталь «Выход» и находит карточку.
+		id: 'ft-tunnel-default',
+		name: 'Клиент FT',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: false,
+		endpoint: '127.0.0.1:9005',
+		address: '10.55.0.2/32',
+		interfaceName: 'awg8',
+		ndmsName: 'Wireguard9',
+		rxBytes: 4_221_003,
+		txBytes: 990_112,
+		lastHandshake: new Date(Date.now() - 40_000).toISOString(),
+		awgVersion: 'wg',
+		mtu: 1420,
+		startedAt: new Date(Date.now() - 8_040_000).toISOString(),
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
+	{
 		id: 'wdtt-tunnel-default',
 		name: 'Клиент wdtt',
 		type: 'amneziawg',
@@ -3150,7 +3171,7 @@ function createInitialMockFreeturn() {
 				startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
 				config: {
 					enabled: true,
-					listen: '127.0.0.1:9000',
+					listen: '127.0.0.1:9005',
 					peer: 'vinvanvlad.com:56000',
 					provider: 'vk',
 					links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
@@ -3291,6 +3312,16 @@ const MOCK_WDTT_WG_CONFIG =
 	'Endpoint = 127.0.0.1:9000\n' +
 	'AllowedIPs = 0.0.0.0/0\n' +
 	'PersistentKeepalive = 25';
+
+/** Часы роутера в формате бэкенда: «2006-01-02 15:04:05 ZONE». */
+function mockRouterClock() {
+	const d = new Date();
+	const p = (n) => String(n).padStart(2, '0');
+	return (
+		`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+		`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} MSK`
+	);
+}
 
 function createInitialMockWdtt() {
 	return {
@@ -8090,7 +8121,7 @@ const server = http.createServer(async (req, res) => {
 			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
 			updateAvailable: false,
 			installing: false,
-			routerClock: new Date().toISOString(),
+			routerClock: mockRouterClock(),
 		});
 		return;
 	}

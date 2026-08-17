@@ -74,13 +74,19 @@
 		min-width: 0;
 	}
 
+	/* Ширина по содержимому: с `width: auto` короткая подпись занимала всю
+	   строку группы, и состояние разъезжалось на три строки вместо одной. */
 	.label {
+		width: max-content;
+		max-width: 100%;
 		font-size: 0.9375rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
 	}
 
 	.meta {
+		width: max-content;
+		max-width: 100%;
 		font-size: 0.8125rem;
 		color: var(--color-text-muted);
 		font-family: var(--font-mono);
