@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -515,11 +516,48 @@ func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *rec
 	routeGetter.SetJSON("/show/ip/route", `[{"destination":"0.0.0.0/0","gateway":"1.2.3.4","interface":"PPPoE0"}]`)
 	svc.queries.Routes = query.NewRouteStore(routeGetter, query.NopLogger())
 
+	// running-config с тремя `ip global`-выходами (порядок появления значим).
+	rcGetter := query.NewFakeGetter()
+	rcGetter.SetJSON("/show/running-config", `{"message":[
+		"interface PPPoE0",
+		"    ip global 32767",
+		"interface Wireguard2",
+		"    ip global auto",
+		"interface OpkgTun0",
+		"    ip global 100"
+	]}`)
+	svc.queries.RunningConfig = query.NewRunningConfigStore(rcGetter, query.NopLogger())
+
 	poster, ok := svc.transport.(*recordingPoster)
 	if !ok {
 		t.Fatalf("unexpected transport type %T", svc.transport)
 	}
 	return svc, store, poster
+}
+
+func TestNatStaticTargets_AllGlobalExits(t *testing.T) {
+	svc, _, _ := newNATModeTestService(t)
+	got, err := svc.natStaticTargets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"PPPoE0", "Wireguard2", "OpkgTun0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestNatStaticTargets_FallbackDefaultWAN(t *testing.T) {
+	svc, _, _ := newNATModeTestService(t)
+	svc.queries.RunningConfig = nil // running-config недоступен
+	got, err := svc.natStaticTargets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"PPPoE0"} // Routes-фейк harness'а отвечает PPPoE0
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
 }
 
 func TestSetNATMode_InternetOnly_SetsStaticToWAN(t *testing.T) {

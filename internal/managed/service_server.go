@@ -229,6 +229,31 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 	return nil
 }
 
+// natStaticTargets отдаёт выходы для static-NAT режима internet-only: ВСЕ
+// интерфейсы с `ip global`. Один дефолт-WAN недостаточен: `no ip nat` снимает
+// маскарад на каждом выходе сразу, и клиентский трафик сервера, уходящий
+// политикой или селективом в VPN-интерфейс, оставался бы с приватным адресом
+// источника. OpkgTun сознательно НЕ исключаются (в отличие от
+// policyTunSNATTargets): семантика internet-only — «как full, но не в LAN», а
+// full подменяет источник во всех OpkgTun и сегодня. running-config не
+// прочитался или `ip global` нигде нет → fallback на дефолт-WAN (прежнее
+// поведение).
+func (s *Service) natStaticTargets(ctx context.Context) ([]string, error) {
+	if s.queries != nil && s.queries.RunningConfig != nil {
+		if exits, err := s.queries.RunningConfig.GlobalEgressInterfaces(ctx); err == nil && len(exits) > 0 {
+			return exits, nil
+		}
+	}
+	if s.queries == nil || s.queries.Routes == nil {
+		return nil, fmt.Errorf("internet-only требует Routes-провайдер")
+	}
+	wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("internet-only требует WAN (нет дефолт-маршрута): %w", err)
+	}
+	return []string{wan}, nil
+}
+
 // applyNATModeRaw applies a NAT mode via RCI (no storage write). Returns the
 // WAN interface a static-NAT rule was created on (empty for full/none) so the
 // caller can persist it for deterministic teardown. prevWAN — previously
