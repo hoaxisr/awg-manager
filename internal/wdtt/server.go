@@ -401,10 +401,16 @@ func (s *Service) updateServerClients(id string, mutate func([]ServerClient) ([]
 }
 
 // putServerClient adds or updates one client identity in wdtt.json.
+//
+// Сравнение — по ПОДРЕЗАННОМУ паролю, как во всём остальном конвейере
+// (UsableServerClients, mergeServerClients, hasServerClientPassword): пароль с
+// пробелами мог попасть в wdtt.json ручной правкой или из старых конфигов, и
+// сырое сравнение завело бы рядом второй экземпляр того же абонента.
 func (s *Service) putServerClient(id string, client ServerClient) error {
+	password := strings.TrimSpace(client.Password)
 	_, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
 		for i, c := range list {
-			if c.Password == client.Password {
+			if strings.TrimSpace(c.Password) == password {
 				list[i] = client
 				return list, true
 			}
@@ -415,10 +421,15 @@ func (s *Service) putServerClient(id string, client ServerClient) error {
 }
 
 // dropServerClient removes one client identity from wdtt.json.
+//
+// Сравнение подрезанное по той же причине, что и в putServerClient, но цена
+// ошибки здесь выше: сырое сравнение не находило абонента с пробелами в пароле,
+// и удаление отвечало УСПЕХОМ, ничего не удалив, — доступ оставался живым.
 func (s *Service) dropServerClient(id, password string) error {
+	password = strings.TrimSpace(password)
 	_, err := s.updateServerClients(id, func(list []ServerClient) ([]ServerClient, bool) {
 		for i, c := range list {
-			if c.Password == password {
+			if strings.TrimSpace(c.Password) == password {
 				return append(list[:i:i], list[i+1:]...), true
 			}
 		}

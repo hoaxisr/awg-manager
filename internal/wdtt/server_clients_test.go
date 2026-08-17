@@ -1542,3 +1542,55 @@ func TestServerClients_ConcurrentRenameDoesNotResurrect(t *testing.T) {
 		}
 	}
 }
+
+// --- Пароль с пробелами в wdtt.json (сравнение в putServerClient/dropServerClient) ---
+
+// TestRemoveServerClient_DropsEntryWithPaddedPassword: запись с пробелами
+// попадает в wdtt.json ручной правкой или из старых конфигов. Список показывает
+// её подрезанной, поэтому удаление приходит подрезанным паролем — и раньше
+// молча не находило запись, отвечая УСПЕХОМ при живом доступе.
+func TestRemoveServerClient_DropsEntryWithPaddedPassword(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, cfgDir := newServerClientsService(t, main)
+	setServerClients(t, s, []ServerClient{
+		{Password: " abonent1 ", Comment: "Иван"},
+		{Password: "abonent2", Comment: "Пётр"},
+	})
+
+	st, err := s.RemoveServerClient(DefaultInstanceID, "abonent1")
+	if err != nil {
+		t.Fatalf("RemoveServerClient: %v", err)
+	}
+	for _, c := range configServerClients(t, s) {
+		if strings.TrimSpace(c.Password) == "abonent1" {
+			t.Fatalf("удаление ответило успехом, но абонент остался в wdtt.json: %+v", configServerClients(t, s))
+		}
+	}
+	for _, u := range st.Users {
+		if u.Password == "abonent1" {
+			t.Fatalf("удалённый абонент остался в ответе ручки: %+v", st.Users)
+		}
+	}
+	if fileHasServerClient(t, cfgDir, "abonent1") {
+		t.Fatal("удалённый абонент остался в passwords.json")
+	}
+}
+
+// TestPutServerClient_ReplacesEntryWithPaddedPassword — тот же класс на записи:
+// без подрезки рядом с " abonent1 " завёлся бы второй экземпляр того же
+// абонента, и сервер получил бы два wrap-ключа на один доступ.
+func TestPutServerClient_ReplacesEntryWithPaddedPassword(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	setServerClients(t, s, []ServerClient{{Password: " abonent1 ", Comment: "Иван"}})
+
+	if err := s.putServerClient(DefaultInstanceID, ServerClient{Password: "abonent1", Comment: "Иван Петров"}); err != nil {
+		t.Fatal(err)
+	}
+	clients := configServerClients(t, s)
+	if len(clients) != 1 {
+		t.Fatalf("запись продублирована: %+v", clients)
+	}
+	if clients[0].Comment != "Иван Петров" {
+		t.Fatalf("запись не замещена: %+v", clients[0])
+	}
+}
