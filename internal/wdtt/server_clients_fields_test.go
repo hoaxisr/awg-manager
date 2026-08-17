@@ -351,6 +351,49 @@ func TestServerClients_ReloadReportsFailedDelivery(t *testing.T) {
 	}
 }
 
+// TestServerClients_ReloadDeadProcessIsStoppedServer — процесс умер между
+// проверкой живости и отправкой сигнала: ядро отвечает ESRCH. Для пользователя
+// это тот же исход, что остановленный сервер (файл записан, состав вступит при
+// следующем запуске), а не «не удалось применить» — отказ доставки
+// подразумевает живого адресата, которому мы не достучались.
+//
+// Гонка воспроизводится швом signalProc: реальное окно между IsRunning и kill
+// микроскопично и наведению не поддаётся.
+func TestServerClients_ReloadDeadProcessIsStoppedServer(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+	startMarkedServerProcess(t, s, DefaultInstanceID, mark)
+
+	proc := s.serverProcs.get(DefaultInstanceID)
+	if running, _ := proc.IsRunning(); !running {
+		t.Fatal("предпосылка теста нарушена: процесс сервера не запущен")
+	}
+	proc.signalProc = func(int, syscall.Signal) error { return syscall.ESRCH }
+
+	st, err := s.AddServerClient(DefaultInstanceID, "abonent1", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Reload != ReloadServerStopped {
+		t.Fatalf("процесс умер до сигнала, а ручка отдала reload = %q", st.Reload)
+	}
+	if !configHasServerClient(t, s, "abonent1") {
+		t.Fatal("абонент потерян из-за умершего процесса")
+	}
+
+	// Граница: ESRCH — единственная ошибка со смыслом «адресата уже нет».
+	// Любая другая остаётся отказом доставки, иначе признак перестанет ловить
+	// живой сервер, до которого не достучались.
+	proc.signalProc = func(int, syscall.Signal) error { return syscall.EPERM }
+	rm, err := s.RemoveServerClient(DefaultInstanceID, "abonent1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rm.Reload != ReloadFailed {
+		t.Fatalf("отказ доставки живому серверу выдан за остановленный: reload = %q", rm.Reload)
+	}
+}
+
 // TestRenameServerClient_ReloadIsEmpty — переименование passwords.json не
 // переписывает и сервер не пинает; отдавать «применено сейчас» ему нечего.
 func TestRenameServerClient_ReloadIsEmpty(t *testing.T) {

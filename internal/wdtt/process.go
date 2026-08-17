@@ -2,6 +2,7 @@ package wdtt
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -262,6 +263,12 @@ func (p *process) Reload() (bool, error) {
 		return false, nil
 	}
 	if err := p.signalProc(pid, syscall.SIGHUP); err != nil {
+		// Процесс умер между проверкой живости и сигналом: перечитывать некому,
+		// и это ровно исход «сервер остановлен», а не отказ доставки. Файл уже
+		// записан, состав вступит в силу при следующем запуске.
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
