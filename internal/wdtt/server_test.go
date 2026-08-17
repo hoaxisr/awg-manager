@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Один инстанс: wdtt0 общий, второй сервер создать нельзя.
@@ -82,6 +83,46 @@ func TestUpdateServerInstance_RejectsMainPasswordSameAsClient(t *testing.T) {
 	clientPass := serverClientPasswordByComment(t, st, "Иван")
 	if _, err := s.UpdateServerInstance(DefaultInstanceID, ServerConfig{Password: clientPass}); err == nil {
 		t.Fatal("ожидалась ошибка: пароль сервера совпадает с паролем клиента")
+	}
+}
+
+// TestUpdateServerInstance_InheritedMainPasswordCollision сторожит ОБА конца
+// правила. Унаследованный битый состав (абонент с главным паролем; попадает
+// только ручной правкой wdtt.json или из старых конфигов) не имеет права валить
+// Update: через него идут старт (StartServerInstance зовёт его ради listen),
+// NAT, политика и LAN-сегменты — то есть сервер переставал запускаться вовсе.
+// Смена же главного пароля на пароль живого абонента отказывает как прежде.
+//
+// Мутация «валидировать всегда» роняет первую половину, «не валидировать
+// никогда» — вторую.
+func TestUpdateServerInstance_InheritedMainPasswordCollision(t *testing.T) {
+	s, _ := newServerClientsService(t, "adminpass")
+	// Состав, который не мог возникнуть через наши ручки: пароль абонента равен
+	// главному.
+	setServerClients(t, s, []ServerClient{{Password: "adminpass", Comment: "битый"}})
+
+	saved, err := s.UpdateServerInstance(DefaultInstanceID, serverConfigOf(t, s, DefaultInstanceID))
+	if err != nil {
+		t.Fatalf("унаследованное столкновение валит Update, а с ним старт и настройки доступа: %v", err)
+	}
+	// Отказ снят не ценой инварианта: опора 1 завела абонента, которого сервер
+	// примет, — иначе wdtt-server упал бы на «[WRAP] нет активных паролей».
+	if len(UsableServerClients(saved.Clients, saved.Password, time.Now())) == 0 {
+		t.Fatalf("рабочего абонента не появилось: %+v", saved.Clients)
+	}
+	// Битую запись не стёрли: тихая потеря пользовательских данных хуже отказа,
+	// а дальше конвейера она и так не проходит.
+	if !slices.ContainsFunc(saved.Clients, func(c ServerClient) bool { return c.Password == "adminpass" }) {
+		t.Fatalf("унаследованная запись молча удалена: %+v", saved.Clients)
+	}
+
+	// Другой конец: состав меняем на рабочий и пробуем СДЕЛАТЬ главным пароль
+	// живого абонента — это по-прежнему отказ.
+	setServerClients(t, s, []ServerClient{{Password: "abonent1"}})
+	cfg := serverConfigOf(t, s, DefaultInstanceID)
+	cfg.Password = "abonent1"
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err == nil {
+		t.Fatal("смена главного пароля на пароль абонента обязана отказывать")
 	}
 }
 

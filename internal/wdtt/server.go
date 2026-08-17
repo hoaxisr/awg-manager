@@ -42,9 +42,26 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	// целиком и держит список снапшотом времени загрузки страницы: иначе
 	// любое сохранение воскрешало бы удалённых и теряло добавленных.
 	cfg.Clients = full.Servers[idx].Config.Clients
+	// Столкновение «главный пароль == пароль абонента» проверяем ТОЛЬКО когда
+	// главный пароль меняют этим вызовом. Состав абонентов сюда приходит из
+	// хранилища (строкой выше), и отказ по нему был отказом за то, чего
+	// вызывающий не делал: унаследованный из ручной правки wdtt.json битый
+	// состав валил ЛЮБОЙ Update, а через него — старт (StartServerInstance
+	// зовёт нас ради нормализации listen), NAT, политику и LAN-сегменты.
+	//
+	// Сама запись никуда не доезжает и без отказа: UsableServerClients её
+	// отбрасывает (ServerClientMainPassword), в passwords.json и в ссылку она
+	// не попадает, в инварианте не считается — а опора ниже заведёт вместо неё
+	// «Абонент 1». Правило остаётся в силе везде, где состав или пароль меняет
+	// вызывающий: смена пароля здесь и AddServerClient.
 	if err := validateServerMainPassword(cfg.Password, cfg.Clients); err != nil {
-		s.mu.Unlock()
-		return ServerConfig{}, err
+		if strings.TrimSpace(cfg.Password) != strings.TrimSpace(prevCfg.Password) {
+			s.mu.Unlock()
+			return ServerConfig{}, err
+		}
+		if s.appLog != nil {
+			s.appLog.Warn("clients", id, "унаследованный конфиг: пароль абонента совпадает с главным — сервер такого абонента не примет, выдайте доступ другому")
+		}
 	}
 	// Первая опора инварианта «у сервера с заданным паролем есть абонент,
 	// которого сервер примет»: без него wdtt-server падает на старте
