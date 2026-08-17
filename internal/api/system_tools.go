@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,22 +11,28 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 	"github.com/hoaxisr/awg-manager/internal/sys/opkg"
+	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	"github.com/hoaxisr/awg-manager/internal/sys/procmon"
 	"github.com/hoaxisr/awg-manager/internal/sys/services"
 )
 
-// SystemToolsHandler exposes Entware file manager, init.d services and opkg.
+// SystemToolsHandler exposes Entware file manager, init.d services, opkg, port inspector, and process monitor.
 type SystemToolsHandler struct {
 	settings *storage.SettingsStore
 	log      *logging.ScopedLogger
 	files    *sysfiles.Sandbox
 	services *services.Scanner
 	opkg     *opkg.Client
+	ports    *sysports.Scanner
+	procmon  *procmon.Sampler
 }
 
 // NewSystemToolsHandler creates the handler.
@@ -36,6 +43,8 @@ func NewSystemToolsHandler(settings *storage.SettingsStore, log logging.AppLogge
 		files:    sysfiles.NewSandbox(nil),
 		services: services.NewScanner(),
 		opkg:     opkg.NewClient(),
+		ports:    sysports.NewScanner(),
+		procmon:  procmon.NewSampler(),
 	}
 }
 
@@ -437,6 +446,106 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// GET /api/system/services/get?script=/opt/etc/init.d/S90name
+func (h *SystemToolsHandler) ServicesGetScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	script := r.URL.Query().Get("script")
+	if script == "" {
+		response.Error(w, "missing script parameter", "INVALID_PARAMS")
+		return
+	}
+	content, err := h.services.ReadScript(script)
+	if err != nil {
+		response.Error(w, err.Error(), "READ_ERROR")
+		return
+	}
+	response.Success(w, map[string]interface{}{
+		"script":  script,
+		"content": content,
+	})
+}
+
+type serviceSaveRequest struct {
+	ScriptName string `json:"scriptName"` // e.g. "S90my-daemon"
+	Content    string `json:"content"`    // shell script body
+}
+
+// POST /api/system/services/save
+func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req serviceSaveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if req.ScriptName == "" {
+		response.Error(w, "scriptName is required", "INVALID_PARAMS")
+		return
+	}
+	if req.Content == "" {
+		response.Error(w, "content cannot be empty", "INVALID_PARAMS")
+		return
+	}
+
+	fullPath, err := h.services.SaveScript(req.ScriptName, req.Content)
+	if err != nil {
+		response.Error(w, err.Error(), "SAVE_ERROR")
+		return
+	}
+
+	h.log.Info("save", req.ScriptName, fullPath)
+	response.Success(w, map[string]interface{}{
+		"ok":     true,
+		"script": fullPath,
+	})
+}
+
+type serviceDeleteRequest struct {
+	Script string `json:"script"`
+}
+
+// POST /api/system/services/delete
+func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req serviceDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if req.Script == "" {
+		response.Error(w, "script is required", "INVALID_PARAMS")
+		return
+	}
+
+	if err := h.services.DeleteScript(req.Script); err != nil {
+		response.Error(w, err.Error(), "DELETE_ERROR")
+		return
+	}
+
+	h.log.Info("delete", req.Script, "service deleted")
+	response.Success(w, map[string]interface{}{
+		"ok": true,
+	})
+}
+
 // GET /api/system/opkg/installed
 func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -608,4 +717,418 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response.Success(w, map[string]string{"output": out})
+}
+
+// GET /api/system/ports/list
+func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	items, err := h.ports.List()
+	if err != nil {
+		response.Error(w, err.Error(), "PORTS_ERROR")
+		return
+	}
+	response.Success(w, items)
+}
+
+// GET /api/system/ports/inspect?port=&proto=
+func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	portStr := r.URL.Query().Get("port")
+	if strings.TrimSpace(portStr) == "" {
+		response.Error(w, "port parameter required", "INVALID_PORT")
+		return
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(portStr))
+	if err != nil || port <= 0 || port > 65535 {
+		response.Error(w, "invalid port number (1-65535)", "INVALID_PORT")
+		return
+	}
+	proto := r.URL.Query().Get("proto")
+	items, err := h.ports.InspectPort(port, proto)
+	if err != nil {
+		response.Error(w, err.Error(), "PORTS_ERROR")
+		return
+	}
+	response.Success(w, map[string]interface{}{
+		"port":     port,
+		"proto":    proto,
+		"bindings": items,
+		"occupied": len(items) > 0,
+	})
+}
+
+type portKillRequest struct {
+	PID     int    `json:"pid"`
+	Signal  string `json:"signal,omitempty"` // "SIGTERM" or "SIGKILL"
+	Port    int    `json:"port,omitempty"`
+	Proto   string `json:"proto,omitempty"`
+}
+
+// POST /api/system/ports/kill
+func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req portKillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if req.PID <= 0 {
+		response.Error(w, "valid PID required", "INVALID_PID")
+		return
+	}
+	sig := req.Signal
+	if strings.TrimSpace(sig) == "" {
+		sig = "SIGTERM"
+	}
+	if err := h.ports.KillProcess(req.PID, sig); err != nil {
+		h.log.Error("kill_process", fmt.Sprintf("PID %d (port %d)", req.PID, req.Port), err.Error())
+		response.Error(w, err.Error(), "KILL_ERROR")
+		return
+	}
+	h.log.Info("kill_process", fmt.Sprintf("PID %d (signal %s, port %d)", req.PID, sig, req.Port), "process terminated")
+	response.Success(w, map[string]interface{}{
+		"pid":    req.PID,
+		"signal": sig,
+		"ok":     true,
+	})
+}
+
+// ScriptStatusDTO describes execution and runtime process status of a script/service.
+type ScriptStatusDTO struct {
+	Path        string `json:"path"`
+	IsScript    bool   `json:"isScript"`
+	Running     bool   `json:"running"`
+	PIDs        []int  `json:"pids"`
+	IsService   bool   `json:"isService"`
+	ServiceName string `json:"serviceName,omitempty"`
+	StatusText  string `json:"statusText,omitempty"`
+	CanExecute  bool   `json:"canExecute"`
+}
+
+func isScriptOrService(path string, fi os.FileInfo) (isService bool, isScript bool, serviceName string) {
+	base := filepath.Base(path)
+	cleanDir := filepath.Clean(filepath.Dir(path))
+
+	if (cleanDir == "/opt/etc/init.d" || strings.HasSuffix(cleanDir, "init.d")) && len(base) > 3 && base[0] == 'S' && base[1] >= '0' && base[1] <= '9' {
+		return true, true, base[3:]
+	}
+
+	lower := strings.ToLower(base)
+	if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") || strings.HasSuffix(lower, ".py") {
+		return false, true, ""
+	}
+
+	if fi != nil && (fi.Mode()&0111 != 0) {
+		return false, true, ""
+	}
+
+	return false, false, ""
+}
+
+func findPIDsForPath(targetPath string) []int {
+	var pids []int
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return pids
+	}
+	cleanTarget := filepath.Clean(targetPath)
+	baseName := filepath.Base(cleanTarget)
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+
+		exeLink, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if exeLink == cleanTarget {
+			pids = append(pids, pid)
+			continue
+		}
+
+		cmdBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err == nil && len(cmdBytes) > 0 {
+			cmdStr := string(cmdBytes)
+			parts := strings.Split(cmdStr, "\x00")
+			matched := false
+			for _, part := range parts {
+				if part == cleanTarget || filepath.Clean(part) == cleanTarget {
+					matched = true
+					break
+				}
+				if strings.Contains(part, baseName) && (strings.HasSuffix(part, ".sh") || strings.HasPrefix(baseName, "S")) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	return pids
+}
+
+// GET /api/system/files/script-status?path=
+func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if strings.TrimSpace(path) == "" {
+		response.Error(w, "path is required", "INVALID_PATH")
+		return
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		response.Success(w, ScriptStatusDTO{Path: path, IsScript: false})
+		return
+	}
+
+	isService, isScript, svcName := isScriptOrService(path, fi)
+	if !isScript && !isService {
+		response.Success(w, ScriptStatusDTO{Path: path, IsScript: false})
+		return
+	}
+
+	dto := ScriptStatusDTO{
+		Path:        path,
+		IsScript:    true,
+		IsService:   isService,
+		ServiceName: svcName,
+		CanExecute:  true,
+	}
+
+	if isService {
+		items, err := h.services.List()
+		if err == nil {
+			for _, item := range items {
+				if item.Script == path || item.Name == svcName {
+					dto.Running = item.Running
+					dto.StatusText = item.StatusText
+					break
+				}
+			}
+		}
+	}
+
+	pids := findPIDsForPath(path)
+	dto.PIDs = pids
+	if len(pids) > 0 {
+		dto.Running = true
+		if dto.StatusText == "" {
+			dto.StatusText = fmt.Sprintf("running (PID %v)", pids)
+		}
+	} else if !isService {
+		dto.StatusText = "stopped"
+	}
+
+	response.Success(w, dto)
+}
+
+type scriptActionRequest struct {
+	Path   string   `json:"path"`
+	Action string   `json:"action"` // "start", "stop", "restart", "run"
+	Args   []string `json:"args,omitempty"`
+}
+
+// POST /api/system/files/script-action
+func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+	var req scriptActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		response.Error(w, "path is required", "INVALID_PATH")
+		return
+	}
+
+	fi, err := os.Stat(req.Path)
+	if err != nil {
+		response.Error(w, "file not found", "NOT_FOUND")
+		return
+	}
+
+	isService, isScript, svcName := isScriptOrService(req.Path, fi)
+	if !isScript && !isService {
+		response.Error(w, "file is not an executable script or service", "NOT_SCRIPT")
+		return
+	}
+
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "run"
+	}
+
+	var output string
+	var runErr error
+
+	if isService {
+		output, runErr = h.services.RunAction(filepath.Base(req.Path), action)
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		switch action {
+		case "start", "run":
+			var cmd *sysexec.Result
+			if strings.HasSuffix(req.Path, ".sh") || strings.HasSuffix(req.Path, ".bash") {
+				cmd, runErr = sysexec.Run(ctx, "/bin/sh", req.Path)
+			} else {
+				cmd, runErr = sysexec.Run(ctx, req.Path, req.Args...)
+			}
+			if cmd != nil {
+				output = cmd.Stdout
+				if output == "" {
+					output = cmd.Stderr
+				}
+			}
+		case "stop":
+			pids := findPIDsForPath(req.Path)
+			if len(pids) == 0 {
+				output = "No running processes found"
+			} else {
+				for _, pid := range pids {
+					_ = h.ports.KillProcess(pid, "SIGTERM")
+				}
+				output = fmt.Sprintf("Stopped PIDs: %v", pids)
+			}
+		case "restart":
+			pids := findPIDsForPath(req.Path)
+			for _, pid := range pids {
+				_ = h.ports.KillProcess(pid, "SIGTERM")
+			}
+			time.Sleep(300 * time.Millisecond)
+			var cmd *sysexec.Result
+			cmd, runErr = sysexec.Run(ctx, "/bin/sh", req.Path)
+			if cmd != nil {
+				output = cmd.Stdout
+				if output == "" {
+					output = cmd.Stderr
+				}
+			}
+		default:
+			response.Error(w, "unsupported action", "INVALID_ACTION")
+			return
+		}
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	pids := findPIDsForPath(req.Path)
+	running := len(pids) > 0
+	if isService && !running {
+		items, _ := h.services.List()
+		for _, item := range items {
+			if item.Script == req.Path || item.Name == svcName {
+				running = item.Running
+				break
+			}
+		}
+	}
+
+	h.log.Info("script_action", fmt.Sprintf("%s (%s)", req.Path, action), output)
+
+	errStr := ""
+	if runErr != nil {
+		errStr = runErr.Error()
+	}
+
+	response.Success(w, map[string]interface{}{
+		"ok":      runErr == nil,
+		"output":  strings.TrimSpace(output),
+		"running": running,
+		"pids":    pids,
+		"error":   errStr,
+	})
+}
+
+// ProcSnapshot returns current CPU, RAM, and process top list.
+func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+
+	snap, err := h.procmon.Snapshot()
+	if err != nil {
+		response.InternalError(w, fmt.Sprintf("proc snapshot failed: %v", err))
+		return
+	}
+
+	response.Success(w, snap)
+}
+
+// ProcKill terminates a process by PID with signal.
+func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if !h.requireExpert(w, r) {
+		return
+	}
+
+	var req struct {
+		PID    int    `json:"pid"`
+		Signal string `json:"signal"` // "SIGTERM" or "SIGKILL"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, "invalid JSON payload")
+		return
+	}
+	if req.PID <= 1 {
+		response.BadRequest(w, "invalid process PID")
+		return
+	}
+	if req.Signal == "" {
+		req.Signal = "SIGTERM"
+	}
+
+	if err := h.procmon.KillProcess(req.PID, req.Signal); err != nil {
+		response.Error(w, err.Error(), "KILL_FAILED")
+		return
+	}
+
+	h.log.Info("proc_kill", strconv.Itoa(req.PID), fmt.Sprintf("Killed PID %d with %s", req.PID, req.Signal))
+	response.Success(w, map[string]interface{}{
+		"pid":    req.PID,
+		"signal": req.Signal,
+		"ok":     true,
+	})
 }

@@ -8,8 +8,12 @@ export type { TrafficPeriod } from './clientCore';
 export type {
 	SystemFileRoot,
 	SystemFileEntry,
+	FileSystemScriptStatus,
 	SystemServiceItem,
 	SystemOpkgPackage,
+	SystemPortBinding,
+	SystemProcSnapshot,
+	SystemProcessItem,
 } from './clientSystem';
 
 class ApiClient extends Awg3Client {}

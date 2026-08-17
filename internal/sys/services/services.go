@@ -178,3 +178,72 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 	out = cleanStatusText(out)
 	return out, err
 }
+
+// ReadScript returns the raw content of an init.d script.
+func (sc *Scanner) ReadScript(script string) (string, error) {
+	base := filepath.Base(script)
+	if !scriptNameRe.MatchString(base) {
+		return "", fmt.Errorf("invalid script name")
+	}
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	full := filepath.Join(dir, base)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// SaveScript writes or creates an init.d script with executable permissions (0755).
+func (sc *Scanner) SaveScript(scriptName string, content string) (string, error) {
+	base := filepath.Base(scriptName)
+	if !scriptNameRe.MatchString(base) {
+		return "", fmt.Errorf("invalid script name (must be S<number><name>, e.g. S90myservice)")
+	}
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	full := filepath.Join(dir, base)
+
+	// Ensure unix line endings
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+
+	if err := os.WriteFile(full, []byte(content), 0755); err != nil {
+		return "", err
+	}
+	// Explicit chmod in case umask cleared execution bits
+	_ = os.Chmod(full, 0755)
+
+	return full, nil
+}
+
+// DeleteScript stops and removes an init.d script.
+func (sc *Scanner) DeleteScript(script string) error {
+	base := filepath.Base(script)
+	if !scriptNameRe.MatchString(base) {
+		return fmt.Errorf("invalid script name")
+	}
+	if base == "S99awg-manager" {
+		return fmt.Errorf("cannot delete awg-manager service")
+	}
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	full := filepath.Join(dir, base)
+
+	// Try to stop service before deleting
+	_, _ = sc.RunAction(full, "stop")
+
+	return os.Remove(full)
+}

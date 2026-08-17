@@ -1,19 +1,21 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { api, type SystemFileEntry, type SystemFileRoot } from '$lib/api/client';
+	import { api, type SystemFileEntry, type SystemFileRoot, type FileSystemScriptStatus } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Button, Card, ConfirmModal } from '$lib/components/ui';
+	import { Button, Card } from '$lib/components/ui';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { errorMessage } from '$lib/utils/errorMessage';
 	import SystemTerminal from './SystemTerminal.svelte';
+	import FilePropsModal from './files/FilePropsModal.svelte';
+	import FileEditorModal from './files/FileEditorModal.svelte';
+	import FileActionModals from './files/FileActionModals.svelte';
+	import { getFileTypeInfo } from './files/fileIcons';
 	import {
 		ChevronDown,
 		ChevronRight,
 		Folder,
 		FileText,
 		RefreshCw,
-		Save,
-		Trash2,
 		FolderPlus,
 		Download,
 		Upload,
@@ -21,6 +23,16 @@
 		Terminal,
 		FilePlus,
 		ArrowUp,
+		Eye,
+		Edit2,
+		Trash2,
+		Play,
+		RotateCw,
+		Square,
+		Search,
+		Check,
+		ExternalLink,
+		Move,
 	} from 'lucide-svelte';
 
 	type TreeDir = {
@@ -37,47 +49,61 @@
 		entry: SystemFileEntry | null;
 	};
 
+	// State
 	let roots = $state<SystemFileRoot[]>([]);
-	let currentPath = $state('');
+	let currentPath = $state('/opt');
 	let entries = $state<SystemFileEntry[]>([]);
 	let treeRoots = $state<TreeDir[]>([]);
 	let loading = $state(false);
-	let editorPath = $state<string | null>(null);
-	let editorContent = $state('');
-	let editorDirty = $state(false);
-	let saving = $state(false);
 	let selected = $state<SystemFileEntry | null>(null);
 	let checked = $state<Set<string>>(new Set());
-	let newDirName = $state('');
-	let showMkdir = $state(false);
-	let deleteTarget = $state<SystemFileEntry | null>(null);
-	let deleting = $state(false);
-	let showTerminal = $state(true);
+	let searchQuery = $state('');
+
+	// Script statuses map (path -> status)
+	let scriptStatuses = $state<Record<string, FileSystemScriptStatus>>({});
+	let runningActionPath = $state<string | null>(null);
+
+	// Terminal
+	let showTerminal = $state(false);
 	let uploadInput: HTMLInputElement | undefined = $state();
-	let ctxMenu = $state<CtxMenu | null>(null);
-	let ctxMenuEl = $state<HTMLDivElement | undefined>(undefined);
-	let propsEntry = $state<SystemFileEntry | null>(null);
+
+	// Modals state
+	let propsModalEntry = $state<SystemFileEntry | null>(null);
+	let editorModalPath = $state<string | null>(null);
+	let editorModalContent = $state('');
+	let showMkdir = $state(false);
+	let showNewFile = $state(false);
 	let renameEntry = $state<SystemFileEntry | null>(null);
-	let renameName = $state('');
 	let copyTarget = $state('');
 	let moveTarget = $state('');
-	let chmodEntry = $state<SystemFileEntry | null>(null);
-	let chmodMode = $state('');
-	let checksumResult = $state('');
-	let newFileName = $state('');
-	let showNewFile = $state(false);
+	let deleteTarget = $state<SystemFileEntry | null>(null);
+
+	// Context Menu
+	let ctxMenu = $state<CtxMenu | null>(null);
+	let ctxMenuEl = $state<HTMLDivElement | undefined>(undefined);
 
 	const currentRoot = $derived(
 		roots.find((r) => currentPath === r.path || currentPath.startsWith(r.path + '/')) ?? roots[0],
 	);
 	const readOnly = $derived(currentRoot?.readOnly ?? false);
 
-	function parentPath(): string | null {
-		if (!currentPath || currentPath === '/') return null;
-		const p = currentPath.replace(/\/$/, '');
-		const i = p.lastIndexOf('/');
-		return i <= 0 ? '/' : p.slice(0, i);
-	}
+	const filteredEntries = $derived.by(() => {
+		const q = searchQuery.trim().toLowerCase();
+		if (!q) return entries;
+		return entries.filter((e) => e.name.toLowerCase().includes(q));
+	});
+
+	const breadcrumbParts = $derived.by(() => {
+		if (!currentPath || currentPath === '/') return [{ name: '/', path: '/' }];
+		const parts = currentPath.split('/').filter(Boolean);
+		const res: { name: string; path: string }[] = [{ name: '/', path: '/' }];
+		let acc = '';
+		for (const p of parts) {
+			acc += '/' + p;
+			res.push({ name: p, path: acc });
+		}
+		return res;
+	});
 
 	onMount(() => {
 		void loadRoots();
@@ -98,13 +124,23 @@
 
 	function onKeyDown(ev: KeyboardEvent) {
 		if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+		if (propsModalEntry || editorModalPath || showMkdir || showNewFile || renameEntry || copyTarget || moveTarget || deleteTarget) return;
+
+		if (ev.key === 'F3' && selected && !selected.isDir) {
+			ev.preventDefault();
+			propsModalEntry = selected;
+		}
+		if (ev.key === 'F4' && selected && !selected.isDir) {
+			ev.preventDefault();
+			void openEditor(selected);
+		}
 		if (ev.key === 'F5') {
 			ev.preventDefault();
 			void loadDir(currentPath);
 		}
-		if (ev.key === 'F2' && selected) {
+		if (ev.key === 'F2' && selected && selected.name !== '..') {
 			ev.preventDefault();
-			startRename(selected);
+			renameEntry = selected;
 		}
 		if (ev.key === 'F7') {
 			ev.preventDefault();
@@ -113,18 +149,6 @@
 		if (ev.key === 'F8' && selected && selected.name !== '..') {
 			ev.preventDefault();
 			deleteTarget = selected;
-		}
-		if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
-			ev.preventDefault();
-			selectAll();
-		}
-		if (ev.key === 'Enter' && selected) {
-			ev.preventDefault();
-			void openEntry(selected);
-		}
-		if (ev.key === 'Backspace' && parentPath()) {
-			ev.preventDefault();
-			void loadDir(parentPath()!);
 		}
 	}
 
@@ -138,12 +162,12 @@
 				loading: false,
 				children: [],
 			}));
-			if (!currentPath && roots.length > 0) {
+			if (roots.length > 0) {
 				currentPath = roots[0].path;
 				await loadDir(currentPath);
 			}
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить корни'));
+			notifications.error(errorMessage(e, 'Не удалось загрузить корневые папки'));
 		}
 	}
 
@@ -151,14 +175,33 @@
 		loading = true;
 		selected = null;
 		checked = new Set();
+		searchQuery = '';
+		scriptStatuses = {};
 		try {
 			const res = await api.systemFilesList(path);
 			currentPath = res.path;
 			entries = res.entries;
+			void fetchScriptStatuses(res.entries);
 		} catch (e) {
 			notifications.error(errorMessage(e, 'Не удалось прочитать каталог'));
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function fetchScriptStatuses(items: SystemFileEntry[]) {
+		const scriptItems = items.filter(
+			(e) => !e.isDir && (getFileTypeInfo(e.name, e.isDir).kind === 'script' || e.mode.includes('x')),
+		);
+		for (const item of scriptItems) {
+			try {
+				const st = await api.systemFilesScriptStatus(item.path);
+				if (st.isScript) {
+					scriptStatuses = { ...scriptStatuses, [item.path]: st };
+				}
+			} catch {
+				// ignore
+			}
 		}
 	}
 
@@ -193,18 +236,39 @@
 	}
 
 	async function openEntry(entry: SystemFileEntry) {
-		selected = entry;
 		if (entry.isDir) {
 			await loadDir(entry.path);
 			return;
 		}
+		await openEditor(entry);
+	}
+
+	async function openEditor(entry: SystemFileEntry) {
 		try {
 			const res = await api.systemFilesRead(entry.path);
-			editorPath = res.path;
-			editorContent = res.content;
-			editorDirty = false;
+			editorModalPath = res.path;
+			editorModalContent = res.content;
 		} catch (e) {
 			notifications.error(errorMessage(e, 'Не удалось открыть файл'));
+		}
+	}
+
+	async function executeScriptAction(entry: SystemFileEntry, action: 'start' | 'stop' | 'restart' | 'run') {
+		runningActionPath = entry.path;
+		try {
+			const res = await api.systemFilesScriptAction({ path: entry.path, action });
+			if (res.ok) {
+				const actionName = action === 'start' || action === 'run' ? 'запущен' : action === 'restart' ? 'перезапущен' : 'остановлен';
+				notifications.success(`Скрипт «${entry.name}» ${actionName}`);
+			} else {
+				notifications.error(res.error || 'Ошибка выполнения');
+			}
+			const st = await api.systemFilesScriptStatus(entry.path);
+			scriptStatuses = { ...scriptStatuses, [entry.path]: st };
+		} catch (e) {
+			notifications.error(errorMessage(e, 'Ошибка выполнения'));
+		} finally {
+			runningActionPath = null;
 		}
 	}
 
@@ -220,32 +284,17 @@
 		checked = new Set(entries.filter((e) => e.name !== '..').map((e) => e.path));
 	}
 
-	function invertSelection() {
-		const next = new Set<string>();
-		for (const e of entries) {
-			if (e.name === '..') continue;
-			if (!checked.has(e.path)) next.add(e.path);
-		}
-		checked = next;
-	}
-
-	function selectedEntries(): SystemFileEntry[] {
-		if (checked.size === 0 && selected) return [selected];
-		return entries.filter((e) => checked.has(e.path));
-	}
-
 	async function showContextMenu(ev: MouseEvent, entry: SystemFileEntry | null) {
 		ev.preventDefault();
 		ev.stopPropagation();
-		if (entry) selected = entry;
+		if (entry) {
+			selected = entry;
+		}
 		const ax = ev.clientX;
 		const ay = ev.clientY;
-		// Off-screen first so we can measure real height before placing.
 		ctxMenu = { x: -10000, y: -10000, entry };
 		await tick();
-		await new Promise<void>((resolve) => {
-			requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-		});
+		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 		if (!ctxMenuEl) {
 			ctxMenu = { x: ax, y: ay, entry };
 			return;
@@ -260,69 +309,7 @@
 		if (y + rect.height > vh - pad) y = ay - rect.height;
 		if (x < pad) x = pad;
 		if (y < pad) y = pad;
-		if (y + rect.height > vh - pad) y = vh - rect.height - pad;
 		ctxMenu = { x, y, entry };
-	}
-
-	async function saveFile() {
-		if (!editorPath) return;
-		saving = true;
-		try {
-			await api.systemFilesWrite(editorPath, editorContent);
-			editorDirty = false;
-			notifications.success('Файл сохранён');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось сохранить'));
-		} finally {
-			saving = false;
-		}
-	}
-
-	async function createDir() {
-		const name = newDirName.trim();
-		if (!name) return;
-		const path = `${currentPath.replace(/\/$/, '')}/${name}`;
-		try {
-			await api.systemFilesMkdir(path);
-			showMkdir = false;
-			newDirName = '';
-			await loadDir(currentPath);
-			notifications.success('Каталог создан');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось создать каталог'));
-		}
-	}
-
-	async function createFile() {
-		const name = newFileName.trim();
-		if (!name) return;
-		const path = `${currentPath.replace(/\/$/, '')}/${name}`;
-		try {
-			await api.systemFilesWrite(path, '');
-			showNewFile = false;
-			newFileName = '';
-			await loadDir(currentPath);
-			notifications.success('Файл создан');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось создать файл'));
-		}
-	}
-
-	async function confirmDelete() {
-		if (!deleteTarget) return;
-		deleting = true;
-		try {
-			await api.systemFilesRemove(deleteTarget.path);
-			if (editorPath === deleteTarget.path) editorPath = null;
-			if (selected?.path === deleteTarget.path) selected = null;
-			deleteTarget = null;
-			await loadDir(currentPath);
-			notifications.success('Удалено');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось удалить'));
-		} finally {
-			deleting = false;
-		}
 	}
 
 	async function copyPath(path?: string) {
@@ -330,29 +317,6 @@
 		if (!p) return;
 		const ok = await copyToClipboard(p);
 		if (ok) notifications.success('Путь скопирован');
-		else notifications.error('Не удалось скопировать');
-	}
-
-	async function terminalInFolder(path?: string) {
-		const p = path ?? (selected?.isDir ? selected.path : currentPath);
-		const cmd = `cd ${JSON.stringify(p)}`;
-		const ok = await copyToClipboard(cmd);
-		if (ok) notifications.success('Команда cd скопирована — вставьте в терминал');
-		else notifications.error('Не удалось скопировать');
-		showTerminal = true;
-	}
-
-	function downloadEntry(entry?: SystemFileEntry | null) {
-		const e = entry ?? selected;
-		if (!e || e.isDir) {
-			notifications.error('Выберите файл для скачивания');
-			return;
-		}
-		window.open(api.systemFilesDownloadUrl(e.path), '_blank');
-	}
-
-	function triggerUpload() {
-		uploadInput?.click();
 	}
 
 	async function onUpload(ev: Event) {
@@ -365,85 +329,7 @@
 			notifications.success(`Загружено: ${res.path}`);
 			await loadDir(currentPath);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить'));
-		}
-	}
-
-	function startRename(entry: SystemFileEntry) {
-		renameEntry = entry;
-		renameName = entry.name;
-		ctxMenu = null;
-	}
-
-	async function confirmRename() {
-		if (!renameEntry) return;
-		const name = renameName.trim();
-		if (!name || name === renameEntry.name) {
-			renameEntry = null;
-			return;
-		}
-		const base = renameEntry.path.replace(/\/[^/]+$/, '');
-		const to = `${base}/${name}`;
-		try {
-			await api.systemFilesRename(renameEntry.path, to);
-			renameEntry = null;
-			await loadDir(currentPath);
-			notifications.success('Переименовано');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось переименовать'));
-		}
-	}
-
-	async function confirmCopy() {
-		const from = copyTarget.trim();
-		if (!from) return;
-		const sel = selectedEntries()[0];
-		if (!sel) return;
-		try {
-			await api.systemFilesCopy(sel.path, from);
-			copyTarget = '';
-			await loadDir(currentPath);
-			notifications.success('Скопировано');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось скопировать'));
-		}
-	}
-
-	async function confirmMove() {
-		const to = moveTarget.trim();
-		if (!to) return;
-		const sel = selectedEntries()[0];
-		if (!sel) return;
-		try {
-			await api.systemFilesRename(sel.path, to);
-			moveTarget = '';
-			await loadDir(currentPath);
-			notifications.success('Перемещено');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось переместить'));
-		}
-	}
-
-	async function confirmChmod() {
-		if (!chmodEntry) return;
-		try {
-			await api.systemFilesChmod(chmodEntry.path, chmodMode.trim());
-			chmodEntry = null;
-			await loadDir(currentPath);
-			notifications.success('Права изменены');
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось изменить права'));
-		}
-	}
-
-	async function runChecksum(entry: SystemFileEntry, algo: 'md5' | 'sha256') {
-		try {
-			const res = await api.systemFilesChecksum(entry.path, algo);
-			checksumResult = `${algo.toUpperCase()}: ${res.checksum}\n${res.path}`;
-			propsEntry = entry;
-			ctxMenu = null;
-		} catch (e) {
-			notifications.error(errorMessage(e, 'Checksum'));
+			notifications.error(errorMessage(e, 'Не удалось загрузить файл'));
 		}
 	}
 
@@ -456,422 +342,802 @@
 	function formatTime(iso: string): string {
 		if (!iso) return '—';
 		const d = new Date(iso);
-		return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+		return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 
-	function ctxTarget(): SystemFileEntry | null {
-		return ctxMenu?.entry ?? selected;
-	}
-
-	function canMutate(entry?: SystemFileEntry | null): boolean {
-		const e = entry ?? ctxTarget();
-		return !readOnly && !!e && e.name !== '..';
+	function parentPath(p: string): string | null {
+		if (!p || p === '/') return null;
+		const clean = p.replace(/\/$/, '');
+		const i = clean.lastIndexOf('/');
+		return i <= 0 ? '/' : clean.slice(0, i);
 	}
 </script>
 
 <input bind:this={uploadInput} type="file" class="hidden-upload" onchange={onUpload} />
 
-<div class="file-manager">
-	<div class="toolbar">
-		<div class="toolbar-left">
-			<Button variant="ghost" onclick={() => loadDir(currentPath)} disabled={loading}>
-				{#snippet iconBefore()}<RefreshCw size={14} />{/snippet}
-				Обновить
-			</Button>
-			{#if parentPath()}
-				<Button variant="ghost" onclick={() => loadDir(parentPath()!)}>
-					{#snippet iconBefore()}<ArrowUp size={14} />{/snippet}
-					Вверх
+<div class="file-manager-root">
+	<!-- Top Controls Toolbar -->
+	<Card padding="sm">
+		<div class="fm-toolbar">
+			<!-- Action buttons -->
+			<div class="fm-toolbar-actions">
+				<Button size="sm" variant="ghost" onclick={() => loadDir(currentPath)} disabled={loading}>
+					{#snippet iconBefore()}<RefreshCw size={14} class={loading ? 'spin' : ''} />{/snippet}
+					Обновить
 				</Button>
-			{/if}
-			{#if !readOnly}
-				<Button variant="secondary" onclick={() => (showMkdir = true)}>
-					{#snippet iconBefore()}<FolderPlus size={14} />{/snippet}
-					Каталог
+
+				{#if !readOnly}
+					<Button size="sm" variant="secondary" onclick={() => (showMkdir = true)}>
+						{#snippet iconBefore()}<FolderPlus size={14} />{/snippet}
+						Папка
+					</Button>
+					<Button size="sm" variant="secondary" onclick={() => (showNewFile = true)}>
+						{#snippet iconBefore()}<FilePlus size={14} />{/snippet}
+						Файл
+					</Button>
+					<Button size="sm" variant="secondary" onclick={() => uploadInput?.click()}>
+						{#snippet iconBefore()}<Upload size={14} />{/snippet}
+						Загрузить
+					</Button>
+				{/if}
+
+				{#if selected && !selected.isDir}
+					<Button size="sm" variant="secondary" onclick={() => window.open(api.systemFilesDownloadUrl(selected?.path ?? ''), '_blank')}>
+						{#snippet iconBefore()}<Download size={14} />{/snippet}
+						Скачать
+					</Button>
+				{/if}
+
+				<Button size="sm" variant={showTerminal ? 'secondary' : 'ghost'} onclick={() => (showTerminal = !showTerminal)}>
+					{#snippet iconBefore()}<Terminal size={14} />{/snippet}
+					Терминал
 				</Button>
-				<Button variant="secondary" onclick={() => (showNewFile = true)}>
-					{#snippet iconBefore()}<FilePlus size={14} />{/snippet}
-					Файл
-				</Button>
-				<Button variant="secondary" onclick={triggerUpload}>
-					{#snippet iconBefore()}<Upload size={14} />{/snippet}
-					Загрузить
-				</Button>
-			{/if}
-			<Button variant="ghost" onclick={() => copyPath()}>
-				{#snippet iconBefore()}<Copy size={14} />{/snippet}
-				Копировать путь
-			</Button>
-			<Button variant="ghost" onclick={() => downloadEntry()} disabled={!selected || selected.isDir}>
-				{#snippet iconBefore()}<Download size={14} />{/snippet}
-				Скачать
-			</Button>
-			<Button variant="ghost" onclick={() => (showTerminal = !showTerminal)}>
-				{#snippet iconBefore()}<Terminal size={14} />{/snippet}
-				{showTerminal ? 'Скрыть терминал' : 'Терминал'}
-			</Button>
+			</div>
+
+			<!-- Search box -->
+			<div class="search-box">
+				<Search size={13} class="search-icon" />
+				<input
+					type="text"
+					placeholder="Поиск в папке…"
+					bind:value={searchQuery}
+				/>
+			</div>
 		</div>
-		<code class="path">{currentPath}</code>
-	</div>
 
-	<div class="body">
-		<aside class="tree-panel">
-			<div class="tree-title">Папки</div>
-			<ul class="tree">
-				{#each treeRoots as node (node.path)}
-					<li>
-						<button type="button" class="tree-row" onclick={() => expandTree(node)}>
-							{#if node.loading}
-								<RefreshCw size={14} class="spin" />
-							{:else if node.expanded}
-								<ChevronDown size={14} />
-							{:else}
-								<ChevronRight size={14} />
-							{/if}
-							<Folder size={14} />
-							<span>{node.name}</span>
-						</button>
-						{#if node.expanded && node.children.length > 0}
-							<ul class="tree nested">
-								{#each node.children as child (child.path)}
-									<li>
-										<button type="button" class="tree-row" onclick={() => expandTree(child)}>
-											{#if child.expanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
-											<Folder size={14} />
-											<span>{child.name}</span>
-										</button>
-									</li>
-								{/each}
-							</ul>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-		</aside>
-
-		<div class="main-panel">
-			<Card padding="sm">
-				{#if loading}
-					<p class="muted">Загрузка…</p>
-				{:else}
-					<div
-						class="file-grid-wrap"
-						oncontextmenu={(e) => showContextMenu(e, null)}
-						role="listbox"
-						tabindex="0"
+		<!-- Breadcrumbs Navigation -->
+		<div class="nav-bar">
+			<div class="breadcrumbs">
+				{#if parentPath(currentPath)}
+					<button type="button" class="btn-up" onclick={() => loadDir(parentPath(currentPath)!)} title="Наверх">
+						<ArrowUp size={13} />
+					</button>
+				{/if}
+				{#each breadcrumbParts as part, i}
+					{#if i > 0}<span class="bc-sep">/</span>{/if}
+					<button
+						type="button"
+						class="bc-item"
+						class:active={i === breadcrumbParts.length - 1}
+						onclick={() => loadDir(part.path)}
 					>
-						<div class="file-grid head">
-							<span class="col-check"></span>
-							<span class="col-name">Имя</span>
-							<span class="col-size">Размер</span>
-							<span class="col-time">Изменён</span>
-							<span class="col-mode">Права</span>
-						</div>
-						{#each entries as entry (entry.path)}
-							<div
-								class="file-grid row"
-								class:selected={selected?.path === entry.path}
-								class:checked={checked.has(entry.path)}
-								oncontextmenu={(e) => showContextMenu(e, entry)}
-								onclick={() => (selected = entry)}
-								ondblclick={() => openEntry(entry)}
-								role="option"
-								aria-selected={selected?.path === entry.path}
-								tabindex="-1"
-							>
-								<span class="col-check">
-									{#if entry.name !== '..'}
-										<input
-											type="checkbox"
-											checked={checked.has(entry.path)}
-											onclick={(e) => toggleCheck(entry.path, e)}
-										/>
-									{/if}
-								</span>
-								<span class="col-name">
-									<span class="entry-link">
-										{#if entry.isDir}<Folder size={14} />{:else}<FileText size={14} />{/if}
-										{entry.name}
-									</span>
-								</span>
-								<span class="col-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
-								<span class="col-time">{formatTime(entry.modTime)}</span>
-								<span class="col-mode">{entry.mode || '—'}</span>
-							</div>
-						{/each}
+						{part.name}
+					</button>
+				{/each}
+			</div>
+		</div>
+	</Card>
+
+	<!-- Main Explorer View -->
+	<Card padding="sm">
+		<div class="modern-layout">
+			<!-- Left folders tree -->
+			<aside class="side-tree">
+				<div class="tree-head">Структура /opt</div>
+				<ul class="tree-root">
+					{#each treeRoots as node (node.path)}
+						<li>
+							<button type="button" class="tree-item" class:active={currentPath === node.path} onclick={() => expandTree(node)}>
+								{#if node.loading}
+									<RefreshCw size={13} class="spin" />
+								{:else if node.expanded}
+									<ChevronDown size={13} />
+								{:else}
+									<ChevronRight size={13} />
+								{/if}
+								<Folder size={13} class="tree-folder-icon" />
+								<span>{node.name}</span>
+							</button>
+							{#if node.expanded && node.children.length > 0}
+								<ul class="tree-nested">
+									{#each node.children as child (child.path)}
+										<li>
+											<button
+												type="button"
+												class="tree-item"
+												class:active={currentPath === child.path}
+												onclick={() => loadDir(child.path)}
+											>
+												<Folder size={13} class="tree-folder-icon" />
+												<span>{child.name}</span>
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			</aside>
+
+			<!-- Main file table -->
+			<div class="files-table-container">
+				{#if loading}
+					<div class="loading-state">Загрузка каталога…</div>
+				{:else if filteredEntries.length === 0}
+					<div class="empty-state">Каталог пуст или файлы не найдены</div>
+				{:else}
+					<div class="table-wrap">
+						<table class="fm-table" oncontextmenu={(e) => showContextMenu(e, null)}>
+							<thead>
+								<tr>
+									<th style="width: 32px;"><span class="sr-only">Выбор</span></th>
+									<th>Имя</th>
+									<th style="width: 100px;">Размер</th>
+									<th style="width: 150px;">Изменён</th>
+									<th style="width: 90px;">Права</th>
+									<th style="width: 145px; text-align: right;">Действия</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each filteredEntries as entry (entry.path)}
+									{@const info = getFileTypeInfo(entry.name, entry.isDir)}
+									{@const scriptSt = scriptStatuses[entry.path]}
+									{@const isScript = !entry.isDir && (info.kind === 'script' || entry.mode.includes('x') || scriptSt?.isScript)}
+									{@const isRunning = scriptSt?.running ?? false}
+									{@const isBusy = runningActionPath === entry.path}
+
+									<tr
+										class:selected={selected?.path === entry.path}
+										class:checked={checked.has(entry.path)}
+										onclick={() => (selected = entry)}
+										ondblclick={() => openEntry(entry)}
+										oncontextmenu={(e) => showContextMenu(e, entry)}
+									>
+										<td class="col-check">
+											{#if entry.name !== '..'}
+												<input
+													type="checkbox"
+													checked={checked.has(entry.path)}
+													onclick={(e) => toggleCheck(entry.path, e)}
+												/>
+											{/if}
+										</td>
+										<td class="col-name">
+											<div class="name-wrap">
+												{#if entry.isDir}
+													<Folder size={16} class="icon-folder" />
+												{:else}
+													<FileText size={16} style="color: {info.color};" />
+												{/if}
+												<span class="entry-name" class:is-dir={entry.isDir}>{entry.name}</span>
+												{#if info.badge}
+													<span class="file-badge" class:badge-script={info.kind === 'script'}>{info.badge}</span>
+												{/if}
+												{#if isScript && isRunning}
+													<span class="running-pill" title={scriptSt?.pids?.length ? `PID: ${scriptSt.pids.join(', ')}` : 'Запущен'}>
+														<span class="dot"></span>
+														<span>Запущен</span>
+													</span>
+												{/if}
+											</div>
+										</td>
+										<td class="col-size">
+											{entry.isDir ? '—' : formatSize(entry.size)}
+										</td>
+										<td class="col-time">
+											{formatTime(entry.modTime)}
+										</td>
+										<td class="col-mode">
+											<code>{entry.mode || '—'}</code>
+										</td>
+										<td class="col-actions">
+											{#if entry.name !== '..'}
+												<div class="row-quick-btns">
+													{#if isScript}
+														{#if isRunning}
+															<button
+																type="button"
+																class="icon-act-btn restart-act-btn"
+																title="Перезапустить скрипт / службу"
+																disabled={isBusy}
+																onclick={(e) => { e.stopPropagation(); void executeScriptAction(entry, 'restart'); }}
+															>
+																<RotateCw size={12} class={isBusy ? 'spin' : ''} />
+															</button>
+															<button
+																type="button"
+																class="icon-act-btn stop-act-btn"
+																title="Остановить"
+																disabled={isBusy}
+																onclick={(e) => { e.stopPropagation(); void executeScriptAction(entry, 'stop'); }}
+															>
+																<Square size={12} />
+															</button>
+														{:else}
+															<button
+																type="button"
+																class="icon-act-btn script-act-btn"
+																title="Запустить скрипт / службу"
+																disabled={isBusy}
+																onclick={(e) => { e.stopPropagation(); void executeScriptAction(entry, scriptSt?.isService ? 'start' : 'run'); }}
+															>
+																<Play size={12} class={isBusy ? 'spin' : ''} />
+															</button>
+														{/if}
+													{/if}
+
+													<button
+														type="button"
+														class="icon-act-btn"
+														title="Свойства"
+														onclick={(e) => { e.stopPropagation(); propsModalEntry = entry; }}
+													>
+														<Eye size={13} />
+													</button>
+													{#if !entry.isDir}
+														<button
+															type="button"
+															class="icon-act-btn"
+															title="Редактировать"
+															onclick={(e) => { e.stopPropagation(); void openEditor(entry); }}
+														>
+															<Edit2 size={13} />
+														</button>
+													{/if}
+													{#if !readOnly}
+														<button
+															type="button"
+															class="icon-act-btn danger"
+															title="Удалить"
+															onclick={(e) => { e.stopPropagation(); deleteTarget = entry; }}
+														>
+															<Trash2 size={13} />
+														</button>
+													{/if}
+												</div>
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
 					</div>
 				{/if}
-			</Card>
-
-			{#if editorPath}
-				<Card padding="sm">
-					<div class="editor-head">
-						<strong>{editorPath}</strong>
-						<div class="editor-actions">
-							{#if !readOnly}
-								<Button variant="primary" loading={saving} disabled={!editorDirty} onclick={saveFile}>
-									{#snippet iconBefore()}<Save size={14} />{/snippet}
-									Сохранить
-								</Button>
-							{/if}
-							<Button variant="ghost" onclick={() => (editorPath = null)}>Закрыть</Button>
-						</div>
-					</div>
-					<textarea class="editor" bind:value={editorContent} readonly={readOnly} oninput={() => (editorDirty = true)}></textarea>
-				</Card>
-			{/if}
+			</div>
 		</div>
-	</div>
+	</Card>
 
+	<!-- Collapsible Terminal Console -->
 	{#if showTerminal}
 		<Card padding="sm">
-			<div class="term-head"><Terminal size={16} /> <span>Терминал</span></div>
+			<div class="terminal-drawer-head">
+				<div class="drawer-title">
+					<Terminal size={15} />
+					<span>Встроенная консоль (текущий каталог: <code>{currentPath}</code>)</span>
+				</div>
+				<Button size="sm" variant="ghost" onclick={() => (showTerminal = false)}>Скрыть</Button>
+			</div>
 			<SystemTerminal compact />
 		</Card>
 	{/if}
-
-	{#if ctxMenu}
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div
-			bind:this={ctxMenuEl}
-			class="file-ctx-menu"
-			style="left:{ctxMenu.x}px;top:{ctxMenu.y}px"
-			role="menu"
-			oncontextmenu={(e) => e.preventDefault()}
-		>
-			<button type="button" role="menuitem" onclick={() => { const e = ctxTarget(); if (e) void openEntry(e); ctxMenu = null; }}>Открыть <kbd>Enter</kbd></button>
-			<button type="button" role="menuitem" onclick={() => { void terminalInFolder(ctxTarget()?.isDir ? ctxTarget()?.path : currentPath); ctxMenu = null; }}>Терминал в папке</button>
-			{#if ctxTarget() && !ctxTarget()?.isDir}
-				<button type="button" role="menuitem" onclick={() => { downloadEntry(ctxTarget()); ctxMenu = null; }}>Скачать</button>
-			{/if}
-			<hr />
-			<button type="button" role="menuitem" onclick={() => { void copyPath(ctxTarget()?.path); ctxMenu = null; }}>Копировать полный путь <kbd>Ctrl+Shift+C</kbd></button>
-			{#if canMutate()}
-				<button type="button" role="menuitem" onclick={() => { copyTarget = `${currentPath.replace(/\/$/, '')}/копия-${ctxTarget()?.name}`; ctxMenu = null; }}>Копировать… <kbd>F5</kbd></button>
-				<button type="button" role="menuitem" onclick={() => { moveTarget = `${currentPath.replace(/\/$/, '')}/${ctxTarget()?.name}`; ctxMenu = null; }}>Переместить… <kbd>F6</kbd></button>
-				<button type="button" role="menuitem" onclick={() => { if (ctxTarget()) startRename(ctxTarget()!); }}>Переименовать… <kbd>F2</kbd></button>
-			{/if}
-			<button type="button" role="menuitem" onclick={() => { propsEntry = ctxTarget(); ctxMenu = null; }}>Свойства…</button>
-			{#if ctxTarget() && !ctxTarget()?.isDir}
-				<button type="button" role="menuitem" onclick={() => { if (ctxTarget()) void runChecksum(ctxTarget()!, 'md5'); }}>Checksum MD5…</button>
-				<button type="button" role="menuitem" onclick={() => { if (ctxTarget()) void runChecksum(ctxTarget()!, 'sha256'); }}>Checksum SHA256…</button>
-			{/if}
-			{#if canMutate()}
-				<button type="button" role="menuitem" onclick={() => { chmodEntry = ctxTarget(); chmodMode = '644'; ctxMenu = null; }}>Права (chmod)…</button>
-				<button type="button" role="menuitem" class="danger" onclick={() => { deleteTarget = ctxTarget(); ctxMenu = null; }}>В корзину <kbd>F8</kbd></button>
-			{/if}
-			<hr />
-			{#if !readOnly}
-				<button type="button" role="menuitem" onclick={() => { showMkdir = true; ctxMenu = null; }}>Создать папку <kbd>F7</kbd></button>
-				<button type="button" role="menuitem" onclick={() => { showNewFile = true; ctxMenu = null; }}>Создать файл <kbd>Shift+F7</kbd></button>
-				<button type="button" role="menuitem" onclick={() => { triggerUpload(); ctxMenu = null; }}>Загрузить…</button>
-			{/if}
-			<button type="button" role="menuitem" onclick={() => { if (parentPath()) void loadDir(parentPath()!); ctxMenu = null; }}>Вверх <kbd>Backspace</kbd></button>
-			<button type="button" role="menuitem" onclick={() => { void loadDir(currentPath); ctxMenu = null; }}>Обновить</button>
-			<hr />
-			<button type="button" role="menuitem" onclick={() => { selectAll(); ctxMenu = null; }}>Выделить всё <kbd>Ctrl+A</kbd></button>
-			<button type="button" role="menuitem" onclick={() => { invertSelection(); ctxMenu = null; }}>Инвертировать выделение <kbd>Ctrl+I</kbd></button>
-		</div>
-	{/if}
 </div>
 
-{#if showMkdir}
-	<Card padding="sm">
-		<p class="modal-title">Новый каталог в {currentPath}</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={newDirName} placeholder="имя каталога" />
-			<Button variant="primary" onclick={createDir}>Создать</Button>
-			<Button variant="ghost" onclick={() => (showMkdir = false)}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
+<!-- ========================================================================= -->
+<!-- MODAL WINDOWS                                                             -->
+<!-- ========================================================================= -->
 
-{#if showNewFile}
-	<Card padding="sm">
-		<p class="modal-title">Новый файл в {currentPath}</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={newFileName} placeholder="имя файла" />
-			<Button variant="primary" onclick={createFile}>Создать</Button>
-			<Button variant="ghost" onclick={() => (showNewFile = false)}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
+<!-- 1. Properties & Chmod Modal -->
+<FilePropsModal
+	open={propsModalEntry !== null}
+	entry={propsModalEntry}
+	{readOnly}
+	onClose={() => (propsModalEntry = null)}
+	onEdit={(e) => void openEditor(e)}
+	onUpdated={() => void loadDir(currentPath)}
+/>
 
-{#if renameEntry}
-	<Card padding="sm">
-		<p class="modal-title">Переименовать {renameEntry.path}</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={renameName} />
-			<Button variant="primary" onclick={confirmRename}>OK</Button>
-			<Button variant="ghost" onclick={() => (renameEntry = null)}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
+<!-- 2. Fullscreen / Big Editor Modal -->
+<FileEditorModal
+	open={editorModalPath !== null}
+	path={editorModalPath}
+	bind:content={editorModalContent}
+	{readOnly}
+	onClose={() => (editorModalPath = null)}
+	onSaved={() => void loadDir(currentPath)}
+/>
 
-{#if copyTarget}
-	<Card padding="sm">
-		<p class="modal-title">Копировать в</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={copyTarget} />
-			<Button variant="primary" onclick={confirmCopy}>Копировать</Button>
-			<Button variant="ghost" onclick={() => (copyTarget = '')}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
+<!-- 3. Action Modals (Mkdir, New File, Rename, Copy, Move, Delete) -->
+<FileActionModals
+	currentPath={currentPath}
+	bind:showMkdir
+	onCloseMkdir={() => (showMkdir = false)}
+	bind:showNewFile
+	onCloseNewFile={() => (showNewFile = false)}
+	bind:renameEntry
+	onCloseRename={() => (renameEntry = null)}
+	bind:copyTarget
+	onCloseCopy={() => (copyTarget = '')}
+	bind:moveTarget
+	onCloseMove={() => (moveTarget = '')}
+	bind:deleteTarget
+	onCloseDelete={() => (deleteTarget = null)}
+	onSuccess={() => void loadDir(currentPath)}
+/>
 
-{#if moveTarget}
-	<Card padding="sm">
-		<p class="modal-title">Переместить в</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={moveTarget} />
-			<Button variant="primary" onclick={confirmMove}>Переместить</Button>
-			<Button variant="ghost" onclick={() => (moveTarget = '')}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
-
-{#if chmodEntry}
-	<Card padding="sm">
-		<p class="modal-title">chmod {chmodEntry.path}</p>
-		<div class="modal-row">
-			<input class="modal-input" bind:value={chmodMode} placeholder="644" />
-			<Button variant="primary" onclick={confirmChmod}>Применить</Button>
-			<Button variant="ghost" onclick={() => (chmodEntry = null)}>Отмена</Button>
-		</div>
-	</Card>
-{/if}
-
-{#if propsEntry}
-	<Card padding="sm">
-		<p class="modal-title">Свойства</p>
-		<dl class="props">
-			<dt>Путь</dt><dd>{propsEntry.path}</dd>
-			<dt>Тип</dt><dd>{propsEntry.isDir ? 'каталог' : 'файл'}</dd>
-			<dt>Размер</dt><dd>{propsEntry.isDir ? '—' : formatSize(propsEntry.size)}</dd>
-			<dt>Права</dt><dd>{propsEntry.mode}</dd>
-			<dt>Изменён</dt><dd>{formatTime(propsEntry.modTime)}</dd>
-			{#if checksumResult}
-				<dt>Checksum</dt><dd class="mono">{checksumResult}</dd>
+<!-- Context Menu -->
+{#if ctxMenu}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div
+		bind:this={ctxMenuEl}
+		class="file-ctx-menu"
+		style="left:{ctxMenu.x}px;top:{ctxMenu.y}px"
+		role="menu"
+		oncontextmenu={(e) => e.preventDefault()}
+	>
+		{#if ctxMenu.entry}
+			<button type="button" role="menuitem" onclick={() => { const e = ctxMenu?.entry; if (e) void openEntry(e); ctxMenu = null; }}>
+				<ExternalLink size={13} /> Открыть <kbd>Enter</kbd>
+			</button>
+			<button type="button" role="menuitem" onclick={() => { propsModalEntry = ctxMenu?.entry ?? null; ctxMenu = null; }}>
+				<Eye size={13} /> Свойства… <kbd>F3</kbd>
+			</button>
+			{#if !ctxMenu.entry.isDir}
+				<button type="button" role="menuitem" onclick={() => { const e = ctxMenu?.entry; if (e) void openEditor(e); ctxMenu = null; }}>
+					<Edit2 size={13} /> Редактировать <kbd>F4</kbd>
+				</button>
+				<button type="button" role="menuitem" onclick={() => { if (ctxMenu?.entry) window.open(api.systemFilesDownloadUrl(ctxMenu.entry.path), '_blank'); ctxMenu = null; }}>
+					<Download size={13} /> Скачать
+				</button>
+				{@const info = getFileTypeInfo(ctxMenu.entry.name, ctxMenu.entry.isDir)}
+				{@const isRunning = scriptStatuses[ctxMenu.entry.path]?.running}
+				{#if info.kind === 'script' || ctxMenu.entry.mode.includes('x')}
+					{#if isRunning}
+						<button type="button" role="menuitem" onclick={() => { if (ctxMenu?.entry) void executeScriptAction(ctxMenu.entry, 'restart'); ctxMenu = null; }}>
+							<RotateCw size={13} /> Перезапустить скрипт
+						</button>
+						<button type="button" role="menuitem" class="danger" onclick={() => { if (ctxMenu?.entry) void executeScriptAction(ctxMenu.entry, 'stop'); ctxMenu = null; }}>
+							<Square size={13} /> Остановить скрипт
+						</button>
+					{:else}
+						<button type="button" role="menuitem" onclick={() => { if (ctxMenu?.entry) void executeScriptAction(ctxMenu.entry, 'start'); ctxMenu = null; }}>
+							<Play size={13} /> Запустить скрипт
+						</button>
+					{/if}
+				{/if}
 			{/if}
-		</dl>
-		<Button variant="ghost" onclick={() => { propsEntry = null; checksumResult = ''; }}>Закрыть</Button>
-	</Card>
-{/if}
-
-{#if deleteTarget}
-	<ConfirmModal
-		open={!!deleteTarget}
-		title="Удалить?"
-		message={deleteTarget.path}
-		confirmLabel="Удалить"
-		variant="danger"
-		busy={deleting}
-		onClose={() => (deleteTarget = null)}
-		onConfirm={confirmDelete}
-	/>
+			<hr />
+			<button type="button" role="menuitem" onclick={() => { void copyPath(ctxMenu?.entry?.path); ctxMenu = null; }}>
+				<Copy size={13} /> Копировать путь
+			</button>
+			{#if !readOnly && ctxMenu.entry.name !== '..'}
+				<button type="button" role="menuitem" onclick={() => { renameEntry = ctxMenu?.entry ?? null; ctxMenu = null; }}>
+					<Edit2 size={13} /> Переименовать… <kbd>F2</kbd>
+				</button>
+				<button type="button" role="menuitem" onclick={() => { copyTarget = ctxMenu?.entry?.path ?? ''; ctxMenu = null; }}>
+					<Copy size={13} /> Копировать в…
+				</button>
+				<button type="button" role="menuitem" onclick={() => { moveTarget = ctxMenu?.entry?.path ?? ''; ctxMenu = null; }}>
+					<Move size={13} /> Переместить в…
+				</button>
+				<button type="button" role="menuitem" class="danger" onclick={() => { deleteTarget = ctxMenu?.entry ?? null; ctxMenu = null; }}>
+					<Trash2 size={13} /> Удалить <kbd>F8</kbd>
+				</button>
+			{/if}
+		{:else}
+			{#if !readOnly}
+				<button type="button" role="menuitem" onclick={() => { showMkdir = true; ctxMenu = null; }}>
+					<FolderPlus size={13} /> Создать папку <kbd>F7</kbd>
+				</button>
+				<button type="button" role="menuitem" onclick={() => { showNewFile = true; ctxMenu = null; }}>
+					<FilePlus size={13} /> Создать файл
+				</button>
+				<button type="button" role="menuitem" onclick={() => { uploadInput?.click(); ctxMenu = null; }}>
+					<Upload size={13} /> Загрузить файл…
+				</button>
+			{/if}
+			<button type="button" role="menuitem" onclick={() => { selectAll(); ctxMenu = null; }}>
+				<Check size={13} /> Выделить всё <kbd>Ctrl+A</kbd>
+			</button>
+			<button type="button" role="menuitem" onclick={() => { void loadDir(currentPath); ctxMenu = null; }}>
+				<RefreshCw size={13} /> Обновить <kbd>F5</kbd>
+			</button>
+		{/if}
+	</div>
 {/if}
 
 <style>
-	.hidden-upload { display: none; }
-	.file-manager { display: flex; flex-direction: column; gap: 0.75rem; }
-	.toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: space-between; align-items: center; }
-	.toolbar-left { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-	.path { font-size: 0.8rem; word-break: break-all; max-width: 100%; }
-	.body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0.75rem; min-height: 320px; }
-	@media (max-width: 900px) { .body { grid-template-columns: 1fr; } .tree-panel { max-height: 180px; overflow: auto; } }
-	.tree-panel { border: 1px solid var(--border-subtle, #333); border-radius: 8px; padding: 0.5rem; background: var(--bg-secondary, rgba(255,255,255,0.02)); }
-	.tree-title { font-size: 0.75rem; font-weight: 600; opacity: 0.7; margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.04em; }
-	.tree, .tree.nested { list-style: none; margin: 0; padding: 0; }
-	.tree.nested { padding-left: 1rem; }
-	.tree-row { display: flex; align-items: center; gap: 0.25rem; width: 100%; text-align: left; background: none; border: none; color: inherit; padding: 0.2rem 0.25rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-	.tree-row:hover { background: var(--bg-hover, rgba(255,255,255,0.05)); }
-	.main-panel { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
-	.file-grid-wrap { overflow: auto; max-height: 420px; font-size: 0.88rem; }
-	.file-grid {
-		display: grid;
-		grid-template-columns: 2rem minmax(0, 1fr) 5.5rem 9rem 4.5rem;
-		gap: 0 0.5rem;
-		align-items: center;
-		padding: 0.2rem 0.25rem;
-		border-bottom: 1px solid var(--border-subtle, #333);
-	}
-	.file-grid.head { font-weight: 600; opacity: 0.85; position: sticky; top: 0; background: var(--bg-primary, #1a1a1a); z-index: 1; }
-	.file-grid.row { cursor: pointer; }
-	.file-grid.row:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
-	.file-grid.row.selected { background: var(--accent-muted, rgba(99,102,241,0.12)); }
-	.col-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.col-size, .col-time, .col-mode { font-size: 0.78rem; opacity: 0.9; white-space: nowrap; }
-	.entry-link { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-	.editor-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; }
-	.editor-actions { display: flex; gap: 0.35rem; }
-	.editor { width: 100%; min-height: 220px; font-family: ui-monospace, monospace; font-size: 0.85rem; resize: vertical; }
-	.modal-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-	.modal-input { flex: 1; min-width: 160px; padding: 0.4rem 0.5rem; }
-	.modal-title { margin: 0 0 0.5rem; }
-	.term-head { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.5rem; font-weight: 600; }
-	.muted { opacity: 0.7; }
-	.props { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; margin: 0 0 0.75rem; font-size: 0.85rem; }
-	.props dd { margin: 0; word-break: break-all; }
-	.mono { font-family: ui-monospace, monospace; white-space: pre-wrap; }
-	:global(.spin) { animation: spin 1s linear infinite; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-
-	.file-ctx-menu {
-		position: fixed;
-		z-index: var(--z-floating);
-		min-width: 240px;
-		max-width: 320px;
-		max-height: min(420px, calc(100dvh - 16px));
-		overflow-x: hidden;
-		overflow-y: auto;
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		box-shadow: var(--shadow);
-		padding: 0.25rem 0;
+	.file-manager-root {
 		display: flex;
 		flex-direction: column;
+		gap: 0.75rem;
 	}
 
-	.file-ctx-menu button {
-		background: transparent;
-		border: none;
-		text-align: left;
-		padding: 0.45rem 0.85rem;
-		font: inherit;
-		font-size: 0.85rem;
-		color: var(--color-text-primary);
-		cursor: pointer;
-		width: 100%;
+	.hidden-upload {
+		display: none;
+	}
+
+	.fm-toolbar {
 		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
 		justify-content: space-between;
 		align-items: center;
 	}
+	.fm-toolbar-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		align-items: center;
+	}
 
-	.file-ctx-menu button:hover,
-	.file-ctx-menu button:focus-visible {
-		background: var(--color-bg-hover);
+	.nav-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+	.breadcrumbs {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		flex-wrap: wrap;
+		font-size: 0.82rem;
+	}
+	.btn-up {
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-primary);
+		padding: 0.2rem 0.4rem;
+		border-radius: 4px;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+	}
+	.btn-up:hover {
+		background: var(--color-bg-tertiary);
+	}
+	.bc-item {
+		background: none;
+		border: none;
+		padding: 0.15rem 0.35rem;
+		border-radius: 4px;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.8rem;
+		color: var(--color-text-secondary);
+		cursor: pointer;
+	}
+	.bc-item:hover {
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+	}
+	.bc-item.active {
+		font-weight: 700;
+		color: var(--color-text-primary);
+	}
+	.bc-sep {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+	}
+
+	.search-box {
+		position: relative;
+		display: flex;
+		align-items: center;
+	}
+	:global(.search-icon) {
+		position: absolute;
+		left: 0.55rem;
+		color: var(--color-text-muted);
+	}
+	.search-box input {
+		padding: 0.3rem 0.55rem 0.3rem 1.65rem;
+		border-radius: var(--radius-sm, 6px);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text-primary);
+		font-size: 0.8rem;
+		width: 190px;
+	}
+	.search-box input:focus {
+		border-color: var(--color-accent);
 		outline: none;
 	}
 
+	/* Layout: Modern */
+	.modern-layout {
+		display: grid;
+		grid-template-columns: 200px 1fr;
+		gap: 0.75rem;
+		min-height: 480px;
+	}
+	.side-tree {
+		border-right: 1px solid var(--color-border);
+		padding-right: 0.5rem;
+		overflow-y: auto;
+		max-height: 520px;
+	}
+	.tree-head {
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		margin-bottom: 0.4rem;
+	}
+	.tree-root, .tree-nested {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.tree-nested {
+		padding-left: 0.75rem;
+	}
+	.tree-item {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		width: 100%;
+		padding: 0.25rem 0.35rem;
+		border-radius: 4px;
+		background: none;
+		border: none;
+		color: var(--color-text-secondary);
+		font-size: 0.8rem;
+		text-align: left;
+		cursor: pointer;
+	}
+	.tree-item:hover {
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+	}
+	.tree-item.active {
+		background: var(--color-accent-tint, rgba(122, 162, 247, 0.18));
+		color: var(--color-accent);
+		font-weight: 600;
+	}
+	:global(.tree-folder-icon) {
+		color: #60a5fa;
+		flex-shrink: 0;
+	}
+
+	.files-table-container {
+		min-width: 0;
+	}
+	.table-wrap {
+		max-height: 520px;
+		overflow-y: auto;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm, 6px);
+		background: var(--color-bg-secondary);
+	}
+	.fm-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.84rem;
+	}
+	.fm-table th, .fm-table td {
+		padding: 0.45rem 0.6rem;
+		border-bottom: 1px solid var(--color-border);
+		text-align: left;
+		vertical-align: middle;
+	}
+	.fm-table th {
+		position: sticky;
+		top: 0;
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		z-index: 1;
+	}
+	.fm-table tr {
+		cursor: pointer;
+	}
+	.fm-table tr:hover {
+		background: var(--color-bg-hover, rgba(255,255,255,0.03));
+	}
+	.fm-table tr.selected {
+		background: var(--color-accent-tint, rgba(122, 162, 247, 0.15));
+	}
+
+	.name-wrap {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		white-space: nowrap;
+	}
+	:global(.icon-folder) {
+		color: #60a5fa;
+		flex-shrink: 0;
+	}
+	.entry-name {
+		font-weight: 500;
+		color: var(--color-text-primary);
+		white-space: nowrap;
+	}
+	.entry-name.is-dir {
+		font-weight: 600;
+	}
+	.file-badge {
+		font-size: 0.65rem;
+		font-weight: 700;
+		padding: 0.05rem 0.25rem;
+		border-radius: 3px;
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+	.file-badge.badge-script {
+		background: rgba(16, 185, 129, 0.1);
+		color: #047857;
+		border: 1px solid rgba(16, 185, 129, 0.25);
+	}
+	:global(.dark) .file-badge.badge-script {
+		background: rgba(16, 185, 129, 0.15);
+		color: #34d399;
+		border-color: rgba(16, 185, 129, 0.35);
+	}
+	.running-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: #047857;
+		background: rgba(16, 185, 129, 0.1);
+		border: 1px solid rgba(16, 185, 129, 0.3);
+		padding: 0.1rem 0.45rem;
+		border-radius: 999px;
+		white-space: nowrap;
+	}
+	:global(.dark) .running-pill {
+		color: #34d399;
+		background: rgba(16, 185, 129, 0.15);
+		border-color: rgba(16, 185, 129, 0.35);
+	}
+	.running-pill .dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #10b981;
+		flex-shrink: 0;
+	}
+
+	.row-quick-btns {
+		display: flex;
+		gap: 0.25rem;
+		justify-content: flex-end;
+	}
+	.icon-act-btn {
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
+		border-radius: 4px;
+		padding: 0.25rem;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+	}
+	.icon-act-btn:hover {
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+	}
+	.icon-act-btn.script-act-btn {
+		color: var(--color-success, #22c55e);
+	}
+	.icon-act-btn.script-act-btn:hover {
+		background: rgba(34, 197, 94, 0.15);
+		border-color: var(--color-success);
+	}
+	.icon-act-btn.restart-act-btn {
+		color: var(--color-accent, #60a5fa);
+	}
+	.icon-act-btn.restart-act-btn:hover {
+		background: var(--color-accent-tint, rgba(96, 165, 250, 0.15));
+		border-color: var(--color-accent);
+	}
+	.icon-act-btn.stop-act-btn {
+		color: var(--color-error, #f87171);
+	}
+	.icon-act-btn.stop-act-btn:hover {
+		background: var(--color-error-tint, rgba(239, 68, 68, 0.15));
+		border-color: var(--color-error);
+	}
+	.icon-act-btn.danger:hover {
+		color: var(--color-error, #f87171);
+		border-color: var(--color-error);
+	}
+
+	/* Terminal drawer */
+	.terminal-drawer-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.4rem;
+	}
+	.drawer-title {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text-primary);
+	}
+
+	/* Context Menu */
+	.file-ctx-menu {
+		position: fixed;
+		z-index: 1100;
+		background: var(--color-bg-secondary, #1f2335);
+		border: 1px solid var(--color-border, #3b4261);
+		border-radius: 6px;
+		padding: 0.3rem 0;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+		min-width: 200px;
+		display: flex;
+		flex-direction: column;
+	}
+	.file-ctx-menu button {
+		background: none;
+		border: none;
+		padding: 0.35rem 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--color-text-primary);
+		font-size: 0.82rem;
+		cursor: pointer;
+		text-align: left;
+		width: 100%;
+	}
+	.file-ctx-menu button:hover {
+		background: var(--color-bg-hover, #292e42);
+		color: var(--color-accent, #7aa2f7);
+	}
 	.file-ctx-menu button.danger {
-		color: var(--color-error);
+		color: var(--color-error, #f7768e);
 	}
-
-	.file-ctx-menu button.danger:hover {
-		background: color-mix(in srgb, var(--color-error) 12%, transparent);
-	}
-
 	.file-ctx-menu hr {
 		border: none;
 		border-top: 1px solid var(--color-border);
 		margin: 0.25rem 0;
 	}
-
-	.file-ctx-menu button kbd {
+	.file-ctx-menu kbd {
+		margin-left: auto;
 		font-size: 0.7rem;
+		opacity: 0.6;
+		background: var(--color-bg-tertiary);
+		padding: 0.1rem 0.3rem;
+		border-radius: 3px;
+	}
+
+	.loading-state, .empty-state {
+		padding: 2rem;
+		text-align: center;
 		color: var(--color-text-muted);
-		margin-left: 1rem;
-		font-family: inherit;
+		font-size: 0.85rem;
+	}
+
+	@media (max-width: 900px) {
+		.modern-layout {
+			grid-template-columns: 1fr;
+		}
+		.side-tree {
+			display: none;
+		}
 	}
 </style>

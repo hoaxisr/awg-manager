@@ -346,8 +346,13 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/files/checksum", h.guarded(h.systemToolsHandler.FilesChecksum))
 	mux.HandleFunc("/api/system/files/download", h.guarded(h.systemToolsHandler.FilesDownload))
 	mux.HandleFunc("/api/system/files/upload", h.guarded(h.systemToolsHandler.FilesUpload))
+	mux.HandleFunc("/api/system/files/script-status", h.guarded(h.systemToolsHandler.FilesScriptStatus))
+	mux.HandleFunc("/api/system/files/script-action", h.guarded(h.systemToolsHandler.FilesScriptAction))
 	mux.HandleFunc("/api/system/services/list", h.guarded(h.systemToolsHandler.ServicesList))
 	mux.HandleFunc("/api/system/services/action", h.guarded(h.systemToolsHandler.ServicesAction))
+	mux.HandleFunc("/api/system/services/get", h.guarded(h.systemToolsHandler.ServicesGetScript))
+	mux.HandleFunc("/api/system/services/save", h.guarded(h.systemToolsHandler.ServicesSaveScript))
+	mux.HandleFunc("/api/system/services/delete", h.guarded(h.systemToolsHandler.ServicesDeleteScript))
 	mux.HandleFunc("/api/system/opkg/installed", h.guarded(h.systemToolsHandler.OpkgInstalled))
 	mux.HandleFunc("/api/system/opkg/upgradable", h.guarded(h.systemToolsHandler.OpkgUpgradable))
 	mux.HandleFunc("/api/system/opkg/search", h.guarded(h.systemToolsHandler.OpkgSearch))
@@ -356,6 +361,11 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/opkg/install", h.guarded(h.systemToolsHandler.OpkgInstall))
 	mux.HandleFunc("/api/system/opkg/remove", h.guarded(h.systemToolsHandler.OpkgRemove))
 	mux.HandleFunc("/api/system/opkg/available", h.guarded(h.systemToolsHandler.OpkgAvailable))
+	mux.HandleFunc("/api/system/ports/list", h.guarded(h.systemToolsHandler.PortsList))
+	mux.HandleFunc("/api/system/ports/inspect", h.guarded(h.systemToolsHandler.PortsInspect))
+	mux.HandleFunc("/api/system/ports/kill", h.guarded(h.systemToolsHandler.PortsKill))
+	mux.HandleFunc("/api/system/proc/snapshot", h.guarded(h.systemToolsHandler.ProcSnapshot))
+	mux.HandleFunc("/api/system/proc/kill", h.guarded(h.systemToolsHandler.ProcKill))
 
 }
 

@@ -702,6 +702,27 @@ export class SystemClient extends TunnelsClient {
 		);
 	}
 
+	async systemFilesScriptStatus(path: string): Promise<FileSystemScriptStatus> {
+		return this.request(`/system/files/script-status?path=${encodeURIComponent(path)}`);
+	}
+
+	async systemFilesScriptAction(params: {
+		path: string;
+		action: 'start' | 'stop' | 'restart' | 'run';
+		args?: string[];
+	}): Promise<{
+		ok: boolean;
+		output: string;
+		running: boolean;
+		pids?: number[];
+		error?: string;
+	}> {
+		return this.request('/system/files/script-action', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
 	async systemServicesList(): Promise<SystemServiceItem[]> {
 		return this.request('/system/services/list');
 	}
@@ -714,6 +735,24 @@ export class SystemClient extends TunnelsClient {
 		return this.request('/system/services/action', {
 			method: 'POST',
 			body: JSON.stringify({ script, action }),
+		});
+	}
+
+	async systemServicesGet(script: string): Promise<{ script: string; content: string }> {
+		return this.request(`/system/services/get?script=${encodeURIComponent(script)}`);
+	}
+
+	async systemServicesSave(payload: { scriptName: string; content: string }): Promise<{ ok: boolean; script: string }> {
+		return this.request('/system/services/save', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	}
+
+	async systemServicesDelete(script: string): Promise<{ ok: boolean }> {
+		return this.request('/system/services/delete', {
+			method: 'POST',
+			body: JSON.stringify({ script }),
 		});
 	}
 
@@ -792,6 +831,46 @@ export class SystemClient extends TunnelsClient {
 		return `${this.baseUrl}/system/files/download?path=${encodeURIComponent(path)}`;
 	}
 
+	async systemPortsList(): Promise<SystemPortBinding[]> {
+		return this.request('/system/ports/list');
+	}
+
+	async systemPortsInspect(port: number, proto?: string): Promise<{
+		port: number;
+		proto?: string;
+		bindings: SystemPortBinding[];
+		occupied: boolean;
+	}> {
+		const qs = proto ? `?port=${port}&proto=${encodeURIComponent(proto)}` : `?port=${port}`;
+		return this.request(`/system/ports/inspect${qs}`);
+	}
+
+	async systemPortsKill(params: {
+		pid: number;
+		signal?: 'SIGTERM' | 'SIGKILL';
+		port?: number;
+		proto?: string;
+	}): Promise<{ pid: number; signal: string; ok: boolean }> {
+		return this.request('/system/ports/kill', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
+	async systemProcSnapshot(): Promise<SystemProcSnapshot> {
+		return this.request('/system/proc/snapshot');
+	}
+
+	async systemProcKill(params: {
+		pid: number;
+		signal?: 'SIGTERM' | 'SIGKILL';
+	}): Promise<{ pid: number; signal: string; ok: boolean }> {
+		return this.request('/system/proc/kill', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
 	// #endregion
 
 }
@@ -809,6 +888,17 @@ export type SystemFileEntry = {
 	size: number;
 	mode: string;
 	modTime: string;
+};
+
+export type FileSystemScriptStatus = {
+	path: string;
+	isScript: boolean;
+	running: boolean;
+	pids?: number[];
+	isService: boolean;
+	serviceName?: string;
+	statusText?: string;
+	canExecute: boolean;
 };
 
 export type SystemServiceItem = {
@@ -829,3 +919,86 @@ export type SystemOpkgPackage = {
 	description?: string;
 	installedAt?: string;
 };
+
+export type SystemPortBinding = {
+	proto: string;
+	port: number;
+	ip: string;
+	state: string;
+	inode: number;
+	pid?: number;
+	processName?: string;
+	exe?: string;
+	cmdline?: string;
+	user?: string;
+	service?: string;
+	isSelf?: boolean;
+	isCritical?: boolean;
+};
+
+export type SystemCpuCore = {
+	id: string; // "total", "cpu0", "cpu1"
+	user: number;
+	system: number;
+	nice: number;
+	idle: number;
+	iowait: number;
+	usage: number; // 0..100
+};
+
+export type SystemMemoryInfo = {
+	total: number;
+	free: number;
+	available: number;
+	used: number;
+	buffers: number;
+	cached: number;
+	swapTotal: number;
+	swapFree: number;
+	swapUsed: number;
+	usagePercent: number;
+};
+
+export type SystemProcessItem = {
+	pid: number;
+	ppid: number;
+	user: string;
+	priority: number;
+	nice: number;
+	threads: number;
+	state: string; // "R", "S", "D", "Z", "T"
+	cpuPercent: number;
+	memoryRss: number;
+	memoryVsize: number;
+	memoryPercent: number;
+	name: string;
+	cmdline: string;
+	exe?: string;
+	service?: string;
+	isSelf: boolean;
+	isCritical: boolean;
+	isKernel?: boolean;
+};
+
+export type SystemProcSummary = {
+	total: number;
+	running: number;
+	sleeping: number;
+	stopped: number;
+	zombie: number;
+	threads: number;
+};
+
+export type SystemProcSnapshot = {
+	timestamp: string;
+	uptimeSeconds: number;
+	loadAvg: [number, number, number];
+	cpuModel?: string;
+	cpuArchitecture?: string;
+	cpuCount?: number;
+	cores: SystemCpuCore[];
+	memory: SystemMemoryInfo;
+	processSummary: SystemProcSummary;
+	processes: SystemProcessItem[];
+};
+

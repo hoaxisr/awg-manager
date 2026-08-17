@@ -6,19 +6,32 @@
 	import ServicesPanel from './ServicesPanel.svelte';
 	import PackagesPanel from './PackagesPanel.svelte';
 	import SystemTerminal from './SystemTerminal.svelte';
+	import PortsPanel from './PortsPanel.svelte';
+	import ProcessesPanel from './ProcessesPanel.svelte';
+	import PinkPoniesPanel from './PinkPoniesPanel.svelte';
+	import { poniesUnlocked } from '$lib/stores/poniesUnlocked';
 
-	type SystemView = 'files' | 'services' | 'packages' | 'terminal';
+	type SystemView = 'files' | 'services' | 'packages' | 'terminal' | 'ports' | 'processes' | 'ponies';
 
-	const views: { id: SystemView; label: string }[] = [
+	const baseViews: { id: SystemView; label: string }[] = [
 		{ id: 'files', label: 'Файлы' },
 		{ id: 'services', label: 'Службы' },
 		{ id: 'packages', label: 'Пакеты opkg' },
 		{ id: 'terminal', label: 'Терминал' },
+		{ id: 'ports', label: 'Порты' },
+		{ id: 'processes', label: 'Процессы' },
 	];
+
+	const views = $derived.by(() => {
+		if ($poniesUnlocked || $page.url.searchParams.get('view') === 'ponies') {
+			return [...baseViews, { id: 'ponies' as SystemView, label: '🦄 Страна розовых пони' }];
+		}
+		return baseViews;
+	});
 
 	function initialView(): SystemView {
 		const v = $page.url.searchParams.get('view');
-		if (v === 'services' || v === 'packages' || v === 'terminal') return v;
+		if (v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes' || v === 'ponies') return v;
 		return 'files';
 	}
 
@@ -26,7 +39,10 @@
 
 	$effect(() => {
 		const v = $page.url.searchParams.get('view');
-		if (v === 'files' || v === 'services' || v === 'packages' || v === 'terminal') {
+		if (v === 'ponies') {
+			poniesUnlocked.unlock();
+			activeView = 'ponies';
+		} else if (v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
 			activeView = v;
 		} else if (!$page.url.searchParams.has('view')) {
 			activeView = 'files';
@@ -56,6 +72,12 @@
 			<ServicesPanel />
 		{:else if activeView === 'packages'}
 			<PackagesPanel />
+		{:else if activeView === 'ports'}
+			<PortsPanel />
+		{:else if activeView === 'processes'}
+			<ProcessesPanel />
+		{:else if activeView === 'ponies'}
+			<PinkPoniesPanel onhide={() => setView('processes')} />
 		{:else}
 			<SystemTerminal />
 		{/if}
