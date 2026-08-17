@@ -62,6 +62,26 @@ func configServerClients(t *testing.T, s *Service) []ServerClient {
 	return inst.Config.Clients
 }
 
+// setServerClients кладёт список абонентов в wdtt.json как есть — так
+// воспроизводится состояние существующей установки (пусто) и «все просрочены».
+func setServerClients(t *testing.T, s *Service, clients []ServerClient) {
+	t.Helper()
+	if _, err := s.updateServerClients(DefaultInstanceID, func([]ServerClient) ([]ServerClient, bool) {
+		return clients, true
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func serverConfigOf(t *testing.T, s *Service, id string) ServerConfig {
+	t.Helper()
+	inst, err := s.serverInstance(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inst.Config
+}
+
 func configHasServerClient(t *testing.T, s *Service, password string) bool {
 	t.Helper()
 	for _, c := range configServerClients(t, s) {
@@ -568,6 +588,12 @@ func TestUpdateServerInstanceKeepsClients(t *testing.T) {
 	if !configHasServerClient(t, s, clientPass) {
 		t.Fatalf("абоненты потеряны при сохранении настроек: %+v", configServerClients(t, s))
 	}
+	// Двое: «Абонент 1» от инварианта непустоты плюс заказанный Иван. Счёт
+	// проверяется, потому что сохранение настроек не должно ни терять абонентов,
+	// ни плодить новых.
+	if got := len(configServerClients(t, s)); got != 2 {
+		t.Fatalf("абонентов %d, ожидалось два: %+v", got, configServerClients(t, s))
+	}
 	inst, err := s.serverInstance(DefaultInstanceID)
 	if err != nil {
 		t.Fatal(err)
@@ -851,4 +877,231 @@ func startMarkedServerProcess(t *testing.T, s *Service, instanceID, mark string)
 		t.Fatalf("Start(%s): %v", instanceID, err)
 	}
 	t.Cleanup(func() { _ = proc.Stop() })
+}
+
+// --- Инвариант «сервер никогда не остаётся без абонентов, которых он примет» ---
+//
+// wdtt-server собирает wrap-ключи из НЕПРОСРОЧЕННЫХ записей passwords.json и на
+// пустом наборе умирает `log.Fatalf` уже на старте. Поэтому все три опоры
+// инварианта считают ровно тем же предикатом, что и запись файла, —
+// UsableServerClients; «абонентов не ноль» и «ключей не ноль» разные величины.
+
+// Опора 1: первый же сохранённый пароль сервера заводит абонента. Мастер
+// собирает ссылку ДО первого старта, и к моменту генерации абонент обязан
+// существовать.
+func TestUpdateServerInstance_FirstPasswordCreatesClient(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	cfg := DefaultServerConfig()
+	cfg.Password = main
+
+	saved, err := s.UpdateServerInstance(DefaultInstanceID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Clients) != 1 {
+		t.Fatalf("ожидался ровно один абонент, получено %d: %+v", len(saved.Clients), saved.Clients)
+	}
+	c := saved.Clients[0]
+	if c.Password == "" {
+		t.Fatal("пароль автоматического абонента пуст")
+	}
+	if c.Password == main {
+		t.Fatalf("пароль абонента равен главному: %q", c.Password)
+	}
+	if c.Comment != "Абонент 1" {
+		t.Fatalf("имя автоматического абонента = %q, ожидалось «Абонент 1»", c.Comment)
+	}
+	if len(UsableServerClients(saved.Clients, main, time.Now())) != 1 {
+		t.Fatalf("заведённого абонента сервер не примет: %+v", saved.Clients)
+	}
+	if !configHasServerClient(t, s, c.Password) {
+		t.Fatalf("абонент не сохранён в wdtt.json: %+v", configServerClients(t, s))
+	}
+}
+
+// Опора 1 срабатывает по отсутствию РАБОЧИХ, а не при каждом сохранении:
+// иначе каждое сохранение формы плодило бы абонентов.
+func TestUpdateServerInstance_SecondSaveDoesNotAddClient(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	first := configServerClients(t, s)
+	if len(first) != 1 {
+		t.Fatalf("предпосылка нарушена, абонентов %d: %+v", len(first), first)
+	}
+
+	cfg := DefaultServerConfig()
+	cfg.Password = "othermainpass00000000000" // в том числе со сменой главного пароля
+	saved, err := s.UpdateServerInstance(DefaultInstanceID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Clients) != 1 {
+		t.Fatalf("повторное сохранение добавило абонентов: %+v", saved.Clients)
+	}
+	if saved.Clients[0].Password != first[0].Password {
+		t.Fatalf("абонент подменён: было %q, стало %q", first[0].Password, saved.Clients[0].Password)
+	}
+}
+
+// Прямой страж предиката: под подсчётом «сколько элементов в списке» тест
+// красный — просроченный абонент есть, а ключа у сервера нет.
+func TestUpdateServerInstance_ExpiredOnlyClientGetsCompanion(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	expiresAt := time.Now().Add(-time.Hour).Unix()
+	setServerClients(t, s, []ServerClient{{Password: "expired1", Comment: "Просроченный", ExpiresAt: expiresAt}})
+
+	cfg := DefaultServerConfig()
+	cfg.Password = main
+	saved, err := s.UpdateServerInstance(DefaultInstanceID, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usable := UsableServerClients(saved.Clients, main, time.Now())
+	if len(usable) != 1 {
+		t.Fatalf("рядом с просроченным не заведён рабочий абонент: %+v", saved.Clients)
+	}
+	if usable[0].Password == "expired1" {
+		t.Fatalf("просроченный посчитан рабочим: %+v", usable)
+	}
+	for _, c := range saved.Clients {
+		if c.Password == "expired1" {
+			if c.ExpiresAt != expiresAt {
+				t.Fatalf("срок просроченного абонента изменён: %d, был %d", c.ExpiresAt, expiresAt)
+			}
+			return
+		}
+	}
+	t.Fatalf("просроченный абонент вычеркнут из списка: %+v", saved.Clients)
+}
+
+// Опора 2 — главный страж C1: путь лечения СУЩЕСТВУЮЩИХ установок. Там пароль
+// сервера задан давно, абонентов нет ни одного (UI говорил «по умолчанию все
+// подключаются основным паролем сервера»), и без этой опоры первый же старт
+// после обновления упирается в «[WRAP] нет активных паролей» — сервер не
+// поднимается вовсе, а супервизор крутит попытки по кругу.
+func TestWriteServerClientsFile_CreatesClientWhenNoneUsable(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	expiresAt := time.Now().Add(-time.Hour).Unix()
+	cases := []struct {
+		name    string
+		clients []ServerClient
+	}{
+		{name: "пустой список", clients: nil},
+		{name: "единственный просроченный", clients: []ServerClient{{Password: "expired1", Comment: "Просроченный", ExpiresAt: expiresAt}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, cfgDir := newServerClientsService(t, main)
+			setServerClients(t, s, tc.clients)
+
+			if err := s.syncServerClientsOnStart(DefaultInstanceID, cfgDir, serverConfigOf(t, s, DefaultInstanceID)); err != nil {
+				t.Fatal(err)
+			}
+			clients := configServerClients(t, s)
+			usable := UsableServerClients(clients, main, time.Now())
+			if len(usable) != 1 {
+				t.Fatalf("после синхронизации рабочих абонентов %d: %+v", len(usable), clients)
+			}
+			if !fileHasServerClient(t, cfgDir, usable[0].Password) {
+				t.Fatalf("рабочий абонент не доехал до passwords.json: %q", usable[0].Password)
+			}
+			if len(tc.clients) == 0 {
+				return
+			}
+			if !configHasServerClient(t, s, "expired1") {
+				t.Fatalf("просроченный абонент вычеркнут из wdtt.json: %+v", clients)
+			}
+			if fileHasServerClient(t, cfgDir, "expired1") {
+				t.Fatal("просроченный абонент уехал в passwords.json — сервер его всё равно отвергнет")
+			}
+		})
+	}
+}
+
+// Опора 3 закрывает окно «живой сервер»: удаление последнего рабочего абонента
+// переписывает passwords.json пустым и SIGHUP обнуляет набор wrap-ключей у
+// работающего процесса, а следующий старт умирает вовсе.
+func TestRemoveServerClient_RefusesLastUsableClient(t *testing.T) {
+	const main = "mainpass0000000000000000"
+
+	t.Run("единственный рабочий", func(t *testing.T) {
+		s, _ := newServerClientsService(t, main)
+		clients := configServerClients(t, s)
+		if len(clients) != 1 {
+			t.Fatalf("предпосылка нарушена, абонентов %d: %+v", len(clients), clients)
+		}
+		pass := clients[0].Password
+		_, err := s.RemoveServerClient(DefaultInstanceID, pass)
+		if err == nil {
+			t.Fatal("ожидался отказ: удаление последнего рабочего абонента")
+		}
+		if !strings.Contains(err.Error(), "последнего рабочего") {
+			t.Fatalf("текст отказа = %q, ожидалось упоминание последнего рабочего абонента", err.Error())
+		}
+		if !configHasServerClient(t, s, pass) {
+			t.Fatalf("абонент удалён вопреки отказу: %+v", configServerClients(t, s))
+		}
+	})
+
+	t.Run("двое рабочих", func(t *testing.T) {
+		s, cfgDir := newServerClientsService(t, main)
+		if _, err := s.AddServerClient(DefaultInstanceID, "client2", "Второй", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RemoveServerClient(DefaultInstanceID, "client2"); err != nil {
+			t.Fatalf("удаление при двух рабочих обязано проходить: %v", err)
+		}
+		if configHasServerClient(t, s, "client2") {
+			t.Fatalf("абонент не удалён: %+v", configServerClients(t, s))
+		}
+		if fileHasServerClient(t, cfgDir, "client2") {
+			t.Fatal("удалённый абонент остался в passwords.json")
+		}
+	})
+
+	// Рабочих не было и до операции: запрещать выход из уже сломанного
+	// состояния бессмысленно, нового заведёт опора 2 той же записью файла.
+	t.Run("единственный просроченный", func(t *testing.T) {
+		s, cfgDir := newServerClientsService(t, main)
+		setServerClients(t, s, []ServerClient{{Password: "expired1", ExpiresAt: time.Now().Add(-time.Hour).Unix()}})
+		if _, err := s.RemoveServerClient(DefaultInstanceID, "expired1"); err != nil {
+			t.Fatalf("удаление просроченного отвергнуто: %v", err)
+		}
+		if configHasServerClient(t, s, "expired1") {
+			t.Fatalf("просроченный абонент не удалён: %+v", configServerClients(t, s))
+		}
+		usable := UsableServerClients(configServerClients(t, s), main, time.Now())
+		if len(usable) != 1 {
+			t.Fatalf("после удаления сервер остался без рабочих абонентов: %+v", configServerClients(t, s))
+		}
+		if !fileHasServerClient(t, cfgDir, usable[0].Password) {
+			t.Fatalf("заведённый взамен абонент не доехал до passwords.json: %q", usable[0].Password)
+		}
+	})
+}
+
+// Страж порядка внутри AddServerClient: побочный эффект «дописать пароль
+// сервера» идёт ПОСЛЕ абонента. Наоборот — сначала сработал бы инвариант
+// непустоты и завёл «Абонента 1» рядом с заказанным.
+func TestAddServerClient_OnEmptyServerCreatesExactlyOne(t *testing.T) {
+	s, _ := newServerClientsService(t, "")
+	const main = "brandnew-main-pass000000"
+
+	st, err := s.AddServerClient(DefaultInstanceID, "", "Иван", "", main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Users) != 1 {
+		t.Fatalf("ответ ручки содержит %d абонентов: %+v", len(st.Users), st.Users)
+	}
+	clients := configServerClients(t, s)
+	if len(clients) != 1 {
+		t.Fatalf("рядом с заказанным абонентом заведён лишний: %+v", clients)
+	}
+	if clients[0].Comment != "Иван" {
+		t.Fatalf("имя абонента = %q, ожидалось «Иван»", clients[0].Comment)
+	}
 }

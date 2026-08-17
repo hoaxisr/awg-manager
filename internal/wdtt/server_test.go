@@ -1,6 +1,8 @@
 package wdtt
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -107,5 +109,81 @@ func TestBuildServerArgsDNS(t *testing.T) {
 	raw.RelayMode = ConnModeRaw
 	if !hasFlag(buildServerArgs(raw), "-dns", DefaultRawServerAddr) {
 		t.Fatalf("raw-relay: нет -dns %s в %v", DefaultRawServerAddr, buildServerArgs(raw))
+	}
+}
+
+// closedServerConfigDir отдаёт существующий, но закрытый на запись config-dir:
+// os.MkdirAll на нём проходит (каталог уже есть), а создать в нём
+// passwords.json нельзя. Ровно так выглядит штатный отказ «config-dir на
+// невоткнутой флешке», которым и проверяется fail-closed старт.
+func closedServerConfigDir(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root игнорирует права каталога — отказ записи не воспроизвести")
+	}
+	dir := filepath.Join(t.TempDir(), "cfgdir")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	// Иначе уборка t.TempDir() не снесёт закрытый каталог.
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	return dir
+}
+
+// Старт fail-closed: если passwords.json не записан, процесс поднялся бы на
+// пустом или протухшем файле и умер бы «[WRAP] нет активных паролей» — мёртвая
+// инстанция без объяснимой причины. Отказ с внятным текстом честнее.
+func TestStartServerInstance_DoesNotStartWhenSyncFails(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+	defer s.Stop()
+	cfg := DefaultServerConfig()
+	cfg.Password = "mainpass0000000000000000"
+	cfg.ConfigDir = closedServerConfigDir(t)
+	if _, err := s.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.StartServerInstance(DefaultInstanceID)
+	if err == nil {
+		t.Fatal("ожидался отказ старта: passwords.json не записан")
+	}
+	if !strings.Contains(err.Error(), "passwords.json") {
+		t.Fatalf("текст отказа = %q, ожидалось упоминание passwords.json", err.Error())
+	}
+	if s.serverProcs.get(DefaultInstanceID).Status().Running {
+		t.Fatal("процесс сервера запущен вопреки отказу синхронизации")
+	}
+}
+
+// Новый путь отказа обязан убирать за собой ровно как соседние: без
+// teardownServerOpkgTun каждый неудачный старт оставляет висеть NDMS-интерфейс,
+// NAT и LAN. Утечка правил — проверенный больной класс этого проекта, и тест
+// выше её не ловит: он смотрит на процесс, а не на OpkgTun.
+func TestStartServerInstance_TearsDownOpkgTunWhenSyncFails(t *testing.T) {
+	svc, fake := newNDMSTestService(t)
+	defer svc.Stop()
+	cfg := ndmsServerConfig()
+	cfg.Password = "mainpass0000000000000000"
+	cfg.ConfigDir = closedServerConfigDir(t)
+	if _, err := svc.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := svc.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.Config.usesNDMSOpkgTun() {
+		t.Fatalf("предпосылка нарушена: конфиг не на NDMS-пути: %+v", saved.Config)
+	}
+
+	if err := svc.StartServerInstance(DefaultInstanceID); err == nil {
+		t.Fatal("ожидался отказ старта: passwords.json не записан")
+	}
+	if fake.index("delete OpkgTun17") < 0 {
+		t.Fatalf("после отказа синхронизации OpkgTun не снят: %v", fake.calls)
 	}
 }

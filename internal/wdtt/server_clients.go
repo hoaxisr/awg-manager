@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// defaultServerClientName — имя абонента, которого заводит инвариант непустоты.
+const defaultServerClientName = "Абонент 1"
+
 // loadServerClientEntries читает живые записи passwords.json. Второе значение —
 // «файл есть и разобран»; отсутствие файла ошибкой не является.
 func loadServerClientEntries(configDir string) (map[string]passwordsJSONUser, bool, error) {
@@ -137,7 +140,34 @@ func (s *Service) adoptServerClientsFromFile(serverID, cfgDir string) ([]ServerC
 // молча; отличить его от нашего же резерва по одному биту невозможно, а второе
 // место, считающее «что именно вычищено», плодить незачем.
 func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConfig, clients []ServerClient) (bool, error) {
+	clients, err := s.ensureUsableServerClient(serverID, cfg, clients)
+	if err != nil {
+		return false, err
+	}
 	return syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
+}
+
+// ensureUsableServerClient — вторая опора инварианта, между усыновлением и
+// записью файла: если пароль сервера задан, а рабочих абонентов не осталось,
+// заводит «Абонент 1» и включает его в записываемый список.
+//
+// Это путь лечения СУЩЕСТВУЮЩИХ установок: там пароль задан давно, первая опора
+// (сохранение конфига) могла не сработать ни разу, и после обновления сервер не
+// поднялся бы вовсе. Она же покрывает «все абоненты просрочены».
+func (s *Service) ensureUsableServerClient(serverID string, cfg ServerConfig, clients []ServerClient) ([]ServerClient, error) {
+	main := strings.TrimSpace(cfg.Password)
+	if main == "" || len(UsableServerClients(clients, main, time.Now())) > 0 {
+		return clients, nil
+	}
+	pass, err := randomClientPassword()
+	if err != nil {
+		return nil, err
+	}
+	client := ServerClient{Password: pass, Comment: defaultServerClientName}
+	if err := s.putServerClient(serverID, client); err != nil {
+		return nil, err
+	}
+	return append(clients, client), nil
 }
 
 // notifyServerClientsChanged просит живой сервер перечитать passwords.json.
@@ -314,7 +344,19 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 	// Усыновление — ПЕРВЫМ действием. После вычёркивания оно вернуло бы
 	// удалённого абонента из ещё не переписанного файла, и удаление стало бы
 	// no-op.
-	if _, err := s.adoptServerClientsFromFile(serverID, cfgDir); err != nil {
+	adopted, err := s.adoptServerClientsFromFile(serverID, cfgDir)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
+	// Третья опора инварианта: последнего РАБОЧЕГО абонента удалить нельзя —
+	// живой сервер после перечитывания файла остался бы без единого wrap-ключа,
+	// а следующий старт умер бы вовсе. Если рабочих не было и до операции
+	// (единственный абонент просрочен), удаление разрешено: запрещать выход из
+	// уже сломанного состояния бессмысленно, а опора 2 заведёт нового.
+	//
+	// Проверка живёт здесь, а не только в UI: инвариант обязан держаться и для
+	// запросов мимо нашего фронта.
+	if err := refuseLastUsableServerClient(adopted, inst.Config.Password, password, time.Now()); err != nil {
 		return ServerClientsStatus{}, err
 	}
 	if err := s.dropServerClient(serverID, password); err != nil {
@@ -368,6 +410,25 @@ func serverClientPasswordFree(clients []ServerClient, password string, now time.
 		return fmt.Errorf("пароль занят живым абонентом")
 	}
 	return nil
+}
+
+// refuseLastUsableServerClient отказывает, если после удаления рабочих абонентов
+// не останется, а до удаления они были. Обе величины считает UsableServerClients:
+// собственный отбор здесь разошёлся бы с тем, что уезжает в passwords.json.
+func refuseLastUsableServerClient(clients []ServerClient, mainPassword, password string, now time.Time) error {
+	if len(UsableServerClients(clients, mainPassword, now)) == 0 {
+		return nil
+	}
+	remaining := make([]ServerClient, 0, len(clients))
+	for _, c := range clients {
+		if strings.TrimSpace(c.Password) != password {
+			remaining = append(remaining, c)
+		}
+	}
+	if len(UsableServerClients(remaining, mainPassword, now)) > 0 {
+		return nil
+	}
+	return errors.New("нельзя удалить последнего рабочего абонента: без единого пароля wdtt-server не запускается")
 }
 
 func randomClientPassword() (string, error) {

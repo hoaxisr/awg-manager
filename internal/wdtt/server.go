@@ -46,6 +46,28 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 		s.mu.Unlock()
 		return ServerConfig{}, err
 	}
+	// Первая опора инварианта «у сервера с заданным паролем есть абонент,
+	// которого сервер примет»: без него wdtt-server падает на старте
+	// («[WRAP] нет активных паролей», форк server.go:2711-2713). Нужна ради
+	// мастера — ссылку пользователь собирает ДО первого старта.
+	//
+	// Условия «пароль стал непустым» здесь нет: список берётся из хранилища и
+	// после первого сохранения непуст сам по себе, а от единственного реального
+	// способа опустеть — просрочки — такое условие не спасало. Считаем ТЕМ ЖЕ
+	// предикатом, что и запись passwords.json: «абонентов не ноль» и «ключей не
+	// ноль» — разные величины.
+	if cfg.Password != "" && len(UsableServerClients(cfg.Clients, cfg.Password, time.Now())) == 0 {
+		pass, genErr := randomClientPassword()
+		if genErr != nil {
+			// Сохранение настроек не роняем: страховкой остаётся опора на пути
+			// старта (writeServerClientsFile).
+			if s.appLog != nil {
+				s.appLog.Warn("clients", id, "автоматический абонент не заведён: "+genErr.Error())
+			}
+		} else {
+			cfg.Clients = append(cfg.Clients, ServerClient{Password: pass, Comment: defaultServerClientName})
+		}
+	}
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
 	cfg.Enabled = prevCfg.Enabled
 	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
@@ -211,8 +233,14 @@ func (s *Service) StartServerInstance(id string) error {
 	// passwords.json собираем из wdtt.json до старта: сервер читает его в
 	// память на старте. Усыновление идёт первым — иначе абоненты, заведённые
 	// мимо менеджера (телеграм-бот), вычёркивались бы из файла.
-	if err := s.syncServerClientsOnStart(id, cfgDir, cfg); err != nil && s.appLog != nil {
-		s.appLog.Warn("clients", id, "passwords.json не записан: "+err.Error())
+	// Отказ здесь фатален: процесс поднялся бы на пустом или протухшем
+	// passwords.json и умер бы log.Fatalf'ом — мёртвая инстанция без объяснимой
+	// причины. Отказ старта с внятным текстом виден и в UI, и в журнале.
+	if err := s.syncServerClientsOnStart(id, cfgDir, cfg); err != nil {
+		if cfg.usesNDMSOpkgTun() {
+			_ = s.teardownServerOpkgTun(ctx, cfg)
+		}
+		return fmt.Errorf("passwords.json не записан: %w", err)
 	}
 	if err := redirectServerStatsLog(cfgDir, id, cfg.StatsLog); err != nil && s.appLog != nil {
 		s.appLog.Warn("stats-log", id, "server.log redirect: "+err.Error())
