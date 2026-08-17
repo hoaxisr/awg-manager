@@ -451,3 +451,65 @@ func TestExposeToPoliciesDoesNotRestartLiveServer(t *testing.T) {
 		t.Fatal("тумблер перезапускает сервер — решение было обратным")
 	}
 }
+
+// Переезд raw-половины в OpkgTun обязан снять наши правила с прежнего имени —
+// симметрично сносу wdtt0, который старт делает для WG-половины. Иначе после
+// обновления бинаря в таблицах навсегда остаётся комплект на wdttraw0.
+func TestStartSweepsLegacyRawRulesAfterMigration(t *testing.T) {
+	swept := 0
+	orig := sweepLegacyRawServerRules
+	sweepLegacyRawServerRules = func(context.Context) { swept++ }
+	t.Cleanup(func() { sweepLegacyRawServerRules = orig })
+
+	// Переехавшая половина: снос обязан быть.
+	startServerUntilIfaceWait(t, ndmsServerConfigWithRaw())
+	if swept != 1 {
+		t.Fatalf("правила с legacy-имени не сняты: вызовов %d", swept)
+	}
+
+	// Не переехавшая: сносить нечего, wdttraw0 — ЖИВОЕ имя, и снос убил бы
+	// правила работающего сервера.
+	swept = 0
+	startServerUntilIfaceWait(t, ndmsServerConfig())
+	if swept != 0 {
+		t.Fatalf("снос legacy-правил на живом wdttraw0: вызовов %d", swept)
+	}
+}
+
+// startServerUntilIfaceWait доводит старт до ожидания интерфейса (дальше он
+// отказывает: ни одного интерфейса нет). До этой точки уже отработали
+// выделение индексов, снос legacy-правил и prepare — их и наблюдаем.
+func startServerUntilIfaceWait(t *testing.T, cfg ServerConfig) {
+	t.Helper()
+	dir := t.TempDir()
+	svc := NewService(dir, filepath.Join(dir, "run"), "", "/bin/sh")
+	defer svc.Stop()
+	svc.SetNDMSInterfaceCommands(&fakeOpkgCommands{})
+	svc.SetInterfaceChecker(&recordingIfaceChecker{asked: map[string]bool{}})
+	cfg.Password = "mainpass0000000000000000"
+	cfg.ConfigDir = t.TempDir()
+	if _, err := svc.UpdateServerInstance(DefaultInstanceID, cfg); err != nil {
+		t.Fatal(err)
+	}
+	sleepSeam(svc.serverProcs.get(DefaultInstanceID))
+	if err := svc.StartServerInstance(DefaultInstanceID); err == nil {
+		t.Fatal("ожидался отказ: ни один интерфейс не появился")
+	}
+}
+
+// Бесхозный raw-OpkgTun (сервер удалён восстановлением бэкапа) ловится сканом
+// по СВОЕМУ description — у WG-собрата такой страж есть с самого начала.
+func TestReapRemovesUnreferencedRawOpkgTun(t *testing.T) {
+	svc, fake := newNDMSTestService(t)
+	svc.SetOpkgTunScanner(func(_ context.Context, desc string) ([]string, error) {
+		if desc == wdttRawOpkgDescription {
+			return []string{"OpkgTun23"}, nil
+		}
+		return nil, nil
+	})
+
+	svc.reapOrphanOpkgTuns(context.Background())
+	if fake.index("delete OpkgTun23") < 0 {
+		t.Fatalf("бесхозный raw-OpkgTun не снят: %v", fake.calls)
+	}
+}

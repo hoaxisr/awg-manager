@@ -289,6 +289,18 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
+// sweepLegacyRawServerRules снимает наши правила с legacy-имени raw-интерфейса
+// (wdttraw0) после переезда половины в OpkgTun: entware NAT/FORWARD/MSS/DNS и
+// policy-mark в mangle.
+//
+// Переменная, а не функция: внутри реальный /opt/sbin/iptables, путь к которому
+// — константа пакета iptables, и наблюдать снос в тесте иначе нечем. Приём тот
+// же, что startCmd у процесса и ensureCommentModuleFn в internal/sys/iptables.
+var sweepLegacyRawServerRules = func(ctx context.Context) {
+	removeEntwareNAT(ctx, DefaultRawServerIface)
+	removeRawServerPolicyMarkRules(ctx, DefaultRawServerIface)
+}
+
 func removeEntwareNAT(ctx context.Context, wgIface string) {
 	removeEntwareNATIfaces(ctx, wgIface)
 }

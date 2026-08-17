@@ -212,6 +212,12 @@ func (s *Service) StartServerInstance(id string) error {
 	if cfg.usesNDMSOpkgTun() {
 		removeEntwareNAT(ctx, DefaultWdttIface)
 		removeEntwareLAN(ctx, DefaultWdttIface)
+		if cfg.usesNDMSRawOpkgTun() {
+			// Симметрично сносу wdtt0 выше: raw-половина переехала в OpkgTun, а
+			// наши правила остались на прежнем имени. Инертны (интерфейса нет),
+			// но это ровно тот класс утечки, который чинили в 2.17.0.
+			sweepLegacyRawServerRules(ctx)
+		}
 		if err := s.prepareNDMSOpkgTun(ctx, cfg); err != nil {
 			_ = s.teardownServerOpkgTun(ctx, cfg)
 			return err
