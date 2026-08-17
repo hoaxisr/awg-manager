@@ -1105,3 +1105,135 @@ func TestAddServerClient_OnEmptyServerCreatesExactlyOne(t *testing.T) {
 		t.Fatalf("имя абонента = %q, ожидалось «Иван»", clients[0].Comment)
 	}
 }
+
+// Ответ ручки удаления собирается ПОСЛЕ записи файла. Опора 2 заводит
+// «Абонента 1» прямо в этой записи, и снимок, сделанный раньше, показал бы
+// пустой список там, где абонент уже есть и в wdtt.json, и в passwords.json:
+// пользователь решил бы, что сервер остался без абонентов.
+func TestRemoveServerClient_AnswerIncludesReplacementClient(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, cfgDir := newServerClientsService(t, main)
+	setServerClients(t, s, []ServerClient{{Password: "expired1", Comment: "Просроченный", ExpiresAt: time.Now().Add(-time.Hour).Unix()}})
+
+	st, err := s.RemoveServerClient(DefaultInstanceID, "expired1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Users) != 1 {
+		t.Fatalf("ответ ручки содержит %d абонентов, а в конфиге %+v", len(st.Users), configServerClients(t, s))
+	}
+	if st.Users[0].Comment != "Абонент 1" {
+		t.Fatalf("в ответе не тот абонент: %+v", st.Users[0])
+	}
+	if !fileHasServerClient(t, cfgDir, st.Users[0].Password) {
+		t.Fatalf("абонент из ответа не найден в passwords.json: %q", st.Users[0].Password)
+	}
+}
+
+// Опора 2 обязана отдавать свою ошибку наружу: проглотив её (fail-open), мы
+// записали бы passwords.json без единого рабочего абонента — ровно то, ради
+// чего опора и заведена. Отказ воспроизводится несуществующим сервером:
+// putServerClient не находит инстанс.
+func TestWriteServerClientsFile_ReportsInvariantFailure(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, cfgDir := newServerClientsService(t, main)
+	cfg := serverConfigOf(t, s, DefaultInstanceID)
+
+	if _, err := s.writeServerClientsFile("нет-такого-сервера", cfgDir, cfg, nil); err == nil {
+		t.Fatal("ожидалась ошибка: абонента для пустого списка завести не удалось")
+	}
+	if _, err := os.Stat(passwordsJSONPath(cfgDir)); !os.IsNotExist(err) {
+		t.Fatalf("passwords.json записан вопреки отказу инварианта: %v", err)
+	}
+}
+
+// Опора 3 считает по УСЫНОВЛЁННОМУ списку. Абонент бота живёт только в
+// passwords.json, и по составу wdtt.json его не видно: без усыновления удаление
+// нашего единственного абонента получило бы ложный отказ, хотя рабочий у
+// сервера остаётся.
+func TestRemoveServerClient_CountsAdoptedClients(t *testing.T) {
+	const main = "mainpass0000000000000000"
+	s, cfgDir := newServerClientsService(t, main)
+	clients := configServerClients(t, s)
+	if len(clients) != 1 {
+		t.Fatalf("предпосылка нарушена, абонентов %d: %+v", len(clients), clients)
+	}
+	ours := clients[0].Password
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: main,
+		Passwords: map[string]passwordsJSONUser{
+			ours:      {Label: clients[0].Comment},
+			"botpass": {Label: "Из бота", ExpiresAt: time.Now().Add(24 * time.Hour).Unix()},
+		},
+	})
+
+	if _, err := s.RemoveServerClient(DefaultInstanceID, ours); err != nil {
+		t.Fatalf("ложный отказ: рабочий абонент бота есть, но он усыновляется только из файла: %v", err)
+	}
+	if configHasServerClient(t, s, ours) {
+		t.Fatalf("абонент не удалён: %+v", configServerClients(t, s))
+	}
+	if !configHasServerClient(t, s, "botpass") {
+		t.Fatalf("абонент бота не усыновлён: %+v", configServerClients(t, s))
+	}
+}
+
+// Автоматический абонент заводится БЕССРОЧНЫМ и с плановым именем — на обеих
+// опорах. Срок, проставленный по недосмотру, отозвал бы доступ сам собой, и
+// сервер снова остался бы без единого wrap-ключа; имя — единственное, по чему
+// пользователь узнаёт запись, которую не заводил.
+func TestServerClients_AutoClientIsNamedAndUnlimited(t *testing.T) {
+	const main = "mainpass0000000000000000"
+
+	t.Run("опора 1: сохранение конфига", func(t *testing.T) {
+		dir := t.TempDir()
+		s := NewService(dir, dir, "/bin/sh", "/bin/sh")
+		cfg := DefaultServerConfig()
+		cfg.Password = main
+		saved, err := s.UpdateServerInstance(DefaultInstanceID, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(saved.Clients) != 1 {
+			t.Fatalf("абонентов %d: %+v", len(saved.Clients), saved.Clients)
+		}
+		if saved.Clients[0].Comment != "Абонент 1" {
+			t.Fatalf("имя = %q, ожидалось «Абонент 1»", saved.Clients[0].Comment)
+		}
+		if saved.Clients[0].ExpiresAt != 0 {
+			t.Fatalf("автоматический абонент заведён со сроком %d", saved.Clients[0].ExpiresAt)
+		}
+	})
+
+	t.Run("опора 2: запись файла", func(t *testing.T) {
+		s, cfgDir := newServerClientsService(t, main)
+		setServerClients(t, s, nil)
+		if err := s.syncServerClientsOnStart(DefaultInstanceID, cfgDir, serverConfigOf(t, s, DefaultInstanceID)); err != nil {
+			t.Fatal(err)
+		}
+		clients := configServerClients(t, s)
+		if len(clients) != 1 {
+			t.Fatalf("абонентов %d: %+v", len(clients), clients)
+		}
+		if clients[0].Comment != "Абонент 1" {
+			t.Fatalf("имя = %q, ожидалось «Абонент 1»", clients[0].Comment)
+		}
+		if clients[0].ExpiresAt != 0 {
+			t.Fatalf("автоматический абонент заведён со сроком %d", clients[0].ExpiresAt)
+		}
+		doc, err := loadPasswordsJSON(cfgDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, ok := doc.Passwords[clients[0].Password]
+		if !ok {
+			t.Fatalf("абонент не записан в passwords.json: %#v", doc.Passwords)
+		}
+		if entry.Label != "Абонент 1" {
+			t.Fatalf("имя в файле = %q, ожидалось «Абонент 1»", entry.Label)
+		}
+		if entry.ExpiresAt != 0 {
+			t.Fatalf("в файле у автоматического абонента срок %d", entry.ExpiresAt)
+		}
+	})
+}

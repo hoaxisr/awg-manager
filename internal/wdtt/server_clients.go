@@ -369,6 +369,14 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 	if _, err := s.writeServerClientsFile(serverID, cfgDir, inst.Config, clients); err != nil {
 		return ServerClientsStatus{}, err
 	}
+	// Список для ответа перечитываем ПОСЛЕ записи: опора 2 могла завести
+	// «Абонента 1» прямо в ней (удалён был единственный просроченный), и снимок,
+	// сделанный до неё, показал бы пустоту там, где абонент уже есть и в
+	// wdtt.json, и в passwords.json.
+	clients, err = s.serverClients(serverID)
+	if err != nil {
+		return ServerClientsStatus{}, err
+	}
 	s.notifyServerClientsChanged(serverID)
 	return s.serverClientsStatus(serverID, cfgDir, clients), nil
 }

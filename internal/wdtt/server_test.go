@@ -151,8 +151,10 @@ func TestStartServerInstance_DoesNotStartWhenSyncFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("ожидался отказ старта: passwords.json не записан")
 	}
-	if !strings.Contains(err.Error(), "passwords.json") {
-		t.Fatalf("текст отказа = %q, ожидалось упоминание passwords.json", err.Error())
+	// Сверяемся с НАШЕЙ обёрткой, а не с подстрокой «passwords.json»: путь файла
+	// приезжает и в тексте ошибки ОС, и такой страж пережил бы снятие обёртки.
+	if !strings.Contains(err.Error(), "passwords.json не записан") {
+		t.Fatalf("текст отказа = %q, ожидалась обёртка «passwords.json не записан»", err.Error())
 	}
 	if s.serverProcs.get(DefaultInstanceID).Status().Running {
 		t.Fatal("процесс сервера запущен вопреки отказу синхронизации")
