@@ -138,3 +138,40 @@ func TestServeServerClients_PartialSuccessCode(t *testing.T) {
 		t.Fatalf("причина отказа потеряна в ответе: %q", resp.Message)
 	}
 }
+
+// mainPasswordNotSavedWdttClients — абонент заведён и применён целиком, а
+// пароль сервера не сохранён: сервис отдаёт завёрнутый
+// ErrServerMainPasswordNotSaved.
+type mainPasswordNotSavedWdttClients struct {
+	stubWdttForImport
+}
+
+func (s *mainPasswordNotSavedWdttClients) AddServerClient(string, string, string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, fmt.Errorf("%w: read-only file system", wdtt.ErrServerMainPasswordNotSaved)
+}
+
+// TestServeServerClients_MainPasswordNotSavedCode — второй частичный успех той
+// же ручки: абонент создан и применён, не сохранился пароль сервера. Код обязан
+// отличаться и от полного отказа, и от «файл не записан» — лечится он другим
+// действием (сохранить пароль в настройках сервера).
+func TestServeServerClients_MainPasswordNotSavedCode(t *testing.T) {
+	h := &WdttHandler{svc: &mainPasswordNotSavedWdttClients{}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wdtt/servers/default/users", strings.NewReader(`{"password":"abonent1","mainPassword":"mainpass0000000000000000"}`))
+
+	h.serveServerClients(rec, req, "default", nil)
+
+	var resp struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("ответ не разобран: %v (тело: %s)", err, rec.Body.String())
+	}
+	if resp.Code != "WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED" {
+		t.Fatalf("код несохранённого пароля сервера = %q", resp.Code)
+	}
+	if !strings.Contains(resp.Message, "read-only file system") {
+		t.Fatalf("причина отказа потеряна в ответе: %q", resp.Message)
+	}
+}

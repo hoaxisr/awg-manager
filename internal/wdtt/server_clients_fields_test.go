@@ -79,6 +79,65 @@ func TestAddServerClient_PlainRefusalIsNotPartialSuccess(t *testing.T) {
 	if errors.Is(err, ErrServerClientFileNotWritten) {
 		t.Fatalf("обычный отказ выдан за частичный успех: %v", err)
 	}
+	if errors.Is(err, ErrServerMainPasswordNotSaved) {
+		t.Fatalf("обычный отказ выдан за несохранённый пароль сервера: %v", err)
+	}
+}
+
+// TestAddServerClient_MainPasswordNotSavedIsPartialSuccess — второй частичный
+// успех той же ручки: у первого абонента главный пароль приходит формой, и
+// сохраняется он ПОСЛЕ абонента. Отказ этого сохранения абонента не отменяет —
+// он в wdtt.json, в passwords.json и уже принят живым сервером, — но сервер без
+// сохранённого пароля не стартует («укажите пароль подключения»), поэтому исход
+// обязан отличаться и от полного отказа, и от «файл не записан».
+//
+// Отказ хранилища наводится правами каталога данных в момент, когда абонент уже
+// применён: шов signalProc зовётся ровно между записью passwords.json и
+// сохранением конфига, другой точки внутри операции нет.
+func TestAddServerClient_MainPasswordNotSavedIsPartialSuccess(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root игнорирует права каталога — отказ записи не воспроизвести")
+	}
+	const main = "mainpass0000000000000000"
+	s, _ := newServerClientsService(t, "")
+	dataDir := s.dataDir
+	// Возврат прав — раньше уборки TempDir (t.Cleanup идёт в обратном порядке):
+	// иначе RemoveAll не разберёт каталог и уронит прогон.
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0700) })
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+	startMarkedServerProcess(t, s, DefaultInstanceID, mark)
+
+	proc := s.serverProcs.get(DefaultInstanceID)
+	proc.signalProc = func(int, syscall.Signal) error {
+		if err := os.Chmod(dataDir, 0500); err != nil {
+			t.Errorf("chmod: %v", err)
+		}
+		// Сам сигнал этому тесту не нужен: он про судьбу пароля сервера.
+		return nil
+	}
+
+	_, err := s.AddServerClient(DefaultInstanceID, "abonent1", "Иван", "", main)
+	if err == nil {
+		t.Fatal("отказ сохранения конфига обязан вернуть ошибку")
+	}
+	if !errors.Is(err, ErrServerMainPasswordNotSaved) {
+		t.Fatalf("частичный успех неотличим от полного отказа: %v", err)
+	}
+	if errors.Is(err, ErrServerClientFileNotWritten) {
+		t.Fatalf("несохранённый пароль сервера выдан за незаписанный файл: %v", err)
+	}
+	// Причина обязана доехать вместе с признаком: «нет прав» и «нет места»
+	// лечатся по-разному.
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("причина отказа потеряна при заворачивании: %v", err)
+	}
+	if !configHasServerClient(t, s, "abonent1") {
+		t.Fatal("признак частичного успеха соврал: абонента нет в wdtt.json")
+	}
+	// Названная потеря: пароль сервера действительно не сохранён.
+	if pass := serverConfigOf(t, s, DefaultInstanceID).Password; pass != "" {
+		t.Fatalf("предпосылка теста нарушена: пароль сервера сохранился (%q)", pass)
+	}
 }
 
 // --- Признак «пароль абонента совпадает с главным» ---

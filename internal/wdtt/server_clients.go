@@ -39,6 +39,14 @@ func loadServerClientEntries(configDir string) (map[string]passwordsJSONUser, bo
 // произошло».
 var ErrServerClientFileNotWritten = errors.New("абонент создан, но не записан в файл сервера")
 
+// ErrServerMainPasswordNotSaved — второй частичный успех добавления: абонент
+// заведён и применён целиком, а пароль сервера, пришедший той же формой, в
+// wdtt.json не сохранился. Терять его молча нельзя (без пароля
+// StartServerInstance отказывается стартовать), но и объявлять абонента
+// несозданным — враньё: он в конфиге, в passwords.json и уже принят живым
+// сервером.
+var ErrServerMainPasswordNotSaved = errors.New("абонент создан, но пароль сервера не сохранён — задайте его в настройках сервера")
+
 // mergeServerClients собирает список для UI: состав из wdtt.json, признаки —
 // из passwords.json и из запомненного срока. mainPassword нужен ровно для
 // признака IsMainPassword: сам пароль наружу не уходит.
@@ -303,7 +311,12 @@ func (s *Service) AddServerClient(serverID, password, comment, vkHash, mainPassw
 		cfg := inst.Config
 		cfg.Password = main
 		if _, err := s.UpdateServerInstance(serverID, cfg); err != nil {
-			return ServerClientsStatus{}, err
+			// Частичный успех, а не отказ: абонент уже и в wdtt.json, и в
+			// passwords.json, и SIGHUP по нему ушёл — отката нет и быть не
+			// может. Не сохранился только пароль сервера, и цена этому —
+			// отказ следующего старта («укажите пароль подключения»),
+			// поэтому исход отличается и от полного отказа, и от SH-26.
+			return ServerClientsStatus{}, fmt.Errorf("%w: %w", ErrServerMainPasswordNotSaved, err)
 		}
 	}
 	return status, nil

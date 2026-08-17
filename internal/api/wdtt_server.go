@@ -212,9 +212,15 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 				// WDTT_SERVER_CLIENT_ADD_NOT_APPLIED = абонент заведён в
 				// конфигурации, passwords.json не записан — доступ появится при
 				// следующем запуске сервера, и в списке абонент уже есть.
+				// WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED = абонент заведён и
+				// применён целиком, не сохранился пароль сервера: сервер
+				// не стартует, пока его не задать в настройках.
 				code := "WDTT_SERVER_CLIENT_ADD_FAILED"
-				if errors.Is(err, wdtt.ErrServerClientFileNotWritten) {
+				switch {
+				case errors.Is(err, wdtt.ErrServerClientFileNotWritten):
 					code = "WDTT_SERVER_CLIENT_ADD_NOT_APPLIED"
+				case errors.Is(err, wdtt.ErrServerMainPasswordNotSaved):
+					code = "WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED"
 				}
 				response.Error(w, err.Error(), code)
 				return
