@@ -3140,6 +3140,32 @@ function createInitialMockFreeturn() {
 					debug: false,
 				},
 			},
+			{
+				// Осиротевший процесс (orphanedPid): живой, pid-файл унаследован.
+				id: 'freeturn-2',
+				name: 'Унаследованный',
+				running: true,
+				orphaned: true,
+				pid: 12999,
+				startedAt: null,
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9010',
+					peer: 'old.freeturn.example:56000',
+					provider: 'vk',
+					links: 'https://vk.ru/call/join/zz77old',
+					streams: 4,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'none',
+					streamsPerCred: 4,
+					platform: 'desktop',
+					dnsMode: 'auto',
+					clientId: '',
+					debug: false,
+				},
+			},
 		],
 		servers: [
 			{
@@ -3162,7 +3188,7 @@ function createInitialMockFreeturn() {
 		],
 		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
 		allowlists: {},
-		clientSeq: 1,
+		clientSeq: 2,
 		serverSeq: 1,
 	};
 }
@@ -3190,13 +3216,17 @@ function mockFreeturnProcessStatus(inst, kind) {
 	const endpoint = kind === 'client' ? cfg.peer : cfg.listen;
 	return {
 		running: inst.running,
-		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		// У осиротевшего процесса startedAt нет: запускал его прошлый демон.
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
 		...(inst.running
 			? {
 					log:
 						'12:41:02 [info] turn pool ready: 8 streams\n' +
 						`12:41:03 [info] tunnel up ${endpoint}\n` +
 						'12:41:07 [info] keepalive ok · rtt 14ms',
+					dtlsConnections: 8,
 				}
 			: { log: '12:12:44 [info] process stopped' }),
 		binary: `/opt/bin/freeturn-${kind}`,
@@ -3211,8 +3241,9 @@ function mockFreeturnAllowlist(serverId) {
 	return mockFreeturn.allowlists[serverId];
 }
 
-// ── WDTT — клиент-only (нет серверов/allowlist). Prism отдаёт на wdtt-эндпоинты
-// пустые 200 (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+// ── WDTT — клиенты и серверы. Prism отдаёт на wdtt-эндпоинты пустые 200
+// (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+const MOCK_WDTT_SERVER_PASSWORD = 'mainpass0000000000000000';
 const MOCK_WDTT_WG_CONFIG =
 	'[Interface]\n' +
 	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
@@ -3272,8 +3303,180 @@ function createInitialMockWdtt() {
 					debug: false,
 				},
 			},
+			{
+				// Осиротевший процесс (orphanedPid): живой, но pid-файл унаследован —
+				// startedAt нет, надзор по нему слеп.
+				id: 'wdtt-3',
+				name: 'Унаследованный',
+				running: true,
+				orphaned: true,
+				pid: 15999,
+				startedAt: null,
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9002',
+					peer: 'old.wdtt.example:56000',
+					password: 'orphan-password',
+					vkHashes: '',
+					workers: 12,
+					obfs: 'audio',
+					fingerprint: 'chrome',
+					deviceId: '',
+					captchaMode: 'rjs',
+					vkAuthMode: 'auto',
+					sub: '',
+					debug: false,
+					connMode: 'raw',
+					ndmsIface: 'OpkgTun19',
+					rawIface: 'wdttraw1',
+					rawClientIp: '10.77.0.5/32',
+				},
+			},
 		],
-		clientSeq: 2,
+		servers: [
+			{
+				// Новый бинарь: raw-интерфейс зарегистрирован в NDMS (rawNdmsIface).
+				id: 'default',
+				name: 'Сервер',
+				running: true,
+				pid: 15901,
+				startedAt: new Date(Date.now() - 26 * 60000).toISOString(),
+				ndmsIface: 'OpkgTun17',
+				wgIface: 'opkgtun17',
+				rawNdmsIface: 'OpkgTun18',
+				rawIface: 'opkgtun18',
+				config: {
+					enabled: true,
+					listen: '0.0.0.0:56000',
+					wgPort: 51830,
+					password: MOCK_WDTT_SERVER_PASSWORD,
+					configDir: '/opt/etc/awg-manager/wdtt/server/default',
+					adminId: '',
+					botToken: '',
+					debug: false,
+					natMode: 'full',
+					policy: 'none',
+					lanSegments: ['Home'],
+					natIface: '',
+					ndmsIface: 'OpkgTun17',
+					wgIface: 'opkgtun17',
+					openFirewall: true,
+					relayMode: 'wg',
+					rawListen: '0.0.0.0:56001',
+					directListen: '',
+					statsLog: 'ram',
+					linkPeer: '203.0.113.10:56000',
+					linkVkHashes: 'a1b2c3d4e5f6',
+					clients: [
+						{ password: MOCK_WDTT_SERVER_PASSWORD, comment: 'Главный пароль' },
+						{ password: 'c1a7f0e93b21', comment: 'Телефон Ивана', vkHash: 'a1b2c3d4e5f6' },
+						{ password: 'd2b8a1f04c32', comment: 'Ноутбук Ольги' },
+						{ password: 'e3c9b2a15d43', comment: 'Гостевой (просрочен)' },
+						{ password: 'f4d0c3b26e54', comment: 'Планшет (отключён)' },
+						{ password: 'a5e1d4c37f65', comment: 'Абонент 1' },
+					],
+				},
+				users: [
+					{
+						password: MOCK_WDTT_SERVER_PASSWORD,
+						comment: 'Главный пароль',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: true,
+						isAuto: false,
+					},
+					{
+						password: 'c1a7f0e93b21',
+						comment: 'Телефон Ивана',
+						vkHash: 'a1b2c3d4e5f6',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'd2b8a1f04c32',
+						comment: 'Ноутбук Ольги',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'e3c9b2a15d43',
+						comment: 'Гостевой (просрочен)',
+						isDeactivated: false,
+						isExpired: true,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'f4d0c3b26e54',
+						comment: 'Планшет (отключён)',
+						isDeactivated: true,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'a5e1d4c37f65',
+						comment: 'Абонент 1',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: true,
+					},
+				],
+				// available=false до первого старта сервера: passwords.json ещё нет.
+				usersAvailable: true,
+			},
+			{
+				// Старый бинарь: -raw-iface не знает, NDMS-имени у raw-интерфейса нет.
+				id: 'wdtt-srv-2',
+				name: 'Сервер (старый бинарь)',
+				running: false,
+				pid: 16044,
+				startedAt: null,
+				ndmsIface: 'OpkgTun20',
+				wgIface: 'opkgtun20',
+				rawNdmsIface: '',
+				rawIface: 'wdttraw0',
+				config: {
+					enabled: false,
+					listen: '0.0.0.0:56100',
+					wgPort: 51831,
+					password: 'legacy-server-password',
+					configDir: '/opt/etc/awg-manager/wdtt/server/wdtt-srv-2',
+					adminId: '',
+					botToken: '',
+					debug: false,
+					natMode: 'none',
+					policy: 'none',
+					lanSegments: [],
+					ndmsIface: 'OpkgTun20',
+					wgIface: 'opkgtun20',
+					openFirewall: true,
+					relayMode: 'raw',
+					rawListen: '',
+					directListen: '',
+					statsLog: 'off',
+					clients: [{ password: 'legacy-server-password', comment: 'Главный пароль' }],
+				},
+				users: [
+					{
+						password: 'legacy-server-password',
+						comment: 'Главный пароль',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: true,
+						isAuto: false,
+					},
+				],
+				usersAvailable: false,
+			},
+		],
+		clientSeq: 3,
+		serverSeq: 2,
 	};
 }
 
@@ -3281,6 +3484,56 @@ let mockWdtt = createInitialMockWdtt();
 
 function mockWdttFind(id) {
 	return mockWdtt.clients.find((i) => i.id === id) ?? null;
+}
+
+function mockWdttServerFind(id) {
+	return mockWdtt.servers.find((i) => i.id === id) ?? null;
+}
+
+function mockWdttServerProcessStatus(inst) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: '/opt/bin/wdtt-server',
+			binaryPresent: mockWdtt.binaryPresent,
+		};
+	}
+	return {
+		running: inst.running,
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
+		...(inst.running
+			? {
+					log:
+						'10:02:11 [info] dtls listen 0.0.0.0:56000\n' +
+						`10:02:11 [info] wireguard listen :${inst.config.wgPort}\n` +
+						'10:02:19 [info] client connected · 2 sessions',
+					dtlsConnections: 2,
+				}
+			: { log: '09:40:02 [info] server stopped' }),
+		ndmsIface: inst.ndmsIface || undefined,
+		rawIface: inst.rawIface || undefined,
+		// Пусто на старом бинаре: raw-интерфейс в NDMS не заведён.
+		rawNdmsIface: inst.rawNdmsIface || undefined,
+		binary: '/opt/bin/wdtt-server',
+		binaryPresent: mockWdtt.binaryPresent,
+	};
+}
+
+/** Ответ ручек /wdtt/servers/{id}/users: состав + судьба SIGHUP этой мутации. */
+function mockWdttServerClients(inst, reload) {
+	return {
+		available: inst.usersAvailable,
+		users: inst.users,
+		...(reload ? { reload } : {}),
+	};
+}
+
+/** delivered — сигнал дошёл живому серверу; иначе файл ждёт следующего запуска. */
+function mockWdttReload(inst) {
+	return inst.running ? 'delivered' : 'serverStopped';
 }
 
 function mockWdttProcessStatus(inst) {
@@ -3294,7 +3547,10 @@ function mockWdttProcessStatus(inst) {
 	}
 	return {
 		running: inst.running,
-		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		// У осиротевшего процесса startedAt нет: запускал его прошлый демон.
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
 		...(inst.running
 			? {
 					log:
@@ -3306,6 +3562,9 @@ function mockWdttProcessStatus(inst) {
 					dtlsConnections: 3,
 				}
 			: { log: '08:51:30 [info] process stopped' }),
+		ndmsIface: inst.config.ndmsIface || undefined,
+		rawIface: inst.config.rawIface || undefined,
+		rawClientIp: inst.config.rawClientIp || undefined,
 		binary: '/opt/bin/wdtt-client',
 		binaryPresent: mockWdtt.binaryPresent,
 	};
@@ -7713,20 +7972,29 @@ const server = http.createServer(async (req, res) => {
 		sendData(res, {
 			version: 2,
 			clients: mockWdtt.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+			servers: mockWdtt.servers.map((i) => ({ id: i.id, name: i.name, config: i.config })),
 		});
 		return;
 	}
 
 	if (req.method === 'GET' && path === '/wdtt/status') {
 		const defClient = mockWdttFind('default') ?? mockWdtt.clients[0];
+		const defServer = mockWdttServerFind('default') ?? mockWdtt.servers[0];
 		sendData(res, {
 			clients: mockWdtt.clients.map((i) => ({
 				id: i.id,
 				name: i.name,
 				status: mockWdttProcessStatus(i),
 			})),
+			servers: mockWdtt.servers.map((i) => ({
+				id: i.id,
+				name: i.name,
+				status: mockWdttServerProcessStatus(i),
+			})),
 			// Легаси-зеркало дефолтного инстанса.
 			client: mockWdttProcessStatus(defClient),
+			server: mockWdttServerProcessStatus(defServer),
+			serverSupported: true,
 			installAvailable: true,
 			installVersion: '2.3.1',
 			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
@@ -7952,6 +8220,299 @@ const server = http.createServer(async (req, res) => {
 		mockWdtt.binaryPresent = true;
 		sendData(res, { message: 'wdtt-client установлен (mock)' });
 		return;
+	}
+
+	// ── WDTT-сервер: инстансы и абоненты. ────────────────────────────────────────
+
+	// Создание сервера: POST /wdtt/servers
+	if (req.method === 'POST' && path === '/wdtt/servers') {
+		readRequestText(req).then((raw) => {
+			try {
+				const body = raw ? JSON.parse(raw) : {};
+				mockWdtt.serverSeq += 1;
+				const n = mockWdtt.serverSeq;
+				const template = mockWdtt.servers[0]?.config ?? {};
+				const password = `server-password-${n}`;
+				const inst = {
+					id: `wdtt-srv-${n}`,
+					name: body.name?.trim() || `Сервер ${n}`,
+					running: false,
+					pid: 16000 + n,
+					startedAt: null,
+					ndmsIface: `OpkgTun${20 + n}`,
+					wgIface: `opkgtun${20 + n}`,
+					rawNdmsIface: `OpkgTun${30 + n}`,
+					rawIface: `opkgtun${30 + n}`,
+					config: {
+						...structuredClone(template),
+						...(body.config ?? {}),
+						enabled: false,
+						password,
+						clients: [{ password, comment: 'Главный пароль' }],
+					},
+					users: [
+						{
+							password,
+							comment: 'Главный пароль',
+							isDeactivated: false,
+							isExpired: false,
+							isMainPassword: true,
+							isAuto: false,
+						},
+					],
+					usersAvailable: false,
+				};
+				mockWdtt.servers.push(inst);
+				sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+			} catch (e) {
+				sendInvalidRequest(res, e);
+			}
+		});
+		return;
+	}
+
+	// Конфиг (PUT) / переименование (PATCH) / удаление (DELETE): /wdtt/servers/{id}
+	{
+		const m = /^\/wdtt\/servers\/([^/]+)$/.exec(path);
+		if (m && ['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttServerFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
+				});
+				return;
+			}
+			if (req.method === 'DELETE') {
+				mockWdtt.servers.splice(mockWdtt.servers.indexOf(inst), 1);
+				sendData(res, { message: `wdtt server ${id} удалён (mock)` });
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (req.method === 'PATCH') {
+						if (body.name?.trim()) inst.name = body.name.trim();
+						sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+						return;
+					}
+					inst.config = { ...inst.config, ...body };
+					sendData(res, { config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Start/stop сервера: POST /wdtt/servers/{id}/start|stop
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/servers\/([^/]+)\/(start|stop)$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const action = m[2];
+			const inst = mockWdttServerFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
+				});
+				return;
+			}
+			inst.running = action === 'start';
+			inst.orphaned = false;
+			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			// passwords.json собирается перед стартом: после первого запуска список «доступен».
+			if (inst.running) inst.usersAvailable = true;
+			sendData(res, { message: `wdtt server ${id}: ${action} (mock)` });
+			return;
+		}
+	}
+
+	// Точечные настройки роутера: POST /wdtt/servers/{id}/nat|policy|lan-segments
+	{
+		const m =
+			req.method === 'POST' && /^\/wdtt\/servers\/([^/]+)\/(nat|policy|lan-segments)$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const kind = m[2];
+			const inst = mockWdttServerFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const body = raw ? JSON.parse(raw) : {};
+					if (kind === 'nat') inst.config.natMode = body.mode;
+					else if (kind === 'policy') inst.config.policy = body.policy;
+					else inst.config.lanSegments = body.segments ?? [];
+					sendData(res, { config: inst.config });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Ссылка абоненту: POST /wdtt/servers/{id}/link
+	{
+		const m = req.method === 'POST' && /^\/wdtt\/servers\/([^/]+)\/link$/.exec(path);
+		if (m) {
+			const id = decodeURIComponent(m[1]);
+			const inst = mockWdttServerFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
+				});
+				return;
+			}
+			readRequestText(req).then((raw) => {
+				try {
+					const opts = raw ? JSON.parse(raw) : {};
+					const peer = opts.peer?.trim() || inst.config.linkPeer || '203.0.113.10:56000';
+					const payload = {
+						name: opts.name || inst.name,
+						peer,
+						password: opts.password || inst.config.password,
+						vkHashes: opts.vkHashes ?? [],
+						workers: 27,
+						listen: '127.0.0.1:9000',
+					};
+					const b64 = Buffer.from(JSON.stringify(payload), 'utf8')
+						.toString('base64')
+						.replace(/\+/g, '-')
+						.replace(/\//g, '_');
+					inst.config.linkPeer = peer;
+					inst.config.linkVkHashes = (opts.vkHashes ?? []).join(',');
+					sendData(res, { link: `wdtt://${b64}`, linkQwdtt: `qwdtt://${b64}`, peer });
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+			});
+			return;
+		}
+	}
+
+	// Абоненты: /wdtt/servers/{id}/users[/{password}]
+	{
+		const one = /^\/wdtt\/servers\/([^/]+)\/users\/([^/]+)$/.exec(path);
+		const list = /^\/wdtt\/servers\/([^/]+)\/users$/.exec(path);
+		if (one || list) {
+			const id = decodeURIComponent((one ?? list)[1]);
+			const inst = mockWdttServerFind(id);
+			if (!inst) {
+				send(res, 404, {
+					success: false,
+					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
+				});
+				return;
+			}
+			// Чтение: reload не заполняется — SIGHUP не посылался.
+			if (list && req.method === 'GET') {
+				sendData(res, mockWdttServerClients(inst));
+				return;
+			}
+			if (list && req.method === 'POST') {
+				readRequestText(req).then((raw) => {
+					try {
+						const body = raw ? JSON.parse(raw) : {};
+						const password = body.password?.trim() || `gen${Date.now().toString(16)}`;
+						if (inst.users.some((u) => u.password === password)) {
+							send(res, 400, {
+								success: false,
+								error: {
+									code: 'WDTT_SERVER_CLIENT_ADD_FAILED',
+									message: 'абонент с таким паролем уже есть',
+								},
+							});
+							return;
+						}
+						inst.users.push({
+							password,
+							comment: body.comment?.trim() || '',
+							...(body.vkHash ? { vkHash: body.vkHash } : {}),
+							isDeactivated: false,
+							isExpired: false,
+							isMainPassword: password === inst.config.password,
+							isAuto: false,
+						});
+						inst.config.clients.push({
+							password,
+							comment: body.comment?.trim() || '',
+							...(body.vkHash ? { vkHash: body.vkHash } : {}),
+						});
+						sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+				});
+				return;
+			}
+			if (one && req.method === 'DELETE') {
+				const password = decodeURIComponent(one[2]);
+				const user = inst.users.find((u) => u.password === password);
+				if (!user) {
+					send(res, 400, {
+						success: false,
+						error: {
+							code: 'WDTT_SERVER_CLIENT_DELETE_FAILED',
+							message: `абонент ${password} не найден`,
+						},
+					});
+					return;
+				}
+				// Главный пароль одним ходом не удаляется — как у бэкенда.
+				if (user.isMainPassword) {
+					send(res, 400, {
+						success: false,
+						error: {
+							code: 'WDTT_SERVER_CLIENT_DELETE_FAILED',
+							message: 'это главный пароль сервера, удалить его нельзя',
+						},
+					});
+					return;
+				}
+				inst.users.splice(inst.users.indexOf(user), 1);
+				inst.config.clients = inst.config.clients.filter((c) => c.password !== password);
+				sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
+				return;
+			}
+			if (one && req.method === 'PATCH') {
+				const password = decodeURIComponent(one[2]);
+				const user = inst.users.find((u) => u.password === password);
+				if (!user) {
+					send(res, 400, {
+						success: false,
+						error: {
+							code: 'WDTT_SERVER_CLIENT_RENAME_FAILED',
+							message: `абонент ${password} не найден`,
+						},
+					});
+					return;
+				}
+				readRequestText(req).then((raw) => {
+					try {
+						const body = raw ? JSON.parse(raw) : {};
+						user.comment = String(body.name ?? '').trim();
+						const cfgClient = inst.config.clients.find((c) => c.password === password);
+						if (cfgClient) cfgClient.comment = user.comment;
+						// Переименование passwords.json не переписывает: reload пуст.
+						sendData(res, mockWdttServerClients(inst));
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+				});
+				return;
+			}
+		}
 	}
 
 	// ── end WDTT ─────────────────────────────────────────────────────────────────
