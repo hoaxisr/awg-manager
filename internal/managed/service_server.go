@@ -278,11 +278,18 @@ func (s *Service) applyNATModeRaw(ctx context.Context, ifaceName, mode string, p
 		if err != nil {
 			return nil, err
 		}
-		// Static NAT ПЕРВЫМ: обычный NAT держится включённым до подтверждения
-		// static, поэтому сбой static никогда не оставляет iface вовсе без NAT.
+		// Static NAT ПЕРВЫМ: при переходе из full обычный NAT держится
+		// включённым до подтверждения static, поэтому сбой static не оставляет
+		// iface вовсе без NAT. Откат возвращает состояние ДО вызова, а не
+		// пустое: цели из prevWANs уже имели static (re-apply internet-only)
+		// и их снятие увело бы интерфейс ниже исходного состояния — при уже
+		// снятом `ip nat` они остались бы без подмены источника.
 		applied := make([]string, 0, len(targets))
 		rollback := func() {
 			for _, a := range applied {
+				if slices.Contains(prevWANs, a) {
+					continue // стоял до вызова — оставляем
+				}
 				if rbErr := s.rciSetStaticNAT(ctx, ifaceName, a, false); rbErr != nil {
 					s.log.Warn("internet-only rollback: remove static NAT failed", "error", rbErr, "interface", ifaceName, "target", a)
 				}

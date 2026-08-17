@@ -691,6 +691,59 @@ func TestSetNATMode_InternetOnly_RollbackOnStaticFailure(t *testing.T) {
 	}
 }
 
+// TestSetNATMode_ReapplyInternetOnly_RollbackKeepsPrevTargets: при повторном
+// применении internet-only цели из prevWANs уже имеют static на роутере, а
+// `ip nat` уже снят. Откат обязан вернуть состояние ДО вызова, а не пустое:
+// снятие таких static оставило бы эти выходы вовсе без подмены источника,
+// хотя storage (fail-closed, не тронут) продолжает их числить.
+func TestSetNATMode_ReapplyInternetOnly_RollbackKeepsPrevTargets(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only",
+		NATStaticWANs: []string{"PPPoE0"},
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.failOn = func(p map[string]interface{}) error {
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if st, ok := ip["static"].(map[string]interface{}); ok && st["to-interface"] == "Wireguard2" {
+				return fmt.Errorf("boom")
+			}
+		}
+		return nil
+	}
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err == nil {
+		t.Fatal("expected error")
+	}
+
+	posts := snapshotPosts(poster)
+	if got := staticPostTargets(posts, ifaceName, true); len(got) != 0 {
+		t.Errorf("rollback must not remove pre-existing targets; removes: %v", got)
+	}
+	for _, p := range posts { // no ip nat не отправлялся
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if natSlice, ok := ip["nat"].([]map[string]interface{}); ok {
+				for _, e := range natSlice {
+					if e["no"] == true && e["interface"] == ifaceName {
+						t.Fatal("no-ip-nat must not be sent on static failure")
+					}
+				}
+			}
+		}
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if saved.NATMode != "internet-only" || !reflect.DeepEqual(saved.NATStaticWANs, []string{"PPPoE0"}) {
+		t.Errorf("storage must be untouched: mode=%q wans=%v", saved.NATMode, saved.NATStaticWANs)
+	}
+}
+
 func TestSetNATMode_FullAfterInternetOnly_RemovesAllStatics(t *testing.T) {
 	svc, store, poster := newNATModeTestService(t)
 	ctx := context.Background()
