@@ -15,7 +15,12 @@
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
 	import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
-	import { DEFAULT_PRESET, parseHeadersText } from './headersParser';
+	import {
+		DEFAULT_PRESET,
+		generateHappPreset,
+		generateHeadersForUrl,
+		parseHeadersText,
+	} from './headersParser';
 	import {
 		appendImportedFileText,
 		mergePastedShareList,
@@ -109,6 +114,56 @@
 		}
 	});
 
+	function cleanSubscriptionUrl(raw: string): string {
+		let s = raw.trim();
+		const lower = s.toLowerCase();
+		if (lower.startsWith('clash://install-config') || lower.startsWith('clashmeta://install-config')) {
+			try {
+				const u = new URL(s);
+				const target = u.searchParams.get('url');
+				if (target) return target;
+			} catch {}
+		}
+		for (const scheme of ['happ://', 'sub://', 'singbox://', 'sing-box://', 'v2ray://', 'sn://', 'ss://']) {
+			if (lower.startsWith(scheme)) {
+				const after = s.slice(scheme.length);
+				const lowerAfter = lower.slice(scheme.length);
+				const httpsIdx = lowerAfter.indexOf('https://');
+				if (httpsIdx !== -1) return after.slice(httpsIdx);
+				const httpIdx = lowerAfter.indexOf('http://');
+				if (httpIdx !== -1) return after.slice(httpIdx);
+				if (scheme === 'happ://') return 'https://' + after;
+			}
+		}
+		return s;
+	}
+
+	let detectingHeaders = $state(false);
+	let detectedNotice = $state('');
+	let detectTimer: any = null;
+
+	function triggerDetectHeaders(targetUrl: string): void {
+		if (detectTimer) clearTimeout(detectTimer);
+		detectedNotice = '';
+		const clean = cleanSubscriptionUrl(targetUrl);
+		if (!clean.startsWith('http://') && !clean.startsWith('https://')) return;
+
+		detectingHeaders = true;
+		detectTimer = setTimeout(async () => {
+			try {
+				const res = await api.detectSubscriptionHeaders(clean);
+				if (res && res.serverCount > 0) {
+					headersText = res.headersText;
+					detectedNotice = `✨ Распознано: ${res.label} (серверов: ${res.serverCount})`;
+				}
+			} catch (e) {
+				// silent fallback
+			} finally {
+				detectingHeaders = false;
+			}
+		}, 300);
+	}
+
 	function reset(): void {
 		kind = 'choose';
 		singleLinks = '';
@@ -128,6 +183,8 @@
 		previewMembers = [];
 		excludedKeys = new Set();
 		previewing = false;
+		detectingHeaders = false;
+		detectedNotice = '';
 		error = '';
 	}
 
@@ -473,8 +530,25 @@
 						class="inp"
 						type="url"
 						bind:value={url}
-						placeholder="https://provider.example/sub/abc"
+						oninput={() => {
+							url = cleanSubscriptionUrl(url);
+							triggerDetectHeaders(url);
+						}}
+						placeholder="https://provider.example/sub/abc или happ://..."
 					/>
+					{#if detectingHeaders}
+						<span class="hint" style="color: var(--accent-primary, #3b82f6);">
+							🔍 Проверяем тип подписки...
+						</span>
+					{:else if detectedNotice}
+						<span class="hint" style="color: var(--success, #10b981); font-weight: 500;">
+							{detectedNotice}
+						</span>
+					{:else}
+						<span class="hint">
+							Поддерживаются ссылки HTTPS, HAPP (happ://), Clash, V2Ray/Xray JSON, Sing-box JSON.
+						</span>
+					{/if}
 				</label>
 				<div class="row">
 					<HeadersTextarea bind:value={headersText} />

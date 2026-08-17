@@ -2,6 +2,8 @@ package subscription
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -464,18 +466,19 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 	isClash := vlink.IsClashYAML(body)
 	isSbJSON := !isClash && vlink.IsSingboxJSON(body)
+	isXrayJSON := !isClash && !isSbJSON && vlink.IsXrayJSON(body)
 	// Детект по СЫРОМУ телу: base64-обёрнутый JSON (sing-box или mieru)
 	// сюда не попадает — он уйдёт в NormalizeBody/DoubleDecode, где после
 	// декодирования строки без share-схем отбрасываются. Ограничение
 	// сознательное и симметричное для обоих JSON-форматов.
-	isMieruJSON := !isClash && !isSbJSON && vlink.IsMieruClientJSON(body)
+	isMieruJSON := !isClash && !isSbJSON && !isXrayJSON && vlink.IsMieruClientJSON(body)
 	// Body that's valid JSON but not a recognised sing-box subscription
 	// (no outbounds key in the right place) or mieru client config (no
 	// profiles) gets a precise error rather than a fall-through into
 	// share-link parsing — otherwise the user sees "ни одной валидной
 	// ссылки" with a meaningless prefix from scanning JSON bytes for "://".
-	if !isClash && !isSbJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
-		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже ни на sing-box config (нет outbounds), ни на mieru client config (нет profiles). Поддерживаются: sing-box JSON config (одиночный, массив конфигов, или массив outbounds), mieru JSON config (формат mieru apply config, экспорт панелей), Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
+	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box/Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box/Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
 		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		s.logWarn("subscription-refresh", id, err.Error())
 		return nil, err
@@ -486,6 +489,8 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		parseRes = vlink.ParseClashBody(body)
 	case isSbJSON:
 		parseRes = vlink.ParseSingboxBody(body)
+	case isXrayJSON:
+		parseRes = vlink.ParseXrayBody(body)
 	case isMieruJSON:
 		parseRes = vlink.ParseMieruClientJSON(body)
 	default:
@@ -494,6 +499,32 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
+	if len(parts.Valid) == 0 && sub.URL != "" {
+		fetchURL, _ := RewriteForRaw(sub.URL)
+		for _, candHdrs := range probeCandidates {
+			if candBody, candCt, candErr := FetchWithContext(ctx, fetchURL, candHdrs, s.fetchOpts); candErr == nil {
+				var candParse vlink.BatchResult
+				switch {
+				case vlink.IsClashYAML(candBody):
+					candParse = vlink.ParseClashBody(candBody)
+				case vlink.IsSingboxJSON(candBody):
+					candParse = vlink.ParseSingboxBody(candBody)
+				case vlink.IsXrayJSON(candBody):
+					candParse = vlink.ParseXrayBody(candBody)
+				case vlink.IsMieruClientJSON(candBody):
+					candParse = vlink.ParseMieruClientJSON(candBody)
+				default:
+					candParse = vlink.ParseBatch(NormalizeBody(candBody, candCt))
+				}
+				candParts := partitionParsedOutbounds(id, candParse.Outbounds)
+				if len(candParts.Valid) > 0 {
+					parts = candParts
+					parseRes = candParse
+					break
+				}
+			}
+		}
+	}
 	s.logPartitionResult(id, parts)
 	if len(parts.Valid) == 0 {
 		emptyClean := len(parseRes.Errors) == 0 && parseRes.SkippedVmess == 0 && parseRes.SkippedUnsupp == 0 &&
@@ -1469,6 +1500,27 @@ type PreviewMember struct {
 	Security  string `json:"security,omitempty"`
 }
 
+var probeCandidates = [][]Header{
+	{
+		{Name: "User-Agent", Value: "Happ/4.6.0/ios/2603181556604"},
+		{Name: "X-Device-OS", Value: "iOS"},
+		{Name: "X-HWID", Value: "d1c1da1b1b111111"},
+		{Name: "X-Device-Locale", Value: "ru"},
+		{Name: "X-Ver-OS", Value: "18.2"},
+		{Name: "X-App-Version", Value: "4.6.0"},
+		{Name: "X-Device-Model", Value: "iPhone 16 Pro"},
+	},
+	{
+		{Name: "User-Agent", Value: "Clash-Verge/1.7.0 (Clash.Meta)"},
+	},
+	{
+		{Name: "User-Agent", Value: "SFA/1.10.0"},
+	},
+	{
+		{Name: "User-Agent", Value: "v2rayN/6.42 (Windows NT 10.0; Win64; x64)"},
+	},
+}
+
 // PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
 // при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
 // ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
@@ -1477,22 +1529,47 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 		return nil, errors.New("subscription: preview requires a URL")
 	}
 	fetchURL, _ := RewriteForRaw(url)
-	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
+
+	fetchAndParse := func(hdrs []Header) (partitionResult, error) {
+		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, s.fetchOpts)
+		if err != nil {
+			return partitionResult{}, err
+		}
+		var parseRes vlink.BatchResult
+		switch {
+		case vlink.IsClashYAML(body):
+			parseRes = vlink.ParseClashBody(body)
+		case vlink.IsSingboxJSON(body):
+			parseRes = vlink.ParseSingboxBody(body)
+		case vlink.IsXrayJSON(body):
+			parseRes = vlink.ParseXrayBody(body)
+		case vlink.IsMieruClientJSON(body):
+			parseRes = vlink.ParseMieruClientJSON(body)
+		default:
+			parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
+		}
+		return partitionParsedOutbounds("preview", parseRes.Outbounds), nil
+	}
+
+	parts, err := fetchAndParse(headers)
+	if err != nil || len(parts.Valid) == 0 {
+		// Smart probe: automatically try candidate client profiles
+		for _, candHdrs := range probeCandidates {
+			if p, err2 := fetchAndParse(candHdrs); err2 == nil && len(p.Valid) > 0 {
+				parts = p
+				err = nil
+				break
+			}
+		}
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-	var parseRes vlink.BatchResult
-	switch {
-	case vlink.IsClashYAML(body):
-		parseRes = vlink.ParseClashBody(body)
-	case vlink.IsSingboxJSON(body):
-		parseRes = vlink.ParseSingboxBody(body)
-	case vlink.IsMieruClientJSON(body):
-		parseRes = vlink.ParseMieruClientJSON(body)
-	default:
-		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
+	if len(parts.Valid) == 0 {
+		return nil, errors.New("subscription: по этой ссылке не найдено серверов")
 	}
-	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
+
 	out := make([]PreviewMember, 0, len(parts.Valid))
 	keys := chooseKeys(parts.Valid)
 	// Dedupe by exclusion key, mirroring ApplyDiff's SkippedDuplicate: a
@@ -1515,6 +1592,126 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 		})
 	}
 	return out, nil
+}
+
+// DetectedProfile describes the automatically probed headers profile for a URL.
+type DetectedProfile struct {
+	Kind        string   `json:"kind"`
+	Headers     []Header `json:"headers"`
+	HeadersText string   `json:"headersText"`
+	Label       string   `json:"label"`
+	ServerCount int      `json:"serverCount"`
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n/2)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// DetectHeaders probes the given URL with different client header profiles and returns
+// the one that successfully delivers valid proxy nodes.
+func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedProfile, error) {
+	if rawUrl == "" {
+		return DetectedProfile{
+			Kind:        "singbox",
+			HeadersText: "User-Agent: sing-box/v1.14.20",
+			Label:       "sing-box (по умолчанию)",
+			ServerCount: 0,
+		}, nil
+	}
+	fetchURL, _ := RewriteForRaw(rawUrl)
+
+	candidates := []struct {
+		kind        string
+		label       string
+		headersFunc func() []Header
+	}{
+		{
+			kind:  "happ",
+			label: "HAPP iOS",
+			headersFunc: func() []Header {
+				return []Header{
+					{Name: "User-Agent", Value: fmt.Sprintf("Happ/4.6.0/ios/%d", time.Now().Unix())},
+					{Name: "X-Device-OS", Value: "iOS"},
+					{Name: "X-HWID", Value: randomHex(16)},
+					{Name: "X-Device-Locale", Value: "ru"},
+					{Name: "X-Ver-OS", Value: "18.2"},
+					{Name: "X-App-Version", Value: "4.6.0"},
+					{Name: "X-Device-Model", Value: "iPhone 16 Pro"},
+				}
+			},
+		},
+		{
+			kind:  "mihomo",
+			label: "Clash / mihomo",
+			headersFunc: func() []Header {
+				return []Header{
+					{Name: "User-Agent", Value: "Clash-Verge/1.7.0 (Clash.Meta)"},
+				}
+			},
+		},
+		{
+			kind:  "singbox",
+			label: "sing-box",
+			headersFunc: func() []Header {
+				return []Header{
+					{Name: "User-Agent", Value: "sing-box/v1.14.20"},
+				}
+			},
+		},
+		{
+			kind:  "v2rayn",
+			label: "v2rayN",
+			headersFunc: func() []Header {
+				return []Header{
+					{Name: "User-Agent", Value: "v2rayN/6.42 (Windows NT 10.0; Win64; x64)"},
+				}
+			},
+		},
+	}
+
+	for _, cand := range candidates {
+		hdrs := cand.headersFunc()
+		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, s.fetchOpts)
+		if err != nil {
+			continue
+		}
+		var parseRes vlink.BatchResult
+		switch {
+		case vlink.IsClashYAML(body):
+			parseRes = vlink.ParseClashBody(body)
+		case vlink.IsSingboxJSON(body):
+			parseRes = vlink.ParseSingboxBody(body)
+		case vlink.IsXrayJSON(body):
+			parseRes = vlink.ParseXrayBody(body)
+		case vlink.IsMieruClientJSON(body):
+			parseRes = vlink.ParseMieruClientJSON(body)
+		default:
+			parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
+		}
+		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
+		if len(parts.Valid) > 0 {
+			var lines []string
+			for _, h := range hdrs {
+				lines = append(lines, fmt.Sprintf("%s: %s", h.Name, h.Value))
+			}
+			return DetectedProfile{
+				Kind:        cand.kind,
+				Headers:     hdrs,
+				HeadersText: strings.Join(lines, "\n"),
+				Label:       cand.label,
+				ServerCount: len(parts.Valid),
+			}, nil
+		}
+	}
+
+	return DetectedProfile{
+		Kind:        "singbox",
+		HeadersText: "User-Agent: sing-box/v1.14.20",
+		Label:       "sing-box (по умолчанию)",
+		ServerCount: 0,
+	}, nil
 }
 
 // GetActiveNow returns the currently-active member tag as reported by the

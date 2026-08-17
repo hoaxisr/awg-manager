@@ -71,7 +71,8 @@ func classifyOutbound(ob map[string]any) string {
 		return ""
 	}
 	// Universal required fields for connect-style outbounds.
-	if _, ok := ob["server"].(string); !ok || ob["server"] == "" {
+	srv, ok := ob["server"].(string)
+	if !ok || srv == "" {
 		// Direct/block/dns don't take a server — exempt those.
 		switch typ {
 		case "direct", "block", "dns":
@@ -79,8 +80,18 @@ func classifyOutbound(ob map[string]any) string {
 		default:
 			return "missing server"
 		}
+	} else {
+		lowerSrv := strings.ToLower(strings.TrimSpace(srv))
+		if lowerSrv == "0.0.0.0" || lowerSrv == "127.0.0.1" || lowerSrv == "::1" || lowerSrv == "localhost" {
+			switch typ {
+			case "direct", "block", "dns":
+				// ok
+			default:
+				return "non-routable/dummy host"
+			}
+		}
 	}
-	if port := portValue(ob["server_port"]); port < 1 || port > 65535 {
+	if port := portValue(ob["server_port"]); port <= 1 || port > 65535 {
 		switch typ {
 		case "direct", "block", "dns":
 			// ok

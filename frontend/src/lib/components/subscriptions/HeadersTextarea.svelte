@@ -1,9 +1,10 @@
 <script lang="ts">
 	import {
 		ALL_HEADERS_PRESET,
-		DEFAULT_PRESET,
-		HAPP_PRESET,
-		MIHOMO_PRESET,
+		generateHappPreset,
+		generateMihomoPreset,
+		generateSingboxPreset,
+		generateV2rayNPreset,
 	} from './headersParser';
 	import { Dropdown } from '$lib/components/ui';
 
@@ -43,15 +44,17 @@
 		<Dropdown
 			placeholder="Подставить пресет"
 			options={[
-				{ value: 'default', label: 'По умолчанию (sing-box)' },
-				{ value: 'mihomo', label: 'Clash / mihomo' },
-				{ value: 'happ', label: 'Happ iOS (если требует провайдер)' },
+				{ value: 'happ', label: '🎲 Случайный HAPP iOS (iPhone 15-17 Pro)' },
+				{ value: 'mihomo', label: '🎲 Clash / mihomo' },
+				{ value: 'singbox', label: '🎲 Sing-box' },
+				{ value: 'v2rayn', label: '🎲 v2rayN' },
 				{ value: 'all', label: 'Полный набор (пустой шаблон)' },
 			]}
 			onchange={(v) => {
-				if (v === 'happ') applyPreset(HAPP_PRESET);
-				else if (v === 'mihomo') applyPreset(MIHOMO_PRESET);
-				else if (v === 'default') applyPreset(DEFAULT_PRESET);
+				if (v === 'happ') applyPreset(generateHappPreset());
+				else if (v === 'mihomo') applyPreset(generateMihomoPreset());
+				else if (v === 'singbox') applyPreset(generateSingboxPreset());
+				else if (v === 'v2rayn') applyPreset(generateV2rayNPreset());
 				else if (v === 'all') applyPreset(ALL_HEADERS_PRESET);
 			}}
 		/>

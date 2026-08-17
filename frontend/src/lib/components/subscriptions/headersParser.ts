@@ -19,37 +19,117 @@ export function serializeHeaders(headers: SubscriptionHeader[]): string {
 	return headers.map((h) => `${h.name}: ${h.value}`).join('\n');
 }
 
-// DEFAULT_PRESET is applied automatically when the user opens the
-// "create subscription" modal. A sing-box User-Agent makes most
-// providers respond with sing-box JSON config (single, array of
-// configs, or array of outbounds) — formats our parser supports for
-// vless / trojan / ss / hysteria2 outbound types.
-export const DEFAULT_PRESET = `User-Agent: sing-box/v1.14.20`;
+function randomHex(len: number): string {
+	const chars = '0123456789abcdef';
+	let res = '';
+	for (let i = 0; i < len; i++) {
+		res += chars[Math.floor(Math.random() * chars.length)];
+	}
+	return res;
+}
 
-// MIHOMO_PRESET stays available for providers that branch on a
-// Clash/mihomo UA and only emit Clash YAML or base64 share-links.
-// Use it when the default sing-box UA returns nothing useful.
-export const MIHOMO_PRESET = `User-Agent: mihomo/v1.19.20`;
+export function generateHappPreset(): string {
+	const models = [
+		'iPhone 15 Pro',
+		'iPhone 15 Pro Max',
+		'iPhone 16 Pro',
+		'iPhone 16 Pro Max',
+		'iPhone 17 Pro',
+		'iPhone 17 Pro Max',
+	];
+	const model = models[Math.floor(Math.random() * models.length)];
+	const hwid = randomHex(16);
+	const buildTime = Date.now().toString() + Math.floor(Math.random() * 1000).toString();
+	const minorVer = Math.floor(Math.random() * 5);
 
-// HAPP_PRESET stays available for providers that gate access on the
-// vendor-specific Happ iOS headers. Note: sites that branch on this
-// UA typically return a V2Ray-style JSON config which our parser
-// does NOT understand — only use this preset if your provider
-// explicitly requires Happ-format headers.
-export const HAPP_PRESET = `User-Agent: Happ/4.6.0/ios/2603181556604
+	return `User-Agent: Happ/4.6.${minorVer}/ios/${buildTime}
 X-Device-OS: iOS
-X-HWID: d1c1da1b1b111111
+X-HWID: ${hwid}
 X-Device-Locale: ru
-X-Ver-OS: 26.4
-X-App-Version: 4.6.0
-X-Device-Model: iPhone 17 Pro Max`;
+X-Ver-OS: 18.${minorVer + 1}
+X-App-Version: 4.6.${minorVer}
+X-Device-Model: ${model}`;
+}
 
-// ALL_HEADERS_PRESET is a fill-me-in scaffold for niche providers whose
-// expected headers don't match the named presets. Lines with empty values
-// are silently dropped by parseHeadersText, so the user can ignore rows
-// that don't apply. The set mirrors the "Часто требуются провайдерами"
-// help block in HeadersTextarea.svelte — keep the two in sync if either
-// list is edited.
+export function generateMihomoPreset(): string {
+	const versions = ['v1.18.10', 'v1.19.0', 'v1.19.2', 'v1.20.0'];
+	const v = versions[Math.floor(Math.random() * versions.length)];
+	return `User-Agent: mihomo/${v} (Clash.Meta)`;
+}
+
+export function generateSingboxPreset(): string {
+	const versions = ['v1.10.0', 'v1.10.7', 'v1.11.0', 'v1.11.2', 'v1.14.20'];
+	const v = versions[Math.floor(Math.random() * versions.length)];
+	return `User-Agent: sing-box/${v}`;
+}
+
+export function generateV2rayNPreset(): string {
+	const versions = ['6.39', '6.40', '6.42', '6.45'];
+	const v = versions[Math.floor(Math.random() * versions.length)];
+	return `User-Agent: v2rayN/${v} (Windows NT 10.0; Win64; x64)`;
+}
+
+export function detectHeaderProfileForUrl(rawUrl: string): HeaderProfileKind {
+	const lower = rawUrl.trim().toLowerCase();
+	if (!lower) return 'happ';
+
+	// Clash / Mihomo indicators
+	if (
+		lower.startsWith('clash://') ||
+		lower.startsWith('clashmeta://') ||
+		lower.includes('clash') ||
+		lower.includes('mihomo') ||
+		lower.includes('meta') ||
+		lower.includes('.yaml') ||
+		lower.includes('.yml') ||
+		lower.includes('format=clash')
+	) {
+		return 'mihomo';
+	}
+
+	// V2Ray / Xray raw indicators
+	if (
+		lower.startsWith('v2ray://') ||
+		lower.includes('v2ray') ||
+		lower.includes('v2rayn') ||
+		lower.includes('format=v2ray')
+	) {
+		return 'v2rayn';
+	}
+
+	// Sing-box explicit indicators
+	if (
+		lower.startsWith('singbox://') ||
+		lower.startsWith('sing-box://') ||
+		lower.includes('format=singbox') ||
+		lower.includes('format=sb')
+	) {
+		return 'singbox';
+	}
+
+	// Default to dynamic HAPP (universal support for Remnawave, Marzban, 3X-UI, VOX, Infomir, CloVPN)
+	return 'happ';
+}
+
+export function generateHeadersForUrl(rawUrl: string): string {
+	const kind = detectHeaderProfileForUrl(rawUrl);
+	switch (kind) {
+		case 'mihomo':
+			return generateMihomoPreset();
+		case 'singbox':
+			return generateSingboxPreset();
+		case 'v2rayn':
+			return generateV2rayNPreset();
+		default:
+			return generateHappPreset();
+	}
+}
+
+export const SINGBOX_PRESET = `User-Agent: sing-box/v1.14.20`;
+export const DEFAULT_PRESET = SINGBOX_PRESET;
+export const HAPP_PRESET = generateHappPreset();
+export const MIHOMO_PRESET = generateMihomoPreset();
+
 export const ALL_HEADERS_PRESET = `# Заполните только нужные строки. Пустые игнорируются при сохранении.
 User-Agent:
 Accept-Encoding:

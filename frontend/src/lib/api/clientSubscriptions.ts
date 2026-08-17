@@ -150,6 +150,25 @@ export class SubscriptionsClient extends SbRouterClient {
 		});
 	}
 
+	async detectSubscriptionHeaders(url: string): Promise<{
+		kind: string;
+		headers: SubscriptionHeader[];
+		headersText: string;
+		label: string;
+		serverCount: number;
+	}> {
+		return this.request<{
+			kind: string;
+			headers: SubscriptionHeader[];
+			headersText: string;
+			label: string;
+			serverCount: number;
+		}>('/singbox/subscriptions/detect-headers', {
+			method: 'POST',
+			body: JSON.stringify({ url }),
+		});
+	}
+
 	// Сводные группы подписок (#372)
 
 	async listSubscriptionGroups(): Promise<SubscriptionGroup[]> {

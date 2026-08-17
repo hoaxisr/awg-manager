@@ -478,3 +478,26 @@ func (h *SubscriptionHandler) PreviewURL(w http.ResponseWriter, r *http.Request)
 	}
 	response.Success(w, members)
 }
+
+type DetectHeadersRequest struct {
+	URL string `json:"url"`
+}
+
+// DetectHeaders handles POST /api/singbox/subscriptions/detect-headers
+func (h *SubscriptionHandler) DetectHeaders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req DetectHeadersRequest
+	if err := decodeBody(r, &req); err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
+		return
+	}
+	profile, err := h.svc.DetectHeaders(r.Context(), req.URL)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "DETECT_FAILED")
+		return
+	}
+	response.Success(w, profile)
+}
