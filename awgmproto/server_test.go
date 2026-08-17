@@ -1201,3 +1201,117 @@ func TestEvictedConnectionClosesFD(t *testing.T) {
 
 	assertClosed(t, r)
 }
+
+// startServerWithAcceptHook — сервер, чей accept подменён швом, плюс копилка
+// ошибок. Шов ставится ДО Serve: связь горутин — оператор go.
+func startServerWithAcceptHook(t *testing.T, h Handler,
+	hook func(srv *Server) (*net.UnixConn, error)) (string, func() []error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "c.sock")
+	var mu sync.Mutex
+	var errs []error
+	srv, err := Listen(ServerConfig{
+		Path: path, Impl: "wt-client", Role: "client", Instance: "default", Handler: h,
+		OnError: func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			errs = append(errs, err)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.acceptHook = func() (*net.UnixConn, error) { return hook(srv) }
+	go srv.Serve()
+	t.Cleanup(func() { _ = srv.Close() })
+	return path, func() []error {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]error(nil), errs...)
+	}
+}
+
+// emfile — отказ accept ровно в той обёртке, в какой его отдаёт net: OpError
+// поверх SyscallError поверх errno. Проверка обязана видеть errno сквозь обе.
+func emfile() error {
+	return &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept", unix.EMFILE)}
+}
+
+// TestServeSurvivesTemporaryAcceptError — исчерпание дескрипторов не убивает
+// цикл приёма.
+//
+// Худший отказ здесь не «соединение не принято», а процесс, ВЫГЛЯДЯЩИЙ живым:
+// после выхода из Serve слушающий сокет остаётся в ядре, проба нового процесса
+// дозванивается через backlog и решает, что инстанс занят, а обслуживать
+// соединения уже некому. Проверяется поэтому не сам ретрай, а его следствие:
+// соединение ПОСЛЕ двух отказов обслужено, и hello по нему пришёл.
+//
+// Шов, а не настоящий EMFILE: воспроизвести его на живом сокете можно только
+// просадкой RLIMIT_NOFILE на весь процесс теста, то есть заодно на все
+// параллельные тесты пакета.
+func TestServeSurvivesTemporaryAcceptError(t *testing.T) {
+	h := &fakeHandler{st: State{Role: "client", Instance: "default", PID: 4242}}
+	var mu sync.Mutex
+	left := 2
+	path, errs := startServerWithAcceptHook(t, h, func(srv *Server) (*net.UnixConn, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if left > 0 {
+			left--
+			return nil, emfile()
+		}
+		return srv.ln.AcceptUnix()
+	})
+
+	c := dialTest(t, path)
+	kind, msg := c.mustNext()
+	ev, ok := msg.(Event)
+	if kind != KindEvent || !ok || ev.Event != EventHello {
+		t.Fatalf("после временных отказов accept соединение не обслужено: вид %v, кадр %#v", kind, msg)
+	}
+	if ev.PID != 4242 {
+		t.Fatalf("hello не от нашего процесса: %+v", ev)
+	}
+
+	// Ждать нечего: оба отказа доложены той же горутиной, что позже приняла
+	// соединение, — hello физически не мог обогнать их.
+	got := errs()
+	if len(got) != 2 {
+		t.Fatalf("OnError позвали %d раз, ожидали по разу на каждый отказ: %v", len(got), got)
+	}
+	for _, err := range got {
+		if !errors.Is(err, unix.EMFILE) {
+			t.Fatalf("в обвязку уехала не причина отказа: %v", err)
+		}
+	}
+}
+
+// TestServeStopsOnFatalAcceptError — поломка слушателя остаётся концом цикла.
+//
+// Обратная сторона ретрая и такой же обязательный страж: если считать
+// временным всё подряд, Serve после Close закрутится вхолостую на ErrClosed —
+// вечная горутина в каждом из четырёх бинарей.
+func TestServeStopsOnFatalAcceptError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	srv, err := Listen(ServerConfig{
+		Path: path, Impl: "wt-client", Role: "client", Instance: "default", Handler: &fakeHandler{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	srv.acceptHook = func() (*net.UnixConn, error) {
+		return nil, &net.OpError{Op: "accept", Net: "unix", Err: net.ErrClosed}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		srv.Serve()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve не вышел на закрытом слушателе: цикл крутится вхолостую")
+	}
+}

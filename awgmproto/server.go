@@ -34,6 +34,15 @@ const (
 	probeDialTimeout = 2 * time.Second
 )
 
+// Паузы между повторами accept, отказавшего по исчерпании ресурса. Первая
+// короткая: дескриптор часто освобождается тут же, и лишняя секунда простоя
+// стоила бы менеджеру целого цикла опроса. Удвоение до потолка нужно на случай,
+// когда ресурс не вернётся никогда, — иначе цикл сожжёт процессор впустую.
+const (
+	acceptRetryMin = 5 * time.Millisecond
+	acceptRetryMax = 1 * time.Second
+)
+
 // Error — отказ с кодом протокола.
 type Error struct {
 	Code string
@@ -88,6 +97,10 @@ type ServerConfig struct {
 type Server struct {
 	cfg ServerConfig
 	ln  *net.UnixListener
+
+	// acceptHook подменяет accept в тестах. Ставится ДО Serve и больше не
+	// трогается: связь горутин — оператор go, отдельной синхронизации нет.
+	acceptHook func() (*net.UnixConn, error)
 
 	// execMu сериализует исполнение КОМАНД поверх ВСЕХ соединений: новый
 	// владелец не начнёт свою первую команду, пока не завершилась чужая
@@ -171,14 +184,68 @@ func reclaimPath(path string) error {
 }
 
 // Serve крутит приём соединений до Close.
+//
+// Отказ accept по исчерпании ресурса (дескрипторы процесса — EMFILE, дескрипторы
+// системы — ENFILE, память под сокет) цикл НЕ убивает: он ретраит с растущей
+// паузой и жалуется через OnError. Молчаливый выход из цикла давал бы худший из
+// возможных отказов — процесс, который ВЫГЛЯДИТ живым: слушающий сокет остаётся
+// в ядре, проба нового процесса дозванивается через backlog и решает, что на
+// инстансе уже кто-то работает, а принять соединение некому. Менеджер при этом
+// видит «сокет есть, hello нет» и ретраит по кругу.
+//
+// Настоящие поломки слушателя (в том числе его закрытие в Close) остаются
+// концом цикла, как и раньше.
 func (s *Server) Serve() {
+	var delay time.Duration
 	for {
-		uc, err := s.ln.AcceptUnix()
-		if err != nil {
+		uc, err := s.accept()
+		if err == nil {
+			delay = 0
+			s.adopt(uc)
+			continue
+		}
+		if !isAcceptRetryable(err) {
 			return
 		}
-		s.adopt(uc)
+		if delay == 0 {
+			delay = acceptRetryMin
+		} else if delay *= 2; delay > acceptRetryMax {
+			delay = acceptRetryMax
+		}
+		s.report(fmt.Errorf("приём соединения отложен на %v: %w", delay, err))
+		time.Sleep(delay)
 	}
+}
+
+// accept — шов: тестам нужен отказ accept, который на живом сокете
+// воспроизводится только просадкой RLIMIT_NOFILE на весь процесс теста.
+func (s *Server) accept() (*net.UnixConn, error) {
+	if s.acceptHook != nil {
+		return s.acceptHook()
+	}
+	return s.ln.AcceptUnix()
+}
+
+// isAcceptRetryable отделяет исчерпание ресурса от поломки слушателя.
+//
+// Явный список errno, а не net.Error.Temporary(): Temporary объявлен устаревшим
+// и на разных ошибках врёт в обе стороны. EINTR, EAGAIN и ECONNABORTED сюда
+// приходить не должны — их рантайм Go разбирает внутри accept, — но названы
+// намеренно: если однажды придут, это тоже «повторить», а не «умереть».
+//
+// Всё остальное фатально, и это важно ровно так же: net.ErrClosed после Close
+// не errno, поэтому Serve на нём выходит, а не крутится вхолостую.
+func isAcceptRetryable(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	switch errno {
+	case unix.EMFILE, unix.ENFILE, unix.ENOBUFS, unix.ENOMEM,
+		unix.ECONNABORTED, unix.EINTR, unix.EAGAIN:
+		return true
+	}
+	return false
 }
 
 // adopt делает нового владельца.
