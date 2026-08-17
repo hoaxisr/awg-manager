@@ -196,6 +196,56 @@ func writePasswordsFixture(t *testing.T, dir string, doc passwordsJSON) {
 	}
 }
 
+// TestUsableServerClients_FollowsReasonClassifier сторожит связь предиката и
+// классификатора: отбор обязан идти ТОЛЬКО через ServerClientUnusableReason.
+// Мутация «добавить условие прямо в UsableServerClients, мимо классификатора»
+// роняет тест — иначе потребитель причины (тексты отказов в internal/api)
+// назвал бы для такого абонента чужую причину, и ни один тест бы не упал.
+func TestUsableServerClients_FollowsReasonClassifier(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	const main = "adminpass"
+	clients := []ServerClient{
+		{Password: "abonent1"},
+		{Password: "botpass", ExpiresAt: now.Add(time.Hour).Unix()},
+		{Password: "  spaced  "},
+		{Password: "   "},
+		{Password: main},
+		{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()},
+	}
+
+	inUsable := map[string]bool{}
+	for _, c := range UsableServerClients(clients, main, now) {
+		inUsable[c.Password] = true
+	}
+	for _, c := range clients {
+		want := ServerClientUnusableReason(c, main, now) == ServerClientUsable
+		if got := inUsable[strings.TrimSpace(c.Password)]; got != want {
+			t.Fatalf("абонент %q: предикат = %v, классификатор = %v (%q) — отбор идёт мимо классификатора",
+				c.Password, got, want, ServerClientUnusableReason(c, main, now))
+		}
+	}
+}
+
+func TestServerClientUnusableReason_NamesEachCondition(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	cases := []struct {
+		name   string
+		client ServerClient
+		want   ServerClientReason
+	}{
+		{"рабочий", ServerClient{Password: "abonent1"}, ServerClientUsable},
+		{"пустой пароль", ServerClient{Password: "   "}, ServerClientEmptyPassword},
+		{"главный пароль", ServerClient{Password: " adminpass "}, ServerClientMainPassword},
+		{"просрочен", ServerClient{Password: "stale", ExpiresAt: now.Add(-time.Second).Unix()}, ServerClientExpired},
+		{"бессрочный", ServerClient{Password: "forever", ExpiresAt: 0}, ServerClientUsable},
+	}
+	for _, tc := range cases {
+		if got := ServerClientUnusableReason(tc.client, "adminpass", now); got != tc.want {
+			t.Fatalf("%s: причина = %q, ожидалась %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestUsableServerClients_SkipsEmptyMainAndExpired(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	got := UsableServerClients([]ServerClient{

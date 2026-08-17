@@ -76,13 +76,10 @@ func TestLinkPasswordFor_RejectsExpiredClient(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Hour).Unix(),
 	})
 
-	// ОГОВОРКА К ВЫВОДУ ПРИЧИНЫ ИСКЛЮЧЕНИЕМ (ревью задачи 5). Текст «просрочен»
-	// получается вычитанием: пароль есть в списке, непуст и не равен главному —
-	// значит непригоден по сроку. Цепочка исчерпывающа ровно для ТРЁХ текущих
-	// условий wdtt.UsableServerClients. Появится четвёртое (скажем,
-	// IsDeactivated в предикате) — отказ останется верным, а текст станет
-	// ложным. Чистое решение — классификатор причины на стороне wdtt; пока
-	// его нет, этот тест и есть напоминание.
+	// Текст «просрочен» больше не выводится вычитанием: причину называет
+	// wdtt.ServerClientUnusableReason, тот же классификатор, на котором стоит
+	// предикат. Четвёртое условие пригодности даст свою причину, а не ложный
+	// срок — сторож на это TestLinkRejectMessage_UnknownReasonIsNotExpired.
 	_, err := linkPasswordFor(WdttGenerateLinkRequest{Password: "botpass"}, cfg)
 	if err == nil {
 		t.Fatal("просроченный абонент обязан быть отказом: сервер его пароль не примет")
@@ -95,6 +92,32 @@ func TestLinkPasswordFor_RejectsExpiredClient(t *testing.T) {
 	// «в конфиге есть просроченный».
 	if _, err := linkPasswordFor(WdttGenerateLinkRequest{Password: "abonent1"}, cfg); err != nil {
 		t.Fatalf("рабочий абонент рядом с просроченным обязан получить ссылку: %v", err)
+	}
+}
+
+// TestLinkRejectMessage_UnknownReasonIsNotExpired сторожит то самое свойство,
+// ради которого заведён классификатор: причина, у которой ещё нет своего текста
+// (новое условие пригодности в wdtt), обязана дать честный общий отказ, а не
+// уверенное «просрочен». Мутация «в default вернуть текст про срок» роняет тест.
+func TestLinkRejectMessage_UnknownReasonIsNotExpired(t *testing.T) {
+	msg := linkRejectMessage(wdtt.ServerClientReason("deactivated"), true)
+	if strings.TrimSpace(msg) == "" {
+		t.Fatal("отказ без текста: пользователю нечего прочитать")
+	}
+	if strings.Contains(msg, "просрочен") {
+		t.Fatalf("причина не от классификатора: непригодность %q объявлена сроком (%q)", "deactivated", msg)
+	}
+
+	// Известные причины свой текст сохраняют — общий отказ не должен съесть
+	// адресные.
+	if got := linkRejectMessage(wdtt.ServerClientExpired, true); !strings.Contains(got, "просрочен") {
+		t.Fatalf("просроченный абонент: получено %q", got)
+	}
+	if got := linkRejectMessage(wdtt.ServerClientMainPassword, false); !strings.Contains(got, "главный пароль сервера") {
+		t.Fatalf("главный пароль: получено %q", got)
+	}
+	if got := linkRejectMessage(wdtt.ServerClientUsable, false); !strings.Contains(got, "не принадлежит ни одному абоненту") {
+		t.Fatalf("чужой пароль: получено %q", got)
 	}
 }
 

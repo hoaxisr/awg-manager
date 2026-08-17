@@ -167,23 +167,55 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 //
 // Пароль в результате уже подрезан: трим — здесь, и внутри конвейера больше
 // нигде, иначе ключ файла и ключ сравнения однажды разойдутся.
+//
+// Своих условий у предиката НЕТ: отбор целиком делает
+// ServerClientUnusableReason. Так причина отказа и сам отбор не могут разойтись
+// — а именно расхождением получался ложный текст «просрочен» у абонента,
+// непригодного по другой причине.
 func UsableServerClients(clients []ServerClient, mainPassword string, now time.Time) []ServerClient {
-	main := strings.TrimSpace(mainPassword)
 	out := make([]ServerClient, 0, len(clients))
 	for _, c := range clients {
-		pass := strings.TrimSpace(c.Password)
-		if pass == "" || pass == main {
+		if ServerClientUnusableReason(c, mainPassword, now) != ServerClientUsable {
 			continue
 		}
-		// Ноль — бессрочный; иначе сервер принимает запись, пока
-		// ExpiresAt > now (isPasswordExpired, форк server.go:460-468).
-		if c.ExpiresAt != 0 && c.ExpiresAt <= now.Unix() {
-			continue
-		}
-		c.Password = pass
+		c.Password = strings.TrimSpace(c.Password)
 		out = append(out, c)
 	}
 	return out
+}
+
+// ServerClientReason — почему wdtt-server не примет пароль абонента.
+// Пустая строка (ServerClientUsable) означает «примет».
+type ServerClientReason string
+
+const (
+	ServerClientUsable        ServerClientReason = ""
+	ServerClientEmptyPassword ServerClientReason = "empty_password"
+	ServerClientMainPassword  ServerClientReason = "main_password"
+	ServerClientExpired       ServerClientReason = "expired"
+)
+
+// ServerClientUnusableReason называет ПРИЧИНУ непригодности — ту же, по которой
+// абонент не попадает в passwords.json. Потребители причины (тексты отказов в
+// internal/api) обязаны спрашивать её, а не выводить причину исключением:
+// вычитание исчерпывающе ровно для сегодняшнего набора условий, и четвёртое
+// условие сделало бы старый текст ложным, не сломав ни одного теста.
+//
+// Новое условие пригодности добавляется ЗДЕСЬ, и только здесь: предикат
+// UsableServerClients построен на этой функции.
+func ServerClientUnusableReason(c ServerClient, mainPassword string, now time.Time) ServerClientReason {
+	pass := strings.TrimSpace(c.Password)
+	switch {
+	case pass == "":
+		return ServerClientEmptyPassword
+	case pass == strings.TrimSpace(mainPassword):
+		return ServerClientMainPassword
+	case c.ExpiresAt != 0 && c.ExpiresAt <= now.Unix():
+		// Ноль — бессрочный; иначе сервер принимает запись, пока
+		// ExpiresAt > now (isPasswordExpired, форк server.go:460-468).
+		return ServerClientExpired
+	}
+	return ServerClientUsable
 }
 
 // dropOrphanPasswordsDevices удаляет устройства, на которые не ссылается ни один

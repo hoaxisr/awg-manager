@@ -362,17 +362,37 @@ func linkPasswordFor(req WdttGenerateLinkRequest, cfg wdtt.ServerConfig) (string
 		}
 	}
 
-	// Пароль не рабочий. Причину называем исключением, а не повторной
-	// проверкой срока: копия предиката в internal/api запрещена.
-	if pass == strings.TrimSpace(cfg.Password) {
-		return "", errors.New("это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента")
-	}
+	// Пароль не рабочий. Причину спрашиваем у классификатора wdtt — того же, на
+	// котором построен предикат. Выводить её исключением («не пустой, не
+	// главный, значит просрочен») нельзя: вычитание исчерпывающе только для
+	// сегодняшнего набора условий, а четвёртое дало бы уверенный ложный текст.
+	known := false
+	target := wdtt.ServerClient{Password: pass}
 	for _, c := range cfg.Clients {
 		if strings.TrimSpace(c.Password) == pass {
-			return "", errors.New("абонент просрочен, ссылка не будет работать: заведите нового абонента")
+			target, known = c, true
+			break
 		}
 	}
-	return "", errors.New("пароль не принадлежит ни одному абоненту сервера")
+	return "", errors.New(linkRejectMessage(wdtt.ServerClientUnusableReason(target, cfg.Password, time.Now()), known))
+}
+
+// linkRejectMessage переводит причину непригодности в текст отказа.
+// «Пароля нет в списке» проверяется ПОСЛЕ главного пароля: главный в списке
+// абонентов не лежит, а сказать про него надо именно про него.
+func linkRejectMessage(reason wdtt.ServerClientReason, knownClient bool) string {
+	switch {
+	case reason == wdtt.ServerClientMainPassword:
+		return "это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента"
+	case !knownClient:
+		return "пароль не принадлежит ни одному абоненту сервера"
+	case reason == wdtt.ServerClientExpired:
+		return "абонент просрочен, ссылка не будет работать: заведите нового абонента"
+	default:
+		// Причина, которой у текстов ещё нет: новое условие пригодности в
+		// wdtt. Общий отказ честнее уверенного «просрочен».
+		return "абонент непригоден для ссылки: заведите нового абонента"
+	}
 }
 
 func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, serverID string, req WdttGenerateLinkRequest) {
