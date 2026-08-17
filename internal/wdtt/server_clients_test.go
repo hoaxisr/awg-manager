@@ -205,6 +205,44 @@ func TestListServerClients_SurvivesMissingFile(t *testing.T) {
 	}
 }
 
+// Отсутствие passwords.json — не ошибка: до первого старта сервера файла нет.
+// Сторожится здесь, а не только через ListServerClients: та ошибку чтения
+// проглатывает в журнал и без этого теста мутант «нет файла = ошибка» выживал.
+func TestLoadServerClientEntries_MissingFileIsNotAnError(t *testing.T) {
+	entries, available, err := loadServerClientEntries(t.TempDir())
+	if err != nil {
+		t.Fatalf("отсутствие файла отдано ошибкой: %v", err)
+	}
+	if available {
+		t.Fatal("файла нет, ожидался available=false")
+	}
+	if len(entries) != 0 {
+		t.Fatalf("записи взялись из ниоткуда: %#v", entries)
+	}
+}
+
+// Битый passwords.json (а не отсутствующий) не должен опустошать список: он
+// собирается из wdtt.json, ошибка уходит в журнал.
+func TestListServerClients_SurvivesUnreadableFile(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	if err := s.putServerClient(DefaultInstanceID, ServerClient{Password: "client1", Comment: "Иван"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordsJSONPath(cfgDir), []byte("это не json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.ListServerClients(DefaultInstanceID)
+	if err != nil {
+		t.Fatalf("список обязан отдаваться и при битом файле: %v", err)
+	}
+	if st.Available {
+		t.Fatalf("файл не разобран, ожидался available=false: %+v", st)
+	}
+	if !hasServerClientEntry(st, "client1") {
+		t.Fatalf("список из wdtt.json пуст: %+v", st.Users)
+	}
+}
+
 func TestAddServerClient_RejectsPasswordEqualToEffectiveMain(t *testing.T) {
 	// Пароль сервера ещё НЕ сохранён: эффективный главный приезжает аргументом.
 	s, cfgDir := newServerClientsService(t, "")
@@ -250,6 +288,62 @@ func TestAddServerClient_WritesConfigAndFile(t *testing.T) {
 	if entry.Label != "Иван" || entry.VkHash != "vk1" {
 		t.Fatalf("личность абонента не доехала до файла: %#v", entry)
 	}
+}
+
+// Первый абонент на сервере без сохранённого пароля: побочный эффект дописывает
+// пароль сервера, а в passwords.json уезжает ЭФФЕКТИВНЫЙ главный — иначе файл
+// получил бы пустой main_password до следующего старта.
+func TestAddServerClient_SavesEffectiveMainPassword(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "")
+	const main = "brandnew-main-pass000000"
+	if _, err := s.AddServerClient(DefaultInstanceID, "client1", "Иван", "", main); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := s.serverInstance(DefaultInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst.Config.Password != main {
+		t.Fatalf("пароль сервера не сохранён: %q", inst.Config.Password)
+	}
+	doc, err := loadPasswordsJSON(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.MainPassword != main {
+		t.Fatalf("main_password в файле = %q, ожидался эффективный главный", doc.MainPassword)
+	}
+	if _, ok := doc.Passwords["client1"]; !ok {
+		t.Fatalf("абонент не записан: %#v", doc.Passwords)
+	}
+}
+
+// Память о сроке сильнее молчания файла: запись без expires_at не снимает срок,
+// запомненный в wdtt.json. Иначе отозванный по сроку доступ становился бы
+// бессрочным при первом же усыновлении.
+func TestAdoptServerClientsFromFile_KeepsRememberedExpiry(t *testing.T) {
+	s, cfgDir := newServerClientsService(t, "mainpass0000000000000000")
+	expires := time.Now().Add(time.Hour).Unix()
+	if err := s.putServerClient(DefaultInstanceID, ServerClient{Password: "client1", ExpiresAt: expires}); err != nil {
+		t.Fatal(err)
+	}
+	writePasswordsFixture(t, cfgDir, passwordsJSON{
+		MainPassword: "mainpass0000000000000000",
+		Passwords:    map[string]passwordsJSONUser{"client1": {Label: "Иван"}},
+	})
+	clients, err := s.adoptServerClientsFromFile(DefaultInstanceID, cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range clients {
+		if c.Password == "client1" {
+			if c.ExpiresAt != expires {
+				t.Fatalf("срок снят пустым значением файла: %d, ожидался %d", c.ExpiresAt, expires)
+			}
+			return
+		}
+	}
+	t.Fatalf("абонент пропал при усыновлении: %+v", clients)
 }
 
 func TestRemoveServerClient_DropsClientAndItsDevice(t *testing.T) {
