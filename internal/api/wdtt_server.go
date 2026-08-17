@@ -195,7 +195,7 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 		case http.MethodGet:
 			st, err := h.svc.ListServerClients(serverID)
 			if err != nil {
-				response.Error(w, err.Error(), "WDTT_PANEL_USERS_FAILED")
+				response.Error(w, err.Error(), "WDTT_SERVER_CLIENTS_FAILED")
 				return
 			}
 			response.Success(w, st)
@@ -207,7 +207,7 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 			}
 			st, err := h.svc.AddServerClient(serverID, req.Password, req.Comment, req.VkHash, req.MainPassword)
 			if err != nil {
-				response.Error(w, err.Error(), "WDTT_PANEL_USER_ADD_FAILED")
+				response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_ADD_FAILED")
 				return
 			}
 			response.Success(w, st)
@@ -222,7 +222,7 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 		}
 		st, err := h.svc.RemoveServerClient(serverID, password)
 		if err != nil {
-			response.Error(w, err.Error(), "WDTT_PANEL_USER_DELETE_FAILED")
+			response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_DELETE_FAILED")
 			return
 		}
 		response.Success(w, st)
