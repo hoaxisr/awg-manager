@@ -410,11 +410,11 @@ type wdttAccessAdapter struct {
 	ifaces *ndmscommand.InterfaceCommands
 }
 
-func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
+func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode string, prevWANs []string) ([]string, error) {
 	if a.svc == nil {
-		return "", fmt.Errorf("managed service not available")
+		return nil, fmt.Errorf("managed service not available")
 	}
-	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWAN)
+	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWANs)
 }
 
 func (a *wdttAccessAdapter) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
