@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -123,7 +124,20 @@ func TestMergeServerClients_MainPasswordComparedTrimmed(t *testing.T) {
 		time.Unix(1700000000, 0),
 	)
 	if !st.Users[0].IsMainPassword {
-		t.Fatalf("пароль с пробелами не признан главным: %+v", st.Users[0])
+		t.Fatalf("пароль абонента с пробелами не признан главным: %+v", st.Users[0])
+	}
+	// Вторая сторона того же сравнения: пробелы в САМОМ главном пароле.
+	// Хранилище тримит его на входе (normalizeServerConfig), но конфиг
+	// переживает старые версии и ручную правку.
+	paddedMain := mergeServerClients(
+		[]ServerClient{{Password: "main"}},
+		nil,
+		false,
+		" main ",
+		time.Unix(1700000000, 0),
+	)
+	if !paddedMain.Users[0].IsMainPassword {
+		t.Fatalf("главный пароль с пробелами не признан совпадением: %+v", paddedMain.Users[0])
 	}
 	// Пустой главный пароль совпадением не считается: сервер без пароля не
 	// запускается, и бейдж у каждого абонента был бы ложью.
@@ -302,6 +316,38 @@ func TestServerClients_ReloadReportsDelivery(t *testing.T) {
 	waitForHupCount(t, mark, 2, 3*time.Second)
 	if rm.Reload != ReloadDelivered {
 		t.Fatalf("удаление у живого сервера: reload = %q", rm.Reload)
+	}
+}
+
+// TestServerClients_ReloadReportsFailedDelivery: процесс живой, а сигнал не
+// ушёл. Файл записан, значит доступ появится при следующем запуске, но
+// «применено сейчас» обещать нельзя — исход обязан отличаться и от доставки, и
+// от остановленного сервера.
+//
+// Отказ доставки воспроизводится швом signalProc: kill своему живому ребёнку не
+// отказывает, другого способа получить эту ветку нет.
+func TestServerClients_ReloadReportsFailedDelivery(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass0000000000000000")
+	mark := filepath.Join(t.TempDir(), "hup.mark")
+	startMarkedServerProcess(t, s, DefaultInstanceID, mark)
+
+	proc := s.serverProcs.get(DefaultInstanceID)
+	if running, _ := proc.IsRunning(); !running {
+		t.Fatal("предпосылка теста нарушена: процесс сервера не запущен")
+	}
+	proc.signalProc = func(int, syscall.Signal) error { return errors.New("operation not permitted") }
+
+	st, err := s.AddServerClient(DefaultInstanceID, "abonent1", "Иван", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Reload != ReloadFailed {
+		t.Fatalf("сигнал не доставлен живому серверу, а ручка отдала reload = %q", st.Reload)
+	}
+	// Отказ доставки не отменяет операции: абонент записан и подхватится
+	// следующим запуском.
+	if !configHasServerClient(t, s, "abonent1") {
+		t.Fatal("абонент потерян из-за недоставленного сигнала")
 	}
 }
 

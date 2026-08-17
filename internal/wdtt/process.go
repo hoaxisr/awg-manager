@@ -41,6 +41,11 @@ type process struct {
 	lastRawConfPayload RawConfPayload
 	logTail            *childproc.RingBuffer
 	startCmd           func(bin string, args ...string) *exec.Cmd
+	// signalProc — тот же приём шва, что startCmd: без него провал доставки
+	// SIGHUP живому процессу не воспроизвести (kill своему ребёнку не
+	// отказывает), а «не применилось» — один из трёх исходов, которые ручка
+	// абонентов отдаёт наружу.
+	signalProc func(pid int, sig syscall.Signal) error
 
 	// drainStartDelay искусственно задерживает старт чтения пайпа —
 	// тест-seam для форсирования окна гонки «Wait закрыл пайп раньше drain».
@@ -57,6 +62,7 @@ func newProcess(name, binary, runtimeDir string) *process {
 		startCmd: func(bin string, args ...string) *exec.Cmd {
 			return exec.Command(bin, args...)
 		},
+		signalProc: childproc.Signal,
 	}
 }
 
@@ -246,7 +252,7 @@ func (p *process) Reload() (bool, error) {
 	if !running {
 		return false, nil
 	}
-	if err := childproc.Signal(pid, syscall.SIGHUP); err != nil {
+	if err := p.signalProc(pid, syscall.SIGHUP); err != nil {
 		return false, err
 	}
 	return true, nil
