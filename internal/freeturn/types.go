@@ -161,6 +161,13 @@ type ProcessStatus struct {
 	// «установите бинарь» hint instead of an opaque exec error on Start.
 	Binary        string `json:"binary"`
 	BinaryPresent bool   `json:"binaryPresent"`
+	// OrphanedPID — процесс НАШ и живой, но pid-файл унаследован: startedAt
+	// нет, потому что запускал его прошлый экземпляр демона. Лога и телеметрии
+	// по такому процессу у нас не будет, health-надзор по нему слеп; лечится
+	// обычным стартом — process.Start его усыновляет, и это же делает
+	// супервизор (supervisor.go). Не путать со stalePid у HydraRoute: там
+	// признак ровно обратный — pid-файл есть, а процесса уже нет.
+	OrphanedPID bool `json:"orphanedPid,omitempty"`
 }
 
 // InstanceStatus pairs instance metadata with live process state.

@@ -235,12 +235,21 @@ func (p *process) Stop() error {
 // Сигнал уходит ТОЛЬКО своему процессу: pid берётся из pid-файла и проверяется
 // pidIsOurs — pid-файл переживает ребут, и после него номер мог достаться
 // постороннему. Сигнал по группе (-pid) не годится: в группе живут помощники.
-func (p *process) Reload() error {
+//
+// Первое значение — «сигнал отправлен живому процессу». Остановленный сервер
+// отказом не считается (перечитывать некому и незачем), но и успехом
+// доставки — тоже: вызывающий обязан различать эти исходы, иначе «применено
+// сейчас» станет обещанием, которого никто не давал. Проверять «запущен ли»
+// вторым вызовом IsRunning нельзя — между вызовами процесс успевает умереть.
+func (p *process) Reload() (bool, error) {
 	running, pid := p.IsRunning()
 	if !running {
-		return nil
+		return false, nil
 	}
-	return childproc.Signal(pid, syscall.SIGHUP)
+	if err := childproc.Signal(pid, syscall.SIGHUP); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (p *process) IsRunning() (bool, int) {
@@ -296,6 +305,11 @@ func (p *process) Status() ProcessStatus {
 	if running {
 		st.PID = pid
 		st.StartedAt = p.startedAt
+		// Живой процесс без startedAt — унаследованный pid-файл (pidIsOurs
+		// подтвердил его по /proc cmdline). Ровно это условие поднимает
+		// супервизор на перезапуск, и наружу оно уходит отдельным признаком:
+		// вычислять «running && !startedAt» на фронте — хрупко.
+		st.OrphanedPID = p.startedAt == nil
 	}
 	return st
 }

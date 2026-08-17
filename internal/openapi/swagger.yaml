@@ -6915,6 +6915,15 @@ definitions:
           confirmations — so the panel can show whether the tunnel actually
           connected instead of just "running".
         type: string
+      orphanedPid:
+        description: |-
+          OrphanedPID — процесс НАШ и живой, но pid-файл унаследован: startedAt
+          нет, потому что запускал его прошлый экземпляр демона. Лога и телеметрии
+          по такому процессу у нас не будет, health-надзор по нему слеп; лечится
+          обычным стартом — process.Start его усыновляет, и это же делает
+          супервизор (supervisor.go). Не путать со stalePid у HydraRoute: там
+          признак ровно обратный — pid-файл есть, а процесса уже нет.
+        type: boolean
       pid:
         type: integer
       running:
@@ -7249,6 +7258,15 @@ definitions:
         type: string
       ndmsIface:
         type: string
+      orphanedPid:
+        description: |-
+          OrphanedPID — процесс НАШ и живой, но pid-файл унаследован: startedAt
+          нет, потому что запускал его прошлый экземпляр демона. Лога и телеметрии
+          по такому процессу у нас не будет, health-надзор по нему слеп; лечится
+          обычным стартом — process.Start его усыновляет, и это же делает
+          супервизор (supervisor.go). Не путать со stalePid у HydraRoute: там
+          признак ровно обратный — pid-файл есть, а процесса уже нет.
+        type: boolean
       pid:
         type: integer
       rawClientIp:
@@ -7270,6 +7288,13 @@ definitions:
     type: object
   wdtt.ServerClient:
     properties:
+      auto:
+        description: |-
+          Auto — абонента завёл инвариант непустоты, а не человек: «Абонент 1»
+          сохранения конфига (server.go) или записи файла (ensureUsableServerClient).
+          Признак ХРАНИТСЯ, потому что вычислить его нечем: имя пользователь меняет,
+          и матч по "Абонент 1" соврал бы сразу после переименования.
+        type: boolean
       comment:
         type: string
       expiresAt:

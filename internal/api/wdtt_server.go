@@ -207,7 +207,16 @@ func (h *WdttHandler) serveServerClients(w http.ResponseWriter, r *http.Request,
 			}
 			st, err := h.svc.AddServerClient(serverID, req.Password, req.Comment, req.VkHash, req.MainPassword)
 			if err != nil {
-				response.Error(w, err.Error(), "WDTT_SERVER_CLIENT_ADD_FAILED")
+				// Частичный успех отличается КОДОМ: конверт отказа несёт
+				// только message и code, поля для признака в нём нет.
+				// WDTT_SERVER_CLIENT_ADD_NOT_APPLIED = абонент заведён в
+				// конфигурации, passwords.json не записан — доступ появится при
+				// следующем запуске сервера, и в списке абонент уже есть.
+				code := "WDTT_SERVER_CLIENT_ADD_FAILED"
+				if errors.Is(err, wdtt.ErrServerClientFileNotWritten) {
+					code = "WDTT_SERVER_CLIENT_ADD_NOT_APPLIED"
+				}
+				response.Error(w, err.Error(), code)
 				return
 			}
 			response.Success(w, st)

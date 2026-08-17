@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,5 +98,43 @@ func TestServeServers_PatchUserRenames(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Иван Петров") {
 		t.Fatalf("ответ ручки не содержит нового имени: %s", rec.Body.String())
+	}
+}
+
+// partialAddWdttClients — абонент заведён в конфигурации, а passwords.json не
+// записан: сервис отдаёт завёрнутый ErrServerClientFileNotWritten.
+type partialAddWdttClients struct {
+	stubWdttForImport
+}
+
+func (s *partialAddWdttClients) AddServerClient(string, string, string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, fmt.Errorf("%w: read-only file system", wdtt.ErrServerClientFileNotWritten)
+}
+
+// TestServeServerClients_PartialSuccessCode — частичный успех отличается от
+// полного отказа ТОЛЬКО кодом: в конверте отказа больше ничего нет. Без этого
+// различия UI обязан говорить «абонент не создан», хотя абонент есть и виден в
+// списке.
+func TestServeServerClients_PartialSuccessCode(t *testing.T) {
+	h := &WdttHandler{svc: &partialAddWdttClients{}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wdtt/servers/default/users", strings.NewReader(`{"password":"abonent1"}`))
+
+	h.serveServerClients(rec, req, "default", nil)
+
+	var resp struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("ответ не разобран: %v (тело: %s)", err, rec.Body.String())
+	}
+	if resp.Code != "WDTT_SERVER_CLIENT_ADD_NOT_APPLIED" {
+		t.Fatalf("код частичного успеха = %q", resp.Code)
+	}
+	// Причина обязана доехать до пользователя: read-only и «нет места»
+	// лечатся по-разному.
+	if !strings.Contains(resp.Message, "read-only file system") {
+		t.Fatalf("причина отказа потеряна в ответе: %q", resp.Message)
 	}
 }

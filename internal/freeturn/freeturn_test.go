@@ -903,3 +903,49 @@ func TestHasBundledWgConfig(t *testing.T) {
 		t.Fatal("real config must be true")
 	}
 }
+
+// TestProcessStatus_OrphanedPIDForInheritedPidFile — признак «унаследованный
+// pid-файл» наружу: процесс НАШ и живой, но запускал его прошлый экземпляр
+// демона, поэтому startedAt пуст, лога и телеметрии по нему нет. Ровно это
+// условие поднимает супервизор на перезапуск; вычислять его на фронте как
+// «running && !startedAt» — хрупко, поэтому оно уезжает отдельным полем.
+//
+// Бинарь = /bin/sleep, чтобы /proc cmdline унаследованного процесса совпал с
+// нашим: иначе pidIsOurs признает pid чужим (TestProcess_StartKeepsForeignPID).
+func TestProcessStatus_OrphanedPIDForInheritedPidFile(t *testing.T) {
+	dir := t.TempDir()
+	p1 := newProcess("client", "/bin/sleep", dir)
+	p1.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sleep", "30")
+	}
+	if err := p1.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = p1.Stop() })
+
+	if st := p1.Status(); !st.Running || st.OrphanedPID {
+		t.Fatalf("свой ребёнок помечен унаследованным: %+v", st)
+	}
+
+	// Новый экземпляр демона: тот же pid-файл, startedAt пуст.
+	p2 := newProcess("client", "/bin/sleep", dir)
+	st := p2.Status()
+	if !st.Running {
+		t.Fatalf("предпосылка теста нарушена: унаследованный процесс не признан живым: %+v", st)
+	}
+	if st.StartedAt != nil {
+		t.Fatalf("предпосылка теста нарушена: у унаследованного процесса есть startedAt: %+v", st)
+	}
+	if !st.OrphanedPID {
+		t.Fatalf("унаследованный pid-файл не помечен: %+v", st)
+	}
+
+	// Остановленный процесс унаследованным не считается: признак существует
+	// только вместе с running, иначе он значил бы «pid-файла нет».
+	if err := p1.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if st := p2.Status(); st.Running || st.OrphanedPID {
+		t.Fatalf("остановленный процесс помечен унаследованным: %+v", st)
+	}
+}

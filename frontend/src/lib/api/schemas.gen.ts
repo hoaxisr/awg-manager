@@ -2483,6 +2483,7 @@ const freeturn_ProcessStatus: v.GenericSchema = v.looseObject({
 	dtlsConnections: v.optional(v.nullable(v.number())),
 	lastError: v.optional(v.nullable(v.string())),
 	log: v.optional(v.nullable(v.string())),
+	orphanedPid: v.optional(v.nullable(v.boolean())),
 	pid: v.optional(v.nullable(v.number())),
 	running: v.optional(v.nullable(v.boolean())),
 	startedAt: v.optional(v.nullable(v.string())),
@@ -2632,6 +2633,7 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 	lastError: v.optional(v.nullable(v.string())),
 	log: v.optional(v.nullable(v.string())),
 	ndmsIface: v.optional(v.nullable(v.string())),
+	orphanedPid: v.optional(v.nullable(v.boolean())),
 	pid: v.optional(v.nullable(v.number())),
 	rawClientIp: v.optional(v.nullable(v.string())),
 	rawIface: v.optional(v.nullable(v.string())),
@@ -2642,6 +2644,7 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 });
 
 const wdtt_ServerClient: v.GenericSchema = v.looseObject({
+	auto: v.optional(v.nullable(v.boolean())),
 	comment: v.optional(v.nullable(v.string())),
 	expiresAt: v.optional(v.nullable(v.number())),
 	password: v.optional(v.nullable(v.string())),

@@ -182,6 +182,7 @@ func TestMergeServerClients_FallsBackToFileLabelAndVkHash(t *testing.T) {
 		[]ServerClient{{Password: "client1"}},
 		map[string]passwordsJSONUser{"client1": {Label: "Из бота", VkHash: "vk9"}},
 		true,
+		"",
 		time.Unix(1700000000, 0),
 	)
 	if len(st.Users) != 1 {
@@ -198,6 +199,7 @@ func TestMergeServerClients_FallsBackToFileLabelAndVkHash(t *testing.T) {
 		[]ServerClient{{Password: "client1", Comment: "Иван", VkHash: "vk1"}},
 		map[string]passwordsJSONUser{"client1": {Label: "Из бота", VkHash: "vk9"}},
 		true,
+		"",
 		time.Unix(1700000000, 0),
 	)
 	if own.Users[0].Comment != "Иван" || own.Users[0].VkHash != "vk1" {

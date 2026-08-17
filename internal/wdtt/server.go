@@ -82,7 +82,7 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 				s.appLog.Warn("clients", id, "автоматический абонент не заведён: "+genErr.Error())
 			}
 		} else {
-			cfg.Clients = append(cfg.Clients, ServerClient{Password: pass, Comment: defaultServerClientName})
+			cfg.Clients = append(cfg.Clients, ServerClient{Password: pass, Comment: defaultServerClientName, Auto: true})
 		}
 	}
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.

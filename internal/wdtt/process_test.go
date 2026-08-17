@@ -306,8 +306,13 @@ func TestProcessReload_SignalsOwnChild(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Stop() })
 
-	if err := p.Reload(); err != nil {
+	delivered, err := p.Reload()
+	if err != nil {
 		t.Fatalf("Reload: %v", err)
+	}
+	// Признак доставки — то, из чего ручка абонентов делает «применено сейчас».
+	if !delivered {
+		t.Fatal("Reload живому процессу доложил, что сигнал не отправлен")
 	}
 	waitForHupCount(t, mark, 1, 3*time.Second)
 
@@ -316,7 +321,7 @@ func TestProcessReload_SignalsOwnChild(t *testing.T) {
 	if !running {
 		t.Fatal("процесс не пережил SIGHUP")
 	}
-	if err := p.Reload(); err != nil {
+	if _, err := p.Reload(); err != nil {
 		t.Fatalf("повторный Reload: %v", err)
 	}
 	waitForHupCount(t, mark, 2, 3*time.Second)
@@ -339,8 +344,12 @@ func TestProcessReload_DoesNotSignalForeignPID(t *testing.T) {
 		t.Fatal("предпосылка теста нарушена: pidIsOurs признал чужой pid своим")
 	}
 
-	if err := p.Reload(); err != nil {
+	delivered, err := p.Reload()
+	if err != nil {
 		t.Fatalf("Reload на чужом pid должен быть тихим no-op, got: %v", err)
+	}
+	if delivered {
+		t.Fatal("Reload доложил о доставке сигнала по чужому pid")
 	}
 	select {
 	case sig := <-ch:
@@ -356,8 +365,14 @@ func TestProcessReload_StoppedServerIsNoop(t *testing.T) {
 	ch := watchOwnSIGHUP(t)
 
 	p := newProcess("server", "/bin/sh", t.TempDir())
-	if err := p.Reload(); err != nil {
+	delivered, err := p.Reload()
+	if err != nil {
 		t.Fatalf("Reload остановленного сервера должен быть тихим no-op, got: %v", err)
+	}
+	// Остановленный сервер — не ошибка и не доставка: ровно на этом различии
+	// стоит «применится при следующем запуске».
+	if delivered {
+		t.Fatal("Reload остановленного сервера доложил о доставке сигнала")
 	}
 	select {
 	case sig := <-ch:
@@ -440,7 +455,7 @@ func TestProcessReload_DoesNotSignalProcessGroup(t *testing.T) {
 	}
 	helperPID := waitForGroupHelper(t, helperPidFile, pid, 3*time.Second)
 
-	if err := p.Reload(); err != nil {
+	if _, err := p.Reload(); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	waitForHupCount(t, mainMark, 1, 3*time.Second)
@@ -519,5 +534,51 @@ func TestLastRawConf_ReadsUnderLock(t *testing.T) {
 
 	if conf, ok := p.lastRawConf(); !ok || conf.ClientIP == "" {
 		t.Fatalf("конфиг не сохранён: %+v ok=%v", conf, ok)
+	}
+}
+
+// TestProcessStatus_OrphanedPIDForInheritedPidFile — признак «унаследованный
+// pid-файл» наружу: процесс НАШ и живой, но запускал его прошлый экземпляр
+// демона, поэтому startedAt пуст, лога и телеметрии по нему нет. Ровно это
+// условие поднимает супервизор на перезапуск; вычислять его на фронте как
+// «running && !startedAt» — хрупко, поэтому оно уезжает отдельным полем.
+//
+// Бинарь = /bin/sleep, чтобы /proc cmdline унаследованного процесса совпал с
+// нашим: иначе pidIsOurs признает pid чужим (TestProcess_StartKeepsForeignPID).
+func TestProcessStatus_OrphanedPIDForInheritedPidFile(t *testing.T) {
+	dir := t.TempDir()
+	p1 := newProcess("server", "/bin/sleep", dir)
+	p1.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sleep", "30")
+	}
+	if err := p1.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = p1.Stop() })
+
+	if st := p1.Status(); !st.Running || st.OrphanedPID {
+		t.Fatalf("свой ребёнок помечен унаследованным: %+v", st)
+	}
+
+	// Новый экземпляр демона: тот же pid-файл, startedAt пуст.
+	p2 := newProcess("server", "/bin/sleep", dir)
+	st := p2.Status()
+	if !st.Running {
+		t.Fatalf("предпосылка теста нарушена: унаследованный процесс не признан живым: %+v", st)
+	}
+	if st.StartedAt != nil {
+		t.Fatalf("предпосылка теста нарушена: у унаследованного процесса есть startedAt: %+v", st)
+	}
+	if !st.OrphanedPID {
+		t.Fatalf("унаследованный pid-файл не помечен: %+v", st)
+	}
+
+	// Остановленный процесс унаследованным не считается: признак существует
+	// только вместе с running, иначе он значил бы «pid-файла нет».
+	if err := p1.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if st := p2.Status(); st.Running || st.OrphanedPID {
+		t.Fatalf("остановленный процесс помечен унаследованным: %+v", st)
 	}
 }

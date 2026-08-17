@@ -161,6 +161,11 @@ type ServerClient struct {
 	// passwords.json, и без этой памяти следующая синхронизация написала бы
 	// её заново с нулевым сроком.
 	ExpiresAt int64 `json:"expiresAt,omitempty"`
+	// Auto — абонента завёл инвариант непустоты, а не человек: «Абонент 1»
+	// сохранения конфига (server.go) или записи файла (ensureUsableServerClient).
+	// Признак ХРАНИТСЯ, потому что вычислить его нечем: имя пользователь меняет,
+	// и матч по "Абонент 1" соврал бы сразу после переименования.
+	Auto bool `json:"auto,omitempty"`
 }
 
 const (
@@ -255,6 +260,13 @@ type ProcessStatus struct {
 	DtlsConnections int    `json:"dtlsConnections,omitempty"`
 	Binary          string `json:"binary"`
 	BinaryPresent   bool   `json:"binaryPresent"`
+	// OrphanedPID — процесс НАШ и живой, но pid-файл унаследован: startedAt
+	// нет, потому что запускал его прошлый экземпляр демона. Лога и телеметрии
+	// по такому процессу у нас не будет, health-надзор по нему слеп; лечится
+	// обычным стартом — process.Start его усыновляет, и это же делает
+	// супервизор (supervisor.go). Не путать со stalePid у HydraRoute: там
+	// признак ровно обратный — pid-файл есть, а процесса уже нет.
+	OrphanedPID bool `json:"orphanedPid,omitempty"`
 }
 
 type InstanceStatus struct {
@@ -290,7 +302,33 @@ type ServerClientEntry struct {
 	// passwords.json не пишется и подключиться не может; в списке он остаётся,
 	// чтобы пользователь понимал, почему доступ пропал.
 	IsExpired bool `json:"isExpired"`
+	// IsMainPassword — пароль абонента совпадает с главным паролем сервера.
+	// Сам главный пароль в списке не передаётся намеренно (это ключ
+	// администрирования), поэтому сравнить пароли на фронте нечем — отдаём
+	// готовый признак. Такой абонент сервером не принимается и одним ходом не
+	// удаляется: RemoveServerClient на него отвечает отказом.
+	IsMainPassword bool `json:"isMainPassword"`
+	// IsAuto — абонента завёл инвариант непустоты (ServerClient.Auto).
+	IsAuto bool `json:"isAuto"`
 }
+
+// ServerClientsReload — судьба SIGHUP после изменения состава абонентов:
+// узнал ли живой сервер об изменении ПРЯМО СЕЙЧАС. Пустое значение — сигнал не
+// посылался (чтение списка, переименование: имя серверу безразлично).
+type ServerClientsReload string
+
+const (
+	// ReloadDelivered — SIGHUP доставлен живому серверу: passwords.json
+	// перечитан, новый состав действует сейчас.
+	ReloadDelivered ServerClientsReload = "delivered"
+	// ReloadServerStopped — сервер не запущен: файл записан, состав вступит в
+	// силу при следующем запуске.
+	ReloadServerStopped ServerClientsReload = "serverStopped"
+	// ReloadFailed — сигнал не доставлен (процесс есть, но kill не прошёл).
+	// Файл записан, поэтому доступ появится при следующем запуске; «применено
+	// сейчас» обещать нельзя.
+	ReloadFailed ServerClientsReload = "failed"
+)
 
 // ServerClientsStatus is returned by the server clients API.
 type ServerClientsStatus struct {
@@ -298,6 +336,10 @@ type ServerClientsStatus struct {
 	// список при этом всё равно отдаётся, из wdtt.json.
 	Available bool                `json:"available"`
 	Users     []ServerClientEntry `json:"users"`
+	// Reload — результат доставки SIGHUP для ЭТОЙ мутации. Заполняют только
+	// ручки, переписывающие passwords.json (добавление, удаление); у чтения и
+	// переименования пусто.
+	Reload ServerClientsReload `json:"reload,omitempty"`
 }
 
 // ImportPayload is the normalized result of wdtt://, qwdtt:// or subscription import.

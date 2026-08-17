@@ -31,9 +31,18 @@ func loadServerClientEntries(configDir string) (map[string]passwordsJSONUser, bo
 	return doc.Passwords, true, nil
 }
 
+// ErrServerClientFileNotWritten — частичный успех добавления: абонент уже лежит
+// в wdtt.json, а passwords.json записать не удалось. Отката нет намеренно
+// (порядок «конфиг → файл» держит инвариант непустоты), и отличать этот исход от
+// полного отказа обязана ручка: абонент существует, ссылку по нему выдавать
+// можно, доступ появится при следующем запуске сервера — не «ничего не
+// произошло».
+var ErrServerClientFileNotWritten = errors.New("абонент создан, но не записан в файл сервера")
+
 // mergeServerClients собирает список для UI: состав из wdtt.json, признаки —
-// из passwords.json и из запомненного срока.
-func mergeServerClients(clients []ServerClient, file map[string]passwordsJSONUser, available bool, now time.Time) ServerClientsStatus {
+// из passwords.json и из запомненного срока. mainPassword нужен ровно для
+// признака IsMainPassword: сам пароль наружу не уходит.
+func mergeServerClients(clients []ServerClient, file map[string]passwordsJSONUser, available bool, mainPassword string, now time.Time) ServerClientsStatus {
 	// Срок считается ТЕМ ЖЕ предикатом, что и запись файла: непросроченные — это
 	// ровно те, кого вернул UsableServerClients. Главный пароль ему не передаём:
 	// в списке абонентов его нет, а отсев по нему исказил бы признак «истёк».
@@ -41,6 +50,7 @@ func mergeServerClients(clients []ServerClient, file map[string]passwordsJSONUse
 	for _, c := range UsableServerClients(clients, "", now) {
 		usable[c.Password] = struct{}{}
 	}
+	main := strings.TrimSpace(mainPassword)
 	out := ServerClientsStatus{Available: available, Users: []ServerClientEntry{}}
 	for _, c := range clients {
 		pass := strings.TrimSpace(c.Password)
@@ -51,6 +61,12 @@ func mergeServerClients(clients []ServerClient, file map[string]passwordsJSONUse
 			Password: pass,
 			Comment:  strings.TrimSpace(c.Comment),
 			VkHash:   strings.TrimSpace(c.VkHash),
+			// Признак авто-создания хранится в записи: вычислять его по имени
+			// нечем — пользователь переименовывает абонента.
+			IsAuto: c.Auto,
+			// Пустой главный пароль совпадением не станет сам: абонента с
+			// пустым паролем цикл сюда не пускает.
+			IsMainPassword: pass == main,
 		}
 		if live, ok := file[pass]; ok {
 			e.IsDeactivated = live.IsDeactivated
@@ -166,7 +182,7 @@ func (s *Service) ensureUsableServerClient(serverID string, cfg ServerConfig, cl
 	if err != nil {
 		return nil, err
 	}
-	client := ServerClient{Password: pass, Comment: defaultServerClientName}
+	client := ServerClient{Password: pass, Comment: defaultServerClientName, Auto: true}
 	if err := s.putServerClient(serverID, client); err != nil {
 		return nil, err
 	}
@@ -180,11 +196,21 @@ func (s *Service) ensureUsableServerClient(serverID string, cfg ServerConfig, cl
 //
 // Отказ доставки не роняет ручку: абонент уже записан и в wdtt.json, и в файл,
 // и следующий старт сервера его подхватит; единственная потеря — применение
-// «прямо сейчас», и о ней надо сообщить в журнал, а не откатывать операцию.
-func (s *Service) notifyServerClientsChanged(serverID string) {
-	if err := s.serverProcs.get(serverID).Reload(); err != nil && s.appLog != nil {
-		s.appLog.Warn("clients", serverID, "перечитывание passwords.json: "+err.Error())
+// «прямо сейчас». Раньше об этой потере узнавал только app-журнал, и ручка
+// отвечала успехом, из которого «применено сейчас» и «применится при запуске»
+// были неразличимы — поэтому исход возвращается наружу.
+func (s *Service) notifyServerClientsChanged(serverID string) ServerClientsReload {
+	delivered, err := s.serverProcs.get(serverID).Reload()
+	if err != nil {
+		if s.appLog != nil {
+			s.appLog.Warn("clients", serverID, "перечитывание passwords.json: "+err.Error())
+		}
+		return ReloadFailed
 	}
+	if !delivered {
+		return ReloadServerStopped
+	}
+	return ReloadDelivered
 }
 
 // syncServerClientsOnStart — цикл абонентов на пути старта: усыновить и
@@ -227,7 +253,7 @@ func (s *Service) ListServerClients(serverID string) (ServerClientsStatus, error
 	} else {
 		clients = adopted
 	}
-	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+	return s.serverClientsStatus(serverID, cfgDir, inst.Config.Password, clients), nil
 }
 
 // AddServerClient заводит отдельного абонента сервера.
@@ -318,10 +344,18 @@ func (s *Service) addServerClientLocked(serverID, cfgDir string, cfg ServerConfi
 	fileCfg := cfg
 	fileCfg.Password = main
 	if _, err := s.writeServerClientsFile(serverID, cfgDir, fileCfg, clients); err != nil {
-		return ServerClientsStatus{}, err
+		// Частичный успех, а не отказ: абонент уже в wdtt.json (строкой выше) и
+		// оттуда никуда не денется — старт сервера перепишет файл сам. Ручка
+		// обязана сказать об этом отдельным исходом, иначе UI объявит абонента
+		// несозданным, а он есть и виден в списке.
+		return ServerClientsStatus{}, fmt.Errorf("%w: %w", ErrServerClientFileNotWritten, err)
 	}
-	s.notifyServerClientsChanged(serverID)
-	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+	// Сигнал — сразу после записи файла, до сбора ответа: между ними ничего
+	// зависящего от порядка нет, а лишняя задержка перед применением есть.
+	reload := s.notifyServerClientsChanged(serverID)
+	st := s.serverClientsStatus(serverID, cfgDir, main, clients)
+	st.Reload = reload
+	return st, nil
 }
 
 // RenameServerClient меняет ИМЯ абонента и больше ничего: пароль, срок действия
@@ -379,7 +413,10 @@ func (s *Service) RenameServerClient(serverID, password, name string) (ServerCli
 	// Ответ собирает serverClientsStatus — она замка не берёт, поэтому хвост под
 	// defer unlock() самодедлока не даёт. ListServerClients звать здесь нельзя
 	// именно поэтому.
-	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+	//
+	// Reload остаётся пустым: passwords.json здесь не переписывается, сигналить
+	// не о чем — «применено сейчас» после переименования было бы неправдой.
+	return s.serverClientsStatus(serverID, cfgDir, inst.Config.Password, clients), nil
 }
 
 // setServerClientComment правит РОВНО Comment одной записи wdtt.json.
@@ -465,8 +502,10 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 	if err != nil {
 		return ServerClientsStatus{}, err
 	}
-	s.notifyServerClientsChanged(serverID)
-	return s.serverClientsStatus(serverID, cfgDir, clients), nil
+	reload := s.notifyServerClientsChanged(serverID)
+	st := s.serverClientsStatus(serverID, cfgDir, inst.Config.Password, clients)
+	st.Reload = reload
+	return st, nil
 }
 
 // serverClients — актуальный список абонентов из wdtt.json.
@@ -481,12 +520,15 @@ func (s *Service) serverClients(serverID string) ([]ServerClient, error) {
 // serverClientsStatus накладывает на список живые признаки из passwords.json.
 // Зовётся под уже взятым замком; отдельного захвата здесь нет — иначе хвост
 // ручки под defer unlock() дал бы самодедлок.
-func (s *Service) serverClientsStatus(serverID, cfgDir string, clients []ServerClient) ServerClientsStatus {
+//
+// mainPassword передаёт вызывающий: у добавления он ЭФФЕКТИВНЫЙ (присланный
+// формой пароль ещё не сохранён в конфиг), у остальных — сохранённый.
+func (s *Service) serverClientsStatus(serverID, cfgDir, mainPassword string, clients []ServerClient) ServerClientsStatus {
 	file, available, err := loadServerClientEntries(cfgDir)
 	if err != nil && s.appLog != nil {
 		s.appLog.Warn("clients", serverID, "passwords.json не прочитан: "+err.Error())
 	}
-	return mergeServerClients(clients, file, available, time.Now())
+	return mergeServerClients(clients, file, available, mainPassword, time.Now())
 }
 
 // serverClientPasswordFree отказывает на ЛЮБОМ уже занятом пароле, двумя

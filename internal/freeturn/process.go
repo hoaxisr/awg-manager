@@ -300,6 +300,11 @@ func (p *process) Status() ProcessStatus {
 		st.PID = pid
 		st.StartedAt = p.startedAt
 		st.DtlsConnections = countActiveDTLSConnections(st.Log)
+		// Живой процесс без startedAt — унаследованный pid-файл (pidIsOurs
+		// подтвердил его по /proc cmdline). Ровно это условие поднимает
+		// супервизор на перезапуск, и наружу оно уходит отдельным признаком:
+		// вычислять «running && !startedAt» на фронте — хрупко.
+		st.OrphanedPID = p.startedAt == nil
 	}
 	return st
 }
