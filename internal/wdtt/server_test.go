@@ -101,9 +101,17 @@ func TestUpdateServerInstance_InheritedMainPasswordCollision(t *testing.T) {
 	// главному.
 	setServerClients(t, s, []ServerClient{{Password: "adminpass", Comment: "битый"}})
 
+	// Журнал — ЕДИНСТВЕННЫЙ сигнал пользователю о битом составе: отказа больше
+	// нет, а в списке абонентов такая запись выглядит обычной.
+	log := &recordingAppLogger{}
+	s.SetLogger(log)
+
 	saved, err := s.UpdateServerInstance(DefaultInstanceID, serverConfigOf(t, s, DefaultInstanceID))
 	if err != nil {
 		t.Fatalf("унаследованное столкновение валит Update, а с ним старт и настройки доступа: %v", err)
+	}
+	if !log.contains("пароль абонента совпадает с главным") {
+		t.Fatalf("битый состав принят молча, пользователю не сказано ничего: %v", log.messages)
 	}
 	// Отказ снят не ценой инварианта: опора 1 завела абонента, которого сервер
 	// примет, — иначе wdtt-server упал бы на «[WRAP] нет активных паролей».
@@ -118,6 +126,7 @@ func TestUpdateServerInstance_InheritedMainPasswordCollision(t *testing.T) {
 
 	// Другой конец: состав меняем на рабочий и пробуем СДЕЛАТЬ главным пароль
 	// живого абонента — это по-прежнему отказ.
+	log.messages = nil
 	setServerClients(t, s, []ServerClient{{Password: "abonent1"}})
 	cfg := serverConfigOf(t, s, DefaultInstanceID)
 	cfg.Password = "abonent1"

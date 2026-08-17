@@ -30,8 +30,8 @@ func (s *failingWdttClients) RemoveServerClient(string, string) (wdtt.ServerClie
 }
 
 // TestServeServerClients_ErrorCodes фиксирует КОНТРАКТ кодов: по ним фронт
-// различает отказы, и переименование (WDTT_PANEL_* -> WDTT_SERVER_CLIENT*)
-// ломает совместимость молча — ни одна проверка типов его не видит.
+// различает отказы, а переименование кода ломает совместимость молча — ни одна
+// проверка типов его не видит.
 func TestServeServerClients_ErrorCodes(t *testing.T) {
 	cases := []struct {
 		name   string
