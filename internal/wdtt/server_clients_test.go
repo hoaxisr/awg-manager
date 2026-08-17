@@ -302,8 +302,15 @@ func TestAddServerClient_RejectsPasswordEqualToEffectiveMain(t *testing.T) {
 	// Пароль сервера ещё НЕ сохранён: эффективный главный приезжает аргументом.
 	s, cfgDir := newServerClientsService(t, "")
 	const main = "future-main-pass00000000"
-	if _, err := s.AddServerClient(DefaultInstanceID, main, "Иван", "", main); err == nil {
+	_, err := s.AddServerClient(DefaultInstanceID, main, "Иван", "", main)
+	if err == nil {
 		t.Fatal("ожидался отказ: пароль абонента равен эффективному главному")
+	}
+	// Текст обязан называть причину и требовать ДРУГОЙ пароль: легаси-формулировка
+	// «используйте основной пароль сервера» предлагала ровно то, что отвергнуто.
+	if !strings.Contains(err.Error(), "совпадает с главным паролем") ||
+		!strings.Contains(err.Error(), "другой пароль") {
+		t.Fatalf("текст отказа = %q, ожидалось «совпадает с главным паролем … другой пароль»", err.Error())
 	}
 	if len(configServerClients(t, s)) != 0 {
 		t.Fatalf("абонент остался в wdtt.json: %+v", configServerClients(t, s))

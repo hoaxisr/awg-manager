@@ -297,7 +297,7 @@ func (s *Service) addServerClientLocked(serverID, cfgDir string, cfg ServerConfi
 	}
 	// Все проверки — до единой записи.
 	if password == main {
-		return ServerClientsStatus{}, fmt.Errorf("используйте основной пароль сервера или сгенерируйте отдельный")
+		return ServerClientsStatus{}, fmt.Errorf("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
 	}
 	if err := serverClientPasswordFree(clients, password, time.Now()); err != nil {
 		return ServerClientsStatus{}, err
