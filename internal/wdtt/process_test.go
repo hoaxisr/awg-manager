@@ -382,3 +382,93 @@ func procStatState(pid int) (string, bool) {
 	}
 	return fields[0], true
 }
+
+// procStatPgrp читает пятое поле /proc/<pid>/stat (pgrp — группа процессов).
+// Поля после закрывающей скобки: state, ppid, pgrp — то есть индекс 2.
+func procStatPgrp(pid int) (int, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	s := string(data)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return 0, false
+	}
+	fields := strings.Fields(s[i+2:])
+	if len(fields) < 3 {
+		return 0, false
+	}
+	pgrp, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return 0, false
+	}
+	return pgrp, true
+}
+
+// TestProcessReload_DoesNotSignalProcessGroup — запрет «сигнал по группе (-pid)
+// не годится: в группе живут помощники». Прямой ребёнок запускается с
+// Setsid и потому САМ лидер своей группы: маркер подписанта пишется и при
+// kill(-pid), поэтому один только он мутанта не ловит. Нужен второй свидетель —
+// помощник в той же группе, у которого свой маркер и свой trap.
+//
+// Помощник обязан быть ЖИВЫМ и именно в группе подписанта к моменту сигнала:
+// без этой предпосылки страж вырождается в вечно-зелёный. Поэтому pgrp
+// помощника сверяется с pid подписанта по /proc до вызова Reload.
+func TestProcessReload_DoesNotSignalProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	mainMark := filepath.Join(dir, "main.mark")
+	helperMark := filepath.Join(dir, "helper.mark")
+	helperPidFile := filepath.Join(dir, "helper.pid")
+	helperScript := filepath.Join(dir, "helper.sh")
+
+	if err := os.WriteFile(helperScript, []byte(
+		"echo $$ > \""+helperPidFile+"\"\n"+hupTrapScript(helperMark)+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestProcess(t, "sh \""+helperScript+"\" &\n"+hupTrapScript(mainMark)+"\n")
+	if err := p.Start(nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Stop() })
+
+	running, pid := p.IsRunning()
+	if !running {
+		t.Fatal("подписант не запущен")
+	}
+	helperPID := waitForGroupHelper(t, helperPidFile, pid, 3*time.Second)
+
+	if err := p.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	waitForHupCount(t, mainMark, 1, 3*time.Second)
+	// Помощник получил бы сигнал ОДНОВРЕМЕННО с подписантом; пауза — запас на
+	// планировщик, а не на доставку.
+	time.Sleep(300 * time.Millisecond)
+	if b, err := os.ReadFile(helperMark); err == nil && len(strings.Fields(string(b))) > 0 {
+		t.Fatalf("SIGHUP ушёл по группе: помощник pid %d (группа %d) тоже получил сигнал: %q", helperPID, pid, b)
+	}
+	if _, ok := procStatPgrp(helperPID); !ok {
+		t.Fatalf("помощник pid %d исчез до конца проверки — свидетель мёртв, страж вырожден", helperPID)
+	}
+}
+
+// waitForGroupHelper дожидается помощника и доказывает, что он в группе
+// подписанта. Возвращает его pid.
+func waitForGroupHelper(t *testing.T, pidFile string, leaderPID int, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if hpid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && hpid > 0 {
+				if pgrp, ok := procStatPgrp(hpid); ok && pgrp == leaderPID {
+					return hpid
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("помощник не появился в группе %d за %s — предпосылка теста не выполнена", leaderPID, timeout)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

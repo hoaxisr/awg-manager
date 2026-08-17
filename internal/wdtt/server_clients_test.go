@@ -793,3 +793,62 @@ func TestServerClients_NoReloadWhenFileWriteFails(t *testing.T) {
 		t.Fatalf("SIGHUP ушёл при неудачной записи passwords.json: %q", b)
 	}
 }
+
+// TestServerClients_ReloadTargetsOwnInstance — сигнал обязан уйти процессу ТОГО
+// сервера, чей файл переписан. Одноинстансная фикстура этого не проверяет:
+// жёсткий DefaultInstanceID вместо serverID в ней неотличим от адресации.
+//
+// Второй инстанс заводится прямо в хранилище: CreateServer второй запрещает
+// (общий интерфейс wdtt0), а ручкам абонентов интерфейс безразличен —
+// им нужен только конфиг с паролем и свой config-dir (он выводится из id).
+func TestServerClients_ReloadTargetsOwnInstance(t *testing.T) {
+	s, _ := newServerClientsService(t, "mainpass")
+
+	full, err := s.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := DefaultServerConfig()
+	second.Password = "secondpass"
+	full.Servers = append(full.Servers, ServerInstance{ID: "srv2", Name: "Второй", Config: second})
+	if err := s.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.serverInstance("srv2"); err != nil {
+		t.Fatalf("предпосылка теста нарушена, второй инстанс не завёлся: %v", err)
+	}
+
+	dir := t.TempDir()
+	markDefault := filepath.Join(dir, "default.mark")
+	markSecond := filepath.Join(dir, "second.mark")
+	startMarkedServerProcess(t, s, DefaultInstanceID, markDefault)
+	startMarkedServerProcess(t, s, "srv2", markSecond)
+
+	if _, err := s.AddServerClient("srv2", "", "Абонент Б", "", ""); err != nil {
+		t.Fatalf("AddServerClient(srv2): %v", err)
+	}
+	waitForHupCount(t, markSecond, 1, 3*time.Second)
+	// Оба процесса получили бы сигнал одновременно; пауза — запас на планировщик.
+	time.Sleep(300 * time.Millisecond)
+	if b, err := os.ReadFile(markDefault); err == nil && len(strings.Fields(string(b))) > 0 {
+		t.Fatalf("SIGHUP ушёл чужому инстансу: изменён srv2, сигнал получил %s: %q", DefaultInstanceID, b)
+	}
+	if running, _ := s.serverProcs.get(DefaultInstanceID).IsRunning(); !running {
+		t.Fatal("процесс чужого инстанса умер — свидетель мёртв, страж вырожден")
+	}
+}
+
+// startMarkedServerProcess поднимает процесс сервера инстанса на shell-скрипте,
+// пишущем строку в маркер на каждый SIGHUP.
+func startMarkedServerProcess(t *testing.T, s *Service, instanceID, mark string) {
+	t.Helper()
+	proc := s.serverProcs.get(instanceID)
+	script := hupTrapScript(mark)
+	proc.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sh", "-c", script)
+	}
+	if err := proc.Start(nil); err != nil {
+		t.Fatalf("Start(%s): %v", instanceID, err)
+	}
+	t.Cleanup(func() { _ = proc.Stop() })
+}
