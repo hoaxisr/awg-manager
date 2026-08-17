@@ -54,6 +54,18 @@ func TestLinkPasswordFor_RejectsUnknownPassword(t *testing.T) {
 	if !strings.Contains(err.Error(), "не принадлежит ни одному абоненту") {
 		t.Fatalf("ожидался текст про чужой пароль, получено: %v", err)
 	}
+
+	// Сравнение при приёме — точное. Ослабление до сравнения без регистра
+	// (strings.EqualFold) выдало бы ссылку с паролем, которого у сервера нет:
+	// wrap-ключи он собирает по точной строке из passwords.json — та самая
+	// «мёртвая молча» ссылка, ради которой заведена проверка членства.
+	_, err = linkPasswordFor(WdttGenerateLinkRequest{Password: "ABONENT1"}, linkCfgWithClient())
+	if err == nil {
+		t.Fatal("пароль абонента в другом регистре — чужой пароль, ссылку выдавать нельзя")
+	}
+	if !strings.Contains(err.Error(), "не принадлежит ни одному абоненту") {
+		t.Fatalf("ожидался текст про чужой пароль для другого регистра, получено: %v", err)
+	}
 }
 
 func TestLinkPasswordFor_RejectsExpiredClient(t *testing.T) {
@@ -64,6 +76,13 @@ func TestLinkPasswordFor_RejectsExpiredClient(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Hour).Unix(),
 	})
 
+	// ОГОВОРКА К ВЫВОДУ ПРИЧИНЫ ИСКЛЮЧЕНИЕМ (ревью задачи 5). Текст «просрочен»
+	// получается вычитанием: пароль есть в списке, непуст и не равен главному —
+	// значит непригоден по сроку. Цепочка исчерпывающа ровно для ТРЁХ текущих
+	// условий wdtt.UsableServerClients. Появится четвёртое (скажем,
+	// IsDeactivated в предикате) — отказ останется верным, а текст станет
+	// ложным. Чистое решение — классификатор причины на стороне wdtt; пока
+	// его нет, этот тест и есть напоминание.
 	_, err := linkPasswordFor(WdttGenerateLinkRequest{Password: "botpass"}, cfg)
 	if err == nil {
 		t.Fatal("просроченный абонент обязан быть отказом: сервер его пароль не примет")
