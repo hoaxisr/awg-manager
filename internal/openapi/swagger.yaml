@@ -6382,7 +6382,8 @@ definitions:
       name:
         type: string
       password:
-        description: per-client password from panel.db; empty → server password
+        description: server client password from passwords.json; required — the server
+          main password is never put into a link
         type: string
       peer:
         type: string
@@ -6532,7 +6533,7 @@ definitions:
       enabled:
         type: boolean
     type: object
-  api.wdttPanelUserAddRequest:
+  api.wdttServerClientAddRequest:
     properties:
       comment:
         type: string
@@ -7260,6 +7261,15 @@ definitions:
     properties:
       comment:
         type: string
+      expiresAt:
+        description: |-
+          ExpiresAt — срок действия, назначенный САМИМ сервером (телеграм-бот и
+          admin-API выдают пароли только со сроком). Ноль — бессрочный, так
+          заводит абонентов менеджер. Поле хранится у нас, чтобы не снять срок с
+          отозванного доступа: янитор форка удаляет истёкшую запись из
+          passwords.json, и без этой памяти следующая синхронизация написала бы
+          её заново с нулевым сроком.
+        type: integer
       password:
         type: string
       vkHash:
@@ -7275,7 +7285,7 @@ definitions:
         type: string
       clients:
         description: |-
-          Clients — клиенты сервера. Источник правды: panel.db пересобирается из
+          Clients — абоненты сервера. Источник правды: passwords.json собирается из
           этого списка перед каждым стартом wdtt-server.
         items:
           $ref: '#/definitions/wdtt.ServerClient'
@@ -18811,7 +18821,7 @@ paths:
         in: body
         name: request
         schema:
-          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+          $ref: '#/definitions/api.wdttServerClientAddRequest'
       responses:
         "200":
           description: OK
@@ -18825,7 +18835,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: List, add or delete WDTT client passwords stored in panel.db
+      summary: List, add or delete WDTT server client passwords stored in passwords.json
       tags:
       - wdtt
     post:
@@ -18841,7 +18851,7 @@ paths:
         in: body
         name: request
         schema:
-          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+          $ref: '#/definitions/api.wdttServerClientAddRequest'
       responses:
         "200":
           description: OK
@@ -18855,7 +18865,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: List, add or delete WDTT client passwords stored in panel.db
+      summary: List, add or delete WDTT server client passwords stored in passwords.json
       tags:
       - wdtt
   /wdtt/servers/{id}/users/{password}:
@@ -18876,7 +18886,7 @@ paths:
         in: body
         name: request
         schema:
-          $ref: '#/definitions/api.wdttPanelUserAddRequest'
+          $ref: '#/definitions/api.wdttServerClientAddRequest'
       responses:
         "200":
           description: OK
@@ -18890,7 +18900,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: List, add or delete WDTT client passwords stored in panel.db
+      summary: List, add or delete WDTT server client passwords stored in passwords.json
       tags:
       - wdtt
   /wdtt/status:

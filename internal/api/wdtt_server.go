@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,7 +107,7 @@ type WdttGenerateLinkRequest struct {
 	Peer     string   `json:"peer,omitempty"`
 	VKHashes []string `json:"vkHashes,omitempty"`
 	Name     string   `json:"name,omitempty"`
-	Password string   `json:"password,omitempty"` // server client password from passwords.json; empty → server password
+	Password string   `json:"password,omitempty"` // server client password from passwords.json; required — the server main password is never put into a link
 }
 
 // CreateServer handles POST /api/wdtt/servers.
@@ -333,6 +334,47 @@ func (h *WdttHandler) generateLinkForServer(w http.ResponseWriter, r *http.Reque
 	h.generateLinkCore(w, r, id, req)
 }
 
+// linkPasswordFor выбирает пароль ссылки. Главный пароль сервера — ключ
+// администрирования (X-Admin-Password у admin-API форка), в ссылку он не
+// попадает ни при каких условиях, поэтому пароль обязан принадлежать списку
+// абонентов сервера.
+//
+// Членство считается по wdtt.UsableServerClients — ровно по тому предикату, по
+// которому абоненты уезжают в passwords.json и по которому сервер собирает
+// wrap-ключи. Проверка по всему cfg.Clients была бы мягче: ссылка на
+// просроченного абонента собралась бы без единой жалобы и молча не
+// подключилась. Своей копии правила здесь быть не имеет права — предикат один
+// на всех потребителей.
+func linkPasswordFor(req WdttGenerateLinkRequest, cfg wdtt.ServerConfig) (string, error) {
+	usable := wdtt.UsableServerClients(cfg.Clients, cfg.Password, time.Now())
+	if len(usable) == 0 {
+		return "", errors.New("у сервера нет ни одного рабочего абонента: заведите абонента и повторите")
+	}
+
+	pass := strings.TrimSpace(req.Password)
+	if pass == "" {
+		return "", errors.New("выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера")
+	}
+	for _, c := range usable {
+		// Пароль из UsableServerClients уже подрезан — трим тут не нужен.
+		if c.Password == pass {
+			return pass, nil
+		}
+	}
+
+	// Пароль не рабочий. Причину называем исключением, а не повторной
+	// проверкой срока: копия предиката в internal/api запрещена.
+	if pass == strings.TrimSpace(cfg.Password) {
+		return "", errors.New("это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента")
+	}
+	for _, c := range cfg.Clients {
+		if strings.TrimSpace(c.Password) == pass {
+			return "", errors.New("абонент просрочен, ссылка не будет работать: заведите нового абонента")
+		}
+	}
+	return "", errors.New("пароль не принадлежит ни одному абоненту сервера")
+}
+
 func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, serverID string, req WdttGenerateLinkRequest) {
 	srvCfg, err := h.svc.ServerConfigForLink(serverID)
 	if err != nil {
@@ -344,9 +386,10 @@ func (h *WdttHandler) generateLinkCore(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
-	linkPassword := strings.TrimSpace(req.Password)
-	if linkPassword == "" {
-		linkPassword = srvCfg.Password
+	linkPassword, err := linkPasswordFor(req, srvCfg)
+	if err != nil {
+		response.Error(w, err.Error(), "WDTT_LINK_NO_CLIENT")
+		return
 	}
 
 	peer := strings.TrimSpace(req.Peer)

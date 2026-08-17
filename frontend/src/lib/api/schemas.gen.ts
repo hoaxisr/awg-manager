@@ -2642,6 +2642,7 @@ const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
 
 const wdtt_ServerClient: v.GenericSchema = v.looseObject({
 	comment: v.optional(v.nullable(v.string())),
+	expiresAt: v.optional(v.nullable(v.number())),
 	password: v.optional(v.nullable(v.string())),
 	vkHash: v.optional(v.nullable(v.string())),
 });
