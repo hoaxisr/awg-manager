@@ -47,7 +47,12 @@ type process struct {
 
 	startMu sync.Mutex // serializes Start so two concurrent calls can't both spawn
 
-	mu            sync.Mutex
+	mu sync.Mutex
+	// startInFlight — свой процесс уже запущен и записан в pid-файл, но
+	// startupGrace ещё не истёк, поэтому startedAt пуст. Признак существует
+	// ровно ради OrphanedPID: без него Status() в этом окне выдавал бы своего
+	// свежепущенного ребёнка за унаследованный pid-файл.
+	startInFlight bool
 	startedAt     *time.Time
 	lastErr       string
 	stopRequested bool // set by Stop() so the exit-watcher goroutine knows this death was expected
@@ -123,6 +128,10 @@ func (p *process) Start(args []string) error {
 		return fmt.Errorf("freeturn %s: start: %w", p.name, err)
 	}
 	pid := cmd.Process.Pid
+	// Метку ставим ДО writePID: наружу процесс появляется вместе с pid-файлом,
+	// и окно «живой, но startedAt нет» открывается именно там.
+	p.setStartInFlight(true)
+	defer p.setStartInFlight(false)
 
 	var drainWG sync.WaitGroup
 	drainWG.Add(2)
@@ -304,7 +313,9 @@ func (p *process) Status() ProcessStatus {
 		// подтвердил его по /proc cmdline). Ровно это условие поднимает
 		// супервизор на перезапуск, и наружу оно уходит отдельным признаком:
 		// вычислять «running && !startedAt» на фронте — хрупко.
-		st.OrphanedPID = p.startedAt == nil
+		// startInFlight отсекает своего ребёнка в окне startupGrace: у него
+		// startedAt тоже пуст, но унаследованным он не является.
+		st.OrphanedPID = p.startedAt == nil && !p.startInFlight
 	}
 	return st
 }
@@ -333,6 +344,12 @@ func (p *process) drain(r io.Reader) {
 	for sc.Scan() {
 		p.logTail.WriteLine(sc.Text())
 	}
+}
+
+func (p *process) setStartInFlight(v bool) {
+	p.mu.Lock()
+	p.startInFlight = v
+	p.mu.Unlock()
 }
 
 func (p *process) setLastErr(s string) {

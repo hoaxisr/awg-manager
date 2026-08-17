@@ -949,3 +949,47 @@ func TestProcessStatus_OrphanedPIDForInheritedPidFile(t *testing.T) {
 		t.Fatalf("остановленный процесс помечен унаследованным: %+v", st)
 	}
 }
+
+// TestProcessStatus_NoOrphanedPIDDuringStart — вторая граница того же признака:
+// между записью pid-файла и концом startupGrace процесс уже НАШ и живой, а
+// startedAt ещё нет. Считать это унаследованным pid-файлом нельзя: бейдж
+// «устаревший процесс» загорался бы на 1.5 с при КАЖДОМ штатном старте (фронт
+// опрашивает статус чаще, чем длится окно).
+func TestProcessStatus_NoOrphanedPIDDuringStart(t *testing.T) {
+	dir := t.TempDir()
+	p := newProcess("client", "/bin/sleep", dir)
+	p.startCmd = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("/bin/sleep", "30")
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.Start(nil) }()
+	t.Cleanup(func() { _ = p.Stop() })
+
+	// Окно ловим по первому же «живой»: раньше pid-файла процесса наружу нет,
+	// позже startupGrace — startedAt уже стоит и проверять нечего.
+	deadline := time.Now().Add(startupGrace / 2)
+	var st ProcessStatus
+	for {
+		st = p.Status()
+		if st.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("предпосылка теста нарушена: процесс не стал живым за половину startupGrace")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if st.StartedAt != nil {
+		t.Fatalf("предпосылка теста нарушена: startedAt выставлен до конца startupGrace: %+v", st)
+	}
+	if st.OrphanedPID {
+		t.Fatalf("свой процесс в окне старта помечен унаследованным: %+v", st)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if st := p.Status(); !st.Running || st.StartedAt == nil || st.OrphanedPID {
+		t.Fatalf("после успешного старта признак не снят: %+v", st)
+	}
+}
