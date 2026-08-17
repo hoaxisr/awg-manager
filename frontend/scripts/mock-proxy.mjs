@@ -3244,6 +3244,15 @@ function mockFreeturnAllowlist(serverId) {
 // ── WDTT — клиенты и серверы. Prism отдаёт на wdtt-эндпоинты пустые 200
 // (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
 const MOCK_WDTT_SERVER_PASSWORD = 'mainpass0000000000000000';
+// Сервер в моке РОВНО ОДИН: бэкенд отвергает второй (internal/wdtt/server.go:136,
+// «интерфейс wdtt0 общий»). Состояния, ради которых раньше держали второй
+// инстанс, включаются переменными окружения:
+//   MOCK_WDTT_OLD_BINARY=1         — бинарь без -raw-iface: rawNdmsIface пуст;
+//   MOCK_WDTT_LEGACY_MAIN_CLIENT=1 — легаси-строка «пароль абонента == главный»
+//     (сегодня такую запись не заводит ни AddServerClient, ни UpdateServerInstance
+//     — server_clients.go:339, server.go:461; она бывает только у старых данных).
+const MOCK_WDTT_OLD_BINARY = process.env.MOCK_WDTT_OLD_BINARY === '1';
+const MOCK_WDTT_LEGACY_MAIN_CLIENT = process.env.MOCK_WDTT_LEGACY_MAIN_CLIENT === '1';
 const MOCK_WDTT_WG_CONFIG =
 	'[Interface]\n' +
 	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
@@ -3336,6 +3345,7 @@ function createInitialMockWdtt() {
 		servers: [
 			{
 				// Новый бинарь: raw-интерфейс зарегистрирован в NDMS (rawNdmsIface).
+				// MOCK_WDTT_OLD_BINARY=1 — старый: NDMS-имени у raw-интерфейса нет.
 				id: 'default',
 				name: 'Сервер',
 				running: true,
@@ -3343,8 +3353,8 @@ function createInitialMockWdtt() {
 				startedAt: new Date(Date.now() - 26 * 60000).toISOString(),
 				ndmsIface: 'OpkgTun17',
 				wgIface: 'opkgtun17',
-				rawNdmsIface: 'OpkgTun18',
-				rawIface: 'opkgtun18',
+				rawNdmsIface: MOCK_WDTT_OLD_BINARY ? '' : 'OpkgTun18',
+				rawIface: MOCK_WDTT_OLD_BINARY ? 'wdttraw0' : 'opkgtun18',
 				config: {
 					enabled: true,
 					listen: '0.0.0.0:56000',
@@ -3368,7 +3378,9 @@ function createInitialMockWdtt() {
 					linkPeer: '203.0.113.10:56000',
 					linkVkHashes: 'a1b2c3d4e5f6',
 					clients: [
-						{ password: MOCK_WDTT_SERVER_PASSWORD, comment: 'Главный пароль' },
+						...(MOCK_WDTT_LEGACY_MAIN_CLIENT
+							? [{ password: MOCK_WDTT_SERVER_PASSWORD, comment: 'Главный пароль' }]
+							: []),
 						{ password: 'c1a7f0e93b21', comment: 'Телефон Ивана', vkHash: 'a1b2c3d4e5f6' },
 						{ password: 'd2b8a1f04c32', comment: 'Ноутбук Ольги' },
 						{ password: 'e3c9b2a15d43', comment: 'Гостевой (просрочен)' },
@@ -3377,14 +3389,18 @@ function createInitialMockWdtt() {
 					],
 				},
 				users: [
-					{
-						password: MOCK_WDTT_SERVER_PASSWORD,
-						comment: 'Главный пароль',
-						isDeactivated: false,
-						isExpired: false,
-						isMainPassword: true,
-						isAuto: false,
-					},
+					...(MOCK_WDTT_LEGACY_MAIN_CLIENT
+						? [
+								{
+									password: MOCK_WDTT_SERVER_PASSWORD,
+									comment: 'Главный пароль',
+									isDeactivated: false,
+									isExpired: false,
+									isMainPassword: true,
+									isAuto: false,
+								},
+							]
+						: []),
 					{
 						password: 'c1a7f0e93b21',
 						comment: 'Телефон Ивана',
@@ -3427,56 +3443,13 @@ function createInitialMockWdtt() {
 						isAuto: true,
 					},
 				],
-				// available=false до первого старта сервера: passwords.json ещё нет.
+				// available=true: passwords.json уже есть — его пишет и старт, и
+				// любая мутация состава (writeServerClientsFile).
 				usersAvailable: true,
-			},
-			{
-				// Старый бинарь: -raw-iface не знает, NDMS-имени у raw-интерфейса нет.
-				id: 'wdtt-srv-2',
-				name: 'Сервер (старый бинарь)',
-				running: false,
-				pid: 16044,
-				startedAt: null,
-				ndmsIface: 'OpkgTun20',
-				wgIface: 'opkgtun20',
-				rawNdmsIface: '',
-				rawIface: 'wdttraw0',
-				config: {
-					enabled: false,
-					listen: '0.0.0.0:56100',
-					wgPort: 51831,
-					password: 'legacy-server-password',
-					configDir: '/opt/etc/awg-manager/wdtt/server/wdtt-srv-2',
-					adminId: '',
-					botToken: '',
-					debug: false,
-					natMode: 'none',
-					policy: 'none',
-					lanSegments: [],
-					ndmsIface: 'OpkgTun20',
-					wgIface: 'opkgtun20',
-					openFirewall: true,
-					relayMode: 'raw',
-					rawListen: '',
-					directListen: '',
-					statsLog: 'off',
-					clients: [{ password: 'legacy-server-password', comment: 'Главный пароль' }],
-				},
-				users: [
-					{
-						password: 'legacy-server-password',
-						comment: 'Главный пароль',
-						isDeactivated: false,
-						isExpired: false,
-						isMainPassword: true,
-						isAuto: false,
-					},
-				],
-				usersAvailable: false,
 			},
 		],
 		clientSeq: 3,
-		serverSeq: 2,
+		serverSeq: 1,
 	};
 }
 
@@ -3529,6 +3502,15 @@ function mockWdttServerClients(inst, reload) {
 		users: inst.users,
 		...(reload ? { reload } : {}),
 	};
+}
+
+/**
+ * Рабочие абоненты — тот же предикат, что у бэкенда (UsableServerClients →
+ * ServerClientUnusableReason, passwords_json.go:206): пустой пароль, главный
+ * пароль, просрочка. isDeactivated в предикат НЕ входит.
+ */
+function mockWdttUsableUsers(users) {
+	return users.filter((u) => u.password && !u.isMainPassword && !u.isExpired);
 }
 
 /** delivered — сигнал дошёл живому серверу; иначе файл ждёт следующего запуска. */
@@ -3847,6 +3829,15 @@ function send(res, status, body, contentType = 'application/json') {
 
 function sendData(res, data, status = 200) {
 	send(res, status, { success: true, data });
+}
+
+/**
+ * Конверт отказа как у бэкенда: {error:true, message, code} на верхнем уровне
+ * (internal/response/response.go:48). Вложенный {success:false,error:{…}} фронт
+ * читать не умеет — request() берёт data.message и err.body.code.
+ */
+function sendBackendError(res, message, code, status = 400) {
+	send(res, status, { error: true, message, code });
 }
 
 function sendInvalidRequest(res, error, status = 400) {
@@ -8226,13 +8217,23 @@ const server = http.createServer(async (req, res) => {
 
 	// Создание сервера: POST /wdtt/servers
 	if (req.method === 'POST' && path === '/wdtt/servers') {
+		// Один инстанс: бэкенд отказывает при существующем сервере
+		// (server.go:136) через response.InternalError → 500 + INTERNAL_ERROR.
+		if (mockWdtt.servers.length > 0) {
+			req.resume();
+			sendBackendError(
+				res,
+				'wdtt-server поддерживает один инстанс: интерфейс wdtt0 общий',
+				'INTERNAL_ERROR',
+				500,
+			);
+			return;
+		}
 		readRequestText(req).then((raw) => {
 			try {
 				const body = raw ? JSON.parse(raw) : {};
 				mockWdtt.serverSeq += 1;
 				const n = mockWdtt.serverSeq;
-				const template = mockWdtt.servers[0]?.config ?? {};
-				const password = `server-password-${n}`;
 				const inst = {
 					id: `wdtt-srv-${n}`,
 					name: body.name?.trim() || `Сервер ${n}`,
@@ -8243,23 +8244,23 @@ const server = http.createServer(async (req, res) => {
 					wgIface: `opkgtun${20 + n}`,
 					rawNdmsIface: `OpkgTun${30 + n}`,
 					rawIface: `opkgtun${30 + n}`,
+					// DefaultServerConfig (types.go:198): пароля и абонентов у
+					// свежего сервера нет — их заводит форма и /users.
 					config: {
-						...structuredClone(template),
-						...(body.config ?? {}),
 						enabled: false,
-						password,
-						clients: [{ password, comment: 'Главный пароль' }],
+						natMode: 'full',
+						policy: 'none',
+						relayMode: 'wg',
+						password: '',
+						clients: [],
+						...(body.config ?? {}),
+						// listen/wgPort/configDir назначает сам бэкенд
+						// (ensureUniqueServerListenAddr, ensureUniqueWgPort).
+						listen: '0.0.0.0:56002',
+						wgPort: 56001,
+						configDir: `/opt/etc/awg-manager/wdtt/server/wdtt-srv-${n}`,
 					},
-					users: [
-						{
-							password,
-							comment: 'Главный пароль',
-							isDeactivated: false,
-							isExpired: false,
-							isMainPassword: true,
-							isAuto: false,
-						},
-					],
+					users: [],
 					usersAvailable: false,
 				};
 				mockWdtt.servers.push(inst);
@@ -8278,10 +8279,7 @@ const server = http.createServer(async (req, res) => {
 			const id = decodeURIComponent(m[1]);
 			const inst = mockWdttServerFind(id);
 			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
-				});
+				sendBackendError(res, `wdtt server ${id} not found`, 'NOT_FOUND', 404);
 				return;
 			}
 			if (req.method === 'DELETE') {
@@ -8315,16 +8313,13 @@ const server = http.createServer(async (req, res) => {
 			const action = m[2];
 			const inst = mockWdttServerFind(id);
 			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
-				});
+				sendBackendError(res, `wdtt server ${id} not found`, 'NOT_FOUND', 404);
 				return;
 			}
 			inst.running = action === 'start';
 			inst.orphaned = false;
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
-			// passwords.json собирается перед стартом: после первого запуска список «доступен».
+			// passwords.json собирается перед стартом (мутации состава пишут его сами).
 			if (inst.running) inst.usersAvailable = true;
 			sendData(res, { message: `wdtt server ${id}: ${action} (mock)` });
 			return;
@@ -8340,10 +8335,7 @@ const server = http.createServer(async (req, res) => {
 			const kind = m[2];
 			const inst = mockWdttServerFind(id);
 			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
-				});
+				sendBackendError(res, `wdtt server ${id} not found`, 'NOT_FOUND', 404);
 				return;
 			}
 			readRequestText(req).then((raw) => {
@@ -8368,20 +8360,54 @@ const server = http.createServer(async (req, res) => {
 			const id = decodeURIComponent(m[1]);
 			const inst = mockWdttServerFind(id);
 			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
-				});
+				sendBackendError(res, `wdtt server ${id} not found`, 'NOT_FOUND', 404);
 				return;
 			}
 			readRequestText(req).then((raw) => {
 				try {
 					const opts = raw ? JSON.parse(raw) : {};
+					// Пароль ссылки — только абонентский и только рабочий
+					// (linkPasswordFor, internal/api/wdtt_server.go:393-423).
+					// Главный пароль сервера в ссылку не попадает никогда.
+					const linkPassword = String(opts.password ?? '').trim();
+					const usable = mockWdttUsableUsers(inst.users);
+					if (usable.length === 0) {
+						sendBackendError(
+							res,
+							'у сервера нет ни одного рабочего абонента: заведите абонента и повторите',
+							'WDTT_LINK_NO_CLIENT',
+						);
+						return;
+					}
+					if (!linkPassword) {
+						sendBackendError(
+							res,
+							'выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера',
+							'WDTT_LINK_NO_CLIENT',
+						);
+						return;
+					}
+					if (!usable.some((u) => u.password === linkPassword)) {
+						// Причина отказа — по классификатору (linkRejectMessage,
+						// wdtt_server.go:428-444), а не вычитанием условий.
+						const known = inst.users.find((u) => u.password === linkPassword);
+						let message = 'абонент непригоден для ссылки: заведите нового абонента';
+						if (linkPassword === String(inst.config.password ?? '').trim()) {
+							message =
+								'это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента';
+						} else if (!known) {
+							message = 'пароль не принадлежит ни одному абоненту сервера';
+						} else if (known.isExpired) {
+							message = 'абонент просрочен, ссылка не будет работать: заведите нового абонента';
+						}
+						sendBackendError(res, message, 'WDTT_LINK_NO_CLIENT');
+						return;
+					}
 					const peer = opts.peer?.trim() || inst.config.linkPeer || '203.0.113.10:56000';
 					const payload = {
 						name: opts.name || inst.name,
 						peer,
-						password: opts.password || inst.config.password,
+						password: linkPassword,
 						vkHashes: opts.vkHashes ?? [],
 						workers: 27,
 						listen: '127.0.0.1:9000',
@@ -8409,10 +8435,7 @@ const server = http.createServer(async (req, res) => {
 			const id = decodeURIComponent((one ?? list)[1]);
 			const inst = mockWdttServerFind(id);
 			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt server ${id} not found` },
-				});
+				sendBackendError(res, `wdtt server ${id} not found`, 'NOT_FOUND', 404);
 				return;
 			}
 			// Чтение: reload не заполняется — SIGHUP не посылался.
@@ -8425,14 +8448,22 @@ const server = http.createServer(async (req, res) => {
 					try {
 						const body = raw ? JSON.parse(raw) : {};
 						const password = body.password?.trim() || `gen${Date.now().toString(16)}`;
+						// Пароль абонента == главному — отказ (addServerClientLocked,
+						// server_clients.go:339): такую запись сервер не примет.
+						if (password === String(inst.config.password ?? '').trim()) {
+							sendBackendError(
+								res,
+								'пароль совпадает с главным паролем сервера — задайте абоненту другой пароль',
+								'WDTT_SERVER_CLIENT_ADD_FAILED',
+							);
+							return;
+						}
 						if (inst.users.some((u) => u.password === password)) {
-							send(res, 400, {
-								success: false,
-								error: {
-									code: 'WDTT_SERVER_CLIENT_ADD_FAILED',
-									message: 'абонент с таким паролем уже есть',
-								},
-							});
+							sendBackendError(
+								res,
+								'пароль занят живым абонентом',
+								'WDTT_SERVER_CLIENT_ADD_FAILED',
+							);
 							return;
 						}
 						inst.users.push({
@@ -8449,6 +8480,9 @@ const server = http.createServer(async (req, res) => {
 							comment: body.comment?.trim() || '',
 							...(body.vkHash ? { vkHash: body.vkHash } : {}),
 						});
+						// Мутация сама пишет passwords.json (writeServerClientsFile),
+						// поэтому список доступен и на остановленном сервере.
+						inst.usersAvailable = true;
 						sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
 					} catch (e) {
 						sendInvalidRequest(res, e);
@@ -8460,28 +8494,41 @@ const server = http.createServer(async (req, res) => {
 				const password = decodeURIComponent(one[2]);
 				const user = inst.users.find((u) => u.password === password);
 				if (!user) {
-					send(res, 400, {
-						success: false,
-						error: {
-							code: 'WDTT_SERVER_CLIENT_DELETE_FAILED',
-							message: `абонент ${password} не найден`,
-						},
-					});
+					sendBackendError(
+						res,
+						`абонент ${password} не найден`,
+						'WDTT_SERVER_CLIENT_DELETE_FAILED',
+					);
 					return;
 				}
-				// Главный пароль одним ходом не удаляется — как у бэкенда.
+				// Главный пароль одним ходом не удаляется (RemoveServerClient,
+				// server_clients.go:472-474).
 				if (user.isMainPassword) {
-					send(res, 400, {
-						success: false,
-						error: {
-							code: 'WDTT_SERVER_CLIENT_DELETE_FAILED',
-							message: 'это главный пароль сервера, удалить его нельзя',
-						},
-					});
+					sendBackendError(
+						res,
+						'нельзя удалить основной пароль сервера',
+						'WDTT_SERVER_CLIENT_DELETE_FAILED',
+					);
+					return;
+				}
+				// Страж последнего рабочего абонента (refuseLastUsableServerClient,
+				// server_clients.go:566-583): если рабочие были, а после удаления не
+				// останется — отказ; из уже сломанного состояния выход разрешён.
+				if (
+					mockWdttUsableUsers(inst.users).length > 0 &&
+					mockWdttUsableUsers(inst.users.filter((u) => u.password !== password)).length === 0
+				) {
+					sendBackendError(
+						res,
+						'нельзя удалить последнего рабочего абонента: без единого пароля wdtt-server не запускается',
+						'WDTT_SERVER_CLIENT_DELETE_FAILED',
+					);
 					return;
 				}
 				inst.users.splice(inst.users.indexOf(user), 1);
 				inst.config.clients = inst.config.clients.filter((c) => c.password !== password);
+				// Удаление тоже переписывает passwords.json.
+				inst.usersAvailable = true;
 				sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
 				return;
 			}
@@ -8489,19 +8536,28 @@ const server = http.createServer(async (req, res) => {
 				const password = decodeURIComponent(one[2]);
 				const user = inst.users.find((u) => u.password === password);
 				if (!user) {
-					send(res, 400, {
-						success: false,
-						error: {
-							code: 'WDTT_SERVER_CLIENT_RENAME_FAILED',
-							message: `абонент ${password} не найден`,
-						},
-					});
+					sendBackendError(
+						res,
+						`абонент ${password} не найден`,
+						'WDTT_SERVER_CLIENT_RENAME_FAILED',
+					);
 					return;
 				}
 				readRequestText(req).then((raw) => {
 					try {
 						const body = raw ? JSON.parse(raw) : {};
-						user.comment = String(body.name ?? '').trim();
+						const name = String(body.name ?? '').trim();
+						// Пустое имя ОТКЛОНЯЕТСЯ, а не очищает (RenameServerClient,
+						// server_clients.go:393-396).
+						if (!name) {
+							sendBackendError(
+								res,
+								'имя абонента не задано',
+								'WDTT_SERVER_CLIENT_RENAME_FAILED',
+							);
+							return;
+						}
+						user.comment = name;
 						const cfgClient = inst.config.clients.find((c) => c.password === password);
 						if (cfgClient) cfgClient.comment = user.comment;
 						// Переименование passwords.json не переписывает: reload пуст.
