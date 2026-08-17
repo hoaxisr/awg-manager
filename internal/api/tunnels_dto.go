@@ -37,6 +37,7 @@ type TunnelListItemDTO struct {
 	TxBytes                   int64                 `json:"txBytes,omitempty" example:"5242880"`
 	LastHandshake             string                `json:"lastHandshake,omitempty" example:"2024-01-15T10:30:00Z"`
 	PingCheck                 TunnelPingCheckStatus `json:"pingCheck"`
+	WdttClientID              string                `json:"wdttClientId,omitempty" example:"default"`
 }
 
 // TunnelListResponse is the envelope for GET /tunnels/list.

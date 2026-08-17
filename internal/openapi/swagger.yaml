@@ -5899,6 +5899,9 @@ definitions:
         - wg
         example: awg
         type: string
+      wdttClientId:
+        example: default
+        type: string
     type: object
   api.TunnelListResponse:
     properties:

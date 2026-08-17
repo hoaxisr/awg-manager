@@ -129,6 +129,7 @@ func (h *TunnelsHandler) appendWdttRawListItems(ctx context.Context, items []tun
 			StartedAt:         startedAt,
 			PingCheck:         pingcheck.TunnelPingInfo{Status: "idle"},
 			ConnectivityCheck: connCheck,
+			WdttClientID:      clientID,
 		})
 		_ = ctx
 		_ = now

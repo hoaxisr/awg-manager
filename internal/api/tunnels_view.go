@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
@@ -209,6 +210,9 @@ type tunnelItem struct {
 	StartedAt                 string                           `json:"startedAt,omitempty"`
 	PingCheck                 pingcheck.TunnelPingInfo         `json:"pingCheck"`
 	ConnectivityCheck         *storage.ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
+	// WdttClientID links the tunnel to the WDTT client instance it was
+	// created from; empty for tunnels unrelated to WDTT.
+	WdttClientID string `json:"wdttClientId,omitempty"`
 }
 
 // listItems builds the tunnel list items for API response and SSE snapshots.
@@ -238,7 +242,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 
 		awgVersion := "wg"
-		var endpoint, address string
+		var endpoint, address, wdttClientID string
 		var ispInterface, ispInterfaceLabel string
 		var resolvedISPInterface, resolvedISPInterfaceLabel string
 		var mtu int
@@ -249,6 +253,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			awgVersion = config.ClassifyAWGVersion(&stored.Interface)
 			ispInterface = stored.ISPInterface
 			ispInterfaceLabel = stored.ISPInterfaceLabel
+			wdttClientID = strings.TrimSpace(stored.WdttClientID)
 
 			// NativeWG stores NDMS IDs (e.g. "ISP"), but frontend uses kernel names (e.g. "eth3").
 			// Convert back so the dropdown can match the stored value.
@@ -343,6 +348,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			MTU:                       mtu,
 			StartedAt:                 startedAt,
 			PingCheck:                 pcInfo,
+			WdttClientID:              wdttClientID,
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck
