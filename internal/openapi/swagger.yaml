@@ -7316,8 +7316,13 @@ definitions:
         description: full | internet-only | none via managed service
         type: string
       natStaticWan:
-        description: persisted WAN for internet-only teardown
+        description: persisted WAN for internet-only teardown (legacy)
         type: string
+      natStaticWans:
+        description: выходы static-NAT (internet-only); NatStaticWAN — legacy
+        items:
+          type: string
+        type: array
       ndmsIface:
         description: NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован
           в роутере.

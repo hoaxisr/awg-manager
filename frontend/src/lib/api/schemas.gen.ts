@@ -2662,6 +2662,7 @@ const wdtt_ServerConfig: v.GenericSchema = v.looseObject({
 	natIface: v.optional(v.nullable(v.string())),
 	natMode: v.optional(v.nullable(v.string())),
 	natStaticWan: v.optional(v.nullable(v.string())),
+	natStaticWans: v.optional(v.nullable(v.array(v.string()))),
 	ndmsIface: v.optional(v.nullable(v.string())),
 	openFirewall: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
