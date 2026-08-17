@@ -152,6 +152,8 @@ export class SubscriptionsClient extends SbRouterClient {
 
 	async detectSubscriptionHeaders(url: string): Promise<{
 		kind: string;
+		decryptedUrl?: string;
+		isEncrypted?: boolean;
 		headers: SubscriptionHeader[];
 		headersText: string;
 		label: string;
@@ -159,6 +161,8 @@ export class SubscriptionsClient extends SbRouterClient {
 	}> {
 		return this.request<{
 			kind: string;
+			decryptedUrl?: string;
+			isEncrypted?: boolean;
 			headers: SubscriptionHeader[];
 			headersText: string;
 			label: string;
