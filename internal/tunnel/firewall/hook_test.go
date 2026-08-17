@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -52,6 +53,30 @@ func TestHookState_RemoveDropsIface(t *testing.T) {
 	}
 	list, _ := os.ReadFile(m.listPath)
 	if got := strings.TrimSpace(string(list)); got != "awgm1 mss" {
+		t.Fatalf("list content %q", got)
+	}
+}
+
+// Одновременный старт двух туннелей на общем менеджере: без сериализации
+// read-modify-write списка один из интерфейсов теряется.
+func TestHookState_ConcurrentAddsKeepBoth(t *testing.T) {
+	m := newHookTestManager(t)
+	var wg sync.WaitGroup
+	for _, iface := range []string{"awgm0", "awgm1"} {
+		wg.Add(1)
+		go func(iface string) {
+			defer wg.Done()
+			if err := m.syncHookState(iface, true); err != nil {
+				t.Errorf("sync %s: %v", iface, err)
+			}
+		}(iface)
+	}
+	wg.Wait()
+	list, err := os.ReadFile(m.listPath)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := strings.TrimSpace(string(list)); got != "awgm0 mss\nawgm1 mss" {
 		t.Fatalf("list content %q", got)
 	}
 }

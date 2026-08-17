@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -18,6 +19,10 @@ type ManagerImpl struct {
 
 	hookPath string // тестовый override; пусто — defaultHookPath
 	listPath string // тестовый override; пусто — defaultListPath
+	// hookMu сериализует read-modify-write списка интерфейсов: выше по стеку
+	// блокировки per-tunnel, и одновременный старт двух туннелей иначе даёт
+	// lost update — потерянный туннель не восстановят после NDM-перезаписи.
+	hookMu sync.Mutex
 }
 
 // New creates a new firewall manager.

@@ -20,10 +20,16 @@ const (
 // и молча стирает всё чужое; без хука правила AddRules живут до первой
 // перезаписи. ndmsManaged (OS5 OpkgTun) — no-op: filter/nat там ведёт NDMS.
 // Формат строки списка: "<iface> mss" (mss — опциональный маркер клампа).
+//
+// Весь read-modify-write под hookMu: сериализация выше по стеку — per-tunnel,
+// так что два туннеля стартуют параллельно и без лока затирали бы записи
+// друг друга.
 func (m *ManagerImpl) syncHookState(iface string, present bool) error {
 	if m.ndmsManaged {
 		return nil
 	}
+	m.hookMu.Lock()
+	defer m.hookMu.Unlock()
 	set, err := m.readList()
 	if err != nil {
 		return err
