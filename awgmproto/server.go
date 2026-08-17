@@ -207,14 +207,24 @@ func (s *Server) Serve() {
 		if !isAcceptRetryable(err) {
 			return
 		}
-		if delay == 0 {
-			delay = acceptRetryMin
-		} else if delay *= 2; delay > acceptRetryMax {
-			delay = acceptRetryMax
-		}
+		delay = nextAcceptDelay(delay)
 		s.report(fmt.Errorf("приём соединения отложен на %v: %w", delay, err))
 		time.Sleep(delay)
 	}
+}
+
+// nextAcceptDelay — шаг паузы между повторами accept. Вынесен из Serve, чтобы
+// рост проверялся литеральными значениями, а не измерением сна: без стража
+// «всегда acceptRetryMin» выглядит рабочим кодом, а на невозвращаемом ресурсе
+// жжёт процессор — ровно то, ради чего рост и заведён.
+func nextAcceptDelay(d time.Duration) time.Duration {
+	if d <= 0 {
+		return acceptRetryMin
+	}
+	if d *= 2; d > acceptRetryMax {
+		return acceptRetryMax
+	}
+	return d
 }
 
 // accept — шов: тестам нужен отказ accept, который на живом сокете

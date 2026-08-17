@@ -1231,10 +1231,11 @@ func startServerWithAcceptHook(t *testing.T, h Handler,
 	}
 }
 
-// emfile — отказ accept ровно в той обёртке, в какой его отдаёт net: OpError
-// поверх SyscallError поверх errno. Проверка обязана видеть errno сквозь обе.
-func emfile() error {
-	return &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept", unix.EMFILE)}
+// acceptErrno — отказ accept ровно в той обёртке, в какой его отдаёт net:
+// OpError поверх SyscallError поверх errno. Проверка обязана видеть errno
+// сквозь обе.
+func acceptErrno(errno unix.Errno) error {
+	return &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept", errno)}
 }
 
 // TestServeSurvivesTemporaryAcceptError — исчерпание дескрипторов не убивает
@@ -1249,39 +1250,71 @@ func emfile() error {
 // Шов, а не настоящий EMFILE: воспроизвести его на живом сокете можно только
 // просадкой RLIMIT_NOFILE на весь процесс теста, то есть заодно на все
 // параллельные тесты пакета.
+//
+// Обе названные причины исчерпания проверяются отдельно: EMFILE — предел
+// процесса, ENFILE — предел системы. Они приходят с разных сторон и в списке
+// isAcceptRetryable стоят двумя записями, значит и выпасть могут поодиночке.
 func TestServeSurvivesTemporaryAcceptError(t *testing.T) {
-	h := &fakeHandler{st: State{Role: "client", Instance: "default", PID: 4242}}
-	var mu sync.Mutex
-	left := 2
-	path, errs := startServerWithAcceptHook(t, h, func(srv *Server) (*net.UnixConn, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if left > 0 {
-			left--
-			return nil, emfile()
+	for _, errno := range []unix.Errno{unix.EMFILE, unix.ENFILE} {
+		t.Run(unix.ErrnoName(errno), func(t *testing.T) {
+			h := &fakeHandler{st: State{Role: "client", Instance: "default", PID: 4242}}
+			var mu sync.Mutex
+			left := 2
+			path, errs := startServerWithAcceptHook(t, h, func(srv *Server) (*net.UnixConn, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				if left > 0 {
+					left--
+					return nil, acceptErrno(errno)
+				}
+				return srv.ln.AcceptUnix()
+			})
+
+			c := dialTest(t, path)
+			kind, msg := c.mustNext()
+			ev, ok := msg.(Event)
+			if kind != KindEvent || !ok || ev.Event != EventHello {
+				t.Fatalf("после временных отказов accept соединение не обслужено: вид %v, кадр %#v", kind, msg)
+			}
+			if ev.PID != 4242 {
+				t.Fatalf("hello не от нашего процесса: %+v", ev)
+			}
+
+			// Ждать нечего: оба отказа доложены той же горутиной, что позже
+			// приняла соединение, — hello физически не мог обогнать их.
+			got := errs()
+			if len(got) != 2 {
+				t.Fatalf("OnError позвали %d раз, ожидали по разу на каждый отказ: %v", len(got), got)
+			}
+			for _, err := range got {
+				if !errors.Is(err, errno) {
+					t.Fatalf("в обвязку уехала не причина отказа: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestNextAcceptDelayGrows — пауза между повторами обязана РАСТИ и упираться в
+// потолок. Без стража «всегда acceptRetryMin» проходит любой тест ретрая:
+// соединение после отказов всё равно обслуживается, а цикл на невозвращаемом
+// ресурсе крутится 200 раз в секунду — и это видно только на живом роутере.
+func TestNextAcceptDelayGrows(t *testing.T) {
+	if got := nextAcceptDelay(0); got != acceptRetryMin {
+		t.Fatalf("первая пауза = %v, ожидалась %v", got, acceptRetryMin)
+	}
+	want := []time.Duration{10, 20, 40, 80, 160, 320, 640}
+	d := acceptRetryMin
+	for _, ms := range want {
+		d = nextAcceptDelay(d)
+		if d != ms*time.Millisecond {
+			t.Fatalf("пауза = %v, ожидалась %v", d, ms*time.Millisecond)
 		}
-		return srv.ln.AcceptUnix()
-	})
-
-	c := dialTest(t, path)
-	kind, msg := c.mustNext()
-	ev, ok := msg.(Event)
-	if kind != KindEvent || !ok || ev.Event != EventHello {
-		t.Fatalf("после временных отказов accept соединение не обслужено: вид %v, кадр %#v", kind, msg)
 	}
-	if ev.PID != 4242 {
-		t.Fatalf("hello не от нашего процесса: %+v", ev)
-	}
-
-	// Ждать нечего: оба отказа доложены той же горутиной, что позже приняла
-	// соединение, — hello физически не мог обогнать их.
-	got := errs()
-	if len(got) != 2 {
-		t.Fatalf("OnError позвали %d раз, ожидали по разу на каждый отказ: %v", len(got), got)
-	}
-	for _, err := range got {
-		if !errors.Is(err, unix.EMFILE) {
-			t.Fatalf("в обвязку уехала не причина отказа: %v", err)
+	// Дальше — потолок, и он держится: удвоение 640мс дало бы 1.28с.
+	for i := 0; i < 3; i++ {
+		if d = nextAcceptDelay(d); d != acceptRetryMax {
+			t.Fatalf("пауза %v ушла за потолок %v", d, acceptRetryMax)
 		}
 	}
 }
