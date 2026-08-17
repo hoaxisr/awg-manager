@@ -6,6 +6,7 @@ package awgmproto
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -23,6 +24,34 @@ const (
 	CodeNotSupported   = "not-supported"
 	CodeInternal       = "internal"
 )
+
+// ErrProtocolMajor — кадр разобрался, но объявил чужую мажорную версию.
+//
+// Отдельный класс отказа, а не общая «ошибка разбора»: реакции на него и на
+// мусор в кадре ПРОТИВОПОЛОЖНЫ. Чужой мажор — приговор инстансу: собеседник
+// говорит на другом языке и заговорит на нашем только после подмены бинаря,
+// ретраить нечего. Мусор — обычно временное: недописанный кадр, чужой писатель
+// в сокете, обрыв. Различать обязана принимающая сторона, и без типизированной
+// ошибки ей приходится разбирать поле v самой — вторым разбором того же кадра
+// рядом с первым.
+var ErrProtocolMajor = errors.New("несовместимая мажорная версия протокола")
+
+// ProtocolMajorError — тот же отказ вместе с версией, которую объявил кадр.
+//
+// errors.Is(err, ErrProtocolMajor) на нём истинно; сама версия достаётся через
+// errors.As — она нужна в жалобе человеку («процесс говорит на 2, менеджер на
+// 1»), и вытаскивать её повторным разбором кадра не надо.
+type ProtocolMajorError struct {
+	// Got — значение поля v из кадра. Кадр БЕЗ поля v сюда не попадает: он
+	// мусор, а не «версия ноль» (см. DecodeLine).
+	Got int
+}
+
+func (e *ProtocolMajorError) Error() string {
+	return fmt.Sprintf("версия протокола %d, поддерживается %d", e.Got, Version)
+}
+
+func (e *ProtocolMajorError) Unwrap() error { return ErrProtocolMajor }
 
 // Kind — вид разобранного сообщения.
 type Kind int
@@ -161,7 +190,7 @@ func DecodeLine(line []byte) (Kind, any, error) {
 		return 0, nil, fmt.Errorf("кадр длиной %d байт превышает потолок %d", len(line), maxLine)
 	}
 	var probe struct {
-		V     int    `json:"v"`
+		V     *int   `json:"v"`
 		Cmd   string `json:"cmd"`
 		Event string `json:"event"`
 		OK    *bool  `json:"ok"`
@@ -169,8 +198,15 @@ func DecodeLine(line []byte) (Kind, any, error) {
 	if err := json.Unmarshal(line, &probe); err != nil {
 		return 0, nil, err
 	}
-	if probe.V != Version {
-		return 0, nil, fmt.Errorf("версия протокола %d, поддерживается %d", probe.V, Version)
+	// Указатель, а не int: кадр без поля v — мусор, а не «версия ноль».
+	// Global Constraints требуют v в КАЖДОМ сообщении, поэтому его отсутствие
+	// говорит не про версию собеседника, а про то, что кадр не наш или
+	// повреждён. Класс отказа отсюда другой: временный, ретраить можно.
+	if probe.V == nil {
+		return 0, nil, fmt.Errorf("в кадре нет поля версии v")
+	}
+	if *probe.V != Version {
+		return 0, nil, &ProtocolMajorError{Got: *probe.V}
 	}
 	switch {
 	case probe.Cmd != "":

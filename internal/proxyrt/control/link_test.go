@@ -450,6 +450,29 @@ func TestLinkRejectsProtocolVersionWithoutRetries(t *testing.T) {
 	}
 }
 
+// TestDialGarbageHelloIsNotProtocolVersion — обратная сторона предыдущего
+// теста и цена ошибки в ней выше.
+//
+// Кадр без поля v — мусор (оборванная строка, чужой писатель в сокете), а не
+// «версия ноль». Спутать их нельзя в эту сторону: терминальный отказ снимает
+// ретраи, и живой процесс, чей первый кадр не дописался, был бы приговорён
+// навсегда вместо переподключения.
+func TestDialGarbageHelloIsNotProtocolVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	serveRaw(t, path, []byte(
+		`{"event":"hello","impl":"wt-client","role":"client","instance":"default"}`+"\n"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Dial(ctx, path)
+	if err == nil {
+		t.Fatal("кадр без поля версии принят за hello")
+	}
+	if errors.Is(err, ErrProtocolVersion) {
+		t.Fatalf("мусор в кадре приговорил инстанс как чужая версия: %v", err)
+	}
+}
+
 // TestLinkTunCommandsTravel — путь передачи дескриптора: единственное место
 // протокола с SCM_RIGHTS.
 //

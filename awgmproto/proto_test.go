@@ -1,6 +1,7 @@
 package awgmproto
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,56 @@ func TestDecodeLineRejectsWrongMajor(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if _, _, err := DecodeLine([]byte(c.in)); err == nil {
 				t.Fatal("ожидали отказ по версии протокола")
+			}
+		})
+	}
+}
+
+// TestDecodeLineTypesWrongMajor — чужой мажор отличим от мусора ПО КЛАССУ
+// ошибки, а не по тексту.
+//
+// Реакции на них противоположны: чужой мажор — приговор инстансу без ретраев,
+// мусор в кадре временен. Пока обе стороны получали одну безымянную ошибку,
+// принимающая сторона разбирала поле v сама, вторым разбором того же кадра
+// рядом с первым, — и именно эта копия обязана исчезнуть.
+//
+// Кадры литеральные: round-trip через EncodeLine проверял бы согласие пакета с
+// самим собой, а тут проверяется договор с проводом.
+func TestDecodeLineTypesWrongMajor(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    string
+		major bool // ожидаем ErrProtocolMajor, а не общий отказ разбора
+		got   int
+	}{
+		// Границы берутся вплотную к нашей версии с обеих сторон: гейт,
+		// написанный как `> Version`, пропустил бы соседа снизу.
+		{name: "версия выше нашей", in: `{"v":2,"event":"hello"}`, major: true, got: 2},
+		{name: "версия ниже нашей", in: `{"v":0,"id":1,"cmd":"state"}`, major: true, got: 0},
+		// Дальше — мусор, и он обязан остаться обычной ошибкой: кадр без v
+		// НЕ «версия ноль», иначе оборванный кадр приговорит живой инстанс.
+		{name: "поля v нет вовсе", in: `{"id":1,"cmd":"state"}`},
+		{name: "v не число", in: `{"v":"1","id":1,"cmd":"state"}`},
+		{name: "не JSON вовсе", in: `это не кадр`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := DecodeLine([]byte(c.in))
+			if err == nil {
+				t.Fatal("кадр принят")
+			}
+			if got := errors.Is(err, ErrProtocolMajor); got != c.major {
+				t.Fatalf("errors.Is(ErrProtocolMajor) = %v, ожидали %v: %v", got, c.major, err)
+			}
+			if !c.major {
+				return
+			}
+			var pme *ProtocolMajorError
+			if !errors.As(err, &pme) {
+				t.Fatalf("версия из кадра недоступна через errors.As: %v", err)
+			}
+			if pme.Got != c.got {
+				t.Fatalf("в отказе версия %d, в кадре %d", pme.Got, c.got)
 			}
 		})
 	}

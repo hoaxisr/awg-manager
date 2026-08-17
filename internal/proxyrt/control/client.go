@@ -8,7 +8,6 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -87,17 +86,17 @@ func Dial(ctx context.Context, path string) (*Client, error) {
 		return nil, fmt.Errorf("%s: hello не прочитан: %w", path, err)
 	}
 	_ = uc.SetReadDeadline(time.Time{})
-	// Версию смотрим ДО общего разбора: DecodeLine возвращает несовпадение
-	// мажора обычной ошибкой, неотличимой от мусора в кадре, а различать их
-	// обязан менеджер — реакция разная (§4).
-	if v, ok := frameVersion(line); ok && v != awgmproto.Version {
-		_ = uc.Close()
-		return nil, fmt.Errorf("%w: процесс говорит на версии %d, менеджер на %d",
-			ErrProtocolVersion, v, awgmproto.Version)
-	}
 	kind, msg, err := awgmproto.DecodeLine(line)
 	if err != nil {
 		_ = uc.Close()
+		// Чужой мажор и мусор в кадре приезжают из разбора разными классами, и
+		// наверх обязаны уехать так же: первый — терминальным отказом (§4),
+		// второй — обычной неудачей соединения, которую Link ретраит.
+		var major *awgmproto.ProtocolMajorError
+		if errors.As(err, &major) {
+			return nil, fmt.Errorf("%w: процесс говорит на версии %d, менеджер на %d",
+				ErrProtocolVersion, major.Got, awgmproto.Version)
+		}
 		return nil, fmt.Errorf("%s: hello не разобран: %w", path, err)
 	}
 	ev, ok := msg.(awgmproto.Event)
@@ -267,20 +266,6 @@ func (c *Client) fail(err error) {
 		c.err = err
 	}
 	c.mu.Unlock()
-}
-
-// frameVersion достаёт из кадра одно поле v, не разбирая остального.
-//
-// Указатель, а не int: кадр без поля v — это мусор, а не «версия ноль», и
-// отвечать за него должен общий разбор.
-func frameVersion(line []byte) (int, bool) {
-	var probe struct {
-		V *int `json:"v"`
-	}
-	if err := json.Unmarshal(line, &probe); err != nil || probe.V == nil {
-		return 0, false
-	}
-	return *probe.V, true
 }
 
 func closeFD(fd int) {
