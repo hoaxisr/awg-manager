@@ -138,7 +138,7 @@
 	}
 
 	const users = $derived(status?.users ?? []);
-	const extraUsers = $derived(users.filter((u) => !u.isMain));
+	const extraUsers = $derived(users.filter((u) => !u.isMainPassword));
 	const panelMissing = $derived(!!status && !status.available);
 </script>
 
@@ -182,7 +182,7 @@
 					<div class="wdtt-users-main">
 						<span class="wdtt-users-name">{entry.comment || '—'}</span>
 						<code class="wdtt-users-pass" title={entry.password}>{shortPass(entry.password)}</code>
-						{#if entry.isMain}
+						{#if entry.isMainPassword}
 							<span class="wdtt-users-badge wdtt-users-badge-main">основной</span>
 						{/if}
 						{#if entry.isDeactivated}
@@ -195,7 +195,7 @@
 								Ссылка
 							</Button>
 						{/if}
-						{#if !entry.isMain}
+						{#if !entry.isMainPassword}
 							<Button
 								variant="ghost"
 								size="sm"
@@ -215,9 +215,6 @@
 				{pluralize(extraUsers.length, ['клиент', 'клиента', 'клиентов'])} с отдельным паролем
 			{:else}
 				Отдельных паролей нет — основной подходит всем
-			{/if}
-			{#if status?.panelDbPath}
-				· <code>{status.panelDbPath}</code>
 			{/if}
 		</p>
 	{/if}

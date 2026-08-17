@@ -28,16 +28,23 @@ const MAIN = 'mainpass0000000000000000';
 
 function status(available: boolean) {
 	return {
-		panelDbPath: '/opt/etc/awg-manager/wdtt/server/default/panel.db',
 		available,
 		users: [
-			{ password: MAIN, comment: 'Основной', isMain: true, isDeactivated: false, deviceCount: 2 },
+			{
+				password: MAIN,
+				comment: 'Основной',
+				isMainPassword: true,
+				isDeactivated: false,
+				isExpired: false,
+				isAuto: false
+			},
 			{
 				password: '3f9a1c77b21e4d0a9c4e5b',
 				comment: 'Клиент Иван',
-				isMain: false,
+				isMainPassword: false,
 				isDeactivated: false,
-				deviceCount: 1
+				isExpired: false,
+				isAuto: false
 			}
 		]
 	};

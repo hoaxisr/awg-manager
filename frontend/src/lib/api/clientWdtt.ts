@@ -200,6 +200,18 @@ export class WdttClient extends FreeturnClient {
 		});
 	}
 
+	/** Переименование абонента: имя ложится в comment записи, состав не меняется. */
+	async renameWdttServerPanelUser(
+		serverId: string,
+		password: string,
+		name: string
+	): Promise<import('$lib/types').WdttPanelUsersStatus> {
+		return this.request(
+			`/wdtt/servers/${encodeURIComponent(serverId)}/users/${encodeURIComponent(password)}`,
+			{ method: 'PATCH', body: JSON.stringify({ name }) }
+		);
+	}
+
 	async removeWdttServerPanelUser(
 		serverId: string,
 		password: string

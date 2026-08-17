@@ -66,6 +66,8 @@ export interface FreeTurnProcessStatus {
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
+	/** Процесс наш и живой, но pid-файл унаследован: startedAt нет, надзор слеп */
+	orphanedPid?: boolean;
 }
 
 export interface FreeTurnInstanceStatus {

@@ -95,9 +95,13 @@ export interface WdttProcessStatus {
 	rawClientIp?: string;
 	rawIface?: string;
 	ndmsIface?: string;
+	/** NDMS-имя raw-интерфейса сервера; пусто на старом бинаре (без -raw-iface) */
+	rawNdmsIface?: string;
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
+	/** Процесс наш и живой, но pid-файл унаследован: startedAt нет, надзор слеп */
+	orphanedPid?: boolean;
 }
 
 export interface WdttInstanceStatus {
@@ -159,14 +163,23 @@ export interface WdttPanelUserEntry {
 	password: string;
 	comment?: string;
 	vkHash?: string;
-	isMain: boolean;
 	isDeactivated: boolean;
-	deviceCount: number;
-	lastSeenAt?: number;
+	/** Срок, назначенный сервером, истёк: в passwords.json не пишется */
+	isExpired: boolean;
+	/** Пароль абонента совпадает с главным паролем сервера */
+	isMainPassword: boolean;
+	/** Абонента завёл инвариант непустоты списка */
+	isAuto: boolean;
 }
 
+/**
+ * Судьба SIGHUP после изменения состава абонентов. Заполняют только мутации
+ * состава (добавление, удаление); у чтения и переименования поля нет.
+ */
+export type WdttServerClientsReload = 'delivered' | 'serverStopped' | 'failed';
+
 export interface WdttPanelUsersStatus {
-	panelDbPath?: string;
 	available: boolean;
 	users: WdttPanelUserEntry[];
+	reload?: WdttServerClientsReload;
 }
