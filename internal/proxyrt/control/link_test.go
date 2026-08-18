@@ -72,13 +72,33 @@ type eventSink struct {
 	mu      sync.Mutex
 	kinds   []proxyrt.EventKind
 	details []string
+	// gate, если задан, задерживает ПЕРВЫЙ будильник: пока watch стоит в
+	// post, он не разбирает очередь событий клиента, и её можно переполнить.
+	gate     chan struct{}
+	holdOnce sync.Once
+	freeOnce sync.Once
 }
 
 func (s *eventSink) post(kind proxyrt.EventKind) bool {
+	s.holdOnce.Do(func() {
+		if s.gate != nil {
+			<-s.gate
+		}
+	})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.kinds = append(s.kinds, kind)
 	return true
+}
+
+// release отпускает задержанный watch. Идемпотентна и обязана быть отложена
+// в тесте: Link.Close ждёт watch, и незакрытая калитка подвесила бы уборку.
+func (s *eventSink) release() {
+	s.freeOnce.Do(func() {
+		if s.gate != nil {
+			close(s.gate)
+		}
+	})
 }
 
 func (s *eventSink) log(msg string) {
@@ -183,13 +203,36 @@ func TestLinkDeadProcessRaisesDied(t *testing.T) {
 
 // TestLinkEvictedLatch — вытеснение защёлкивается, переподключений нет, и
 // защёлка снимается только снаружи.
+//
+// Очередь событий клиента НАМЕРЕННО переполнена к моменту вытеснения: watch
+// задержан в первом post, значит из очереди (глубина eventQueue) уходит не
+// больше одного события, и кадр evicted гарантированно попадает в ветку
+// «очередь полна» (client.go). До watch он не доедет НИКОГДА, и остаётся
+// единственный источник правды — клиентская защёлка, которую read ставит ДО
+// буферизации.
+//
+// Без переполнения тест проверял бы только самый удобный случай: watch
+// запаркован в select, событие отдаётся напрямую разбуженному получателю. В
+// проде так не бывает — post пишет в журнал, очередь не пуста, и evicted либо
+// теряется в ней, либо проигрывает разрыву в select самого watch (сервер шлёт
+// кадр и тут же закрывает сокет, оба канала готовы, выбор ветки случаен).
 func TestLinkEvictedLatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.sock")
-	startProcess(t, path, awgmproto.State{PID: os.Getpid()})
-	sink := &eventSink{}
+	p := startProcess(t, path, awgmproto.State{PID: os.Getpid()})
+	sink := &eventSink{gate: make(chan struct{})}
+	defer sink.release()
 	l := newLink(t, path, sink, func(int, string) bool { return true })
 	if _, err := l.State(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	l.mu.Lock()
+	c := l.cur
+	l.mu.Unlock()
+
+	// Пишем заведомо больше глубины очереди: читатель на той стороне задержан
+	// в post и разберёт не больше одного события.
+	for i := 0; i < 4*eventQueue; i++ {
+		p.srv.Push(awgmproto.Event{Event: awgmproto.EventAddress, Address: "10.70.0.5"})
 	}
 
 	// Второй менеджер: подключается и вытесняет нас.
@@ -199,12 +242,32 @@ func TestLinkEvictedLatch(t *testing.T) {
 	}
 	defer other.Close()
 
+	// Соединение закрыто сервером — значит кадр evicted УЖЕ разобран: в read
+	// порядок жёсткий (защёлка, буферизация, следом EOF).
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("сервер не закрыл вытесненное соединение")
+	}
+	if !c.Evicted() {
+		t.Fatal("клиентская защёлка не встала — тест бьёт мимо")
+	}
+	if len(c.events) != cap(c.events) {
+		t.Fatalf("очередь не переполнена (%d из %d): кадр evicted мог доехать событием, и тест ничего не проверяет",
+			len(c.events), cap(c.events))
+	}
+
+	sink.release() // отпустить watch: он разберёт очередь и упрётся в разрыв
+
 	deadline := time.Now().Add(5 * time.Second)
 	for !l.Evicted() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !l.Evicted() {
 		t.Fatal("защёлка вытеснения не встала")
+	}
+	if !sink.hasDetail("вытеснен") {
+		t.Fatalf("вытеснение обязано доехать в журнал: %v", sink.details)
 	}
 	if _, err := l.State(context.Background()); !errors.Is(err, ErrEvicted) {
 		t.Fatalf("после evicted обязан быть отказ с причиной, получили %v", err)

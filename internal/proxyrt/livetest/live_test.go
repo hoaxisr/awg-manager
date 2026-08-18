@@ -3,6 +3,7 @@ package livetest
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -197,19 +198,64 @@ func TestLiveTunHandoffBadFdIsFailure(t *testing.T) {
 	}
 }
 
+// TestLiveEvictionIsTerminalForOldManager — вытеснение через ЖИВОЙ сокет и
+// библиотечный evict обязано стать терминальным отказом старого менеджера.
+//
+// Наблюдатель старого менеджера НАМЕРЕННО задержан в будильнике: пока он стоит
+// в post, очередь push (глубина 16, control) переполняется, и кадр evicted
+// уходит в ветку «очередь полна» — до наблюдателя он не доедет НИКОГДА.
+// Проверяется то, что остаётся: защёлка, которую соединение ставит до
+// буферизации. Без задержки тест ставил бы систему в единственную
+// конфигурацию, где кадр заведомо доезжает (наблюдатель запаркован в select и
+// получает событие напрямую), и потерю защёлки поймать не мог.
 func TestLiveEvictionIsTerminalForOldManager(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "wt-client-client-it.sock")
-	startDouble(t, sock, baseState(nil))
+	_, srv := startDouble(t, sock, baseState(nil))
 
-	first := newLink(t, sock, nil)
+	gate := make(chan struct{})
+	var holdOnce, freeOnce sync.Once
+	// release идемпотентна и отложена: Link.Close ждёт наблюдателя, и
+	// незакрытая калитка подвесила бы уборку теста.
+	release := func() { freeOnce.Do(func() { close(gate) }) }
+	defer release()
+
+	first := newLink(t, sock, func(proxyrt.EventKind) bool {
+		holdOnce.Do(func() { <-gate })
+		return true
+	})
 	if _, err := first.State(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Заведомо больше глубины очереди: наблюдатель задержан и разберёт не
+	// больше одного события.
+	for i := 0; i < 64; i++ {
+		srv.Push(awgmproto.Event{Event: awgmproto.EventAddress, Address: "10.70.0.5"})
+	}
+
 	second := newLink(t, sock, nil)
 	if _, err := second.State(context.Background()); err != nil {
 		t.Fatal(err) // accept второго вытесняет первого
 	}
-	deadline := time.After(2 * time.Second)
+
+	// Ждём, пока старое соединение доразберёт поток. io.EOF приходит из него
+	// самого и означает, что кадр evicted УЖЕ разобран: порядок в разборе
+	// жёсткий — защёлка, буферизация, следом EOF. Пока наблюдатель задержан,
+	// State ходит по тому же мёртвому соединению и переподключений не делает.
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, err := first.State(context.Background()); errors.Is(err, io.EOF) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("вытесненное соединение не закрыто процессом")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	release() // отпустить наблюдателя: он разберёт очередь и упрётся в разрыв
+
+	deadline = time.After(2 * time.Second)
 	for !first.Evicted() {
 		select {
 		case <-deadline:
