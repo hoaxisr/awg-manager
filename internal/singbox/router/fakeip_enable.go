@@ -230,7 +230,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 
 	// B. Inject engine-locked bits via explicit-spec overlay (replaces
-	// BuildFakeIPTunConfig). Using the local iface/p/sr vars directly avoids
+	// ensureFakeIPOverlay). Using the local iface/p/sr vars directly avoids
 	// ordering coupling with ensureFakeIPOverlayFromState (which reads
 	// settings.FakeIP.Index — not yet persisted at this point in the flow).
 	spec := FakeIPTunSpec{

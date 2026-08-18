@@ -170,7 +170,7 @@ func TestOperator_GetStatus_PopulatesInstallStateAndBytes(t *testing.T) {
 func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 
 	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
 	if err != nil {
@@ -232,9 +232,9 @@ func TestEnsureBaseConfig_Idempotent(t *testing.T) {
 	}
 	// First call applies surgical heals (e.g. route.default_domain_resolver
 	// for sing-box 1.13+). Second call must be a no-op — same bytes.
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	first, _ := os.ReadFile(basePath)
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	second, _ := os.ReadFile(basePath)
 	if string(first) != string(second) {
 		t.Errorf("ensureBaseConfig not idempotent: first=%s second=%s", first, second)
@@ -256,7 +256,7 @@ func TestEnsureBaseConfig_PatchesStaleClashPort(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -293,7 +293,7 @@ func TestEnsureBaseConfig_NoClashApiBlockUntouched(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -323,7 +323,7 @@ func TestEnsureBaseConfig_PatchesStaleLogLevel(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -346,7 +346,7 @@ func TestEnsureBaseConfig_DefaultDesiredLevelOverridesDebug(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -496,7 +496,7 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -528,7 +528,7 @@ func TestEnsureBaseConfig_RespectsExistingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -549,7 +549,7 @@ func TestEnsureBaseConfig_MaterialisesMissingRouteBlock(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -582,7 +582,7 @@ func TestEnsureBaseConfig_MigratesIpv4OnlyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -602,7 +602,7 @@ func TestEnsureBaseConfig_KeepsNonLegacyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -706,7 +706,7 @@ func TestClassifyProcessLine(t *testing.T) {
 }
 
 func TestFreshBaseConfig_CacheFilePathIsAbsolute(t *testing.T) {
-	cfg := freshBaseConfig()
+	cfg := freshBaseConfigWithLogLevel("info")
 	exp := cfg["experimental"].(map[string]any)
 	cf := exp["cache_file"].(map[string]any)
 	if cf["enabled"] != true {
@@ -728,7 +728,7 @@ func TestEnsureBaseConfig_PatchesRelativeCachePath(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -753,7 +753,7 @@ func TestEnsureBaseConfig_LeavesAbsoluteCachePathUntouched(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	json.Unmarshal(raw, &m)
@@ -973,7 +973,7 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patchTunnelsSlotEnsureNaiveUDPOverTCP(p)
+	patchSlotOutboundCompat(p)
 
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -992,6 +992,45 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 	vless := outbounds[1].(map[string]any)
 	if _, ok := vless["udp_over_tcp"]; ok {
 		t.Fatalf("vless must not get udp_over_tcp: %v", vless)
+	}
+}
+
+// TestPatchSlotOutboundCompat_Hysteria2ChromeParrot — вторая половина слитого
+// шага: несовместимый по TLS hysteria2 получает disable_chrome_parrot,
+// совместимый остаётся нетронутым.
+func TestPatchSlotOutboundCompat_Hysteria2ChromeParrot(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "10-tunnels.json")
+	slot := `{
+		"outbounds": [
+			{"type":"hysteria2","tag":"BAD","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h","disable_sni":true,"insecure":false}},
+			{"type":"hysteria2","tag":"OK","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h"}}
+		]
+	}`
+	if err := os.WriteFile(p, []byte(slot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patchSlotOutboundCompat(p)
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	outbounds := m["outbounds"].([]any)
+	bad := outbounds[0].(map[string]any)
+	if bad["disable_chrome_parrot"] != true {
+		t.Fatalf("incompatible hysteria2 must get disable_chrome_parrot, got: %v", bad)
+	}
+	ok := outbounds[1].(map[string]any)
+	if _, has := ok["disable_chrome_parrot"]; has {
+		t.Fatalf("compatible hysteria2 must stay untouched: %v", ok)
 	}
 }
 
@@ -1147,7 +1186,7 @@ func TestEnsureBaseConfig_PatchesMissingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -1174,7 +1213,7 @@ func TestEnsureBaseConfig_PreservesExistingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -1199,7 +1238,7 @@ func TestEnsureBaseConfig_PrependsDirectWhenMissing(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
 		t.Fatal(err)
@@ -1241,7 +1280,7 @@ func TestEnsureBaseConfig_MovesExistingDirectToFirstOutbound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ensureBaseConfig(configDir)
+	ensureBaseConfigWithLogLevel(configDir, "info")
 
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
@@ -1886,7 +1925,7 @@ func TestRemoveFinalFromBase_MalformedJSON_NoOp(t *testing.T) {
 // --- freshBaseConfig DNS (#445) ---
 
 func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
-	cfg := freshBaseConfig()
+	cfg := freshBaseConfigWithLogLevel("info")
 	dns, ok := cfg["dns"].(map[string]any)
 	if !ok {
 		t.Fatalf("dns block missing/wrong type: %v", cfg["dns"])
@@ -1939,66 +1978,6 @@ func TestRemoveDNSFinalFromBase_DropsFinal_KeepsStrategyWhenRouterAbsent(t *test
 	// Other dns keys intact.
 	if _, has := dns["servers"]; !has {
 		t.Errorf("dns.servers unexpectedly removed")
-	}
-}
-
-func TestRemoveDNSFinalFromBase_StripsStrategyWhenRouterOwnsIt(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4","servers":[{"tag":"dns-bootstrap","type":"udp","server":"1.1.1.1"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot sets a non-empty strategy → base strategy strip is enabled.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"ipv4_only","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should be stripped")
-	}
-	if _, has := dns["strategy"]; has {
-		t.Errorf("dns.strategy should be stripped when router owns it, got %v", dns["strategy"])
-	}
-}
-
-func TestRemoveDNSFinalFromBase_RouterStrategyEmpty_KeepsBaseStrategy(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4"}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot exists but strategy is empty → base keeps its strategy.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	_ = json.Unmarshal(raw, &m)
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should still be stripped")
-	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must survive when router strategy empty, got %v", dns["strategy"])
 	}
 }
 
