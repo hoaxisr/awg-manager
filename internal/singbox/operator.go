@@ -307,11 +307,11 @@ func NewOperator(d OperatorDeps) *Operator {
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
 	ensureBaseConfigWithLogLevel(configPath, desiredSingboxLogLevel, log)
-	ensureLegacyConfigMigrated(dir)
-	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"))
-	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"))
-	patchTunnelsSlotEnsureHysteria2ChromeParrot(filepath.Join(configPath, "10-tunnels.json"))
-	stripStrayDirectPlaceholder(configPath)
+	ensureLegacyConfigMigrated(dir, log)
+	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"), log)
+	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"), log)
+	patchTunnelsSlotEnsureHysteria2ChromeParrot(filepath.Join(configPath, "10-tunnels.json"), log)
+	stripStrayDirectPlaceholder(configPath, log)
 	removeFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
 	removeDNSFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
 
