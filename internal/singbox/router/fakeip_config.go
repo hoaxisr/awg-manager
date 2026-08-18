@@ -230,7 +230,15 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	if st == nil {
 		return fmt.Errorf("fakeip overlay: OpkgTun ownership record not provisioned (nil)")
 	}
-	p := resolveFakeIPParams(s.deps.FakeIPTun, settings.SingboxRouter)
+	// Настройки в оверлей идут НОРМАЛИЗОВАННЫМИ — как во всех остальных
+	// потребителях (enable, реап, статус). На достижимых путях хранимое уже
+	// normalized (enable завершает Save нормализованного sr), так что это
+	// выравнивание инварианта, а не фикс наблюдаемого бага.
+	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	if err != nil {
+		return fmt.Errorf("fakeip overlay: normalize settings: %w", err)
+	}
+	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
 	spec := FakeIPTunSpec{
 		Iface:      tunIfaceName(st.Index),
 		TunAddr4:   p.TunAddr4,
@@ -240,8 +248,8 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 		Inet6Range: p.Inet6Range,
 		CachePath:  p.CachePath,
 		RealServer: p.RealServer,
-		Stack:      settings.SingboxRouter.FakeIPStack,
-		UDPTimeout: settings.SingboxRouter.UDPTimeout,
+		Stack:      sr.FakeIPStack,
+		UDPTimeout: sr.UDPTimeout,
 	}
 	ensureFakeIPOverlay(cfg, spec)
 	return nil

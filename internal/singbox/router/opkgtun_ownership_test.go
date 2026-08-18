@@ -2,7 +2,10 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -321,5 +324,40 @@ func TestFakeIPEnable_EmptyPool6DisablesV6(t *testing.T) {
 	// v4-провижининг при этом идёт как обычно.
 	if !h.log.has("Create:OpkgTun0:private") || !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("v4-провижининг обязан пройти: %v", h.log.calls)
+	}
+}
+
+// СТРАХОВКА (не красный: на достижимых путях хранимое уже нормализовано):
+// оверлей строится из НОРМАЛИЗОВАННЫХ настроек — сырой пустой FakeIPStack в
+// персисте не должен дать пустой stack в спеке оверлея.
+func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(fakeip): %v", err)
+	}
+	// Сырое, до-нормализационное значение в персисте.
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.FakeIPStack = ""
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := h.svc.fakeipWithConfig(context.Background(), "test", func(*RouterConfig) error { return nil }); err != nil {
+		t.Fatalf("fakeipWithConfig: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+	if err != nil {
+		t.Fatalf("read 21-fakeip.json: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+	}
+	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].Stack != "gvisor" {
+		t.Errorf("tun-инбаунд stack = %q, want \"gvisor\" (дефолт нормализации): %s", cfg.Inbounds[0].Stack, data)
 	}
 }
