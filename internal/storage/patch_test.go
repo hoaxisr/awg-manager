@@ -343,6 +343,11 @@ var nonPatchableSettings = map[string]struct{}{
 	// SettingsStore.SetDNSChainPresetState — same single-writer reasoning as
 	// fakeip: a generic PUT must not silently switch/clear the preset.
 	"dnsChainPreset": {},
+	// opkgTun — единая backend-managed запись владения OpkgTun, пишется ТОЛЬКО
+	// SetOpkgTunState/SetOpkgTunNATSegments — та же single-writer логика, что у
+	// fakeip/policyTun (легаси-ключи остаются в списке: PATCH не должен уметь
+	// подсунуть их и после миграции).
+	"opkgTun": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

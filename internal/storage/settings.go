@@ -552,6 +552,44 @@ func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetOpkgTunState atomically persists the unified OpkgTun ownership record
+// under the store lock (single-writer: lifecycle only). nil очищает запись.
+// Mirrors SetFakeIPState.
+func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	s.settings.OpkgTun = st
+	return s.saveUnlocked(s.settings)
+}
+
+// SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая
+// ownership-поля (Mode/Provisioned/Index): у payload другой писатель
+// (NAT-reconcile) и другие моменты записи. Пустой/nil список снимает payload.
+// Copy-on-write: в кэш публикуется новая запись, старую могут параллельно
+// маршалить читатели без нашего лока. Запись отсутствует → ошибка (payload
+// без владельца не бывает).
+func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	if s.settings.OpkgTun == nil {
+		return fmt.Errorf("no OpkgTun ownership record")
+	}
+	cp := *s.settings.OpkgTun
+	if len(segs) == 0 {
+		cp.PolicyTun = nil
+	} else {
+		cp.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
+	}
+	s.settings.OpkgTun = &cp
+	return s.saveUnlocked(s.settings)
+}
+
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
 // writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.

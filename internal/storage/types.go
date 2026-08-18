@@ -79,6 +79,10 @@ type Settings struct {
 	// mode (see PolicyTunState). Pointer so it's absent from JSON when never
 	// provisioned; nil = not provisioned. Written ONLY via SetPolicyTunState.
 	PolicyTun *PolicyTunState `json:"policyTun,omitempty"`
+	// OpkgTun — единая backend-managed запись владения OpkgTun<N> (см.
+	// OpkgTunState). Pointer: отсутствует в JSON, пока ничего не провижинено.
+	// Пишется ТОЛЬКО через SetOpkgTunState/SetOpkgTunNATSegments.
+	OpkgTun *OpkgTunState `json:"opkgTun,omitempty"`
 	// DNSChainPreset is backend-managed state of the sing-box 1.14 DNS-chain
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
@@ -128,6 +132,42 @@ type PolicyTunState struct {
 	Provisioned bool                  `json:"provisioned,omitempty"`
 	Index       int                   `json:"index,omitempty"`
 	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
+const (
+	OpkgTunModeFakeIP    = "fakeip-tun" // значения совпадают с RoutingMode
+	OpkgTunModePolicyTun = "policy-tun"
+)
+
+// OpkgTunFakeIPData — payload fakeip-tun: диапазоны пула, применённые при
+// провижининге (детектор протухшего fakeip-кэша).
+type OpkgTunFakeIPData struct {
+	Inet4Range string `json:"inet4Range,omitempty"`
+	Inet6Range string `json:"inet6Range,omitempty"`
+}
+
+// OpkgTunPolicyData — payload policy-tun: записанное исходное NAT-состояние
+// сегментов (source-preserve). Писатель payload — NAT-reconcile, у него
+// отдельный сеттер, не трогающий ownership-поля.
+type OpkgTunPolicyData struct {
+	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
+// OpkgTunState — ЕДИНАЯ запись владения OpkgTun<N>. Пишется ТОЛЬКО
+// lifecycle'ом через SetOpkgTunState / SetOpkgTunNATSegments. Инварианты:
+//   - Mode ∈ {OpkgTunModeFakeIP, OpkgTunModePolicyTun};
+//   - Provisioned=false при непустой записи — hold (штатно только у
+//     policy-tun: индекс удержан ради permit'а в политике);
+//   - persist-before-create: запись кладётся ДО CreateOpkgTun (журнал
+//     намерения, не результата);
+//   - payload чужого Mode допустим ТОЛЬКО как артефакт миграции v34 —
+//     реап восстанавливает и снимает его.
+type OpkgTunState struct {
+	Mode        string             `json:"mode"`
+	Provisioned bool               `json:"provisioned,omitempty"`
+	Index       int                `json:"index"`
+	FakeIP      *OpkgTunFakeIPData `json:"fakeip,omitempty"`
+	PolicyTun   *OpkgTunPolicyData `json:"policyTun,omitempty"`
 }
 
 type DownloadSettings struct {

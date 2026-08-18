@@ -768,6 +768,76 @@ func TestSetPolicyTunState_PersistsAndClears(t *testing.T) {
 	}
 }
 
+// TestSetOpkgTunState_PersistsAndClears — единая запись владения OpkgTun:
+// персист, перечитывание свежим стором, очистка nil'ом, ошибка на незагруженном.
+func TestSetOpkgTunState_PersistsAndClears(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	want := &OpkgTunState{
+		Mode: OpkgTunModePolicyTun, Provisioned: false, Index: 3,
+		PolicyTun: &OpkgTunPolicyData{NATSegments: []PolicyTunNATSegment{{Name: "Guest", PriorMode: "dynamic"}}},
+	}
+	if err := store.SetOpkgTunState(want); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewSettingsStore(dir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.OpkgTun == nil || s.OpkgTun.Mode != OpkgTunModePolicyTun || s.OpkgTun.Index != 3 ||
+		s.OpkgTun.Provisioned || s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("persisted = %+v", s.OpkgTun)
+	}
+	if err := fresh.SetOpkgTunState(nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := NewSettingsStore(dir).Load()
+	if c.OpkgTun != nil {
+		t.Fatalf("OpkgTun = %+v after clear, want nil", c.OpkgTun)
+	}
+	if err := (&SettingsStore{}).SetOpkgTunState(want); err == nil {
+		t.Error("unloaded store: want error")
+	}
+}
+
+// TestSetOpkgTunNATSegments_PayloadOnly — payload-сеттер не трогает ownership
+// (Mode/Provisioned/Index), nil/пустой снимает payload, без записи — ошибка.
+func TestSetOpkgTunNATSegments_PayloadOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err == nil {
+		t.Fatal("no ownership record: want error")
+	}
+	if err := store.SetOpkgTunState(&OpkgTunState{Mode: OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := NewSettingsStore(dir).Load()
+	if s.OpkgTun == nil || !s.OpkgTun.Provisioned || s.OpkgTun.Index != 2 ||
+		s.OpkgTun.Mode != OpkgTunModePolicyTun {
+		t.Fatalf("ownership clobbered: %+v", s.OpkgTun)
+	}
+	if s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("payload = %+v", s.OpkgTun.PolicyTun)
+	}
+	if err := store.SetOpkgTunNATSegments(nil); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := NewSettingsStore(dir).Load()
+	if s2.OpkgTun.PolicyTun != nil {
+		t.Fatalf("payload not cleared: %+v", s2.OpkgTun.PolicyTun)
+	}
+}
+
 func TestMigrateToV26_NATEnabledToMode(t *testing.T) {
 	st := &Settings{SchemaVersion: 25, ManagedServers: []ManagedServer{
 		{InterfaceName: "Wireguard3", NATEnabled: true},
