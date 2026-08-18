@@ -33,9 +33,10 @@
 	/>
 	<!-- WE-50/WE-51: поле обязательное у обоих протоколов (`exitStep2Ready`), и
 	     без подписи «Дальше» гасла бы молча. Значение у них разное: у WDTT это
-	     VK-хеши, у FreeTurn — ссылки VK Calls (`links`), отсюда две строки. -->
+	     VK-хеши, у FreeTurn — ссылки VK Calls (`links`), отсюда две строки и две
+	     подписи: WE-35 у WDTT и EX-59 у FreeTurn (та же, что на детали). -->
 	<Input
-		label="VK-хеши"
+		label={protocol === 'wdtt' ? 'VK-хеши' : 'Ссылки VK Calls'}
 		bind:value={fields.vkHashes}
 		hint={protocol === 'wdtt'
 			? 'Обязательно — без VK-хешей клиент не запустится'
