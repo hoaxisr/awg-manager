@@ -283,8 +283,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Домашний провайдер',
 		endpoint: 'de-fra.demo.example:51820',
 		address: '10.8.0.2/32',
-		interfaceName: 'awg0',
-		ndmsName: 'Wireguard0',
+		interfaceName: 'opkgtun1',
+		ndmsName: 'OpkgTun1',
 		rxBytes: 142_320_120,
 		txBytes: 38_442_331,
 		lastHandshake: new Date(Date.now() - 45_000).toISOString(),
@@ -306,7 +306,7 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резервный WAN',
 		endpoint: 'nl-ams.demo.example:51820',
 		address: '10.9.0.2/32',
-		interfaceName: 'OpkgTun0',
+		interfaceName: 'nwg1',
 		ndmsName: 'Wireguard1',
 		rxBytes: 88_201_442,
 		txBytes: 22_781_930,
@@ -329,8 +329,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Мобильный WAN',
 		endpoint: 'pl-waw.demo.example:51820',
 		address: '10.30.0.2/32',
-		interfaceName: 'awg2',
-		ndmsName: 'Wireguard2',
+		interfaceName: 'opkgtun3',
+		ndmsName: 'OpkgTun3',
 		rxBytes: 57_322_404,
 		txBytes: 18_640_122,
 		lastHandshake: new Date(Date.now() - 20_000).toISOString(),
@@ -352,7 +352,7 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резерв LTE',
 		endpoint: 'se-sto.demo.example:51820',
 		address: '10.40.0.2/32',
-		interfaceName: 'awg3',
+		interfaceName: 'nwg3',
 		ndmsName: 'Wireguard3',
 		rxBytes: 0,
 		txBytes: 0,
@@ -375,8 +375,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резервный WAN',
 		endpoint: 'uk-lon.demo.example:51820',
 		address: '10.50.0.2/32, fd00:8::2/128',
-		interfaceName: 'awg4',
-		ndmsName: 'Wireguard4',
+		interfaceName: 'opkgtun5',
+		ndmsName: 'OpkgTun5',
 		rxBytes: 1_204_880,
 		txBytes: 412_330,
 		lastHandshake: new Date(Date.now() - 720_000).toISOString(),
@@ -398,8 +398,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Оптика #2',
 		endpoint: 'ca-tor.demo.example:51820',
 		address: '10.60.0.2/32',
-		interfaceName: 'awg5',
-		ndmsName: 'Wireguard5',
+		interfaceName: 'opkgtun6',
+		ndmsName: 'OpkgTun6',
 		rxBytes: 8_102_344,
 		txBytes: 2_741_118,
 		lastHandshake: new Date(Date.now() - 65_000).toISOString(),
@@ -445,8 +445,8 @@ const MOCK_AWG_TUNNELS = [
 		defaultRoute: false,
 		endpoint: '127.0.0.1:9005',
 		address: '10.55.0.2/32',
-		interfaceName: 'awg8',
-		ndmsName: 'Wireguard9',
+		interfaceName: 'opkgtun9',
+		ndmsName: 'OpkgTun9',
 		rxBytes: 4_221_003,
 		txBytes: 990_112,
 		lastHandshake: new Date(Date.now() - 40_000).toISOString(),
@@ -469,8 +469,8 @@ const MOCK_AWG_TUNNELS = [
 		wdttClientId: 'default',
 		endpoint: '127.0.0.1:9000',
 		address: '10.66.0.2/32',
-		interfaceName: 'awg7',
-		ndmsName: 'Wireguard8',
+		interfaceName: 'opkgtun8',
+		ndmsName: 'OpkgTun8',
 		rxBytes: 9_112_334,
 		txBytes: 2_004_112,
 		lastHandshake: new Date(Date.now() - 30_000).toISOString(),
@@ -485,6 +485,31 @@ const MOCK_AWG_TUNNELS = [
 
 /** Счётчик импортированных туннелей: даёт им номер, а из него — NDMS-имя. */
 let mockImportSeq = 0;
+
+/** Новый kernel-туннель в списке: имена — как их строит Go (awgN → OpkgTunN). */
+function mockImportKernelTunnel(name, link = {}) {
+	const num = 20 + ++mockImportSeq;
+	const item = {
+		id: `awg${num}`,
+		name: name || `Импорт ${num}`,
+		type: 'amneziawg',
+		status: 'stopped',
+		enabled: false,
+		defaultRoute: false,
+		endpoint: '',
+		address: '10.0.0.2/32',
+		interfaceName: `opkgtun${num}`,
+		ndmsName: `OpkgTun${num}`,
+		awgVersion: 'awg3',
+		mtu: 1420,
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 3 },
+		...link,
+	};
+	MOCK_AWG_TUNNELS.push(item);
+	return item;
+}
 
 /** AWG tunnels where monitoring self-check is down while status stays running or broken. */
 const MOCK_AWG_SELF_CHECK_FAIL = new Set(['awg-demo-fin', 'awg-demo-5']);
@@ -2781,7 +2806,7 @@ const mockRoutingDnsRoutes = [
 		domains: ['discord.com', 'discord.gg'],
 		manualDomains: ['discord.com', 'discord.gg'],
 		hrRouteMode: 'interface',
-		routes: [{ interface: 'awg0', tunnelId: 'awg-demo-1', fallback: 'auto' }],
+		routes: [{ interface: 'opkgtun1', tunnelId: 'awg-demo-1', fallback: 'auto' }],
 		enabled: true,
 		backend: 'hydraroute',
 		createdAt: '2026-05-09T10:00:00Z',
@@ -4085,7 +4110,8 @@ function mergeMockDnsRoute(route, patch) {
 function mockPolicyInterfaceRef(id, order = 0) {
 	const tunnel = awgTunnelByID(id);
 	if (!tunnel) return { name: id, label: id, order };
-	return { name: tunnel.interfaceName, label: tunnel.name || tunnel.interfaceName, order };
+	const iface = tunnel.ndmsName || tunnel.interfaceName;
+	return { name: iface, label: tunnel.name || iface, order };
 }
 
 function getConnectionTunnel(index) {
@@ -4945,27 +4971,13 @@ const server = http.createServer(async (req, res) => {
 					(link.wdttClientId && t.wdttClientId === link.wdttClientId) ||
 					(link.freeTurnClientId && t.freeTurnClientId === link.freeTurnClientId),
 			);
-			const num = existing ? Number(existing.id.replace(/\D+/g, '')) : 20 + ++mockImportSeq;
-			const item = existing ?? {
-				id: `awg${num}`,
-				type: 'amneziawg',
-				status: 'stopped',
-				enabled: false,
-				defaultRoute: false,
-				interfaceName: `opkgtun${num}`,
-				ndmsName: `OpkgTun${num}`,
-				awgVersion: 'awg3',
-				mtu: 1420,
-				backend: 'kernel',
-				connectivityCheck: { method: 'http' },
-				pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 3 },
-			};
-			item.name = String(body.name ?? '').trim() || `Импорт ${num}`;
+			const name = String(body.name ?? '').trim();
+			const item = existing ?? mockImportKernelTunnel(name);
+			if (name) item.name = name;
 			item.endpoint = /Endpoint\s*=\s*(\S+)/i.exec(content)?.[1] ?? '';
 			item.address = /Address\s*=\s*(\S+)/i.exec(content)?.[1] ?? '10.0.0.2/32';
 			if (link.wdttClientId) item.wdttClientId = link.wdttClientId;
 			if (link.freeTurnClientId) item.freeTurnClientId = link.freeTurnClientId;
-			if (!existing) MOCK_AWG_TUNNELS.push(item);
 			sendData(res, {
 				id: item.id,
 				name: item.name,
@@ -8433,13 +8445,25 @@ const server = http.createServer(async (req, res) => {
 				});
 				return;
 			}
-			// Туннель считаем уже привязанным (created:false + tunnelId) — авто-поллинг
-			// помечает клиент settled и не долбит POST каждую секунду.
+			// Как в Go (internal/api/wdtt_wg.go): туннель клиента ищется по связи
+			// wdttClientId, и только если его нет — импортируется новый. Отдавать
+			// несуществующий id нельзя: клиент без туннеля становится непроходим.
+			const linked = MOCK_AWG_TUNNELS.find((t) => t.wdttClientId === id);
+			if (linked) {
+				sendData(res, {
+					created: false,
+					tunnelId: linked.id,
+					tunnelName: linked.name,
+					message: 'Туннель уже привязан (mock)',
+				});
+				return;
+			}
+			const created = mockImportKernelTunnel(`${inst.name} wdtt`, { wdttClientId: id });
 			sendData(res, {
-				created: false,
-				tunnelId: `wdtt-tunnel-${id}`,
-				tunnelName: `${inst.name} wdtt`,
-				message: 'Туннель уже привязан (mock)',
+				created: true,
+				tunnelId: created.id,
+				tunnelName: created.name,
+				message: 'Туннель создан (mock)',
 			});
 			return;
 		}
