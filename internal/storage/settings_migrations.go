@@ -413,3 +413,13 @@ func (s *SettingsStore) migrateToV34(settings *Settings) {
 		settings.OpkgTun = st
 	}
 }
+
+// migrateToV35 материализует пустой FakeIPPool6 в явный дефолт: до v35
+// нормализация дефолтила "" на каждом чтении, с v35 "" означает «v6 выключен».
+// Литерал ЗАМОРОЖЕН намеренно (дубль DefaultFakeIPTunParams — миграции не
+// дрейфуют с будущими дефолтами).
+func (s *SettingsStore) migrateToV35(settings *Settings) {
+	if settings.SingboxRouter.FakeIPPool6 == "" {
+		settings.SingboxRouter.FakeIPPool6 = "fc00::/18"
+	}
+}

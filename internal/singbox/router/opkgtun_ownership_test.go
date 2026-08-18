@@ -282,3 +282,44 @@ func TestTunEnable_NoReprovisionWhenScanUnavailable(t *testing.T) {
 		})
 	}
 }
+
+// Д2: нормализация СОХРАНЯЕТ пустой pool6 — это значимое значение («v6
+// выключен», обещание UI/DTO), а не «поле не заполнено».
+func TestNormalizeSettings_EmptyPool6MeansV6Off(t *testing.T) {
+	sr := storage.SingboxRouterSettings{FakeIPPool6: "", WANAutoDetect: true}
+	got, err := NormalizeSingboxRouterSettings(sr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FakeIPPool6 != "" {
+		t.Fatalf("pool6 = %q, want empty preserved (v6 off)", got.FakeIPPool6)
+	}
+}
+
+// Сквозной: enable fakeip с пустым pool6 не провижинит v6 вообще.
+func TestFakeIPEnable_EmptyPool6DisablesV6(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.FakeIPPool6 = ""
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(fakeip): %v", err)
+	}
+
+	for _, c := range h.log.calls {
+		if strings.HasPrefix(c, "SetIPv6Address:") || strings.HasPrefix(c, "SetPermitACLv6:") ||
+			strings.HasPrefix(c, "AddRoute6:") {
+			t.Errorf("пустой pool6 обязан выключать v6, а вызван %q: %v", c, h.log.calls)
+		}
+	}
+	// v4-провижининг при этом идёт как обычно.
+	if !h.log.has("Create:OpkgTun0:private") || !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
+		t.Errorf("v4-провижининг обязан пройти: %v", h.log.calls)
+	}
+}

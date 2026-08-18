@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 34
+	CurrentSchemaVersion        = 35
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -194,6 +194,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 34 {
 			s.migrateToV34(&settings)
 		}
+		if settings.SchemaVersion < 35 {
+			s.migrateToV35(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -282,6 +285,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			// KeenDNS/CrazeDNS: имена резолвит сам роутер, его адреса —
 			// мимо sing-box.
 			BypassPresets: []string{"keendns"},
+			// Явный дефолт v6-пула: с v35 пустое значение ЗНАЧИМО («v6
+			// выключен»), поэтому свежая установка обязана нести его дословно.
+			// Литерал — дубль DefaultFakeIPTunParams().Inet6Range.
+			FakeIPPool6: "fc00::/18",
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only

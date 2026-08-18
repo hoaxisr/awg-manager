@@ -95,6 +95,13 @@ func newTestSettingsStore(t *testing.T, sr storage.SingboxRouterSettings) *stora
 	if !sr.WANAutoDetect && sr.WANInterface == "" {
 		sr.WANAutoDetect = true
 	}
+	// С v35 пустой pool6 ЗНАЧИМ («v6 выключен»), и нормализация его больше не
+	// дефолтит: arrange обязан задавать пул явно, иначе dual-stack-тесты
+	// молча проверяли бы v4-only-режим. Тест, которому нужен v6 off, ставит
+	// пустое значение ПОСЛЕ этого хелпера.
+	if sr.FakeIPPool6 == "" {
+		sr.FakeIPPool6 = DefaultFakeIPTunParams().Inet6Range
+	}
 	dir := t.TempDir()
 	store := storage.NewSettingsStore(dir)
 	all, err := store.Load()
@@ -1325,8 +1332,10 @@ func TestNormalizeSingboxRouterSettings_DefaultsFakeIPFields(t *testing.T) {
 	if out.FakeIPPool4 != def.Inet4Range {
 		t.Errorf("FakeIPPool4 = %q, want %q", out.FakeIPPool4, def.Inet4Range)
 	}
-	if out.FakeIPPool6 != def.Inet6Range {
-		t.Errorf("FakeIPPool6 = %q, want %q", out.FakeIPPool6, def.Inet6Range)
+	// Д2: pool6 — ИСКЛЮЧЕНИЕ из дефолтинга, пустое значение значимо («v6
+	// выключен») и сохраняется дословно.
+	if out.FakeIPPool6 != "" {
+		t.Errorf("FakeIPPool6 = %q, want %q (пустое значимо)", out.FakeIPPool6, "")
 	}
 	if out.FakeIPMTU != def.MTU {
 		t.Errorf("FakeIPMTU = %d, want %d", out.FakeIPMTU, def.MTU)

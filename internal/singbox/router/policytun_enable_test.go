@@ -92,7 +92,8 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: statePolicyTun, WANAutoDetect: true}
+	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: statePolicyTun, WANAutoDetect: true,
+		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
 	if err := store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

@@ -127,6 +127,7 @@ func (h *transitionHarness) seedState(t *testing.T, mode string, enabled bool) {
 		Enabled:       enabled,
 		DeviceMode:    "all", // tproxy: no policy required
 		WANAutoDetect: true,
+		FakeIPPool6:   DefaultFakeIPTunParams().Inet6Range,
 	}
 	if err := h.store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)

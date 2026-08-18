@@ -191,7 +191,8 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true}
+	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true,
+		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
 	if err := store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
