@@ -84,7 +84,7 @@ func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, descrip
 	if !s.provenForeignOpkgTun(ctx, ndmsName, description) {
 		return false
 	}
-	s.appLog.Warn(scope, ndmsName, "индекс занят чужим OpkgTun — снос пропущен")
+	s.appLog.Warn(scope, ndmsName, "на этом номере нет нашего OpkgTun — снос пропущен")
 	return true
 }
 

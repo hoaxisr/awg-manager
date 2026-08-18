@@ -309,7 +309,7 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 		if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
 			ndmsName := tunNDMSName(st.Index)
 			if s.provenForeignOpkgTun(ctx, ndmsName, fakeIPTunDescription) {
-				s.appLog.Warn("fakeip-cidr", ndmsName, "индекс занят чужим OpkgTun — CIDR-маршруты не тронуты")
+				s.appLog.Warn("fakeip-cidr", ndmsName, "на этом номере нет нашего OpkgTun — CIDR-маршруты не тронуты")
 			} else {
 				s.syncTunCIDRRoutes(ctx, ndmsName, before, cfg)
 			}

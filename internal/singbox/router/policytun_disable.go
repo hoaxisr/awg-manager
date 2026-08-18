@@ -83,7 +83,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// чужой» — без скана и на его ошибке разбираем как раньше.
 	foreign := s.provenForeignOpkgTun(ctx, ndmsName, policyTunDescription)
 	if foreign {
-		s.appLog.Warn("policy-tun-disable", ndmsName, "индекс занят чужим OpkgTun — интерфейс не трогаем")
+		s.appLog.Warn("policy-tun-disable", ndmsName, "на этом номере нет нашего OpkgTun — интерфейс не трогаем")
 	}
 
 	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
