@@ -325,7 +325,14 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// Merge, а не присваивание: перенесённые из prev записи сегментов, уже
 		// выбывших из желаемого списка, обязаны дожить до восстановления в
 		// restoreRevokedPolicyTunNAT — иначе их static-NAT остался бы навсегда.
-		ptState.NATSegments = mergePolicyTunNATRecords(ptState.NATSegments, recorded)
+		// Мутируем копию: ptState уже уходил в кэш стора (SetPolicyTunState
+		// выше кладёт туда сам указатель), и запись по месту гонялась бы с
+		// маршалом кэша. Копию публикуют мутатор ниже и финальный Save —
+		// поэтому её же подшиваем в settings.
+		next := *ptState
+		next.NATSegments = mergePolicyTunNATRecords(ptState.NATSegments, recorded)
+		ptState = &next
+		settings.PolicyTun = ptState
 		// Персист ДО проверки ошибки, как в сверке: откат выше может и сам упасть
 		// (RCI, уронивший apply, обычно роняет и его), и тогда запись — всё, что
 		// помнит исходный режим сегмента. Provisioned/Index уже в персисте (см.
