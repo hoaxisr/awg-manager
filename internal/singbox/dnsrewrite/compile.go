@@ -4,21 +4,34 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-// ManagedKeenDNS marks rewrites owned by the keendns bypass preset
-// (own FQDN → адрес из статической записи роутера). User CRUD must not
-// invent this value; SyncManaged upserts/removes these entries.
+// ManagedKeenDNS — id владельца перезаписей, которые пресет keendns заводил
+// до 2.18.0 (свой FQDN → адрес роутера). Пресет их больше не создаёт: имена
+// уходят резолверу самого роутера. Константа осталась ради разовой уборки
+// таких записей из стора, см. Service.SetKeenDNSEnabled.
 const ManagedKeenDNS = "keendns"
 
-// keenDNSPortalDomains — порталы локального доступа Keenetic/Netcraze. Их
-// A-запись указывает на общий 78.47.125.180, который роутер обслуживает сам
-// (см. CLI-мануал NC-1812), поэтому TPROXY уводил их в туннель — исходная
-// половина issue #490. Вывести их из забронированного FQDN нельзя: зона
-// 4-го уровня (crazedns.ru) не даёт имени портала (my.netcraze.net), так
-// что список фиксированный.
-var keenDNSPortalDomains = []string{"my.keenetic.net", "my.netcraze.net"}
+// keenDNSHosts — порталы локального доступа Keenetic/Netcraze, keenDNSZones —
+// зоны, в которых KeenDNS/CrazeDNS выдаёт имена роутерам. Все эти имена
+// резолвит сам роутер: с прошивок 5.1.3/5.2 их адреса переехали в
+// документационный 198.51.100.0/24, которого публичный DNS не отдаёт вовсе,
+// так что спрашивать надо ndnproxy, а не апстрим политики (issue #729).
+var (
+	keenDNSHosts = []string{"my.keenetic.net", "my.netcraze.net"}
+	keenDNSZones = []string{
+		"keenetic.pro", "keenetic.link", "keenetic.name", "keenetic.io",
+		"netcraze.pro", "netcraze.net", "netcraze.io", "crazedns.ru",
+	}
+)
+
+// KeenDNSHosts отдаёт точные имена порталов пресета keendns.
+func KeenDNSHosts() []string { return slices.Clone(keenDNSHosts) }
+
+// KeenDNSZones отдаёт зоны пресета keendns (имя роутера — их поддомен).
+func KeenDNSZones() []string { return slices.Clone(keenDNSZones) }
 
 // DNSRewrite — каноническая запись перезаписи: glob-паттерн домена → IP.
 type DNSRewrite struct {

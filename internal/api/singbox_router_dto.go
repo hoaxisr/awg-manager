@@ -84,8 +84,8 @@ type SingboxRouterSettingsData struct {
 	WANInterface  string `json:"wanInterface,omitempty" example:"ppp0"`
 	// BypassPresets lists active named bypass presets.
 	// Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-	// (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → адрес роутера,
-	// плюс обход этого адреса). Default includes "keendns".
+	// (имена KeenDNS/CrazeDNS резолвит сам роутер, плюс обход его адресов).
+	// Default includes "keendns".
 	BypassPresets []string `json:"bypassPresets,omitempty" example:"keendns"`
 	// BypassExtraPorts is a user-defined comma-separated list of extra
 	// port exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").

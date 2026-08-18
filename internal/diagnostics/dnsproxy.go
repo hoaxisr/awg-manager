@@ -239,28 +239,40 @@ func isSimpleToken(s string) bool {
 	return true
 }
 
-// StaticIPv4For возвращает IPv4-адреса, которые роутер сам отдаёт для host
-// своими статическими записями (static_a во ВСЕХ профилях ndnproxy, дедуп со
-// стабильным порядком). Сравнение имени регистронезависимое, хвостовая точка
-// не учитывается.
+// StaticIPv4InZones возвращает IPv4 из static_a всех профилей ndnproxy для
+// имён, которые равны одному из hosts или лежат в одной из zones (дедуп со
+// стабильным порядком, сравнение регистронезависимое, хвостовая точка не
+// учитывается).
 //
-// Нужно пресету keendns: для домена KeenDNS роутер заводит запись на общий
-// адрес сервиса, и клиентам из политики надо отдавать именно её, а не
-// придумывать свой ответ. AAAA сознательно не отдаём — обход в iptables у нас
-// только IPv4 (см. syncKeenDNSRewrites).
-func StaticIPv4For(proxies []DNSProxy, host string) []string {
-	want := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if want == "" {
-		return nil
+// Нужно пресету keendns: это адреса, к которым роутер направляет свои
+// KeenDNS-имена, и трафик к ним обязан идти мимо sing-box. Брать их надо
+// именно с роутера — с прошивок 5.1.3/5.2 адрес сервиса переехал с
+// 78.47.125.180 в документационный 198.51.100.0/24 и отличается у Keenetic
+// и NetCraze. AAAA сознательно не отдаём: перехвата IPv6 у нас нет.
+func StaticIPv4InZones(proxies []DNSProxy, hosts, zones []string) []string {
+	match := func(name string) bool {
+		n := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+		if n == "" {
+			return false
+		}
+		for _, h := range hosts {
+			if n == strings.ToLower(h) {
+				return true
+			}
+		}
+		for _, z := range zones {
+			z = strings.ToLower(z)
+			if n == z || strings.HasSuffix(n, "."+z) {
+				return true
+			}
+		}
+		return false
 	}
 	var out []string
 	seen := map[string]struct{}{}
 	for _, p := range proxies {
 		for _, r := range p.Static {
-			if r.Type != "A" {
-				continue
-			}
-			if strings.TrimSuffix(strings.ToLower(r.Host), ".") != want {
+			if r.Type != "A" || !match(r.Host) {
 				continue
 			}
 			ip := net.ParseIP(r.Value)

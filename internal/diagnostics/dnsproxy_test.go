@@ -231,31 +231,34 @@ func TestParseDoHComment_URLVariants(t *testing.T) {
 	}
 }
 
-func TestStaticIPv4For(t *testing.T) {
-	proxies, _ := ParseDNSProxy(loadSample(t))
-	cases := []struct {
-		name string
-		host string
-		want []string
-	}{
-		{"точное имя", "host1.example.net", []string{"203.0.113.10"}},
-		{"регистр и хвостовая точка", "HOST1.Example.Net.", []string{"203.0.113.10"}},
-		{"дедуп по всем профилям", "awgm-dnscheck.test", []string{"10.10.10.1"}},
-		{"только AAAA — не наш случай", "host5.example.ru", nil},
-		{"имени нет", "нет.такого", nil},
-		{"пустой host", "", nil},
+// Фикстура — снимок ndnproxy с живого роутера (KeenDNS в режиме direct):
+// у собственного FQDN только AAAA, адреса своих имён лежат на порталах и
+// сервисных поддоменах, а пользовательская запись в зону KeenDNS не входит.
+func TestStaticIPv4InZones(t *testing.T) {
+	hosts := []string{"my.keenetic.net", "my.netcraze.net"}
+	zones := []string{"keenetic.pro", "netcraze.pro", "netcraze.io", "crazedns.ru"}
+	proxies := []DNSProxy{{Name: "System", Static: []DNSStaticRecord{
+		{Host: "my.keenetic.net", Type: "A", Value: "78.47.125.180"},
+		{Host: "awgm-dnscheck.test", Type: "A", Value: "192.168.0.1"},
+		{Host: "impod.netcraze.pro", Type: "AAAA", Value: "2001:2:7847:1251:feee:ed78:4712:5180"},
+		{Host: "awgm.impod.netcraze.pro", Type: "A", Value: "78.47.125.180"},
+		{Host: "ccb8e46a1680cb7a8ebd6ea1.netcraze.io", Type: "A", Value: "78.47.125.180"},
+	}}, {Name: "Policy0", Static: []DNSStaticRecord{
+		// 5.1.3/5.2: адрес сервиса переехал в документационный диапазон.
+		{Host: "My.Keenetic.Net.", Type: "A", Value: "198.51.100.37"},
+	}}}
+
+	got := StaticIPv4InZones(proxies, hosts, zones)
+	want := []string{"78.47.125.180", "198.51.100.37"}
+	if len(got) != len(want) {
+		t.Fatalf("StaticIPv4InZones = %v, want %v", got, want)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := StaticIPv4For(proxies, tc.host)
-			if len(got) != len(tc.want) {
-				t.Fatalf("StaticIPv4For(%q) = %v, want %v", tc.host, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("StaticIPv4For(%q) = %v, want %v", tc.host, got, tc.want)
-				}
-			}
-		})
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("StaticIPv4InZones = %v, want %v", got, want)
+		}
+	}
+	if v := StaticIPv4InZones(proxies, nil, nil); v != nil {
+		t.Fatalf("без зон и имён совпадений быть не может: %v", v)
 	}
 }

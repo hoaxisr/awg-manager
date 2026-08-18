@@ -550,14 +550,15 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
-	// keendns preset → managed DNS rewrite своего FQDN на тот же адрес, что
-	// роутер отдаёт статической записью, плюс обход этого адреса мимо
-	// sing-box. Подмена на LAN IP ломала доступ к морде роутера по имени
-	// KeenDNS (issue #729).
+	// keendns preset → имена KeenDNS резолвит сам роутер, а его адреса идут
+	// мимо sing-box. Прежняя подмена FQDN на LAN IP ломала доступ к морде
+	// роутера по имени KeenDNS (issue #729).
 	if a.routerSvc != nil {
 		a.routerSvc.SetKeenDNSPreset(
-			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
-			keenDNSAddrAdapter{store: a.ndmsQueries.DNSProxyStatus},
+			keenDNSInfoAdapter{
+				keendns:  a.ndmsQueries.KeenDNS,
+				dnsProxy: a.ndmsQueries.DNSProxyStatus,
+			},
 			dnsRewriteSvc,
 		)
 		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
@@ -566,7 +567,7 @@ func (a *app) setupListen() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			a.routerSvc.SyncKeenDNSRewrites(ctx)
+			a.routerSvc.SyncKeenDNSPreset(ctx)
 		}()
 	}
 
