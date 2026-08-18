@@ -24,8 +24,12 @@
 		endpointPort: number;
 		/** `-connect` выбранного сервера: `127.0.0.1:<listenPort>`. */
 		onconnect: (addr: string) => void;
-		/** `.conf` пира с подставленным Endpoint — он уезжает в ссылку абоненту. */
-		onpeerconf: (conf: string) => void;
+		/**
+		 * `.conf` пира с подставленным Endpoint — он уезжает в ссылку абоненту, и
+		 * текст отказа, если `.conf` запросить не удалось: без него шаг 4 звал бы
+		 * вставить конфиг в ветке, где поля вставки нет.
+		 */
+		onpeerconf: (conf: string, confError: string) => void;
 	}
 
 	let { endpointPort, onconnect, onpeerconf }: Props = $props();
@@ -43,6 +47,8 @@
 	let manualConf = $state('');
 	/** .conf пира, полученный из API: он и есть источник для перепатчивания. */
 	let fetchedConf = $state('');
+	/** Отказ запроса .conf: пир не Keenetic, вставлять руками некуда. */
+	let confError = $state('');
 
 	const options = $derived(buildRunningServerPeerDropdownOptions(snap));
 
@@ -62,13 +68,16 @@
 		// Без порта Endpoint собрался бы как `127.0.0.1:0` — конфиг с таким
 		// адресом абоненту отдавать нельзя, лучше не отдавать конфиг вовсе.
 		const ok = Number.isInteger(localPort) && localPort > 0 && localPort <= 65535;
-		untrack(() => onpeerconf(src && ok ? patchWgConfEndpoint(src, localPort) : ''));
+		const conf = src && ok ? patchWgConfEndpoint(src, localPort) : '';
+		const err = confError;
+		untrack(() => onpeerconf(conf, err));
 	});
 
 	async function pick(value: string) {
 		selected = value;
 		manualConf = '';
 		fetchedConf = '';
+		confError = '';
 		if (!value || !snap) return;
 		loading = true;
 		try {
@@ -89,7 +98,10 @@
 					? await api.getSystemServerPeerConf(serverId, pubkey)
 					: await api.getManagedPeerConf(serverId, pubkey);
 		} catch (e) {
-			notifications.error(errText(e));
+			// Ветка не-Keenetic: `keenetic` здесь уже false, поля вставки .conf
+			// на экране нет — причину обязан унести наверх сам компонент.
+			confError = errText(e);
+			notifications.error(confError);
 		} finally {
 			loading = false;
 		}

@@ -17,6 +17,7 @@ import {
 	rawPortHint,
 	shareConfigSetupComplete,
 	shareLinkGap,
+	shareLinkNeedsConf,
 	shareStep2Ready,
 	wdttCardBlock,
 } from './shareWizard';
@@ -153,9 +154,43 @@ describe('shareLinkGap: почему ссылки нет на шаге 4', () =>
 		expect(shareLinkGap({ protocol: 'wdtt', peerConf: '' })).toBe('addr');
 	});
 
+	it('отказ запроса .conf — своя ветка: поля вставки там нет', () => {
+		// Пир не Keenetic, `.conf` не пришёл по отказу запроса: `ConfPasteBox` не
+		// показан, и звать «вставьте .conf» (WS-47) было бы в никуда.
+		expect(
+			shareLinkGap({ protocol: 'freeturn', peerConf: '', confError: 'сервер недоступен' }),
+		).toBe('confFailed');
+		// Отказа не было — ветка прежняя: вставлять .conf есть куда.
+		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '', confError: '   ' })).toBe('conf');
+		// .conf на руках — отказ прошлой попытки причиной уже не считается.
+		expect(
+			shareLinkGap({
+				protocol: 'freeturn',
+				peerConf: '[Interface]',
+				confError: 'сервер недоступен',
+			}),
+		).toBe('addr');
+	});
+
+	it('обе ветки без .conf запрещают собирать ссылку', () => {
+		expect(shareLinkNeedsConf('conf')).toBe(true);
+		expect(shareLinkNeedsConf('confFailed')).toBe(true);
+		expect(shareLinkNeedsConf('addr')).toBe(false);
+		expect(shareLinkNeedsConf('')).toBe(false);
+	});
+
 	it('ссылка собралась — подписи нет', () => {
 		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '', link: 'ft://x' })).toBe('');
 		expect(shareLinkGap({ protocol: 'wdtt', peerConf: '', linkQwdtt: 'qwdtt://x' })).toBe('');
+		// Отказ запроса .conf собранной ссылке не мешает: подписи нет и с ним.
+		expect(
+			shareLinkGap({
+				protocol: 'freeturn',
+				peerConf: '[Interface]',
+				confError: 'сервер недоступен',
+				link: 'ft://x',
+			}),
+		).toBe('');
 	});
 });
 

@@ -17,6 +17,7 @@
 		nextSharePort,
 		randomHex,
 		shareLinkGap,
+		shareLinkNeedsConf,
 		shareStep2Ready,
 		wdttCardBlock,
 		DEFAULT_FT_PORT,
@@ -119,6 +120,8 @@
 
 	let peer = $state('');
 	let peerConf = $state('');
+	/** Отказ запроса `.conf` пира: у него своя ветка подписи на шаге 4. */
+	let peerConfError = $state('');
 	let wanBusy = $state(false);
 
 	// Сервер, созданный этим мастером, и заведённый им абонент: повтор после
@@ -181,8 +184,8 @@
 			// FreeTurn собирает ссылку из конфига пира: без него абонент получил
 			// бы ссылку без WG-конфига и не понял бы, чего в ней не хватает.
 			// Сервер запускаем, ссылку — нет (WS-47).
-			const noConf = shareLinkGap({ protocol, peerConf }) === 'conf';
-			const wantLink = withLink && !noConf;
+			const gap = shareLinkGap({ protocol, peerConf, confError: peerConfError });
+			const wantLink = withLink && !shareLinkNeedsConf(gap);
 			const res = await commitShareWizard({
 				protocol,
 				fields,
@@ -201,7 +204,13 @@
 			}
 			link = res.link;
 			linkQwdtt = res.linkQwdtt;
-			linkMissing = shareLinkGap({ protocol, peerConf, link, linkQwdtt });
+			linkMissing = shareLinkGap({
+				protocol,
+				peerConf,
+				confError: peerConfError,
+				link,
+				linkQwdtt,
+			});
 		} catch (e) {
 			// Отказ этапа абонента говорит строками микрокопии (TS-13..TS-16,
 			// SH-26); остальные этапы отдают текст бэкенда как есть.
@@ -272,7 +281,10 @@
 				{protocol}
 				bind:fields
 				endpointPort={ftClientPort}
-				onpeerconf={(conf) => (peerConf = conf)}
+				onpeerconf={(conf, err) => {
+				peerConf = conf;
+				peerConfError = err;
+			}}
 			/>
 		{:else if step === 2}
 			{#if protocol === 'wdtt'}
@@ -319,7 +331,11 @@
 				<div class="btn-row">
 					<Button variant="secondary" size="sm" loading={wanBusy} onclick={fillWan}>WAN IP</Button>
 				</div>
-				{#if linkMissing === 'conf'}
+				{#if linkMissing === 'confFailed'}
+					<!-- Поля вставки .conf в этой ветке нет: звать вставлять некуда,
+					     печатаем сам отказ запроса — как и прочие отказы этапов. -->
+					<p class="warn">{peerConfError}</p>
+				{:else if linkMissing === 'conf'}
 					<p class="warn">
 						Ссылку соберём после вставки .conf пира — приватный ключ из Keenetic OS недоступен
 					</p>

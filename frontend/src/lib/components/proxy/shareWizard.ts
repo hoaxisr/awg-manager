@@ -54,24 +54,34 @@ export function nextSharePort(protocol: ProxyProtocol, used: number[] = []): num
 }
 
 /** Чего не хватило шагу 4 для ссылки: '' — ссылка собралась. */
-export type ShareLinkGap = '' | 'addr' | 'conf';
+export type ShareLinkGap = '' | 'addr' | 'conf' | 'confFailed';
 
 /**
  * Почему ссылки нет после запуска (WS-44/WS-47).
  *
  * `conf` — FreeTurn без `.conf` пира: ссылку собирать не из чего (пир заведён
- * в Keenetic OS, приватного ключа у нас нет). `addr` — ссылку запрашивали, но
- * она не собралась: адреса сервера нет. Причины разные, и называть их одной
- * строкой значит врать про заполненный адрес.
+ * в Keenetic OS, приватного ключа у нас нет), и вставить его есть куда.
+ * `confFailed` — `.conf` не пришёл: запрос за ним отказал. Поля вставки в этой
+ * ветке нет, звать «вставьте .conf» некуда — там печатается сам отказ запроса.
+ * `addr` — ссылку запрашивали, но она не собралась: адреса сервера нет.
+ * Причины разные, и называть их одной строкой значит врать.
  */
 export function shareLinkGap(o: {
 	protocol: ProxyProtocol;
 	peerConf: string;
+	/** Текст отказа запроса `.conf` пира; пусто — запрос не отказывал. */
+	confError?: string;
 	link?: string;
 	linkQwdtt?: string;
 }): ShareLinkGap {
 	if (o.link?.trim() || o.linkQwdtt?.trim()) return '';
-	return o.protocol === 'freeturn' && !o.peerConf.trim() ? 'conf' : 'addr';
+	if (o.protocol !== 'freeturn' || o.peerConf.trim()) return 'addr';
+	return o.confError?.trim() ? 'confFailed' : 'conf';
+}
+
+/** Ссылку FreeTurn без `.conf` пира не собрать — по любой из двух причин. */
+export function shareLinkNeedsConf(gap: ShareLinkGap): boolean {
+	return gap === 'conf' || gap === 'confFailed';
 }
 
 /** Карточка протокола заблокирована: бейдж, подпись под карточками и (i). */
