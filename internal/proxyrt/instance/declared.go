@@ -11,6 +11,13 @@ import (
 // (router_adapters.go:339) и потому НИКОГДА не находил клиентские сироты —
 // их description это имя инстанса, а не константа (ndms_iface.go:452 против
 // client_ndms.go:123). Метка-префикс LabelClientPrefix чинит класс.
+//
+// Обратное требование — то, что сканер кладёт в OwnedResource.Label, — на
+// сканере НЕ лежит: туда едет фактическое description, и уборщик сам сверяет
+// его с этим списком по префиксу (proxyrt.Sweeper.ours). Требование «положи
+// константу отсюда» было бы неисполнимо (у клиента description = метка плюс
+// имя инстанса) и невидимо при нарушении: уборщик просто перестал бы находить
+// сирот — тот же мёртвый скан, только этажом выше.
 func SweepLabels() []string {
 	return []string{roles.LabelServerWG, roles.LabelServerRaw, roles.LabelClientPrefix}
 }

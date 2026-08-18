@@ -138,6 +138,28 @@ func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
 	<-done
 }
 
+func TestSweepFindsOrphanByLabelPrefix(t *testing.T) {
+	// Сканер отдаёт ФАКТИЧЕСКОЕ описание ресурса, а не константу-метку: у
+	// клиента описание — это метка плюс имя инстанса (roles.ClientDescription),
+	// и другого текста в NDMS попросту нет. Сверка точным равенством на этом
+	// месте молча переставала находить клиентские сироты — ровно тот мёртвый
+	// скан, который план и чинит, только этажом выше.
+	sc := fakeScanner{out: []OwnedResource{
+		{Label: "AWGM WDTT Raw Client: мой инстанс", Name: "OpkgTun19"},
+	}}
+	rm := &fakeRemover{}
+	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}),
+		[]string{"AWGM WDTT Raw Client"}, noIndex)
+
+	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "OpkgTun19" {
+		t.Fatalf("сирота с описанием-хвостом не найдена: %v", removed)
+	}
+}
+
 func TestSweepIgnoresForeignLabel(t *testing.T) {
 	// Страховка от бага в сканере: цена ошибки — снесённый чужой интерфейс
 	// роутера, поэтому метку проверяем сами, а не только доверяем сканеру.
