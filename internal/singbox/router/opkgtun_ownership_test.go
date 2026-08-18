@@ -587,3 +587,37 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 		})
 	}
 }
+
+// Выключение policy-tun интерфейс не удаляет, а УДЕРЖИВАЕТ: снимает дефолт
+// (v4+v6) и разбирает интерфейс (ACL, down, адреса) по имени из записи владения.
+// Проверки описания не было — на чужом интерфейсе это сняло бы его дефолт и
+// адреса. Согласованная семантика: доказанно чужой → операции пропускаются, а
+// запись владения СНИМАЕТСЯ (удерживать чужой индекс бессмысленно: наш
+// интерфейс мёртв, а permit пользователя NDMS уже стёрла — стенд 2026-08-18).
+func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
+	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun0") {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPolicyTunEnableHarness(t, "")
+			provisionPolicyTunForDisable(t, h)
+			h.svc.deps.OpkgTunScan = tc.scan
+
+			if err := h.svc.Disable(context.Background()); err != nil {
+				t.Fatalf("Disable(policy-tun): %v", err)
+			}
+
+			for _, call := range []string{"RemoveDefaultRoute:OpkgTun0", "InterfaceDown:OpkgTun0", "ClearAddress:OpkgTun0"} {
+				if got := h.log.has(call); got != tc.wantDel {
+					t.Errorf("%s = %v, want %v: %v", call, got, tc.wantDel, h.log.calls)
+				}
+			}
+			st := h.loadPolicyTun(t)
+			if tc.wantDel {
+				if st == nil || st.Provisioned {
+					t.Errorf("запись = %+v, want удержание {Provisioned:false}", st)
+				}
+			} else if st != nil {
+				t.Errorf("запись = %+v, want nil (удерживать чужой индекс нечем)", st)
+			}
+		})
+	}
+}
