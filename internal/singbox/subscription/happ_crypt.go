@@ -5,34 +5,242 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 var (
-	happParsedKeysOnce sync.Once
-	happParsedKeys     []*rsa.PrivateKey
+	// ErrHappKeysNotConfigured indicates that user has not supplied RSA decryption keys.
+	ErrHappKeysNotConfigured = errors.New("happ: RSA decryption keys not configured")
+
+	happKeysMu     sync.RWMutex
+	happParsedKeys []*rsa.PrivateKey
 )
 
-func getHappKeys() ([]*rsa.PrivateKey, error) {
-	var err error
-	happParsedKeysOnce.Do(func() {
-		for _, b64 := range happPKCS1KeysB64 {
-			der, e := base64.StdEncoding.DecodeString(b64)
-			if e != nil {
-				err = e
-				return
-			}
-			pk, e := x509.ParsePKCS1PrivateKey(der)
-			if e != nil {
-				err = e
-				return
-			}
-			happParsedKeys = append(happParsedKeys, pk)
+func cleanB64(s string) string {
+	s = strings.Trim(s, `"',`)
+	return strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\n' || r == '\r' || r == '\t' {
+			return -1
 		}
-	})
-	return happParsedKeys, err
+		return r
+	}, s)
+}
+
+// ParseHappKeysInput extracts PKCS1 Base64 RSA private keys from various formats (JSON array, PEM blocks, or Base64 lines).
+func ParseHappKeysInput(input string) ([]string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, errors.New("empty keys input")
+	}
+
+	// 1. Try JSON array of strings
+	var jsonArr []string
+	if err := json.Unmarshal([]byte(input), &jsonArr); err == nil && len(jsonArr) > 0 {
+		var valid []string
+		for _, k := range jsonArr {
+			k = cleanB64(k)
+			if k != "" {
+				valid = append(valid, k)
+			}
+		}
+		if len(valid) > 0 {
+			return valid, nil
+		}
+	}
+
+	// 2. Try PEM blocks
+	var keys []string
+	rest := []byte(input)
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type == "RSA PRIVATE KEY" {
+			keys = append(keys, base64.StdEncoding.EncodeToString(block.Bytes))
+		} else if block.Type == "PRIVATE KEY" {
+			pk, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+			if err == nil {
+				if rsaKey, ok := pk.(*rsa.PrivateKey); ok {
+					keys = append(keys, base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(rsaKey)))
+				}
+			}
+		}
+	}
+	if len(keys) > 0 {
+		return keys, nil
+	}
+
+	// 3. Smart Base64 RSA tokenizer
+	fields := strings.Fields(input)
+	var candidates []string
+	var current strings.Builder
+	for _, f := range fields {
+		f = strings.Trim(f, `"',[]`)
+		if len(f) == 0 {
+			continue
+		}
+		if strings.HasPrefix(f, "MII") && current.Len() > 500 {
+			candidates = append(candidates, current.String())
+			current.Reset()
+		}
+		current.WriteString(f)
+	}
+	if current.Len() > 0 {
+		candidates = append(candidates, current.String())
+	}
+
+	for _, cand := range candidates {
+		cleaned := cleanB64(cand)
+		if len(cleaned) > 64 {
+			if der, err := b64DecodeUrlSafe(cleaned); err == nil {
+				if _, err1 := x509.ParsePKCS1PrivateKey(der); err1 == nil {
+					keys = append(keys, cleaned)
+					continue
+				}
+				if _, err2 := x509.ParsePKCS8PrivateKey(der); err2 == nil {
+					keys = append(keys, cleaned)
+					continue
+				}
+			}
+		}
+	}
+
+	if len(keys) == 0 {
+		return nil, errors.New("no valid RSA private keys recognized")
+	}
+	return keys, nil
+}
+
+// SetCustomHappKeys configures PKCS1 Base64 RSA private keys at runtime.
+func SetCustomHappKeys(b64Keys []string) error {
+	var parsed []*rsa.PrivateKey
+	for _, b64 := range b64Keys {
+		b64 = strings.TrimSpace(b64)
+		if b64 == "" {
+			continue
+		}
+		var der []byte
+		var err error
+		block, _ := pem.Decode([]byte(b64))
+		if block != nil && strings.Contains(block.Type, "PRIVATE KEY") {
+			der = block.Bytes
+		} else {
+			der, err = b64DecodeUrlSafe(cleanB64(b64))
+			if err != nil {
+				return fmt.Errorf("invalid base64 key: %w", err)
+			}
+		}
+
+		pk, err := x509.ParsePKCS1PrivateKey(der)
+		if err != nil {
+			// Try PKCS8 fallback
+			p8, err8 := x509.ParsePKCS8PrivateKey(der)
+			if err8 == nil {
+				if rsaKey, ok := p8.(*rsa.PrivateKey); ok {
+					pk = rsaKey
+					err = nil
+				}
+			}
+		}
+		if err != nil {
+			if strings.Contains(err.Error(), "data truncated") || strings.Contains(err.Error(), "too short") {
+				return fmt.Errorf("Ключ #%d повреждён: данные обрезаны. Проверьте, что ключ скопирован полностью (он должен содержать ~3132 символа).", len(parsed)+1)
+			}
+			return fmt.Errorf("Ключ #%d не является валидным PKCS1 RSA ключом: %v", len(parsed)+1, err)
+		}
+		parsed = append(parsed, pk)
+	}
+
+	happKeysMu.Lock()
+	happParsedKeys = parsed
+	happKeysMu.Unlock()
+	return nil
+}
+
+// LoadHappKeysFromFile attempts to load RSA keys from a JSON file containing a string array.
+func LoadHappKeysFromFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var keys []string
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	return SetCustomHappKeys(keys)
+}
+
+// HasHappKeys reports whether any RSA keys are currently configured.
+func HasHappKeys() bool {
+	happKeysMu.RLock()
+	defer happKeysMu.RUnlock()
+	return len(happParsedKeys) > 0
+}
+
+// GetHappKeysCount returns the number of currently loaded RSA keys.
+func GetHappKeysCount() int {
+	happKeysMu.RLock()
+	defer happKeysMu.RUnlock()
+	return len(happParsedKeys)
+}
+
+func getHappKeys() ([]*rsa.PrivateKey, error) {
+	happKeysMu.RLock()
+	defer happKeysMu.RUnlock()
+	if len(happParsedKeys) == 0 {
+		return nil, ErrHappKeysNotConfigured
+	}
+	return happParsedKeys, nil
+}
+
+func (s *Service) keysPath() string {
+	if s.store != nil && s.store.path != "" {
+		return filepath.Join(filepath.Dir(s.store.path), "happ_keys.json")
+	}
+	return "happ_keys.json"
+}
+
+// LoadHappKeys reads happ_keys.json from disk if present.
+func (s *Service) LoadHappKeys() error {
+	path := s.keysPath()
+	if _, err := os.Stat(path); err == nil {
+		return LoadHappKeysFromFile(path)
+	}
+	return nil
+}
+
+// SaveHappKeys persists custom RSA keys to happ_keys.json and applies them to memory.
+func (s *Service) SaveHappKeys(keys []string) error {
+	if err := SetCustomHappKeys(keys); err != nil {
+		return err
+	}
+	path := s.keysPath()
+	data, err := json.MarshalIndent(keys, "", "  ")
+	if err != nil {
+		return err
+	}
+	return storage.AtomicWrite(path, data)
+}
+
+// ClearHappKeys removes happ_keys.json and clears keys from memory.
+func (s *Service) ClearHappKeys() error {
+	happKeysMu.Lock()
+	happParsedKeys = nil
+	happKeysMu.Unlock()
+	path := s.keysPath()
+	_ = os.Remove(path)
+	return nil
 }
 
 func b64DecodeUrlSafe(s string) ([]byte, error) {
@@ -82,12 +290,22 @@ func DecryptHappLink(rawLink string) (string, error) {
 		return "", errors.New("not an encrypted happ link")
 	}
 
+	if len(payload) > 16384 {
+		return "", errors.New("encrypted payload too large")
+	}
+
 	keys, err := getHappKeys()
-	if err != nil || ordinal >= len(keys) {
-		return "", errors.New("failed to load happ decryption keys")
+	if err != nil {
+		return "", err
+	}
+	if ordinal >= len(keys) {
+		return "", fmt.Errorf("happ: key #%d for %s not configured", ordinal+1, path[:strings.Index(path, "/")+1])
 	}
 
 	privKey := keys[ordinal]
+	if privKey == nil {
+		return "", fmt.Errorf("happ: key #%d is nil", ordinal+1)
+	}
 	keySize := (privKey.N.BitLen() + 7) / 8
 
 	cipherBytes, err := b64DecodeUrlSafe(payload)

@@ -204,6 +204,7 @@ func (a *app) setupSingbox() {
 	// Operator uses for tunnels) so disabling it stops subscriptions from
 	// creating NDMS Proxy interfaces too.
 	a.subSvc.SetNDMSProxyEnabled(a.settingsStore.IsSingboxNDMSProxyEnabled)
+	_ = a.subSvc.LoadHappKeys()
 
 	// Сводные группы (#372) — отдельный JSON-файл рядом с subscriptions.json.
 	subGroupStorePath := filepath.Join(a.dataDir, "subscription-groups.json")

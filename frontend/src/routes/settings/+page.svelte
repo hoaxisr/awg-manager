@@ -26,6 +26,7 @@
 		PukhososPatrol,
 		SettingsSectionLabel,
 	} from "$lib/components/settings";
+	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
 	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
 	import {
 		downloadOutbounds,
@@ -107,6 +108,7 @@
 	let systemInfoInFlight: Promise<void> | null = null;
 	let developGateOpen = $state(false);
 	let footerPatrolWidth = $state(0);
+	let showHappKeysModal = $state(false);
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const singboxStatusLoading = $derived(
@@ -976,6 +978,24 @@ $effect(() => {
 						/>
 					</div>
 					{/if}
+					
+					<div class="setting-row toggle-inline-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">RSA-ключи Happ</span>
+							<span class="setting-description">
+								Ключи для расшифровки приватных подписок.
+							</span>
+						</div>
+						<Button
+							variant="secondary"
+							size="md"
+							onclick={() => (showHappKeysModal = true)}
+							disabled={saving}
+						>
+							Управление ключами
+						</Button>
+					</div>
+
 					{#if singboxInstalled && showSingboxIntegration}
 						<div class="setting-row toggle-inline-row">
 							<div class="flex flex-col gap-1">
@@ -1127,6 +1147,11 @@ $effect(() => {
 			<Button variant="primary" size="md" onclick={restartDaemon}>Перезапустить</Button>
 		{/snippet}
 	</Modal>
+
+	<HappKeysModal
+		bind:open={showHappKeysModal}
+		onclose={() => (showHappKeysModal = false)}
+	/>
 </PageContainer>
 
 <style>

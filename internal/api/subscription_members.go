@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -500,4 +501,80 @@ func (h *SubscriptionHandler) DetectHeaders(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	response.Success(w, profile)
+}
+
+type HappKeysRequest struct {
+	Keys []string `json:"keys,omitempty"`
+	Text string   `json:"text,omitempty"`
+}
+
+type HappKeysResponse struct {
+	Configured bool `json:"configured"`
+	Count      int  `json:"count"`
+}
+
+// HappKeys handles GET, POST, and DELETE /api/singbox/subscriptions/happ-keys
+func (h *SubscriptionHandler) HappKeys(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		response.Success(w, HappKeysResponse{
+			Configured: subscription.HasHappKeys(),
+			Count:      subscription.GetHappKeysCount(),
+		})
+	case http.MethodPost:
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "failed to read request body", "INVALID_BODY")
+			return
+		}
+		var keys []string
+		// 1. Try direct raw array of string keys
+		if err := json.Unmarshal(bodyBytes, &keys); err == nil && len(keys) > 0 {
+			// successfully unmarshaled raw string array
+		} else {
+			// 2. Try HappKeysRequest object
+			var req HappKeysRequest
+			if err := json.Unmarshal(bodyBytes, &req); err == nil && (len(req.Keys) > 0 || strings.TrimSpace(req.Text) != "") {
+				if len(req.Keys) > 0 {
+					keys = req.Keys
+				} else if strings.TrimSpace(req.Text) != "" {
+					keys, err = subscription.ParseHappKeysInput(req.Text)
+					if err != nil {
+						response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_KEYS")
+						return
+					}
+				}
+			} else {
+				// 3. Fall back to parsing bodyBytes directly as text (Base64 lines, PEM blocks, etc.)
+				keys, err = subscription.ParseHappKeysInput(string(bodyBytes))
+				if err != nil {
+					response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_KEYS")
+					return
+				}
+			}
+		}
+		if len(keys) == 0 {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "no valid keys found in payload", "INVALID_KEYS")
+			return
+		}
+		if err := h.svc.SaveHappKeys(keys); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "SAVE_KEYS_FAILED")
+			return
+		}
+		response.Success(w, HappKeysResponse{
+			Configured: true,
+			Count:      len(keys),
+		})
+	case http.MethodDelete:
+		if err := h.svc.ClearHappKeys(); err != nil {
+			response.InternalError(w, err.Error())
+			return
+		}
+		response.Success(w, HappKeysResponse{
+			Configured: false,
+			Count:      0,
+		})
+	default:
+		response.MethodNotAllowed(w)
+	}
 }

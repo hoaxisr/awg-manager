@@ -12,6 +12,7 @@
 	} from '$lib/types';
 	import { Check, LayoutGrid, Link, Globe, Waypoints } from 'lucide-svelte';
 	import HeadersTextarea from './HeadersTextarea.svelte';
+	import HappKeysModal from './HappKeysModal.svelte';
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
 	import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
@@ -144,9 +145,10 @@
 
 	let detectingHeaders = $state(false);
 	let detectedNotice = $state('');
+	let showHappKeysModal = $state(false);
 	let detectTimer: ReturnType<typeof setTimeout> | null = null;
 
-	function triggerDetectHeaders(targetUrl: string): void {
+	function triggerDetectHeaders(targetUrl: string, immediate = false): void {
 		if (detectTimer) clearTimeout(detectTimer);
 		detectedNotice = '';
 		const clean = cleanSubscriptionUrl(targetUrl);
@@ -158,26 +160,37 @@
 			return;
 		}
 
-		detectingHeaders = true;
-		detectTimer = setTimeout(async () => {
+		const runDetect = async () => {
+			detectingHeaders = true;
 			try {
 				const res = await api.detectSubscriptionHeaders(clean);
+				if (res && res.isEncrypted && res.decryptedUrl) {
+					url = res.decryptedUrl;
+				}
 				if (res && res.serverCount > 0) {
 					headersText = res.headersText;
-					if (res.isEncrypted) {
-						detectedNotice = `🔓 Зашифрованная ссылка расшифрована! ${res.label} (найдено серверов: ${res.serverCount})`;
+					if (res.isEncrypted && res.decryptedUrl) {
+						detectedNotice = `Расшифровано: ${res.decryptedUrl} (${res.label}, серверов: ${res.serverCount})`;
 					} else {
-						detectedNotice = `✨ Распознано: ${res.label} (найдено серверов: ${res.serverCount})`;
+						detectedNotice = `Распознано: ${res.label} (найдено серверов: ${res.serverCount})`;
 					}
 				} else if (res && res.isEncrypted && res.decryptedUrl) {
-					detectedNotice = `🔓 Зашифрованная ссылка расшифрована в: ${res.decryptedUrl}`;
+					detectedNotice = `Расшифровано: ${res.decryptedUrl}`;
+				} else if (res && res.isEncrypted && !res.decryptedUrl) {
+					detectedNotice = `Обнаружена зашифрованная ссылка Happ (требуются ключи RSA)`;
 				}
 			} catch (e) {
 				// silent fallback
 			} finally {
 				detectingHeaders = false;
 			}
-		}, 250);
+		};
+
+		if (immediate) {
+			void runDetect();
+		} else {
+			detectTimer = setTimeout(runDetect, 250);
+		}
 	}
 
 	function reset(): void {
@@ -554,11 +567,24 @@
 					/>
 					{#if detectingHeaders}
 						<div class="detect-badge detect-loading">
-							<span>🔍</span> <span>Расшифровываем и проверяем тип подписки...</span>
+							<span>Определение типа подписки...</span>
 						</div>
 					{:else if detectedNotice}
-						<div class="detect-badge detect-success">
+						<div
+							class="detect-badge"
+							class:detect-warning={detectedNotice.includes('RSA')}
+							class:detect-success={!detectedNotice.includes('RSA')}
+						>
 							<span>{detectedNotice}</span>
+							{#if detectedNotice.includes('RSA')}
+								<button
+									type="button"
+									class="btn-keys-action"
+									onclick={() => (showHappKeysModal = true)}
+								>
+									Ввести ключи…
+								</button>
+							{/if}
 						</div>
 					{:else}
 						<span class="hint">
@@ -725,6 +751,15 @@
 	{/snippet}
 </Modal>
 
+<HappKeysModal
+	bind:open={showHappKeysModal}
+	onclose={() => (showHappKeysModal = false)}
+	onsaved={() => {
+		showHappKeysModal = false;
+		if (url) triggerDetectHeaders(url, true);
+	}}
+/>
+
 <style>
 	.lead { color: var(--color-text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0 0 0.8rem; }
 	.lead code {
@@ -883,10 +918,31 @@
 		border: 1px solid rgba(59, 130, 246, 0.25);
 	}
 	.detect-success {
-		background: rgba(16, 185, 129, 0.1);
+		background: rgba(16, 185, 129, 0.08);
 		color: var(--color-success, #10b981);
-		border: 1px solid rgba(16, 185, 129, 0.3);
+		border: 1px solid rgba(16, 185, 129, 0.2);
 		font-weight: 500;
+	}
+	.detect-warning {
+		background: rgba(245, 158, 11, 0.08);
+		color: #d97706;
+		border: 1px solid rgba(245, 158, 11, 0.2);
+		font-weight: 500;
+	}
+	.btn-keys-action {
+		margin-left: auto;
+		background: rgba(245, 158, 11, 0.12);
+		border: 1px solid rgba(245, 158, 11, 0.25);
+		color: #d97706;
+		border-radius: 4px;
+		padding: 0.15rem 0.5rem;
+		font-size: 0.75rem;
+		cursor: pointer;
+		font-weight: 500;
+	}
+	.btn-keys-action:hover {
+		background: rgba(245, 158, 11, 0.2);
+		color: #b45309;
 	}
 	@media (max-width: 480px) {
 		.mode-grid { grid-template-columns: 1fr; }

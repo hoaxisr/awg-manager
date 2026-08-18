@@ -206,7 +206,25 @@ export class SubscriptionsClient extends SbRouterClient {
 		});
 	}
 
+	// Happ RSA keys configuration
+	async getHappKeysInfo(): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys');
+	}
+
+	async saveHappKeys(keysOrText: { keys?: string[]; text?: string }): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys', {
+			method: 'POST',
+			body: JSON.stringify(keysOrText),
+		});
+	}
+
+	async clearHappKeys(): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys', {
+			method: 'DELETE',
+		});
+	}
+
 	// #endregion
 
-
 }
+

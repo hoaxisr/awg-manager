@@ -16,6 +16,7 @@ func NormalizeSubscriptionURL(rawURL string) (string, bool) {
 		if decrypted, err := DecryptHappLink(trimmed); err == nil && decrypted != "" {
 			return decrypted, true
 		}
+		return trimmed, false
 	}
 
 	// clash://install-config?url=... or clashmeta://install-config?url=...

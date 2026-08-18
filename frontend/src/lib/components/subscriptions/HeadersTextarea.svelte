@@ -44,11 +44,11 @@
 		<Dropdown
 			placeholder="Подставить пресет"
 			options={[
-				{ value: 'happ', label: '🎲 Случайный HAPP iOS (iPhone 15-17 Pro)' },
-				{ value: 'mihomo', label: '🎲 Clash / mihomo' },
-				{ value: 'singbox', label: '🎲 Sing-box' },
-				{ value: 'v2rayn', label: '🎲 v2rayN' },
-				{ value: 'all', label: 'Полный набор (пустой шаблон)' },
+				{ value: 'happ', label: 'HAPP iOS (iPhone 15-17 Pro, динамический)' },
+				{ value: 'mihomo', label: 'Clash / mihomo' },
+				{ value: 'singbox', label: 'Sing-box' },
+				{ value: 'v2rayn', label: 'v2rayN' },
+				{ value: 'all', label: 'Полный шаблон заголовков' },
 			]}
 			onchange={(v) => {
 				if (v === 'happ') applyPreset(generateHappPreset());

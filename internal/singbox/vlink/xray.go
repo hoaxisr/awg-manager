@@ -273,8 +273,8 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
 		sbOutbound["uuid"] = user.ID
-		if user.Flow != "" {
-			sbOutbound["flow"] = user.Flow
+		if f := normalizeFlow(user.Flow); f != "" {
+			sbOutbound["flow"] = f
 		}
 
 	case "trojan":

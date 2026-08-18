@@ -3,30 +3,54 @@ package subscription
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"testing"
 )
 
-func TestDecryptHappLink_AllVersions(t *testing.T) {
-	keys, err := getHappKeys()
-	if err != nil {
-		t.Fatalf("getHappKeys() failed: %v", err)
+func TestDecryptHappLink_NotConfigured(t *testing.T) {
+	// Reset keys
+	happKeysMu.Lock()
+	happParsedKeys = nil
+	happKeysMu.Unlock()
+
+	link := "happ://crypt/YWJj"
+	_, err := DecryptHappLink(link)
+	if !errors.Is(err, ErrHappKeysNotConfigured) {
+		t.Fatalf("expected ErrHappKeysNotConfigured, got %v", err)
 	}
-	if len(keys) != 4 {
-		t.Fatalf("expected 4 keys, got %d", len(keys))
+}
+
+func TestDecryptHappLink_DynamicKeys(t *testing.T) {
+	// Generate 4 synthetic test keys
+	var b64Keys []string
+	var privKeys []*rsa.PrivateKey
+
+	for i := 0; i < 4; i++ {
+		pk, err := rsa.GenerateKey(rand.Reader, 1024)
+		if err != nil {
+			t.Fatalf("GenerateKey failed: %v", err)
+		}
+		der := x509.MarshalPKCS1PrivateKey(pk)
+		b64 := base64.StdEncoding.EncodeToString(der)
+		b64Keys = append(b64Keys, b64)
+		privKeys = append(privKeys, pk)
 	}
 
-	testURL := "https://client.infomir.net/sub/pdVq1XnFdRF7rG5C"
+	if err := SetCustomHappKeys(b64Keys); err != nil {
+		t.Fatalf("SetCustomHappKeys failed: %v", err)
+	}
 
+	testURL := "https://client.example.com/sub/test-token-12345"
 	schemes := []string{"crypt", "crypt2", "crypt3", "crypt4"}
 
 	for i, scheme := range schemes {
 		t.Run(scheme, func(t *testing.T) {
-			privKey := keys[i]
+			privKey := privKeys[i]
 			pubKey := &privKey.PublicKey
 
-			// Encrypt testURL
 			maxLen := pubKey.Size() - 11
 			var cipherBytes []byte
 			for j := 0; j < len(testURL); j += maxLen {
@@ -61,16 +85,15 @@ func TestDecryptHappLink_AllVersions(t *testing.T) {
 	}
 }
 
-func TestDecryptHappLink_RealUserLink(t *testing.T) {
-	link := "happ://crypt4/icqCFaHatND6UTCBa1Q13aiXmjdnOquGDlyuNOUIDp6LHlcuoK2zd3CPaEEeRzgDaqe7nigQ7o9I76/XlhNX6SPXmsnbpwopCLHP+06YcGflstvafIKIp1UhsBu51K/iLBpY882OlcLsfyQNyBiVclRRMOvKhBfJXB3GiTwN0yyfcdJNDgGwUTaRBsJz6eW1SLaJhgadBLy8dps5bd0svR1jq3apMJVpbnVX/rAu4qlog8A1pnOJvCS9+LiOkKC+f+sFksJYArvvNybEy91l/N2WgA9JEbwfF+mToz7A45AsBTTxPDBvMBJCwOEHiUNgTCPlXp8qXglDVZ2mH918SpyTGe7KGB9vhlQ9kcB45m26qvICpKs8aDX+Mq0L+GerUADlOWJpRGq70DoUa8obrgUuhVwx2MHaae9Qu6bEO2kPJel5JYgTWl0utwnTRyYx1QkuQfeiva0fv9ZUG8s0XatsJ4E6em+Lpk6UQ+sWL1eaX3y9c+mFFcKQkGEqIF3U52IQejJmgBzdIgmgRw/+kmjKHQ8lP/4KI3L8dAStYJnET+iMb2FIwkDEFpR4BTxbqmiC7I5U3Z4abeyVapQXyBxPMEdI+Uh8mGyRHzDipzwF/Pw6uCkBckdEVBIUvY9UM04GKhGObIrYKQc+lmg2MHb94JvZeMvm5k7YOCeN3pA="
-
-	decrypted, err := DecryptHappLink(link)
+func TestParseHappKeysInput(t *testing.T) {
+	jsonInput := `[
+		"MIICXwIBAAKBgQCxsS7PUq1biQlVD92rf6eXKr9oG1/SrYx3qWahZP+Jq35m4Wb/Z+mB6eBWrPzJ/zZpZLWLQorcvOKt+sLaCHyH1HLNkti4jlaEQX6x97XgBm8GK08+lLLWquFDhWRNxsrfzJyNdpVopzBRmCJKTc8ObYyPbrv9T35a8Kd5WqjnUwIDAQABAoGBAJoqe85skPPF5U7jwRM2YhUJhZ+xgGWtJR3834pPslWjcLuZ/F7DrRiF7ZnF5FztDCxMsCXuycPSLWl9EulQS5mrL/fnwpK2jVE8O1Em9RsBOOrWwzuZnAuooRIb/8zC0fvH2oGkk60zSKycMe69uvYUDjhvULX2Spjmf9CS9/HhAkEA3I797En/DrpAZz6NM4GqZ1mkH0kEX/kAHLP1lBgYL1kVK455EG/ecJkMJmtK7A+fWw0N0IcxrpYAbbOAo19vjwJBAM4+0MAZ8TIZUk6Rs2gYUo04A6mYUy5MWtRa9pyFIgD71oHDR+1jrnPLqQyCj0tfbZBc1iVgsisJBpocC8sKaf0CQQDRNd3Mxb/nY2p1xJLBmaxezlvsxSEePB4MG/PFXzmJqBF5uHJD0imIWtR4mOt/ka4R+wbwl1zcAzMy28MYtQ0nAkEAuUILWML0uL+uAw01TeerH1aVU52T+h5z6BPdOTMNHD0arWywCzhi13i03JvaAyYw0F/Tq7dz0txEpeFTZopwMQJBANnHbzB87/xTjDQA4/L8sSU8m0vM1nRWmJIaAC94pcM+KDGLnbBhWrvZGy8Zg8vQwNvdvCLvylk0jVTTFqW3ibM="
+	]`
+	keys, err := ParseHappKeysInput(jsonInput)
 	if err != nil {
-		t.Fatalf("DecryptHappLink failed: %v", err)
+		t.Fatalf("ParseHappKeysInput failed: %v", err)
 	}
-
-	expected := "https://tunnel.shitposting.team/sub/WTPVoBbgmvJKH_8q"
-	if decrypted != expected {
-		t.Fatalf("expected %q, got %q", expected, decrypted)
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
 	}
 }

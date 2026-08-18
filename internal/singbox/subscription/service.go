@@ -499,32 +499,6 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
-	if len(parts.Valid) == 0 && sub.URL != "" {
-		fetchURL, _ := RewriteForRaw(sub.URL)
-		for _, candHdrs := range probeCandidates {
-			if candBody, candCt, candErr := FetchWithContext(ctx, fetchURL, candHdrs, s.fetchOpts); candErr == nil {
-				var candParse vlink.BatchResult
-				switch {
-				case vlink.IsClashYAML(candBody):
-					candParse = vlink.ParseClashBody(candBody)
-				case vlink.IsSingboxJSON(candBody):
-					candParse = vlink.ParseSingboxBody(candBody)
-				case vlink.IsXrayJSON(candBody):
-					candParse = vlink.ParseXrayBody(candBody)
-				case vlink.IsMieruClientJSON(candBody):
-					candParse = vlink.ParseMieruClientJSON(candBody)
-				default:
-					candParse = vlink.ParseBatch(NormalizeBody(candBody, candCt))
-				}
-				candParts := partitionParsedOutbounds(id, candParse.Outbounds)
-				if len(candParts.Valid) > 0 {
-					parts = candParts
-					parseRes = candParse
-					break
-				}
-			}
-		}
-	}
 	s.logPartitionResult(id, parts)
 	if len(parts.Valid) == 0 {
 		emptyClean := len(parseRes.Errors) == 0 && parseRes.SkippedVmess == 0 && parseRes.SkippedUnsupp == 0 &&
@@ -1500,27 +1474,6 @@ type PreviewMember struct {
 	Security  string `json:"security,omitempty"`
 }
 
-var probeCandidates = [][]Header{
-	{
-		{Name: "User-Agent", Value: "Happ/4.6.0/ios/2603181556604"},
-		{Name: "X-Device-OS", Value: "iOS"},
-		{Name: "X-HWID", Value: "d1c1da1b1b111111"},
-		{Name: "X-Device-Locale", Value: "ru"},
-		{Name: "X-Ver-OS", Value: "18.2"},
-		{Name: "X-App-Version", Value: "4.6.0"},
-		{Name: "X-Device-Model", Value: "iPhone 16 Pro"},
-	},
-	{
-		{Name: "User-Agent", Value: "Clash-Verge/1.7.0 (Clash.Meta)"},
-	},
-	{
-		{Name: "User-Agent", Value: "SFA/1.10.0"},
-	},
-	{
-		{Name: "User-Agent", Value: "v2rayN/6.42 (Windows NT 10.0; Win64; x64)"},
-	},
-}
-
 // PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
 // при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
 // ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
@@ -1528,40 +1481,33 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 	if url == "" {
 		return nil, errors.New("subscription: preview requires a URL")
 	}
+	if IsHappCryptLink(url) {
+		dec, err := DecryptHappLink(url)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", err)
+		}
+		url = dec
+	}
 	fetchURL, _ := RewriteForRaw(url)
 
-	fetchAndParse := func(hdrs []Header) (partitionResult, error) {
-		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, s.fetchOpts)
-		if err != nil {
-			return partitionResult{}, err
-		}
-		var parseRes vlink.BatchResult
-		switch {
-		case vlink.IsClashYAML(body):
-			parseRes = vlink.ParseClashBody(body)
-		case vlink.IsSingboxJSON(body):
-			parseRes = vlink.ParseSingboxBody(body)
-		case vlink.IsXrayJSON(body):
-			parseRes = vlink.ParseXrayBody(body)
-		case vlink.IsMieruClientJSON(body):
-			parseRes = vlink.ParseMieruClientJSON(body)
-		default:
-			parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
-		}
-		return partitionParsedOutbounds("preview", parseRes.Outbounds), nil
+	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
+	if err != nil {
+		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-
-	parts, err := fetchAndParse(headers)
-	if err != nil || len(parts.Valid) == 0 {
-		// Smart probe: automatically try candidate client profiles
-		for _, candHdrs := range probeCandidates {
-			if p, err2 := fetchAndParse(candHdrs); err2 == nil && len(p.Valid) > 0 {
-				parts = p
-				err = nil
-				break
-			}
-		}
+	var parseRes vlink.BatchResult
+	switch {
+	case vlink.IsClashYAML(body):
+		parseRes = vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		parseRes = vlink.ParseSingboxBody(body)
+	case vlink.IsXrayJSON(body):
+		parseRes = vlink.ParseXrayBody(body)
+	case vlink.IsMieruClientJSON(body):
+		parseRes = vlink.ParseMieruClientJSON(body)
+	default:
+		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
 	}
+	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
 
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
