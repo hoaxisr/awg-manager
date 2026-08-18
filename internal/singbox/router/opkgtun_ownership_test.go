@@ -400,3 +400,148 @@ func TestFakeIPEnable_KeepsForeignNATPayloadWhenReleaseFails(t *testing.T) {
 		t.Fatalf("NAT-свидетельства потеряны при handover: payload = %+v", all.OpkgTun.PolicyTun)
 	}
 }
+
+// scanOurs — успешный скан, отдающий наше имя по ЗАДАННОМУ описанию: «доказанно
+// наш» (симметрия к scanNone).
+func scanOurs(description, id string) func(context.Context, string) ([]string, error) {
+	return func(_ context.Context, desc string) ([]string, error) {
+		if desc != description {
+			return nil, nil
+		}
+		return []string{id}, nil
+	}
+}
+
+// foreignTeardownCases — общая раскладка для всех точек сноса по индексу из
+// записи владения: чужой не сносится, свой сносится, недоступный скан сносится
+// (страховочный подкейс — «не знаем» ≠ «чужой», иначе обвязки без скана
+// перестали бы убирать собственные сироты).
+func foreignTeardownCases(description, id string) []struct {
+	name    string
+	scan    func(context.Context, string) ([]string, error)
+	wantDel bool
+} {
+	return []struct {
+		name    string
+		scan    func(context.Context, string) ([]string, error)
+		wantDel bool
+	}{
+		{"чужой на нашем индексе", scanNone(), false},
+		{"наш", scanOurs(description, id), true},
+		{"скан недоступен", nil, true},
+	}
+}
+
+// Слепой снос по индексу (предсуществующее, не регресс ветки): гард
+// provenForeignOpkgTun защищал от ПРИСВОЕНИЯ чужого интерфейса, но не от его
+// УДАЛЕНИЯ. Выключение fakeip сносит OpkgTun по индексу из записи владения —
+// если наш умер, а индекс занял посторонний, удалялся чужой (и NDMS-объект, и
+// добивающий kernel-девайс `ip link delete`).
+func TestFakeIPDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
+	for _, tc := range foreignTeardownCases(fakeIPTunDescription, "OpkgTun0") {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newFakeIPEnableHarness(t, "")
+			captureDrain(t)
+			provisionForDisable(t, h)
+			deletes := stubOrphanNetdev(t, true)
+			h.svc.deps.OpkgTunScan = tc.scan
+
+			if err := h.svc.Disable(context.Background()); err != nil {
+				t.Fatalf("Disable(fakeip): %v", err)
+			}
+
+			if got := h.log.has("Delete:OpkgTun0"); got != tc.wantDel {
+				t.Errorf("Delete:OpkgTun0 = %v, want %v: %v", got, tc.wantDel, h.log.calls)
+			}
+			wantLink := 0
+			if tc.wantDel {
+				wantLink = 1
+			}
+			if got := deletes(); got != wantLink {
+				t.Errorf("ip link delete calls = %d, want %d", got, wantLink)
+			}
+		})
+	}
+}
+
+// Персист-реап fakeip: та же дыра на пути «режим сменился, запись осталась».
+func TestReapOrphaned_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
+	for _, tc := range foreignTeardownCases(fakeIPTunDescription, "OpkgTun3") {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newReapSettingsStore(t, "tproxy", 3, true)
+			opkg := &recordingOpkgTunProvisioner{}
+			svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: tc.scan})
+
+			if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+				t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+			}
+
+			if got := len(opkg.deleted) == 1 && opkg.deleted[0] == "OpkgTun3"; got != tc.wantDel {
+				t.Errorf("deleted = %v, want снос = %v", opkg.deleted, tc.wantDel)
+			}
+			// Запись снимается в обоих исходах: нашего интерфейса на индексе
+			// доказанно нет, а погоня за чужим индексом каждый тик — churn.
+			if got := loadFakeIP(t, store); got != nil {
+				t.Errorf("запись = %+v, want nil после реапа", got)
+			}
+		})
+	}
+}
+
+// Персист-реап policy-tun (через releaseForeignOpkgTun — тот же путь, что у
+// handover'а обоих enable).
+func TestPolicyTunReap_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
+	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun2") {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
+			if err := store.SetOpkgTunState(&storage.OpkgTunState{
+				Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2,
+			}); err != nil {
+				t.Fatalf("SetOpkgTunState: %v", err)
+			}
+			opkg := &recordingOpkgTunProvisioner{}
+			svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: tc.scan})
+
+			if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+				t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+			}
+
+			if got := len(opkg.deleted) == 1 && opkg.deleted[0] == "OpkgTun2"; got != tc.wantDel {
+				t.Errorf("deleted = %v, want снос = %v", opkg.deleted, tc.wantDel)
+			}
+		})
+	}
+}
+
+// Удаление пакета: чужой интерфейс на нашем индексе не сносится и дефолт с него
+// не снимается — `opkg remove` не имеет права разбирать посторонний туннель.
+func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
+	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun1") {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
+			if err := store.SetOpkgTunState(&storage.OpkgTunState{
+				Mode: storage.OpkgTunModePolicyTun, Index: 1,
+			}); err != nil {
+				t.Fatalf("SetOpkgTunState: %v", err)
+			}
+			opkg := &recordingOpkgTunProvisioner{}
+			log := &callLog{}
+
+			if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+				Settings:     store,
+				OpkgTun:      opkg,
+				DefaultRoute: &recDefaultRoute{log: log},
+				OpkgTunScan:  tc.scan,
+			}); err != nil {
+				t.Fatalf("ReleasePolicyTunForRemoval: %v", err)
+			}
+
+			if got := len(opkg.deleted) == 1 && opkg.deleted[0] == "OpkgTun1"; got != tc.wantDel {
+				t.Errorf("deleted = %v, want снос = %v", opkg.deleted, tc.wantDel)
+			}
+			if got := log.has("RemoveDefaultRoute:OpkgTun1"); got != tc.wantDel {
+				t.Errorf("RemoveDefaultRoute = %v, want %v: %v", got, tc.wantDel, log.calls)
+			}
+		})
+	}
+}

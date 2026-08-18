@@ -204,17 +204,25 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// route renewed to reject (step 2), deleting the iface fail-closes the
 	// pool: the reject flag now drops any client still on a fakeip address.
 	// Best-effort: a failed delete is retried by the periodic reap scan.
-	_ = s.teardownOpkgTun(ctx, ndmsName, "fakeip-disable")
+	//
+	// Гейт общий с (4c): доказанно чужой интерфейс на нашем индексе не сносим
+	// НИ на уровне NDMS, ни добивающим `ip link delete` — пропустив первое и
+	// выполнив второе, мы убили бы посторонний туннель наполовину. Цена гейта
+	// честная: kernel-сироту без NDMS-объекта скан тоже не видит, поэтому её
+	// уборка здесь пропускается (индекс не течёт — аллокатор live-sourced).
+	if !s.skipForeignTeardown(ctx, ndmsName, fakeIPTunDescription, "fakeip-disable") {
+		_ = s.teardownOpkgTun(ctx, ndmsName, "fakeip-disable")
 
-	// (4c) Orphan-netdev cleanup: NDMS DeleteOpkgTun normally tears the
-	// kernel device down too, but a half-removed teardown can leave a DOWN orphan
-	// opkgtunN behind. Such an orphan collides with the index allocator on the next
-	// Enable (LiveOpkgTunIndices unions kernel /sys names), so reap it directly via
-	// `ip link delete`. Probe-then-delete with the kernel (lowercase) iface name —
-	// the kernel device, not the NDMS RCI name. Best-effort + logged.
-	if fakeIPLinkPresent(ctx, iface) {
-		if err := fakeIPLinkDelete(ctx, iface); err != nil {
-			s.appLog.Warn("fakeip-disable", iface, "delete orphan netdev: "+err.Error())
+		// (4c) Orphan-netdev cleanup: NDMS DeleteOpkgTun normally tears the
+		// kernel device down too, but a half-removed teardown can leave a DOWN orphan
+		// opkgtunN behind. Such an orphan collides with the index allocator on the next
+		// Enable (LiveOpkgTunIndices unions kernel /sys names), so reap it directly via
+		// `ip link delete`. Probe-then-delete with the kernel (lowercase) iface name —
+		// the kernel device, not the NDMS RCI name. Best-effort + logged.
+		if fakeIPLinkPresent(ctx, iface) {
+			if err := fakeIPLinkDelete(ctx, iface); err != nil {
+				s.appLog.Warn("fakeip-disable", iface, "delete orphan netdev: "+err.Error())
+			}
 		}
 	}
 

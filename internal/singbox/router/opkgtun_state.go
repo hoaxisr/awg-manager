@@ -73,6 +73,21 @@ func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, descri
 	return !slices.Contains(ids, ndmsName)
 }
 
+// skipForeignTeardown отвечает, надо ли ПРОПУСТИТЬ снос интерфейса, на который
+// указывает запись владения: индекс мог занять посторонний OpkgTun после смерти
+// нашего, и снос по имени убил бы чужое. Зеркало provenForeignOpkgTun-гарда на
+// присвоении: тот запрещает БРАТЬ чужой интерфейс, этот — УДАЛЯТЬ его.
+// Семантика та же — «недоступный скан ≠ чужой»: без скана и на его ошибке
+// сносим как раньше, иначе обвязки без скана перестали бы убирать собственные
+// сироты. Пропуск логируется.
+func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, description, scope string) bool {
+	if !s.provenForeignOpkgTun(ctx, ndmsName, description) {
+		return false
+	}
+	s.appLog.Warn(scope, ndmsName, "индекс занят чужим OpkgTun — снос пропущен")
+	return true
+}
+
 // releaseForeignOpkgTun освобождает запись владения ЧУЖОГО режима перед её
 // перезаписью (handover в enable) или снятием (персист-реап): для policy-tun
 // сперва восстановить записанный NAT сегментов (best-effort, Warn — как в
@@ -85,6 +100,13 @@ func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.Opk
 		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
 			s.appLog.Warn(scope, ndmsName, "restore segment NAT: "+err.Error())
 		}
+	}
+	desc := fakeIPTunDescription
+	if st.Mode == storage.OpkgTunModePolicyTun {
+		desc = policyTunDescription
+	}
+	if s.skipForeignTeardown(ctx, ndmsName, desc, scope) {
+		return nil
 	}
 	return s.teardownOpkgTun(ctx, ndmsName, scope)
 }

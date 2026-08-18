@@ -298,7 +298,9 @@ func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	scan := &recOpkgTunScan{}
+	// Скан обязан ВИДЕТЬ наш интерфейс: пустая выдача успешного скана теперь
+	// означает «на индексе не наше» и снос по ней не идёт.
+	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2"}}}
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
@@ -413,7 +415,9 @@ func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	scan := &recOpkgTunScan{}
+	// Скан обязан ВИДЕТЬ наш интерфейс: пустая выдача успешного скана теперь
+	// означает «на индексе не наше» и снос по ней не идёт.
+	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2"}}}
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {

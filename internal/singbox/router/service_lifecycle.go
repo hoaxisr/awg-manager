@@ -278,13 +278,18 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		// A future boot with a real provisioner reaps it.
 		return nil
 	}
-	if err := s.teardownOpkgTun(ctx, owned, "fakeip-reap"); err != nil {
-		// Keep the persist on failure: the next tick/boot retries the reap
-		// rather than leaking the orphan forever. teardownOpkgTun has already
-		// cleared the addresses, so the leftover cannot loop ndm's nginx.
-		return fmt.Errorf("reap opkgtun %s: %w", owned, err)
+	// Доказанно чужой интерфейс на нашем индексе не сносим (нашего там нет);
+	// запись при этом снимается как отработанная — гоняться за чужим индексом
+	// каждый тик значило бы churn без шанса на успех.
+	if !s.skipForeignTeardown(ctx, owned, fakeIPTunDescription, "fakeip-reap") {
+		if err := s.teardownOpkgTun(ctx, owned, "fakeip-reap"); err != nil {
+			// Keep the persist on failure: the next tick/boot retries the reap
+			// rather than leaking the orphan forever. teardownOpkgTun has already
+			// cleared the addresses, so the leftover cannot loop ndm's nginx.
+			return fmt.Errorf("reap opkgtun %s: %w", owned, err)
+		}
+		s.appLog.Info("fakeip-reap", owned, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
 	}
-	s.appLog.Info("fakeip-reap", owned, "removed orphaned fakeip OpkgTun (mode != fakeip-tun)")
 	// Clear the record ONLY after a confirmed delete success (NDMS returns nil
 	// even when the iface was already gone, i.e. idempotent), so the index frees.
 	return s.deps.Settings.SetOpkgTunState(nil)
