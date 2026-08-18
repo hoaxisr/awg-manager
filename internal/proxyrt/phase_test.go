@@ -51,6 +51,13 @@ func TestDerivePhase(t *testing.T) {
 		// объявляется достигнутым.
 		{"отмена при пустом плане — не «достигнуто»",
 			IntentEnabled, []ResourceState{ok}, true, StopCanceled, PhaseWaiting},
+		// Удаление: ресурсы сошлись к пустому желаемому, но уборка ещё не
+		// случилась. Без своей ветки это докладывалось бы как settled — «всё
+		// как заказано» про инстанс, которого не должно существовать.
+		{"удаляется — не «достигнуто», а то же «работать не должно»",
+			IntentDeleted, []ResourceState{ok, ok}, true, StopNone, PhaseDisabled},
+		{"удаляется — намерение перекрывает даже отказ",
+			IntentDeleted, []ResourceState{failed}, true, StopNone, PhaseDisabled},
 	}
 
 	for _, c := range cases {

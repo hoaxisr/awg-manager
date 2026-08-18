@@ -256,8 +256,8 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 		{
 			name: "сменилось намерение", intent: IntentEnabled, res: base, phase: PhaseWaiting,
 			secondIntent: IntentDeleted, secondRes: base, secondPhase: PhaseWaiting,
-			// У DerivePhase ветки для deleted нет, поэтому фаза совпадает:
-			// отличить enabled от deleted может только сравнение намерения.
+			// Фаза здесь задана тестом и совпадает намеренно: отличить
+			// enabled от deleted может только сравнение намерения.
 			whyMustPublish: "enabled → deleted при совпавшей фазе",
 		},
 		{

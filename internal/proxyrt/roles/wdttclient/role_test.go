@@ -387,6 +387,25 @@ func TestRawDisabledLedgerIsExhaustive(t *testing.T) {
 	}
 }
 
+func TestDeletedDeclaresTheSameAsDisabled(t *testing.T) {
+	// Удаление = выключение плюс уборка по меткам (§4.2): своей ветки
+	// декларации у него нет и быть не должно — иначе вернулся бы рукописный
+	// список снятия. Страж на равенство ведомостей: молчаливое «deleted не
+	// disabled» оставило бы удаляемый инстанс работающим, а его ресурсы —
+	// в желаемом enabled.
+	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
+	off := ids(role.Resources(proxyrt.IntentDisabled, rawCfg(), proxyrt.NewObservations()))
+	gone := ids(role.Resources(proxyrt.IntentDeleted, rawCfg(), proxyrt.NewObservations()))
+	if len(off) != len(gone) {
+		t.Fatalf("ведомость deleted %v разошлась с disabled %v", gone, off)
+	}
+	for i := range off {
+		if off[i] != gone[i] {
+			t.Fatalf("ведомость deleted %v разошлась с disabled %v", gone, off)
+		}
+	}
+}
+
 func TestInvalidConfigTouchesNoNDMS(t *testing.T) {
 	// I3 ревью: у клиента приговор Validate() прикрыт порядком (process выше
 	// NDMS-хвоста), но опираться на порядок нельзя — гейт делает свойство
