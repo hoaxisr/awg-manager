@@ -147,12 +147,6 @@ func (r *ServerRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observa
 
 // serverPorts — протокол INPUT-правила следует за Mode, udp по умолчанию
 // (serverListenPortSpec, freeturn/server_firewall.go:18-21).
-//
-// ВНИМАНИЕ (расхождение с serverListenPortSpec, зафиксировано планом): старый
-// код берёт порт через listenfirewall.WANListenPort и отбрасывает локальный
-// bind — при Listen 127.0.0.1:3478 INPUT-правила НЕ появлялось. Здесь такого
-// отбора нет: порт открывается для любого host в Listen. Полный паритет — это
-// проверка host ∈ {"", 0.0.0.0, ::, [::]}, как в wdttserver.wanPort.
 func serverPorts(c roles.FreeTurnServerConfig, enabled bool) []netres.PortSpec {
 	if !enabled || !c.OpenFirewall {
 		return nil
