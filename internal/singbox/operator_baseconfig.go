@@ -111,7 +111,14 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel string, log *slog.Log
 		{stepEnsureBaseConfig, func() { ensureBaseConfigWithLogLevel(configPath, desiredLogLevel, log) }},
 		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
 		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
-		{stepOutboundCompat, func() { patchSlotOutboundCompat(tunnels, log) }},
+		// Компат-фиксы нужны каждому продюсеру outbound'ов: 10-tunnels пишет
+		// UI, 40-subscriptions — подписочный адаптер. Только активный путь
+		// config.d/ — слоты в disabled/ и pending/ не трогаются (та же
+		// семантика, что у stripStrayDirectPlaceholder: их нет в merged).
+		{stepOutboundCompat, func() {
+			patchSlotOutboundCompat(tunnels, log)
+			patchSlotOutboundCompat(filepath.Join(configPath, "40-subscriptions.json"), log)
+		}},
 		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
 		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
 		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},

@@ -100,6 +100,13 @@ func dirtyTreeFixture(t *testing.T) string {
 		"dns":   map[string]any{"strategy": "ipv4_only", "final": "dns-doh"},
 		"route": map[string]any{"final": "direct"},
 	})
+	writeFixtureJSON(t, filepath.Join(cd, "40-subscriptions.json"), map[string]any{
+		"outbounds": []any{
+			map[string]any{"type": "naive", "tag": "sub-nv", "server": "s", "server_port": 443},
+			map[string]any{"type": "hysteria2", "tag": "sub-h2", "server": "s", "server_port": 443,
+				"tls": map[string]any{"disable_sni": true, "insecure": false}},
+		},
+	})
 	writeFixtureJSON(t, filepath.Join(dir, "config.json"), map[string]any{
 		"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
 	})
@@ -336,12 +343,19 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 			})
 			return dir
 		},
-		stepOutboundCompat: func(t *testing.T) string { // naive + hysteria2 в 10-tunnels
+		stepOutboundCompat: func(t *testing.T) string { // naive + hysteria2 в 10-tunnels и 40-subscriptions
 			dir := t.TempDir()
 			writeFixtureJSON(t, filepath.Join(dir, "config.d", "10-tunnels.json"), map[string]any{
 				"outbounds": []any{
 					map[string]any{"type": "naive", "tag": "nv1", "server": "s", "server_port": 443},
 					map[string]any{"type": "hysteria2", "tag": "h1", "server": "s", "server_port": 443,
+						"tls": map[string]any{"disable_sni": true, "insecure": false}},
+				},
+			})
+			writeFixtureJSON(t, filepath.Join(dir, "config.d", "40-subscriptions.json"), map[string]any{
+				"outbounds": []any{
+					map[string]any{"type": "naive", "tag": "sub-nv", "server": "s", "server_port": 443},
+					map[string]any{"type": "hysteria2", "tag": "sub-h2", "server": "s", "server_port": 443,
 						"tls": map[string]any{"disable_sni": true, "insecure": false}},
 				},
 			})
