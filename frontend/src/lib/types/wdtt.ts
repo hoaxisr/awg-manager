@@ -48,6 +48,8 @@ export interface WdttServerConfig {
 	natIface?: string;
 	/** Kernel WG dev (opkgtunN); пусто → legacy wdtt0 */
 	wgIface?: string;
+	/** Kernel raw dev (opkgtunN); пусто → legacy wdttraw0 (`kernelRawIface`) */
+	rawIface?: string;
 	/** NDMS id (OpkgTun17..49) when registered in router */
 	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
@@ -103,6 +105,13 @@ export interface WdttProcessStatus {
 	ndmsIface?: string;
 	/** NDMS-имя raw-интерфейса сервера; пусто на старом бинаре (без -raw-iface) */
 	rawNdmsIface?: string;
+	/**
+	 * Значение `exposeToPolicies`, с которым РЕАЛЬНО стартовал живой процесс:
+	 * тумблер применяется только на старте. Поля нет — демон применённого
+	 * значения не знает (сервер не запускался, остановлен либо процесс усыновлён
+	 * по pid-файлу), и расхождение с выбранным показывать не из чего.
+	 */
+	appliedExposeToPolicies?: boolean;
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;

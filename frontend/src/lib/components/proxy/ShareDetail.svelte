@@ -148,22 +148,11 @@
 			: [ftDraft?.connect ?? ''].filter(Boolean),
 	);
 
-	// ─── Применённое значение exposeToPolicies.
-	//
-	// Бэкенд его не отдаёт: в `ProcessStatus` такого поля нет. Признак локальный —
-	// значение конфига на момент, когда сервер стартовал; бейдж SH-56 держится,
-	// пока выбранное не совпало с ним.
-	let exposeApplied = $state(untrack(() => wdttServer?.exposeToPolicies ?? false));
-	let seenStartedAt = $state(untrack(() => row.startedAt ?? ''));
-
-	$effect(() => {
-		const startedAt = row.startedAt ?? '';
-		if (startedAt === seenStartedAt) return;
-		seenStartedAt = startedAt;
-		untrack(() => {
-			exposeApplied = wdttServer?.exposeToPolicies ?? false;
-		});
-	});
+	// Применённое значение exposeToPolicies — из статуса: тумблер применяется
+	// только на старте процесса, и с чем тот стартовал, знает один бэкенд.
+	// `undefined` — не знает и он (сервер не запускался, остановлен, процесс
+	// усыновлён); тогда расхождения не показываем (SH-56 молчит).
+	const exposeApplied = $derived(wdttStatus?.appliedExposeToPolicies);
 
 	onMount(async () => {
 		try {

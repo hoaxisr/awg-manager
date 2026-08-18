@@ -19,11 +19,11 @@
 		/** Сегменты LAN роутера для мультивыбора. */
 		lanOptions: { value: string; label: string }[];
 		/**
-		 * Значение `exposeToPolicies`, с которым сервер запущен. Бэкенд
-		 * применённого значения не отдаёт (в `ProcessStatus` его нет), поэтому
-		 * пару «выбрано/применено» деталь считает локально.
+		 * Значение `exposeToPolicies`, с которым сервер запущен (из статуса).
+		 * `undefined` — применённого значения не знает и бэкенд: сервер не
+		 * запускался, остановлен либо процесс усыновлён.
 		 */
-		exposeApplied: boolean;
+		exposeApplied?: boolean;
 		saving?: boolean;
 		/** Общий замок мутаций сервера: одна операция за раз. */
 		busy?: boolean;
@@ -51,8 +51,11 @@
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
 	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
 	const ftPort = $derived(String(ftServer?.listen?.split(':').pop() ?? ''));
-	// SH-56 держится, пока выбранное не совпало с применённым.
-	const exposePending = $derived((wdttServer?.exposeToPolicies ?? false) !== exposeApplied);
+	// SH-56 держится, пока выбранное не совпало с применённым. Применённое
+	// неизвестно — расхождения нет о чём заявлять, бейдж не показываем.
+	const exposePending = $derived(
+		exposeApplied !== undefined && (wdttServer?.exposeToPolicies ?? false) !== exposeApplied,
+	);
 
 	function applyWgPort(value: string) {
 		if (!wdttServer) return;

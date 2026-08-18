@@ -3453,6 +3453,9 @@ function createInitialMockWdtt() {
 				wgIface: 'opkgtun17',
 				rawNdmsIface: MOCK_WDTT_OLD_BINARY ? '' : 'OpkgTun18',
 				rawIface: MOCK_WDTT_OLD_BINARY ? 'wdttraw0' : 'opkgtun18',
+				// С каким exposeToPolicies стартовал живой процесс: у работающего
+				// сервера — значение конфига на момент старта.
+				appliedExposeToPolicies: false,
 				config: {
 					enabled: true,
 					listen: '0.0.0.0:56000',
@@ -3474,10 +3477,9 @@ function createInitialMockWdtt() {
 					directListen: '',
 					statsLog: 'ram',
 					// Тумблер «Использовать в политиках доступа»: поле конфига,
-					// применяется на старте сервера. Применённого значения
-					// бэкенд не отдаёт — в статусе его нет (ProcessStatus,
-					// internal/wdtt/types.go), деталь считает пару
-					// «выбрано/применено» локально.
+					// применяется на старте сервера. Применённое значение отдаёт
+					// статус (appliedExposeToPolicies) — по нему деталь и считает
+					// пару «выбрано/применено».
 					exposeToPolicies: false,
 					linkPeer: '203.0.113.10:56000',
 					linkVkHashes: 'a1b2c3d4e5f6',
@@ -3594,6 +3596,11 @@ function mockWdttServerProcessStatus(inst) {
 		rawIface: inst.rawIface || undefined,
 		// Пусто на старом бинаре: raw-интерфейс в NDMS не заведён.
 		rawNdmsIface: inst.rawNdmsIface || undefined,
+		// Применённое значение тумблера живёт у процесса: нет процесса (или он
+		// усыновлён от прошлого демона) — нет и значения, поля в ответе не будет.
+		...(inst.running && !inst.orphaned && typeof inst.appliedExposeToPolicies === 'boolean'
+			? { appliedExposeToPolicies: inst.appliedExposeToPolicies }
+			: {}),
 		binary: '/opt/bin/wdtt-server',
 		binaryPresent: mockWdtt.binaryPresent,
 	};
@@ -8703,6 +8710,9 @@ const server = http.createServer(async (req, res) => {
 			inst.running = action === 'start';
 			inst.orphaned = false;
 			inst.startedAt = inst.running ? new Date().toISOString() : null;
+			// Тумблер «в политиках» применяется ровно здесь, на старте; со стопом
+			// применённое значение уходит вместе с процессом.
+			inst.appliedExposeToPolicies = inst.running ? inst.config.exposeToPolicies === true : null;
 			// passwords.json собирается перед стартом (мутации состава пишут его сами).
 			if (inst.running) inst.usersAvailable = true;
 			sendData(res, { message: `wdtt server ${id}: ${action} (mock)` });
