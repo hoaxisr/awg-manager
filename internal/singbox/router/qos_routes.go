@@ -265,6 +265,12 @@ func (s *ServiceImpl) renameQoSClassOutbound(oldTag, newTag string) error {
 	if err != nil {
 		return err
 	}
+	// Mutate a private copy: Load/Get hand out the store's live cache, which
+	// other goroutines read without a lock. QoSClasses elements are edited in
+	// place below, so the slice needs its own backing array too.
+	cp := *settings
+	cp.SingboxRouter.QoSClasses = append([]storage.SingboxQoSClass(nil), cp.SingboxRouter.QoSClasses...)
+	settings = &cp
 	changed := false
 	for i := range settings.SingboxRouter.QoSClasses {
 		if strings.TrimSpace(settings.SingboxRouter.QoSClasses[i].Outbound) == oldTag {
@@ -293,6 +299,12 @@ func (s *ServiceImpl) disableQoSClassesForOutbound(tag string) error {
 	if err != nil {
 		return err
 	}
+	// Mutate a private copy: Load/Get hand out the store's live cache, which
+	// other goroutines read without a lock. QoSClasses elements are edited in
+	// place below, so the slice needs its own backing array too.
+	cp := *settings
+	cp.SingboxRouter.QoSClasses = append([]storage.SingboxQoSClass(nil), cp.SingboxRouter.QoSClasses...)
+	settings = &cp
 	changed := false
 	for i := range settings.SingboxRouter.QoSClasses {
 		c := &settings.SingboxRouter.QoSClasses[i]

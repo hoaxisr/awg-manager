@@ -139,6 +139,12 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	if err = s.deps.Settings.SetPolicyTunState(ptState); err != nil {
 		return fmt.Errorf("enable policy-tun: persist policy-tun state: %w", err)
 	}
+	// Мутируем локальную копию: `settings` всё ещё алиас живого кэша стора,
+	// который параллельно читают другие горутины без лока. Копия именно
+	// здесь, а не сразу после Load: так в неё попадает всё, что записали в
+	// кэш узкие мутаторы выше, — ровно то, что сохранил бы прежний Save.
+	cp := *settings
+	settings = &cp
 	settings.PolicyTun = ptState
 	push(func() {
 		// Откат ВОЗВРАЩАЕТ ПРЕЖНИЙ персист, а не обнуляет его.

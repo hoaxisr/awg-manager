@@ -49,6 +49,10 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err != nil {
 		return err
 	}
+	// Мутируем локальную копию: Load/Get возвращают живой кэш стора,
+	// который параллельно читают другие горутины без лока.
+	cp := *settings
+	settings = &cp
 	if err := s.validateBypassGeoIPTags(normalized); err != nil {
 		return err
 	}
