@@ -175,13 +175,6 @@
 {/if}
 
 <style>
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.75rem;
-	}
-
 	.file-input {
 		display: none;
 	}
