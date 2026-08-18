@@ -16,10 +16,12 @@
 		commitShareWizard,
 		nextSharePort,
 		randomHex,
+		shareLinkGap,
 		shareStep2Ready,
 		wdttCardBlock,
 		DEFAULT_FT_PORT,
 		DEFAULT_WDTT_PORT,
+		type ShareLinkGap,
 		type ShareWizardClient,
 		type ShareWizardFields,
 	} from './shareWizard';
@@ -131,8 +133,8 @@
 
 	let link = $state('');
 	let linkQwdtt = $state('');
-	/** WS-44: запуск прошёл, ссылка не собралась — адреса сервера нет. */
-	let linkMissing = $state(false);
+	/** WS-44/WS-47: запуск прошёл, ссылки нет — и причины у этого разные. */
+	let linkMissing = $state<ShareLinkGap>('');
 
 	const blocked = $derived(protocol === 'wdtt' && !!wdttBlock);
 	const step2Ready = $derived(shareStep2Ready({ protocol, ...fields }));
@@ -174,12 +176,13 @@
 
 	async function run(withLink: boolean) {
 		busy = true;
-		linkMissing = false;
+		linkMissing = '';
 		try {
 			// FreeTurn собирает ссылку из конфига пира: без него абонент получил
 			// бы ссылку без WG-конфига и не понял бы, чего в ней не хватает.
-			// Сервер запускаем, ссылку — нет (WS-44).
-			const wantLink = withLink && (protocol === 'wdtt' || !!peerConf.trim());
+			// Сервер запускаем, ссылку — нет (WS-47).
+			const noConf = shareLinkGap({ protocol, peerConf }) === 'conf';
+			const wantLink = withLink && !noConf;
 			const res = await commitShareWizard({
 				protocol,
 				fields,
@@ -198,7 +201,7 @@
 			}
 			link = res.link;
 			linkQwdtt = res.linkQwdtt;
-			linkMissing = !res.link && !res.linkQwdtt;
+			linkMissing = shareLinkGap({ protocol, peerConf, link, linkQwdtt });
 		} catch (e) {
 			// Отказ этапа абонента говорит строками микрокопии (TS-13..TS-16,
 			// SH-26); остальные этапы отдают текст бэкенда как есть.
@@ -316,7 +319,11 @@
 				<div class="btn-row">
 					<Button variant="secondary" size="sm" loading={wanBusy} onclick={fillWan}>WAN IP</Button>
 				</div>
-				{#if linkMissing}
+				{#if linkMissing === 'conf'}
+					<p class="warn">
+						Ссылку соберём после вставки .conf пира — приватный ключ из Keenetic OS недоступен
+					</p>
+				{:else if linkMissing === 'addr'}
 					<p class="warn">Ссылку соберём после запуска: не хватает адреса сервера</p>
 				{/if}
 			{:else}

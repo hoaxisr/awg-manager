@@ -16,6 +16,7 @@ import {
 	peerWithPort,
 	rawPortHint,
 	shareConfigSetupComplete,
+	shareLinkGap,
 	shareStep2Ready,
 	wdttCardBlock,
 } from './shareWizard';
@@ -130,6 +131,24 @@ describe('nextSharePort: порт нового сервера', () => {
 
 	it('WDTT — дефолт бинаря: сервер на роутере один', () => {
 		expect(nextSharePort('wdtt', [56002])).toBe(56002);
+	});
+});
+
+describe('shareLinkGap: почему ссылки нет на шаге 4', () => {
+	it('WS-47: FreeTurn без .conf пира — причина в конфиге, а не в адресе', () => {
+		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '' })).toBe('conf');
+		// Адрес сервера заполнен, а ссылки всё равно нет: причина прежняя.
+		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '   ' })).toBe('conf');
+	});
+
+	it('WS-44: .conf есть, ссылка не собралась — не хватает адреса', () => {
+		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '[Interface]' })).toBe('addr');
+		expect(shareLinkGap({ protocol: 'wdtt', peerConf: '' })).toBe('addr');
+	});
+
+	it('ссылка собралась — подписи нет', () => {
+		expect(shareLinkGap({ protocol: 'freeturn', peerConf: '', link: 'ft://x' })).toBe('');
+		expect(shareLinkGap({ protocol: 'wdtt', peerConf: '', linkQwdtt: 'qwdtt://x' })).toBe('');
 	});
 });
 

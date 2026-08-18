@@ -48,6 +48,27 @@ export function nextSharePort(protocol: ProxyProtocol, used: number[] = []): num
 	return DEFAULT_FT_PORT;
 }
 
+/** Чего не хватило шагу 4 для ссылки: '' — ссылка собралась. */
+export type ShareLinkGap = '' | 'addr' | 'conf';
+
+/**
+ * Почему ссылки нет после запуска (WS-44/WS-47).
+ *
+ * `conf` — FreeTurn без `.conf` пира: ссылку собирать не из чего (пир заведён
+ * в Keenetic OS, приватного ключа у нас нет). `addr` — ссылку запрашивали, но
+ * она не собралась: адреса сервера нет. Причины разные, и называть их одной
+ * строкой значит врать про заполненный адрес.
+ */
+export function shareLinkGap(o: {
+	protocol: ProxyProtocol;
+	peerConf: string;
+	link?: string;
+	linkQwdtt?: string;
+}): ShareLinkGap {
+	if (o.link?.trim() || o.linkQwdtt?.trim()) return '';
+	return o.protocol === 'freeturn' && !o.peerConf.trim() ? 'conf' : 'addr';
+}
+
 /** Карточка протокола заблокирована: бейдж, подпись под карточками и (i). */
 export interface ShareCardBlock {
 	badge: string;
