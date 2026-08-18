@@ -265,17 +265,32 @@ func (a *routerSingboxTunnelEditor) UpdateTunnelOutbounds(ctx context.Context, u
 	return a.op.UpdateTunnels(ctx, updates)
 }
 
-func (a *routerSingboxTunnelEditor) IsSingboxTunnelTag(ctx context.Context, tag string) bool {
+// StageTunnelOutboundUpdates routes through the orchestrator's pending/
+// directory so bind changes ride the same draft as the composite group
+// edit (#709, PR #732 review blocker #2). The operator falls back to
+// UpdateTunnels when the orchestrator is not wired, so legacy callers
+// see the same immediate behaviour.
+func (a *routerSingboxTunnelEditor) StageTunnelOutboundUpdates(ctx context.Context, updates map[string]json.RawMessage) error {
+	return a.op.StageTunnelOutboundUpdates(ctx, updates)
+}
+
+func (a *routerSingboxTunnelEditor) IsSingboxTunnelTag(ctx context.Context, tag string) (bool, error) {
 	tunnels, err := a.op.ListTunnels(ctx)
 	if err != nil {
-		return false
+		// Propagate the error so a corrupted 10-tunnels.json or a
+		// dead sing-box process does not silently drop the bind
+		// change for every member of the group (#709, PR #732
+		// review non-blocker #10). The old "return false" path
+		// masked real failures and made patch cycles no-op
+		// without any visible signal.
+		return false, fmt.Errorf("list sing-box tunnels: %w", err)
 	}
 	for _, t := range tunnels {
 		if t.Tag == tag {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // subscriptionBindValidator bridges router bindable-interface validation

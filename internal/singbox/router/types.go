@@ -195,15 +195,28 @@ type RuleSet struct {
 }
 
 type Outbound struct {
-	Type          string   `json:"type"`
-	Tag           string   `json:"tag"`
-	BindInterface string   `json:"bind_interface,omitempty"`
-	Outbounds     []string `json:"outbounds,omitempty"`
-	URL           string   `json:"url,omitempty"`
-	Interval      string   `json:"interval,omitempty"`
-	Tolerance     int      `json:"tolerance,omitempty"`
-	Default       string   `json:"default,omitempty"`
-	Strategy      string   `json:"strategy,omitempty"`
+	Type          string `json:"type"`
+	Tag           string `json:"tag"`
+	BindInterface string `json:"bind_interface,omitempty"`
+	// EgressBind is the kernel interface propagated to the sing-box
+	// tunnel outbounds referenced as members. It is owned by the
+	// *group* (set on the composite row), not by the member tunnel,
+	// and is therefore accepted on every composite Outbound
+	// regardless of which slot the group lives in. The field is
+	// the same JSON key the UI sends from
+	// CompositeOutboundEditModal.svelte and what the API projector
+	// exposes on CompositeOutboundView — keeping it on Outbound
+	// itself ensures the value round-trips when the FakeIP
+	// handler decodes its body (decodeBody does not reject
+	// unknown fields, so the value would otherwise be silently
+	// dropped — #709, PR #732 review blocker #6).
+	EgressBind string   `json:"egress_bind,omitempty"`
+	Outbounds  []string `json:"outbounds,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	Interval   string   `json:"interval,omitempty"`
+	Tolerance  int      `json:"tolerance,omitempty"`
+	Default    string   `json:"default,omitempty"`
+	Strategy   string   `json:"strategy,omitempty"`
 	// Server and DomainResolver support fakeip-tun's domain_resolver guard:
 	// a hostname-bearing proxy outbound resolves its Server via the named
 	// resolver instead of the fakeip server. Both omitempty so v1 IP-bound
@@ -218,13 +231,13 @@ type Outbound struct {
 // (mutable via this service); "subscription" entries come from
 // 40-subscriptions.json (managed by the subscription service — the UI
 // renders them read-only).
+//
+// EgressBind lives on the embedded Outbound; the projector service
+// populates it from the settings store at list time, so consumers
+// always see the same field shape on the wire regardless of slot.
 type CompositeOutboundView struct {
 	Outbound
 	Source string `json:"source"`
-	// EgressBind — kernel iface propagated to sing-box tunnel members when
-	// this composite is selector/urltest (#709). Stored in settings, not in
-	// 20-router.json.
-	EgressBind string `json:"egress_bind,omitempty"`
 }
 
 type Inbound struct {

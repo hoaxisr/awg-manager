@@ -897,13 +897,12 @@ func (h *SingboxFakeIPConfigHandler) AddOutbound(w http.ResponseWriter, r *http.
 	}
 	var req struct {
 		router.Outbound
-		EgressBind string `json:"egress_bind,omitempty"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), req.Outbound, req.EgressBind); err != nil {
+	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), req.Outbound); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
@@ -930,15 +929,17 @@ func (h *SingboxFakeIPConfigHandler) UpdateOutbound(w http.ResponseWriter, r *ht
 		return
 	}
 	var body struct {
-		Tag        string          `json:"tag"`
-		Outbound   router.Outbound `json:"outbound"`
-		EgressBind *string         `json:"egress_bind,omitempty"`
+		Tag      string          `json:"tag"`
+		Outbound router.Outbound `json:"outbound"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPUpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound, body.EgressBind); err != nil {
+	// egress_bind travels on the embedded Outbound now; reading it
+	// from a top-level field would silently drop the value the
+	// front-end set on the outbound (#709, PR #732 review blocker #6).
+	if err := h.svc.FakeIPUpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

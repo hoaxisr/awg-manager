@@ -175,7 +175,23 @@
 					busy = false;
 					return;
 				}
-				built = { type: 'direct', tag: tag.trim(), bind_interface: bindInterface };
+				// Direct groups do not own an egress_bind: the
+				// bind_interface they carry is the *group*'s
+				// outbound, not the per-member tunnel dial. We
+				// still send egress_bind explicitly as "" so the
+				// server contract is unambiguous (nil vs "" have
+				// different semantics in UpdateCompositeOutbound)
+				// and any prior egress_bind on this group is
+				// reliably cleared. Without this, "selector with
+				// bind → direct" would leave bind_interface on the
+				// former members and a stale settings entry behind
+				// (#709, PR #732 review blocker #4).
+				built = {
+					type: 'direct',
+					tag: tag.trim(),
+					bind_interface: bindInterface,
+					egress_bind: '',
+				};
 			} else {
 				const memberList = isSubscription && outbound ? [...(outbound.outbounds ?? [])] : [...members];
 				if (memberList.length < 2) {

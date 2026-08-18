@@ -216,7 +216,15 @@ func (s *ServiceImpl) FakeIPListCompositeOutbounds(ctx context.Context) ([]Compo
 	return out, nil
 }
 
-func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error {
+// FakeIPAddCompositeOutbound now reads egress_bind directly from
+// o.EgressBind — the front-end encodes it on the outbound itself, and
+// keeping a separate parameter would silently drop the value when the
+// FakeIP handler decodes the body (decodeBody does not reject unknown
+// fields, so the old wrapper-level EgressBind was the only path and it
+// was tied to a non-existent field on router.Outbound — #709, PR #732
+// review blocker #6).
+func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error {
+	egressBind := strings.TrimSpace(o.EgressBind)
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
@@ -243,16 +251,24 @@ func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound
 	return nil
 }
 
-func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error {
+// FakeIPUpdateCompositeOutbound reads egress_bind from o.EgressBind,
+// matching the new contract used by the router-slot Update path.
+// The bind on the Outbound is always authoritative: an explicit
+// empty string means "clear any previous bind on this group", a
+// non-empty value means "set/keep bind on members". This makes the
+// FakeIP variant symmetrical with Add and removes the silent-drop
+// bug where the JSON `egress_bind` on the outbound was discarded.
+func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
+	egressBind := strings.TrimSpace(o.EgressBind)
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
-	} else if egressBind != nil {
-		if err := validateBindInterfaceOptional(ctx, s, *egressBind); err != nil {
+	} else {
+		if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
 			return err
 		}
-		if err := s.validateEgressBindConflicts(tag, o.Outbounds, *egressBind); err != nil {
+		if err := s.validateEgressBindConflicts(tag, o.Outbounds, egressBind); err != nil {
 			return err
 		}
 	}
@@ -286,13 +302,15 @@ func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag str
 		tag = newTag
 	}
 
-	if strings.EqualFold(o.Type, "direct") || egressBind == nil {
+	// Direct edit OR explicit empty bind: clear any prior group bind.
+	// Mirrors the router-slot contract.
+	if strings.EqualFold(o.Type, "direct") || egressBind == "" {
 		if binds := s.compositeEgressBinds(); binds != nil && binds[tag] != "" {
 			return s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
 		}
 		return nil
 	}
-	return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, *egressBind)
+	return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, egressBind)
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,
@@ -388,8 +406,8 @@ type FakeIPConfigService interface {
 
 	// Composite outbounds
 	FakeIPListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
-	FakeIPAddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error
-	FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error
+	FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error
+	FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error
 	FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 }
 

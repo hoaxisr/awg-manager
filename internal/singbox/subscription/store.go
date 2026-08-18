@@ -284,7 +284,14 @@ func (s *Store) Update(id string, patch UpdatePatch) (*Subscription, error) {
 			sub.FilterExclude = *patch.FilterExclude
 		}
 		if patch.BindInterface != nil {
-			sub.BindInterface = *patch.BindInterface
+			// Trim before persisting so storage state matches the
+			// validated value: subscription/service.go trims and
+			// validates before reaching the store, but a direct
+			// Store.Update call (tests, future programmatic
+			// paths) would otherwise persist a value with stray
+			// whitespace and silently fail the next kernel check
+			// (#709, PR #732 review non-blocker #11).
+			sub.BindInterface = strings.TrimSpace(*patch.BindInterface)
 		}
 		return nil
 	})
