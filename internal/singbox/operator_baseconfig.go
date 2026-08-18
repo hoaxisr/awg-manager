@@ -86,6 +86,7 @@ const (
 	stepStripStrayDirect       = "strip-stray-direct"
 	stepRemoveRouteFinal       = "remove-route-final"
 	stepRemoveDNSFinal         = "remove-dns-final"
+	stepReconcileDNSStrategy   = "reconcile-dns-strategy"
 )
 
 // reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
@@ -122,6 +123,7 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel string, log *slog.Log
 		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
 		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
 		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},
+		{stepReconcileDNSStrategy, func() { reconcileBaseDNSStrategy(configPath, log) }},
 	}
 }
 
@@ -577,13 +579,10 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // (the only slot that then sets it) wins when enabled. Same observable
 // behavior as the old explicit "dns-bootstrap".
 //
-// dns.strategy — stripped ONLY when the sibling 20-router.json exists AND sets
-// a non-empty dns.strategy (the router then owns strategy, set together with
-// final via SetDNSGlobals). Unlike final, strategy has NO first-server
-// fallback: it is a genuine scalar default, so stripping it unconditionally
-// would drop the guaranteed prefer_ipv4 whenever the router slot is absent
-// (router disabled). Gating on the router slot keeps base's prefer_ipv4 as the
-// router-disabled default while letting an enabled router override it.
+// dns.strategy сюда не относится — ею занимается отдельный шаг
+// reconcile-dns-strategy (reconcileBaseDNSStrategy): у strategy нет
+// first-server fallback'а, поэтому её примирение симметрично (стрижка при
+// владении routing-слотом / восстановление дефолта без владельца).
 //
 // Idempotent; silent skip on missing file / read error / malformed JSON /
 // missing dns section (matches removeFinalFromBase).
@@ -603,12 +602,6 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 		delete(dns, "final")
 		changed = true
 	}
-	strategyStripped := false
-	if _, hasStrategy := dns["strategy"]; hasStrategy && routerOwnsDNSStrategy(filepath.Dir(basePath), stepRemoveDNSFinal, log) {
-		delete(dns, "strategy")
-		strategyStripped = true
-		changed = true
-	}
 	if !changed {
 		return
 	}
@@ -619,26 +612,74 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 		"patch", "remove-dns-final",
 		"path", basePath,
 		"oldFinal", oldFinal,
-		"strategyStripped", strategyStripped,
 	)
 }
 
-// routerOwnsDNSStrategy reports whether the sibling 20-router.json in configDir
-// exists and sets a non-empty dns.strategy. See removeDNSFinalFromBase for why
-// the base dns.strategy strip is gated on this. step/log принадлежат
-// ВЫЗЫВАЮЩЕМУ шагу — подглядывание в чужой слот иначе остаётся анонимным в
-// логе.
-func routerOwnsDNSStrategy(configDir, step string, log *slog.Logger) bool {
-	m, ok := readSlotJSON(step, filepath.Join(configDir, "20-router.json"), log)
-	if !ok {
-		return false
+// baseDefaultDNSStrategy — значение dns.strategy, которым 00-base.json владеет,
+// пока никакой routing-слот его не задаёт. У strategy нет fallback'а на первый
+// dns-сервер (в отличие от dns.final), поэтому её отсутствие в merged-конфиге
+// — не «дефолт», а другое поведение.
+const baseDefaultDNSStrategy = "prefer_ipv4"
+
+// routingSlotOwnsDNSStrategy — непустую dns.strategy может задавать ЛЮБОЙ
+// активный routing-слот: 20-router.json (tproxy/policy-tun) ИЛИ 21-fakeip.json
+// (fakeip-tun). Файл, перепаркованный в disabled/, владельцем не считается —
+// его нет в merged-конфиге. step/log принадлежат ВЫЗЫВАЮЩЕМУ шагу:
+// подглядывание в чужой слот иначе остаётся анонимным в логе.
+func routingSlotOwnsDNSStrategy(configDir, step string, log *slog.Logger) bool {
+	for _, name := range []string{"20-router.json", "21-fakeip.json"} {
+		m, ok := readSlotJSON(step, filepath.Join(configDir, name), log)
+		if !ok {
+			continue
+		}
+		dns, _ := m["dns"].(map[string]any)
+		if dns == nil {
+			continue
+		}
+		if s, _ := dns["strategy"].(string); strings.TrimSpace(s) != "" {
+			return true
+		}
 	}
+	return false
+}
+
+// reconcileBaseDNSStrategyMap примиряет dns.strategy базового слота с
+// владением routing-слотов. routingOwns=true → strategy стрижётся из base
+// (иначе мерж скаляров first-file-wins затеняет выбор пользователя, семейство
+// бага #445); routingOwns=false → strategy восстанавливается в
+// baseDefaultDNSStrategy, если dns-блок есть, а strategy нет. Без
+// restore-направления рантайм-стрижка открыла бы дыру «поставил strategy →
+// снял strategy → в merged нет strategy вовсе». Отсутствующий dns-блок —
+// no-op: чужие секции не материализуем.
+func reconcileBaseDNSStrategyMap(m map[string]any, routingOwns bool) bool {
 	dns, _ := m["dns"].(map[string]any)
 	if dns == nil {
 		return false
 	}
-	s, _ := dns["strategy"].(string)
-	return strings.TrimSpace(s) != ""
+	_, has := dns["strategy"]
+	switch {
+	case routingOwns && has:
+		delete(dns, "strategy")
+		return true
+	case !routingOwns && !has:
+		dns["strategy"] = baseDefaultDNSStrategy
+		return true
+	}
+	return false
+}
+
+// reconcileBaseDNSStrategy — бут-шаг reconcile-dns-strategy.
+func reconcileBaseDNSStrategy(configDir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	basePath := filepath.Join(configDir, "00-base.json")
+	m, ok := readSlotJSON(stepReconcileDNSStrategy, basePath, log)
+	if !ok {
+		return
+	}
+	if !reconcileBaseDNSStrategyMap(m, routingSlotOwnsDNSStrategy(configDir, stepReconcileDNSStrategy, log)) {
+		return
+	}
+	writeSlotJSON(stepReconcileDNSStrategy, basePath, m, log)
 }
 
 // stripStrayDirectPlaceholder removes the canonical
@@ -962,6 +1003,52 @@ func (o *Operator) ApplyLogLevel(level string) error {
 			logBlock["timestamp"] = true
 		}
 		base = parsed
+	}
+
+	raw, err := json.MarshalIndent(base, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal 00-base.json: %w", err)
+	}
+
+	if o.orch != nil {
+		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
+			return fmt.Errorf("save base slot: %w", err)
+		}
+		return nil
+	}
+
+	if err := writeJSONFile(basePath, base); err != nil {
+		return fmt.Errorf("write base file: %w", err)
+	}
+	if running, _ := o.proc.IsRunning(); running {
+		if err := o.proc.Reload(); err != nil {
+			return fmt.Errorf("reload sing-box: %w", err)
+		}
+	}
+	return nil
+}
+
+// ReconcileBaseDNSStrategy — рантайм-вариант шага reconcile-dns-strategy:
+// зовётся роутер-сервисом после применения dns-globals, чтобы выбор strategy
+// вступил в силу без перезапуска демона (мерж скаляров first-file-wins,
+// 00-base затеняет 20/21). Запись через оркестратор — валидация +
+// коалесцированный reload (как ApplyLogLevel).
+func (o *Operator) ReconcileBaseDNSStrategy() error {
+	basePath := filepath.Join(o.configPath, "00-base.json")
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read 00-base.json: %w", err)
+	}
+	var base map[string]any
+	if err := json.Unmarshal(data, &base); err != nil {
+		return fmt.Errorf("parse 00-base.json: %w", err)
+	}
+	owns := routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log)
+	if !reconcileBaseDNSStrategyMap(base, owns) {
+		return nil
 	}
 
 	raw, err := json.MarshalIndent(base, "", "  ")

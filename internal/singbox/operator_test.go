@@ -1981,66 +1981,6 @@ func TestRemoveDNSFinalFromBase_DropsFinal_KeepsStrategyWhenRouterAbsent(t *test
 	}
 }
 
-func TestRemoveDNSFinalFromBase_StripsStrategyWhenRouterOwnsIt(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4","servers":[{"tag":"dns-bootstrap","type":"udp","server":"1.1.1.1"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot sets a non-empty strategy → base strategy strip is enabled.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"ipv4_only","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should be stripped")
-	}
-	if _, has := dns["strategy"]; has {
-		t.Errorf("dns.strategy should be stripped when router owns it, got %v", dns["strategy"])
-	}
-}
-
-func TestRemoveDNSFinalFromBase_RouterStrategyEmpty_KeepsBaseStrategy(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4"}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot exists but strategy is empty → base keeps its strategy.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	_ = json.Unmarshal(raw, &m)
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should still be stripped")
-	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must survive when router strategy empty, got %v", dns["strategy"])
-	}
-}
-
 func TestRemoveDNSFinalFromBase_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "00-base.json")

@@ -115,9 +115,10 @@ func TestEnsureLegacyConfigMigrated_WarnsOnBrokenLegacy(t *testing.T) {
 	}
 }
 
-// routerOwnsDNSStrategy подглядывает в чужой 20-router.json три вызова вглубь;
-// битый router-слот обязан всплыть Warn'ом от шага remove-dns-final.
-func TestRemoveDNSFinalFromBase_WarnsOnBrokenRouterSlot(t *testing.T) {
+// routingSlotOwnsDNSStrategy подглядывает в чужой 20-router.json три вызова
+// вглубь; битый routing-слот обязан всплыть Warn'ом от шага
+// reconcile-dns-strategy.
+func TestReconcileBaseDNSStrategy_WarnsOnBrokenRoutingSlot(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 	dir := t.TempDir()
@@ -132,8 +133,8 @@ func TestRemoveDNSFinalFromBase_WarnsOnBrokenRouterSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removeDNSFinalFromBase(basePath, log)
-	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "remove-dns-final") {
-		t.Fatalf("want WARN with step %q, got: %s", "remove-dns-final", buf.String())
+	reconcileBaseDNSStrategy(dir, log)
+	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "reconcile-dns-strategy") {
+		t.Fatalf("want WARN with step %q, got: %s", "reconcile-dns-strategy", buf.String())
 	}
 }

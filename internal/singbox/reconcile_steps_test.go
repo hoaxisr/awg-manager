@@ -378,6 +378,17 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 			})
 			return dir
 		},
+		stepReconcileDNSStrategy: func(t *testing.T) string { // base со strategy + 21-fakeip со strategy
+			dir := t.TempDir()
+			cd := filepath.Join(dir, "config.d")
+			writeFixtureJSON(t, filepath.Join(cd, "00-base.json"), map[string]any{
+				"dns": map[string]any{"strategy": "prefer_ipv4"},
+			})
+			writeFixtureJSON(t, filepath.Join(cd, "21-fakeip.json"), map[string]any{
+				"dns": map[string]any{"strategy": "ipv4_only"},
+			})
+			return dir
+		},
 		stepRemoveDNSFinal: func(t *testing.T) string { // base c dns.final + 20-router со strategy
 			dir := t.TempDir()
 			cd := filepath.Join(dir, "config.d")
