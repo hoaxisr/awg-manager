@@ -7,12 +7,14 @@
 	import {
 		BinaryStrip,
 		ExitDetail,
+		ExitWizard,
 		InstanceList,
 		RunBar,
 		binaryStripItems,
 		deleteProxyInstance,
 		exitInstance,
 		exitRows,
+		exitStep2Ready,
 		normalizeExitConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
@@ -20,8 +22,9 @@
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
-	import type { ExitConfig, ProxyInstanceRow } from '$lib/components/proxy';
+	import type { ExitConfig, ExitProtocol, ProxyInstanceRow } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
+	import { proxyClientOpsMode, proxyInOpsMode } from '$lib/utils/proxyOpsMode';
 	import { formatUptime } from '$lib/components/freeturn/uptime';
 	import { errText } from '$lib/utils/errorMessage';
 	import type {
@@ -49,7 +52,10 @@
 
 	let selectedExitKey = $state<string | null>(null);
 	let selectedShareKey = $state<string | null>(null);
-	let exitWizard = $state(false);
+	/** Мастер «Выхода», открытый явно: кнопкой списка (новый) или «Мастер». */
+	let exitWizard = $state<'new' | 'instance' | null>(null);
+	/** Авто-мастер ненастроенного инстанса закрыт пользователем. */
+	let exitWizardClosed = $state(false);
 	let shareWizard = $state(false);
 	let deleteTarget = $state<ProxyInstanceRow | null>(null);
 	let deleting = $state(false);
@@ -79,7 +85,50 @@
 	);
 	const selectedShare = $derived(shares.find((r) => r.key === selectedShareKey) ?? null);
 	const selected = $derived(activeTab === 'exit' ? selectedExit : selectedShare);
-	const wizardOpen = $derived(activeTab === 'exit' ? exitWizard : shareWizard);
+
+	// Конфиг настроен ровно по критерию шага 2 мастера — это и есть setupComplete
+	// панелей, по которому инстанс уходит из мастера в деталь (решение Q12).
+	const exitSetupComplete = $derived.by(() => {
+		if (exitWdttClient) {
+			return exitStep2Ready({
+				protocol: 'wdtt',
+				peer: exitWdttClient.peer,
+				password: exitWdttClient.password,
+				vkHashes: exitWdttClient.vkHashes,
+				workers: String(exitWdttClient.workers),
+			});
+		}
+		if (exitFtClient) {
+			return exitStep2Ready({
+				protocol: 'freeturn',
+				peer: exitFtClient.peer,
+				password: '',
+				vkHashes: exitFtClient.links ?? '',
+				workers: String(exitFtClient.streams),
+			});
+		}
+		return false;
+	});
+	const exitLife = $derived({
+		running: selectedExit?.state === 'running',
+		startedAt: selectedExit?.startedAt,
+		enabled: selectedExit?.autostart,
+	});
+	const exitOpsMode = $derived(
+		proxyClientOpsMode({ ...exitLife, setupComplete: exitSetupComplete }),
+	);
+	/** Инстанс ни разу не поднимался — только тогда возврат в мастер осмыслен (RB-08). */
+	const exitNeverRan = $derived(!proxyInOpsMode(exitLife));
+	// Мастер подменяет деталь, пока инстанс не настроен (ia.md §1).
+	const exitWizardOpen = $derived(
+		exitWizard !== null || (!!selectedExit && !exitOpsMode && !exitWizardClosed),
+	);
+	const wizardOpen = $derived(activeTab === 'exit' ? exitWizardOpen : shareWizard);
+	/** Занятые локальные порты: подсказка порта новому клиенту. */
+	const usedListens = $derived({
+		wdtt: (wdttConfig?.clients ?? []).map((c) => c.config.listen),
+		freeturn: (ftConfig?.clients ?? []).map((c) => c.config.listen),
+	});
 
 	// Выбор не переживает удаление инстанса — уводим на первую строку вкладки.
 	$effect(() => {
@@ -218,6 +267,14 @@
 		}
 	}
 
+	/** Мастер довёл инстанс до запуска — «Готово» уводит в его деталь (ia.md §2.3). */
+	async function exitWizardDone(protocol: ExitProtocol, id: string) {
+		exitWizard = null;
+		exitWizardClosed = false;
+		await reloadAll();
+		selectedExitKey = `${protocol}:client:${id}`;
+	}
+
 	async function renameInstance(row: ProxyInstanceRow, name: string) {
 		try {
 			await renameProxyInstance(row, name);
@@ -276,14 +333,15 @@
 					onselect={(r) => {
 						if (activeTab === 'exit') {
 							selectedExitKey = r.key;
-							exitWizard = false;
+							exitWizard = null;
+							exitWizardClosed = false;
 						} else {
 							selectedShareKey = r.key;
 							shareWizard = false;
 						}
 					}}
 					onadd={() => {
-						if (activeTab === 'exit') exitWizard = true;
+						if (activeTab === 'exit') exitWizard = 'new';
 						else shareWizard = true;
 					}}
 					ontoggle={toggleInstance}
@@ -293,23 +351,33 @@
 			</aside>
 
 			<main class="detail">
-				{#if wizardOpen}
-					<!-- Мастера — задачи 4 и 7; здесь только оболочка с выходом к списку. -->
+				{#if activeTab === 'exit' && exitWizardOpen}
+					<!-- Мастер живёт от источника до запуска: {#key} сбрасывает его
+					     состояние при смене инстанса и при заходе за новым. -->
+					{#key exitWizard === 'new' ? 'new' : selectedExitKey}
+						<ExitWizard
+							{policies}
+							{usedListens}
+							row={exitWizard === 'new' ? null : selectedExit}
+							wdttClient={exitWizard === 'new' ? undefined : exitWdttClient}
+							ftClient={exitWizard === 'new' ? undefined : exitFtClient}
+							onclose={() => {
+								exitWizard = null;
+								exitWizardClosed = true;
+							}}
+							ondone={exitWizardDone}
+						/>
+					{/key}
+				{:else if wizardOpen}
+					<!-- Мастер «Раздачи» — задача 7; здесь только оболочка с выходом к списку. -->
 					<Card>
 						{#snippet header()}
 							<div class="detail-head">
-								<h2 class="detail-title">
-									{activeTab === 'exit' ? 'Вывести трафик' : 'Настроить раздачу'}
-								</h2>
+								<h2 class="detail-title">Настроить раздачу</h2>
 							</div>
 						{/snippet}
-						<button
-							type="button"
-							class="wizard-back"
-							onclick={() => {
-								if (activeTab === 'exit') exitWizard = false;
-								else shareWizard = false;
-							}}>← К списку</button
+						<button type="button" class="wizard-back" onclick={() => (shareWizard = false)}
+							>← К списку</button
 						>
 					</Card>
 				{:else if activeTab === 'exit' && selectedExit}
@@ -327,7 +395,7 @@
 							busy={busyKeys.includes(selectedExit.key)}
 							onstart={() => selectedExit && toggleInstance(selectedExit, true)}
 							onstop={() => selectedExit && toggleInstance(selectedExit, false)}
-							onwizard={() => (exitWizard = true)}
+							onwizard={exitNeverRan ? () => (exitWizard = 'instance') : undefined}
 							onsave={saveExit}
 							onreload={reloadAll}
 						/>
@@ -346,10 +414,7 @@
 							busy={busyKeys.includes(selected.key)}
 							onstart={() => toggleInstance(selected, true)}
 							onstop={() => toggleInstance(selected, false)}
-							onwizard={() => {
-								if (activeTab === 'exit') exitWizard = true;
-								else shareWizard = true;
-							}}
+							onwizard={() => (shareWizard = true)}
 						/>
 					</Card>
 				{/if}
