@@ -422,6 +422,12 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// via the hijack-dns route rule once a client points at the tun .2.
 
 	// Persist enabled LAST (success). From here we do NOT roll back.
+	// Mutate a private copy: `settings` still aliases the store's live cache,
+	// which other goroutines read without a lock. Copying here (and not right
+	// after Load) keeps what the narrow mutators wrote into the cache above —
+	// the copy is exactly what the old aliased Save would have persisted.
+	cp := *settings
+	settings = &cp
 	settings.SingboxRouter = sr
 	if err = s.deps.Settings.Save(settings); err != nil {
 		return fmt.Errorf("enable fakeip-tun: save settings: %w", err)

@@ -221,6 +221,14 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		return err
 	}
 	st := settings.PolicyTun
+	if st != nil {
+		// Мутируем копию: settings.PolicyTun — объект живого кэша стора,
+		// который параллельно маршалят читатели без нашего лока, а записи
+		// сегментов ниже по стеку идут в него без лока. Копию публикуют
+		// SetPolicyTunState — уже под локом стора.
+		cp := *st
+		st = &cp
+	}
 
 	if !sr.Enabled {
 		// Teardown только когда что-то реально поднято — иначе каждый

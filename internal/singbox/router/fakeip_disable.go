@@ -103,6 +103,10 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// Nothing provisioned (or persist already cleared) → idempotent: just persist
 	// the disabled flag and emit. No NDMS teardown to do.
 	if st == nil || !st.Provisioned {
+		// Mutate a private copy: `settings` aliases the store's live cache,
+		// which other goroutines read without a lock.
+		cp := *settings
+		settings = &cp
 		settings.SingboxRouter.Enabled = false
 		if err := s.deps.Settings.Save(settings); err != nil {
 			return err
@@ -237,6 +241,12 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	}
 
 	// (6) Persist disabled — MANDATORY. This is the durable on/off truth.
+	// Mutate a private copy: `settings` still aliases the store's live cache,
+	// which other goroutines read without a lock. Copying here (and not right
+	// after Load) keeps what the narrow mutators wrote into the cache above —
+	// the copy is exactly what the old aliased Save would have persisted.
+	cp := *settings
+	settings = &cp
 	settings.SingboxRouter.Enabled = false
 	if err := s.deps.Settings.Save(settings); err != nil {
 		return err

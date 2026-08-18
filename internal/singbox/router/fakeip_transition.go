@@ -228,6 +228,10 @@ func (s *ServiceImpl) persistMode(mode string, enabled bool) error {
 	if err != nil {
 		return err
 	}
+	// Mutate a private copy: Load/Get hand out the store's live cache, which
+	// other goroutines read without a lock.
+	cp := *settings
+	settings = &cp
 	settings.SingboxRouter.RoutingMode = mode
 	settings.SingboxRouter.Enabled = enabled
 	return s.deps.Settings.Save(settings)

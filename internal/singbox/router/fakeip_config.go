@@ -202,6 +202,10 @@ func (s *ServiceImpl) captureFakeIPRealServerEdit(before, after *RouterConfig) e
 	if err != nil {
 		return fmt.Errorf("fakeip real server: load settings: %w", err)
 	}
+	// Mutate a private copy: Load/Get hand out the store's live cache, which
+	// other goroutines read without a lock.
+	cp := *settings
+	settings = &cp
 	norm := addr.String()
 	if settings.SingboxRouter.FakeIPRealServer == norm {
 		return nil
