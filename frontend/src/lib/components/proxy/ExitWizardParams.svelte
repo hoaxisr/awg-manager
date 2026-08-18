@@ -7,10 +7,11 @@
 
 	interface Props {
 		protocol: ExitProtocol;
+		/** Поля мастера правятся здесь же: владелец значения — мастер. */
 		fields: ExitWizardFields;
 	}
 
-	let { protocol, fields }: Props = $props();
+	let { protocol, fields = $bindable() }: Props = $props();
 </script>
 
 <p class="lead">Значения из ссылки — поправьте, если нужно.</p>

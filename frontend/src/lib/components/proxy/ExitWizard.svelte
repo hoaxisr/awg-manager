@@ -286,7 +286,7 @@
 				}}
 			/>
 		{:else if step === 1}
-			<ExitWizardParams {protocol} {fields} />
+			<ExitWizardParams {protocol} bind:fields />
 		{:else if willHaveIface}
 			<div class="explain">
 				{#if protocol === 'wdtt' && mode === 'raw'}
