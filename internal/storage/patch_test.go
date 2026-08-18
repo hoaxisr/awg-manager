@@ -331,13 +331,13 @@ var nonPatchableSettings = map[string]struct{}{
 	"serverInterfaceMeta": {},
 	"serverPeerSecrets":   {},
 	// fakeip is backend-managed fakeip-tun operational state written ONLY via
-	// SettingsStore.SetFakeIPState (the single-writer lifecycle). Exposing it on
+	// SettingsStore.SetOpkgTunState (the single-writer lifecycle). Exposing it on
 	// the generic PATCH surface would let an authenticated client PUT clobber
 	// the allocated OpkgTun index / provisioned flag — the exact race this
 	// design eliminates by keeping the state off the settings API.
 	"fakeip": {},
 	// policyTun is backend-managed policy-tun operational state written ONLY via
-	// SettingsStore.SetPolicyTunState — same single-writer reasoning as fakeip.
+	// SettingsStore.SetOpkgTunState — same single-writer reasoning as fakeip.
 	"policyTun": {},
 	// dnsChainPreset is backend-managed DNS-preset state written ONLY via
 	// SettingsStore.SetDNSChainPresetState — same single-writer reasoning as

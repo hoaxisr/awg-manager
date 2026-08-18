@@ -79,7 +79,7 @@ func TestPolicyTunReconcile_NoSharedNATStateMutation(t *testing.T) {
 
 // Красный до фикса под -race: в одном тике есть И отозванный сегмент, И новый.
 // restoreRevokedPolicyTunNAT публикует полученный объект состояния в кэш
-// (SetPolicyTunState кладёт САМ указатель), а reconcilePolicyTunNAT следом
+// (SetOpkgTunState кладёт САМ указатель), а reconcilePolicyTunNAT следом
 // дописывает в него записи без лока — запись идёт уже в объект кэша, который
 // параллельно маршалит Snapshot. Копии `st` у вызывающего для этого мало.
 func TestPolicyTunReconcile_NoSharedNATStateMutation_RevokedAndPending(t *testing.T) {

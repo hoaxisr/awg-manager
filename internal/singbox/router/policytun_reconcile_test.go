@@ -826,7 +826,7 @@ func TestReconcilePolicyTun_QoSChainsWiped_Reinstalls(t *testing.T) {
 func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -861,7 +861,7 @@ func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 func TestReap_PolicyTunKeepsOwnDNATRules(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -908,7 +908,7 @@ func TestSingboxReady_PolicyTunCarrier(t *testing.T) {
 		t.Error("без провижининга policy-tun готовность должна быть false")
 	}
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if !svc.singboxReady(context.Background(), true) {
 		t.Error("процесс жив + carrier → policy-tun готов")
@@ -1073,7 +1073,7 @@ func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
 	}
 	all.OpkgTun.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}}
 	if err := h.store.SetOpkgTunState(all.OpkgTun); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	h.svc.deps.IPTables = errProbeIPTables()
 	st, err = h.svc.GetStatus(context.Background())

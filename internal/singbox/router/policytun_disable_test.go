@@ -109,7 +109,7 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable (provision for disable): %v", err)
@@ -212,7 +212,7 @@ func TestPolicyTunDisable_NATSegments(t *testing.T) {
 		if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0,
 			PolicyTun: &storage.OpkgTunPolicyData{NATSegments: recorded},
 		}); err != nil {
-			t.Fatalf("SetPolicyTunState: %v", err)
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 
 		if err := h.svc.Disable(context.Background()); err != nil {
@@ -233,7 +233,7 @@ func TestPolicyTunDisable_NATSegments(t *testing.T) {
 		if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0,
 			PolicyTun: &storage.OpkgTunPolicyData{NATSegments: recorded},
 		}); err != nil {
-			t.Fatalf("SetPolicyTunState: %v", err)
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 
 		if err := h.svc.Disable(context.Background()); err != nil {
@@ -295,7 +295,7 @@ func TestPolicyTunDisable_IdempotentWithoutPersist(t *testing.T) {
 func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{}
@@ -365,7 +365,7 @@ func TestPolicyTunDisable_ParksSlotWithoutPersist(t *testing.T) {
 	}
 	// Персист стёрт мимо нас, слот при этом жив.
 	if err := h.store.SetOpkgTunState(nil); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
 		t.Fatal("предусловие: слот обязан быть активным")
@@ -385,7 +385,7 @@ func TestPolicyTunDisable_ParksSlotWithoutPersist(t *testing.T) {
 func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2", "OpkgTun5"}}}
@@ -410,7 +410,7 @@ func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
 func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{}
@@ -433,7 +433,7 @@ func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 func TestPolicyTunReap_NoopInPolicyTunMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2", "OpkgTun5"}}}

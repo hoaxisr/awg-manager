@@ -252,7 +252,7 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 func TestPolicyTunEnable_PrefersPersistedIndex(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -286,7 +286,7 @@ func TestPolicyTunEnable_ReusesHeldOwnInterface(t *testing.T) {
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun3")
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -308,7 +308,7 @@ func TestPolicyTunEnable_ReallocatesWhenPersistedIndexForeign(t *testing.T) {
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = scanOwning() // наших интерфейсов нет вовсе
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -329,7 +329,7 @@ func TestPolicyTunEnable_ReallocatesWhenScanFails(t *testing.T) {
 		return []string{"OpkgTun3"}, errors.New("injected: scan")
 	}
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -348,7 +348,7 @@ func TestPolicyTunEnable_ReallocatesWhenScanUnavailable(t *testing.T) {
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = nil
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -366,7 +366,7 @@ func TestPolicyTunEnable_IdempotentWhenLive(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -472,7 +472,7 @@ func TestPolicyTunEnable_RollbackRestoresPreviousPersist(t *testing.T) {
 		{Name: "Home", PriorMode: "none"},
 	}}}
 	if err := h.store.SetOpkgTunState(prev); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 
 	if err := h.svc.Enable(context.Background()); err == nil {

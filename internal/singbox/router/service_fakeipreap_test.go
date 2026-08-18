@@ -55,7 +55,7 @@ func newReapSettingsStore(t *testing.T, mode string, index int, provisioned bool
 	})
 	if provisioned {
 		if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: index, FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15", Inet6Range: "fc00::/18"}}); err != nil {
-			t.Fatalf("SetFakeIPState: %v", err)
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 	}
 	return store
