@@ -256,10 +256,22 @@ type ProcessStatus struct {
 	// RawNdmsIface — NDMS-имя raw-интерфейса сервера. У клиента раздельных
 	// имён нет (интерфейс один), у сервера их два, и в веб-морде роутера
 	// человек ищет оба.
-	RawNdmsIface    string `json:"rawNdmsIface,omitempty"`
-	DtlsConnections int    `json:"dtlsConnections,omitempty"`
-	Binary          string `json:"binary"`
-	BinaryPresent   bool   `json:"binaryPresent"`
+	RawNdmsIface string `json:"rawNdmsIface,omitempty"`
+	// AppliedExposeToPolicies — значение тумблера ExposeToPolicies, с которым
+	// РЕАЛЬНО стартовал живой процесс. Тумблер применяется только на старте
+	// (security-level + `ip global`), поэтому без применённого значения никто
+	// не может честно сказать, доехало ли выбранное до роутера.
+	//
+	// nil — демон применённого значения НЕ ЗНАЕТ: сервер не запускался, был
+	// остановлен, либо процесс усыновлён по pid-файлу от прошлого экземпляра
+	// демона (см. OrphanedPID) — с чем стартовал тот, не знает никто, и
+	// значение не переживает перезапуск демона. Гадать здесь нельзя:
+	// расхождение выбранного и применённого показывается только когда
+	// известны ОБА значения.
+	AppliedExposeToPolicies *bool  `json:"appliedExposeToPolicies,omitempty"`
+	DtlsConnections         int    `json:"dtlsConnections,omitempty"`
+	Binary                  string `json:"binary"`
+	BinaryPresent           bool   `json:"binaryPresent"`
 	// OrphanedPID — процесс НАШ и живой, но pid-файл унаследован: startedAt
 	// нет, потому что запускал его прошлый экземпляр демона. Лога и телеметрии
 	// по такому процессу у нас не будет, health-надзор по нему слеп; лечится

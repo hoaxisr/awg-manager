@@ -39,14 +39,20 @@ type process struct {
 	// startupGrace ещё не истёк, поэтому startedAt пуст. Признак существует
 	// ровно ради OrphanedPID: без него Status() в этом окне выдавал бы своего
 	// свежепущенного ребёнка за унаследованный pid-файл.
-	startInFlight      bool
-	startedAt          *time.Time
-	lastErr            string
-	stopRequested      bool
-	lastWgConfig       string // last CONFIG event seen in drain; survives log ring-buffer eviction
-	lastRawConfPayload RawConfPayload
-	logTail            *childproc.RingBuffer
-	startCmd           func(bin string, args ...string) *exec.Cmd
+	startInFlight bool
+	// appliedExposeToPolicies — с каким значением тумблера «использовать в
+	// политиках» ушёл в жизнь ТЕКУЩИЙ процесс. Живёт под тем же p.mu, что
+	// startedAt: пишет старт, читает Status. Указатель после записи не
+	// мутируется (каждая запись кладёт новый), поэтому Status отдаёт его как
+	// есть.
+	appliedExposeToPolicies *bool
+	startedAt               *time.Time
+	lastErr                 string
+	stopRequested           bool
+	lastWgConfig            string // last CONFIG event seen in drain; survives log ring-buffer eviction
+	lastRawConfPayload      RawConfPayload
+	logTail                 *childproc.RingBuffer
+	startCmd                func(bin string, args ...string) *exec.Cmd
 	// signalProc — тот же приём шва, что startCmd: без него провал доставки
 	// SIGHUP живому процессу не воспроизвести (kill своему ребёнку не
 	// отказывает), а «не применилось» — один из трёх исходов, которые ручка
@@ -117,6 +123,7 @@ func (p *process) Start(args []string) error {
 	p.logTail.Reset()
 	p.mu.Lock()
 	p.stopRequested = false
+	p.appliedExposeToPolicies = nil
 	p.lastWgConfig = ""
 	p.lastRawConfPayload = RawConfPayload{}
 	p.mu.Unlock()
@@ -336,6 +343,7 @@ func (p *process) Status() ProcessStatus {
 		// startInFlight отсекает своего ребёнка в окне startupGrace: у него
 		// startedAt тоже пуст, но унаследованным он не является.
 		st.OrphanedPID = p.startedAt == nil && !p.startInFlight
+		st.AppliedExposeToPolicies = p.appliedExposeToPolicies
 	}
 	return st
 }
@@ -404,6 +412,16 @@ func (p *process) lastRawConf() (RawConfPayload, bool) {
 func (p *process) setStartInFlight(v bool) {
 	p.mu.Lock()
 	p.startInFlight = v
+	p.mu.Unlock()
+}
+
+// setAppliedExposeToPolicies запоминает значение тумблера, с которым только что
+// стартовал процесс. Зовётся сразу после успешного Start: сам Start сбрасывает
+// поле в nil, поэтому провалившийся старт применённого значения не оставляет, а
+// усыновлённый чужой процесс его не получает никогда.
+func (p *process) setAppliedExposeToPolicies(v bool) {
+	p.mu.Lock()
+	p.appliedExposeToPolicies = &v
 	p.mu.Unlock()
 }
 

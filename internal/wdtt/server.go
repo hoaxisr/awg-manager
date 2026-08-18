@@ -277,6 +277,11 @@ func (s *Service) StartServerInstance(id string) error {
 		}
 		return err
 	}
+	// Тумблер «в политиках» применяется только здесь, на старте: security-level
+	// уже проставлен prepareNDMSOpkgTun, `ip global` доставит activate ниже.
+	// Запоминаем ровно за тем процессом, который только что стартовал, — иначе
+	// применённое значение наружу не узнать ни от кого.
+	s.serverProcs.get(id).setAppliedExposeToPolicies(cfg.ExposeToPolicies)
 	if !waitForInterface(s.ifaceChecker, cfg.kernelRawIface(), 8*time.Second) {
 		_ = s.serverProcs.get(id).Stop()
 		if cfg.usesNDMSOpkgTun() {
