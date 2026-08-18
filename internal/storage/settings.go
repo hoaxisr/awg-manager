@@ -617,11 +617,12 @@ func (s *SettingsStore) IsServerInterface(id string) bool {
 
 // GetServerInterfaceMeta returns AWG Manager metadata for a system server.
 func (s *SettingsStore) GetServerInterfaceMeta(serverID string) (ServerInterfaceMeta, bool) {
-	settings, err := s.Get()
-	if err != nil || settings.ServerInterfaceMeta == nil {
+	if _, err := s.Get(); err != nil {
 		return ServerInterfaceMeta{}, false
 	}
-	meta, ok := settings.ServerInterfaceMeta[serverID]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	meta, ok := s.settings.ServerInterfaceMeta[serverID]
 	return meta, ok
 }
 
@@ -645,11 +646,12 @@ func (s *SettingsStore) UpdateServerInterfaceMeta(serverID string, fn func(*Serv
 
 // GetServerPeerSecret returns stored key material for a system-server peer.
 func (s *SettingsStore) GetServerPeerSecret(serverID, pubkey string) (ServerPeerSecret, bool) {
-	settings, err := s.Get()
-	if err != nil || settings.ServerPeerSecrets == nil {
+	if _, err := s.Get(); err != nil {
 		return ServerPeerSecret{}, false
 	}
-	peers, ok := settings.ServerPeerSecrets[serverID]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	peers, ok := s.settings.ServerPeerSecrets[serverID]
 	if !ok {
 		return ServerPeerSecret{}, false
 	}
@@ -738,6 +740,29 @@ func (s *SettingsStore) Get() (*Settings, error) {
 	return s.Load()
 }
 
+// Snapshot возвращает глубокую копию настроек (JSON round-trip под RLock).
+// Для маршала наружу (HTTP-ответы): Get() возвращает ЖИВОЙ объект, и его
+// map-поля (ServerPeerSecrets, ServerInterfaceMeta) нельзя читать
+// одновременно с узкими мутаторами — concurrent map read/write валит
+// процесс. На горячем пути (auth middleware) НЕ использовать — там
+// остаётся дешёвый Get().
+func (s *SettingsStore) Snapshot() (*Settings, error) {
+	if _, err := s.Get(); err != nil { // гарантировать загрузку кэша
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := json.Marshal(s.settings)
+	if err != nil {
+		return nil, err
+	}
+	out := &Settings{}
+	if err := json.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IsAuthEnabled returns whether authentication is enabled.
 func (s *SettingsStore) IsAuthEnabled() bool {
 	settings, err := s.Get()
@@ -773,11 +798,47 @@ func (s *SettingsStore) IsEntwareAuthEnabled() bool {
 // an alternative to a session cookie. On error returns empty (no key
 // match → request falls through to the session check).
 func (s *SettingsStore) GetApiKey() string {
-	settings, err := s.Get()
-	if err != nil {
+	if _, err := s.Get(); err != nil {
 		return ""
 	}
-	return settings.ApiKey
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.settings.ApiKey
+}
+
+// SetApiKey сохраняет новый API-ключ под локом стора. Копия вместо правки
+// s.settings по месту: указатель из Get() читают без лока, in-place
+// запись строки гонялась бы с этими чтениями.
+func (s *SettingsStore) SetApiKey(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	updated := *s.settings
+	updated.ApiKey = key
+	return s.saveUnlocked(&updated)
+}
+
+// SetServerListen сохраняет адрес прослушивания HTTP-сервера под локом.
+// Легаси-поле Interface — для downgrade-совместимости: старый бинарь
+// биндится на FirstIPv4(Interface); при нескольких интерфейсах — первый,
+// при «всех» — пусто (0.0.0.0). Копия — по той же причине, что в SetApiKey.
+func (s *SettingsStore) SetServerListen(port int, interfaces []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	updated := *s.settings
+	updated.Server.Port = port
+	updated.Server.Interfaces = interfaces
+	if len(interfaces) > 0 {
+		updated.Server.Interface = interfaces[0]
+	} else {
+		updated.Server.Interface = ""
+	}
+	return s.saveUnlocked(&updated)
 }
 
 // IsMemorySavingDisabled returns whether memory saving mode is disabled.
