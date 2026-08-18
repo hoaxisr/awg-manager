@@ -252,13 +252,13 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// drift-heal ниже чинил бы ЧУЖОЙ интерфейс.
 	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
 		(probeErr == nil && live[st.Index] &&
-			s.provenForeignOpkgTun(ctx, fakeIPNDMSName(st.Index), policyTunDescription)) {
+			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), policyTunDescription)) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
+	iface := tunIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
 	// Провижинен и жив, но tun-инбаунда в слоте нет — состояние НЕДОДЕЛАНО, и
 	// само оно не заживёт. Так выглядит краш между удержанием интерфейса и

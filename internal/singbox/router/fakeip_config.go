@@ -232,7 +232,7 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	}
 	p := resolveFakeIPParams(s.deps.FakeIPTun, settings.SingboxRouter)
 	spec := FakeIPTunSpec{
-		Iface:      fakeIPIfaceName(st.Index),
+		Iface:      tunIfaceName(st.Index),
 		TunAddr4:   p.TunAddr4,
 		TunAddr6:   p.TunAddr6,
 		MTU:        p.MTU,
@@ -294,7 +294,7 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 	// provisioned (ensureFakeIPOverlayFromState above errors on a nil record).
 	if settings, serr := s.deps.Settings.Load(); serr == nil {
 		if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
-			s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(st.Index), before, cfg)
+			s.syncTunCIDRRoutes(ctx, tunNDMSName(st.Index), before, cfg)
 		}
 	}
 	s.emitCfgEvent(event, cfg)

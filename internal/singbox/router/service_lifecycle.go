@@ -92,25 +92,26 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // Returns ctx.Err on cancellation, or a timeout error after the deadline;
 // callers can treat the timeout as soft (proceed with iptables and accept
 // the brief race) or hard at their discretion.
-// fakeIPIfaceName builds the KERNEL interface name for a fakeip-tun OpkgTun from
-// its allocated index (e.g. index 3 → "opkgtun3"). Use this ONLY where the
+// tunIfaceName builds the KERNEL interface name for a tun-mode OpkgTun
+// (fakeip-tun и policy-tun, а также реап) from its allocated index (e.g. index
+// 3 → "opkgtun3"). Use this ONLY where the
 // kernel sees the iface: the sing-box tun inbound interface_name, the
 // "ip addr flush dev <iface>" exec, /sys/class/net/<iface>/carrier, the
 // /proc/net/route iface match, and the /sys index scan. For NDMS RCI calls use
-// fakeIPNDMSName instead — NDMS rejects the lowercase kernel name.
-func fakeIPIfaceName(index int) string {
+// tunNDMSName instead — NDMS rejects the lowercase kernel name.
+func tunIfaceName(index int) string {
 	return tunnel.NewNames("awg" + strconv.Itoa(index)).IfaceName
 }
 
-// fakeIPNDMSName builds the NDMS RCI interface name for a fakeip-tun OpkgTun from
-// its allocated index (e.g. index 3 → "OpkgTun3"). This mirrors
+// tunNDMSName builds the NDMS RCI interface name for a tun-mode OpkgTun
+// (fakeip-tun и policy-tun, а также реап) from its allocated index (e.g. index 3 → "OpkgTun3"). This mirrors
 // tunnel.Names.NDMSName (CamelCase "OpkgTun%s"); the kernel name is its lowercase
-// (strings.ToLower → fakeIPIfaceName). NDMS REQUIRES this CamelCase form for every
+// (strings.ToLower → tunIfaceName). NDMS REQUIRES this CamelCase form for every
 // RCI interface op (create/delete, address/mtu, up/down) and StaticRouteSpec
 // Interface — passing the lowercase kernel name yields
-// "unsupported interface type: \"opkgtun\"" (stand-verified). Use fakeIPIfaceName
+// "unsupported interface type: \"opkgtun\"" (stand-verified). Use tunIfaceName
 // only for the kernel-facing sites (sing-box config, ip exec, /sys, /proc).
-func fakeIPNDMSName(index int) string {
+func tunNDMSName(index int) string {
 	return tunnel.NewNames("awg" + strconv.Itoa(index)).NDMSName
 }
 
@@ -161,10 +162,10 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		switch st.Mode {
 		case storage.OpkgTunModeFakeIP:
 			if st.Provisioned {
-				owned = fakeIPNDMSName(st.Index)
+				owned = tunNDMSName(st.Index)
 			}
 		case storage.OpkgTunModePolicyTun:
-			ownedPolicy = fakeIPNDMSName(st.Index)
+			ownedPolicy = tunNDMSName(st.Index)
 		}
 	}
 
@@ -337,7 +338,7 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	if !ok || !st.Provisioned {
 		return "", "", netip.Prefix{}, false
 	}
-	iface = fakeIPIfaceName(st.Index)
+	iface = tunIfaceName(st.Index)
 	dnsAddr, err = DeriveTunDNS(s.deps.FakeIPTun.TunAddr4)
 	if err != nil {
 		return "", "", netip.Prefix{}, false
@@ -457,7 +458,7 @@ func (s *ServiceImpl) tunModeIface() (string, bool) {
 		if !ok || !st.Provisioned {
 			return "", false
 		}
-		return fakeIPIfaceName(st.Index), true
+		return tunIfaceName(st.Index), true
 	}
 	iface, _, _, ok := s.fakeIPReadyInputs()
 	return iface, ok
@@ -1010,8 +1011,8 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	policyTunIfaceName := ""
 	if policyTunSt, ok := opkgTunOwned(settings, statePolicyTun); sr.RoutingMode == statePolicyTun &&
 		ok && policyTunSt.Provisioned {
-		policyTunNDMSName = fakeIPNDMSName(policyTunSt.Index)
-		policyTunIfaceName = fakeIPIfaceName(policyTunSt.Index)
+		policyTunNDMSName = tunNDMSName(policyTunSt.Index)
+		policyTunIfaceName = tunIfaceName(policyTunSt.Index)
 		if s.deps.RunningConfig != nil {
 			policyTunLines, _ = s.deps.RunningConfig.Lines(ctx)
 		}
@@ -1174,7 +1175,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	fakeIPTunAddr := ""
 	if fakeIPSt, ok := opkgTunOwned(settings, stateFakeIPTun); sr.RoutingMode == "fakeip-tun" &&
 		ok && fakeIPSt.Provisioned {
-		fakeIPIface = fakeIPIfaceName(fakeIPSt.Index)
+		fakeIPIface = tunIfaceName(fakeIPSt.Index)
 		if d, derr := DeriveTunDNS(s.deps.FakeIPTun.TunAddr4); derr == nil {
 			fakeIPDns = d
 		}
@@ -1208,8 +1209,8 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	var policyTunSourcePreserve *bool
 	if sr.RoutingMode == statePolicyTun && sr.Enabled {
 		if st, ok := opkgTunOwned(settings, statePolicyTun); ok && st.Provisioned {
-			policyTunIface = fakeIPIfaceName(st.Index)
-			policyTunNDMS = fakeIPNDMSName(st.Index)
+			policyTunIface = tunIfaceName(st.Index)
+			policyTunNDMS = tunNDMSName(st.Index)
 		}
 		// ПРИМЕНЁННОЕ, а не желаемое: записи персиста — единственный след того,
 		// что static-NAT реально доехал до роутера. Сравнение ПОСЕГМЕНТНОЕ:

@@ -41,7 +41,7 @@ func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
 		deps:   d,
 		appLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
 	}
-	ndmsName := fakeIPNDMSName(st.Index)
+	ndmsName := tunNDMSName(st.Index)
 
 	// Сегменты возвращаем ПЕРВЫМИ, пока дефолт ещё на tun: иначе удаление
 	// пакета при включённом source-preserve оставило бы их на static-NAT

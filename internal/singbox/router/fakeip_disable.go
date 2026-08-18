@@ -115,8 +115,8 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 		return nil
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel name: log labels only here
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: reject-renew + iface delete
+	iface := tunIfaceName(st.Index)   // kernel name: log labels only here
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI name: reject-renew + iface delete
 
 	// Derive the v4 pool network + dotted mask (Masked, mirroring Enable) for both
 	// the reject route and the auto-route removal. If the persisted range is

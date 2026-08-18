@@ -62,7 +62,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Доказанно чужой (успешный скан без нашего имени) → re-provision.
 	prev, _ := opkgTunOwned(settings, statePolicyTun)
 	if prev != nil && prev.Provisioned && live[prev.Index] &&
-		!s.provenForeignOpkgTun(ctx, fakeIPNDMSName(prev.Index), policyTunDescription) {
+		!s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription) {
 		return nil
 	}
 
@@ -73,7 +73,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModePolicyTun {
 		if rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable"); rerr != nil {
-			s.appLog.Warn("policy-tun-enable", fakeIPNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
+			s.appLog.Warn("policy-tun-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
 		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
 			return fmt.Errorf("enable policy-tun: list opkgtun indices: %w", err)
 		}
@@ -92,7 +92,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	switch {
 	case prev != nil && !live[prev.Index]:
 		idx = prev.Index
-	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index), policyTunDescription):
+	case prev != nil && s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription):
 		idx = prev.Index
 	default:
 		if idx, err = allocateFakeIPIndex(live); err != nil {
@@ -101,8 +101,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	}
 	// Two names per index: NDMS RCI takes the CamelCase ndmsName, the kernel
 	// (sing-box config, ip flush, /sys carrier) sees the lowercase iface.
-	ndmsName := fakeIPNDMSName(idx)
-	iface := fakeIPIfaceName(idx)
+	ndmsName := tunNDMSName(idx)
+	iface := tunIfaceName(idx)
 	if prev != nil && prev.Index != idx {
 		s.appLog.Warn("policy-tun", iface, "индекс OpkgTun изменился — проверьте permit в политиках")
 	}

@@ -329,7 +329,7 @@ func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the
-// same convention fakeIPNDMSName produces on the router side.
+// same convention tunNDMSName produces on the router side.
 func opkgTunScanner(store *ndmsquery.InterfaceStore) func(ctx context.Context, description string) ([]string, error) {
 	return func(ctx context.Context, description string) ([]string, error) {
 		all, err := store.List(ctx)

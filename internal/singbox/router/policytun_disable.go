@@ -74,8 +74,8 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		return nil
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel name: только метки в логах
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
+	iface := tunIfaceName(st.Index)   // kernel name: только метки в логах
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
 
 	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
 	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —

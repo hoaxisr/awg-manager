@@ -65,7 +65,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// drift-heal ниже чинил бы маршруты на ЧУЖОМ интерфейсе.
 	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
 		(probeErr == nil && live[st.Index] &&
-			s.provenForeignOpkgTun(ctx, fakeIPNDMSName(st.Index), fakeIPTunDescription))
+			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), fakeIPTunDescription))
 	if reprovision {
 		// Not provisioned, or the iface vanished (crash / manual removal) →
 		// (re-)provision. Enable's idempotency guard short-circuits the
@@ -79,8 +79,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Best-effort: each step logs + continues so one drifted resource cannot
 	// abort the heal of the others. NEVER re-allocate an index or re-create the
 	// iface here — that is Enable's job, gated on the liveness check above.
-	iface := fakeIPIfaceName(st.Index)   // kernel name: /proc route probe, log labels
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: static-route Interface
+	iface := tunIfaceName(st.Index)   // kernel name: /proc route probe, log labels
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI name: static-route Interface
 
 	// Запаркованный слот 21 — дрейф НЕЗАВИСИМО от жизни процесса (ревью #523):
 	// раньше слот чинился только при мёртвом sing-box, а при живом (крутит

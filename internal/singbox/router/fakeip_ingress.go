@@ -511,7 +511,7 @@ func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.Opkg
 		return FakeIPIngressSpec{}
 	}
 	return FakeIPIngressSpec{
-		TunIface: fakeIPIfaceName(st.Index),
+		TunIface: tunIfaceName(st.Index),
 		TunDNS:   tunDNS,
 		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
 	}

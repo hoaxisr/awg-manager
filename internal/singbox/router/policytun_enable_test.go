@@ -754,7 +754,7 @@ func TestPolicyTunEnable_PermitACLv6FollowsAddress(t *testing.T) {
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	ndmsName := fakeIPNDMSName(0)
+	ndmsName := tunNDMSName(0)
 	if !h.log.has("SetPermitACLv6:" + ndmsName) {
 		t.Fatalf("v6-разрешение не поставлено: %v", h.log.calls)
 	}

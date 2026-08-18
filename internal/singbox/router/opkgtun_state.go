@@ -80,7 +80,7 @@ func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, descri
 // persist-less сироту, которую добивает description-скан — профиль потерь
 // идентичен прежнему реаповому пути.
 func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.OpkgTunState, scope string) error {
-	ndmsName := fakeIPNDMSName(st.Index)
+	ndmsName := tunNDMSName(st.Index)
 	if segs := natSegmentsOf(st); len(segs) > 0 {
 		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
 			s.appLog.Warn(scope, ndmsName, "restore segment NAT: "+err.Error())

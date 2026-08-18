@@ -103,7 +103,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// no-op return runs before any rollback is pushed.
 	prev, _ := opkgTunOwned(settings, stateFakeIPTun)
 	if prev != nil && prev.Provisioned {
-		if live[prev.Index] && !s.provenForeignOpkgTun(ctx, fakeIPNDMSName(prev.Index), fakeIPTunDescription) {
+		if live[prev.Index] && !s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), fakeIPTunDescription) {
 			return nil // наш (или недоказуемо чужой) жив → no-op (Enabled already persisted)
 		}
 		// Мёртв (crash/manual removal) ЛИБО доказанно чужой (индекс занял
@@ -119,7 +119,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
 		if rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable"); rerr != nil {
-			s.appLog.Warn("fakeip-enable", fakeIPNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
+			s.appLog.Warn("fakeip-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
 		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
 			return fmt.Errorf("enable fakeip-tun: list opkgtun indices: %w", err)
 		}
@@ -133,8 +133,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// name, so every NDMS op (create/delete, address/mtu, up/down, static routes)
 	// takes the CamelCase ndmsName; the kernel sees iface (sing-box config, ip
 	// flush, /sys, /proc) under the lowercase name.
-	ndmsName := fakeIPNDMSName(idx)
-	iface := fakeIPIfaceName(idx)
+	ndmsName := tunNDMSName(idx)
+	iface := tunIfaceName(idx)
 
 	// Capture the FakeIP state as it was BEFORE this Enable so we can detect a
 	// pool-range change and wipe the stale fakeip cache before sing-box starts.
