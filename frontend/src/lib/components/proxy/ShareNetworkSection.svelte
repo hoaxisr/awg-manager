@@ -34,6 +34,11 @@
 		onrevert: () => void;
 		/** .conf выбранного пира — уезжает в ссылку абоненту FreeTurn (FS-18). */
 		onpeerconf?: (conf: string) => void;
+		/**
+		 * Выбранный пир FreeTurn-сервера. Состояние принадлежит детали: тот же
+		 * выбор показывает быстрый селект строки состояния (RB-12).
+		 */
+		peer?: string;
 	}
 
 	let {
@@ -49,6 +54,7 @@
 		onsave,
 		onrevert,
 		onpeerconf,
+		peer = $bindable(''),
 	}: Props = $props();
 
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
@@ -162,6 +168,7 @@
 			autoApply
 			compact
 			peerLabel="Пир"
+			bind:selected={peer}
 			onConnect={(addr) => {
 				if (ftServer) ftServer.connect = addr;
 			}}

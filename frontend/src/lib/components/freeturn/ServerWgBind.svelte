@@ -21,6 +21,12 @@
 		compact?: boolean;
 		/** Подпись выпадающего списка; деталь «Раздача» ставит свою (SH-60). */
 		peerLabel?: string;
+		/**
+		 * Выбранный пир. Владелец может держать его снаружи — тогда тот же
+		 * выбор показывает второй контрол (селект строки состояния, RB-12), и
+		 * состояние у них одно.
+		 */
+		selected?: string;
 	}
 
 	let {
@@ -31,11 +37,11 @@
 		clientListenPort = 9000,
 		autoApply = false,
 		compact = false,
-		peerLabel = 'Сервер · пир'
+		peerLabel = 'Сервер · пир',
+		selected = $bindable('')
 	}: Props = $props();
 
 	let snap: ServersSnapshot | null = $state(null);
-	let selected = $state('');
 	let loading = $state(false);
 	let error = $state('');
 	let endpointPort = $state(9000);

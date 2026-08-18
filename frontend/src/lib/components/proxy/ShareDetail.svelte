@@ -4,11 +4,13 @@
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
 	import { onMount, untrack } from 'svelte';
-	import { Badge, Card, FieldHint, Toggle } from '$lib/components/ui';
+	import { Badge, Card, Dropdown, FieldHint, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
+	import { servers, type ServersSnapshot } from '$lib/stores/servers';
+	import { buildRunningServerPeerDropdownOptions } from '$lib/utils/serverPeerOptions';
 	import { formatUptime } from '../freeturn/uptime';
 	import type { NatMode } from '$lib/utils/network';
 	import type {
@@ -91,12 +93,18 @@
 	// .conf пира, выбранного виджетом «Сеть»: он уезжает в ссылку абоненту
 	// FreeTurn (ia.md §3.3 часть Б — конфиг пира попадает в ссылку).
 	let peerConf = $state('');
+	// Выбранный пир живёт здесь: его показывают ДВА контрола — быстрый селект
+	// строки состояния (Дополнение №4 п.3) и виджет «Сети». Состояние одно,
+	// вся механика (.conf Keenetic, запрос конфига) осталась в «Сети».
+	let peer = $state('');
+	let peerSnap = $state<ServersSnapshot | null>(null);
 	let lanOptions = $state<{ value: string; label: string }[]>([]);
 	let ingress = $state(false);
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
 	// до ответа ручки статуса тумблер молчит, а не пугает.
 	let singboxRunning = $state(true);
 
+	const peerOptions = $derived(buildRunningServerPeerDropdownOptions(peerSnap));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
 	const running = $derived(row.state === 'running');
 	const ports = $derived(
@@ -171,6 +179,10 @@
 	// `undefined` — не знает и он (сервер не запускался, остановлен, процесс
 	// усыновлён); тогда расхождения не показываем (SH-56 молчит).
 	const exposeApplied = $derived(wdttStatus?.appliedExposeToPolicies);
+
+	// Каталог пиров общий со «Сетью»: стор один, второго запроса не будет.
+	// Отдельным эффектом, а не в onMount: асинхронный onMount отписку не вернёт.
+	$effect(() => servers.subscribe((st) => (peerSnap = st.data)));
 
 	onMount(async () => {
 		try {
@@ -296,7 +308,7 @@
 		{onstart}
 		{onstop}
 		{onwizard}
-		aside={wdttDraft ? ingressToggle : undefined}
+		aside={wdttDraft ? ingressToggle : ftDraft ? peerSelect : undefined}
 	/>
 
 	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
@@ -364,6 +376,7 @@
 		onsave={save}
 		onrevert={revert}
 		onpeerconf={(conf) => (peerConf = conf)}
+		bind:peer
 	/>
 
 	<ShareAdvancedSection bind:wdttServer={wdttDraft} bind:ftServer={ftDraft} ports={killPorts} />
@@ -380,6 +393,25 @@
 		}}
 	/>
 </Card>
+
+<!-- RB-12: быстрый выбор пира зеркалит тумблер RB-09 у WDTT. Механика живёт
+     в «Сети»; здесь — тот же выбор под рукой. -->
+{#snippet peerSelect()}
+	<div class="run-toggle">
+		<Dropdown
+			label="Пир"
+			value={peer}
+			options={peerOptions}
+			placeholder={peerOptions.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}
+			disabled={!peerOptions.length || mutating}
+			onchange={(v) => (peer = v)}
+		/>
+		<FieldHint
+			text="Пир — вход для всех абонентов этого сервера: их трафик FreeTurn отдаёт в выбранный WG-сервер роутера, и маршрутизация абонентов повторяет маршрутизацию этого пира. Ссылка абоненту собирается из конфига пира."
+			ariaLabel="Подсказка: пир сервера"
+		/>
+	</div>
+{/snippet}
 
 {#snippet ingressToggle()}
 	<div class="run-toggle">
@@ -442,6 +474,19 @@
 		display: flex;
 		align-items: center;
 		gap: 0.375rem;
+	}
+
+	/* Селект пира в строке состояния — компактный: подпись слева, поле по
+	   содержимому, а не во всю строку. */
+	.run-toggle :global(.field) {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	.run-toggle :global(.field .trigger) {
+		min-width: 11rem;
+		max-width: 16rem;
 	}
 
 </style>

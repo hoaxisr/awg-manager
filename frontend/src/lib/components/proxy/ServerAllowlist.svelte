@@ -4,13 +4,13 @@
 	// Перенесён из `freeturn/ServerAllowlist.svelte`; легаси-тексты заменены на
 	// строки микрокопии там, где ID для них есть.
 	import { untrack } from 'svelte';
-	import { RefreshCw } from 'lucide-svelte';
-	import { Button, ConfirmModal, IconButton, Input } from '$lib/components/ui';
+	import { Button, ConfirmModal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import type { FreeTurnAllowlistEntry, FreeTurnServerConfig } from '$lib/types';
 	import LinkBox from './LinkBox.svelte';
+	import ServerAllowlistAddModal from './ServerAllowlistAddModal.svelte';
 
 	interface Props {
 		serverId: string;
@@ -31,8 +31,8 @@
 	let loadedFor = $state('');
 	let disableOpen = $state(false);
 
-	let clientId = $state('');
-	let comment = $state('');
+	let addOpen = $state(false);
+	let addError = $state('');
 	let link = $state('');
 
 	async function reload() {
@@ -56,45 +56,48 @@
 		});
 	});
 
-	/** Client ID придумывает фронт: бэкенд в ответе лишь возвращает присланный. */
-	function randomClientId() {
-		const bytes = new Uint8Array(16);
-		crypto.getRandomValues(bytes);
-		clientId = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-	}
-
-	/** SH-46: ссылка выдаётся и получатель сразу вносится в список. */
-	function issueAndAllow() {
+	/**
+	 * SH-46: ссылка выдаётся и получатель сразу вносится в список. Форма живёт
+	 * в модалке (Дополнение №4 п.1), решение «вносить ли» — галка WS-38.
+	 */
+	function addClient(values: { clientId: string; name: string; allow: boolean }) {
 		if (busy) return;
-		if (!clientId.trim()) randomClientId();
+		addError = '';
 		void locked(async () => {
 			try {
 				const res = await api.generateFreeTurnLink({
 					serverId,
-					clientId: clientId.trim() || undefined,
-					name: comment.trim() || serverName,
+					clientId: values.clientId || undefined,
+					name: values.name || serverName,
 					peer: server.connect?.trim() || undefined,
 					wg: peerConf.trim() || undefined,
 				});
-				link = res.link ?? '';
-				const id = (res.clientId || clientId).trim();
-				if (!id) return;
-				clientId = id;
-				const add = await api.addFreeTurnServerAllowlistClient(serverId, id, comment.trim());
-				entries = add.clients ?? [];
-				enabled = add.enabled;
-				clientsFile = add.clientsFile ?? '';
-				// TS-11 — только когда бэкенд сказал, что перезапуск нужен
-				// (включение списка). На добавление записи тоста нет: сервер
-				// подхватывает её сам (оговорка TS-11).
-				if (add.needsRestart) {
-					notifications.info('Список включён — перезапустите сервер, чтобы проверка заработала');
-				} else {
-					// TS-10
-					notifications.success('Client ID внесён в список разрешённых');
+				const id = (res.clientId || values.clientId).trim();
+				if (id && values.allow) {
+					const add = await api.addFreeTurnServerAllowlistClient(serverId, id, values.name);
+					entries = add.clients ?? [];
+					enabled = add.enabled;
+					clientsFile = add.clientsFile ?? '';
+					// TS-11 — только когда бэкенд сказал, что перезапуск нужен
+					// (включение списка). На добавление записи тоста нет: сервер
+					// подхватывает её сам (оговорка TS-11).
+					if (add.needsRestart) {
+						notifications.info(
+							'Список включён — перезапустите сервер, чтобы проверка заработала',
+						);
+					} else {
+						// TS-10
+						notifications.success('Client ID внесён в список разрешённых');
+					}
 				}
+				// Окно закрывается только полным успехом: ссылка под списком
+				// иначе относилась бы к невнесённому абоненту.
+				link = res.link ?? '';
+				addOpen = false;
 			} catch (e) {
-				notifications.error(errText(e));
+				// Отказ остаётся в открытой модалке: он про то, что в полях.
+				addError = errText(e);
+				await reload();
 			}
 		});
 	}
@@ -136,13 +139,25 @@
 </script>
 
 <div class="allowlist">
-	{#if enabled}
-		<div class="head">
+	<div class="head">
+		<!-- SH-43: форма ушла в окно, в шапке осталась кнопка. -->
+		<Button
+			variant="secondary"
+			size="sm"
+			disabled={busy}
+			onclick={() => {
+				addError = '';
+				addOpen = true;
+			}}
+		>
+			Добавить
+		</Button>
+		{#if enabled}
 			<Button variant="ghost" size="sm" disabled={busy} onclick={() => (disableOpen = true)}>
 				Выключить список
 			</Button>
-		</div>
-	{/if}
+		{/if}
+	</div>
 
 	{#if entries.length}
 		<ul class="list">
@@ -175,23 +190,18 @@
 		<p class="empty">Список пуст — с включённой проверкой сервер не пропустит никого</p>
 	{/if}
 
-	<div class="form">
-		<div class="field-with-btn">
-			<Input label="Client ID" bind:value={clientId} fullWidth />
-			<IconButton size="sm" ariaLabel="Обновить Client ID" onclick={randomClientId}>
-				<RefreshCw size={14} />
-			</IconButton>
-		</div>
-		<Input label="Комментарий" bind:value={comment} />
-		<Button variant="secondary" size="sm" disabled={busy} onclick={issueAndAllow}>
-			Ссылка · внести в список
-		</Button>
-	</div>
-
 	{#if link}
 		<LinkBox {link} freeturn />
 	{/if}
 </div>
+
+<ServerAllowlistAddModal
+	open={addOpen}
+	{busy}
+	error={addError}
+	onsubmit={addClient}
+	onclose={() => (addOpen = false)}
+/>
 
 <ConfirmModal
 	open={disableOpen}
@@ -278,21 +288,4 @@
 		color: var(--color-text-secondary);
 	}
 
-	.field-with-btn {
-		display: flex;
-		align-items: flex-end;
-		gap: 0.375rem;
-		min-width: 0;
-	}
-
-	.field-with-btn :global(svg) {
-		display: block;
-	}
-
-	.form {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-		gap: 0.5rem;
-		align-items: end;
-	}
 </style>
