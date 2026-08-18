@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WdttClientConfig } from '$lib/types';
-import { setPeer, setPeerRaw, setPeerWg, switchConnMode } from './wdttPeerMode';
+import { setPeer, switchConnMode } from './wdttPeerMode';
 
 function cfg(partial: Partial<WdttClientConfig> = {}): WdttClientConfig {
 	return {
@@ -33,18 +33,5 @@ describe('wdttPeerMode', () => {
 		switchConnMode(c, 'raw');
 		expect(c.peer).toBe('');
 		expect(c.peerWg).toBe('1.1.1.1:56002');
-	});
-
-	it('правка активного слота уходит и в peer — иначе бэкенд её затрёт', () => {
-		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
-		setPeerWg(c, '2.2.2.2:56002');
-		expect(c.peer).toBe('2.2.2.2:56002');
-	});
-
-	it('правка неактивного слота peer не трогает', () => {
-		const c = cfg({ peer: '1.1.1.1:56002', connMode: 'wg' });
-		setPeerRaw(c, '1.1.1.1:56003');
-		expect(c.peer).toBe('1.1.1.1:56002');
-		expect(c.peerRaw).toBe('1.1.1.1:56003');
 	});
 });

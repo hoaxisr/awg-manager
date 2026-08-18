@@ -62,8 +62,8 @@ export function exitStep1Ready(s: {
 }
 
 /**
- * Шаг 2: тот же критерий, по которому панели считают клиента настроенным
- * (`setupComplete` в WdttClientSimple/FreeTurnClientSimple). Остальные слагаемые
+ * Шаг 2: тот же критерий, по которому клиент считается настроенным и уходит
+ * из мастера в деталь (`exitConfigSetupComplete`). Остальные слагаемые
  * FreeTurn (`streamsPerCred`, `platform`, `dnsMode`) приезжают дефолтами
  * бэкенда при создании инстанса, руками их в мастере не задают.
  */
@@ -128,8 +128,8 @@ export function nextLocalListen(listens: string[], protocol: ExitProtocol = 'wdt
 
 /**
  * Порт из подписки одинаков для всех стран — у каждого клиента он свой,
- * поэтому берётся подсказка, а не значение документа (та же оговорка, что в
- * старом импорте WdttTab).
+ * поэтому берётся подсказка, а не значение документа (оговорка унаследована из
+ * старого импорта прокси-вкладки главной).
  */
 function listenFromPayload(payloadListen: string | undefined, candidate: string, fromSub: boolean) {
 	if (fromSub) return candidate;

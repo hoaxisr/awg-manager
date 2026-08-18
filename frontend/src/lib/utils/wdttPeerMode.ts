@@ -19,16 +19,6 @@ export function setPeer(c: WdttClientConfig, value: string): void {
 	else c.peerWg = value;
 }
 
-export function setPeerWg(c: WdttClientConfig, value: string): void {
-	c.peerWg = value;
-	if (modeOf(c) === 'wg') c.peer = value;
-}
-
-export function setPeerRaw(c: WdttClientConfig, value: string): void {
-	c.peerRaw = value;
-	if (modeOf(c) === 'raw') c.peer = value;
-}
-
 /**
  * Переключение режима подставляет адрес из слота нового режима. Пустой слот
  * даёт пустое поле — лучше, чем молча уехать на порт соседнего режима.
