@@ -116,8 +116,9 @@
 						{#if renamingKey !== row.key}
 							<span class="row-meta">
 								{#each meta(row) as part, i (part)}
-									{#if i > 0}<span class="row-meta-sep">·</span>{/if}
-									<span class="row-meta-part">{part}</span>
+									<!-- Разделитель едет ВНУТРИ своей части: иначе при переносе он
+									     остаётся висеть в конце предыдущей строки. -->
+									<span class="row-meta-part">{i > 0 ? '· ' : ''}{part}</span>
 								{/each}
 							</span>
 						{/if}
@@ -282,8 +283,7 @@
 		color: var(--color-text-muted);
 	}
 
-	.row-meta-part,
-	.row-meta-sep {
+	.row-meta-part {
 		white-space: nowrap;
 	}
 
