@@ -10,21 +10,16 @@ import (
 
 // FakeIPTunSpec is the input to ensureFakeIPOverlay — every value the
 // fakeip-tun mode needs that the overlay cannot derive on its own. It carries
-// the kernel tun device, the fakeip pools, the real upstream resolver and the
-// already-built outbound list (proxy + direct).
+// the kernel tun device, the fakeip pools and the real upstream resolver.
 type FakeIPTunSpec struct {
-	Iface          string     // kernel iface name, e.g. "opkgtun10"
-	TunAddr4       string     // e.g. "172.18.0.1/30"
-	TunAddr6       string     // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
-	MTU            int        //
-	Inet4Range     string     // fakeip v4 pool
-	Inet6Range     string     // fakeip v6 pool (empty to omit v6)
-	CachePath      string     //
-	RealServer     string     // real upstream resolver, e.g. "1.1.1.1"
-	Outbounds      []Outbound // proxy + direct
-	ProxyTag       string     // outbound tag that tun-in routes to
-	DomainRuleSets []string   // .srs tags for domains to fakeip (empty = fake all A/AAAA)
-	SourceIPCIDR   []string   // optional per-device targeting (empty = all sources)
+	Iface      string // kernel iface name, e.g. "opkgtun10"
+	TunAddr4   string // e.g. "172.18.0.1/30"
+	TunAddr6   string // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
+	MTU        int    //
+	Inet4Range string // fakeip v4 pool
+	Inet6Range string // fakeip v6 pool (empty to omit v6)
+	CachePath  string //
+	RealServer string // real upstream resolver, e.g. "1.1.1.1"
 	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
 	// "system". When "system" the builder forces gso:false on the tun inbound —
 	// the only stable system-stack combo on this router's kernel (4.9), where the

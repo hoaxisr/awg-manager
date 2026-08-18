@@ -8,7 +8,6 @@ func TestFakeIPTunInboundUDPTimeout(t *testing.T) {
 	base := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy"}}, ProxyTag: "proxy",
 	}
 
 	// Explicit value flows through verbatim on the overlay path (every persist).
