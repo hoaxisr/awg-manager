@@ -22,6 +22,7 @@ export { default as ShareDetail } from './ShareDetail.svelte';
 export { default as ShareNetworkSection } from './ShareNetworkSection.svelte';
 export { default as ShareWizard } from './ShareWizard.svelte';
 export { default as Topology } from './Topology.svelte';
+export { default as ProxyDetailPane } from './ProxyDetailPane.svelte';
 export { default as SubscriptionSection } from './SubscriptionSection.svelte';
 export { default as WizardSteps } from './WizardSteps.svelte';
 export { binaryStripItems } from './binaries';
