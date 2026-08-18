@@ -46,7 +46,7 @@ type FreeTurnService interface {
 	ListServerAllowlist(serverID string) (freeturn.AllowlistStatus, error)
 	AddServerAllowlistClient(serverID, clientID, comment string) (freeturn.AddAllowlistResult, error)
 	RemoveServerAllowlistClient(serverID, clientID string) error
-	DisableServerAllowlist(serverID string) error
+	DisableServerAllowlist(serverID string) (bool, error)
 	CaptchaStatus() freeturn.CaptchaOverview
 	CaptchaStatusForClient(id string) (freeturn.CaptchaClientStatus, bool)
 }
@@ -832,11 +832,12 @@ func (h *FreeTurnHandler) serveServerAllowlist(w http.ResponseWriter, r *http.Re
 			}
 			response.Success(w, res)
 		case http.MethodDelete:
-			if err := h.svc.DisableServerAllowlist(serverID); err != nil {
+			needsRestart, err := h.svc.DisableServerAllowlist(serverID)
+			if err != nil {
 				response.Error(w, err.Error(), "FREETURN_ALLOWLIST_DISABLE_FAILED")
 				return
 			}
-			response.Success(w, map[string]string{"message": "allowlist disabled"})
+			response.Success(w, map[string]any{"message": "allowlist disabled", "needsRestart": needsRestart})
 		default:
 			response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 		}

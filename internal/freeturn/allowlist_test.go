@@ -79,3 +79,35 @@ func TestAddServerAllowlistClient_EnablesOnFirstSave(t *testing.T) {
 		t.Fatalf("list: %+v err=%v", st, err)
 	}
 }
+
+func TestDisableServerAllowlist_NeedsRestart(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, dir, "", "")
+	if _, err := s.AddServerAllowlistClient("default", "aabbccddeeff00112233445566778899", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	needsRestart, err := s.DisableServerAllowlist("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needsRestart {
+		t.Fatal("expected needsRestart on disable: -clients-file is a start argument")
+	}
+	cfg, err := s.GetConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Servers[0].Config.ClientsFile != "" {
+		t.Fatal("clientsFile not cleared")
+	}
+
+	// Повторное выключение ничего не меняет — перезапускать нечего.
+	needsRestart, err = s.DisableServerAllowlist("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needsRestart {
+		t.Fatal("already disabled: needsRestart must be false")
+	}
+}

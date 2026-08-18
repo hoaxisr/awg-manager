@@ -52,7 +52,7 @@ func (s *stubFreeTurnForImport) AddServerAllowlistClient(string, string, string)
 	return freeturn.AddAllowlistResult{}, nil
 }
 func (s *stubFreeTurnForImport) RemoveServerAllowlistClient(string, string) error { return nil }
-func (s *stubFreeTurnForImport) DisableServerAllowlist(string) error              { return nil }
+func (s *stubFreeTurnForImport) DisableServerAllowlist(string) (bool, error)      { return false, nil }
 func (s *stubFreeTurnForImport) CaptchaStatus() freeturn.CaptchaOverview {
 	return freeturn.CaptchaOverview{}
 }

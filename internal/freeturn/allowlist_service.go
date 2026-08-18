@@ -73,7 +73,10 @@ func (s *Service) RemoveServerAllowlistClient(serverID, clientID string) error {
 }
 
 // DisableServerAllowlist turns off Client ID checking (clears clientsFile in config).
-func (s *Service) DisableServerAllowlist(serverID string) error {
+// Returns needsRestart, mirroring AddServerAllowlistClient: the path goes into the
+// `-clients-file` start argument, so a running server keeps checking the allowlist
+// until it is restarted. Already-disabled allowlist changes nothing — false.
+func (s *Service) DisableServerAllowlist(serverID string) (bool, error) {
 	// Весь метод — store Load-modify-Save, хвост функции: defer покрывает и
 	// ранний return при пустом ClientsFile. Load/Save/findServerIndex s.mu не берут.
 	s.mu.Lock()
@@ -81,15 +84,18 @@ func (s *Service) DisableServerAllowlist(serverID string) error {
 
 	full, err := s.store.Load()
 	if err != nil {
-		return err
+		return false, err
 	}
 	idx := findServerIndex(full.Servers, serverID)
 	if idx < 0 {
-		return fmt.Errorf("сервер %q не найден", serverID)
+		return false, fmt.Errorf("сервер %q не найден", serverID)
 	}
 	if full.Servers[idx].Config.ClientsFile == "" {
-		return nil
+		return false, nil
 	}
 	full.Servers[idx].Config.ClientsFile = ""
-	return s.store.Save(full)
+	if err := s.store.Save(full); err != nil {
+		return false, err
+	}
+	return true, nil
 }
