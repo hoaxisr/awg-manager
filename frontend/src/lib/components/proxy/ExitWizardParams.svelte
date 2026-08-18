@@ -7,7 +7,8 @@
 
 	interface Props {
 		protocol: ExitProtocol;
-		/** Режим WDTT: в Raw отдельного AWG-туннеля нет, и подсказка WE-34 врала бы. */
+		/** Режим WDTT: в Raw отдельного AWG-туннеля нет, и подсказка WE-34 врала бы.
+		 * У FreeTurn режима нет — туннель всегда WG. */
 		mode: ExitMode;
 		/** Поля мастера правятся здесь же: владелец значения — мастер. */
 		fields: ExitWizardFields;
@@ -27,7 +28,7 @@
 	<Input
 		label="Локальный порт"
 		bind:value={fields.listen}
-		hint={mode === 'raw' ? '' : 'Сюда будет смотреть AWG-туннель'}
+		hint={protocol === 'wdtt' && mode === 'raw' ? '' : 'Сюда будет смотреть AWG-туннель'}
 		fullWidth
 	/>
 	<Input label="VK-хеши" bind:value={fields.vkHashes} fullWidth />
