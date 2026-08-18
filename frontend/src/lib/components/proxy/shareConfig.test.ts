@@ -4,6 +4,7 @@ import {
 	freeTurnServerPorts,
 	natModeLabel,
 	normalizeWdttServerConfig,
+	wdttServerKillPorts,
 	wdttServerPorts,
 } from './shareConfig';
 
@@ -54,6 +55,29 @@ describe('wdttServerPorts', () => {
 	it('отличный Direct-порт добавляет третью строку', () => {
 		const ports = wdttServerPorts(wdtt({ directListen: '0.0.0.0:56005' }));
 		expect(ports[2]).toMatchObject({ label: 'Direct', port: 56005 });
+	});
+});
+
+describe('wdttServerKillPorts', () => {
+	it('WG-порт добавляется отдельной строкой', () => {
+		const ports = wdttServerKillPorts(wdtt());
+		expect(ports.map((p) => [p.label, p.port])).toEqual([
+			['DTLS', 56002],
+			['Raw', 56003],
+			['WG', 56001],
+		]);
+	});
+
+	it('совпавший с Raw WG-порт — одна строка (ключ each не дублируется)', () => {
+		// DTLS :56000 → Raw по умолчанию :56001 == дефолтный WG-порт.
+		const ports = wdttServerKillPorts(wdtt({ listen: '0.0.0.0:56000', wgPort: 56001 }));
+		expect(ports.map((p) => p.listen)).toEqual(['0.0.0.0:56000', '0.0.0.0:56001']);
+		expect(new Set(ports.map((p) => p.listen)).size).toBe(ports.length);
+	});
+
+	it('совпавшие DTLS и Raw тоже схлопываются в одну строку', () => {
+		const ports = wdttServerKillPorts(wdtt({ rawListen: '0.0.0.0:56002' }));
+		expect(new Set(ports.map((p) => p.listen)).size).toBe(ports.length);
 	});
 });
 

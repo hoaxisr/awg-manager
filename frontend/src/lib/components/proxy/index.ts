@@ -33,8 +33,8 @@ export {
 	normalizeShareConfigs,
 	saveShareInstance,
 	shareInstance,
+	wdttServerKillPorts,
 	wdttServerPorts,
-	wdttServerWgPort,
 } from './shareConfig';
 export type { ShareConfig, ShareInstance, SharePort } from './shareConfig';
 export { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';

@@ -31,8 +31,8 @@
 	import {
 		freeTurnServerPorts,
 		natModeLabel,
+		wdttServerKillPorts,
 		wdttServerPorts,
-		wdttServerWgPort,
 		type ShareConfig,
 	} from './shareConfig';
 	import { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
@@ -104,7 +104,7 @@
 	);
 	// Освобождать приходится и внутренний WG-порт: сервер поднимает на нём
 	// WireGuard, а в мете строки состояния (RB-07) его не показывают.
-	const killPorts = $derived(wdttDraft ? [...ports, wdttServerWgPort(wdttDraft)] : ports);
+	const killPorts = $derived(wdttDraft ? wdttServerKillPorts(wdttDraft) : ports);
 
 	// RB-07: порты раздачи, аптайм, PID.
 	const runMeta = $derived(

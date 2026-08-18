@@ -151,6 +151,8 @@
 
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */
 	async function decode() {
+		// Источник сменился — вставленный руками .conf к нему не относится.
+		manualWg = '';
 		const text = link.trim();
 		const kind = detectProxyLinkScheme(text);
 		if (!text || kind === 'unknown') {
@@ -224,6 +226,7 @@
 
 	function toggleManual() {
 		manual = !manual;
+		manualWg = '';
 		if (!manual) return;
 		link = '';
 		wdttPayload = null;
@@ -257,7 +260,9 @@
 				wdttPayload: profile,
 				ftPayload,
 				subUrl: subUrl || undefined,
-				wgConf,
+				// Мусор вместо .conf на бэкенд не отправляем: импорт всё равно
+				// откажет, но уже после создания клиента.
+				wgConf: hasWg ? wgConf : undefined,
 				existing:
 					created ?? (row && config ? { id: row.id, config: cloneConfig(config) } : undefined),
 				oncreated: (c) => (created = c),
@@ -321,6 +326,7 @@
 				ontogglemanual={toggleManual}
 				onprotocol={(p) => {
 					protocol = p;
+					manualWg = '';
 					// Подсказки порта и потоков — правила выбранного протокола.
 					const blank = emptyFields(candidateListen(p), p);
 					fields.listen = blank.listen;

@@ -3483,7 +3483,9 @@ function createInitialMockWdtt() {
 				config: {
 					enabled: true,
 					listen: '0.0.0.0:56000',
-					wgPort: 51830,
+					// Дефолт бэкенда: при DTLS :56000 он совпадает с raw-портом
+					// (DTLS+1) — так мок ловит дубли в списке освобождения портов.
+					wgPort: 56001,
 					password: MOCK_WDTT_SERVER_PASSWORD,
 					configDir: '/opt/etc/awg-manager/wdtt/server/default',
 					adminId: '',

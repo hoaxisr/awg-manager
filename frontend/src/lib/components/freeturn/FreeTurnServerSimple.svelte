@@ -166,7 +166,7 @@
 					]),
 			guide(
 				'endpoint',
-				`Проверьте порт Endpoint (${defaultClientListenPort}) — это listen клиента FreeTurn (вкладка «Клиент»)`,
+				`Проверьте порт Endpoint (${defaultClientListenPort}) — локальный порт FreeTurn-клиента, который смотрит на этот сервер`,
 				{ done: peerReady, pending: !peerReady }
 			),
 			...(obfProfileOk

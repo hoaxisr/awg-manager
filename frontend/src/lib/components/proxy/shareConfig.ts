@@ -117,6 +117,20 @@ export function wdttServerWgPort(cfg: WdttServerConfig): SharePort {
 	return { listen: `0.0.0.0:${port}`, label: 'WG', port };
 }
 
+/**
+ * Список секции «Освобождение портов» раздачи WDTT: порты сервера плюс
+ * внутренний WG-порт, без дублей по `listen`. Совпадения реальны: raw по
+ * умолчанию — DTLS+1, и при DTLS :56000 он равен дефолтному WG-порту 56001.
+ * Совпавший порт показывается одной строкой.
+ */
+export function wdttServerKillPorts(cfg: WdttServerConfig): SharePort[] {
+	const out: SharePort[] = [];
+	for (const p of [...wdttServerPorts(cfg), wdttServerWgPort(cfg)]) {
+		if (!out.some((x) => x.listen === p.listen)) out.push(p);
+	}
+	return out;
+}
+
 export function freeTurnServerPorts(cfg: FreeTurnServerConfig): SharePort[] {
 	const port = listenPortNumber(cfg.listen ?? '', 56000);
 	return [

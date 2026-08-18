@@ -90,7 +90,12 @@
 				options={obfOptions}
 				fullWidth
 			/>
-			<Input label="Локальный порт" bind:value={ftClient.listen} fullWidth />
+			<Input
+				label="Локальный порт"
+				bind:value={ftClient.listen}
+				hint="Сюда смотрит AWG-туннель"
+				fullWidth
+			/>
 			<Input label="URL подписки" bind:value={ftClient.sub} fullWidth />
 		{/if}
 	</div>
