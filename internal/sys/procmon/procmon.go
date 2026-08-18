@@ -349,6 +349,17 @@ func (s *Sampler) KillProcess(pid int, sigName string) error {
 		return fmt.Errorf("cannot kill system init process (PID %d)", pid)
 	}
 
+	exeLink, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	stat, _ := parseProcStat(fmt.Sprintf("/proc/%d/stat", pid))
+	
+	if isCriticalProcess(stat.comm, exeLink) {
+		return fmt.Errorf("cannot kill critical process %q", stat.comm)
+	}
+
+	if pid == os.Getpid() {
+		return fmt.Errorf("cannot kill own process via API")
+	}
+
 	var sig os.Signal = syscall.SIGTERM
 	if strings.EqualFold(sigName, "SIGKILL") || strings.EqualFold(sigName, "KILL") || sigName == "9" {
 		sig = syscall.SIGKILL
@@ -357,15 +368,6 @@ func (s *Sampler) KillProcess(pid int, sigName string) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return fmt.Errorf("find process %d: %w", pid, err)
-	}
-
-	if pid == os.Getpid() {
-		// Delayed self termination so HTTP 200 can be returned first
-		go func() {
-			time.Sleep(150 * time.Millisecond)
-			_ = proc.Signal(sig)
-		}()
-		return nil
 	}
 
 	return proc.Signal(sig)
@@ -633,10 +635,10 @@ func readCPUArch(cpuinfoPath string) string {
 
 func isCriticalProcess(name, exe string) bool {
 	lower := strings.ToLower(name)
-	if lower == "ndm" || lower == "dropbear" || lower == "init" || lower == "systemd" || lower == "kthreadd" {
+	if lower == "ndm" || lower == "dropbear" || lower == "init" || lower == "systemd" || lower == "kthreadd" || lower == "awg-manager" {
 		return true
 	}
-	if strings.Contains(exe, "/usr/sbin/ndm") || strings.Contains(exe, "dropbear") {
+	if strings.Contains(exe, "/usr/sbin/ndm") || strings.Contains(exe, "dropbear") || strings.Contains(exe, "awg-manager") {
 		return true
 	}
 	return false

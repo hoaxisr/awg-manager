@@ -14,7 +14,6 @@
 	import AwgConfigAnalyzerTab from './AwgConfigAnalyzerTab.svelte';
 	import AboutDeviceTab from './AboutDeviceTab.svelte';
 	import DnsInfoTab from './DnsInfoTab.svelte';
-	import { SystemTab } from '$lib/components/system';
 	import { MonitoringTab } from '$lib/components/pingcheck';
 
 	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns' | 'system';
@@ -203,6 +202,8 @@
 	{:else if activeTab === 'dns'}
 		<DnsInfoTab />
 	{:else if activeTab === 'system'}
-		<SystemTab />
+		{#await import('$lib/components/system/SystemTab.svelte') then { default: SystemTab }}
+			<SystemTab />
+		{/await}
 	{/if}
 </PageContainer>

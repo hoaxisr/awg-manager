@@ -51,7 +51,7 @@
 		if (remember) {
 			saveTerminalAutoLogin(payload);
 			saved = true;
-			notifications.success('Данные для автовхода сохранены в этом браузере');
+			notifications.success('Данные для автовхода сохранены на время сессии');
 		} else {
 			clearTerminalAutoLogin();
 			saved = false;
@@ -75,7 +75,7 @@
 		<div>
 			<h3>Автовход в shell</h3>
 			<p class="hint">
-				Логин и пароль сохраняются только в этом браузере и подставляются при запросе
+				Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки) и автоматически подставляются при запросе
 				<code>login</code> / <code>Password</code> в терминале.
 			</p>
 		</div>
@@ -95,7 +95,7 @@
 		</label>
 		<label class="remember">
 			<input type="checkbox" bind:checked={remember} />
-			<span>Запомнить на этом устройстве</span>
+			<span>Запомнить на время сессии</span>
 		</label>
 	</div>
 

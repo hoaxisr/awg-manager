@@ -40,8 +40,11 @@
 	$effect(() => {
 		const v = $page.url.searchParams.get('view');
 		if (v === 'ponies') {
-			poniesUnlocked.unlock();
-			activeView = 'ponies';
+			if ($poniesUnlocked) {
+				activeView = 'ponies';
+			} else {
+				activeView = 'files';
+			}
 		} else if (v === 'files' || v === 'services' || v === 'packages' || v === 'terminal' || v === 'ports' || v === 'processes') {
 			activeView = v;
 		} else if (!$page.url.searchParams.has('view')) {
@@ -79,7 +82,7 @@
 		{:else if activeView === 'ponies'}
 			<PinkPoniesPanel onhide={() => setView('processes')} />
 		{:else}
-			<SystemTerminal />
+			<SystemTerminal compact={true} />
 		{/if}
 	</div>
 </div>

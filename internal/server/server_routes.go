@@ -159,6 +159,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.signatureHandler = api.NewSignatureHandler()
 	h.terminalHandler = api.NewTerminalHandler(s.terminalManager, s.loggingService)
 	h.systemToolsHandler = api.NewSystemToolsHandler(s.settings, h.appLog)
+	h.systemToolsHandler.SetEventBus(s.bus)
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 

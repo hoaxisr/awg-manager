@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -33,6 +34,23 @@ type SystemToolsHandler struct {
 	opkg     *opkg.Client
 	ports    *sysports.Scanner
 	procmon  *procmon.Sampler
+	bus      *events.Bus
+}
+
+func (h *SystemToolsHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
+
+func (h *SystemToolsHandler) emitEvent(action, subject, details string) {
+	h.log.Info(action, subject, details)
+	if h.bus != nil {
+		h.bus.Publish("system:tool-action", map[string]string{
+			"type":    "system_tool_action",
+			"action":  action,
+			"subject": subject,
+			"details": details,
+		})
+	}
 }
 
 // NewSystemToolsHandler creates the handler.
@@ -66,6 +84,12 @@ func (h *SystemToolsHandler) requireExpert(w http.ResponseWriter, r *http.Reques
 }
 
 // GET /api/system/files/roots
+// @Summary FilesRoots (Expert only)
+// @Description FilesRoots (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/roots [get]
 func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -88,6 +112,12 @@ func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) 
 }
 
 // GET /api/system/files/list?path=
+// @Summary FilesList (Expert only)
+// @Description FilesList (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/list [get]
 func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -109,6 +139,12 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/system/files/read?path=
+// @Summary FilesRead (Expert only)
+// @Description FilesRead (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/read [get]
 func (h *SystemToolsHandler) FilesRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -136,6 +172,12 @@ type filesWriteRequest struct {
 }
 
 // POST /api/system/files/write
+// @Summary FilesWrite (Expert only)
+// @Description FilesWrite (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/write [post]
 func (h *SystemToolsHandler) FilesWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -157,7 +199,7 @@ func (h *SystemToolsHandler) FilesWrite(w http.ResponseWriter, r *http.Request) 
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("write", req.Path, fmt.Sprintf("write %d bytes", len(req.Content)))
+	h.emitEvent("write", req.Path, fmt.Sprintf("write %d bytes", len(req.Content)))
 	response.Success(w, nil)
 }
 
@@ -166,6 +208,12 @@ type filesPathRequest struct {
 }
 
 // POST /api/system/files/mkdir
+// @Summary FilesMkdir (Expert only)
+// @Description FilesMkdir (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/mkdir [post]
 func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -183,11 +231,17 @@ func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) 
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("mkdir", req.Path, "mkdir")
+	h.emitEvent("mkdir", req.Path, "mkdir")
 	response.Success(w, nil)
 }
 
 // POST /api/system/files/remove
+// @Summary FilesRemove (Expert only)
+// @Description FilesRemove (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/remove [post]
 func (h *SystemToolsHandler) FilesRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -205,7 +259,7 @@ func (h *SystemToolsHandler) FilesRemove(w http.ResponseWriter, r *http.Request)
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("remove", req.Path, "remove")
+	h.emitEvent("remove", req.Path, "remove")
 	response.Success(w, nil)
 }
 
@@ -215,6 +269,12 @@ type filesRenameRequest struct {
 }
 
 // POST /api/system/files/rename
+// @Summary FilesRename (Expert only)
+// @Description FilesRename (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/rename [post]
 func (h *SystemToolsHandler) FilesRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -232,7 +292,7 @@ func (h *SystemToolsHandler) FilesRename(w http.ResponseWriter, r *http.Request)
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("rename", req.From, fmt.Sprintf("rename -> %s", req.To))
+	h.emitEvent("rename", req.From, fmt.Sprintf("rename -> %s", req.To))
 	response.Success(w, nil)
 }
 
@@ -242,6 +302,12 @@ type filesCopyRequest struct {
 }
 
 // POST /api/system/files/copy
+// @Summary FilesCopy (Expert only)
+// @Description FilesCopy (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/copy [post]
 func (h *SystemToolsHandler) FilesCopy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -259,7 +325,7 @@ func (h *SystemToolsHandler) FilesCopy(w http.ResponseWriter, r *http.Request) {
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("copy", req.From, fmt.Sprintf("copy -> %s", req.To))
+	h.emitEvent("copy", req.From, fmt.Sprintf("copy -> %s", req.To))
 	response.Success(w, nil)
 }
 
@@ -269,6 +335,12 @@ type filesChmodRequest struct {
 }
 
 // POST /api/system/files/chmod
+// @Summary FilesChmod (Expert only)
+// @Description FilesChmod (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/chmod [post]
 func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -286,11 +358,17 @@ func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) 
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("chmod", req.Path, req.Mode)
+	h.emitEvent("chmod", req.Path, req.Mode)
 	response.Success(w, nil)
 }
 
 // GET /api/system/files/checksum?path=&algo=md5|sha256
+// @Summary FilesChecksum (Expert only)
+// @Description FilesChecksum (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/checksum [get]
 func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -315,6 +393,13 @@ func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Reques
 }
 
 // GET /api/system/files/download?path=
+// @Summary FilesDownload (Expert only)
+// @Description FilesDownload (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Param path query string false "Path"
+// @Router /api/system/files/download [get]
 func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -337,6 +422,13 @@ func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Reques
 }
 
 // POST /api/system/files/upload  multipart: file + path (target directory)
+// @Summary FilesUpload (Expert only)
+// @Description FilesUpload (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Param path query string false "Path"
+// @Router /api/system/files/upload [post]
 func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -345,7 +437,10 @@ func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request)
 	if !h.requireExpert(w, r) {
 		return
 	}
-	const maxMem = 12 << 20
+	const maxMem = 12 << 20 // 12 MB
+	// Protect against memory exhaustion DoS
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxUploadBytes())+1<<20)
+
 	if err := r.ParseMultipartForm(maxMem); err != nil {
 		response.Error(w, "invalid multipart form", "INVALID_FORM")
 		return
@@ -376,7 +471,7 @@ func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request)
 		h.filesError(w, err)
 		return
 	}
-	h.log.Info("upload", saved, fmt.Sprintf("%d bytes", len(data)))
+	h.emitEvent("upload", saved, fmt.Sprintf("%d bytes", len(data)))
 	response.Success(w, map[string]string{"path": saved})
 }
 
@@ -395,6 +490,12 @@ func (h *SystemToolsHandler) filesError(w http.ResponseWriter, err error) {
 }
 
 // GET /api/system/services/list
+// @Summary ServicesList (Expert only)
+// @Description ServicesList (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/services/list [get]
 func (h *SystemToolsHandler) ServicesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -417,6 +518,12 @@ type serviceActionRequest struct {
 }
 
 // POST /api/system/services/action
+// @Summary ServicesAction (Expert only)
+// @Description ServicesAction (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/services/action [post]
 func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -431,7 +538,7 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	out, err := h.services.RunAction(req.Script, req.Action)
-	h.log.Info(req.Action, req.Script, out)
+	h.emitEvent(req.Action, req.Script, out)
 	if err != nil {
 		response.Success(w, map[string]interface{}{
 			"output": out,
@@ -447,6 +554,12 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 }
 
 // GET /api/system/services/get?script=/opt/etc/init.d/S90name
+// @Summary ServicesGetScript (Expert only)
+// @Description ServicesGetScript (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/services/get [get]
 func (h *SystemToolsHandler) ServicesGetScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -477,6 +590,12 @@ type serviceSaveRequest struct {
 }
 
 // POST /api/system/services/save
+// @Summary ServicesSaveScript (Expert only)
+// @Description ServicesSaveScript (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/services/save [post]
 func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -505,7 +624,7 @@ func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.log.Info("save", req.ScriptName, fullPath)
+	h.emitEvent("save", req.ScriptName, fullPath)
 	response.Success(w, map[string]interface{}{
 		"ok":     true,
 		"script": fullPath,
@@ -517,6 +636,12 @@ type serviceDeleteRequest struct {
 }
 
 // POST /api/system/services/delete
+// @Summary ServicesDeleteScript (Expert only)
+// @Description ServicesDeleteScript (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/services/delete [post]
 func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -540,13 +665,19 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 		return
 	}
 
-	h.log.Info("delete", req.Script, "service deleted")
+	h.emitEvent("delete", req.Script, "service deleted")
 	response.Success(w, map[string]interface{}{
 		"ok": true,
 	})
 }
 
 // GET /api/system/opkg/installed
+// @Summary OpkgInstalled (Expert only)
+// @Description OpkgInstalled (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/installed [get]
 func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -564,6 +695,12 @@ func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Reques
 }
 
 // GET /api/system/opkg/upgradable
+// @Summary OpkgUpgradable (Expert only)
+// @Description OpkgUpgradable (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/upgradable [get]
 func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -581,6 +718,12 @@ func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Reque
 }
 
 // GET /api/system/opkg/search?q=
+// @Summary OpkgSearch (Expert only)
+// @Description OpkgSearch (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/search [get]
 func (h *SystemToolsHandler) OpkgSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -603,6 +746,12 @@ type opkgPackagesRequest struct {
 }
 
 // POST /api/system/opkg/update
+// @Summary OpkgUpdate (Expert only)
+// @Description OpkgUpdate (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/update [post]
 func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -612,7 +761,7 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out, err := h.opkg.Update()
-	h.log.Info("update", "", "opkg update")
+	h.emitEvent("update", "", "opkg update")
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -621,6 +770,12 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 }
 
 // POST /api/system/opkg/upgrade
+// @Summary OpkgUpgrade (Expert only)
+// @Description OpkgUpgrade (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/upgrade [post]
 func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -640,7 +795,7 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 	} else {
 		out, err = h.opkg.UpgradePackages(req.Packages)
 	}
-	h.log.Info("upgrade", strings.Join(req.Packages, ","), "opkg upgrade")
+	h.emitEvent("upgrade", strings.Join(req.Packages, ","), "opkg upgrade")
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -649,6 +804,12 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 }
 
 // POST /api/system/opkg/install
+// @Summary OpkgInstall (Expert only)
+// @Description OpkgInstall (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/install [post]
 func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -663,7 +824,7 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	out, err := h.opkg.Install(req.Packages)
-	h.log.Info("install", strings.Join(req.Packages, ","), "opkg install")
+	h.emitEvent("install", strings.Join(req.Packages, ","), "opkg install")
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -672,6 +833,12 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 }
 
 // GET /api/system/opkg/available?q=&offset=&limit=
+// @Summary OpkgAvailable (Expert only)
+// @Description OpkgAvailable (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/available [get]
 func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -697,6 +864,12 @@ func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Reques
 }
 
 // POST /api/system/opkg/remove
+// @Summary OpkgRemove (Expert only)
+// @Description OpkgRemove (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/opkg/remove [post]
 func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -711,7 +884,7 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out, err := h.opkg.Remove(req.Packages)
-	h.log.Info("remove", strings.Join(req.Packages, ","), "opkg remove")
+	h.emitEvent("remove", strings.Join(req.Packages, ","), "opkg remove")
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -720,6 +893,12 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 }
 
 // GET /api/system/ports/list
+// @Summary PortsList (Expert only)
+// @Description PortsList (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/ports/list [get]
 func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -737,6 +916,12 @@ func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/system/ports/inspect?port=&proto=
+// @Summary PortsInspect (Expert only)
+// @Description PortsInspect (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/ports/inspect [get]
 func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -770,13 +955,19 @@ func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request
 }
 
 type portKillRequest struct {
-	PID     int    `json:"pid"`
-	Signal  string `json:"signal,omitempty"` // "SIGTERM" or "SIGKILL"
-	Port    int    `json:"port,omitempty"`
-	Proto   string `json:"proto,omitempty"`
+	PID    int    `json:"pid"`
+	Signal string `json:"signal,omitempty"` // "SIGTERM" or "SIGKILL"
+	Port   int    `json:"port,omitempty"`
+	Proto  string `json:"proto,omitempty"`
 }
 
 // POST /api/system/ports/kill
+// @Summary PortsKill (Expert only)
+// @Description PortsKill (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/ports/kill [post]
 func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -803,7 +994,7 @@ func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "KILL_ERROR")
 		return
 	}
-	h.log.Info("kill_process", fmt.Sprintf("PID %d (signal %s, port %d)", req.PID, sig, req.Port), "process terminated")
+	h.emitEvent("kill_process", fmt.Sprintf("PID %d (signal %s, port %d)", req.PID, sig, req.Port), "process terminated")
 	response.Success(w, map[string]interface{}{
 		"pid":    req.PID,
 		"signal": sig,
@@ -850,7 +1041,6 @@ func findPIDsForPath(targetPath string) []int {
 		return pids
 	}
 	cleanTarget := filepath.Clean(targetPath)
-	baseName := filepath.Base(cleanTarget)
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -877,10 +1067,6 @@ func findPIDsForPath(targetPath string) []int {
 					matched = true
 					break
 				}
-				if strings.Contains(part, baseName) && (strings.HasSuffix(part, ".sh") || strings.HasPrefix(baseName, "S")) {
-					matched = true
-					break
-				}
 			}
 			if matched {
 				pids = append(pids, pid)
@@ -891,6 +1077,12 @@ func findPIDsForPath(targetPath string) []int {
 }
 
 // GET /api/system/files/script-status?path=
+// @Summary FilesScriptStatus (Expert only)
+// @Description FilesScriptStatus (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/script-status [get]
 func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -905,13 +1097,19 @@ func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	fi, err := os.Stat(path)
+	abs, _, err := h.files.Resolve(path)
+	if err != nil {
+		response.Error(w, "access denied", "ACCESS_DENIED")
+		return
+	}
+
+	fi, err := os.Stat(abs)
 	if err != nil || fi.IsDir() {
 		response.Success(w, ScriptStatusDTO{Path: path, IsScript: false})
 		return
 	}
 
-	isService, isScript, svcName := isScriptOrService(path, fi)
+	isService, isScript, svcName := isScriptOrService(abs, fi)
 	if !isScript && !isService {
 		response.Success(w, ScriptStatusDTO{Path: path, IsScript: false})
 		return
@@ -929,7 +1127,7 @@ func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Re
 		items, err := h.services.List()
 		if err == nil {
 			for _, item := range items {
-				if item.Script == path || item.Name == svcName {
+				if item.Script == abs || item.Name == svcName {
 					dto.Running = item.Running
 					dto.StatusText = item.StatusText
 					break
@@ -938,7 +1136,7 @@ func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	pids := findPIDsForPath(path)
+	pids := findPIDsForPath(abs)
 	dto.PIDs = pids
 	if len(pids) > 0 {
 		dto.Running = true
@@ -959,6 +1157,12 @@ type scriptActionRequest struct {
 }
 
 // POST /api/system/files/script-action
+// @Summary FilesScriptAction (Expert only)
+// @Description FilesScriptAction (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/files/script-action [post]
 func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -977,13 +1181,19 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	fi, err := os.Stat(req.Path)
+	abs, _, err := h.files.Resolve(req.Path)
+	if err != nil {
+		response.Error(w, "access denied", "ACCESS_DENIED")
+		return
+	}
+
+	fi, err := os.Stat(abs)
 	if err != nil {
 		response.Error(w, "file not found", "NOT_FOUND")
 		return
 	}
 
-	isService, isScript, svcName := isScriptOrService(req.Path, fi)
+	isService, isScript, svcName := isScriptOrService(abs, fi)
 	if !isScript && !isService {
 		response.Error(w, "file is not an executable script or service", "NOT_SCRIPT")
 		return
@@ -998,17 +1208,17 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 	var runErr error
 
 	if isService {
-		output, runErr = h.services.RunAction(filepath.Base(req.Path), action)
+		output, runErr = h.services.RunAction(filepath.Base(abs), action)
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		switch action {
 		case "start", "run":
 			var cmd *sysexec.Result
-			if strings.HasSuffix(req.Path, ".sh") || strings.HasSuffix(req.Path, ".bash") {
-				cmd, runErr = sysexec.Run(ctx, "/bin/sh", req.Path)
+			if strings.HasSuffix(abs, ".sh") || strings.HasSuffix(abs, ".bash") {
+				cmd, runErr = sysexec.Run(ctx, "/bin/sh", abs)
 			} else {
-				cmd, runErr = sysexec.Run(ctx, req.Path, req.Args...)
+				cmd, runErr = sysexec.Run(ctx, abs)
 			}
 			if cmd != nil {
 				output = cmd.Stdout
@@ -1017,7 +1227,7 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 				}
 			}
 		case "stop":
-			pids := findPIDsForPath(req.Path)
+			pids := findPIDsForPath(abs)
 			if len(pids) == 0 {
 				output = "No running processes found"
 			} else {
@@ -1027,13 +1237,17 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 				output = fmt.Sprintf("Stopped PIDs: %v", pids)
 			}
 		case "restart":
-			pids := findPIDsForPath(req.Path)
+			pids := findPIDsForPath(abs)
 			for _, pid := range pids {
 				_ = h.ports.KillProcess(pid, "SIGTERM")
 			}
 			time.Sleep(300 * time.Millisecond)
 			var cmd *sysexec.Result
-			cmd, runErr = sysexec.Run(ctx, "/bin/sh", req.Path)
+			if strings.HasSuffix(abs, ".sh") || strings.HasSuffix(abs, ".bash") {
+				cmd, runErr = sysexec.Run(ctx, "/bin/sh", abs)
+			} else {
+				cmd, runErr = sysexec.Run(ctx, abs)
+			}
 			if cmd != nil {
 				output = cmd.Stdout
 				if output == "" {
@@ -1059,7 +1273,7 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	h.log.Info("script_action", fmt.Sprintf("%s (%s)", req.Path, action), output)
+	h.emitEvent("script_action", fmt.Sprintf("%s (%s)", req.Path, action), output)
 
 	errStr := ""
 	if runErr != nil {
@@ -1076,6 +1290,12 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 }
 
 // ProcSnapshot returns current CPU, RAM, and process top list.
+// @Summary ProcSnapshot (Expert only)
+// @Description ProcSnapshot (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/proc/snapshot [post]
 func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -1095,6 +1315,12 @@ func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request
 }
 
 // ProcKill terminates a process by PID with signal.
+// @Summary ProcKill (Expert only)
+// @Description ProcKill (Expert only)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Router /api/system/proc/kill [post]
 func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -1125,7 +1351,7 @@ func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("proc_kill", strconv.Itoa(req.PID), fmt.Sprintf("Killed PID %d with %s", req.PID, req.Signal))
+	h.emitEvent("proc_kill", strconv.Itoa(req.PID), fmt.Sprintf("Killed PID %d with %s", req.PID, req.Signal))
 	response.Success(w, map[string]interface{}{
 		"pid":    req.PID,
 		"signal": req.Signal,

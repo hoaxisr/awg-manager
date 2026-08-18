@@ -237,6 +237,9 @@ func (c *Client) UpgradePackages(names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no packages specified")
 	}
+	if err := validatePkgNames(names); err != nil {
+		return "", err
+	}
 	args := append([]string{"upgrade"}, names...)
 	out, err := c.runLocked(args...)
 	if err == nil {
@@ -252,6 +255,9 @@ func (c *Client) Install(names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no packages specified")
 	}
+	if err := validatePkgNames(names); err != nil {
+		return "", err
+	}
 	args := append([]string{"install"}, names...)
 	out, err := c.runLocked(args...)
 	if err == nil {
@@ -266,6 +272,9 @@ func (c *Client) Install(names []string) (string, error) {
 func (c *Client) Remove(names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no packages specified")
+	}
+	if err := validatePkgNames(names); err != nil {
+		return "", err
 	}
 	args := append([]string{"remove"}, names...)
 	out, err := c.runLocked(args...)
@@ -392,4 +401,15 @@ func parseUpgradable(text string) []Package {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+var pkgNameRegex = regexp.MustCompile(`^[a-zA-Z0-9.\-_+]+$`)
+
+func validatePkgNames(names []string) error {
+	for _, name := range names {
+		if !pkgNameRegex.MatchString(name) {
+			return fmt.Errorf("invalid package name format: %q", name)
+		}
+	}
+	return nil
 }

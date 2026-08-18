@@ -26,7 +26,6 @@ var DefaultRoots = []Root{
 	{Path: "/opt/var", Label: "Entware /opt/var"},
 	{Path: "/opt", Label: "Entware /opt"},
 	{Path: "/tmp", Label: "Temp"},
-	{Path: "/", Label: "Filesystem /", ReadOnly: true},
 }
 
 // Sandbox resolves and validates paths against configured roots.
@@ -41,6 +40,9 @@ func NewSandbox(roots []Root) *Sandbox {
 	normalized := make([]Root, 0, len(roots))
 	for _, r := range roots {
 		p := filepath.Clean(r.Path)
+		if ep, err := filepath.EvalSymlinks(p); err == nil {
+			p = ep
+		}
 		normalized = append(normalized, Root{Path: p, ReadOnly: r.ReadOnly, Label: r.Label})
 	}
 	return &Sandbox{roots: normalized}
@@ -61,9 +63,16 @@ func (s *Sandbox) Resolve(requested string) (abs string, root Root, err error) {
 	if !filepath.IsAbs(clean) {
 		return "", Root{}, fmt.Errorf("path must be absolute")
 	}
+	
+	// Evaluate symlinks if file exists to prevent sandbox escape via symlinks
+	resolved := clean
+	if eval, err := filepath.EvalSymlinks(clean); err == nil {
+		resolved = eval
+	}
+
 	for _, r := range s.roots {
-		if pathWithin(clean, r.Path) {
-			return clean, r, nil
+		if pathWithin(resolved, r.Path) || pathWithin(clean, r.Path) {
+			return resolved, r, nil
 		}
 	}
 	return "", Root{}, ErrPathDenied

@@ -182,6 +182,12 @@ func (s *Sandbox) OpenDownload(path string) (io.ReadCloser, fs.FileInfo, error) 
 	if fi.IsDir() {
 		return nil, nil, fmt.Errorf("is a directory")
 	}
+	if !fi.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("not a regular file")
+	}
+	if fi.Size() > 50*1024*1024 {
+		return nil, nil, fmt.Errorf("file too large for download (max 50MB)")
+	}
 	f, err := os.Open(abs)
 	if err != nil {
 		return nil, nil, err
@@ -252,14 +258,16 @@ func (s *Sandbox) Chmod(path, modeOctal string) error {
 	if err != nil {
 		return err
 	}
-	modeOctal = strings.TrimPrefix(strings.TrimSpace(modeOctal), "0")
-	if modeOctal == "" {
+	modeStr := strings.TrimSpace(modeOctal)
+	if modeStr == "" {
 		return fmt.Errorf("mode required")
 	}
-	u, err := strconv.ParseUint(modeOctal, 8, 32)
+	u, err := strconv.ParseUint(modeStr, 8, 32)
 	if err != nil {
 		return fmt.Errorf("invalid mode: %w", err)
 	}
+	// Mask out SUID/SGID and sticky bits, allow only standard rwx (0777)
+	u = u & 0777
 	return os.Chmod(abs, fs.FileMode(u))
 }
 

@@ -4,6 +4,7 @@
 	import type { SystemCpuCore } from '$lib/api/clientSystem';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Card, Modal } from '$lib/components/ui';
+	import { formatBytes } from '$lib/utils/format';
 	import { errorMessage } from '$lib/utils/errorMessage';
 	import {
 		RefreshCw,
@@ -20,6 +21,8 @@
 		Pause,
 		Play,
 		Power,
+		Plus,
+		Check,
 	} from 'lucide-svelte';
 
 	// Master on/off state (persisted)
@@ -197,14 +200,6 @@
 		}
 	}
 
-	function formatBytes(bytes: number): string {
-		if (!bytes || bytes <= 0) return '0 B';
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-	}
-
 	function formatUptime(sec: number): string {
 		if (!sec) return '—';
 		const days = Math.floor(sec / 86400);
@@ -295,7 +290,11 @@
 						class:active={showKernelThreads}
 						onclick={() => (showKernelThreads = !showKernelThreads)}
 					>
-						{showKernelThreads ? '✓ Все потоки ядра' : '+ Показать потоки ядра'}
+						{#if showKernelThreads}
+							<Check size={14} class="icon-inline" /> Все потоки ядра
+						{:else}
+							<Plus size={14} class="icon-inline" /> Показать потоки ядра
+						{/if}
 					</button>
 
 					<div class="search-box">

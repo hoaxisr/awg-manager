@@ -32,16 +32,18 @@ export function handleVersionBadgeClick(options: {
 }): void {
 	const { usageLevel, hasUpdate, onSettingsPage } = options;
 
+	if (!onSettingsPage) return;
+
 	clickCount += 1;
 	scheduleReset();
 
-	// 5 Clicks: Unlock Pink Ponies!
-	if (clickCount === PONY_EASTER_EGG_CLICKS) {
-		poniesUnlocked.unlock();
-		notifications.success('🦄✨ Секретный раздел «Страна розовых пони» разблокирован в разделе «Система»!');
+	if (usageLevel === 'expert') {
+		// 5 Clicks: Unlock Pink Ponies!
+		if (clickCount === PONY_EASTER_EGG_CLICKS) {
+			poniesUnlocked.unlock();
+			notifications.success('🦄✨ Секретный раздел «Страна розовых пони» разблокирован в разделе «Система»!');
+		}
 	}
-
-	if (!onSettingsPage) return;
 
 	if (hasUpdate) {
 		settingsUpdateHighlight.pulse();

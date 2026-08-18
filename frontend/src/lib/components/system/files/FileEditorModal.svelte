@@ -3,7 +3,8 @@
 	import { Modal, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { errorMessage } from '$lib/utils/errorMessage';
-	import { Save, FileText, Play, RotateCw, Square, Check, Terminal, AlertCircle } from 'lucide-svelte';
+	import { formatBytes } from '$lib/utils/format';
+	import { Save, FileText, Play, RotateCw, Square, Check, Terminal, AlertCircle, X } from 'lucide-svelte';
 
 	interface Props {
 		open: boolean;
@@ -99,12 +100,6 @@
 			}, 0);
 		}
 	}
-
-	function formatBytes(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-	}
 </script>
 
 <Modal
@@ -183,7 +178,7 @@
 			<div class="script-output-banner">
 				<div class="banner-head">
 					<div class="head-title"><Terminal size={14} /> Вывод выполнения:</div>
-					<button type="button" class="btn-close-output" onclick={() => (lastOutput = null)}>✕</button>
+					<button type="button" class="btn-close-output" onclick={() => (lastOutput = null)}><X size={14} /></button>
 				</div>
 				<pre class="output-text">{lastOutput}</pre>
 			</div>

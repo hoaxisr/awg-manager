@@ -56,4 +56,18 @@ describe('handleVersionBadgeClick', () => {
 		expect(get(experimentalSettingsUnlocked)).toBe(true);
 		expect(notifications.success).toHaveBeenCalledWith('Экспериментальные настройки разблокированы');
 	});
+
+	it('unlocks pink ponies on the 5th click for expert mode', () => {
+		for (let i = 0; i < 5; i += 1) {
+			handleVersionBadgeClick({ usageLevel: 'expert', hasUpdate: false, onSettingsPage: true });
+		}
+		expect(notifications.success).toHaveBeenCalledWith('🦄✨ Секретный раздел «Страна розовых пони» разблокирован в разделе «Система»!');
+	});
+
+	it('does not unlock pink ponies for basic mode', () => {
+		for (let i = 0; i < 5; i += 1) {
+			handleVersionBadgeClick({ usageLevel: 'basic', hasUpdate: false, onSettingsPage: true });
+		}
+		expect(notifications.success).not.toHaveBeenCalled();
+	});
 });

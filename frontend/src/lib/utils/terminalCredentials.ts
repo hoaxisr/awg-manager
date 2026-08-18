@@ -10,7 +10,7 @@ export type TerminalAutoLogin = {
 
 export function loadTerminalAutoLogin(): TerminalAutoLogin | null {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = sessionStorage.getItem(STORAGE_KEY);
 		if (!raw) return null;
 		const parsed = JSON.parse(raw) as TerminalAutoLogin;
 		if (!parsed?.enabled || !parsed.login?.trim()) return null;
@@ -31,14 +31,14 @@ export function saveTerminalAutoLogin(value: TerminalAutoLogin): void {
 		enabled: value.enabled && !!value.login.trim(),
 	};
 	if (!payload.enabled) {
-		localStorage.removeItem(STORAGE_KEY);
+		sessionStorage.removeItem(STORAGE_KEY);
 		return;
 	}
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+	sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
 export function clearTerminalAutoLogin(): void {
-	localStorage.removeItem(STORAGE_KEY);
+	sessionStorage.removeItem(STORAGE_KEY);
 }
 
 type AutoLoginPhase = 'wait_login' | 'wait_password' | 'done';

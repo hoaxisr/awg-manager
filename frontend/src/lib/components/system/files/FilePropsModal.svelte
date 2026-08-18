@@ -4,6 +4,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { errorMessage } from '$lib/utils/errorMessage';
+	import { formatBytes } from '$lib/utils/format';
 	import { getFileTypeInfo } from './fileIcons';
 	import {
 		Copy,
@@ -157,12 +158,6 @@
 		} finally {
 			calculatingSha = false;
 		}
-	}
-
-	function formatBytes(b: number): string {
-		if (b < 1024) return `${b} байт`;
-		if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} КБ (${b.toLocaleString()} байт)`;
-		return `${(b / (1024 * 1024)).toFixed(2)} МБ (${b.toLocaleString()} байт)`;
 	}
 
 	async function copy(val: string) {
