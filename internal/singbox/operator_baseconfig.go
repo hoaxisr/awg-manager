@@ -88,6 +88,36 @@ const (
 	stepRemoveDNSFinal         = "remove-dns-final"
 )
 
+// reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
+type reconcileStep struct {
+	name string
+	run  func()
+}
+
+// reconcileConfigSteps — плоский именованный набор шагов примирения.
+// Гоняется каждый бут из NewOperator; каждый шаг идемпотентен и самогасится
+// проверкой «уже так — no-op».
+//
+// ЕДИНСТВЕННОЕ ограничение порядка — снаружи набора: MigrateLegacyConfigDir
+// обязан выполниться ПЕРВЫМ (создаёт config.d; иначе dns-блок легаси-конфига
+// скопируется дважды и configmerge отвергнет дубликаты тегов — см.
+// MigrateLegacyConfigDir в config.go). Внутри набора ограничений порядка нет:
+// шаги попарно коммутируют по конечному состоянию (закреплено
+// TestReconcileConfigSteps_CommuteReversed).
+func reconcileConfigSteps(dir, configPath, desiredLogLevel string, log *slog.Logger) []reconcileStep {
+	base := filepath.Join(configPath, "00-base.json")
+	tunnels := filepath.Join(configPath, "10-tunnels.json")
+	return []reconcileStep{
+		{stepEnsureBaseConfig, func() { ensureBaseConfigWithLogLevel(configPath, desiredLogLevel, log) }},
+		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
+		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
+		{stepOutboundCompat, func() { patchSlotOutboundCompat(tunnels, log) }},
+		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
+		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
+		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},
+	}
+}
+
 // readSlotJSON — общий пролог чтения шага примирения. «Файла нет» — норма
 // (молчаливый no-op, ok=false); «файл есть, но прочитать/распарсить не
 // смогли» — Warn с именем шага: молчаливый провал патчера оставляет демон
