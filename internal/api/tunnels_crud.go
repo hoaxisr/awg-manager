@@ -398,6 +398,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.Type = existing.Type
 	req.Enabled = existing.Enabled
 	req.ActiveWAN = existing.ActiveWAN
+	req.StartedAt = existing.StartedAt
 	req.Backend = existing.Backend
 	req.NWGIndex = existing.NWGIndex
 	if req.Name == "" {
