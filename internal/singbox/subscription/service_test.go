@@ -193,6 +193,17 @@ func (f *fakeMutator) GetClashSelectorActive(selectorTag string) (string, error)
 	}
 	return f.clashActiveByTag[selectorTag], nil
 }
+func (f *fakeMutator) SubscriptionOutbounds() []map[string]any {
+	var out []map[string]any
+	for tag, b := range f.bodies {
+		var ob map[string]any
+		if json.Unmarshal(b, &ob) == nil {
+			ob["tag"] = tag
+			out = append(out, ob)
+		}
+	}
+	return out
+}
 
 func TestService_Create_FetchAndMaterialize(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

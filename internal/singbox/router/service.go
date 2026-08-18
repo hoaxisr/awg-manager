@@ -562,6 +562,9 @@ func NewService(d Deps) *ServiceImpl {
 }
 
 func (s *ServiceImpl) routerConfigPath() string {
+	if s.deps.Singbox == nil {
+		return ""
+	}
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
 }
 
@@ -620,6 +623,9 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 			return nil, fmt.Errorf("load router config: %w", err)
 		}
 		return parseRouterConfigBytes(data)
+	}
+	if s.deps.Singbox == nil {
+		return NewEmptyConfig(), nil
 	}
 	// Legacy fallback (no orchestrator): read from active path directly.
 	activePath := s.routerConfigPath()

@@ -216,32 +216,83 @@ func (s *ServiceImpl) FakeIPListCompositeOutbounds(ctx context.Context) ([]Compo
 	return out, nil
 }
 
-func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error {
+func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error {
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
+	} else {
+		if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
+			return err
+		}
+		if err := s.validateEgressBindConflicts(o.Tag, o.Outbounds, egressBind); err != nil {
+			return err
+		}
 	}
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.AddCompositeOutbound(o)
-	})
+	}); err != nil {
+		return err
+	}
+	if !strings.EqualFold(o.Type, "direct") {
+		return s.applyCompositeEgressBind(ctx, nil, o.Outbounds, o.Tag, egressBind)
+	}
+	return nil
 }
 
-func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
+func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error {
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
+	} else if egressBind != nil {
+		if err := validateBindInterfaceOptional(ctx, s, *egressBind); err != nil {
+			return err
+		}
+		if err := s.validateEgressBindConflicts(tag, o.Outbounds, *egressBind); err != nil {
+			return err
+		}
 	}
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+
+	var oldMembers []string
+	if cfg, err := s.loadFakeIPConfig(); err == nil && cfg != nil {
+		for _, prev := range cfg.CompositeOutbounds() {
+			if prev.Tag == tag {
+				oldMembers = prev.Outbounds
+				break
+			}
+		}
+	}
+
+	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)
-	})
+	}); err != nil {
+		return err
+	}
+
+	if newTag := strings.TrimSpace(o.Tag); newTag != "" && newTag != tag {
+		if binds := s.compositeEgressBinds(); binds != nil {
+			if prev, ok := binds[tag]; ok {
+				_ = s.setCompositeEgressBind(newTag, prev)
+				_ = s.deleteCompositeEgressBind(tag)
+			}
+		}
+		tag = newTag
+	}
+
+	if strings.EqualFold(o.Type, "direct") || egressBind == nil {
+		if binds := s.compositeEgressBinds(); binds != nil && binds[tag] != "" {
+			return s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
+		}
+		return nil
+	}
+	return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, *egressBind)
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,
@@ -269,7 +320,26 @@ func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, 
 }
 
 func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
-	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) })
+	var oldMembers []string
+	if cfg, err := s.loadFakeIPConfig(); err == nil && cfg != nil {
+		for _, prev := range cfg.CompositeOutbounds() {
+			if prev.Tag == tag {
+				oldMembers = prev.Outbounds
+				break
+			}
+		}
+	}
+	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) }); err != nil {
+		return err
+	}
+	if len(oldMembers) > 0 {
+		if err := s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, ""); err != nil {
+			s.appLog.Warn("egress-bind", tag, "clear fakeip members bind on delete: "+err.Error())
+		}
+	} else {
+		_ = s.deleteCompositeEgressBind(tag)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -318,8 +388,8 @@ type FakeIPConfigService interface {
 
 	// Composite outbounds
 	FakeIPListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
-	FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error
-	FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error
+	FakeIPAddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error
+	FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error
 	FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 }
 

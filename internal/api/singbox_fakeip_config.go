@@ -895,16 +895,19 @@ func (h *SingboxFakeIPConfigHandler) AddOutbound(w http.ResponseWriter, r *http.
 		response.MethodNotAllowed(w)
 		return
 	}
-	var o router.Outbound
-	if err := decodeBody(r, &o); err != nil {
+	var req struct {
+		router.Outbound
+		EgressBind string `json:"egress_bind,omitempty"`
+	}
+	if err := decodeBody(r, &req); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), o); err != nil {
+	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), req.Outbound, req.EgressBind); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
-	h.log.Info("fakeip-outbound-add", o.Tag, "fakeip composite outbound added: "+o.Tag)
+	h.log.Info("fakeip-outbound-add", req.Tag, "fakeip composite outbound added: "+req.Tag)
 	response.Success(w, map[string]bool{"ok": true})
 }
 
@@ -927,14 +930,15 @@ func (h *SingboxFakeIPConfigHandler) UpdateOutbound(w http.ResponseWriter, r *ht
 		return
 	}
 	var body struct {
-		Tag      string          `json:"tag"`
-		Outbound router.Outbound `json:"outbound"`
+		Tag        string          `json:"tag"`
+		Outbound   router.Outbound `json:"outbound"`
+		EgressBind *string         `json:"egress_bind,omitempty"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPUpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound); err != nil {
+	if err := h.svc.FakeIPUpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound, body.EgressBind); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

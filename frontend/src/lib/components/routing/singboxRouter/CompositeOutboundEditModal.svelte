@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Dropdown, SegmentedControl, type DropdownOption } from '$lib/components/ui';
-	import BindInterfacePicker from '$lib/components/singbox/BindInterfacePicker.svelte';
+	import { BindInterfacePicker } from '$lib/components/singbox';
 	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';

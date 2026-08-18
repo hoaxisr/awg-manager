@@ -43,7 +43,7 @@ func TestFakeIPCompositeOutbound_RejectsUnknownMembers(t *testing.T) {
 
 	err := svc.FakeIPAddCompositeOutbound(ctx, Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"have", "ghost-1"},
-	})
+	}, "")
 	if err == nil {
 		t.Fatal("composite with unknown member must be rejected")
 	}
@@ -57,14 +57,14 @@ func TestFakeIPCompositeOutbound_RejectsUnknownMembers(t *testing.T) {
 	// Все члены известны (слотовые выходы) — принимается.
 	if err := svc.FakeIPAddCompositeOutbound(ctx, Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"have", "have2"},
-	}); err != nil {
+	}, ""); err != nil {
 		t.Fatalf("valid composite rejected: %v", err)
 	}
 
 	// Update с мёртвым членом — тоже отказ.
 	err = svc.FakeIPUpdateCompositeOutbound(ctx, "combo", Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"ghost-2", "ghost-3"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("update with unknown members must be rejected")
 	}

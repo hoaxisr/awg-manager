@@ -20,7 +20,7 @@
 		Zap
 	} from 'lucide-svelte';
 	import { Button, Dropdown } from '$lib/components/ui';
-	import BindInterfacePicker from '$lib/components/singbox/BindInterfacePicker.svelte';
+	import { BindInterfacePicker } from '$lib/components/singbox';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
 

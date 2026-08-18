@@ -1158,3 +1158,30 @@ func writeJSONFile(path string, data any) error {
 	}
 	return storage.AtomicWrite(path, raw)
 }
+
+// SanitizeMissingBindInterfaces strips bind_interface from outbounds if the
+// target interface is not present in the kernel (/sys/class/net), preventing
+// FATAL sing-box crash loops when interfaces (e.g. USB modems) disappear.
+func (c *Config) SanitizeMissingBindInterfaces(ifaceExists func(string) bool) bool {
+	if c == nil || c.raw == nil || ifaceExists == nil {
+		return false
+	}
+	obs, ok := c.raw["outbounds"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, item := range obs {
+		ob, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if bind, ok := ob["bind_interface"].(string); ok && strings.TrimSpace(bind) != "" {
+			if !ifaceExists(strings.TrimSpace(bind)) {
+				delete(ob, "bind_interface")
+				changed = true
+			}
+		}
+	}
+	return changed
+}

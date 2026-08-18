@@ -62,6 +62,3 @@
 	error={error}
 	onchange={(v) => onchange?.(v)}
 />
-
-<style>
-</style>

@@ -946,6 +946,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	prevBind := current.BindInterface
 	if patch.BindInterface != nil {
 		newBind := strings.TrimSpace(*patch.BindInterface)
+		patch.BindInterface = &newBind
 		if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
 			return nil, fmt.Errorf("subscription: %w", err)
 		}
@@ -961,21 +962,17 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// принудительный re-parse сохранённого paste-тела (обход short-circuit).
 	// refresh сам пересобирает group outbound, поэтому mode-ветка ниже
 	// в этом случае не нужна.
-	if filterChanged || bindChanged {
-		forceReparse := sub.IsInline() && (filterChanged || bindChanged)
+	if filterChanged {
+		forceReparse := sub.IsInline()
 		if _, err := s.refreshLockedOpts(context.Background(), id, forceReparse); err != nil {
-			// Компенсация: новый фильтр/интерфейс уже записан в store, но
+			// Компенсация: новый фильтр уже записан в store, но
 			// ре-материализация не удалась (фильтр скрывает всё, URL
 			// недоступен). Оставить его — значит ронять каждый плановый
 			// refresh той же ошибкой. Возвращаем прежние значения
 			// и отдаём ошибку — клиент видит, что сохранение не прошло.
-			rb := UpdatePatch{}
-			if filterChanged {
-				rb.FilterInclude = &prevInclude
-				rb.FilterExclude = &prevExclude
-			}
-			if bindChanged {
-				rb.BindInterface = &prevBind
+			rb := UpdatePatch{
+				FilterInclude: &prevInclude,
+				FilterExclude: &prevExclude,
 			}
 			if _, rbErr := s.store.Update(id, rb); rbErr != nil {
 				s.logWarn("subscription-update", id, "failed to restore previous settings after failed refresh: "+rbErr.Error())
@@ -983,6 +980,30 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 				s.logWarn("subscription-update", id, "settings change rolled back (refresh failed): "+err.Error())
 			}
 			return sub, fmt.Errorf("subscription: применение настроек: %w", err)
+		}
+		sub, err = s.store.Get(id)
+		if err != nil {
+			return nil, err
+		}
+	} else if bindChanged {
+		if sub.IsInline() {
+			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
+				rb := UpdatePatch{BindInterface: &prevBind}
+				if _, rbErr := s.store.Update(id, rb); rbErr != nil {
+					s.logWarn("subscription-update", id, "failed to restore previous settings after failed refresh: "+rbErr.Error())
+				}
+				return sub, fmt.Errorf("subscription: применение настроек: %w", err)
+			}
+		} else {
+			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
+			// Позволяет переключить uplink даже когда текущий интернет лежит.
+			if err := s.rematerializeMembersBind(context.Background(), sub); err != nil {
+				rb := UpdatePatch{BindInterface: &prevBind}
+				if _, rbErr := s.store.Update(id, rb); rbErr != nil {
+					s.logWarn("subscription-update", id, "failed to restore previous settings after failed rematerialize: "+rbErr.Error())
+				}
+				return sub, fmt.Errorf("subscription: применение bind_interface: %w", err)
+			}
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
@@ -1030,6 +1051,32 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	}
 	return sub, nil
+}
+
+func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription) error {
+	return s.withTx(func() error {
+		if adapter, ok := s.mutator.(interface{ SubscriptionOutbounds() []map[string]any }); ok {
+			obs := adapter.SubscriptionOutbounds()
+			tagSet := make(map[string]bool, len(sub.MemberTags))
+			for _, tag := range sub.MemberTags {
+				tagSet[tag] = true
+			}
+			for _, ob := range obs {
+				tag, _ := ob["tag"].(string)
+				if tagSet[tag] {
+					raw, err := json.Marshal(ob)
+					if err != nil {
+						continue
+					}
+					jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, raw, tag, sub.BindInterface)
+					if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return s.reloadWithGroups(ctx)
+	})
 }
 
 // ErrActiveMemberOnURLTest is returned by SetActiveMember when the

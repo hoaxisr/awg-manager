@@ -164,8 +164,8 @@ func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndms
 }
 
 // SetSettingsStore wires global settings for connectivity checks.
-func (h *SingboxHandler) SetSettingsStore(s *storage.SettingsStore) {
-	h.settingsStore = s
+func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
+	h.settingsStore = settings
 }
 
 // SetBindValidator wires the router's validateBindInterface for direct API tunnel saves.
@@ -620,7 +620,7 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "tag required")
 		return
 	}
-	
+
 	if h.bindValidator != nil {
 		var peek struct {
 			BindInterface string `json:"bind_interface"`

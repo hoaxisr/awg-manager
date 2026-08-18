@@ -14,7 +14,7 @@
 	import { untrack } from 'svelte';
 	import { showOutboundReferencedError } from '$lib/utils/outboundReferenced';
 	import { softCompileGoRegex } from '$lib/utils/subscriptionGroupPreview';
-	import BindInterfacePicker from '$lib/components/singbox/BindInterfacePicker.svelte';
+	import { BindInterfacePicker } from '$lib/components/singbox';
 
 	interface Props {
 		subscription: Subscription;

@@ -623,7 +623,17 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 }
 
 func (o *Operator) loadConfig() (*Config, error) {
-	return LoadConfig(o.tunnelsFile())
+	cfg, err := LoadConfig(o.tunnelsFile())
+	if err != nil {
+		return nil, err
+	}
+	if cfg.SanitizeMissingBindInterfaces(kernelInterfaceExists) {
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Warn("tunnels", "", "sanitized missing bind_interface in 10-tunnels.json")
+		}
+		_ = cfg.Save(o.tunnelsFile())
+	}
+	return cfg, nil
 }
 
 // HasUserTunnels reports whether 10-tunnels.json defines at least one

@@ -165,8 +165,13 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound, egre
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
-	} else if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
-		return err
+	} else {
+		if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
+			return err
+		}
+		if err := s.validateEgressBindConflicts(o.Tag, o.Outbounds, egressBind); err != nil {
+			return err
+		}
 	}
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
@@ -176,12 +181,7 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound, egre
 	}); err != nil {
 		return err
 	}
-	
-	if !strings.EqualFold(o.Type, "direct") {
-		if err := s.validateEgressBindConflicts(o.Tag, o.Outbounds, egressBind); err != nil {
-			return err
-		}
-	}
+
 	if !strings.EqualFold(o.Type, "direct") {
 		return s.applyCompositeEgressBind(ctx, nil, o.Outbounds, o.Tag, egressBind)
 	}
@@ -197,18 +197,21 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		if err := validateBindInterfaceOptional(ctx, s, *egressBind); err != nil {
 			return err
 		}
+		if err := s.validateEgressBindConflicts(tag, o.Outbounds, *egressBind); err != nil {
+			return err
+		}
 	}
-	
+
 	var oldMembers []string
 	if cfg, err := s.loadRouterConfig(); err == nil && cfg != nil {
-		for _, o := range cfg.CompositeOutbounds() {
-			if o.Tag == tag {
-				oldMembers = o.Outbounds
+		for _, prev := range cfg.CompositeOutbounds() {
+			if prev.Tag == tag {
+				oldMembers = prev.Outbounds
 				break
 			}
 		}
 	}
-	
+
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
@@ -217,12 +220,7 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 	}); err != nil {
 		return err
 	}
-	
-	if egressBind != nil && !strings.EqualFold(o.Type, "direct") {
-		if err := s.validateEgressBindConflicts(tag, o.Outbounds, *egressBind); err != nil {
-			return err
-		}
-	}
+
 	// A rename rewrites config references (renameOutboundReferences inside
 	// UpdateCompositeOutbound); mirror it for the settings-side QoS classes.
 	if newTag := strings.TrimSpace(o.Tag); newTag != "" && newTag != tag {
@@ -237,10 +235,15 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		}
 		tag = newTag
 	}
-	if !strings.EqualFold(o.Type, "direct") && egressBind != nil {
-		return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, *egressBind)
+
+	if strings.EqualFold(o.Type, "direct") || egressBind == nil {
+		// If group changed to direct, or egressBind is omitted, clear any previous egressBind for this tag
+		if binds := s.compositeEgressBinds(); binds != nil && binds[tag] != "" {
+			return s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
+		}
+		return nil
 	}
-	return nil
+	return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, *egressBind)
 }
 
 func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
@@ -260,14 +263,16 @@ func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, f
 			}
 		}
 	}
-	
+
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) }); err != nil {
 		return err
 	}
-	
+
 	// Clear bind from all members
 	if len(oldMembers) > 0 {
-		_ = s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
+		if err := s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, ""); err != nil {
+			s.appLog.Warn("egress-bind", tag, "clear members bind on delete: "+err.Error())
+		}
 	} else {
 		_ = s.deleteCompositeEgressBind(tag)
 	}
