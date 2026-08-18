@@ -2,8 +2,10 @@ package livetest
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/procres"
 )
 
@@ -230,3 +233,70 @@ func (deadRunner) AlivePID() (int, bool)                        { return 0, fals
 type passGate struct{}
 
 func (passGate) Check(context.Context, string, string, string, []string) error { return nil }
+
+// nopRole/nopJournal — инстансу в этом тесте считать нечего: проверяется
+// владение связью, а не реконсиляция.
+type nopRole struct{}
+
+func (nopRole) Resources(proxyrt.Intent, any, proxyrt.Observations) []proxyrt.Resource { return nil }
+
+type nopJournal struct{}
+
+func (nopJournal) Info(string, string, string) {}
+func (nopJournal) Warn(string, string, string) {}
+
+// linkWatchers — сколько горутин control.(*Link).watch сейчас живо. Прямая
+// улика утечки: наблюдатель заканчивается только после закрытия соединения,
+// то есть отпущенного unix-сокета.
+func linkWatchers() int {
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), "control.(*Link).watch(")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+func TestLiveInstanceStopReleasesLink(t *testing.T) {
+	// Инстанс кончается на Stop — связь обязана кончиться вместе с ним.
+	// Иначе каждый цикл «удалить инстанс» (ручки API плана 5) оставляет
+	// горутину watch и открытый сокет.
+	sock := filepath.Join(t.TempDir(), "wt-client-client-it.sock")
+	startDouble(t, sock, baseState(nil))
+
+	before := linkWatchers()
+	link := newLink(t, sock, nil)
+	if _, err := link.State(context.Background()); err != nil {
+		t.Fatal(err) // соединение поднято, наблюдатель заведён
+	}
+	if got := linkWatchers(); got != before+1 {
+		t.Fatalf("наблюдатель связи не поднялся — тест ничего не доказывает: было %d, стало %d", before, got)
+	}
+
+	inst := instance.New(instance.Config{
+		ID: "it", Role: nopRole{},
+		Cfg:     func() any { return nil },
+		Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+		Link:    link,
+		States:  proxyrt.NewStateStore(nil, nil),
+		Journal: nopJournal{},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inst.Start(ctx)
+	inst.Stop()
+
+	// Срок обязателен: тест, который «висит», обязан падать сам.
+	deadline := time.Now().Add(2 * time.Second)
+	for linkWatchers() > before {
+		if time.Now().After(deadline) {
+			t.Fatal("после Stop наблюдатель связи жив: горутина watch и unix-сокет утекли")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := link.State(context.Background()); !errors.Is(err, control.ErrClosed) {
+		t.Fatalf("после Stop связь обязана быть закрыта навсегда: %v", err)
+	}
+}
