@@ -8822,7 +8822,15 @@ const server = http.createServer(async (req, res) => {
 						sendData(res, { id: inst.id, name: inst.name, config: inst.config });
 						return;
 					}
-					inst.config = { ...inst.config, ...body };
+					// Абонентов правит только ручка /users: конфиг формы держит их
+					// снапшотом времени загрузки страницы, и Go берёт состав из
+					// хранилища (`UpdateServerInstance`, server.go:41).
+					const clients = inst.config.clients;
+					inst.config = { ...inst.config, ...body, clients };
+					// Первая опора инварианта непустоты (server.go:76): сервер с
+					// заданным паролем и нулём рабочих абонентов заводит «Абонент 1»
+					// сам — иначе wdtt-server не стартует.
+					mockWdttEnsureUsable(inst);
 					sendData(res, { config: inst.config });
 				} catch (e) {
 					sendInvalidRequest(res, e);
@@ -8979,9 +8987,22 @@ const server = http.createServer(async (req, res) => {
 					try {
 						const body = raw ? JSON.parse(raw) : {};
 						const password = body.password?.trim() || `gen${Date.now().toString(16)}`;
+						// Эффективный главный пароль: сохранённый, а при пустом —
+						// присланный формой (AddServerClient, server_clients.go:286).
+						const main =
+							String(inst.config.password ?? '').trim() ||
+							String(body.mainPassword ?? '').trim();
+						if (!main) {
+							sendBackendError(
+								res,
+								'сначала задайте пароль сервера',
+								'WDTT_SERVER_CLIENT_ADD_FAILED',
+							);
+							return;
+						}
 						// Пароль абонента == главному — отказ (addServerClientLocked,
 						// server_clients.go:339): такую запись сервер не примет.
-						if (password === String(inst.config.password ?? '').trim()) {
+						if (password === main) {
 							sendBackendError(
 								res,
 								'пароль совпадает с главным паролем сервера — задайте абоненту другой пароль',
@@ -9003,7 +9024,7 @@ const server = http.createServer(async (req, res) => {
 							...(body.vkHash ? { vkHash: body.vkHash } : {}),
 							isDeactivated: false,
 							isExpired: false,
-							isMainPassword: password === inst.config.password,
+							isMainPassword: password === main,
 							isAuto: false,
 						});
 						inst.config.clients.push({
@@ -9011,6 +9032,11 @@ const server = http.createServer(async (req, res) => {
 							comment: body.comment?.trim() || '',
 							...(body.vkHash ? { vkHash: body.vkHash } : {}),
 						});
+						// Побочный эффект «дописать пароль сервера, если он пуст» —
+						// ПОСЛЕ абонента (server_clients.go:307-310): иначе опора
+						// непустоты завела бы автоматического абонента рядом с
+						// заказанным.
+						if (!String(inst.config.password ?? '').trim()) inst.config.password = main;
 						// Мутация сама пишет passwords.json (writeServerClientsFile),
 						// поэтому список доступен и на остановленном сервере.
 						inst.usersAvailable = true;

@@ -86,13 +86,21 @@ export function wdttCardBlock(o: {
 }
 
 /**
+ * Верхняя граница порта WDTT-сервера: Raw-половина занимает СЛЕДУЮЩИЙ порт
+ * (`internal/wdtt/ports.go`), и для 65535 его уже не существует.
+ */
+const MAX_WDTT_PORT = 65534;
+
+/**
  * WS-19: Raw-половина занимает следующий порт за DTLS (`internal/wdtt/ports.go`).
  * Число считается от введённого порта и пересчитывается при вводе — литералом
- * его зашивать нельзя (оговорка факт-чека к WS-19).
+ * его зашивать нельзя (оговорка факт-чека к WS-19). Порт, для которого
+ * Raw-половины не существует, подсказку не считает: она соврала бы.
  */
 export function rawPortHint(port: string): string {
 	const dtls = Number(port.trim());
-	const raw = Number.isInteger(dtls) && dtls > 0 && dtls < 65535 ? dtls + 1 : DEFAULT_WDTT_PORT + 1;
+	const raw =
+		Number.isInteger(dtls) && dtls > 0 && dtls <= MAX_WDTT_PORT ? dtls + 1 : DEFAULT_WDTT_PORT + 1;
 	return `Raw-половина займёт следующий порт — ${raw}`;
 }
 
@@ -110,9 +118,10 @@ export interface ShareWizardFields {
 	obfKey: string;
 }
 
-function validPort(port: string): boolean {
+function validPort(port: string, protocol: ProxyProtocol): boolean {
 	const n = Number(port.trim());
-	return Number.isInteger(n) && n > 0 && n <= 65535;
+	// У WDTT порт не последний: следом идёт Raw-половина (WS-19).
+	return Number.isInteger(n) && n > 0 && n <= (protocol === 'wdtt' ? MAX_WDTT_PORT : 65535);
 }
 
 /**
@@ -127,7 +136,7 @@ export function shareStep2Ready(s: {
 	port: string;
 	connect: string;
 }): boolean {
-	if (!validPort(s.port)) return false;
+	if (!validPort(s.port, s.protocol)) return false;
 	return s.protocol === 'wdtt' ? !!s.password.trim() : !!s.connect.trim();
 }
 
@@ -227,23 +236,35 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 			cfg = inst.config;
 			input.oncreated?.({ id, config: cfg });
 		}
+
+		// Абонент заводится ПЕРЕД сохранением конфига и сам приносит главный
+		// пароль: `AddServerClient` дописывает его ПОСЛЕ абонента
+		// (server_clients.go:307-310). Обратный порядок означал бы PUT с
+		// непустым паролем и нулём абонентов — а это первая опора инварианта
+		// (`UpdateServerInstance`, server.go:76), и рядом с заказанным
+		// абонентом встал бы автоматический «Абонент 1», которому и ушла бы
+		// ссылка.
+		let password = input.addedClientPassword ?? '';
+		if (!password) {
+			const before = cfg.clients ?? [];
+			const st = await api.addWdttServerPanelUser(id, {
+				password: client.password.trim() || undefined,
+				comment: client.name.trim() || undefined,
+				vkHash: client.vkHash.trim() || undefined,
+				mainPassword: fields.password.trim(),
+			});
+			// Заданный руками пароль знаем и без сверки состава; сгенерированный
+			// ищем как запись, которой до добавления не было.
+			password = client.password.trim() || addedPassword(before, st.users ?? []);
+			input.onclientadded?.(password);
+		}
+
 		cfg.password = fields.password.trim();
 		cfg.listen = setListenPort(cfg.listen || `0.0.0.0:${DEFAULT_WDTT_PORT}`, port);
 		cfg.openFirewall = fields.firewall;
 		const saved = await api.updateWdttServerInstance(id, cfg);
 		cfg = saved.config;
 		input.oncreated?.({ id, config: cfg });
-
-		let password = input.addedClientPassword ?? '';
-		if (!password) {
-			const st = await api.addWdttServerPanelUser(id, {
-				password: client.password.trim() || undefined,
-				comment: client.name.trim() || undefined,
-				vkHash: client.vkHash.trim() || undefined,
-			});
-			password = addedPassword([], st.users ?? []);
-			input.onclientadded?.(password);
-		}
 
 		await api.startWdttServerInstance(id);
 		if (!input.withLink) return { id, protocol: 'wdtt', link: '', linkQwdtt: '' };

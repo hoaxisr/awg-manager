@@ -41,6 +41,12 @@
 		ftServer?: FreeTurnServerConfig;
 		/** WS-02: выход из мастера. */
 		onclose: () => void;
+		/**
+		 * Перечитать список инстансов: сервер, созданный прошлой попыткой, при
+		 * смене протокола остаётся на бэкенде — в списке страницы он обязан быть
+		 * виден, а занятая им карточка WDTT — закрыться (WS-11).
+		 */
+		onreload?: () => Promise<void> | void;
 		/** Сервер настроен и запущен — страница уводит в его деталь. */
 		ondone: (protocol: ProxyProtocol, id: string) => Promise<void> | void;
 	}
@@ -54,6 +60,7 @@
 		wdttServer,
 		ftServer,
 		onclose,
+		onreload,
 		ondone,
 	}: Props = $props();
 
@@ -95,23 +102,31 @@
 		})),
 	);
 
-	let client = $state<ShareWizardClient>({
-		name: 'Абонент 1',
-		password: '',
-		vkHash: '',
-		clientId: randomHex(16),
-		allow: true,
-	});
+	/** Дефолт имени первого абонента — только у WDTT (ia.md §3.4). */
+	const WDTT_CLIENT_NAME = 'Абонент 1';
+
+	let client = $state<ShareWizardClient>(
+		untrack(() => ({
+			name: protocol === 'wdtt' ? WDTT_CLIENT_NAME : '',
+			password: '',
+			vkHash: '',
+			clientId: randomHex(16),
+			allow: true,
+		})),
+	);
 
 	let peer = $state('');
 	let peerConf = $state('');
 	let wanBusy = $state(false);
 
 	// Сервер, созданный этим мастером, и заведённый им абонент: повтор после
-	// отказа правит их, а не плодит вторых.
-	let created = $state<{ id: string; config: WdttServerConfig | FreeTurnServerConfig } | null>(
-		null,
-	);
+	// отказа правит их, а не плодит вторых. Протокол хранится вместе с сервером:
+	// после смены протокола этот сервер — чужой, и слать в него правки нельзя.
+	let created = $state<{
+		id: string;
+		protocol: ProxyProtocol;
+		config: WdttServerConfig | FreeTurnServerConfig;
+	} | null>(null);
 	let addedClientPassword = $state('');
 
 	let link = $state('');
@@ -126,7 +141,7 @@
 
 	/** Мастер настраивает открытый инстанс, только если протокол не сменили. */
 	function existing() {
-		if (created) return created;
+		if (created) return created.protocol === protocol ? created : undefined;
 		const cfg = protocol === 'wdtt' ? wdttServer : ftServer;
 		if (!row || row.protocol !== protocol || !cfg) return undefined;
 		return { id: row.id, config: cloneConfig(cfg) };
@@ -134,8 +149,16 @@
 
 	function pickProtocol(p: ProxyProtocol) {
 		if (p === protocol) return;
+		const orphan = created && created.protocol !== p;
 		protocol = p;
 		fields.port = String(nextSharePort(p, usedPorts));
+		// Имя абонента правит пользователь: сбрасываем только нетронутый дефолт.
+		if (!client.name.trim() || client.name === WDTT_CLIENT_NAME) {
+			client.name = p === 'wdtt' ? WDTT_CLIENT_NAME : '';
+		}
+		// Сервер прошлой попытки остаётся на бэкенде — показываем его в списке
+		// страницы, а не умалчиваем.
+		if (orphan) void onreload?.();
 	}
 
 	async function fillWan() {
@@ -153,15 +176,19 @@
 		busy = true;
 		linkMissing = false;
 		try {
+			// FreeTurn собирает ссылку из конфига пира: без него абонент получил
+			// бы ссылку без WG-конфига и не понял бы, чего в ней не хватает.
+			// Сервер запускаем, ссылку — нет (WS-44).
+			const wantLink = withLink && (protocol === 'wdtt' || !!peerConf.trim());
 			const res = await commitShareWizard({
 				protocol,
 				fields,
 				client,
-				withLink,
+				withLink: wantLink,
 				peer,
 				peerConf,
 				existing: existing(),
-				oncreated: (c) => (created = c),
+				oncreated: (c) => (created = { ...c, protocol }),
 				addedClientPassword: addedClientPassword || undefined,
 				onclientadded: (p) => (addedClientPassword = p),
 			});
@@ -183,7 +210,7 @@
 
 	/** Выход: если сервер уже заведён, уводим в его деталь, а не в пустоту. */
 	function leave() {
-		if (created) void ondone(protocol, created.id);
+		if (created) void ondone(created.protocol, created.id);
 		else onclose();
 	}
 </script>
@@ -197,11 +224,14 @@
 	<WizardSteps steps={STEPS} current={step} {canNext} ongo={(i) => (step = i)}>
 		{#if step === 0}
 			<div class="choices">
+				<!-- Заблокированная карточка не выбирается: выбрать её означало бы
+				     упереться в погасшую «Дальше» без объяснения. -->
 				<button
 					type="button"
 					class="choice"
 					class:selected={protocol === 'wdtt'}
 					class:blocked={!!wdttBlock}
+					disabled={!!wdttBlock}
 					onclick={() => pickProtocol('wdtt')}
 				>
 					<span class="choice-head">
@@ -262,7 +292,8 @@
 			{:else}
 				<div class="grid">
 					<Input label="Client ID" bind:value={client.clientId} fullWidth />
-					<Input label="Комментарий" bind:value={client.name} fullWidth />
+					<!-- SH-39: у абонента имя, а не комментарий (Дополнение №4 п.2). -->
+					<Input label="Имя абонента" bind:value={client.name} fullWidth />
 				</div>
 				<div class="toggle-row">
 					<Toggle
@@ -361,6 +392,10 @@
 
 	.choice.blocked {
 		opacity: 0.7;
+	}
+
+	.choice:disabled {
+		cursor: default;
 	}
 
 	.choice-head {

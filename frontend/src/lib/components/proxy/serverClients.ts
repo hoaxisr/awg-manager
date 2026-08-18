@@ -178,9 +178,13 @@ export function reissueName(
 	return `${base} (${n})`;
 }
 
-/** Пароль записи, появившейся после добавления: бэкенд его не возвращает. */
+/**
+ * Пароль записи, появившейся после добавления: бэкенд его не возвращает.
+ * До-список берётся и из состава панели, и из `clients` конфига сервера —
+ * сверяется только пароль.
+ */
 export function addedPassword(
-	before: WdttPanelUserEntry[],
+	before: { password: string }[],
 	after: WdttPanelUserEntry[],
 ): string {
 	const known = new Set(before.map((u) => u.password));

@@ -34,11 +34,15 @@
 	let selected = $state('');
 	let loading = $state(false);
 	// svelte-ignore state_referenced_locally -- стартовое значение поля порта
-	let port = $state(String(endpointPort));
+	// Порт неизвестен (клиента FreeTurn на роутере нет или их несколько) —
+	// поле пустое: подставлять чужой порт молча нельзя.
+	let port = $state(endpointPort > 0 ? String(endpointPort) : '');
 	/** Пир заведён в Keenetic OS: приватного ключа у нас нет (WS-28). */
 	let keenetic = $state(false);
 	/** Конфиг, вставленный руками в ветке Keenetic. */
 	let manualConf = $state('');
+	/** .conf пира, полученный из API: он и есть источник для перепатчивания. */
+	let fetchedConf = $state('');
 
 	const options = $derived(buildRunningServerPeerDropdownOptions(snap));
 
@@ -48,20 +52,23 @@
 		return unsub;
 	});
 
-	// Порт правится после выбора пира — Endpoint в уже полученном .conf
-	// пересобирается под новое значение.
+	// Единственное место, откуда .conf уходит наверх: и полученный из API, и
+	// вставленный руками пересобираются здесь. Порт правится ПОСЛЕ выбора пира —
+	// значит источник обязан храниться, иначе Endpoint в ссылке остаётся со
+	// старым портом (в мастере конфиг невидим, и заметить это негде).
 	$effect(() => {
-		const localPort = Number(port) || endpointPort;
-		const conf = manualConf.trim();
-		untrack(() => {
-			if (!keenetic) return;
-			onpeerconf(conf ? patchWgConfEndpoint(conf, localPort) : '');
-		});
+		const localPort = Number(port.trim()) || endpointPort;
+		const src = (keenetic ? manualConf : fetchedConf).trim();
+		// Без порта Endpoint собрался бы как `127.0.0.1:0` — конфиг с таким
+		// адресом абоненту отдавать нельзя, лучше не отдавать конфиг вовсе.
+		const ok = Number.isInteger(localPort) && localPort > 0 && localPort <= 65535;
+		untrack(() => onpeerconf(src && ok ? patchWgConfEndpoint(src, localPort) : ''));
 	});
 
 	async function pick(value: string) {
 		selected = value;
 		manualConf = '';
+		fetchedConf = '';
 		if (!value || !snap) return;
 		loading = true;
 		try {
@@ -76,15 +83,11 @@
 				?.find((s) => s.id === serverId)
 				?.peers?.find((p) => p.publicKey === pubkey);
 			keenetic = kind === 'system' && peer?.confAvailable !== true;
-			if (keenetic) {
-				onpeerconf('');
-				return;
-			}
-			const conf =
+			if (keenetic) return;
+			fetchedConf =
 				kind === 'system'
 					? await api.getSystemServerPeerConf(serverId, pubkey)
 					: await api.getManagedPeerConf(serverId, pubkey);
-			onpeerconf(patchWgConfEndpoint(conf, Number(port) || endpointPort));
 		} catch (e) {
 			notifications.error(errText(e));
 		} finally {

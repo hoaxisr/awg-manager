@@ -1,6 +1,17 @@
-import { describe, it, expect } from 'vitest';
-import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { FreeTurnServerConfig, WdttPanelUserEntry, WdttServerConfig } from '$lib/types';
+
+const apiMock = vi.hoisted(() => ({
+	createWdttServer: vi.fn(),
+	updateWdttServerInstance: vi.fn(),
+	addWdttServerPanelUser: vi.fn(),
+	startWdttServerInstance: vi.fn(),
+	generateWdttServerLink: vi.fn(),
+}));
+vi.mock('$lib/api/client', () => ({ api: apiMock }));
+
 import {
+	commitShareWizard,
 	nextSharePort,
 	peerWithPort,
 	rawPortHint,
@@ -64,6 +75,17 @@ describe('shareStep2Ready: критерий старта бэкенда', () => 
 		).toBe(true);
 	});
 
+	it('WDTT: 65535 отвергается — Raw-половине занять нечего', () => {
+		const wdtt = { protocol: 'wdtt' as const, password: 'main', connect: '' };
+		expect(shareStep2Ready({ ...wdtt, port: '65535' })).toBe(false);
+		expect(shareStep2Ready({ ...wdtt, port: '65534' })).toBe(true);
+	});
+
+	it('FreeTurn: порт один, 65535 допустим', () => {
+		const ft = { protocol: 'freeturn' as const, password: '', connect: '127.0.0.1:1' };
+		expect(shareStep2Ready({ ...ft, port: '65535' })).toBe(true);
+	});
+
 	it('порт вне диапазона отвергается у обоих', () => {
 		expect(shareStep2Ready({ protocol: 'wdtt', password: 'main', port: '0', connect: '' })).toBe(
 			false,
@@ -119,5 +141,132 @@ describe('peerWithPort: адрес ссылки', () => {
 	it('свой порт не перебивается, пустой адрес остаётся пустым', () => {
 		expect(peerWithPort('example.org:1234', 56002)).toBe('example.org:1234');
 		expect(peerWithPort('  ', 56002)).toBe('');
+	});
+});
+
+/**
+ * Первая опора инварианта бэкенда (`UpdateServerInstance`, server.go:76):
+ * сохранение конфига с непустым паролем и нулём рабочих абонентов заводит
+ * автоматического «Абонента 1». Двойник повторяет её и побочный эффект
+ * `AddServerClient` (server_clients.go:307-310), иначе тест не отличил бы
+ * правильный порядок от неправильного.
+ */
+function fakeWdttBackend() {
+	const state = {
+		password: '',
+		clients: [] as { password: string; comment: string; auto: boolean }[],
+		calls: [] as string[],
+	};
+	const entries = (): WdttPanelUserEntry[] =>
+		state.clients.map((c) => ({
+			password: c.password,
+			comment: c.comment,
+			isDeactivated: false,
+			isExpired: false,
+			isMainPassword: c.password === state.password,
+			isAuto: c.auto,
+		}));
+	const usable = () => state.clients.filter((c) => c.password !== state.password).length;
+
+	apiMock.createWdttServer.mockImplementation(async () => {
+		state.calls.push('create');
+		return { id: 's1', name: 'Раздача', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '', clients: [] } };
+	});
+	apiMock.updateWdttServerInstance.mockImplementation(async (_id: string, cfg: WdttServerConfig) => {
+		state.calls.push('put');
+		state.password = (cfg.password ?? '').trim();
+		if (state.password && usable() === 0) {
+			state.clients.push({ password: 'auto-1', comment: 'Абонент 1', auto: true });
+		}
+		return { config: { ...cfg, clients: state.clients } };
+	});
+	apiMock.addWdttServerPanelUser.mockImplementation(
+		async (_id: string, opts: { password?: string; comment?: string; mainPassword?: string }) => {
+			state.calls.push('add');
+			const main = state.password || (opts.mainPassword ?? '').trim();
+			if (!main) throw new Error('сначала задайте пароль сервера');
+			state.clients.push({
+				password: opts.password || 'gen-1',
+				comment: opts.comment ?? '',
+				auto: false,
+			});
+			if (!state.password) state.password = main;
+			return { available: true, users: entries(), reload: 'delivered' as const };
+		},
+	);
+	apiMock.startWdttServerInstance.mockImplementation(async () => {
+		state.calls.push('start');
+	});
+	apiMock.generateWdttServerLink.mockImplementation(async () => ({
+		link: 'wdtt://x',
+		linkQwdtt: 'qwdtt://x',
+	}));
+	return state;
+}
+
+describe('commitShareWizard: WDTT — ссылку получает заведённый абонент', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const fields = {
+		password: 'mainpass0000',
+		port: '56002',
+		firewall: true,
+		connect: '',
+		obfProfile: 'none' as const,
+		obfKey: '',
+	};
+	const client = { name: 'Ноутбук Пети', password: '', vkHash: '', clientId: '', allow: true };
+
+	it('абонент заводится ДО сохранения пароля — второго, автоматического, не появляется', async () => {
+		const state = fakeWdttBackend();
+		const res = await commitShareWizard({
+			protocol: 'wdtt',
+			fields,
+			client,
+			withLink: true,
+			peer: '203.0.113.10',
+		});
+
+		expect(state.calls).toEqual(['create', 'add', 'put', 'start']);
+		expect(state.clients.map((c) => c.comment)).toEqual(['Ноутбук Пети']);
+		expect(apiMock.addWdttServerPanelUser.mock.calls[0][1]).toMatchObject({
+			mainPassword: 'mainpass0000',
+			comment: 'Ноутбук Пети',
+		});
+		// WS-29: ссылка собрана на пароль абонента шага 3, а не автоматического.
+		expect(apiMock.generateWdttServerLink.mock.calls[0][1]).toMatchObject({ password: 'gen-1' });
+		expect(res.link).toBe('wdtt://x');
+	});
+
+	it('заданный руками пароль абонента уходит в ссылку как есть', async () => {
+		fakeWdttBackend();
+		await commitShareWizard({
+			protocol: 'wdtt',
+			fields,
+			client: { ...client, password: 'petya12345678' },
+			withLink: true,
+			peer: '',
+		});
+		expect(apiMock.generateWdttServerLink.mock.calls[0][1]).toMatchObject({
+			password: 'petya12345678',
+		});
+	});
+
+	it('повтор после отказа абонента не заводит: ссылка идёт на пароль прошлой попытки', async () => {
+		const state = fakeWdttBackend();
+		await commitShareWizard({
+			protocol: 'wdtt',
+			fields,
+			client,
+			withLink: true,
+			peer: '',
+			existing: { id: 's1', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '', clients: [] } },
+			addedClientPassword: 'gen-1',
+		});
+		expect(state.calls).toEqual(['put', 'start']);
+		expect(apiMock.addWdttServerPanelUser).not.toHaveBeenCalled();
+		expect(apiMock.generateWdttServerLink.mock.calls[0][1]).toMatchObject({ password: 'gen-1' });
 	});
 });

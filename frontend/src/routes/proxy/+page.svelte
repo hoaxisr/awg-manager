@@ -148,9 +148,16 @@
 		shareWizard !== null || (!!selectedShare && !shareOpsMode && !shareWizardClosed),
 	);
 	const wizardOpen = $derived(activeTab === 'exit' ? exitWizardOpen : shareWizardOpen);
-	/** Дефолт порта Endpoint мастера раздачи: listen FreeTurn-клиента роутера (F-18). */
+	/**
+	 * Дефолт порта Endpoint мастера раздачи: listen FreeTurn-клиента роутера
+	 * (F-18). Подставляется, только когда клиент ЕДИНСТВЕННЫЙ: понятия
+	 * «выбранный клиент» у мастера раздачи нет, а при нескольких клиентах любой
+	 * выбор был бы догадкой. 0 — порт неизвестен, поле остаётся пустым.
+	 */
 	const ftClientPort = $derived(
-		listenPortNumber(ftConfig?.clients?.[0]?.config.listen ?? '', 9000),
+		(ftConfig?.clients?.length ?? 0) === 1
+			? listenPortNumber(ftConfig?.clients?.[0]?.config.listen ?? '', 0)
+			: 0,
 	);
 	/** Занятые порты серверов раздачи — подсказка порта новому серверу. */
 	const usedSharePorts = $derived(
@@ -450,6 +457,7 @@
 								shareWizard = null;
 								shareWizardClosed = true;
 							}}
+							onreload={loadConfigs}
 							ondone={shareWizardDone}
 						/>
 					{/key}
