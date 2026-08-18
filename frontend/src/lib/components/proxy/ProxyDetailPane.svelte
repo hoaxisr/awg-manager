@@ -158,10 +158,19 @@
 			? listenPortNumber(ftConfig?.clients?.[0]?.config.listen ?? '', 0)
 			: 0,
 	);
-	/** Занятые порты серверов раздачи — подсказка порта новому серверу. */
-	const usedSharePorts = $derived(
-		(ftConfig?.servers ?? []).map((s) => listenPortNumber(s.config.listen ?? '', 0)),
-	);
+	/**
+	 * Занятые порты серверов раздачи — подсказка порта новому серверу. WDTT-
+	 * сервер держит два: DTLS-listen и внутренний WG-порт (`wgPort`); бэкенд
+	 * считает занятыми оба (`proxylisten.CrossChecker`), и подсказка обязана
+	 * считать так же — иначе она называет порт, который бэкенд молча подвинет.
+	 */
+	const usedSharePorts = $derived([
+		...(ftConfig?.servers ?? []).map((s) => listenPortNumber(s.config.listen ?? '', 0)),
+		...(wdttConfig?.servers ?? []).flatMap((s) => [
+			listenPortNumber(s.config.listen ?? '', 0),
+			s.config.wgPort ?? 0,
+		]),
+	]);
 	/** Занятые локальные порты: подсказка порта новому клиенту. */
 	const usedListens = $derived({
 		wdtt: (wdttConfig?.clients ?? []).map((c) => c.config.listen),
