@@ -36,7 +36,8 @@
 	<Input
 		label="Потоков"
 		type="number"
-		bind:value={fields.workers}
+		value={fields.workers}
+		oninput={(v) => (fields.workers = v)}
 		hint={protocol === 'wdtt' ? 'Клиент округлит вниз до кратного 9 (минимум 9)' : ''}
 		fullWidth
 	/>
