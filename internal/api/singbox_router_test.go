@@ -22,7 +22,6 @@ import (
 
 // mockRouterSvc satisfies router.Service with controllable return values.
 type mockRouterSvc struct {
-	enableErr     error
 	bindMAC       string
 	bindPolicy    string
 	bindErr       error
@@ -54,8 +53,6 @@ type mockRouterSvc struct {
 	natPreviewErr error
 }
 
-func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
-func (m *mockRouterSvc) Disable(ctx context.Context) error   { return nil }
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
 func (m *mockRouterSvc) SwitchRoutingMode(ctx context.Context, target string) error {
 	m.switchMu.Lock()
@@ -249,28 +246,6 @@ func TestRouterDeleteOutbound_ReferencedByProxy_Returns409(t *testing.T) {
 	}
 }
 
-func TestRouterEnable_PolicyNotConfigured_Returns400(t *testing.T) {
-	svc := &mockRouterSvc{enableErr: router.ErrPolicyNotConfigured}
-	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
-	}
-}
-
-func TestRouterEnable_PolicyMissing_Returns400(t *testing.T) {
-	svc := &mockRouterSvc{enableErr: router.ErrPolicyMissing}
-	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d", rr.Code)
-	}
-}
-
 func TestRouterPutSettings_QoSClassesInvalid_Returns400(t *testing.T) {
 	svc := &mockRouterSvc{updateSettingsErr: fmt.Errorf("%w: qosClasses[0]: DSCP должен быть 0-63 (получено 99)", router.ErrQoSClassesInvalid)}
 	h := newMockRouterHandler(svc)
@@ -406,16 +381,6 @@ func TestRouterSwitchMode_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/mode", nil)
 	rr := httptest.NewRecorder()
 	h.SwitchMode(rr, req)
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("want 405, got %d", rr.Code)
-	}
-}
-
-func TestRouterEnable_MethodNotAllowed(t *testing.T) {
-	h := newMockRouterHandler(&mockRouterSvc{})
-	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("want 405, got %d", rr.Code)
 	}

@@ -87,6 +87,7 @@
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
+  let restarting = $state(false);
   let lastError = $state<string | null>(null);
   let wanAutoOverride = $state<WanAutoOverride>(null);
   let wanAuto = $derived(resolveWanAuto(wanAutoOverride, cfg?.wanAutoDetect));
@@ -183,11 +184,16 @@
     if (activeMode !== null) modeSwitch.request(m);
   }
   async function restartEngine(_e: MouseEvent) {
+    if (restarting) return;
+    restarting = true;
     try {
       await api.singboxControl('restart');
       await singboxRouterStore.reloadStatus();
+      notifications.success('Движок перезапущен');
     } catch (e) {
-      console.error('restart failed', e);
+      notifications.error(`Не удалось перезапустить: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      restarting = false;
     }
   }
 
@@ -469,7 +475,7 @@
         <Button variant={captureOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
           {captureOn ? 'Выключить' : 'Включить'}
         </Button>
-        <Button variant="ghost" size="sm" fullWidth onclick={restartEngine}>Перезапустить</Button>
+        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>Перезапустить</Button>
       </div>
       {#if isExpert}
         <span class="save-status" class:err={lastError}>
