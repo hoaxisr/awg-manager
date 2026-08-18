@@ -165,27 +165,16 @@
 			</Button>
 		{/if}
 	</div>
-	{#if compact}
-		<div class="ft-wg-port">
-			<Input
-				label="Endpoint клиента FreeTurn (порт)"
-				type="number"
-				value={String(endpointPort)}
-				onchange={(v) => (endpointPort = Number(v) || 9000)}
-			/>
-			<span class="ft-hint">Порт listen клиента freeturn (вкладка «Клиент»), адрес <code>127.0.0.1</code></span>
-		</div>
-	{:else}
-		<div class="ft-wg-port">
-			<Input
-				label="Endpoint клиента FreeTurn (порт)"
-				type="number"
-				value={String(endpointPort)}
-				onchange={(v) => (endpointPort = Number(v) || 9000)}
-			/>
-			<span class="ft-hint">Адрес: <code>127.0.0.1</code>, порт — listen клиента freeturn (вкладка «Клиент»)</span>
-		</div>
-	{/if}
+	<div class="ft-wg-port">
+		<Input
+			label="Endpoint клиента FreeTurn (порт)"
+			type="number"
+			value={String(endpointPort)}
+			onchange={(v) => (endpointPort = Number(v) || 9000)}
+		/>
+		<!-- SH-87: вкладки «Клиент» на странице «Прокси» нет — ссылаться на неё нельзя. -->
+		<span class="ft-hint">Локальный порт FreeTurn-клиента, который смотрит на этот сервер</span>
+	</div>
 
 	{#if keeneticPeer}
 		<div class="ft-keenetic-warn">

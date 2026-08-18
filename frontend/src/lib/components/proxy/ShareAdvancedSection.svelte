@@ -1,10 +1,12 @@
 <script lang="ts">
-	// SH-62..SH-71 — «Дополнительно» раздачи: экспертные поля WDTT-сервера,
-	// режим записи server.log и освобождение портов. Свёрнута: глобального
-	// режима «Эксперт» больше нет (решение Q7 ИА).
-	import { FieldHint, Input, SegmentedControl } from '$lib/components/ui';
+	// SH-62..SH-71, SH-84/SH-85 — «Дополнительно» раздачи: экспертные поля
+	// WDTT-сервера, бэкенд и режим туннеля FreeTurn-сервера, режим записи
+	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
+	// больше нет (решение Q7 ИА).
+	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
-	import type { WdttServerConfig } from '$lib/types';
+	import { modeOptions } from '../freeturn/options';
+	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
 	import type { SharePort } from './shareConfig';
@@ -12,13 +14,15 @@
 	type StatsLogMode = 'ram' | 'off' | 'disk';
 
 	interface Props {
-		/** Редактируемая копия конфига WDTT-сервера; у FreeTurn полей нет. */
+		/** Редактируемая копия конфига WDTT-сервера. */
 		wdttServer?: WdttServerConfig;
+		/** Редактируемая копия конфига FreeTurn-сервера. */
+		ftServer?: FreeTurnServerConfig;
 		/** Порты инстанса — строка на каждый. */
 		ports: SharePort[];
 	}
 
-	let { wdttServer = $bindable(), ports }: Props = $props();
+	let { wdttServer = $bindable(), ftServer = $bindable(), ports }: Props = $props();
 
 	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
 		{ value: 'ram', label: 'RAM' },
@@ -51,6 +55,11 @@
 				text="Запись на накопитель изнашивает память роутера. Запущенный сервер будет перезапущен."
 				ariaLabel="Подсказка: режим server.log"
 			/>
+		</div>
+	{:else if ftServer}
+		<div class="grid">
+			<Input label="Бэкенд (connect)" bind:value={ftServer.connect} fullWidth />
+			<Dropdown label="Режим туннеля" bind:value={ftServer.mode} options={modeOptions} fullWidth />
 		</div>
 	{/if}
 

@@ -19,13 +19,20 @@
 		WdttServerConfig,
 	} from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
+	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
 	import RunBar from './RunBar.svelte';
 	import ShareAdvancedSection from './ShareAdvancedSection.svelte';
 	import ShareNetworkSection from './ShareNetworkSection.svelte';
 	import Topology, { type TopologyInbound } from './Topology.svelte';
 	import { cloneConfig } from './exitConfig';
-	import { freeTurnServerPorts, natModeLabel, wdttServerPorts, type ShareConfig } from './shareConfig';
+	import {
+		freeTurnServerPorts,
+		natModeLabel,
+		wdttServerPorts,
+		wdttServerWgPort,
+		type ShareConfig,
+	} from './shareConfig';
 	import { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
 	import type { ProxyInstanceRow } from './rows';
 
@@ -81,12 +88,18 @@
 
 	let lanOptions = $state<{ value: string; label: string }[]>([]);
 	let ingress = $state(false);
+	// RB-11 показывается, только когда точно известно, что sing-box не работает:
+	// до ответа ручки статуса тумблер молчит, а не пугает.
+	let singboxRunning = $state(true);
 
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
 	const running = $derived(row.state === 'running');
 	const ports = $derived(
 		wdttDraft ? wdttServerPorts(wdttDraft) : ftDraft ? freeTurnServerPorts(ftDraft) : [],
 	);
+	// Освобождать приходится и внутренний WG-порт: сервер поднимает на нём
+	// WireGuard, а в мете строки состояния (RB-07) его не показывают.
+	const killPorts = $derived(wdttDraft ? [...ports, wdttServerWgPort(wdttDraft)] : ports);
 
 	// RB-07: порты раздачи, аптайм, PID.
 	const runMeta = $derived(
@@ -168,6 +181,11 @@
 			ingress = ingressOn(settings.ingressInterfaces, wdttIngressRefs(wdttDraft, wdttStatus));
 		} catch {
 			/* нет ответа — тумблер остаётся выключенным */
+		}
+		try {
+			singboxRunning = (await api.singboxGetStatus()).running;
+		} catch {
+			/* нет ответа — про состояние sing-box ничего не заявляем */
 		}
 	});
 
@@ -276,6 +294,9 @@
 		aside={wdttDraft ? ingressToggle : undefined}
 	/>
 
+	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
+	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
+
 	<DetailSection title="Схема">
 		<Topology
 			{inbound}
@@ -314,12 +335,18 @@
 		onrevert={revert}
 	/>
 
-	<ShareAdvancedSection bind:wdttServer={wdttDraft} {ports} />
+	<ShareAdvancedSection bind:wdttServer={wdttDraft} bind:ftServer={ftDraft} ports={killPorts} />
 
 	<LogSection
 		log={status?.log}
 		{routerClock}
 		hint="Это вывод процесса, а не файл server.log."
+		showDebug={!!ftDraft}
+		debug={ftDraft?.debug ?? false}
+		debugHint="Применяется при старте процесса"
+		ondebug={(on) => {
+			if (ftDraft) ftDraft.debug = on;
+		}}
 	/>
 </Card>
 
@@ -327,6 +354,7 @@
 	<div class="run-toggle">
 		<Toggle
 			label="Маршрутизация через sing-box"
+			hint={singboxRunning ? '' : 'sing-box не запущен — правило вступит в силу после его запуска'}
 			checked={ingress}
 			disabled={mutating}
 			onchange={toggleIngress}

@@ -23,6 +23,7 @@
 	import CaptchaSection from './CaptchaSection.svelte';
 	import DetailSection from './DetailSection.svelte';
 	import ExitParamsSection from './ExitParamsSection.svelte';
+	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
 	import RunBar from './RunBar.svelte';
 	import SubscriptionSection from './SubscriptionSection.svelte';
@@ -220,12 +221,7 @@
 	/>
 
 	<!-- EX-01: ошибка живёт, пока процесс не работает. -->
-	{#if !running && status?.lastError}
-		<div class="error-box">
-			<p class="error-title">Ошибка последнего запуска</p>
-			<pre>{status.lastError}</pre>
-		</div>
-	{/if}
+	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
 
 	<DetailSection
 		title="Нагрузка"
@@ -253,15 +249,18 @@
 					<code>{rawNdms}</code>
 					<FieldHint text={rawHint} ariaLabel="Подсказка: интерфейс клиента" />
 				</div>
-			{:else if tunnel && row.protocol === 'wdtt'}
-				<!-- EX-09/EX-10 — строка режима WG, а режим есть только у WDTT. -->
+			{:else if tunnel}
+				<!-- EX-09 — и у WDTT-WG, и у FreeTurn-клиента: туннель есть у обоих.
+				     (i) EX-10 рассказывает про режим WG — он только у WDTT. -->
 				<div class="line-row">
 					<span class="line-label">AWG-туннель:</span>
 					<a class="link" href={`/tunnels/${tunnel.id}`}>{tunnel.name}<ExternalLink size={12} /></a>
-					<FieldHint
-						text={`Режим WG: клиент получает WireGuard-конфиг, из него создан AWG-туннель с Endpoint 127.0.0.1:${port ?? ''}.`}
-						ariaLabel="Подсказка: AWG-туннель"
-					/>
+					{#if row.protocol === 'wdtt'}
+						<FieldHint
+							text={`Режим WG: клиент получает WireGuard-конфиг, из него создан AWG-туннель с Endpoint 127.0.0.1:${port ?? ''}.`}
+							ariaLabel="Подсказка: AWG-туннель"
+						/>
+					{/if}
 				</div>
 			{/if}
 			<div class="line-row">
@@ -344,30 +343,6 @@
 		font-size: 1.125rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
-	}
-
-	.error-box {
-		border: 1px solid var(--color-error-border);
-		background: var(--color-error-tint);
-		border-radius: var(--radius);
-		padding: 0.625rem 0.75rem;
-		margin-top: 0.75rem;
-	}
-
-	.error-title {
-		margin: 0 0 0.375rem;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--color-error);
-	}
-
-	.error-box pre {
-		margin: 0;
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-		white-space: pre-wrap;
-		word-break: break-word;
 	}
 
 	.stat-row {

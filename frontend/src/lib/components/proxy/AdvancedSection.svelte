@@ -1,10 +1,13 @@
 <script lang="ts">
-	// EX-34..48 — «Дополнительно»: экспертные поля, работа с WireGuard-конфигом
-	// и освобождение портов. Свёрнута: глобального режима «Эксперт» больше нет
-	// (решение Q7 ИА).
-	import { Button, Dropdown, Input } from '$lib/components/ui';
+	// EX-34..48, EX-58, EX-66..EX-68 — «Дополнительно»: экспертные поля, работа
+	// с WireGuard-конфигом и освобождение портов. Свёрнута: глобального режима
+	// «Эксперт» больше нет (решение Q7 ИА).
+	import { Button, Dropdown, Input, Toggle } from '$lib/components/ui';
 	import WgConfExportPanel from '../proxy-panel/WgConfExportPanel.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { obfOptions } from '../freeturn/options';
 	import type { FreeTurnClientConfig, WdttClientConfig } from '$lib/types';
+	import ConfPasteBox from './ConfPasteBox.svelte';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
 
@@ -37,8 +40,14 @@
 	}: Props = $props();
 
 	let confShown = $state(false);
-	let manualOpen = $state(false);
 	let manualConf = $state('');
+
+	// -vk-auth-mode: маппинг awg-manager → wt-client (internal/wdtt/service.go:951).
+	const vkAuthOptions = [
+		{ value: 'vkcalls', label: 'vkcalls' },
+		{ value: 'anonymous', label: 'anonymous' },
+		{ value: 'account', label: 'account' },
+	];
 
 	async function importManual() {
 		const conf = manualConf.trim();
@@ -64,11 +73,40 @@
 			/>
 			<Input label="Fingerprint" bind:value={wdttClient.fingerprint} fullWidth />
 			<Input label="Device ID" bind:value={wdttClient.deviceId} fullWidth />
+			<Dropdown
+				label="VK-авторизация"
+				bind:value={wdttClient.vkAuthMode}
+				options={vkAuthOptions}
+				fullWidth
+			/>
 			<Input label="URL подписки" bind:value={wdttClient.sub} fullWidth />
 		{:else if ftClient}
+			<Input label="Provider" bind:value={ftClient.provider} fullWidth />
+			<Input label="Client ID" bind:value={ftClient.clientId} fullWidth />
+			<SensitiveInput label="Ключ обфускации" bind:value={ftClient.obfKey} />
+			<Dropdown
+				label="Профиль обфускации"
+				bind:value={ftClient.obfProfile}
+				options={obfOptions}
+				fullWidth
+			/>
+			<Input label="Локальный порт" bind:value={ftClient.listen} fullWidth />
 			<Input label="URL подписки" bind:value={ftClient.sub} fullWidth />
 		{/if}
 	</div>
+
+	{#if ftClient}
+		<div class="toggle-row">
+			<Toggle
+				label="Bond"
+				hint="Bond — только в режиме TCP"
+				checked={ftClient.bond}
+				onchange={(v) => {
+					if (ftClient) ftClient.bond = v;
+				}}
+			/>
+		</div>
+	{/if}
 
 	{#if !raw}
 		<p class="sub-title">WireGuard-конфиг</p>
@@ -86,14 +124,7 @@
 				importingTunnel={busyTunnel}
 			/>
 		{/if}
-		<div class="btn-row">
-			<Button variant="ghost" onclick={() => (manualOpen = !manualOpen)}>
-				Вставить .conf вручную
-			</Button>
-		</div>
-		{#if manualOpen}
-			<textarea class="manual-conf" bind:value={manualConf} rows="8" aria-label="WireGuard-конфиг"
-			></textarea>
+		<ConfPasteBox label="Вставить .conf вручную" bind:value={manualConf}>
 			<div class="btn-row">
 				<Button
 					variant="primary"
@@ -104,7 +135,7 @@
 					Создать AWG-туннель
 				</Button>
 			</div>
-		{/if}
+		</ConfPasteBox>
 	{/if}
 
 	<KillPortSection {ports} />
@@ -124,16 +155,11 @@
 		color: var(--color-text-secondary);
 	}
 
-	.manual-conf {
-		width: 100%;
-		margin-top: 0.5rem;
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		padding: 0.5rem 0.625rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		resize: vertical;
+	.toggle-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		margin-top: 0.875rem;
 	}
 </style>

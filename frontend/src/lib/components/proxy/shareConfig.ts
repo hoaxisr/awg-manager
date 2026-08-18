@@ -107,6 +107,16 @@ export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
 	return ports;
 }
 
+/**
+ * Внутренний WG-порт сервера (`-wg-port`). В мете строки состояния его нет —
+ * снаружи на него не приходят, — но освобождать его иногда нужно, поэтому в
+ * списке «Освобождение портов» он отдельной строкой.
+ */
+export function wdttServerWgPort(cfg: WdttServerConfig): SharePort {
+	const port = cfg.wgPort || 56001;
+	return { listen: `0.0.0.0:${port}`, label: 'WG', port };
+}
+
 export function freeTurnServerPorts(cfg: FreeTurnServerConfig): SharePort[] {
 	const port = listenPortNumber(cfg.listen ?? '', 56000);
 	return [

@@ -14,9 +14,14 @@
 		routerClock?: string;
 		/** Пояснение секции под (i): SH-73 у «Раздачи». */
 		hint?: string;
-		/** EX-53/54: тумблер отладки есть только у FreeTurn-клиента. */
+		/**
+		 * EX-53: тумблер отладки есть у FreeTurn-клиента и FreeTurn-сервера —
+		 * `-debug` знают только их бинари (у wdtt поле мёртвое).
+		 */
 		showDebug?: boolean;
 		debug?: boolean;
+		/** (i) у тумблера: EX-54 у клиента, SH-86 у сервера. */
+		debugHint?: string;
 		ondebug?: (on: boolean) => void;
 	}
 
@@ -26,6 +31,7 @@
 		hint = '',
 		showDebug = false,
 		debug = false,
+		debugHint = 'Отладочный вывод включится при следующем запуске процесса.',
 		ondebug,
 	}: Props = $props();
 
@@ -64,10 +70,7 @@
 	{#if showDebug}
 		<div class="debug-row">
 			<Toggle label="Отладочный вывод" checked={debug} onchange={(v) => ondebug?.(v)} />
-			<FieldHint
-				text="Отладочный вывод включится при следующем запуске процесса."
-				ariaLabel="Подсказка: отладочный вывод"
-			/>
+			<FieldHint text={debugHint} ariaLabel="Подсказка: отладочный вывод" />
 		</div>
 	{/if}
 </DetailSection>

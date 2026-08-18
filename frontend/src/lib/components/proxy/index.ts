@@ -1,12 +1,14 @@
 export { default as AdvancedSection } from './AdvancedSection.svelte';
 export { default as BinaryStrip } from './BinaryStrip.svelte';
 export { default as CaptchaSection } from './CaptchaSection.svelte';
+export { default as ConfPasteBox } from './ConfPasteBox.svelte';
 export { default as DetailSection } from './DetailSection.svelte';
 export { default as ExitDetail } from './ExitDetail.svelte';
 export { default as ExitWizard } from './ExitWizard.svelte';
 export { default as ExitParamsSection } from './ExitParamsSection.svelte';
 export { default as InstanceList } from './InstanceList.svelte';
 export { default as KillPortSection } from './KillPortSection.svelte';
+export { default as LastErrorBox } from './LastErrorBox.svelte';
 export { default as LogSection } from './LogSection.svelte';
 export { default as RunBar } from './RunBar.svelte';
 export { default as ShareAdvancedSection } from './ShareAdvancedSection.svelte';
@@ -27,6 +29,7 @@ export {
 	saveShareInstance,
 	shareInstance,
 	wdttServerPorts,
+	wdttServerWgPort,
 } from './shareConfig';
 export type { ShareConfig, ShareInstance, SharePort } from './shareConfig';
 export { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';

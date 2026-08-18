@@ -1,9 +1,11 @@
 <script lang="ts">
-	// EX-15..24 — «Параметры» клиента. Поля правятся в конфиге инстанса на
-	// месте; сохраняет и откатывает страница (владелец конфига).
-	import { Button, Input } from '$lib/components/ui';
+	// EX-15..24, EX-57, EX-59..EX-65 — «Параметры» клиента. Поля правятся в
+	// конфиге инстанса на месте; сохраняет и откатывает страница (владелец
+	// конфига).
+	import { Button, Dropdown, Input } from '$lib/components/ui';
 	import { setPeer } from '$lib/utils/wdttPeerMode';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
 	import type { FreeTurnClientConfig, WdttClientConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 
@@ -26,6 +28,13 @@
 		onsave,
 		onrevert,
 	}: Props = $props();
+
+	// -captcha-mode: auto|rjs|wv, дефолт роутера rjs (internal/wdtt/types.go:24).
+	const captchaOptions = [
+		{ value: 'rjs', label: 'rjs (рекомендуется)' },
+		{ value: 'auto', label: 'auto' },
+		{ value: 'wv', label: 'wv' },
+	];
 </script>
 
 <DetailSection title="Параметры">
@@ -62,14 +71,15 @@
 				onchange={(v) => (wdttClient.workers = Number(v) || wdttClient.workers)}
 				fullWidth
 			/>
-		{:else if ftClient}
-			<Input label="Адрес сервера" bind:value={ftClient.peer} fullWidth />
-			<Input
-				label="Локальный порт"
-				bind:value={ftClient.listen}
-				hint="Сюда смотрит AWG-туннель"
+			<Dropdown
+				label="Режим капчи"
+				bind:value={wdttClient.captchaMode}
+				options={captchaOptions}
 				fullWidth
 			/>
+		{:else if ftClient}
+			<Input label="Адрес сервера" bind:value={ftClient.peer} fullWidth />
+			<Input label="Ссылки VK Calls" bind:value={ftClient.links} fullWidth />
 			<Input
 				label="Потоков"
 				type="number"
@@ -77,6 +87,28 @@
 				onchange={(v) => (ftClient.streams = Number(v) || ftClient.streams)}
 				fullWidth
 			/>
+			<Input
+				label="Потоков на кред"
+				type="number"
+				value={String(ftClient.streamsPerCred)}
+				onchange={(v) => (ftClient.streamsPerCred = Number(v) || ftClient.streamsPerCred)}
+				fullWidth
+			/>
+			<Dropdown label="Режим" bind:value={ftClient.mode} options={modeOptions} fullWidth />
+			<Dropdown
+				label="Транспорт"
+				bind:value={ftClient.transport}
+				options={transportOptions}
+				fullWidth
+			/>
+			<Dropdown
+				label="Платформа"
+				bind:value={ftClient.platform}
+				options={platformOptions}
+				fullWidth
+			/>
+			<Dropdown label="DNS-режим" bind:value={ftClient.dnsMode} options={dnsModeOptions} fullWidth />
+			<Input label="DNS-серверы" bind:value={ftClient.dnsServers} fullWidth />
 		{/if}
 	</div>
 	<div class="btn-row">

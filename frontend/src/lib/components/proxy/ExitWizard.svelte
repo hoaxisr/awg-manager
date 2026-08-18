@@ -10,6 +10,7 @@
 	import { errText } from '$lib/utils/errorMessage';
 	import { detectProxyLinkScheme } from '$lib/utils/proxyLinkScheme';
 	import { linkHasBundledWg } from '$lib/utils/serverPeerOptions';
+	import ConfPasteBox from './ConfPasteBox.svelte';
 	import WizardSteps from './WizardSteps.svelte';
 	import ExitWizardParams from './ExitWizardParams.svelte';
 	import ExitWizardSource from './ExitWizardSource.svelte';
@@ -103,12 +104,20 @@
 		),
 	);
 
+	/** WE-49: клиентский .conf, вставленный руками на шаге 3 (FreeTurn без WG). */
+	let manualWg = $state('');
+
 	const scheme = $derived(detectProxyLinkScheme(link));
 	const profile = $derived<WdttImportPayload | null>(
 		subscription ? (subscription.profiles[Number(profileIdx)] ?? null) : wdttPayload,
 	);
-	const wgConf = $derived(protocol === 'wdtt' ? profile?.wg : ftPayload?.wg);
+	// WE-49: у FreeTurn-ссылки без WG-конфига источником становится .conf,
+	// вставленный руками на шаге 3 — обещание WE-26.
+	const linkWg = $derived(protocol === 'wdtt' ? profile?.wg : ftPayload?.wg);
+	const wgConf = $derived(linkHasBundledWg(linkWg) ? linkWg : manualWg);
 	const hasWg = $derived(linkHasBundledWg(wgConf));
+	/** Ссылка WG-конфиг не принесла — шаг 3 предлагает вставить его руками. */
+	const needsManualWg = $derived(protocol === 'freeturn' && !linkHasBundledWg(linkWg));
 	const subUrl = $derived(
 		subscription?.subUrl || (scheme === 'subscription' ? link.trim() : profile?.subUrl) || '',
 	);
@@ -263,6 +272,12 @@
 				});
 				if (iface) {
 					await api.permitPolicyInterface(policy, iface, policyPermitOrder(policies, policy));
+				} else {
+					// TS-23: имя интерфейса так и не появилось — в политику его
+					// добавить нечем, и молчать об этом нельзя.
+					notifications.error(
+						'Не удалось добавить интерфейс в политику — добавьте его на странице «Маршрутизация»',
+					);
 				}
 			}
 			await ondone(res.protocol, res.id);
@@ -320,48 +335,54 @@
 			/>
 		{:else if step === 1}
 			<ExitWizardParams {protocol} {mode} bind:fields />
-		{:else if willHaveIface}
-			<div class="explain">
-				{#if protocol === 'wdtt' && mode === 'raw'}
-					<p>
-						Клиент поднимет свой интерфейс в роутере.
-						<FieldHint
-							text="Режим Raw: отдельный AWG-туннель не нужен. Интерфейс виден в AWG-туннелях с бейджем «WDTT Raw» и в «Маршрутизации», переключатель в AWG управляет этим клиентом."
-							ariaLabel="Подсказка: режим Raw"
-						/>
-					</p>
-				{:else}
-					<p>
-						Будет создан AWG-туннель «{tunnelName}».
-						<FieldHint
-							text={`Режим WG: клиент получит WireGuard-конфиг, из него создастся AWG-туннель с Endpoint 127.0.0.1:${port}.`}
-							ariaLabel="Подсказка: режим WG"
+		{:else}
+			{#if needsManualWg}
+				<!-- WE-26 обещает вставку .conf именно здесь. -->
+				<ConfPasteBox label="Вставить клиентский .conf" bind:value={manualWg} />
+			{/if}
+			{#if willHaveIface}
+				<div class="explain">
+					{#if protocol === 'wdtt' && mode === 'raw'}
+						<p>
+							Клиент поднимет свой интерфейс в роутере.
+							<FieldHint
+								text="Режим Raw: отдельный AWG-туннель не нужен. Интерфейс виден в AWG-туннелях с бейджем «WDTT Raw» и в «Маршрутизации», переключатель в AWG управляет этим клиентом."
+								ariaLabel="Подсказка: режим Raw"
+							/>
+						</p>
+					{:else}
+						<p>
+							Будет создан AWG-туннель «{tunnelName}».
+							<FieldHint
+								text={`Режим WG: клиент получит WireGuard-конфиг, из него создастся AWG-туннель с Endpoint 127.0.0.1:${port}.`}
+								ariaLabel="Подсказка: режим WG"
+							/>
+						</p>
+					{/if}
+				</div>
+
+				<Dropdown
+					label="Политика доступа"
+					value={policy}
+					options={policyOptions}
+					onchange={(v) => (policy = v)}
+					fullWidth
+				/>
+				{#if policy}
+					<p class="note">
+						Интерфейс будет добавлен в конец выбранной политики<FieldHint
+							text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
+							ariaLabel="Подсказка: политика доступа"
 						/>
 					</p>
 				{/if}
-			</div>
-
-			<Dropdown
-				label="Политика доступа"
-				value={policy}
-				options={policyOptions}
-				onchange={(v) => (policy = v)}
-				fullWidth
-			/>
-			{#if policy}
-				<p class="note">
-					Интерфейс будет добавлен в конец выбранной политики<FieldHint
-						text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
-						ariaLabel="Подсказка: политика доступа"
-					/>
-				</p>
+				<div class="routing-link">
+					<Button variant="ghost" size="sm" href="/routing">
+						Маршрутизация
+						{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
+					</Button>
+				</div>
 			{/if}
-			<div class="routing-link">
-				<Button variant="ghost" size="sm" href="/routing">
-					Маршрутизация
-					{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
-				</Button>
-			</div>
 		{/if}
 
 		{#snippet finish()}

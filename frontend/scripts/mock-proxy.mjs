@@ -40,7 +40,9 @@
  * - GET  /__mock/capabilities — fixture map and runtime state;
  * - GET  /__mock/tunnels — normalized tunnel catalog used by mock surfaces;
  * - POST /__mock/reset-runtime (alias /__mock/reset) — reset volatile runtime switches;
- * - POST /__mock/singbox-install-fail {"enabled": true|false}.
+ * - POST /__mock/singbox-install-fail {"enabled": true|false};
+ * - POST /__mock/singbox-running {"running": true|false} — живость sing-box в
+ *   GET /singbox/status (env MOCK_SINGBOX_DOWN=1 выключает её на старте).
  *
  * Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
  */
@@ -128,6 +130,7 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 			'POST /__mock/reset-runtime',
 			'POST /__mock/reset',
 			'POST /__mock/singbox-install-fail',
+			'POST /__mock/singbox-running',
 			'POST /__mock/download-faults',
 			'POST /__mock/keenetic-os',
 		],
@@ -165,6 +168,7 @@ function getRuntimeState() {
 		updateChannel,
 		updateCheckEnabled,
 		singboxInstallShouldFail,
+		singboxRunning,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -180,6 +184,7 @@ function resetRuntimeControls() {
 	updateChannel = DEFAULT_MOCK_STATE.updateChannel;
 	updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
+	singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -242,6 +247,9 @@ const MOCK_DOWNLOAD_OUTBOUNDS = [
 	},
 ];
 let singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
+// Живость sing-box в GET /singbox/status: обе ветки hint'а RB-11 у раздачи
+// (тумблер «Маршрутизация через sing-box») переключаются на ходу.
+let singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
 let mockProxyInstances = [
 	{
 		id: 'default',
@@ -5659,8 +5667,8 @@ const server = http.createServer(async (req, res) => {
 			data: {
 				installed: true,
 				version: '1.13.11',
-				running: true,
-				pid: 4242,
+				running: singboxRunning,
+				...(singboxRunning ? { pid: 4242 } : {}),
 				tunnelCount: MOCK_SINGBOX_TUNNELS.length,
 				proxyComponent: true,
 				features: ['with_gvisor', 'with_quic', 'with_naive_outbound'],
@@ -5903,6 +5911,18 @@ const server = http.createServer(async (req, res) => {
 				},
 			],
 		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/__mock/singbox-running') {
+		try {
+			const body = await readJsonBody(req);
+			singboxRunning = body.running !== false;
+			send(res, 200, { ok: true, singboxRunning });
+			console.log(`[mock-proxy] singboxRunning → ${singboxRunning}`);
+		} catch (e) {
+			send(res, 400, { error: String(e) });
+		}
 		return;
 	}
 
@@ -8994,7 +9014,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
-	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/download-faults, POST /__mock/keenetic-os');
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
