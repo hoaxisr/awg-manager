@@ -4657,8 +4657,10 @@ definitions:
         example: 198.18.0.0/15
         type: string
       fakeipPool6:
-        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18");
-          "" disables v6.
+        description: |-
+          FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18").
+          Explicit "" disables v6; an OMITTED field keeps the stored value
+          (absent != empty — the handler substitutes the current setting).
         example: fc00::/18
         type: string
       fakeipRealServer:

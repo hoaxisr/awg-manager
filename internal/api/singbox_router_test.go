@@ -1060,3 +1060,39 @@ func TestRouterUpdateDNSRule_Managed_ReturnsManagedCode(t *testing.T) {
 		t.Fatalf("want code DNS_RULE_MANAGED, got %q", env.Code)
 	}
 }
+
+// Footgun Д2: после того как "" стало значимым («v6 выключен»), PUT без поля
+// fakeipPool6 декодировался бы в Go zero "" и МОЛЧА выключал v6 (узор
+// PR #757 с routingMode). Absent обязан сохранять текущее значение.
+func TestRouterPutSettings_OmittedPool6KeepsStored(t *testing.T) {
+	svc := &mockRouterSvc{settings: storage.SingboxRouterSettings{FakeIPPool6: "fc00::/18"}}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"policyName":"awgm-router"}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.settings.FakeIPPool6 != "fc00::/18" {
+		t.Errorf("fakeipPool6 = %q, want сохранённое \"fc00::/18\" (absent ≠ empty)", svc.settings.FakeIPPool6)
+	}
+}
+
+// Обратное направление: явное "" доходит до сервиса как "" (осознанное
+// выключение). На уровне handler'а это СТРАХОВКА (decode и сегодня отдаёт ""),
+// краснота выключения целиком — сквозной тест роутера.
+func TestRouterPutSettings_ExplicitEmptyPool6Passes(t *testing.T) {
+	svc := &mockRouterSvc{settings: storage.SingboxRouterSettings{FakeIPPool6: "fc00::/18"}}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"fakeipPool6":""}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.settings.FakeIPPool6 != "" {
+		t.Errorf("fakeipPool6 = %q, want \"\" (подстановки быть не должно)", svc.settings.FakeIPPool6)
+	}
+}

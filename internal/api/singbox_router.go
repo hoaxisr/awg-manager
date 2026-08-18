@@ -219,10 +219,31 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 		response.MethodNotAllowed(w)
 		return
 	}
-	var sr storage.SingboxRouterSettings
-	if err := decodeBody(r, &sr); err != nil {
+	// Теневой указатель различает «поле не прислано» и «прислано пустым»:
+	// пустой fakeipPool6 ЗНАЧИМ (выключает v6), и Go zero "" от отсутствующего
+	// ключа молча выключал бы его (узор дефекта PR #757, routingMode). Правило
+	// encoding/json: поле меньшей глубины перехватывает ключ у embedded-
+	// структуры — body.FakeIPPool6 видит JSON, embedded-поле остаётся "".
+	var body struct {
+		storage.SingboxRouterSettings
+		FakeIPPool6 *string `json:"fakeipPool6"`
+	}
+	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
+	}
+	sr := body.SingboxRouterSettings
+	if body.FakeIPPool6 != nil {
+		sr.FakeIPPool6 = *body.FakeIPPool6
+	} else {
+		// Absent = не менять: подставляем текущее значение (нормализация
+		// возвращает pool6 дословно, включая "").
+		cur, err := h.svc.GetSettings(r.Context())
+		if err != nil {
+			h.handleErr(w, "request", err)
+			return
+		}
+		sr.FakeIPPool6 = cur.FakeIPPool6
 	}
 	if err := h.svc.UpdateSettings(r.Context(), sr); err != nil {
 		h.handleErr(w, "request", err)
