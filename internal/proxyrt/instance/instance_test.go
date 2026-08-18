@@ -155,7 +155,7 @@ func TestSweepLabelsAndDeclaredNames(t *testing.T) {
 	if len(labels) != 3 {
 		t.Fatalf("меток три (сервер WG, сервер raw, клиент-префикс): %v", labels)
 	}
-	names := DeclaredNDMSNames([]any{
+	names := DeclaredNDMSNames([]NDMSNamed{
 		roles.WdttServerConfig{NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19"},
 		// ВЫКЛЮЧЕННЫЙ клиент тоже объявляет свои имена: sweep не сносит
 		// ресурсы disabled-инстансов (спека §4.2).
@@ -169,5 +169,42 @@ func TestSweepLabelsAndDeclaredNames(t *testing.T) {
 	}
 	if len(names) != 3 {
 		t.Fatalf("лишние имена: %v", names)
+	}
+}
+
+// Все четыре конфига ролей обязаны объявлять свои NDMS-имена САМИ. Тип, который
+// метод не объявил, в ведомость не попадёт — но и не соберётся: это и есть
+// защита от «нового конфига, о котором ведомость не знает». Пример отказа
+// сборки:
+//
+//	type новыйКонфиг struct{}
+//	DeclaredNDMSNames([]NDMSNamed{новыйКонфиг{}})
+//	// cannot use новыйКонфиг{} … as NDMSNamed value … missing method NDMSNames
+var (
+	_ NDMSNamed = roles.WdttClientConfig{}
+	_ NDMSNamed = roles.WdttServerConfig{}
+	_ NDMSNamed = roles.FreeTurnClientConfig{}
+	_ NDMSNamed = roles.FreeTurnServerConfig{}
+)
+
+func TestDeclaredNDMSNamesPointerConfigSameAsValue(t *testing.T) {
+	// Указатель на конфиг обязан дать ТЕ ЖЕ имена, что значение: старая
+	// ведомость на []any молча роняла указатель, и sweeper сносил живой
+	// интерфейс. Методы на значении — метод-сет *T их включает, поэтому
+	// расхождение здесь означало бы, что кто-то завёл метод на указателе.
+	val := roles.WdttServerConfig{NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19"}
+	byValue := DeclaredNDMSNames([]NDMSNamed{val})
+	byPointer := DeclaredNDMSNames([]NDMSNamed{&val})
+	if len(byPointer) != len(byValue) {
+		t.Fatalf("указатель дал другую ведомость: %v против %v", byPointer, byValue)
+	}
+	for name := range byValue {
+		if !byPointer[name] {
+			t.Fatalf("указатель потерял %s: %v", name, byPointer)
+		}
+	}
+	cli := roles.WdttClientConfig{Mode: "raw", NdmsIface: "OpkgTun18"}
+	if names := DeclaredNDMSNames([]NDMSNamed{&cli}); !names["OpkgTun18"] {
+		t.Fatalf("указатель на клиента потерял имя: %v", names)
 	}
 }

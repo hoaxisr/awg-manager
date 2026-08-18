@@ -64,6 +64,15 @@ func (c WdttClientConfig) Validate() error {
 	return nil
 }
 
+// NDMSNames — NDMS-интерфейсы, объявленные конфигом: из них строится ведомость
+// для уборщика (instance.DeclaredNDMSNames). У wg-клиента имени нет — пустая
+// строка, ведомость её отбрасывает.
+//
+// Метод обязан быть у КАЖДОГО конфига роли: ведомость собирается по интерфейсу,
+// и конфиг без метода не соберётся вовсе — вместо того чтобы молча выпасть из
+// ведомости и отдать свой живой интерфейс уборщику.
+func (c WdttClientConfig) NDMSNames() []string { return []string{c.NdmsIface} }
+
 // WdttServerConfig — сервер WDTT (обе половины: WG + raw).
 type WdttServerConfig struct {
 	Listen       string // DTLS, 0.0.0.0:56000
@@ -129,6 +138,9 @@ func (c WdttServerConfig) Validate() error {
 	return nil
 }
 
+// NDMSNames — обе половины сервера: WG и raw.
+func (c WdttServerConfig) NDMSNames() []string { return []string{c.NdmsIface, c.RawNdmsIface} }
+
 // EffectiveRawListen — как ports.go:30: явный RawListen либо DTLS+1.
 func (c WdttServerConfig) EffectiveRawListen() string {
 	if a := strings.TrimSpace(c.RawListen); a != "" {
@@ -183,6 +195,11 @@ func (c FreeTurnClientConfig) Validate() error {
 	return nil
 }
 
+// NDMSNames — у FreeTurn NDMS-интерфейсов нет: клиент слушает 127.0.0.1.
+// Пустая декларация объявлена ЯВНО, а не отсутствием метода: без неё конфиг
+// выпал бы из ведомости неотличимо от забытого.
+func (c FreeTurnClientConfig) NDMSNames() []string { return nil }
+
 // FreeTurnServerConfig — сервер FreeTurn.
 type FreeTurnServerConfig struct {
 	Listen       string
@@ -201,6 +218,9 @@ func (c FreeTurnServerConfig) Validate() error {
 	}
 	return nil
 }
+
+// NDMSNames — у FreeTurn NDMS-интерфейсов нет.
+func (c FreeTurnServerConfig) NDMSNames() []string { return nil }
 
 func localListen(addr string) error {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
