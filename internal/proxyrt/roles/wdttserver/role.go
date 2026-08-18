@@ -135,7 +135,16 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	if c.ExposeToPolicies {
 		level = "public"
 	}
-	r.proc.SetDesired(enabled, roles.WdttServerArgs(c), c.Validate())
+	cfgErr := c.Validate()
+	r.proc.SetDesired(enabled, roles.WdttServerArgs(c), cfgErr)
+	if enabled && cfgErr != nil {
+		// Конфиг заведомо нерабочий: ведомость — один процесс с приговором.
+		// Обе NDMS-половины объявлены ВЫШЕ процесса, и без этого гейта
+		// роутеру уезжали бы два create OpkgTun прежде, чем причина дойдёт до
+		// пользователя (I3 ревью). Выключенный инстанс гейта не знает: там
+		// желаемое — снятие, и его надо доводить на любом конфиге.
+		return []proxyrt.Resource{r.proc}
+	}
 	r.ifaceWG.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.NdmsIface,
 		Description: roles.LabelServerWG, SecurityLevel: level, MTU: wgMTU})
 	r.ifaceRaw.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.RawNdmsIface,

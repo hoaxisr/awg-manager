@@ -3,6 +3,7 @@ package wdttserver
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,29 @@ type nilGate struct{}
 
 func (nilGate) Check(context.Context, string, string, string, []string) error { return nil }
 
-type nilCmds struct{ ndmsres.Commands }
+// countCmds — счётчик мутаций NDMS: гейт валидации требуется доказывать
+// нулём вызовов к роутеру, а не отсутствием шагов в плане.
+type countCmds struct{ n int }
+
+func (c *countCmds) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
+	c.n++
+	return nil
+}
+func (c *countCmds) DeleteOpkgTun(context.Context, string) error              { c.n++; return nil }
+func (c *countCmds) SetDescription(context.Context, string, string) error     { c.n++; return nil }
+func (c *countCmds) SetSecurityLevel(context.Context, string, string) error   { c.n++; return nil }
+func (c *countCmds) SetIPGlobal(context.Context, string) error                { c.n++; return nil }
+func (c *countCmds) SetAddress(context.Context, string, string, string) error { c.n++; return nil }
+func (c *countCmds) ClearAddress(context.Context, string) error               { c.n++; return nil }
+func (c *countCmds) SetMTU(context.Context, string, int) error                { c.n++; return nil }
+func (c *countCmds) InterfaceUp(context.Context, string) error                { c.n++; return nil }
+func (c *countCmds) InterfaceDown(context.Context, string) error              { c.n++; return nil }
+func (c *countCmds) SetPermitAllACL(context.Context, string) error            { c.n++; return nil }
+func (c *countCmds) RemovePermitAllACL(context.Context, string) error         { c.n++; return nil }
+func (c *countCmds) EnsureDefaultRouteCandidacy(context.Context, string) error {
+	c.n++
+	return nil
+}
 
 // memQuery — карта фактов; тест наполняет её ПОСЛЕ New, ресурсы долгоживущие
 // и читают ту же карту (пересоздавать ресурсы нельзя — в них живут защёлки).
@@ -98,12 +121,19 @@ func srvCfg() roles.WdttServerConfig {
 
 func newRole(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery) {
 	t.Helper()
+	r, acc, ing, q, _ := newRoleCmds(t)
+	return r, acc, ing, q
+}
+
+func newRoleCmds(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery, *countCmds) {
+	t.Helper()
 	acc, ing := &nilAccess{}, &nilIngress{}
 	q := memQuery{facts: map[string]ndmsres.IfaceFacts{}}
+	cmds := &countCmds{}
 	r, err := New(Deps{
 		Instance: "default", Binary: "/opt/bin/wdtt-server",
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
-		Cmds: nilCmds{}, Query: q, IPT: nilIPT{}, FW: nilFW{},
+		Cmds: cmds, Query: q, IPT: nilIPT{}, FW: nilFW{},
 		RunHook:       func(context.Context, string, string) error { return nil },
 		EnableForward: func() error { return nil },
 		IfaceExists:   func(string) bool { return true },
@@ -114,7 +144,7 @@ func newRole(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r, acc, ing, q
+	return r, acc, ing, q, cmds
 }
 
 func ids(res []proxyrt.Resource) []proxyrt.ResourceID {
@@ -324,5 +354,38 @@ func TestServerInputPortsOnlyWAN(t *testing.T) {
 	cfg.OpenFirewall = false
 	if got := inputPorts(cfg); len(got) != 0 {
 		t.Fatalf("тумблер выключен — портов нет: %v", got)
+	}
+}
+
+func TestServerInvalidConfigTouchesNoNDMS(t *testing.T) {
+	// I3 ревью: обе NDMS-половины объявлены ВЫШЕ процесса, а приговор
+	// Validate() был только у процесса — на заведомо нерабочем конфиге
+	// роутеру уезжали два create OpkgTun прежде, чем причина доходила до
+	// пользователя.
+	role, acc, ing, _, cmds := newRoleCmds(t)
+	cfg := srvCfg()
+	cfg.NatMode = "internet-only" // без NatStaticWAN — отказ Validate
+	cfg.NatStaticWAN = ""
+
+	res, phase := proxyrt.NewReconciler(role, cfg, proxyrt.ReconcileOpts{}).
+		Run(context.Background(), proxyrt.IntentEnabled)
+
+	if cmds.n != 0 {
+		t.Fatalf("на невалидном конфиге к NDMS ушло %d вызовов: %+v", cmds.n, res.States)
+	}
+	if len(acc.applied) != 0 || ing.calls != 0 {
+		t.Fatalf("на невалидном конфиге тронуты доступ/ingress: %v, %d", acc.applied, ing.calls)
+	}
+	if phase != proxyrt.PhaseFailed {
+		t.Fatalf("фаза %v, ожидали failed: %+v", phase, res.States)
+	}
+	reason := ""
+	for _, s := range res.States {
+		if s.Status == proxyrt.StatusFailed {
+			reason = s.Error
+		}
+	}
+	if !strings.Contains(reason, "natStaticWAN") {
+		t.Fatalf("приговор обязан называть причину валидации: %q (%+v)", reason, res.States)
 	}
 }

@@ -3,6 +3,7 @@ package wdttclient
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +51,29 @@ type nilGate struct{}
 
 func (nilGate) Check(context.Context, string, string, string, []string) error { return nil }
 
-type nilCmds struct{ ndmsres.Commands }
+// countCmds — счётчик мутаций NDMS: гейт валидации доказывается нулём
+// вызовов к роутеру, а не отсутствием шагов в плане.
+type countCmds struct{ n int }
+
+func (c *countCmds) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
+	c.n++
+	return nil
+}
+func (c *countCmds) DeleteOpkgTun(context.Context, string) error              { c.n++; return nil }
+func (c *countCmds) SetDescription(context.Context, string, string) error     { c.n++; return nil }
+func (c *countCmds) SetSecurityLevel(context.Context, string, string) error   { c.n++; return nil }
+func (c *countCmds) SetIPGlobal(context.Context, string) error                { c.n++; return nil }
+func (c *countCmds) SetAddress(context.Context, string, string, string) error { c.n++; return nil }
+func (c *countCmds) ClearAddress(context.Context, string) error               { c.n++; return nil }
+func (c *countCmds) SetMTU(context.Context, string, int) error                { c.n++; return nil }
+func (c *countCmds) InterfaceUp(context.Context, string) error                { c.n++; return nil }
+func (c *countCmds) InterfaceDown(context.Context, string) error              { c.n++; return nil }
+func (c *countCmds) SetPermitAllACL(context.Context, string) error            { c.n++; return nil }
+func (c *countCmds) RemovePermitAllACL(context.Context, string) error         { c.n++; return nil }
+func (c *countCmds) EnsureDefaultRouteCandidacy(context.Context, string) error {
+	c.n++
+	return nil
+}
 
 type memQuery struct{ facts map[string]ndmsres.IfaceFacts }
 
@@ -100,11 +123,18 @@ func (nilOcc) OccupiedLocalListenPorts(context.Context) (map[int]bool, error) {
 
 func newRole(t *testing.T, link *fakeLink) (*Role, *memRegistry) {
 	t.Helper()
+	r, reg, _ := newRoleCmds(t, link)
+	return r, reg
+}
+
+func newRoleCmds(t *testing.T, link *fakeLink) (*Role, *memRegistry, *countCmds) {
+	t.Helper()
 	reg := &memRegistry{m: map[string]linkres.ExitInfo{}}
+	cmds := &countCmds{}
 	r, err := New(Deps{
 		Instance: "default", Binary: "/opt/bin/wt-client",
 		Link: link, Runner: nilRunner{}, Gate: nilGate{},
-		Cmds: nilCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Cmds: cmds, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 		Policies: nilPolicies{}, Permit: nilPermit{},
 		Hooks: nilHooks{}, Registry: reg,
 		Sync: nilSync{}, Occ: nilOcc{}, Now: time.Now,
@@ -112,7 +142,7 @@ func newRole(t *testing.T, link *fakeLink) (*Role, *memRegistry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r, reg
+	return r, reg, cmds
 }
 
 func rawCfg() roles.WdttClientConfig {
@@ -304,5 +334,36 @@ func TestRoutableExitPublishedEvenWhenDown(t *testing.T) {
 	}
 	if got.Ready {
 		t.Fatalf("процесс не поднялся — выход не может быть Ready: %+v", got)
+	}
+}
+
+func TestInvalidConfigTouchesNoNDMS(t *testing.T) {
+	// I3 ревью: у клиента приговор Validate() прикрыт порядком (process выше
+	// NDMS-хвоста), но опираться на порядок нельзя — гейт делает свойство
+	// «невалидный конфиг не мутирует роутер» общим для всех четырёх ролей.
+	role, reg, cmds := newRoleCmds(t, &fakeLink{err: control.ErrNoSocket})
+	cfg := rawCfg()
+	cfg.Password = "" // wt-client без -password выходит: отказ Validate
+
+	res, phase := proxyrt.NewReconciler(role, cfg, proxyrt.ReconcileOpts{}).
+		Run(context.Background(), proxyrt.IntentEnabled)
+
+	if cmds.n != 0 {
+		t.Fatalf("на невалидном конфиге к NDMS ушло %d вызовов: %+v", cmds.n, res.States)
+	}
+	if len(reg.m) != 0 {
+		t.Fatalf("на невалидном конфиге опубликован выход: %+v", reg.m)
+	}
+	if phase != proxyrt.PhaseFailed {
+		t.Fatalf("фаза %v, ожидали failed: %+v", phase, res.States)
+	}
+	reason := ""
+	for _, s := range res.States {
+		if s.Status == proxyrt.StatusFailed {
+			reason = s.Error
+		}
+	}
+	if !strings.Contains(reason, "password") {
+		t.Fatalf("приговор обязан называть причину валидации: %q (%+v)", reason, res.States)
 	}
 }
