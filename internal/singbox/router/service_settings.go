@@ -129,7 +129,7 @@ func (s *ServiceImpl) reapplyFakeIPOverlay(ctx context.Context, settings *storag
 	if sr.RoutingMode != "fakeip-tun" || !sr.Enabled {
 		return nil
 	}
-	if settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+	if st, ok := opkgTunOwned(settings, stateFakeIPTun); !ok || !st.Provisioned {
 		return nil
 	}
 	return s.fakeipWithConfig(ctx, "settings", func(*RouterConfig) error { return nil })
@@ -241,10 +241,13 @@ const (
 
 // normalizeFakeIPSettings defaults the user-editable fakeip engine fields from
 // DefaultFakeIPTunParams (single source of truth) when empty/zero, then
-// validates them. Per spec, an empty FakeIPPool6 is defaulted to the v6 pool
-// (so a fresh install gets dual-stack); v6 is disabled at a higher layer, not
-// by persisting "" here. Idempotent: re-running on a normalized struct is a
-// fixed point.
+// validates them. FakeIPPool6 — ИСКЛЮЧЕНИЕ: пустое значение ЗНАЧИМО («v6
+// выключен», обещание UI/DTO) и НЕ дефолтится; дефолт свежей установки сеет
+// defaultSettings, хранимое "" старых установок материализовала migrateToV35.
+// «Не прислано» ≠ «прислано пустым» различает PUT-handler (PutSettings,
+// теневой указатель): absent сохраняет текущее значение — сюда пустое приходит
+// только как осознанное выключение. Idempotent: re-running on a normalized
+// struct is a fixed point.
 func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	def := DefaultFakeIPTunParams()
 	if sr.FakeIPStack == "" {
@@ -255,9 +258,6 @@ func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	}
 	if sr.FakeIPPool4 == "" {
 		sr.FakeIPPool4 = def.Inet4Range
-	}
-	if sr.FakeIPPool6 == "" {
-		sr.FakeIPPool6 = def.Inet6Range
 	}
 	if sr.FakeIPMTU == 0 {
 		sr.FakeIPMTU = def.MTU

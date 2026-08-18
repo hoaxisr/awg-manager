@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 33
+	CurrentSchemaVersion        = 35
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -191,6 +191,12 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 33 {
 			s.migrateToV33(&settings)
 		}
+		if settings.SchemaVersion < 34 {
+			s.migrateToV34(&settings)
+		}
+		if settings.SchemaVersion < 35 {
+			s.migrateToV35(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -279,6 +285,10 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			// KeenDNS/CrazeDNS: имена резолвит сам роутер, его адреса —
 			// мимо sing-box.
 			BypassPresets: []string{"keendns"},
+			// Явный дефолт v6-пула: с v35 пустое значение ЗНАЧИМО («v6
+			// выключен»), поэтому свежая установка обязана нести его дословно.
+			// Литерал — дубль DefaultFakeIPTunParams().Inet6Range.
+			FakeIPPool6: "fc00::/18",
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -526,35 +536,47 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
-// SetFakeIPState atomically persists the fakeip-tun operational state under the
-// store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetSingboxManuallyStopped.
-func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
+// SetOpkgTunState atomically persists the unified OpkgTun ownership record
+// under the store lock (single-writer: lifecycle only). nil очищает запись.
+// Mirrors SetSingboxManuallyStopped.
+func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.FakeIP = st
+	s.settings.OpkgTun = st
 	return s.saveUnlocked(s.settings)
 }
 
-// SetPolicyTunState atomically persists the policy-tun operational state under
-// the store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetFakeIPState.
-func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
+// SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая
+// ownership-поля (Mode/Provisioned/Index): у payload другой писатель
+// (NAT-reconcile) и другие моменты записи. Пустой/nil список снимает payload.
+// Copy-on-write: в кэш публикуется новая запись, старую могут параллельно
+// маршалить читатели без нашего лока. Запись отсутствует → ошибка (payload
+// без владельца не бывает).
+func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.PolicyTun = st
+	if s.settings.OpkgTun == nil {
+		return fmt.Errorf("no OpkgTun ownership record")
+	}
+	cp := *s.settings.OpkgTun
+	if len(segs) == 0 {
+		cp.PolicyTun = nil
+	} else {
+		cp.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
+	}
+	s.settings.OpkgTun = &cp
 	return s.saveUnlocked(s.settings)
 }
 
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
-// writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.
+// writer). Pass nil to clear (preset off). Mirrors SetOpkgTunState.
 func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

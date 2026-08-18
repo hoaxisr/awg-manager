@@ -220,12 +220,11 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
-	st := settings.PolicyTun
+	st, _ := opkgTunOwned(settings, statePolicyTun)
 	if st != nil {
-		// Мутируем копию: settings.PolicyTun — объект живого кэша стора,
-		// который параллельно маршалят читатели без нашего лока, а записи
-		// сегментов ниже по стеку идут в него без лока. Копию публикуют
-		// SetPolicyTunState — уже под локом стора.
+		// Мутируем копию: запись — объект живого кэша стора, который
+		// параллельно маршалят читатели без нашего лока. Копию публикуют
+		// SetOpkgTunState/SetOpkgTunNATSegments — уже под локом стора.
 		cp := *st
 		st = &cp
 	}
@@ -249,13 +248,17 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.deps.OpkgTunIndices != nil {
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
-	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) {
+	// Доказанно чужой живой индекс — тоже повод для re-provision: иначе
+	// drift-heal ниже чинил бы ЧУЖОЙ интерфейс.
+	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
+		(probeErr == nil && live[st.Index] &&
+			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), policyTunDescription)) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
+	iface := tunIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
 	// Провижинен и жив, но tun-инбаунда в слоте нет — состояние НЕДОДЕЛАНО, и
 	// само оно не заживёт. Так выглядит краш между удержанием интерфейса и
@@ -270,8 +273,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if !s.policyTunInboundPresent() {
 		s.appLog.Warn("policy-tun-reconcile", iface,
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
-		if e := s.deps.Settings.SetPolicyTunState(&storage.PolicyTunState{
-			Index: st.Index, NATSegments: st.NATSegments,
+		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
+			Mode: storage.OpkgTunModePolicyTun, Index: st.Index, PolicyTun: st.PolicyTun,
 		}); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
 		}

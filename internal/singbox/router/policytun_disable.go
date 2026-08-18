@@ -30,7 +30,7 @@ import (
 //     индекс переживают выключение: к имени привязан permit в политике;
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
-	st := settings.PolicyTun
+	st, _ := opkgTunOwned(settings, statePolicyTun)
 
 	// (0) Хук перехвата DNS сносим ПЕРВЫМ и ДО гарда «нет персиста». Две
 	// причины:
@@ -74,16 +74,25 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		return nil
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel name: только метки в логах
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
+	iface := tunIfaceName(st.Index)   // kernel name: только метки в логах
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI name: маршруты + удаление
+
+	// Имя адресует ИНДЕКС из записи владения, а не сам объект: наш интерфейс мог
+	// умереть, и номер занял посторонний OpkgTun. Тогда шаги (2) и (5) сняли бы
+	// ЕГО дефолт и адреса. Один скан на всё выключение; «недоступный скан ≠
+	// чужой» — без скана и на его ошибке разбираем как раньше.
+	foreign := s.provenForeignOpkgTun(ctx, ndmsName, policyTunDescription)
+	if foreign {
+		s.appLog.Warn("policy-tun-disable", ndmsName, "на этом номере нет нашего OpkgTun — интерфейс не трогаем")
+	}
 
 	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
 	// трафик сегментов сразу уходит через WAN штатным маскарадом. Best-effort —
 	// teardown не прерывается (персист чистится только при успешном delete, так
 	// что провал повторится реапом).
 	natRestored := true
-	if len(st.NATSegments) > 0 {
-		if err := s.restorePolicyTunNAT(ctx, st.NATSegments); err != nil {
+	if segs := natSegmentsOf(st); len(segs) > 0 {
+		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "restore segment NAT: "+err.Error())
 			natRestored = false
 		}
@@ -91,7 +100,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 
 	// (2) Снять дефолт с tun. v6 снимаем безусловно: персист не хранит,
 	// был ли настроен v6-адрес, а remove-форма NDMS (`no:true`) идемпотентна.
-	if s.deps.DefaultRoute != nil {
+	if !foreign && s.deps.DefaultRoute != nil {
 		if err := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "remove default route: "+err.Error())
 		}
@@ -161,12 +170,24 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// Автоматического повтора у неё НЕТ — в выключенном состоянии
 	// reconcilePolicyTun выходит рано; запись отработает на следующем включении,
 	// смене режима или реапе.
-	if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-		held := &storage.PolicyTunState{Index: st.Index}
-		if !natRestored {
-			held.NATSegments = st.NATSegments
+	// Доказанно чужой интерфейс на нашем индексе не удерживаем, а запись СНИМАЕМ:
+	// удержание существует ради permit'а пользователя, привязанного к имени, но
+	// стенд 2026-08-18 показал, что NDMS стирает запись permit'а вместе с
+	// интерфейсом и пересоздание одноимённого её НЕ воскрешает. Наш интерфейс
+	// мёртв → permit уже испарился, беречь нечего, а держаться за чужой номер
+	// значило бы навсегда запретить себе аллокацию. Индекс не течёт: аллокатор
+	// live-sourced. Профиль потерь тот же, что у персист-реапа (там запись тоже
+	// снимается на пропуске чужого).
+	if foreign {
+		if err := s.deps.Settings.SetOpkgTunState(nil); err != nil {
+			s.appLog.Warn("policy-tun-disable", iface, "clear policy-tun persist: "+err.Error())
 		}
-		if err := s.deps.Settings.SetPolicyTunState(held); err != nil {
+	} else if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
+		held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index}
+		if !natRestored {
+			held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
+		}
+		if err := s.deps.Settings.SetOpkgTunState(held); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
 		}
 	}

@@ -33,7 +33,7 @@ func (liveIndices) LiveOpkgTunIndices(_ context.Context) (map[int]bool, error) {
 	return map[int]bool{0: true}, nil
 }
 
-func newDNSStrategyEnv(t *testing.T, sr storage.SingboxRouterSettings, fakeip *storage.FakeIPState) *dnsStrategyEnv {
+func newDNSStrategyEnv(t *testing.T, sr storage.SingboxRouterSettings, fakeip *storage.OpkgTunState) *dnsStrategyEnv {
 	t.Helper()
 
 	op := NewOperator(OperatorDeps{Dir: t.TempDir()})
@@ -59,7 +59,7 @@ func newDNSStrategyEnv(t *testing.T, sr storage.SingboxRouterSettings, fakeip *s
 		t.Fatalf("settings.Load: %v", err)
 	}
 	all.SingboxRouter = sr
-	all.FakeIP = fakeip
+	all.OpkgTun = fakeip
 	if err := settings.Save(all); err != nil {
 		t.Fatalf("settings.Save: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestReconcile_StripsBaseDNSStrategyAfterUnparking(t *testing.T) {
 		RoutingMode:   "fakeip-tun",
 		Enabled:       true,
 		WANAutoDetect: true,
-	}, &storage.FakeIPState{Provisioned: true, Index: 0})
+	}, &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 0})
 	env.seedSlotStrategy(t, orchestrator.SlotFakeIP)
 	if err := env.orch.SetEnabled(orchestrator.SlotFakeIP, false); err != nil {
 		t.Fatalf("предусловие: парковка слота 21: %v", err)
@@ -176,8 +176,8 @@ func TestReconcile_StripsBaseDNSStrategyAfterUnparkingPolicyTun(t *testing.T) {
 		[]byte(`{"dns":{"strategy":"ipv4_only"},"inbounds":[{"type":"tun","tag":"tun-in"}]}`)); err != nil {
 		t.Fatalf("предусловие: Save слота 20: %v", err)
 	}
-	if err := env.settings.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("предусловие: PolicyTunState: %v", err)
+	if err := env.settings.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("предусловие: OpkgTunState: %v", err)
 	}
 	if err := env.orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
 		t.Fatalf("предусловие: парковка слота 20: %v", err)

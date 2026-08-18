@@ -26,7 +26,7 @@ func TestFakeIPCompositeOutbound_RejectsUnknownMembers(t *testing.T) {
 	if err0 != nil {
 		t.Fatal(err0)
 	}
-	all.FakeIP = &storage.FakeIPState{Provisioned: true, Index: 0, Inet4Range: "198.18.0.0/15"}
+	all.OpkgTun = &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 0, FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15"}}
 	if err0 := svc.deps.Settings.Save(all); err0 != nil {
 		t.Fatal(err0)
 	}

@@ -204,6 +204,9 @@ func runCleanup(dataDir string) {
 		DefaultRoute: cleanupNDMSCommands.Routes,
 		SegmentNAT:   cleanupNDMSCommands.NAT,
 		NATState:     &routerNATStateAdapter{nat: cleanupNDMSQueries.NAT, static: cleanupNDMSQueries.StaticNAT},
+		// Скан по описанию: без него снятие шло бы по индексу вслепую и на
+		// удалении пакета разобрало бы ЧУЖОЙ OpkgTun, занявший наш номер.
+		OpkgTunScan: opkgTunScanner(cleanupNDMSQueries.Interfaces),
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "policy-tun cleanup error: %v\n", err)
 	}
