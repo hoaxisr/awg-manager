@@ -546,7 +546,7 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 	if !writeSlotJSON(stepRemoveRouteFinal, basePath, m, log) {
 		return
 	}
-	logConfigPatchInfo(log, "singbox base config migrated",
+	logConfigPatchInfo(log, "singbox base config self-healed",
 		"patch", "remove-route-final",
 		"path", basePath,
 		"oldFinal", oldFinal,
@@ -608,7 +608,7 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 	if !writeSlotJSON(stepRemoveDNSFinal, basePath, m, log) {
 		return
 	}
-	logConfigPatchInfo(log, "singbox base config migrated",
+	logConfigPatchInfo(log, "singbox base config self-healed",
 		"patch", "remove-dns-final",
 		"path", basePath,
 		"oldFinal", oldFinal,
