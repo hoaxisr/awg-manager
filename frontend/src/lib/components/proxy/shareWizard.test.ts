@@ -145,11 +145,11 @@ describe('peerWithPort: адрес ссылки', () => {
 });
 
 /**
- * Первая опора инварианта бэкенда (`UpdateServerInstance`, server.go:76):
- * сохранение конфига с непустым паролем и нулём рабочих абонентов заводит
- * автоматического «Абонента 1». Двойник повторяет её и побочный эффект
- * `AddServerClient` (server_clients.go:307-310), иначе тест не отличил бы
- * правильный порядок от неправильного.
+ * Двойник бэкенда мастера. Сохранение конфига абонентов НЕ заводит
+ * (Дополнение №5): «Абонент 1» рождается только на цикле старта. Поэтому
+ * порядок шагов сторожится самим списком вызовов, а побочный эффект
+ * `AddServerClient` — «дописать главный пароль ПОСЛЕ абонента» — двойник
+ * повторяет: на нём держится, что ссылка уходит заказанному абоненту.
  */
 function fakeWdttBackend() {
 	const state = {
@@ -166,7 +166,6 @@ function fakeWdttBackend() {
 			isMainPassword: c.password === state.password,
 			isAuto: c.auto,
 		}));
-	const usable = () => state.clients.filter((c) => c.password !== state.password).length;
 
 	apiMock.createWdttServer.mockImplementation(async () => {
 		state.calls.push('create');
@@ -175,9 +174,6 @@ function fakeWdttBackend() {
 	apiMock.updateWdttServerInstance.mockImplementation(async (_id: string, cfg: WdttServerConfig) => {
 		state.calls.push('put');
 		state.password = (cfg.password ?? '').trim();
-		if (state.password && usable() === 0) {
-			state.clients.push({ password: 'auto-1', comment: 'Абонент 1', auto: true });
-		}
 		return { config: { ...cfg, clients: state.clients } };
 	});
 	apiMock.addWdttServerPanelUser.mockImplementation(
@@ -219,7 +215,7 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 	};
 	const client = { name: 'Ноутбук Пети', password: '', vkHash: '', clientId: '', allow: true };
 
-	it('абонент заводится ДО сохранения пароля — второго, автоматического, не появляется', async () => {
+	it('абонент заводится ДО сохранения пароля, ссылка уходит ему', async () => {
 		const state = fakeWdttBackend();
 		const res = await commitShareWizard({
 			protocol: 'wdtt',
@@ -235,7 +231,7 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 			mainPassword: 'mainpass0000',
 			comment: 'Ноутбук Пети',
 		});
-		// WS-29: ссылка собрана на пароль абонента шага 3, а не автоматического.
+		// WS-29: ссылка собрана на пароль абонента шага 3.
 		expect(apiMock.generateWdttServerLink.mock.calls[0][1]).toMatchObject({ password: 'gen-1' });
 		expect(res.link).toBe('wdtt://x');
 	});

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, StatusDot } from '$lib/components/ui';
+	import { Button, FieldHint, StatusDot } from '$lib/components/ui';
 	import { Play, Square, Wand2 } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import type { ProxyRunState } from './rows';
@@ -15,9 +15,23 @@
 		onwizard?: () => void;
 		/** Слот управления рядом с «Запустить/Остановить» — тумблер sing-box у раздачи. */
 		aside?: Snippet;
+		/**
+		 * Непустой текст блокирует «Запустить» и печатается подсказкой рядом:
+		 * гейт SH-91 у WDTT-раздачи без рабочих абонентов. Пусто — гейта нет.
+		 */
+		startBlockedHint?: string;
 	}
 
-	let { state, meta, busy = false, onstart, onstop, onwizard, aside }: Props = $props();
+	let {
+		state,
+		meta,
+		busy = false,
+		onstart,
+		onstop,
+		onwizard,
+		aside,
+		startBlockedHint = '',
+	}: Props = $props();
 
 	// RB-01..RB-03.
 	const label = $derived(
@@ -42,13 +56,16 @@
 		{/if}
 		<Button
 			variant="success"
-			disabled={state === 'running' || busy}
+			disabled={state === 'running' || busy || !!startBlockedHint}
 			loading={busy && state !== 'running'}
 			onclick={onstart}
 		>
 			{#snippet iconBefore()}<Play size={14} strokeWidth={2.5} />{/snippet}
 			Запустить
 		</Button>
+		{#if startBlockedHint}
+			<FieldHint text={startBlockedHint} ariaLabel="Подсказка: запуск заблокирован" />
+		{/if}
 		<!-- «Остановить» доступна и при упавшем процессе: иначе не снять enabled (WC-32). -->
 		<Button variant="secondary" disabled={busy} onclick={onstop}>
 			{#snippet iconBefore()}<Square size={14} strokeWidth={2.5} />{/snippet}

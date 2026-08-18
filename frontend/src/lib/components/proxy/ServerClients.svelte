@@ -16,10 +16,11 @@
 		addErrorText,
 		apiErrorCode,
 		addedPassword,
-		autoCreateAfterRemove,
+		noUsableAfterRemove,
 		counterLabel,
 		headerApplied,
 		reissueName,
+		usableCount,
 	} from './serverClients';
 
 	/** WU-07: запрос списка не висит дольше 20 секунд. */
@@ -35,15 +36,23 @@
 		busy?: boolean;
 		/** Общий замок мутаций сервера (деталь «Раздача» владеет им). */
 		locked: (fn: () => Promise<void>) => Promise<void>;
+		/**
+		 * Гейт старта (SH-91) живёт в детали раздачи, а список абонентов — здесь:
+		 * отдаём число рабочих наверх. `undefined` — состав ещё не известен, по
+		 * незнанию блокировать нельзя.
+		 */
+		onusable?: (count: number | undefined) => void;
 	}
 
-	let { serverId, serverName, server, running, busy = false, locked }: Props = $props();
+	let { serverId, serverName, server, running, busy = false, locked, onusable }: Props = $props();
 
 	let users = $state<WdttPanelUserEntry[]>([]);
 	let lastReload = $state<WdttPanelUsersStatus['reload']>(undefined);
 	let loading = $state(false);
 	let loadError = $state('');
 	let loadedFor = $state('');
+	/** Состав получен хотя бы раз для ТЕКУЩЕГО сервера. */
+	let usersKnown = $state(false);
 
 	let linkUser = $state<WdttPanelUserEntry | undefined>();
 	let removeTarget = $state<WdttPanelUserEntry | undefined>();
@@ -89,6 +98,7 @@
 	function applyStatus(st: WdttPanelUsersStatus) {
 		seq += 1;
 		users = st.users ?? [];
+		usersKnown = true;
 		lastReload = st.reload;
 	}
 
@@ -105,6 +115,7 @@
 			const st = await withTimeout(api.getWdttServerPanelUsers(serverId), FETCH_TIMEOUT_MS);
 			if (my !== seq) return;
 			users = st.users ?? [];
+			usersKnown = true;
 			if (!preserveBadge) lastReload = st.reload;
 		} catch (e) {
 			if (my !== seq) return;
@@ -122,8 +133,15 @@
 		untrack(() => {
 			if (id === loadedFor) return;
 			loadedFor = id;
+			usersKnown = false;
 			void reload();
 		});
+	});
+
+	// Отчёт наверх идёт и при неизвестном составе: иначе после перехода на
+	// другой сервер деталь держала бы гейт по чужому числу.
+	$effect(() => {
+		onusable?.(usersKnown ? usableCount(users) : undefined);
 	});
 
 	function addUser(values: { comment: string; password: string; vkHash: string }) {
@@ -331,8 +349,8 @@
 	open={removeTarget !== undefined}
 	title="Удалить абонента?"
 	message={`Абонент «${removeTarget?.comment || removeTarget?.password || ''}» будет удалён с сервера.`}
-	secondary={removeTarget && autoCreateAfterRemove(removeTarget, users)
-		? 'Ссылка этого абонента перестанет работать сразу после удаления. После удаления сервер заведёт абонента «Абонент 1» автоматически — иначе он не запустится.'
+	secondary={removeTarget && noUsableAfterRemove(removeTarget, users)
+		? 'Ссылка этого абонента перестанет работать сразу после удаления. После удаления абонентов не останется — сервер нельзя будет запустить, пока не добавите нового.'
 		: 'Ссылка этого абонента перестанет работать сразу после удаления.'}
 	confirmLabel="Удалить"
 	onConfirm={() => removeTarget && removeUser(removeTarget)}

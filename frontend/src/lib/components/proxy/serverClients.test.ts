@@ -3,7 +3,7 @@ import type { WdttPanelUserEntry } from '$lib/types';
 import {
 	addErrorText,
 	addedPassword,
-	autoCreateAfterRemove,
+	noUsableAfterRemove,
 	counterLabel,
 	groupDigits,
 	headerApplied,
@@ -95,14 +95,14 @@ describe('матрица кнопок §4.4', () => {
 	});
 });
 
-describe('SH-77: предупреждение про «Абонент 1»', () => {
+describe('SH-77: предупреждение «сервер нельзя будет запустить»', () => {
 	it('показывается, когда после удаления рабочих не остаётся', () => {
-		expect(autoCreateAfterRemove(expired, [expired])).toBe(true);
-		expect(autoCreateAfterRemove(expired, [main, expired])).toBe(true);
+		expect(noUsableAfterRemove(expired, [expired])).toBe(true);
+		expect(noUsableAfterRemove(expired, [main, expired])).toBe(true);
 	});
 
 	it('молчит, когда рабочие остаются', () => {
-		expect(autoCreateAfterRemove(expired, [alive, expired])).toBe(false);
+		expect(noUsableAfterRemove(expired, [alive, expired])).toBe(false);
 	});
 });
 

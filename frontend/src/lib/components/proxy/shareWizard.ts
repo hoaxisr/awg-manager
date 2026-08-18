@@ -239,11 +239,9 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 
 		// Абонент заводится ПЕРЕД сохранением конфига и сам приносит главный
 		// пароль: `AddServerClient` дописывает его ПОСЛЕ абонента
-		// (server_clients.go:307-310). Обратный порядок означал бы PUT с
-		// непустым паролем и нулём абонентов — а это первая опора инварианта
-		// (`UpdateServerInstance`, server.go:76), и рядом с заказанным
-		// абонентом встал бы автоматический «Абонент 1», которому и ушла бы
-		// ссылка.
+		// (server_clients.go). Обратный порядок сохранил бы пароль сервера и
+		// при отказе добавления — сервер остался бы с паролем и без единого
+		// абонента, то есть незапускаемым (гейт SH-91).
 		let password = input.addedClientPassword ?? '';
 		if (!password) {
 			const before = cfg.clients ?? [];

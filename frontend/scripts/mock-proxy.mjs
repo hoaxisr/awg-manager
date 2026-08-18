@@ -3357,9 +3357,9 @@ const MOCK_WDTT_SERVER_PASSWORD = 'mainpass0000000000000000';
 const MOCK_WDTT_OLD_BINARY = process.env.MOCK_WDTT_OLD_BINARY === '1';
 const MOCK_WDTT_LEGACY_MAIN_CLIENT = process.env.MOCK_WDTT_LEGACY_MAIN_CLIENT === '1';
 //   MOCK_WDTT_ALL_EXPIRED=1       — у сервера остались только просроченные
-//                                   записи: из этого состояния удаление
-//                                   последней заводит «Абонент 1» (инвариант
-//                                   непустоты, server_clients.go).
+//                                   записи: удаление последней разрешено и
+//                                   оставляет сервер без рабочих — «Запустить»
+//                                   после этого блокирует гейт SH-91.
 const MOCK_WDTT_ALL_EXPIRED = process.env.MOCK_WDTT_ALL_EXPIRED === '1';
 //   MOCK_WDTT_SERVER_UNSUPPORTED=1 — арка роутера без серверной сборки:
 //     `serverSupported: false` (internal/wdtt/install.go:69), мастер не
@@ -3667,9 +3667,11 @@ function mockWdttUsableUsers(users) {
 }
 
 /**
- * Инвариант непустоты (ensureUsableServerClient, wdtt/server_clients.go:184):
- * запись passwords.json — а её делает любая мутация состава — при заданном
- * главном пароле и нуле рабочих абонентов заводит «Абонент 1». Обещание SH-77.
+ * Инвариант непустоты (ensureUsableServerClient, wdtt/server_clients.go): при
+ * заданном главном пароле и нуле рабочих абонентов заводит «Абонент 1». Стоит
+ * РОВНО на цикле старта — последняя линия для путей мимо UI. На путях UI
+ * (сохранение конфига, добавление, удаление) абонент за пользователя не
+ * заводится: Дополнение №5.
  */
 function mockWdttEnsureUsable(inst) {
 	const main = String(inst.config.password ?? '').trim();
@@ -8827,10 +8829,8 @@ const server = http.createServer(async (req, res) => {
 					// хранилища (`UpdateServerInstance`, server.go:41).
 					const clients = inst.config.clients;
 					inst.config = { ...inst.config, ...body, clients };
-					// Первая опора инварианта непустоты (server.go:76): сервер с
-					// заданным паролем и нулём рабочих абонентов заводит «Абонент 1»
-					// сам — иначе wdtt-server не стартует.
-					mockWdttEnsureUsable(inst);
+					// Абонента здесь не заводит никто: опора на сохранении конфига
+					// снята (Дополнение №5, server.go).
 					sendData(res, { config: inst.config });
 				} catch (e) {
 					sendInvalidRequest(res, e);
@@ -8857,8 +8857,13 @@ const server = http.createServer(async (req, res) => {
 			// Тумблер «в политиках» применяется ровно здесь, на старте; со стопом
 			// применённое значение уходит вместе с процессом.
 			inst.appliedExposeToPolicies = inst.running ? inst.config.exposeToPolicies === true : null;
-			// passwords.json собирается перед стартом (мутации состава пишут его сами).
-			if (inst.running) inst.usersAvailable = true;
+			// passwords.json собирается перед стартом — вместе с инвариантом
+			// непустоты (syncServerClientsOnStart): старт мимо UI (автостарт,
+			// супервизор, апгрейд) заводит «Абонент 1» с бейджем SH-30.
+			if (inst.running) {
+				mockWdttEnsureUsable(inst);
+				inst.usersAvailable = true;
+			}
 			sendData(res, { message: `wdtt server ${id}: ${action} (mock)` });
 			return;
 		}
@@ -9084,9 +9089,8 @@ const server = http.createServer(async (req, res) => {
 				}
 				inst.users.splice(inst.users.indexOf(user), 1);
 				inst.config.clients = inst.config.clients.filter((c) => c.password !== password);
-				// Удаление тоже переписывает passwords.json — вместе с инвариантом
-				// непустоты: рабочих не осталось → сервер заводит «Абонент 1» сам.
-				mockWdttEnsureUsable(inst);
+				// Абонента взамен не заводим: удаление — путь UI (Дополнение №5).
+				// Сервер остаётся без рабочих, и «Запустить» блокирует гейт SH-91.
 				inst.usersAvailable = true;
 				sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
 				return;

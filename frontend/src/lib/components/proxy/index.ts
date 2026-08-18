@@ -50,7 +50,7 @@ export {
 	addErrorText,
 	addedPassword,
 	apiErrorCode,
-	autoCreateAfterRemove,
+	noUsableAfterRemove,
 	counterLabel,
 	headerApplied,
 	isUsable,

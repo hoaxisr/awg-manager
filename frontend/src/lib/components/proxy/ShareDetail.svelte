@@ -26,6 +26,7 @@
 	import RunBar from './RunBar.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import ServerClients from './ServerClients.svelte';
+	import { CLIENT_TEXT } from './serverClients';
 	import ShareAdvancedSection from './ShareAdvancedSection.svelte';
 	import ShareNetworkSection from './ShareNetworkSection.svelte';
 	import Topology, { type TopologyInbound } from './Topology.svelte';
@@ -103,6 +104,15 @@
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
 	// до ответа ручки статуса тумблер молчит, а не пугает.
 	let singboxRunning = $state(true);
+
+	// Гейт старта WDTT-сервера (SH-91): «Абонент 1» на путях UI больше не
+	// рождается, и сервер без единого рабочего пароля просто не поднимется
+	// («[WRAP] нет активных паролей»). Число рабочих отдаёт блок «Абоненты»;
+	// `undefined` — состав ещё не пришёл, и блокировать нельзя.
+	let usableClients = $state<number | undefined>(undefined);
+	const startBlockedHint = $derived(
+		wdttServer && usableClients === 0 ? CLIENT_TEXT.startNoUsable : '',
+	);
 
 	const peerOptions = $derived(buildRunningServerPeerDropdownOptions(peerSnap));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
@@ -309,6 +319,7 @@
 		{onstop}
 		{onwizard}
 		aside={wdttDraft ? ingressToggle : ftDraft ? peerSelect : undefined}
+		{startBlockedHint}
 	/>
 
 	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
@@ -349,6 +360,7 @@
 				{running}
 				busy={mutating}
 				{locked}
+				onusable={(count) => (usableClients = count)}
 			/>
 		{:else if ftServer}
 			<ServerAllowlist
