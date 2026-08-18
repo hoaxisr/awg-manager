@@ -3027,7 +3027,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/bypass-set/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
 })]),
-	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/add": v.lazy(() => api_OkResponse),
@@ -3042,7 +3041,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/dns/servers/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/servers/move": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/servers/update": v.lazy(() => api_OkResponse),
-	"POST /singbox/router/enable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/inspect": v.lazy(() => api_SingboxRouterInspectResponse),
 	"POST /singbox/router/inspect-dns": v.lazy(() => api_SingboxRouterInspectDNSResponse),
 	"POST /singbox/router/mode": v.lazy(() => api_OkResponse),

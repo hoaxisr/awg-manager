@@ -13879,30 +13879,6 @@ paths:
       summary: Geoip bypass-set status
       tags:
       - singbox-router
-  /singbox/router/disable:
-    post:
-      description: Stops the singbox-router engine and uninstalls iptables/policy
-        rules. Idempotent.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Disable singbox-router
-      tags:
-      - singbox-router
   /singbox/router/dns/chain-preset:
     get:
       description: 'Returns the DNS-chain preset (sing-box 1.14 evaluate/match_response):
@@ -14562,41 +14538,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS server
-      tags:
-      - singbox-router
-  /singbox/router/enable:
-    post:
-      description: 'Starts the singbox-router engine and installs iptables/policy
-        rules. Returns 400 with code POLICY_NOT_CONFIGURED or POLICY_MISSING when
-        the router policy mode is incomplete. Returns 503 SINGBOX_NOT_READY when sing-box
-        did not become ready within the boot-wait window — iptables install is deliberately
-        skipped to avoid orphaning DNS:53 redirects (issue #221).'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: sing-box did not come up in time
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Enable singbox-router
       tags:
       - singbox-router
   /singbox/router/geosites/list:

@@ -63,68 +63,6 @@ func (h *SingboxRouterHandler) GetStatus(w http.ResponseWriter, r *http.Request)
 	response.Success(w, st)
 }
 
-// Enable starts the singbox-router engine and installs iptables/policy rules.
-//
-//	@Summary		Enable singbox-router
-//	@Description	Starts the singbox-router engine and installs iptables/policy rules. Returns 400 with code POLICY_NOT_CONFIGURED or POLICY_MISSING when the router policy mode is incomplete. Returns 503 SINGBOX_NOT_READY when sing-box did not become ready within the boot-wait window — iptables install is deliberately skipped to avoid orphaning DNS:53 redirects (issue #221).
-//	@Tags			singbox-router
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	OkResponse
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		405	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Failure		503	{object}	APIErrorEnvelope	"sing-box did not come up in time"
-//	@Router			/singbox/router/enable [post]
-func (h *SingboxRouterHandler) Enable(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if err := h.svc.Enable(r.Context()); err != nil {
-		if errors.Is(err, router.ErrPolicyNotConfigured) {
-			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "POLICY_NOT_CONFIGURED")
-			return
-		}
-		if errors.Is(err, router.ErrPolicyMissing) {
-			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "POLICY_MISSING")
-			return
-		}
-		if errors.Is(err, router.ErrSingboxNotReady) {
-			response.ErrorWithStatus(w, http.StatusServiceUnavailable, err.Error(), "SINGBOX_NOT_READY")
-			return
-		}
-		h.handleErr(w, "request", err)
-		return
-	}
-	h.log.Info("enable", "", "Sing-box router enabled")
-	response.Success(w, map[string]bool{"ok": true})
-}
-
-// Disable stops the singbox-router engine and uninstalls iptables/policy rules.
-//
-//	@Summary		Disable singbox-router
-//	@Description	Stops the singbox-router engine and uninstalls iptables/policy rules. Idempotent.
-//	@Tags			singbox-router
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	OkResponse
-//	@Failure		405	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/singbox/router/disable [post]
-func (h *SingboxRouterHandler) Disable(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if err := h.svc.Disable(r.Context()); err != nil {
-		response.InternalError(w, err.Error())
-		return
-	}
-	h.log.Info("disable", "", "Sing-box router disabled")
-	response.Success(w, map[string]bool{"ok": true})
-}
-
 // SwitchMode orchestrates a routing-mode transition (off↔tproxy↔fakeip-tun↔policy-tun)
 // with directional fail-closed rollback. Progress is reported out-of-band as
 // "singbox-router:transition" events on the existing events SSE stream
