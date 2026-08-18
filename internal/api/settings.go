@@ -228,7 +228,9 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := h.store.Get()
+	// Снапшот, а не Get(): живой объект кэша нельзя маршалить — его
+	// map-поля параллельно правят узкие мутаторы стора.
+	settings, err := h.store.Snapshot()
 	if err != nil {
 		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
@@ -510,7 +512,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.logsSnapshot()
 	}
 
-	response.Success(w, merged)
+	// merged после Save и есть живой кэш — наружу отдаём снапшот.
+	if snap, err := h.store.Snapshot(); err == nil {
+		response.Success(w, snap)
+	} else {
+		response.Success(w, merged)
+	}
 	publishInvalidated(h.bus, ResourceSettings, "updated")
 }
 
@@ -541,14 +548,13 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.store.Get()
-	if err != nil {
-		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+	if err := h.store.SetApiKey(key); err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
 		return
 	}
-	settings.ApiKey = key
-	if err := h.store.Save(settings); err != nil {
-		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+	settings, err := h.store.Snapshot()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
 	}
 
