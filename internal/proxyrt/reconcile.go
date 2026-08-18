@@ -55,6 +55,8 @@ func NewReconciler(role Role, cfg any, opts ReconcileOpts) *Reconciler {
 func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 	res := Result{Intent: intent}
 	applied := make(map[string]bool)
+	// Ресурсы последнего прохода: по ним после цикла считается будильник.
+	var resources []Resource
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -68,7 +70,7 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 		res.Passes++
 
 		obs := NewObservations()
-		resources := r.role.Resources(intent, r.cfg, obs)
+		resources = r.role.Resources(intent, r.cfg, obs)
 		dup := ResourceID("")
 		for _, rs := range resources {
 			id := rs.ID()
@@ -94,12 +96,14 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 				Status: StatusFailed,
 				Error:  "идентификатор ресурса объявлен в роли дважды",
 			}}
+			// Будильник тут не нужен: ничего не применялось, а дефект роли сам
+			// не рассосётся — незачем гонять прогоны по таймеру.
+			resources = nil
 			break
 		}
 		// Второй вызов: желаемое может зависеть от наблюдений — адрес
 		// интерфейса вычисляется из состояния процесса.
 		resources = r.role.Resources(intent, r.cfg, obs)
-		res.Recheck = minRecheck(resources)
 
 		steps, states := Plan(resources, obs)
 		res.Steps, res.States = steps, states
@@ -162,6 +166,14 @@ func (r *Reconciler) Run(ctx context.Context, intent Intent) (Result, Phase) {
 			break
 		}
 	}
+	// Будильник считается ПОСЛЕ цикла, по состоянию ресурсов на момент выхода.
+	// Ресурс вправе взвести backoff внутри Apply (гейт пригодности бинаря,
+	// отказ старта процесса), а отказ Apply рвёт прогон — счёт до применения
+	// публиковал бы Recheck=0, и разбудить инстанс в failed было бы некому.
+	// Ровно так же выходы по потолку проходов и по StopAwaiting забирают паузу
+	// последнего применения, а не предыдущего прохода.
+	res.Recheck = minRecheck(resources)
+
 	// При отменённом контексте причина остановки — отмена, чем бы цикл ни
 	// завершился до этого: мы выключаемся, и любой другой вывод (ожидание
 	// эффекта, исчерпанный потолок) наружу не публикуется.

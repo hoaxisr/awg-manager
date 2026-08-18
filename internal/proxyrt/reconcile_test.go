@@ -302,8 +302,8 @@ func TestReconcileDuplicateResourceIDIsFailedNotSilent(t *testing.T) {
 	// шага: наблюдение первого затирается вторым, а шаг первого исполняет ЧУЖОЙ
 	// объект. На роутере это правило, уехавшее в чужую политику, — и наружу при
 	// этом уезжало здоровое «ожидание».
-	first := &statefulResource{id: "same", want: "первый"}
-	second := &statefulResource{id: "same", want: "второй"}
+	first := &statefulResource{id: "same", want: "первый", recheck: time.Minute}
+	second := &statefulResource{id: "same", want: "второй", recheck: time.Minute}
 	rec := NewReconciler(staticRole{res: []Resource{first, second}}, nil, ReconcileOpts{})
 
 	res, phase := rec.Run(context.Background(), IntentEnabled)
@@ -323,6 +323,9 @@ func TestReconcileDuplicateResourceIDIsFailedNotSilent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("состояния не называют коллизию идентификаторов: %+v", res.States)
+	}
+	if res.Recheck != 0 {
+		t.Fatalf("Recheck = %v, ожидали 0: дефект роли сам не рассосётся, гонять прогоны по таймеру незачем", res.Recheck)
 	}
 }
 
@@ -435,5 +438,92 @@ func TestReconcileReportsMinRecheck(t *testing.T) {
 
 	if res.Recheck != 15*time.Second {
 		t.Fatalf("Recheck = %v, ожидали минимальный ненулевой 15s", res.Recheck)
+	}
+}
+
+// backoffResource — образец Proc: паузу до следующей попытки он взводит ВНУТРИ
+// Apply (гейт пригодности бинаря, отказ старта), а не в Observe.
+type backoffResource struct {
+	id      ResourceID
+	backoff time.Duration
+	fail    bool
+	grow    bool // каждое применение рождает НОВЫЙ шаг — так добирается потолок
+	n       int
+	recheck time.Duration
+}
+
+func (b *backoffResource) ID() ResourceID { return b.id }
+
+func (b *backoffResource) Observe(context.Context) (Observation, error) {
+	return Observation{Known: true}, nil
+}
+
+func (b *backoffResource) Plan(Observation) []Step {
+	arg := "0"
+	if b.grow {
+		arg = strconv.Itoa(b.n)
+	}
+	return []Step{{Resource: b.id, Op: "start", Args: map[string]string{"n": arg}, Reason: "нужно запустить"}}
+}
+
+func (b *backoffResource) Apply(context.Context, Step) error {
+	b.n++
+	b.recheck = b.backoff * time.Duration(b.n) // каждое применение удлиняет паузу
+	if b.fail {
+		return errors.New("пин бинаря не обновлён")
+	}
+	return nil
+}
+
+func (b *backoffResource) RecheckAfter() time.Duration { return b.recheck }
+
+func TestReconcileRecheckSurvivesApplyFailure(t *testing.T) {
+	// Отказ Apply рвёт прогон, но ресурс уже взвёл backoff внутри Apply. Если
+	// считать будильник до применения, наружу уедет Recheck=0 и воркер не
+	// заведёт таймер: wdtt-клиент с протухшим пином бинаря останется в failed
+	// навсегда — будить его некому, процесса нет, а значит нет и push'ей.
+	b := &backoffResource{id: "process", backoff: 5 * time.Second, fail: true}
+	rec := NewReconciler(staticRole{res: []Resource{b}}, nil, ReconcileOpts{})
+
+	res, phase := rec.Run(context.Background(), IntentEnabled)
+
+	if phase != PhaseFailed {
+		t.Fatalf("фаза %q, ожидали failed", phase)
+	}
+	if res.Recheck != 5*time.Second {
+		t.Fatalf("Recheck = %v, ожидали ровно 5s — backoff, взведённый внутри Apply", res.Recheck)
+	}
+}
+
+func TestReconcileRecheckSurvivesCeiling(t *testing.T) {
+	// Потолок проходов — тоже выход мимо пересчёта: последний проход применил и
+	// взвёл паузу, а цикл оборвался сверху.
+	b := &backoffResource{id: "process", backoff: 5 * time.Second, grow: true}
+	rec := NewReconciler(staticRole{res: []Resource{b}}, nil, ReconcileOpts{MaxPasses: 2})
+
+	res, _ := rec.Run(context.Background(), IntentEnabled)
+
+	if res.Stop != StopCeiling {
+		t.Fatalf("стопор %q, ожидали ceiling", res.Stop)
+	}
+	if res.Recheck != 10*time.Second {
+		t.Fatalf("Recheck = %v, ожидали ровно 10s — пауза после ПОСЛЕДНЕГО применения, а не после предпоследнего", res.Recheck)
+	}
+}
+
+func TestReconcileRecheckSurvivesAwaiting(t *testing.T) {
+	// Ожидание эффекта: шаг применён в первом проходе, во втором повторён тем же
+	// и отброшен как применённый. Пауза, взведённая тем применением, обязана
+	// доехать наружу.
+	b := &backoffResource{id: "process", backoff: 5 * time.Second}
+	rec := NewReconciler(staticRole{res: []Resource{b}}, nil, ReconcileOpts{})
+
+	res, _ := rec.Run(context.Background(), IntentEnabled)
+
+	if res.Stop != StopAwaiting {
+		t.Fatalf("стопор %q, ожидали awaiting", res.Stop)
+	}
+	if res.Recheck != 5*time.Second {
+		t.Fatalf("Recheck = %v, ожидали ровно 5s", res.Recheck)
 	}
 }
