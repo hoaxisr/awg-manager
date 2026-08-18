@@ -192,7 +192,7 @@ function resetRuntimeControls() {
 	mockManagedAscByServer = createInitialMockManagedAscByServer();
 	mockSystemAscByTunnel = createInitialMockSystemAscByTunnel();
 	mockFreeturn = createInitialMockFreeturn();
-	mockWdtt = createInitialMockWdtt();
+	mockWdtt = applyAllExpired(createInitialMockWdtt());
 	applyDefaultMockKeeneticProfile();
 }
 const MOCK_DOWNLOAD_OUTBOUNDS = [
@@ -3356,6 +3356,11 @@ const MOCK_WDTT_SERVER_PASSWORD = 'mainpass0000000000000000';
 //     — server_clients.go:339, server.go:461; она бывает только у старых данных).
 const MOCK_WDTT_OLD_BINARY = process.env.MOCK_WDTT_OLD_BINARY === '1';
 const MOCK_WDTT_LEGACY_MAIN_CLIENT = process.env.MOCK_WDTT_LEGACY_MAIN_CLIENT === '1';
+//   MOCK_WDTT_ALL_EXPIRED=1       — у сервера остались только просроченные
+//                                   записи: из этого состояния удаление
+//                                   последней заводит «Абонент 1» (инвариант
+//                                   непустоты, server_clients.go).
+const MOCK_WDTT_ALL_EXPIRED = process.env.MOCK_WDTT_ALL_EXPIRED === '1';
 const MOCK_WDTT_WG_CONFIG =
 	'[Interface]\n' +
 	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
@@ -3578,7 +3583,19 @@ function createInitialMockWdtt() {
 	};
 }
 
-let mockWdtt = createInitialMockWdtt();
+/** Отбор состояния «все абоненты просрочены» — только под флагом мока. */
+function applyAllExpired(state) {
+	if (!MOCK_WDTT_ALL_EXPIRED) return state;
+	for (const srv of state.servers) {
+		srv.users = srv.users.filter((u) => u.isExpired || u.isMainPassword);
+		srv.config.clients = srv.config.clients.filter((c) =>
+			srv.users.some((u) => u.password === c.password),
+		);
+	}
+	return state;
+}
+
+let mockWdtt = applyAllExpired(createInitialMockWdtt());
 
 function mockWdttFind(id) {
 	return mockWdtt.clients.find((i) => i.id === id) ?? null;

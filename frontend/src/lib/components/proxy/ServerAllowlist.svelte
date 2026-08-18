@@ -155,6 +155,7 @@
 		<p class="counter">
 			<span>Записей: {entries.length}</span>
 			{#if clientsFile}
+				<span aria-hidden="true">·</span>
 				<code>{clientsFile}</code>
 			{/if}
 		</p>

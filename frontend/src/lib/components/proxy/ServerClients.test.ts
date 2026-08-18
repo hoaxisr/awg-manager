@@ -95,17 +95,19 @@ describe('матрица кнопок строки', () => {
 		const main = within(rowOf('Главный'));
 		expect(main.queryByRole('button', { name: 'Ссылка' })).toBeNull();
 		expect(main.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
-		expect((main.getByRole('button', { name: 'Удалить' })).disabled).toBe(true);
+		expect(main.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(true);
 
 		const alive = within(rowOf('Телефон Ивана'));
-		expect((alive.getByRole('button', { name: 'Ссылка' })).disabled).toBe(false);
+		expect(alive.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
 		expect(alive.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
-		expect((alive.getByRole('button', { name: 'Удалить' })).disabled).toBe(false);
+		expect(alive.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
 		const expired = within(rowOf('Гостевой'));
-		expect((expired.getByRole('button', { name: 'Ссылка' })).disabled).toBe(true);
-		expect((expired.getByRole('button', { name: 'Перевыпустить' })).disabled).toBe(false);
-		expect((expired.getByRole('button', { name: 'Удалить' })).disabled).toBe(false);
+		expect(expired.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(true);
+		expect(expired.getByRole('button', { name: 'Перевыпустить' }).hasAttribute('disabled')).toBe(
+			false,
+		);
+		expect(expired.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
 		// Карандаш есть у всех трёх состояний.
 		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(4);
@@ -115,9 +117,9 @@ describe('матрица кнопок строки', () => {
 		mount([MAIN, ALIVE, EXPIRED]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		expect(
-			(within(rowOf('Телефон Ивана')).getByRole('button', {
-				name: 'Удалить',
-			})).disabled,
+			within(rowOf('Телефон Ивана'))
+				.getByRole('button', { name: 'Удалить' })
+				.hasAttribute('disabled'),
 		).toBe(true);
 		// SH-38 считает отключённого рабочим (оговорка SH-28/38).
 		expect(screen.getByText('Абонентов: 3 · рабочих: 1')).toBeTruthy();
@@ -222,9 +224,7 @@ describe('добавление', () => {
 			expect(screen.getByText('Сначала задайте главный пароль сервера')).toBeTruthy(),
 		);
 		await fireEvent.input(screen.getByLabelText('Имя абонента'), { target: { value: 'X' } });
-		expect((screen.getByRole('button', { name: 'Добавить' })).disabled).toBe(
-			true,
-		);
+		expect(screen.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(true);
 	});
 });
 
