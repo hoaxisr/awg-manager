@@ -926,7 +926,9 @@ func TestReconcile_DisabledPartialInstall_CleansUp(t *testing.T) {
 			}
 			return nil
 		},
-		runIP: func(_ context.Context, args ...string) error { return nil },
+		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
+		runIP:          func(_ context.Context, args ...string) error { return nil },
+		runIPOut:       func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		cleanupHook: func() {
 			uninstallCalled = true
 		},
