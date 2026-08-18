@@ -20,6 +20,7 @@ export { default as ServerClients } from './ServerClients.svelte';
 export { default as ShareAdvancedSection } from './ShareAdvancedSection.svelte';
 export { default as ShareDetail } from './ShareDetail.svelte';
 export { default as ShareNetworkSection } from './ShareNetworkSection.svelte';
+export { default as ShareWizard } from './ShareWizard.svelte';
 export { default as Topology } from './Topology.svelte';
 export { default as SubscriptionSection } from './SubscriptionSection.svelte';
 export { default as WizardSteps } from './WizardSteps.svelte';
@@ -40,8 +41,15 @@ export {
 export type { ShareConfig, ShareInstance, SharePort } from './shareConfig';
 export { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
 export {
+	rawPortHint,
+	shareConfigSetupComplete,
+	shareStep2Ready,
+	wdttCardBlock,
+} from './shareWizard';
+export {
 	addErrorText,
 	addedPassword,
+	apiErrorCode,
 	autoCreateAfterRemove,
 	counterLabel,
 	headerApplied,

@@ -3361,6 +3361,10 @@ const MOCK_WDTT_LEGACY_MAIN_CLIENT = process.env.MOCK_WDTT_LEGACY_MAIN_CLIENT ==
 //                                   последней заводит «Абонент 1» (инвариант
 //                                   непустоты, server_clients.go).
 const MOCK_WDTT_ALL_EXPIRED = process.env.MOCK_WDTT_ALL_EXPIRED === '1';
+//   MOCK_WDTT_SERVER_UNSUPPORTED=1 — арка роутера без серверной сборки:
+//     `serverSupported: false` (internal/wdtt/install.go:69), мастер не
+//     предлагает WDTT-раздачу.
+const MOCK_WDTT_SERVER_UNSUPPORTED = process.env.MOCK_WDTT_SERVER_UNSUPPORTED === '1';
 const MOCK_WDTT_WG_CONFIG =
 	'[Interface]\n' +
 	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
@@ -3688,6 +3692,35 @@ function mockWdttReload(inst) {
 }
 
 /** Первый свободный локальный порт 9000..9199 (wdtt/validate.go:87). */
+/** Занятый другим инстансом порт двигается вперёд — `ensureUniqueServerListenAddr`. */
+function mockUniqueServerListen(servers, inst) {
+	const want = String(inst.config?.listen ?? '');
+	const host = want.split(':')[0] || '0.0.0.0';
+	const port = Number(want.split(':').pop()) || 56000;
+	const used = new Set(
+		servers
+			.filter((i) => i !== inst)
+			.map((i) => Number(String(i.config?.listen ?? '').split(':').pop()))
+			.filter(Boolean),
+	);
+	if (!used.has(port)) return `${host}:${port}`;
+	for (let p = 56000; p < 56100; p++) {
+		if (!used.has(p)) return `${host}:${p}`;
+	}
+	return `${host}:${port}`;
+}
+
+/** Порт нового FreeTurn-сервера: 56000..56099, как `nextServerListen` бэкенда. */
+function mockNextServerListen(servers) {
+	const used = new Set(
+		servers.map((i) => Number(String(i.config?.listen ?? '').split(':').pop())).filter(Boolean),
+	);
+	for (let port = 56000; port < 56100; port++) {
+		if (!used.has(port)) return `0.0.0.0:${port}`;
+	}
+	return '0.0.0.0:56000';
+}
+
 function mockNextLocalListen(instances) {
 	const used = new Set(
 		instances.map((i) => Number(String(i.config?.listen ?? '').split(':').pop())).filter(Boolean),
@@ -7445,6 +7478,12 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Внешний адрес роутера для кнопки «WAN IP» (internal/api/servers.go:617).
+	if (req.method === 'GET' && path === '/servers/wan-ip') {
+		sendData(res, { ip: '203.0.113.10' });
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/servers/marked') {
 		sendData(res, ['Wireguard9']);
 		return;
@@ -8042,6 +8081,11 @@ const server = http.createServer(async (req, res) => {
 			readRequestText(req).then((raw) => {
 				try {
 					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
+					if (kind === 'server') {
+						// Занятый порт бэкенд двигает молча и возвращает свой listen
+						// (ensureUniqueServerListenAddr, freeturn/service.go:322).
+						inst.config.listen = mockUniqueServerListen(mockFreeturn.servers, inst);
+					}
 					sendData(res, inst.config);
 				} catch (e) {
 					sendInvalidRequest(res, e);
@@ -8148,7 +8192,6 @@ const server = http.createServer(async (req, res) => {
 					const seqKey = kind === 'client' ? 'clientSeq' : 'serverSeq';
 					mockFreeturn[seqKey] += 1;
 					const n = mockFreeturn[seqKey];
-					const template = mockFreeturnList(kind)[0]?.config ?? {};
 					const inst = {
 						id: `${kind}-${n}`,
 						name: body.name?.trim() || `${kind === 'client' ? 'Клиент' : 'Сервер'} ${n}`,
@@ -8174,7 +8217,16 @@ const server = http.createServer(async (req, res) => {
 										dnsMode: 'auto',
 										debug: false,
 									}
-								: { ...structuredClone(template), enabled: false },
+								: {
+										// DefaultServerConfig (types.go:78) + nextServerListen
+										// (validate.go:135): 56000..56099, первый свободный.
+										enabled: false,
+										listen: mockNextServerListen(mockFreeturn.servers),
+										connect: '',
+										mode: 'udp',
+										obfProfile: 'none',
+										debug: false,
+									},
 					};
 					mockFreeturnList(kind).push(inst);
 					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
@@ -8398,7 +8450,7 @@ const server = http.createServer(async (req, res) => {
 			// Легаси-зеркало дефолтного инстанса.
 			client: mockWdttProcessStatus(defClient),
 			server: mockWdttServerProcessStatus(defServer),
-			serverSupported: true,
+			serverSupported: !MOCK_WDTT_SERVER_UNSUPPORTED,
 			installAvailable: true,
 			installVersion: '2.3.1',
 			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,

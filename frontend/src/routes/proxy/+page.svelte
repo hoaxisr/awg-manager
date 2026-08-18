@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
@@ -10,6 +10,7 @@
 		ExitWizard,
 		InstanceList,
 		ShareDetail,
+		ShareWizard,
 		binaryStripItems,
 		deleteProxyInstance,
 		exitInstance,
@@ -21,6 +22,7 @@
 		reportDeletedTunnels,
 		saveExitInstance,
 		saveShareInstance,
+		shareConfigSetupComplete,
 		shareInstance,
 		shareRows,
 		toggleProxyInstance,
@@ -32,7 +34,8 @@
 		ShareConfig,
 	} from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
-	import { proxyClientOpsMode, proxyInOpsMode } from '$lib/utils/proxyOpsMode';
+	import { listenPortNumber } from '$lib/utils/listenPortUtils';
+	import { proxyClientOpsMode, proxyInOpsMode, proxyServerOpsMode } from '$lib/utils/proxyOpsMode';
 	import { errText } from '$lib/utils/errorMessage';
 	import type {
 		AccessPolicy,
@@ -64,7 +67,10 @@
 	let exitWizard = $state<'new' | 'instance' | null>(null);
 	/** Авто-мастер ненастроенного инстанса закрыт пользователем. */
 	let exitWizardClosed = $state(false);
-	let shareWizard = $state(false);
+	/** Мастер «Раздачи», открытый явно: кнопкой списка (новый) или «Мастер». */
+	let shareWizard = $state<'new' | 'instance' | null>(null);
+	/** Авто-мастер ненастроенного сервера закрыт пользователем. */
+	let shareWizardClosed = $state(false);
 	let deleteTarget = $state<ProxyInstanceRow | null>(null);
 	let deleting = $state(false);
 	let busyKeys = $state<string[]>([]);
@@ -125,7 +131,31 @@
 	const exitWizardOpen = $derived(
 		exitWizard !== null || (!!selectedExit && !exitOpsMode && !exitWizardClosed),
 	);
-	const wizardOpen = $derived(activeTab === 'exit' ? exitWizardOpen : shareWizard);
+	// Раздача: тот же порядок, что у «Выхода». Настроен сервер ровно по критерию
+	// шага 2 мастера — им же он уходит из мастера в деталь.
+	const shareSetupComplete = $derived(shareConfigSetupComplete(shareWdttServer, shareFtServer));
+	const shareLife = $derived({
+		running: selectedShare?.state === 'running',
+		startedAt: selectedShare?.startedAt,
+		enabled: selectedShare?.autostart,
+	});
+	const shareOpsMode = $derived(
+		proxyServerOpsMode({ ...shareLife, setupComplete: shareSetupComplete }),
+	);
+	/** Сервер ни разу не поднимался — только тогда возврат в мастер осмыслен (RB-08). */
+	const shareNeverRan = $derived(!proxyInOpsMode(shareLife));
+	const shareWizardOpen = $derived(
+		shareWizard !== null || (!!selectedShare && !shareOpsMode && !shareWizardClosed),
+	);
+	const wizardOpen = $derived(activeTab === 'exit' ? exitWizardOpen : shareWizardOpen);
+	/** Дефолт порта Endpoint мастера раздачи: listen FreeTurn-клиента роутера (F-18). */
+	const ftClientPort = $derived(
+		listenPortNumber(ftConfig?.clients?.[0]?.config.listen ?? '', 9000),
+	);
+	/** Занятые порты серверов раздачи — подсказка порта новому серверу. */
+	const usedSharePorts = $derived(
+		(ftConfig?.servers ?? []).map((s) => listenPortNumber(s.config.listen ?? '', 0)),
+	);
 	/** Занятые локальные порты: подсказка порта новому клиенту. */
 	const usedListens = $derived({
 		wdtt: (wdttConfig?.clients ?? []).map((c) => c.config.listen),
@@ -292,6 +322,16 @@
 		await toggleInstance(row, true);
 	}
 
+	/** Мастер раздачи довёл сервер до запуска — уводим в его деталь, к абонентам. */
+	async function shareWizardDone(protocol: ExitProtocol, id: string) {
+		shareWizard = null;
+		shareWizardClosed = false;
+		await reloadAll();
+		selectedShareKey = `${protocol}:server:${id}`;
+		await tick();
+		document.getElementById('share-clients')?.scrollIntoView({ block: 'start' });
+	}
+
 	/** Мастер довёл инстанс до запуска — «Готово» уводит в его деталь (ia.md §2.3). */
 	async function exitWizardDone(protocol: ExitProtocol, id: string) {
 		exitWizard = null;
@@ -362,12 +402,13 @@
 							exitWizardClosed = false;
 						} else {
 							selectedShareKey = r.key;
-							shareWizard = false;
+							shareWizard = null;
+							shareWizardClosed = false;
 						}
 					}}
 					onadd={() => {
 						if (activeTab === 'exit') exitWizard = 'new';
-						else shareWizard = true;
+						else shareWizard = 'new';
 					}}
 					ontoggle={toggleInstance}
 					onrename={renameInstance}
@@ -394,17 +435,24 @@
 						/>
 					{/key}
 				{:else if wizardOpen}
-					<!-- Мастер «Раздачи» — задача 7; здесь только оболочка с выходом к списку. -->
-					<Card>
-						{#snippet header()}
-							<div class="detail-head">
-								<h2 class="detail-title">Настроить раздачу</h2>
-							</div>
-						{/snippet}
-						<button type="button" class="wizard-back" onclick={() => (shareWizard = false)}
-							>← К списку</button
-						>
-					</Card>
+					<!-- Мастер живёт от протокола до ссылки: {#key} сбрасывает его
+					     состояние при смене инстанса и при заходе за новым. -->
+					{#key shareWizard === 'new' ? 'new' : selectedShareKey}
+						<ShareWizard
+							wdttServerExists={(wdttConfig?.servers.length ?? 0) > 0}
+							serverSupported={wdttStatus?.serverSupported}
+							{ftClientPort}
+							usedPorts={usedSharePorts}
+							row={shareWizard === 'new' ? null : selectedShare}
+							wdttServer={shareWizard === 'new' ? undefined : shareWdttServer}
+							ftServer={shareWizard === 'new' ? undefined : shareFtServer}
+							onclose={() => {
+								shareWizard = null;
+								shareWizardClosed = true;
+							}}
+							ondone={shareWizardDone}
+						/>
+					{/key}
 				{:else if activeTab === 'exit' && selectedExit}
 					<!-- Локальное состояние детали не переживает смену инстанса (W-13). -->
 					{#key selectedExit.key}
@@ -439,7 +487,7 @@
 							busy={busyKeys.includes(selectedShare.key)}
 							onstart={() => selectedShare && toggleInstance(selectedShare, true)}
 							onstop={() => selectedShare && toggleInstance(selectedShare, false)}
-							onwizard={() => (shareWizard = true)}
+							onwizard={shareNeverRan ? () => (shareWizard = 'instance') : undefined}
 							onrestart={restartShare}
 							onsave={saveShare}
 							onreload={reloadAll}
@@ -479,30 +527,6 @@
 	.rail,
 	.detail {
 		min-width: 0;
-	}
-
-	.detail-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-	}
-
-	.detail-title {
-		margin: 0;
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-
-	.wizard-back {
-		background: none;
-		border: none;
-		padding: 0;
-		font-size: 0.8125rem;
-		color: var(--color-accent);
-		cursor: pointer;
 	}
 
 	/* Узкий экран: список схлопывается над деталью (ia.md §1). */

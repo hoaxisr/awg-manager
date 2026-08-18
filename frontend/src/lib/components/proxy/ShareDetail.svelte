@@ -321,6 +321,8 @@
 		{/if}
 	</DetailSection>
 
+	<!-- Якорь возврата из мастера: «Готово» уводит в деталь, к абонентам. -->
+	<div id="share-clients">
 	<DetailSection
 		title="Абоненты"
 		hint={wdttDraft
@@ -347,6 +349,7 @@
 			/>
 		{/if}
 	</DetailSection>
+	</div>
 
 	<ShareNetworkSection
 		bind:wdttServer={wdttDraft}

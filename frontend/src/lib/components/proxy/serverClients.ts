@@ -122,6 +122,11 @@ export function shortPassword(pass: string): string {
 
 const NOT_WRITTEN_PREFIX = 'абонент создан, но не записан в файл сервера';
 
+/** Код отказа из конверта бэкенда: по нему различаются частичные успехи. */
+export function apiErrorCode(e: unknown): string {
+	return (e as { body?: { code?: string } })?.body?.code ?? '';
+}
+
 /**
  * Текст отказа добавления. Два частичных успеха отличаются КОДОМ
  * (`internal/api/wdtt_server.go:218-224`):

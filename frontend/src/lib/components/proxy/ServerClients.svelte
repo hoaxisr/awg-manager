@@ -14,6 +14,7 @@
 	import {
 		CLIENT_TEXT,
 		addErrorText,
+		apiErrorCode,
 		addedPassword,
 		autoCreateAfterRemove,
 		counterLabel,
@@ -77,10 +78,6 @@
 				},
 			);
 		});
-	}
-
-	function apiCode(e: unknown): string {
-		return (e as { body?: { code?: string } })?.body?.code ?? '';
 	}
 
 	/**
@@ -155,7 +152,7 @@
 			} catch (e) {
 				// Отказ остаётся в открытой модалке: он про то, что в полях, и
 				// тостом за окном был бы оторван от них.
-				addError = addErrorText(apiCode(e), errText(e));
+				addError = addErrorText(apiErrorCode(e), errText(e));
 				// ИА §5 п.4: после любого отказа список перечитывается.
 				await reload();
 			}
@@ -220,7 +217,7 @@
 					FETCH_TIMEOUT_MS,
 				);
 			} catch (e) {
-				notifications.error(addErrorText(apiCode(e), errText(e)));
+				notifications.error(addErrorText(apiErrorCode(e), errText(e)));
 				await reload();
 				return;
 			}
