@@ -15,6 +15,7 @@
   import { systemInfo } from '$lib/stores/system';
   import { notifications } from '$lib/stores/notifications';
   import { drawerOpen, closeDrawer } from './drawerStore';
+  import { openSourceDrawer } from './sourceDrawerStore';
   import { mode } from './modeStore';
   import DepRow from './DepRow.svelte';
   import IssueRow from './IssueRow.svelte';
@@ -152,6 +153,20 @@
       // ignore
     }
   });
+
+  // Новичку TPROXY-настройки живут в SourceDrawer (узел «Источник» во FlowGraph);
+  // здесь — сводка и переход, чтобы под выбором режима не было пусто (#730).
+  let sourceSummary = $derived.by(() => {
+    if (cfg?.deviceMode === 'all') return 'Весь LAN-трафик роутера.';
+    const name = (cfg?.policyName ?? '').trim();
+    return name
+      ? `Только устройства политики «${name}».`
+      : 'Политика не выбрана — трафик устройств не обрабатывается.';
+  });
+  function goToSourceSettings() {
+    closeDrawer();
+    openSourceDrawer();
+  }
 
   // ── Engine control ──
   function toggleEngine(turnOn: boolean) {
@@ -326,6 +341,16 @@
          Видна и новичку — это состояние режима, а не эксперт-настройка. -->
     {#if policyTunMode && cfg}
       <PolicyTunCard {cfg} status={s} onPatch={(patch) => applyPatch(patch)} />
+    {/if}
+
+    <!-- TPROXY у новичка: сводка источника + переход в SourceDrawer. Иначе под
+         выбором режима пусто, тогда как policy-tun показывает свою карточку. -->
+    {#if !policyTunMode && !isExpert && cfg}
+      <section class="sec">
+        <div class="sec-cap">Источник трафика</div>
+        <p class="hint">{sourceSummary}</p>
+        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+      </section>
     {/if}
 
     {#if isExpert && cfg}
