@@ -162,3 +162,45 @@ func TestParseXrayBody_VoxSample(t *testing.T) {
 		t.Fatalf("expected outbounds, got 0. Errors: %v", res.Errors)
 	}
 }
+
+func TestParseXrayBody_ArrayFirstEmpty(t *testing.T) {
+	raw := []byte(`[
+		{
+			"remarks": "envelope_without_outbounds",
+			"outbounds": []
+		},
+		{
+			"remarks": "🇸🇬 Singapore Trojan",
+			"outbounds": [
+				{
+					"protocol": "trojan",
+					"settings": {
+						"servers": [
+							{
+								"address": "sg.example.com",
+								"port": 443,
+								"password": "pass"
+							}
+						]
+					}
+				}
+			]
+		}
+	]`)
+
+	if !IsXrayJSON(raw) {
+		t.Fatalf("expected IsXrayJSON to return true")
+	}
+
+	res := ParseXrayBody(raw)
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("expected 1 outbound, got %d (errors: %v)", len(res.Outbounds), res.Errors)
+	}
+	if res.Outbounds[0].Server != "sg.example.com" {
+		t.Errorf("Server = %q, want 'sg.example.com'", res.Outbounds[0].Server)
+	}
+	if res.Outbounds[0].Tag != "🇸🇬 Singapore Trojan" {
+		t.Errorf("Tag = %q, want '🇸🇬 Singapore Trojan'", res.Outbounds[0].Tag)
+	}
+}
+

@@ -69,68 +69,8 @@ export function generateV2rayNPreset(): string {
 	return `User-Agent: v2rayN/${v} (Windows NT 10.0; Win64; x64)`;
 }
 
-export type HeaderProfileKind = 'happ' | 'mihomo' | 'singbox' | 'v2rayn';
-
-export function detectHeaderProfileForUrl(rawUrl: string): HeaderProfileKind {
-	const lower = rawUrl.trim().toLowerCase();
-	if (!lower) return 'happ';
-
-	// Clash / Mihomo indicators
-	if (
-		lower.startsWith('clash://') ||
-		lower.startsWith('clashmeta://') ||
-		lower.includes('clash') ||
-		lower.includes('mihomo') ||
-		lower.includes('meta') ||
-		lower.includes('.yaml') ||
-		lower.includes('.yml') ||
-		lower.includes('format=clash')
-	) {
-		return 'mihomo';
-	}
-
-	// V2Ray / Xray raw indicators
-	if (
-		lower.startsWith('v2ray://') ||
-		lower.includes('v2ray') ||
-		lower.includes('v2rayn') ||
-		lower.includes('format=v2ray')
-	) {
-		return 'v2rayn';
-	}
-
-	// Sing-box explicit indicators
-	if (
-		lower.startsWith('singbox://') ||
-		lower.startsWith('sing-box://') ||
-		lower.includes('format=singbox') ||
-		lower.includes('format=sb')
-	) {
-		return 'singbox';
-	}
-
-	// Default to dynamic HAPP (universal support for Remnawave, Marzban, 3X-UI, VOX, Infomir, CloVPN)
-	return 'happ';
-}
-
-export function generateHeadersForUrl(rawUrl: string): string {
-	const kind = detectHeaderProfileForUrl(rawUrl);
-	switch (kind) {
-		case 'mihomo':
-			return generateMihomoPreset();
-		case 'singbox':
-			return generateSingboxPreset();
-		case 'v2rayn':
-			return generateV2rayNPreset();
-		default:
-			return generateHappPreset();
-	}
-}
-
 export const SINGBOX_PRESET = `User-Agent: sing-box/v1.14.20`;
 export const DEFAULT_PRESET = SINGBOX_PRESET;
-export const HAPP_PRESET = generateHappPreset();
-export const MIHOMO_PRESET = generateMihomoPreset();
 
 export const ALL_HEADERS_PRESET = `# Заполните только нужные строки. Пустые игнорируются при сохранении.
 User-Agent:

@@ -18,8 +18,6 @@
 	import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
 	import {
 		DEFAULT_PRESET,
-		generateHappPreset,
-		generateHeadersForUrl,
 		parseHeadersText,
 	} from './headersParser';
 	import {
@@ -147,9 +145,14 @@
 	let detectedNotice = $state('');
 	let showHappKeysModal = $state(false);
 	let detectTimer: ReturnType<typeof setTimeout> | null = null;
+	let detectAbortCtrl: AbortController | null = null;
 
 	function triggerDetectHeaders(targetUrl: string, immediate = false): void {
 		if (detectTimer) clearTimeout(detectTimer);
+		if (detectAbortCtrl) {
+			detectAbortCtrl.abort();
+			detectAbortCtrl = null;
+		}
 		detectedNotice = '';
 		const clean = cleanSubscriptionUrl(targetUrl);
 		if (
@@ -161,9 +164,12 @@
 		}
 
 		const runDetect = async () => {
+			const controller = new AbortController();
+			detectAbortCtrl = controller;
 			detectingHeaders = true;
 			try {
 				const res = await api.detectSubscriptionHeaders(clean);
+				if (controller.signal.aborted) return;
 				if (res && res.isEncrypted && res.decryptedUrl) {
 					url = res.decryptedUrl;
 				}
@@ -182,7 +188,9 @@
 			} catch (e) {
 				// silent fallback
 			} finally {
-				detectingHeaders = false;
+				if (!controller.signal.aborted) {
+					detectingHeaders = false;
+				}
 			}
 		};
 
@@ -559,10 +567,9 @@
 						class="inp"
 						type="url"
 						bind:value={url}
-						oninput={() => {
-							url = cleanSubscriptionUrl(url);
-							triggerDetectHeaders(url);
-						}}
+						onpaste={() => setTimeout(() => { url = cleanSubscriptionUrl(url); triggerDetectHeaders(url, true); }, 0)}
+						onblur={() => { url = cleanSubscriptionUrl(url); triggerDetectHeaders(url, true); }}
+						oninput={() => triggerDetectHeaders(url)}
 						placeholder="https://provider.example/sub/abc или happ://..."
 					/>
 					{#if detectingHeaders}
@@ -577,13 +584,13 @@
 						>
 							<span>{detectedNotice}</span>
 							{#if detectedNotice.includes('RSA')}
-								<button
-									type="button"
-									class="btn-keys-action"
+								<Button
+									size="sm"
+									variant="secondary"
 									onclick={() => (showHappKeysModal = true)}
 								>
 									Ввести ключи…
-								</button>
+								</Button>
 							{/if}
 						</div>
 					{:else}
@@ -928,21 +935,6 @@
 		color: #d97706;
 		border: 1px solid rgba(245, 158, 11, 0.2);
 		font-weight: 500;
-	}
-	.btn-keys-action {
-		margin-left: auto;
-		background: rgba(245, 158, 11, 0.12);
-		border: 1px solid rgba(245, 158, 11, 0.25);
-		color: #d97706;
-		border-radius: 4px;
-		padding: 0.15rem 0.5rem;
-		font-size: 0.75rem;
-		cursor: pointer;
-		font-weight: 500;
-	}
-	.btn-keys-action:hover {
-		background: rgba(245, 158, 11, 0.2);
-		color: #b45309;
 	}
 	@media (max-width: 480px) {
 		.mode-grid { grid-template-columns: 1fr; }

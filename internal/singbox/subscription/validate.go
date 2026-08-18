@@ -80,18 +80,9 @@ func classifyOutbound(ob map[string]any) string {
 		default:
 			return "missing server"
 		}
-	} else {
-		lowerSrv := strings.ToLower(strings.TrimSpace(srv))
-		if lowerSrv == "0.0.0.0" || lowerSrv == "127.0.0.1" || lowerSrv == "::1" || lowerSrv == "localhost" {
-			switch typ {
-			case "direct", "block", "dns":
-				// ok
-			default:
-				return "non-routable/dummy host"
-			}
-		}
 	}
-	if port := portValue(ob["server_port"]); port <= 1 || port > 65535 {
+	port := portValue(ob["server_port"])
+	if port < 1 || port > 65535 {
 		switch typ {
 		case "direct", "block", "dns":
 			// ok
@@ -123,6 +114,18 @@ func classifyOutbound(ob map[string]any) string {
 		}
 		if stringOf(ob["method"]) == "" {
 			return "missing shadowsocks method"
+		}
+	}
+
+	if srv != "" {
+		lowerSrv := strings.ToLower(strings.TrimSpace(srv))
+		if lowerSrv == "0.0.0.0" || (port == 1 && (lowerSrv == "127.0.0.1" || lowerSrv == "localhost" || lowerSrv == "::1")) {
+			switch typ {
+			case "direct", "block", "dns":
+				// ok
+			default:
+				return "non-routable/dummy host"
+			}
 		}
 	}
 	return ""

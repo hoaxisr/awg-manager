@@ -72,9 +72,30 @@ func IsSingboxJSON(body []byte) bool {
 	return rootHasOutbounds(root)
 }
 
+func isXrayOutbounds(rawOutbounds any) bool {
+	obs, ok := rawOutbounds.([]any)
+	if !ok {
+		return false
+	}
+	for _, el := range obs {
+		if m, ok := el.(map[string]any); ok {
+			if _, hasProto := m["protocol"].(string); hasProto {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasSingboxTypeOutbounds(rawOutbounds any) bool {
 	obs, ok := rawOutbounds.([]any)
-	if !ok || len(obs) == 0 {
+	if !ok {
+		return false
+	}
+	if len(obs) == 0 {
+		return true
+	}
+	if isXrayOutbounds(rawOutbounds) {
 		return false
 	}
 	for _, el := range obs {

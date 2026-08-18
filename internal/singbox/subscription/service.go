@@ -478,25 +478,12 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	// share-link parsing — otherwise the user sees "ни одной валидной
 	// ссылки" with a meaningless prefix from scanning JSON bytes for "://".
 	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
-		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box/Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box/Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config / Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box config, Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
 		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		s.logWarn("subscription-refresh", id, err.Error())
 		return nil, err
 	}
-	var parseRes vlink.BatchResult
-	switch {
-	case isClash:
-		parseRes = vlink.ParseClashBody(body)
-	case isSbJSON:
-		parseRes = vlink.ParseSingboxBody(body)
-	case isXrayJSON:
-		parseRes = vlink.ParseXrayBody(body)
-	case isMieruJSON:
-		parseRes = vlink.ParseMieruClientJSON(body)
-	default:
-		lines := NormalizeBody(body, ct)
-		parseRes = vlink.ParseBatch(lines)
-	}
+	parseRes := parseSubscriptionBody(body, ct)
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
 	s.logPartitionResult(id, parts)
@@ -1477,6 +1464,21 @@ type PreviewMember struct {
 // PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
 // при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
 // ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
+func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+	switch {
+	case vlink.IsClashYAML(body):
+		return vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		return vlink.ParseSingboxBody(body)
+	case vlink.IsXrayJSON(body):
+		return vlink.ParseXrayBody(body)
+	case vlink.IsMieruClientJSON(body):
+		return vlink.ParseMieruClientJSON(body)
+	default:
+		return vlink.ParseBatch(NormalizeBody(body, ct))
+	}
+}
+
 func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) ([]PreviewMember, error) {
 	if url == "" {
 		return nil, errors.New("subscription: preview requires a URL")
@@ -1494,29 +1496,14 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-	var parseRes vlink.BatchResult
-	switch {
-	case vlink.IsClashYAML(body):
-		parseRes = vlink.ParseClashBody(body)
-	case vlink.IsSingboxJSON(body):
-		parseRes = vlink.ParseSingboxBody(body)
-	case vlink.IsXrayJSON(body):
-		parseRes = vlink.ParseXrayBody(body)
-	case vlink.IsMieruClientJSON(body):
-		parseRes = vlink.ParseMieruClientJSON(body)
-	default:
-		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
-	}
+	parseRes := parseSubscriptionBody(body, ct)
 	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
 
-	if err != nil {
-		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
-	}
+	out := make([]PreviewMember, 0, len(parts.Valid))
 	if len(parts.Valid) == 0 {
-		return nil, errors.New("subscription: по этой ссылке не найдено серверов")
+		return out, nil
 	}
 
-	out := make([]PreviewMember, 0, len(parts.Valid))
 	keys := chooseKeys(parts.Valid)
 	// Dedupe by exclusion key, mirroring ApplyDiff's SkippedDuplicate: a
 	// byte-identical duplicate in the feed becomes ONE member on refresh, so
@@ -1569,12 +1556,18 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 		}, nil
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
 	isEnc := IsHappCryptLink(rawUrl)
 	decryptedURL := ""
 	if isEnc {
-		if dec, err := DecryptHappLink(rawUrl); err == nil && dec != "" {
-			decryptedURL = dec
+		dec, err := DecryptHappLink(rawUrl)
+		if err != nil {
+			return DetectedProfile{}, fmt.Errorf("happ: %w", err)
 		}
+		decryptedURL = dec
+		rawUrl = dec
 	}
 
 	fetchURL, _ := RewriteForRaw(rawUrl)
@@ -1630,23 +1623,13 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 
 	for _, cand := range candidates {
 		hdrs := cand.headersFunc()
-		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, s.fetchOpts)
+		fetchOpts := s.fetchOpts
+		fetchOpts.Timeout = 5 * time.Second
+		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, fetchOpts)
 		if err != nil {
 			continue
 		}
-		var parseRes vlink.BatchResult
-		switch {
-		case vlink.IsClashYAML(body):
-			parseRes = vlink.ParseClashBody(body)
-		case vlink.IsSingboxJSON(body):
-			parseRes = vlink.ParseSingboxBody(body)
-		case vlink.IsXrayJSON(body):
-			parseRes = vlink.ParseXrayBody(body)
-		case vlink.IsMieruClientJSON(body):
-			parseRes = vlink.ParseMieruClientJSON(body)
-		default:
-			parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
-		}
+		parseRes := parseSubscriptionBody(body, ct)
 		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
 		if len(parts.Valid) > 0 {
 			var lines []string

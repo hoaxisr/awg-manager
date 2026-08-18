@@ -15,14 +15,14 @@ type XrayOutbound struct {
 }
 
 type XrayStream struct {
-	Network         string                 `json:"network"`
-	Security        string                 `json:"security"`
-	TLSSettings     *XrayTLSConfig         `json:"tlsSettings"`
-	RealitySettings *XrayRealityConfig     `json:"realitySettings"`
-	WSSettings      *XrayWSConfig          `json:"wsSettings"`
-	GRPCSettings    *XrayGRPCConfig        `json:"grpcSettings"`
-	HTTPSettings    *XrayHTTPConfig        `json:"httpSettings"`
-	Sockopt         map[string]interface{} `json:"sockopt"`
+	Network         string             `json:"network"`
+	Security        string             `json:"security"`
+	TLSSettings     *XrayTLSConfig     `json:"tlsSettings"`
+	RealitySettings *XrayRealityConfig `json:"realitySettings"`
+	WSSettings      *XrayWSConfig      `json:"wsSettings"`
+	GRPCSettings    *XrayGRPCConfig    `json:"grpcSettings"`
+	HTTPSettings    *XrayHTTPConfig    `json:"httpSettings"`
+	Sockopt         map[string]any     `json:"sockopt"`
 }
 
 type XrayTLSConfig struct {
@@ -148,53 +148,58 @@ func ParseXrayBody(body []byte) BatchResult {
 
 	// Try 1: Array of config objects with remarks [{"remarks": "...", "outbounds": [...]}]
 	var configArr []XrayConfigItem
-	if err := json.Unmarshal(body, &configArr); err == nil && len(configArr) > 0 && len(configArr[0].Outbounds) > 0 {
+	if err := json.Unmarshal(body, &configArr); err == nil && len(configArr) > 0 {
+		hasAny := false
 		for _, item := range configArr {
-			remarks := strings.TrimSpace(item.Remarks)
-			var realOutbounds []XrayOutbound
-			for _, ob := range item.Outbounds {
-				proto := strings.ToLower(ob.Protocol)
-				if proto != "" && proto != "freedom" && proto != "blackhole" && proto != "dns" && proto != "loopback" {
-					realOutbounds = append(realOutbounds, ob)
-				}
-			}
-
-			for idx, ob := range realOutbounds {
-				proto := strings.ToLower(ob.Protocol)
-				if proto == "vmess" {
-					res.SkippedVmess++
-					continue
-				}
-
-				tag := ob.Tag
-				if remarks != "" {
-					if len(realOutbounds) > 1 {
-						tag = fmt.Sprintf("%s #%d", remarks, idx+1)
-					} else {
-						tag = remarks
-					}
-				}
-				ob.Tag = tag
-
-				parsed, err := convertXrayOutbound(ob)
-				if err != nil {
-					res.Errors = append(res.Errors, ParseError{
-						LineIdx: idx,
-						Scheme:  proto,
-						Message: err.Error(),
-					})
-					continue
-				}
-				if parsed != nil {
-					// Ignore invalid placeholder 0.0.0.0 addresses
-					if parsed.Server == "0.0.0.0" || parsed.Server == "127.0.0.1" || parsed.Port == 0 || parsed.Port == 1 {
-						continue
-					}
-					res.Outbounds = append(res.Outbounds, *parsed)
-				}
+			if len(item.Outbounds) > 0 {
+				hasAny = true
+				break
 			}
 		}
-		return res
+		if hasAny {
+			for _, item := range configArr {
+				remarks := strings.TrimSpace(item.Remarks)
+				var realOutbounds []XrayOutbound
+				for _, ob := range item.Outbounds {
+					proto := strings.ToLower(ob.Protocol)
+					if proto != "" && proto != "freedom" && proto != "blackhole" && proto != "dns" && proto != "loopback" {
+						realOutbounds = append(realOutbounds, ob)
+					}
+				}
+
+				for idx, ob := range realOutbounds {
+					proto := strings.ToLower(ob.Protocol)
+					if proto == "vmess" {
+						res.SkippedVmess++
+						continue
+					}
+
+					tag := ob.Tag
+					if remarks != "" {
+						if len(realOutbounds) > 1 {
+							tag = fmt.Sprintf("%s #%d", remarks, idx+1)
+						} else {
+							tag = remarks
+						}
+					}
+					ob.Tag = tag
+
+					parsed, err := convertXrayOutbound(ob)
+					if err != nil {
+						res.Errors = append(res.Errors, ParseError{
+							LineIdx: idx,
+							Scheme:  proto,
+							Message: err.Error(),
+						})
+						continue
+					}
+					if parsed != nil {
+						res.Outbounds = append(res.Outbounds, *parsed)
+					}
+				}
+			}
+			return res
+		}
 	}
 
 	// Try 2: Single config object or bare array
@@ -233,9 +238,6 @@ func ParseXrayBody(body []byte) BatchResult {
 			continue
 		}
 		if parsed != nil {
-			if parsed.Server == "0.0.0.0" || parsed.Server == "127.0.0.1" || parsed.Port == 0 || parsed.Port == 1 {
-				continue
-			}
 			res.Outbounds = append(res.Outbounds, *parsed)
 		}
 	}
@@ -250,7 +252,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		tag = fmt.Sprintf("%s-node", proto)
 	}
 
-	sbOutbound := map[string]interface{}{
+	sbOutbound := map[string]any{
 		"tag": tag,
 	}
 
@@ -317,7 +319,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 
 		if sec == "reality" && stream.RealitySettings != nil {
 			rs := stream.RealitySettings
-			tlsMap := map[string]interface{}{
+			tlsMap := map[string]any{
 				"enabled":     true,
 				"server_name": rs.ServerName,
 			}
@@ -325,11 +327,11 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 			if fp == "" {
 				fp = "chrome"
 			}
-			tlsMap["utls"] = map[string]interface{}{
+			tlsMap["utls"] = map[string]any{
 				"enabled":     true,
 				"fingerprint": fp,
 			}
-			tlsMap["reality"] = map[string]interface{}{
+			tlsMap["reality"] = map[string]any{
 				"enabled":    true,
 				"public_key": rs.PublicKey,
 				"short_id":   rs.ShortID,
@@ -337,7 +339,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 			sbOutbound["tls"] = tlsMap
 		} else if (sec == "tls" || sec == "true") && stream.TLSSettings != nil {
 			ts := stream.TLSSettings
-			tlsMap := map[string]interface{}{
+			tlsMap := map[string]any{
 				"enabled":     true,
 				"server_name": ts.ServerName,
 			}
@@ -348,7 +350,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 				tlsMap["alpn"] = ts.ALPN
 			}
 			if ts.Fingerprint != "" {
-				tlsMap["utls"] = map[string]interface{}{
+				tlsMap["utls"] = map[string]any{
 					"enabled":     true,
 					"fingerprint": ts.Fingerprint,
 				}
@@ -359,7 +361,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		net := strings.ToLower(stream.Network)
 		if net == "ws" && stream.WSSettings != nil {
 			ws := stream.WSSettings
-			transportMap := map[string]interface{}{
+			transportMap := map[string]any{
 				"type": "ws",
 				"path": ws.Path,
 			}
@@ -369,14 +371,14 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 			sbOutbound["transport"] = transportMap
 		} else if net == "grpc" && stream.GRPCSettings != nil {
 			grpc := stream.GRPCSettings
-			transportMap := map[string]interface{}{
+			transportMap := map[string]any{
 				"type":         "grpc",
 				"service_name": grpc.ServiceName,
 			}
 			sbOutbound["transport"] = transportMap
 		} else if (net == "http" || net == "h2") && stream.HTTPSettings != nil {
 			httpConfig := stream.HTTPSettings
-			transportMap := map[string]interface{}{
+			transportMap := map[string]any{
 				"type": "http",
 				"path": httpConfig.Path,
 			}

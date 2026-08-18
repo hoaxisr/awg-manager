@@ -29,7 +29,7 @@ func NormalizeSubscriptionURL(rawURL string) (string, bool) {
 	}
 
 	// Any wrapper scheme containing https:// or http:// (e.g. happ://add/https://..., sub://https://...)
-	for _, scheme := range []string{"happ://", "sub://", "singbox://", "sing-box://", "v2ray://", "sn://", "ss://"} {
+	for _, scheme := range []string{"happ://", "sub://", "singbox://", "sing-box://", "v2ray://", "sn://"} {
 		if strings.HasPrefix(lower, scheme) {
 			after := trimmed[len(scheme):]
 			lowerAfter := lower[len(scheme):]

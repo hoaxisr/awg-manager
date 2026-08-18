@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -485,6 +484,18 @@ type DetectHeadersRequest struct {
 }
 
 // DetectHeaders handles POST /api/singbox/subscriptions/detect-headers
+//
+//	@Summary		Auto-detect required HTTP headers for a subscription URL
+//	@Description	Probes a subscription URL with different client profiles to auto-detect working headers
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		DetectHeadersRequest	true	"Subscription URL"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		502		{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/detect-headers [post]
 func (h *SubscriptionHandler) DetectHeaders(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -514,6 +525,20 @@ type HappKeysResponse struct {
 }
 
 // HappKeys handles GET, POST, and DELETE /api/singbox/subscriptions/happ-keys
+//
+//	@Summary		Manage HAPP RSA decryption keys
+//	@Description	GET returns key status; POST saves user-provided RSA keys (JSON array or raw text); DELETE removes stored keys
+//	@Tags			subscriptions
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		HappKeysRequest	false	"RSA keys array or raw text (POST only)"
+//	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/singbox/subscriptions/happ-keys [get]
+//	@Router			/singbox/subscriptions/happ-keys [post]
+//	@Router			/singbox/subscriptions/happ-keys [delete]
 func (h *SubscriptionHandler) HappKeys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -522,35 +547,20 @@ func (h *SubscriptionHandler) HappKeys(w http.ResponseWriter, r *http.Request) {
 			Count:      subscription.GetHappKeysCount(),
 		})
 	case http.MethodPost:
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "failed to read request body", "INVALID_BODY")
+		var req HappKeysRequest
+		if err := decodeBody(r, &req); err != nil {
+			response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
 			return
 		}
 		var keys []string
-		// 1. Try direct raw array of string keys
-		if err := json.Unmarshal(bodyBytes, &keys); err == nil && len(keys) > 0 {
-			// successfully unmarshaled raw string array
-		} else {
-			// 2. Try HappKeysRequest object
-			var req HappKeysRequest
-			if err := json.Unmarshal(bodyBytes, &req); err == nil && (len(req.Keys) > 0 || strings.TrimSpace(req.Text) != "") {
-				if len(req.Keys) > 0 {
-					keys = req.Keys
-				} else if strings.TrimSpace(req.Text) != "" {
-					keys, err = subscription.ParseHappKeysInput(req.Text)
-					if err != nil {
-						response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_KEYS")
-						return
-					}
-				}
-			} else {
-				// 3. Fall back to parsing bodyBytes directly as text (Base64 lines, PEM blocks, etc.)
-				keys, err = subscription.ParseHappKeysInput(string(bodyBytes))
-				if err != nil {
-					response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_KEYS")
-					return
-				}
+		var err error
+		if len(req.Keys) > 0 {
+			keys = req.Keys
+		} else if strings.TrimSpace(req.Text) != "" {
+			keys, err = subscription.ParseHappKeysInput(req.Text)
+			if err != nil {
+				response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_KEYS")
+				return
 			}
 		}
 		if len(keys) == 0 {

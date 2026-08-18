@@ -45,7 +45,7 @@ func buildRequest(url string, headers []Header, opts FetchOpts) Request {
 		opts.MaxBodyBytes = 5 * 1024 * 1024
 	}
 	if opts.UserAgent == "" {
-		opts.UserAgent = "Happ/4.6.0 (iOS; build 120)"
+		opts.UserAgent = "awg-manager"
 	}
 
 	reqHeaders := make(http.Header)
@@ -59,27 +59,6 @@ func buildRequest(url string, headers []Header, opts FetchOpts) Request {
 			continue
 		}
 		reqHeaders.Set(h.Name, h.Value)
-	}
-
-	if strings.HasPrefix(strings.ToLower(ua), "happ/") {
-		if reqHeaders.Get("X-Device-OS") == "" {
-			reqHeaders.Set("X-Device-OS", "iOS")
-		}
-		if reqHeaders.Get("X-HWID") == "" {
-			reqHeaders.Set("X-HWID", "d1c1da1b1b111111")
-		}
-		if reqHeaders.Get("X-Device-Locale") == "" {
-			reqHeaders.Set("X-Device-Locale", "ru")
-		}
-		if reqHeaders.Get("X-Ver-OS") == "" {
-			reqHeaders.Set("X-Ver-OS", "18.2")
-		}
-		if reqHeaders.Get("X-App-Version") == "" {
-			reqHeaders.Set("X-App-Version", "4.6.0")
-		}
-		if reqHeaders.Get("X-Device-Model") == "" {
-			reqHeaders.Set("X-Device-Model", "iPhone 16 Pro")
-		}
 	}
 	allowed := make([]int, 0, 200)
 	for code := 200; code <= 399; code++ {

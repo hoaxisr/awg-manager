@@ -155,9 +155,9 @@ func SetCustomHappKeys(b64Keys []string) error {
 		}
 		if err != nil {
 			if strings.Contains(err.Error(), "data truncated") || strings.Contains(err.Error(), "too short") {
-				return fmt.Errorf("Ключ #%d повреждён: данные обрезаны. Проверьте, что ключ скопирован полностью (он должен содержать ~3132 символа).", len(parsed)+1)
+				return fmt.Errorf("key #%d is corrupted: data truncated", len(parsed)+1)
 			}
-			return fmt.Errorf("Ключ #%d не является валидным PKCS1 RSA ключом: %v", len(parsed)+1, err)
+			return fmt.Errorf("key #%d is not a valid PKCS1/PKCS8 RSA private key: %w", len(parsed)+1, err)
 		}
 		parsed = append(parsed, pk)
 	}
@@ -239,7 +239,9 @@ func (s *Service) ClearHappKeys() error {
 	happParsedKeys = nil
 	happKeysMu.Unlock()
 	path := s.keysPath()
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
