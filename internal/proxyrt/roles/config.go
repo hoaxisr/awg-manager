@@ -3,6 +3,7 @@ package roles
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -114,6 +115,17 @@ func (c WdttServerConfig) Validate() error {
 	default:
 		return fmt.Errorf("relayMode %q: ожидали wg|raw", c.RelayMode)
 	}
+	// Обе NDMS-половины обязательны: argv ставит -dns шлюзом OpkgTun-формы
+	// (10.66.0.1 / 10.70.66.1), а старый legacy-путь wdtt0 отвечал другим
+	// адресом (modes.go:72 → 10.66.66.1). Пустое имя означало бы legacy-мир,
+	// которого новый рантайм не строит: отказ конфига честнее, чем молча
+	// неверный резолвер у абонентов.
+	if strings.TrimSpace(c.NdmsIface) == "" || strings.TrimSpace(c.WgIface) == "" {
+		return fmt.Errorf("не заданы NDMS-имена WG-половины сервера (ndmsIface/wgIface)")
+	}
+	if strings.TrimSpace(c.RawNdmsIface) == "" || strings.TrimSpace(c.RawIface) == "" {
+		return fmt.Errorf("не заданы NDMS-имена raw-половины сервера (rawNdmsIface/rawIface)")
+	}
 	return nil
 }
 
@@ -129,8 +141,10 @@ func (c WdttServerConfig) EffectiveRawListen() string {
 	if strings.TrimSpace(host) == "" {
 		host = "0.0.0.0"
 	}
-	var p int
-	if _, err := fmt.Sscanf(port, "%d", &p); err != nil || p <= 0 || p >= 65535 {
+	// strconv.Atoi, а не Sscanf: Sscanf на "56000x" возвращает 56000 без
+	// ошибки, и вместо фолбэка ports.go:10-27 получился бы порт из мусора.
+	p, err := strconv.Atoi(port)
+	if err != nil || p <= 0 || p >= 65535 {
 		return net.JoinHostPort(host, "56003")
 	}
 	return net.JoinHostPort(host, fmt.Sprintf("%d", p+1))

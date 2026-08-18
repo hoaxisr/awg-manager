@@ -108,6 +108,12 @@ func TestValidateRejects(t *testing.T) {
 		{"сервер без password", "password", WdttServerConfig{Listen: "0.0.0.0:56000"}},
 		{"internet-only без WAN", "natStaticWAN", WdttServerConfig{
 			Listen: "0.0.0.0:56000", Password: "x", NatMode: "internet-only", RelayMode: "wg"}},
+		{"сервер без WG-половины NDMS", "ndmsIface", WdttServerConfig{
+			Listen: "0.0.0.0:56000", Password: "x", NatMode: "full", RelayMode: "wg",
+			RawIface: "opkgtun18", RawNdmsIface: "OpkgTun18"}},
+		{"сервер без raw-половины NDMS", "rawNdmsIface", WdttServerConfig{
+			Listen: "0.0.0.0:56000", Password: "x", NatMode: "full", RelayMode: "wg",
+			WgIface: "opkgtun17", NdmsIface: "OpkgTun17"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -131,5 +137,14 @@ func TestWantHashStableAndIgnoresAwgmFlags(t *testing.T) {
 	other.Password = "другой"
 	if WantHash(base) == WantHash(WdttClientArgs(other)) {
 		t.Fatal("смена пароля обязана менять отпечаток")
+	}
+}
+
+// Порт из мусора не становится портом: Sscanf на "56000x" молча отдавал 56000,
+// и raw-половина уезжала на 56001 вместо фолбэка ports.go.
+func TestEffectiveRawListenFallsBackOnGarbagePort(t *testing.T) {
+	c := WdttServerConfig{Listen: "0.0.0.0:56000x"}
+	if got := c.EffectiveRawListen(); got != "0.0.0.0:56003" {
+		t.Fatalf("EffectiveRawListen = %q, ожидали фолбэк 0.0.0.0:56003", got)
 	}
 }
