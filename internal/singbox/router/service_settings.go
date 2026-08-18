@@ -82,7 +82,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// пропускает тик целиком, если transitionMu занят сменой режима, и
 	// снятие пресета молча не доехало бы. Повторный вызов из Reconcile —
 	// no-op (набор уже совпадает).
-	s.syncKeenDNSRewrites(ctx, normalized)
+	s.syncKeenDNSPreset(ctx, normalized)
 	return s.Reconcile(ctx)
 }
 

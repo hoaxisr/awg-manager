@@ -1399,7 +1399,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.syncKeenDNSRewrites(ctx, sr)
+	s.syncKeenDNSPreset(ctx, sr)
 	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
 	// IPTables.IsInstalled/HasAnyInstalled) would always read "not installed"
 	// and route every tick to Enable. Dispatch by mode FIRST so the tproxy

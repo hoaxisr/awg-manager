@@ -526,8 +526,8 @@ type ServiceImpl struct {
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
 
-	// Optional keendns-preset → managed DNS rewrite (own FQDN → адрес из
-	// статической записи роутера) плюс обход этого адреса мимо sing-box.
+	// Optional keendns-preset → имена KeenDNS резолвит сам роутер, а его
+	// адреса идут мимо sing-box.
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
 	// setupListen after the router service) — под keenDNSMu, потому что
 	// startup-Reconcile читает их из своей горутины уже во время wiring.
@@ -535,14 +535,13 @@ type ServiceImpl struct {
 	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
 	// не писать один и тот же warn на каждом тике Reconcile.
 	keenDNSWarnState string
-	keenDNSDomain    KeenDNSDomainProvider
-	keenDNSAddr      KeenDNSAddrProvider
-	keenDNSSync      KeenDNSRewriteSyncer
-	// Кэш статических записей роутера (см. keenDNSAddrTTL) и производный от
-	// него список CIDR обхода, который уезжает в RestoreInputSpec.
-	keenDNSAddrHost    string
-	keenDNSAddrIPs     []string
-	keenDNSAddrAt      time.Time
+	keenDNSInfoProv  KeenDNSInfoProvider
+	keenDNSSync      KeenDNSPresetSyncer
+	// Кэш данных с роутера (см. keenDNSInfoTTL) и производный от него
+	// список CIDR обхода, который уезжает в RestoreInputSpec.
+	keenDNSFQDN        string
+	keenDNSAddrs       []string
+	keenDNSInfoAt      time.Time
 	keenDNSBypassCIDRs []string
 }
 

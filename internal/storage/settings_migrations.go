@@ -339,10 +339,8 @@ func (s *SettingsStore) migrateToV32(settings *Settings) {
 	settings.SchemaVersion = 32
 }
 
-// migrateToV33 enables the keendns bypass preset by default. The preset
-// now drives a managed DNS rewrite of the router's own KeenDNS FQDN →
-// LAN IP (not an iptables exclusion of the shared cloud IP 78.47.125.180).
-// Append only when missing so an existing keendns entry is left intact.
+// migrateToV33 enables the keendns bypass preset by default. Append only
+// when missing so an existing keendns entry is left intact.
 func (s *SettingsStore) migrateToV33(settings *Settings) {
 	has := false
 	for _, name := range settings.SingboxRouter.BypassPresets {

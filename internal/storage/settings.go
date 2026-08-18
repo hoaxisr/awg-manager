@@ -276,8 +276,8 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
-			// KeenDNS/CrazeDNS: managed DNS rewrite of own FQDN → LAN
-			// (not iptables /32 for the shared cloud IP).
+			// KeenDNS/CrazeDNS: имена резолвит сам роутер, его адреса —
+			// мимо sing-box.
 			BypassPresets: []string{"keendns"},
 		},
 		CreateNDMSProxyForSingbox: true,
