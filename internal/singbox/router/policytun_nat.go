@@ -525,7 +525,12 @@ func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage
 		kept = nil
 	}
 	st.NATSegments = kept
-	if err := s.deps.Settings.SetPolicyTunState(st); err != nil {
+	// В кэш уходит КОПИЯ: SetPolicyTunState кладёт сам указатель, а вызывающий
+	// продолжает писать в st ниже по стеку (reconcilePolicyTunNAT). Опубликуй
+	// мы st — эти записи шли бы уже в объект кэша, который параллельно маршалят
+	// читатели без нашего лока.
+	cp := *st
+	if err := s.deps.Settings.SetPolicyTunState(&cp); err != nil {
 		s.appLog.Warn("policy-tun-reconcile", iface, "persist nat segments: "+err.Error())
 	}
 }
