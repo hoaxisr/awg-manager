@@ -14,6 +14,7 @@ export { default as LinkPanel } from './LinkPanel.svelte';
 export { default as LogSection } from './LogSection.svelte';
 export { default as RunBar } from './RunBar.svelte';
 export { default as ServerAllowlist } from './ServerAllowlist.svelte';
+export { default as ServerClientAddModal } from './ServerClientAddModal.svelte';
 export { default as ServerClientRow } from './ServerClientRow.svelte';
 export { default as ServerClients } from './ServerClients.svelte';
 export { default as ShareAdvancedSection } from './ShareAdvancedSection.svelte';

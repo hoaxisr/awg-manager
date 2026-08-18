@@ -219,10 +219,43 @@ describe('страж гонки ответов (WU-08)', () => {
 });
 
 describe('добавление', () => {
-	async function fillAndAdd(name: string) {
-		await fireEvent.input(screen.getByLabelText('Имя абонента'), { target: { value: name } });
+	/** Форма живёт в модалке (Дополнение №3): её открывает кнопка шапки. */
+	async function openAddModal() {
 		await fireEvent.click(screen.getByRole('button', { name: 'Добавить' }));
+		return within(screen.getByRole('dialog'));
 	}
+
+	async function fillAndAdd(name: string, password?: string) {
+		const dialog = await openAddModal();
+		await fireEvent.input(dialog.getByLabelText('Имя абонента'), { target: { value: name } });
+		if (password !== undefined) {
+			await fireEvent.input(dialog.getByLabelText('Пароль'), { target: { value: password } });
+		}
+		await fireEvent.click(dialog.getByRole('button', { name: 'Добавить' }));
+		return dialog;
+	}
+
+	it('успех со своим паролем даёт TS-05 и закрывает модалку', async () => {
+		mount([ALIVE]);
+		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
+		apiMock.addWdttServerPanelUser.mockResolvedValue({
+			available: true,
+			users: [ALIVE, user({ password: 'mine1234', comment: 'Ноутбук' })],
+			reload: 'delivered',
+		});
+
+		await fillAndAdd('Ноутбук', 'mine1234');
+		await waitFor(() =>
+			expect(notify.success).toHaveBeenCalledWith('Абонент «Ноутбук» добавлен'),
+		);
+		expect(apiMock.addWdttServerPanelUser).toHaveBeenCalledWith('default', {
+			comment: 'Ноутбук',
+			password: 'mine1234',
+			vkHash: undefined,
+			mainPassword: 'mainpass0000',
+		});
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+	});
 
 	it('успех со сгенерированным паролем даёт TS-06', async () => {
 		mount([ALIVE]);
@@ -240,7 +273,7 @@ describe('добавление', () => {
 		expect(screen.getByText('Ноутбук')).toBeTruthy();
 	});
 
-	it('ADD_NOT_APPLIED показывает SH-26 и перечитывает список', async () => {
+	it('ADD_NOT_APPLIED показывает SH-26 в модалке и перечитывает список', async () => {
 		mount([ALIVE]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		const err: Error & { body?: unknown } = new Error(
@@ -249,12 +282,17 @@ describe('добавление', () => {
 		err.body = { code: 'WDTT_SERVER_CLIENT_ADD_NOT_APPLIED' };
 		apiMock.addWdttServerPanelUser.mockRejectedValue(err);
 
-		await fillAndAdd('Ноутбук');
+		const dialog = await fillAndAdd('Ноутбук');
+		// Отказ печатается в открытой модалке, а не тостом за ней.
 		await waitFor(() =>
-			expect(notify.error).toHaveBeenCalledWith(
-				'Абонент создан, но не записан в файл сервера: read-only file system. Сервер подхватит его при следующем запуске.',
-			),
+			expect(
+				dialog.getByText(
+					'Абонент создан, но не записан в файл сервера: read-only file system. Сервер подхватит его при следующем запуске.',
+				),
+			).toBeTruthy(),
 		);
+		expect(notify.error).not.toHaveBeenCalled();
+		expect(screen.getByRole('dialog')).toBeTruthy();
 		// ИА §5 п.4: после отказа список перечитывается (первый GET — стартовый).
 		await waitFor(() => expect(apiMock.getWdttServerPanelUsers).toHaveBeenCalledTimes(2));
 	});
@@ -267,8 +305,8 @@ describe('добавление', () => {
 		err.body = { code: 'WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED' };
 		apiMock.addWdttServerPanelUser.mockRejectedValue(err);
 
-		await fillAndAdd('Ноутбук');
-		await waitFor(() => expect(notify.error).toHaveBeenCalledWith(msg));
+		const dialog = await fillAndAdd('Ноутбук');
+		await waitFor(() => expect(dialog.getByText(msg)).toBeTruthy());
 		await waitFor(() => expect(apiMock.getWdttServerPanelUsers).toHaveBeenCalledTimes(2));
 	});
 
@@ -288,8 +326,20 @@ describe('добавление', () => {
 		await waitFor(() =>
 			expect(screen.getByText('Сначала задайте главный пароль сервера')).toBeTruthy(),
 		);
-		await fireEvent.input(screen.getByLabelText('Имя абонента'), { target: { value: 'X' } });
+		// Форму даже не открыть: кнопка шапки заблокирована.
 		expect(screen.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(true);
+		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+
+	it('пустое имя отправить нельзя, «Отменить» закрывает модалку', async () => {
+		mount([ALIVE]);
+		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
+
+		const dialog = await openAddModal();
+		expect(dialog.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(true);
+		await fireEvent.click(dialog.getByRole('button', { name: 'Отменить' }));
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+		expect(apiMock.addWdttServerPanelUser).not.toHaveBeenCalled();
 	});
 });
 

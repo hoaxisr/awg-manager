@@ -3,12 +3,13 @@
 	// Владеет списком и его мутациями; решает матрицу кнопок чистый модуль
 	// `serverClients.ts`, тексты — по ID микрокопии.
 	import { untrack } from 'svelte';
-	import { Badge, Button, ConfirmModal, FieldHint, Input } from '$lib/components/ui';
+	import { Badge, Button, ConfirmModal, FieldHint } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import type { WdttPanelUserEntry, WdttPanelUsersStatus, WdttServerConfig } from '$lib/types';
 	import LinkPanel from './LinkPanel.svelte';
+	import ServerClientAddModal from './ServerClientAddModal.svelte';
 	import ServerClientRow from './ServerClientRow.svelte';
 	import {
 		CLIENT_TEXT,
@@ -47,9 +48,8 @@
 	let removeTarget = $state<WdttPanelUserEntry | undefined>();
 	let reissueTarget = $state<WdttPanelUserEntry | undefined>();
 
-	let newName = $state('');
-	let newPassword = $state('');
-	let newVkHash = $state('');
+	let addOpen = $state(false);
+	let addError = $state('');
 
 	// WU-08: страж гонки ответов — побеждает последний применённый результат
 	// (и чтение, и мутация). Счётчик летящих GET-ов отдельный: спиннер гасится
@@ -59,7 +59,9 @@
 
 	const mainPassword = $derived((server.password ?? '').trim());
 	const applied = $derived(headerApplied(lastReload, running));
-	const canAdd = $derived(!!mainPassword && !!newName.trim() && !busy);
+	// TS-13: без главного пароля сервера абонента завести нельзя — форму даже
+	// не открываем, причина написана под списком.
+	const canAdd = $derived(!!mainPassword && !busy);
 
 	function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 		return new Promise((resolve, reject) => {
@@ -127,11 +129,10 @@
 		});
 	});
 
-	function addUser() {
-		if (!canAdd) return;
-		const comment = newName.trim();
-		const password = newPassword.trim();
-		const vkHash = newVkHash.trim();
+	function addUser(values: { comment: string; password: string; vkHash: string }) {
+		if (!canAdd || !values.comment) return;
+		const { comment, password, vkHash } = values;
+		addError = '';
 		void locked(async () => {
 			try {
 				const st = await withTimeout(
@@ -144,9 +145,7 @@
 					FETCH_TIMEOUT_MS,
 				);
 				applyStatus(st);
-				newName = '';
-				newPassword = '';
-				newVkHash = '';
+				addOpen = false;
 				// TS-05 / TS-06
 				notifications.success(
 					password
@@ -154,7 +153,9 @@
 						: `Абонент «${comment}» добавлен, пароль сгенерирован`,
 				);
 			} catch (e) {
-				notifications.error(addErrorText(apiCode(e), errText(e)));
+				// Отказ остаётся в открытой модалке: он про то, что в полях, и
+				// тостом за окном был бы оторван от них.
+				addError = addErrorText(apiCode(e), errText(e));
 				// ИА §5 п.4: после любого отказа список перечитывается.
 				await reload();
 			}
@@ -252,6 +253,17 @@
 		<Badge size="sm" variant={applied ? 'success' : 'warning'}>
 			{applied ? 'применено сейчас' : 'применится при следующем запуске'}
 		</Badge>
+		<Button
+			variant="secondary"
+			size="sm"
+			disabled={!canAdd}
+			onclick={() => {
+				addError = '';
+				addOpen = true;
+			}}
+		>
+			Добавить
+		</Button>
 		<Button variant="ghost" size="sm" loading={loading} onclick={() => reload()}>Обновить</Button>
 	</div>
 
@@ -304,20 +316,18 @@
 		</p>
 	{/if}
 
-	<div class="add">
-		<Input label="Имя абонента" placeholder="Ноутбук Пети" bind:value={newName} />
-		<Input label="Пароль" placeholder="Пусто — сгенерируется" bind:value={newPassword} />
-		<Input
-			label="VK-хеш (необязательно)"
-			placeholder="vk.com/call/join/… — не пароль wdtt://"
-			bind:value={newVkHash}
-		/>
-		<Button variant="secondary" size="sm" disabled={!canAdd} onclick={addUser}>Добавить</Button>
-	</div>
 	{#if !mainPassword}
 		<p class="note">{CLIENT_TEXT.mainPasswordUnset}</p>
 	{/if}
 </div>
+
+<ServerClientAddModal
+	open={addOpen}
+	{busy}
+	error={addError}
+	onsubmit={addUser}
+	onclose={() => (addOpen = false)}
+/>
 
 <ConfirmModal
 	open={removeTarget !== undefined}
@@ -385,13 +395,6 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
-	}
-
-	.add {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-		gap: 0.5rem;
-		align-items: end;
 	}
 
 	.note {
