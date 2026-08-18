@@ -39,15 +39,25 @@ type Config struct {
 	MaxPasses int
 }
 
-// cfgRole перечитывает конфиг на каждом прогоне: движковый Reconciler держит
-// cfg константой конструктора, а наш конфиг — нет.
+// cfgRole подставляет роли снимок конфига: движковый Reconciler держит cfg
+// константой конструктора, а наш конфиг живёт у писателя (план 5) и меняется
+// между прогонами.
+//
+// Снимок берётся РАЗ в прогон, а не на каждый Resources. Движок держит состав
+// ресурсов стабильным для пары (intent, cfg) на всём прогоне: проверку дублей
+// ID он делает по первому списку, а Plan и Apply работают по второму
+// (reconcile.go). Перечитай мы конфиг между этими вызовами — списки разошлись
+// бы, и проверенным оказался бы не тот, который применяется.
+//
+// snap пишет и читает одна горутина — воркерная: движок зовёт intent и
+// Resources последовательно внутри runOnce (worker.go).
 type cfgRole struct {
 	inner proxyrt.Role
-	cfg   func() any
+	snap  any
 }
 
-func (c cfgRole) Resources(intent proxyrt.Intent, _ any, obs proxyrt.Observations) []proxyrt.Resource {
-	return c.inner.Resources(intent, c.cfg(), obs)
+func (c *cfgRole) Resources(intent proxyrt.Intent, _ any, obs proxyrt.Observations) []proxyrt.Resource {
+	return c.inner.Resources(intent, c.snap, obs)
 }
 
 // Instance — один прокси-инстанс поверх движка.
@@ -64,11 +74,18 @@ func New(cfg Config) *Instance {
 		panic("instance.New: неполные зависимости (G4)")
 	}
 	inst := &Instance{id: cfg.ID, cfg: cfg}
-	rec := proxyrt.NewReconciler(cfgRole{inner: cfg.Role, cfg: cfg.Cfg}, nil,
-		proxyrt.ReconcileOpts{MaxPasses: cfg.MaxPasses})
+	role := &cfgRole{inner: cfg.Role}
+	rec := proxyrt.NewReconciler(role, nil, proxyrt.ReconcileOpts{MaxPasses: cfg.MaxPasses})
+	// Замыкание намерения — единственный per-run-хук движка (worker.go зовёт
+	// его один раз за прогон), поэтому снимок конфига берётся здесь же: пара
+	// (intent, cfg) обязана быть одна на весь прогон.
+	intent := func() proxyrt.Intent {
+		role.snap = cfg.Cfg()
+		return cfg.Intent()
+	}
 	// Идентификатора у воркера нет по построению (worker.go: «заводить второй
 	// экземпляр имени незачем») — им владеет Instance и подставляет в Update.
-	inst.worker = proxyrt.NewWorker(rec, cfg.Intent, inst.onState)
+	inst.worker = proxyrt.NewWorker(rec, intent, inst.onState)
 	return inst
 }
 

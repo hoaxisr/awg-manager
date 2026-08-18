@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,6 +110,40 @@ func TestCfgReadPerRunNotAtConstruction(t *testing.T) {
 	inst.Stop()
 }
 
+// TestCfgSnapshotOncePerRun — конфиг снимается РОВНО раз в прогон.
+//
+// Движок держит состав ресурсов стабильным для пары (intent, cfg) на всём
+// прогоне: проверку дублей ID он делает по ПЕРВОМУ списку, а Plan и Apply
+// работают по второму (reconcile.go). Обёртка, перечитывающая Cfg() на каждый
+// Resources, отдавала бы разные списки, смени писатель конфиг посреди прохода.
+// Единственный per-run-хук движка — замыкание intent, там снимок и берётся.
+func TestCfgSnapshotOncePerRun(t *testing.T) {
+	role := &recordRole{}
+	var cfgCalls atomic.Int32
+	j := &memJournal{}
+	inst := New(Config{ID: "i1", Role: role,
+		Cfg:     func() any { cfgCalls.Add(1); return "v1" },
+		Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+		States:  proxyrt.NewStateStore(nil, nil),
+		Journal: j,
+	})
+	ctx, cancel := contextWithCancel()
+	defer cancel()
+	inst.Start(ctx)
+	inst.Post(proxyrt.EventBoot)
+	waitFor(t, func() bool { return j.count() >= 1 })
+	inst.Stop() // терминален и ждёт горутину воркера: числа окончательные
+
+	// Проверка не вырождена только пока движок зовёт Resources несколько раз
+	// за прогон — иначе «один снимок» выполнялось бы само собой.
+	if calls := len(role.snapshot()); calls < 2 {
+		t.Fatalf("движок звал Resources %d раз — проверке нечего ловить", calls)
+	}
+	if got := cfgCalls.Load(); got != 1 {
+		t.Fatalf("на один прогон обязан быть один снимок конфига, снят %d раз", got)
+	}
+}
+
 func TestOneJournalLinePerReconcile(t *testing.T) {
 	role := &recordRole{}
 	j := &memJournal{}
@@ -123,9 +158,15 @@ func TestOneJournalLinePerReconcile(t *testing.T) {
 	inst.Start(ctx)
 	inst.Post(proxyrt.EventBoot)
 	waitFor(t, func() bool { return j.count() >= 1 })
+	// Stop терминален и дожидается горутины воркера, так что после него число
+	// строк окончательное. Событие было одно, прогон один — строка обязана
+	// быть РОВНО одна: запас «не больше двух» съедал всю проверку, и мутация
+	// «писать в журнал дважды» проходила незамеченной. Начальный прогон
+	// воркер не делает (worker.go: прогон только по будильнику), отменённый
+	// прогон не публикуется и не пишет.
 	inst.Stop()
-	if j.count() > 2 { // boot мог схлопнуться с дренажом стопа — но не больше
-		t.Fatalf("журнал шумит: %v", j.lines)
+	if j.count() != 1 {
+		t.Fatalf("на один прогон обязана быть одна строка (§8), получили %d: %v", j.count(), j.lines)
 	}
 }
 
