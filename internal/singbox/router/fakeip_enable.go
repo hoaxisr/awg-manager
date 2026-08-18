@@ -161,12 +161,20 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// crash between here and CreateOpkgTun leaves a persist the reap can find
 	// by index; a persist-less orphan that still slips through is caught by
 	// the reap's description scan.
-	if err = s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
+	fkState := &storage.OpkgTunState{
 		Mode:        storage.OpkgTunModeFakeIP,
 		Provisioned: true,
 		Index:       idx,
 		FakeIP:      &storage.OpkgTunFakeIPData{Inet4Range: p.Inet4Range, Inet6Range: p.Inet6Range},
-	}); err != nil {
+	}
+	// Записи NAT-сегментов прежней записи переезжают в новую артефактом
+	// (симметрично enablePolicyTun). Освобождение чужой записи выше —
+	// best-effort: провал restore NAT вместе с провалом teardown потерял бы
+	// единственный след того, каким сегмент был ДО нас, и сегмент навсегда
+	// остался бы на нашем static-NAT. Артефакт не сирота: реап восстанавливает
+	// его и снимает, disable — тоже.
+	setPolicyPayload(fkState, natSegmentsOf(prevRecord))
+	if err = s.deps.Settings.SetOpkgTunState(fkState); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip state: %w", err)
 	}
 	push(func() {

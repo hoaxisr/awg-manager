@@ -361,3 +361,42 @@ func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
 		t.Errorf("tun-инбаунд stack = %q, want \"gvisor\" (дефолт нормализации): %s", cfg.Inbounds[0].Stack, data)
 	}
 }
+
+// Регресс ветки: handover в fakeip перезаписывал запись владения БЕЗ
+// policy-payload. Если обе операции освобождения провалились (restore NAT и
+// teardown), а провижининг fakeip дальше успешен, то NAT-свидетельства
+// терялись немедленно, а живой policy-интерфейс оставался persist-less:
+// description-скан его снесёт, но восстанавливать NAT будет уже нечем.
+// Паритет с реапом (он персист хранит и ретраит) требует переносить payload
+// в новую запись артефактом — как это делает enablePolicyTun.
+func TestFakeIPEnable_KeepsForeignNATPayloadWhenReleaseFails(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "Delete") // teardown чужого интерфейса падает
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{2: true}}
+	natState := &fakeNATState{static: []query.StaticNATEntry{{Interface: "Guest", ToInterface: "OpkgTun2"}}}
+	h.svc.deps.NATState = natState
+	// restore NAT падает на возврате динамического NAT сегменту.
+	h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: natState, failAt: "SetSegmentNAT"}
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode:      storage.OpkgTunModePolicyTun,
+		Index:     2,
+		PolicyTun: &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Guest", PriorMode: "dynamic"}}},
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(fakeip): %v", err)
+	}
+
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.OpkgTun == nil || all.OpkgTun.Mode != storage.OpkgTunModeFakeIP {
+		t.Fatalf("итоговая запись = %+v, want Mode=fakeip-tun", all.OpkgTun)
+	}
+	segs := natSegmentsOf(all.OpkgTun)
+	if len(segs) != 1 || segs[0].Name != "Guest" || segs[0].PriorMode != "dynamic" {
+		t.Fatalf("NAT-свидетельства потеряны при handover: payload = %+v", all.OpkgTun.PolicyTun)
+	}
+}
