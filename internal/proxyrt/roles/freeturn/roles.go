@@ -157,12 +157,19 @@ func serverPorts(c roles.FreeTurnServerConfig, enabled bool) []netres.PortSpec {
 	if !enabled || !c.OpenFirewall {
 		return nil
 	}
-	_, portStr, err := net.SplitHostPort(strings.TrimSpace(c.Listen))
+	// Локальный bind в firewall не открывается — паритет с
+	// listenfirewall.WANListenPort (старый путь при Listen 127.0.0.1:3478
+	// правила INPUT не ставил вовсе) и с wdttserver.wanPort соседней роли.
+	host, portStr, err := net.SplitHostPort(strings.TrimSpace(c.Listen))
 	if err != nil {
 		return nil
 	}
+	host = strings.TrimSpace(host)
+	if host != "" && host != "0.0.0.0" && host != "::" && host != "[::]" {
+		return nil
+	}
 	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 {
+	if err != nil || port <= 0 || port > 65535 {
 		return nil
 	}
 	proto := strings.ToLower(strings.TrimSpace(c.Mode))

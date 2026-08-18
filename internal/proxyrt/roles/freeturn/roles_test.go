@@ -183,3 +183,22 @@ func TestServerResourcesAreLongLived(t *testing.T) {
 		}
 	}
 }
+
+// Локальный bind не открывает порт наружу: старый путь через
+// listenfirewall.WANListenPort при 127.0.0.1 правила не ставил.
+func TestServerLocalBindDeclaresNoPorts(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:3478", "192.168.0.1:3478"} {
+		cfg := roles.FreeTurnServerConfig{Listen: addr, Connect: "127.0.0.1:51820", Mode: "udp", OpenFirewall: true}
+		if got := serverPorts(cfg, true); got != nil {
+			t.Fatalf("serverPorts(%q) = %v, ожидали nil (локальный bind наружу не открываем)", addr, got)
+		}
+	}
+	wan := roles.FreeTurnServerConfig{Listen: "0.0.0.0:3478", Connect: "127.0.0.1:51820", Mode: "udp", OpenFirewall: true}
+	if got := serverPorts(wan, true); len(got) != 1 || got[0].Port != 3478 {
+		t.Fatalf("serverPorts(0.0.0.0:3478) = %v, ожидали один порт 3478", got)
+	}
+	over := roles.FreeTurnServerConfig{Listen: "0.0.0.0:70000", Connect: "127.0.0.1:51820", Mode: "udp", OpenFirewall: true}
+	if got := serverPorts(over, true); got != nil {
+		t.Fatalf("serverPorts(:70000) = %v, ожидали nil (порт вне диапазона)", got)
+	}
+}
