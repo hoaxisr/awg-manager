@@ -10,7 +10,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -29,12 +28,18 @@ type InterfaceQueries interface {
 	FetchSummary(ctx context.Context, name string) (*ndms.InterfaceDetails, error)
 }
 
+// Backend reports whether the tunnel interface is up.
+// Implemented by *backend.KernelBackend; an interface for test doubles.
+type Backend interface {
+	IsRunning(ctx context.Context, ifaceName string) (running bool, pid int)
+}
+
 // ManagerImpl is the implementation of the state Manager.
 // It is the SINGLE SOURCE OF TRUTH for tunnel state.
 type ManagerImpl struct {
 	ifaces   InterfaceQueries
 	wg       wg.Client
-	backend  backend.Backend
+	backend  Backend
 	matrixV2 StateMatrixV2
 	appLog   *logging.ScopedLogger
 	// deviceExists checks if a network device exists. Defaults to sysfs check.
@@ -43,7 +48,7 @@ type ManagerImpl struct {
 }
 
 // New creates a new StateManager.
-func New(ifaces InterfaceQueries, wgClient wg.Client, backendImpl backend.Backend, appLogger logging.AppLogger) *ManagerImpl {
+func New(ifaces InterfaceQueries, wgClient wg.Client, backendImpl Backend, appLogger logging.AppLogger) *ManagerImpl {
 	m := &ManagerImpl{
 		ifaces:   ifaces,
 		wg:       wgClient,
@@ -135,7 +140,7 @@ func (m *ManagerImpl) GetState(ctx context.Context, tunnelID string) tunnel.Stat
 	m.appLog.Debug("state", tunnelID, fmt.Sprintf("State resolved: %s", info.State))
 
 	// 7. Add backend type
-	info.BackendType = m.backend.Type().String()
+	info.BackendType = "kernel"
 
 	// 8. Add diagnostic details
 	info.Details = m.buildDetails(info)

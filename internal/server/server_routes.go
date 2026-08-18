@@ -80,7 +80,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.testingHandler = api.NewTestingHandler(s.testingService)
 	h.systemHandler = api.NewSystemHandler(s.config.Version)
 	h.systemHandler.SetSettingsStore(s.settings)
-	h.systemHandler.SetActiveBackend(s.activeBackend)
 	h.systemHandler.SetKmodLoader(s.kmodLoader)
 	h.systemHandler.SetSettingsWriter(s.settings)
 	h.systemHandler.SetTunnelService(s.tunnelService)
@@ -135,7 +134,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		TunnelService:        s.tunnelService,
 		NDMSQueries:          s.ndmsQueries,
 		NDMSTransport:        s.ndmsTransport,
-		Backend:              s.activeBackend,
 		KmodLoader:           s.kmodLoader,
 		TunnelStore:          s.tunnels,
 		LogService:           &diagLogAdapter{svc: s.loggingService},
