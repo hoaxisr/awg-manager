@@ -162,10 +162,6 @@ func (s *Service) adoptServerClientsFromFile(serverID, cfgDir string) ([]ServerC
 // свободным. Раньше бит был вырожден собственным резервом, и сообщение
 // печаталось бы на каждой записи файла.
 func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConfig, clients []ServerClient) (bool, error) {
-	clients, err := s.ensureUsableServerClient(serverID, cfg, clients)
-	if err != nil {
-		return false, err
-	}
 	sanitized, err := syncPasswordsJSON(cfgDir, cfg.Password, cfg.AdminID, cfg.BotToken, clients)
 	if err == nil && sanitized && s.appLog != nil {
 		s.appLog.Warn("server-clients", serverID,
@@ -174,13 +170,15 @@ func (s *Service) writeServerClientsFile(serverID, cfgDir string, cfg ServerConf
 	return sanitized, err
 }
 
-// ensureUsableServerClient — вторая опора инварианта, между усыновлением и
-// записью файла: если пароль сервера задан, а рабочих абонентов не осталось,
-// заводит «Абонент 1» и включает его в записываемый список.
+// ensureUsableServerClient — ЕДИНСТВЕННАЯ опора, которая заводит абонента, и
+// стоит она на пути старта, между усыновлением и записью файла: если пароль
+// сервера задан, а рабочих абонентов не осталось, заводит «Абонент 1» и
+// включает его в записываемый список.
 //
-// Это путь лечения СУЩЕСТВУЮЩИХ установок: там пароль задан давно, первая опора
-// (сохранение конфига) могла не сработать ни разу, и после обновления сервер не
-// поднялся бы вовсе. Она же покрывает «все абоненты просрочены».
+// Это последняя линия для путей МИМО UI: лечение существующих установок (пароль
+// задан давно, абонентов нет), апгрейд, ручной запуск. Она же покрывает «все
+// абоненты просрочены». На путях UI абонента не заводит никто: фронт не даёт
+// запустить сервер без рабочего абонента (Дополнение №5).
 func (s *Service) ensureUsableServerClient(serverID string, cfg ServerConfig, clients []ServerClient) ([]ServerClient, error) {
 	main := strings.TrimSpace(cfg.Password)
 	if main == "" || len(UsableServerClients(clients, main, time.Now())) > 0 {
@@ -230,6 +228,16 @@ func (s *Service) syncServerClientsOnStart(serverID, cfgDir string, cfg ServerCo
 	unlock := s.lockServerClients(serverID)
 	defer unlock()
 	clients, err := s.adoptServerClientsFromFile(serverID, cfgDir)
+	if err != nil {
+		return err
+	}
+	// Опора стоит ЗДЕСЬ, а не внутри writeServerClientsFile: тот же файл пишут
+	// ручки абонентов, а на путях UI абонент за пользователя не заводится
+	// (Дополнение №5). Удаление последнего просроченного намеренно оставляет
+	// сервер без рабочих — запустить его не даст фронт; если запуск всё же
+	// случится мимо UI (супервизор, автостарт, апгрейд), абонента заведёт эта
+	// опора, и он будет виден с бейджем «заведён автоматически».
+	clients, err = s.ensureUsableServerClient(serverID, cfg, clients)
 	if err != nil {
 		return err
 	}
@@ -305,8 +313,10 @@ func (s *Service) AddServerClient(serverID, password, comment, vkHash, mainPassw
 		return ServerClientsStatus{}, addErr
 	}
 	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
-	// абонента: иначе первым сработал бы инвариант непустоты и завёл бы
-	// автоматического абонента рядом с заказанным.
+	// абонента: на отказе добавления пароль остаётся несохранённым, и сервер не
+	// получает состояния «пароль есть, абонента нет». (Раньше у порядка была
+	// вторая причина — первым сработал бы инвариант непустоты и завёл бы
+	// автоматического абонента рядом с заказанным; опора на этом пути снята.)
 	if strings.TrimSpace(inst.Config.Password) == "" {
 		cfg := inst.Config
 		cfg.Password = main
@@ -486,11 +496,13 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 	if err != nil {
 		return ServerClientsStatus{}, err
 	}
-	// Третья опора инварианта: последнего РАБОЧЕГО абонента удалить нельзя —
-	// живой сервер после перечитывания файла остался бы без единого wrap-ключа,
-	// а следующий старт умер бы вовсе. Если рабочих не было и до операции
-	// (единственный абонент просрочен), удаление разрешено: запрещать выход из
-	// уже сломанного состояния бессмысленно, а опора 2 заведёт нового.
+	// Страж инварианта на удалении: последнего РАБОЧЕГО абонента удалить нельзя
+	// — живой сервер после перечитывания файла остался бы без единого
+	// wrap-ключа, а следующий старт умер бы вовсе. Если рабочих не было и до
+	// операции (единственный абонент просрочен), удаление разрешено: запрещать
+	// выход из уже сломанного состояния бессмысленно. Абонента взамен здесь
+	// никто не заводит — сервер остаётся без рабочих, и запустить его фронт не
+	// даст, пока не добавят нового (Дополнение №5).
 	//
 	// Проверка живёт здесь, а не только в UI: инвариант обязан держаться и для
 	// запросов мимо нашего фронта.
@@ -505,14 +517,6 @@ func (s *Service) RemoveServerClient(serverID, password string) (ServerClientsSt
 		return ServerClientsStatus{}, err
 	}
 	if _, err := s.writeServerClientsFile(serverID, cfgDir, inst.Config, clients); err != nil {
-		return ServerClientsStatus{}, err
-	}
-	// Список для ответа перечитываем ПОСЛЕ записи: опора 2 могла завести
-	// «Абонента 1» прямо в ней (удалён был единственный просроченный), и снимок,
-	// сделанный до неё, показал бы пустоту там, где абонент уже есть и в
-	// wdtt.json, и в passwords.json.
-	clients, err = s.serverClients(serverID)
-	if err != nil {
 		return ServerClientsStatus{}, err
 	}
 	reload := s.notifyServerClientsChanged(serverID)

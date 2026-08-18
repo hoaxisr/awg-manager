@@ -214,29 +214,11 @@ func TestMergeServerClients_MainPasswordComparedTrimmed(t *testing.T) {
 
 // --- Признак «заведён автоматически» ---
 
-// TestServerClients_AutoFlagOnFirstSupport: опора 1 (сохранение пароля сервера)
-// заводит «Абонента 1» — он обязан быть помечен в хранилище и в списке.
-func TestServerClients_AutoFlagOnFirstSupport(t *testing.T) {
-	s, _ := newServerClientsService(t, "mainpass0000000000000000")
-	clients := configServerClients(t, s)
-	if len(clients) != 1 {
-		t.Fatalf("опора 1 не завела абонента: %+v", clients)
-	}
-	if !clients[0].Auto {
-		t.Fatalf("автоматический абонент не помечен в wdtt.json: %+v", clients[0])
-	}
-	st, err := s.ListServerClients(DefaultInstanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !serverClientEntry(t, st, clients[0].Password).IsAuto {
-		t.Fatalf("признак авто-создания не доехал до списка: %+v", st.Users)
-	}
-}
-
-// TestServerClients_AutoFlagOnFileSupport: опора 2 (ensureUsableServerClient на
-// пути записи файла) — второй источник автоматических абонентов, и он обязан
-// метить их так же.
+// TestServerClients_AutoFlagOnFileSupport: опора старта
+// (ensureUsableServerClient в цикле syncServerClientsOnStart) — ЕДИНСТВЕННЫЙ
+// источник автоматических абонентов, и он обязан их метить: без бейджа
+// «заведён автоматически» пользователь не отличит живой пароль, которого не
+// заказывал, от своего.
 func TestServerClients_AutoFlagOnFileSupport(t *testing.T) {
 	const main = "mainpass0000000000000000"
 	s, cfgDir := newServerClientsService(t, main)
@@ -254,17 +236,17 @@ func TestServerClients_AutoFlagOnFileSupport(t *testing.T) {
 		}
 	}
 	if auto == nil {
-		t.Fatalf("опора 2 не завела абонента: %+v", configServerClients(t, s))
+		t.Fatalf("опора старта не завела абонента: %+v", configServerClients(t, s))
 	}
 	if !auto.Auto {
-		t.Fatalf("автоматический абонент опоры 2 не помечен: %+v", *auto)
+		t.Fatalf("автоматический абонент опоры старта не помечен: %+v", *auto)
 	}
 	st, err := s.ListServerClients(DefaultInstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !serverClientEntry(t, st, auto.Password).IsAuto {
-		t.Fatalf("признак авто-создания опоры 2 не доехал до списка: %+v", st.Users)
+		t.Fatalf("признак авто-создания опоры старта не доехал до списка: %+v", st.Users)
 	}
 	if serverClientEntry(t, st, "abonent1").IsAuto {
 		t.Fatalf("заведённый человеком абонент помечен автоматическим: %+v", st.Users)
@@ -292,6 +274,8 @@ func TestAddServerClient_IsNotAuto(t *testing.T) {
 func TestServerClients_AutoFlagSurvivesRenameAndAdoption(t *testing.T) {
 	const main = "mainpass0000000000000000"
 	s, cfgDir := newServerClientsService(t, main)
+	// Запись в том виде, в каком её оставляет опора старта.
+	setServerClients(t, s, []ServerClient{{Password: "autoclient1", Comment: defaultServerClientName, Auto: true}})
 	auto := configServerClients(t, s)[0]
 
 	if _, err := s.RenameServerClient(DefaultInstanceID, auto.Password, "Мой ноутбук"); err != nil {

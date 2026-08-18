@@ -51,9 +51,9 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 	//
 	// Сама запись никуда не доезжает и без отказа: UsableServerClients её
 	// отбрасывает (ServerClientMainPassword), в passwords.json и в ссылку она
-	// не попадает, в инварианте не считается — а опора ниже заведёт вместо неё
-	// «Абонент 1». Правило остаётся в силе везде, где состав или пароль меняет
-	// вызывающий: смена пароля здесь и AddServerClient.
+	// не попадает, в инварианте не считается. Правило остаётся в силе везде,
+	// где состав или пароль меняет вызывающий: смена пароля здесь и
+	// AddServerClient.
 	if err := validateServerMainPassword(cfg.Password, cfg.Clients); err != nil {
 		if strings.TrimSpace(cfg.Password) != strings.TrimSpace(prevCfg.Password) {
 			s.mu.Unlock()
@@ -63,28 +63,13 @@ func (s *Service) UpdateServerInstance(id string, cfg ServerConfig) (ServerConfi
 			s.appLog.Warn("clients", id, "унаследованный конфиг: пароль абонента совпадает с главным — сервер такого абонента не примет, выдайте доступ другому")
 		}
 	}
-	// Первая опора инварианта «у сервера с заданным паролем есть абонент,
-	// которого сервер примет»: без него wdtt-server падает на старте
-	// («[WRAP] нет активных паролей», форк server.go:2711-2713). Нужна ради
-	// мастера — ссылку пользователь собирает ДО первого старта.
-	//
-	// Условия «пароль стал непустым» здесь нет: список берётся из хранилища и
-	// после первого сохранения непуст сам по себе, а от единственного реального
-	// способа опустеть — просрочки — такое условие не спасало. Считаем ТЕМ ЖЕ
-	// предикатом, что и запись passwords.json: «абонентов не ноль» и «ключей не
-	// ноль» — разные величины.
-	if cfg.Password != "" && len(UsableServerClients(cfg.Clients, cfg.Password, time.Now())) == 0 {
-		pass, genErr := randomClientPassword()
-		if genErr != nil {
-			// Сохранение настроек не роняем: страховкой остаётся опора на пути
-			// старта (writeServerClientsFile).
-			if s.appLog != nil {
-				s.appLog.Warn("clients", id, "автоматический абонент не заведён: "+genErr.Error())
-			}
-		} else {
-			cfg.Clients = append(cfg.Clients, ServerClient{Password: pass, Comment: defaultServerClientName, Auto: true})
-		}
-	}
+	// Абонента здесь НЕ заводим: сохранение настроек сервера — путь UI, а
+	// «Абонент 1», рождённый на пути UI, — невидимый живой пароль, которого
+	// пользователь не заказывал (решение владельца, Дополнение №5). Инвариант
+	// «у сервера с заданным паролем есть абонент, которого он примет» держат
+	// опора на пути старта (ensureUsableServerClient) — последняя линия для
+	// путей мимо UI, апгрейда и ручного запуска — и страж удаления последнего
+	// рабочего. Фронт до старта не пускает, пока рабочих абонентов нет.
 	// Enabled — только Start/Stop; сохранение настроек не должно гасить автостарт.
 	cfg.Enabled = prevCfg.Enabled
 	// Здесь backoff НЕ сбрасываем, в отличие от клиентского Update:
