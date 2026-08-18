@@ -54,6 +54,22 @@ func (m *memFW) Reconcile(_ context.Context, desired []netres.PortSpec) error {
 	return nil
 }
 
+// countSync и countFW — счётчики мутаций, доступных ролям FreeTurn: правка
+// endpoint'ов связанных туннелей у клиента и INPUT-правила у сервера. NDMS
+// ролям FreeTurn не выдан вовсе, и это тоже часть инварианта.
+type countSync struct{ n int }
+
+func (c *countSync) List(context.Context, string) ([]linkres.LinkedTunnel, error) {
+	c.n++
+	return nil, nil
+}
+func (c *countSync) Sync(context.Context, string, string) (int, error) { c.n++; return 0, nil }
+
+type countFW struct{ n int }
+
+func (f *countFW) Managed(context.Context) ([]netres.PortSpec, error) { f.n++; return nil, nil }
+func (f *countFW) Reconcile(context.Context, []netres.PortSpec) error { f.n++; return nil }
+
 func ids(res []proxyrt.Resource) []proxyrt.ResourceID {
 	var out []proxyrt.ResourceID
 	for _, r := range res {
@@ -135,6 +151,48 @@ func TestServerClosedFirewallDeclaresNoPorts(t *testing.T) {
 	obs, _ := input.Observe(context.Background())
 	if steps := input.Plan(obs); len(steps) != 0 {
 		t.Fatalf("выключенный OpenFirewall — портов нет: %v", steps)
+	}
+}
+
+func TestClientResourcesDeclareWithoutTouchingRouter(t *testing.T) {
+	// G1: Resources — чистая декларация. Приведение живёт в Apply ресурсов, и
+	// ни одно намерение не даёт роли права мутировать что-либо самой.
+	cfg := roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "relay:3478"}
+	for _, intent := range []proxyrt.Intent{
+		proxyrt.IntentEnabled, proxyrt.IntentDisabled, proxyrt.IntentDeleted,
+	} {
+		sync := &countSync{}
+		role, err := NewClient(ClientDeps{Instance: "default", Binary: "/opt/bin/ft-client",
+			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+			Sync: sync, Occ: nilOcc{}, Now: time.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		role.Resources(intent, cfg, proxyrt.NewObservations())
+		if sync.n != 0 {
+			t.Fatalf("%s: за сборку декларации ушло %d правок связанных туннелей", intent, sync.n)
+		}
+	}
+}
+
+func TestServerResourcesDeclareWithoutTouchingRouter(t *testing.T) {
+	// То же для серверной роли: INPUT-порты открывает Apply ресурса
+	// input_port, а не ветка декларации.
+	cfg := roles.FreeTurnServerConfig{Listen: "0.0.0.0:3478", Mode: "udp", OpenFirewall: true}
+	for _, intent := range []proxyrt.Intent{
+		proxyrt.IntentEnabled, proxyrt.IntentDisabled, proxyrt.IntentDeleted,
+	} {
+		fw := &countFW{}
+		role, err := NewServer(ServerDeps{Instance: "default", Binary: "/opt/bin/ft-server",
+			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+			FW: fw, Now: time.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		role.Resources(intent, cfg, proxyrt.NewObservations())
+		if fw.n != 0 {
+			t.Fatalf("%s: за сборку декларации ушло %d обращений к firewall", intent, fw.n)
+		}
 	}
 }
 

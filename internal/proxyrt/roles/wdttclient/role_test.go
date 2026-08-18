@@ -337,6 +337,56 @@ func TestRoutableExitPublishedEvenWhenDown(t *testing.T) {
 	}
 }
 
+func TestResourcesDeclareWithoutTouchingRouter(t *testing.T) {
+	// G1: Resources — чистая декларация состава и желаемого. Ни при каком
+	// намерении и ни в одном режиме за её вызов к роутеру не уходит НИ ОДНОЙ
+	// мутации: снятие выражается желаемым тех же ресурсов, а не рукописным
+	// вызовом в ветке выхода.
+	//
+	// Счётчиком, а не составом списка: рукописный DeleteOpkgTun в ветке
+	// disabled состав ведомости не меняет и потому невидим для стражей
+	// порядка. Ровно этим и опасен — ведомость перестаёт быть ведомостью.
+	wg := rawCfg()
+	wg.Mode, wg.NdmsIface, wg.RawIface = "wg", "", ""
+	for _, mode := range []struct {
+		name string
+		cfg  roles.WdttClientConfig
+	}{{"raw", rawCfg()}, {"wg", wg}} {
+		for _, intent := range []proxyrt.Intent{
+			proxyrt.IntentEnabled, proxyrt.IntentDisabled, proxyrt.IntentDeleted,
+		} {
+			role, reg, cmds := newRoleCmds(t, &fakeLink{err: control.ErrNoSocket})
+			role.Resources(intent, mode.cfg, proxyrt.NewObservations())
+			if cmds.n != 0 {
+				t.Fatalf("%s/%s: за сборку декларации к NDMS ушло %d команд", mode.name, intent, cmds.n)
+			}
+			if len(reg.m) != 0 {
+				t.Fatalf("%s/%s: за сборку декларации опубликован выход: %v", mode.name, intent, reg.m)
+			}
+		}
+	}
+}
+
+func TestRawDisabledLedgerIsExhaustive(t *testing.T) {
+	// Состав disabled-ведомости пиннится ЦЕЛИКОМ, как у wg-ветки: потеря
+	// ресурса из списка тестов состава не роняет, а выключенный инстанс
+	// молча перестаёт чинить дрейф (описание, security-level, адрес, down).
+	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
+	got := ids(role.Resources(proxyrt.IntentDisabled, rawCfg(), proxyrt.NewObservations()))
+	want := []proxyrt.ResourceID{
+		"process", "ndms_interface", "ndms_address", "ndms_admin_state",
+		"client_routes", "routable_exit",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("disabled-состав: %v, ожидали %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("disabled-порядок: %v, ожидали %v", got, want)
+		}
+	}
+}
+
 func TestInvalidConfigTouchesNoNDMS(t *testing.T) {
 	// I3 ревью: у клиента приговор Validate() прикрыт порядком (process выше
 	// NDMS-хвоста), но опираться на порядок нельзя — гейт делает свойство
