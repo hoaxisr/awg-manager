@@ -9,23 +9,30 @@
 		ExitDetail,
 		ExitWizard,
 		InstanceList,
-		RunBar,
+		ShareDetail,
 		binaryStripItems,
 		deleteProxyInstance,
 		exitInstance,
 		exitRows,
 		exitConfigSetupComplete,
 		normalizeExitConfigs,
+		normalizeShareConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
 		saveExitInstance,
+		saveShareInstance,
+		shareInstance,
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
-	import type { ExitConfig, ExitProtocol, ProxyInstanceRow } from '$lib/components/proxy';
+	import type {
+		ExitConfig,
+		ExitProtocol,
+		ProxyInstanceRow,
+		ShareConfig,
+	} from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { proxyClientOpsMode, proxyInOpsMode } from '$lib/utils/proxyOpsMode';
-	import { formatUptime } from '$lib/components/freeturn/uptime';
 	import { errText } from '$lib/utils/errorMessage';
 	import type {
 		AccessPolicy,
@@ -49,6 +56,7 @@
 	let policies = $state<AccessPolicy[]>([]);
 	let tunnels = $state<TunnelListItem[]>([]);
 	let savingExit = $state(false);
+	let savingShare = $state(false);
 
 	let selectedExitKey = $state<string | null>(null);
 	let selectedShareKey = $state<string | null>(null);
@@ -84,7 +92,21 @@
 			: ftStatus?.clients?.find((c) => c.id === selectedExit?.id)?.status,
 	);
 	const selectedShare = $derived(shares.find((r) => r.key === selectedShareKey) ?? null);
-	const selected = $derived(activeTab === 'exit' ? selectedExit : selectedShare);
+	const shareWdttServer = $derived(
+		selectedShare?.protocol === 'wdtt'
+			? wdttConfig?.servers.find((s) => s.id === selectedShare.id)?.config
+			: undefined,
+	);
+	const shareFtServer = $derived(
+		selectedShare?.protocol === 'freeturn'
+			? ftConfig?.servers.find((s) => s.id === selectedShare.id)?.config
+			: undefined,
+	);
+	const shareStatus = $derived(
+		selectedShare?.protocol === 'wdtt'
+			? wdttStatus?.servers?.find((s) => s.id === selectedShare.id)?.status
+			: ftStatus?.servers?.find((s) => s.id === selectedShare?.id)?.status,
+	);
 
 	// Конфиг настроен ровно по критерию шага 2 мастера — это и есть setupComplete
 	// панелей, по которому инстанс уходит из мастера в деталь (решение Q12).
@@ -127,13 +149,6 @@
 
 	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
 
-	// RB-07: порты раздачи приезжают вместе с деталью «Раздача» (задача 5).
-	const shareMeta = $derived(
-		[formatUptime(selectedShare?.startedAt), selectedShare?.pid ? `PID ${selectedShare.pid}` : '']
-			.filter(Boolean)
-			.join(' · '),
-	);
-
 	// ─── Загрузка и поллинг.
 
 	async function loadStatuses() {
@@ -147,6 +162,7 @@
 	async function loadConfigs() {
 		const [w, f] = await Promise.all([api.getWdttConfig(), api.getFreeTurnConfig()]);
 		normalizeExitConfigs(w, f);
+		normalizeShareConfigs(w, f);
 		wdttConfig = w;
 		ftConfig = f;
 	}
@@ -245,6 +261,35 @@
 		} finally {
 			savingExit = false;
 		}
+	}
+
+	/**
+	 * Сохранение конфига сервера раздачи. Возвращает конфиг на бэкенде после
+	 * записи; null — не сохранилось.
+	 */
+	async function saveShare(config: ShareConfig): Promise<ShareConfig | null> {
+		const row = selectedShare;
+		const inst = shareInstance(row, wdttConfig, ftConfig);
+		if (!row || !inst) return null;
+		savingShare = true;
+		try {
+			const stored = await saveShareInstance(row, inst, config);
+			await loadStatuses();
+			return stored;
+		} catch (e) {
+			notifications.error(errText(e));
+			return null;
+		} finally {
+			savingShare = false;
+		}
+	}
+
+	/** Перезапуск сервера формой детали: смена режима server.log (SH-68). */
+	async function restartShare() {
+		const row = selectedShare;
+		if (!row) return;
+		await toggleInstance(row, false);
+		await toggleInstance(row, true);
 	}
 
 	/** Мастер довёл инстанс до запуска — «Готово» уводит в его деталь (ia.md §2.3). */
@@ -380,23 +425,26 @@
 							onreload={reloadAll}
 						/>
 					{/key}
-				{:else if selected}
-					<!-- Секции детали «Раздача» — задача 5; каркас несёт строку состояния. -->
-					<Card>
-						{#snippet header()}
-							<div class="detail-head">
-								<h2 class="detail-title">{selected.name}</h2>
-							</div>
-						{/snippet}
-						<RunBar
-							state={selected.state}
-							meta={shareMeta}
-							busy={busyKeys.includes(selected.key)}
-							onstart={() => toggleInstance(selected, true)}
-							onstop={() => toggleInstance(selected, false)}
+				{:else if activeTab === 'share' && selectedShare}
+					<!-- Локальное состояние детали не переживает смену инстанса (W-13). -->
+					{#key selectedShare.key}
+						<ShareDetail
+							row={selectedShare}
+							status={shareStatus}
+							wdttServer={shareWdttServer}
+							ftServer={shareFtServer}
+							routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+							{policies}
+							saving={savingShare}
+							busy={busyKeys.includes(selectedShare.key)}
+							onstart={() => selectedShare && toggleInstance(selectedShare, true)}
+							onstop={() => selectedShare && toggleInstance(selectedShare, false)}
 							onwizard={() => (shareWizard = true)}
+							onrestart={restartShare}
+							onsave={saveShare}
+							onreload={reloadAll}
 						/>
-					</Card>
+					{/key}
 				{/if}
 			</main>
 		</div>

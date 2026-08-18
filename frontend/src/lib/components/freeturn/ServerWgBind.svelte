@@ -19,6 +19,8 @@
 		clientListenPort?: number;
 		autoApply?: boolean;
 		compact?: boolean;
+		/** Подпись выпадающего списка; деталь «Раздача» ставит свою (SH-60). */
+		peerLabel?: string;
 	}
 
 	let {
@@ -28,7 +30,8 @@
 		keeneticSelected = $bindable(false),
 		clientListenPort = 9000,
 		autoApply = false,
-		compact = false
+		compact = false,
+		peerLabel = 'Сервер · пир'
 	}: Props = $props();
 
 	let snap: ServersSnapshot | null = $state(null);
@@ -150,7 +153,7 @@
 	</p>
 	<div class="ft-wg-row">
 		<Dropdown
-			label="Сервер · пир"
+			label={peerLabel}
 			bind:value={selected}
 			options={options}
 			placeholder={options.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}

@@ -6,15 +6,17 @@
 	interface Props {
 		/** Все порты инстанса; строка рисуется на каждый. */
 		ports: { listen: string; proto?: 'udp' | 'tcp' }[];
+		/** EX-46 у «Выхода», SH-69 у «Раздачи» — портов там несколько. */
+		title?: string;
 	}
 
-	let { ports }: Props = $props();
+	let { ports, title = 'Освобождение порта' }: Props = $props();
 
 	const shown = $derived(ports.filter((p) => p.listen?.trim()));
 </script>
 
 {#if shown.length}
-	<p class="sub-title">Освобождение порта</p>
+	<p class="sub-title">{title}</p>
 	{#each shown as port (port.listen)}
 		<ListenPortKillButton variant="section" listen={port.listen} proto={port.proto ?? 'udp'} />
 	{/each}

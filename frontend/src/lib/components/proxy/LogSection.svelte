@@ -12,13 +12,22 @@
 		log?: string;
 		/** Часы роутера — чтобы сверять с метками строк. */
 		routerClock?: string;
+		/** Пояснение секции под (i): SH-73 у «Раздачи». */
+		hint?: string;
 		/** EX-53/54: тумблер отладки есть только у FreeTurn-клиента. */
 		showDebug?: boolean;
 		debug?: boolean;
 		ondebug?: (on: boolean) => void;
 	}
 
-	let { log = '', routerClock = '', showDebug = false, debug = false, ondebug }: Props = $props();
+	let {
+		log = '',
+		routerClock = '',
+		hint = '',
+		showDebug = false,
+		debug = false,
+		ondebug,
+	}: Props = $props();
 
 	let logEl = $state<HTMLPreElement | undefined>();
 	let stickToBottom = $state(true);
@@ -50,7 +59,7 @@
 	}
 </script>
 
-<DetailSection title="Журнал" aside={toolbar}>
+<DetailSection title="Журнал" {hint} aside={toolbar}>
 	<pre bind:this={logEl} class="log" onscroll={onScroll}>{text}</pre>
 	{#if showDebug}
 		<div class="debug-row">
