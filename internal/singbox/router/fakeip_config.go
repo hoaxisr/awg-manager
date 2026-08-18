@@ -300,9 +300,19 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 	// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
 	// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
 	// provisioned (ensureFakeIPOverlayFromState above errors on a nil record).
+	//
+	// Имя берётся из записи владения, поэтому доказанно чужой интерфейс на нашем
+	// индексе (наш умер, номер занял посторонний) обязан быть пропущен: это не
+	// снос, но правка ЕГО маршрутов. «Недоступный скан ≠ чужой» — без скана и на
+	// его ошибке синхронизируем как раньше.
 	if settings, serr := s.deps.Settings.Load(); serr == nil {
 		if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
-			s.syncTunCIDRRoutes(ctx, tunNDMSName(st.Index), before, cfg)
+			ndmsName := tunNDMSName(st.Index)
+			if s.provenForeignOpkgTun(ctx, ndmsName, fakeIPTunDescription) {
+				s.appLog.Warn("fakeip-cidr", ndmsName, "индекс занят чужим OpkgTun — CIDR-маршруты не тронуты")
+			} else {
+				s.syncTunCIDRRoutes(ctx, ndmsName, before, cfg)
+			}
 		}
 	}
 	s.emitCfgEvent(event, cfg)

@@ -545,3 +545,45 @@ func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
 		})
 	}
 }
+
+// Правка маршрутов по индексу из записи владения (не снос): каждая CRUD-мутация
+// fakeip-конфига досинхронизирует специфические CIDR-маршруты на tun по имени из
+// записи. Проверки описания не было — если наш интерфейс умер, а индекс занял
+// посторонний, мы добавляли/снимали маршруты на ЧУЖОМ. Раскладка та же, что у
+// сноса (wantDel здесь читается как «операция выполнена»): недоступный скан
+// работает по-прежнему.
+func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
+	for _, tc := range foreignTeardownCases(fakeIPTunDescription, "OpkgTun3") {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newFakeIPTestService(t)
+			all, err := svc.deps.Settings.Load()
+			if err != nil {
+				t.Fatalf("Settings.Load: %v", err)
+			}
+			all.OpkgTun = &storage.OpkgTunState{
+				Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 3,
+				FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15"},
+			}
+			if err := svc.deps.Settings.Save(all); err != nil {
+				t.Fatalf("Settings.Save: %v", err)
+			}
+			log := &callLog{}
+			svc.deps.StaticRoutes = &recStaticRoutes{log: log}
+			svc.deps.OpkgTunScan = tc.scan
+
+			err = svc.fakeipWithConfig(t.Context(), "test", func(cfg *RouterConfig) error {
+				cfg.Route.Rules = append(cfg.Route.Rules, Rule{
+					Action: "route", Outbound: "proxy", IPCIDR: []string{"149.154.160.0/20"},
+				})
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("fakeipWithConfig: %v", err)
+			}
+
+			if got := log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3"); got != tc.wantDel {
+				t.Errorf("правка CIDR-маршрутов = %v, want %v: %v", got, tc.wantDel, log.calls)
+			}
+		})
+	}
+}
