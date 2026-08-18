@@ -44,6 +44,11 @@
         controlled = false,
     }: Props = $props();
 
+    // Видимая подпись лежит вне .toggle-container (она рядом с дорожкой, а не
+    // внутри неё), поэтому связь с чекбоксом — через for/id: иначе клик по
+    // тексту ничего не переключает, а у поля нет доступного имени.
+    const fieldId = $props.id();
+
     function handleInput(event: Event) {
         if (loading || disabled) {
             event.preventDefault();
@@ -74,7 +79,7 @@
             class:tint-starting={tint === 'starting'}
             class:tint-unreachable={tint === 'unreachable'}
         >
-            <input type="checkbox" checked={checked} {disabled} aria-label={ariaLabel || undefined} oninput={handleInput} />
+            <input type="checkbox" id={fieldId} checked={checked} {disabled} aria-label={ariaLabel || undefined} oninput={handleInput} />
             {#if variant === 'flip'}
                 <span class="flip-track">
                     <span class="flip-lever">
@@ -98,7 +103,7 @@
             {/if}
         </label>
         <div class="toggle-text">
-            <span class="toggle-label">{label}</span>
+            <label class="toggle-label" for={fieldId}>{label}</label>
             {#if hint}
                 <span class="toggle-hint">{hint}</span>
             {/if}
@@ -485,6 +490,9 @@
         font-size: 14px;
         font-weight: 500;
         color: var(--color-text-primary);
+        /* Подпись — <label for>, а глобальный стиль форм даёт label отступ
+           снизу: гасим, как и у .toggle-container, иначе строка съезжает. */
+        margin-bottom: 0;
     }
 
     .toggle-hint {
