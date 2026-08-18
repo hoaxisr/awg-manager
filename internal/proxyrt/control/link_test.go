@@ -281,6 +281,127 @@ func TestLinkEvictedLatch(t *testing.T) {
 	}
 }
 
+// waitUntil ждёт условия до пяти секунд.
+func waitUntil(t *testing.T, why string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(why)
+}
+
+// newDialCountingLink — связь со счётчиком дозвонов: сам дозвон настоящий,
+// подменён только учёт.
+func newDialCountingLink(t *testing.T, path string, sink *eventSink,
+	dial func(ctx context.Context, path string) (*Client, error)) *Link {
+	t.Helper()
+	l := NewLink(LinkOpts{
+		Path: path, Impl: "wt-client", Role: "client", Instance: "default",
+		Binary: "/opt/bin/wt-client",
+		Post:   sink.post, Log: sink.log, Alive: func(int, string) bool { return true },
+		Dial:       dial,
+		RetryEvery: 10 * time.Millisecond, ConnectDeadline: 5 * time.Second,
+		CallTimeout: 5 * time.Second,
+	})
+	t.Cleanup(l.Close)
+	return l
+}
+
+// TestLinkEvictedShortCircuitsBeforeDial — гард ВЫТЕСНЕНИЯ В connect.
+//
+// Терминальность вытеснения держат два гарда: короткое замыкание в connect и
+// проверка в adopt. Они взаимно избыточны, поэтому страж на причину отказа
+// (ErrEvicted) не защищает НИ ОДИН из них: снятие любого одного отдаёт ту же
+// ошибку из соседнего места и проходит молча. Отсюда страж на наблюдаемое
+// различие — при стоящей защёлке связь не набирает номер вовсе.
+func TestLinkEvictedShortCircuitsBeforeDial(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	startProcess(t, path, awgmproto.State{PID: os.Getpid()})
+	sink := &eventSink{}
+	var dials atomic.Int32
+	l := newDialCountingLink(t, path, sink, func(ctx context.Context, p string) (*Client, error) {
+		dials.Add(1)
+		return Dial(ctx, p)
+	})
+
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Второй менеджер: защёлка встаёт настоящим путём.
+	other, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	waitUntil(t, "защёлка вытеснения не встала", l.Evicted)
+
+	dials.Store(0)
+	if _, err := l.State(context.Background()); !errors.Is(err, ErrEvicted) {
+		t.Fatalf("после вытеснения обязан быть ErrEvicted, получили %v", err)
+	}
+	if n := dials.Load(); n != 0 {
+		t.Fatalf("при стоящей защёлке номер не набирается, а набран %d раз", n)
+	}
+}
+
+// TestLinkEvictedRejectsConnectionDialedInFlight — гард ВЫТЕСНЕНИЯ В adopt.
+//
+// Второй гард ловит то, чего первый поймать не может: защёлка встала, ПОКА мы
+// дозванивались, — connect проверял её до набора номера. Случай достижим при
+// двух дозвонах разом (докстрока adopt), и тест воспроизводит именно его:
+// первый дозвон заперт в калитке, второй успевает поднять соединение, и это
+// соединение вытесняет настоящий второй менеджер.
+func TestLinkEvictedRejectsConnectionDialedInFlight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	startProcess(t, path, awgmproto.State{PID: os.Getpid()})
+	sink := &eventSink{}
+	gate := make(chan struct{})
+	started := make(chan struct{}, 1)
+	var held atomic.Bool
+	l := newDialCountingLink(t, path, sink, func(ctx context.Context, p string) (*Client, error) {
+		if held.CompareAndSwap(false, true) {
+			started <- struct{}{}
+			<-gate
+		}
+		return Dial(ctx, p)
+	})
+	openGate := sync.OnceFunc(func() { close(gate) })
+	defer openGate() // калитка обязана открыться и на падении теста
+
+	// Дозвон №1 замирает в калитке — свою проверку защёлки connect уже прошёл.
+	inflight := make(chan error, 1)
+	go func() {
+		_, err := l.State(context.Background())
+		inflight <- err
+	}()
+	<-started
+
+	// Дозвон №2 проходит насквозь и ставит соединение на пост.
+	go func() { _, _ = l.State(context.Background()) }()
+	waitUntil(t, "второе соединение не встало на пост", func() bool {
+		_, ok := l.Snapshot()
+		return ok
+	})
+
+	// Настоящий второй менеджер вытесняет соединение, стоящее на посту.
+	other, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	waitUntil(t, "защёлка вытеснения не встала", l.Evicted)
+
+	openGate()
+	if err := <-inflight; !errors.Is(err, ErrEvicted) {
+		t.Fatalf("соединение, поднятое при вставшей защёлке, обязано быть отвергнуто, получили %v", err)
+	}
+}
+
 func TestLinkNoSocketFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "нет.sock")
 	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
