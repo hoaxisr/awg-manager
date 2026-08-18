@@ -522,6 +522,11 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 
 	diff := ApplyDiff(id, sub.MemberTags, parts.Valid)
 
+	// Сироты, для которых в выдаче есть тот же сервер под новым тегом,
+	// забирают свой прежний тег обратно (issue #745). Обязано идти ДО
+	// remapStaleTags: тому остаются только по-настоящему протухшие теги.
+	diff = reassociateOrphans(diff, sub.Members)
+
 	// Перенос исключений на текущую схему тегов (issues #614/#625). Обязан
 	// идти ДО applyDiff: тот читает sub.ExcludedTags (см. ниже) и без переноса
 	// применил бы протухшие теги, вернув исключённые серверы в строй.
@@ -601,6 +606,20 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		declared[t] = true
 	}
 	newMembers, prunedTags := filterDeclaredMembers(newMembers, declared)
+	// Added считается по членам, реально попавшим в подписку: серверы,
+	// скрытые фильтром или исключением, в MemberTags не пишутся и потому
+	// приходят из ApplyDiff новыми на КАЖДОМ обновлении. len(diff.New) завышал
+	// счётчик в ответе API и держал вечно истинным условие журнала ниже.
+	newTags := make(map[string]bool, len(diff.New))
+	for _, n := range diff.New {
+		newTags[n.Tag] = true
+	}
+	added := 0
+	for _, m := range newMembers {
+		if newTags[m.Tag] {
+			added++
+		}
+	}
 	rejected := appendRejectedUnique(parts.Rejected, rejectedFromPrunedTags(sub, prunedTags)...)
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 	if len(prunedTags) > 0 {
@@ -626,7 +645,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 
 	res := &RefreshResult{
 		When:             time.Now(),
-		Added:            len(diff.New),
+		Added:            added,
 		Updated:          len(diff.Existing),
 		Orphaned:         len(diff.Orphan),
 		SkippedVmess:     parseRes.SkippedVmess,
