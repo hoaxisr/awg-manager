@@ -67,6 +67,16 @@ func newFakeIPTables(fe *fakeExec) *IPTables {
 		runIPTables:    fe.runIPTables,
 		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return jumpsPresentDump(), nil },
 		runIP:          fe.runIP,
+		runIPOut:       func(_ context.Context, _ ...string) (string, error) { return "", nil },
+		persistRules:   func(_, _, _ string) error { return nil },
+		persistHook:    func(bool) error { return nil },
+		cleanupHook:    func() {},
+
+		persistPolicyTunDNSHook: func(string) error { return nil },
+		cleanupPolicyTunDNSHook: func() {},
+		persistBlackhole:        func(string) error { return nil },
+		cleanupBlackhole:        func() {},
+		runCtClean:              func(context.Context) {},
 	}
 }
 
