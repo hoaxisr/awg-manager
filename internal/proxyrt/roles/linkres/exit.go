@@ -44,14 +44,27 @@ func (r *RoutableExit) SetDesired(info ExitInfo) { r.want = info }
 
 func (r *RoutableExit) ID() proxyrt.ResourceID { return r.id }
 
+// Observe кладёт ТОЛЬКО факты. Сравнение с желаемым — в Plan: движок зовёт
+// Resources дважды за проход, наблюдение идёт МЕЖДУ вызовами, и вердикт,
+// запечённый в Observe, судил бы по желаемому ПЕРВОГО вызова (I2 ревью).
+// Форма та же, что у ndmsres.Address: желаемое перечитывается в момент
+// планирования.
 func (r *RoutableExit) Observe(context.Context) (proxyrt.Observation, error) {
 	got, ok := r.reg.Lookup(r.want.ID)
-	return proxyrt.Observation{Known: true, Exists: ok && got == r.want,
-		Attrs: map[string]string{"ready": strconv.FormatBool(got.Ready)}}, nil
+	return proxyrt.Observation{Known: true, Exists: ok, Attrs: map[string]string{
+		"id":           got.ID,
+		"ndms_name":    got.NDMSName,
+		"kernel_iface": got.KernelIface,
+		"ready":        strconv.FormatBool(got.Ready),
+	}}, nil
 }
 
 func (r *RoutableExit) Plan(obs proxyrt.Observation) []proxyrt.Step {
-	if obs.Exists {
+	if obs.Exists &&
+		obs.Attrs["id"] == r.want.ID &&
+		obs.Attrs["ndms_name"] == r.want.NDMSName &&
+		obs.Attrs["kernel_iface"] == r.want.KernelIface &&
+		obs.Attrs["ready"] == strconv.FormatBool(r.want.Ready) {
 		return nil
 	}
 	return []proxyrt.Step{{Resource: r.id, Op: "publish", Reason: "запись в реестре выходов отстала"}}

@@ -190,3 +190,43 @@ func TestRoutableExitRegistersAtCreationNotAtReady(t *testing.T) {
 		t.Fatal("Ready не доехал до реестра")
 	}
 }
+
+// roleExitFlip — роль-двойник с желаемым, зависящим от наблюдений (у
+// raw-клиента так считается Ready). Движок зовёт Resources ДВАЖДЫ за проход и
+// планирует по ВТОРОМУ списку: первый нужен только чтобы было что наблюдать.
+type roleExitFlip struct {
+	re     *RoutableExit
+	calls  int
+	first  ExitInfo
+	second ExitInfo
+}
+
+func (r *roleExitFlip) Resources(proxyrt.Intent, any, proxyrt.Observations) []proxyrt.Resource {
+	info := r.second
+	if r.calls == 0 {
+		info = r.first
+	}
+	r.calls++
+	r.re.SetDesired(info)
+	return []proxyrt.Resource{r.re}
+}
+
+func TestRoutableExitPlansAgainstFreshDesired(t *testing.T) {
+	// I2 ревью: сравнение желаемого, запечённое в Observe, судит по желаемому
+	// ПЕРВОГО вызова Resources — запись реестра совпала со старым want, шага
+	// нет, и новое желаемое уезжает в реестр лишь следующей реконсиляцией.
+	stale := ExitInfo{ID: "wdttraw-client1", NDMSName: "OpkgTun18",
+		KernelIface: "opkgtun18", Ready: false}
+	fresh := stale
+	fresh.Ready = true
+	reg := &fakeRegistry{m: map[string]ExitInfo{stale.ID: stale}}
+	role := &roleExitFlip{re: NewRoutableExit("routable_exit", reg), first: stale, second: fresh}
+
+	res, phase := proxyrt.NewReconciler(role, nil, proxyrt.ReconcileOpts{}).
+		Run(context.Background(), proxyrt.IntentEnabled)
+
+	if got := reg.m[stale.ID]; !got.Ready {
+		t.Fatalf("публикация обязана отражать желаемое второго вызова Resources в том же прогоне: %+v (фаза %v, шаги %v)",
+			got, phase, res.Steps)
+	}
+}
