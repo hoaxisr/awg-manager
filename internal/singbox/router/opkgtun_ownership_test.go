@@ -68,3 +68,42 @@ func TestOpkgTunOwned_SingleRead(t *testing.T) {
 		t.Fatalf("hold must be owned by policy-tun: %+v", st)
 	}
 }
+
+// Р2: fakeip уже был провижинен (запись есть, интерфейс умер), re-provision
+// упал после персиста нового индекса → откат обязан вернуть ПРЕЖНЮЮ запись, а
+// не nil. С nil протухший ресурс прежнего провижининга терял персист — реапу
+// оставался только description-скан, а детектор сброса fakeip-кэша терял
+// prev-диапазоны.
+func TestFakeIPEnable_RollbackRestoresPreviousRecord(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "SetAddress")
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 1,
+		FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15"},
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err == nil {
+		t.Fatal("Enable must fail (injected SetAddress)")
+	}
+
+	st := h.loadFakeIP(t)
+	if st == nil || !st.Provisioned || st.Index != 1 ||
+		st.FakeIP == nil || st.FakeIP.Inet4Range != "198.18.0.0/15" {
+		t.Fatalf("запись после отката = %+v, want прежняя {fakeip, provisioned, index 1}", st)
+	}
+}
+
+// СТРАХОВКА (зелёный до и после): первый enable (записи не было) откатывается
+// в nil — прежнее поведение, частный случай restore-prev.
+func TestFakeIPEnable_RollbackClearsRecordOnFirstEnable(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "SetAddress")
+
+	if err := h.svc.Enable(context.Background()); err == nil {
+		t.Fatal("Enable must fail (injected SetAddress)")
+	}
+
+	if st := h.loadFakeIP(t); st != nil {
+		t.Fatalf("запись после отката = %+v, want nil", st)
+	}
+}

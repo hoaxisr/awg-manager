@@ -168,16 +168,15 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip state: %w", err)
 	}
-	// Откат: чужую (handover) запись ВОЗВРАЩАЕМ — иначе провал enable вводил бы
-	// новую потерю NAT-свидетельств; воскрешение released-записи самоисцеляется
-	// (реап следующего тика повторит release идемпотентно). Своя прежняя
-	// fakeip-запись пока обнуляется, как и раньше.
-	var rollbackTo *storage.OpkgTunState
-	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
-		rollbackTo = prevRecord
-	}
 	push(func() {
-		if e := s.deps.Settings.SetOpkgTunState(rollbackTo); e != nil {
+		// Р2: откат возвращает ПРЕЖНЮЮ запись (как у policy-tun), а не nil.
+		// Re-provision: прежняя запись сохраняет реапабельность и prev-диапазоны
+		// детектора сброса кэша. Handover: возвращённая policy-запись
+		// самоисцеляется реапом (повторный release идемпотентен). Первый enable
+		// (prevRecord == nil) откатывается в nil — прежнее поведение.
+		// NB: prevRecord — указатель в кэш стора; вернуть его же безопасно
+		// (store публикует под своим локом), но НЕ мутировать.
+		if e := s.deps.Settings.SetOpkgTunState(prevRecord); e != nil {
 			s.appLog.Warn("fakeip-rollback", iface, "restore opkgtun persist: "+e.Error())
 		}
 	})
