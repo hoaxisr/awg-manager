@@ -26,16 +26,12 @@ var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 // package decoupled from the operator's path layout (it just receives a string).
 func DefaultCacheDBPath() string { return defaultCacheDBPath }
 
-// ensureBaseConfig writes a minimal 00-base.json if config.d is empty,
-// so sing-box starts standalone (direct outbound + bootstrap DNS) before
+// ensureBaseConfigWithLogLevel writes a minimal 00-base.json if config.d is
+// empty, so sing-box starts standalone (direct outbound + bootstrap DNS) before
 // any tunnels are added. Also surgically self-heals an older base config
 // that hard-coded the wrong Clash API port (9090 instead of
 // clashAPIAddr's 9099), which silently broke our LogForwarder /
 // DelayChecker on existing installs.
-func ensureBaseConfig(configDir string, loggers ...*slog.Logger) {
-	ensureBaseConfigWithLogLevel(configDir, "info", loggers...)
-}
-
 func ensureBaseConfigWithLogLevel(configDir, desiredLogLevel string, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
 	basePath := filepath.Join(configDir, "00-base.json")
@@ -907,12 +903,9 @@ func patchSlotOutboundCompat(slotPath string, loggers ...*slog.Logger) {
 	}
 }
 
-// freshBaseConfig returns the canonical base sing-box config. Single
-// source of truth for ensureBaseConfig (initial write + self-heal path).
-func freshBaseConfig() map[string]any {
-	return freshBaseConfigWithLogLevel("info")
-}
-
+// freshBaseConfigWithLogLevel returns the canonical base sing-box config.
+// Single source of truth for ensureBaseConfigWithLogLevel (initial write +
+// self-heal path).
 func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 	return map[string]any{
 		"log": map[string]any{"level": normalizeSingboxLogLevel(logLevel), "timestamp": true},

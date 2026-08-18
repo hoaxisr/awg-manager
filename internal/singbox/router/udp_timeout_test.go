@@ -11,31 +11,21 @@ func TestFakeIPTunInboundUDPTimeout(t *testing.T) {
 		Outbounds: []Outbound{{Type: "direct", Tag: "proxy"}}, ProxyTag: "proxy",
 	}
 
-	// Explicit value flows through verbatim.
+	// Explicit value flows through verbatim on the overlay path (every persist).
 	spec := base
 	spec.UDPTimeout = "1h"
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if got := cfg.Inbounds[0].UDPTimeout; got != "1h" {
-		t.Fatalf("tun-in udp_timeout = %q, want 1h", got)
-	}
-
-	// Empty falls back to DefaultUDPTimeout (not sing-box's 5m).
-	cfg2, err := BuildFakeIPTunConfig(base)
-	if err != nil {
-		t.Fatalf("build default: %v", err)
-	}
-	if got := cfg2.Inbounds[0].UDPTimeout; got != DefaultUDPTimeout {
-		t.Fatalf("tun-in default udp_timeout = %q, want %q", got, DefaultUDPTimeout)
-	}
-
-	// The overlay path (every persist) must re-assert it too.
 	oc := NewEmptyConfig()
 	ensureFakeIPOverlay(oc, spec)
 	if got := findInbound(oc, "tun-in").UDPTimeout; got != "1h" {
 		t.Fatalf("overlay tun-in udp_timeout = %q, want 1h", got)
+	}
+
+	// Empty falls back to DefaultUDPTimeout (not sing-box's 5m) on the LIVE
+	// overlay path.
+	oc2 := NewEmptyConfig()
+	ensureFakeIPOverlay(oc2, base) // base.UDPTimeout == ""
+	if got := findInbound(oc2, "tun-in").UDPTimeout; got != DefaultUDPTimeout {
+		t.Fatalf("overlay default udp_timeout = %q, want %q", got, DefaultUDPTimeout)
 	}
 }
 

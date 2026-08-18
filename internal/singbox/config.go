@@ -26,7 +26,7 @@ type Config struct {
 
 // NewConfig returns the empty slot-shape skeleton for 10-tunnels.json:
 // inbounds + outbounds + route only. log/dns/experimental are intentionally
-// omitted — those keys belong to 00-base.json (owned by ensureBaseConfig).
+// omitted — those keys belong to 00-base.json (owned by ensureBaseConfigWithLogLevel).
 // Emitting them here used to pollute 10-tunnels.json on first tunnel-add
 // with dns-bootstrap/dns-doh tags that 00-base owns, tripping the
 // orchestrator's cross-slot duplicate-tag validator.
@@ -184,17 +184,10 @@ func (c *Config) Tunnels() []TunnelInfo {
 	return out
 }
 
-// AddTunnel inserts inbound + outbound + route rule for a new tunnel.
-// Returns error if tag already exists. Picks listen_port internally via
-// allocPort — use AddTunnelWithListenPort when the caller needs the
-// listen_port to align with an externally-chosen ProxyN slot.
-func (c *Config) AddTunnel(tag, protocol, server string, port int, outbound json.RawMessage) error {
-	return c.AddTunnelWithListenPort(tag, protocol, server, port, 0, outbound)
-}
-
-// AddTunnelWithListenPort is like AddTunnel but lets the caller pin the
-// listen_port. Pass 0 to fall back to allocPort (equivalent to AddTunnel).
-// A non-zero listenPort is rejected if already taken in this config.
+// AddTunnelWithListenPort inserts inbound + outbound + route rule for a new
+// tunnel and lets the caller pin the listen_port. Returns error if the tag
+// already exists. Pass 0 to pick the listen_port internally via allocPort;
+// a non-zero listenPort is rejected if already taken in this config.
 func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, listenPort int, outbound json.RawMessage) error {
 	for _, ob := range c.userOutbounds() {
 		if t, _ := ob["tag"].(string); t == tag {
@@ -1160,7 +1153,7 @@ func MigrateLegacyConfigDir(dir string) error {
 }
 
 // writeJSONFile is the shared atomic JSON writer used by
-// MigrateLegacyConfigDir + ensureBaseConfig. Marshals with indent for
+// MigrateLegacyConfigDir + ensureBaseConfigWithLogLevel. Marshals with indent for
 // human-editable fragments. Uses the fsync'ed temp+rename writer so a power
 // loss mid-write cannot leave a truncated config fragment behind.
 func writeJSONFile(path string, data any) error {
