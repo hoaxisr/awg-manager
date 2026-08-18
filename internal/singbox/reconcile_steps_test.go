@@ -432,3 +432,54 @@ func findReconcileStep(t *testing.T, dir, name string) reconcileStep {
 	t.Fatalf("шаг %q не найден в наборе", name)
 	return reconcileStep{}
 }
+
+// КРАСНЫЙ ДО ФИКСА (против набора, где шаг outbound-compat целится только в
+// 10-tunnels.json): шаг обязан лечить ОБА слота-продюсера outbound'ов — и
+// 10-tunnels.json (пишет UI), и 40-subscriptions.json (пишет подписочный
+// адаптер). Идемпотентности здесь мало: no-op тоже идемпотентен, поэтому
+// нацеливание закрепляется ассертом на результат.
+func TestReconcileConfigSteps_OutboundCompatHealsBothSlots(t *testing.T) {
+	dir := t.TempDir()
+	cd := filepath.Join(dir, "config.d")
+	incompatible := func() map[string]any {
+		return map[string]any{
+			"outbounds": []any{
+				map[string]any{"type": "naive", "tag": "nv", "server": "s", "server_port": 443},
+				map[string]any{"type": "hysteria2", "tag": "h2", "server": "s", "server_port": 443,
+					"tls": map[string]any{"disable_sni": true, "insecure": false}},
+			},
+		}
+	}
+	writeFixtureJSON(t, filepath.Join(cd, "10-tunnels.json"), incompatible())
+	writeFixtureJSON(t, filepath.Join(cd, "40-subscriptions.json"), incompatible())
+
+	runReconcile(t, dir, false)
+
+	for _, slot := range []string{"10-tunnels.json", "40-subscriptions.json"} {
+		m := readJSONMap(t, filepath.Join(cd, slot))
+		if m == nil {
+			t.Fatalf("слот %s пропал", slot)
+		}
+		naive := findOutboundByTag(t, m, "nv")
+		if _, ok := naive["udp_over_tcp"]; !ok {
+			t.Fatalf("%s: naive без udp_over_tcp: %v", slot, naive)
+		}
+		hy2 := findOutboundByTag(t, m, "h2")
+		if hy2["disable_chrome_parrot"] != true {
+			t.Fatalf("%s: hysteria2 без disable_chrome_parrot: %v", slot, hy2)
+		}
+	}
+}
+
+func findOutboundByTag(t *testing.T, slot map[string]any, tag string) map[string]any {
+	t.Helper()
+	obs, _ := slot["outbounds"].([]any)
+	for _, v := range obs {
+		ob, _ := v.(map[string]any)
+		if ob != nil && ob["tag"] == tag {
+			return ob
+		}
+	}
+	t.Fatalf("outbound %q не найден: %v", tag, slot["outbounds"])
+	return nil
+}
