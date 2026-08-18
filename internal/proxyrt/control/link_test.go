@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -792,5 +793,123 @@ func TestSocketPathRejectsOverlongPath(t *testing.T) {
 		if err == nil {
 			t.Fatalf("путь в %d байт принят", tc.total)
 		}
+	}
+}
+
+// TestLinkGivesNewIncarnationItsWindow — после смерти процесса связь обязана
+// забыть его pid. Иначе короткое замыкание connect («мёртвый pid — сразу
+// мёртв») судит НОВОЕ воплощение по номеру предыдущего и отбирает у него окно
+// ретраев §7: на mips сокет поднимается 4-5 с, а отказ за микросекунды —
+// приговор живому процессу.
+func TestLinkGivesNewIncarnationItsWindow(t *testing.T) {
+	const oldPID, newPID = 1000001, 1000002
+	path := filepath.Join(t.TempDir(), "c.sock")
+	old := startProcess(t, path, awgmproto.State{PID: oldPID})
+	sink := &eventSink{}
+	// Живым считается ТОЛЬКО новое воплощение: старый pid мёртв, как ему и
+	// положено после смерти процесса.
+	l := NewLink(LinkOpts{
+		Path: path, Impl: "wt-client", Role: "client", Instance: "default",
+		Binary:          "/opt/bin/wt-client",
+		Post:            sink.post,
+		Log:             sink.log,
+		Alive:           func(pid int, _ string) bool { return pid == newPID },
+		RetryEvery:      10 * time.Millisecond,
+		ConnectDeadline: 3 * time.Second,
+		CallTimeout:     time.Second,
+	})
+	t.Cleanup(l.Close)
+
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Процесс умер. Ждём вердикт «died»: он выносится по pid УМЕРШЕГО
+	// воплощения, то есть к следующему наблюдению lost уже отработал.
+	_ = old.srv.Close()
+	sink.waitFor(t, proxyrt.EventProcessDied)
+
+	// Новое воплощение с ДРУГИМ pid поднимает сокет позже.
+	type spawn struct {
+		srv *awgmproto.Server
+		err error
+	}
+	spawned := make(chan spawn, 1)
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		srv, err := awgmproto.Listen(awgmproto.ServerConfig{
+			Path: path, Impl: "wt-client", Role: "client", Instance: "default",
+			Handler: &fakeProcess{st: awgmproto.State{PID: newPID}},
+		})
+		spawned <- spawn{srv: srv, err: err}
+		if err == nil {
+			srv.Serve()
+		}
+	}()
+
+	// Срок наблюдения длиннее задержки подъёма сокета, но не бесконечный:
+	// зависший тест обязан падать, а не висеть.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := l.State(ctx)
+
+	s := <-spawned
+	if s.err != nil {
+		t.Fatalf("новое воплощение не подняло сокет: %v", s.err)
+	}
+	t.Cleanup(func() { _ = s.srv.Close() })
+
+	if err != nil {
+		t.Fatalf("новое воплощение лишили окна на подъём сокета: %v", err)
+	}
+	if st.PID != newPID {
+		t.Fatalf("ответило не новое воплощение: pid %d", st.PID)
+	}
+}
+
+// TestLinkKeepsPIDOfLivingIncarnation — разрыв связи с ЖИВЫМ процессом pid не
+// отменяет: воплощение то же. Умри процесс в окне переподключения — вердикт
+// обязан прийти сразу, а не через полное окно ретраев §7.
+func TestLinkKeepsPIDOfLivingIncarnation(t *testing.T) {
+	const pid = 1000003
+	path := filepath.Join(t.TempDir(), "c.sock")
+	p := startProcess(t, path, awgmproto.State{PID: pid})
+	sink := &eventSink{}
+	var alive atomic.Bool
+	alive.Store(true)
+	l := NewLink(LinkOpts{
+		Path: path, Impl: "wt-client", Role: "client", Instance: "default",
+		Binary:          "/opt/bin/wt-client",
+		Post:            sink.post,
+		Log:             sink.log,
+		Alive:           func(int, string) bool { return alive.Load() },
+		RetryEvery:      10 * time.Millisecond,
+		ConnectDeadline: 3 * time.Second,
+		CallTimeout:     time.Second,
+	})
+	t.Cleanup(l.Close)
+
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Связь потеряна при живом процессе.
+	_ = p.srv.Close()
+	sink.waitFor(t, proxyrt.EventProcessState)
+	if !sink.hasDetail("разорвано") {
+		t.Fatal("разрыв при живом процессе обязан читаться как потеря связи")
+	}
+
+	// Процесс умер в окне переподключения: короткое замыкание обязано сработать.
+	alive.Store(false)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := l.State(ctx)
+	if !errors.Is(err, ErrNoSocket) || !strings.Contains(err.Error(), "мёртв") {
+		t.Fatalf("ожидали приговор по мёртвому pid, получили %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("вердикт занял %v: pid забыт, приговор ждал окна ретраев", elapsed)
 	}
 }
