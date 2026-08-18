@@ -31,7 +31,13 @@
 		hint={protocol === 'wdtt' && mode === 'raw' ? '' : 'Сюда будет смотреть AWG-туннель'}
 		fullWidth
 	/>
-	<Input label="VK-хеши" bind:value={fields.vkHashes} fullWidth />
+	<!-- WE-50: поле обязательное, и без подписи «Дальше» гасла бы молча. -->
+	<Input
+		label="VK-хеши"
+		bind:value={fields.vkHashes}
+		hint={protocol === 'wdtt' ? 'Обязательно — без VK-хешей клиент не запустится' : ''}
+		fullWidth
+	/>
 	<!-- WE-37 — про округление в wdtt-клиенте; у freeturn правила кратности нет. -->
 	<Input
 		label="Потоков"
