@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui';
+	import { Button, ConfirmModal } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { parseListenHostPort } from '$lib/utils/listenPortUtils';
@@ -30,6 +30,8 @@
 	let pid = $state<number | null>(null);
 	let comm = $state('');
 	let open = $state(false);
+	/** SH-94: подтверждение — своя модалка страницы, а не браузерный confirm. */
+	let confirmOpen = $state(false);
 
 	const parsed = $derived(parseListenHostPort(listen, defaultHost));
 
@@ -57,7 +59,7 @@
 
 	async function kill() {
 		if (!parsed) return;
-		if (!confirm(`Остановить процесс${pid ? ` PID ${pid}` : ''} на порту ${parsed.port}?`)) return;
+		confirmOpen = false;
 		killing = true;
 		try {
 			const res = await api.killProxyListener(parsed.host, parsed.port, proto);
@@ -86,7 +88,13 @@
 		{:else}
 			<span class="kill-text">Порт {parsed.port} — свободен</span>
 		{/if}
-		<Button variant="secondary" size="sm" loading={killing} disabled={!open || !pid} onclick={kill}>
+		<Button
+			variant="secondary"
+			size="sm"
+			loading={killing}
+			disabled={!open || !pid}
+			onclick={() => (confirmOpen = true)}
+		>
 			Освободить порт
 		</Button>
 	</div>
@@ -102,12 +110,24 @@
 			size="sm"
 			loading={killing}
 			disabled={!open || !pid}
-			onclick={kill}
+			onclick={() => (confirmOpen = true)}
 			title={pid ? `Освободить порт ${parsed.port} (kill PID ${pid})` : `Порт ${parsed.port} свободен`}
 		>
 			Kill port
 		</Button>
 	</span>
+{/if}
+
+{#if parsed}
+	<ConfirmModal
+		open={confirmOpen}
+		title="Освободить порт {parsed.port}? Процесс, занявший его, будет завершён."
+		message=""
+		confirmLabel="Освободить порт"
+		busy={killing}
+		onConfirm={kill}
+		onClose={() => (confirmOpen = false)}
+	/>
 {/if}
 
 <style>
