@@ -263,6 +263,23 @@ func TestAddressUnknownUntilRawconf(t *testing.T) {
 	}
 }
 
+func TestRawResourcesAreLongLived(t *testing.T) {
+	// I5: reconcile зовёт Resources дважды за проход и применяет по второму
+	// списку. Пересозданный ресурс терял бы защёлки (ClientRoutes.notified,
+	// окно старта и backoff процесса) — уведомления пошли бы в цикле.
+	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
+	first := role.Resources(proxyrt.IntentEnabled, rawCfg(), proxyrt.NewObservations())
+	second := role.Resources(proxyrt.IntentEnabled, rawCfg(), proxyrt.NewObservations())
+	if len(first) != len(second) {
+		t.Fatalf("состав поплыл между вызовами: %v против %v", ids(first), ids(second))
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("ресурс %s пересоздан между вызовами Resources", first[i].ID())
+		}
+	}
+}
+
 func TestRoutableExitPublishedEvenWhenDown(t *testing.T) {
 	// Регистрация при создании, Ready=false для лежачего (§5).
 	role, reg := newRole(t, &fakeLink{err: control.ErrNoSocket})
