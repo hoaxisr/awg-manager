@@ -3,6 +3,8 @@ package wdttserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -354,6 +356,206 @@ func TestServerInputPortsOnlyWAN(t *testing.T) {
 	cfg.OpenFirewall = false
 	if got := inputPorts(cfg); len(got) != 0 {
 		t.Fatalf("тумблер выключен — портов нет: %v", got)
+	}
+}
+
+// --- модель таблиц: снятие правил проверяется фактом, а не вызовом ---
+
+var errNoRule = errors.New("iptables: no chain/target/match by that name")
+
+type modelIPT struct {
+	chains map[string][]string
+	runs   int // любое обращение к iptables, включая листинг
+}
+
+func newModelIPT() *modelIPT { return &modelIPT{chains: map[string][]string{}} }
+
+func (m *modelIPT) Run(_ context.Context, args ...string) error {
+	m.runs++
+	table := "filter"
+	if len(args) >= 2 && args[0] == "-t" {
+		table, args = args[1], args[2:]
+	}
+	op, chain, rest := args[0], args[1], args[2:]
+	key := table + "/" + chain
+	switch op {
+	case "-N", "-F":
+		m.chains[key] = nil
+		return nil
+	case "-I":
+		if len(rest) > 0 && rest[0] == "1" {
+			rest = rest[1:]
+		}
+		m.chains[key] = append([]string{strings.Join(rest, " ")}, m.chains[key]...)
+		return nil
+	case "-A":
+		m.chains[key] = append(m.chains[key], strings.Join(rest, " "))
+		return nil
+	case "-C":
+		for _, r := range m.chains[key] {
+			if r == strings.Join(rest, " ") {
+				return nil
+			}
+		}
+		return errNoRule
+	case "-D":
+		want := strings.Join(rest, " ")
+		for i, r := range m.chains[key] {
+			if r == want {
+				m.chains[key] = append(m.chains[key][:i], m.chains[key][i+1:]...)
+				return nil
+			}
+		}
+		return errNoRule
+	}
+	return fmt.Errorf("модель не знает операции %q", op)
+}
+
+func (m *modelIPT) Output(_ context.Context, args ...string) (string, error) {
+	m.runs++
+	if len(args) != 4 || args[0] != "-t" || args[2] != "-S" {
+		return "", fmt.Errorf("модель не знает листинга %v", args)
+	}
+	var b strings.Builder
+	for _, r := range m.chains[args[1]+"/"+args[3]] {
+		b.WriteString("-A " + args[3] + " " + r + "\n")
+	}
+	return b.String(), nil
+}
+
+func (m *modelIPT) rules(table, chain string) []string { return m.chains[table+"/"+chain] }
+
+type countFW struct{ n int }
+
+func (f *countFW) Managed(context.Context) ([]netres.PortSpec, error) { f.n++; return nil, nil }
+func (f *countFW) Reconcile(context.Context, []netres.PortSpec) error { f.n++; return nil }
+
+// serverParts — роль с моделями вместо заглушек: хук пишется в песочницу
+// теста (прод-путь /opt/etc/ndm/netfilter.d не писуем), iptables и firewall
+// считают обращения.
+type serverParts struct {
+	role     *Role
+	acc      *nilAccess
+	ing      *nilIngress
+	cmds     *countCmds
+	ipt      *modelIPT
+	fw       *countFW
+	hookPath string
+}
+
+func newServerParts(t *testing.T) serverParts {
+	t.Helper()
+	p := serverParts{
+		acc: &nilAccess{}, ing: &nilIngress{}, cmds: &countCmds{},
+		ipt: newModelIPT(), fw: &countFW{},
+		hookPath: t.TempDir() + "/61-awgm-wdtt-forward.sh",
+	}
+	r, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wdtt-server",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+		Cmds: p.cmds, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		IPT: p.ipt, FW: p.fw,
+		RunHook:       func(context.Context, string, string) error { return nil },
+		EnableForward: func() error { return nil },
+		IfaceExists:   func(string) bool { return true },
+		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
+		Access:        p.acc, Ingress: p.ing, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Файл хука — в песочницу теста; ресурс тот же, меняется только путь.
+	r.hook = netres.NewHook(roles.RNetfilterHook, p.hookPath, r.deps.RunHook)
+	p.role = r
+	return p
+}
+
+// drive доводит один ресурс до пустого плана.
+func drive(t *testing.T, res proxyrt.Resource) {
+	t.Helper()
+	for pass := 0; pass < 5; pass++ {
+		obs, err := res.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("%s observe: %v", res.ID(), err)
+		}
+		steps := res.Plan(obs)
+		if len(steps) == 0 {
+			return
+		}
+		for _, s := range steps {
+			if err := res.Apply(context.Background(), s); err != nil {
+				t.Fatalf("%s apply %s: %v", res.ID(), s.Op, err)
+			}
+		}
+	}
+	t.Fatalf("%s не сошёлся за 5 проходов", res.ID())
+}
+
+func byID(res []proxyrt.Resource) map[proxyrt.ResourceID]proxyrt.Resource {
+	out := map[proxyrt.ResourceID]proxyrt.Resource{}
+	for _, r := range res {
+		out[r.ID()] = r
+	}
+	return out
+}
+
+func TestServerDisabledEmptiesNetfilterDesired(t *testing.T) {
+	// Выключение сервера обязано СНИМАТЬ MASQUERADE, FORWARD-accept и
+	// netfilter.d-хук — и снимать их переходом ЖЕЛАЕМОГО в пустое, а не
+	// рукописным списком (G1). Страж на желаемое, а не на присутствие
+	// ресурса в списке: потеря SetDesired(nil) состав ведомости не меняет.
+	p := newServerParts(t)
+	cfg := srvCfg()
+
+	res := byID(p.role.Resources(proxyrt.IntentEnabled, cfg, proxyrt.NewObservations()))
+	for _, id := range []proxyrt.ResourceID{roles.RNatRules, roles.RForwardRules, roles.RNetfilterHook} {
+		drive(t, res[id])
+	}
+	if len(p.ipt.rules("nat", "POSTROUTING")) == 0 || len(p.ipt.rules("filter", "FORWARD")) == 0 {
+		t.Fatalf("включённый сервер не поставил правила: %v", p.ipt.chains)
+	}
+	if _, err := os.Stat(p.hookPath); err != nil {
+		t.Fatalf("включённый сервер не написал хук: %v", err)
+	}
+
+	res = byID(p.role.Resources(proxyrt.IntentDisabled, cfg, proxyrt.NewObservations()))
+	for _, id := range []proxyrt.ResourceID{roles.RNatRules, roles.RForwardRules, roles.RNetfilterHook} {
+		drive(t, res[id])
+	}
+	if got := p.ipt.rules("nat", "POSTROUTING"); len(got) != 0 {
+		t.Fatalf("выключенный сервер оставил MASQUERADE: %v", got)
+	}
+	if got := p.ipt.rules("filter", "FORWARD"); len(got) != 0 {
+		t.Fatalf("выключенный сервер оставил FORWARD-accept: %v", got)
+	}
+	if _, err := os.Stat(p.hookPath); !os.IsNotExist(err) {
+		t.Fatalf("выключенный сервер оставил netfilter.d-хук: %v", err)
+	}
+}
+
+func TestServerResourcesDeclareWithoutTouchingRouter(t *testing.T) {
+	// G1: Resources — чистая декларация. Приведение живёт в Apply ресурсов;
+	// ни NDMS, ни iptables, ни firewall, ни доступ с ingress-ссылками за
+	// сборку ведомости не трогаются НИ ПРИ КАКОМ намерении.
+	for _, intent := range []proxyrt.Intent{
+		proxyrt.IntentEnabled, proxyrt.IntentDisabled, proxyrt.IntentDeleted,
+	} {
+		p := newServerParts(t)
+		p.role.Resources(intent, srvCfg(), proxyrt.NewObservations())
+		if p.cmds.n != 0 {
+			t.Fatalf("%s: за сборку декларации к NDMS ушло %d команд", intent, p.cmds.n)
+		}
+		if p.ipt.runs != 0 {
+			t.Fatalf("%s: за сборку декларации ушло %d обращений к iptables", intent, p.ipt.runs)
+		}
+		if p.fw.n != 0 {
+			t.Fatalf("%s: за сборку декларации ушло %d обращений к firewall", intent, p.fw.n)
+		}
+		if len(p.acc.applied) != 0 || p.ing.calls != 0 {
+			t.Fatalf("%s: за сборку декларации тронуты доступ/ingress: %v, %d",
+				intent, p.acc.applied, p.ing.calls)
+		}
 	}
 }
 
