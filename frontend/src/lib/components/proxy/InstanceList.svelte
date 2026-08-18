@@ -66,15 +66,18 @@
 
 	// LS-05..LS-09. Осиротевший процесс проверяется первым: startedAt у него нет,
 	// поэтому строка «запущен · …» вышла бы без аптайма.
-	function meta(row: ProxyInstanceRow): string {
-		if (row.orphanedPid) return 'устаревший процесс';
+	//
+	// Мета отдаётся частями, а не готовой строкой: в рейле 300px одна строка с
+	// эллипсисом съедала хвост («PID 15…»), а по частям он переносится целиком.
+	function meta(row: ProxyInstanceRow): string[] {
+		if (row.orphanedPid) return ['устаревший процесс'];
 		if (row.state === 'running') {
-			return ['запущен', formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : '']
-				.filter(Boolean)
-				.join(' · ');
+			return ['запущен', formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : ''].filter(
+				Boolean,
+			);
 		}
-		if (row.state === 'error') return 'не запускается';
-		return row.autostart ? 'автоподключение · остановлен' : 'остановлен';
+		if (row.state === 'error') return ['не запускается'];
+		return row.autostart ? ['автоподключение', 'остановлен'] : ['остановлен'];
 	}
 
 	// EX-55 / SH-83 — та же строка, что в модалке удаления: у раздачи своя.
@@ -111,7 +114,12 @@
 							{/if}
 						</span>
 						{#if renamingKey !== row.key}
-							<span class="row-meta">{meta(row)}</span>
+							<span class="row-meta">
+								{#each meta(row) as part, i (part)}
+									{#if i > 0}<span class="row-meta-sep">·</span>{/if}
+									<span class="row-meta-part">{part}</span>
+								{/each}
+							</span>
 						{/if}
 					</button>
 
@@ -265,11 +273,17 @@
 	}
 
 	.row-meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 0.3rem;
 		font-size: 0.6875rem;
 		font-family: var(--font-mono);
 		color: var(--color-text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
+	}
+
+	.row-meta-part,
+	.row-meta-sep {
 		white-space: nowrap;
 	}
 

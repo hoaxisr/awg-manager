@@ -110,13 +110,15 @@
 	// («[WRAP] нет активных паролей»). Число рабочих отдаёт блок «Абоненты»;
 	// `undefined` — состав ещё не пришёл, и блокировать нельзя.
 	let usableClients = $state<number | undefined>(undefined);
-	const startBlockedHint = $derived(
-		wdttServer && usableClients === 0 ? CLIENT_TEXT.startNoUsable : '',
-	);
 
 	const peerOptions = $derived(buildRunningServerPeerDropdownOptions(peerSnap));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
 	const running = $derived(row.state === 'running');
+	// У работающего сервера подсказки нет: «Запустить» и так заперта состоянием,
+	// а текст про незапускаемый сервер рядом с запущенным — прямая неправда.
+	const startBlockedHint = $derived(
+		wdttServer && !running && usableClients === 0 ? CLIENT_TEXT.startNoUsable : '',
+	);
 	const ports = $derived(
 		wdttDraft ? wdttServerPorts(wdttDraft) : ftDraft ? freeTurnServerPorts(ftDraft) : [],
 	);
