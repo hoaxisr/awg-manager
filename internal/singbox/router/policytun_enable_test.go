@@ -130,13 +130,13 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 	return &policyTunEnableHarness{svc: svc, log: log, opkg: opkg, store: store, dir: dir}
 }
 
-func (h *policyTunEnableHarness) loadPolicyTun(t *testing.T) *storage.PolicyTunState {
+func (h *policyTunEnableHarness) loadPolicyTun(t *testing.T) *storage.OpkgTunState {
 	t.Helper()
 	all, err := h.store.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return all.PolicyTun
+	return all.OpkgTun
 }
 
 // withPolicy задаёт целевую политику режима (sr.PolicyName) и подсовывает фейк
@@ -250,7 +250,7 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 // бы их молча.
 func TestPolicyTunEnable_PrefersPersistedIndex(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -284,7 +284,7 @@ func TestPolicyTunEnable_ReusesHeldOwnInterface(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun3")
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -306,7 +306,7 @@ func TestPolicyTunEnable_ReallocatesWhenPersistedIndexForeign(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = scanOwning() // наших интерфейсов нет вовсе
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -327,7 +327,7 @@ func TestPolicyTunEnable_ReallocatesWhenScanFails(t *testing.T) {
 	h.svc.deps.OpkgTunScan = func(context.Context, string) ([]string, error) {
 		return []string{"OpkgTun3"}, errors.New("injected: scan")
 	}
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestPolicyTunEnable_ReallocatesWhenScanUnavailable(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
 	h.svc.deps.OpkgTunScan = nil
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -364,7 +364,7 @@ func TestPolicyTunEnable_ReallocatesWhenScanUnavailable(t *testing.T) {
 func TestPolicyTunEnable_IdempotentWhenLive(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -466,15 +466,11 @@ func TestPolicyTunEnable_RollbackRestoresPreviousPersist(t *testing.T) {
 
 	// Прежнее состояние: интерфейс пропал (live пуст), индекс запинен, в
 	// записях — desired-сегмент Home и уже отозванный Guest.
-	prev := &storage.PolicyTunState{
-		Provisioned: true,
-		Index:       3,
-		NATSegments: []storage.PolicyTunNATSegment{
-			{Name: "Guest", PriorMode: "dynamic"},
-			{Name: "Home", PriorMode: "none"},
-		},
-	}
-	if err := h.store.SetPolicyTunState(prev); err != nil {
+	prev := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 3, PolicyTun: &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{
+		{Name: "Guest", PriorMode: "dynamic"},
+		{Name: "Home", PriorMode: "none"},
+	}}}
+	if err := h.store.SetOpkgTunState(prev); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 
@@ -489,8 +485,8 @@ func TestPolicyTunEnable_RollbackRestoresPreviousPersist(t *testing.T) {
 	if !st.Provisioned || st.Index != 3 {
 		t.Errorf("PolicyTun persist = %+v, want provisioned index 3", st)
 	}
-	if !reflect.DeepEqual(st.NATSegments, prev.NATSegments) {
-		t.Errorf("NATSegments = %+v, want %+v (отозванный сегмент обязан уцелеть)", st.NATSegments, prev.NATSegments)
+	if !reflect.DeepEqual(natSegmentsOf(st), natSegmentsOf(prev)) {
+		t.Errorf("NATSegments = %+v, want %+v (отозванный сегмент обязан уцелеть)", natSegmentsOf(st), natSegmentsOf(prev))
 	}
 	// Сам откат при этом отработал: NAT desired-сегмента возвращён, ифейс снят.
 	if !h.log.has("RemoveStaticNAT:Home:ISP") {

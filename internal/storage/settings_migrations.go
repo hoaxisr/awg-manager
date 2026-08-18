@@ -385,3 +385,31 @@ func (s *SettingsStore) migratePortFile(settings *Settings) {
 	// Remove old port file after successful migration
 	os.Remove(portFile)
 }
+
+// migrateToV34 сливает зеркальные записи владения OpkgTun (ключи fakeip и
+// policyTun) в единую opkgTun. Конфликт «обе записи» разрешается активным
+// RoutingMode; NAT-записи проигравшей policy-записи не выбрасываются — они
+// переезжают в payload (реап восстановит их и вне режима policy-tun).
+// Потеря payload'а проигравшей fakeip-записи безопасна: пустой prev-диапазон
+// заставляет FakeIPCacheNeedsReset сработать в сторону лишнего сброса кэша.
+func (s *SettingsStore) migrateToV34(settings *Settings) {
+	fk, pt := settings.LegacyFakeIP, settings.LegacyPolicyTun
+	settings.LegacyFakeIP, settings.LegacyPolicyTun = nil, nil
+	switch {
+	case fk == nil && pt == nil:
+		return
+	case pt == nil, fk != nil && settings.SingboxRouter.RoutingMode == OpkgTunModeFakeIP:
+		st := &OpkgTunState{Mode: OpkgTunModeFakeIP, Provisioned: fk.Provisioned, Index: fk.Index,
+			FakeIP: &OpkgTunFakeIPData{Inet4Range: fk.Inet4Range, Inet6Range: fk.Inet6Range}}
+		if pt != nil && len(pt.NATSegments) > 0 {
+			st.PolicyTun = &OpkgTunPolicyData{NATSegments: pt.NATSegments}
+		}
+		settings.OpkgTun = st
+	default:
+		st := &OpkgTunState{Mode: OpkgTunModePolicyTun, Provisioned: pt.Provisioned, Index: pt.Index}
+		if len(pt.NATSegments) > 0 {
+			st.PolicyTun = &OpkgTunPolicyData{NATSegments: pt.NATSegments}
+		}
+		settings.OpkgTun = st
+	}
+}

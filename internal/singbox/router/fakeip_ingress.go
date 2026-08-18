@@ -502,7 +502,7 @@ func (it *IPTables) removeFakeIPIngressDNAT(ctx context.Context, dump, tag strin
 // fakeIPIngressSpecFor собирает желаемое состояние из персиста fakeip и
 // ingress-ref'ов настроек. Пустой spec (нет персиста, не резолвится DNS или
 // список ref'ов пуст) означает «заворота быть не должно».
-func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.FakeIPState, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
+func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.OpkgTunState, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
 	if st == nil || !st.Provisioned {
 		return FakeIPIngressSpec{}
 	}

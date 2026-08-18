@@ -16,7 +16,7 @@ import (
 // Go, а не парсингом файла шеллом (на прошивке нет jq).
 func TestReleasePolicyTunForRemoval_RemovesHeldInterface(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 0}); err != nil {
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 0}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
@@ -47,10 +47,7 @@ func TestReleasePolicyTunForRemoval_RemovesHeldInterface(t *testing.T) {
 // static-NAT навсегда.
 func TestReleasePolicyTunForRemoval_RestoresSegmentNATFirst(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{
-		Index:       1,
-		NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}},
-	}); err != nil {
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 1, PolicyTun: &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}}}}); err != nil {
 		t.Fatalf("SetPolicyTunState: %v", err)
 	}
 	// ОДИН регистратор на все шаги: с раздельными журналами утверждение о

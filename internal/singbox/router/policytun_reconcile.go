@@ -220,12 +220,11 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
-	st := settings.PolicyTun
+	st, _ := opkgTunOwned(settings, statePolicyTun)
 	if st != nil {
-		// Мутируем копию: settings.PolicyTun — объект живого кэша стора,
-		// который параллельно маршалят читатели без нашего лока, а записи
-		// сегментов ниже по стеку идут в него без лока. Копию публикуют
-		// SetPolicyTunState — уже под локом стора.
+		// Мутируем копию: запись — объект живого кэша стора, который
+		// параллельно маршалят читатели без нашего лока. Копию публикуют
+		// SetOpkgTunState/SetOpkgTunNATSegments — уже под локом стора.
 		cp := *st
 		st = &cp
 	}
@@ -270,8 +269,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if !s.policyTunInboundPresent() {
 		s.appLog.Warn("policy-tun-reconcile", iface,
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
-		if e := s.deps.Settings.SetPolicyTunState(&storage.PolicyTunState{
-			Index: st.Index, NATSegments: st.NATSegments,
+		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
+			Mode: storage.OpkgTunModePolicyTun, Index: st.Index, PolicyTun: st.PolicyTun,
 		}); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
 		}

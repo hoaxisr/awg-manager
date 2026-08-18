@@ -32,7 +32,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
-	st := settings.FakeIP
+	st, _ := opkgTunOwned(settings, stateFakeIPTun)
 
 	if !sr.Enabled {
 		// Teardown нужен только когда что-то реально поднято. Безусловный
@@ -139,9 +139,13 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// fires only when the route is ABSENT. In steady state the route is present, so
 	// this produces ZERO route POSTs per tick. Derive net/mask from the persisted
 	// ranges exactly as Enable does (Masked first).
+	var inet4Range, inet6Range string
+	if st.FakeIP != nil {
+		inet4Range, inet6Range = st.FakeIP.Inet4Range, st.FakeIP.Inet6Range
+	}
 	if s.deps.StaticRoutes != nil {
-		if prefix, perr := netip.ParsePrefix(st.Inet4Range); perr == nil {
-			if poolNet4, poolMask4, derr := poolV4NetMask(st.Inet4Range); derr == nil {
+		if prefix, perr := netip.ParsePrefix(inet4Range); perr == nil {
+			if poolNet4, poolMask4, derr := poolV4NetMask(inet4Range); derr == nil {
 				// Probe v4 presence (same seam GetStatus uses); only re-add when absent.
 				if !fakeIPPoolRoutePresent(iface, prefix.Masked()) {
 					if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
@@ -158,9 +162,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					// together at Enable, so v4-present ⇒ v6-present is a sound v1
 					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
 					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
-					if st.Inet6Range != "" {
+					if inet6Range != "" {
 						if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
-							V6: true, Network: st.Inet6Range, Interface: ndmsName,
+							V6: true, Network: inet6Range, Interface: ndmsName,
 						}); e != nil {
 							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
 						} else {
@@ -171,7 +175,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			} else {
 				s.appLog.Warn("fakeip-reconcile", iface, "derive pool v4 mask: "+derr.Error())
 			}
-		} else if st.Inet4Range != "" {
+		} else if inet4Range != "" {
 			s.appLog.Warn("fakeip-reconcile", iface, "parse pool v4 range: "+perr.Error())
 		}
 	}

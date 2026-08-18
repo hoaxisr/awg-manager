@@ -488,8 +488,8 @@ func (s *ServiceImpl) restorePolicyTunNAT(ctx context.Context, recorded []storag
 //
 // Анти-churn: записи вычищаются из персиста ТОЛЬКО после успешного
 // восстановления, и следующий тик уже не находит отозванных.
-func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage.SingboxRouterSettings, st *storage.PolicyTunState, iface string) {
-	if st == nil || len(st.NATSegments) == 0 || s.deps.SegmentNAT == nil || s.deps.NATState == nil {
+func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage.SingboxRouterSettings, st *storage.OpkgTunState, iface string) {
+	if len(natSegmentsOf(st)) == 0 || s.deps.SegmentNAT == nil || s.deps.NATState == nil {
 		return
 	}
 	want := map[string]bool{}
@@ -499,8 +499,8 @@ func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage
 		}
 	}
 	var revoked []storage.PolicyTunNATSegment
-	kept := make([]storage.PolicyTunNATSegment, 0, len(st.NATSegments))
-	for _, rec := range st.NATSegments {
+	kept := make([]storage.PolicyTunNATSegment, 0, len(natSegmentsOf(st)))
+	for _, rec := range natSegmentsOf(st) {
 		if want[rec.Name] {
 			kept = append(kept, rec)
 			continue
@@ -524,13 +524,10 @@ func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage
 	if len(kept) == 0 {
 		kept = nil
 	}
-	st.NATSegments = kept
-	// В кэш уходит КОПИЯ: SetPolicyTunState кладёт сам указатель, а вызывающий
-	// продолжает писать в st ниже по стеку (reconcilePolicyTunNAT). Опубликуй
-	// мы st — эти записи шли бы уже в объект кэша, который параллельно маршалят
-	// читатели без нашего лока.
-	cp := *st
-	if err := s.deps.Settings.SetPolicyTunState(&cp); err != nil {
+	setPolicyPayload(st, kept)
+	// Payload-сеттер: ownership-поля (Mode/Provisioned/Index) не трогаются, в
+	// кэш стора уходит копия (copy-on-write внутри сеттера).
+	if err := s.deps.Settings.SetOpkgTunNATSegments(kept); err != nil {
 		s.appLog.Warn("policy-tun-reconcile", iface, "persist nat segments: "+err.Error())
 	}
 }
@@ -554,7 +551,7 @@ func (s *ServiceImpl) restoreRevokedPolicyTunNAT(ctx context.Context, sr storage
 // применение вживую работает и при дефолте, уже припаркованном на tun. Резолв
 // WAN по дефолту остаётся лишь запасным путём для молчащего running-config: там
 // чинить нечем, и мы честно предупреждаем вместо SNAT в собственный tun.
-func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.SingboxRouterSettings, st *storage.PolicyTunState, iface string) {
+func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.SingboxRouterSettings, st *storage.OpkgTunState, iface string) {
 	if !sr.PolicyTunSourcePreserve || len(sr.PolicyTunNATSegments) == 0 ||
 		s.deps.NATState == nil || s.deps.SegmentNAT == nil || st == nil {
 		return
@@ -596,7 +593,7 @@ func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.Sing
 		return false
 	}
 	applied := map[string]bool{}
-	for _, rec := range st.NATSegments {
+	for _, rec := range natSegmentsOf(st) {
 		applied[rec.Name] = true
 	}
 	// Разделены только ради журнала: пользователю важно отличить «включили и
@@ -626,12 +623,12 @@ func (s *ServiceImpl) reconcilePolicyTunNAT(ctx context.Context, sr storage.Sing
 		s.appLog.Warn("policy-tun-reconcile", iface,
 			"сегменты вернулись на динамический NAT мимо нас — применяем source-preserve повторно: "+strings.Join(drifted, ", "))
 	}
-	recorded, err := s.applyPolicyTunSourcePreserve(ctx, append(pending, drifted...), st.NATSegments)
+	recorded, err := s.applyPolicyTunSourcePreserve(ctx, append(pending, drifted...), natSegmentsOf(st))
 	// Персист пишем ДО проверки ошибки: сегменты, до которых apply дошёл,
 	// изменены на роутере, и без записи их не вернул бы ни teardown, ни revoke.
-	if merged := mergePolicyTunNATRecords(st.NATSegments, recorded); len(merged) != len(st.NATSegments) {
-		st.NATSegments = merged
-		if perr := s.deps.Settings.SetPolicyTunState(st); perr != nil {
+	if merged := mergePolicyTunNATRecords(natSegmentsOf(st), recorded); len(merged) != len(natSegmentsOf(st)) {
+		setPolicyPayload(st, merged)
+		if perr := s.deps.Settings.SetOpkgTunNATSegments(merged); perr != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "persist nat segments: "+perr.Error())
 		}
 	}

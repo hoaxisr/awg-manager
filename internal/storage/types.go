@@ -71,14 +71,12 @@ type Settings struct {
 	// 0.0.0.0/0 with "subnet overlaps with the other peer". Set after a
 	// successful sweep; the sweep runs at startup while false.
 	ManagedPeerAllowIPsMigrated bool `json:"managedPeerAllowIPsMigrated,omitempty"`
-	// FakeIP is backend-managed operational state for sing-box fakeip-tun
-	// mode (see FakeIPState). Pointer so it's absent from JSON when never
-	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
-	FakeIP *FakeIPState `json:"fakeip,omitempty"`
-	// PolicyTun is backend-managed operational state for sing-box policy-tun
-	// mode (see PolicyTunState). Pointer so it's absent from JSON when never
-	// provisioned; nil = not provisioned. Written ONLY via SetPolicyTunState.
-	PolicyTun *PolicyTunState `json:"policyTun,omitempty"`
+	// LegacyFakeIP — pre-v34 запись владения fakeip-tun (см. FakeIPState).
+	// Читается ТОЛЬКО migrateToV34; писателей нет — владение живёт в OpkgTun.
+	LegacyFakeIP *FakeIPState `json:"fakeip,omitempty"`
+	// LegacyPolicyTun — pre-v34 запись владения policy-tun (см. PolicyTunState).
+	// Читается ТОЛЬКО migrateToV34; писателей нет — владение живёт в OpkgTun.
+	LegacyPolicyTun *PolicyTunState `json:"policyTun,omitempty"`
 	// OpkgTun — единая backend-managed запись владения OpkgTun<N> (см.
 	// OpkgTunState). Pointer: отсутствует в JSON, пока ничего не провижинено.
 	// Пишется ТОЛЬКО через SetOpkgTunState/SetOpkgTunNATSegments.
@@ -92,7 +90,7 @@ type Settings struct {
 // DNSChainPresetState is backend-managed state of the DNS-chain preset
 // (sing-box 1.14 evaluate/match_response chains). Written ONLY via
 // SettingsStore.SetDNSChainPresetState — never by the settings API, so a
-// settings PUT cannot clobber it (mirrors FakeIPState).
+// settings PUT cannot clobber it (mirrors SetOpkgTunState).
 // Mode: "" (no preset) | "resilient" (race direct+proxy) | "antipoison"
 // (re-route poisoned answers through the proxy resolver). DirectServer /
 // ProxyServer are tags of existing DNS servers; PoisonCIDRs is the antipoison
@@ -104,12 +102,11 @@ type DNSChainPresetState struct {
 	PoisonCIDRs  []string `json:"poisonCidrs,omitempty"`
 }
 
-// FakeIPState is backend-managed operational state for sing-box fakeip-tun
-// mode. Written ONLY by the fakeip-tun lifecycle (Enable/Disable/reap) via
-// SettingsStore.SetFakeIPState — never by the settings API. Index is the
-// allocated OpkgTun index (iface "opkgtun<N>"), valid only when Provisioned;
-// Inet4Range/Inet6Range record the pool ranges last applied so a pool change
-// can invalidate the sing-box cache.
+// FakeIPState is the pre-v34 fakeip-tun ownership record. Deprecated:
+// читается ТОЛЬКО миграцией v34 (её результат — OpkgTunState), писателей нет.
+// Index is the allocated OpkgTun index (iface "opkgtun<N>"), valid only when
+// Provisioned; Inet4Range/Inet6Range record the pool ranges last applied so a
+// pool change can invalidate the sing-box cache.
 type FakeIPState struct {
 	Provisioned bool   `json:"provisioned,omitempty"`
 	Index       int    `json:"index,omitempty"`
@@ -126,8 +123,8 @@ type PolicyTunNATSegment struct {
 	PriorStaticWAN string `json:"priorStaticWan,omitempty"`
 }
 
-// PolicyTunState — backend-managed состояние policy-tun (зеркало FakeIPState).
-// Пишется ТОЛЬКО lifecycle'ом (Enable/Disable/reap) через SetPolicyTunState.
+// PolicyTunState — pre-v34 запись владения policy-tun (зеркало FakeIPState).
+// Deprecated: читается ТОЛЬКО миграцией v34, писателей нет.
 type PolicyTunState struct {
 	Provisioned bool                  `json:"provisioned,omitempty"`
 	Index       int                   `json:"index,omitempty"`
@@ -233,7 +230,7 @@ type SingboxRouterSettings struct {
 	// --- fakeip-tun engine settings (USER-editable) ---
 	// These mirror the static fakeip-tun engine knobs (default
 	// DefaultFakeIPTunParams) but persisted + validated so the UI can edit them.
-	// Unlike FakeIPState (backend-managed operational state) these are user
+	// Unlike OpkgTunState (backend-managed operational state) these are user
 	// intent, defaulted by NormalizeSingboxRouterSettings.
 	//
 	// FakeIPStack selects the sing-tun stack: "gvisor" (default, robust) or

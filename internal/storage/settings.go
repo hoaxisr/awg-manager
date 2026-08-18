@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 33
+	CurrentSchemaVersion        = 34
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -190,6 +190,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		}
 		if settings.SchemaVersion < 33 {
 			s.migrateToV33(&settings)
+		}
+		if settings.SchemaVersion < 34 {
+			s.migrateToV34(&settings)
 		}
 	}
 
@@ -526,35 +529,9 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
-// SetFakeIPState atomically persists the fakeip-tun operational state under the
-// store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetSingboxManuallyStopped.
-func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.settings == nil {
-		return fmt.Errorf("settings not loaded")
-	}
-	s.settings.FakeIP = st
-	return s.saveUnlocked(s.settings)
-}
-
-// SetPolicyTunState atomically persists the policy-tun operational state under
-// the store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetFakeIPState.
-func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.settings == nil {
-		return fmt.Errorf("settings not loaded")
-	}
-	s.settings.PolicyTun = st
-	return s.saveUnlocked(s.settings)
-}
-
 // SetOpkgTunState atomically persists the unified OpkgTun ownership record
 // under the store lock (single-writer: lifecycle only). nil очищает запись.
-// Mirrors SetFakeIPState.
+// Mirrors SetSingboxManuallyStopped.
 func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -592,7 +569,7 @@ func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error 
 
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
-// writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.
+// writer). Pass nil to clear (preset off). Mirrors SetOpkgTunState.
 func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

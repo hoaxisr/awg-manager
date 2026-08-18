@@ -27,7 +27,7 @@ func seedSourcePreserveCopy(t *testing.T, h *policyTunEnableHarness, segs []stri
 }
 
 // Красный до фикса под -race: reconcilePolicyTun берёт объект состояния прямо
-// из живого кэша (`st := settings.PolicyTun` после Load) и дописывает в него
+// из живого кэша (`st := settings.OpkgTun` после Load) и дописывает в него
 // записи NAT-сегментов без лока, а Snapshot маршалит тот же кэш под RLock —
 // лок с одной стороны гонку не закрывает.
 func TestPolicyTunReconcile_NoSharedNATStateMutation(t *testing.T) {

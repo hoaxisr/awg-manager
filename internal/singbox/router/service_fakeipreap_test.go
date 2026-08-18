@@ -54,25 +54,20 @@ func newReapSettingsStore(t *testing.T, mode string, index int, provisioned bool
 		WANAutoDetect: true,
 	})
 	if provisioned {
-		if err := store.SetFakeIPState(&storage.FakeIPState{
-			Provisioned: true,
-			Index:       index,
-			Inet4Range:  "198.18.0.0/15",
-			Inet6Range:  "fc00::/18",
-		}); err != nil {
+		if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: index, FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15", Inet6Range: "fc00::/18"}}); err != nil {
 			t.Fatalf("SetFakeIPState: %v", err)
 		}
 	}
 	return store
 }
 
-func loadFakeIP(t *testing.T, store *storage.SettingsStore) *storage.FakeIPState {
+func loadFakeIP(t *testing.T, store *storage.SettingsStore) *storage.OpkgTunState {
 	t.Helper()
 	all, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return all.FakeIP
+	return all.OpkgTun
 }
 
 func TestReapOrphaned_RemovesAndClears(t *testing.T) {

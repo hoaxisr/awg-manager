@@ -1376,12 +1376,12 @@ func TestReapplyFakeIPOverlay_Gating(t *testing.T) {
 	}{
 		{"disabled", func(st *storage.Settings) { st.SingboxRouter.Enabled = false }},
 		{"tproxy mode", func(st *storage.Settings) { st.SingboxRouter.RoutingMode = "tproxy" }},
-		{"fakeip state nil (provisioning window)", func(st *storage.Settings) { st.FakeIP = nil }},
-		{"fakeip state not provisioned", func(st *storage.Settings) { st.FakeIP = &storage.FakeIPState{} }},
+		{"fakeip state nil (provisioning window)", func(st *storage.Settings) { st.OpkgTun = nil }},
+		{"fakeip state not provisioned", func(st *storage.Settings) { st.OpkgTun = &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP} }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := &storage.Settings{SingboxRouter: on, FakeIP: &storage.FakeIPState{Provisioned: true}}
+			st := &storage.Settings{SingboxRouter: on, OpkgTun: &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true}}
 			tc.mut(st)
 			if err := s.reapplyFakeIPOverlay(context.Background(), st); err != nil {
 				t.Errorf("reapplyFakeIPOverlay = %v, want nil (skip)", err)

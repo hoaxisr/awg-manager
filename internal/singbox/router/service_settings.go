@@ -129,7 +129,7 @@ func (s *ServiceImpl) reapplyFakeIPOverlay(ctx context.Context, settings *storag
 	if sr.RoutingMode != "fakeip-tun" || !sr.Enabled {
 		return nil
 	}
-	if settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+	if st, ok := opkgTunOwned(settings, stateFakeIPTun); !ok || !st.Provisioned {
 		return nil
 	}
 	return s.fakeipWithConfig(ctx, "settings", func(*RouterConfig) error { return nil })

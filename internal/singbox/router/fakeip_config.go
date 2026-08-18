@@ -226,12 +226,13 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	if err != nil {
 		return fmt.Errorf("fakeip overlay: load settings: %w", err)
 	}
-	if settings == nil || settings.FakeIP == nil {
-		return fmt.Errorf("fakeip overlay: FakeIPState not provisioned (nil)")
+	st, _ := opkgTunOwned(settings, stateFakeIPTun)
+	if st == nil {
+		return fmt.Errorf("fakeip overlay: OpkgTun ownership record not provisioned (nil)")
 	}
 	p := resolveFakeIPParams(s.deps.FakeIPTun, settings.SingboxRouter)
 	spec := FakeIPTunSpec{
-		Iface:      fakeIPIfaceName(settings.FakeIP.Index),
+		Iface:      fakeIPIfaceName(st.Index),
 		TunAddr4:   p.TunAddr4,
 		TunAddr6:   p.TunAddr6,
 		MTU:        p.MTU,
@@ -290,9 +291,11 @@ func (s *ServiceImpl) fakeipWithConfig(ctx context.Context, event string, fn fun
 	}
 	// Sync specific CIDR routes to the tun for proxy-routed dst CIDRs.
 	// Best-effort; never fails the CRUD. fakeipWithConfig runs only when
-	// provisioned (ensureFakeIPOverlayFromState above errors on nil FakeIP).
-	if settings, serr := s.deps.Settings.Load(); serr == nil && settings != nil && settings.FakeIP != nil {
-		s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(settings.FakeIP.Index), before, cfg)
+	// provisioned (ensureFakeIPOverlayFromState above errors on a nil record).
+	if settings, serr := s.deps.Settings.Load(); serr == nil {
+		if st, ok := opkgTunOwned(settings, stateFakeIPTun); ok {
+			s.syncTunCIDRRoutes(ctx, fakeIPNDMSName(st.Index), before, cfg)
+		}
 	}
 	s.emitCfgEvent(event, cfg)
 	return nil

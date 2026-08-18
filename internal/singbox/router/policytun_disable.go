@@ -30,7 +30,7 @@ import (
 //     индекс переживают выключение: к имени привязан permit в политике;
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
-	st := settings.PolicyTun
+	st, _ := opkgTunOwned(settings, statePolicyTun)
 
 	// (0) Хук перехвата DNS сносим ПЕРВЫМ и ДО гарда «нет персиста». Две
 	// причины:
@@ -82,8 +82,8 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// teardown не прерывается (персист чистится только при успешном delete, так
 	// что провал повторится реапом).
 	natRestored := true
-	if len(st.NATSegments) > 0 {
-		if err := s.restorePolicyTunNAT(ctx, st.NATSegments); err != nil {
+	if segs := natSegmentsOf(st); len(segs) > 0 {
+		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "restore segment NAT: "+err.Error())
 			natRestored = false
 		}
@@ -162,11 +162,11 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// reconcilePolicyTun выходит рано; запись отработает на следующем включении,
 	// смене режима или реапе.
 	if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-		held := &storage.PolicyTunState{Index: st.Index}
+		held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index}
 		if !natRestored {
-			held.NATSegments = st.NATSegments
+			held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
 		}
-		if err := s.deps.Settings.SetPolicyTunState(held); err != nil {
+		if err := s.deps.Settings.SetOpkgTunState(held); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
 		}
 	}
