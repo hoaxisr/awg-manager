@@ -16,12 +16,14 @@
 		serverId: string;
 		serverName: string;
 		server: FreeTurnServerConfig;
+		/** .conf пира из секции «Сеть»: он вкладывается в ссылку абоненту. */
+		peerConf?: string;
 		busy?: boolean;
 		/** Общий замок мутаций сервера (деталь «Раздача» владеет им). */
 		locked: (fn: () => Promise<void>) => Promise<void>;
 	}
 
-	let { serverId, serverName, server, busy = false, locked }: Props = $props();
+	let { serverId, serverName, server, peerConf = '', busy = false, locked }: Props = $props();
 
 	let entries = $state<FreeTurnAllowlistEntry[]>([]);
 	let enabled = $state(false);
@@ -72,6 +74,7 @@
 					clientId: clientId.trim() || undefined,
 					name: comment.trim() || serverName,
 					peer: server.connect?.trim() || undefined,
+					wg: peerConf.trim() || undefined,
 				});
 				link = res.link ?? '';
 				const id = (res.clientId || clientId).trim();

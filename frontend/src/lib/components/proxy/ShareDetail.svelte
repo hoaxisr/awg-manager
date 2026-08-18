@@ -88,6 +88,9 @@
 	const withIngressLock = createIngressMutationLock();
 	let mutating = $state(false);
 
+	// .conf пира, выбранного виджетом «Сеть»: он уезжает в ссылку абоненту
+	// FreeTurn (ia.md §3.3 часть Б — конфиг пира попадает в ссылку).
+	let peerConf = $state('');
 	let lanOptions = $state<{ value: string; label: string }[]>([]);
 	let ingress = $state(false);
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
@@ -338,6 +341,7 @@
 				serverId={row.id}
 				serverName={row.name}
 				server={ftServer}
+				{peerConf}
 				busy={mutating}
 				{locked}
 			/>
@@ -356,6 +360,7 @@
 		onpolicy={setPolicy}
 		onsave={save}
 		onrevert={revert}
+		onpeerconf={(conf) => (peerConf = conf)}
 	/>
 
 	<ShareAdvancedSection bind:wdttServer={wdttDraft} bind:ftServer={ftDraft} ports={killPorts} />

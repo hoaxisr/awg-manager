@@ -32,6 +32,8 @@
 		onpolicy: (policy: string) => void;
 		onsave: () => void;
 		onrevert: () => void;
+		/** .conf выбранного пира — уезжает в ссылку абоненту FreeTurn (FS-18). */
+		onpeerconf?: (conf: string) => void;
 	}
 
 	let {
@@ -46,6 +48,7 @@
 		onpolicy,
 		onsave,
 		onrevert,
+		onpeerconf,
 	}: Props = $props();
 
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
@@ -162,7 +165,7 @@
 			onConnect={(addr) => {
 				if (ftServer) ftServer.connect = addr;
 			}}
-			onPeerConf={() => {}}
+			onPeerConf={(conf) => onpeerconf?.(conf)}
 		/>
 
 		<!-- Ключа обфускации в детали нет: строки под него в микрокопии не
