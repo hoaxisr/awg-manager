@@ -118,7 +118,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// его пропустит.
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
-		if rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable"); rerr != nil {
+		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable"); rerr != nil {
 			s.appLog.Warn("fakeip-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
 		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
 			return fmt.Errorf("enable fakeip-tun: list opkgtun indices: %w", err)

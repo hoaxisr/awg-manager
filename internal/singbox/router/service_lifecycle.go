@@ -214,11 +214,18 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		// releaseForeignOpkgTun: записанный NAT сегментов восстанавливается ДО
 		// сноса интерфейса — тот же первый шаг, что в disablePolicyTun (записи
 		// живут в персисте, который очищается только при успешном delete).
-		if err := s.releaseForeignOpkgTun(ctx, st, "policy-tun-reap"); err != nil {
+		removed, err := s.releaseForeignOpkgTun(ctx, st, "policy-tun-reap")
+		if err != nil {
 			// Персист остаётся — следующий тик/бут повторит.
 			s.appLog.Warn("policy-tun-reap", ownedPolicy, "reap opkgtun: "+err.Error())
 		} else {
-			s.appLog.Info("policy-tun-reap", ownedPolicy, "removed orphaned policy-tun OpkgTun (mode != policy-tun)")
+			// Info — только на реальном сносе: на пропуске чужого интерфейса
+			// сносить было нечего, а запись всё равно снимается (скан успешен,
+			// нашего описания на имени нет → наш интерфейс исчез, запись
+			// протухла). Та же форма, что в fakeip-реапе ниже.
+			if removed {
+				s.appLog.Info("policy-tun-reap", ownedPolicy, "removed orphaned policy-tun OpkgTun (mode != policy-tun)")
+			}
 			if err := s.deps.Settings.SetOpkgTunState(nil); err != nil {
 				s.appLog.Warn("policy-tun-reap", ownedPolicy, "clear policy-tun persist: "+err.Error())
 			}

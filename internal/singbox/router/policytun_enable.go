@@ -81,7 +81,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// live не перечитываем, аллокатор его пропустит.
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModePolicyTun {
-		if rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable"); rerr != nil {
+		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable"); rerr != nil {
 			s.appLog.Warn("policy-tun-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
 		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
 			return fmt.Errorf("enable policy-tun: list opkgtun indices: %w", err)

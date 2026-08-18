@@ -94,7 +94,11 @@ func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, descrip
 // реапе), затем teardownOpkgTun. Возвращает ошибку teardown; провал оставляет
 // persist-less сироту, которую добивает description-скан — профиль потерь
 // идентичен прежнему реаповому пути.
-func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.OpkgTunState, scope string) error {
+//
+// removed отвечает, был ли интерфейс действительно снесён: на пропуске чужого
+// ошибки нет, но и сноса не было — без этого флага вызывающий печатал бы
+// «removed» вхолостую.
+func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.OpkgTunState, scope string) (removed bool, err error) {
 	ndmsName := tunNDMSName(st.Index)
 	if segs := natSegmentsOf(st); len(segs) > 0 {
 		if err := s.restorePolicyTunNAT(ctx, segs); err != nil {
@@ -106,7 +110,10 @@ func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.Opk
 		desc = policyTunDescription
 	}
 	if s.skipForeignTeardown(ctx, ndmsName, desc, scope) {
-		return nil
+		return false, nil
 	}
-	return s.teardownOpkgTun(ctx, ndmsName, scope)
+	if err := s.teardownOpkgTun(ctx, ndmsName, scope); err != nil {
+		return false, err
+	}
+	return true, nil
 }
