@@ -3662,6 +3662,26 @@ function mockWdttUsableUsers(users) {
 	return users.filter((u) => u.password && !u.isMainPassword && !u.isExpired);
 }
 
+/**
+ * Инвариант непустоты (ensureUsableServerClient, wdtt/server_clients.go:184):
+ * запись passwords.json — а её делает любая мутация состава — при заданном
+ * главном пароле и нуле рабочих абонентов заводит «Абонент 1». Обещание SH-77.
+ */
+function mockWdttEnsureUsable(inst) {
+	const main = String(inst.config.password ?? '').trim();
+	if (!main || mockWdttUsableUsers(inst.users).length > 0) return;
+	const password = `auto${Date.now().toString(16)}`;
+	inst.users.push({
+		password,
+		comment: 'Абонент 1',
+		isDeactivated: false,
+		isExpired: false,
+		isMainPassword: false,
+		isAuto: true,
+	});
+	inst.config.clients.push({ password, comment: 'Абонент 1', auto: true });
+}
+
 /** delivered — сигнал дошёл живому серверу; иначе файл ждёт следующего запуска. */
 function mockWdttReload(inst) {
 	return inst.running ? 'delivered' : 'serverStopped';
@@ -8871,8 +8891,9 @@ const server = http.createServer(async (req, res) => {
 						.toString('base64')
 						.replace(/\+/g, '-')
 						.replace(/\//g, '_');
-					inst.config.linkPeer = peer;
-					inst.config.linkVkHashes = (opts.vkHashes ?? []).join(',');
+					// Выдача ссылки в конфиг НИЧЕГО не пишет (generateLinkCore,
+					// api/wdtt_server.go:443 — только читает): peer сохраняет фронт
+					// отдельным PUT, а VK-хеши ссылки не персистятся вовсе.
 					sendData(res, { link: `wdtt://${b64}`, linkQwdtt: `qwdtt://${b64}`, peer });
 				} catch (e) {
 					sendInvalidRequest(res, e);
@@ -8982,7 +9003,9 @@ const server = http.createServer(async (req, res) => {
 				}
 				inst.users.splice(inst.users.indexOf(user), 1);
 				inst.config.clients = inst.config.clients.filter((c) => c.password !== password);
-				// Удаление тоже переписывает passwords.json.
+				// Удаление тоже переписывает passwords.json — вместе с инвариантом
+				// непустоты: рабочих не осталось → сервер заводит «Абонент 1» сам.
+				mockWdttEnsureUsable(inst);
 				inst.usersAvailable = true;
 				sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
 				return;

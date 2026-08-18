@@ -76,6 +76,8 @@
 	let link = $state('');
 	let manual = $state(false);
 	let decodeSeq = 0;
+	/** Текст ссылки, с которым `decode()` работал в прошлый раз. */
+	let decodedLink = '';
 	let debounce: ReturnType<typeof setTimeout> | undefined;
 	// Недопечатанная ссылка отвергается бэкендом на каждом вводе — тост держим
 	// до конца ввода (blur/Enter) и показываем, только если ссылка так и не
@@ -151,9 +153,14 @@
 
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */
 	async function decode() {
-		// Источник сменился — вставленный руками .conf к нему не относится.
-		manualWg = '';
 		const text = link.trim();
+		// Источник сменился — вставленный руками .conf к нему не относится.
+		// Разбор той же самой ссылки источником не считается: blur на нетронутом
+		// поле не должен стирать уже вставленный .conf.
+		if (text !== decodedLink) {
+			decodedLink = text;
+			manualWg = '';
+		}
 		const kind = detectProxyLinkScheme(text);
 		if (!text || kind === 'unknown') {
 			wdttPayload = null;
@@ -227,6 +234,7 @@
 	function toggleManual() {
 		manual = !manual;
 		manualWg = '';
+		decodedLink = '';
 		if (!manual) return;
 		link = '';
 		wdttPayload = null;

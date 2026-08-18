@@ -153,6 +153,71 @@ describe('бейдж шапки', () => {
 	});
 });
 
+describe('панель ссылок', () => {
+	it('смена абонента пересобирает ссылки на его пароль', async () => {
+		const OLGA = user({ password: 'p-olga', comment: 'Ноутбук Ольги' });
+		mount([ALIVE, OLGA]);
+		await waitFor(() => expect(screen.getByText('Ноутбук Ольги')).toBeTruthy());
+
+		await fireEvent.click(within(rowOf('Телефон Ивана')).getByRole('button', { name: 'Ссылка' }));
+		await waitFor(() =>
+			expect(apiMock.generateWdttServerLink).toHaveBeenCalledWith(
+				'default',
+				expect.objectContaining({ password: 'p-alive' }),
+			),
+		);
+
+		// Панель уже открыта на другом абоненте: ссылки обязаны пересобраться,
+		// иначе Ольге достанется доступ Ивана.
+		await fireEvent.click(within(rowOf('Ноутбук Ольги')).getByRole('button', { name: 'Ссылка' }));
+		await waitFor(() =>
+			expect(apiMock.generateWdttServerLink).toHaveBeenCalledWith(
+				'default',
+				expect.objectContaining({ password: 'p-olga' }),
+			),
+		);
+		expect(screen.getByText('Абонент: Ноутбук Ольги')).toBeTruthy();
+	});
+});
+
+describe('страж гонки ответов (WU-08)', () => {
+	it('отставший GET не затирает результат мутации', async () => {
+		mount([ALIVE, OFF]);
+		await waitFor(() => expect(screen.getByText('Планшет')).toBeTruthy());
+
+		// «Обновить» уходит в полёт и зависает — ответ на него придёт последним.
+		let releaseStale: (v: unknown) => void = () => {};
+		apiMock.getWdttServerPanelUsers.mockReturnValueOnce(
+			new Promise((resolve) => {
+				releaseStale = resolve;
+			}),
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Обновить' }));
+
+		// Пока GET висит, мутация успевает применить свежий состав.
+		apiMock.removeWdttServerPanelUser.mockResolvedValue({
+			available: true,
+			users: [ALIVE],
+			reload: 'delivered',
+		});
+		await fireEvent.click(within(rowOf('Планшет')).getByRole('button', { name: 'Удалить' }));
+		await fireEvent.click(
+			within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }),
+		);
+		await waitFor(() => expect(screen.queryByText('Планшет')).toBeNull());
+
+		// Отставший ответ несёт состав ДО удаления — применить его нельзя.
+		releaseStale({ available: true, users: [ALIVE, OFF] });
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Обновить' }).hasAttribute('disabled')).toBe(
+				false,
+			),
+		);
+		expect(screen.queryByText('Планшет')).toBeNull();
+		expect(screen.getByText('Абонентов: 1 · рабочих: 1')).toBeTruthy();
+	});
+});
+
 describe('добавление', () => {
 	async function fillAndAdd(name: string) {
 		await fireEvent.input(screen.getByLabelText('Имя абонента'), { target: { value: name } });
@@ -247,6 +312,22 @@ describe('переименование', () => {
 			),
 		);
 		await waitFor(() => expect(apiMock.getWdttServerPanelUsers).toHaveBeenCalledTimes(2));
+	});
+
+	it('бейдж шапки переименованием не двигается: состав не менялся', async () => {
+		mount([ALIVE], false);
+		await waitFor(() => expect(screen.getByText('применится при следующем запуске')).toBeTruthy());
+		apiMock.renameWdttServerPanelUser.mockResolvedValue({ available: true, users: [ALIVE] });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Переименовать абонента' }));
+		const input = screen.getByLabelText('Имя абонента', { selector: 'input.rename-input' });
+		await fireEvent.input(input, { target: { value: 'Телефон Ани' } });
+		await fireEvent.keyDown(input, { key: 'Enter' });
+
+		await waitFor(() => expect(apiMock.getWdttServerPanelUsers).toHaveBeenCalledTimes(2));
+		// PATCH судьбу SIGHUP не заполняет — признак остаётся по running.
+		expect(screen.getByText('применится при следующем запуске')).toBeTruthy();
+		expect(screen.queryByText('применено сейчас')).toBeNull();
 	});
 });
 

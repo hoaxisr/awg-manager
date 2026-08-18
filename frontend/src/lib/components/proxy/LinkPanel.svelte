@@ -29,6 +29,11 @@
 	// svelte-ignore state_referenced_locally
 	let vkHashes = $state(user.vkHash?.trim() || (server.linkVkHashes ?? ''));
 
+	// Проп `server` после нашего же PUT не перечитывается: что в конфиге уже
+	// лежит, помним сами — иначе каждый `generate()` шлёт тот же PUT заново.
+	// svelte-ignore state_referenced_locally -- снимок на момент открытия панели
+	let persistedPeer = server.linkPeer ?? '';
+
 	let link = $state('');
 	let linkQwdtt = $state('');
 	let busy = $state(false);
@@ -75,9 +80,10 @@
 	 */
 	async function persistPeer(value: string) {
 		const next = value.trim();
-		if (!next || next === (server.linkPeer ?? '')) return;
+		if (!next || next === persistedPeer) return;
 		try {
 			await api.updateWdttServerInstance(serverId, { ...server, linkPeer: next });
+			persistedPeer = next;
 		} catch {
 			/* не критично: ссылка уже показана, peer допишется при сохранении */
 		}

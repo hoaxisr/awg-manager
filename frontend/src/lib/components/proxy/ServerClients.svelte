@@ -51,8 +51,11 @@
 	let newPassword = $state('');
 	let newVkHash = $state('');
 
-	// WU-08: страж гонки ответов — побеждает последний запрос.
+	// WU-08: страж гонки ответов — побеждает последний применённый результат
+	// (и чтение, и мутация). Счётчик летящих GET-ов отдельный: спиннер гасится
+	// по их окончанию, а не по тому, чей результат победил.
 	let seq = 0;
+	let inflight = 0;
 
 	const mainPassword = $derived((server.password ?? '').trim());
 	const applied = $derived(headerApplied(lastReload, running));
@@ -78,8 +81,14 @@
 		return (e as { body?: { code?: string } })?.body?.code ?? '';
 	}
 
-	/** Ответ мутации несёт и состав, и судьбу SIGHUP этой мутации. */
+	/**
+	 * Ответ мутации несёт и состав, и судьбу SIGHUP этой мутации. Применённый
+	 * ответ устаревает все летящие GET-ы (WU-08): иначе стартовый GET или
+	 * «Обновить», запущенные до мутации, перезаписали бы её результат более
+	 * старым составом.
+	 */
 	function applyStatus(st: WdttPanelUsersStatus) {
+		seq += 1;
 		users = st.users ?? [];
 		lastReload = st.reload;
 	}
@@ -90,6 +99,7 @@
 	 */
 	async function reload(preserveBadge = false) {
 		const my = ++seq;
+		inflight += 1;
 		loading = true;
 		loadError = '';
 		try {
@@ -103,7 +113,8 @@
 			loadError = 'Не удалось получить список абонентов';
 			notifications.error(errText(e));
 		} finally {
-			if (my === seq) loading = false;
+			inflight -= 1;
+			loading = inflight > 0;
 		}
 	}
 
@@ -266,13 +277,21 @@
 	{/if}
 
 	{#if linkUser}
-		<LinkPanel
-			{serverId}
-			{serverName}
-			{server}
-			user={linkUser}
-			onclose={() => (linkUser = undefined)}
-		/>
+		<!--
+			Панель — снимок абонента: её стартовые значения (peer, VK-хеши) и обе
+			собранные ссылки считаются один раз, на пароль абонента. Смена абонента
+			при открытой панели обязана пересоздать компонент, иначе заголовок
+			покажет нового, а ссылки останутся собранными на пароль прежнего.
+		-->
+		{#key linkUser.password}
+			<LinkPanel
+				{serverId}
+				{serverName}
+				{server}
+				user={linkUser}
+				onclose={() => (linkUser = undefined)}
+			/>
+		{/key}
 	{/if}
 
 	{#if users.length}
