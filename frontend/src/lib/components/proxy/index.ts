@@ -9,8 +9,13 @@ export { default as ExitParamsSection } from './ExitParamsSection.svelte';
 export { default as InstanceList } from './InstanceList.svelte';
 export { default as KillPortSection } from './KillPortSection.svelte';
 export { default as LastErrorBox } from './LastErrorBox.svelte';
+export { default as LinkBox } from './LinkBox.svelte';
+export { default as LinkPanel } from './LinkPanel.svelte';
 export { default as LogSection } from './LogSection.svelte';
 export { default as RunBar } from './RunBar.svelte';
+export { default as ServerAllowlist } from './ServerAllowlist.svelte';
+export { default as ServerClientRow } from './ServerClientRow.svelte';
+export { default as ServerClients } from './ServerClients.svelte';
 export { default as ShareAdvancedSection } from './ShareAdvancedSection.svelte';
 export { default as ShareDetail } from './ShareDetail.svelte';
 export { default as ShareNetworkSection } from './ShareNetworkSection.svelte';
@@ -33,6 +38,19 @@ export {
 } from './shareConfig';
 export type { ShareConfig, ShareInstance, SharePort } from './shareConfig';
 export { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
+export {
+	addErrorText,
+	addedPassword,
+	autoCreateAfterRemove,
+	counterLabel,
+	headerApplied,
+	isUsable,
+	reissueName,
+	rowActions,
+	shortPassword,
+	usableCount,
+} from './serverClients';
+export type { RowActions } from './serverClients';
 export type { ExitProtocol } from './exitWizard';
 export type { ExitConfig, ExitInstance, ExitSaveResult } from './exitConfig';
 export {

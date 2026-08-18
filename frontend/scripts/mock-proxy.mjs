@@ -3328,9 +3328,20 @@ function mockFreeturnProcessStatus(inst, kind) {
 
 function mockFreeturnAllowlist(serverId) {
 	if (!mockFreeturn.allowlists[serverId]) {
-		mockFreeturn.allowlists[serverId] = { enabled: false, clientsFile: '', clients: [] };
+		// Записи живут в файле и переживают выключение списка: выключение
+		// стирает путь в конфиге, а не файл (DisableServerAllowlist).
+		mockFreeturn.allowlists[serverId] = { clientsFile: '', clients: [] };
 	}
 	return mockFreeturn.allowlists[serverId];
+}
+
+/**
+ * Статус списка ровно как у бэкенда (`loadAllowlistStatus`): включённость —
+ * это НАЛИЧИЕ пути к файлу, а у выключенного списка состав не отдаётся.
+ */
+function mockFreeturnAllowlistStatus(al) {
+	const enabled = !!al.clientsFile;
+	return { enabled, clientsFile: al.clientsFile, clients: enabled ? al.clients : [] };
 }
 
 // ── WDTT — клиенты и серверы. Prism отдаёт на wdtt-эндпоинты пустые 200
@@ -8254,12 +8265,15 @@ const server = http.createServer(async (req, res) => {
 		if (base) {
 			const serverId = decodeURIComponent(base[1]);
 			const al = mockFreeturnAllowlist(serverId);
+			const srv = mockFreeturn.servers.find((i) => i.id === serverId);
 			if (req.method === 'GET') {
-				sendData(res, al);
+				sendData(res, mockFreeturnAllowlistStatus(al));
 				return;
 			}
 			if (req.method === 'DELETE') {
-				al.enabled = false;
+				// Выключение стирает путь в конфиге сервера (DisableServerAllowlist).
+				al.clientsFile = '';
+				if (srv) srv.config.clientsFile = '';
 				sendData(res, { message: 'allowlist отключён (mock)' });
 				return;
 			}
@@ -8269,11 +8283,19 @@ const server = http.createServer(async (req, res) => {
 						const body = raw ? JSON.parse(raw) : {};
 						const clientId = String(body.clientId ?? '').trim();
 						if (!clientId) throw new Error('clientId обязателен');
-						al.enabled = true;
+						// needsRestart — только когда список ВКЛЮЧАЕТСЯ этой записью:
+						// путь появляется в конфиге, и его подхватит лишь новый
+						// процесс (AddServerAllowlistClient). Добавление в уже
+						// включённый список сервер подхватывает сам.
+						const needsRestart = !al.clientsFile;
+						if (needsRestart) {
+							al.clientsFile = `/opt/etc/awg-manager/freeturn/server/${serverId}/clients.txt`;
+							if (srv) srv.config.clientsFile = al.clientsFile;
+						}
 						if (!al.clients.some((c) => c.clientId === clientId)) {
 							al.clients.push({ clientId, comment: body.comment?.trim() || undefined });
 						}
-						sendData(res, { ...al, needsRestart: true });
+						sendData(res, { ...mockFreeturnAllowlistStatus(al), needsRestart });
 					} catch (e) {
 						sendInvalidRequest(res, e);
 					}

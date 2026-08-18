@@ -22,6 +22,8 @@
 	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
 	import RunBar from './RunBar.svelte';
+	import ServerAllowlist from './ServerAllowlist.svelte';
+	import ServerClients from './ServerClients.svelte';
 	import ShareAdvancedSection from './ShareAdvancedSection.svelte';
 	import ShareNetworkSection from './ShareNetworkSection.svelte';
 	import Topology, { type TopologyInbound } from './Topology.svelte';
@@ -316,9 +318,30 @@
 		{/if}
 	</DetailSection>
 
-	<!-- Блок «Абоненты» наполняет задача 6; здесь только его место в порядке секций. -->
-	<DetailSection title="Абоненты">
-		<div class="clients-slot"></div>
+	<DetailSection
+		title="Абоненты"
+		hint={wdttDraft
+			? 'Абонент — пароль, по которому подключаются к серверу. Ссылка выдаётся на пароль абонента, а не на главный пароль сервера.'
+			: 'FreeTurn различает получателей по Client ID. Пока список выключен, сервер принимает любой ID; включённый список с пустым набором не пропустит никого. Новые записи сервер подхватывает сам, без перезапуска.'}
+	>
+		{#if wdttServer}
+			<ServerClients
+				serverId={row.id}
+				serverName={row.name}
+				server={wdttServer}
+				{running}
+				busy={mutating}
+				{locked}
+			/>
+		{:else if ftServer}
+			<ServerAllowlist
+				serverId={row.id}
+				serverName={row.name}
+				server={ftServer}
+				busy={mutating}
+				{locked}
+			/>
+		{/if}
 	</DetailSection>
 
 	<ShareNetworkSection
