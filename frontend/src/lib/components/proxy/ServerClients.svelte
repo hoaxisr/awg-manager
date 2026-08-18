@@ -309,8 +309,9 @@
 	{#if users.length}
 		<p class="counter">
 			<span>{counterLabel(users)}</span>
+			<!-- SH-88 -->
 			<FieldHint
-				text="«Отключённый» абонент (IsDeactivated) считается РАБОЧИМ: пишется в passwords.json и удерживает страж последнего рабочего."
+				text="Отключённый абонент пишется в файл сервера и считается рабочим"
 				ariaLabel="Подсказка: счётчик рабочих"
 			/>
 		</p>

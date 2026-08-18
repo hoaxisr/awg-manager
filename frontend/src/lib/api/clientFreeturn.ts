@@ -190,10 +190,14 @@ export class FreeturnClient extends SubscriptionsClient {
 		);
 	}
 
-	async disableFreeTurnServerAllowlist(serverId: string): Promise<void> {
-		await this.request(`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist`, {
-			method: 'DELETE'
-		});
+	/** needsRestart — список реально выключился этой ручкой (TS-24). */
+	async disableFreeTurnServerAllowlist(
+		serverId: string
+	): Promise<{ needsRestart?: boolean }> {
+		return this.request<{ needsRestart?: boolean }>(
+			`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist`,
+			{ method: 'DELETE' }
+		);
 	}
 
 	async lookupProxyListener(

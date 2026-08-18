@@ -8310,10 +8310,13 @@ const server = http.createServer(async (req, res) => {
 				return;
 			}
 			if (req.method === 'DELETE') {
-				// Выключение стирает путь в конфиге сервера (DisableServerAllowlist).
+				// Выключение стирает путь в конфиге сервера (DisableServerAllowlist,
+				// freeturn/allowlist_service.go:79). needsRestart зеркален включению:
+				// true только когда путь реально был, повторное выключение — false.
+				const needsRestart = !!al.clientsFile;
 				al.clientsFile = '';
 				if (srv) srv.config.clientsFile = '';
-				sendData(res, { message: 'allowlist отключён (mock)' });
+				sendData(res, { message: 'allowlist отключён (mock)', needsRestart });
 				return;
 			}
 			if (req.method === 'POST') {

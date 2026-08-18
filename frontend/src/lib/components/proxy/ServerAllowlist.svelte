@@ -114,7 +114,15 @@
 		disableOpen = false;
 		void locked(async () => {
 			try {
-				await api.disableFreeTurnServerAllowlist(serverId);
+				const res = await api.disableFreeTurnServerAllowlist(serverId);
+				// TS-24 — как и на включении, тост только когда бэкенд сказал, что
+				// перезапуск нужен: -clients-file читается при старте процесса, и
+				// живой сервер до перезапуска продолжает проверять ID.
+				if (res.needsRestart) {
+					notifications.info(
+						'Список выключен — перезапустите сервер, чтобы проверка отключилась',
+					);
+				}
 			} catch (e) {
 				notifications.error(errText(e));
 			}
@@ -162,6 +170,9 @@
 				<code>{clientsFile}</code>
 			{/if}
 		</p>
+	{:else}
+		<!-- SH-89: пустой список — не «ничего не настроено», а «никто не пройдёт». -->
+		<p class="empty">Список пуст — с включённой проверкой сервер не пропустит никого</p>
 	{/if}
 
 	<div class="form">
@@ -246,6 +257,15 @@
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		color: var(--color-text-secondary);
+	}
+
+	.empty {
+		margin: 0;
+		padding: 0.625rem 0.75rem;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-sm);
 	}
 
 	.counter {
