@@ -65,6 +65,12 @@ export interface WdttServerConfig {
 	linkVkHashes?: string;
 	/** server.log (JSON ~2 с): ram (default), off, disk */
 	statsLog?: 'ram' | 'off' | 'disk';
+	/**
+	 * Показывать интерфейсы сервера роутеру как подключения (public + `ip
+	 * global`) — тогда он предлагает их в политиках доступа. Применяется на
+	 * старте: живой сервер от смены не перезапускается (`internal/wdtt/types.go`).
+	 */
+	exposeToPolicies?: boolean;
 }
 
 export interface WdttServerClient {

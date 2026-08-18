@@ -2104,6 +2104,10 @@ let mockSBSettings = {
 	fakeipPool6: '3f80::/10',
 	fakeipMtu: 1500,
 	fakeipSourcePreserve: true,
+	// Ingress-интерфейсы sing-box: здесь живёт состояние тумблера
+	// «Маршрутизация через sing-box» раздачи (RB-09). ServerConfig.ingressEnabled
+	// не читает никто.
+	ingressInterfaces: [],
 };
 
 // Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
@@ -3469,6 +3473,12 @@ function createInitialMockWdtt() {
 					rawListen: '0.0.0.0:56001',
 					directListen: '',
 					statsLog: 'ram',
+					// Тумблер «Использовать в политиках доступа»: поле конфига,
+					// применяется на старте сервера. Применённого значения
+					// бэкенд не отдаёт — в статусе его нет (ProcessStatus,
+					// internal/wdtt/types.go), деталь считает пару
+					// «выбрано/применено» локально.
+					exposeToPolicies: false,
 					linkPeer: '203.0.113.10:56000',
 					linkVkHashes: 'a1b2c3d4e5f6',
 					clients: [
