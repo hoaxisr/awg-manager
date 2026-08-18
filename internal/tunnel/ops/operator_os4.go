@@ -13,7 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
@@ -32,7 +31,7 @@ type OperatorOS4Impl struct {
 	queries  *query.Queries
 	commands *command.Commands
 	wg       wg.Client
-	backend  backend.Backend
+	backend  Backend
 	firewall firewall.Manager
 	appLog   *logging.ScopedLogger
 
@@ -51,7 +50,7 @@ func NewOperatorOS4(
 	queries *query.Queries,
 	commands *command.Commands,
 	wgClient wg.Client,
-	backendImpl backend.Backend,
+	backendImpl Backend,
 	firewallMgr firewall.Manager,
 ) *OperatorOS4Impl {
 	o := &OperatorOS4Impl{
@@ -140,11 +139,9 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 		o.logWarn("start", cfg.ID, "Failed to set MTU: "+exec.FormatError(result, err).Error())
 	}
 
-	// Set txqueuelen (kernel backend only)
-	if o.backend.Type() == backend.TypeKernel {
-		if result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "dev", ifaceName, "txqueuelen", "1000"); err != nil {
-			o.logWarn("start", cfg.ID, "Failed to set txqueuelen: "+exec.FormatError(result, err).Error())
-		}
+	// Set txqueuelen
+	if result, err := exec.Run(ctx, "/opt/sbin/ip", "link", "set", "dev", ifaceName, "txqueuelen", "1000"); err != nil {
+		o.logWarn("start", cfg.ID, "Failed to set txqueuelen: "+exec.FormatError(result, err).Error())
 	}
 
 	o.logInfo("start", cfg.ID, "Interface up with MTU")

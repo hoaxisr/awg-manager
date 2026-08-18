@@ -96,7 +96,6 @@ func (a *app) setupServer() {
 			FreeTurnService:     a.freeturnService,
 			WdttService:         a.wdttService,
 			LoggingService:      a.loggingService,
-			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,
 			UpdaterService:      a.updaterService,
 			NdmsQueries:         a.ndmsQueries,

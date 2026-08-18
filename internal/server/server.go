@@ -47,7 +47,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
@@ -90,7 +89,6 @@ type Server struct {
 	freeturnService            api.FreeTurnService
 	wdttService                api.WdttService
 	loggingService             *logging.Service
-	activeBackend              backend.Backend
 	kmodLoader                 *kmod.Loader
 	updaterService             *updater.Service
 	ndmsQueries                *ndmsquery.Queries
@@ -179,7 +177,6 @@ type Deps struct {
 	FreeTurnService      api.FreeTurnService
 	WdttService          api.WdttService
 	LoggingService       *logging.Service
-	ActiveBackend        backend.Backend
 	KmodLoader           *kmod.Loader
 	UpdaterService       *updater.Service
 	NdmsQueries          *ndmsquery.Queries
@@ -240,7 +237,6 @@ func New(cfg Config, deps Deps) *Server {
 		freeturnService:        deps.FreeTurnService,
 		wdttService:            deps.WdttService,
 		loggingService:         deps.LoggingService,
-		activeBackend:          deps.ActiveBackend,
 		kmodLoader:             deps.KmodLoader,
 		updaterService:         deps.UpdaterService,
 		ndmsQueries:            deps.NdmsQueries,

@@ -81,9 +81,9 @@ func runCleanup(dataDir string) {
 
 	// Create service components
 	wgClient := wg.New()
-	backendImpl := backend.New(bootLog)
+	backendImpl := backend.NewKernel()
 	stateMgr := state.New(cleanupNDMSQueries.Interfaces, wgClient, backendImpl, nil)
-	firewallMgr := firewall.New(backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), nil)
+	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), nil)
 
 	// Build NDMS Commands early so the Operator can consume them. HookNotifier
 	// is wired below once the orchestrator exists (see SetHookNotifier call).

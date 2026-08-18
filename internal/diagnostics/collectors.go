@@ -41,9 +41,7 @@ func (r *Runner) collectSystem(ctx context.Context) SystemInfo {
 		TotalMemoryMB: osdetect.GetTotalMemoryMB(),
 	}
 
-	if r.deps.Backend != nil {
-		info.Backend = r.deps.Backend.Type().String()
-	}
+	info.Backend = "kernel"
 
 	// Kernel module status — delegate to Loader (single source of truth)
 	if r.deps.KmodLoader != nil {

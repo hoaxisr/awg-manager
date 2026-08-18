@@ -22,7 +22,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -180,7 +179,6 @@ type SystemHandler struct {
 	version                string
 	settingsStore          SettingsProvider
 	settingsWriter         *storage.SettingsStore
-	activeBackend          backend.Backend
 	kmodLoader             KmodLoader
 	tunnelService          TunnelService
 	pingCheckService       PingCheckService
@@ -223,11 +221,6 @@ func NewSystemHandler(version string) *SystemHandler {
 // SetSettingsStore sets the settings provider.
 func (h *SystemHandler) SetSettingsStore(sp SettingsProvider) {
 	h.settingsStore = sp
-}
-
-// SetActiveBackend sets the active backend for status reporting.
-func (h *SystemHandler) SetActiveBackend(b backend.Backend) {
-	h.activeBackend = b
 }
 
 // SetKmodLoader sets the kernel module loader for status reporting.
@@ -427,9 +420,6 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 		isAarch64 = h.kmodLoader.SoC().IsAARCH64()
 	}
 	activeBackendType := "kernel"
-	if h.activeBackend != nil {
-		activeBackendType = h.activeBackend.Type().String()
-	}
 
 	// Router LAN IP (from br0 interface)
 	routerIP := netif.FirstIPv4(storage.DefaultInterface)
