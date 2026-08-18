@@ -129,8 +129,9 @@ func TestDisable_RestoresBaseDNSStrategyAfterParking(t *testing.T) {
 	}
 }
 
-// Распарковка слота 21 в drift-heal — единственная смена владения мимо
-// enableLocked: владелец появился, значит strategy обязана уйти из base.
+// Распарковка слота 21 в drift-heal — одна из двух смен владения мимо
+// enableLocked (вторая — слот 20 в policy-tun, кейс ниже): владелец появился,
+// значит strategy обязана уйти из base.
 func TestReconcile_StripsBaseDNSStrategyAfterUnparking(t *testing.T) {
 	env := newDNSStrategyEnv(t, storage.SingboxRouterSettings{
 		RoutingMode:   "fakeip-tun",
@@ -154,6 +155,46 @@ func TestReconcile_StripsBaseDNSStrategyAfterUnparking(t *testing.T) {
 
 	if s, ok := env.baseStrategy(t); ok {
 		t.Fatalf("после распарковки слота 21 strategy обязана уйти из base, got %q", s)
+	}
+}
+
+// Зеркало предыдущего кейса для policy-tun: распарковка слота 20 в drift-heal —
+// вторая смена владения мимо enableLocked.
+func TestReconcile_StripsBaseDNSStrategyAfterUnparkingPolicyTun(t *testing.T) {
+	env := newDNSStrategyEnv(t, storage.SingboxRouterSettings{
+		RoutingMode:   "policy-tun",
+		Enabled:       true,
+		WANAutoDetect: true,
+	}, nil)
+	// Тело слота пишем сами, а не seedSlotStrategy: без tun-инбаунда
+	// reconcilePolicyTun считает состояние недоделанным и уходит в
+	// re-provision мимо ветки распарковки.
+	if err := env.orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+		t.Fatalf("предусловие: SetEnabled слота 20: %v", err)
+	}
+	if err := env.orch.Save(orchestrator.SlotRouter,
+		[]byte(`{"dns":{"strategy":"ipv4_only"},"inbounds":[{"type":"tun","tag":"tun-in"}]}`)); err != nil {
+		t.Fatalf("предусловие: Save слота 20: %v", err)
+	}
+	if err := env.settings.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("предусловие: PolicyTunState: %v", err)
+	}
+	if err := env.orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
+		t.Fatalf("предусловие: парковка слота 20: %v", err)
+	}
+	if s, ok := env.baseStrategy(t); !ok || s != "prefer_ipv4" {
+		t.Fatalf("предусловие: без владельца base несёт prefer_ipv4, got %q (present=%v)", s, ok)
+	}
+
+	if err := env.svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if st, ok := slotState(env.orch, orchestrator.SlotRouter); !ok || !st.Enabled {
+		t.Fatalf("предусловие: drift-heal обязан был распарковать слот 20, got %+v", st)
+	}
+
+	if s, ok := env.baseStrategy(t); ok {
+		t.Fatalf("после распарковки слота 20 strategy обязана уйти из base, got %q", s)
 	}
 }
 
