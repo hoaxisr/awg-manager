@@ -103,11 +103,12 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// no-op return runs before any rollback is pushed.
 	prev, _ := opkgTunOwned(settings, stateFakeIPTun)
 	if prev != nil && prev.Provisioned {
-		if live[prev.Index] {
-			return nil // already provisioned + iface live → no-op (Enabled already persisted)
+		if live[prev.Index] && !s.provenForeignOpkgTun(ctx, fakeIPNDMSName(prev.Index), fakeIPTunDescription) {
+			return nil // наш (или недоказуемо чужой) жив → no-op (Enabled already persisted)
 		}
-		// provisioned but iface NOT live (crash/manual removal) → fall through and
-		// re-provision (allocateFakeIPIndex reuses the now-free index; old iface gone, no leak).
+		// Мёртв (crash/manual removal) ЛИБО доказанно чужой (индекс занял
+		// посторонний интерфейс) → re-provision. Чужой остаётся в live,
+		// аллокатор его не выдаст — Create поверх чужого невозможен.
 	}
 
 	// Handover: единая запись владения одна на всех, поэтому запись ЧУЖОГО

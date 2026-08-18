@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -41,6 +42,35 @@ func setPolicyPayload(st *storage.OpkgTunState, segs []storage.PolicyTunNATSegme
 		return
 	}
 	st.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: segs}
+}
+
+// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание.
+// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
+// интерфейсу переписал бы его настройки (fail-closed, reuse-путь policy-tun).
+func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName, description string) bool {
+	if s.deps.OpkgTunScan == nil {
+		return false
+	}
+	ids, err := s.deps.OpkgTunScan(ctx, description)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(ids, ndmsName)
+}
+
+// provenForeignOpkgTun — «доказанно чужой»: скан по нашему описанию УСПЕШЕН и
+// имени в нём нет. Отличие от !ownsOpkgTun принципиально: там «не знаем ≠ наш»
+// (fail-closed для reuse), здесь «не знаем ≠ чужой» — недоступный скан не
+// должен ронять идемпотентность в вечный re-provision.
+func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, description string) bool {
+	if s.deps.OpkgTunScan == nil {
+		return false
+	}
+	ids, err := s.deps.OpkgTunScan(ctx, description)
+	if err != nil {
+		return false
+	}
+	return !slices.Contains(ids, ndmsName)
 }
 
 // releaseForeignOpkgTun освобождает запись владения ЧУЖОГО режима перед её

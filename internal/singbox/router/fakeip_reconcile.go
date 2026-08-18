@@ -61,7 +61,11 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
 
-	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index])
+	// Доказанно чужой живой индекс — тоже повод для re-provision: иначе
+	// drift-heal ниже чинил бы маршруты на ЧУЖОМ интерфейсе.
+	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
+		(probeErr == nil && live[st.Index] &&
+			s.provenForeignOpkgTun(ctx, fakeIPNDMSName(st.Index), fakeIPTunDescription))
 	if reprovision {
 		// Not provisioned, or the iface vanished (crash / manual removal) →
 		// (re-)provision. Enable's idempotency guard short-circuits the

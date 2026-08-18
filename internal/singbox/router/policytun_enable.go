@@ -3,25 +3,10 @@ package router
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
-
-// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание policy-tun.
-// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
-// интерфейсу переписал бы его настройки.
-func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName string) bool {
-	if s.deps.OpkgTunScan == nil {
-		return false
-	}
-	ids, err := s.deps.OpkgTunScan(ctx, policyTunDescription)
-	if err != nil {
-		return false
-	}
-	return slices.Contains(ids, ndmsName)
-}
 
 // enablePolicyTun provisions the policy-tun path: persist index → create a
 // PUBLIC + `ip global` OpkgTun (so NDMS lists it as a policy exit) → addr/mtu/up
@@ -73,8 +58,11 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// routes every tick here. Re-provisioning would allocate a new index,
 	// clobber persist and orphan the live iface. Sits BEFORE any mutation, so
 	// the no-op return runs before a single rollback entry is pushed.
+	// live ≠ наш: индекс мог занять посторонний интерфейс после смерти нашего.
+	// Доказанно чужой (успешный скан без нашего имени) → re-provision.
 	prev, _ := opkgTunOwned(settings, statePolicyTun)
-	if prev != nil && prev.Provisioned && live[prev.Index] {
+	if prev != nil && prev.Provisioned && live[prev.Index] &&
+		!s.provenForeignOpkgTun(ctx, fakeIPNDMSName(prev.Index), policyTunDescription) {
 		return nil
 	}
 
@@ -104,7 +92,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	switch {
 	case prev != nil && !live[prev.Index]:
 		idx = prev.Index
-	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index)):
+	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index), policyTunDescription):
 		idx = prev.Index
 	default:
 		if idx, err = allocateFakeIPIndex(live); err != nil {
