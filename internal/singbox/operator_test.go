@@ -973,7 +973,7 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patchTunnelsSlotEnsureNaiveUDPOverTCP(p)
+	patchSlotOutboundCompat(p)
 
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -992,6 +992,45 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 	vless := outbounds[1].(map[string]any)
 	if _, ok := vless["udp_over_tcp"]; ok {
 		t.Fatalf("vless must not get udp_over_tcp: %v", vless)
+	}
+}
+
+// TestPatchSlotOutboundCompat_Hysteria2ChromeParrot — вторая половина слитого
+// шага: несовместимый по TLS hysteria2 получает disable_chrome_parrot,
+// совместимый остаётся нетронутым.
+func TestPatchSlotOutboundCompat_Hysteria2ChromeParrot(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "10-tunnels.json")
+	slot := `{
+		"outbounds": [
+			{"type":"hysteria2","tag":"BAD","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h","disable_sni":true,"insecure":false}},
+			{"type":"hysteria2","tag":"OK","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h"}}
+		]
+	}`
+	if err := os.WriteFile(p, []byte(slot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patchSlotOutboundCompat(p)
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	outbounds := m["outbounds"].([]any)
+	bad := outbounds[0].(map[string]any)
+	if bad["disable_chrome_parrot"] != true {
+		t.Fatalf("incompatible hysteria2 must get disable_chrome_parrot, got: %v", bad)
+	}
+	ok := outbounds[1].(map[string]any)
+	if _, has := ok["disable_chrome_parrot"]; has {
+		t.Fatalf("compatible hysteria2 must stay untouched: %v", ok)
 	}
 }
 

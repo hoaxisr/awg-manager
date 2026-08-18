@@ -27,7 +27,7 @@ func TestPatchers_WarnOnBrokenFile_SilentOnMissing(t *testing.T) {
 		{"strip-base-owned-blocks", func(p string, l *slog.Logger) { patchTunnelsSlotStripBaseOwnedBlocks(p, l) }},
 		{"remove-route-final", func(p string, l *slog.Logger) { removeFinalFromBase(p, l) }},
 		{"remove-dns-final", func(p string, l *slog.Logger) { removeDNSFinalFromBase(p, l) }},
-		{"outbound-compat", func(p string, l *slog.Logger) { patchTunnelsSlotEnsureNaiveUDPOverTCP(p, l) }},
+		{"outbound-compat", func(p string, l *slog.Logger) { patchSlotOutboundCompat(p, l) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -476,6 +476,18 @@ func ensureHysteria2ChromeParrot(ob map[string]any) bool {
 	return true
 }
 
+// EnsureOutboundCompat применяет к одному outbound'у компат-фиксы, обязательные
+// для КАЖДОГО продюсера слотов: naive → udp_over_tcp (без него UDP через naive
+// мёртв), hysteria2 → disable_chrome_parrot при несовместимых TLS-опциях
+// (sing-box 1.14.0-beta.7 включил парротинг по умолчанию). Экспортирован для
+// подписочного адаптера; Config.Save применяет те же фиксы через свои
+// методы-обёртки.
+func EnsureOutboundCompat(ob map[string]any) bool {
+	naive := ensureNaiveUDPOverTCP(ob)
+	hy2 := ensureHysteria2ChromeParrot(ob)
+	return naive || hy2
+}
+
 func (c *Config) ensureHysteria2ChromeParrotOutbounds() bool {
 	changed := false
 	for _, raw := range c.outbounds() {

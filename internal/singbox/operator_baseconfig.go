@@ -806,33 +806,26 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string, loggers ...*slog.L
 	}
 }
 
-func patchTunnelsSlotEnsureNaiveUDPOverTCP(tunnelsPath string, loggers ...*slog.Logger) {
+// patchSlotOutboundCompat чинит уже лежащие на диске outbound'ы слота:
+// naive без udp_over_tcp (UDP мёртв) и hysteria2 с TLS-опциями, которые не
+// переживают включённый по умолчанию chrome-парротинг sing-box 1.14.0-beta.7.
+// Без этого шага несовместимый туннель остался бы мёртвым до первой ручной
+// правки. См. EnsureOutboundCompat.
+func patchSlotOutboundCompat(slotPath string, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
-	m, ok := readSlotJSON(stepOutboundCompat, tunnelsPath, log)
+	m, ok := readSlotJSON(stepOutboundCompat, slotPath, log)
 	if !ok {
 		return
 	}
-	outbounds, _ := m["outbounds"].([]any)
-	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
-	if cfg.ensureNaiveUDPOverTCPOutbounds() {
-		writeSlotJSON(stepOutboundCompat, tunnelsPath, m, log)
+	changed := false
+	obs, _ := m["outbounds"].([]any)
+	for _, v := range obs {
+		if ob, ok := v.(map[string]any); ok && EnsureOutboundCompat(ob) {
+			changed = true
+		}
 	}
-}
-
-// patchTunnelsSlotEnsureHysteria2ChromeParrot чинит уже лежащие на диске
-// hysteria2-туннели: sing-box 1.14.0-beta.7 включил chrome-парротинг по
-// умолчанию, и без этого патча несовместимый туннель остался бы мёртвым до
-// первой ручной правки. См. ensureHysteria2ChromeParrot.
-func patchTunnelsSlotEnsureHysteria2ChromeParrot(tunnelsPath string, loggers ...*slog.Logger) {
-	log := firstLogger(loggers)
-	m, ok := readSlotJSON(stepOutboundCompat, tunnelsPath, log)
-	if !ok {
-		return
-	}
-	outbounds, _ := m["outbounds"].([]any)
-	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
-	if cfg.ensureHysteria2ChromeParrotOutbounds() {
-		writeSlotJSON(stepOutboundCompat, tunnelsPath, m, log)
+	if changed {
+		writeSlotJSON(stepOutboundCompat, slotPath, m, log)
 	}
 }
 
