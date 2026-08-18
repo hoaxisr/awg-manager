@@ -32,6 +32,15 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// есть v6 в policy-tun скрыто зависит от настройки fakeip-пула. Осознанно:
 	// отдельную настройку адресов policy-tun не заводим.
 	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+	// Д3: MTU — пользовательская настройка СТРАНИЦЫ FAKEIP; policy-tun её
+	// молча наследовал. У policy-tun своей ручки MTU нет — используем
+	// проводной статический дефолт. (Скрытая v6-зависимость от FakeIPPool6
+	// остаётся осознанной — см. ГОЧУ выше.)
+	if base := s.deps.FakeIPTun.MTU; base != 0 {
+		p.MTU = base
+	} else {
+		p.MTU = DefaultFakeIPTunParams().MTU // тестовые wiring'и с zero-value deps
+	}
 
 	// Validate the tun addresses BEFORE any state is touched — a malformed
 	// TunAddr4 must fail the enable, not surface later as a half-provisioned

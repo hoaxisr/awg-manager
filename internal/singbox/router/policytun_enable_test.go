@@ -760,3 +760,37 @@ func TestPolicyTunEnable_PermitACLv6FollowsAddress(t *testing.T) {
 	}
 	mustOrderCalls(t, h.log, "SetIPv6Address:"+ndmsName+":fdfe:dcba:9876::1", "SetPermitACLv6:"+ndmsName)
 }
+
+// Д3: policy-tun молча наследовал пользовательский FakeIPMTU со страницы
+// fakeip. Ожидание: проводной статический MTU, настройка чужой страницы
+// игнорируется (у policy-tun ручки MTU в UI нет вовсе).
+func TestPolicyTunEnable_IgnoresFakeIPMTU(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	all.SingboxRouter.FakeIPMTU = 9000
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+
+	if !h.log.has("SetMTU:OpkgTun0:1500") {
+		t.Errorf("MTU обязан быть проводным 1500, а не 9000: %v", h.log.calls)
+	}
+	data, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	if err != nil {
+		t.Fatalf("read 20-router.json: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal 20-router.json: %v", err)
+	}
+	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].MTU != 1500 {
+		t.Errorf("tun-инбаунд MTU = %d, want 1500: %s", cfg.Inbounds[0].MTU, data)
+	}
+}
