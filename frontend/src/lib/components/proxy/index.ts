@@ -14,7 +14,7 @@ export { default as WizardSteps } from './WizardSteps.svelte';
 export { binaryStripItems } from './binaries';
 export { reportDeletedTunnels, tunnelErrorNames } from './deleteNotice';
 export { exitInstance, normalizeExitConfigs, saveExitInstance } from './exitConfig';
-export { exitStep1Ready, exitStep2Ready } from './exitWizard';
+export { exitConfigSetupComplete, exitStep1Ready, exitStep2Ready } from './exitWizard';
 export type { ExitProtocol } from './exitWizard';
 export type { ExitConfig, ExitInstance, ExitSaveResult } from './exitConfig';
 export {

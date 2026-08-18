@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_WORKERS,
+	exitConfigSetupComplete,
 	emptyFields,
 	exitStep1Ready,
 	exitStep2Ready,
@@ -56,6 +57,28 @@ describe('exitStep2Ready', () => {
 		const ft = { ...wdtt, protocol: 'freeturn' as const, password: '' };
 		expect(exitStep2Ready(ft)).toBe(true);
 		expect(exitStep2Ready({ ...ft, vkHashes: '' })).toBe(false);
+	});
+});
+
+describe('exitConfigSetupComplete', () => {
+	it('судит сохранённый конфиг тем же критерием, что шаг 2', () => {
+		const wdtt = {
+			peer: 'vps:56000',
+			password: 'p',
+			vkHashes: 'aa',
+			workers: 27,
+		} as unknown as Parameters<typeof exitConfigSetupComplete>[0];
+		expect(exitConfigSetupComplete(wdtt)).toBe(true);
+		expect(exitConfigSetupComplete({ ...wdtt!, vkHashes: '' })).toBe(false);
+		expect(exitConfigSetupComplete(undefined, undefined)).toBe(false);
+	});
+
+	it('FreeTurn: ссылки VK Calls вместо пароля', () => {
+		const ft = { peer: 'vps:56000', links: 'https://vk', streams: 10 } as unknown as Parameters<
+			typeof exitConfigSetupComplete
+		>[1];
+		expect(exitConfigSetupComplete(undefined, ft)).toBe(true);
+		expect(exitConfigSetupComplete(undefined, { ...ft!, links: '' })).toBe(false);
 	});
 });
 

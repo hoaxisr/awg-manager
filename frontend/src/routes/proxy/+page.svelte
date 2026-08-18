@@ -14,7 +14,7 @@
 		deleteProxyInstance,
 		exitInstance,
 		exitRows,
-		exitStep2Ready,
+		exitConfigSetupComplete,
 		normalizeExitConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
@@ -88,27 +88,7 @@
 
 	// Конфиг настроен ровно по критерию шага 2 мастера — это и есть setupComplete
 	// панелей, по которому инстанс уходит из мастера в деталь (решение Q12).
-	const exitSetupComplete = $derived.by(() => {
-		if (exitWdttClient) {
-			return exitStep2Ready({
-				protocol: 'wdtt',
-				peer: exitWdttClient.peer,
-				password: exitWdttClient.password,
-				vkHashes: exitWdttClient.vkHashes,
-				workers: String(exitWdttClient.workers),
-			});
-		}
-		if (exitFtClient) {
-			return exitStep2Ready({
-				protocol: 'freeturn',
-				peer: exitFtClient.peer,
-				password: '',
-				vkHashes: exitFtClient.links ?? '',
-				workers: String(exitFtClient.streams),
-			});
-		}
-		return false;
-	});
+	const exitSetupComplete = $derived(exitConfigSetupComplete(exitWdttClient, exitFtClient));
 	const exitLife = $derived({
 		running: selectedExit?.state === 'running',
 		startedAt: selectedExit?.startedAt,

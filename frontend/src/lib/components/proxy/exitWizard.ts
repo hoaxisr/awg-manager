@@ -72,6 +72,32 @@ export function exitStep2Ready(s: {
 	return s.protocol === 'freeturn' || !!s.password.trim();
 }
 
+/** Тот же критерий для сохранённого конфига: настроен ли инстанс «Выхода». */
+export function exitConfigSetupComplete(
+	wdtt?: WdttClientConfig,
+	ft?: FreeTurnClientConfig,
+): boolean {
+	if (wdtt) {
+		return exitStep2Ready({
+			protocol: 'wdtt',
+			peer: wdtt.peer,
+			password: wdtt.password,
+			vkHashes: wdtt.vkHashes,
+			workers: String(wdtt.workers),
+		});
+	}
+	if (ft) {
+		return exitStep2Ready({
+			protocol: 'freeturn',
+			peer: ft.peer,
+			password: '',
+			vkHashes: ft.links ?? '',
+			workers: String(ft.streams),
+		});
+	}
+	return false;
+}
+
 // ─── Значения из ссылки.
 
 /**
