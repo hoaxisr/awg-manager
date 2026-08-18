@@ -202,7 +202,7 @@ func (h *SingboxRouterHandler) GetSettings(w http.ResponseWriter, r *http.Reques
 // PutSettings persists singbox-router settings.
 //
 //	@Summary		Update singbox-router settings
-//	@Description	Persists singbox-router settings. The router is restarted only when fields that affect the running config change.
+//	@Description	Persists singbox-router settings. The router is restarted only when fields that affect the running config change. `routingMode`/`enabled` in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
 //	@Tags			singbox-router
 //	@Accept			json
 //	@Produce		json
@@ -291,6 +291,8 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 		// 400: non-empty but invalid bulk selection (duplicate index/tag,
 		// non-route rule, unknown outbound tag, non-remote rule set).
 		response.Error(w, err.Error(), "BULK_INVALID_SELECTION")
+	case errors.Is(err, router.ErrTransitionInProgress):
+		response.Error(w, err.Error(), "TRANSITION_IN_PROGRESS")
 	case errors.Is(err, router.ErrCompositeMemberUnknown):
 		// 400: member-тег композита не существует ни в одном каталоге (#567).
 		response.Error(w, err.Error(), "COMPOSITE_MEMBER_UNKNOWN")

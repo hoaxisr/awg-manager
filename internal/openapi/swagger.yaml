@@ -15717,7 +15717,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
@@ -15753,7 +15754,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
