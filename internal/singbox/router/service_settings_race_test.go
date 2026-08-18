@@ -36,9 +36,12 @@ func TestUpdateSettings_NoSharedMutation(t *testing.T) {
 		t.Fatalf("GetSettings: %v", err)
 	}
 	for i := 0; i < 100; i++ {
-		// Меняем безобидное поле, чтобы каждый вызов реально сохранял.
+		// Чередуем безобидное поле: UpdateSettings сохраняет в любом случае,
+		// разные значения нужны лишь чтобы вызовы не были копией друг друга.
+		// Формат обязателен валидный (PORT TCP|UDP) — иначе половина итераций
+		// гасла бы в Normalize, не доходя до целевой записи.
 		if i%2 == 0 {
-			sr.BypassExtraPorts = "8080"
+			sr.BypassExtraPorts = "8080 TCP"
 		} else {
 			sr.BypassExtraPorts = ""
 		}
