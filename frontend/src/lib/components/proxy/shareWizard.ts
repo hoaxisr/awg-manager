@@ -32,20 +32,25 @@ export const DEFAULT_WDTT_PORT = 56002;
 /** Дефолтный listen FreeTurn-сервера (`DefaultServerConfig`, internal/freeturn/types.go). */
 export const DEFAULT_FT_PORT = 56000;
 
+/** Верхняя граница серверного диапазона бэкенда: 56000..56099. */
+const SHARE_PORT_MAX = DEFAULT_FT_PORT + 100;
+
 /**
- * Порт нового сервера: первый свободный в диапазоне бэкенда — 56000..56099 у
- * FreeTurn (`nextServerListen`, internal/freeturn/validate.go:135). Это
- * подсказка поля: порт назначает бэкенд, он же подвинет занятый
- * (`ensureUniqueServerListenAddr`). WDTT-сервер на роутере один, двигать его
- * порт не от кого — там дефолт бинаря.
+ * Порт нового сервера: первый свободный, начиная с дефолта бинаря, в диапазоне
+ * бэкенда 56000..56099 (`nextServerListen` — internal/freeturn/validate.go:135
+ * и internal/wdtt/validate.go:187). Это подсказка поля: порт назначает бэкенд,
+ * он же подвинет занятый (`ensureUniqueServerListenAddr`). WDTT-сервер на
+ * роутере один, но резерв портов у него общий с FreeTurn-серверами
+ * (`proxylisten.CrossChecker`, internal/wdtt/server.go:38,130) — занятый порт
+ * бэкенд подвинет и ему, поэтому подсказывать занятое нельзя обоим.
  */
 export function nextSharePort(protocol: ProxyProtocol, used: number[] = []): number {
-	if (protocol === 'wdtt') return DEFAULT_WDTT_PORT;
+	const start = protocol === 'wdtt' ? DEFAULT_WDTT_PORT : DEFAULT_FT_PORT;
 	const taken = new Set(used.filter((p) => Number.isInteger(p) && p > 0));
-	for (let port = DEFAULT_FT_PORT; port < DEFAULT_FT_PORT + 100; port++) {
+	for (let port = start; port < SHARE_PORT_MAX; port++) {
 		if (!taken.has(port)) return port;
 	}
-	return DEFAULT_FT_PORT;
+	return start;
 }
 
 /** Чего не хватило шагу 4 для ссылки: '' — ссылка собралась. */

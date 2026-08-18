@@ -129,8 +129,15 @@ describe('nextSharePort: порт нового сервера', () => {
 		expect(nextSharePort('freeturn', [56000, 56001])).toBe(56002);
 	});
 
-	it('WDTT — дефолт бинаря: сервер на роутере один', () => {
-		expect(nextSharePort('wdtt', [56002])).toBe(56002);
+	it('WDTT стартует с дефолта бинаря', () => {
+		expect(nextSharePort('wdtt', [])).toBe(56002);
+	});
+
+	it('WDTT обходит занятое: резерв у него общий с FreeTurn-серверами', () => {
+		// Дефолтный порт занял FreeTurn-сервер — бэкенд подвинет и WDTT-сервер
+		// (`ensureUniqueServerListenAddr`), значит подсказка двигается сама.
+		expect(nextSharePort('wdtt', [56002])).toBe(56003);
+		expect(nextSharePort('wdtt', [56002, 56003])).toBe(56004);
 	});
 });
 
