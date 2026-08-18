@@ -205,7 +205,7 @@
 
 <ConfirmModal
 	open={disableOpen}
-	title="Выключить проверку Client ID? Сервер будет принимать любые ID."
+	title="Выключить список разрешённых? Сервер будет принимать любой Client ID."
 	message=""
 	confirmLabel="Выключить список"
 	onConfirm={disableList}
