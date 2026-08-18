@@ -18,7 +18,7 @@
 {#if shown.length}
 	<p class="sub-title">{title}</p>
 	{#each shown as port (port.listen)}
-		<ListenPortKillButton variant="section" listen={port.listen} proto={port.proto ?? 'udp'} />
+		<ListenPortKillButton listen={port.listen} proto={port.proto ?? 'udp'} />
 	{/each}
 {/if}
 
