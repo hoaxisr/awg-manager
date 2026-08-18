@@ -525,6 +525,13 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Разметка слотов маршрутизации = владение dns.strategy, поэтому base
+	// примиряется на ВЫХОДЕ, а не хвостом: слоты перепаркованы и на путях,
+	// которые заканчиваются ошибкой (откаты enableFakeIPTun/enablePolicyTun,
+	// rollback провального Install), и хвостовой вызов их бы не покрыл. Ранние
+	// return'ы до перепарковки безопасны: примирять нечего — записи нет.
+	defer s.reconcileBaseDNSStrategy()
+
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
 	settings, err := s.deps.Settings.Load()
@@ -1272,6 +1279,11 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Парковка слота отбирает владение dns.strategy — примирение на выходе, по
+	// тем же причинам, что в enableLocked (teardown'ы паркуют слот и уходят
+	// разными return'ами).
+	defer s.reconcileBaseDNSStrategy()
 
 	// Каждый teardown — в журнал: выключение бывает не только по кнопке
 	// (fail-safe при удалённой политике, drift-heal), и без записи причину
