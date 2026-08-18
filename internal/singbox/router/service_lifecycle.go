@@ -172,8 +172,24 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// mode. The currently-persisted iface is excluded — in fakeip-tun mode the
 	// active Enable/Reconcile own it, in other modes the persist-based reap
 	// below handles it with its persist-clearing semantics. Best-effort.
-	s.reapFakeIPOrphansByDescription(ctx, owned)
-	s.reapPolicyTunOrphansByDescription(ctx, ownedPolicy)
+	s.reapOrphansByDescription(ctx, fakeIPTunDescription, owned, "fakeip-reap",
+		func(ctx context.Context, id string) {
+			// pre-delete: пуловый (возможно reject-drain) маршрут переживает
+			// удаление интерфейса — снять, пока имя сироты его адресует.
+			// Best-effort с НАСТРОЕННЫМ пулом: свой пул сироты без персиста
+			// неизвестен.
+			if s.deps.StaticRoutes == nil {
+				return
+			}
+			if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
+				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+					Network: poolNet, Mask: poolMask, Interface: id, Comment: fakeIPDrainComment,
+				}); err != nil {
+					s.appLog.Warn("fakeip-reap", id, "remove pool route: "+err.Error())
+				}
+			}
+		})
+	s.reapOrphansByDescription(ctx, policyTunDescription, ownedPolicy, "policy-tun-reap", nil)
 
 	// Миграционный артефакт: policy-payload на записи ЧУЖОГО режима (v34
 	// перенесла NAT-записи проигравшей записи). Вне policy-tun восстановить и
@@ -273,69 +289,33 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	return s.deps.Settings.SetOpkgTunState(nil)
 }
 
-// reapFakeIPOrphansByDescription removes NDMS OpkgTun interfaces stamped with
-// the fakeip description that no persist tracks (crash mid-Enable rollback,
-// failed disable delete after the mandatory persist clear, downgrade). owned is
-// the currently-persisted NDMS name ("" when not provisioned) — it is excluded,
-// its owner is either the active fakeip mode or the persist-based reap.
-// Entirely best-effort; a failed teardown retries on the next tick/boot.
-func (s *ServiceImpl) reapFakeIPOrphansByDescription(ctx context.Context, owned string) {
+// reapOrphansByDescription удаляет persist-less OpkgTun-сироты по точному
+// NDMS-описанию (см. fakeIPTunDescription/policyTunDescription — LOAD-BEARING,
+// два штампа остаются двумя). owned — NDMS-имя из единой записи владения,
+// исключается: им занимается активный режим либо персист-реап. preDelete —
+// режимный pre-delete-хук (fakeip: снять пуловый drain-маршрут, пока имя
+// сироты ещё адресует его; policy-tun: нечего снимать — nil). Best-effort;
+// провалившийся teardown повторится на следующем тике/буте.
+func (s *ServiceImpl) reapOrphansByDescription(ctx context.Context, description, owned, scope string, preDelete func(ctx context.Context, id string)) {
 	if s.deps.OpkgTunScan == nil || s.deps.OpkgTun == nil {
 		return
 	}
-	ids, err := s.deps.OpkgTunScan(ctx, fakeIPTunDescription)
+	ids, err := s.deps.OpkgTunScan(ctx, description)
 	if err != nil {
-		s.appLog.Warn("fakeip-reap", "", "scan opkgtuns by description: "+err.Error())
+		s.appLog.Warn(scope, "", "scan opkgtuns by description: "+err.Error())
 		return
 	}
 	for _, id := range ids {
 		if id == owned {
 			continue
 		}
-		// The pool route (possibly renewed to a reject kill-switch by a failed
-		// disable) is interface-bound and SURVIVES the iface deletion
-		// (stand-verified, see fakeip_disable) — remove it first, while the
-		// orphan's name still addresses it, or the pool prefix stays
-		// reject-routed with no owner. Best-effort with the CONFIGURED pool:
-		// the orphan's own pool is unknowable without its persist.
-		if s.deps.StaticRoutes != nil {
-			if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
-				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
-					Network: poolNet, Mask: poolMask, Interface: id, Comment: fakeIPDrainComment,
-				}); err != nil {
-					s.appLog.Warn("fakeip-reap", id, "remove pool route: "+err.Error())
-				}
-			}
+		if preDelete != nil {
+			preDelete(ctx, id)
 		}
-		if err := s.teardownOpkgTun(ctx, id, "fakeip-reap"); err != nil {
-			continue // logged by teardownOpkgTun; retried next tick/boot
+		if err := s.teardownOpkgTun(ctx, id, scope); err != nil {
+			continue // залогировано в teardownOpkgTun; повтор на следующем тике/буте
 		}
-		s.appLog.Info("fakeip-reap", id, "removed persist-less orphaned fakeip OpkgTun")
-	}
-}
-
-// reapPolicyTunOrphansByDescription — тот же скан для policy-tun OpkgTun'ов
-// (своё NDMS-описание, отдельный проход: у policy-tun нет ни пула, ни
-// drain-маршрута, снимать перед delete нечего). owned — текущий персист
-// policy-tun ("" если не провижинился); он исключается, им занимается либо
-// активный режим, либо персист-реап с его очисткой персиста.
-func (s *ServiceImpl) reapPolicyTunOrphansByDescription(ctx context.Context, owned string) {
-	if s.deps.OpkgTunScan == nil || s.deps.OpkgTun == nil {
-		return
-	}
-	ids, err := s.deps.OpkgTunScan(ctx, policyTunDescription)
-	if err != nil {
-		s.appLog.Warn("policy-tun-reap", "", "scan opkgtuns by description: "+err.Error())
-		return
-	}
-	for _, id := range ids {
-		if id == owned {
-			continue
-		}
-		if err := s.teardownOpkgTun(ctx, id, "policy-tun-reap"); err != nil {
-			continue // залогировано в teardownOpkgTun; повтор на следующем тике
-		}
-		s.appLog.Info("policy-tun-reap", id, "removed persist-less orphaned policy-tun OpkgTun")
+		s.appLog.Info(scope, id, "removed persist-less orphaned OpkgTun")
 	}
 }
 
