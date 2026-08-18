@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/procmon"
 )
 
 // Binding describes an open/listening network port and the associated process.
@@ -112,6 +114,10 @@ func (s *Scanner) InspectPort(port int, proto string) ([]Binding, error) {
 }
 
 // KillProcess terminates a process by PID with safety checks.
+// Critical processes (init, ndm, dropbear, sshd, systemd, klogd, syslogd,
+// awg-manager, kthreadd) cannot be killed via this API even if the caller
+// supplies SIGKILL — the same predicate is shared with the process monitor
+// (procmon.IsCriticalProcess) to keep both kill paths in sync.
 func (s *Scanner) KillProcess(pid int, signalName string) error {
 	if pid <= 1 {
 		return fmt.Errorf("cannot kill system process with PID %d", pid)
@@ -120,6 +126,11 @@ func (s *Scanner) KillProcess(pid int, signalName string) error {
 	selfPid := os.Getpid()
 	if pid == selfPid {
 		return fmt.Errorf("cannot kill self (awg-manager process PID %d)", pid)
+	}
+
+	comm, exe := s.readProcCommPID(pid), s.readProcExePID(pid)
+	if procmon.IsCriticalProcess(comm, exe) {
+		return fmt.Errorf("cannot kill critical process %q (PID %d)", comm, pid)
 	}
 
 	sig := syscall.SIGTERM
@@ -331,7 +342,7 @@ func (s *Scanner) enrichWithProcesses(procDir string, inodeMap map[uint64][]*Bin
 				exe := s.readProcExe(procDir, pid)
 				cmdline := s.readProcCmdline(procDir, pid)
 				isSelf := (pid == selfPid)
-				isCritical := isCriticalProcess(pid, comm, exe)
+				isCritical := procmon.IsCriticalProcess(comm, exe)
 				service := matchService(exe, comm, initServices)
 
 				for _, t := range targets {
@@ -356,12 +367,20 @@ func (s *Scanner) readProcComm(procDir string, pid int) string {
 	return strings.TrimSpace(string(data))
 }
 
+func (s *Scanner) readProcCommPID(pid int) string {
+	return s.readProcComm("/proc", pid)
+}
+
 func (s *Scanner) readProcExe(procDir string, pid int) string {
 	link, err := os.Readlink(filepath.Join(procDir, strconv.Itoa(pid), "exe"))
 	if err != nil {
 		return ""
 	}
 	return link
+}
+
+func (s *Scanner) readProcExePID(pid int) string {
+	return s.readProcExe("/proc", pid)
 }
 
 func (s *Scanner) readProcCmdline(procDir string, pid int) string {
@@ -411,21 +430,6 @@ func matchService(exe, comm string, services map[string]string) string {
 		return s
 	}
 	return ""
-}
-
-func isCriticalProcess(pid int, comm, exe string) bool {
-	if pid <= 1 {
-		return true
-	}
-	base := strings.ToLower(filepath.Base(exe))
-	if base == "" {
-		base = strings.ToLower(comm)
-	}
-	switch base {
-	case "init", "ndm", "dropbear", "sshd", "systemd", "klogd", "syslogd":
-		return true
-	}
-	return false
 }
 
 func uidToName(uid string) string {

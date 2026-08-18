@@ -7,6 +7,7 @@
 	import { TerminalInstall, TerminalView, TerminalCredentialsBar } from '$lib/components/terminal';
 	import type { TerminalStatus } from '$lib/types';
 	import { errorMessage } from '$lib/utils/errorMessage';
+	import { usageLevel } from '$lib/stores/settings';
 	import {
 		loadTerminalAutoLogin,
 		type TerminalAutoLogin,
@@ -109,7 +110,9 @@
 {:else if pageState === 'active'}
 	<div class="terminal-page">
 		<div class="terminal-stack">
-			<TerminalCredentialsBar onchange={(v) => (autoLogin = v)} />
+			{#if $usageLevel === 'expert'}
+				<TerminalCredentialsBar onchange={(v) => (autoLogin = v)} />
+			{/if}
 			<TerminalView
 				{autoLogin}
 				compact={false}

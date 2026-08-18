@@ -7854,400 +7854,6 @@ paths:
       summary: Login to Amnezia Premium portal
       tags:
       - amnezia-premium
-  /api/system/files/checksum:
-    get:
-      consumes:
-      - application/json
-      description: FilesChecksum (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesChecksum (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/chmod:
-    post:
-      consumes:
-      - application/json
-      description: FilesChmod (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesChmod (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/copy:
-    post:
-      consumes:
-      - application/json
-      description: FilesCopy (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesCopy (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/download:
-    get:
-      consumes:
-      - application/json
-      description: FilesDownload (Expert only)
-      parameters:
-      - description: Path
-        in: query
-        name: path
-        type: string
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesDownload (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/list:
-    get:
-      consumes:
-      - application/json
-      description: FilesList (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesList (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/mkdir:
-    post:
-      consumes:
-      - application/json
-      description: FilesMkdir (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesMkdir (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/read:
-    get:
-      consumes:
-      - application/json
-      description: FilesRead (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesRead (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/remove:
-    post:
-      consumes:
-      - application/json
-      description: FilesRemove (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesRemove (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/rename:
-    post:
-      consumes:
-      - application/json
-      description: FilesRename (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesRename (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/roots:
-    get:
-      consumes:
-      - application/json
-      description: FilesRoots (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesRoots (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/script-action:
-    post:
-      consumes:
-      - application/json
-      description: FilesScriptAction (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesScriptAction (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/script-status:
-    get:
-      consumes:
-      - application/json
-      description: FilesScriptStatus (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesScriptStatus (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/upload:
-    post:
-      consumes:
-      - application/json
-      description: FilesUpload (Expert only)
-      parameters:
-      - description: Path
-        in: query
-        name: path
-        type: string
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesUpload (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/files/write:
-    post:
-      consumes:
-      - application/json
-      description: FilesWrite (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: FilesWrite (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/available:
-    get:
-      consumes:
-      - application/json
-      description: OpkgAvailable (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgAvailable (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/install:
-    post:
-      consumes:
-      - application/json
-      description: OpkgInstall (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgInstall (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/installed:
-    get:
-      consumes:
-      - application/json
-      description: OpkgInstalled (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgInstalled (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/remove:
-    post:
-      consumes:
-      - application/json
-      description: OpkgRemove (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgRemove (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/search:
-    get:
-      consumes:
-      - application/json
-      description: OpkgSearch (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgSearch (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/update:
-    post:
-      consumes:
-      - application/json
-      description: OpkgUpdate (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgUpdate (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/upgradable:
-    get:
-      consumes:
-      - application/json
-      description: OpkgUpgradable (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgUpgradable (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/opkg/upgrade:
-    post:
-      consumes:
-      - application/json
-      description: OpkgUpgrade (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: OpkgUpgrade (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/ports/inspect:
-    get:
-      consumes:
-      - application/json
-      description: PortsInspect (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: PortsInspect (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/ports/kill:
-    post:
-      consumes:
-      - application/json
-      description: PortsKill (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: PortsKill (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/ports/list:
-    get:
-      consumes:
-      - application/json
-      description: PortsList (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: PortsList (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/proc/kill:
-    post:
-      consumes:
-      - application/json
-      description: ProcKill (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ProcKill (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/proc/snapshot:
-    post:
-      consumes:
-      - application/json
-      description: ProcSnapshot (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ProcSnapshot (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/services/action:
-    post:
-      consumes:
-      - application/json
-      description: ServicesAction (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ServicesAction (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/services/delete:
-    post:
-      consumes:
-      - application/json
-      description: ServicesDeleteScript (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ServicesDeleteScript (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/services/get:
-    get:
-      consumes:
-      - application/json
-      description: ServicesGetScript (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ServicesGetScript (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/services/list:
-    get:
-      consumes:
-      - application/json
-      description: ServicesList (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ServicesList (Expert only)
-      tags:
-      - system
-      - expert
-  /api/system/services/save:
-    post:
-      consumes:
-      - application/json
-      description: ServicesSaveScript (Expert only)
-      produces:
-      - application/json
-      responses: {}
-      summary: ServicesSaveScript (Expert only)
-      tags:
-      - system
-      - expert
   /auth/login:
     post:
       consumes:
@@ -17704,6 +17310,450 @@ paths:
       summary: Restore full data-dir backup
       tags:
       - system
+  /system/files/checksum:
+    get:
+      consumes:
+      - application/json
+      description: FilesChecksum (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesChecksum (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/chmod:
+    post:
+      consumes:
+      - application/json
+      description: FilesChmod (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesChmod (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/copy:
+    post:
+      consumes:
+      - application/json
+      description: FilesCopy (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesCopy (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/download:
+    get:
+      consumes:
+      - application/json
+      description: FilesDownload (Expert only)
+      parameters:
+      - description: Path
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesDownload (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/list:
+    get:
+      consumes:
+      - application/json
+      description: FilesList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/mkdir:
+    post:
+      consumes:
+      - application/json
+      description: FilesMkdir (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesMkdir (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/read:
+    get:
+      consumes:
+      - application/json
+      description: FilesRead (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRead (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/remove:
+    post:
+      consumes:
+      - application/json
+      description: FilesRemove (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRemove (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/rename:
+    post:
+      consumes:
+      - application/json
+      description: FilesRename (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRename (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/roots:
+    get:
+      consumes:
+      - application/json
+      description: FilesRoots (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRoots (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/script-action:
+    post:
+      consumes:
+      - application/json
+      description: FilesScriptAction (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesScriptAction (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/script-status:
+    get:
+      consumes:
+      - application/json
+      description: FilesScriptStatus (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesScriptStatus (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/upload:
+    post:
+      consumes:
+      - application/json
+      description: FilesUpload (Expert only)
+      parameters:
+      - description: Path
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesUpload (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/write:
+    post:
+      consumes:
+      - application/json
+      description: FilesWrite (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesWrite (Expert only)
+      tags:
+      - system
+      - expert
   /system/hydraroute-control:
     post:
       consumes:
@@ -17772,6 +17822,409 @@ paths:
       summary: System info
       tags:
       - system
+  /system/opkg/available:
+    get:
+      consumes:
+      - application/json
+      description: OpkgAvailable (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgAvailable (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/install:
+    post:
+      consumes:
+      - application/json
+      description: OpkgInstall (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgInstall (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/installed:
+    get:
+      consumes:
+      - application/json
+      description: OpkgInstalled (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgInstalled (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/remove:
+    post:
+      consumes:
+      - application/json
+      description: OpkgRemove (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgRemove (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/search:
+    get:
+      consumes:
+      - application/json
+      description: OpkgSearch (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgSearch (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/update:
+    post:
+      consumes:
+      - application/json
+      description: OpkgUpdate (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpdate (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/upgradable:
+    get:
+      consumes:
+      - application/json
+      description: OpkgUpgradable (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpgradable (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: OpkgUpgrade (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpgrade (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/inspect:
+    get:
+      consumes:
+      - application/json
+      description: PortsInspect (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsInspect (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/kill:
+    post:
+      consumes:
+      - application/json
+      description: PortsKill (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsKill (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/list:
+    get:
+      consumes:
+      - application/json
+      description: PortsList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/proc/kill:
+    post:
+      consumes:
+      - application/json
+      description: ProcKill (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ProcKill (Expert only)
+      tags:
+      - system
+      - expert
+  /system/proc/snapshot:
+    post:
+      consumes:
+      - application/json
+      description: ProcSnapshot (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ProcSnapshot (Expert only)
+      tags:
+      - system
+      - expert
   /system/restart:
     post:
       produces:
@@ -17794,6 +18247,161 @@ paths:
       summary: Restart daemon
       tags:
       - system
+  /system/services/action:
+    post:
+      consumes:
+      - application/json
+      description: ServicesAction (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesAction (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/delete:
+    post:
+      consumes:
+      - application/json
+      description: ServicesDeleteScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesDeleteScript (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/get:
+    get:
+      consumes:
+      - application/json
+      description: ServicesGetScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesGetScript (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/list:
+    get:
+      consumes:
+      - application/json
+      description: ServicesList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/save:
+    post:
+      consumes:
+      - application/json
+      description: ServicesSaveScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesSaveScript (Expert only)
+      tags:
+      - system
+      - expert
   /system/update/apply:
     post:
       produces:

@@ -24,6 +24,10 @@
 	let installing = $state(false);
 	let installError: string | null = $state(null);
 	let autoLogin = $state<Pick<TerminalAutoLogin, 'login' | 'password'> | null>(null);
+	// ownedSession is true only when THIS component started the ttyd session.
+	// Used to decide whether onDestroy should stop the session: when another
+	// tab already opened ttyd, leaving the System tab must not kill it.
+	let ownedSession = $state(false);
 
 	onMount(async () => {
 		autoLogin = loadTerminalAutoLogin();
@@ -31,7 +35,8 @@
 	});
 
 	onDestroy(() => {
-		if (pageState === 'active') {
+		if (ownedSession && pageState === 'active') {
+			ownedSession = false;
 			api.terminalStop().catch(() => {});
 		}
 	});
@@ -72,6 +77,7 @@
 		pageState = 'starting';
 		try {
 			await api.terminalStart();
+			ownedSession = true;
 			pageState = 'active';
 		} catch (e) {
 			notifications.error('Не удалось запустить терминал: ' + errorMessage(e, ''));
@@ -82,6 +88,7 @@
 	async function stopTerminal() {
 		try {
 			await api.terminalStop();
+			ownedSession = false;
 			pageState = 'idle';
 			notifications.info('Сессия терминала остановлена');
 		} catch (e) {
@@ -90,6 +97,7 @@
 	}
 
 	function handleTerminalClose() {
+		ownedSession = false;
 		pageState = 'idle';
 		api.terminalStop().catch(() => {});
 	}

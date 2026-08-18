@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	opkgBin        = "/opt/bin/opkg"
-	statusFile     = "/opt/lib/opkg/status"
-	listCacheTTL   = 10 * time.Minute
-	maxListScan    = 20000
+	opkgBin      = "/opt/bin/opkg"
+	statusFile   = "/opt/lib/opkg/status"
+	listCacheTTL = 10 * time.Minute
+	maxListScan  = 20000
 )
 
 var (
@@ -40,9 +40,9 @@ type Package struct {
 type Client struct {
 	Bin string
 
-	mu          sync.Mutex
-	listCache   []Package
-	listCached  time.Time
+	mu         sync.Mutex
+	listCache  []Package
+	listCached time.Time
 }
 
 func NewClient() *Client {
@@ -403,7 +403,9 @@ func parseUpgradable(text string) []Package {
 	return out
 }
 
-var pkgNameRegex = regexp.MustCompile(`^[a-zA-Z0-9.\-_+]+$`)
+// pkgNameRegex enforces a safe opkg package name format.
+// Leading hyphen is forbidden because opkg treats "-name" as a CLI flag.
+var pkgNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._+][a-zA-Z0-9.\-_+]*$`)
 
 func validatePkgNames(names []string) error {
 	for _, name := range names {

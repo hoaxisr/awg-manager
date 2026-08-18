@@ -51,6 +51,9 @@ func NewSandbox(roots []Root) *Sandbox {
 func (s *Sandbox) Roots() []Root { return append([]Root(nil), s.roots...) }
 
 // Resolve returns the absolute path if it lies inside an allowed root.
+// Both the raw (cleaned) path and the symlink-resolved path must fall inside
+// at least one root — otherwise a symlink created inside a writable root can
+// be used to escape the sandbox.
 func (s *Sandbox) Resolve(requested string) (abs string, root Root, err error) {
 	if strings.TrimSpace(requested) == "" {
 		if len(s.roots) == 0 {
@@ -63,15 +66,17 @@ func (s *Sandbox) Resolve(requested string) (abs string, root Root, err error) {
 	if !filepath.IsAbs(clean) {
 		return "", Root{}, fmt.Errorf("path must be absolute")
 	}
-	
-	// Evaluate symlinks if file exists to prevent sandbox escape via symlinks
+
+	// Evaluate symlinks if the file exists. When the path is missing
+	// (or EvalSymlinks errors for any reason) we fall back to `clean` and
+	// the AND-check below reduces to a single-form comparison.
 	resolved := clean
 	if eval, err := filepath.EvalSymlinks(clean); err == nil {
 		resolved = eval
 	}
 
 	for _, r := range s.roots {
-		if pathWithin(resolved, r.Path) || pathWithin(clean, r.Path) {
+		if pathWithin(resolved, r.Path) && pathWithin(clean, r.Path) {
 			return resolved, r, nil
 		}
 	}

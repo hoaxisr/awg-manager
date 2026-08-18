@@ -105,7 +105,13 @@ func managedService(script string) (string, bool) {
 	name := serviceName(script)
 	switch name {
 	case "awg-manager":
-		return "Управляется AWG Manager; остановка может прервать веб-интерфейс", true
+		return "Управляется AWG Manager; удаление/остановка прерывает веб-интерфейс", true
+	case "ttyd":
+		return "Встроенный web-терминал вкладки «Система»; удаление отключит его", true
+	case "sing-box":
+		return "Основной прокси-движок awg-manager; удаление отключит VPN/прокси", true
+	case "dropbear":
+		return "SSH-сервер роутера; удаление сделает устройство недоступным по SSH", true
 	default:
 		return "", false
 	}
@@ -233,8 +239,8 @@ func (sc *Scanner) DeleteScript(script string) error {
 	if !scriptNameRe.MatchString(base) {
 		return fmt.Errorf("invalid script name")
 	}
-	if base == "S99awg-manager" {
-		return fmt.Errorf("cannot delete awg-manager service")
+	if hint, managed := managedService(base); managed {
+		return fmt.Errorf("cannot delete %s: %s", base, hint)
 	}
 	dir := sc.InitDir
 	if dir == "" {

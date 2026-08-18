@@ -48,7 +48,7 @@ export function saveTerminalHistoryWidth(width: number): void {
 
 export function loadTerminalCommands(): string[] {
 	try {
-		const raw = localStorage.getItem(HISTORY_KEY);
+		const raw = sessionStorage.getItem(HISTORY_KEY);
 		if (!raw) return [];
 		const parsed = JSON.parse(raw);
 		if (!Array.isArray(parsed)) return [];
@@ -60,7 +60,7 @@ export function loadTerminalCommands(): string[] {
 
 export function saveTerminalCommands(commands: string[]): void {
 	try {
-		localStorage.setItem(HISTORY_KEY, JSON.stringify(commands.slice(0, MAX_COMMANDS)));
+		sessionStorage.setItem(HISTORY_KEY, JSON.stringify(commands.slice(0, MAX_COMMANDS)));
 	} catch {
 		/* ignore quota errors */
 	}

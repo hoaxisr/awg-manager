@@ -78,5 +78,8 @@ export function createTerminalAutoLogin(
 }
 
 // Busybox/Entware login, Keenetic, generic getty prompts.
-const loginPromptRe = /(?:^|\n)[^\n]*\b(?:login|username|логин)\s*:\s*$/i;
-const passwordPromptRe = /(?:^|\n)[^\n]*\b(?:password|пароль)\s*:\s*$/i;
+// The anchors require the line to contain ONLY the prompt (after possible
+// leading whitespace) so we don't misfire on messages like
+// "sudo: incorrect password:" or "Enter password:".
+const loginPromptRe = /(?:^|\n)\s*(?:login|username|логин)\s*:\s*$/i;
+const passwordPromptRe = /(?:^|\n)\s*password\s*:\s*$/i;

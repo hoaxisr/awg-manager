@@ -15,49 +15,49 @@ import (
 
 // CpuCore describes CPU load for a single core or total.
 type CpuCore struct {
-	ID       string  `json:"id"`       // "total", "cpu0", "cpu1", etc.
-	User     float64 `json:"user"`     // %
-	System   float64 `json:"system"`   // %
-	Nice     float64 `json:"nice"`     // %
-	Idle     float64 `json:"idle"`     // %
-	IoWait   float64 `json:"iowait"`   // %
-	Usage    float64 `json:"usage"`    // Total non-idle %
+	ID     string  `json:"id"`     // "total", "cpu0", "cpu1", etc.
+	User   float64 `json:"user"`   // %
+	System float64 `json:"system"` // %
+	Nice   float64 `json:"nice"`   // %
+	Idle   float64 `json:"idle"`   // %
+	IoWait float64 `json:"iowait"` // %
+	Usage  float64 `json:"usage"`  // Total non-idle %
 }
 
 // MemoryInfo describes RAM and Swap usage in bytes.
 type MemoryInfo struct {
-	Total     uint64  `json:"total"`
-	Free      uint64  `json:"free"`
-	Available uint64  `json:"available"`
-	Used      uint64  `json:"used"`
-	Buffers   uint64  `json:"buffers"`
-	Cached    uint64  `json:"cached"`
-	SwapTotal uint64  `json:"swapTotal"`
-	SwapFree  uint64  `json:"swapFree"`
-	SwapUsed  uint64  `json:"swapUsed"`
+	Total        uint64  `json:"total"`
+	Free         uint64  `json:"free"`
+	Available    uint64  `json:"available"`
+	Used         uint64  `json:"used"`
+	Buffers      uint64  `json:"buffers"`
+	Cached       uint64  `json:"cached"`
+	SwapTotal    uint64  `json:"swapTotal"`
+	SwapFree     uint64  `json:"swapFree"`
+	SwapUsed     uint64  `json:"swapUsed"`
 	UsagePercent float64 `json:"usagePercent"`
 }
 
 // ProcessItem describes a single Linux process.
 type ProcessItem struct {
-	PID         int     `json:"pid"`
-	PPID        int     `json:"ppid"`
-	User        string  `json:"user"`
-	Priority    int     `json:"priority"`
-	Nice        int     `json:"nice"`
-	Threads     int     `json:"threads"`
-	State       string  `json:"state"` // "R", "S", "D", "Z", "T"
-	CPUPercent  float64 `json:"cpuPercent"`
-	MemoryRSS   uint64  `json:"memoryRss"` // bytes
-	MemoryVSize uint64  `json:"memoryVsize"` // bytes
+	PID           int     `json:"pid"`
+	PPID          int     `json:"ppid"`
+	User          string  `json:"user"`
+	Priority      int     `json:"priority"`
+	Nice          int     `json:"nice"`
+	Threads       int     `json:"threads"`
+	State         string  `json:"state"` // "R", "S", "D", "Z", "T"
+	CPUPercent    float64 `json:"cpuPercent"`
+	MemoryRSS     uint64  `json:"memoryRss"`   // bytes
+	MemoryVSize   uint64  `json:"memoryVsize"` // bytes
 	MemoryPercent float64 `json:"memoryPercent"`
-	Name        string  `json:"name"`
-	Cmdline     string  `json:"cmdline"`
-	Exe         string  `json:"exe,omitempty"`
-	Service     string  `json:"service,omitempty"`
-	IsSelf      bool    `json:"isSelf"`
-	IsCritical  bool    `json:"isCritical"`
-	IsKernel    bool    `json:"isKernel"`
+	Name          string  `json:"name"`
+	Cmdline       string  `json:"cmdline"`
+	Exe           string  `json:"exe,omitempty"`
+	Service       string  `json:"service,omitempty"`
+	IsSelf        bool    `json:"isSelf"`
+	IsCritical    bool    `json:"isCritical"`
+	IsKernel      bool    `json:"isKernel"`
 }
 
 // SystemSnapshot is the full payload returned to the frontend.
@@ -68,7 +68,7 @@ type SystemSnapshot struct {
 	CPUModel        string        `json:"cpuModel"`
 	CPUArchitecture string        `json:"cpuArchitecture"`
 	CPUCount        int           `json:"cpuCount"`
-	Cores           []CpuCore     `json:"cores"`   // index 0 is total, followed by cpu0, cpu1...
+	Cores           []CpuCore     `json:"cores"` // index 0 is total, followed by cpu0, cpu1...
 	Memory          MemoryInfo    `json:"memory"`
 	ProcessSummary  ProcSummary   `json:"processSummary"`
 	Processes       []ProcessItem `json:"processes"`
@@ -85,14 +85,14 @@ type ProcSummary struct {
 }
 
 type cpuSample struct {
-	user   uint64
-	nice   uint64
-	system uint64
-	idle   uint64
-	iowait uint64
-	irq    uint64
+	user    uint64
+	nice    uint64
+	system  uint64
+	idle    uint64
+	iowait  uint64
+	irq     uint64
 	softirq uint64
-	steal  uint64
+	steal   uint64
 }
 
 func (s cpuSample) total() uint64 {
@@ -290,7 +290,7 @@ func (s *Sampler) readProcesses(procDir string, totalMem uint64, totalCpuDelta u
 		item.User = s.getUserForPID(procDir, pid)
 
 		// Critical check
-		item.IsCritical = isCriticalProcess(item.Name, item.Exe)
+		item.IsCritical = IsCriticalProcess(item.Name, item.Exe)
 
 		// Service association
 		if strings.HasPrefix(item.Name, "S") || strings.Contains(item.Cmdline, "/opt/etc/init.d/") {
@@ -351,8 +351,8 @@ func (s *Sampler) KillProcess(pid int, sigName string) error {
 
 	exeLink, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	stat, _ := parseProcStat(fmt.Sprintf("/proc/%d/stat", pid))
-	
-	if isCriticalProcess(stat.comm, exeLink) {
+
+	if IsCriticalProcess(stat.comm, exeLink) {
 		return fmt.Errorf("cannot kill critical process %q", stat.comm)
 	}
 
@@ -633,12 +633,28 @@ func readCPUArch(cpuinfoPath string) string {
 	return arch
 }
 
-func isCriticalProcess(name, exe string) bool {
+// IsCriticalProcess reports whether killing the process with the given
+// process name and exe path is unsafe. Used by both the process monitor
+// and the ports scanner to gate process termination.
+//
+// The set of names mirrors the union of what procmon and ports used to
+// keep separately so that all kill paths (KillProcess, port-driven kill,
+// process-row kill) agree on what must not be terminated.
+func IsCriticalProcess(name, exe string) bool {
 	lower := strings.ToLower(name)
-	if lower == "ndm" || lower == "dropbear" || lower == "init" || lower == "systemd" || lower == "kthreadd" || lower == "awg-manager" {
+	switch lower {
+	case "ndm", "dropbear", "init", "systemd", "kthreadd", "awg-manager",
+		"sshd", "klogd", "syslogd":
 		return true
 	}
-	if strings.Contains(exe, "/usr/sbin/ndm") || strings.Contains(exe, "dropbear") || strings.Contains(exe, "awg-manager") {
+	exeLower := strings.ToLower(exe)
+	if exeLower == "" {
+		return false
+	}
+	switch {
+	case strings.Contains(exeLower, "/usr/sbin/ndm"),
+		strings.Contains(exeLower, "dropbear"),
+		strings.Contains(exeLower, "awg-manager"):
 		return true
 	}
 	return false

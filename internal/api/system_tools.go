@@ -89,7 +89,12 @@ func (h *SystemToolsHandler) requireExpert(w http.ResponseWriter, r *http.Reques
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/roots [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/roots [get]
 func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -117,7 +122,12 @@ func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) 
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/list [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/list [get]
 func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -144,7 +154,12 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/read [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/read [get]
 func (h *SystemToolsHandler) FilesRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -177,7 +192,12 @@ type filesWriteRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/write [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/write [post]
 func (h *SystemToolsHandler) FilesWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -213,7 +233,12 @@ type filesPathRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/mkdir [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/mkdir [post]
 func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -241,7 +266,12 @@ func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) 
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/remove [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/remove [post]
 func (h *SystemToolsHandler) FilesRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -274,7 +304,12 @@ type filesRenameRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/rename [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/rename [post]
 func (h *SystemToolsHandler) FilesRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -307,7 +342,12 @@ type filesCopyRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/copy [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/copy [post]
 func (h *SystemToolsHandler) FilesCopy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -340,7 +380,12 @@ type filesChmodRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/chmod [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/chmod [post]
 func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -368,7 +413,12 @@ func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) 
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/checksum [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/checksum [get]
 func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -399,7 +449,12 @@ func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Reques
 // @Accept json
 // @Produce json
 // @Param path query string false "Path"
-// @Router /api/system/files/download [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/download [get]
 func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -428,7 +483,12 @@ func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Reques
 // @Accept json
 // @Produce json
 // @Param path query string false "Path"
-// @Router /api/system/files/upload [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/upload [post]
 func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -495,7 +555,12 @@ func (h *SystemToolsHandler) filesError(w http.ResponseWriter, err error) {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/services/list [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/list [get]
 func (h *SystemToolsHandler) ServicesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -523,7 +588,12 @@ type serviceActionRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/services/action [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/action [post]
 func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -559,7 +629,12 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/services/get [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/get [get]
 func (h *SystemToolsHandler) ServicesGetScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -595,7 +670,12 @@ type serviceSaveRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/services/save [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/save [post]
 func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -641,7 +721,12 @@ type serviceDeleteRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/services/delete [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/delete [post]
 func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -677,7 +762,12 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/installed [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/installed [get]
 func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -700,7 +790,12 @@ func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Reques
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/upgradable [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/upgradable [get]
 func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -723,7 +818,12 @@ func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Reque
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/search [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/search [get]
 func (h *SystemToolsHandler) OpkgSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -751,7 +851,12 @@ type opkgPackagesRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/update [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/update [post]
 func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -775,7 +880,12 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/upgrade [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/upgrade [post]
 func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -809,7 +919,12 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/install [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/install [post]
 func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -838,7 +953,12 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/available [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/available [get]
 func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -869,7 +989,12 @@ func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Reques
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/opkg/remove [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/opkg/remove [post]
 func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -898,7 +1023,12 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/ports/list [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/ports/list [get]
 func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -921,7 +1051,12 @@ func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/ports/inspect [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/ports/inspect [get]
 func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -967,7 +1102,12 @@ type portKillRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/ports/kill [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/ports/kill [post]
 func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -1082,7 +1222,12 @@ func findPIDsForPath(targetPath string) []int {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/script-status [get]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/script-status [get]
 func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -1162,7 +1307,12 @@ type scriptActionRequest struct {
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/files/script-action [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/files/script-action [post]
 func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -1295,7 +1445,12 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/proc/snapshot [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/proc/snapshot [post]
 func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -1320,7 +1475,12 @@ func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request
 // @Tags system,expert
 // @Accept json
 // @Produce json
-// @Router /api/system/proc/kill [post]
+// @Security CookieAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/proc/kill [post]
 func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)

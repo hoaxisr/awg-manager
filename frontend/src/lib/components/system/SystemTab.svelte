@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { AlertTriangle } from 'lucide-svelte';
 	import { Tabs } from '$lib/components/ui';
 	import FileManager from './FileManager.svelte';
 	import ServicesPanel from './ServicesPanel.svelte';
@@ -66,6 +67,16 @@
 </script>
 
 <div class="system-tools">
+	<div class="expert-disclaimer" role="note">
+		<AlertTriangle size={16} aria-hidden="true" />
+		<span>
+			<strong>Expert-режим.</strong> Изменения файлов, служб, пакетов и процессов
+			выполняются от имени <code>root</code> и могут привести к потере доступа
+			к роутеру или нарушению его работы. Используйте только если понимаете,
+			что делаете.
+		</span>
+	</div>
+
 	<Tabs tabs={views} active={activeView} onchange={(id) => setView(id as SystemView)} />
 
 	<div class="panel">
@@ -88,6 +99,29 @@
 </div>
 
 <style>
+	.expert-disclaimer {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.6rem;
+		padding: 0.55rem 0.75rem;
+		background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 45%, transparent);
+		border-radius: var(--radius-sm, 6px);
+		color: var(--color-text-primary, #e5e7eb);
+		font-size: 0.82rem;
+		line-height: 1.4;
+	}
+	.expert-disclaimer :global(svg) {
+		flex-shrink: 0;
+		margin-top: 0.1rem;
+		color: var(--warning, #f59e0b);
+	}
+	.expert-disclaimer code {
+		padding: 0 0.25rem;
+		background: rgba(0, 0, 0, 0.2);
+		border-radius: 3px;
+		font-size: 0.78rem;
+	}
 	.system-tools {
 		display: flex;
 		flex-direction: column;
