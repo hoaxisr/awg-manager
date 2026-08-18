@@ -64,12 +64,22 @@
 	let step = $state(0);
 	let busy = $state(false);
 
+	// Инстанс, созданный этим мастером: после отказа на любом следующем шаге
+	// повторное «Сохранить и запустить» правит его, а не заводит второй.
+	let created = $state<{ id: string; config: WdttClientConfig | FreeTurnClientConfig } | null>(
+		null,
+	);
+
 	// ─── Шаг 1: источник.
 
 	let link = $state('');
 	let manual = $state(false);
 	let decodeSeq = 0;
 	let debounce: ReturnType<typeof setTimeout> | undefined;
+	// Недопечатанная ссылка отвергается бэкендом на каждом вводе — тост держим
+	// до конца ввода (blur/Enter) и показываем, только если ссылка так и не
+	// разобралась.
+	let pendingLinkError = $state('');
 
 	let wdttPayload = $state<WdttImportPayload | null>(null);
 	let ftPayload = $state<FreeTurnLinkPayload | null>(null);
@@ -89,7 +99,7 @@
 				? fieldsFromWdttConfig(wdttClient, row?.name ?? '')
 				: ftClient
 					? fieldsFromFtConfig(ftClient, row?.name ?? '')
-					: emptyFields(nextLocalListen(usedListens.wdtt)),
+					: emptyFields(candidateListen(protocol), protocol),
 		),
 	);
 
@@ -127,7 +137,7 @@
 	const step2Ready = $derived(exitStep2Ready({ protocol, ...fields }));
 
 	function candidateListen(p: ExitProtocol): string {
-		return nextLocalListen(p === 'wdtt' ? usedListens.wdtt : usedListens.freeturn);
+		return nextLocalListen(p === 'wdtt' ? usedListens.wdtt : usedListens.freeturn, p);
 	}
 
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */
@@ -138,9 +148,11 @@
 			wdttPayload = null;
 			ftPayload = null;
 			subscription = null;
+			pendingLinkError = '';
 			return;
 		}
 		const seq = ++decodeSeq;
+		pendingLinkError = '';
 		try {
 			if (kind === 'freeturn') {
 				const payload = await api.decodeFreeTurnLink(text);
@@ -168,8 +180,15 @@
 				applyProfile(res.profile, false);
 			}
 		} catch (e) {
-			notifications.error(errText(e));
+			pendingLinkError = errText(e);
 		}
+	}
+
+	/** Показать отложенную ошибку разбора: ввод завершён, ссылка так и не читается. */
+	function showLinkError() {
+		if (!pendingLinkError) return;
+		notifications.error(pendingLinkError);
+		pendingLinkError = '';
 	}
 
 	function applyProfile(payload: WdttImportPayload, fromSub: boolean) {
@@ -179,6 +198,7 @@
 
 	function onLinkInput(v: string) {
 		link = v;
+		pendingLinkError = '';
 		clearTimeout(debounce);
 		debounce = setTimeout(() => void decode(), 350);
 	}
@@ -190,6 +210,7 @@
 		link = text;
 		manual = false;
 		await decode();
+		showLinkError();
 	}
 
 	function toggleManual() {
@@ -199,7 +220,7 @@
 		wdttPayload = null;
 		ftPayload = null;
 		subscription = null;
-		fields = emptyFields(candidateListen(protocol));
+		fields = emptyFields(candidateListen(protocol), protocol);
 	}
 
 	// ─── Шаг 3: политика и запуск.
@@ -228,7 +249,9 @@
 				ftPayload,
 				subUrl: subUrl || undefined,
 				wgConf,
-				existing: row && config ? { id: row.id, config: cloneConfig(config) } : undefined,
+				existing:
+					created ?? (row && config ? { id: row.id, config: cloneConfig(config) } : undefined),
+				oncreated: (c) => (created = c),
 			});
 			if (policy) {
 				const iface = await resolveExitInterface({
@@ -275,9 +298,19 @@
 				ftClientId={ftPayload?.cid ?? ''}
 				ftHasWg={hasWg}
 				oninput={onLinkInput}
+				oncommit={() => {
+					clearTimeout(debounce);
+					void decode().then(showLinkError);
+				}}
 				onfile={(f) => void readFile(f)}
 				ontogglemanual={toggleManual}
-				onprotocol={(p) => (protocol = p)}
+				onprotocol={(p) => {
+					protocol = p;
+					// Подсказки порта и потоков — правила выбранного протокола.
+					const blank = emptyFields(candidateListen(p), p);
+					fields.listen = blank.listen;
+					fields.workers = blank.workers;
+				}}
 				onmode={(m) => (mode = m)}
 				onprofile={(idx) => {
 					profileIdx = idx;
@@ -286,7 +319,7 @@
 				}}
 			/>
 		{:else if step === 1}
-			<ExitWizardParams {protocol} bind:fields />
+			<ExitWizardParams {protocol} {mode} bind:fields />
 		{:else if willHaveIface}
 			<div class="explain">
 				{#if protocol === 'wdtt' && mode === 'raw'}
@@ -315,15 +348,20 @@
 				onchange={(v) => (policy = v)}
 				fullWidth
 			/>
-			<p class="note">
-				{#if policy}
+			{#if policy}
+				<p class="note">
 					Интерфейс будет добавлен в конец выбранной политики<FieldHint
 						text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
 						ariaLabel="Подсказка: политика доступа"
-					/> ·
-				{/if}
-				<a class="link" href="/routing">Маршрутизация<ExternalLink size={12} /></a>
-			</p>
+					/>
+				</p>
+			{/if}
+			<div class="routing-link">
+				<Button variant="ghost" size="sm" href="/routing">
+					Маршрутизация
+					{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
+				</Button>
+			</div>
 		{/if}
 
 		{#snippet finish()}
@@ -373,15 +411,7 @@
 		line-height: 1.6;
 	}
 
-	.link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		color: var(--color-accent);
-		text-decoration: none;
-	}
-
-	.link:hover {
-		text-decoration: underline;
+	.routing-link {
+		margin-top: 0.625rem;
 	}
 </style>

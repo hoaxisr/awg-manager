@@ -3,15 +3,17 @@
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
 	import { Input } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
-	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
+	import type { ExitMode, ExitProtocol, ExitWizardFields } from './exitWizard';
 
 	interface Props {
 		protocol: ExitProtocol;
+		/** Режим WDTT: в Raw отдельного AWG-туннеля нет, и подсказка WE-34 врала бы. */
+		mode: ExitMode;
 		/** Поля мастера правятся здесь же: владелец значения — мастер. */
 		fields: ExitWizardFields;
 	}
 
-	let { protocol, fields = $bindable() }: Props = $props();
+	let { protocol, mode, fields = $bindable() }: Props = $props();
 </script>
 
 <p class="lead">Значения из ссылки — поправьте, если нужно.</p>
@@ -25,7 +27,7 @@
 	<Input
 		label="Локальный порт"
 		bind:value={fields.listen}
-		hint="Сюда будет смотреть AWG-туннель"
+		hint={mode === 'raw' ? '' : 'Сюда будет смотреть AWG-туннель'}
 		fullWidth
 	/>
 	<Input label="VK-хеши" bind:value={fields.vkHashes} fullWidth />

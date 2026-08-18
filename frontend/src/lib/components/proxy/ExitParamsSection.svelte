@@ -11,6 +11,8 @@
 		/** Редактируемая копия конфига детали — правится на месте. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
+		/** Режим Raw: отдельного AWG-туннеля нет, и подсказка EX-20 врала бы. */
+		raw?: boolean;
 		saving?: boolean;
 		onsave: () => void;
 		onrevert: () => void;
@@ -19,6 +21,7 @@
 	let {
 		wdttClient = $bindable(),
 		ftClient = $bindable(),
+		raw = false,
 		saving = false,
 		onsave,
 		onrevert,
@@ -43,7 +46,7 @@
 			<Input
 				label="Локальный порт"
 				bind:value={wdttClient.listen}
-				hint="Сюда смотрит AWG-туннель"
+				hint={raw ? '' : 'Сюда смотрит AWG-туннель'}
 				fullWidth
 			/>
 			<Input

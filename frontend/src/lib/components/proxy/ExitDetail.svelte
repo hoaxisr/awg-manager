@@ -4,7 +4,7 @@
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
 	import { untrack } from 'svelte';
-	import { Badge, Card, FieldHint } from '$lib/components/ui';
+	import { Badge, Button, Card, FieldHint } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -275,7 +275,10 @@
 					text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
 					ariaLabel="Подсказка: политика доступа"
 				/>
-				<a class="link" href="/routing">Маршрутизация<ExternalLink size={12} /></a>
+				<Button variant="ghost" size="sm" href="/routing">
+					Маршрутизация
+					{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
+				</Button>
 			</div>
 		</DetailSection>
 	{/if}
@@ -283,6 +286,7 @@
 	<ExitParamsSection
 		bind:wdttClient={wdttDraft}
 		bind:ftClient={ftDraft}
+		{raw}
 		{saving}
 		onsave={save}
 		onrevert={revert}

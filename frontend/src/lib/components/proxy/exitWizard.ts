@@ -33,8 +33,15 @@ export interface ExitWizardFields {
 	workers: string;
 }
 
-/** Решение микрокопии: 24 клиент округляет вниз до 18, 27 — ближайшее кратное. */
+/** WDTT: 24 клиент округляет вниз до 18, 27 — ближайшее кратное (WE-37). */
 export const DEFAULT_WORKERS = '27';
+
+/** FreeTurn: кратности нет, дефолт бинаря (`DefaultClientConfig`, internal/freeturn/types.go). */
+export const DEFAULT_FT_STREAMS = '10';
+
+function defaultWorkers(protocol: ExitProtocol): string {
+	return protocol === 'freeturn' ? DEFAULT_FT_STREAMS : DEFAULT_WORKERS;
+}
 
 // ─── Готовность шагов.
 
@@ -101,20 +108,22 @@ export function exitConfigSetupComplete(
 // ─── Значения из ссылки.
 
 /**
- * Локальный порт нового клиента: первый свободный из 9000..9199, как считает
- * бэкенд (`nextClientListen`, internal/wdtt/validate.go:87). Это подсказка
+ * Локальный порт нового клиента: первый свободный, как считает бэкенд —
+ * 9000..9199 у WDTT (`nextClientListen`, internal/wdtt/validate.go:87) и
+ * 9000..9099 у FreeTurn (internal/freeturn/validate.go:125). Это подсказка
  * поля — порт назначает бэкенд, и он же отвергнет занятый.
  */
-export function nextLocalListen(listens: string[]): string {
+export function nextLocalListen(listens: string[], protocol: ExitProtocol = 'wdtt'): string {
 	const used = new Set(
 		listens
 			.map((l) => Number(l?.trim().split(':').pop()))
 			.filter((p) => Number.isInteger(p) && p > 0),
 	);
-	for (let port = 9000; port < 9200; port++) {
+	const limit = protocol === 'freeturn' ? 9100 : 9200;
+	for (let port = 9000; port < limit; port++) {
 		if (!used.has(port)) return `127.0.0.1:${port}`;
 	}
-	return '127.0.0.1:9100';
+	return protocol === 'freeturn' ? '127.0.0.1:9000' : '127.0.0.1:9100';
 }
 
 /**
@@ -152,7 +161,7 @@ export function fieldsFromFtPayload(
 		password: '',
 		listen: listenFromPayload(p.listen, candidateListen, false),
 		vkHashes: '',
-		workers: p.n && p.n > 0 ? String(p.n) : DEFAULT_WORKERS,
+		workers: p.n && p.n > 0 ? String(p.n) : DEFAULT_FT_STREAMS,
 	};
 }
 
@@ -175,19 +184,19 @@ export function fieldsFromFtConfig(cfg: FreeTurnClientConfig, name: string): Exi
 		password: '',
 		listen: cfg.listen ?? '',
 		vkHashes: cfg.links ?? '',
-		workers: cfg.streams > 0 ? String(cfg.streams) : DEFAULT_WORKERS,
+		workers: cfg.streams > 0 ? String(cfg.streams) : DEFAULT_FT_STREAMS,
 	};
 }
 
 /** Пустые поля ручного создания (WE-10). */
-export function emptyFields(candidateListen: string): ExitWizardFields {
+export function emptyFields(candidateListen: string, protocol: ExitProtocol = 'wdtt'): ExitWizardFields {
 	return {
 		name: '',
 		peer: '',
 		password: '',
 		listen: candidateListen,
 		vkHashes: '',
-		workers: DEFAULT_WORKERS,
+		workers: defaultWorkers(protocol),
 	};
 }
 
@@ -263,6 +272,12 @@ export interface ExitCommitInput {
 	 * а не в новый. Конфиг — копия серверного, её мастер и правит.
 	 */
 	existing?: { id: string; config: WdttClientConfig | FreeTurnClientConfig };
+	/**
+	 * Инстанс только что создан. Отказ любого следующего шага оставляет его на
+	 * бэкенде, поэтому мастер запоминает id и при повторе идёт по ветке
+	 * `existing` — второго инстанса-сироты не появляется.
+	 */
+	oncreated?: (created: { id: string; config: WdttClientConfig | FreeTurnClientConfig }) => void;
 }
 
 export interface ExitCommitResult {
@@ -292,6 +307,7 @@ export async function commitExitWizard(input: ExitCommitInput): Promise<ExitComm
 			const inst = await api.createWdttClient(name || undefined);
 			id = inst.id;
 			cfg = inst.config;
+			input.oncreated?.({ id, config: cfg });
 		} else if (name) {
 			await api.renameWdttClient(id, name);
 		}
@@ -311,6 +327,7 @@ export async function commitExitWizard(input: ExitCommitInput): Promise<ExitComm
 		const inst = await api.createFreeTurnClient(name || undefined);
 		id = inst.id;
 		cfg = inst.config;
+		input.oncreated?.({ id, config: cfg });
 	} else if (name) {
 		await api.renameFreeTurnClient(id, name);
 	}

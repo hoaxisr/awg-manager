@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	DEFAULT_FT_STREAMS,
 	DEFAULT_WORKERS,
 	exitConfigSetupComplete,
 	emptyFields,
@@ -92,6 +93,13 @@ describe('nextLocalListen', () => {
 	it('мусорные значения не занимают портов', () => {
 		expect(nextLocalListen(['', 'ерунда'])).toBe('127.0.0.1:9000');
 	});
+
+	it('диапазон и фоллбэк — по правилам протокола (Go: 9000..9199 / 9000..9099)', () => {
+		const wdttFull = Array.from({ length: 200 }, (_, i) => `127.0.0.1:${9000 + i}`);
+		expect(nextLocalListen(wdttFull.slice(0, 100), 'freeturn')).toBe('127.0.0.1:9000');
+		expect(nextLocalListen(wdttFull.slice(0, 100), 'wdtt')).toBe('127.0.0.1:9100');
+		expect(nextLocalListen(wdttFull, 'wdtt')).toBe('127.0.0.1:9100');
+	});
 });
 
 describe('поля из ссылки', () => {
@@ -143,6 +151,13 @@ describe('поля из ссылки', () => {
 			vkHashes: '',
 			workers: DEFAULT_WORKERS,
 		});
+	});
+
+	it('дефолт потоков FreeTurn — дефолт бинаря, не wdtt-округление', () => {
+		expect(emptyFields('127.0.0.1:9000', 'freeturn').workers).toBe(DEFAULT_FT_STREAMS);
+		expect(DEFAULT_FT_STREAMS).toBe('10');
+		const f = fieldsFromFtPayload({ v: 1, peer: 'vps:56000' }, '127.0.0.1:9001');
+		expect(f.workers).toBe(DEFAULT_FT_STREAMS);
 	});
 });
 

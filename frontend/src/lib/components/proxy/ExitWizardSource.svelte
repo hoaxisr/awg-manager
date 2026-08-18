@@ -20,6 +20,8 @@
 		/** Ссылка FreeTurn принесла WireGuard-конфиг. */
 		ftHasWg?: boolean;
 		oninput: (v: string) => void;
+		/** Ввод завершён (blur/Enter): мастер показывает отложенную ошибку разбора. */
+		oncommit: () => void;
 		onfile: (f: File | undefined) => void;
 		ontogglemanual: () => void;
 		onprotocol: (p: ExitProtocol) => void;
@@ -38,6 +40,7 @@
 		ftClientId = '',
 		ftHasWg = false,
 		oninput,
+		oncommit,
 		onfile,
 		ontogglemanual,
 		onprotocol,
@@ -52,6 +55,7 @@
 	label="Ссылка или URL подписки"
 	value={link}
 	{oninput}
+	onchange={() => oncommit()}
 	placeholder="wdtt:// · qwdtt:// · freeturn:// · https://…"
 	hint="Протокол определится по ссылке"
 	disabled={manual}
