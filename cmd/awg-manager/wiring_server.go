@@ -398,6 +398,7 @@ func (a *app) setupRouter() {
 	a.tunnelService.SetDeviceProxyRefChecker(a.deviceProxySvc)
 	a.tunnelService.SetRouterRefChecker(routerSvc)
 	a.singboxHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	a.singboxHandler.SetBindValidator(routerSvc.ValidateBindInterface)
 	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
 	// Initial reconcile on boot — idempotent, brings config.json in sync
 	// with storage + current tunnel set. Runs strictly AFTER

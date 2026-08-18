@@ -85,25 +85,16 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 		response.MethodNotAllowed(w)
 		return
 	}
-	var body SingboxRouterOutboundUpdateRequest
+	var body struct {
+		Tag        string          `json:"tag"`
+		Outbound   router.Outbound `json:"outbound"`
+		EgressBind *string         `json:"egress_bind,omitempty"`
+	}
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	o := router.Outbound{
-		Type:           body.Outbound.Type,
-		Tag:            body.Outbound.Tag,
-		BindInterface:  body.Outbound.BindInterface,
-		Outbounds:      body.Outbound.Outbounds,
-		URL:            body.Outbound.URL,
-		Interval:       body.Outbound.Interval,
-		Tolerance:      body.Outbound.Tolerance,
-		Default:        body.Outbound.Default,
-		Strategy:       body.Outbound.Strategy,
-		Server:         body.Outbound.Server,
-		DomainResolver: body.Outbound.DomainResolver,
-	}
-	if err := h.svc.UpdateCompositeOutbound(r.Context(), body.Tag, o, body.EgressBind); err != nil {
+	if err := h.svc.UpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound, body.EgressBind); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

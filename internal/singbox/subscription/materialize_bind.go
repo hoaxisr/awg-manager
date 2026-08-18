@@ -8,7 +8,7 @@ import (
 
 // materializeMemberOutbound patches tag and optional bind_interface onto a
 // parsed member outbound before it is committed to 40-subscriptions.json.
-func materializeMemberOutbound(ctx context.Context, validator BindValidator, raw []byte, tag, bindInterface string) []byte {
+func materializeMemberOutbound(ctx context.Context, validator BindInterfaceValidator, raw []byte, tag, bindInterface string) []byte {
 	var ob map[string]any
 	if json.Unmarshal(raw, &ob) != nil {
 		return replaceTag(raw, tag)

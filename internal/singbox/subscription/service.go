@@ -733,7 +733,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		if skip(n.Tag, n.Out.Label) {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
-		jsonWithTag := materializeMemberOutbound(ctx, s.deps.BindValidator, n.Out.Outbound, n.Tag, sub.BindInterface)
+		jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, n.Out.Outbound, n.Tag, sub.BindInterface)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -743,7 +743,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
 			continue
 		}
-		jsonWithTag := materializeMemberOutbound(ctx, s.deps.BindValidator, e.Out.Outbound, e.Tag, sub.BindInterface)
+		jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, e.Out.Outbound, e.Tag, sub.BindInterface)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -1223,7 +1223,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(ctx, s.deps.BindValidator, out.Outbound, tag, sub.BindInterface)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(ctx, s.bindValidator, out.Outbound, tag, sub.BindInterface)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}

@@ -44,6 +44,7 @@
 	let defaultOutbound = $state(outbound?.default ?? '');
 	// svelte-ignore state_referenced_locally
 	let bindInterface = $state(outbound?.bind_interface ?? '');
+	// svelte-ignore state_referenced_locally
 	let egressBind = $state(outbound?.egress_bind ?? '');
 
 

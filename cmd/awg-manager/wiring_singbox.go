@@ -278,7 +278,6 @@ func (a *app) setupSingbox() {
 	a.singboxHandler = api.NewSingboxHandler(a.singboxOp, a.eventBus, delayChecker, a.testService, a.loggingService)
 	singboxMigrator := singbox.NewMigrator(a.singboxOp, a.settingsStore, a.loggingService)
 	a.singboxHandler.SetNDMSProxyMigrator(singboxMigrator, a.settingsStore)
-	a.singboxHandler.SetBindValidator(a.routerService.ValidateBindInterface)
 	a.clashProxy = api.NewClashProxy(a.singboxOp)
 	a.singboxConnsHandler = api.NewSingboxConnectionsHandler(a.ndmsQueries.Hotspot)
 	// Managed WG-server peer names for the connections monitor (issue
