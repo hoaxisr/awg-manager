@@ -122,6 +122,8 @@
 	let peerConf = $state('');
 	/** Отказ запроса `.conf` пира: у него своя ветка подписи на шаге 4. */
 	let peerConfError = $state('');
+	/** Порт клиента для Endpoint не известен: своя ветка подписи (WS-48). */
+	let peerPortUnknown = $state(false);
 	let wanBusy = $state(false);
 
 	// Сервер, созданный этим мастером, и заведённый им абонент: повтор после
@@ -184,7 +186,12 @@
 			// FreeTurn собирает ссылку из конфига пира: без него абонент получил
 			// бы ссылку без WG-конфига и не понял бы, чего в ней не хватает.
 			// Сервер запускаем, ссылку — нет (WS-47).
-			const gap = shareLinkGap({ protocol, peerConf, confError: peerConfError });
+			const gap = shareLinkGap({
+				protocol,
+				peerConf,
+				confError: peerConfError,
+				portUnknown: peerPortUnknown,
+			});
 			const wantLink = withLink && !shareLinkNeedsConf(gap);
 			const res = await commitShareWizard({
 				protocol,
@@ -208,6 +215,7 @@
 				protocol,
 				peerConf,
 				confError: peerConfError,
+				portUnknown: peerPortUnknown,
 				link,
 				linkQwdtt,
 			});
@@ -281,9 +289,10 @@
 				{protocol}
 				bind:fields
 				endpointPort={ftClientPort}
-				onpeerconf={(conf, err) => {
+				onpeerconf={(conf, err, portUnknown) => {
 				peerConf = conf;
 				peerConfError = err;
+				peerPortUnknown = portUnknown;
 			}}
 			/>
 		{:else if step === 2}
@@ -339,6 +348,9 @@
 					<p class="warn">
 						Ссылку соберём после вставки .conf пира — приватный ключ из Keenetic OS недоступен
 					</p>
+				{:else if linkMissing === 'port'}
+					<!-- WS-48: вставка .conf тут не поможет — не хватает порта. -->
+					<p class="warn">Ссылку соберём, когда будет известен порт клиента</p>
 				{:else if linkMissing === 'addr'}
 					<p class="warn">Ссылку соберём после запуска: не хватает адреса сервера</p>
 				{/if}

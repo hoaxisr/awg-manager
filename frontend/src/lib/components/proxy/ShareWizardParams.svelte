@@ -14,7 +14,7 @@
 		fields: ShareWizardFields;
 		/** Дефолт порта Endpoint: listen FreeTurn-клиента этого роутера (F-18). */
 		endpointPort: number;
-		onpeerconf: (conf: string, confError: string) => void;
+		onpeerconf: (conf: string, confError: string, portUnknown: boolean) => void;
 	}
 
 	let { protocol, fields = $bindable(), endpointPort, onpeerconf }: Props = $props();

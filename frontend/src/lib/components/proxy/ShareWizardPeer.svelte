@@ -25,11 +25,12 @@
 		/** `-connect` выбранного сервера: `127.0.0.1:<listenPort>`. */
 		onconnect: (addr: string) => void;
 		/**
-		 * `.conf` пира с подставленным Endpoint — он уезжает в ссылку абоненту, и
-		 * текст отказа, если `.conf` запросить не удалось: без него шаг 4 звал бы
-		 * вставить конфиг в ветке, где поля вставки нет.
+		 * `.conf` пира с подставленным Endpoint — он уезжает в ссылку абоненту;
+		 * текст отказа, если `.conf` запросить не удалось, и признак «порт клиента
+		 * неизвестен»: без них шаг 4 звал бы вставить конфиг там, где поля вставки
+		 * нет либо вставка ничего не решает.
 		 */
-		onpeerconf: (conf: string, confError: string) => void;
+		onpeerconf: (conf: string, confError: string, portUnknown: boolean) => void;
 	}
 
 	let { endpointPort, onconnect, onpeerconf }: Props = $props();
@@ -49,6 +50,8 @@
 	let fetchedConf = $state('');
 	/** Отказ запроса .conf: пир не Keenetic, вставлять руками некуда. */
 	let confError = $state('');
+	/** listen сервера не определился: `-connect` этого пира собрать не из чего. */
+	let listenUnknown = $state(false);
 
 	const options = $derived(buildRunningServerPeerDropdownOptions(snap));
 
@@ -70,7 +73,10 @@
 		const ok = Number.isInteger(localPort) && localPort > 0 && localPort <= 65535;
 		const conf = src && ok ? patchWgConfEndpoint(src, localPort) : '';
 		const err = confError;
-		untrack(() => onpeerconf(conf, err));
+		// WS-48: конфиг пира есть, а порта для Endpoint нет — либо его не ввели,
+		// либо не определился listen сервера. Вставка .conf тут ничего не чинит.
+		const portUnknown = listenUnknown || (!!src && !ok);
+		untrack(() => onpeerconf(conf, err, portUnknown));
 	});
 
 	async function pick(value: string) {
@@ -78,12 +84,16 @@
 		manualConf = '';
 		fetchedConf = '';
 		confError = '';
+		listenUnknown = false;
 		if (!value || !snap) return;
 		loading = true;
 		try {
 			const { kind, serverId, pubkey } = decodeServerPeerValue(value);
 			const listen = resolveServerListenPort(snap, kind, serverId);
 			if (!listen) {
+				// `onconnect` не звали: адрес остался от прошлого выбора, и ссылка
+				// собралась бы на чужой сервер. Причину уносим наверх (WS-48).
+				listenUnknown = true;
 				notifications.error('Не удалось определить listenPort сервера');
 				return;
 			}

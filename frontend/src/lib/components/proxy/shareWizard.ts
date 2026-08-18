@@ -54,15 +54,18 @@ export function nextSharePort(protocol: ProxyProtocol, used: number[] = []): num
 }
 
 /** Чего не хватило шагу 4 для ссылки: '' — ссылка собралась. */
-export type ShareLinkGap = '' | 'addr' | 'conf' | 'confFailed';
+export type ShareLinkGap = '' | 'addr' | 'conf' | 'confFailed' | 'port';
 
 /**
- * Почему ссылки нет после запуска (WS-44/WS-47).
+ * Почему ссылки нет после запуска (WS-44/WS-47/WS-48).
  *
  * `conf` — FreeTurn без `.conf` пира: ссылку собирать не из чего (пир заведён
  * в Keenetic OS, приватного ключа у нас нет), и вставить его есть куда.
  * `confFailed` — `.conf` не пришёл: запрос за ним отказал. Поля вставки в этой
  * ветке нет, звать «вставьте .conf» некуда — там печатается сам отказ запроса.
+ * `port` — порт клиента неизвестен (поле «Порт» пусто/невалидно либо listen
+ * сервера не определился): `.conf` есть откуда взять, но Endpoint в нём собрать
+ * не из чего, и звать «вставьте .conf» (WS-47) значит звать не туда.
  * `addr` — ссылку запрашивали, но она не собралась: адреса сервера нет.
  * Причины разные, и называть их одной строкой значит врать.
  */
@@ -71,17 +74,20 @@ export function shareLinkGap(o: {
 	peerConf: string;
 	/** Текст отказа запроса `.conf` пира; пусто — запрос не отказывал. */
 	confError?: string;
+	/** Порт клиента для Endpoint не известен — WS-48. */
+	portUnknown?: boolean;
 	link?: string;
 	linkQwdtt?: string;
 }): ShareLinkGap {
 	if (o.link?.trim() || o.linkQwdtt?.trim()) return '';
 	if (o.protocol !== 'freeturn' || o.peerConf.trim()) return 'addr';
-	return o.confError?.trim() ? 'confFailed' : 'conf';
+	if (o.confError?.trim()) return 'confFailed';
+	return o.portUnknown ? 'port' : 'conf';
 }
 
-/** Ссылку FreeTurn без `.conf` пира не собрать — по любой из двух причин. */
+/** Ссылку FreeTurn без `.conf` пира не собрать — ни по одной из трёх причин. */
 export function shareLinkNeedsConf(gap: ShareLinkGap): boolean {
-	return gap === 'conf' || gap === 'confFailed';
+	return gap === 'conf' || gap === 'confFailed' || gap === 'port';
 }
 
 /** Карточка протокола заблокирована: бейдж, подпись под карточками и (i). */

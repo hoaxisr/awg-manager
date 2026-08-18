@@ -172,9 +172,27 @@ describe('shareLinkGap: почему ссылки нет на шаге 4', () =>
 		).toBe('addr');
 	});
 
-	it('обе ветки без .conf запрещают собирать ссылку', () => {
+	it('WS-48: порт клиента неизвестен — три ветки без .conf разведены', () => {
+		// Поле вставки есть — зовём вставить (WS-47); порта нет — вставка ничего
+		// не решает (WS-48); запрос отказал — печатается сам отказ бэкенда.
+		const base = { protocol: 'freeturn' as const, peerConf: '' };
+		expect(shareLinkGap(base)).toBe('conf');
+		expect(shareLinkGap({ ...base, portUnknown: true })).toBe('port');
+		expect(shareLinkGap({ ...base, confError: 'сервер недоступен' })).toBe('confFailed');
+		// Отказ запроса конкретнее ненайденного порта: у него есть свой текст.
+		expect(
+			shareLinkGap({ ...base, portUnknown: true, confError: 'сервер недоступен' }),
+		).toBe('confFailed');
+		// .conf на руках — значит порт в Endpoint уже подставлен: причина в адресе.
+		expect(
+			shareLinkGap({ protocol: 'freeturn', peerConf: '[Interface]', portUnknown: true }),
+		).toBe('addr');
+	});
+
+	it('все ветки без .conf запрещают собирать ссылку', () => {
 		expect(shareLinkNeedsConf('conf')).toBe(true);
 		expect(shareLinkNeedsConf('confFailed')).toBe(true);
+		expect(shareLinkNeedsConf('port')).toBe(true);
 		expect(shareLinkNeedsConf('addr')).toBe(false);
 		expect(shareLinkNeedsConf('')).toBe(false);
 	});
