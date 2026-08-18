@@ -127,7 +127,7 @@ func normalizeSpec(spec []string) []string {
 // имени интерфейса в Spec расставляет построитель (hookQuote): хук и Go-код
 // обязаны ставить одно и то же правило.
 func (r Rule) HookLine() string {
-	check := strings.Join(append(append([]string{}, r.prefix()...), "-C", r.Chain), " ") + " " + strings.Join(r.Spec, " ")
+	check := strings.Join(r.CheckArgs(), " ")
 	insert := strings.Join(r.InsertArgs(), " ")
 	return "run " + hookQuoteIfaces(check) + " || run " + hookQuoteIfaces(insert)
 }

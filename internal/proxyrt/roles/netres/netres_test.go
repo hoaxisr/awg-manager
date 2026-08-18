@@ -446,6 +446,65 @@ func TestHookScriptRendersFromSameRules(t *testing.T) {
 	}
 }
 
+func TestHookLineIsRenderedFromCheckArgs(t *testing.T) {
+	// Носитель формы один: половина `-C` строки хука обязана БЫТЬ рендером
+	// CheckArgs, а не собранной рядом копией. Копия «побайтово такая же
+	// сегодня» — это ровно то состояние, из которого в 2.17.0 разъехались
+	// вставка и снос, и снос перестал удалять.
+	for _, r := range []Rule{
+		{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", "opkgtun19", "-j", "ACCEPT"}},
+		{Table: "nat", Chain: "POSTROUTING", Pos: 1, Spec: []string{"-s", "10.70.0.0/16",
+			"!", "-o", "opkgtun19", "-m", "comment", "--comment", Comment, "-j", "MASQUERADE"}},
+		{Table: "mangle", Chain: MSSChain, Spec: []string{"-s", "10.70.0.0/16",
+			"-j", "TCPMSS", "--clamp-mss-to-pmtu"}},
+	} {
+		want := "run " + hookQuoteIfaces(strings.Join(r.CheckArgs(), " ")) +
+			" || run " + hookQuoteIfaces(strings.Join(r.InsertArgs(), " "))
+		if got := r.HookLine(); got != want {
+			t.Fatalf("строка хука собрана мимо рендеров Rule:\n%q\nожидали\n%q", got, want)
+		}
+	}
+}
+
+func TestHookScriptCoversEveryTable(t *testing.T) {
+	// Диспетчер по $table — рукописный список; выпадение таблицы из него молча
+	// теряет ВСЕ её правила: движок ndm зовёт хук по каждой таблице отдельно,
+	// и ветки, которой нет, он не заметит.
+	groups := append(ForwardGroups([]string{"opkgtun19"}),
+		MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")...)
+	groups = append(groups, PolicyMarkGroup("opkgtun19", "0xffffd00"))
+	script := HookScript(groups)
+
+	for _, c := range []struct{ table, rule string }{
+		{"filter", `-C FORWARD -i "opkgtun19" -j ACCEPT`},
+		{"nat", `-t nat -C POSTROUTING -s 10.70.0.0/16 ! -o "opkgtun19"`},
+		{"mangle", `-t mangle -I PREROUTING 1 -i "opkgtun19" -j MARK`},
+	} {
+		if !strings.Contains(script, c.table+")\n") {
+			t.Fatalf("в диспетчере хука нет ветки %s:\n%s", c.table, script)
+		}
+		if !strings.Contains(script, c.rule) {
+			t.Fatalf("правила таблицы %s не доехали в хук:\n%s", c.table, script)
+		}
+	}
+}
+
+func TestHookAllOrNoneInsertsInReverseOrder(t *testing.T) {
+	// F3 (PR #697): итоговый порядок в цепочке — MARK, затем CONNMARK. Обе
+	// вставки идут на позицию 1, поэтому вставляться они обязаны в ОБРАТНОМ
+	// порядке декларации: CONNMARK первым. Инверсия цикла даёт save-mark,
+	// пишущий ноль, — и хук чинил бы это на каждой перезаписи таблиц.
+	script := HookScript([]Group{PolicyMarkGroup("opkgtun19", "0xffffd00")})
+	connmark := strings.Index(script, `run -t mangle -I PREROUTING 1 -i "opkgtun19" -j CONNMARK`)
+	mark := strings.Index(script, `run -t mangle -I PREROUTING 1 -i "opkgtun19" -j MARK`)
+	if connmark < 0 || mark < 0 {
+		t.Fatalf("вставки пары не найдены (%d, %d):\n%s", connmark, mark, script)
+	}
+	if connmark > mark {
+		t.Fatalf("CONNMARK обязан вставляться первым — иначе в цепочке он окажется выше MARK:\n%s", script)
+	}
+}
+
 func TestHookResourceWritesAndRefreshes(t *testing.T) {
 	dir := t.TempDir()
 	var ran []string
