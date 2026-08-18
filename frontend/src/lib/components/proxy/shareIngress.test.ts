@@ -19,6 +19,13 @@ describe('wdttIngressRefs', () => {
 	it('без имён — легаси-умолчания бэкенда', () => {
 		expect(wdttIngressRefs({} as WdttServerConfig)).toEqual(['iface:wdtt0', 'iface:wdttraw0']);
 	});
+
+	it('без статуса raw-имя берётся из конфига, как считает бэкенд', () => {
+		expect(wdttIngressRefs({ ...cfg, rawIface: 'opkgtun18' })).toEqual([
+			'iface:opkgtun17',
+			'iface:opkgtun18',
+		]);
+	});
 });
 
 describe('ingressOn', () => {
@@ -45,6 +52,26 @@ describe('nextIngressInterfaces', () => {
 		expect(nextIngressInterfaces(['iface:opkgtun17'], refs, true)).toEqual([
 			'iface:opkgtun17',
 			'iface:opkgtun18',
+		]);
+	});
+
+	it('снимает мёртвую легаси-ссылку своего сервера — и на включении, и на выключении', () => {
+		const refs = wdttIngressRefs(cfg, status);
+		expect(nextIngressInterfaces(['iface:wdttraw0', 'iface:nwg3'], refs, true)).toEqual([
+			'iface:nwg3',
+			'iface:opkgtun17',
+			'iface:opkgtun18',
+		]);
+		expect(
+			nextIngressInterfaces(['iface:wdtt0', 'iface:wdttraw0', 'iface:opkgtun17'], refs, false),
+		).toEqual([]);
+	});
+
+	it('легаси-имя не трогается, когда оно и есть текущее', () => {
+		const refs = wdttIngressRefs(cfg, { rawIface: 'wdttraw0' } as WdttProcessStatus);
+		expect(nextIngressInterfaces(['iface:wdttraw0'], refs, true)).toEqual([
+			'iface:wdttraw0',
+			'iface:opkgtun17',
 		]);
 	});
 
