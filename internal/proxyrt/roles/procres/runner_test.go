@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 )
 
 // writeScript кладёт исполняемый скрипт — настоящий дочерний процесс, не мок.
@@ -45,6 +47,42 @@ func TestRunnerStartWritesPidAndAliveSeesChild(t *testing.T) {
 	got, ok := r.AlivePID()
 	if !ok || got != pid {
 		t.Fatalf("AlivePID = %d,%v; ожидали живой %d", got, ok, pid)
+	}
+}
+
+// Опознание своего ребёнка не должно опираться на /proc. Сразу после execve
+// ядро уже закрыло CLOEXEC-трубу (этим разблокируется cmd.Start), но ещё не
+// выставило mm->arg_start, и /proc/<pid>/cmdline читается ПУСТЫМ: fail-closed
+// childproc.MatchesBinary в этом окне (~50 мкс, замер до правки — 26 падений
+// TestRunnerStartWritesPidAndAliveSeesChild из 200) объявляет живого ребёнка
+// чужим, и наблюдение ресурса process хоронит работающий прокси.
+//
+// Гонку в лоб тест не ловит — ловит её свойство, которым она лечится: pid,
+// выданный нашим же Start, признаётся нашим независимо от того, что говорит
+// /proc. Ребёнок здесь ПОДМЕНЯЕТ себя через exec, argv0 становится "sleep", и
+// сверка с /bin/sh не проходит никогда — так проверка детерминирована, а не
+// зависит от того, успел ли тест попасть в микросекундное окно.
+func TestRunnerAliveTrustsOwnChildWithoutProc(t *testing.T) {
+	r := shellRunner(t, t.TempDir())
+	pid, err := r.Start(context.Background(), []string{"-c", "exec sleep 30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Stop(context.Background(), pid) }()
+
+	// Ждём саму подмену: до неё ребёнок ещё sh, и проверка была бы пустой.
+	deadline := time.Now().Add(2 * time.Second)
+	for !childproc.MatchesAnyBinary(pid, "sleep") {
+		if time.Now().After(deadline) {
+			t.Fatal("предпосылка теста сломана: argv0 так и не стал sleep")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if childproc.MatchesBinary(pid, "/bin/sh") {
+		t.Fatal("предпосылка теста сломана: argv0 обязан перестать быть sh")
+	}
+	if got, ok := r.AlivePID(); !ok || got != pid {
+		t.Fatalf("AlivePID = %d,%v; свой ребёнок %d обязан опознаваться без /proc", got, ok, pid)
 	}
 }
 

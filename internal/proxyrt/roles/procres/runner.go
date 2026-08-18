@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -26,6 +27,12 @@ type Runner struct {
 	binary  string
 	pidPath string
 	env     []string
+
+	// mu защищает own — pid ребёнка, которого породили МЫ и которого ещё не
+	// схоронил reaper. Пишет его Start и та же горутина-reaper, читает
+	// AlivePID из воркера инстанса.
+	mu  sync.Mutex
+	own int
 }
 
 func NewRunner(binary, pidPath string, env []string) *Runner {
@@ -68,9 +75,21 @@ func (r *Runner) Start(ctx context.Context, args []string) (int, error) {
 		return 0, fmt.Errorf("start %s: %w", filepath.Base(r.binary), err)
 	}
 	pid := cmd.Process.Pid
+	r.mu.Lock()
+	r.own = pid
+	r.mu.Unlock()
 	// Reaper: без Wait ребёнок остался бы зомби. Статус никому не нужен —
 	// смерть детектится pid-проверкой и закрытием управляющего сокета.
-	go func() { _, _ = cmd.Process.Wait() }()
+	// Он же снимает опознание по own: до Wait ядро держит номер за нашим
+	// зомби и переиспользовать его не может, после — может.
+	go func() {
+		_, _ = cmd.Process.Wait()
+		r.mu.Lock()
+		if r.own == pid {
+			r.own = 0
+		}
+		r.mu.Unlock()
+	}()
 	if err := os.WriteFile(r.pidPath, []byte(strconv.Itoa(pid)), 0o644); err != nil {
 		_ = childproc.TerminateGroup(pid)
 		return 0, fmt.Errorf("pid-файл: %w", err)
@@ -103,6 +122,14 @@ func (r *Runner) Stop(ctx context.Context, pid int) error {
 
 // AlivePID — жив ли процесс из pid-файла И наш ли он. Сверка с бинарём
 // обязательна: pid-файл переживает ребут, номер мог достаться постороннему.
+//
+// Своего непохороненного ребёнка опознаём по own, НЕ по /proc: сразу после
+// execve ядро успевает закрыть CLOEXEC-трубу (этим Start и разблокируется),
+// но ещё не выставило mm->arg_start, и /proc/<pid>/cmdline читается ПУСТЫМ —
+// fail-closed MatchesBinary в этом окне (замер: ~50 мкс на x86) объявляет
+// живого ребёнка чужим. Номер за нашим ребёнком держит ядро, пока reaper его
+// не схоронил, поэтому опознание по own честное — тот же приём, что
+// `tracked ||` в internal/wdtt.process.pidIsOurs.
 func (r *Runner) AlivePID() (int, bool) {
 	b, err := os.ReadFile(r.pidPath)
 	if err != nil {
@@ -112,8 +139,17 @@ func (r *Runner) AlivePID() (int, bool) {
 	if err != nil || pid <= 0 {
 		return 0, false
 	}
-	if !childproc.IsAlive(pid) || !childproc.MatchesBinary(pid, r.binary) {
+	if !childproc.IsAlive(pid) || !r.isOurs(pid) {
 		return pid, false
 	}
 	return pid, true
+}
+
+// isOurs — наш ли это процесс: свой непохороненный ребёнок либо подтверждённый
+// по /proc унаследованный pid.
+func (r *Runner) isOurs(pid int) bool {
+	r.mu.Lock()
+	own := r.own
+	r.mu.Unlock()
+	return pid == own || childproc.MatchesBinary(pid, r.binary)
 }

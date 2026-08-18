@@ -21,8 +21,17 @@ func MatchesBinary(pid int, binary string) bool {
 	base, ok := cmdlineArgv0Base(pid)
 	if !ok {
 		// Личность не подтверждается: pid исчез между kill(0) и чтением либо
-		// cmdline недоступен, либо cmdline пуст (зомби). Fail-closed —
-		// считаем, что это не наш процесс.
+		// cmdline недоступен, либо cmdline пуст. Fail-closed — считаем, что
+		// это не наш процесс.
+		//
+		// Пустой cmdline — это НЕ только зомби. Те же несколько десятков
+		// микросекунд он пуст у процесса, который ТОЛЬКО ЧТО прошёл execve:
+		// ядро закрывает CLOEXEC-трубу (этим разблокируется fork/exec
+		// родителя) в begin_new_exec, а mm->arg_start выставляет позже, и
+		// всё это время /proc/<pid>/cmdline читается нулевой длины.
+		// Опознавать этой функцией СВОЕГО только что порождённого ребёнка
+		// поэтому нельзя — своего опознают по pid из Start, пока reaper его
+		// не схоронил (см. procres.Runner.AlivePID, wdtt.process.pidIsOurs).
 		return false
 	}
 	return base == filepath.Base(binary)
