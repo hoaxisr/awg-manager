@@ -475,7 +475,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Service handles runtime RCI based on the diff between existing
 	// (pre-merge snapshot) and req (post-merge state). Storage save
-	// happens AFTER service runs — handler is the sole writer. Fail-closed:
+	// happens AFTER service runs. The store has many writers besides this
+	// handler (orchestrator, pingcheck, cleanup), so runtime fields are
+	// re-read right before the save — see below. Fail-closed:
 	// if the service can't apply the change to the running interface,
 	// we don't persist it either, otherwise on-disk state would diverge
 	// from the live state.
@@ -483,6 +485,22 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("update", req.Name, "Service update failed: "+err.Error())
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
+	}
+
+	// svc.Update выше — секунды RCI-обменов; оркестратор и pingcheck за это
+	// время могли переписать runtime-поля. Переносим их из свежего чтения,
+	// а не из снапшота existing, снятого до svc.Update. Окно сужается до
+	// микросекунд; полный фикс (одна операция под локом стора) — отдельная
+	// задача.
+	if fresh, err := h.store.Get(id); err == nil {
+		req.Enabled = fresh.Enabled
+		req.ActiveWAN = fresh.ActiveWAN
+		req.StartedAt = fresh.StartedAt
+		// Кэш резолва валиден только для endpoint'а, под которым получен —
+		// то же условие, что при merge выше.
+		if req.Peer.Endpoint == fresh.Peer.Endpoint {
+			req.ResolvedEndpointIP = fresh.ResolvedEndpointIP
+		}
 	}
 
 	// Save updated tunnel

@@ -330,3 +330,41 @@ func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {
 		t.Fatalf("StartedAt затёрт: %q", saved.StartedAt)
 	}
 }
+
+// Красный до фикса: пока svc.Update «ходит в RCI», оркестратор записал
+// новые runtime-поля; хэндлер сохраняет затем снапшот existing и затирает их.
+func TestTunnelUpdate_KeepsConcurrentRuntimeWrites(t *testing.T) {
+	stub := &stubTunnelSvc{}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Save(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Enabled: true,
+		StartedAt: "2026-08-18T10:00:00Z", ActiveWAN: "ISP",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	stub.updateFn = func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+		fresh, err := store.Get("awg10")
+		if err != nil {
+			return err
+		}
+		fresh.ActiveWAN = "Wireguard2"           // WAN-failover в окне
+		fresh.StartedAt = "2026-08-18T11:00:00Z" // рестарт pingcheck'ом
+		fresh.Enabled = false                    // suspend оркестратором
+		return store.Save(fresh)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"t1"}`))
+	h.Update(httptest.NewRecorder(), req)
+
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.ActiveWAN != "Wireguard2" || saved.StartedAt != "2026-08-18T11:00:00Z" || saved.Enabled {
+		t.Fatalf("runtime-поля затёрты снапшотом existing: ActiveWAN=%q StartedAt=%q Enabled=%v",
+			saved.ActiveWAN, saved.StartedAt, saved.Enabled)
+	}
+}
