@@ -149,7 +149,14 @@ func (h *Hook) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (h *Hook) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "remove":
-		return os.Remove(h.path)
+		// Идемпотентность: файла уже нет — работа сделана, а не провалена
+		// (старый removeWdttForwardNetfilterHook глотал os.Remove по тому же
+		// доводу). Иначе гонка «хук снял кто-то другой» роняет инстанс в
+		// Failed из-за уже достигнутого состояния.
+		if err := os.Remove(h.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	case "write":
 		if err := storage.AtomicWritePerm(h.path, []byte(HookScript(h.groups)), 0o755); err != nil {
 			return err

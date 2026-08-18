@@ -95,13 +95,32 @@ func listMarked(ctx context.Context, ipt IPT, table, chain, comment string) ([]R
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		spec := strings.Fields(strings.TrimPrefix(line, prefix))
+		spec := normalizeSpec(strings.Fields(strings.TrimPrefix(line, prefix)))
 		rule := Rule{Table: table, Chain: chain, Spec: spec}
 		if rule.CommentTag() == comment {
 			rules = append(rules, rule)
 		}
 	}
 	return rules, nil
+}
+
+// normalizeSpec приводит токены строки `-S` к той форме, которой мы правило
+// СТАВИМ. Сегодня различие ровно одно: часть сборок iptables печатает значение
+// `--comment` в кавычках (`--comment "AWGM_WDTT"`), часть — голым словом; на
+// прошивке 4.3.8 mips (прогон 2026-08-18) кавычек нет, кавыченная форма
+// зафиксирована в этом же репозитории для sb-router
+// (internal/singbox/router/iptables.go:1328 и тест, запрещающий quoted-only
+// матч). Кавычки — артефакт печати, не часть значения, и снимать их надо
+// именно при разборе, а не при сравнении метки: тот же токен идёт в Rule.Key
+// (иначе своё живое правило опознаётся сиротой — churn каждые 15 с) и в
+// DeleteArgs (иначе `-D` с кавычками не находит правило).
+func normalizeSpec(spec []string) []string {
+	for i, tok := range spec {
+		if tok == "--comment" && i+1 < len(spec) {
+			spec[i+1] = strings.Trim(spec[i+1], `"`)
+		}
+	}
+	return spec
 }
 
 // HookLine — строка netfilter.d-хука: `run -C … || run -I …`. Кавычки вокруг

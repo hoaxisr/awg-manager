@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -182,17 +183,13 @@ func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 		// оно потеряно навсегда (разность желаемых его больше не даст).
 		var firstErr error
 		for key, rule := range r.doomed {
-			if r.ipt.Run(ctx, rule.CheckArgs()...) != nil {
-				delete(r.doomed, key) // правила уже нет
-				continue
+			gone, err := r.deleteAll(ctx, rule)
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
-			if err := r.ipt.Run(ctx, rule.DeleteArgs()...); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
+			if gone {
+				delete(r.doomed, key)
 			}
-			delete(r.doomed, key)
 		}
 		if firstErr != nil {
 			return firstErr
@@ -218,6 +215,49 @@ func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
+}
+
+// sweepPasses — потолок проходов сноса ОДНОГО правила за шаг; паритет пяти
+// проходов старого NAT-ресинка (entware_nat_linux.go:316).
+const sweepPasses = 5
+
+// deleteAll сносит ВСЕ копии правила. `iptables -D` снимает ровно одну, а
+// копий бывает больше (дубль от старого кода, второй вставки хука или
+// прежнего запуска демона): один снос и выброс ключа оставлял вторую копию
+// навсегда — разность желаемых её больше не даёт (I-3).
+//
+// gone=true возвращается только когда правила в цепочке достоверно нет. Отказ
+// `-C`, из которого «правила нет» НЕ следует (занят xtables-lock, движок ndm
+// переписывает таблицы, exec не запустился), оставляет правило в ведомости до
+// следующего прохода — иначе оно теряется навсегда так же, как теряло M-2 на
+// отказе `-D` (I-4).
+func (r *RuleSet) deleteAll(ctx context.Context, rule Rule) (bool, error) {
+	for pass := 0; pass < sweepPasses; pass++ {
+		if err := r.ipt.Run(ctx, rule.CheckArgs()...); err != nil {
+			return ruleAbsent(err), nil
+		}
+		if err := r.ipt.Run(ctx, rule.DeleteArgs()...); err != nil {
+			return false, err
+		}
+	}
+	// Потолок исчерпан — правило остаётся в ведомости до следующего sweep.
+	return false, nil
+}
+
+// ruleAbsent отличает «такого правила нет» от отказа, из которого этого не
+// следует. Кода возврата в ошибке нет: прод-исполнитель отдаёт её строкой
+// (sys/iptables.Run → exec.FormatError со stderr), поэтому судим по тексту
+// самого iptables. Всё неопознанное считается транзиентным: цена ошибки
+// несимметрична — лишний проход дешевле правила, потерянного из ведомости.
+func ruleAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	// Первое — ответ `-C` на несуществующее правило, второе — на
+	// несуществующую цепочку или незагруженный матч. Сносить нечего в обоих.
+	return strings.Contains(msg, "does a matching rule exist") ||
+		strings.Contains(msg, "no chain/target/match by that name")
 }
 
 func (r *RuleSet) RecheckAfter() time.Duration {

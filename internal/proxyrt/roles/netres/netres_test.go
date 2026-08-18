@@ -14,6 +14,12 @@ import (
 type fakeIPT struct {
 	chains     map[string][]string // "table/chain" -> rules
 	failDelete bool                // симуляция отказа iptables на -D (M-2)
+	failCheck  bool                // транзиентный отказ -C: занят xtables-lock (I-4)
+	// quoteComment — прошивка, чей `iptables -S` печатает значение --comment
+	// в кавычках. Обе формы реальны: на 4.3.8 mips -S печатает БЕЗ кавычек,
+	// кавыченная зафиксирована в этом же репозитории
+	// (internal/singbox/router/iptables.go:1328 и тест рядом с ним).
+	quoteComment bool
 }
 
 func newFakeIPT() *fakeIPT {
@@ -27,6 +33,12 @@ func newFakeIPT() *fakeIPT {
 type iptNotFound struct{}
 
 func (iptNotFound) Error() string { return "iptables: no chain/target/match by that name" }
+
+// iptTransient — отказ, из которого НЕ следует «правила нет»: занятый
+// xtables-lock, перезапись таблиц движком ndm, не запустившийся exec.
+type iptTransient struct{}
+
+func (iptTransient) Error() string { return "iptables: resource temporarily unavailable" }
 
 func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 	table := "filter"
@@ -50,6 +62,9 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 	rule := strings.Join(rest, " ")
 	switch op {
 	case "-C":
+		if f.failCheck {
+			return iptTransient{}
+		}
 		for _, r := range f.chains[key] {
 			if r == rule {
 				return nil
@@ -97,9 +112,34 @@ func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
 	key := args[1] + "/" + args[3]
 	var b strings.Builder
 	for _, r := range f.chains[key] {
+		if f.quoteComment {
+			r = quoteCommentValue(r)
+		}
 		b.WriteString("-A " + args[3] + " " + r + "\n")
 	}
 	return b.String(), nil
+}
+
+// quoteCommentValue — печать метки в кавычках, как это делает часть сборок
+// iptables в выводе `-S`.
+func quoteCommentValue(rule string) string {
+	fields := strings.Fields(rule)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "--comment" {
+			fields[i+1] = `"` + fields[i+1] + `"`
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
+func (f *fakeIPT) count(key, rule string) int {
+	n := 0
+	for _, r := range f.chains[key] {
+		if r == rule {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeIPT) has(key, substr string) bool {
@@ -503,6 +543,125 @@ func TestInputPortClosesOldPortOnChange(t *testing.T) {
 	}
 	if !fw.has(56100, "udp") {
 		t.Fatal("новый порт не открыт")
+	}
+}
+
+func TestRuleSetAdoptsMarkedWhenCommentQuoted(t *testing.T) {
+	// C2: часть сборок iptables печатает значение --comment в выводе `-S`
+	// в кавычках (`--comment "AWGM_WDTT"`), часть — голым словом. Кавычки —
+	// артефакт печати, не часть значения. Без их снятия усыновление-по-метке
+	// выключается НЕМО целиком: метка не совпадает с желаемой, правило
+	// прежнего запуска живёт вечно, а движок ставит вторую копию рядом.
+	// В репозитории эта развилка уже зафиксирована для sb-router
+	// (internal/singbox/router/iptables.go:1328).
+	ipt := newFakeIPT()
+	ipt.quoteComment = true
+	ipt.chains["nat/POSTROUTING"] = []string{
+		// full-форма от прежней жизни демона.
+		"-s 10.70.0.0/16 ! -o opkgtun19 -m comment --comment AWGM_WDTT -j MASQUERADE",
+		// чужое правило без нашей метки — трогать нельзя.
+		"-s 192.168.1.0/24 -j MASQUERADE",
+	}
+	rs := NewRuleSet("nat_rules", ipt, nil) // свежий ресурс = рестарт демона
+	rs.SetDesired(StaticGroups(MasqGroups(
+		[]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
+	driveRS(t, rs)
+
+	for _, r := range ipt.chains["nat/POSTROUTING"] {
+		if strings.Contains(r, "! -o opkgtun19") {
+			t.Fatalf("метка в кавычках ослепила усыновление: %v", ipt.chains["nat/POSTROUTING"])
+		}
+	}
+	if !ipt.has("nat/POSTROUTING", "-s 192.168.1.0/24 -j MASQUERADE") {
+		t.Fatal("чужое правило без метки снесено — усыновление вышло за владение")
+	}
+	want := "-s 10.70.0.0/16 -o eth3 -m comment --comment AWGM_WDTT -j MASQUERADE"
+	if ipt.count("nat/POSTROUTING", want) != 1 {
+		t.Fatalf("желаемое обязано стоять ровно в одном экземпляре: %v", ipt.chains["nat/POSTROUTING"])
+	}
+	// Ключ живого правила обязан совпасть с ключом желаемого: иначе своё же
+	// правило каждый проход опознаётся сиротой — снос+вставка каждые 15 с.
+	obs, err := rs.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := rs.Plan(obs); len(steps) != 0 {
+		t.Fatalf("кавыченная метка гоняет churn: %v (stale=%s)", steps, obs.Attrs["stale"])
+	}
+}
+
+func TestSweepRemovesDuplicateUnmarkedRule(t *testing.T) {
+	// I-3: копий непомеченного правила может быть больше одной (дубль от
+	// старого кода, второй вставки хука или прежнего запуска). `iptables -D`
+	// снимает РОВНО ОДНУ; разность желаемых второй копии больше не даст, и
+	// она осталась бы навсегда. Старый ресинк гонял до 5 проходов
+	// (entware_nat_linux.go:316).
+	const dup = "-i opkgtun19 -j ACCEPT"
+	ipt := newFakeIPT()
+	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	driveRS(t, rs)
+	// Вторая копия того же правила рядом.
+	ipt.chains["filter/FORWARD"] = append([]string{dup}, ipt.chains["filter/FORWARD"]...)
+	if ipt.count("filter/FORWARD", dup) != 2 {
+		t.Fatalf("фикстура: копий обязано быть две: %v", ipt.chains["filter/FORWARD"])
+	}
+
+	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+	driveRS(t, rs)
+
+	if n := ipt.count("filter/FORWARD", dup); n != 0 {
+		t.Fatalf("копий правила прежнего желаемого осталось %d: %v", n, ipt.chains["filter/FORWARD"])
+	}
+}
+
+func TestSweepKeepsRuleOnTransientCheckFailure(t *testing.T) {
+	// I-4: отказ `-C` в sweep трактовался как «правила уже нет» и выбрасывал
+	// его из ведомости навсегда. Но `-C` отказывает и транзиентно: движок ndm
+	// переписывает таблицы 18-21 раз на flap, а `-w` берёт xtables-lock.
+	// M-2 закрыл только отказ `-D`.
+	ipt := newFakeIPT()
+	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	driveRS(t, rs)
+	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+
+	obs, err := rs.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sweep *proxyrt.Step
+	steps := rs.Plan(obs)
+	for i := range steps {
+		if steps[i].Op == "sweep" {
+			sweep = &steps[i]
+		}
+	}
+	if sweep == nil {
+		t.Fatalf("смена интерфейса обязана давать шаг sweep: %v", obs.Attrs)
+	}
+	// Отказ проверки ровно на время sweep.
+	ipt.failCheck = true
+	_ = rs.Apply(context.Background(), *sweep)
+	ipt.failCheck = false
+
+	driveRS(t, rs)
+	if ipt.has("filter/FORWARD", "-i opkgtun19 -j ACCEPT") {
+		t.Fatalf("правило потеряно из ведомости после транзиентного отказа -C: %v",
+			ipt.chains["filter/FORWARD"])
+	}
+}
+
+func TestHookRemoveIsIdempotent(t *testing.T) {
+	// M-4: шаг remove на уже отсутствующем файле — это выполненная работа, а
+	// не отказ (старый removeWdttForwardNetfilterHook глотал os.Remove).
+	// Иначе гонка «файл снял кто-то другой» роняет инстанс в Failed.
+	dir := t.TempDir()
+	h := NewHook("netfilter_hook", dir+"/61-awgm-wdtt-forward.sh",
+		func(context.Context, string, string) error { return nil })
+	step := proxyrt.Step{Resource: "netfilter_hook", Op: "remove"}
+	if err := h.Apply(context.Background(), step); err != nil {
+		t.Fatalf("remove на отсутствующем файле обязан быть no-op: %v", err)
 	}
 }
 
