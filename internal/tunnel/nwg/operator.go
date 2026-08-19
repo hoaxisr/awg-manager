@@ -1214,7 +1214,7 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 	// awg3 is included here so the extended block (S3/S4, I1-I5) still reaches
 	// NDMS. Firmware ASC does not model the awg3-specific device params, so
 	// those are simply not sent — the kernel backend (awg setconf) applies them.
-	if ver == "awg1.5" || ver == "awg2.0" || ver == "awg3" {
+	if ver == "awg1.5" || ver == "awg2.0" || ver == "awg3" || ver == "awg3.1" {
 		params := ndms.ASCParamsExtended{
 			ASCParams: ndms.ASCParams{
 				Jc: iface.Jc, Jmin: iface.Jmin, Jmax: iface.Jmax,

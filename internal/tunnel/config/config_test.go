@@ -1223,13 +1223,28 @@ func TestParse_AWG31DisableCookies(t *testing.T) {
 // tunnel classified as plain: both flags printed as off must leave it alone.
 func TestClassifyAWGVersion_AWG31Flags(t *testing.T) {
 	plain := &storage.AWGInterface{}
-	if got := ClassifyAWGVersion(plain); got == "awg3" {
+	if got := ClassifyAWGVersion(plain); got != "wg" {
 		t.Fatalf("an interface with both flags off classified as %q", got)
 	}
 	withFlag := &storage.AWGInterface{
 		AWGObfuscation: storage.AWGObfuscation{RandomTrailers: true},
 	}
-	if got := ClassifyAWGVersion(withFlag); got != "awg3" {
-		t.Fatalf("RandomTrailers on classified as %q, want awg3", got)
+	if got := ClassifyAWGVersion(withFlag); got != "awg3.1" {
+		t.Fatalf("RandomTrailers on classified as %q, want awg3.1", got)
+	}
+	withCookies := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{DisableCookies: true},
+	}
+	if got := ClassifyAWGVersion(withCookies); got != "awg3.1" {
+		t.Fatalf("DisableCookies on classified as %q, want awg3.1", got)
+	}
+	// A 3.0 param alongside a flag is still a 3.1 config: 3.1 is a superset.
+	mixed := &storage.AWGInterface{
+		AWGObfuscation: storage.AWGObfuscation{
+			HeaderProtectionKey: "aKey=", RandomTrailers: true,
+		},
+	}
+	if got := ClassifyAWGVersion(mixed); got != "awg3.1" {
+		t.Fatalf("HeaderProtectionKey + RandomTrailers classified as %q, want awg3.1", got)
 	}
 }

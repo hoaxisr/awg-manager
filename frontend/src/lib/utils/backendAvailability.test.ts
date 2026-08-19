@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nativewgUnavailableHint, supportsAwg3, supportsAwg31 } from './backendAvailability';
+import { nativewgUnavailableHint, supportsAwg3 } from './backendAvailability';
 
 describe('nativewgUnavailableHint', () => {
 	it('explains the missing WireGuard component', () => {
@@ -29,22 +29,3 @@ describe('supportsAwg3', () => {
 	});
 });
 
-describe('supportsAwg31', () => {
-	it('rejects 3.0, which supportsAwg3 accepts', () => {
-		expect(supportsAwg3('3.0.20260805')).toBe(true);
-		expect(supportsAwg31('3.0.20260805')).toBe(false);
-	});
-
-	it('accepts 3.1 and above', () => {
-		expect(supportsAwg31('3.1.20260812')).toBe(true);
-		expect(supportsAwg31('3.2.20270101')).toBe(true);
-		expect(supportsAwg31('4.0.20270101')).toBe(true);
-	});
-
-	it('rejects older modules, a missing one and garbage', () => {
-		expect(supportsAwg31('1.0.20251009')).toBe(false);
-		expect(supportsAwg31('')).toBe(false);
-		expect(supportsAwg31(undefined)).toBe(false);
-		expect(supportsAwg31('unknown')).toBe(false);
-	});
-});

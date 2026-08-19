@@ -119,7 +119,7 @@ export interface TunnelListItem {
 	rxBytes?: number;
 	txBytes?: number;
 	lastHandshake?: string;
-	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3';
+	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3' | 'awg3.1';
 	mtu?: number;
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';

@@ -21,10 +21,19 @@ function hasAnyAwg3Param(params: ASCParams): boolean {
 	);
 }
 
-/** Mirrors backend config.ClassifyAWGVersion — AWG 3.0 → 2.0 → 1.5 → 1.0 → WG. */
+function hasAnyAwg31Param(params: ASCParams): boolean {
+	const ext = params as ASCParamsExtended;
+	return !!(ext.randomTrailers || ext.disableCookies);
+}
+
+/** Mirrors backend config.ClassifyAWGVersion — AWG 3.1 → 3.0 → 2.0 → 1.5 → 1.0 → WG. */
 export function classifyAwgVersionFromAsc(params: ASCParams | null | undefined): AwgValue {
 	if (!params) return 'wg';
 
+	// AWG 3.1 is a superset of 3.0, so its flags outrank the 3.0 device params.
+	if (hasAnyAwg31Param(params)) {
+		return 'awg3.1';
+	}
 	// AWG 3.0 outranks the rest — its device params sit on top of the obfuscation.
 	if (hasAnyAwg3Param(params)) {
 		return 'awg3';
