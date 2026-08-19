@@ -40,6 +40,7 @@ type Service interface {
 	// ListBindableInterfaces returns interfaces a user can bind a direct
 	// outbound to (all interfaces minus auto-managed AWG/WG ones).
 	ListBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
+	ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
 
 	// ListIngressEligibleInterfaces returns interfaces eligible for
 	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
@@ -197,6 +198,10 @@ type WANInterfaceLister interface {
 // awgoutbounds auto-managed set). Optional dep; nil = no existence check.
 type BindableInterfaceLister interface {
 	ListBindable(ctx context.Context) ([]WANInterfaceInfo, error)
+	// ListAllBindable — то же множество, но БЕЗ вычитания интерфейсов, уже
+	// занятых direct-outbound'ом: подписки и одиночные туннели делят
+	// интерфейс с direct-выходом свободно (#709).
+	ListAllBindable(ctx context.Context) ([]WANInterfaceInfo, error)
 }
 
 // IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в

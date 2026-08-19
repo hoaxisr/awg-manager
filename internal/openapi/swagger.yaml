@@ -13862,8 +13862,15 @@ paths:
   /singbox/router/bindable-interfaces:
     get:
       description: Returns router interfaces (minus our own and AWG/WG auto-covered)
-        that a direct outbound can bind to. Fields id and priority are not populated
-        for this endpoint (only name, label, up are meaningful).
+        that a direct outbound can bind to. With scope=all the interfaces already
+        taken by a direct outbound are kept — subscriptions and manual tunnels may
+        share them. Fields id and priority are not populated for this endpoint (only
+        name, label, up are meaningful).
+      parameters:
+      - description: all — keep interfaces already bound by a direct outbound
+        in: query
+        name: scope
+        type: string
       produces:
       - application/json
       responses:

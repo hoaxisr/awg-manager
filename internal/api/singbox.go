@@ -173,6 +173,25 @@ func (h *SingboxHandler) SetBindValidator(validator func(ctx context.Context, na
 	h.bindValidator = validator
 }
 
+// validateOutboundBind rejects an outbound whose bind_interface is not in the
+// router's bindable catalog. No validator wired (tests / minimal bootstrap) —
+// no check, mirroring the router service.
+func (h *SingboxHandler) validateOutboundBind(ctx context.Context, raw json.RawMessage) error {
+	if h.bindValidator == nil || len(raw) == 0 {
+		return nil
+	}
+	var peek struct {
+		BindInterface string `json:"bind_interface"`
+	}
+	if err := json.Unmarshal(raw, &peek); err != nil || peek.BindInterface == "" {
+		return nil
+	}
+	if err := h.bindValidator(ctx, peek.BindInterface); err != nil {
+		return fmt.Errorf("invalid bind_interface: %w", err)
+	}
+	return nil
+}
+
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
 // sing-box tunnel deletion (refuse when tag is still in a composite/rule).
 func (h *SingboxHandler) SetOutboundRefCheckers(dp tunnelservice.DeviceProxyRefChecker, r tunnelservice.RouterRefChecker) {
@@ -487,18 +506,11 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.bindValidator != nil {
-		batch := singbox.ParseTunnelLinksInput(body.Links)
-		for _, p := range batch.Outbounds {
-			var peek struct {
-				BindInterface string `json:"bind_interface"`
-			}
-			if err := json.Unmarshal(p.Outbound, &peek); err == nil && peek.BindInterface != "" {
-				if err := h.bindValidator(r.Context(), peek.BindInterface); err != nil {
-					response.BadRequest(w, fmt.Sprintf("invalid bind_interface: %v", err))
-					return
-				}
-			}
+	batch := singbox.ParseTunnelLinksInput(body.Links)
+	for _, p := range batch.Outbounds {
+		if err := h.validateOutboundBind(r.Context(), p.Outbound); err != nil {
+			response.BadRequest(w, err.Error())
+			return
 		}
 	}
 
@@ -637,16 +649,9 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.bindValidator != nil {
-		var peek struct {
-			BindInterface string `json:"bind_interface"`
-		}
-		if err := json.Unmarshal(body.Outbound, &peek); err == nil && peek.BindInterface != "" {
-			if err := h.bindValidator(r.Context(), peek.BindInterface); err != nil {
-				response.BadRequest(w, fmt.Sprintf("invalid bind_interface: %v", err))
-				return
-			}
-		}
+	if err := h.validateOutboundBind(r.Context(), body.Outbound); err != nil {
+		response.BadRequest(w, err.Error())
+		return
 	}
 
 	h.log.Info("single-update", tag, "requested via API")

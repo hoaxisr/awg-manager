@@ -28,7 +28,7 @@
 
 	onMount(() => {
 		void api
-			.singboxRouterListBindableInterfaces()
+			.singboxRouterListBindableInterfaces('all')
 			.then((list) => {
 				bindables = list;
 			})

@@ -85,6 +85,9 @@ func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInte
 func (m *mockRouterSvc) ListBindableInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return []router.WANInterfaceInfo{{Name: "ipsec0", Label: "IPSec", Up: true}}, nil
 }
+func (m *mockRouterSvc) ListAllBindableInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
+	return []router.WANInterfaceInfo{{Name: "ipsec0", Label: "IPSec", Up: true}}, nil
+}
 func (m *mockRouterSvc) ListIngressEligibleInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return nil, nil
 }

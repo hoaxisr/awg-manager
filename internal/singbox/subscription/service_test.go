@@ -2125,3 +2125,107 @@ func TestService_Update_RollbackRestoresAllFields(t *testing.T) {
 		t.Errorf("Mode=%q want %q", stored.Mode, ModeSelector)
 	}
 }
+
+// recordingBindValidator запоминает, с каким именем его позвали.
+type recordingBindValidator struct {
+	seen string
+	err  error
+}
+
+func (v *recordingBindValidator) ValidateBindInterface(_ context.Context, name string) error {
+	v.seen = name
+	return v.err
+}
+
+// Trim должен случиться ДО валидации: иначе валидатор получает " eth3 ",
+// не находит его в каталоге и создание падает на пробелах.
+func TestService_Create_TrimsBindBeforeValidation(t *testing.T) {
+	svc, _ := newTestService(t)
+	v := &recordingBindValidator{}
+	svc.SetBindInterfaceValidator(v)
+
+	if _, err := svc.Create(context.Background(), CreateInput{
+		Label:         "trim-before-validate",
+		Inline:        "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A",
+		Enabled:       true,
+		BindInterface: "  eth3  \n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if v.seen != "eth3" {
+		t.Fatalf("validator got %q, want trimmed eth3", v.seen)
+	}
+}
+
+// Провал применения bind-only правки должен вернуть store в прежнее состояние:
+// иначе настройки показывают новый интерфейс, а в конфиге его нет.
+func TestService_Update_BindOnly_RollsBackOnFailure(t *testing.T) {
+	tempNet := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tempNet, "eth3"), 0755)
+	oldRoot := sysClassNet
+	sysClassNet = tempNet
+	t.Cleanup(func() { sysClassNet = oldRoot })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A\n"))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "url-sub", URL: srv.URL, Enabled: true, BindInterface: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mut.reloadErr = errors.New("reload failed")
+	newBind := "eth3"
+	if _, err := svc.Update(sub.ID, UpdatePatch{BindInterface: &newBind}); err == nil {
+		t.Fatal("expected error when applying bind fails")
+	}
+
+	stored, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BindInterface != "" {
+		t.Fatalf("BindInterface=%q, want rollback to empty", stored.BindInterface)
+	}
+}
+
+// bind вместе со сменой mode — одна транзакция и один SIGHUP.
+func TestService_Update_BindAndMode_SingleReload(t *testing.T) {
+	tempNet := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tempNet, "eth3"), 0755)
+	oldRoot := sysClassNet
+	sysClassNet = tempNet
+	t.Cleanup(func() { sysClassNet = oldRoot })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A\n"))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "url-sub", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := mut.reloads
+	newBind := "eth3"
+	newMode := ModeURLTest
+	if _, err := svc.Update(sub.ID, UpdatePatch{BindInterface: &newBind, Mode: &newMode}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := mut.reloads - before; got != 1 {
+		t.Fatalf("reloads=%d, want exactly 1 (bind and mode must share one transaction)", got)
+	}
+}

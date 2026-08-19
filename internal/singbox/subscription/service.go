@@ -997,7 +997,10 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	modeChanged := patch.Mode != nil || patch.URLTest != nil
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
 
-	// Store rollback patch restoring all previous settings on error (#709, PR #732 review blocker #2)
+	// Снимок прежних настроек для отката, если применение упадёт (#709).
+	// URLTest здесь несёт семантику UpdatePatch «nil = не трогать»: если у
+	// подписки его не было, откат вернёт Mode, а осиротевший urltest-конфиг
+	// останется — в режиме selector он не читается.
 	rollbackPatch := UpdatePatch{
 		FilterInclude: &current.FilterInclude,
 		FilterExclude: &current.FilterExclude,
@@ -1037,33 +1040,23 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	} else if bindChanged {
 		if sub.IsInline() {
+			// Inline: re-parse сохранённого тела; refresh сам пересобирает
+			// group outbound, поэтому смену mode отдельно доделывать не нужно.
 			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
 				return rollback(err, "refresh")
 			}
 		} else {
 			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
 			// Позволяет переключить uplink даже когда текущий интернет лежит.
-			if err := s.rematerializeMembersBind(context.Background(), sub); err != nil {
+			// Смена mode в том же сохранении едет одной транзакцией и одним
+			// SIGHUP — иначе на одно нажатие «Сохранить» приходилось два.
+			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged); err != nil {
 				return rollback(err, "rematerialize")
 			}
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
 			return nil, err
-		}
-		if modeChanged {
-			if err := s.withTx(func() error {
-				s.mutator.RemoveOutbound(sub.SelectorTag)
-				if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
-					return fmt.Errorf("rebuild group outbound: %w", err)
-				}
-				if err := s.reloadWithGroups(context.Background()); err != nil {
-					return fmt.Errorf("reload after mode change: %w", err)
-				}
-				return nil
-			}); err != nil {
-				return sub, err
-			}
 		}
 	} else if modeChanged {
 		// Mode / urltest config changes require a fresh group outbound in
@@ -1073,16 +1066,15 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// description so the rename is visible in the router UI.
 		// Stage + Reload — одна txMu-секция (общий батч адаптера).
 		if err := s.withTx(func() error {
-			s.mutator.RemoveOutbound(sub.SelectorTag)
-			if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
-				return fmt.Errorf("rebuild group outbound: %w", err)
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
 			}
 			if err := s.reloadWithGroups(context.Background()); err != nil {
 				return fmt.Errorf("reload after mode change: %w", err)
 			}
 			return nil
 		}); err != nil {
-			return sub, err
+			return rollback(err, "mode change")
 		}
 	} else if enabledChanged {
 		// Включение/выключение подписки меняет состав сводных групп:
@@ -1092,7 +1084,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// первого несвязанного reload. Для самой подписки enabled остаётся
 		// метаданными (её селектор в конфиге не трогаем — прежнее поведение).
 		if err := s.withTx(func() error { return s.reloadWithGroups(context.Background()) }); err != nil {
-			return sub, fmt.Errorf("reload after enabled change: %w", err)
+			return rollback(err, "enabled change")
 		}
 	}
 	if patch.Label != nil && s.proxyEnabled() && sub.ProxyIndex >= 0 {
@@ -1109,7 +1101,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	return sub, nil
 }
 
-func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription) error {
+func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup bool) error {
 	return s.withTx(func() error {
 		obs := s.mutator.SubscriptionOutbounds()
 		tagSet := make(map[string]bool, len(sub.MemberTags))
@@ -1129,8 +1121,23 @@ func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscriptio
 				}
 			}
 		}
+		if rebuildGroup {
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
+			}
+		}
 		return s.reloadWithGroups(ctx)
 	})
+}
+
+// stageGroupRebuild пересобирает group outbound подписки в открытом батче
+// (без reload — его делает вызывающий, чтобы SIGHUP был один на операцию).
+func (s *Service) stageGroupRebuild(sub *Subscription) error {
+	s.mutator.RemoveOutbound(sub.SelectorTag)
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
+		return fmt.Errorf("rebuild group outbound: %w", err)
+	}
+	return nil
 }
 
 // ErrActiveMemberOnURLTest is returned by SetActiveMember when the

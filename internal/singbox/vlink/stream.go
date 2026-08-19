@@ -140,8 +140,10 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		return nil, fmt.Errorf("vlink: unknown security %q", sec)
 	}
 
-	if b := firstNonEmpty(q.Get("bind_interface"), q.Get("bindInterface"), q.Get("bind")); b != "" {
-		s.BindInterface = strings.TrimSpace(b)
+	// Только каноническое имя поля sing-box: алиасы (bindInterface, bind)
+	// ничем не подтверждены и угадывают чужой формат.
+	if b := strings.TrimSpace(q.Get("bind_interface")); b != "" {
+		s.BindInterface = b
 	}
 
 	return s, nil
