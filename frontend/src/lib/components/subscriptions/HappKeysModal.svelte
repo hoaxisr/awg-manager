@@ -29,9 +29,11 @@
 		valid: boolean;
 		tokens: string[];
 		errorMsg: string;
+		warnMsg: string;
 	} {
 		const trimmed = text.trim();
-		if (!trimmed) return { count: 0, valid: false, tokens: [], errorMsg: '' };
+		let warnMsg = '';
+		if (!trimmed) return { count: 0, valid: false, tokens: [], errorMsg: '', warnMsg };
 
 		let tokens: string[] = [];
 
@@ -85,17 +87,20 @@
 			}
 		}
 
+		// Сколько ключей достаточно, решает бэкенд (ParseHappKeysInput принимает
+		// любое их число): не отклонять здесь то, что сервер бы принял.
 		if (tokens.length > 0 && tokens.length < 4 && !errorMsg) {
-			errorMsg = `Обнаружено ключей: ${tokens.length} из 4. Для работы Happ crypt4 требуются все 4 ключа.`;
+			warnMsg = `Обнаружено ключей: ${tokens.length} из 4 — ссылки, зашифрованные остальными, расшифровать не выйдет.`;
 		}
 
-		const valid = tokens.length === 4 && errorMsg === '';
+		const valid = tokens.length > 0 && errorMsg === '';
 
 		return {
 			count: tokens.length,
 			valid,
 			tokens,
 			errorMsg,
+			warnMsg,
 		};
 	}
 
@@ -132,7 +137,7 @@
 			return;
 		}
 		if (!validation.valid) {
-			error = validation.errorMsg || 'Вставьте все 4 валидных ключа RSA';
+			error = validation.errorMsg || 'Вставьте хотя бы один валидный ключ RSA';
 			return;
 		}
 
@@ -239,7 +244,10 @@
 				>
 					{#if validation.valid}
 						<CheckCircle2 size={14} />
-						<span>Ключи валидны: обнаружены все 4 ключа (crypt, crypt2, crypt3, crypt4)</span>
+						<span>
+							{validation.warnMsg ||
+								`Ключи валидны: обнаружено ключей — ${validation.count}`}
+						</span>
 					{:else}
 						<AlertCircle size={14} />
 						<span>{validation.errorMsg}</span>

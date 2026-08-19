@@ -978,7 +978,7 @@ $effect(() => {
 						/>
 					</div>
 					{/if}
-					
+
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">RSA-ключи Happ</span>

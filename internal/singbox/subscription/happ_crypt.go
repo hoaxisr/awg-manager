@@ -235,13 +235,15 @@ func (s *Service) SaveHappKeys(keys []string) error {
 
 // ClearHappKeys removes happ_keys.json and clears keys from memory.
 func (s *Service) ClearHappKeys() error {
+	// Disk first: clearing memory before a failed os.Remove would report an
+	// error while the keys are already unloaded, and the next start would
+	// silently load them back from the file that is still there.
+	if err := os.Remove(s.keysPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	happKeysMu.Lock()
 	happParsedKeys = nil
 	happKeysMu.Unlock()
-	path := s.keysPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
 	return nil
 }
 

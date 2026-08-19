@@ -66,8 +66,8 @@ func RewriteForRaw(rawURL string) (string, bool) {
 	host := strings.ToLower(u.Host)
 
 	// Web landing page handoff (e.g. links.clovpn.org/happ?id=... -> /api/sub?id=...)
-	if (u.Path == "/happ" || strings.HasSuffix(u.Path, "/happ")) && (u.Query().Get("id") != "" || u.Query().Get("token") != "") {
-		u.Path = strings.TrimSuffix(u.Path, "/happ") + "/api/sub"
+	if u.Path == "/happ" && (u.Query().Get("id") != "" || u.Query().Get("token") != "") {
+		u.Path = "/api/sub"
 		return u.String(), true
 	}
 

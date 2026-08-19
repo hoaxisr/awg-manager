@@ -1,5 +1,6 @@
 import type {
 	CreateSubscriptionGroupInput,
+	DetectedSubscriptionProfile,
 	CreateSubscriptionInput,
 	Subscription,
 	SubscriptionActiveNowResponse,
@@ -150,26 +151,13 @@ export class SubscriptionsClient extends SbRouterClient {
 		});
 	}
 
-	async detectSubscriptionHeaders(url: string): Promise<{
-		kind: string;
-		decryptedUrl?: string;
-		isEncrypted?: boolean;
-		headers: SubscriptionHeader[];
-		headersText: string;
-		label: string;
-		serverCount: number;
-	}> {
-		return this.request<{
-			kind: string;
-			decryptedUrl?: string;
-			isEncrypted?: boolean;
-			headers: SubscriptionHeader[];
-			headersText: string;
-			label: string;
-			serverCount: number;
-		}>('/singbox/subscriptions/detect-headers', {
+	async detectSubscriptionHeaders(
+		url: string,
+		headers: SubscriptionHeader[] = []
+	): Promise<DetectedSubscriptionProfile> {
+		return this.request<DetectedSubscriptionProfile>('/singbox/subscriptions/detect-headers', {
 			method: 'POST',
-			body: JSON.stringify({ url }),
+			body: JSON.stringify({ url, headers }),
 		});
 	}
 

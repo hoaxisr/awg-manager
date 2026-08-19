@@ -982,6 +982,10 @@ definitions:
     type: object
   api.DetectHeadersRequest:
     properties:
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
       url:
         type: string
     type: object
@@ -16121,7 +16125,7 @@ paths:
       description: Probes a subscription URL with different client profiles to auto-detect
         working headers
       parameters:
-      - description: Subscription URL
+      - description: Subscription URL and user-configured headers
         in: body
         name: body
         required: true

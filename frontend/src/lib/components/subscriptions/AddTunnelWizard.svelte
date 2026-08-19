@@ -127,7 +127,7 @@
 			return s;
 		}
 
-		for (const scheme of ['happ://', 'sub://', 'singbox://', 'sing-box://', 'v2ray://', 'sn://', 'ss://']) {
+		for (const scheme of ['happ://', 'sub://', 'singbox://', 'sing-box://', 'v2ray://', 'sn://']) {
 			if (lower.startsWith(scheme)) {
 				const after = s.slice(scheme.length);
 				const lowerAfter = lower.slice(scheme.length);
@@ -143,33 +143,42 @@
 
 	let detectingHeaders = $state(false);
 	let detectedNotice = $state('');
+	let detectStatus = $state<'ok' | 'keys' | 'error'>('ok');
 	let showHappKeysModal = $state(false);
 	let detectTimer: ReturnType<typeof setTimeout> | null = null;
-	let detectAbortCtrl: AbortController | null = null;
+	// Поколение запроса: ответ детекта, устаревший к моменту прихода, не должен
+	// переписать headersText от нового URL и не должен гасить чужой индикатор.
+	let detectSeq = 0;
+	let lastDetectedUrl = '';
 
 	function triggerDetectHeaders(targetUrl: string, immediate = false): void {
 		if (detectTimer) clearTimeout(detectTimer);
-		if (detectAbortCtrl) {
-			detectAbortCtrl.abort();
-			detectAbortCtrl = null;
-		}
-		detectedNotice = '';
 		const clean = cleanSubscriptionUrl(targetUrl);
 		if (
 			!clean.startsWith('http://') &&
 			!clean.startsWith('https://') &&
 			!clean.startsWith('happ://crypt')
 		) {
+			detectSeq++;
+			detectingHeaders = false;
+			detectedNotice = '';
+			detectStatus = 'ok';
+			lastDetectedUrl = '';
 			return;
 		}
+		// onpaste и следующий за ним onblur дают один и тот же URL — вторая
+		// серия проб роутеру не нужна.
+		if (clean === lastDetectedUrl) return;
+		detectedNotice = '';
+		detectStatus = 'ok';
 
 		const runDetect = async () => {
-			const controller = new AbortController();
-			detectAbortCtrl = controller;
+			const seq = ++detectSeq;
+			lastDetectedUrl = clean;
 			detectingHeaders = true;
 			try {
-				const res = await api.detectSubscriptionHeaders(clean);
-				if (controller.signal.aborted) return;
+				const res = await api.detectSubscriptionHeaders(clean, parseHeadersText(headersText));
+				if (seq !== detectSeq) return;
 				if (res && res.isEncrypted && res.decryptedUrl) {
 					url = res.decryptedUrl;
 				}
@@ -183,12 +192,18 @@
 				} else if (res && res.isEncrypted && res.decryptedUrl) {
 					detectedNotice = `Расшифровано: ${res.decryptedUrl}`;
 				} else if (res && res.isEncrypted && !res.decryptedUrl) {
-					detectedNotice = `Обнаружена зашифрованная ссылка Happ (требуются ключи RSA)`;
+					detectStatus = 'keys';
+					detectedNotice = 'Обнаружена зашифрованная ссылка Happ (требуются ключи RSA)';
 				}
 			} catch (e) {
-				// silent fallback
+				if (seq !== detectSeq) return;
+				// Повторить детект по тому же URL после ошибки должно быть можно.
+				lastDetectedUrl = '';
+				detectStatus = 'error';
+				detectedNotice =
+					e instanceof Error ? e.message : 'Не удалось определить тип подписки';
 			} finally {
-				if (!controller.signal.aborted) {
+				if (seq === detectSeq) {
 					detectingHeaders = false;
 				}
 			}
@@ -222,6 +237,8 @@
 		previewing = false;
 		detectingHeaders = false;
 		detectedNotice = '';
+		detectStatus = 'ok';
+		lastDetectedUrl = '';
 		error = '';
 	}
 
@@ -579,11 +596,11 @@
 					{:else if detectedNotice}
 						<div
 							class="detect-badge"
-							class:detect-warning={detectedNotice.includes('RSA')}
-							class:detect-success={!detectedNotice.includes('RSA')}
+							class:detect-warning={detectStatus !== 'ok'}
+							class:detect-success={detectStatus === 'ok'}
 						>
 							<span>{detectedNotice}</span>
-							{#if detectedNotice.includes('RSA')}
+							{#if detectStatus === 'keys'}
 								<Button
 									size="sm"
 									variant="secondary"

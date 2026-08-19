@@ -203,4 +203,3 @@ func TestParseXrayBody_ArrayFirstEmpty(t *testing.T) {
 		t.Errorf("Tag = %q, want '🇸🇬 Singapore Trojan'", res.Outbounds[0].Tag)
 	}
 }
-

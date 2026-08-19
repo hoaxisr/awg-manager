@@ -35,6 +35,17 @@ export interface SubscriptionHeader {
 	value: string;
 }
 
+// Ответ POST /api/singbox/subscriptions/detect-headers.
+export interface DetectedSubscriptionProfile {
+	kind: string;
+	decryptedUrl?: string;
+	isEncrypted?: boolean;
+	headers: SubscriptionHeader[];
+	headersText: string;
+	label: string;
+	serverCount: number;
+}
+
 export interface SubscriptionMember {
 	tag: string;
 	label?: string;

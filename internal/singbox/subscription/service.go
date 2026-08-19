@@ -449,7 +449,21 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		// can safely recover — at best a hot path of recovery, at worst
 		// silently garbled outbounds (see PR adding RewriteForRaw for the
 		// HardVPN-bypass-WhiteLists/good_keys.txt regression).
-		fetchURL, rewrote := RewriteForRaw(sub.URL)
+		// happ://crypt… must be decrypted here, not inside RewriteForRaw:
+		// that helper swallows the decryption error and would leave the
+		// subscription silently fetching the still-encrypted link.
+		target := sub.URL
+		if IsHappCryptLink(target) {
+			dec, decErr := DecryptHappLink(target)
+			if decErr != nil {
+				err := fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", decErr)
+				s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
+				s.logWarn("subscription-refresh", id, err.Error())
+				return nil, err
+			}
+			target = dec
+		}
+		fetchURL, rewrote := RewriteForRaw(target)
 		if rewrote {
 			s.logWarn("subscription-refresh", id,
 				"rewrote web-view URL to raw URL")
@@ -1538,15 +1552,38 @@ type DetectedProfile struct {
 	ServerCount  int      `json:"serverCount"`
 }
 
+// randomHex returns n hex characters (n/2 random bytes).
 func randomHex(n int) string {
 	b := make([]byte, n/2)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("0", n)
+	}
 	return hex.EncodeToString(b)
 }
 
+// mergeHeaders returns base with override applied on top: same-name headers
+// (case-insensitive, as HTTP defines them) take the override value, the rest
+// of base is preserved.
+func mergeHeaders(base, override []Header) []Header {
+	out := make([]Header, 0, len(base)+len(override))
+	taken := make(map[string]struct{}, len(override))
+	for _, h := range override {
+		taken[strings.ToLower(h.Name)] = struct{}{}
+	}
+	for _, h := range base {
+		if _, dup := taken[strings.ToLower(h.Name)]; dup {
+			continue
+		}
+		out = append(out, h)
+	}
+	return append(out, override...)
+}
+
 // DetectHeaders probes the given URL with different client header profiles and returns
-// the one that successfully delivers valid proxy nodes.
-func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedProfile, error) {
+// the one that successfully delivers valid proxy nodes. userHeaders are the headers
+// already configured by the user: probe profiles are merged ON TOP of them, so a
+// provider-required auth header survives the probe instead of being replaced by it.
+func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders []Header) (DetectedProfile, error) {
 	if rawUrl == "" {
 		return DetectedProfile{
 			Kind:        "singbox",
@@ -1563,6 +1600,12 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 	decryptedURL := ""
 	if isEnc {
 		dec, err := DecryptHappLink(rawUrl)
+		if errors.Is(err, ErrHappKeysNotConfigured) {
+			// Not an error the user can act on by retrying: the UI turns this
+			// answer into the «нужны ключи RSA» prompt. Returning an error here
+			// would surface as a bare 502 and hide the prompt.
+			return DetectedProfile{IsEncrypted: true, Label: "HAPP Crypt (нужны ключи RSA)"}, nil
+		}
 		if err != nil {
 			return DetectedProfile{}, fmt.Errorf("happ: %w", err)
 		}
@@ -1622,7 +1665,7 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string) (DetectedPro
 	}
 
 	for _, cand := range candidates {
-		hdrs := cand.headersFunc()
+		hdrs := mergeHeaders(userHeaders, cand.headersFunc())
 		fetchOpts := s.fetchOpts
 		fetchOpts.Timeout = 5 * time.Second
 		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, fetchOpts)

@@ -480,7 +480,8 @@ func (h *SubscriptionHandler) PreviewURL(w http.ResponseWriter, r *http.Request)
 }
 
 type DetectHeadersRequest struct {
-	URL string `json:"url"`
+	URL     string               `json:"url"`
+	Headers []SubscriptionHeader `json:"headers"`
 }
 
 // DetectHeaders handles POST /api/singbox/subscriptions/detect-headers
@@ -491,7 +492,7 @@ type DetectHeadersRequest struct {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		DetectHeadersRequest	true	"Subscription URL"
+//	@Param			body	body		DetectHeadersRequest	true	"Subscription URL and user-configured headers"
 //	@Success		200		{object}	APIEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		502		{object}	APIErrorEnvelope
@@ -506,7 +507,7 @@ func (h *SubscriptionHandler) DetectHeaders(w http.ResponseWriter, r *http.Reque
 		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
 		return
 	}
-	profile, err := h.svc.DetectHeaders(r.Context(), req.URL)
+	profile, err := h.svc.DetectHeaders(r.Context(), req.URL, fromSubscriptionHeaders(req.Headers))
 	if err != nil {
 		response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "DETECT_FAILED")
 		return

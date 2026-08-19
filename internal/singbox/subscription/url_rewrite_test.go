@@ -119,6 +119,11 @@ func TestRewriteForRaw(t *testing.T) {
 			rewrote: true,
 		},
 		{
+			name:    "/happ deeper in the path is left alone",
+			in:      "https://provider.example/sub/happ?id=42",
+			rewrote: false,
+		},
+		{
 			name:    "happ://add/https:// stripped cleanly",
 			in:      "happ://add/https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
 			want:    "https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
