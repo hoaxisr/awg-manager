@@ -684,6 +684,7 @@
 			<section class="card tunnel-section egress-section">
 				<SettingsSectionLabel label="Исходящий интерфейс" icon={Waypoints} tone="slate" header />
 				<BindInterfacePicker
+					label=""
 					value={getFieldString(['bind_interface'])}
 					onchange={setBindInterface}
 					hint="Принудительно направляет dial этого прокси через выбранный uplink (модем, WAN, Wi‑Fi)."

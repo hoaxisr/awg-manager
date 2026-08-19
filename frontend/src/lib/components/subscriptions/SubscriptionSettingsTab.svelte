@@ -271,6 +271,7 @@
 		<div class="bind-section">
 			<h3 class="col-title">Исходящий интерфейс</h3>
 			<BindInterfacePicker
+				label=""
 				bind:value={bindInterface}
 				hint="Весь трафик серверов этой подписки будет dial'иться через выбранный uplink. Удобно для модема, отдельного WAN или Wi‑Fi."
 			/>
