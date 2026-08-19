@@ -1,9 +1,18 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 // TestMergeInterfaceWhitelist_AppliesAWGParamsFromRequest covers issue #131:
@@ -250,5 +259,112 @@ func TestMergePeerWhitelist_PSKCleared(t *testing.T) {
 
 	if req.Peer.PresharedKey != "" {
 		t.Fatalf("PSK not cleared: got %q", req.Peer.PresharedKey)
+	}
+}
+
+// stubTunnelSvc — минимальный TunnelService для тестов Update-хэндлера.
+// Get возвращает ошибку: BuildTunnelResponse тогда отдаёт UPDATE_FAILED,
+// но это ПОСЛЕ store.Save — ассерты идут по стору, код ответа не важен.
+type stubTunnelSvc struct {
+	updateFn func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
+}
+
+func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
+func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus, error) {
+	return nil, fmt.Errorf("stub")
+}
+func (s *stubTunnelSvc) Create(context.Context, string, string, tunnel.Config, *storage.AWGTunnel) error {
+	return nil
+}
+func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	if s.updateFn != nil {
+		return s.updateFn(ctx, oldStored, newStored)
+	}
+	return nil
+}
+func (s *stubTunnelSvc) Delete(context.Context, string) error                   { return nil }
+func (s *stubTunnelSvc) Start(context.Context, string) error                    { return nil }
+func (s *stubTunnelSvc) Stop(context.Context, string) error                     { return nil }
+func (s *stubTunnelSvc) Restart(context.Context, string) error                  { return nil }
+func (s *stubTunnelSvc) CheckAddressConflicts(context.Context, string) []string { return nil }
+func (s *stubTunnelSvc) GetState(context.Context, string) tunnel.StateInfo      { return tunnel.StateInfo{} }
+func (s *stubTunnelSvc) SetEnabled(context.Context, string, bool) error         { return nil }
+func (s *stubTunnelSvc) SetDefaultRoute(context.Context, string, bool) error    { return nil }
+func (s *stubTunnelSvc) Import(context.Context, string, string, string) (*service.TunnelWithStatus, error) {
+	return nil, fmt.Errorf("stub")
+}
+func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error { return nil }
+func (s *stubTunnelSvc) WANModel() *wan.Model                                        { return nil }
+func (s *stubTunnelSvc) GetResolvedISP(string) string                                { return "" }
+func (s *stubTunnelSvc) SetSelfCreateGate(tunnel.SelfCreateGater)                    {}
+
+func newTunnelsUpdateHarness(t *testing.T, stub *stubTunnelSvc) (*TunnelsHandler, *storage.AWGTunnelStore) {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	// nil AppLogger безопасен — см. комментарий в settings_test.go.
+	return NewTunnelsHandler(stub, store, nil), store
+}
+
+func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Save(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Enabled: true,
+		StartedAt: "2026-08-18T10:00:00Z", ActiveWAN: "ISP",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Частичное тело — как шлёт фронт (Partial<AWGTunnel>): без StartedAt.
+	req := httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"t1"}`))
+	h.Update(httptest.NewRecorder(), req)
+
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.StartedAt != "2026-08-18T10:00:00Z" {
+		t.Fatalf("StartedAt затёрт: %q", saved.StartedAt)
+	}
+}
+
+// Красный до фикса: пока svc.Update «ходит в RCI», оркестратор записал
+// новые runtime-поля; хэндлер сохраняет затем снапшот existing и затирает их.
+func TestTunnelUpdate_KeepsConcurrentRuntimeWrites(t *testing.T) {
+	stub := &stubTunnelSvc{}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Save(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Enabled: true,
+		StartedAt: "2026-08-18T10:00:00Z", ActiveWAN: "ISP",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	stub.updateFn = func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+		fresh, err := store.Get("awg10")
+		if err != nil {
+			return err
+		}
+		fresh.ActiveWAN = "Wireguard2"           // WAN-failover в окне
+		fresh.StartedAt = "2026-08-18T11:00:00Z" // рестарт pingcheck'ом
+		fresh.Enabled = false                    // suspend оркестратором
+		return store.Save(fresh)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"t1"}`))
+	h.Update(httptest.NewRecorder(), req)
+
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.ActiveWAN != "Wireguard2" || saved.StartedAt != "2026-08-18T11:00:00Z" || saved.Enabled {
+		t.Fatalf("runtime-поля затёрты снапшотом existing: ActiveWAN=%q StartedAt=%q Enabled=%v",
+			saved.ActiveWAN, saved.StartedAt, saved.Enabled)
 	}
 }

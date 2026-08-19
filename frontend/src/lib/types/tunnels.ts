@@ -31,6 +31,9 @@ export interface AWGInterface {
 	rejectAfterTime?: string;
 	keepaliveTimeout?: string;
 	maxHandshakeAttempts?: string;
+	// AWG 3.1 device flags (module 3.1+).
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
 }
 
 export interface AWGPeer {
@@ -116,7 +119,7 @@ export interface TunnelListItem {
 	rxBytes?: number;
 	txBytes?: number;
 	lastHandshake?: string;
-	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3';
+	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3' | 'awg3.1';
 	mtu?: number;
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';
@@ -202,6 +205,10 @@ export interface ASCParamsExtended extends ASCParamsBase {
 	rejectAfterTime?: string;
 	keepaliveTimeout?: string;
 	maxHandshakeAttempts?: string;
+	// AWG 3.1 device flags (kernel mode, module 3.1+). RandomTrailers is not
+	// negotiated on the wire and has to be on at both ends.
+	randomTrailers?: boolean;
+	disableCookies?: boolean;
 }
 
 export type ASCParams = ASCParamsBase | ASCParamsExtended;

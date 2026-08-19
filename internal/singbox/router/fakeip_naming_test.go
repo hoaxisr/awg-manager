@@ -15,11 +15,11 @@ func TestFakeIPNames(t *testing.T) {
 	for i := 0; i <= 9; i++ {
 		wantNDMS := fmt.Sprintf("OpkgTun%d", i)
 		wantIface := fmt.Sprintf("opkgtun%d", i)
-		if got := fakeIPNDMSName(i); got != wantNDMS {
-			t.Errorf("fakeIPNDMSName(%d) = %q, want %q", i, got, wantNDMS)
+		if got := tunNDMSName(i); got != wantNDMS {
+			t.Errorf("tunNDMSName(%d) = %q, want %q", i, got, wantNDMS)
 		}
-		if got := fakeIPIfaceName(i); got != wantIface {
-			t.Errorf("fakeIPIfaceName(%d) = %q, want %q", i, got, wantIface)
+		if got := tunIfaceName(i); got != wantIface {
+			t.Errorf("tunIfaceName(%d) = %q, want %q", i, got, wantIface)
 		}
 	}
 }

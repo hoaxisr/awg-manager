@@ -97,3 +97,31 @@ Endpoint = 192.0.2.1:51820
 		t.Fatalf("range starting at zero must survive, got %q", ranged.Interface.ContentPaddingAddition)
 	}
 }
+
+// TestValidateAWG3FlagsAreIndependent pins that the two 3.1 flags do not
+// interact with the header-protection rule: they are device policy, not
+// padding, and refusing them next to a key would be an invented restriction.
+func TestValidateAWG3FlagsAreIndependent(t *testing.T) {
+	o := &storage.AWGObfuscation{
+		HeaderProtectionKey: "dGVzdA==",
+		S1:                  12, S2: 12, S3: 12, S4: 12,
+		RandomTrailers: true,
+		DisableCookies: true,
+	}
+	if err := ValidateAWG3(o); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestValidateAWG3FlagsStillEnforceSxFloor keeps the existing Sx>=12 rule
+// reachable when the new flags are set, so adding them cannot shadow it.
+func TestValidateAWG3FlagsStillEnforceSxFloor(t *testing.T) {
+	o := &storage.AWGObfuscation{
+		HeaderProtectionKey: "dGVzdA==",
+		S1:                  11, S2: 12, S3: 12, S4: 12,
+		RandomTrailers: true,
+	}
+	if err := ValidateAWG3(o); err == nil {
+		t.Fatal("expected S1 = 11 to be refused next to a header protection key")
+	}
+}

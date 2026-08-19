@@ -13,11 +13,15 @@ All current modules target Linux **4.9-ndm** (verify with
 ## One file per group, not per model
 
 The sweep builds a module for every model, but the results collapse: 28 models
-produce 10 distinct binaries. Within a group `.text`, `.data`, `.rodata`,
-`.modinfo` and vermagic are identical, `__versions` is empty (no
-CONFIG_MODVERSIONS, so no per-kernel symbol CRCs), and the undefined-symbol sets
-match. What separates the groups is kernel configuration the hwnat patch keys
-off, which is why KN-1011 stands apart from its mt7621 neighbours.
+produce 10 files here — and those 10 hold only **9 distinct binaries**, because
+`KN-1212` and `KN-1710` are byte-identical in `.text`, `.data` and `.rodata`
+(true of the 3.0 batch as well as 3.1). They are kept as two names rather than
+aliased, so that `modelAlias` does not have to change on a version bump; the cost
+is one duplicate file. Within a group `.text`, `.data`, `.rodata`, `.modinfo` and
+vermagic are identical, `__versions` is empty (no CONFIG_MODVERSIONS, so no
+per-kernel symbol CRCs), and the undefined-symbol sets match. What separates the
+groups is kernel configuration the hwnat patch keys off, which is why KN-1011
+stands apart from its mt7621 neighbours.
 
 So this directory holds one file per group and `modelAlias` in
 `internal/sys/kmod/loader.go` points the rest at it. The mipsel IPK carries
@@ -36,16 +40,31 @@ router: `selectBundledModule` finds no matching file, copies nothing and leaves
 the version marker alone. A fresh install on such a model gets no kernel module
 at all, so kernel mode is unavailable there and only NativeWG remains.
 
-## AWG 3.0 (awg3) rebuild
+## AWG 3.x (awg3) rebuild
 
 AWG 3.0 device params (HeaderProtectionKey, ContentPaddingAddition, and the
 timing ranges RekeyAfterTime / RekeyTimeout / RejectAfterTime / KeepaliveTimeout
-/ MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. They need
-awg3-capable modules **and** an awg3-capable `awg` tool (see `../bin/README.md`).
+/ MaxHandshakeAttempts) are applied in kernel mode via `awg setconf`. AWG 3.1
+adds two boolean device flags on top: **RandomTrailers** and **DisableCookies**.
+All of them need awg3-capable modules **and** a matching `awg` tool (see
+`../bin/README.md`) — the tool aborts the whole `setconf` on a key it does not
+know, so module and tool ship together.
 
-Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.0.20260805**
+`RandomTrailers` is not negotiated on the wire: with it on, handshake and cookie
+messages carry a random tail outside the encryption, and a peer on 3.0 drops them
+on its length check without a word. Both ends have to be on 3.1, which is why the
+UI gates the switch on a *loaded* module of 3.1 or newer, not on the marker below.
+
+Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.1.20260812**
 (AWG 3.0 landed on master via PR #192; the `feat/awg3` branch no longer exists).
 The kernel floor is 3.10, so no shipped model regresses.
+
+Upstream 3.1 took over three of the patches we used to carry, and they are gone
+from `kmod/amneziawg/patches/`: **013** (`awg_has_header_protection` deleted
+outright, which also drops a `down_read`/`up_read` from every inbound packet —
+a measurable win on mips), **018** (`has_protection` now computed after the
+`IS_ERR(wg)` check) and **022** (`le32_to_cpu` added on all four message-type
+comparisons). Eleven patches remain and apply to 3.1 unchanged.
 
 The recipe and the patch stack live in `kmod/amneziawg/` in this repo; copy that
 directory to `keenetic-sdk/package/kernel/amneziawg/` and build there. The stock
@@ -55,21 +74,19 @@ on it:
 | Patch | Why |
 |---|---|
 | 011 | `header_protection.c` uses the kernel 6.15 chacha API, reimplemented on the bundled zinc chacha20 |
-| 013 | `awg_has_header_protection` is declared `inline` across translation units, and 4.9 maps `inline` to `always_inline` |
 | 015 | the new blake2s compat block pulls the kernel's `crypto/blake2s.h` into zinc's own translation units |
 | 017 | Jmin is never checked against Jmax, so the junk packet size can run past the jmax-sized buffer |
-| 018 | `wg_set_device()` calls `awg_has_header_protection(wg)` before the `IS_ERR(wg)` check, taking a rwsem inside an ERR_PTR |
 | 019 | `wg_newlink()` never initialises `header_protection.lock`, and a zeroed rwsem kills every MIPS target on the first `awg setconf` |
 | 021 | the crypt workers call `cond_resched()` inside the SIMD region, so an arm64 worker can sleep with NEON still held |
-| 022 | the message type is matched without `le32_to_cpu()`, so a big endian target drops every packet it receives |
 
 019 is the one that put mipsel routers in a boot loop while aarch64 was fine:
 MIPS builds use `CONFIG_RWSEM_GENERIC_SPINLOCK`, where `__down_read()` reads a
 zeroed `wait_list` as "has waiters" and dereferences NULL, while
 `CONFIG_RWSEM_XCHGADD_ALGORITHM` on aarch64 reads the same zeroes as an unlocked
-rwsem. All three bugs are reproduced on a KN-1810 stand, each against a build
-that carries the patch and one that does not. Upstream has none of them fixed as
-of 3.0.20260805.
+rwsem. Both remaining bugs are reproduced on a KN-1810 stand, each against a
+build that carries the patch and one that does not. Neither is fixed upstream as
+of 3.1.20260812: `device.c` is untouched by 3.1, so `init_rwsem` is still absent
+and 019 is still what keeps every MIPS target from boot-looping.
 
 021 is the arm64 counterpart: `CONFIG_PREEMPT_COUNT` is not set on 4.9-ndm, so
 the `preempt_disable()` inside `kernel_neon_begin()` is a bare `barrier()` and
@@ -80,16 +97,17 @@ NC-1812 carrying an ESP tunnel next to a busy AmneziaWG interface rebooted every
 `wireguard.ko` holds NEON just as long but has no `cond_resched()` in the
 region, which is why only our module shows this.
 
-022 is the big endian counterpart, and it is total rather than intermittent:
-`awg_determine_type_and_padding()` matches the raw `__le32` type field against
+Big endian, fixed upstream in 3.1 — kept here as history, since it explains why
+the 3.0.20260805 batch shipped a patch that no longer exists. Before 3.1,
+`awg_determine_type_and_padding()` matched the raw `__le32` type field against
 the host-order H1-H4 ranges without converting it, so an en7512 / en7516 router
-reads `01 00 00 00` as `0x01000000`, misses even the `{1,1}` default set in
-`wg_newlink()`, and drops every packet of every type. Kernel mode simply cannot
-work on KN-2010, KN-2110, KN-2112, KN-2410, KN-2510 and KN-3610 without this
-patch, whatever the configuration; NativeWG is unaffected, which is why the hole
-stayed invisible. On the little endian and aarch64 targets `le32_to_cpu()` is the
-identity, so their modules are unchanged and were not rebuilt. Fixed upstream on
-`feat/awg-3.1` (`d6d7342f`), unmerged as of v3.0.20260805; 022 is that hunk alone.
+read `01 00 00 00` as `0x01000000`, missed even the `{1,1}` default set in
+`wg_newlink()`, and dropped every packet of every type. Kernel mode simply could
+not work on KN-2010, KN-2110, KN-2112, KN-2410, KN-2510 or KN-3610, whatever the
+configuration; NativeWG was unaffected, which is why the hole stayed invisible.
+We carried it as patch 022 (a single hunk lifted from `feat/awg-3.1`, `d6d7342f`);
+3.1 merged `le32_to_cpu()` on all four comparisons, so the patch is gone and the
+fix now comes from upstream code.
 
 The -02 tag carries three fixes we reported: I4/I5 no longer overwrite the I1
 junk spec, the inverted RekeyTimeout test is corrected, and a header protection
@@ -113,7 +131,7 @@ this on our side.
 2. Drop the awg3 `awg` tool into `../bin/` (see that README).
 3. Set `ExpectedKmodVersion` in `internal/sys/kmod/download.go` to the module's
    own version string, the one `modinfo` reports and the one that ends up in
-   `/sys/module/amneziawg/version` (`3.0.20260805` for this batch). Any change
+   `/sys/module/amneziawg/version` (`3.1.20260812` for this batch). Any change
    to the string makes installed routers re-copy the modules, and keeping it
    equal to the real version means `kernelModuleVersion` and
    `kernelModuleLoadedVersion` in system info agree once the router reboots.

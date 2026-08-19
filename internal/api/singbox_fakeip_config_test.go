@@ -16,7 +16,7 @@ import (
 
 // newTestFakeIPConfigHandler wires a real *router.ServiceImpl over a real
 // *orchestrator.Orchestrator (both SlotRouter and SlotFakeIP registered),
-// with a SettingsStore that has FakeIPState provisioned so writes succeed.
+// with a SettingsStore that has the OpkgTun ownership record provisioned so writes succeed.
 func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	t.Helper()
 	dir := t.TempDir()
@@ -39,7 +39,7 @@ func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	if _, err := settingsStore.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if err := settingsStore.SetFakeIPState(&storage.FakeIPState{Provisioned: true, Index: 0}); err != nil {
+	if err := settingsStore.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 0}); err != nil {
 		t.Fatal(err)
 	}
 

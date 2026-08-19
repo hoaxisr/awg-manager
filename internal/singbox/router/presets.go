@@ -43,12 +43,13 @@ var knownPresets = map[string]bypassPreset{
 	"l2tp":        {UDP: []int{500, 4500, 1701}},
 	"ntp":         {UDP: []int{123}},
 	"netbios-smb": {UDP: []int{137, 138}, TCP: []int{139, 445}},
-	// KeenDNS/CrazeDNS (issue #490 → domain rewrite): сам по себе пресет
-	// больше НЕ исключает 78.47.125.180/32 из TPROXY (общий IP всех чужих
-	// *.keenetic.pro / *.netcraze.* — банил бы и кореша). Вместо этого
-	// UpdateSettings/Reconcile синхронизирует managed DNS-rewrite своего
-	// FQDN из NDMS → LAN IP (см. SyncKeenDNSRewrites). Портов/CIDR нет —
-	// запись нужна только чтобы имя оставалось валидным в BypassPresets.
+	// KeenDNS/CrazeDNS (#490, #729): статического CIDR у пресета нет —
+	// адреса берутся с самого роутера (статические записи ndnproxy + адрес
+	// доступа из /show/ndns) и приезжают в resolveBypassCIDRs отдельным
+	// аргументом, см. syncKeenDNSPreset. Константы тут быть не может: с
+	// прошивок 5.1.3/5.2 адрес сервиса переехал с 78.47.125.180 в
+	// документационный 198.51.100.0/24 и отличается у Keenetic и NetCraze.
+	// Запись нужна, чтобы имя оставалось валидным в BypassPresets.
 	"keendns": {},
 }
 
@@ -81,10 +82,11 @@ func resolveBypassPorts(presets []string, extra string) (udp, tcp []PortRange, e
 }
 
 // resolveBypassCIDRs собирает итоговый список destination-CIDR исключений:
-// CIDR-часть именованных пресетов + пользовательский extra-список
+// CIDR-часть именованных пресетов + рантайм-исключения (adhoc, сейчас это
+// адрес KeenDNS с самого роутера) + пользовательский extra-список
 // (resolveBypassSubnets). Дедуп со стабильным порядком — пользователь мог
 // продублировать IP пресета вручную, а дубли в iptables-правилах не нужны.
-func resolveBypassCIDRs(presets []string, extra string) ([]string, error) {
+func resolveBypassCIDRs(presets []string, extra string, adhoc []string) ([]string, error) {
 	var out []string
 	seen := make(map[string]struct{})
 	add := func(c string) {
@@ -102,6 +104,9 @@ func resolveBypassCIDRs(presets []string, extra string) ([]string, error) {
 		for _, c := range ps.CIDRs {
 			add(c)
 		}
+	}
+	for _, c := range adhoc {
+		add(c)
 	}
 	subnets, err := resolveBypassSubnets(extra)
 	if err != nil {

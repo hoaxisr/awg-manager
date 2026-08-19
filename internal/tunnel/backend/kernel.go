@@ -1,3 +1,5 @@
+// Package backend provides tunnel interface management via the AmneziaWG
+// kernel module.
 package backend
 
 import (
@@ -21,11 +23,6 @@ type KernelBackend struct{}
 // NewKernel creates a new kernel backend.
 func NewKernel() *KernelBackend {
 	return &KernelBackend{}
-}
-
-// Type returns the backend type.
-func (b *KernelBackend) Type() Type {
-	return TypeKernel
 }
 
 // Start creates a kernel AmneziaWG interface.
@@ -105,6 +102,3 @@ func (b *KernelBackend) WaitReady(ctx context.Context, ifaceName string, timeout
 		}
 	}
 }
-
-// Ensure KernelBackend implements Backend interface.
-var _ Backend = (*KernelBackend)(nil)

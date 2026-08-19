@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1153,7 +1154,7 @@ func TestRestore_PreflightDetectsInvalidAddress(t *testing.T) {
 	}
 }
 
-func TestRestore_InternetOnly_PersistsNATStaticWAN(t *testing.T) {
+func TestRestore_InternetOnly_PersistsNATStaticWANs(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewSettingsStore(dir)
 	_, _ = store.Load()
@@ -1180,7 +1181,7 @@ func TestRestore_InternetOnly_PersistsNATStaticWAN(t *testing.T) {
 		ListenPort:    52020,
 		PrivateKey:    validPrivateKey(51),
 		NATMode:       "internet-only",
-		NATStaticWAN:  "", // empty — must be filled in from live WAN
+		NATStaticWAN:  "", // empty — must be filled in from live exits
 	}}, RestoreOptions{})
 
 	if len(out) != 1 || out[0].Action != "created" {
@@ -1194,7 +1195,10 @@ func TestRestore_InternetOnly_PersistsNATStaticWAN(t *testing.T) {
 	if got.NATMode != "internet-only" {
 		t.Errorf("storage NATMode: got %q, want internet-only", got.NATMode)
 	}
-	if got.NATStaticWAN != "PPPoE0" {
-		t.Errorf("storage NATStaticWAN: got %q, want PPPoE0", got.NATStaticWAN)
+	if !reflect.DeepEqual(got.NATStaticWANs, []string{"PPPoE0"}) {
+		t.Errorf("storage NATStaticWANs: got %v, want [PPPoE0]", got.NATStaticWANs)
+	}
+	if got.NATStaticWAN != "" {
+		t.Errorf("legacy NATStaticWAN must be cleared, got %q", got.NATStaticWAN)
 	}
 }

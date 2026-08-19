@@ -35,6 +35,27 @@ export interface SubscriptionHeader {
 	value: string;
 }
 
+// Пресет заголовков клиента: GET /api/singbox/subscriptions/header-profiles.
+export interface SubscriptionHeaderProfile {
+	kind: string;
+	label: string;
+	headersText: string;
+}
+
+// Ответ POST /api/singbox/subscriptions/detect-headers.
+export interface DetectedSubscriptionProfile {
+	kind: string;
+	decryptedUrl?: string;
+	// URL, которым следует заменить введённый: снятая обёртка / расшифрованная
+	// ссылка. Нормализацию делает сервер, фронт её не повторяет.
+	normalizedUrl?: string;
+	isEncrypted?: boolean;
+	headers: SubscriptionHeader[];
+	headersText: string;
+	label: string;
+	serverCount: number;
+}
+
 export interface SubscriptionMember {
 	tag: string;
 	label?: string;

@@ -43,9 +43,9 @@ import (
 func (a *app) setupTunnels() {
 	// Create tunnel service components
 	a.wgClient = wg.New()
-	a.backendImpl = backend.New(a.bootLog)
+	a.backendImpl = backend.NewKernel()
 	a.stateMgr = state.New(a.ndmsQueries.Interfaces, a.wgClient, a.backendImpl, a.loggingService)
-	firewallMgr := firewall.New(a.backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), a.loggingService)
+	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), a.loggingService)
 
 	// Build NDMS CQRS Commands eagerly so the Operator can consume them.
 	// HookNotifier is wired later (ndmsCommands.SetHookNotifier(orch)) once

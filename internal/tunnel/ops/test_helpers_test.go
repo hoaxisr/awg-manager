@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -57,10 +56,6 @@ type MockBackend struct {
 
 	StartCalls []string
 	StopCalls  []string
-}
-
-func (m *MockBackend) Type() backend.Type {
-	return backend.TypeKernel
 }
 
 func (m *MockBackend) Start(ctx context.Context, ifaceName string) error {

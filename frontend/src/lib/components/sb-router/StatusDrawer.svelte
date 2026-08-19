@@ -15,6 +15,7 @@
   import { systemInfo } from '$lib/stores/system';
   import { notifications } from '$lib/stores/notifications';
   import { drawerOpen, closeDrawer } from './drawerStore';
+  import { openSourceDrawer } from './sourceDrawerStore';
   import { mode } from './modeStore';
   import DepRow from './DepRow.svelte';
   import IssueRow from './IssueRow.svelte';
@@ -86,6 +87,7 @@
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
+  let restarting = $state(false);
   let lastError = $state<string | null>(null);
   let wanAutoOverride = $state<WanAutoOverride>(null);
   let wanAuto = $derived(resolveWanAuto(wanAutoOverride, cfg?.wanAutoDetect));
@@ -153,6 +155,20 @@
     }
   });
 
+  // Новичку TPROXY-настройки живут в SourceDrawer (узел «Источник» во FlowGraph);
+  // здесь — сводка и переход, чтобы под выбором режима не было пусто (#730).
+  let sourceSummary = $derived.by(() => {
+    if (cfg?.deviceMode === 'all') return 'Весь LAN-трафик роутера.';
+    const name = (cfg?.policyName ?? '').trim();
+    return name
+      ? `Только устройства политики «${name}».`
+      : 'Политика не выбрана — трафик устройств не обрабатывается.';
+  });
+  function goToSourceSettings() {
+    closeDrawer();
+    openSourceDrawer();
+  }
+
   // ── Engine control ──
   function toggleEngine(turnOn: boolean) {
     modeSwitch.request(turnOn ? targetMode : 'off');
@@ -168,11 +184,16 @@
     if (activeMode !== null) modeSwitch.request(m);
   }
   async function restartEngine(_e: MouseEvent) {
+    if (restarting) return;
+    restarting = true;
     try {
       await api.singboxControl('restart');
       await singboxRouterStore.reloadStatus();
+      notifications.success('Движок перезапущен');
     } catch (e) {
-      console.error('restart failed', e);
+      notifications.error(`Не удалось перезапустить: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      restarting = false;
     }
   }
 
@@ -328,6 +349,16 @@
       <PolicyTunCard {cfg} status={s} onPatch={(patch) => applyPatch(patch)} />
     {/if}
 
+    <!-- TPROXY у новичка: сводка источника + переход в SourceDrawer. Иначе под
+         выбором режима пусто, тогда как policy-tun показывает свою карточку. -->
+    {#if !policyTunMode && !isExpert && cfg}
+      <section class="sec">
+        <div class="sec-cap">Источник трафика</div>
+        <p class="hint">{sourceSummary}</p>
+        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+      </section>
+    {/if}
+
     {#if isExpert && cfg}
       <!-- Источник трафика (deviceMode/policy) — только TPROXY: в policy-tun
            захват задаётся привязкой интерфейса к политике доступа NDMS. -->
@@ -444,7 +475,7 @@
         <Button variant={captureOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
           {captureOn ? 'Выключить' : 'Включить'}
         </Button>
-        <Button variant="ghost" size="sm" fullWidth onclick={restartEngine}>Перезапустить</Button>
+        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>Перезапустить</Button>
       </div>
       {#if isExpert}
         <span class="save-status" class:err={lastError}>

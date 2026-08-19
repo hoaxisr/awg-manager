@@ -317,12 +317,12 @@ func TestSyncTunCIDRRoutes_Diff(t *testing.T) {
 func TestFakeipWithConfig_SyncsCIDRRoutes(t *testing.T) {
 	svc, _ := newFakeIPTestService(t)
 
-	// Re-provision FakeIPState at Index=3 so fakeIPNDMSName yields OpkgTun3.
+	// Re-provision FakeIPState at Index=3 so tunNDMSName yields OpkgTun3.
 	all, err := svc.deps.Settings.Load()
 	if err != nil {
 		t.Fatalf("Settings.Load: %v", err)
 	}
-	all.FakeIP = &storage.FakeIPState{Provisioned: true, Index: 3, Inet4Range: "198.18.0.0/15"}
+	all.OpkgTun = &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 3, FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15"}}
 	if err := svc.deps.Settings.Save(all); err != nil {
 		t.Fatalf("Settings.Save: %v", err)
 	}

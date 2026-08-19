@@ -175,6 +175,15 @@ func (a *app) setupSingbox() {
 		mode := curSettings.SingboxRouter.RoutingMode
 		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
 		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
+		// Разметка выше меняет владельца dns.strategy, а бут-шаг
+		// reconcile-dns-strategy отработал раньше — внутри NewOperator. Без
+		// повторного примирения рассинхрон base переживает бут И не лечится
+		// периодическим Reconcile: его drift-heal берётся только при
+		// фактически запаркованном слоте, а мы слот уже распарковали.
+		// Best-effort: провал не повод ронять бут.
+		if err := a.singboxOp.ReconcileBaseDNSStrategy(); err != nil {
+			a.bootLog.Warn("reconcile-dns-strategy", "", err.Error())
+		}
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.
@@ -204,6 +213,9 @@ func (a *app) setupSingbox() {
 	// Operator uses for tunnels) so disabling it stops subscriptions from
 	// creating NDMS Proxy interfaces too.
 	a.subSvc.SetNDMSProxyEnabled(a.settingsStore.IsSingboxNDMSProxyEnabled)
+	if err := a.subSvc.LoadHappKeys(); err != nil {
+		a.bootLog.Warn("subscription-happ-keys", "load-from-disk", err.Error())
+	}
 
 	// Сводные группы (#372) — отдельный JSON-файл рядом с subscriptions.json.
 	subGroupStorePath := filepath.Join(a.dataDir, "subscription-groups.json")

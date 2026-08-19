@@ -96,7 +96,6 @@ func (a *app) setupServer() {
 			FreeTurnService:     a.freeturnService,
 			WdttService:         a.wdttService,
 			LoggingService:      a.loggingService,
-			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,
 			UpdaterService:      a.updaterService,
 			NdmsQueries:         a.ndmsQueries,
@@ -317,25 +316,26 @@ func (a *app) setupDeviceProxy() {
 func (a *app) setupRouter() {
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
 	routerSvc := router.NewService(router.Deps{
-		AppLog:                 a.loggingService,
-		Settings:               a.settingsStore,
-		Singbox:                a.singboxOp,
-		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
-		Events:                 a.eventBus,
-		Bus:                    a.eventBus,
-		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
-		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
-		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
-		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
-		Orch:                   a.sbOrch,
-		WANInterfaces:          &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces},
-		BindableInterfaces:     bindableAdapter,
-		IngressResolver:        &routerIngressResolverAdapter{store: a.ndmsQueries.Interfaces},
-		PresetCatalog:          a.presetCatalog,
-		GeoData:                a.geoDataStore,
-		GeoTagCounts:           a.geoDataStore,
-		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
-		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
+		AppLog:                   a.loggingService,
+		Settings:                 a.settingsStore,
+		Singbox:                  a.singboxOp,
+		Policies:                 &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
+		Events:                   a.eventBus,
+		Bus:                      a.eventBus,
+		AWGTags:                  &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},
+		AWGOutboundsRefresh:      a.awgoutboundsSvc.Reconcile,
+		SingboxTunnels:           &routerSingboxTunnelAdapter{src: a.singboxOp},
+		SubscriptionComposites:   router.NewSubscriptionCompositesAdapter(a.subAdapter),
+		Orch:                     a.sbOrch,
+		ReconcileBaseDNSStrategy: a.singboxOp.ReconcileBaseDNSStrategy,
+		WANInterfaces:            &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces},
+		BindableInterfaces:       bindableAdapter,
+		IngressResolver:          &routerIngressResolverAdapter{store: a.ndmsQueries.Interfaces},
+		PresetCatalog:            a.presetCatalog,
+		GeoData:                  a.geoDataStore,
+		GeoTagCounts:             a.geoDataStore,
+		OpkgTun:                  a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
+		StaticRoutes:             &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
 		OpkgTunIndices: &routerOpkgTunIndexAdapter{
 			store: a.ndmsQueries.Interfaces,
 			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
@@ -550,12 +550,15 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
-	// keendns preset → managed DNS rewrite (own FQDN → LAN), not iptables
-	// /32 for 78.47.125.180 (that IP is shared with every other KeenDNS host).
+	// keendns preset → имена KeenDNS резолвит сам роутер, а его адреса идут
+	// мимо sing-box. Прежняя подмена FQDN на LAN IP ломала доступ к морде
+	// роутера по имени KeenDNS (issue #729).
 	if a.routerSvc != nil {
 		a.routerSvc.SetKeenDNSPreset(
-			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
-			keenDNSLANAdapter{},
+			keenDNSInfoAdapter{
+				keendns:  a.ndmsQueries.KeenDNS,
+				dnsProxy: a.ndmsQueries.DNSProxyStatus,
+			},
 			dnsRewriteSvc,
 		)
 		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
@@ -564,7 +567,7 @@ func (a *app) setupListen() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			a.routerSvc.SyncKeenDNSRewrites(ctx)
+			a.routerSvc.SyncKeenDNSPreset(ctx)
 		}()
 	}
 

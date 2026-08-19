@@ -14,9 +14,14 @@ func ClassifyAWGVersion(iface *storage.AWGInterface) string {
 	if iface == nil {
 		return "wg"
 	}
+	// AWG 3.1: the two device flags. Checked before awg3 — 3.1 is a superset,
+	// so a config carrying both a 3.0 param and a flag is a 3.1 config.
+	if hasAnyAWG31Param(iface) {
+		return "awg3.1"
+	}
 	// AWG 3.0: any awg3 device param (header protection / content padding /
-	// timing range). Checked first — awg3 builds on top of the AWG 1.x/2.0
-	// obfuscation, so its presence outranks H-ranges and signature packets.
+	// timing range). awg3 builds on top of the AWG 1.x/2.0 obfuscation, so its
+	// presence outranks H-ranges and signature packets.
 	if hasAnyAWG3Param(iface) {
 		return "awg3"
 	}
@@ -63,4 +68,12 @@ func hasAnyAWG3Param(iface *storage.AWGInterface) bool {
 		iface.RekeyAfterTime != "" || iface.RekeyTimeout != "" ||
 		iface.RejectAfterTime != "" || iface.KeepaliveTimeout != "" ||
 		iface.MaxHandshakeAttempts != ""
+}
+
+// hasAnyAWG31Param reports whether one of the AmneziaWG 3.1 device flags is set.
+func hasAnyAWG31Param(iface *storage.AWGInterface) bool {
+	if iface == nil {
+		return false
+	}
+	return iface.RandomTrailers || iface.DisableCookies
 }

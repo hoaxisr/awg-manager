@@ -228,7 +228,9 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := h.store.Get()
+	// Снапшот, а не Get(): живой объект кэша нельзя маршалить — его
+	// map-поля параллельно правят узкие мутаторы стора.
+	settings, err := h.store.Snapshot()
 	if err != nil {
 		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
@@ -240,7 +242,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update saves settings.
 //
 //	@Summary		Update settings
-//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags. Send only the fields you want to change, or send the full Settings object to update everything atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
+//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags. Send only the fields you want to change, or send the full Settings object to update everything atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key). singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing mode changes only via POST /singbox/router/mode, enable/disable only via the dedicated endpoints.
 //	@Tags			settings
 //	@Accept			json
 //	@Produce		json
@@ -277,6 +279,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	merged := *oldSettings
 	storage.ApplyPatch(&merged, &patch)
+	// Режим перехвата и вкл/выкл sing-box-роутера этим путём НЕ меняются:
+	// Save здесь идёт мимо SwitchRoutingMode, а тик планировщика подхватил бы
+	// чужой режим и оставил ресурсы прежнего жить (см. шапку
+	// internal/singbox/router/fakeip_transition.go). Режим меняется только
+	// POST /singbox/router/mode, Enabled — /enable и /disable. Поля из тела
+	// молча игнорируются — patch-семантика, как у пустого ApiKey выше.
+	merged.SingboxRouter.RoutingMode = oldSettings.SingboxRouter.RoutingMode
+	merged.SingboxRouter.Enabled = oldSettings.SingboxRouter.Enabled
 	merged.PingCheck.Defaults.Target = normalizePingCheckTarget(merged.PingCheck.Defaults.Target)
 	if err := validatePingCheckTarget(merged.PingCheck.Defaults.Target); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_PING_CHECK_TARGET")
@@ -510,7 +520,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.logsSnapshot()
 	}
 
-	response.Success(w, merged)
+	// merged после Save и есть живой кэш — наружу отдаём снапшот.
+	if snap, err := h.store.Snapshot(); err == nil {
+		response.Success(w, snap)
+	} else {
+		response.Success(w, merged)
+	}
 	publishInvalidated(h.bus, ResourceSettings, "updated")
 }
 
@@ -541,14 +556,13 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.store.Get()
-	if err != nil {
-		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+	if err := h.store.SetApiKey(key); err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
 		return
 	}
-	settings.ApiKey = key
-	if err := h.store.Save(settings); err != nil {
-		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+	settings, err := h.store.Snapshot()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
 	}
 

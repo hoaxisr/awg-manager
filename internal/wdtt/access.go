@@ -3,6 +3,7 @@ package wdtt
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -11,7 +12,7 @@ import (
 // With NDMS OpkgTun (OpkgTun17..49) NAT/LAN/policy use the same NDMS path as
 // managed WireGuard servers. Legacy wdtt0 falls back to entware iptables.
 type AccessManager interface {
-	ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error)
+	ApplyNATModeToInterface(ctx context.Context, ifaceName, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
 	EnsureInterfaceFirewallPermit(ctx context.Context, ifaceName string) error
@@ -52,27 +53,27 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	accessMask := cfg.serverAccessMask()
 
 	mode := normalizeNatMode(cfg.NatMode)
-	prevWAN := strings.TrimSpace(cfg.NatStaticWAN)
-	newStaticWAN := prevWAN
+	prevWANs := cfg.staticNATList()
+	newStaticWANs := prevWANs
 
 	if s.accessMgr != nil && useNDMS {
-		wan, err := s.accessMgr.ApplyNATModeToInterface(ctx, ndmsIface, mode, prevWAN)
+		wans, err := s.accessMgr.ApplyNATModeToInterface(ctx, ndmsIface, mode, prevWANs)
 		if err != nil {
 			if s.appLog != nil {
 				s.appLog.Warn("access", id, "NDMS NAT "+mode+" пропущен: "+err.Error())
 			}
-			if mode == "internet-only" && wan == "" {
+			if mode == "internet-only" && len(wans) == 0 {
 				if gw, gwErr := s.accessMgr.DefaultGatewayNDMS(ctx); gwErr == nil && gw != "" {
-					wan = gw
+					wans = []string{gw}
 				}
 			}
 		} else if s.appLog != nil {
 			s.appLog.Info("access", id, fmt.Sprintf("NDMS NAT %s на %s", mode, ndmsIface))
 		}
-		if mode == "internet-only" && wan != "" {
-			newStaticWAN = wan
+		if mode == "internet-only" && len(wans) > 0 {
+			newStaticWANs = wans
 		} else if mode != "internet-only" {
-			newStaticWAN = ""
+			newStaticWANs = nil
 		}
 
 		policy := normalizePolicy(cfg.Policy)
@@ -108,17 +109,17 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	} else if s.accessMgr != nil {
 		if mode == "internet-only" {
 			if gw, gwErr := s.accessMgr.DefaultGatewayNDMS(ctx); gwErr == nil && gw != "" {
-				newStaticWAN = gw
+				newStaticWANs = []string{gw}
 			}
 		} else {
-			newStaticWAN = ""
+			newStaticWANs = nil
 		}
 	} else if mode != "internet-only" {
-		newStaticWAN = ""
+		newStaticWANs = nil
 	}
 
-	if newStaticWAN != prevWAN {
-		_ = s.setServerNatStaticWAN(id, newStaticWAN)
+	if !reflect.DeepEqual(newStaticWANs, prevWANs) {
+		_ = s.setServerNatStaticWANs(id, newStaticWANs)
 	}
 
 	if useNDMS {
@@ -132,8 +133,10 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	s.ensureWdttIngressRefs(ctx, cfg)
 
 	wanDev := ""
-	if mode == "internet-only" && newStaticWAN != "" && s.accessMgr != nil {
-		wanDev = s.accessMgr.KernelIfaceName(ctx, newStaticWAN)
+	if mode == "internet-only" && len(newStaticWANs) > 0 && s.accessMgr != nil {
+		if gw, gwErr := s.accessMgr.DefaultGatewayNDMS(ctx); gwErr == nil && gw != "" {
+			wanDev = s.accessMgr.KernelIfaceName(ctx, gw)
+		}
 	} else if cfg.needsEntwareNAT() && mode != "none" {
 		if dev, err := s.resolveServerEntwareNATExtIface(ctx, cfg, mode); err != nil {
 			if s.appLog != nil {
@@ -183,7 +186,7 @@ func (s *Service) applyServerAccess(ctx context.Context, id string, cfg ServerCo
 	return nil
 }
 
-func (s *Service) setServerNatStaticWAN(id, wan string) error {
+func (s *Service) setServerNatStaticWANs(id string, wans []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	full, err := s.store.Load()
@@ -194,10 +197,12 @@ func (s *Service) setServerNatStaticWAN(id, wan string) error {
 	if idx < 0 {
 		return fmt.Errorf("сервер %q не найден", id)
 	}
-	if full.Servers[idx].Config.NatStaticWAN == wan {
+	cfg := &full.Servers[idx].Config
+	if cfg.NatStaticWAN == "" && reflect.DeepEqual(cfg.NatStaticWANs, wans) {
 		return nil
 	}
-	full.Servers[idx].Config.NatStaticWAN = wan
+	cfg.NatStaticWANs = wans
+	cfg.NatStaticWAN = "" // источник правды теперь список
 	return s.store.Save(full)
 }
 

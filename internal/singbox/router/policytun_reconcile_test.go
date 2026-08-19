@@ -825,8 +825,8 @@ func TestReconcilePolicyTun_QoSChainsWiped_Reinstalls(t *testing.T) {
 
 func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -860,8 +860,8 @@ func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 
 func TestReap_PolicyTunKeepsOwnDNATRules(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -907,8 +907,8 @@ func TestSingboxReady_PolicyTunCarrier(t *testing.T) {
 	if svc.singboxReady(context.Background(), true) {
 		t.Error("без провижининга policy-tun готовность должна быть false")
 	}
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if !svc.singboxReady(context.Background(), true) {
 		t.Error("процесс жив + carrier → policy-tun готов")
@@ -1071,9 +1071,9 @@ func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.PolicyTun.NATSegments = []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
-	if err := h.store.SetPolicyTunState(all.PolicyTun); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	all.OpkgTun.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}}
+	if err := h.store.SetOpkgTunState(all.OpkgTun); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	h.svc.deps.IPTables = errProbeIPTables()
 	st, err = h.svc.GetStatus(context.Background())

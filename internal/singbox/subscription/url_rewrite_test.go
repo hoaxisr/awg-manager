@@ -89,6 +89,47 @@ func TestRewriteForRaw(t *testing.T) {
 			rewrote: false,
 		},
 		{
+			name:    "happ://https:// scheme stripped",
+			in:      "happ://https://vpn.example.com/api/v1/client/subscribe?token=xyz123",
+			want:    "https://vpn.example.com/api/v1/client/subscribe?token=xyz123",
+			rewrote: true,
+		},
+		{
+			name:    "happ:// domain converted to https://",
+			in:      "happ://vpn.example.com/sub/token123",
+			want:    "https://vpn.example.com/sub/token123",
+			rewrote: true,
+		},
+		{
+			name:    "clash://install-config extracted",
+			in:      "clash://install-config?url=https%3A%2F%2Fsub.example.org%2Fclash.yaml",
+			want:    "https://sub.example.org/clash.yaml",
+			rewrote: true,
+		},
+		{
+			name:    "sub://https:// stripped",
+			in:      "sub://https://provider.net/export",
+			want:    "https://provider.net/export",
+			rewrote: true,
+		},
+		{
+			name:    "landing page /happ?id= converted to /api/sub?id=",
+			in:      "https://links.clovpn.org/happ?id=1353818979",
+			want:    "https://links.clovpn.org/api/sub?id=1353818979",
+			rewrote: true,
+		},
+		{
+			name:    "/happ deeper in the path is left alone",
+			in:      "https://provider.example/sub/happ?id=42",
+			rewrote: false,
+		},
+		{
+			name:    "happ://add/https:// stripped cleanly",
+			in:      "happ://add/https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
+			want:    "https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
+			rewrote: true,
+		},
+		{
 			name:    "malformed URL returned unchanged",
 			in:      "://no-scheme",
 			rewrote: false,

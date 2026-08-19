@@ -62,6 +62,12 @@ var (
 	// 400 with the detailed Russian message intact.
 	ErrQoSClassesInvalid = errors.New("некорректные классы QoS")
 
+	// ErrTransitionInProgress: PUT настроек лёг в окно живого SwitchRoutingMode.
+	// Save отсюда откатил бы persistMode(target), и Enable перехода поднялся бы
+	// по чужому режиму. Не ждём (переход держит transitionMu минуты) — честно
+	// отказываем, клиент повторит после завершения перехода.
+	ErrTransitionInProgress = errors.New("смена режима роутинга выполняется — повторите после её завершения")
+
 	// ErrDNSChainTagReserved rejects a user DNS rule that claims (or references)
 	// the awgm-dns-* tag namespace owned by the DNS-preset overlay: such a rule
 	// would be wiped by the next ensureDNSChainOverlay. Mapped to 400 by the API.

@@ -41,9 +41,15 @@ type Service struct {
 	// managed-набор), а отставший flush — записать слот без свежей записи.
 	mu sync.Mutex
 	// slotDirty взводится, когда стор уже изменён, а слот пересобрать не
-	// удалось. Без него идемпотентный гвард в SyncManagedKeenDNS замыкал бы
-	// накоротко навсегда: набор в сторе целевой, а слот остался старым.
+	// удалось. Без него идемпотентный гвард в SetKeenDNSEnabled замыкал бы
+	// накоротко навсегда: стор целевой, а слот остался старым.
 	slotDirty bool
+	// keenDNSOn/keenDNSExtra — состояние пресета keendns: включён ли блок и
+	// доп. имя роутера, если /show/ndns отдал FQDN вне keenDNSZones. Живёт
+	// в памяти: источник правды — настройки движка, роутер зовёт
+	// SetKeenDNSEnabled на старте и каждый Reconcile.
+	keenDNSOn    bool
+	keenDNSExtra string
 }
 
 func NewService(store Store, orch Orchestrator, bus EventBus) *Service {
@@ -137,104 +143,132 @@ func (s *Service) Resync() error {
 	return s.flush()
 }
 
-// SyncManagedKeenDNS приводит managed-набор пресета keendns в соответствие с
-// (domain, lanIP): точный FQDN, *.FQDN и порталы локального доступа → lanIP.
-// Пустой domain или lanIP = снести managed-записи. Единственный контракт —
-// «набор равен аргументам», решение «а надо ли вообще трогать» принимает
-// вызывающий (router.syncKeenDNSRewrites бережёт last-good при флапе NDMS).
+// SetKeenDNSEnabled включает или снимает блок пресета keendns в слоте:
+// DNS-сервер на резолвер роутера и правило, отправляющее туда имена
+// KeenDNS/CrazeDNS. extraDomain — FQDN роутера из /show/ndns; учитывается
+// только если он не покрыт keenDNSZones (страховка на случай новой зоны).
 //
-// Идемпотентна и БЕЗ побочных эффектов, если набор уже совпадает: Reconcile
-// зовёт её каждые 30с, а любая запись — это writeAtomic двух файлов на флеш,
-// пересборка слота и SSE-инвалидация у фронта.
-func (s *Service) SyncManagedKeenDNS(domain, lanIP string) error {
+// Идемпотентна: Reconcile зовёт её каждые 30с, а любая запись — это
+// пересборка слота, SIGHUP sing-box и SSE-инвалидация у фронта.
+func (s *Service) SetKeenDNSEnabled(on bool, extraDomain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	domain = strings.TrimSuffix(domain, ".")
-	lanIP = strings.TrimSpace(lanIP)
-
-	var items []DNSRewrite
-	if domain != "" && lanIP != "" {
-		patterns := append([]string{domain, "*." + domain}, keenDNSPortalDomains...)
-		items = make([]DNSRewrite, 0, len(patterns))
-		for _, p := range patterns {
-			r := DNSRewrite{Pattern: p, IPs: []string{lanIP}, Managed: ManagedKeenDNS}
-			if _, err := compileRewrite(r); err != nil {
-				return err
-			}
-			items = append(items, r)
-		}
+	extra := normalizeDomain(extraDomain)
+	if extra != "" && domainCoveredByKeenDNS(extra) {
+		extra = ""
 	}
-	if !s.slotDirty && managedEqual(s.currentManaged(), items) {
-		return nil
-	}
-	if err := s.store.ReplaceManaged(ManagedKeenDNS, items); err != nil {
+	// Разовая уборка: до 2.18.0 пресет клал в стор managed-перезаписи своего
+	// FQDN на LAN-адрес роутера, и они ломали доступ к его морде по имени
+	// KeenDNS (issue #729). Снимаем их независимо от того, включён пресет
+	// сейчас или нет.
+	dropped, err := s.dropManagedRewrites()
+	if err != nil {
 		return err
 	}
+	if !dropped && !s.slotDirty && s.keenDNSOn == on && s.keenDNSExtra == extra {
+		return nil
+	}
+	s.keenDNSOn, s.keenDNSExtra = on, extra
 	return s.flush()
 }
 
-// currentManaged возвращает записи пресета keendns в текущем порядке стора.
-// Ошибка чтения = "неизвестно" → nil, и вызывающий пойдёт на полную запись.
-func (s *Service) currentManaged() []DNSRewrite {
+// dropManagedRewrites сносит из стора перезаписи прежнего пресета. Отдаёт
+// true, если что-то реально удалено.
+func (s *Service) dropManagedRewrites() (bool, error) {
 	items, err := s.store.List()
 	if err != nil {
-		return nil
+		return false, err
 	}
-	out := make([]DNSRewrite, 0, len(items))
+	found := false
 	for _, r := range items {
 		if r.Managed == ManagedKeenDNS {
-			out = append(out, r)
+			found = true
+			break
 		}
 	}
-	return out
+	if !found {
+		return false, nil
+	}
+	if err := s.store.ReplaceManaged(ManagedKeenDNS, nil); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// managedEqual сравнивает наборы по паттернам и IP — Managed у обоих один и
-// тот же по построению.
-func managedEqual(a, b []DNSRewrite) bool {
-	if len(a) != len(b) {
-		return false
+// keenDNSSlotRules отдаёт (сервер, правило) блока пресета для слота.
+func (s *Service) keenDNSSlotRules() (map[string]any, map[string]any) {
+	domains := KeenDNSHosts()
+	if s.keenDNSExtra != "" {
+		domains = append(domains, s.keenDNSExtra)
 	}
-	for i := range a {
-		if a[i].Pattern != b[i].Pattern || !slices.Equal(a[i].IPs, b[i].IPs) {
-			return false
+	// Резолвер роутера — ndnproxy, он слушает 0.0.0.0:53, так что 127.0.0.1
+	// это он же (проверено netstat на железе). Адрес-константа, в отличие от
+	// IP на мосту, не зависит от того, какую LAN-подсеть выбрал пользователь.
+	server := map[string]any{
+		"tag":    keenDNSServerTag,
+		"type":   "udp",
+		"server": "127.0.0.1",
+	}
+	rule := map[string]any{
+		"domain":        domains,
+		"domain_suffix": KeenDNSZones(),
+		"server":        keenDNSServerTag,
+	}
+	return server, rule
+}
+
+func normalizeDomain(d string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+}
+
+// domainCoveredByKeenDNS сообщает, попадает ли имя под keenDNSHosts/keenDNSZones.
+func domainCoveredByKeenDNS(d string) bool {
+	if slices.Contains(keenDNSHosts, d) {
+		return true
+	}
+	for _, z := range keenDNSZones {
+		if d == z || strings.HasSuffix(d, "."+z) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 type slotConfig struct {
 	DNS slotDNS `json:"dns"`
 }
 type slotDNS struct {
-	Rules []map[string]any `json:"rules"`
+	Servers []map[string]any `json:"servers,omitempty"`
+	Rules   []map[string]any `json:"rules"`
 }
+
+// keenDNSServerTag — тег DNS-сервера пресета в объединённом конфиге.
+const keenDNSServerTag = "keendns-router"
 
 func (s *Service) flush() error {
 	items, err := s.store.List()
 	if err != nil {
 		return err
 	}
-	// Managed-правила компилируются ПЕРВЫМИ: sing-box берёт первое совпавшее
-	// правило, и широкий пользовательский паттерн (*.pro) иначе перекрыл бы
-	// перезапись пресета. Порядок ХРАНЕНИЯ при этом не трогаем — managed
-	// лежат в хвосте, чтобы их появление/снятие фоновым sync'ом не сдвигало
-	// индексы пользовательских записей, которыми адресует API.
-	rules := make([]map[string]any, 0, len(items))
-	for _, pass := range []bool{true, false} {
-		for _, r := range items {
-			if (r.Managed != "") != pass {
-				continue
-			}
-			compiled, err := compileRewrite(r)
-			if err != nil {
-				return fmt.Errorf("compile %q: %w", r.Pattern, err)
-			}
-			rules = append(rules, compiled...)
-		}
+	// Блок пресета идёт ПЕРВЫМ: sing-box берёт первое совпавшее правило, и
+	// широкий пользовательский паттерн (*.pro) иначе перехватил бы имена
+	// KeenDNS. Слот 17-dns-rewrites.json мержится раньше 21-fakeip.json, так
+	// что этот же порядок уводит имена роутера мимо fakeip.
+	var servers []map[string]any
+	rules := make([]map[string]any, 0, len(items)+1)
+	if s.keenDNSOn {
+		server, rule := s.keenDNSSlotRules()
+		servers = append(servers, server)
+		rules = append(rules, rule)
 	}
-	data, err := json.MarshalIndent(slotConfig{DNS: slotDNS{Rules: rules}}, "", "  ")
+	for _, r := range items {
+		compiled, err := compileRewrite(r)
+		if err != nil {
+			return fmt.Errorf("compile %q: %w", r.Pattern, err)
+		}
+		rules = append(rules, compiled...)
+	}
+	data, err := json.MarshalIndent(slotConfig{DNS: slotDNS{Servers: servers, Rules: rules}}, "", "  ")
 	if err != nil {
 		s.slotDirty = true
 		return err

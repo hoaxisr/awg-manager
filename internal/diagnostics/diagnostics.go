@@ -17,7 +17,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -428,7 +427,6 @@ type Deps struct {
 	TunnelService        TunnelServiceForDiag
 	NDMSQueries          *query.Queries
 	NDMSTransport        *transport.Client
-	Backend              backend.Backend
 	KmodLoader           *kmod.Loader
 	TunnelStore          *storage.AWGTunnelStore
 	LogService           LogServiceForDiag

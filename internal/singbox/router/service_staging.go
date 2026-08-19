@@ -42,6 +42,7 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
 		s.GCRuleSetArtifacts()
+		s.reconcileBaseDNSStrategy()
 		s.emitStagingEvent("applied")
 		s.emitRulesEvent()
 	}
@@ -69,4 +70,16 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 	m := s.ruleSetMaterializer()
 	_, err = m.materializeConfig(m.restoreConfig(cfg))
 	return err
+}
+
+// reconcileBaseDNSStrategy зовёт опциональный dep после того, как содержимое
+// routing-слота стало активным. Best-effort: изменение слота уже применено,
+// ошибка примирения обязана попасть в app-лог, но не отменять успех.
+func (s *ServiceImpl) reconcileBaseDNSStrategy() {
+	if s.deps.ReconcileBaseDNSStrategy == nil {
+		return
+	}
+	if err := s.deps.ReconcileBaseDNSStrategy(); err != nil {
+		s.appLog.Warn("dns-globals", "", "reconcile base dns.strategy: "+err.Error())
+	}
 }
