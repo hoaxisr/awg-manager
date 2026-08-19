@@ -33,10 +33,37 @@ import type {
 	TerminalStatus,
 	UpdateInfo,
 	WANInterface,
-	WANStatus
+	WANStatus,
+	SystemFileRoot,
+	SystemFileEntry,
+	FileSystemScriptStatus,
+	SystemServiceItem,
+	SystemOpkgPackage,
+	SystemPortBinding,
+	SystemCpuCore,
+	SystemMemoryInfo,
+	SystemProcessItem,
+	SystemProcSummary,
+	SystemProcSnapshot,
 } from '$lib/types';
 import { readDiagnosticsSanitizedPreference } from './clientCore';
 import { TunnelsClient } from './clientTunnels';
+
+// Типы объявлены в $lib/types/systemTools; здесь — реэкспорт для кода,
+// который импортирует их из клиента.
+export type {
+	SystemFileRoot,
+	SystemFileEntry,
+	FileSystemScriptStatus,
+	SystemServiceItem,
+	SystemOpkgPackage,
+	SystemPortBinding,
+	SystemCpuCore,
+	SystemMemoryInfo,
+	SystemProcessItem,
+	SystemProcSummary,
+	SystemProcSnapshot,
+} from '$lib/types';
 
 export class SystemClient extends TunnelsClient {
 	// ─────────────────────────────────────────────
@@ -631,5 +658,246 @@ export class SystemClient extends TunnelsClient {
 
 	// #endregion
 
+
+	// ─────────────────────────────────────────────
+	// #region System tools (expert)
+	// ─────────────────────────────────────────────
+
+	async systemFilesRoots(): Promise<SystemFileRoot[]> {
+		return this.request('/system/files/roots');
+	}
+
+	async systemFilesList(path = ''): Promise<{ path: string; entries: SystemFileEntry[] }> {
+		const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+		return this.request(`/system/files/list${qs}`);
+	}
+
+	async systemFilesRead(path: string): Promise<{ path: string; content: string; info: SystemFileEntry }> {
+		return this.request(`/system/files/read?path=${encodeURIComponent(path)}`);
+	}
+
+	async systemFilesWrite(path: string, content: string): Promise<void> {
+		await this.request('/system/files/write', {
+			method: 'POST',
+			body: JSON.stringify({ path, content }),
+		});
+	}
+
+	async systemFilesMkdir(path: string): Promise<void> {
+		await this.request('/system/files/mkdir', {
+			method: 'POST',
+			body: JSON.stringify({ path }),
+		});
+	}
+
+	async systemFilesRemove(path: string): Promise<void> {
+		await this.request('/system/files/remove', {
+			method: 'POST',
+			body: JSON.stringify({ path }),
+		});
+	}
+
+	async systemFilesRename(from: string, to: string): Promise<void> {
+		await this.request('/system/files/rename', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async systemFilesCopy(from: string, to: string): Promise<void> {
+		await this.request('/system/files/copy', {
+			method: 'POST',
+			body: JSON.stringify({ from, to }),
+		});
+	}
+
+	async systemFilesChmod(path: string, mode: string): Promise<void> {
+		await this.request('/system/files/chmod', {
+			method: 'POST',
+			body: JSON.stringify({ path, mode }),
+		});
+	}
+
+	async systemFilesChecksum(path: string, algo: 'md5' | 'sha256' = 'md5'): Promise<{
+		path: string;
+		checksum: string;
+		algo: string;
+		info: SystemFileEntry;
+	}> {
+		return this.request(
+			`/system/files/checksum?path=${encodeURIComponent(path)}&algo=${encodeURIComponent(algo)}`,
+		);
+	}
+
+	async systemFilesScriptStatus(path: string): Promise<FileSystemScriptStatus> {
+		return this.request(`/system/files/script-status?path=${encodeURIComponent(path)}`);
+	}
+
+	async systemFilesScriptAction(params: {
+		path: string;
+		action: 'start' | 'stop' | 'restart' | 'run';
+		args?: string[];
+	}): Promise<{
+		ok: boolean;
+		output: string;
+		running: boolean;
+		pids?: number[];
+		error?: string;
+	}> {
+		return this.request('/system/files/script-action', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
+	async systemServicesList(): Promise<SystemServiceItem[]> {
+		return this.request('/system/services/list');
+	}
+
+	async systemServicesAction(script: string, action: 'start' | 'stop' | 'restart' | 'status'): Promise<{
+		output: string;
+		ok: boolean;
+		error?: string;
+	}> {
+		return this.request('/system/services/action', {
+			method: 'POST',
+			body: JSON.stringify({ script, action }),
+		});
+	}
+
+	async systemServicesGet(script: string): Promise<{ script: string; content: string }> {
+		return this.request(`/system/services/get?script=${encodeURIComponent(script)}`);
+	}
+
+	async systemServicesSave(payload: { scriptName: string; content: string }): Promise<{ ok: boolean; script: string }> {
+		return this.request('/system/services/save', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	}
+
+	async systemServicesDelete(script: string): Promise<{ ok: boolean }> {
+		return this.request('/system/services/delete', {
+			method: 'POST',
+			body: JSON.stringify({ script }),
+		});
+	}
+
+	async systemOpkgInstalled(): Promise<SystemOpkgPackage[]> {
+		return this.request('/system/opkg/installed');
+	}
+
+	async systemOpkgUpgradable(): Promise<SystemOpkgPackage[]> {
+		return this.request('/system/opkg/upgradable');
+	}
+
+	async systemOpkgSearch(q: string): Promise<SystemOpkgPackage[]> {
+		return this.request(`/system/opkg/search?q=${encodeURIComponent(q)}`);
+	}
+
+	async systemOpkgUpdate(): Promise<{ output: string }> {
+		return this.request('/system/opkg/update', { method: 'POST', body: '{}' });
+	}
+
+	async systemOpkgUpgrade(packages?: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/upgrade', {
+			method: 'POST',
+			body: JSON.stringify({ packages: packages ?? [] }),
+		});
+	}
+
+	async systemOpkgInstall(packages: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/install', {
+			method: 'POST',
+			body: JSON.stringify({ packages }),
+		});
+	}
+
+	async systemOpkgRemove(packages: string[]): Promise<{ output: string }> {
+		return this.request('/system/opkg/remove', {
+			method: 'POST',
+			body: JSON.stringify({ packages }),
+		});
+	}
+
+	async systemOpkgAvailable(params: {
+		q?: string;
+		offset?: number;
+		limit?: number;
+	} = {}): Promise<{ items: SystemOpkgPackage[]; total: number; offset: number; limit: number }> {
+		const sp = new URLSearchParams();
+		if (params.q) sp.set('q', params.q);
+		if (params.offset != null) sp.set('offset', String(params.offset));
+		if (params.limit != null) sp.set('limit', String(params.limit));
+		const qs = sp.toString();
+		return this.request(`/system/opkg/available${qs ? '?' + qs : ''}`);
+	}
+
+	async systemFilesUpload(path: string, file: File): Promise<{ path: string }> {
+		const form = new FormData();
+		form.append('path', path);
+		form.append('file', file);
+		const res = await fetch(`${this.baseUrl}/system/files/upload`, {
+			method: 'POST',
+			credentials: 'same-origin',
+			body: form,
+			signal: this.abortController.signal,
+		});
+		if (res.status === 401) {
+			this.onUnauthorized?.();
+			throw new Error('Сессия истекла');
+		}
+		const body = (await res.json()) as { success?: boolean; data?: { path: string }; message?: string };
+		if (!res.ok || body.success === false) {
+			throw new Error(body.message || 'Не удалось загрузить файл');
+		}
+		return body.data ?? { path: '' };
+	}
+
+	systemFilesDownloadUrl(path: string): string {
+		return `${this.baseUrl}/system/files/download?path=${encodeURIComponent(path)}`;
+	}
+
+	async systemPortsList(): Promise<SystemPortBinding[]> {
+		return this.request('/system/ports/list');
+	}
+
+	async systemPortsInspect(port: number, proto?: string): Promise<{
+		port: number;
+		proto?: string;
+		bindings: SystemPortBinding[];
+		occupied: boolean;
+	}> {
+		const qs = proto ? `?port=${port}&proto=${encodeURIComponent(proto)}` : `?port=${port}`;
+		return this.request(`/system/ports/inspect${qs}`);
+	}
+
+	async systemPortsKill(params: {
+		pid: number;
+		signal?: 'SIGTERM' | 'SIGKILL';
+		port?: number;
+		proto?: string;
+	}): Promise<{ pid: number; signal: string; ok: boolean }> {
+		return this.request('/system/ports/kill', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
+	async systemProcSnapshot(): Promise<SystemProcSnapshot> {
+		return this.request('/system/proc/snapshot');
+	}
+
+	async systemProcKill(params: {
+		pid: number;
+		signal?: 'SIGTERM' | 'SIGKILL';
+	}): Promise<{ pid: number; signal: string; ok: boolean }> {
+		return this.request('/system/proc/kill', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
+	// #endregion
 
 }

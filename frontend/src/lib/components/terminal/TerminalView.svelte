@@ -6,16 +6,38 @@
 	import { get } from 'svelte/store';
 	import { theme, resolveThemeTokens } from '$lib/stores/theme';
 	import { buildXtermTheme } from '$lib/utils/xterm-theme';
+	import { type TerminalAutoLogin } from '$lib/utils/terminalCredentials';
+	import { stripAnsi } from '$lib/utils/ansi';
+	import {
+		createCommandLineTracker,
+		HISTORY_DEFAULT_WIDTH,
+		HISTORY_MIN_WIDTH,
+		loadTerminalCommands,
+		loadTerminalHistoryEnabled,
+		loadTerminalHistoryWidth,
+		looksLikeShellPrompt,
+		pushTerminalCommand,
+		saveTerminalCommands,
+		saveTerminalHistoryEnabled,
+		saveTerminalHistoryWidth,
+		SPLITTER_WIDTH,
+		TERMINAL_MIN_WIDTH,
+	} from '$lib/utils/terminalCommandHistory';
+	import TerminalHistoryPanel from './TerminalHistoryPanel.svelte';
+	import { History, KeyRound, UserRound } from 'lucide-svelte';
 
 	interface Props {
 		onclose?: () => void;
 		onerror?: (msg: string) => void;
 		onreconnect?: () => Promise<void>;
+		autoLogin?: Pick<TerminalAutoLogin, 'login' | 'password'> | null;
+		compact?: boolean;
 	}
 
-	let { onclose, onerror, onreconnect }: Props = $props();
+	let { onclose, onerror, onreconnect, autoLogin = null, compact = false }: Props = $props();
 
 	let containerEl: HTMLDivElement;
+	let macBodyEl: HTMLDivElement;
 	let termInstance: Terminal | null = $state(null);
 	let fitAddonRef: FitAddon | null = null;
 	let ws: WebSocket | null = $state(null);
@@ -31,6 +53,125 @@
 	let autoReconnecting = false;
 	let lastOpenAt = 0; // время последнего успешного open
 	let flapCount = 0; // подряд короткоживущие (<10с) сессии
+
+	function sendTerminalInput(data: string) {
+		if (ws?.readyState !== WebSocket.OPEN) return;
+		const encoder = new TextEncoder();
+		const payload = encoder.encode(data);
+		const msg = new Uint8Array(payload.length + 1);
+		msg[0] = TTYD_INPUT;
+		msg.set(payload, 1);
+		ws.send(msg.buffer);
+	}
+
+	let historyEnabled = $state(loadTerminalHistoryEnabled());
+	let historyCommands = $state(loadTerminalCommands());
+	let historyWidth = $state(loadTerminalHistoryWidth(HISTORY_DEFAULT_WIDTH));
+	let resizingHistory = $state(false);
+	let resizeRaf = 0;
+	let cmdTracker = createCommandLineTracker((command) => {
+		if (!historyEnabled) return;
+		historyCommands = pushTerminalCommand(historyCommands, command);
+		saveTerminalCommands(historyCommands);
+	});
+
+	$effect(() => {
+		if (!macBodyEl || !historyEnabled) return;
+		const ro = new ResizeObserver(() => {
+			const bodyWidth = macBodyEl.getBoundingClientRect().width;
+			const clamped = clampHistoryWidth(historyWidth, bodyWidth);
+			if (clamped !== historyWidth) {
+				historyWidth = clamped;
+				saveTerminalHistoryWidth(clamped);
+			}
+			scheduleTerminalFit();
+		});
+		ro.observe(macBodyEl);
+		return () => ro.disconnect();
+	});
+
+	// Учётные данные уходят в tty только по явному нажатию: прежний
+	// авто-ввод срабатывал на ЛЮБОЙ вывод, оканчивающийся на «password:»,
+	// то есть пароль роутера мог уехать в чужое приглашение (ssh, sudo,
+	// mysql) внутри той же сессии.
+	function sendStoredLogin() {
+		if (!autoLogin?.login) return;
+		sendTerminalInput(autoLogin.login + '\r');
+	}
+
+	function sendStoredPassword() {
+		if (!autoLogin?.password) return;
+		sendTerminalInput(autoLogin.password + '\r');
+	}
+
+	function feedShellDetection(chunk: Uint8Array) {
+		const text = stripAnsi(new TextDecoder().decode(chunk));
+		if (looksLikeShellPrompt(text)) {
+			cmdTracker.markShellReady();
+		}
+	}
+
+	function setHistoryEnabled(enabled: boolean) {
+		historyEnabled = enabled;
+		saveTerminalHistoryEnabled(enabled);
+		if (enabled) scheduleTerminalFit();
+	}
+
+	function runHistoryCommand(command: string) {
+		sendTerminalInput(command + '\r');
+		if (historyEnabled) {
+			historyCommands = pushTerminalCommand(historyCommands, command);
+			saveTerminalCommands(historyCommands);
+		}
+		termInstance?.focus();
+	}
+
+	function clearHistory() {
+		historyCommands = [];
+		saveTerminalCommands([]);
+	}
+
+	function clampHistoryWidth(width: number, bodyWidth: number): number {
+		const maxWidth = Math.max(
+			HISTORY_MIN_WIDTH,
+			bodyWidth - TERMINAL_MIN_WIDTH - SPLITTER_WIDTH,
+		);
+		return Math.min(maxWidth, Math.max(HISTORY_MIN_WIDTH, width));
+	}
+
+	function scheduleTerminalFit() {
+		if (resizeRaf) cancelAnimationFrame(resizeRaf);
+		resizeRaf = requestAnimationFrame(() => {
+			resizeRaf = 0;
+			fitAddonRef?.fit();
+		});
+	}
+
+	function startHistoryResize(event: PointerEvent) {
+		if (!macBodyEl) return;
+		event.preventDefault();
+		resizingHistory = true;
+		const startX = event.clientX;
+		const startWidth = historyWidth;
+		const bodyWidth = macBodyEl.getBoundingClientRect().width;
+
+		const handleMove = (moveEvent: PointerEvent) => {
+			const delta = startX - moveEvent.clientX;
+			historyWidth = clampHistoryWidth(startWidth + delta, bodyWidth);
+			scheduleTerminalFit();
+		};
+
+		const handleUp = () => {
+			resizingHistory = false;
+			saveTerminalHistoryWidth(historyWidth);
+			scheduleTerminalFit();
+			window.removeEventListener('pointermove', handleMove);
+			window.removeEventListener('pointerup', handleUp);
+		};
+
+		window.addEventListener('pointermove', handleMove);
+		window.addEventListener('pointerup', handleUp);
+	}
 
 	// ttyd protocol: message types are ASCII characters, not binary values!
 	const TTYD_OUTPUT = '0'.charCodeAt(0);
@@ -52,6 +193,7 @@
 	function attachSocketHandlers(socket: WebSocket, term: Terminal, fitAddon: FitAddon) {
 		socket.onopen = () => {
 			lastOpenAt = Date.now();
+			cmdTracker.reset();
 			socket.send(JSON.stringify({ AuthToken: '' }));
 			sendResize(socket, term.cols, term.rows);
 			fitAddon.fit();
@@ -66,6 +208,7 @@
 
 			switch (msgType) {
 				case TTYD_OUTPUT:
+					feedShellDetection(payload);
 					term.write(payload);
 					break;
 				case TTYD_SET_TITLE:
@@ -120,16 +263,6 @@
 				reject(new Error('WebSocket error'));
 			};
 		});
-	}
-
-	function sendTerminalInput(data: string) {
-		if (ws?.readyState !== WebSocket.OPEN) return;
-		const encoder = new TextEncoder();
-		const payload = encoder.encode(data);
-		const msg = new Uint8Array(payload.length + 1);
-		msg[0] = TTYD_INPUT;
-		msg.set(payload, 1);
-		ws.send(msg.buffer);
 	}
 
 	function clearScreen() {
@@ -231,6 +364,7 @@
 		fitAddon.fit();
 
 		term.onData((data: string) => {
+			cmdTracker.feed(data);
 			sendTerminalInput(data);
 		});
 
@@ -305,9 +439,61 @@
 			</button>
 		</div>
 		<span class="mac-title">Терминал</span>
+		<div class="mac-titlebar-actions">
+			{#if autoLogin?.login}
+				<button
+					type="button"
+					class="history-toggle"
+					title="Отправить сохранённый логин в текущее приглашение"
+					onclick={sendStoredLogin}
+				>
+					<UserRound size={14} />
+					<span>Логин</span>
+				</button>
+			{/if}
+			{#if autoLogin?.password}
+				<button
+					type="button"
+					class="history-toggle"
+					title="Отправить сохранённый пароль в текущее приглашение"
+					onclick={sendStoredPassword}
+				>
+					<KeyRound size={14} />
+					<span>Пароль</span>
+				</button>
+			{/if}
+			{#if !historyEnabled}
+				<button
+					type="button"
+					class="history-toggle"
+					title="Показать историю команд"
+					onclick={() => setHistoryEnabled(true)}
+				>
+					<History size={14} />
+					<span>История</span>
+				</button>
+			{/if}
+		</div>
 	</div>
-	<div class="mac-body">
+	<div class="mac-body" bind:this={macBodyEl} class:resizing={resizingHistory}>
 		<div class="terminal-container" bind:this={containerEl}></div>
+		{#if historyEnabled}
+			<button
+				type="button"
+				class="history-splitter"
+				aria-label="Изменить ширину панели истории"
+				onpointerdown={startHistoryResize}
+			></button>
+			<div class="history-wrap" style:width="{historyWidth}px">
+				<TerminalHistoryPanel
+					{compact}
+					commands={historyCommands}
+					onselect={runHistoryCommand}
+					onclear={clearHistory}
+					onclose={() => setHistoryEnabled(false)}
+				/>
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -451,6 +637,32 @@
 		transform: translateY(0);
 	}
 
+	.mac-titlebar-actions {
+		grid-column: 3;
+		display: flex;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.history-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-bg-primary) 50%, transparent);
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		padding: 0.15rem 0.45rem;
+		cursor: pointer;
+	}
+
+	.history-toggle:hover {
+		color: var(--color-text-primary);
+		background: color-mix(in srgb, var(--color-bg-primary) 75%, transparent);
+	}
+
 	.mac-title {
 		grid-column: 2;
 		font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
@@ -471,12 +683,55 @@
 		background: var(--color-bg-primary);
 	}
 
+	.mac-body.resizing {
+		cursor: col-resize;
+		user-select: none;
+	}
+
 	.terminal-container {
-		width: 100%;
+		flex: 1;
+		min-width: 160px;
 		height: 100%;
 		background: var(--color-bg-primary);
 		overflow: hidden;
 		box-sizing: border-box;
+	}
+
+	.history-splitter {
+		flex-shrink: 0;
+		width: 6px;
+		margin: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		cursor: col-resize;
+		position: relative;
+	}
+
+	.history-splitter::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		width: 1px;
+		transform: translateX(-50%);
+		background: var(--color-border);
+		transition: background var(--t-fast, 150ms) ease;
+	}
+
+	.history-splitter:hover::after,
+	.mac-body.resizing .history-splitter::after {
+		width: 2px;
+		background: color-mix(in srgb, var(--accent-primary, #3b82f6) 65%, var(--color-border));
+	}
+
+	.history-wrap {
+		flex-shrink: 0;
+		min-width: 100px;
+		height: 100%;
+		border-left: 1px solid var(--color-border);
+		overflow: hidden;
 	}
 
 	.terminal-container :global(.xterm) {

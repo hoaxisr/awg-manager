@@ -5,6 +5,18 @@ import { Awg3Client } from './clientAwg3';
 
 export { ApiGatewayError } from './clientCore';
 export type { TrafficPeriod } from './clientCore';
+// Реэкспорт для существующих импортов из '$lib/api/client'; сами типы
+// объявлены в $lib/types/systemTools.
+export type {
+	SystemFileRoot,
+	SystemFileEntry,
+	FileSystemScriptStatus,
+	SystemServiceItem,
+	SystemOpkgPackage,
+	SystemPortBinding,
+	SystemProcSnapshot,
+	SystemProcessItem,
+} from '$lib/types';
 
 class ApiClient extends Awg3Client {}
 

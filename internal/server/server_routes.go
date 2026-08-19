@@ -54,9 +54,17 @@ type routeHandlers struct {
 	managedHandler       *api.ManagedServerHandler
 	accessPolicyHandler  *api.AccessPolicyHandler
 	crHandler            *api.ClientRouteHandler
+	systemToolsHandler   *api.SystemToolsHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
+}
+
+// expertGuarded — auth плюс проверка usage level: раздел «Система» даёт
+// root-доступ к файлам, процессам и opkg, поэтому гейт стоит на регистрации
+// маршрута, а не копией в начале каждого хендлера.
+func (h *routeHandlers) expertGuarded(fn http.HandlerFunc) http.HandlerFunc {
+	return h.guarded(h.systemToolsHandler.ExpertOnly(fn))
 }
 
 // buildRouteHandlers конструирует и перекрёстно связывает handlers,
@@ -155,6 +163,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.signatureHandler = api.NewSignatureHandler()
 	h.terminalHandler = api.NewTerminalHandler(s.terminalManager, s.loggingService)
+	h.systemToolsHandler = api.NewSystemToolsHandler(s.settings, h.appLog)
+	h.systemToolsHandler.SetEventBus(s.bus)
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
@@ -328,6 +338,40 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/update/check", h.guarded(h.updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", h.guarded(h.updateHandler.Apply))
 	mux.HandleFunc("/api/system/update/changelog", h.guarded(h.updateHandler.Changelog))
+
+	// System tools (expert): file manager, init.d services, opkg
+	mux.HandleFunc("/api/system/files/roots", h.expertGuarded(h.systemToolsHandler.FilesRoots))
+	mux.HandleFunc("/api/system/files/list", h.expertGuarded(h.systemToolsHandler.FilesList))
+	mux.HandleFunc("/api/system/files/read", h.expertGuarded(h.systemToolsHandler.FilesRead))
+	mux.HandleFunc("/api/system/files/write", h.expertGuarded(h.systemToolsHandler.FilesWrite))
+	mux.HandleFunc("/api/system/files/mkdir", h.expertGuarded(h.systemToolsHandler.FilesMkdir))
+	mux.HandleFunc("/api/system/files/remove", h.expertGuarded(h.systemToolsHandler.FilesRemove))
+	mux.HandleFunc("/api/system/files/rename", h.expertGuarded(h.systemToolsHandler.FilesRename))
+	mux.HandleFunc("/api/system/files/copy", h.expertGuarded(h.systemToolsHandler.FilesCopy))
+	mux.HandleFunc("/api/system/files/chmod", h.expertGuarded(h.systemToolsHandler.FilesChmod))
+	mux.HandleFunc("/api/system/files/checksum", h.expertGuarded(h.systemToolsHandler.FilesChecksum))
+	mux.HandleFunc("/api/system/files/download", h.expertGuarded(h.systemToolsHandler.FilesDownload))
+	mux.HandleFunc("/api/system/files/upload", h.expertGuarded(h.systemToolsHandler.FilesUpload))
+	mux.HandleFunc("/api/system/files/script-status", h.expertGuarded(h.systemToolsHandler.FilesScriptStatus))
+	mux.HandleFunc("/api/system/files/script-action", h.expertGuarded(h.systemToolsHandler.FilesScriptAction))
+	mux.HandleFunc("/api/system/services/list", h.expertGuarded(h.systemToolsHandler.ServicesList))
+	mux.HandleFunc("/api/system/services/action", h.expertGuarded(h.systemToolsHandler.ServicesAction))
+	mux.HandleFunc("/api/system/services/get", h.expertGuarded(h.systemToolsHandler.ServicesGetScript))
+	mux.HandleFunc("/api/system/services/save", h.expertGuarded(h.systemToolsHandler.ServicesSaveScript))
+	mux.HandleFunc("/api/system/services/delete", h.expertGuarded(h.systemToolsHandler.ServicesDeleteScript))
+	mux.HandleFunc("/api/system/opkg/installed", h.expertGuarded(h.systemToolsHandler.OpkgInstalled))
+	mux.HandleFunc("/api/system/opkg/upgradable", h.expertGuarded(h.systemToolsHandler.OpkgUpgradable))
+	mux.HandleFunc("/api/system/opkg/search", h.expertGuarded(h.systemToolsHandler.OpkgSearch))
+	mux.HandleFunc("/api/system/opkg/update", h.expertGuarded(h.systemToolsHandler.OpkgUpdate))
+	mux.HandleFunc("/api/system/opkg/upgrade", h.expertGuarded(h.systemToolsHandler.OpkgUpgrade))
+	mux.HandleFunc("/api/system/opkg/install", h.expertGuarded(h.systemToolsHandler.OpkgInstall))
+	mux.HandleFunc("/api/system/opkg/remove", h.expertGuarded(h.systemToolsHandler.OpkgRemove))
+	mux.HandleFunc("/api/system/opkg/available", h.expertGuarded(h.systemToolsHandler.OpkgAvailable))
+	mux.HandleFunc("/api/system/ports/list", h.expertGuarded(h.systemToolsHandler.PortsList))
+	mux.HandleFunc("/api/system/ports/inspect", h.expertGuarded(h.systemToolsHandler.PortsInspect))
+	mux.HandleFunc("/api/system/ports/kill", h.expertGuarded(h.systemToolsHandler.PortsKill))
+	mux.HandleFunc("/api/system/proc/snapshot", h.expertGuarded(h.systemToolsHandler.ProcSnapshot))
+	mux.HandleFunc("/api/system/proc/kill", h.expertGuarded(h.systemToolsHandler.ProcKill))
 
 }
 
