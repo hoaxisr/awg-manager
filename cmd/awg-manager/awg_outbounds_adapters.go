@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -251,56 +250,28 @@ func (a *routerSingboxTunnelAdapter) ListTunnelTags(ctx context.Context) ([]stri
 	return out, nil
 }
 
-// routerSingboxTunnelEditor patches sing-box tunnel outbounds for composite
-// egress bind (#709).
-type routerSingboxTunnelEditor struct {
-	op *singbox.Operator
-}
-
-func (a *routerSingboxTunnelEditor) GetTunnelOutbound(ctx context.Context, tag string) (json.RawMessage, error) {
-	return a.op.GetTunnel(ctx, tag)
-}
-
-func (a *routerSingboxTunnelEditor) UpdateTunnelOutbounds(ctx context.Context, updates map[string]json.RawMessage) error {
-	return a.op.UpdateTunnels(ctx, updates)
-}
-
-// StageTunnelOutboundUpdates routes through the orchestrator's pending/
-// directory so bind changes ride the same draft as the composite group
-// edit (#709, PR #732 review blocker #2). The operator falls back to
-// UpdateTunnels when the orchestrator is not wired, so legacy callers
-// see the same immediate behaviour.
-func (a *routerSingboxTunnelEditor) StageTunnelOutboundUpdates(ctx context.Context, updates map[string]json.RawMessage) error {
-	return a.op.StageTunnelOutboundUpdates(ctx, updates)
-}
-
-func (a *routerSingboxTunnelEditor) IsSingboxTunnelTag(ctx context.Context, tag string) (bool, error) {
-	tunnels, err := a.op.ListTunnels(ctx)
-	if err != nil {
-		// Propagate the error so a corrupted 10-tunnels.json or a
-		// dead sing-box process does not silently drop the bind
-		// change for every member of the group (#709, PR #732
-		// review non-blocker #10). The old "return false" path
-		// masked real failures and made patch cycles no-op
-		// without any visible signal.
-		return false, fmt.Errorf("list sing-box tunnels: %w", err)
-	}
-	for _, t := range tunnels {
-		if t.Tag == tag {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // subscriptionBindValidator bridges router bindable-interface validation
-// into the subscription service (#709).
+// into the subscription service and sing-box tunnel endpoints (#709).
+// It validates against the unfiltered list of bindable interfaces so
+// interfaces with direct outbounds remain usable by subscriptions and tunnels.
 type subscriptionBindValidator struct {
-	router *router.ServiceImpl
+	adapter *routerWANInterfaceAdapter
 }
 
 func (v subscriptionBindValidator) ValidateBindInterface(ctx context.Context, name string) error {
-	return v.router.ValidateBindInterface(ctx, name)
+	if v.adapter == nil {
+		return nil
+	}
+	ifaces, err := v.adapter.ListAllBindable(ctx)
+	if err != nil {
+		return err
+	}
+	for _, i := range ifaces {
+		if i.Name == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("bind_interface %q is not a selectable interface", name)
 }
 
 // monitoringSingboxTunnelAdapter projects sing-box tunnels into the

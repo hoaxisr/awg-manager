@@ -194,7 +194,7 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		Enabled:          in.Enabled,
 		FilterInclude:    in.FilterInclude,
 		FilterExclude:    in.FilterExclude,
-		BindInterface:    in.BindInterface,
+		BindInterface:    strings.TrimSpace(in.BindInterface),
 		SelectorTag:      "sub-" + short,
 		InboundTag:       "sub-" + short + "-in",
 		ProxyIndex:       -1,

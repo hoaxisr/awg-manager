@@ -166,7 +166,7 @@ func TestCompositeOutbound_TproxyRejectsUnknownMembers(t *testing.T) {
 
 	err := svc.AddCompositeOutbound(ctx, Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"have", "ghost-1"},
-	}, "")
+	})
 	if err == nil {
 		t.Fatal("tproxy composite with unknown member must be rejected")
 	}
@@ -180,14 +180,14 @@ func TestCompositeOutbound_TproxyRejectsUnknownMembers(t *testing.T) {
 	// Все члены известны — принимается.
 	if err := svc.AddCompositeOutbound(ctx, Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"have", "have2"},
-	}, ""); err != nil {
+	}); err != nil {
 		t.Fatalf("valid tproxy composite rejected: %v", err)
 	}
 
 	// Update с мёртвым членом — отказ.
 	err = svc.UpdateCompositeOutbound(ctx, "combo", Outbound{
 		Tag: "combo", Type: "urltest", Outbounds: []string{"ghost-2"},
-	}, nil)
+	})
 	if err == nil || !errors.Is(err, ErrCompositeMemberUnknown) {
 		t.Fatalf("tproxy update with unknown member must be rejected, got: %v", err)
 	}

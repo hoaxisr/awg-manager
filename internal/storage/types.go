@@ -234,10 +234,6 @@ type SingboxRouterSettings struct {
 	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
 	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
-	// CompositeEgressBinds maps router-owned composite outbound tags
-	// (selector/urltest in 20-router.json) to a kernel iface applied to
-	// sing-box tunnel members (#709). Not written into sing-box JSON.
-	CompositeEgressBinds map[string]string `json:"compositeEgressBinds,omitempty"`
 }
 
 // SingboxQoSClass is one DSCP-based QoS traffic class routed to a dedicated

@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { Button, Dropdown, SegmentedControl, type DropdownOption } from '$lib/components/ui';
-	import { BindInterfacePicker } from '$lib/components/singbox';
 	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
-	import type { SingboxRouterOutbound } from '$lib/types';
+	import type { SingboxRouterOutbound, SingboxRouterWANInterface } from '$lib/types';
 	import type { OutboundGroup } from './outboundOptions';
 	import { isSubscriptionOutbound } from '$lib/components/sb-router/outboundLabel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -44,9 +43,17 @@
 	let defaultOutbound = $state(outbound?.default ?? '');
 	// svelte-ignore state_referenced_locally
 	let bindInterface = $state(outbound?.bind_interface ?? '');
-	// svelte-ignore state_referenced_locally
-	let egressBind = $state(outbound?.egress_bind ?? '');
-
+	let bindables = $state<SingboxRouterWANInterface[]>([]);
+	let bindablesLoading = $state(true);
+	$effect(() => {
+		void api.singboxRouterListBindableInterfaces()
+			.then((l) => { bindables = l; })
+			.catch(() => { bindables = []; })
+			.finally(() => { bindablesLoading = false; });
+	});
+	const bindableOptions = $derived<DropdownOption[]>(
+		bindables.map((i) => ({ value: i.name, label: `${i.label} · ${i.name}${i.up ? '' : ' (down)'}` }))
+	);
 
 	let busy = $state(false);
 	let error = $state('');
@@ -61,7 +68,6 @@
 	let initialTolerance = $state(50);
 	let initialDefaultOutbound = $state('');
 	let initialBind = $state('');
-	let initialEgressBind = $state('');
 
 	// Initialize snapshot when modal opens
 	$effect(() => {
@@ -74,7 +80,6 @@
 			initialTolerance = outbound.tolerance ?? 50;
 			initialDefaultOutbound = outbound.default ?? '';
 			initialBind = outbound.bind_interface ?? '';
-			initialEgressBind = outbound.egress_bind ?? '';
 		} else {
 			initialType = 'urltest';
 			initialTag = '';
@@ -84,7 +89,6 @@
 			initialTolerance = 50;
 			initialDefaultOutbound = '';
 			initialBind = '';
-			initialEgressBind = '';
 		}
 	});
 
@@ -104,8 +108,7 @@
 			interval !== initialInterval ||
 			tolerance !== initialTolerance ||
 			defaultOutbound !== initialDefaultOutbound ||
-			bindInterface !== initialBind ||
-			egressBind !== initialEgressBind
+			bindInterface !== initialBind
 		);
 	});
 
@@ -175,23 +178,7 @@
 					busy = false;
 					return;
 				}
-				// Direct groups do not own an egress_bind: the
-				// bind_interface they carry is the *group*'s
-				// outbound, not the per-member tunnel dial. We
-				// still send egress_bind explicitly as "" so the
-				// server contract is unambiguous (nil vs "" have
-				// different semantics in UpdateCompositeOutbound)
-				// and any prior egress_bind on this group is
-				// reliably cleared. Without this, "selector with
-				// bind → direct" would leave bind_interface on the
-				// former members and a stale settings entry behind
-				// (#709, PR #732 review blocker #4).
-				built = {
-					type: 'direct',
-					tag: tag.trim(),
-					bind_interface: bindInterface,
-					egress_bind: '',
-				};
+				built = { type: 'direct', tag: tag.trim(), bind_interface: bindInterface };
 			} else {
 				const memberList = isSubscription && outbound ? [...(outbound.outbounds ?? [])] : [...members];
 				if (memberList.length < 2) {
@@ -214,7 +201,6 @@
 				} else {
 					built.default = defaultOutbound || members[0];
 				}
-				built.egress_bind = egressBind.trim();
 			}
 
 			await onSave(built);
@@ -334,24 +320,17 @@
 					/>
 				</div>
 			{/if}
-
-			{#if !isSubscription}
-				<div class="field">
-					<BindInterfacePicker
-						bind:value={egressBind}
-						label="Исходящий интерфейс (members)"
-						hint="Принудительно dial'ит sing-box туннели-участники через выбранный uplink. Для подписок настройте bind в карточке подписки."
-					/>
-				</div>
-			{/if}
 		{/if}
 
 		{#if type === 'direct'}
 			<div class="field">
-				<BindInterfacePicker
+				<div class="lbl">Интерфейс</div>
+				<Dropdown
 					bind:value={bindInterface}
-					label="Интерфейс"
-					hint=""
+					options={bindableOptions}
+					placeholder={bindablesLoading ? 'Загрузка интерфейсов…' : bindables.length === 0 ? 'Нет доступных интерфейсов' : '— выбрать интерфейс —'}
+					disabled={bindablesLoading || bindables.length === 0}
+					fullWidth
 				/>
 			</div>
 		{/if}

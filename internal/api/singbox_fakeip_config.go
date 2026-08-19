@@ -895,18 +895,16 @@ func (h *SingboxFakeIPConfigHandler) AddOutbound(w http.ResponseWriter, r *http.
 		response.MethodNotAllowed(w)
 		return
 	}
-	var req struct {
-		router.Outbound
-	}
-	if err := decodeBody(r, &req); err != nil {
+	var o router.Outbound
+	if err := decodeBody(r, &o); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), req.Outbound); err != nil {
+	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), o); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
-	h.log.Info("fakeip-outbound-add", req.Tag, "fakeip composite outbound added: "+req.Tag)
+	h.log.Info("fakeip-outbound-add", o.Tag, "fakeip composite outbound added: "+o.Tag)
 	response.Success(w, map[string]bool{"ok": true})
 }
 
@@ -936,9 +934,6 @@ func (h *SingboxFakeIPConfigHandler) UpdateOutbound(w http.ResponseWriter, r *ht
 		response.BadRequest(w, err.Error())
 		return
 	}
-	// egress_bind travels on the embedded Outbound now; reading it
-	// from a top-level field would silently drop the value the
-	// front-end set on the outbound (#709, PR #732 review blocker #6).
 	if err := h.svc.FakeIPUpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound); err != nil {
 		h.handleErr(w, "request", err)
 		return

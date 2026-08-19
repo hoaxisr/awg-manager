@@ -51,19 +51,16 @@ func (h *SingboxRouterHandler) AddOutbound(w http.ResponseWriter, r *http.Reques
 		response.MethodNotAllowed(w)
 		return
 	}
-	var req struct {
-		router.Outbound
-		EgressBind string `json:"egress_bind,omitempty"`
-	}
-	if err := decodeBody(r, &req); err != nil {
+	var o router.Outbound
+	if err := decodeBody(r, &o); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.AddCompositeOutbound(r.Context(), req.Outbound, req.EgressBind); err != nil {
+	if err := h.svc.AddCompositeOutbound(r.Context(), o); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
-	h.log.Info("outbound-add", req.Tag, "composite outbound added: "+req.Tag)
+	h.log.Info("outbound-add", o.Tag, "composite outbound added: "+o.Tag)
 	response.Success(w, map[string]bool{"ok": true})
 }
 
@@ -86,15 +83,14 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		Tag        string          `json:"tag"`
-		Outbound   router.Outbound `json:"outbound"`
-		EgressBind *string         `json:"egress_bind,omitempty"`
+		Tag      string          `json:"tag"`
+		Outbound router.Outbound `json:"outbound"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.UpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound, body.EgressBind); err != nil {
+	if err := h.svc.UpdateCompositeOutbound(r.Context(), body.Tag, body.Outbound); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

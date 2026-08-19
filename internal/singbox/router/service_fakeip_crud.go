@@ -216,101 +216,32 @@ func (s *ServiceImpl) FakeIPListCompositeOutbounds(ctx context.Context) ([]Compo
 	return out, nil
 }
 
-// FakeIPAddCompositeOutbound now reads egress_bind directly from
-// o.EgressBind — the front-end encodes it on the outbound itself, and
-// keeping a separate parameter would silently drop the value when the
-// FakeIP handler decodes the body (decodeBody does not reject unknown
-// fields, so the old wrapper-level EgressBind was the only path and it
-// was tied to a non-existent field on router.Outbound — #709, PR #732
-// review blocker #6).
 func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound) error {
-	egressBind := strings.TrimSpace(o.EgressBind)
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
-	} else {
-		if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
-			return err
-		}
-		if err := s.validateEgressBindConflicts(o.Tag, o.Outbounds, egressBind); err != nil {
-			return err
-		}
 	}
-	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.AddCompositeOutbound(o)
-	}); err != nil {
-		return err
-	}
-	if !strings.EqualFold(o.Type, "direct") {
-		return s.applyCompositeEgressBind(ctx, nil, o.Outbounds, o.Tag, egressBind)
-	}
-	return nil
+	})
 }
 
-// FakeIPUpdateCompositeOutbound reads egress_bind from o.EgressBind,
-// matching the new contract used by the router-slot Update path.
-// The bind on the Outbound is always authoritative: an explicit
-// empty string means "clear any previous bind on this group", a
-// non-empty value means "set/keep bind on members". This makes the
-// FakeIP variant symmetrical with Add and removes the silent-drop
-// bug where the JSON `egress_bind` on the outbound was discarded.
 func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
-	egressBind := strings.TrimSpace(o.EgressBind)
 	if strings.EqualFold(o.Type, "direct") {
 		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
 			return err
 		}
-	} else {
-		if err := validateBindInterfaceOptional(ctx, s, egressBind); err != nil {
-			return err
-		}
-		if err := s.validateEgressBindConflicts(tag, o.Outbounds, egressBind); err != nil {
-			return err
-		}
 	}
-
-	var oldMembers []string
-	if cfg, err := s.loadFakeIPConfig(); err == nil && cfg != nil {
-		for _, prev := range cfg.CompositeOutbounds() {
-			if prev.Tag == tag {
-				oldMembers = prev.Outbounds
-				break
-			}
-		}
-	}
-
-	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
 		return c.UpdateCompositeOutbound(tag, o)
-	}); err != nil {
-		return err
-	}
-
-	if newTag := strings.TrimSpace(o.Tag); newTag != "" && newTag != tag {
-		if binds := s.compositeEgressBinds(); binds != nil {
-			if prev, ok := binds[tag]; ok {
-				_ = s.setCompositeEgressBind(newTag, prev)
-				_ = s.deleteCompositeEgressBind(tag)
-			}
-		}
-		tag = newTag
-	}
-
-	// Direct edit OR explicit empty bind: clear any prior group bind.
-	// Mirrors the router-slot contract.
-	if strings.EqualFold(o.Type, "direct") || egressBind == "" {
-		if binds := s.compositeEgressBinds(); binds != nil && binds[tag] != "" {
-			return s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, "")
-		}
-		return nil
-	}
-	return s.applyCompositeEgressBind(ctx, oldMembers, o.Outbounds, tag, egressBind)
+	})
 }
 
 // validateCompositeMembers отклоняет selector/urltest с member-тегами,
@@ -338,26 +269,7 @@ func (s *ServiceImpl) validateCompositeMembers(ctx context.Context, o Outbound, 
 }
 
 func (s *ServiceImpl) FakeIPDeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
-	var oldMembers []string
-	if cfg, err := s.loadFakeIPConfig(); err == nil && cfg != nil {
-		for _, prev := range cfg.CompositeOutbounds() {
-			if prev.Tag == tag {
-				oldMembers = prev.Outbounds
-				break
-			}
-		}
-	}
-	if err := s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) }); err != nil {
-		return err
-	}
-	if len(oldMembers) > 0 {
-		if err := s.applyCompositeEgressBind(ctx, oldMembers, nil, tag, ""); err != nil {
-			s.appLog.Warn("egress-bind", tag, "clear fakeip members bind on delete: "+err.Error())
-		}
-	} else {
-		_ = s.deleteCompositeEgressBind(tag)
-	}
-	return nil
+	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error { return c.DeleteCompositeOutbound(tag, force) })
 }
 
 // ---------------------------------------------------------------------------

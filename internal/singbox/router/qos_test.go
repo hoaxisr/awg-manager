@@ -1337,7 +1337,7 @@ func TestUpdateCompositeOutbound_RenameFollowsQoSClasses(t *testing.T) {
 	}, "vpn-a")
 
 	err := svc.UpdateCompositeOutbound(context.Background(), "vpn-a",
-		Outbound{Type: "selector", Tag: "vpn-renamed", Outbounds: []string{"member-x"}}, nil)
+		Outbound{Type: "selector", Tag: "vpn-renamed", Outbounds: []string{"member-x"}})
 	if err != nil {
 		t.Fatalf("UpdateCompositeOutbound: %v", err)
 	}

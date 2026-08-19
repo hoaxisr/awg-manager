@@ -187,15 +187,16 @@ func nextFreeListenPortSlot(cfg *Config, reserved map[int]bool) int {
 }
 
 // parseTunnelLinksInput разбирает пользовательский ввод AddTunnels. Обычный
-// путь — построчный ParseBatch по share-link'ам, но канонический JSON-конфиг
-// клиента mieru (экспорт панелей, формат mieru apply config) — это единый
-// многострочный документ: line-split его убивает, поэтому сначала проверяем
-// тело целиком.
-func parseTunnelLinksInput(linksText string) vlink.BatchResult {
+// ParseTunnelLinksInput parses linksText as either mieru JSON or a batch of lines.
+func ParseTunnelLinksInput(linksText string) vlink.BatchResult {
 	if body := []byte(linksText); vlink.IsMieruClientJSON(body) {
 		return vlink.ParseMieruClientJSON(body)
 	}
 	return vlink.ParseBatch(strings.Split(linksText, "\n"))
+}
+
+func parseTunnelLinksInput(linksText string) vlink.BatchResult {
+	return ParseTunnelLinksInput(linksText)
 }
 
 // AddTunnels parses one or more links and atomically adds them.
@@ -426,103 +427,32 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 
 // UpdateTunnel replaces outbound JSON, reloads.
 func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.RawMessage) error {
-	return o.UpdateTunnels(ctx, map[string]json.RawMessage{tag: outbound})
-}
-
-// UpdateTunnels replaces multiple outbound JSONs, reloads once.
-func (o *Operator) UpdateTunnels(ctx context.Context, updates map[string]json.RawMessage) error {
-	if len(updates) == 0 {
-		return nil
-	}
 	if o.runtimeLogger != nil {
-		o.runtimeLogger.Info("batch-update", fmt.Sprintf("%d tunnels", len(updates)), "start")
+		o.runtimeLogger.Info("single-update", tag, "start")
 	}
 	cfg, err := o.loadConfig()
 	if err != nil {
 		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("batch-update", "", "load config failed: "+err.Error())
+			o.runtimeLogger.Error("single-update", tag, "load config failed: "+err.Error())
 		}
 		return err
 	}
-	for tag, outbound := range updates {
-		if err := cfg.UpdateTunnel(tag, outbound); err != nil {
-			if o.runtimeLogger != nil {
-				o.runtimeLogger.Warn("batch-update", tag, "update outbound failed: "+err.Error())
-			}
-			return err
+	if err := cfg.UpdateTunnel(tag, outbound); err != nil {
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Warn("single-update", tag, "update outbound failed: "+err.Error())
 		}
+		return err
 	}
 	if err := o.applyConfig(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("batch-update", "", "apply config failed: "+err.Error())
+			o.runtimeLogger.Error("single-update", tag, "apply config failed: "+err.Error())
 		}
 		return err
 	}
 	if o.runtimeLogger != nil {
-		o.runtimeLogger.Info("batch-update", "", "done")
+		o.runtimeLogger.Info("single-update", tag, "done")
 	}
 	return nil
-}
-
-// StageTunnelOutboundUpdates patches outbound JSONs and writes the merged
-// 10-tunnels.json to the orchestrator's pending/ directory so the bind
-// changes ride the same draft as the composite group edit (#709, PR #732
-// review blocker #2). No SIGHUP, no sing-box check, no process state
-// change — the orchestrator's debounced ApplyDraft path does all of that
-// atomically with the rest of the staged slots.
-//
-// When the orchestrator is not wired (tests, pre-bootstrap) it falls
-// back to UpdateTunnels — sing-box hot-reload is the only way to land
-// the patch in that mode. When the operator's source dir is not the
-// same as the orchestrator's configDir (should not happen in production
-// — the wiring pins both to the same path), we still fall back to
-// UpdateTunnels to avoid landing an unsanitized draft.
-func (o *Operator) StageTunnelOutboundUpdates(ctx context.Context, updates map[string]json.RawMessage) error {
-	if len(updates) == 0 {
-		return nil
-	}
-	if o.orch == nil {
-		return o.UpdateTunnels(ctx, updates)
-	}
-	configDir := o.orch.ConfigDir()
-	if filepath.Clean(configDir) != filepath.Clean(o.configPath) {
-		// Mismatched paths: avoid racing the orchestrator's draft. The
-		// router service pins both, but tests and ad-hoc constructors
-		// might not.
-		return o.UpdateTunnels(ctx, updates)
-	}
-	pendingPath := filepath.Join(configDir, "pending", "10-tunnels.json")
-	activePath := o.tunnelsFile()
-
-	data, err := os.ReadFile(pendingPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read pending tunnels: %w", err)
-	}
-	if data == nil {
-		data, err = os.ReadFile(activePath)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("read active tunnels: %w", err)
-		}
-	}
-	var cfg *Config
-	if len(data) > 0 {
-		cfg = NewConfig()
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return fmt.Errorf("parse tunnels for staging: %w", err)
-		}
-	} else {
-		cfg = NewConfig()
-	}
-	for tag, outbound := range updates {
-		if err := cfg.UpdateTunnel(strings.TrimSpace(tag), outbound); err != nil {
-			return fmt.Errorf("stage tunnel %q: %w", tag, err)
-		}
-	}
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal staged tunnels: %w", err)
-	}
-	return o.orch.SaveDraft(orchestrator.SlotTunnels, out)
 }
 
 var reservedOutboundTags = map[string]struct{}{
@@ -684,17 +614,7 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 }
 
 func (o *Operator) loadConfig() (*Config, error) {
-	cfg, err := LoadConfig(o.tunnelsFile())
-	if err != nil {
-		return nil, err
-	}
-	if cfg.SanitizeMissingBindInterfaces(kernelInterfaceExists) {
-		if o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("tunnels", "", "sanitized missing bind_interface in 10-tunnels.json")
-		}
-		_ = cfg.Save(o.tunnelsFile())
-	}
-	return cfg, nil
+	return LoadConfig(o.tunnelsFile())
 }
 
 // HasUserTunnels reports whether 10-tunnels.json defines at least one

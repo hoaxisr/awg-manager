@@ -76,8 +76,8 @@ type Service interface {
 	DatRuleSetFile(ctx context.Context, kind string, tags []string, token string) (string, error)
 
 	ListCompositeOutbounds(ctx context.Context) ([]CompositeOutboundView, error)
-	AddCompositeOutbound(ctx context.Context, o Outbound, egressBind string) error
-	UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound, egressBind *string) error
+	AddCompositeOutbound(ctx context.Context, o Outbound) error
+	UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error
 	DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error
 
 	ApplyPreset(ctx context.Context, presetID, outboundTag string) error
@@ -294,9 +294,6 @@ type Deps struct {
 	// протухший каталог AWG-тегов не валил enable «unknown-outbound» (#567).
 	AWGOutboundsRefresh func(ctx context.Context) error
 	SingboxTunnels      SingboxTunnelCatalog // optional — when nil, computeIssues skips cross-slot tunnel tags
-	// SingboxTunnelsEditor patches 10-tunnels.json outbounds for composite
-	// egress bind (#709). Optional — nil skips propagation.
-	SingboxTunnelsEditor SingboxTunnelEditor
 	// SubscriptionComposites lists composite outbounds owned by the
 	// subscription slot (40-subscriptions.json). Optional — when nil,
 	// ListCompositeOutbounds returns only this service's own composites.
@@ -562,9 +559,6 @@ func NewService(d Deps) *ServiceImpl {
 }
 
 func (s *ServiceImpl) routerConfigPath() string {
-	if s.deps.Singbox == nil {
-		return ""
-	}
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
 }
 
@@ -623,9 +617,6 @@ func (s *ServiceImpl) loadRouterConfig() (*RouterConfig, error) {
 			return nil, fmt.Errorf("load router config: %w", err)
 		}
 		return parseRouterConfigBytes(data)
-	}
-	if s.deps.Singbox == nil {
-		return NewEmptyConfig(), nil
 	}
 	// Legacy fallback (no orchestrator): read from active path directly.
 	activePath := s.routerConfigPath()

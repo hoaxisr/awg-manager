@@ -4205,12 +4205,6 @@ definitions:
       default:
         example: awg-vpn0
         type: string
-      egress_bind:
-        description: |-
-          EgressBind — kernel iface propagated to sing-box tunnel members for
-          selector/urltest groups (#709). Stored in settings, not in 20-router.json.
-        example: eth3
-        type: string
       interval:
         example: 3m
         type: string
@@ -4253,9 +4247,6 @@ definitions:
     type: object
   api.SingboxRouterOutboundUpdateRequest:
     properties:
-      egress_bind:
-        example: eth3
-        type: string
       outbound:
         $ref: '#/definitions/api.SingboxRouterOutboundDTO'
       tag:

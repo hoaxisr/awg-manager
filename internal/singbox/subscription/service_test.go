@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1978,5 +1979,149 @@ func TestAddManualMember_TransportDiffersIsNotDuplicate(t *testing.T) {
 	}
 	if len(updated.MemberTags) != 2 {
 		t.Errorf("MemberTags=%d want 2", len(updated.MemberTags))
+	}
+}
+
+func TestService_Create_TrimSpaceBindInterface(t *testing.T) {
+	svc, _ := newTestService(t)
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:         "trimmed-bind",
+		Inline:        "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A",
+		Enabled:       true,
+		BindInterface: "  eth3  \n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.BindInterface != "eth3" {
+		t.Fatalf("sub.BindInterface=%q want eth3", sub.BindInterface)
+	}
+	stored, err := svc.store.Get(sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BindInterface != "eth3" {
+		t.Fatalf("stored.BindInterface=%q want eth3", stored.BindInterface)
+	}
+}
+
+func TestService_Update_BindAndMode_Together(t *testing.T) {
+	tempNet := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tempNet, "eth3"), 0755)
+	oldRoot := sysClassNet
+	sysClassNet = tempNet
+	t.Cleanup(func() { sysClassNet = oldRoot })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A\n"))
+	}))
+	defer srv.Close()
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "url-sub", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newBind := "eth3"
+	newMode := ModeURLTest
+	urltest := URLTestConfig{IntervalSec: 120, ToleranceMs: 100}
+	updated, err := svc.Update(sub.ID, UpdatePatch{
+		BindInterface: &newBind,
+		Mode:          &newMode,
+		URLTest:       &urltest,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.BindInterface != "eth3" {
+		t.Errorf("BindInterface=%q want eth3", updated.BindInterface)
+	}
+	if updated.Mode != ModeURLTest {
+		t.Errorf("Mode=%q want %q", updated.Mode, ModeURLTest)
+	}
+
+	// Verify members in mutator received bind_interface
+	obs := mut.SubscriptionOutbounds()
+	foundMember := false
+	foundGroup := false
+	for _, ob := range obs {
+		tag, _ := ob["tag"].(string)
+		if strings.HasPrefix(tag, "sub-") && tag != updated.SelectorTag {
+			foundMember = true
+			if ob["bind_interface"] != "eth3" {
+				t.Errorf("member %s bind_interface=%v want eth3", tag, ob["bind_interface"])
+			}
+		}
+		if tag == updated.SelectorTag {
+			foundGroup = true
+			if ob["type"] != "urltest" {
+				t.Errorf("group outbound type=%v want urltest", ob["type"])
+			}
+		}
+	}
+	if !foundMember {
+		t.Fatal("expected member outbound in mutator")
+	}
+	if !foundGroup {
+		t.Fatal("expected group outbound in mutator")
+	}
+}
+
+func TestService_Update_RollbackRestoresAllFields(t *testing.T) {
+	tempNet := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(tempNet, "eth0"), 0755)
+	oldRoot := sysClassNet
+	sysClassNet = tempNet
+	t.Cleanup(func() { sysClassNet = oldRoot })
+
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mut := &fakeMutator{}
+	svc := NewService(store, mut)
+	withLegacySetupNoop(svc)
+
+	sub, err := svc.Create(context.Background(), CreateInput{
+		Label:         "orig-label",
+		Inline:        "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=a#A",
+		Enabled:       true,
+		FilterInclude: "(?i)A",
+		BindInterface: "eth0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make mutator fail Reload to simulate refresh/apply failure
+	mut.reloadErr = errors.New("reload failed")
+
+	newInclude := "(?i)B"
+	newBind := "eth3"
+	newMode := ModeURLTest
+	_, err = svc.Update(sub.ID, UpdatePatch{
+		FilterInclude: &newInclude,
+		BindInterface: &newBind,
+		Mode:          &newMode,
+	})
+	if err == nil {
+		t.Fatal("expected error on failed reload")
+	}
+
+	// Verify store was fully rolled back to original values
+	stored, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.FilterInclude != "(?i)A" {
+		t.Errorf("FilterInclude=%q want (?i)A", stored.FilterInclude)
+	}
+	if stored.BindInterface != "eth0" {
+		t.Errorf("BindInterface=%q want eth0", stored.BindInterface)
+	}
+	if stored.Mode != ModeSelector {
+		t.Errorf("Mode=%q want %q", stored.Mode, ModeSelector)
 	}
 }

@@ -52,6 +52,9 @@ type ConfigMutator interface {
 	// dangling group members on later rebuilds. Empty slice = "can't
 	// report" (caller must treat as no-op, not as "drop everything").
 	DeclaredOutboundTags() []string
+	// SubscriptionOutbounds returns a snapshot of every outbound currently
+	// in the subscription config slot (#709).
+	SubscriptionOutbounds() []map[string]any
 }
 
 // Service is the subscription business-logic facade.
@@ -284,6 +287,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	if _, err := CompileMemberFilter(in.FilterInclude, in.FilterExclude); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)
 	}
+	in.BindInterface = strings.TrimSpace(in.BindInterface)
 	if err := validateBindInterfaceOptional(ctx, s.bindValidator, in.BindInterface); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)
 	}
@@ -733,7 +737,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		if skip(n.Tag, n.Out.Label) {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
-		jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, n.Out.Outbound, n.Tag, sub.BindInterface)
+		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -743,7 +747,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
 			continue
 		}
-		jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, e.Out.Outbound, e.Tag, sub.BindInterface)
+		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -928,7 +932,6 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// пару (patch-значение либо текущее) — ошибка одного поля не должна
 	// маскироваться валидностью другого.
 	filterChanged := false
-	prevInclude, prevExclude := current.FilterInclude, current.FilterExclude
 	if patch.FilterInclude != nil || patch.FilterExclude != nil {
 		newInclude, newExclude := current.FilterInclude, current.FilterExclude
 		if patch.FilterInclude != nil {
@@ -942,21 +945,46 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		filterChanged = newInclude != current.FilterInclude || newExclude != current.FilterExclude
 	}
+
 	bindChanged := false
-	prevBind := current.BindInterface
 	if patch.BindInterface != nil {
 		newBind := strings.TrimSpace(*patch.BindInterface)
 		patch.BindInterface = &newBind
-		if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
-			return nil, fmt.Errorf("subscription: %w", err)
-		}
 		bindChanged = newBind != current.BindInterface
+		if bindChanged && newBind != "" {
+			if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
+				return nil, fmt.Errorf("subscription: %w", err)
+			}
+		}
 	}
+
+	modeChanged := patch.Mode != nil || patch.URLTest != nil
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
+
+	// Store rollback patch restoring all previous settings on error (#709, PR #732 review blocker #2)
+	rollbackPatch := UpdatePatch{
+		FilterInclude: &current.FilterInclude,
+		FilterExclude: &current.FilterExclude,
+		BindInterface: &current.BindInterface,
+		Mode:          &current.Mode,
+		URLTest:       current.URLTest,
+		Enabled:       &current.Enabled,
+		Label:         &current.Label,
+	}
 	sub, err := s.store.Update(id, patch)
 	if err != nil {
 		return nil, err
 	}
+
+	rollback := func(err error, action string) (*Subscription, error) {
+		if _, rbErr := s.store.Update(id, rollbackPatch); rbErr != nil {
+			s.logWarn("subscription-update", id, "failed to restore previous settings after failed "+action+": "+rbErr.Error())
+		} else {
+			s.logWarn("subscription-update", id, "settings change rolled back ("+action+" failed): "+err.Error())
+		}
+		return current, fmt.Errorf("subscription: применение настроек: %w", err)
+	}
+
 	// Смена фильтра требует полной ре-материализации набора серверов:
 	// URL-подписка — обычный refresh (fetch + diff + rebuild), inline —
 	// принудительный re-parse сохранённого paste-тела (обход short-circuit).
@@ -965,21 +993,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	if filterChanged {
 		forceReparse := sub.IsInline()
 		if _, err := s.refreshLockedOpts(context.Background(), id, forceReparse); err != nil {
-			// Компенсация: новый фильтр уже записан в store, но
-			// ре-материализация не удалась (фильтр скрывает всё, URL
-			// недоступен). Оставить его — значит ронять каждый плановый
-			// refresh той же ошибкой. Возвращаем прежние значения
-			// и отдаём ошибку — клиент видит, что сохранение не прошло.
-			rb := UpdatePatch{
-				FilterInclude: &prevInclude,
-				FilterExclude: &prevExclude,
-			}
-			if _, rbErr := s.store.Update(id, rb); rbErr != nil {
-				s.logWarn("subscription-update", id, "failed to restore previous settings after failed refresh: "+rbErr.Error())
-			} else {
-				s.logWarn("subscription-update", id, "settings change rolled back (refresh failed): "+err.Error())
-			}
-			return sub, fmt.Errorf("subscription: применение настроек: %w", err)
+			return rollback(err, "refresh")
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
@@ -988,28 +1002,34 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	} else if bindChanged {
 		if sub.IsInline() {
 			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
-				rb := UpdatePatch{BindInterface: &prevBind}
-				if _, rbErr := s.store.Update(id, rb); rbErr != nil {
-					s.logWarn("subscription-update", id, "failed to restore previous settings after failed refresh: "+rbErr.Error())
-				}
-				return sub, fmt.Errorf("subscription: применение настроек: %w", err)
+				return rollback(err, "refresh")
 			}
 		} else {
 			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
 			// Позволяет переключить uplink даже когда текущий интернет лежит.
 			if err := s.rematerializeMembersBind(context.Background(), sub); err != nil {
-				rb := UpdatePatch{BindInterface: &prevBind}
-				if _, rbErr := s.store.Update(id, rb); rbErr != nil {
-					s.logWarn("subscription-update", id, "failed to restore previous settings after failed rematerialize: "+rbErr.Error())
-				}
-				return sub, fmt.Errorf("subscription: применение bind_interface: %w", err)
+				return rollback(err, "rematerialize")
 			}
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
 			return nil, err
 		}
-	} else if patch.Mode != nil || patch.URLTest != nil {
+		if modeChanged {
+			if err := s.withTx(func() error {
+				s.mutator.RemoveOutbound(sub.SelectorTag)
+				if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
+					return fmt.Errorf("rebuild group outbound: %w", err)
+				}
+				if err := s.reloadWithGroups(context.Background()); err != nil {
+					return fmt.Errorf("reload after mode change: %w", err)
+				}
+				return nil
+			}); err != nil {
+				return sub, err
+			}
+		}
+	} else if modeChanged {
 		// Mode / urltest config changes require a fresh group outbound in
 		// sing-box config and a SIGHUP so the new wrapper takes effect.
 		// URL / headers / refresh-cadence only mutate metadata.
@@ -1055,23 +1075,21 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 
 func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription) error {
 	return s.withTx(func() error {
-		if adapter, ok := s.mutator.(interface{ SubscriptionOutbounds() []map[string]any }); ok {
-			obs := adapter.SubscriptionOutbounds()
-			tagSet := make(map[string]bool, len(sub.MemberTags))
-			for _, tag := range sub.MemberTags {
-				tagSet[tag] = true
-			}
-			for _, ob := range obs {
-				tag, _ := ob["tag"].(string)
-				if tagSet[tag] {
-					raw, err := json.Marshal(ob)
-					if err != nil {
-						continue
-					}
-					jsonWithTag := materializeMemberOutbound(ctx, s.bindValidator, raw, tag, sub.BindInterface)
-					if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
-						return err
-					}
+		obs := s.mutator.SubscriptionOutbounds()
+		tagSet := make(map[string]bool, len(sub.MemberTags))
+		for _, tag := range sub.MemberTags {
+			tagSet[tag] = true
+		}
+		for _, ob := range obs {
+			tag, _ := ob["tag"].(string)
+			if tagSet[tag] {
+				raw, err := json.Marshal(ob)
+				if err != nil {
+					return fmt.Errorf("marshal outbound %s: %w", tag, err)
+				}
+				jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, s.logWarn)
+				if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
+					return err
 				}
 			}
 		}
@@ -1270,7 +1288,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(ctx, s.bindValidator, out.Outbound, tag, sub.BindInterface)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface, s.logWarn)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}

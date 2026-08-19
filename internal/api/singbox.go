@@ -486,6 +486,22 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	if h.bindValidator != nil {
+		batch := singbox.ParseTunnelLinksInput(body.Links)
+		for _, p := range batch.Outbounds {
+			var peek struct {
+				BindInterface string `json:"bind_interface"`
+			}
+			if err := json.Unmarshal(p.Outbound, &peek); err == nil && peek.BindInterface != "" {
+				if err := h.bindValidator(r.Context(), peek.BindInterface); err != nil {
+					response.BadRequest(w, fmt.Sprintf("invalid bind_interface: %v", err))
+					return
+				}
+			}
+		}
+	}
+
 	h.log.Info("single-add", "", "requested via API")
 	added, errs, err := h.op.AddTunnels(r.Context(), body.Links)
 	if err != nil {

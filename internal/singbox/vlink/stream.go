@@ -21,6 +21,7 @@ type StreamBuilder struct {
 	ServiceName         string
 	Mode                string // xhttp mode: auto | packet-up | stream-up | stream-one
 	XPaddingBytes       string // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
+	BindInterface       string // egress kernel interface for dial (#709)
 }
 
 // outboundTLS is the parsed TLS / Reality block ready to be emitted as
@@ -137,6 +138,10 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		// no TLS
 	default:
 		return nil, fmt.Errorf("vlink: unknown security %q", sec)
+	}
+
+	if b := firstNonEmpty(q.Get("bind_interface"), q.Get("bindInterface"), q.Get("bind")); b != "" {
+		s.BindInterface = strings.TrimSpace(b)
 	}
 
 	return s, nil
@@ -282,5 +287,9 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			}
 		}
 		out["tls"] = tls
+	}
+
+	if s.BindInterface != "" {
+		out["bind_interface"] = s.BindInterface
 	}
 }

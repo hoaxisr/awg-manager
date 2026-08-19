@@ -1,8 +1,8 @@
 package subscription
 
 import (
-	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +12,9 @@ var sysClassNet = "/sys/class/net" //nolint:gochecknoglobals // overridden in te
 
 // materializeMemberOutbound patches tag and optional bind_interface onto a
 // parsed member outbound before it is committed to 40-subscriptions.json.
-func materializeMemberOutbound(ctx context.Context, _ BindInterfaceValidator, raw []byte, tag, bindInterface string) []byte {
+// If bindInterface is specified but does not exist in the kernel, it is dropped
+// (fail-open to avoid sing-box FATAL) and a warning is logged.
+func materializeMemberOutbound(raw []byte, tag, bindInterface string, logWarn func(action, target, msg string)) []byte {
 	var ob map[string]any
 	if json.Unmarshal(raw, &ob) != nil {
 		return replaceTag(raw, tag)
@@ -20,15 +22,21 @@ func materializeMemberOutbound(ctx context.Context, _ BindInterfaceValidator, ra
 	ob["tag"] = tag
 	if bind := strings.TrimSpace(bindInterface); bind != "" {
 		if !kernelInterfaceExists(bind) {
-			// Drop missing interface to prevent FATAL crash in sing-box
+			// Drop missing interface to prevent FATAL crash in sing-box (#709)
 			delete(ob, "bind_interface")
+			if logWarn != nil {
+				logWarn("subscription-bind", tag, fmt.Sprintf("bind_interface %q does not exist in kernel, dropped to prevent sing-box crash", bind))
+			}
 		} else {
 			ob["bind_interface"] = bind
 		}
 	} else {
 		delete(ob, "bind_interface")
 	}
-	out, _ := json.Marshal(ob)
+	out, err := json.Marshal(ob)
+	if err != nil {
+		return replaceTag(raw, tag)
+	}
 	return out
 }
 
@@ -36,10 +44,6 @@ func kernelInterfaceExists(name string) bool {
 	if name == "" {
 		return false
 	}
-	root := sysClassNet
-	if root == "" {
-		root = "/sys/class/net"
-	}
-	_, err := os.Stat(filepath.Join(root, name))
+	_, err := os.Stat(filepath.Join(sysClassNet, name))
 	return err == nil
 }

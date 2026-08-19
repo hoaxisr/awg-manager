@@ -395,8 +395,6 @@ export interface SingboxRouterOutbound {
 	 * subscription service and shown read-only.
 	 */
 	source?: 'router' | 'subscription';
-	/** Egress bind for selector/urltest groups (#709) — stored in settings, propagated to tunnel members. */
-	egress_bind?: string;
 }
 
 /**

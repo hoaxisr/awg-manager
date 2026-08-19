@@ -132,10 +132,10 @@ func (m *mockRouterSvc) DatRuleSetFile(ctx context.Context, kind string, tags []
 func (m *mockRouterSvc) ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error) {
 	return nil, nil
 }
-func (m *mockRouterSvc) AddCompositeOutbound(ctx context.Context, o router.Outbound, egressBind string) error {
+func (m *mockRouterSvc) AddCompositeOutbound(ctx context.Context, o router.Outbound) error {
 	return nil
 }
-func (m *mockRouterSvc) UpdateCompositeOutbound(ctx context.Context, tag string, o router.Outbound, egressBind *string) error {
+func (m *mockRouterSvc) UpdateCompositeOutbound(ctx context.Context, tag string, o router.Outbound) error {
 	return nil
 }
 func (m *mockRouterSvc) DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {
