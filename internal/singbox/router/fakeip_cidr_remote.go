@@ -107,6 +107,68 @@ func (s *ServiceImpl) singboxBinary() string {
 	return ""
 }
 
+// ruleSetFileFacts — всё, что Tier-2 берёт из СОДЕРЖИМОГО скачанного набора:
+// пригоден ли он к merged matching и какие CIDR несёт. Обе величины следуют
+// только из файла, поэтому запоминаются вместе с его mtime+размером.
+type ruleSetFileFacts struct {
+	mod       time.Time
+	size      int64
+	mergeable bool
+	cidrs     []string
+}
+
+// ruleSetFactsByPath помнит разбор каждого скачанного набора. Без него каждый
+// 30-секундный тик reconcile спавнил `sing-box rule-set decompile` на КАЖДЫЙ
+// remote-набор (issue #756) — на 580МГц MIPS это секунды CPU в тик, вечно, при
+// том что файл в кэше живёт час. Ключ — путь файла; запись самозаменяется на
+// перекачке, так что карта не растёт сверх числа наборов.
+var (
+	ruleSetFactsMu     sync.Mutex
+	ruleSetFactsByPath = map[string]ruleSetFileFacts{}
+)
+
+// factsForRuleSetFile разбирает скачанный набор, пропуская decompile, когда
+// файл не менялся с прошлого раза. Провал stat (файла нет) отключает память
+// для этого вызова — fail-open: разбираем как раньше.
+func (s *ServiceImpl) factsForRuleSetFile(ctx context.Context, path, format string) (ruleSetFileFacts, error) {
+	st, statErr := os.Stat(path)
+	if statErr == nil {
+		ruleSetFactsMu.Lock()
+		f, ok := ruleSetFactsByPath[path]
+		ruleSetFactsMu.Unlock()
+		if ok && f.size == st.Size() && f.mod.Equal(st.ModTime()) {
+			return f, nil
+		}
+	}
+
+	var raw []byte
+	var err error
+	if strings.HasSuffix(path, ".json") || format == "source" {
+		raw, err = os.ReadFile(path)
+	} else {
+		raw, err = ruleSetDecompileExec(ctx, s.singboxBinary(), path)
+	}
+	if err != nil {
+		return ruleSetFileFacts{}, fmt.Errorf("read/decompile: %w", err)
+	}
+	var src inlineRuleSetSource
+	if e := json.Unmarshal(raw, &src); e != nil {
+		return ruleSetFileFacts{}, fmt.Errorf("parse: %w", e)
+	}
+
+	facts := ruleSetFileFacts{
+		mergeable: mergeableRuleSetRule(RuleSet{Rules: src.Rules}) != nil,
+		cidrs:     ruleSetCIDRs(RuleSet{Rules: src.Rules}),
+	}
+	if statErr == nil {
+		facts.mod, facts.size = st.ModTime(), st.Size()
+		ruleSetFactsMu.Lock()
+		ruleSetFactsByPath[path] = facts
+		ruleSetFactsMu.Unlock()
+	}
+	return facts, nil
+}
+
 // remoteTunCIDRs downloads + decompiles each remote rule-set referenced by a
 // LOOP-SAFE proxy route-rule and returns the normalized v4/v6 ip_cidr it contains.
 // Gating on loopSafeProxyRule (not just isProxyRoute) is the loop-safety contract:
@@ -168,19 +230,9 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "download: "+err.Error())
 			continue
 		}
-		var raw []byte
-		if strings.HasSuffix(path, ".json") || rs.Format == "source" {
-			raw, err = os.ReadFile(path)
-		} else {
-			raw, err = ruleSetDecompileExec(ctx, s.singboxBinary(), path)
-		}
+		facts, err := s.factsForRuleSetFile(ctx, path, rs.Format)
 		if err != nil {
-			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "read/decompile: "+err.Error())
-			continue
-		}
-		var src inlineRuleSetSource
-		if e := json.Unmarshal(raw, &src); e != nil {
-			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, "parse: "+e.Error())
+			s.appLog.Warn("fakeip-cidr-remote", rs.Tag, err.Error())
 			continue
 		}
 		// Тот же beta.1-гейт merged matching, что в desiredTunCIDRs, но по
@@ -188,10 +240,12 @@ func (s *ServiceImpl) remoteTunCIDRs(ctx context.Context, cfg *RouterConfig) (v4
 		// Если на набор ссылаются ТОЛЬКО правила с собственным ip_cidr, его
 		// CIDR безопасны лишь когда набор mergeable — иначе внешнее правило по
 		// такому пакету не совпадёт и он уйдёт в route.final=direct → петля.
-		if !standalone[rs.Tag] && mergeableRuleSetRule(RuleSet{Rules: src.Rules}) == nil {
+		// Гейт зависит от КОНФИГА, поэтому решается здесь, а не в памяти
+		// разбора: та помнит только то, что следует из самого файла.
+		if !standalone[rs.Tag] && !facts.mergeable {
 			continue
 		}
-		for _, c := range ruleSetCIDRs(RuleSet{Rules: src.Rules}) {
+		for _, c := range facts.cidrs {
 			add(c)
 		}
 	}
