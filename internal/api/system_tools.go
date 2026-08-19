@@ -66,6 +66,18 @@ func NewSystemToolsHandler(settings *storage.SettingsStore, log logging.AppLogge
 	}
 }
 
+// ExpertOnly оборачивает хендлер проверкой usage level: вкладка «Система»
+// целиком expert-only, и гейт стоит один раз на регистрации маршрута, а не
+// копией в начале каждого из 32 хендлеров.
+func (h *SystemToolsHandler) ExpertOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.requireExpert(w, r) {
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (h *SystemToolsHandler) requireExpert(w http.ResponseWriter, r *http.Request) bool {
 	if h.settings == nil {
 		response.InternalError(w, "settings unavailable")
@@ -100,9 +112,6 @@ func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	type rootDTO struct {
 		Path     string `json:"path"`
 		Label    string `json:"label"`
@@ -133,9 +142,6 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	path := r.URL.Query().Get("path")
 	entries, abs, err := h.files.ListDir(path)
 	if err != nil {
@@ -163,9 +169,6 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 func (h *SystemToolsHandler) FilesRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	path := r.URL.Query().Get("path")
@@ -201,9 +204,6 @@ type filesWriteRequest struct {
 func (h *SystemToolsHandler) FilesWrite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req filesWriteRequest
@@ -244,9 +244,6 @@ func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req filesPathRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -275,9 +272,6 @@ func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) 
 func (h *SystemToolsHandler) FilesRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req filesPathRequest
@@ -315,9 +309,6 @@ func (h *SystemToolsHandler) FilesRename(w http.ResponseWriter, r *http.Request)
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req filesRenameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -351,9 +342,6 @@ type filesCopyRequest struct {
 func (h *SystemToolsHandler) FilesCopy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req filesCopyRequest
@@ -391,9 +379,6 @@ func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req filesChmodRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -422,9 +407,6 @@ func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) 
 func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	path := r.URL.Query().Get("path")
@@ -460,9 +442,6 @@ func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Reques
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	path := r.URL.Query().Get("path")
 	f, fi, err := h.files.OpenDownload(path)
 	if err != nil {
@@ -492,9 +471,6 @@ func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Reques
 func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	const maxMem = 12 << 20 // 12 MB
@@ -566,9 +542,6 @@ func (h *SystemToolsHandler) ServicesList(w http.ResponseWriter, r *http.Request
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	items, err := h.services.List()
 	if err != nil {
 		response.Error(w, err.Error(), "SERVICES_ERROR")
@@ -597,9 +570,6 @@ type serviceActionRequest struct {
 func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req serviceActionRequest
@@ -640,9 +610,6 @@ func (h *SystemToolsHandler) ServicesGetScript(w http.ResponseWriter, r *http.Re
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	script := r.URL.Query().Get("script")
 	if script == "" {
 		response.Error(w, "missing script parameter", "INVALID_PARAMS")
@@ -679,9 +646,6 @@ type serviceSaveRequest struct {
 func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req serviceSaveRequest
@@ -732,9 +696,6 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req serviceDeleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -773,9 +734,6 @@ func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Reques
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	pkgs, err := h.opkg.ListInstalled()
 	if err != nil {
 		response.Error(w, err.Error(), "OPKG_ERROR")
@@ -801,9 +759,6 @@ func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Reque
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	pkgs, err := h.opkg.ListUpgradable()
 	if err != nil {
 		response.Error(w, err.Error(), "OPKG_ERROR")
@@ -827,9 +782,6 @@ func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Reque
 func (h *SystemToolsHandler) OpkgSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	q := r.URL.Query().Get("q")
@@ -862,9 +814,6 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	out, err := h.opkg.Update()
 	h.emitEvent("update", "", "opkg update")
 	if err != nil {
@@ -889,9 +838,6 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req opkgPackagesRequest
@@ -930,9 +876,6 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req opkgPackagesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -962,9 +905,6 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	q := r.URL.Query().Get("q")
@@ -1000,9 +940,6 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	var req opkgPackagesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, "invalid JSON", "INVALID_JSON")
@@ -1034,9 +971,6 @@ func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	items, err := h.ports.List()
 	if err != nil {
 		response.Error(w, err.Error(), "PORTS_ERROR")
@@ -1060,9 +994,6 @@ func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	portStr := r.URL.Query().Get("port")
@@ -1111,9 +1042,6 @@ type portKillRequest struct {
 func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req portKillRequest
@@ -1233,9 +1161,6 @@ func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Re
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 	path := r.URL.Query().Get("path")
 	if strings.TrimSpace(path) == "" {
 		response.Error(w, "path is required", "INVALID_PATH")
@@ -1296,9 +1221,9 @@ func (h *SystemToolsHandler) FilesScriptStatus(w http.ResponseWriter, r *http.Re
 }
 
 type scriptActionRequest struct {
-	Path   string   `json:"path"`
-	Action string   `json:"action"` // "start", "stop", "restart", "run"
-	Args   []string `json:"args,omitempty"`
+	Path   string `json:"path"`
+	Action string `json:"action"` // "start", "stop", "restart", "run"
+	// Аргументы намеренно не принимаются: они уходили бы в exec от root.
 }
 
 // POST /api/system/files/script-action
@@ -1316,9 +1241,6 @@ type scriptActionRequest struct {
 func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 	var req scriptActionRequest
@@ -1456,9 +1378,6 @@ func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request
 		response.MethodNotAllowed(w)
 		return
 	}
-	if !h.requireExpert(w, r) {
-		return
-	}
 
 	snap, err := h.procmon.Snapshot()
 	if err != nil {
@@ -1484,9 +1403,6 @@ func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request
 func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
-		return
-	}
-	if !h.requireExpert(w, r) {
 		return
 	}
 

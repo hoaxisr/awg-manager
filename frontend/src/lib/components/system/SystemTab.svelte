@@ -25,7 +25,7 @@
 
 	const views = $derived.by(() => {
 		if ($poniesUnlocked || $page.url.searchParams.get('view') === 'ponies') {
-			return [...baseViews, { id: 'ponies' as SystemView, label: '🦄 Страна розовых пони' }];
+			return [...baseViews, { id: 'ponies' as SystemView, label: 'Страна розовых пони' }];
 		}
 		return baseViews;
 	});

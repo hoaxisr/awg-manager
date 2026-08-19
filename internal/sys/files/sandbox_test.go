@@ -119,3 +119,80 @@ func TestSandboxSymlinkInsideAllowed(t *testing.T) {
 		t.Fatalf("want resolved=%q, got %q", real, abs)
 	}
 }
+
+// На Keenetic /opt — симлинк на /tmp/mnt/<диск>/install. Корень, заданный
+// через симлинк, должен работать: и для существующего файла, и для нового.
+func TestResolve_RootBehindSymlink(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "mnt", "disk", "install")
+	if err := os.MkdirAll(filepath.Join(real, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opt := filepath.Join(base, "opt")
+	if err := os.Symlink(real, opt); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(real, "etc", "conf.json")
+	if err := os.WriteFile(existing, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := NewSandbox([]Root{
+		{Path: filepath.Join(opt, "bin"), Label: "bin", ReadOnly: true},
+		{Path: opt, Label: "opt"},
+	})
+
+	abs, _, err := sb.Resolve(filepath.Join(opt, "etc", "conf.json"))
+	if err != nil {
+		t.Fatalf("существующий файл под корнем-симлинком отвергнут: %v", err)
+	}
+	if abs != existing {
+		t.Errorf("abs = %q, want %q", abs, existing)
+	}
+	if _, err := sb.ResolveWrite(filepath.Join(opt, "etc", "new.conf")); err != nil {
+		t.Errorf("новый файл под корнем-симлинком отвергнут: %v", err)
+	}
+	// Read-only корень держится и через реальный путь, и через симлинк.
+	if _, err := sb.ResolveWrite(filepath.Join(real, "bin", "x")); err == nil {
+		t.Error("запись в read-only корень по реальному пути разрешена")
+	}
+	if _, err := sb.ResolveWrite(filepath.Join(opt, "bin", "x")); err == nil {
+		t.Error("запись в read-only корень через симлинк разрешена")
+	}
+}
+
+// Симлинк, созданный внутри writable-корня и смотрящий наружу, — отказ.
+// Отдельно: несуществующий файл ЗА таким симлинком тоже отказ.
+func TestResolve_SymlinkEscapeDenied(t *testing.T) {
+	base := t.TempDir()
+	tmp := filepath.Join(base, "tmp")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "shadow")
+	if err := os.WriteFile(secret, []byte("root:x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(tmp, "esc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tmp, "dir")); err != nil {
+		t.Fatal(err)
+	}
+
+	sb := NewSandbox([]Root{{Path: tmp, Label: "tmp"}})
+
+	if abs, _, err := sb.Resolve(filepath.Join(tmp, "esc")); err == nil {
+		t.Errorf("симлинк наружу пропущен: %s", abs)
+	}
+	if abs, err := sb.ResolveWrite(filepath.Join(tmp, "esc")); err == nil {
+		t.Errorf("запись по симлинку наружу разрешена: %s", abs)
+	}
+	if abs, err := sb.ResolveWrite(filepath.Join(tmp, "dir", "new.txt")); err == nil {
+		t.Errorf("создание файла за симлинком-каталогом наружу разрешено: %s", abs)
+	}
+}

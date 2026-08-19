@@ -3,6 +3,7 @@ package opkg
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -84,11 +85,27 @@ func (c *Client) run(args ...string) (stdout string, exitCode int, err error) {
 	return stdout, exitCode, nil
 }
 
+// ErrLocked — база opkg занята другим процессом (ручной opkg по SSH,
+// автообновление). Своим мьютексом это не ловится: он сериализует только
+// наши вызовы.
+var ErrLocked = errors.New("opkg занят другим процессом: дождитесь окончания его работы")
+
+// lockedByOther распознаёт занятую базу по сообщению opkg.
+func lockedByOther(out string) bool {
+	low := strings.ToLower(out)
+	return strings.Contains(low, "could not lock") ||
+		strings.Contains(low, "resource temporarily unavailable") ||
+		strings.Contains(low, "opkg_conf_load")
+}
+
 func (c *Client) runLocked(args ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out, code, err := c.run(args...)
 	if err != nil {
+		if lockedByOther(out) {
+			return "", ErrLocked
+		}
 		if out != "" && isBenignEmptyList(args, out, code) {
 			return out, nil
 		}
@@ -198,6 +215,11 @@ func (c *Client) Search(query string) ([]Package, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query required")
+	}
+	// Поиск уходит в exec тем же путём, что install/remove: без проверки
+	// строка вида "-f /tmp/my.conf" читается opkg как флаг.
+	if err := validatePkgNames([]string{query}); err != nil {
+		return nil, err
 	}
 	text, err := c.runLocked("find", query)
 	if err != nil {

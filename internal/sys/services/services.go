@@ -167,6 +167,11 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 	if !scriptNameRe.MatchString(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
+	// Остановить службу, которая отдаёт эту же страницу, можно, а включить
+	// обратно — уже нет. Перезапуск разрешён: панель вернётся сама.
+	if action == "stop" && serviceName(base) == "awg-manager" {
+		return "", fmt.Errorf("cannot stop %s: остановка прервёт веб-интерфейс, включить обратно из UI будет нечем", base)
+	}
 	full := filepath.Join(sc.InitDir, base)
 	if sc.InitDir == "" {
 		full = filepath.Join(initDir, base)
@@ -208,6 +213,11 @@ func (sc *Scanner) SaveScript(scriptName string, content string) (string, error)
 	base := filepath.Base(scriptName)
 	if !scriptNameRe.MatchString(base) {
 		return "", fmt.Errorf("invalid script name (must be S<number><name>, e.g. S90myservice)")
+	}
+	// Перезапись — тот же результат, что и удаление: защита от удаления без
+	// неё обходится одним сохранением пустого файла.
+	if hint, managed := managedService(base); managed {
+		return "", fmt.Errorf("cannot overwrite %s: %s", base, hint)
 	}
 	dir := sc.InitDir
 	if dir == "" {

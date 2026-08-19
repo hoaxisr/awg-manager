@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, Card } from '$lib/components/ui';
+	import { Button, Card, Toggle } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		clearTerminalAutoLogin,
@@ -93,10 +93,10 @@
 			<span>Пароль</span>
 			<input bind:value={password} type="password" autocomplete="current-password" />
 		</label>
-		<label class="remember">
-			<input type="checkbox" bind:checked={remember} />
+		<div class="remember">
+			<Toggle checked={remember} onchange={(v) => (remember = v)} />
 			<span>Запомнить на время сессии</span>
-		</label>
+		</div>
 	</div>
 
 	<div class="actions">

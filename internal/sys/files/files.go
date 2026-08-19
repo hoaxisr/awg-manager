@@ -160,9 +160,11 @@ func (s *Sandbox) Rename(from, to string) error {
 	return os.Rename(src, dst)
 }
 
+// rootForPath ожидает уже разрешённый путь (то, что вернул Resolve), поэтому
+// сравнивает с разрешённой формой корня.
 func rootForPath(roots []Root, path string) *Root {
 	for i := range roots {
-		if pathWithin(path, roots[i].Path) {
+		if pathWithin(path, roots[i].resolved) {
 			return &roots[i]
 		}
 	}
