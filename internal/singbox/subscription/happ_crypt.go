@@ -17,13 +17,19 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-var (
-	// ErrHappKeysNotConfigured indicates that user has not supplied RSA decryption keys.
-	ErrHappKeysNotConfigured = errors.New("happ: RSA decryption keys not configured")
+// ErrHappKeysNotConfigured indicates that user has not supplied RSA decryption keys.
+var ErrHappKeysNotConfigured = errors.New("happ: RSA decryption keys not configured")
 
-	happKeysMu     sync.RWMutex
-	happParsedKeys []*rsa.PrivateKey
-)
+// happKeys owns the RSA keys used to decrypt happ://crypt… links: the set is
+// per-Service state (one Service = one data dir = one happ_keys.json), not a
+// package global.
+type happKeys struct {
+	mu   sync.RWMutex
+	path string
+	keys []*rsa.PrivateKey
+}
+
+func newHappKeys(path string) *happKeys { return &happKeys{path: path} }
 
 func cleanB64(s string) string {
 	s = strings.Trim(s, `"',`)
@@ -122,8 +128,8 @@ func ParseHappKeysInput(input string) ([]string, error) {
 	return keys, nil
 }
 
-// SetCustomHappKeys configures PKCS1 Base64 RSA private keys at runtime.
-func SetCustomHappKeys(b64Keys []string) error {
+// set parses PKCS1/PKCS8 Base64 (or PEM) RSA private keys and installs them.
+func (k *happKeys) set(b64Keys []string) error {
 	var parsed []*rsa.PrivateKey
 	for _, b64 := range b64Keys {
 		b64 = strings.TrimSpace(b64)
@@ -162,15 +168,18 @@ func SetCustomHappKeys(b64Keys []string) error {
 		parsed = append(parsed, pk)
 	}
 
-	happKeysMu.Lock()
-	happParsedKeys = parsed
-	happKeysMu.Unlock()
+	k.mu.Lock()
+	k.keys = parsed
+	k.mu.Unlock()
 	return nil
 }
 
-// LoadHappKeysFromFile attempts to load RSA keys from a JSON file containing a string array.
-func LoadHappKeysFromFile(path string) error {
-	data, err := os.ReadFile(path)
+// load reads the key file if it exists; a missing file is not an error.
+func (k *happKeys) load() error {
+	data, err := os.ReadFile(k.path)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -178,73 +187,74 @@ func LoadHappKeysFromFile(path string) error {
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return err
 	}
-	return SetCustomHappKeys(keys)
+	return k.set(keys)
 }
 
-// HasHappKeys reports whether any RSA keys are currently configured.
-func HasHappKeys() bool {
-	happKeysMu.RLock()
-	defer happKeysMu.RUnlock()
-	return len(happParsedKeys) > 0
-}
-
-// GetHappKeysCount returns the number of currently loaded RSA keys.
-func GetHappKeysCount() int {
-	happKeysMu.RLock()
-	defer happKeysMu.RUnlock()
-	return len(happParsedKeys)
-}
-
-func getHappKeys() ([]*rsa.PrivateKey, error) {
-	happKeysMu.RLock()
-	defer happKeysMu.RUnlock()
-	if len(happParsedKeys) == 0 {
-		return nil, ErrHappKeysNotConfigured
-	}
-	return happParsedKeys, nil
-}
-
-func (s *Service) keysPath() string {
-	if s.store != nil && s.store.path != "" {
-		return filepath.Join(filepath.Dir(s.store.path), "happ_keys.json")
-	}
-	return "happ_keys.json"
-}
-
-// LoadHappKeys reads happ_keys.json from disk if present.
-func (s *Service) LoadHappKeys() error {
-	path := s.keysPath()
-	if _, err := os.Stat(path); err == nil {
-		return LoadHappKeysFromFile(path)
-	}
-	return nil
-}
-
-// SaveHappKeys persists custom RSA keys to happ_keys.json and applies them to memory.
-func (s *Service) SaveHappKeys(keys []string) error {
-	if err := SetCustomHappKeys(keys); err != nil {
+// save installs the keys and persists them next to the subscriptions file.
+func (k *happKeys) save(b64Keys []string) error {
+	if err := k.set(b64Keys); err != nil {
 		return err
 	}
-	path := s.keysPath()
-	data, err := json.MarshalIndent(keys, "", "  ")
+	data, err := json.MarshalIndent(b64Keys, "", "  ")
 	if err != nil {
 		return err
 	}
-	return storage.AtomicWrite(path, data)
+	return storage.AtomicWrite(k.path, data)
 }
 
-// ClearHappKeys removes happ_keys.json and clears keys from memory.
-func (s *Service) ClearHappKeys() error {
+// clear drops the keys from disk and then from memory.
+func (k *happKeys) clear() error {
 	// Disk first: clearing memory before a failed os.Remove would report an
 	// error while the keys are already unloaded, and the next start would
 	// silently load them back from the file that is still there.
-	if err := os.Remove(s.keysPath()); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(k.path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	happKeysMu.Lock()
-	happParsedKeys = nil
-	happKeysMu.Unlock()
+	k.mu.Lock()
+	k.keys = nil
+	k.mu.Unlock()
 	return nil
+}
+
+// status reports whether keys are configured and how many.
+func (k *happKeys) status() (bool, int) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return len(k.keys) > 0, len(k.keys)
+}
+
+func (k *happKeys) loaded() ([]*rsa.PrivateKey, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	if len(k.keys) == 0 {
+		return nil, ErrHappKeysNotConfigured
+	}
+	return k.keys, nil
+}
+
+// happKeysPath returns the key file path for a store path ("" → cwd).
+func happKeysPath(storePath string) string {
+	if storePath == "" {
+		return "happ_keys.json"
+	}
+	return filepath.Join(filepath.Dir(storePath), "happ_keys.json")
+}
+
+// LoadHappKeys reads happ_keys.json from disk if present.
+func (s *Service) LoadHappKeys() error { return s.happKeys.load() }
+
+// SaveHappKeys persists custom RSA keys and applies them to memory.
+func (s *Service) SaveHappKeys(keys []string) error { return s.happKeys.save(keys) }
+
+// ClearHappKeys removes the stored RSA keys.
+func (s *Service) ClearHappKeys() error { return s.happKeys.clear() }
+
+// HappKeysStatus reports whether decryption keys are configured and how many.
+func (s *Service) HappKeysStatus() (bool, int) { return s.happKeys.status() }
+
+// DecryptHappLink decrypts a happ://crypt… link with this service's keys.
+func (s *Service) DecryptHappLink(rawLink string) (string, error) {
+	return s.happKeys.decrypt(rawLink)
 }
 
 func b64DecodeUrlSafe(s string) ([]byte, error) {
@@ -267,8 +277,8 @@ func IsHappCryptLink(rawLink string) bool {
 		strings.HasPrefix(lower, "crypt4/")
 }
 
-// DecryptHappLink decrypts encrypted happ:// links (happ://crypt/, happ://crypt2/, happ://crypt3/, happ://crypt4/)
-func DecryptHappLink(rawLink string) (string, error) {
+// decrypt turns happ://crypt…/<payload> back into the plain subscription URL.
+func (k *happKeys) decrypt(rawLink string) (string, error) {
 	trimmed := strings.TrimSpace(rawLink)
 	path := trimmed
 	if strings.HasPrefix(strings.ToLower(trimmed), "happ://") {
@@ -298,7 +308,7 @@ func DecryptHappLink(rawLink string) (string, error) {
 		return "", errors.New("encrypted payload too large")
 	}
 
-	keys, err := getHappKeys()
+	keys, err := k.loaded()
 	if err != nil {
 		return "", err
 	}

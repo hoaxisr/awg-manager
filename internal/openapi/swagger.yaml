@@ -16444,6 +16444,22 @@ paths:
       summary: Manage HAPP RSA decryption keys
       tags:
       - subscriptions
+  /singbox/subscriptions/header-profiles:
+    get:
+      description: Client fingerprints used by header auto-detection; the UI offers
+        the same list as presets
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List client header profiles
+      tags:
+      - subscriptions
   /singbox/subscriptions/members/add:
     post:
       consumes:

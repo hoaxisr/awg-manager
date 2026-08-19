@@ -1,12 +1,8 @@
 <script lang="ts">
-	import {
-		ALL_HEADERS_PRESET,
-		generateHappPreset,
-		generateMihomoPreset,
-		generateSingboxPreset,
-		generateV2rayNPreset,
-	} from './headersParser';
+	import { ALL_HEADERS_PRESET } from './headersParser';
 	import { Dropdown } from '$lib/components/ui';
+	import { api } from '$lib/api/client';
+	import type { SubscriptionHeaderProfile } from '$lib/types';
 
 	interface Props {
 		value: string;
@@ -14,10 +10,37 @@
 	let { value = $bindable('') }: Props = $props();
 
 	let showHelp = $state(false);
+	// Пресеты приходят с бэкенда — тот же список, которым детект перебирает
+	// профили клиентов. Второй копии на фронте нет.
+	let profiles = $state<SubscriptionHeaderProfile[]>([]);
+
+	$effect(() => {
+		void api
+			.listSubscriptionHeaderProfiles()
+			.then((list) => (profiles = list))
+			.catch(() => (profiles = []));
+	});
+
+	let presetOptions = $derived([
+		...profiles.map((p) => ({ value: p.kind, label: p.label })),
+		{ value: 'all', label: 'Полный шаблон заголовков' },
+	]);
 
 	function applyPreset(preset: string): void {
 		if (value.trim() && !confirm('Заменить текущие заголовки пресетом?')) return;
 		value = preset;
+	}
+
+	async function pickPreset(kind: string): Promise<void> {
+		if (kind === 'all') {
+			applyPreset(ALL_HEADERS_PRESET);
+			return;
+		}
+		// Перезапрос — ради свежих HWID / модели устройства: часть значений
+		// профиля генерируется на каждый вызов.
+		const fresh = await api.listSubscriptionHeaderProfiles().catch(() => profiles);
+		const profile = fresh.find((p) => p.kind === kind);
+		if (profile) applyPreset(profile.headersText);
 	}
 </script>
 
@@ -43,20 +66,8 @@
 	<div class="head-actions">
 		<Dropdown
 			placeholder="Подставить пресет"
-			options={[
-				{ value: 'happ', label: 'HAPP iOS (iPhone 15-17 Pro, динамический)' },
-				{ value: 'mihomo', label: 'Clash / mihomo' },
-				{ value: 'singbox', label: 'Sing-box' },
-				{ value: 'v2rayn', label: 'v2rayN' },
-				{ value: 'all', label: 'Полный шаблон заголовков' },
-			]}
-			onchange={(v) => {
-				if (v === 'happ') applyPreset(generateHappPreset());
-				else if (v === 'mihomo') applyPreset(generateMihomoPreset());
-				else if (v === 'singbox') applyPreset(generateSingboxPreset());
-				else if (v === 'v2rayn') applyPreset(generateV2rayNPreset());
-				else if (v === 'all') applyPreset(ALL_HEADERS_PRESET);
-			}}
+			options={presetOptions}
+			onchange={(v) => void pickPreset(v)}
 		/>
 	</div>
 </div>

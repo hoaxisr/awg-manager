@@ -7,17 +7,15 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 )
 
 func TestDecryptHappLink_NotConfigured(t *testing.T) {
-	// Reset keys
-	happKeysMu.Lock()
-	happParsedKeys = nil
-	happKeysMu.Unlock()
+	k := newHappKeys(filepath.Join(t.TempDir(), "happ_keys.json"))
 
 	link := "happ://crypt/YWJj"
-	_, err := DecryptHappLink(link)
+	_, err := k.decrypt(link)
 	if !errors.Is(err, ErrHappKeysNotConfigured) {
 		t.Fatalf("expected ErrHappKeysNotConfigured, got %v", err)
 	}
@@ -39,8 +37,9 @@ func TestDecryptHappLink_DynamicKeys(t *testing.T) {
 		privKeys = append(privKeys, pk)
 	}
 
-	if err := SetCustomHappKeys(b64Keys); err != nil {
-		t.Fatalf("SetCustomHappKeys failed: %v", err)
+	k := newHappKeys(filepath.Join(t.TempDir(), "happ_keys.json"))
+	if err := k.set(b64Keys); err != nil {
+		t.Fatalf("set keys failed: %v", err)
 	}
 
 	testURL := "https://client.example.com/sub/test-token-12345"
@@ -73,9 +72,9 @@ func TestDecryptHappLink_DynamicKeys(t *testing.T) {
 				t.Fatalf("IsHappCryptLink(%q) returned false", happLink)
 			}
 
-			decrypted, err := DecryptHappLink(happLink)
+			decrypted, err := k.decrypt(happLink)
 			if err != nil {
-				t.Fatalf("DecryptHappLink(%q) failed: %v", happLink, err)
+				t.Fatalf("decrypt(%q) failed: %v", happLink, err)
 			}
 
 			if decrypted != testURL {

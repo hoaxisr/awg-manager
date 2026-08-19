@@ -515,6 +515,35 @@ func (h *SubscriptionHandler) DetectHeaders(w http.ResponseWriter, r *http.Reque
 	response.Success(w, profile)
 }
 
+// HeaderProfileDTO is one client fingerprint offered as a preset in the UI.
+type HeaderProfileDTO struct {
+	Kind        string `json:"kind" example:"happ"`
+	Label       string `json:"label" example:"HAPP iOS"`
+	HeadersText string `json:"headersText" example:"User-Agent: Happ/4.6.0/ios/1"`
+}
+
+// HeaderProfiles handles GET /api/singbox/subscriptions/header-profiles
+//
+//	@Summary		List client header profiles
+//	@Description	Client fingerprints used by header auto-detection; the UI offers the same list as presets
+//	@Tags			subscriptions
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	APIEnvelope
+//	@Router			/singbox/subscriptions/header-profiles [get]
+func (h *SubscriptionHandler) HeaderProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	profiles := subscription.HeaderProfiles()
+	out := make([]HeaderProfileDTO, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, HeaderProfileDTO{Kind: p.Kind, Label: p.Label, HeadersText: p.HeadersText()})
+	}
+	response.Success(w, out)
+}
+
 type HappKeysRequest struct {
 	Keys []string `json:"keys,omitempty"`
 	Text string   `json:"text,omitempty"`
@@ -543,10 +572,8 @@ type HappKeysResponse struct {
 func (h *SubscriptionHandler) HappKeys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		response.Success(w, HappKeysResponse{
-			Configured: subscription.HasHappKeys(),
-			Count:      subscription.GetHappKeysCount(),
-		})
+		configured, count := h.svc.HappKeysStatus()
+		response.Success(w, HappKeysResponse{Configured: configured, Count: count})
 	case http.MethodPost:
 		var req HappKeysRequest
 		if err := decodeBody(r, &req); err != nil {

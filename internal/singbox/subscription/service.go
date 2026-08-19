@@ -91,10 +91,21 @@ type Service struct {
 	// мьютексы Service и нельзя выполнять сетевой I/O (fetch подписки идёт
 	// до applyDiff, вне txMu).
 	txMu sync.Mutex
+	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
+	// файлом подписок, состояние принадлежит сервису, не пакету.
+	happKeys *happKeys
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
-	return &Service{store: store, mutator: mutator}
+	storePath := ""
+	if store != nil {
+		storePath = store.path
+	}
+	return &Service{
+		store:    store,
+		mutator:  mutator,
+		happKeys: newHappKeys(happKeysPath(storePath)),
+	}
 }
 
 // SetNDMSProxyEnabled wires the global "Create NDMS Proxy for sing-box"
@@ -454,7 +465,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		// subscription silently fetching the still-encrypted link.
 		target := sub.URL
 		if IsHappCryptLink(target) {
-			dec, decErr := DecryptHappLink(target)
+			dec, decErr := s.DecryptHappLink(target)
 			if decErr != nil {
 				err := fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", decErr)
 				s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
@@ -1498,7 +1509,7 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 		return nil, errors.New("subscription: preview requires a URL")
 	}
 	if IsHappCryptLink(url) {
-		dec, err := DecryptHappLink(url)
+		dec, err := s.DecryptHappLink(url)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", err)
 		}
@@ -1543,13 +1554,18 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 
 // DetectedProfile describes the automatically probed headers profile for a URL.
 type DetectedProfile struct {
-	Kind         string   `json:"kind"`
-	DecryptedURL string   `json:"decryptedUrl,omitempty"`
-	IsEncrypted  bool     `json:"isEncrypted,omitempty"`
-	Headers      []Header `json:"headers"`
-	HeadersText  string   `json:"headersText"`
-	Label        string   `json:"label"`
-	ServerCount  int      `json:"serverCount"`
+	Kind string `json:"kind"`
+	// DecryptedURL is set only for happ://crypt… links.
+	DecryptedURL string `json:"decryptedUrl,omitempty"`
+	// NormalizedURL is the URL the input should be replaced with: wrapper
+	// schemes stripped, happ://crypt… decrypted. The UI shows it instead of
+	// re-implementing NormalizeSubscriptionURL in TypeScript.
+	NormalizedURL string   `json:"normalizedUrl,omitempty"`
+	IsEncrypted   bool     `json:"isEncrypted,omitempty"`
+	Headers       []Header `json:"headers"`
+	HeadersText   string   `json:"headersText"`
+	Label         string   `json:"label"`
+	ServerCount   int      `json:"serverCount"`
 }
 
 // randomHex returns n hex characters (n/2 random bytes).
@@ -1585,10 +1601,11 @@ func mergeHeaders(base, override []Header) []Header {
 // provider-required auth header survives the probe instead of being replaced by it.
 func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders []Header) (DetectedProfile, error) {
 	if rawUrl == "" {
+		fallback := defaultHeaderProfile()
 		return DetectedProfile{
-			Kind:        "singbox",
-			HeadersText: "User-Agent: sing-box/v1.14.20",
-			Label:       "sing-box (по умолчанию)",
+			Kind:        fallback.Kind,
+			HeadersText: fallback.HeadersText(),
+			Label:       fallback.Label + " (по умолчанию)",
 			ServerCount: 0,
 		}, nil
 	}
@@ -1599,7 +1616,7 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders 
 	isEnc := IsHappCryptLink(rawUrl)
 	decryptedURL := ""
 	if isEnc {
-		dec, err := DecryptHappLink(rawUrl)
+		dec, err := s.DecryptHappLink(rawUrl)
 		if errors.Is(err, ErrHappKeysNotConfigured) {
 			// Not an error the user can act on by retrying: the UI turns this
 			// answer into the «нужны ключи RSA» prompt. Returning an error here
@@ -1613,59 +1630,14 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders 
 		rawUrl = dec
 	}
 
+	normalizedURL, _ := NormalizeSubscriptionURL(rawUrl)
+	if normalizedURL == "" {
+		normalizedURL = rawUrl
+	}
 	fetchURL, _ := RewriteForRaw(rawUrl)
 
-	candidates := []struct {
-		kind        string
-		label       string
-		headersFunc func() []Header
-	}{
-		{
-			kind:  "happ",
-			label: "HAPP iOS",
-			headersFunc: func() []Header {
-				return []Header{
-					{Name: "User-Agent", Value: fmt.Sprintf("Happ/4.6.0/ios/%d", time.Now().Unix())},
-					{Name: "X-Device-OS", Value: "iOS"},
-					{Name: "X-HWID", Value: randomHex(16)},
-					{Name: "X-Device-Locale", Value: "ru"},
-					{Name: "X-Ver-OS", Value: "18.2"},
-					{Name: "X-App-Version", Value: "4.6.0"},
-					{Name: "X-Device-Model", Value: "iPhone 16 Pro"},
-				}
-			},
-		},
-		{
-			kind:  "mihomo",
-			label: "Clash / mihomo",
-			headersFunc: func() []Header {
-				return []Header{
-					{Name: "User-Agent", Value: "Clash-Verge/1.7.0 (Clash.Meta)"},
-				}
-			},
-		},
-		{
-			kind:  "singbox",
-			label: "sing-box",
-			headersFunc: func() []Header {
-				return []Header{
-					{Name: "User-Agent", Value: "sing-box/v1.14.20"},
-				}
-			},
-		},
-		{
-			kind:  "v2rayn",
-			label: "v2rayN",
-			headersFunc: func() []Header {
-				return []Header{
-					{Name: "User-Agent", Value: "v2rayN/6.42 (Windows NT 10.0; Win64; x64)"},
-				}
-			},
-		},
-	}
-
-	for _, cand := range candidates {
-		hdrs := mergeHeaders(userHeaders, cand.headersFunc())
+	for _, prof := range HeaderProfiles() {
+		hdrs := mergeHeaders(userHeaders, prof.Headers)
 		fetchOpts := s.fetchOpts
 		fetchOpts.Timeout = 5 * time.Second
 		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, fetchOpts)
@@ -1675,38 +1647,37 @@ func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders 
 		parseRes := parseSubscriptionBody(body, ct)
 		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
 		if len(parts.Valid) > 0 {
-			var lines []string
-			for _, h := range hdrs {
-				lines = append(lines, fmt.Sprintf("%s: %s", h.Name, h.Value))
-			}
-			label := cand.label
+			label := prof.Label
 			if isEnc {
-				label = "HAPP Crypt (расшифровано: " + cand.label + ")"
+				label = "HAPP Crypt (расшифровано: " + prof.Label + ")"
 			}
 			return DetectedProfile{
-				Kind:         cand.kind,
-				DecryptedURL: decryptedURL,
-				IsEncrypted:  isEnc,
-				Headers:      hdrs,
-				HeadersText:  strings.Join(lines, "\n"),
-				Label:        label,
-				ServerCount:  len(parts.Valid),
+				Kind:          prof.Kind,
+				DecryptedURL:  decryptedURL,
+				NormalizedURL: normalizedURL,
+				IsEncrypted:   isEnc,
+				Headers:       hdrs,
+				HeadersText:   HeaderProfile{Headers: hdrs}.HeadersText(),
+				Label:         label,
+				ServerCount:   len(parts.Valid),
 			}, nil
 		}
 	}
 
-	label := "sing-box (по умолчанию)"
+	fallback := defaultHeaderProfile()
+	label := fallback.Label + " (по умолчанию)"
 	if isEnc {
 		label = "HAPP Crypt (расшифровано)"
 	}
 
 	return DetectedProfile{
-		Kind:         "singbox",
-		DecryptedURL: decryptedURL,
-		IsEncrypted:  isEnc,
-		HeadersText:  "User-Agent: sing-box/v1.14.20",
-		Label:        label,
-		ServerCount:  0,
+		Kind:          fallback.Kind,
+		DecryptedURL:  decryptedURL,
+		NormalizedURL: normalizedURL,
+		IsEncrypted:   isEnc,
+		HeadersText:   fallback.HeadersText(),
+		Label:         label,
+		ServerCount:   0,
 	}, nil
 }
 

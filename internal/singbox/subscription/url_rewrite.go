@@ -11,11 +11,11 @@ func NormalizeSubscriptionURL(rawURL string) (string, bool) {
 	trimmed := strings.TrimSpace(rawURL)
 	lower := strings.ToLower(trimmed)
 
-	// happ://crypt/, happ://crypt2/, happ://crypt3/, happ://crypt4/
+	// happ://crypt… несёт зашифрованный payload — расшифровка требует ключей
+	// сервиса и умеет падать, поэтому её делают вызывающие (Refresh,
+	// PreviewURL, DetectHeaders). Здесь ссылку только пропускаем нетронутой,
+	// чтобы её не разобрал общий цикл wrapper-схем ниже.
 	if IsHappCryptLink(trimmed) {
-		if decrypted, err := DecryptHappLink(trimmed); err == nil && decrypted != "" {
-			return decrypted, true
-		}
 		return trimmed, false
 	}
 

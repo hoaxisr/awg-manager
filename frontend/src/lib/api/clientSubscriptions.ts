@@ -1,6 +1,7 @@
 import type {
 	CreateSubscriptionGroupInput,
 	DetectedSubscriptionProfile,
+	SubscriptionHeaderProfile,
 	CreateSubscriptionInput,
 	Subscription,
 	SubscriptionActiveNowResponse,
@@ -195,14 +196,20 @@ export class SubscriptionsClient extends SbRouterClient {
 	}
 
 	// Happ RSA keys configuration
+	async listSubscriptionHeaderProfiles(): Promise<SubscriptionHeaderProfile[]> {
+		return this.request<SubscriptionHeaderProfile[]>('/singbox/subscriptions/header-profiles');
+	}
+
 	async getHappKeysInfo(): Promise<{ configured: boolean; count: number }> {
 		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys');
 	}
 
-	async saveHappKeys(keysOrText: { keys?: string[]; text?: string }): Promise<{ configured: boolean; count: number }> {
+	// Разбор ключей — на сервере (ParseHappKeysInput): второй парсер на фронте
+	// расходился с ним вердиктами.
+	async saveHappKeys(text: string): Promise<{ configured: boolean; count: number }> {
 		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys', {
 			method: 'POST',
-			body: JSON.stringify(keysOrText),
+			body: JSON.stringify({ text }),
 		});
 	}
 

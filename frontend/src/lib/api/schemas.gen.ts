@@ -2865,6 +2865,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/subscriptions/get": v.lazy(() => api_SubscriptionResponse),
 	"GET /singbox/subscriptions/groups": v.lazy(() => api_SubscriptionGroupListResponse),
 	"GET /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
+	"GET /singbox/subscriptions/header-profiles": v.lazy(() => api_APIEnvelope),
 	"GET /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"GET /singbox/tunnels/get": v.lazy(() => api_SingboxTunnelGetResponse),
 	"GET /singbox/tunnels/test/connectivity": v.lazy(() => api_APIEnvelope),

@@ -113,34 +113,6 @@
 		}
 	});
 
-	function cleanSubscriptionUrl(raw: string): string {
-		let s = raw.trim();
-		const lower = s.toLowerCase();
-		if (lower.startsWith('clash://install-config') || lower.startsWith('clashmeta://install-config')) {
-			try {
-				const u = new URL(s);
-				const target = u.searchParams.get('url');
-				if (target) return target;
-			} catch {}
-		}
-		if (lower.startsWith('happ://crypt')) {
-			return s;
-		}
-
-		for (const scheme of ['happ://', 'sub://', 'singbox://', 'sing-box://', 'v2ray://', 'sn://']) {
-			if (lower.startsWith(scheme)) {
-				const after = s.slice(scheme.length);
-				const lowerAfter = lower.slice(scheme.length);
-				const httpsIdx = lowerAfter.indexOf('https://');
-				if (httpsIdx !== -1) return after.slice(httpsIdx);
-				const httpIdx = lowerAfter.indexOf('http://');
-				if (httpIdx !== -1) return after.slice(httpIdx);
-				if (scheme === 'happ://') return 'https://' + after;
-			}
-		}
-		return s;
-	}
-
 	let detectingHeaders = $state(false);
 	let detectedNotice = $state('');
 	let detectStatus = $state<'ok' | 'keys' | 'error'>('ok');
@@ -150,37 +122,39 @@
 	// переписать headersText от нового URL и не должен гасить чужой индикатор.
 	let detectSeq = 0;
 	let lastDetectedUrl = '';
+	let lastNormalizedUrl = '';
 
 	function triggerDetectHeaders(targetUrl: string, immediate = false): void {
 		if (detectTimer) clearTimeout(detectTimer);
-		const clean = cleanSubscriptionUrl(targetUrl);
-		if (
-			!clean.startsWith('http://') &&
-			!clean.startsWith('https://') &&
-			!clean.startsWith('happ://crypt')
-		) {
+		const raw = targetUrl.trim();
+		// Нормализацию (снятие обёрток happ:// / clash:// и расшифровку
+		// happ://crypt) делает сервер и возвращает в normalizedUrl — здесь
+		// только грубый отсев того, что ещё не похоже на ссылку.
+		if (!raw.includes('://')) {
 			detectSeq++;
 			detectingHeaders = false;
 			detectedNotice = '';
 			detectStatus = 'ok';
 			lastDetectedUrl = '';
+			lastNormalizedUrl = '';
 			return;
 		}
 		// onpaste и следующий за ним onblur дают один и тот же URL — вторая
 		// серия проб роутеру не нужна.
-		if (clean === lastDetectedUrl) return;
+		if (raw === lastDetectedUrl || raw === lastNormalizedUrl) return;
 		detectedNotice = '';
 		detectStatus = 'ok';
 
 		const runDetect = async () => {
 			const seq = ++detectSeq;
-			lastDetectedUrl = clean;
+			lastDetectedUrl = raw;
 			detectingHeaders = true;
 			try {
-				const res = await api.detectSubscriptionHeaders(clean, parseHeadersText(headersText));
+				const res = await api.detectSubscriptionHeaders(raw, parseHeadersText(headersText));
 				if (seq !== detectSeq) return;
-				if (res && res.isEncrypted && res.decryptedUrl) {
-					url = res.decryptedUrl;
+				if (res?.normalizedUrl) {
+					lastNormalizedUrl = res.normalizedUrl;
+					url = res.normalizedUrl;
 				}
 				if (res && res.serverCount > 0) {
 					headersText = res.headersText;
@@ -239,6 +213,7 @@
 		detectedNotice = '';
 		detectStatus = 'ok';
 		lastDetectedUrl = '';
+		lastNormalizedUrl = '';
 		error = '';
 	}
 
@@ -584,8 +559,8 @@
 						class="inp"
 						type="url"
 						bind:value={url}
-						onpaste={() => setTimeout(() => { url = cleanSubscriptionUrl(url); triggerDetectHeaders(url, true); }, 0)}
-						onblur={() => { url = cleanSubscriptionUrl(url); triggerDetectHeaders(url, true); }}
+						onpaste={() => setTimeout(() => triggerDetectHeaders(url, true), 0)}
+						onblur={() => triggerDetectHeaders(url, true)}
 						oninput={() => triggerDetectHeaders(url)}
 						placeholder="https://provider.example/sub/abc или happ://..."
 					/>

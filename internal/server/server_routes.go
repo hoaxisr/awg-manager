@@ -965,6 +965,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/subscriptions/members/restore", h.guarded(sh.RestoreMembers))
 		mux.HandleFunc("/api/singbox/subscriptions/preview", h.guarded(sh.PreviewURL))
 		mux.HandleFunc("/api/singbox/subscriptions/detect-headers", h.guarded(sh.DetectHeaders))
+		mux.HandleFunc("/api/singbox/subscriptions/header-profiles", h.guarded(sh.HeaderProfiles))
 		mux.HandleFunc("/api/singbox/subscriptions/happ-keys", h.guarded(sh.HappKeys))
 		mux.HandleFunc("/api/singbox/subscriptions/groups", h.guarded(sh.ListGroups))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/create", h.guarded(sh.CreateGroup))
