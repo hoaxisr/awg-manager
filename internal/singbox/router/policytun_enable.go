@@ -449,17 +449,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable policy-tun: collect WAN IPs: %w", cerr)
 			return err
 		}
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
-		if err = s.deps.IPTables.Install(ctx, RestoreInputSpec{
-			DSCPOnly:       true,
-			MatchAll:       true,
-			WANIPs:         wanIPs,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
-			BypassCIDRs:    bypassSubnets,
-			QoSClasses:     qosSpecs,
-		}); err != nil {
+		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		if err = s.deps.IPTables.Install(ctx, spec); err != nil {
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}
 		// Применённое состояние netfilter — база сравнения для reconcile: без
@@ -468,8 +459,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// успешной установки; когда классов нет, netfilterStateKnown остаётся
 		// false, и первый тик reconcile сделает одноразовый Uninstall-свип
 		// (снимет чужие цепочки и blackhole прежнего режима). s.mu уже держит
-		// enableLocked.
-		s.currentQoSClasses = qosSpecs
+		// enableLocked. Базой сравнения служит спек ЦЕЛИКОМ, а не одни классы:
+		// WAN-адреса и bypass — такие же входы правил.
+		s.appliedSpec = &spec
 		s.netfilterStateKnown = true
 	}
 

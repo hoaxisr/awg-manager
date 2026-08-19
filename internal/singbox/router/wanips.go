@@ -92,7 +92,7 @@ type wanIPCollectorImpl struct {
 func NewWANIPCollector(log wanLogger) WANIPCollector {
 	return &wanIPCollectorImpl{
 		run: func(ctx context.Context, args ...string) (string, error) {
-			result, err := sysexec.Run(ctx, "ip", args...)
+			result, err := sysexec.Run(ctx, ipBinary, args...)
 			if err != nil {
 				return "", sysexec.FormatError(result, err)
 			}
@@ -103,6 +103,13 @@ func NewWANIPCollector(log wanLogger) WANIPCollector {
 }
 
 func (c *wanIPCollectorImpl) Collect(ctx context.Context) ([]string, error) {
+	// ДОРОГО и дешевле не делается: это дамп ВСЕХ таблиц целиком, на роутере с
+	// hydraroute — десятки тысяч строк, а нужны из них только строки «default
+	// …». Селектор `default` тут НЕ помогает: на сборке iproute2 для Keenetic
+	// вместе с `table all` он молча игнорируется — проверено на железе, выдача
+	// `ip route show default table all` содержит и обычные маршруты, и таблицу
+	// local, и IPv6. Форма запроса закреплена тестом именно поэтому.
+	// Цена заметна: в режиме policy-tun сбор идёт каждым тиком reconcile.
 	routeOut, err := c.run(ctx, "route", "show", "table", "all")
 	if err != nil {
 		return nil, err

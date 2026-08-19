@@ -164,6 +164,12 @@ func parseDNSRedirRule(line string) (iface, mark string, port int, ok bool) {
 	return iface, mark, port, true
 }
 
+// discoverLANBridges — шов под DiscoverLANBridges (та же роль, что у
+// singboxListeningProbe и fakeIPLinkPresent). Без него путь «NDMS-хотспот
+// обнаружен → DNS-RESCUE доехал до правил» не проверяем на уровне сервиса:
+// сама функция читает дамп iptables и /sys через пакетный sysexec.
+var discoverLANBridges = DiscoverLANBridges
+
 // isLinuxBridge reports whether the named interface is a real Linux
 // bridge (has a /sys/class/net/<name>/bridge directory). WireGuard
 // tunnels, physical NICs, PPP, and SSTP "bridges" that NDMS marks but
@@ -171,23 +177,6 @@ func parseDNSRedirRule(line string) (iface, mark string, port int, ok bool) {
 func isLinuxBridge(iface string) bool {
 	info, err := os.Stat(fmt.Sprintf("/sys/class/net/%s/bridge", iface))
 	return err == nil && info.IsDir()
-}
-
-// equalLANBridges reports whether two []LANBridgeDNSRedir slices have
-// the same (bridge, port) pairs in the same order. Used by
-// reconcileInstalled to decide whether an iptables re-install is
-// needed when LAN-bridge state on the router drifts (NDMS hotspot
-// reconfigured, bridge added/removed, port reassigned).
-func equalLANBridges(a, b []LANBridgeDNSRedir) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Bridge != b[i].Bridge || a[i].Port != b[i].Port {
-			return false
-		}
-	}
-	return true
 }
 
 func splitLines(s string) []string {

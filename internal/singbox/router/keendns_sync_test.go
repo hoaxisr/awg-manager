@@ -164,8 +164,7 @@ func TestReconcileInstalled_KeenDNSCIDRChangeReinstalls(t *testing.T) {
 			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	sr := storage.SingboxRouterSettings{Enabled: true, PolicyName: "Policy0", WANAutoDetect: true}
@@ -184,8 +183,8 @@ func TestReconcileInstalled_KeenDNSCIDRChangeReinstalls(t *testing.T) {
 	if restoreCalls != 1 {
 		t.Fatalf("появление адреса KeenDNS обязано переустановить правила, got %d", restoreCalls)
 	}
-	if !slices.Equal(svc.currentKeenDNSCIDRs, []string{"78.47.125.180/32"}) {
-		t.Fatalf("currentKeenDNSCIDRs = %v", svc.currentKeenDNSCIDRs)
+	if !slices.Contains(svc.appliedSpec.BypassCIDRs, "78.47.125.180/32") {
+		t.Fatalf("применённые bypass-CIDR = %v", svc.appliedSpec.BypassCIDRs)
 	}
 
 	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {

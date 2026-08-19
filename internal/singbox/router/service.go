@@ -443,31 +443,55 @@ type ServiceImpl struct {
 	transitionReadinessProgress func(message string)
 
 	// ─── Применённое состояние netfilter ────────────────────────────────────
-	// Поля current* ниже плюс netfilterStateKnown, blackholeActive и
-	// currentQoSClasses описывают то, что РЕАЛЬНО установлено в netfilter.
+	// appliedSpec, appliedBlackhole, netfilterStateKnown и
+	// currentBypassGeoIPTags описывают то, что РЕАЛЬНО установлено в netfilter.
 	//
-	// ИНВАРИАНТ: все они читаются и пишутся только под transitionMu.
-	// Писатели: enableLocked, Disable, enablePolicyTun, reconcileInstalled,
-	// reconcilePolicyTunQoS. Читатели: reconcileInstalled,
+	// ИНВАРИАНТ: взаимное исключение даёт transitionMu, и только он.
+	// Писатели: enableLocked, Disable, enablePolicyTun, disablePolicyTun,
+	// reconcileInstalled, reconcilePolicyTunQoS. Читатели: reconcileInstalled,
 	// reconcilePolicyTunQoS. Каждый достижим ровно двумя путями — Reconcile
-	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock);
-	// s.mu, который берут Enable/Disable, ЭТИ поля не защищает, потому что
-	// reconcileInstalled читает их вне s.mu.
+	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock).
+	//
+	// s.mu вокруг записей НЕ является защитой этих полей: часть чтений в
+	// reconcileInstalled (forceInitialSync, specChanged, bypassGeoTagsChanged)
+	// идёт вне s.mu, так что опираться на него нельзя — он держится ради
+	// соседних полей в тех же критических секциях.
 	//
 	// Пока путей два, гонки нет по построению. Третий путь (например новая
 	// публичная ручка, зовущая Enable/Disable мимо transitionMu) её вернёт —
 	// раньше такой путь давали ручки POST /singbox/router/{enable,disable},
 	// и они удалены именно поэтому. Новый вызывающий обязан заходить через
 	// Reconcile или SwitchRoutingMode.
-	currentMark               string              // last-installed iptables mark; used by Reconcile to detect change
-	currentWANIPs             []string            // last-collected WAN IPs; used by Reconcile to detect change
-	currentLANBridges         []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
-	currentBypassPresets      []string
-	currentBypassExtraPorts   string
-	currentBypassExtraSubnets string
-	currentBypassGeoIPTags    []string // last-installed geoip-теги обхода; их смена = переустановка правил
-	currentKeenDNSCIDRs       []string // last-installed CIDR обхода пресета keendns (адрес с роутера, не из настроек)
-	currentIngress            []string // last-installed резолвленные ingress kernel-имена
+	//
+	// appliedSpec — снимок ровно того RestoreInputSpec, что уехал в
+	// IPTables.Install; nil = «ничего нашего в netfilter не установлено».
+	// Хранятся ВХОДЫ правил целиком, а не их разложенные копии: пока входы
+	// лежали двенадцатью полями, каждая новая точка сравнения забывала часть
+	// из них (так и жил дефект policy-tun, сравнивавший один вход из семи).
+	// Сравнение — equalInstalledSpec, по РЕНДЕРУ спека: поле, которого нет в
+	// правилах, изменить netfilter не может, поэтому «забыли поле» здесь
+	// невыразимо. После записи спек не мутируется.
+	// Единственный писатель непустого значения — успешный Install (nil в него
+	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
+	appliedSpec *RestoreInputSpec
+
+	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
+	// который reconcileInstalled поднимает, пока sing-box мёртв, а
+	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от
+	// appliedSpec во всём: свой рендер (buildBlackholeRestoreInput), свой файл
+	// правил (persistBlackhole) и своя цепочка (BlackholeChain), — поэтому и
+	// снимок свой (сравнение — equalBlackholeSpec). Снимком, а не булевым
+	// флагом: по флагу переустановка сводилась бы к «уже стоит — не трогаем»,
+	// и смена WAN-адреса роутера посреди простоя движка не доехала бы до
+	// исключений блокировки — это закреплено
+	// TestReconcileInstalled_BlackholeFollowsWANIPChange.
+	appliedBlackhole *RestoreInputSpec
+
+	// last-installed geoip-теги обхода; в спеке от них остаётся только
+	// производный BypassGeoIPSet, то есть состав тегов из снимка
+	// невосстановим. Поэтому смена состава видна ТОЛЬКО здесь — и это триггер
+	// пересборки/сноса набора AWGM-BYPASS.
+	currentBypassGeoIPTags []string
 
 	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
 	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
@@ -519,18 +543,6 @@ type ServiceImpl struct {
 	// молча остался бы без v6-разрешения до перезапуска режима.
 	fakeipACLv6Asserted    bool
 	policyTunACLv6Asserted bool
-
-	// blackholeActive tracks whether the fail-closed DROP chain is currently
-	// engaged (installed by reconcileInstalled while sing-box is dead and the
-	// PREROUTING interception jumps were wiped). It is removed the moment the
-	// engine recovers. Под transitionMu, как остальное применённое состояние
-	// netfilter (см. инвариант у current*): s.mu его не защищает.
-	blackholeActive bool
-
-	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
-	// ports only — the class outbound lives in sing-box config, not in
-	// iptables). Reconcile re-Installs when it drifts from settings.
-	currentQoSClasses []QoSClassSpec
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.
