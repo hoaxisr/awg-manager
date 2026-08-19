@@ -23,7 +23,7 @@ const (
 	rawMTU               = 1300
 	rawIPPrefix          = "10.70.66."
 	rawTunVirtioHdrLen   = 10 // wireguard-go tun.virtioNetHdrLen on Linux (amd64/arm64)
-	rawDownlinkQueueSize = 256  // как в APK (newDownlinkWorker)
+	rawDownlinkQueueSize = 1024 // 4x буфер для downlink bursts (было 256)
 	rawDownlinkChunkSize = 8    // downlinkChunkSizeFor в APK
 	rawMaxWorkersPerIP   = 256  // safety cap (support up to 256 parallel workers)
 	rawPacketBufCap      = 2048
@@ -179,16 +179,39 @@ func putRawDownlinkBuf(bp *[]byte) {
 
 func (r *rawRouter) dispatchDownlink(packet []byte) {
 	dst := ipv4DstString(packet)
-	w := r.pickDownlinkWorker(packet)
-	if w == nil {
-		if dst != "" && atomic.CompareAndSwapInt32(&rawNoDownlinkSessionLogged, 0, 1) {
+	if dst == "" {
+		return
+	}
+	cs := r.sessionsFor(dst)
+	cs.mu.Lock()
+	n := len(cs.workers)
+	if n == 0 {
+		cs.mu.Unlock()
+		if atomic.CompareAndSwapInt32(&rawNoDownlinkSessionLogged, 0, 1) {
 			log.Printf("[RAW] downlink: нет сессии для %s (пакет от интернета, но клиент не зарегистрирован)", dst)
 		}
 		return
 	}
+	chunk := downlinkChunkSizeFor(n)
+	seq := atomic.AddUint32(&cs.seq, 1) - 1
+	start := int(seq/chunk) % n
+
 	bp := getRawDownlinkBuf(len(packet))
 	copy(*bp, packet)
-	if !w.enqueue(bp) {
+
+	enqueued := false
+	for i := 0; i < n; i++ {
+		w := cs.workers[(start+i)%n]
+		if w != nil && w.sess != nil && w.sess.ready {
+			if w.enqueue(bp) {
+				enqueued = true
+				break
+			}
+		}
+	}
+	cs.mu.Unlock()
+
+	if !enqueued {
 		putRawDownlinkBuf(bp)
 	}
 }

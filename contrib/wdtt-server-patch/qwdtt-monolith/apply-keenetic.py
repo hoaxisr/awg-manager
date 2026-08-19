@@ -96,6 +96,122 @@ def patch_server_go_v14(text: str) -> str:
     text = patch_stats_active_devices(text)
     text = patch_dtls_idle_timeout(text)
     text = patch_get_next_ip_skip_gateway(text)
+    text = patch_pacer_and_downlink(text)
+    return text
+
+
+def patch_pacer_and_downlink(text: str) -> str:
+    # 1. Remove artificial rate throttling from pacer, increase worker buffer from 256 to 1024
+    old_pacer_const = (
+        "const downlinkWorkerBuf = 256\n\n"
+        "// rawDownlinkRate ограничивает одну TURN-аллокацию немного ниже наблюдаемого\n"
+        "// VK лимита ~260 KiB/s. Пейсер сглаживает bursts, не меняя протокол клиента.\n"
+        "const (\n"
+        "\trawDownlinkRate  = 247 * 1024\n"
+        "\trawDownlinkBurst = 16 * 1024\n"
+        ")"
+    )
+    new_pacer_const = (
+        "const downlinkWorkerBuf = 1024\n\n"
+        "// rawDownlinkRate: 0 отключает искусственное ограничение скорости для максимального throughput\n"
+        "const (\n"
+        "\trawDownlinkRate  = 0\n"
+        "\trawDownlinkBurst = 0\n"
+        ")"
+    )
+    if old_pacer_const in text:
+        text = text.replace(old_pacer_const, new_pacer_const, 1)
+
+    # 2. Add multi-worker failover to dispatchDownlink
+    old_downlink_loop = (
+        "\t\tw := r.pickDownlinkConn(dst, len(pkt))\n"
+        "\t\tif w == nil {\n"
+        "\t\t\tif atomic.CompareAndSwapUint32(&r.noSessionLogged, 0, 1) {\n"
+        "\t\t\t\tlog.Printf(\"[RAW] downlink: нет сессии для %s (пакет от интернета, но клиент не зарегистрирован)\", dst)\n"
+        "\t\t\t}\n"
+        "\t\t\tcontinue\n"
+        "\t\t}\n"
+        "\t\tif atomic.CompareAndSwapUint32(&r.firstDownlink, 0, 1) {\n"
+        "\t\t\tlog.Printf(\"[RAW] Первый downlink-пакет доставлен клиенту %s (%d байт)\", dst, len(pkt))\n"
+        "\t\t}\n"
+        "\t\t// Копируем в pooled-буфер: pkt живёт в общем buf, который readLoop\n"
+        "\t\t// тут же перезапишет следующим Read — writer-горутина воркера должна\n"
+        "\t\t// получить свою независимую копию, раз запись теперь асинхронная.\n"
+        "\t\tout := getBuf2048()[:len(pkt)]\n"
+        "\t\tcopy(out, pkt)\n"
+        "\t\tw.enqueue(out)"
+    )
+    new_downlink_loop = (
+        "\t\tout := getBuf2048()[:len(pkt)]\n"
+        "\t\tcopy(out, pkt)\n"
+        "\t\tif !r.dispatchDownlink(dst, out) {\n"
+        "\t\t\tputBuf2048(out)\n"
+        "\t\t}"
+    )
+    if old_downlink_loop in text:
+        text = text.replace(old_downlink_loop, new_downlink_loop, 1)
+
+    old_pick = (
+        "// pickDownlinkConn выбирает воркера для очередного downlink-пакета клиента\n"
+        "// dst, размазывая нагрузку по всем его зарегистрированным воркерам\n"
+        "// адаптивными чанками (см. downlinkChunkSizeFor) с предохранителем\n"
+        "// downlinkMaxDwellMS на случай, если текущий relay начал тормозить.\n"
+        "func (r *rawRouter) pickDownlinkConn(dst string, pktSize int) *downlinkWorker {\n"
+    )
+    new_dispatch = (
+        "// dispatchDownlink отправляет downlink-пакет клиенту dst, распределяя по воркерам\n"
+        "// и выполняя failover на свободные воркеры при временной занятости очереди.\n"
+        "func (r *rawRouter) dispatchDownlink(dst string, pkt []byte) bool {\n"
+        "\tr.mu.Lock()\n"
+        "\tcs := r.sessions[dst]\n"
+        "\tif cs == nil || len(cs.workers) == 0 {\n"
+        "\t\tr.mu.Unlock()\n"
+        "\t\tif atomic.CompareAndSwapUint32(&r.noSessionLogged, 0, 1) {\n"
+        "\t\t\tlog.Printf(\"[RAW] downlink: нет сессии для %s (пакет от интернета, но клиент не зарегистрирован)\", dst)\n"
+        "\t\t}\n"
+        "\t\treturn false\n"
+        "\t}\n"
+        "\tn := len(cs.workers)\n"
+        "\tif cs.rrIndex >= n {\n"
+        "\t\tcs.rrIndex = 0\n"
+        "\t}\n"
+        "\tnow := time.Now().UnixMilli()\n"
+        "\tif cs.chunkStartTs == 0 {\n"
+        "\t\tcs.chunkStartTs = now\n"
+        "\t} else if now-cs.chunkStartTs >= downlinkMaxDwellMS {\n"
+        "\t\tcs.rrIndex = (cs.rrIndex + 1) % n\n"
+        "\t\tcs.rrCount = 0\n"
+        "\t\tcs.chunkStartTs = now\n"
+        "\t}\n"
+        "\tstart := cs.rrIndex\n"
+        "\tcs.rrCount++\n"
+        "\tif cs.rrCount >= downlinkChunkSizeFor(len(pkt)) {\n"
+        "\t\tcs.rrIndex = (cs.rrIndex + 1) % n\n"
+        "\t\tcs.rrCount = 0\n"
+        "\t\tcs.chunkStartTs = now\n"
+        "\t}\n"
+        "\tif atomic.CompareAndSwapUint32(&r.firstDownlink, 0, 1) {\n"
+        "\t\tlog.Printf(\"[RAW] Первый downlink-пакет доставлен клиенту %s (%d байт)\", dst, len(pkt))\n"
+        "\t}\n"
+        "\tfor i := 0; i < n; i++ {\n"
+        "\t\tw := cs.workers[(start+i)%n]\n"
+        "\t\tif w != nil {\n"
+        "\t\t\tselect {\n"
+        "\t\t\tcase w.sendCh <- pkt:\n"
+        "\t\t\t\tr.mu.Unlock()\n"
+        "\t\t\t\treturn true\n"
+        "\t\t\tdefault:\n"
+        "\t\t\t}\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\tr.mu.Unlock()\n"
+        "\treturn false\n"
+        "}\n\n"
+        "func (r *rawRouter) pickDownlinkConn(dst string, pktSize int) *downlinkWorker {\n"
+    )
+    if old_pick in text:
+        text = text.replace(old_pick, new_dispatch, 1)
+
     return text
 
 
