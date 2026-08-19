@@ -17,7 +17,7 @@
 	$effect(() => {
 		void api
 			.listSubscriptionHeaderProfiles()
-			.then((list) => (profiles = list))
+			.then((list) => (profiles = Array.isArray(list) ? list : []))
 			.catch(() => (profiles = []));
 	});
 
@@ -39,7 +39,7 @@
 		// Перезапрос — ради свежих HWID / модели устройства: часть значений
 		// профиля генерируется на каждый вызов.
 		const fresh = await api.listSubscriptionHeaderProfiles().catch(() => profiles);
-		const profile = fresh.find((p) => p.kind === kind);
+		const profile = (Array.isArray(fresh) ? fresh : profiles).find((p) => p.kind === kind);
 		if (profile) applyPreset(profile.headersText);
 	}
 </script>

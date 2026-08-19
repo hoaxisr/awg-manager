@@ -186,7 +186,7 @@
 					disabled={saving || !keysText.trim()}
 					onclick={handleSave}
 				>
-					{saving ? 'Сохранение...' : 'Сохранить ключи'}
+					{saving ? 'Сохранение…' : 'Сохранить'}
 				</Button>
 			</div>
 		</div>

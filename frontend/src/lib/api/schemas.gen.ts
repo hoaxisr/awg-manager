@@ -341,6 +341,22 @@ const api_DecodeLinkResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_DetectHeadersResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_DetectedProfileDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_DetectedProfileDTO: v.GenericSchema = v.looseObject({
+	decryptedUrl: v.optional(v.nullable(v.string())),
+	headers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionHeader)))),
+	headersText: v.optional(v.nullable(v.string())),
+	isEncrypted: v.optional(v.nullable(v.boolean())),
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+	normalizedUrl: v.optional(v.nullable(v.string())),
+	serverCount: v.optional(v.nullable(v.number())),
+});
+
 const api_DeviceProxyAuthDTO: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
@@ -616,6 +632,17 @@ const api_GeoTagDTO: v.GenericSchema = v.looseObject({
 
 const api_GeoTagsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_GeoTagDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_HeaderProfileDTO: v.GenericSchema = v.looseObject({
+	headersText: v.optional(v.nullable(v.string())),
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+});
+
+const api_HeaderProfilesResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_HeaderProfileDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2865,7 +2892,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /singbox/subscriptions/get": v.lazy(() => api_SubscriptionResponse),
 	"GET /singbox/subscriptions/groups": v.lazy(() => api_SubscriptionGroupListResponse),
 	"GET /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
-	"GET /singbox/subscriptions/header-profiles": v.lazy(() => api_APIEnvelope),
+	"GET /singbox/subscriptions/header-profiles": v.lazy(() => api_HeaderProfilesResponse),
 	"GET /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"GET /singbox/tunnels/get": v.lazy(() => api_SingboxTunnelGetResponse),
 	"GET /singbox/tunnels/test/connectivity": v.lazy(() => api_APIEnvelope),
@@ -3075,7 +3102,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/staging/discard": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/active-member": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/create": v.lazy(() => api_SubscriptionResponse),
-	"POST /singbox/subscriptions/detect-headers": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/subscriptions/detect-headers": v.lazy(() => api_DetectHeadersResponse),
 	"POST /singbox/subscriptions/groups/create": v.lazy(() => api_SubscriptionGroupResponse),
 	"POST /singbox/subscriptions/groups/delete": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),

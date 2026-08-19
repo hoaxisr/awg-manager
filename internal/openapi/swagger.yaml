@@ -989,6 +989,41 @@ definitions:
       url:
         type: string
     type: object
+  api.DetectHeadersResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DetectedProfileDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.DetectedProfileDTO:
+    properties:
+      decryptedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      isEncrypted:
+        type: boolean
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+      normalizedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      serverCount:
+        example: 3
+        type: integer
+    type: object
   api.DeviceProxyAuthDTO:
     properties:
       enabled:
@@ -1722,6 +1757,28 @@ definitions:
         type: array
       text:
         type: string
+    type: object
+  api.HeaderProfileDTO:
+    properties:
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+    type: object
+  api.HeaderProfilesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.HeaderProfileDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
     type: object
   api.HealthData:
     properties:
@@ -16137,7 +16194,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.APIEnvelope'
+            $ref: '#/definitions/api.DetectHeadersResponse'
         "400":
           description: Bad Request
           schema:
@@ -16454,7 +16511,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.APIEnvelope'
+            $ref: '#/definitions/api.HeaderProfilesResponse'
       security:
       - CookieAuth: []
       summary: List client header profiles

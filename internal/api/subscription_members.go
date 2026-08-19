@@ -484,6 +484,24 @@ type DetectHeadersRequest struct {
 	Headers []SubscriptionHeader `json:"headers"`
 }
 
+// DetectedProfileDTO is the auto-detection result for a subscription URL.
+type DetectedProfileDTO struct {
+	Kind          string               `json:"kind" example:"happ"`
+	DecryptedURL  string               `json:"decryptedUrl,omitempty" example:"https://provider.example/sub/abc"`
+	NormalizedURL string               `json:"normalizedUrl,omitempty" example:"https://provider.example/sub/abc"`
+	IsEncrypted   bool                 `json:"isEncrypted,omitempty"`
+	Headers       []SubscriptionHeader `json:"headers"`
+	HeadersText   string               `json:"headersText" example:"User-Agent: Happ/4.6.0/ios/1"`
+	Label         string               `json:"label" example:"HAPP iOS"`
+	ServerCount   int                  `json:"serverCount" example:"3"`
+}
+
+// DetectHeadersResponse is the envelope for the auto-detection result.
+type DetectHeadersResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    DetectedProfileDTO `json:"data"`
+}
+
 // DetectHeaders handles POST /api/singbox/subscriptions/detect-headers
 //
 //	@Summary		Auto-detect required HTTP headers for a subscription URL
@@ -493,7 +511,7 @@ type DetectHeadersRequest struct {
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			body	body		DetectHeadersRequest	true	"Subscription URL and user-configured headers"
-//	@Success		200		{object}	APIEnvelope
+//	@Success		200		{object}	DetectHeadersResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		502		{object}	APIErrorEnvelope
 //	@Router			/singbox/subscriptions/detect-headers [post]
@@ -522,6 +540,12 @@ type HeaderProfileDTO struct {
 	HeadersText string `json:"headersText" example:"User-Agent: Happ/4.6.0/ios/1"`
 }
 
+// HeaderProfilesResponse is the envelope for the preset list.
+type HeaderProfilesResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Data    []HeaderProfileDTO `json:"data"`
+}
+
 // HeaderProfiles handles GET /api/singbox/subscriptions/header-profiles
 //
 //	@Summary		List client header profiles
@@ -529,7 +553,7 @@ type HeaderProfileDTO struct {
 //	@Tags			subscriptions
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Success		200	{object}	APIEnvelope
+//	@Success		200	{object}	HeaderProfilesResponse
 //	@Router			/singbox/subscriptions/header-profiles [get]
 func (h *SubscriptionHandler) HeaderProfiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
