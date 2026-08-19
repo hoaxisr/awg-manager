@@ -23,8 +23,6 @@ import (
 )
 
 type Service interface {
-	Enable(ctx context.Context) error
-	Disable(ctx context.Context) error
 	Reconcile(ctx context.Context) error
 	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
 	// fakeip-tun) with directional fail-closed rollback and progress events.
@@ -399,6 +397,13 @@ type Deps struct {
 	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
 	// *query.RouteStore.
 	DefaultGateway DefaultGatewayResolver
+	// ReconcileBaseDNSStrategy примиряет dns.strategy 00-base.json с
+	// владением routing-слотов ПОСЛЕ того, как их содержимое изменилось
+	// (ApplyStaging / FakeIPSetDNSGlobals): мерж скаляров в config.d —
+	// first-file-wins, поэтому без примирения base затеняет выбор
+	// пользователя до перезапуска демона. Best-effort: ошибка не валит
+	// успешное применение. Optional — nil в тестах.
+	ReconcileBaseDNSStrategy func() error
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -436,14 +441,33 @@ type ServiceImpl struct {
 	// transitionReadinessProgress emits readiness heartbeats during
 	// waitForSingbox while SwitchRoutingMode is in flight (nil otherwise).
 	transitionReadinessProgress func(message string)
-	currentMark                 string              // last-installed iptables mark; used by Reconcile to detect change
-	currentWANIPs               []string            // last-collected WAN IPs; used by Reconcile to detect change
-	currentLANBridges           []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
-	currentBypassPresets        []string
-	currentBypassExtraPorts     string
-	currentBypassExtraSubnets   string
-	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
-	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+
+	// ─── Применённое состояние netfilter ────────────────────────────────────
+	// Поля current* ниже плюс netfilterStateKnown, blackholeActive и
+	// currentQoSClasses описывают то, что РЕАЛЬНО установлено в netfilter.
+	//
+	// ИНВАРИАНТ: все они читаются и пишутся только под transitionMu.
+	// Писатели: enableLocked, Disable, enablePolicyTun, reconcileInstalled,
+	// reconcilePolicyTunQoS. Читатели: reconcileInstalled,
+	// reconcilePolicyTunQoS. Каждый достижим ровно двумя путями — Reconcile
+	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock);
+	// s.mu, который берут Enable/Disable, ЭТИ поля не защищает, потому что
+	// reconcileInstalled читает их вне s.mu.
+	//
+	// Пока путей два, гонки нет по построению. Третий путь (например новая
+	// публичная ручка, зовущая Enable/Disable мимо transitionMu) её вернёт —
+	// раньше такой путь давали ручки POST /singbox/router/{enable,disable},
+	// и они удалены именно поэтому. Новый вызывающий обязан заходить через
+	// Reconcile или SwitchRoutingMode.
+	currentMark               string              // last-installed iptables mark; used by Reconcile to detect change
+	currentWANIPs             []string            // last-collected WAN IPs; used by Reconcile to detect change
+	currentLANBridges         []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
+	currentBypassPresets      []string
+	currentBypassExtraPorts   string
+	currentBypassExtraSubnets string
+	currentBypassGeoIPTags    []string // last-installed geoip-теги обхода; их смена = переустановка правил
+	currentKeenDNSCIDRs       []string // last-installed CIDR обхода пресета keendns (адрес с роутера, не из настроек)
+	currentIngress            []string // last-installed резолвленные ingress kernel-имена
 
 	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
 	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
@@ -499,7 +523,8 @@ type ServiceImpl struct {
 	// blackholeActive tracks whether the fail-closed DROP chain is currently
 	// engaged (installed by reconcileInstalled while sing-box is dead and the
 	// PREROUTING interception jumps were wiped). It is removed the moment the
-	// engine recovers. Guarded by s.mu, like the other current* install state.
+	// engine recovers. Под transitionMu, как остальное применённое состояние
+	// netfilter (см. инвариант у current*): s.mu его не защищает.
 	blackholeActive bool
 
 	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
@@ -525,7 +550,8 @@ type ServiceImpl struct {
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
 
-	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Optional keendns-preset → имена KeenDNS резолвит сам роутер, а его
+	// адреса идут мимо sing-box.
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
 	// setupListen after the router service) — под keenDNSMu, потому что
 	// startup-Reconcile читает их из своей горутины уже во время wiring.
@@ -533,9 +559,14 @@ type ServiceImpl struct {
 	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
 	// не писать один и тот же warn на каждом тике Reconcile.
 	keenDNSWarnState string
-	keenDNSDomain    KeenDNSDomainProvider
-	keenDNSLAN       LANIPv4Provider
-	keenDNSSync      KeenDNSRewriteSyncer
+	keenDNSInfoProv  KeenDNSInfoProvider
+	keenDNSSync      KeenDNSPresetSyncer
+	// Кэш данных с роутера (см. keenDNSInfoTTL) и производный от него
+	// список CIDR обхода, который уезжает в RestoreInputSpec.
+	keenDNSFQDN        string
+	keenDNSAddrs       []string
+	keenDNSInfoAt      time.Time
+	keenDNSBypassCIDRs []string
 }
 
 func NewService(d Deps) *ServiceImpl {

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=amneziawg
-PKG_VERSION:=3.0.20260805
+PKG_VERSION:=3.1.20260812
 
 PKG_SOURCE_URL:=https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)

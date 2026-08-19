@@ -18,6 +18,10 @@ const keenDNSTTL = 60 * time.Second
 type KeenDNSInfo struct {
 	Domain  string `json:"domain"`
 	Enabled bool   `json:"enabled"`
+	// Address — IPv4 доступа к роутеру по имени KeenDNS. В режиме direct
+	// статической записи у ndnproxy нет, и это единственный источник адреса
+	// для обхода пресета keendns.
+	Address string `json:"address"`
 }
 
 // KeenDNSStore caches KeenDNS status from NDMS.
@@ -60,8 +64,9 @@ func (s *KeenDNSStore) fetch(ctx context.Context, _ string) (*KeenDNSInfo, error
 // для стоковой *.keenetic.pro не перепроверялось).
 func parseKeenDNS(raw []byte) *KeenDNSInfo {
 	var v struct {
-		Booked string `json:"booked"`
-		Domain string `json:"domain"`
+		Booked  string `json:"booked"`
+		Domain  string `json:"domain"`
+		Address string `json:"address"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil
@@ -71,5 +76,9 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 	if booked == "" || domain == "" {
 		return nil
 	}
-	return &KeenDNSInfo{Domain: booked + "." + domain, Enabled: true}
+	return &KeenDNSInfo{
+		Domain:  booked + "." + domain,
+		Enabled: true,
+		Address: strings.TrimSpace(v.Address),
+	}
 }

@@ -79,9 +79,16 @@
 
   let currentPolicy = $derived(policies.find((p) => p.name === policyName));
 
-  let sourceTitle = $derived(deviceMode === 'all' ? 'Весь роутер' : 'Устройства в политике');
+  // В «Политики + tun» deviceMode мёртв (бэкенд ветвится раньше — см.
+  // service_lifecycle.go: enable/reconcile уходят в policy-tun до его чтения),
+  // а захват задаёт членство в политике. Поэтому узел не зовёт SourceDrawer с
+  // его выбором «весь роутер», а ведёт в карточку режима (StatusDrawer).
+  let policyTunMode = $derived($storeSettings?.routingMode === 'policy-tun');
+  let sourceTitle = $derived(
+    policyTunMode ? 'Политика доступа' : deviceMode === 'all' ? 'Весь роутер' : 'Устройства в политике',
+  );
   let sourceSub = $derived.by(() => {
-    if (deviceMode === 'all') return 'весь LAN-трафик';
+    if (!policyTunMode && deviceMode === 'all') return 'весь LAN-трафик';
     if (!policyName) return 'политика не выбрана';
     const label = currentPolicy?.description?.trim() || policyName;
     const devices = s?.deviceCount ?? currentPolicy?.deviceCount ?? 0;
@@ -129,7 +136,12 @@
 
 <div class="flow">
   <div class="row">
-    <button type="button" class="node source" onclick={openSourceDrawer} aria-label="Настроить источник трафика">
+    <button
+      type="button"
+      class="node source"
+      onclick={policyTunMode ? openDrawer : openSourceDrawer}
+      aria-label={policyTunMode ? 'Открыть настройки режима «Политики + tun»' : 'Настроить источник трафика'}
+    >
       <div class="cap">Источник</div>
       <div class="node-title">{sourceTitle}</div>
       <div class="node-sub">{sourceSub}</div>
@@ -142,7 +154,7 @@
       <div class="node-title">{engineSub}</div>
       <div class="node-sub">
         {pluralize(rulesCount, RULE_WORDS)}
-        {#if deviceMode === 'all'}
+        {#if !policyTunMode && deviceMode === 'all'}
           {' · '}весь роутер
         {/if}
         {#if trafficText}

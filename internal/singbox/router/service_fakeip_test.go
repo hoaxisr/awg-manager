@@ -191,7 +191,8 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true}
+	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true,
+		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
 	if err := store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -236,13 +237,13 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	}
 }
 
-func (h *fakeIPEnableHarness) loadFakeIP(t *testing.T) *storage.FakeIPState {
+func (h *fakeIPEnableHarness) loadFakeIP(t *testing.T) *storage.OpkgTunState {
 	t.Helper()
 	all, err := h.store.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return all.FakeIP
+	return all.OpkgTun
 }
 
 // ---------------------------------------------------------------------------
@@ -267,8 +268,8 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	if st == nil || !st.Provisioned || st.Index != 0 {
 		t.Fatalf("FakeIP persist = %+v, want provisioned index 0", st)
 	}
-	if st.Inet4Range != "198.18.0.0/15" || st.Inet6Range != "fc00::/18" {
-		t.Errorf("FakeIP ranges = %q/%q, want pool defaults", st.Inet4Range, st.Inet6Range)
+	if st.FakeIP == nil || st.FakeIP.Inet4Range != "198.18.0.0/15" || st.FakeIP.Inet6Range != "fc00::/18" {
+		t.Errorf("FakeIP ranges = %+v, want pool defaults", st.FakeIP)
 	}
 
 	// Ordered sequence assertions.
@@ -501,7 +502,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 	}
 	// Persisted FakeIP state records the overridden ranges.
 	st := h.loadFakeIP(t)
-	if st == nil || st.Inet4Range != "10.64.0.0/12" || st.Inet6Range != "fc00::/7" {
+	if st == nil || st.FakeIP == nil || st.FakeIP.Inet4Range != "10.64.0.0/12" || st.FakeIP.Inet6Range != "fc00::/7" {
 		t.Errorf("FakeIP state ranges = %+v, want overridden", st)
 	}
 
@@ -815,8 +816,8 @@ func TestEnable_TproxyUnchanged(t *testing.T) {
 	if !all.SingboxRouter.Enabled {
 		t.Error("tproxy Enable must persist Enabled=true")
 	}
-	if all.FakeIP != nil {
-		t.Errorf("tproxy Enable must not write FakeIP persist, got %+v", all.FakeIP)
+	if all.OpkgTun != nil {
+		t.Errorf("tproxy Enable must not write FakeIP persist, got %+v", all.OpkgTun)
 	}
 }
 
@@ -1360,7 +1361,7 @@ func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
 	}
 	// Teardown still reached the mandatory persist steps.
 	if st := h.loadFakeIP(t); st != nil {
-		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetFakeIPState(nil))", st)
+		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetOpkgTunState(nil))", st)
 	}
 	all, _ := h.store.Load()
 	if all.SingboxRouter.Enabled {
@@ -1400,8 +1401,8 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	if after.SingboxRouter.Enabled {
 		t.Error("Enabled must be false after Disable")
 	}
-	if after.FakeIP != nil {
-		t.Errorf("FakeIP must stay nil, got %+v", after.FakeIP)
+	if after.OpkgTun != nil {
+		t.Errorf("FakeIP must stay nil, got %+v", after.OpkgTun)
 	}
 }
 

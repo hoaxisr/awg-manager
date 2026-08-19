@@ -1,7 +1,7 @@
 <script lang="ts" module>
   export type VersionBadgeKind = 'backend' | 'awg';
   export type BackendValue = 'kernel' | 'nativewg' | string;
-  export type AwgValue = 'awg3' | 'awg2.0' | 'awg1.5' | 'awg1.0' | 'wg' | string;
+  export type AwgValue = 'awg3.1' | 'awg3' | 'awg2.0' | 'awg1.5' | 'awg1.0' | 'wg' | string;
 </script>
 
 <script lang="ts">
@@ -19,6 +19,7 @@
       return 'Kernel';
     }
     return ({
+      'awg3.1': 'AWG 3.1',
       'awg3': 'AWG 3.0',
       'awg2.0': 'AWG 2.0',
       'awg1.5': 'AWG 1.5',

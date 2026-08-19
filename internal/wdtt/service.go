@@ -58,6 +58,10 @@ type Service struct {
 	// (не только в хранилище, но и на живом интерфейсе — см. api.SyncLinkedTunnelEndpoints).
 	linkedEndpointSync func(clientID, listen string) (int, error)
 
+	// natIdleSwept — снос entware-NAT в холостом тике уже сделан. Без лока:
+	// пишется и читается только из горутины natReconcileLoop.
+	natIdleSwept bool
+
 	wgIfaceMu        sync.Mutex
 	wgIfaceFlagKnown bool
 	wgIfaceFlagOK    bool

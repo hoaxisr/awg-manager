@@ -292,3 +292,50 @@ PersistentKeepalive = `
 		}
 	}
 }
+
+// TestParseConf_Awg31Flags проверяет два устройственных флага AWG 3.1.
+//
+// Литерал в JSON обязан быть булевым true, а не строкой "on": endpoint
+// sing-box отдаёт значение движку через UAPI, где оно разбирается
+// strconv.ParseBool, который "on" не понимает. В .conf же наоборот — там
+// on/off, потому что их читает parse_bool из amneziawg-tools.
+func TestParseConf_Awg31Flags(t *testing.T) {
+	cases := map[string]struct {
+		line    string
+		want    string
+		notWant []string
+	}{
+		"trailers on":        {"RandomTrailers = on", `"random_trailers":true`, []string{"disable_cookies"}},
+		"trailers On":        {"RandomTrailers = On", `"random_trailers":true`, nil},
+		"trailers numeric":   {"RandomTrailers = 1", `"random_trailers":true`, nil},
+		"cookies on":         {"DisableCookies = on", `"disable_cookies":true`, []string{"random_trailers"}},
+		"trailers off gone":  {"RandomTrailers = off", "", []string{"random_trailers"}},
+		"trailers zero gone": {"RandomTrailers = 0", "", []string{"random_trailers"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			conf := `[Interface]
+PrivateKey = CLIENTPRIV==
+Address = 10.10.0.2/32
+` + tc.line + `
+
+[Peer]
+PublicKey = SERVERPUB==
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0`
+			got, err := ParseConf(conf)
+			if err != nil {
+				t.Fatalf("ParseConf: %v", err)
+			}
+			compact := string(got)
+			if tc.want != "" && !strings.Contains(compact, tc.want) {
+				t.Fatalf("ожидалось %q в %s", tc.want, compact)
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(compact, notWant) {
+					t.Fatalf("не ожидалось %q в %s", notWant, compact)
+				}
+			}
+		})
+	}
+}

@@ -3,34 +3,35 @@ package router
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-type fakeKeenDNSDomain struct {
-	domain string
-	err    error
+type fakeKeenDNSInfo struct {
+	fqdn  string
+	addrs []string
+	err   error
+	calls int
 }
 
-func (f fakeKeenDNSDomain) KeenDNSDomain(context.Context) (string, error) {
-	return f.domain, f.err
+func (f *fakeKeenDNSInfo) KeenDNSInfo(context.Context) (string, []string, error) {
+	f.calls++
+	return f.fqdn, f.addrs, f.err
 }
-
-type fakeLANIP struct{ ip string }
-
-func (f fakeLANIP) LANIPv4() string { return f.ip }
 
 type keenDNSSyncCall struct {
-	domain string
-	lanIP  string
+	on    bool
+	extra string
 }
 
 type recordingKeenDNSSync struct{ calls []keenDNSSyncCall }
 
-func (r *recordingKeenDNSSync) SyncManagedKeenDNS(domain, lanIP string) error {
-	r.calls = append(r.calls, keenDNSSyncCall{domain, lanIP})
+func (r *recordingKeenDNSSync) SetKeenDNSEnabled(on bool, extraDomain string) error {
+	r.calls = append(r.calls, keenDNSSyncCall{on, extraDomain})
 	return nil
 }
 
@@ -41,85 +42,156 @@ func newKeenDNSSyncTestSvc(sync *recordingKeenDNSSync) *ServiceImpl {
 	}
 }
 
-func TestSyncKeenDNSRewrites_NDMSErrorKeepsExisting(t *testing.T) {
+func keenDNSPresetSettings(on bool) storage.SingboxRouterSettings {
+	sr := storage.SingboxRouterSettings{WANAutoDetect: true, DeviceMode: "policy"}
+	if on {
+		sr.BypassPresets = []string{"keendns"}
+	}
+	return sr
+}
+
+func TestSyncKeenDNSPreset_HappyPath(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSDomain = fakeKeenDNSDomain{err: errors.New("ndms down")}
-	svc.keenDNSLAN = fakeLANIP{ip: "192.168.1.1"}
+	svc.keenDNSInfoProv = &fakeKeenDNSInfo{
+		fqdn:  "impod.netcraze.pro",
+		addrs: []string{"78.47.125.180", "91.144.142.72"},
+	}
 
-	svc.syncKeenDNSRewrites(context.Background(), storage.SingboxRouterSettings{
-		BypassPresets: []string{"keendns"},
-		WANAutoDetect: true,
-		DeviceMode:    "policy",
-	})
-	if len(sync.calls) != 0 {
-		t.Fatalf("NDMS error must not SyncManagedKeenDNS (would clear), got %v", sync.calls)
+	svc.syncKeenDNSPreset(context.Background(), keenDNSPresetSettings(true))
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{true, "impod.netcraze.pro"}) {
+		t.Fatalf("вызовы синка = %v", sync.calls)
+	}
+	want := []string{"78.47.125.180/32", "91.144.142.72/32"}
+	if got := svc.keenDNSBypass(); !slices.Equal(got, want) {
+		t.Fatalf("обход = %v, want %v", got, want)
 	}
 }
 
-func TestSyncKeenDNSRewrites_EmptyLANKeepsExisting(t *testing.T) {
+func TestSyncKeenDNSPreset_PresetOffClears(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSDomain = fakeKeenDNSDomain{domain: "home.netcraze.pro"}
-	svc.keenDNSLAN = fakeLANIP{ip: ""}
+	svc.keenDNSInfoProv = &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
+	svc.setKeenDNSBypass([]string{"78.47.125.180"})
 
-	svc.syncKeenDNSRewrites(context.Background(), storage.SingboxRouterSettings{
-		BypassPresets: []string{"keendns"},
-		WANAutoDetect: true,
-		DeviceMode:    "policy",
-	})
-	if len(sync.calls) != 0 {
-		t.Fatalf("empty LAN must not clear managed rewrites, got %v", sync.calls)
+	svc.syncKeenDNSPreset(context.Background(), keenDNSPresetSettings(false))
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{false, ""}) {
+		t.Fatalf("снятый пресет обязан снять блок, got %v", sync.calls)
+	}
+	if got := svc.keenDNSBypass(); len(got) != 0 {
+		t.Fatalf("снятый пресет обязан снять и обход, got %v", got)
 	}
 }
 
-func TestSyncKeenDNSRewrites_UnbookedClears(t *testing.T) {
+// Правило DNS нужно и без данных с роутера: порталы my.keenetic.net роутер
+// обслуживает всегда, а вот обход ставить не из чего.
+func TestSyncKeenDNSPreset_NDMSErrorStillEnablesRule(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSDomain = fakeKeenDNSDomain{domain: ""}
-	svc.keenDNSLAN = fakeLANIP{ip: "192.168.1.1"}
+	svc.keenDNSInfoProv = &fakeKeenDNSInfo{err: errors.New("ndms down")}
 
-	svc.syncKeenDNSRewrites(context.Background(), storage.SingboxRouterSettings{
-		BypassPresets: []string{"keendns"},
-		WANAutoDetect: true,
-		DeviceMode:    "policy",
-	})
-	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{}) {
-		t.Fatalf("unbooked KeenDNS must clear managed, got %v", sync.calls)
+	svc.syncKeenDNSPreset(context.Background(), keenDNSPresetSettings(true))
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{true, ""}) {
+		t.Fatalf("вызовы синка = %v", sync.calls)
+	}
+	if got := svc.keenDNSBypass(); len(got) != 0 {
+		t.Fatalf("обход без данных = %v, want пусто", got)
 	}
 }
 
-func TestSyncKeenDNSRewrites_HappyPath(t *testing.T) {
-	sync := &recordingKeenDNSSync{}
-	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSDomain = fakeKeenDNSDomain{domain: "Home.Netcraze.Pro."}
-	svc.keenDNSLAN = fakeLANIP{ip: "192.168.1.1"}
+// Сбой RCI и пустой ответ не должны сносить уже установленный обход: иначе
+// разовая ошибка на 5 минут возвращает issue #729.
+func TestSyncKeenDNSPreset_KeepsLastGoodBypass(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(*fakeKeenDNSInfo)
+	}{
+		{"сбой RCI", func(f *fakeKeenDNSInfo) { f.addrs, f.err = nil, errors.New("rci down") }},
+		{"пустой ответ", func(f *fakeKeenDNSInfo) { f.addrs = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sync := &recordingKeenDNSSync{}
+			svc := newKeenDNSSyncTestSvc(sync)
+			info := &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
+			svc.keenDNSInfoProv = info
+			sr := keenDNSPresetSettings(true)
+			svc.syncKeenDNSPreset(context.Background(), sr)
 
-	svc.syncKeenDNSRewrites(context.Background(), storage.SingboxRouterSettings{
-		BypassPresets: []string{"keendns"},
-		WANAutoDetect: true,
-		DeviceMode:    "policy",
-	})
-	if len(sync.calls) != 1 {
-		t.Fatalf("want 1 sync call, got %v", sync.calls)
-	}
-	c := sync.calls[0]
-	if c.domain != "Home.Netcraze.Pro." || c.lanIP != "192.168.1.1" {
-		t.Fatalf("unexpected call: %+v", c)
+			svc.keenDNSMu.Lock()
+			svc.keenDNSInfoAt = time.Now().Add(-2 * keenDNSInfoTTL)
+			svc.keenDNSMu.Unlock()
+			tc.fail(info)
+
+			svc.syncKeenDNSPreset(context.Background(), sr)
+			want := []string{"78.47.125.180/32"}
+			if got := svc.keenDNSBypass(); !slices.Equal(got, want) {
+				t.Fatalf("обход = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
-func TestSyncKeenDNSRewrites_PresetOffClears(t *testing.T) {
+// Reconcile зовёт синк каждые 30с, а адреса KeenDNS не меняются — в RCI
+// ходим не чаще keenDNSInfoTTL.
+func TestSyncKeenDNSPreset_InfoCached(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSDomain = fakeKeenDNSDomain{domain: "home.netcraze.pro"}
-	svc.keenDNSLAN = fakeLANIP{ip: "192.168.1.1"}
+	info := &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
+	svc.keenDNSInfoProv = info
 
-	svc.syncKeenDNSRewrites(context.Background(), storage.SingboxRouterSettings{
-		WANAutoDetect: true,
-		DeviceMode:    "policy",
+	sr := keenDNSPresetSettings(true)
+	svc.syncKeenDNSPreset(context.Background(), sr)
+	svc.syncKeenDNSPreset(context.Background(), sr)
+	if info.calls != 1 {
+		t.Fatalf("запросов к роутеру = %d, want 1", info.calls)
+	}
+}
+
+// Адрес KeenDNS приходит с роутера, а не из настроек: его появление обязано
+// переустановить правила, иначе обход доедет только по ручному Enable (#729).
+func TestReconcileInstalled_KeenDNSCIDRChangeReinstalls(t *testing.T) {
+	restoreCalls := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restoreCalls++
+		return nil
 	})
-	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{}) {
-		t.Fatalf("preset off must clear, got %v", sync.calls)
+	stubListeningProbe(t, func() bool { return true })
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			Singbox:            newReadyTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+		currentMark:         "0xffffaaa",
+		currentWANIPs:       []string{"203.0.113.207/32"},
+		netfilterStateKnown: true,
+	}
+	sr := storage.SingboxRouterSettings{Enabled: true, PolicyName: "Policy0", WANAutoDetect: true}
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if restoreCalls != 0 {
+		t.Fatalf("устойчивое состояние не должно переустанавливать правила, got %d", restoreCalls)
+	}
+
+	svc.setKeenDNSBypass([]string{"78.47.125.180"})
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if restoreCalls != 1 {
+		t.Fatalf("появление адреса KeenDNS обязано переустановить правила, got %d", restoreCalls)
+	}
+	if !slices.Equal(svc.currentKeenDNSCIDRs, []string{"78.47.125.180/32"}) {
+		t.Fatalf("currentKeenDNSCIDRs = %v", svc.currentKeenDNSCIDRs)
+	}
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if restoreCalls != 1 {
+		t.Fatalf("неизменный адрес не должен переустанавливать правила, got %d", restoreCalls)
 	}
 }

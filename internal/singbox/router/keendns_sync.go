@@ -8,125 +8,160 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// keenDNSQueryTimeout ограничивает поход в NDMS за доменом. Sync вызывается
-// из Reconcile, который уже держит transitionMu, — стоящий RCI (backstop
+// keenDNSQueryTimeout ограничивает поход в NDMS. Sync вызывается из
+// Reconcile, который уже держит transitionMu, — стоящий RCI (backstop
 // транспорта 30с) иначе заблокировал бы на это время пользовательские
 // Enable/Disable и смену режима.
 const keenDNSQueryTimeout = 5 * time.Second
 
-// KeenDNSDomainProvider returns the router's booked KeenDNS/CrazeDNS FQDN
-// (e.g. "home.netcraze.pro"). Empty string = not configured.
-type KeenDNSDomainProvider interface {
-	KeenDNSDomain(ctx context.Context) (string, error)
+// keenDNSInfoTTL — как долго доверять прочитанным с роутера данным.
+const keenDNSInfoTTL = 5 * time.Minute
+
+// KeenDNSInfoProvider отдаёт данные пресета keendns с самого роутера: FQDN,
+// который роутеру выдал KeenDNS, и IPv4, к которым роутер направляет свои
+// KeenDNS-имена (статические записи ndnproxy + адрес доступа в режиме direct).
+// Пустые значения = KeenDNS не настроен.
+type KeenDNSInfoProvider interface {
+	KeenDNSInfo(ctx context.Context) (fqdn string, addrs []string, err error)
 }
 
-// LANIPv4Provider returns the LAN-bridge IPv4 used as the rewrite target.
-type LANIPv4Provider interface {
-	LANIPv4() string
+// KeenDNSPresetSyncer включает или снимает блок пресета keendns в слоте DNS.
+type KeenDNSPresetSyncer interface {
+	SetKeenDNSEnabled(on bool, extraDomain string) error
 }
 
-// KeenDNSRewriteSyncer приводит managed-набор DNS-перезаписей пресета keendns
-// к (domain, lanIP); пустые аргументы = снести набор.
-type KeenDNSRewriteSyncer interface {
-	SyncManagedKeenDNS(domain, lanIP string) error
-}
-
-// SetKeenDNSPreset wires optional providers for the keendns bypass preset
-// (domain rewrite path). Safe to call after NewService; nil syncer = no-op.
+// SetKeenDNSPreset wires optional providers for the keendns bypass preset.
+// Safe to call after NewService; nil syncer = no-op.
 //
 // Под keenDNSMu, а не под s.mu: dnsrewrite строится в setupListen, а
 // startup-Reconcile уже крутится в горутине из setupRouter — то есть запись
 // этих полей гарантированно конкурирует с их чтением.
-func (s *ServiceImpl) SetKeenDNSPreset(domain KeenDNSDomainProvider, lan LANIPv4Provider, sync KeenDNSRewriteSyncer) {
+func (s *ServiceImpl) SetKeenDNSPreset(info KeenDNSInfoProvider, sync KeenDNSPresetSyncer) {
 	s.keenDNSMu.Lock()
 	defer s.keenDNSMu.Unlock()
-	s.keenDNSDomain = domain
-	s.keenDNSLAN = lan
+	s.keenDNSInfoProv = info
 	s.keenDNSSync = sync
 }
 
 // keenDNSPreset снимает согласованный снапшот провайдеров пресета.
-func (s *ServiceImpl) keenDNSPreset() (KeenDNSDomainProvider, LANIPv4Provider, KeenDNSRewriteSyncer) {
+func (s *ServiceImpl) keenDNSPreset() (KeenDNSInfoProvider, KeenDNSPresetSyncer) {
 	s.keenDNSMu.Lock()
 	defer s.keenDNSMu.Unlock()
-	return s.keenDNSDomain, s.keenDNSLAN, s.keenDNSSync
+	return s.keenDNSInfoProv, s.keenDNSSync
 }
 
-// SyncKeenDNSRewrites runs the keendns-preset rewrite sync against current
-// settings. Used at boot after SetKeenDNSPreset; Reconcile also calls it.
-func (s *ServiceImpl) SyncKeenDNSRewrites(ctx context.Context) {
-	if _, _, sync := s.keenDNSPreset(); sync == nil || s.deps.Settings == nil {
+// SyncKeenDNSPreset runs the keendns-preset sync against current settings.
+// Used at boot after SetKeenDNSPreset; Reconcile also calls it.
+func (s *ServiceImpl) SyncKeenDNSPreset(ctx context.Context) {
+	if _, sync := s.keenDNSPreset(); sync == nil || s.deps.Settings == nil {
 		return
 	}
 	settings, err := s.deps.Settings.Load()
 	if err != nil {
-		s.appLog.Warn("keendns-rewrite", "", err.Error())
+		s.appLog.Warn("keendns-preset", "", err.Error())
 		return
 	}
 	sr, err := NormalizeSingboxRouterSettings(settings.SingboxRouter)
 	if err != nil {
-		s.appLog.Warn("keendns-rewrite", "", err.Error())
+		s.appLog.Warn("keendns-preset", "", err.Error())
 		return
 	}
-	s.syncKeenDNSRewrites(ctx, sr)
+	s.syncKeenDNSPreset(ctx, sr)
 }
 
-// syncKeenDNSRewrites applies or clears managed DNS rewrites when the
-// keendns preset is toggled. Best-effort: failures are logged, never
-// fail Reconcile/Enable (iptables path must keep working).
+// syncKeenDNSPreset приводит блок пресета в слоте DNS и обход в iptables к
+// состоянию настроек. Best-effort: сбои логируются, но не валят
+// Reconcile/Enable — путь iptables обязан работать дальше.
 //
-// Destructive clear only when the preset is off, or when KeenDNS is
-// confirmed unbooked (empty domain, no provider error). Transient NDMS
-// errors or a missing LAN IP leave existing managed rewrites intact.
-func (s *ServiceImpl) syncKeenDNSRewrites(ctx context.Context, sr storage.SingboxRouterSettings) {
-	domainProv, lanProv, sync := s.keenDNSPreset()
+// Имена KeenDNS уходят резолверу самого роутера, поэтому список доменов от
+// NDMS не зависит: провайдер нужен только ради адресов обхода и FQDN вне
+// известных зон. Сбой NDMS оставляет последний удачный обход как есть.
+func (s *ServiceImpl) syncKeenDNSPreset(ctx context.Context, sr storage.SingboxRouterSettings) {
+	infoProv, sync := s.keenDNSPreset()
 	if sync == nil {
 		return
 	}
 	if !slices.Contains(sr.BypassPresets, PresetKeenDNS) {
-		if err := sync.SyncManagedKeenDNS("", ""); err != nil {
-			s.appLog.Warn("keendns-rewrite", "", err.Error())
+		s.setKeenDNSBypass(nil)
+		if err := sync.SetKeenDNSEnabled(false, ""); err != nil {
+			s.appLog.Warn("keendns-preset", "", err.Error())
 		}
 		return
 	}
 
-	var domain string
-	if domainProv != nil {
-		qctx, cancel := context.WithTimeout(ctx, keenDNSQueryTimeout)
-		d, err := domainProv.KeenDNSDomain(qctx)
-		cancel()
-		if err != nil {
-			// Keep last-good rewrites — do not treat a flap as "unbooked".
-			s.warnKeenDNSOnce("err", "KeenDNS domain: "+err.Error())
-			return
-		}
-		domain = d
+	fqdn, addrs, ok := s.keenDNSInfo(ctx, infoProv)
+	if err := sync.SetKeenDNSEnabled(true, fqdn); err != nil {
+		s.appLog.Warn("keendns-preset", fqdn, err.Error())
+		return
 	}
-	var lan string
-	if lanProv != nil {
-		lan = lanProv.LANIPv4()
+	if ok {
+		s.setKeenDNSBypass(addrs)
+	}
+}
+
+// keenDNSInfo отдаёт (FQDN, адреса обхода) с роутера, кэшируя их на
+// keenDNSInfoTTL: Reconcile зовёт синк каждые 30с, а адреса KeenDNS не
+// меняются годами. Третье значение = «данные достоверны»; при сбое RCI без
+// last-good оно false, и вызывающий не трогает уже установленный обход.
+func (s *ServiceImpl) keenDNSInfo(ctx context.Context, prov KeenDNSInfoProvider) (string, []string, bool) {
+	if prov == nil {
+		return "", nil, false
+	}
+	s.keenDNSMu.Lock()
+	fresh := !s.keenDNSInfoAt.IsZero() && time.Since(s.keenDNSInfoAt) < keenDNSInfoTTL
+	cachedFQDN, cachedAddrs := s.keenDNSFQDN, slices.Clone(s.keenDNSAddrs)
+	s.keenDNSMu.Unlock()
+	if fresh {
+		return cachedFQDN, cachedAddrs, true
 	}
 
-	if domain == "" {
-		// Confirmed: no booked FQDN → drop managed rewrites.
-		s.warnKeenDNSOnce("unbooked",
-			"пресет keendns включён, но KeenDNS не забронирован — перезаписи не создаются")
-		if err := sync.SyncManagedKeenDNS("", ""); err != nil {
-			s.appLog.Warn("keendns-rewrite", "", err.Error())
+	qctx, cancel := context.WithTimeout(ctx, keenDNSQueryTimeout)
+	fqdn, addrs, err := prov.KeenDNSInfo(qctx)
+	cancel()
+	if err != nil {
+		s.warnKeenDNSOnce("err", "данные KeenDNS с роутера: "+err.Error())
+		if !s.keenDNSInfoAt.IsZero() {
+			return cachedFQDN, cachedAddrs, true
 		}
-		return
+		return "", nil, false
 	}
-	if lan == "" {
-		// Domain known but LAN IP missing (iface down) — keep last rewrite.
-		s.warnKeenDNSOnce("nolan",
-			"пресет keendns включён, но нет LAN IP — оставляем прежний managed rewrite")
-		return
+	if len(addrs) == 0 {
+		// Адресов роутер не отдал: KeenDNS не настроен, прошивка без
+		// /show/ndns либо RCI ответил пустотой. Правило DNS всё равно нужно
+		// (порталы my.keenetic.net обслуживаются всегда), а прежний обход
+		// не снимаем — иначе разовая пустота на 5 минут вернула бы issue.
+		s.warnKeenDNSOnce("noaddr",
+			"пресет keendns включён, но роутер не отдаёт адресов своих KeenDNS-имён")
+		addrs = cachedAddrs
+	} else {
+		s.clearKeenDNSWarn()
 	}
-	if err := sync.SyncManagedKeenDNS(domain, lan); err != nil {
-		s.appLog.Warn("keendns-rewrite", domain, err.Error())
-		return
+
+	s.keenDNSMu.Lock()
+	s.keenDNSFQDN = fqdn
+	s.keenDNSAddrs = slices.Clone(addrs)
+	s.keenDNSInfoAt = time.Now()
+	s.keenDNSMu.Unlock()
+	return fqdn, addrs, true
+}
+
+// setKeenDNSBypass запоминает адреса, которые должны обходить sing-box, в
+// форме CIDR для iptables. Пустой список = обхода нет.
+func (s *ServiceImpl) setKeenDNSBypass(ips []string) {
+	var cidrs []string
+	for _, ip := range ips {
+		cidrs = append(cidrs, ip+"/32")
 	}
-	s.clearKeenDNSWarn()
+	s.keenDNSMu.Lock()
+	s.keenDNSBypassCIDRs = cidrs
+	s.keenDNSMu.Unlock()
+}
+
+// keenDNSBypass отдаёт текущие CIDR обхода пресета keendns для RestoreInputSpec.
+func (s *ServiceImpl) keenDNSBypass() []string {
+	s.keenDNSMu.Lock()
+	defer s.keenDNSMu.Unlock()
+	return slices.Clone(s.keenDNSBypassCIDRs)
 }
 
 // warnKeenDNSOnce пишет предупреждение только при СМЕНЕ состояния. Пресет
@@ -141,7 +176,7 @@ func (s *ServiceImpl) warnKeenDNSOnce(state, msg string) {
 	if repeat {
 		return
 	}
-	s.appLog.Warn("keendns-rewrite", "", msg)
+	s.appLog.Warn("keendns-preset", "", msg)
 }
 
 func (s *ServiceImpl) clearKeenDNSWarn() {

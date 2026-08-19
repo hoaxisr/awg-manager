@@ -14,7 +14,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
@@ -65,7 +64,7 @@ type OperatorOS5Impl struct {
 	queries  *query.Queries
 	commands *command.Commands
 	wg       wg.Client
-	backend  backend.Backend
+	backend  Backend
 	firewall firewall.Manager
 	ipRun    ipRunFunc // ip command runner (mockable in tests)
 
@@ -96,7 +95,7 @@ func NewOperatorOS5(
 	queries *query.Queries,
 	commands *command.Commands,
 	wgClient wg.Client,
-	backendImpl backend.Backend,
+	backendImpl Backend,
 	firewallMgr firewall.Manager,
 ) *OperatorOS5Impl {
 	o := &OperatorOS5Impl{
@@ -332,8 +331,8 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("start", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
 	}
 
-	o.logInfo("start", cfg.ID, fmt.Sprintf("Backend started (%s)", o.backend.Type()))
-	o.appLog.Info("start", cfg.ID, fmt.Sprintf("Интерфейс создан (%s)", o.backend.Type()))
+	o.logInfo("start", cfg.ID, "Backend started (kernel)")
+	o.appLog.Info("start", cfg.ID, "Интерфейс создан (kernel)")
 
 	// === Phase 4: Interface config + WireGuard configuration ===
 	mtu := cfg.MTU

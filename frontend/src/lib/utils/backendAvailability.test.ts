@@ -28,3 +28,4 @@ describe('supportsAwg3', () => {
 		expect(supportsAwg3(undefined)).toBe(false);
 	});
 });
+

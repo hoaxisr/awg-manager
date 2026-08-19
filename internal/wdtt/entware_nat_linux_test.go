@@ -3,6 +3,7 @@
 package wdtt
 
 import (
+	"context"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -88,5 +89,78 @@ func TestWdttNetfilterHookScriptShellSyntax(t *testing.T) {
 	}
 	if out, err := osexec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("sh -n: %v\n%s", err, out)
+	}
+}
+
+// Холостой тик (сервер в конфиге есть, но не запущен) сносил entware-NAT
+// вслепую каждые 15 с: ~18 форков iptables на тик вечно, хотя правила сами по
+// себе не воскресают. Снос делается один раз на переход «ничего не работает»,
+// повторный тик обязан быть пустым. Проверка белоящичная — своей точки
+// наблюдения за iptables в пакете нет, а заводить её ради одного теста дороже
+// самой правки.
+func TestIdleNATSweepRunsOnce(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(dir, filepath.Join(dir, "run"), "", "")
+	full, err := svc.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full.Servers = append(full.Servers, ServerInstance{ID: "srv1", Config: ndmsServerConfig()})
+	if err := svc.store.Save(full); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.reconcileRunningServersNAT(context.Background())
+	if !svc.natIdleSwept {
+		t.Fatal("первый холостой тик обязан снести entware-NAT и взвести защёлку")
+	}
+	svc.reconcileRunningServersNAT(context.Background())
+	if !svc.natIdleSwept {
+		t.Fatal("защёлка сброшена без единого запущенного сервера")
+	}
+}
+
+// Форма правила FORWARD accept обязана совпадать у всех трёх мест: вставка,
+// проверка наличия и снос. С 2.17.0 они разъехались — вставка и проверка стали
+// голыми, а снос остался на помеченной форме (`-m comment --comment AWGM_WDTT`)
+// и потому не мог удалить ничего. Каждая остановка WDTT-сервера с тех пор
+// оставляла в FORWARD вечное `-i wdttraw0 -j ACCEPT`: дыра в межсетевом экране,
+// которую не закрывали ни остановка, ни удаление сервера.
+func TestEntwareForwardDeleteMatchesInsertForm(t *testing.T) {
+	specs := entwareForwardDeleteSpecs("-i", "wdttraw0")
+	if len(specs) == 0 {
+		t.Fatal("снос не знает ни одной формы правила")
+	}
+	insert := entwareForwardMatch("-i", "wdttraw0")
+	found := false
+	for _, s := range specs {
+		if reflect.DeepEqual(s, insert) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("снос не покрывает форму вставки %v (знает только %v)", insert, specs)
+	}
+	// Помеченная форма версий ≤2.16.x обязана остаться в списке: иначе
+	// апгрейд поверх них оставит их в FORWARD навсегда.
+	legacy := []string{"-i", "wdttraw0", "-m", "comment", "--comment", entwareNATComment, "-j", "ACCEPT"}
+	for _, s := range specs {
+		if reflect.DeepEqual(s, legacy) {
+			return
+		}
+	}
+	t.Fatalf("снос забыл помеченную форму старых версий: %v", specs)
+}
+
+// Хук netfilter.d восстанавливает те же правила после перезаписи таблиц NDM —
+// и обязан ставить ровно ту форму, которую Go-код проверяет и сносит.
+func TestEntwareForwardHookUsesSameForm(t *testing.T) {
+	script := wdttNetfilterHookScript(wdttNetfilterSpec{ForwardIfaces: []string{"wdttraw0"}})
+	match := strings.Join(entwareForwardMatch("-i", `"wdttraw0"`), " ")
+	if !strings.Contains(script, "run -C FORWARD "+match) {
+		t.Fatalf("проверка в хуке разошлась с формой Go-кода (%s):\n%s", match, script)
+	}
+	if !strings.Contains(script, "run -I FORWARD 1 "+match) {
+		t.Fatalf("вставка в хуке разошлась с формой Go-кода (%s):\n%s", match, script)
 	}
 }

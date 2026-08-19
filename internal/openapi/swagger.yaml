@@ -395,6 +395,9 @@ definitions:
     type: object
   api.Awg3TunnelDTO:
     properties:
+      disableCookies:
+        example: true
+        type: boolean
       headerProtection:
         example: true
         type: boolean
@@ -410,6 +413,12 @@ definitions:
       maxHandshakeAttempts:
         example: "5"
         type: string
+      randomTrailers:
+        description: |-
+          AWG 3.1 device flags, read-only like the timers above. RandomTrailers is
+          not negotiated on the wire and needs 3.1 on both ends.
+        example: true
+        type: boolean
       rejectAfterTime:
         example: "180"
         type: string
@@ -490,11 +499,6 @@ definitions:
         items:
           type: string
         type: array
-      xtSetAvailable:
-        description: |-
-          XtSetAvailable reports whether the xt_set kernel module is loaded or
-          available as a .ko file (required for -m set iptables matching).
-        type: boolean
     type: object
   api.ChangelogData:
     properties:
@@ -978,6 +982,50 @@ definitions:
       id:
         example: a1b2c3d4e5f60718293a4b5c
         type: string
+    type: object
+  api.DetectHeadersRequest:
+    properties:
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      url:
+        type: string
+    type: object
+  api.DetectHeadersResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DetectedProfileDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.DetectedProfileDTO:
+    properties:
+      decryptedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      isEncrypted:
+        type: boolean
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+      normalizedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      serverCount:
+        example: 3
+        type: integer
     type: object
   api.DeviceProxyAuthDTO:
     properties:
@@ -1699,6 +1747,37 @@ definitions:
       data:
         items:
           $ref: '#/definitions/api.GeoTagDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.HappKeysRequest:
+    properties:
+      keys:
+        items:
+          type: string
+        type: array
+      text:
+        type: string
+    type: object
+  api.HeaderProfileDTO:
+    properties:
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+    type: object
+  api.HeaderProfilesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.HeaderProfileDTO'
         type: array
       success:
         example: true
@@ -4631,7 +4710,8 @@ definitions:
         description: |-
           BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
+          (имена KeenDNS/CrazeDNS резолвит сам роутер, плюс обход его адресов).
+          Default includes "keendns".
         example:
         - keendns
         items:
@@ -4655,8 +4735,10 @@ definitions:
         example: 198.18.0.0/15
         type: string
       fakeipPool6:
-        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18");
-          "" disables v6.
+        description: |-
+          FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18").
+          Explicit "" disables v6; an OMITTED field keeps the stored value
+          (absent != empty — the handler substitutes the current setting).
         example: fc00::/18
         type: string
       fakeipRealServer:
@@ -5600,7 +5682,7 @@ definitions:
         example: false
         type: boolean
       kernelModuleLoadedVersion:
-        example: 3.0.20260805
+        example: 3.1.20260812
         type: string
       kernelModuleModel:
         example: MT7981
@@ -5826,6 +5908,7 @@ definitions:
         - awg1.5
         - awg2.0
         - awg3
+        - awg3.1
         example: awg2.0
         type: string
       backend:
@@ -7322,8 +7405,13 @@ definitions:
         description: full | internet-only | none via managed service
         type: string
       natStaticWan:
-        description: persisted WAN for internet-only teardown
+        description: persisted WAN for internet-only teardown (legacy)
         type: string
+      natStaticWans:
+        description: выходы static-NAT (internet-only); NatStaticWAN — legacy
+        items:
+          type: string
+        type: array
       ndmsIface:
         description: NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован
           в роутере.
@@ -12289,7 +12377,10 @@ paths:
       description: 'Persists Settings via patch semantics: any field omitted from
         the payload is preserved, including top-level bool flags. Send only the fields
         you want to change, or send the full Settings object to update everything
-        atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).'
+        atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
+        singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing
+        mode changes only via POST /singbox/router/mode, enable/disable only via the
+        dedicated endpoints.'
       parameters:
       - description: Settings patch — any subset of fields
         in: body
@@ -13874,30 +13965,6 @@ paths:
       summary: Geoip bypass-set status
       tags:
       - singbox-router
-  /singbox/router/disable:
-    post:
-      description: Stops the singbox-router engine and uninstalls iptables/policy
-        rules. Idempotent.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Disable singbox-router
-      tags:
-      - singbox-router
   /singbox/router/dns/chain-preset:
     get:
       description: 'Returns the DNS-chain preset (sing-box 1.14 evaluate/match_response):
@@ -14557,41 +14624,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS server
-      tags:
-      - singbox-router
-  /singbox/router/enable:
-    post:
-      description: 'Starts the singbox-router engine and installs iptables/policy
-        rules. Returns 400 with code POLICY_NOT_CONFIGURED or POLICY_MISSING when
-        the router policy mode is incomplete. Returns 503 SINGBOX_NOT_READY when sing-box
-        did not become ready within the boot-wait window — iptables install is deliberately
-        skipped to avoid orphaning DNS:53 redirects (issue #221).'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: sing-box did not come up in time
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Enable singbox-router
       tags:
       - singbox-router
   /singbox/router/geosites/list:
@@ -15717,7 +15749,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
@@ -15753,7 +15786,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
@@ -16100,6 +16134,39 @@ paths:
       summary: Delete sing-box subscription
       tags:
       - subscriptions
+  /singbox/subscriptions/detect-headers:
+    post:
+      consumes:
+      - application/json
+      description: Probes a subscription URL with different client profiles to auto-detect
+        working headers
+      parameters:
+      - description: Subscription URL and user-configured headers
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DetectHeadersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DetectHeadersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Auto-detect required HTTP headers for a subscription URL
+      tags:
+      - subscriptions
   /singbox/subscriptions/get:
     get:
       parameters:
@@ -16297,6 +16364,116 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Update aggregate subscription group
+      tags:
+      - subscriptions
+  /singbox/subscriptions/happ-keys:
+    delete:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    get:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    post:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+  /singbox/subscriptions/header-profiles:
+    get:
+      description: Client fingerprints used by header auto-detection; the UI offers
+        the same list as presets
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HeaderProfilesResponse'
+      security:
+      - CookieAuth: []
+      summary: List client header profiles
       tags:
       - subscriptions
   /singbox/subscriptions/members/add:

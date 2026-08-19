@@ -99,14 +99,30 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// re-provisioning would allocate a new index, clobber persist, orphan the prior
 	// iface, and exhaust the 0..9 range. Full drift-reconcile (re-add routes,
 	// restart a dead sing-box) is handled by reconcileFakeIPTun; here we
-	// only prevent the leak. Sits BEFORE allocate/SetFakeIPState/Create — the
+	// only prevent the leak. Sits BEFORE allocate/SetOpkgTunState/Create — the
 	// no-op return runs before any rollback is pushed.
-	if prev := settings.FakeIP; prev != nil && prev.Provisioned {
-		if live[prev.Index] {
-			return nil // already provisioned + iface live → no-op (Enabled already persisted)
+	prev, _ := opkgTunOwned(settings, stateFakeIPTun)
+	if prev != nil && prev.Provisioned {
+		if live[prev.Index] && !s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), fakeIPTunDescription) {
+			return nil // наш (или недоказуемо чужой) жив → no-op (Enabled already persisted)
 		}
-		// provisioned but iface NOT live (crash/manual removal) → fall through and
-		// re-provision (allocateFakeIPIndex reuses the now-free index; old iface gone, no leak).
+		// Мёртв (crash/manual removal) ЛИБО доказанно чужой (индекс занял
+		// посторонний интерфейс) → re-provision. Чужой остаётся в live,
+		// аллокатор его не выдаст — Create поверх чужого невозможен.
+	}
+
+	// Handover: единая запись владения одна на всех, поэтому запись ЧУЖОГО
+	// режима обязана быть освобождена ДО аллокации (restore NAT best-effort →
+	// teardown), иначе её интерфейс остался бы зомби без персиста. Провал
+	// release оставляет чужой интерфейс живым — live не перечитываем, аллокатор
+	// его пропустит.
+	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
+	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
+		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable"); rerr != nil {
+			s.appLog.Warn("fakeip-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
+		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
+			return fmt.Errorf("enable fakeip-tun: list opkgtun indices: %w", err)
+		}
 	}
 
 	idx, err := allocateFakeIPIndex(live)
@@ -117,14 +133,14 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// name, so every NDMS op (create/delete, address/mtu, up/down, static routes)
 	// takes the CamelCase ndmsName; the kernel sees iface (sing-box config, ip
 	// flush, /sys, /proc) under the lowercase name.
-	ndmsName := fakeIPNDMSName(idx)
-	iface := fakeIPIfaceName(idx)
+	ndmsName := tunNDMSName(idx)
+	iface := tunIfaceName(idx)
 
 	// Capture the FakeIP state as it was BEFORE this Enable so we can detect a
 	// pool-range change and wipe the stale fakeip cache before sing-box starts.
-	var prevState storage.FakeIPState
-	if settings.FakeIP != nil {
-		prevState = *settings.FakeIP
+	var prevState storage.OpkgTunFakeIPData
+	if prev != nil && prev.FakeIP != nil {
+		prevState = *prev.FakeIP
 	}
 
 	// rollback is a LIFO stack of inverse operations. Each resource-creating
@@ -145,17 +161,32 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// crash between here and CreateOpkgTun leaves a persist the reap can find
 	// by index; a persist-less orphan that still slips through is caught by
 	// the reap's description scan.
-	if err = s.deps.Settings.SetFakeIPState(&storage.FakeIPState{
+	fkState := &storage.OpkgTunState{
+		Mode:        storage.OpkgTunModeFakeIP,
 		Provisioned: true,
 		Index:       idx,
-		Inet4Range:  p.Inet4Range,
-		Inet6Range:  p.Inet6Range,
-	}); err != nil {
+		FakeIP:      &storage.OpkgTunFakeIPData{Inet4Range: p.Inet4Range, Inet6Range: p.Inet6Range},
+	}
+	// Записи NAT-сегментов прежней записи переезжают в новую артефактом
+	// (симметрично enablePolicyTun). Освобождение чужой записи выше —
+	// best-effort: провал restore NAT вместе с провалом teardown потерял бы
+	// единственный след того, каким сегмент был ДО нас, и сегмент навсегда
+	// остался бы на нашем static-NAT. Артефакт не сирота: реап восстанавливает
+	// его и снимает, disable — тоже.
+	setPolicyPayload(fkState, natSegmentsOf(prevRecord))
+	if err = s.deps.Settings.SetOpkgTunState(fkState); err != nil {
 		return fmt.Errorf("enable fakeip-tun: persist fakeip state: %w", err)
 	}
 	push(func() {
-		if e := s.deps.Settings.SetFakeIPState(nil); e != nil {
-			s.appLog.Warn("fakeip-rollback", iface, "clear fakeip persist: "+e.Error())
+		// Р2: откат возвращает ПРЕЖНЮЮ запись (как у policy-tun), а не nil.
+		// Re-provision: прежняя запись сохраняет реапабельность и prev-диапазоны
+		// детектора сброса кэша. Handover: возвращённая policy-запись
+		// самоисцеляется реапом (повторный release идемпотентен). Первый enable
+		// (prevRecord == nil) откатывается в nil — прежнее поведение.
+		// NB: prevRecord — указатель в кэш стора; вернуть его же безопасно
+		// (store публикует под своим локом), но НЕ мутировать.
+		if e := s.deps.Settings.SetOpkgTunState(prevRecord); e != nil {
+			s.appLog.Warn("fakeip-rollback", iface, "restore opkgtun persist: "+e.Error())
 		}
 	})
 
@@ -230,9 +261,9 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 
 	// B. Inject engine-locked bits via explicit-spec overlay (replaces
-	// BuildFakeIPTunConfig). Using the local iface/p/sr vars directly avoids
+	// ensureFakeIPOverlay). Using the local iface/p/sr vars directly avoids
 	// ordering coupling with ensureFakeIPOverlayFromState (which reads
-	// settings.FakeIP.Index — not yet persisted at this point in the flow).
+	// settings.OpkgTun.Index — not yet persisted at this point in the flow).
 	spec := FakeIPTunSpec{
 		Iface:      iface,
 		TunAddr4:   p.TunAddr4,
@@ -394,7 +425,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box»
 	// (issue #678): перехват DNS + весь трафик клиентов в tun. Best-effort —
 	// см. ensureFakeIPIngress; iface/tunDNS уже известны локально, персист
-	// settings.FakeIP на этом шаге ещё не перечитан.
+	// settings.OpkgTun на этом шаге ещё не перечитан.
 	s.ensureFakeIPIngress(ctx, FakeIPIngressSpec{
 		TunIface: iface,
 		TunDNS:   tunDNS,
@@ -422,6 +453,12 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// via the hijack-dns route rule once a client points at the tun .2.
 
 	// Persist enabled LAST (success). From here we do NOT roll back.
+	// Mutate a private copy: `settings` still aliases the store's live cache,
+	// which other goroutines read without a lock. Copying here (and not right
+	// after Load) keeps what the narrow mutators wrote into the cache above —
+	// the copy is exactly what the old aliased Save would have persisted.
+	cp := *settings
+	settings = &cp
 	settings.SingboxRouter = sr
 	if err = s.deps.Settings.Save(settings); err != nil {
 		return fmt.Errorf("enable fakeip-tun: save settings: %w", err)

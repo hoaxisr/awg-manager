@@ -63,6 +63,26 @@ describe('classifyAwgVersionFromAsc', () => {
 			params: { h1: '100-200', h2: '2', h3: '3', h4: '4', i1: 'sig', maxHandshakeAttempts: '5' } as ASCParams,
 			want: 'awg3',
 		},
+		{
+			name: 'AWG 3.1 — RandomTrailers',
+			params: { randomTrailers: true } as ASCParams,
+			want: 'awg3.1',
+		},
+		{
+			name: 'AWG 3.1 — DisableCookies',
+			params: { disableCookies: true } as ASCParams,
+			want: 'awg3.1',
+		},
+		{
+			name: 'AWG 3.1 takes priority over AWG 3.0',
+			params: { headerProtectionKey: 'a2V5', randomTrailers: true } as ASCParams,
+			want: 'awg3.1',
+		},
+		{
+			name: 'both flags off stay out of the way',
+			params: { h1: '1', h2: '2', h3: '3', h4: '4', randomTrailers: false, disableCookies: false } as ASCParams,
+			want: 'awg1.0',
+		},
 	])('$name → $want', ({ params, want }) => {
 		expect(classifyAwgVersionFromAsc(params)).toBe(want);
 	});

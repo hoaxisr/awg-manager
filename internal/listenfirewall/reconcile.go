@@ -18,16 +18,34 @@ func StartReconciler(ctx context.Context, provider RunningPortsProvider) {
 	go reconcileLoop(ctx, provider)
 }
 
+// skipIdleTick — тик можно пропустить целиком: открывать нечего, а снос уже
+// сделан. Правила сами не появляются, пока ни один прокси-сервер не работает,
+// поэтому сверять их каждые 15 с не за чем; NDMS-хук на этот случай тоже уже
+// снят. Первый холостой тик после простоя всё же сверяется — им и убираются
+// правила остановленного сервера.
+func skipIdleTick(desired []PortSpec, idleSwept bool) bool {
+	return idleSwept && len(desired) == 0
+}
+
 func reconcileLoop(ctx context.Context, provider RunningPortsProvider) {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
-	Reconcile(ctx, provider())
+	idleSwept := false
+	tick := func() {
+		desired := provider()
+		if skipIdleTick(desired, idleSwept) {
+			return
+		}
+		Reconcile(ctx, desired)
+		idleSwept = len(desired) == 0
+	}
+	tick()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			Reconcile(ctx, provider())
+			tick()
 		}
 	}
 }

@@ -2,6 +2,8 @@ package subscription
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,10 +96,21 @@ type Service struct {
 	txMu sync.Mutex
 	// bindValidator — optional catalog check for BindInterface (#709).
 	bindValidator BindInterfaceValidator
+	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
+	// файлом подписок, состояние принадлежит сервису, не пакету.
+	happKeys *happKeys
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
-	return &Service{store: store, mutator: mutator}
+	storePath := ""
+	if store != nil {
+		storePath = store.path
+	}
+	return &Service{
+		store:    store,
+		mutator:  mutator,
+		happKeys: newHappKeys(happKeysPath(storePath)),
+	}
 }
 
 // SetNDMSProxyEnabled wires the global "Create NDMS Proxy for sing-box"
@@ -459,7 +472,21 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		// can safely recover — at best a hot path of recovery, at worst
 		// silently garbled outbounds (see PR adding RewriteForRaw for the
 		// HardVPN-bypass-WhiteLists/good_keys.txt regression).
-		fetchURL, rewrote := RewriteForRaw(sub.URL)
+		// happ://crypt… must be decrypted here, not inside RewriteForRaw:
+		// that helper swallows the decryption error and would leave the
+		// subscription silently fetching the still-encrypted link.
+		target := sub.URL
+		if IsHappCryptLink(target) {
+			dec, decErr := s.DecryptHappLink(target)
+			if decErr != nil {
+				err := fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", decErr)
+				s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
+				s.logWarn("subscription-refresh", id, err.Error())
+				return nil, err
+			}
+			target = dec
+		}
+		fetchURL, rewrote := RewriteForRaw(target)
 		if rewrote {
 			s.logWarn("subscription-refresh", id,
 				"rewrote web-view URL to raw URL")
@@ -476,34 +503,24 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 	isClash := vlink.IsClashYAML(body)
 	isSbJSON := !isClash && vlink.IsSingboxJSON(body)
+	isXrayJSON := !isClash && !isSbJSON && vlink.IsXrayJSON(body)
 	// Детект по СЫРОМУ телу: base64-обёрнутый JSON (sing-box или mieru)
 	// сюда не попадает — он уйдёт в NormalizeBody/DoubleDecode, где после
 	// декодирования строки без share-схем отбрасываются. Ограничение
 	// сознательное и симметричное для обоих JSON-форматов.
-	isMieruJSON := !isClash && !isSbJSON && vlink.IsMieruClientJSON(body)
+	isMieruJSON := !isClash && !isSbJSON && !isXrayJSON && vlink.IsMieruClientJSON(body)
 	// Body that's valid JSON but not a recognised sing-box subscription
 	// (no outbounds key in the right place) or mieru client config (no
 	// profiles) gets a precise error rather than a fall-through into
 	// share-link parsing — otherwise the user sees "ни одной валидной
 	// ссылки" with a meaningless prefix from scanning JSON bytes for "://".
-	if !isClash && !isSbJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
-		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже ни на sing-box config (нет outbounds), ни на mieru client config (нет profiles). Поддерживаются: sing-box JSON config (одиночный, массив конфигов, или массив outbounds), mieru JSON config (формат mieru apply config, экспорт панелей), Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
+	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.LooksLikeJSON(body) {
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config / Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box config, Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://.")
 		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		s.logWarn("subscription-refresh", id, err.Error())
 		return nil, err
 	}
-	var parseRes vlink.BatchResult
-	switch {
-	case isClash:
-		parseRes = vlink.ParseClashBody(body)
-	case isSbJSON:
-		parseRes = vlink.ParseSingboxBody(body)
-	case isMieruJSON:
-		parseRes = vlink.ParseMieruClientJSON(body)
-	default:
-		lines := NormalizeBody(body, ct)
-		parseRes = vlink.ParseBatch(lines)
-	}
+	parseRes := parseSubscriptionBody(body, ct)
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
 	s.logPartitionResult(id, parts)
@@ -533,6 +550,11 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 
 	diff := ApplyDiff(id, sub.MemberTags, parts.Valid)
+
+	// Сироты, для которых в выдаче есть тот же сервер под новым тегом,
+	// забирают свой прежний тег обратно (issue #745). Обязано идти ДО
+	// remapStaleTags: тому остаются только по-настоящему протухшие теги.
+	diff = reassociateOrphans(diff, sub.Members)
 
 	// Перенос исключений на текущую схему тегов (issues #614/#625). Обязан
 	// идти ДО applyDiff: тот читает sub.ExcludedTags (см. ниже) и без переноса
@@ -613,6 +635,20 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		declared[t] = true
 	}
 	newMembers, prunedTags := filterDeclaredMembers(newMembers, declared)
+	// Added считается по членам, реально попавшим в подписку: серверы,
+	// скрытые фильтром или исключением, в MemberTags не пишутся и потому
+	// приходят из ApplyDiff новыми на КАЖДОМ обновлении. len(diff.New) завышал
+	// счётчик в ответе API и держал вечно истинным условие журнала ниже.
+	newTags := make(map[string]bool, len(diff.New))
+	for _, n := range diff.New {
+		newTags[n.Tag] = true
+	}
+	added := 0
+	for _, m := range newMembers {
+		if newTags[m.Tag] {
+			added++
+		}
+	}
 	rejected := appendRejectedUnique(parts.Rejected, rejectedFromPrunedTags(sub, prunedTags)...)
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 	if len(prunedTags) > 0 {
@@ -638,7 +674,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 
 	res := &RefreshResult{
 		When:             time.Now(),
-		Added:            len(diff.New),
+		Added:            added,
 		Updated:          len(diff.Existing),
 		Orphaned:         len(diff.Orphan),
 		SkippedVmess:     parseRes.SkippedVmess,
@@ -1563,28 +1599,46 @@ type PreviewMember struct {
 // PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
 // при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
 // ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
+func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+	switch {
+	case vlink.IsClashYAML(body):
+		return vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		return vlink.ParseSingboxBody(body)
+	case vlink.IsXrayJSON(body):
+		return vlink.ParseXrayBody(body)
+	case vlink.IsMieruClientJSON(body):
+		return vlink.ParseMieruClientJSON(body)
+	default:
+		return vlink.ParseBatch(NormalizeBody(body, ct))
+	}
+}
+
 func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) ([]PreviewMember, error) {
 	if url == "" {
 		return nil, errors.New("subscription: preview requires a URL")
 	}
+	if IsHappCryptLink(url) {
+		dec, err := s.DecryptHappLink(url)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", err)
+		}
+		url = dec
+	}
 	fetchURL, _ := RewriteForRaw(url)
+
 	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-	var parseRes vlink.BatchResult
-	switch {
-	case vlink.IsClashYAML(body):
-		parseRes = vlink.ParseClashBody(body)
-	case vlink.IsSingboxJSON(body):
-		parseRes = vlink.ParseSingboxBody(body)
-	case vlink.IsMieruClientJSON(body):
-		parseRes = vlink.ParseMieruClientJSON(body)
-	default:
-		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
-	}
+	parseRes := parseSubscriptionBody(body, ct)
 	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
+
 	out := make([]PreviewMember, 0, len(parts.Valid))
+	if len(parts.Valid) == 0 {
+		return out, nil
+	}
+
 	keys := chooseKeys(parts.Valid)
 	// Dedupe by exclusion key, mirroring ApplyDiff's SkippedDuplicate: a
 	// byte-identical duplicate in the feed becomes ONE member on refresh, so
@@ -1606,6 +1660,135 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 		})
 	}
 	return out, nil
+}
+
+// DetectedProfile describes the automatically probed headers profile for a URL.
+type DetectedProfile struct {
+	Kind string `json:"kind"`
+	// DecryptedURL is set only for happ://crypt… links.
+	DecryptedURL string `json:"decryptedUrl,omitempty"`
+	// NormalizedURL is the URL the input should be replaced with: wrapper
+	// schemes stripped, happ://crypt… decrypted. The UI shows it instead of
+	// re-implementing NormalizeSubscriptionURL in TypeScript.
+	NormalizedURL string   `json:"normalizedUrl,omitempty"`
+	IsEncrypted   bool     `json:"isEncrypted,omitempty"`
+	Headers       []Header `json:"headers"`
+	HeadersText   string   `json:"headersText"`
+	Label         string   `json:"label"`
+	ServerCount   int      `json:"serverCount"`
+}
+
+// randomHex returns n hex characters (n/2 random bytes).
+func randomHex(n int) string {
+	b := make([]byte, n/2)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("0", n)
+	}
+	return hex.EncodeToString(b)
+}
+
+// mergeHeaders returns base with override applied on top: same-name headers
+// (case-insensitive, as HTTP defines them) take the override value, the rest
+// of base is preserved.
+func mergeHeaders(base, override []Header) []Header {
+	out := make([]Header, 0, len(base)+len(override))
+	taken := make(map[string]struct{}, len(override))
+	for _, h := range override {
+		taken[strings.ToLower(h.Name)] = struct{}{}
+	}
+	for _, h := range base {
+		if _, dup := taken[strings.ToLower(h.Name)]; dup {
+			continue
+		}
+		out = append(out, h)
+	}
+	return append(out, override...)
+}
+
+// DetectHeaders probes the given URL with different client header profiles and returns
+// the one that successfully delivers valid proxy nodes. userHeaders are the headers
+// already configured by the user: probe profiles are merged ON TOP of them, so a
+// provider-required auth header survives the probe instead of being replaced by it.
+func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders []Header) (DetectedProfile, error) {
+	if rawUrl == "" {
+		fallback := defaultHeaderProfile()
+		return DetectedProfile{
+			Kind:        fallback.Kind,
+			HeadersText: fallback.HeadersText(),
+			Label:       fallback.Label + " (по умолчанию)",
+			ServerCount: 0,
+		}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	isEnc := IsHappCryptLink(rawUrl)
+	decryptedURL := ""
+	if isEnc {
+		dec, err := s.DecryptHappLink(rawUrl)
+		if errors.Is(err, ErrHappKeysNotConfigured) {
+			// Not an error the user can act on by retrying: the UI turns this
+			// answer into the «нужны ключи RSA» prompt. Returning an error here
+			// would surface as a bare 502 and hide the prompt.
+			return DetectedProfile{IsEncrypted: true, Label: "HAPP Crypt (нужны ключи RSA)"}, nil
+		}
+		if err != nil {
+			return DetectedProfile{}, fmt.Errorf("happ: %w", err)
+		}
+		decryptedURL = dec
+		rawUrl = dec
+	}
+
+	normalizedURL, _ := NormalizeSubscriptionURL(rawUrl)
+	if normalizedURL == "" {
+		normalizedURL = rawUrl
+	}
+	fetchURL, _ := RewriteForRaw(rawUrl)
+
+	for _, prof := range HeaderProfiles() {
+		hdrs := mergeHeaders(userHeaders, prof.Headers)
+		fetchOpts := s.fetchOpts
+		fetchOpts.Timeout = 5 * time.Second
+		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, fetchOpts)
+		if err != nil {
+			continue
+		}
+		parseRes := parseSubscriptionBody(body, ct)
+		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
+		if len(parts.Valid) > 0 {
+			label := prof.Label
+			if isEnc {
+				label = "HAPP Crypt (расшифровано: " + prof.Label + ")"
+			}
+			return DetectedProfile{
+				Kind:          prof.Kind,
+				DecryptedURL:  decryptedURL,
+				NormalizedURL: normalizedURL,
+				IsEncrypted:   isEnc,
+				Headers:       hdrs,
+				HeadersText:   HeaderProfile{Headers: hdrs}.HeadersText(),
+				Label:         label,
+				ServerCount:   len(parts.Valid),
+			}, nil
+		}
+	}
+
+	fallback := defaultHeaderProfile()
+	label := fallback.Label + " (по умолчанию)"
+	if isEnc {
+		label = "HAPP Crypt (расшифровано)"
+	}
+
+	return DetectedProfile{
+		Kind:          fallback.Kind,
+		DecryptedURL:  decryptedURL,
+		NormalizedURL: normalizedURL,
+		IsEncrypted:   isEnc,
+		HeadersText:   fallback.HeadersText(),
+		Label:         label,
+		ServerCount:   0,
+	}, nil
 }
 
 // GetActiveNow returns the currently-active member tag as reported by the

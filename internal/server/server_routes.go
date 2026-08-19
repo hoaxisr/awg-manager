@@ -80,7 +80,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.testingHandler = api.NewTestingHandler(s.testingService)
 	h.systemHandler = api.NewSystemHandler(s.config.Version)
 	h.systemHandler.SetSettingsStore(s.settings)
-	h.systemHandler.SetActiveBackend(s.activeBackend)
 	h.systemHandler.SetKmodLoader(s.kmodLoader)
 	h.systemHandler.SetSettingsWriter(s.settings)
 	h.systemHandler.SetTunnelService(s.tunnelService)
@@ -135,7 +134,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		TunnelService:        s.tunnelService,
 		NDMSQueries:          s.ndmsQueries,
 		NDMSTransport:        s.ndmsTransport,
-		Backend:              s.activeBackend,
 		KmodLoader:           s.kmodLoader,
 		TunnelStore:          s.tunnels,
 		LogService:           &diagLogAdapter{svc: s.loggingService},
@@ -816,8 +814,6 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.singboxRouterHandler != nil {
 		rh := s.singboxRouterHandler
 		mux.HandleFunc("/api/singbox/router/status", h.guarded(rh.GetStatus))
-		mux.HandleFunc("/api/singbox/router/enable", h.guarded(rh.Enable))
-		mux.HandleFunc("/api/singbox/router/disable", h.guarded(rh.Disable))
 		mux.HandleFunc("/api/singbox/router/mode", h.guarded(rh.SwitchMode))
 		mux.HandleFunc("/api/singbox/router/settings", h.guarded(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
@@ -964,6 +960,9 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/subscriptions/members/exclude", h.guarded(sh.ExcludeMembers))
 		mux.HandleFunc("/api/singbox/subscriptions/members/restore", h.guarded(sh.RestoreMembers))
 		mux.HandleFunc("/api/singbox/subscriptions/preview", h.guarded(sh.PreviewURL))
+		mux.HandleFunc("/api/singbox/subscriptions/detect-headers", h.guarded(sh.DetectHeaders))
+		mux.HandleFunc("/api/singbox/subscriptions/header-profiles", h.guarded(sh.HeaderProfiles))
+		mux.HandleFunc("/api/singbox/subscriptions/happ-keys", h.guarded(sh.HappKeys))
 		mux.HandleFunc("/api/singbox/subscriptions/groups", h.guarded(sh.ListGroups))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/create", h.guarded(sh.CreateGroup))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/update", h.guarded(sh.UpdateGroup))

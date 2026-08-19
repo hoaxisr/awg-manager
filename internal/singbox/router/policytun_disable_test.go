@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -109,8 +108,8 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 // нуле утверждение «индекс сохранён» проходит и для персиста, потерявшего поле.
 func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
-	if err := h.store.SetPolicyTunState(&storage.PolicyTunState{Index: 3}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable (provision for disable): %v", err)
@@ -210,17 +209,17 @@ func TestPolicyTunDisable_NATSegments(t *testing.T) {
 		h := newPolicyTunEnableHarness(t, "")
 		provisionPolicyTunForDisable(t, h)
 		// SegmentNAT/NATState не подключены → restore возвращает ошибку.
-		if err := h.store.SetPolicyTunState(&storage.PolicyTunState{
-			Provisioned: true, Index: 0, NATSegments: recorded,
+		if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0,
+			PolicyTun: &storage.OpkgTunPolicyData{NATSegments: recorded},
 		}); err != nil {
-			t.Fatalf("SetPolicyTunState: %v", err)
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 
 		if err := h.svc.Disable(context.Background()); err != nil {
 			t.Fatalf("Disable(policy-tun): %v", err)
 		}
 		st := h.loadPolicyTun(t)
-		if st == nil || len(st.NATSegments) != 1 {
+		if st == nil || len(natSegmentsOf(st)) != 1 {
 			t.Errorf("NATSegments = %+v, want сохранены при провале restore", st)
 		}
 	})
@@ -231,17 +230,17 @@ func TestPolicyTunDisable_NATSegments(t *testing.T) {
 		state := &fakeNATState{}
 		h.svc.deps.NATState = state
 		h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: state}
-		if err := h.store.SetPolicyTunState(&storage.PolicyTunState{
-			Provisioned: true, Index: 0, NATSegments: recorded,
+		if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0,
+			PolicyTun: &storage.OpkgTunPolicyData{NATSegments: recorded},
 		}); err != nil {
-			t.Fatalf("SetPolicyTunState: %v", err)
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 
 		if err := h.svc.Disable(context.Background()); err != nil {
 			t.Fatalf("Disable(policy-tun): %v", err)
 		}
 		st := h.loadPolicyTun(t)
-		if st == nil || len(st.NATSegments) != 0 {
+		if st == nil || len(natSegmentsOf(st)) != 0 {
 			t.Errorf("NATSegments = %+v, want очищены после успешного restore", st)
 		}
 	})
@@ -295,11 +294,13 @@ func TestPolicyTunDisable_IdempotentWithoutPersist(t *testing.T) {
 
 func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	scan := &recOpkgTunScan{}
+	// Скан обязан ВИДЕТЬ наш интерфейс: пустая выдача успешного скана теперь
+	// означает «на индексе не наше» и снос по ней не идёт.
+	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2"}}}
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
@@ -309,8 +310,8 @@ func TestPolicyTunReap_RemovesOrphanInOtherMode(t *testing.T) {
 		t.Errorf("deleted = %v, want [OpkgTun2]", opkg.deleted)
 	}
 	all, _ := store.Load()
-	if all.PolicyTun != nil {
-		t.Errorf("PolicyTun persist = %+v, want nil after the reap", all.PolicyTun)
+	if all.OpkgTun != nil {
+		t.Errorf("PolicyTun persist = %+v, want nil after the reap", all.OpkgTun)
 	}
 	// Скан по описанию идёт для ОБОИХ режимов: персиста могло не остаться.
 	if !scan.scanned(fakeIPTunDescription) || !scan.scanned(policyTunDescription) {
@@ -365,8 +366,8 @@ func TestPolicyTunDisable_ParksSlotWithoutPersist(t *testing.T) {
 		t.Fatalf("Enable: %v", err)
 	}
 	// Персист стёрт мимо нас, слот при этом жив.
-	if err := h.store.SetPolicyTunState(nil); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := h.store.SetOpkgTunState(nil); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if !slotEnabled(t, h.svc, orchestrator.SlotRouter) {
 		t.Fatal("предусловие: слот обязан быть активным")
@@ -385,8 +386,8 @@ func TestPolicyTunDisable_ParksSlotWithoutPersist(t *testing.T) {
 // следующее включение обязано взять тот же номер.
 func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 2}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2", "OpkgTun5"}}}
@@ -399,8 +400,8 @@ func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
 		t.Errorf("deleted = %v, want [OpkgTun5] (удержанный OpkgTun2 обязан уцелеть)", opkg.deleted)
 	}
 	all, _ := store.Load()
-	if all.PolicyTun == nil || all.PolicyTun.Index != 2 {
-		t.Errorf("PolicyTun persist = %+v, want удержанный индекс 2", all.PolicyTun)
+	if all.OpkgTun == nil || all.OpkgTun.Index != 2 {
+		t.Errorf("PolicyTun persist = %+v, want удержанный индекс 2", all.OpkgTun)
 	}
 }
 
@@ -410,11 +411,13 @@ func TestPolicyTunReap_SparesHeldInterface(t *testing.T) {
 // вакуумной.
 func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 2}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	scan := &recOpkgTunScan{}
+	// Скан обязан ВИДЕТЬ наш интерфейс: пустая выдача успешного скана теперь
+	// означает «на индексе не наше» и снос по ней не идёт.
+	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2"}}}
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scan.scan})
 
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
@@ -424,8 +427,8 @@ func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 		t.Errorf("deleted = %v, want [OpkgTun2]", opkg.deleted)
 	}
 	all, _ := store.Load()
-	if all.PolicyTun != nil {
-		t.Errorf("PolicyTun persist = %+v, want nil: удержание отменено сменой режима", all.PolicyTun)
+	if all.OpkgTun != nil {
+		t.Errorf("PolicyTun persist = %+v, want nil: удержание отменено сменой режима", all.OpkgTun)
 	}
 }
 
@@ -433,8 +436,8 @@ func TestPolicyTunReap_HeldInterfaceRemovedInOtherMode(t *testing.T) {
 // ни персист policy-tun, ни его интерфейс из скана.
 func TestPolicyTunReap_NoopInPolicyTunMode(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
 	scan := &recOpkgTunScan{ids: map[string][]string{policyTunDescription: {"OpkgTun2", "OpkgTun5"}}}
@@ -447,8 +450,8 @@ func TestPolicyTunReap_NoopInPolicyTunMode(t *testing.T) {
 		t.Errorf("deleted = %v, want [OpkgTun5] (owned OpkgTun2 must be skipped)", opkg.deleted)
 	}
 	all, _ := store.Load()
-	if all.PolicyTun == nil || all.PolicyTun.Index != 2 {
-		t.Errorf("PolicyTun persist = %+v, want unchanged in policy-tun mode", all.PolicyTun)
+	if all.OpkgTun == nil || all.OpkgTun.Index != 2 {
+		t.Errorf("PolicyTun persist = %+v, want unchanged in policy-tun mode", all.OpkgTun)
 	}
 }
 
@@ -493,112 +496,6 @@ func TestPolicyTunDisable_RemovesIngress(t *testing.T) {
 	if !flushed {
 		t.Errorf("таблица %s не очищена: %v", fakeIPIngressTableStr(), ipCalls)
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Реап: кросс-персистная коллизия индексов
-// ---------------------------------------------------------------------------
-
-// Гард коллизии щадит интерфейс ТОЛЬКО в режиме fakeip-tun: там персист
-// policy-tun может указывать на живой чужой интерфейс. В третьем режиме
-// (tproxy) не активен ни один из двух, и сироту обязан снести обычный реап —
-// иначе она пережила бы смену режима из-за одного лишь совпадения индексов.
-func TestReap_IndexCollision_RemovesOrphanInThirdMode(t *testing.T) {
-	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "tproxy"})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
-	}
-	if err := store.SetFakeIPState(&storage.FakeIPState{
-		Provisioned: true, Index: 2, Inet4Range: "198.18.0.0/15",
-	}); err != nil {
-		t.Fatalf("SetFakeIPState: %v", err)
-	}
-	opkg := &recordingOpkgTunProvisioner{}
-	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg})
-
-	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
-		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
-	}
-	// Проверяем ОЧИСТКУ ПЕРСИСТА, а не факт удаления интерфейса: тот же
-	// OpkgTun2 сносит и fakeip-ветка по своему персисту, поэтому по `deleted`
-	// не отличить, сработала наша ветка или чужая.
-	all, _ := store.Load()
-	if all.PolicyTun != nil {
-		t.Errorf("PolicyTun persist = %+v, want nil: вне обоих режимов сироту убирает реап", all.PolicyTun)
-	}
-}
-
-// Протухший FakeIPState с индексом ЖИВОГО policy-tun-интерфейса не должен
-// снести активный режим: владелец определяется активным режимом, а не персистом.
-func TestReap_IndexCollision_KeepsLivePolicyTun(t *testing.T) {
-	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
-	}
-	if err := store.SetFakeIPState(&storage.FakeIPState{
-		Provisioned: true, Index: 2, Inet4Range: "198.18.0.0/15",
-	}); err != nil {
-		t.Fatalf("SetFakeIPState: %v", err)
-	}
-	opkg := &recordingOpkgTunProvisioner{}
-	rec := &recordingAppLogger{}
-	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg})
-	svc.appLog = logging.NewScopedLogger(rec, logging.GroupRouting, logging.SubSingboxRouter)
-
-	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
-		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
-	}
-	if len(opkg.deleted) != 0 {
-		t.Errorf("deleted = %v, живой policy-tun-интерфейс трогать нельзя", opkg.deleted)
-	}
-	all, _ := store.Load()
-	if all.PolicyTun == nil || all.PolicyTun.Index != 2 {
-		t.Errorf("PolicyTun persist = %+v, want unchanged", all.PolicyTun)
-	}
-	if !hasLogEntry(rec, "коллизия индексов") {
-		t.Errorf("коллизия обязана попасть в журнал: %v", rec.entries)
-	}
-}
-
-// Зеркальный случай: протухший PolicyTunState с индексом живого fakeip.
-func TestReap_IndexCollision_KeepsLiveFakeIP(t *testing.T) {
-	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: "fakeip-tun"})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 2}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
-	}
-	if err := store.SetFakeIPState(&storage.FakeIPState{
-		Provisioned: true, Index: 2, Inet4Range: "198.18.0.0/15",
-	}); err != nil {
-		t.Fatalf("SetFakeIPState: %v", err)
-	}
-	opkg := &recordingOpkgTunProvisioner{}
-	rec := &recordingAppLogger{}
-	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg})
-	svc.appLog = logging.NewScopedLogger(rec, logging.GroupRouting, logging.SubSingboxRouter)
-
-	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
-		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
-	}
-	if len(opkg.deleted) != 0 {
-		t.Errorf("deleted = %v, живой fakeip-интерфейс трогать нельзя", opkg.deleted)
-	}
-	all, _ := store.Load()
-	if all.FakeIP == nil || all.FakeIP.Index != 2 {
-		t.Errorf("FakeIP persist = %+v, want unchanged", all.FakeIP)
-	}
-	if !hasLogEntry(rec, "коллизия индексов") {
-		t.Errorf("коллизия обязана попасть в журнал: %v", rec.entries)
-	}
-}
-
-// hasLogEntry сообщает, попала ли в журнал строка с подстрокой want.
-func hasLogEntry(rec *recordingAppLogger, want string) bool {
-	for _, e := range rec.entries {
-		if strings.Contains(e, want) {
-			return true
-		}
-	}
-	return false
 }
 
 // Хук перехвата DNS снимается ПЕРВЫМ шагом teardown: следом идут RCI-мутации

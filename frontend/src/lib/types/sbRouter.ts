@@ -82,8 +82,6 @@ export interface SingboxQosClass {
 export interface BypassSetStatus {
 	/** Бинарь ipset есть на роутере. */
 	available: boolean;
-	/** Модуль xt_set загружен или доступен .ko (нужен для `-m set`). */
-	xtSetAvailable: boolean;
 	/** Бинарь conntrack есть: без него правки бьют только по новым соединениям. */
 	conntrackAvailable: boolean;
 	/** Идёт установка пакета, запущенная через install-эндпоинты. */

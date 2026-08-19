@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
@@ -247,6 +248,12 @@ func (a *OperatorAdapter) AddOutbound(tag string, jsonBody []byte) error {
 		return fmt.Errorf("subscription adapter: AddOutbound %q: bad json: %w", tag, err)
 	}
 	ob["tag"] = tag
+	// Компат-фиксы наравне с 10-tunnels (naive udp_over_tcp, hysteria2
+	// chrome-parrot): подписочный слот пишется мимо Config.Save, без этого
+	// вызова приехавший подпиской туннель остаётся несовместимым. Map только
+	// что распарсена — ни с кем не разделена, инвариант shallow-снапшота
+	// батча не нарушается.
+	singbox.EnsureOutboundCompat(ob)
 	if reason := classifyOutbound(ob); reason != "" {
 		a.preFlushDropped = append(a.preFlushDropped, DropReason{Tag: tag, Reason: reason})
 		return nil
@@ -266,6 +273,8 @@ func (a *OperatorAdapter) UpdateOutbound(tag string, jsonBody []byte) error {
 		return fmt.Errorf("subscription adapter: UpdateOutbound %q: bad json: %w", tag, err)
 	}
 	ob["tag"] = tag
+	// См. AddOutbound: тот же компат-фикс на свежераспарсенной map.
+	singbox.EnsureOutboundCompat(ob)
 	if reason := classifyOutbound(ob); reason != "" {
 		a.preFlushDropped = append(a.preFlushDropped, DropReason{Tag: tag, Reason: reason})
 		return nil

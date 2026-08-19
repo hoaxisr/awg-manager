@@ -3,17 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
@@ -23,9 +26,8 @@ import (
 // interfaces — catches interface drift at the declaration line instead
 // of at the wiring callsite in main.go.
 var (
-	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
-	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
-	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+	_ router.AccessPolicyProvider = (*routerAccessPolicyAdapter)(nil)
+	_ router.KeenDNSInfoProvider  = keenDNSInfoAdapter{}
 )
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
@@ -327,7 +329,7 @@ func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the
-// same convention fakeIPNDMSName produces on the router side.
+// same convention tunNDMSName produces on the router side.
 func opkgTunScanner(store *ndmsquery.InterfaceStore) func(ctx context.Context, description string) ([]string, error) {
 	return func(ctx context.Context, description string) ([]string, error) {
 		all, err := store.List(ctx)
@@ -429,11 +431,11 @@ type wdttAccessAdapter struct {
 	ifaces *ndmscommand.InterfaceCommands
 }
 
-func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
+func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode string, prevWANs []string) ([]string, error) {
 	if a.svc == nil {
-		return "", fmt.Errorf("managed service not available")
+		return nil, fmt.Errorf("managed service not available")
 	}
-	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWAN)
+	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWANs)
 }
 
 func (a *wdttAccessAdapter) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
@@ -494,30 +496,48 @@ func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, err
 	return a.svc.DefaultGatewayNDMSInterface(ctx)
 }
 
-// keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
-type keenDNSDomainAdapter struct {
-	store *ndmsquery.KeenDNSStore
+// keenDNSInfoAdapter собирает данные пресета keendns с самого роутера: FQDN
+// из /show/ndns и IPv4, к которым роутер направляет свои KeenDNS-имена —
+// статические записи ndnproxy по зонам KeenDNS плюс адрес доступа в режиме
+// direct, где статической записи нет вовсе (issue #729).
+type keenDNSInfoAdapter struct {
+	keendns  *ndmsquery.KeenDNSStore
+	dnsProxy *ndmsquery.DNSProxyStatusStore
 }
 
-func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error) {
-	if a.store == nil {
-		return "", nil
+func (a keenDNSInfoAdapter) KeenDNSInfo(ctx context.Context) (string, []string, error) {
+	var fqdn string
+	var addrs []string
+	if a.keendns != nil {
+		info, err := a.keendns.Get(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		if info != nil && info.Enabled {
+			fqdn = info.Domain
+			if ip := net.ParseIP(info.Address); ip != nil && ip.To4() != nil {
+				addrs = append(addrs, ip.String())
+			}
+		}
 	}
-	info, err := a.store.Get(ctx)
-	if err != nil {
-		return "", err
+	if a.dnsProxy != nil {
+		raw, err := a.dnsProxy.List(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		proxies, err := diagnostics.ParseDNSProxy(raw)
+		if err != nil {
+			return "", nil, err
+		}
+		static := diagnostics.StaticIPv4InZones(proxies,
+			dnsrewrite.KeenDNSHosts(), dnsrewrite.KeenDNSZones())
+		for _, ip := range static {
+			if !slices.Contains(addrs, ip) {
+				addrs = append(addrs, ip)
+			}
+		}
 	}
-	if info == nil || !info.Enabled {
-		return "", nil
-	}
-	return info.Domain, nil
-}
-
-// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
-type keenDNSLANAdapter struct{}
-
-func (keenDNSLANAdapter) LANIPv4() string {
-	return netif.FirstIPv4(storage.DefaultInterface)
+	return fqdn, addrs, nil
 }
 
 var _ wdtt.IngressRefEnsurer = (*wdttIngressEnsurer)(nil)

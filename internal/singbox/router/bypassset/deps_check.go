@@ -1,7 +1,7 @@
 // Package bypassset owns the AWGM-BYPASS ipset: creation, population and the
 // availability checks for the userspace tooling it needs (ipset binary,
-// xt_set kernel module, conntrack). Traffic whose destination IP is listed in
-// the set bypasses sing-box entirely (RETURN → WAN).
+// conntrack). Traffic whose destination IP is listed in the set bypasses
+// sing-box entirely (RETURN → WAN).
 package bypassset
 
 import (
@@ -238,23 +238,6 @@ func RecheckIPSet() { resetIPSetCache() }
 
 // xtSetModuleName is the kernel module name for iptables ipset matching.
 const xtSetModuleName = "xt_set"
-
-// IsXtSetAvailable reports whether the xt_set kernel module is currently
-// loaded OR available as a .ko file that can be loaded.
-// NOT cached — called at status-check time, result must reflect reality
-// after module load attempts.
-func IsXtSetAvailable() bool {
-	if isModuleLoaded(xtSetModuleName) {
-		return true
-	}
-	kernel := osdetect.KernelRelease()
-	if kernel == "" {
-		return false
-	}
-	path := filepath.Join("/lib/modules", kernel, xtSetModuleName+".ko")
-	_, err := os.Stat(path)
-	return err == nil
-}
 
 // isModuleLoaded checks /proc/modules for the given module name.
 // Identical to the helper in iptables.go; duplicated to keep the

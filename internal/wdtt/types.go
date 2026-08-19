@@ -103,7 +103,8 @@ type ServerConfig struct {
 	// Router integration (awg-manager + NDMS):
 	NatIface       string   `json:"natIface,omitempty"`       // -nat-if when built-in NAT enabled manually
 	NatMode        string   `json:"natMode"`                  // full | internet-only | none via managed service
-	NatStaticWAN   string   `json:"natStaticWan,omitempty"`   // persisted WAN for internet-only teardown
+	NatStaticWAN   string   `json:"natStaticWan,omitempty"`   // persisted WAN for internet-only teardown (legacy)
+	NatStaticWANs  []string `json:"natStaticWans,omitempty"`  // выходы static-NAT (internet-only); NatStaticWAN — legacy
 	Policy         string   `json:"policy"`                   // NDMS hotspot policy or "none"
 	LanSegments    []string `json:"lanSegments,omitempty"`    // LAN bridge names
 	IngressEnabled bool     `json:"ingressEnabled,omitempty"` // sing-box ingress for iface:wgIface + wdttraw0
@@ -172,6 +173,17 @@ func DefaultServerConfig() ServerConfig {
 		Policy:    "none",
 		RelayMode: ConnModeWG,
 	}
+}
+
+// staticNATList — выходы static-NAT: новый список, иначе legacy-одиночка.
+func (c ServerConfig) staticNATList() []string {
+	if len(c.NatStaticWANs) > 0 {
+		return c.NatStaticWANs
+	}
+	if w := strings.TrimSpace(c.NatStaticWAN); w != "" {
+		return []string{w}
+	}
+	return nil
 }
 
 type ServerInstance struct {

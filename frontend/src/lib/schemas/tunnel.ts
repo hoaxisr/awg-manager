@@ -90,6 +90,9 @@ export const editTunnelSchema = z.object({
     rejectAfterTime: u16RangeField(),
     keepaliveTimeout: u16RangeField(),
     maxHandshakeAttempts: u16RangeField(),
+    // AWG 3.1 device flags — read-only, set only by an imported .conf.
+    randomTrailers: z.boolean().default(false),
+    disableCookies: z.boolean().default(false),
 }).refine(data => {
     const total = calcByteSize(data.i1) + calcByteSize(data.i2) +
         calcByteSize(data.i3) + calcByteSize(data.i4) + calcByteSize(data.i5);

@@ -2054,7 +2054,6 @@ const MOCK_GEO_TAGS = {
 // Состояние набора обхода AWGM-BYPASS (GET/POST /singbox/router/bypass-set/*).
 let mockBypassSet = {
 	available: true,
-	xtSetAvailable: true,
 	conntrackAvailable: false,
 	installing: false,
 	entryCount: 148223,
@@ -4362,7 +4361,7 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'POST' && path === '/singbox/router/bypass-set/install-deps') {
-		mockBypassSet = { ...mockBypassSet, available: true, xtSetAvailable: true };
+		mockBypassSet = { ...mockBypassSet, available: true };
 		send(res, 200, { success: true, data: mockBypassSet });
 		return;
 	}

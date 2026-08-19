@@ -8,7 +8,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -100,7 +99,6 @@ type MockBackend struct {
 	pid     int
 }
 
-func (m *MockBackend) Type() backend.Type { return backend.TypeKernel }
 func (m *MockBackend) Start(ctx context.Context, ifaceName string) error {
 	return nil
 }

@@ -62,18 +62,27 @@ func (s *Service) reconcileRunningServersNAT(ctx context.Context) {
 			legacyIfaces[iface] = true
 		}
 	}
-	if len(legacyIfaces) == 0 {
-		if !s.anyServerRunning(full) {
-			removeEntwareNAT(ctx, DefaultWdttIface)
-			removeWdttForwardNetfilterHook()
-		}
-		return
-	}
+	// Ни один сервер не работает — правила надо снять, но ровно один раз на
+	// переход в это состояние: сами по себе они не воскресают, а слепой снос
+	// стоит ~18 форков iptables и при выключенном сервере повторялся бы каждые
+	// 15 с вечно. Защёлка снимается ниже, как только сервер снова работает.
 	if !s.anyServerRunning(full) {
-		for iface := range legacyIfaces {
-			removeEntwareNAT(ctx, iface)
+		if s.natIdleSwept {
+			return
+		}
+		if len(legacyIfaces) == 0 {
+			removeEntwareNAT(ctx, DefaultWdttIface)
+		} else {
+			for iface := range legacyIfaces {
+				removeEntwareNAT(ctx, iface)
+			}
 		}
 		removeWdttForwardNetfilterHook()
+		s.natIdleSwept = true
+		return
+	}
+	s.natIdleSwept = false
+	if len(legacyIfaces) == 0 {
 		return
 	}
 	for _, srv := range full.Servers {
