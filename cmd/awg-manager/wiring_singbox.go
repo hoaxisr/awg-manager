@@ -203,6 +203,7 @@ func (a *app) setupSingbox() {
 	// Gate subscription ProxyN creation on the global toggle (same flag the
 	// Operator uses for tunnels) so disabling it stops subscriptions from
 	// creating NDMS Proxy interfaces too.
+	a.subSvc.SetNDMSProxyEnabled(a.settingsStore.IsSingboxNDMSProxyEnabled)
 	if err := a.subSvc.LoadHappKeys(); err != nil {
 		a.bootLog.Warn("subscription-happ-keys", "load-from-disk", err.Error())
 	}
