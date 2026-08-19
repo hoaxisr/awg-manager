@@ -480,8 +480,21 @@ func TestReconcileInstalled_BlackholeInstalledOnce(t *testing.T) {
 	svc := newReconcileInstalledService(t, sb)
 	var restores []string
 	persists := 0
-	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
-	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	chainPresent, jumpPresent := false, false
+	ipt := newStubIPTables(func(_ context.Context, in string) error {
+		restores = append(restores, in)
+		if strings.Contains(in, ":"+BlackholeChain+" - [0:0]") {
+			chainPresent = true // restore блокировки создал цепочку
+		}
+		if strings.Contains(in, "-j "+BlackholeChain) {
+			jumpPresent = true // и её PREROUTING-джамп
+		}
+		return nil
+	})
+	// Дамп отражает установку: пока блокировка цела, переустанавливать нечего.
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return blackholeDump(chainPresent, jumpPresent), nil
+	}
 	ipt.persistBlackhole = func(string) error { persists++; return nil }
 	svc.deps.IPTables = ipt
 
@@ -528,5 +541,148 @@ func TestReconcileInstalled_BlackholeFollowsWANIPChange(t *testing.T) {
 	}
 	if strings.Contains(restores[1], "203.0.113.207/32") {
 		t.Errorf("старый адрес обязан уйти из blackhole:\n%s", restores[1])
+	}
+}
+
+// blackholeDump: цепочки AWGM живы, PREROUTING-джампы перехвата снесены, а
+// блокировка присутствует теми частями, что заданы. Обе обязательны: цепочка
+// без своего PREROUTING-джампа не перехватывает ничего, то есть блокировки
+// фактически нет. InstallBlackhole пишет их одним restore, поэтому в норме
+// флаги ходят парой; врозь — это ровно те две поломки мимо NDMS, которые
+// reconcile обязан заметить.
+func blackholeDump(chain, jump bool) string {
+	out := chainsOnlyDump()
+	if chain {
+		out += "-N " + BlackholeChain + "\n"
+	}
+	if jump {
+		out += "-A PREROUTING -m connmark --mark 0xffffaaa -m conntrack ! --ctstate INVALID -j " + BlackholeChain + "\n"
+	}
+	return out
+}
+
+// КРАСНЫЙ: второй рубеж fail-closed. Цепочка блокировки может исчезнуть мимо
+// NDMS (ручной `iptables -F -t mangle`, сбой netfilter.d-хука) при неизменном
+// спеке. Снимок appliedBlackhole тогда врёт: служба «помнит», что ставила, а
+// в netfilter блокировки нет и policy-трафик течёт в WAN. Наблюдение факта
+// (цепочка в дампе mangle, тот же дамп, что и у Probe) обязано её вернуть.
+func TestReconcileInstalled_BlackholeChainWiped_Reinstalls(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	chainPresent, jumpPresent := false, false
+	var restores []string
+	ipt := newStubIPTables(func(_ context.Context, in string) error {
+		restores = append(restores, in)
+		if strings.Contains(in, ":"+BlackholeChain+" - [0:0]") {
+			chainPresent = true // restore блокировки создал цепочку
+		}
+		if strings.Contains(in, "-j "+BlackholeChain) {
+			jumpPresent = true // и её PREROUTING-джамп
+		}
+		return nil
+	})
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return blackholeDump(chainPresent, jumpPresent), nil
+	}
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("первый тик: %v", err)
+	}
+	if len(restores) != 1 || !chainPresent {
+		t.Fatalf("precondition: первый тик обязан поставить блокировку: restores=%d chainPresent=%v", len(restores), chainPresent)
+	}
+
+	chainPresent = false // кто-то снёс mangle мимо NDMS
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("второй тик: %v", err)
+	}
+	if len(restores) != 2 {
+		t.Fatalf("пропажу цепочки блокировки обязан вылечить reconcile: restores=%d, want 2", len(restores))
+	}
+	if !strings.Contains(restores[1], "-A "+BlackholeChain+" -j DROP") {
+		t.Errorf("переустановлена не блокировка:\n%s", restores[1])
+	}
+}
+
+// КРАСНЫЙ: вторая половина того же рубежа. Цепочка блокировки цела, а её
+// `-A PREROUTING ... -j AWGM-BLACKHOLE` снесён — в netfilter в неё никто не
+// заходит, то есть блокировки НЕТ и policy-трафик течёт в WAN (fail-OPEN,
+// ровно тот исход, ради которого блокировка и существует). Джамп лежит в том
+// же дампе mangle, что и цепочка, поэтому решение о переустановке обязано
+// учитывать обе части — без единого лишнего вызова iptables.
+func TestReconcileInstalled_BlackholeJumpWiped_Reinstalls(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	chainPresent, jumpPresent := false, false
+	var restores []string
+	ipt := newStubIPTables(func(_ context.Context, in string) error {
+		restores = append(restores, in)
+		if strings.Contains(in, ":"+BlackholeChain+" - [0:0]") {
+			chainPresent = true
+		}
+		if strings.Contains(in, "-j "+BlackholeChain) {
+			jumpPresent = true
+		}
+		return nil
+	})
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return blackholeDump(chainPresent, jumpPresent), nil
+	}
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("первый тик: %v", err)
+	}
+	if len(restores) != 1 || !chainPresent || !jumpPresent {
+		t.Fatalf("precondition: первый тик обязан поставить блокировку целиком: restores=%d chain=%v jump=%v",
+			len(restores), chainPresent, jumpPresent)
+	}
+
+	jumpPresent = false // джамп снесли, цепочка осталась
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("второй тик: %v", err)
+	}
+	if len(restores) != 2 {
+		t.Fatalf("пропажу джампа блокировки обязан вылечить reconcile: restores=%d, want 2", len(restores))
+	}
+	if !strings.Contains(restores[1], "-j "+BlackholeChain) {
+		t.Errorf("переустановка обязана вернуть PREROUTING-джамп:\n%s", restores[1])
+	}
+}
+
+// СВОЙСТВО: снимок блокировки пишется ТОЛЬКО после успешной установки. Обратное
+// дало бы дефект наизнанку — блокировки в netfilter нет, а служба «помнит», что
+// поставила, и следующий тик её не повторит. Дамп здесь показывает блокировку
+// живой (правила пережили прошлое воплощение демона и вернулись хуком), поэтому
+// повтор может держаться ТОЛЬКО на пустом снимке.
+func TestReconcileInstalled_BlackholeInstallFailure_RetriesNextTick(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	restores := 0
+	installFails := true
+	ipt := newStubIPTables(func(_ context.Context, _ string) error {
+		restores++
+		if installFails {
+			return errors.New("iptables-restore: write failed")
+		}
+		return nil
+	})
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return blackholeDump(true, true), nil }
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("первый тик: %v", err)
+	}
+	if restores != 1 || svc.appliedBlackhole != nil {
+		t.Fatalf("провал установки не должен писать снимок: restores=%d снимок=%v", restores, svc.appliedBlackhole != nil)
+	}
+
+	installFails = false
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("второй тик: %v", err)
+	}
+	if restores != 2 || svc.appliedBlackhole == nil {
+		t.Fatalf("следующий тик обязан повторить установку: restores=%d снимок=%v", restores, svc.appliedBlackhole != nil)
 	}
 }

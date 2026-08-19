@@ -841,10 +841,12 @@ func TestReconcile_QoSClassesSame_NoReinstall(t *testing.T) {
 	})
 	svc := &ServiceImpl{
 		deps: Deps{
-			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
-			IPTables:           ipt,
-			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
-			Singbox:            newTestSingbox(t),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:       ipt,
+			WANIPCollector: &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			// Движок ЖИВОЙ: с мёртвым установку глушит гейт готовности и «ноль
+			// Install» не доказывал бы совпадения классов.
+			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},

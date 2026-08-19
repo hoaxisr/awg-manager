@@ -1456,25 +1456,46 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 // On a query error Probe returns (false, false, err); callers must treat that
 // as "unknown" (do NOT reinstall) rather than "broken".
 func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error) {
-	mChain, mJump, err := it.probeTable(ctx, "mangle", ChainName)
-	if err != nil {
-		return false, false, err
-	}
-	nChain, nJump, err := it.probeTable(ctx, "nat", RedirectChain)
-	if err != nil {
-		return false, false, err
-	}
-	installed = mChain && nChain
-	jumps = installed && mJump && nJump
-	return installed, jumps, nil
+	installed, jumps, _, err = it.probeAll(ctx)
+	return installed, jumps, err
 }
 
-func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainExists, jumpExists bool, err error) {
-	out, err := it.runIPTablesOut(ctx, "-t", table, "-S")
+// probeAll is Probe plus the fail-closed blackhole's liveness. The blackhole
+// lives in the SAME mangle table, so both its `-N` declaration and its
+// PREROUTING jump are already in the dump Probe fetches: observing it costs
+// zero extra iptables calls. Live means chain AND jump, by the same logic as
+// `jumps` above — a chain nobody enters drops nothing, and that is fail-OPEN.
+// Observing the live rules beats remembering that we installed them, because a
+// manual `iptables -F -t mangle` or a failed netfilter.d hook wipes them with
+// no NDMS event to react to.
+//
+// On a query error probeAll returns (false, false, false, err) — same contract
+// as Probe: the zeros are "unknown", NOT "absent". A caller must gate on err
+// before acting on any of the three, or a transient `-S` failure will read as
+// "nothing is installed". In particular blackhole reads false even when the
+// mangle dump already showed it, because the nat dump failed afterwards.
+func (it *IPTables) probeAll(ctx context.Context) (installed, jumps, blackhole bool, err error) {
+	mangleDump, err := it.runIPTablesOut(ctx, "-t", "mangle", "-S")
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
-	for _, line := range strings.Split(out, "\n") {
+	mChain, mJump := scanChain(mangleDump, ChainName)
+	bChain, bJump := scanChain(mangleDump, BlackholeChain)
+	blackhole = bChain && bJump
+	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S")
+	if err != nil {
+		return false, false, false, err
+	}
+	nChain, nJump := scanChain(natDump, RedirectChain)
+	installed = mChain && nChain
+	jumps = installed && mJump && nJump
+	return installed, jumps, blackhole, nil
+}
+
+// scanChain reports the chain's declaration and its PREROUTING jump in an
+// `iptables -S <table>` dump.
+func scanChain(dump, chain string) (chainExists, jumpExists bool) {
+	for _, line := range strings.Split(dump, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "-N "+chain {
 			chainExists = true
@@ -1483,7 +1504,7 @@ func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainE
 			jumpExists = true
 		}
 	}
-	return chainExists, jumpExists, nil
+	return chainExists, jumpExists
 }
 
 // jumpToken reports whether line jumps to chain via `-j chain` or `-g chain`

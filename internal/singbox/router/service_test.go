@@ -718,13 +718,15 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 
 	// netfilterStateKnown=true models a daemon that has already completed
 	// its initial install cycle — mark and WAN IPs are identical to the
-	// stored values, so no re-install should be triggered.
+	// stored values, so no re-install should be triggered. Движок ЖИВОЙ:
+	// с мёртвым установку глушит гейт готовности и «ноль Install» не
+	// говорил бы о сравнении спеков ничего.
 	svc := &ServiceImpl{
 		deps: Deps{
 			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
 			IPTables:           ipt,
 			WANIPCollector:     collector,
-			Singbox:            newTestSingbox(t),
+			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
 		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}}, // same
@@ -762,7 +764,8 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 	collector := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
 
 	// Живой движок: jump-heal при мёртвом процессе намеренно пропускается
-	// (FIX-B, см. TestReconcileInstalled_DeadEngineSkipsJumpHeal) — здесь
+	// (FIX-B, см. TestReconcileInstalled_DeadEngineInstallsBlackhole и
+	// TestReconcileInstalled_LiveButUnboundJumpsIntactDefers) — здесь
 	// проверяем сам триггер восстановления джампов.
 	sb := newTestSingbox(t)
 	sb.isRunningFn = func() (bool, int) { return true, 4242 }
@@ -809,10 +812,12 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 	}
 	svc := &ServiceImpl{
 		deps: Deps{
-			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
-			IPTables:           ipt,
-			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
-			Singbox:            newTestSingbox(t),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:       ipt,
+			WANIPCollector: &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			// Движок ЖИВОЙ и готов: иначе установку глушит гейт готовности и
+			// тест был бы зелен независимо от трактовки ошибки probe.
+			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
 		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
@@ -1886,10 +1891,12 @@ func TestReconcile_BypassPresetsSame_NoOp(t *testing.T) {
 
 	svc := &ServiceImpl{
 		deps: Deps{
-			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
-			IPTables:           ipt,
-			WANIPCollector:     collector,
-			Singbox:            newTestSingbox(t),
+			Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:       ipt,
+			WANIPCollector: collector,
+			// Движок ЖИВОЙ: с мёртвым установку глушит гейт готовности и «ноль
+			// Install» не доказывал бы совпадения bypass-портов.
+			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
 		// то же самое, что вычислит reconcile: пресет l2tp + 51820/UDP
@@ -2111,6 +2118,14 @@ func TestReconcileInstalled_LANBridgesChangeReinstalls(t *testing.T) {
 	if len(svc.appliedSpec.LANBridges) != 0 {
 		t.Errorf("применённые мосты не обновились: %v", svc.appliedSpec.LANBridges)
 	}
+
+	// Второй тик без изменений — тишина.
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled (второй тик): %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Errorf("повторный тик без изменений: restoreCalls = %d, want 1", *restoreCalls)
+	}
 }
 
 // Страховка: смена пользовательских bypass-подсетей обязана переустанавливать
@@ -2175,5 +2190,13 @@ func TestReconcileInstalled_PresetTableChangeReinstalls(t *testing.T) {
 	}
 	if !strings.Contains(*last, "9999") {
 		t.Errorf("порт из новой таблицы пресетов не попал в правила:\n%s", *last)
+	}
+
+	// Второй тик без изменений — тишина.
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled (второй тик): %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Errorf("повторный тик без изменений: restoreCalls = %d, want 1", *restoreCalls)
 	}
 }

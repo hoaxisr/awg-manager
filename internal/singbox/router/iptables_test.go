@@ -2240,3 +2240,50 @@ func TestEqualRestoreInputSpec_NilSliceEqualsEmpty(t *testing.T) {
 		t.Error("nil-слайс и пустой слайс обязаны быть равны")
 	}
 }
+
+// СТРАХОВКА: блокировка читается из ТОГО ЖЕ дампа mangle, что и джампы
+// перехвата, — два `-S` на probe, как и раньше. Живой блокировкой считается
+// цепочка ВМЕСТЕ с её PREROUTING-джампом: в цепочку без джампа никто не
+// заходит, дропа нет, трафик течёт в WAN.
+func TestProbeAll_BlackholeFromSameDump(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		chain, jump bool
+		want        bool
+	}{
+		{"цепочка и джамп", true, true, true},
+		{"цепочка без джампа", true, false, false},
+		{"джамп без цепочки", false, true, false},
+		{"ничего нашего", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			it := &IPTables{runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+				calls++
+				out := jumpsPresentDump()
+				if len(args) >= 2 && args[1] == "mangle" {
+					if tc.chain {
+						out += "-N " + BlackholeChain + "\n"
+					}
+					if tc.jump {
+						out += "-A PREROUTING -m conntrack ! --ctstate INVALID -j " + BlackholeChain + "\n"
+					}
+				}
+				return out, nil
+			}}
+			installed, jumps, blackhole, err := it.probeAll(context.Background())
+			if err != nil {
+				t.Fatalf("probeAll: %v", err)
+			}
+			if !installed || !jumps {
+				t.Errorf("installed=%v jumps=%v, want true/true", installed, jumps)
+			}
+			if blackhole != tc.want {
+				t.Errorf("blackhole=%v, want %v", blackhole, tc.want)
+			}
+			if calls != 2 {
+				t.Errorf("дампов %d, want 2 (mangle+nat)", calls)
+			}
+		})
+	}
+}

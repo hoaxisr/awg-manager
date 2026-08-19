@@ -1616,7 +1616,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// the NDMS reload; this is the slower secondary net. On a probe error treat
 	// the state as unknown and DO NOT reinstall — a transient `-S` failure
 	// during an NDMS reload must not trigger a needless rebuild.
-	_, jumps, probeErr := s.deps.IPTables.Probe(ctx)
+	_, jumps, blackholeLive, probeErr := s.deps.IPTables.probeAll(ctx)
 	jumpsMissing := probeErr == nil && !jumps
 	// wantBlackhole: движок мёртв И PREROUTING-джампы снесены (NDMS перестроил
 	// firewall). Раньше здесь перехват просто не восстанавливался в мёртвый порт
@@ -1644,8 +1644,15 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		// тех же входов, что и перехват, и WAN-адрес роутера среди них. Гард
 		// «уже стоит — не трогаем» заморозил бы исключения на всё время
 		// простоя движка, и смена адреса до правил не доехала бы.
+		// Второй рубеж: блокировку могли снести мимо NDMS (ручной `iptables -F
+		// -t mangle`, сбой netfilter.d-хука) — снимок тогда врёт, а fail-closed
+		// ресурс без наблюдения факта чинился бы только сменой спека или
+		// возвращением движка. Живой считается цепочка ВМЕСТЕ с её
+		// PREROUTING-джампом: снесённый джамп при целой цепочке — тот же
+		// fail-OPEN, что и снесённая цепочка. Обе части берутся из того же
+		// дампа mangle, что и джампы перехвата: лишних вызовов iptables ноль.
 		firstEngage := s.appliedBlackhole == nil
-		needBlackhole := !equalRestoreInputSpec(s.appliedBlackhole, &blackholeSpec)
+		needBlackhole := !blackholeLive || !equalRestoreInputSpec(s.appliedBlackhole, &blackholeSpec)
 		s.mu.Unlock()
 		if needBlackhole {
 			// Набор обязан существовать, иначе iptables-restore blackhole'а падает
@@ -1665,6 +1672,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 				s.appLog.Warn("reconcile", "", "не удалось поставить fail-closed blackhole: "+err.Error())
 			case firstEngage:
 				s.appLog.Warn("reconcile", "", "движок не работает, PREROUTING jumps снесены — включён fail-closed blackhole (policy-трафик дропается, не течёт в WAN)")
+			case !blackholeLive:
+				s.appLog.Warn("reconcile", "", "fail-closed blackhole пропал из netfilter (цепочка или её PREROUTING-джамп) — переустановлен")
 			default:
 				s.appLog.Info("reconcile", "", "исключения fail-closed blackhole обновлены (сменились адреса роутера или настройки обхода)")
 			}

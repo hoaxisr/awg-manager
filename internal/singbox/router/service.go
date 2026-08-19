@@ -466,7 +466,8 @@ type ServiceImpl struct {
 	// лежали двенадцатью полями, каждая новая точка сравнения забывала часть
 	// из них (так и жил дефект policy-tun, сравнивавший один вход из семи).
 	// Сравнение — equalRestoreInputSpec; после записи спек не мутируется.
-	// Единственный писатель — успешный Install.
+	// Единственный писатель непустого значения — успешный Install (nil в него
+	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
 	appliedSpec *RestoreInputSpec
 
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
