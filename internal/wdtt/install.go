@@ -40,7 +40,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
-			SHA256: "b5846bddb48f004698acecd4372eabe3c2e12482995973c64039bf8956b71031", Size: 15401122,
+			SHA256: "a95d93dea1b9ed9dca20c40ca428f8a3c1eca75d1c4b2ea3c12a072009942e38", Size: 15401122,
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
@@ -53,13 +53,13 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "d52a312d617930550516503167ce6c8e400fc07591aa3bc14323cb3ddd80a679", Size: 17563841,
+			SHA256: "2b92ae0b636d4b4f7239bccb1da295bae5b7ae37f66ac4162c35e493253b0376", Size: 17563841,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "afd9ccc8d8d12b7c9a626fa56e0d32a28a48d0375498f1601c05d37109ab2089", Size: 17563841,
+			SHA256: "924ad71f363aec4472ea683c6282d67c1f38d070ac853a75fad6657f3d84d421", Size: 17563841,
 		},
 	},
 }
