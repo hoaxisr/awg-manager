@@ -5,40 +5,71 @@ import (
 	"strings"
 )
 
+// NormalizeSubscriptionURL strips wrapper schemes (happ://, clash://, etc.)
+// and ensures a clean http/https URL. Returns normalized URL and whether a change occurred.
+func NormalizeSubscriptionURL(rawURL string) (string, bool) {
+	trimmed := strings.TrimSpace(rawURL)
+	lower := strings.ToLower(trimmed)
+
+	// happ://crypt… несёт зашифрованный payload — расшифровка требует ключей
+	// сервиса и умеет падать, поэтому её делают вызывающие (Refresh,
+	// PreviewURL, DetectHeaders). Здесь ссылку только пропускаем нетронутой,
+	// чтобы её не разобрал общий цикл wrapper-схем ниже.
+	if IsHappCryptLink(trimmed) {
+		return trimmed, false
+	}
+
+	// clash://install-config?url=... or clashmeta://install-config?url=...
+	if strings.HasPrefix(lower, "clash://install-config") || strings.HasPrefix(lower, "clashmeta://install-config") {
+		if u, err := url.Parse(trimmed); err == nil {
+			if target := u.Query().Get("url"); target != "" {
+				return target, true
+			}
+		}
+	}
+
+	// Any wrapper scheme containing https:// or http:// (e.g. happ://add/https://..., sub://https://...)
+	for _, scheme := range []string{"happ://", "sub://", "singbox://", "sing-box://", "v2ray://", "sn://"} {
+		if strings.HasPrefix(lower, scheme) {
+			after := trimmed[len(scheme):]
+			lowerAfter := lower[len(scheme):]
+			if idx := strings.Index(lowerAfter, "https://"); idx != -1 {
+				return after[idx:], true
+			}
+			if idx := strings.Index(lowerAfter, "http://"); idx != -1 {
+				return after[idx:], true
+			}
+			if scheme == "happ://" {
+				// happ://domain.com/path... -> https://domain.com/path...
+				return "https://" + after, true
+			}
+		}
+	}
+
+	return trimmed, false
+}
+
 // RewriteForRaw maps a small set of well-known git-hosting web-view
-// ("blob") URLs to the equivalent raw-content URL. Returns the rewritten
-// URL plus a boolean indicating whether a rewrite happened. URLs not
-// matching a known pattern are returned unchanged with rewrote=false.
-//
-// Rationale: when a user pastes a github.com/.../blob/... URL, our
-// fetcher otherwise downloads HTML and the share-link extractor scrapes
-// URLs out of GitHub's React payload — where `&` is JSON-escaped to
-// `&`. The literal `&` substring is not a real URL separator,
-// so url.Parse treats the whole query as a single param. Rewriting to
-// raw side-steps the HTML detour entirely.
-//
-// Supported patterns (path-prefix → path-prefix substitution, host swap
-// where the hoster requires one):
-//
-//   - github.com/{O}/{R}/blob/{REF}/{PATH}
-//     → raw.githubusercontent.com/{O}/{R}/{REF}/{PATH}
-//
-//   - gitlab.com/{O}/{R}/-/blob/{REF}/{PATH}
-//     → gitlab.com/{O}/{R}/-/raw/{REF}/{PATH}
-//     (works for self-hosted GitLab too — only path is rewritten)
-//
-//   - Gitea / Forgejo: {host}/{O}/{R}/src/branch/{REF}/{PATH}
-//     → {host}/{O}/{R}/raw/branch/{REF}/{PATH}
-//
-// The function is deliberately conservative: query string and fragment
-// are preserved as-is, unknown hosts are not rewritten, and the result
-// always passes through net/url for syntactic validation.
+// ("blob") URLs and proxy client schemas (happ://, clash://) to the
+// equivalent raw-content URL. Returns the rewritten URL plus a boolean
+// indicating whether a rewrite happened.
 func RewriteForRaw(rawURL string) (string, bool) {
+	normalized, normRewrote := NormalizeSubscriptionURL(rawURL)
+	if normRewrote {
+		rawURL = normalized
+	}
+
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return rawURL, false
+		return rawURL, normRewrote
 	}
 	host := strings.ToLower(u.Host)
+
+	// Web landing page handoff (e.g. links.clovpn.org/happ?id=... -> /api/sub?id=...)
+	if u.Path == "/happ" && (u.Query().Get("id") != "" || u.Query().Get("token") != "") {
+		u.Path = "/api/sub"
+		return u.String(), true
+	}
 
 	// github.com/{owner}/{repo}/blob/{ref}/{path...}
 	if host == "github.com" {
@@ -68,5 +99,5 @@ func RewriteForRaw(rawURL string) (string, bool) {
 		}
 	}
 
-	return rawURL, false
+	return rawURL, normRewrote
 }

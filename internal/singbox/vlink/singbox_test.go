@@ -58,6 +58,11 @@ func TestIsSingboxJSON(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "xray config array with protocol not type",
+			body: `[{"remarks":"test","outbounds":[{"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"1.2.3.4","port":443,"users":[{"id":"u"}]}]}}]}]`,
+			want: false,
+		},
+		{
 			name: "non-JSON share-link plain",
 			body: `vless://uuid@host:443?security=tls`,
 			want: false,

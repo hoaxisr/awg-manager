@@ -1,5 +1,7 @@
 import type {
 	CreateSubscriptionGroupInput,
+	DetectedSubscriptionProfile,
+	SubscriptionHeaderProfile,
 	CreateSubscriptionInput,
 	Subscription,
 	SubscriptionActiveNowResponse,
@@ -150,6 +152,16 @@ export class SubscriptionsClient extends SbRouterClient {
 		});
 	}
 
+	async detectSubscriptionHeaders(
+		url: string,
+		headers: SubscriptionHeader[] = []
+	): Promise<DetectedSubscriptionProfile> {
+		return this.request<DetectedSubscriptionProfile>('/singbox/subscriptions/detect-headers', {
+			method: 'POST',
+			body: JSON.stringify({ url, headers }),
+		});
+	}
+
 	// Сводные группы подписок (#372)
 
 	async listSubscriptionGroups(): Promise<SubscriptionGroup[]> {
@@ -183,7 +195,31 @@ export class SubscriptionsClient extends SbRouterClient {
 		});
 	}
 
+	// Happ RSA keys configuration
+	async listSubscriptionHeaderProfiles(): Promise<SubscriptionHeaderProfile[]> {
+		return this.request<SubscriptionHeaderProfile[]>('/singbox/subscriptions/header-profiles');
+	}
+
+	async getHappKeysInfo(): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys');
+	}
+
+	// Разбор ключей — на сервере (ParseHappKeysInput): второй парсер на фронте
+	// расходился с ним вердиктами.
+	async saveHappKeys(text: string): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys', {
+			method: 'POST',
+			body: JSON.stringify({ text }),
+		});
+	}
+
+	async clearHappKeys(): Promise<{ configured: boolean; count: number }> {
+		return this.request<{ configured: boolean; count: number }>('/singbox/subscriptions/happ-keys', {
+			method: 'DELETE',
+		});
+	}
+
 	// #endregion
 
-
 }
+

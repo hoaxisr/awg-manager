@@ -980,6 +980,50 @@ definitions:
         example: a1b2c3d4e5f60718293a4b5c
         type: string
     type: object
+  api.DetectHeadersRequest:
+    properties:
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      url:
+        type: string
+    type: object
+  api.DetectHeadersResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DetectedProfileDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.DetectedProfileDTO:
+    properties:
+      decryptedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      isEncrypted:
+        type: boolean
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+      normalizedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      serverCount:
+        example: 3
+        type: integer
+    type: object
   api.DeviceProxyAuthDTO:
     properties:
       enabled:
@@ -1700,6 +1744,37 @@ definitions:
       data:
         items:
           $ref: '#/definitions/api.GeoTagDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.HappKeysRequest:
+    properties:
+      keys:
+        items:
+          type: string
+        type: array
+      text:
+        type: string
+    type: object
+  api.HeaderProfileDTO:
+    properties:
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+    type: object
+  api.HeaderProfilesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.HeaderProfileDTO'
         type: array
       success:
         example: true
@@ -16049,6 +16124,39 @@ paths:
       summary: Delete sing-box subscription
       tags:
       - subscriptions
+  /singbox/subscriptions/detect-headers:
+    post:
+      consumes:
+      - application/json
+      description: Probes a subscription URL with different client profiles to auto-detect
+        working headers
+      parameters:
+      - description: Subscription URL and user-configured headers
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DetectHeadersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DetectHeadersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Auto-detect required HTTP headers for a subscription URL
+      tags:
+      - subscriptions
   /singbox/subscriptions/get:
     get:
       parameters:
@@ -16246,6 +16354,116 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Update aggregate subscription group
+      tags:
+      - subscriptions
+  /singbox/subscriptions/happ-keys:
+    delete:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    get:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    post:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+  /singbox/subscriptions/header-profiles:
+    get:
+      description: Client fingerprints used by header auto-detection; the UI offers
+        the same list as presets
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HeaderProfilesResponse'
+      security:
+      - CookieAuth: []
+      summary: List client header profiles
       tags:
       - subscriptions
   /singbox/subscriptions/members/add:

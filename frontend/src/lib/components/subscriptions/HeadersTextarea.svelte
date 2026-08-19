@@ -1,11 +1,8 @@
 <script lang="ts">
-	import {
-		ALL_HEADERS_PRESET,
-		DEFAULT_PRESET,
-		HAPP_PRESET,
-		MIHOMO_PRESET,
-	} from './headersParser';
+	import { ALL_HEADERS_PRESET } from './headersParser';
 	import { Dropdown } from '$lib/components/ui';
+	import { api } from '$lib/api/client';
+	import type { SubscriptionHeaderProfile } from '$lib/types';
 
 	interface Props {
 		value: string;
@@ -13,10 +10,37 @@
 	let { value = $bindable('') }: Props = $props();
 
 	let showHelp = $state(false);
+	// Пресеты приходят с бэкенда — тот же список, которым детект перебирает
+	// профили клиентов. Второй копии на фронте нет.
+	let profiles = $state<SubscriptionHeaderProfile[]>([]);
+
+	$effect(() => {
+		void api
+			.listSubscriptionHeaderProfiles()
+			.then((list) => (profiles = Array.isArray(list) ? list : []))
+			.catch(() => (profiles = []));
+	});
+
+	let presetOptions = $derived([
+		...profiles.map((p) => ({ value: p.kind, label: p.label })),
+		{ value: 'all', label: 'Полный шаблон заголовков' },
+	]);
 
 	function applyPreset(preset: string): void {
 		if (value.trim() && !confirm('Заменить текущие заголовки пресетом?')) return;
 		value = preset;
+	}
+
+	async function pickPreset(kind: string): Promise<void> {
+		if (kind === 'all') {
+			applyPreset(ALL_HEADERS_PRESET);
+			return;
+		}
+		// Перезапрос — ради свежих HWID / модели устройства: часть значений
+		// профиля генерируется на каждый вызов.
+		const fresh = await api.listSubscriptionHeaderProfiles().catch(() => profiles);
+		const profile = (Array.isArray(fresh) ? fresh : profiles).find((p) => p.kind === kind);
+		if (profile) applyPreset(profile.headersText);
 	}
 </script>
 
@@ -42,18 +66,8 @@
 	<div class="head-actions">
 		<Dropdown
 			placeholder="Подставить пресет"
-			options={[
-				{ value: 'default', label: 'По умолчанию (sing-box)' },
-				{ value: 'mihomo', label: 'Clash / mihomo' },
-				{ value: 'happ', label: 'Happ iOS (если требует провайдер)' },
-				{ value: 'all', label: 'Полный набор (пустой шаблон)' },
-			]}
-			onchange={(v) => {
-				if (v === 'happ') applyPreset(HAPP_PRESET);
-				else if (v === 'mihomo') applyPreset(MIHOMO_PRESET);
-				else if (v === 'default') applyPreset(DEFAULT_PRESET);
-				else if (v === 'all') applyPreset(ALL_HEADERS_PRESET);
-			}}
+			options={presetOptions}
+			onchange={(v) => void pickPreset(v)}
 		/>
 	</div>
 </div>
