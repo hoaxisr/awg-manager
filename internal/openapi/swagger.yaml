@@ -5827,6 +5827,7 @@ definitions:
         - awg1.5
         - awg2.0
         - awg3
+        - awg3.1
         example: awg2.0
         type: string
       backend:
