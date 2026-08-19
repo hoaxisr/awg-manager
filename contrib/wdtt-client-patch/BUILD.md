@@ -24,7 +24,7 @@
 ```
 Client → Server: GETCONF_RAW:deviceID|password   (только worker #1)
 Server → Client: RAWCONF:10.70.66.x|1.1.1.1|1300
-Workers 2..N: uplink IP без GETCONF (как APK libclient.so)
+Workers 2..N:    AUTH:deviceID|password           (relay привязка без ответа)
 ```
 
 Транспорт: VK TURN → UDP relay → WRAP/RTP AEAD → VPS `-listen-raw`.

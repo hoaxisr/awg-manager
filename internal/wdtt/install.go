@@ -24,7 +24,7 @@ type ArchSpecs struct {
 	Server BinarySpec
 }
 
-const PinnedClientVersion = "1.4.4-awgm"
+const PinnedClientVersion = "1.4.5-awgm"
 const PinnedServerVersion = "1.4.4-awgm"
 
 // releaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
@@ -40,7 +40,7 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-arm64",
-			SHA256: "6f82bfd0b5851b1c61398d80ea4665575ba570c5dd641997194b25aef17f6e83", Size: 15401122,
+			SHA256: "d05c3033a45292a422f0edd88661cec0f56384faded8d06747f03d952c551d3c", Size: 15401122,
 		},
 		Server: BinarySpec{
 			Version: PinnedServerVersion, URL: serverReleaseBase + "wdtt-server-linux-arm64",
@@ -53,13 +53,13 @@ var EmbeddedBinaries = map[string]ArchSpecs{
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "0af429515d65f7f844c3d24f0ec052c6b27cb65f6a9ef70e6ebdeb9f39782b7d", Size: 17563841,
+			SHA256: "8e893417a4f97b2e30a11bfb1bdaca6f8ab20d45081f9a8c75e37c14c046ce98", Size: 17563841,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: PinnedClientVersion, URL: releaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "8b4d2d838c696f91b771507c2992ba62d9b1f2993fad32ef396d5b53b976906e", Size: 17563841,
+			SHA256: "17e6a56718b141bbe834277259c363c1021efc76367aa6b9aa07176c0adf3cb0", Size: 17563841,
 		},
 	},
 }

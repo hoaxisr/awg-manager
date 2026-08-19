@@ -25,7 +25,7 @@ func runRawTunClient(
 	stopPending := context.AfterFunc(ctx, func() { _ = pending.Close() })
 	defer stopPending()
 
-	disp := NewDispatcher(ctx, pending, stats)
+	disp := NewRawTunDispatcher(ctx, pending, stats)
 	defer disp.Shutdown()
 
 	useTunFd := tunFdSockPath() != ""

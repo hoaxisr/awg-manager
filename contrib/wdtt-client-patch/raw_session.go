@@ -261,7 +261,11 @@ func RunRawSession(
 			}
 		}
 	} else {
-		log.Printf("[RAW #%d] Relay готов (без GETCONF)", sessionID)
+		if err := SendRawAuth(plainConn, deviceID, password); err != nil {
+			log.Printf("[RAW #%d] Ошибка AUTH: %v", sessionID, err)
+			return false, err
+		}
+		log.Printf("[RAW #%d] Relay готов (AUTH отправлен)", sessionID)
 	}
 
 	log.Printf("[RAW #%d] [READY] Raw-туннель готов ✓", sessionID)
