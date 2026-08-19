@@ -3091,6 +3091,27 @@ definitions:
       state:
         type: string
     type: object
+  api.ScriptStatusDTO:
+    properties:
+      canExecute:
+        type: boolean
+      isScript:
+        type: boolean
+      isService:
+        type: boolean
+      path:
+        type: string
+      pids:
+        items:
+          type: integer
+        type: array
+      running:
+        type: boolean
+      serviceName:
+        type: string
+      statusText:
+        type: string
+    type: object
   api.ServerAddPeerRequestDTO:
     properties:
       description:
@@ -5617,6 +5638,86 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SystemFileChecksumData:
+    properties:
+      algo:
+        example: sha256
+        type: string
+      checksum:
+        example: 9f86d081884c7d65
+        type: string
+      info:
+        $ref: '#/definitions/files.Entry'
+      path:
+        example: /opt/bin/awg-manager
+        type: string
+    type: object
+  api.SystemFileChecksumResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFileChecksumData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFileReadData:
+    properties:
+      content:
+        type: string
+      info:
+        $ref: '#/definitions/files.Entry'
+      path:
+        example: /opt/etc/config
+        type: string
+    type: object
+  api.SystemFileReadResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFileReadData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFileRootDTO:
+    properties:
+      label:
+        example: Entware /opt/etc
+        type: string
+      path:
+        example: /opt/etc
+        type: string
+      readOnly:
+        example: false
+        type: boolean
+    type: object
+  api.SystemFileRootsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SystemFileRootDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFilesListData:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/files.Entry'
+        type: array
+      path:
+        example: /opt/etc
+        type: string
+    type: object
+  api.SystemFilesListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFilesListData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SystemInfoBackendAvailability:
     properties:
       kernel:
@@ -5736,6 +5837,229 @@ definitions:
         example: 1.9.3
         type: string
     type: object
+  api.SystemKillData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+      pid:
+        example: 1234
+        type: integer
+      signal:
+        example: SIGTERM
+        type: string
+    type: object
+  api.SystemKillResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemKillData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKFlagData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKFlagResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOKFlagData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKResponse:
+    properties:
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOpkgAvailableData:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/opkg.Package'
+        type: array
+      limit:
+        example: 100
+        type: integer
+      offset:
+        example: 0
+        type: integer
+      total:
+        example: 1800
+        type: integer
+    type: object
+  api.SystemOpkgAvailableResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOpkgAvailableData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOpkgPackagesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/opkg.Package'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOutputData:
+    properties:
+      output:
+        type: string
+    type: object
+  api.SystemOutputResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOutputData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemPortInspectData:
+    properties:
+      bindings:
+        items:
+          $ref: '#/definitions/ports.Binding'
+        type: array
+      occupied:
+        example: true
+        type: boolean
+      port:
+        example: 8080
+        type: integer
+      proto:
+        example: tcp
+        type: string
+    type: object
+  api.SystemPortInspectResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemPortInspectData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemPortsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/ports.Binding'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemProcSnapshotResponse:
+    properties:
+      data:
+        $ref: '#/definitions/procmon.SystemSnapshot'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptActionData:
+    properties:
+      error:
+        type: string
+      ok:
+        example: true
+        type: boolean
+      output:
+        type: string
+      pids:
+        items:
+          type: integer
+        type: array
+      running:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptActionResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemScriptActionData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ScriptStatusDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceActionData:
+    properties:
+      error:
+        type: string
+      ok:
+        example: true
+        type: boolean
+      output:
+        type: string
+    type: object
+  api.SystemServiceActionResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceActionData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceSavedData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+      script:
+        example: /opt/etc/init.d/S90myservice
+        type: string
+    type: object
+  api.SystemServiceSavedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceSavedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceScriptData:
+    properties:
+      content:
+        type: string
+      script:
+        example: /opt/etc/init.d/S90myservice
+        type: string
+    type: object
+  api.SystemServiceScriptResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceScriptData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServicesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/services.Item'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SystemTunnelDTO:
     properties:
       connected:
@@ -5786,6 +6110,20 @@ definitions:
         items:
           $ref: '#/definitions/api.SystemTunnelDTO'
         type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemUploadData:
+    properties:
+      path:
+        example: /tmp/upload.bin
+        type: string
+    type: object
+  api.SystemUploadResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemUploadData'
       success:
         example: true
         type: boolean
@@ -6727,6 +7065,21 @@ definitions:
       sni:
         type: string
     type: object
+  files.Entry:
+    properties:
+      isDir:
+        type: boolean
+      modTime:
+        type: string
+      mode:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      size:
+        type: integer
+    type: object
   freeturn.AllowlistEntry:
     properties:
       clientId:
@@ -7073,6 +7426,61 @@ definitions:
           InstallVersion.
         type: boolean
     type: object
+  opkg.Package:
+    properties:
+      description:
+        type: string
+      installedAt:
+        type: string
+      name:
+        type: string
+      upgradeVersion:
+        type: string
+      version:
+        type: string
+    type: object
+  ports.Binding:
+    properties:
+      cmdline:
+        description: Full command line arguments
+        type: string
+      exe:
+        description: Binary path (e.g. "/opt/bin/wt-client")
+        type: string
+      inode:
+        description: Socket inode
+        type: integer
+      ip:
+        description: Local IP (e.g. "0.0.0.0", "127.0.0.1", "::")
+        type: string
+      isCritical:
+        description: True if terminating may affect connectivity
+        type: boolean
+      isSelf:
+        description: True if it is this awg-manager daemon
+        type: boolean
+      pid:
+        description: Process ID
+        type: integer
+      port:
+        description: Port number (e.g. 56013)
+        type: integer
+      processName:
+        description: Name (e.g. "wt-client", "dropbear")
+        type: string
+      proto:
+        description: '"tcp", "udp", "tcp6", "udp6"'
+        type: string
+      service:
+        description: Associated init.d service (if detected)
+        type: string
+      state:
+        description: '"LISTEN", "UNCONN", etc.'
+        type: string
+      user:
+        description: User / UID
+        type: string
+    type: object
   presets.DNSEngine:
     properties:
       domains:
@@ -7153,6 +7561,160 @@ definitions:
         items:
           $ref: '#/definitions/presets.RuleRef'
         type: array
+    type: object
+  procmon.CpuCore:
+    properties:
+      id:
+        description: '"total", "cpu0", "cpu1", etc.'
+        type: string
+      idle:
+        description: '%'
+        type: number
+      iowait:
+        description: '%'
+        type: number
+      nice:
+        description: '%'
+        type: number
+      system:
+        description: '%'
+        type: number
+      usage:
+        description: Total non-idle %
+        type: number
+      user:
+        description: '%'
+        type: number
+    type: object
+  procmon.MemoryInfo:
+    properties:
+      available:
+        type: integer
+      buffers:
+        type: integer
+      cached:
+        type: integer
+      free:
+        type: integer
+      swapFree:
+        type: integer
+      swapTotal:
+        type: integer
+      swapUsed:
+        type: integer
+      total:
+        type: integer
+      usagePercent:
+        type: number
+      used:
+        type: integer
+    type: object
+  procmon.ProcSummary:
+    properties:
+      running:
+        type: integer
+      sleeping:
+        type: integer
+      stopped:
+        type: integer
+      threads:
+        type: integer
+      total:
+        type: integer
+      zombie:
+        type: integer
+    type: object
+  procmon.ProcessItem:
+    properties:
+      cmdline:
+        type: string
+      cpuPercent:
+        type: number
+      exe:
+        type: string
+      isCritical:
+        type: boolean
+      isKernel:
+        type: boolean
+      isSelf:
+        type: boolean
+      memoryPercent:
+        type: number
+      memoryRss:
+        description: bytes
+        type: integer
+      memoryVsize:
+        description: bytes
+        type: integer
+      name:
+        type: string
+      nice:
+        type: integer
+      pid:
+        type: integer
+      ppid:
+        type: integer
+      priority:
+        type: integer
+      service:
+        type: string
+      state:
+        description: '"R", "S", "D", "Z", "T"'
+        type: string
+      threads:
+        type: integer
+      user:
+        type: string
+    type: object
+  procmon.SystemSnapshot:
+    properties:
+      cores:
+        description: index 0 is total, followed by cpu0, cpu1...
+        items:
+          $ref: '#/definitions/procmon.CpuCore'
+        type: array
+      cpuArchitecture:
+        type: string
+      cpuCount:
+        type: integer
+      cpuModel:
+        type: string
+      loadAvg:
+        description: 1m, 5m, 15m
+        items:
+          type: number
+        type: array
+      memory:
+        $ref: '#/definitions/procmon.MemoryInfo'
+      processSummary:
+        $ref: '#/definitions/procmon.ProcSummary'
+      processes:
+        items:
+          $ref: '#/definitions/procmon.ProcessItem'
+        type: array
+      timestamp:
+        type: string
+      uptimeSeconds:
+        type: integer
+    type: object
+  services.Item:
+    properties:
+      enabled:
+        type: boolean
+      logPath:
+        type: string
+      managed:
+        type: boolean
+      managedHint:
+        type: string
+      name:
+        type: string
+      running:
+        type: boolean
+      script:
+        type: string
+      statusText:
+        type: string
     type: object
   wdtt.ClientConfig:
     properties:
@@ -17503,8 +18065,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemFileChecksumResponse'
         "400":
           description: Bad Request
           schema:
@@ -17534,8 +18095,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -17565,8 +18125,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -17599,10 +18158,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: содержимое файла
           schema:
-            additionalProperties: true
-            type: object
+            type: file
         "400":
           description: Bad Request
           schema:
@@ -17632,8 +18190,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemFilesListResponse'
         "400":
           description: Bad Request
           schema:
@@ -17663,8 +18220,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -17694,8 +18250,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemFileReadResponse'
         "400":
           description: Bad Request
           schema:
@@ -17725,8 +18280,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -17756,8 +18310,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -17787,8 +18340,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemFileRootsResponse'
         "400":
           description: Bad Request
           schema:
@@ -17818,8 +18370,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemScriptActionResponse'
         "400":
           description: Bad Request
           schema:
@@ -17849,8 +18400,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemScriptStatusResponse'
         "400":
           description: Bad Request
           schema:
@@ -17885,8 +18435,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemUploadResponse'
         "400":
           description: Bad Request
           schema:
@@ -17916,8 +18465,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKResponse'
         "400":
           description: Bad Request
           schema:
@@ -18015,8 +18563,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOpkgAvailableResponse'
         "400":
           description: Bad Request
           schema:
@@ -18046,8 +18593,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOutputResponse'
         "400":
           description: Bad Request
           schema:
@@ -18077,8 +18623,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
         "400":
           description: Bad Request
           schema:
@@ -18108,8 +18653,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOutputResponse'
         "400":
           description: Bad Request
           schema:
@@ -18139,8 +18683,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
         "400":
           description: Bad Request
           schema:
@@ -18170,8 +18713,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOutputResponse'
         "400":
           description: Bad Request
           schema:
@@ -18201,8 +18743,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
         "400":
           description: Bad Request
           schema:
@@ -18232,8 +18773,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOutputResponse'
         "400":
           description: Bad Request
           schema:
@@ -18263,8 +18803,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemPortInspectResponse'
         "400":
           description: Bad Request
           schema:
@@ -18294,8 +18833,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemKillResponse'
         "400":
           description: Bad Request
           schema:
@@ -18325,8 +18863,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemPortsListResponse'
         "400":
           description: Bad Request
           schema:
@@ -18356,8 +18893,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemKillResponse'
         "400":
           description: Bad Request
           schema:
@@ -18377,7 +18913,7 @@ paths:
       - system
       - expert
   /system/proc/snapshot:
-    post:
+    get:
       consumes:
       - application/json
       description: ProcSnapshot (Expert only)
@@ -18387,8 +18923,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemProcSnapshotResponse'
         "400":
           description: Bad Request
           schema:
@@ -18440,8 +18975,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemServiceActionResponse'
         "400":
           description: Bad Request
           schema:
@@ -18471,8 +19005,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemOKFlagResponse'
         "400":
           description: Bad Request
           schema:
@@ -18502,8 +19035,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemServiceScriptResponse'
         "400":
           description: Bad Request
           schema:
@@ -18533,8 +19065,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemServicesListResponse'
         "400":
           description: Bad Request
           schema:
@@ -18564,8 +19095,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/api.SystemServiceSavedResponse'
         "400":
           description: Bad Request
           schema:

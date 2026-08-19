@@ -6,10 +6,7 @@
 	import { get } from 'svelte/store';
 	import { theme, resolveThemeTokens } from '$lib/stores/theme';
 	import { buildXtermTheme } from '$lib/utils/xterm-theme';
-	import {
-		createTerminalAutoLogin,
-		type TerminalAutoLogin,
-	} from '$lib/utils/terminalCredentials';
+	import { type TerminalAutoLogin } from '$lib/utils/terminalCredentials';
 	import { stripAnsi } from '$lib/utils/ansi';
 	import {
 		createCommandLineTracker,
@@ -27,7 +24,7 @@
 		TERMINAL_MIN_WIDTH,
 	} from '$lib/utils/terminalCommandHistory';
 	import TerminalHistoryPanel from './TerminalHistoryPanel.svelte';
-	import { History } from 'lucide-svelte';
+	import { History, KeyRound, UserRound } from 'lucide-svelte';
 
 	interface Props {
 		onclose?: () => void;
@@ -67,7 +64,6 @@
 		ws.send(msg.buffer);
 	}
 
-	let autoLoginCtl = $state(createTerminalAutoLogin(sendTerminalInput, null));
 	let historyEnabled = $state(loadTerminalHistoryEnabled());
 	let historyCommands = $state(loadTerminalCommands());
 	let historyWidth = $state(loadTerminalHistoryWidth(HISTORY_DEFAULT_WIDTH));
@@ -77,10 +73,6 @@
 		if (!historyEnabled) return;
 		historyCommands = pushTerminalCommand(historyCommands, command);
 		saveTerminalCommands(historyCommands);
-	});
-
-	$effect(() => {
-		autoLoginCtl = createTerminalAutoLogin(sendTerminalInput, autoLogin ?? null);
 	});
 
 	$effect(() => {
@@ -98,8 +90,18 @@
 		return () => ro.disconnect();
 	});
 
-	function feedAutoLogin(chunk: Uint8Array) {
-		autoLoginCtl.feed(new TextDecoder().decode(chunk));
+	// Учётные данные уходят в tty только по явному нажатию: прежний
+	// авто-ввод срабатывал на ЛЮБОЙ вывод, оканчивающийся на «password:»,
+	// то есть пароль роутера мог уехать в чужое приглашение (ssh, sudo,
+	// mysql) внутри той же сессии.
+	function sendStoredLogin() {
+		if (!autoLogin?.login) return;
+		sendTerminalInput(autoLogin.login + '\r');
+	}
+
+	function sendStoredPassword() {
+		if (!autoLogin?.password) return;
+		sendTerminalInput(autoLogin.password + '\r');
 	}
 
 	function feedShellDetection(chunk: Uint8Array) {
@@ -191,7 +193,6 @@
 	function attachSocketHandlers(socket: WebSocket, term: Terminal, fitAddon: FitAddon) {
 		socket.onopen = () => {
 			lastOpenAt = Date.now();
-			autoLoginCtl.reset();
 			cmdTracker.reset();
 			socket.send(JSON.stringify({ AuthToken: '' }));
 			sendResize(socket, term.cols, term.rows);
@@ -207,7 +208,6 @@
 
 			switch (msgType) {
 				case TTYD_OUTPUT:
-					feedAutoLogin(payload);
 					feedShellDetection(payload);
 					term.write(payload);
 					break;
@@ -440,6 +440,28 @@
 		</div>
 		<span class="mac-title">Терминал</span>
 		<div class="mac-titlebar-actions">
+			{#if autoLogin?.login}
+				<button
+					type="button"
+					class="history-toggle"
+					title="Отправить сохранённый логин в текущее приглашение"
+					onclick={sendStoredLogin}
+				>
+					<UserRound size={14} />
+					<span>Логин</span>
+				</button>
+			{/if}
+			{#if autoLogin?.password}
+				<button
+					type="button"
+					class="history-toggle"
+					title="Отправить сохранённый пароль в текущее приглашение"
+					onclick={sendStoredPassword}
+				>
+					<KeyRound size={14} />
+					<span>Пароль</span>
+				</button>
+			{/if}
 			{#if !historyEnabled}
 				<button
 					type="button"

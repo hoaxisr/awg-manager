@@ -51,7 +51,7 @@
 		if (remember) {
 			saveTerminalAutoLogin(payload);
 			saved = true;
-			notifications.success('Данные для автовхода сохранены на время сессии');
+			notifications.success('Учётные данные сохранены на время сессии');
 		} else {
 			clearTerminalAutoLogin();
 			saved = false;
@@ -66,17 +66,19 @@
 		saved = false;
 		clearTerminalAutoLogin();
 		onchange?.(null);
-		notifications.success('Автовход отключён');
+		notifications.success('Учётные данные удалены');
 	}
 </script>
 
 <Card padding="sm">
 	<div class="head">
 		<div>
-			<h3>Автовход в shell</h3>
+			<h3>Учётные данные shell</h3>
 			<p class="hint">
-				Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки) и автоматически подставляются при запросе
-				<code>login</code> / <code>Password</code> в терминале.
+				Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки).
+				В терминал они уходят по кнопкам «Логин» и «Пароль» в его заголовке — сами,
+				по виду приглашения, не подставляются: иначе пароль роутера мог бы уехать
+				в чужой запрос (<code>ssh</code>, <code>sudo</code>) внутри той же сессии.
 			</p>
 		</div>
 		{#if saved}

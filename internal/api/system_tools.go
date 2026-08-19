@@ -102,7 +102,7 @@ func (h *SystemToolsHandler) requireExpert(w http.ResponseWriter, r *http.Reques
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemFileRootsResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -112,15 +112,10 @@ func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) 
 		response.MethodNotAllowed(w)
 		return
 	}
-	type rootDTO struct {
-		Path     string `json:"path"`
-		Label    string `json:"label"`
-		ReadOnly bool   `json:"readOnly"`
-	}
 	roots := h.files.Roots()
-	out := make([]rootDTO, 0, len(roots))
+	out := make([]SystemFileRootDTO, 0, len(roots))
 	for _, root := range roots {
-		out = append(out, rootDTO{Path: root.Path, Label: root.Label, ReadOnly: root.ReadOnly})
+		out = append(out, SystemFileRootDTO{Path: root.Path, Label: root.Label, ReadOnly: root.ReadOnly})
 	}
 	response.Success(w, out)
 }
@@ -132,7 +127,7 @@ func (h *SystemToolsHandler) FilesRoots(w http.ResponseWriter, r *http.Request) 
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemFilesListResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -148,10 +143,7 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 		h.filesError(w, err)
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"path":    abs,
-		"entries": entries,
-	})
+	response.Success(w, SystemFilesListData{Path: abs, Entries: entries})
 }
 
 // GET /api/system/files/read?path=
@@ -161,7 +153,7 @@ func (h *SystemToolsHandler) FilesList(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemFileReadResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -177,11 +169,7 @@ func (h *SystemToolsHandler) FilesRead(w http.ResponseWriter, r *http.Request) {
 		h.filesError(w, err)
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"path":    info.Path,
-		"content": content,
-		"info":    info,
-	})
+	response.Success(w, SystemFileReadData{Path: info.Path, Content: content, Info: info})
 }
 
 type filesWriteRequest struct {
@@ -196,7 +184,7 @@ type filesWriteRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -234,7 +222,7 @@ type filesPathRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -264,7 +252,7 @@ func (h *SystemToolsHandler) FilesMkdir(w http.ResponseWriter, r *http.Request) 
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -299,7 +287,7 @@ type filesRenameRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -334,7 +322,7 @@ type filesCopyRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -369,7 +357,7 @@ type filesChmodRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -399,7 +387,7 @@ func (h *SystemToolsHandler) FilesChmod(w http.ResponseWriter, r *http.Request) 
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemFileChecksumResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -416,12 +404,7 @@ func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Reques
 		h.filesError(w, err)
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"path":     info.Path,
-		"checksum": sum,
-		"algo":     algo,
-		"info":     info,
-	})
+	response.Success(w, SystemFileChecksumData{Path: info.Path, Checksum: sum, Algo: algo, Info: info})
 }
 
 // GET /api/system/files/download?path=
@@ -432,7 +415,7 @@ func (h *SystemToolsHandler) FilesChecksum(w http.ResponseWriter, r *http.Reques
 // @Produce json
 // @Param path query string false "Path"
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {file} binary "содержимое файла"
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -463,7 +446,7 @@ func (h *SystemToolsHandler) FilesDownload(w http.ResponseWriter, r *http.Reques
 // @Produce json
 // @Param path query string false "Path"
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemUploadResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -508,7 +491,7 @@ func (h *SystemToolsHandler) FilesUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.emitEvent("upload", saved, fmt.Sprintf("%d bytes", len(data)))
-	response.Success(w, map[string]string{"path": saved})
+	response.Success(w, SystemUploadData{Path: saved})
 }
 
 func maxUploadBytes() int { return 10 * 1024 * 1024 }
@@ -532,7 +515,7 @@ func (h *SystemToolsHandler) filesError(w http.ResponseWriter, err error) {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemServicesListResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -562,7 +545,7 @@ type serviceActionRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemServiceActionResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -580,17 +563,10 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 	out, err := h.services.RunAction(req.Script, req.Action)
 	h.emitEvent(req.Action, req.Script, out)
 	if err != nil {
-		response.Success(w, map[string]interface{}{
-			"output": out,
-			"ok":     false,
-			"error":  err.Error(),
-		})
+		response.Success(w, SystemServiceActionData{Output: out, OK: false, Error: err.Error()})
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"output": out,
-		"ok":     true,
-	})
+	response.Success(w, SystemServiceActionData{Output: out, OK: true})
 }
 
 // GET /api/system/services/get?script=/opt/etc/init.d/S90name
@@ -600,7 +576,7 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemServiceScriptResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -620,10 +596,7 @@ func (h *SystemToolsHandler) ServicesGetScript(w http.ResponseWriter, r *http.Re
 		response.Error(w, err.Error(), "READ_ERROR")
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"script":  script,
-		"content": content,
-	})
+	response.Success(w, SystemServiceScriptData{Script: script, Content: content})
 }
 
 type serviceSaveRequest struct {
@@ -638,7 +611,7 @@ type serviceSaveRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemServiceSavedResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -669,10 +642,7 @@ func (h *SystemToolsHandler) ServicesSaveScript(w http.ResponseWriter, r *http.R
 	}
 
 	h.emitEvent("save", req.ScriptName, fullPath)
-	response.Success(w, map[string]interface{}{
-		"ok":     true,
-		"script": fullPath,
-	})
+	response.Success(w, SystemServiceSavedData{OK: true, Script: fullPath})
 }
 
 type serviceDeleteRequest struct {
@@ -686,7 +656,7 @@ type serviceDeleteRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOKFlagResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -712,9 +682,7 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 	}
 
 	h.emitEvent("delete", req.Script, "service deleted")
-	response.Success(w, map[string]interface{}{
-		"ok": true,
-	})
+	response.Success(w, SystemOKFlagData{OK: true})
 }
 
 // GET /api/system/opkg/installed
@@ -724,7 +692,7 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOpkgPackagesResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -749,7 +717,7 @@ func (h *SystemToolsHandler) OpkgInstalled(w http.ResponseWriter, r *http.Reques
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOpkgPackagesResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -774,7 +742,7 @@ func (h *SystemToolsHandler) OpkgUpgradable(w http.ResponseWriter, r *http.Reque
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOpkgPackagesResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -804,7 +772,7 @@ type opkgPackagesRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOutputResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -820,7 +788,7 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
 	}
-	response.Success(w, map[string]string{"output": out})
+	response.Success(w, SystemOutputData{Output: out})
 }
 
 // POST /api/system/opkg/upgrade
@@ -830,7 +798,7 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOutputResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -856,7 +824,7 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
 	}
-	response.Success(w, map[string]string{"output": out})
+	response.Success(w, SystemOutputData{Output: out})
 }
 
 // POST /api/system/opkg/install
@@ -866,7 +834,7 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOutputResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -887,7 +855,7 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
 	}
-	response.Success(w, map[string]string{"output": out})
+	response.Success(w, SystemOutputData{Output: out})
 }
 
 // GET /api/system/opkg/available?q=&offset=&limit=
@@ -897,7 +865,7 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOpkgAvailableResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -915,12 +883,7 @@ func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Reques
 		response.Error(w, err.Error(), "OPKG_ERROR")
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"items":  items,
-		"total":  total,
-		"offset": offset,
-		"limit":  limit,
-	})
+	response.Success(w, SystemOpkgAvailableData{Items: items, Total: total, Offset: offset, Limit: limit})
 }
 
 // POST /api/system/opkg/remove
@@ -930,7 +893,7 @@ func (h *SystemToolsHandler) OpkgAvailable(w http.ResponseWriter, r *http.Reques
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemOutputResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -951,7 +914,7 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
 	}
-	response.Success(w, map[string]string{"output": out})
+	response.Success(w, SystemOutputData{Output: out})
 }
 
 // GET /api/system/ports/list
@@ -961,7 +924,7 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemPortsListResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -986,7 +949,7 @@ func (h *SystemToolsHandler) PortsList(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemPortInspectResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -1012,12 +975,7 @@ func (h *SystemToolsHandler) PortsInspect(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "PORTS_ERROR")
 		return
 	}
-	response.Success(w, map[string]interface{}{
-		"port":     port,
-		"proto":    proto,
-		"bindings": items,
-		"occupied": len(items) > 0,
-	})
+	response.Success(w, SystemPortInspectData{Port: port, Proto: proto, Bindings: items, Occupied: len(items) > 0})
 }
 
 type portKillRequest struct {
@@ -1034,7 +992,7 @@ type portKillRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemKillResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -1063,11 +1021,7 @@ func (h *SystemToolsHandler) PortsKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.emitEvent("kill_process", fmt.Sprintf("PID %d (signal %s, port %d)", req.PID, sig, req.Port), "process terminated")
-	response.Success(w, map[string]interface{}{
-		"pid":    req.PID,
-		"signal": sig,
-		"ok":     true,
-	})
+	response.Success(w, SystemKillData{PID: req.PID, Signal: sig, OK: true})
 }
 
 // ScriptStatusDTO describes execution and runtime process status of a script/service.
@@ -1151,7 +1105,7 @@ func findPIDsForPath(targetPath string) []int {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemScriptStatusResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -1233,7 +1187,7 @@ type scriptActionRequest struct {
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemScriptActionResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -1352,12 +1306,12 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 		errStr = runErr.Error()
 	}
 
-	response.Success(w, map[string]interface{}{
-		"ok":      runErr == nil,
-		"output":  strings.TrimSpace(output),
-		"running": running,
-		"pids":    pids,
-		"error":   errStr,
+	response.Success(w, SystemScriptActionData{
+		OK:      runErr == nil,
+		Output:  strings.TrimSpace(output),
+		Running: running,
+		PIDs:    pids,
+		Error:   errStr,
 	})
 }
 
@@ -1368,11 +1322,11 @@ func (h *SystemToolsHandler) FilesScriptAction(w http.ResponseWriter, r *http.Re
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemProcSnapshotResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
-// @Router /system/proc/snapshot [post]
+// @Router /system/proc/snapshot [get]
 func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -1395,7 +1349,7 @@ func (h *SystemToolsHandler) ProcSnapshot(w http.ResponseWriter, r *http.Request
 // @Accept json
 // @Produce json
 // @Security CookieAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} SystemKillResponse
 // @Failure 400 {object} APIErrorEnvelope
 // @Failure 403 {object} APIErrorEnvelope
 // @Failure 500 {object} APIErrorEnvelope
@@ -1428,9 +1382,5 @@ func (h *SystemToolsHandler) ProcKill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitEvent("proc_kill", strconv.Itoa(req.PID), fmt.Sprintf("Killed PID %d with %s", req.PID, req.Signal))
-	response.Success(w, map[string]interface{}{
-		"pid":    req.PID,
-		"signal": req.Signal,
-		"ok":     true,
-	})
+	response.Success(w, SystemKillData{PID: req.PID, Signal: req.Signal, OK: true})
 }

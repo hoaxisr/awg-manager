@@ -4,6 +4,7 @@ export * from './types/tunnels';
 export * from './types/routing';
 export * from './types/servers';
 export * from './types/system';
+export * from './types/systemTools';
 export * from './types/deviceproxy';
 export * from './types/diagnostics';
 export * from './types/singbox';

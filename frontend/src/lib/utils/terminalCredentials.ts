@@ -1,5 +1,3 @@
-import { stripAnsi } from '$lib/utils/ansi';
-
 const STORAGE_KEY = 'awgm-terminal-auto-login';
 
 export type TerminalAutoLogin = {
@@ -40,46 +38,3 @@ export function saveTerminalAutoLogin(value: TerminalAutoLogin): void {
 export function clearTerminalAutoLogin(): void {
 	sessionStorage.removeItem(STORAGE_KEY);
 }
-
-type AutoLoginPhase = 'wait_login' | 'wait_password' | 'done';
-
-/** Watches tty output and injects login/password when login(1) prompts appear. */
-export function createTerminalAutoLogin(
-	send: (data: string) => void,
-	creds: Pick<TerminalAutoLogin, 'login' | 'password'> | null,
-) {
-	let phase: AutoLoginPhase = 'wait_login';
-	let buf = '';
-
-	function reset() {
-		phase = 'wait_login';
-		buf = '';
-	}
-
-	function feed(chunk: string) {
-		if (!creds?.login || phase === 'done') return;
-		buf = (buf + stripAnsi(chunk)).slice(-600);
-		const tail = buf.replace(/\r/g, '').trimEnd();
-
-		if (phase === 'wait_login' && loginPromptRe.test(tail)) {
-			send(creds.login + '\r');
-			phase = 'wait_password';
-			buf = '';
-			return;
-		}
-		if (phase === 'wait_password' && passwordPromptRe.test(tail)) {
-			send(creds.password + '\r');
-			phase = 'done';
-			buf = '';
-		}
-	}
-
-	return { feed, reset };
-}
-
-// Busybox/Entware login, Keenetic, generic getty prompts.
-// The anchors require the line to contain ONLY the prompt (after possible
-// leading whitespace) so we don't misfire on messages like
-// "sudo: incorrect password:" or "Enter password:".
-const loginPromptRe = /(?:^|\n)\s*(?:login|username|логин)\s*:\s*$/i;
-const passwordPromptRe = /(?:^|\n)\s*password\s*:\s*$/i;
