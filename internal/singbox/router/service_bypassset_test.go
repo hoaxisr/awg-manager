@@ -348,8 +348,8 @@ func TestTriggerBypassSetPopulate_RerunsAfterTriggerDuringRun(t *testing.T) {
 		return bypassset.PopulateResult{CountOK: true}, nil
 	}
 	svc.TriggerBypassSetPopulate()
-	<-entered                       // первый прогон вошёл
-	svc.TriggerBypassSetPopulate()  // занято → взводит повтор
+	<-entered                      // первый прогон вошёл
+	svc.TriggerBypassSetPopulate() // занято → взводит повтор
 	close(release)
 
 	select {

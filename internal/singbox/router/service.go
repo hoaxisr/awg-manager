@@ -446,13 +446,16 @@ type ServiceImpl struct {
 	// appliedSpec, appliedBlackhole, netfilterStateKnown и
 	// currentBypassGeoIPTags описывают то, что РЕАЛЬНО установлено в netfilter.
 	//
-	// ИНВАРИАНТ: все они читаются и пишутся только под transitionMu.
+	// ИНВАРИАНТ: взаимное исключение даёт transitionMu, и только он.
 	// Писатели: enableLocked, Disable, enablePolicyTun, disablePolicyTun,
 	// reconcileInstalled, reconcilePolicyTunQoS. Читатели: reconcileInstalled,
 	// reconcilePolicyTunQoS. Каждый достижим ровно двумя путями — Reconcile
-	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock);
-	// s.mu, который берут Enable/Disable, ЭТИ поля не защищает, потому что
-	// reconcileInstalled читает их вне s.mu.
+	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock).
+	//
+	// s.mu вокруг записей НЕ является защитой этих полей: часть чтений в
+	// reconcileInstalled (forceInitialSync, specChanged, bypassGeoTagsChanged)
+	// идёт вне s.mu, так что опираться на него нельзя — он держится ради
+	// соседних полей в тех же критических секциях.
 	//
 	// Пока путей два, гонки нет по построению. Третий путь (например новая
 	// публичная ручка, зовущая Enable/Disable мимо transitionMu) её вернёт —
@@ -465,7 +468,9 @@ type ServiceImpl struct {
 	// Хранятся ВХОДЫ правил целиком, а не их разложенные копии: пока входы
 	// лежали двенадцатью полями, каждая новая точка сравнения забывала часть
 	// из них (так и жил дефект policy-tun, сравнивавший один вход из семи).
-	// Сравнение — equalRestoreInputSpec; после записи спек не мутируется.
+	// Сравнение — equalInstalledSpec, по РЕНДЕРУ спека: поле, которого нет в
+	// правилах, изменить netfilter не может, поэтому «забыли поле» здесь
+	// невыразимо. После записи спек не мутируется.
 	// Единственный писатель непустого значения — успешный Install (nil в него
 	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
 	appliedSpec *RestoreInputSpec
@@ -475,9 +480,11 @@ type ServiceImpl struct {
 	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от
 	// appliedSpec во всём: свой рендер (buildBlackholeRestoreInput), свой файл
 	// правил (persistBlackhole) и своя цепочка (BlackholeChain), — поэтому и
-	// снимок свой. Снимком, а не булевым флагом: по флагу переустановка
-	// сводилась бы к «уже стоит — не трогаем», и смена WAN-адреса роутера
-	// посреди простоя движка не доехала бы до исключений блокировки.
+	// снимок свой (сравнение — equalBlackholeSpec). Снимком, а не булевым
+	// флагом: по флагу переустановка сводилась бы к «уже стоит — не трогаем»,
+	// и смена WAN-адреса роутера посреди простоя движка не доехала бы до
+	// исключений блокировки — это закреплено
+	// TestReconcileInstalled_BlackholeFollowsWANIPChange.
 	appliedBlackhole *RestoreInputSpec
 
 	// last-installed geoip-теги обхода; в спеке от них остаётся только
@@ -572,15 +579,6 @@ type ServiceImpl struct {
 	keenDNSAddrs       []string
 	keenDNSInfoAt      time.Time
 	keenDNSBypassCIDRs []string
-}
-
-// appliedQoSClasses — применённые классы QoS из снимка; nil, когда снимка
-// нет (свежий процесс, выключённый режим, policy-tun без классов).
-func (s *ServiceImpl) appliedQoSClasses() []QoSClassSpec {
-	if s.appliedSpec == nil {
-		return nil
-	}
-	return s.appliedSpec.QoSClasses
 }
 
 func NewService(d Deps) *ServiceImpl {

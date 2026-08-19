@@ -773,8 +773,8 @@ func TestReconcile_QoSClassesChanged_Reinstalls(t *testing.T) {
 		t.Errorf("restore input missing dscp rule:\n%s", lastRestore)
 	}
 	want := []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}}
-	if !slices.Equal(svc.appliedQoSClasses(), want) {
-		t.Errorf("применённые классы QoS не обновились: %+v", svc.appliedQoSClasses())
+	if !slices.Equal(appliedQoSOf(svc), want) {
+		t.Errorf("применённые классы QoS не обновились: %+v", appliedQoSOf(svc))
 	}
 }
 
@@ -909,8 +909,8 @@ func TestReconcile_QoSXtDscpUnavailable_DegradesWithoutFailing(t *testing.T) {
 	if restoreCalls != 0 {
 		t.Errorf("expected no Install churn while xt_dscp unavailable, got %d", restoreCalls)
 	}
-	if svc.appliedQoSClasses() != nil {
-		t.Errorf("применённые классы QoS обязаны остаться пустыми, got %+v", svc.appliedQoSClasses())
+	if appliedQoSOf(svc) != nil {
+		t.Errorf("применённые классы QoS обязаны остаться пустыми, got %+v", appliedQoSOf(svc))
 	}
 }
 
@@ -956,8 +956,8 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 		t.Errorf("disabled class must not be dispatched:\n%s", restoreInput)
 	}
 	want := []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}}
-	if !slices.Equal(svc.appliedQoSClasses(), want) {
-		t.Errorf("применённые классы QoS = %+v, want %+v", svc.appliedQoSClasses(), want)
+	if !slices.Equal(appliedQoSOf(svc), want) {
+		t.Errorf("применённые классы QoS = %+v, want %+v", appliedQoSOf(svc), want)
 	}
 
 	// sing-box side: persisted config carries the class inbound pair. The
@@ -1092,8 +1092,8 @@ func TestEnable_Tproxy_QoSXtDscpMissing_DegradesWithoutFailing(t *testing.T) {
 	if strings.Contains(restoreInput, "-m dscp") {
 		t.Errorf("dscp rules must be skipped when xt_dscp unavailable:\n%s", restoreInput)
 	}
-	if svc.appliedQoSClasses() != nil {
-		t.Errorf("применённые классы QoS обязаны остаться пустыми при деградации, got %+v", svc.appliedQoSClasses())
+	if appliedQoSOf(svc) != nil {
+		t.Errorf("применённые классы QoS обязаны остаться пустыми при деградации, got %+v", appliedQoSOf(svc))
 	}
 }
 
@@ -1446,4 +1446,13 @@ func TestGetStatus_ReportsQoSOutboundMissing(t *testing.T) {
 	if hits[0].Tag != "vpn-ghost" || !strings.Contains(hits[0].Message, "vpn-ghost") {
 		t.Errorf("issue must name the missing outbound: %+v", hits[0])
 	}
+}
+
+// appliedQoSOf — применённые классы QoS из снимка; в проде это читается
+// инлайном в одном месте, тестам нужен короткий доступ.
+func appliedQoSOf(s *ServiceImpl) []QoSClassSpec {
+	if s.appliedSpec == nil {
+		return nil
+	}
+	return s.appliedSpec.QoSClasses
 }

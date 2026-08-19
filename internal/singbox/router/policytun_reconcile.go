@@ -493,22 +493,13 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 			s.appLog.Warn("policy-tun-reconcile", "qos", "collect WAN IPs: "+err.Error())
 			return
 		}
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
-		want = &RestoreInputSpec{
-			DSCPOnly:       true,
-			MatchAll:       true,
-			WANIPs:         wanIPs,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
-			BypassCIDRs:    bypassSubnets,
-			QoSClasses:     qosSpecs,
-		}
+		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		want = &spec
 	}
 
 	s.mu.Lock()
 	force := !s.netfilterStateKnown
-	changed := !equalRestoreInputSpec(s.appliedSpec, want)
+	changed := !equalInstalledSpec(s.appliedSpec, want)
 	s.mu.Unlock()
 	if !force && !changed {
 		if want == nil {

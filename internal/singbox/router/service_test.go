@@ -484,7 +484,11 @@ func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
 			// needsInstall is true — override to avoid real syscalls.
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}}, // same as collector — only mark differs
+		// netfilterStateKnown ОБЯЗАТЕЛЕН: без него forceInitialSync истинен, и
+		// переустановка случилась бы при любом компараторе — тест утверждал бы
+		// про смену метки, а проверял бы первый тик после старта.
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}}, // same as collector — only mark differs
+		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -691,7 +695,9 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"198.51.100.1/32"}}, // different
+		// См. соседний тест: без netfilterStateKnown проверялся бы не тот вход.
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"198.51.100.1/32"}}, // different
+		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -2100,7 +2106,8 @@ func newAppliedSpecReconcileService(t *testing.T, applied *RestoreInputSpec) (*S
 // Страховка: смена набора LAN-мостов (NDMS переконфигурировал hotspot, порт
 // ndnproxy переехал) обязана переустанавливать правила — от неё зависят
 // REDIRECT-правила DNS-RESCUE. Направление «было — стало пусто»:
-// DiscoverLANBridges — пакетная функция без шва, в тесте она отдаёт пусто.
+// Шов discoverLANBridges здесь не подменяется: настоящая DiscoverLANBridges
+// в тестовом окружении не находит хотспот-цепочку и отдаёт пусто.
 func TestReconcileInstalled_LANBridgesChangeReinstalls(t *testing.T) {
 	svc, restoreCalls, _ := newAppliedSpecReconcileService(t, &RestoreInputSpec{
 		PolicyMark: "0xffffaaa",

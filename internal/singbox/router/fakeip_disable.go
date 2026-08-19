@@ -16,14 +16,14 @@ import (
 // exits non-zero when the device is absent → we treat any error as "absent" (no
 // delete attempted). Seam var for tests. Mirrors fakeIPAddrFlush's sysexec seam.
 var fakeIPLinkPresent = func(ctx context.Context, iface string) bool {
-	_, err := sysexec.Run(ctx, "ip", "link", "show", "dev", iface)
+	_, err := sysexec.Run(ctx, ipBinary, "link", "show", "dev", iface)
 	return err == nil
 }
 
 // fakeIPLinkDelete removes a lingering kernel netdev (`ip link delete <iface>`).
 // Seam var for tests. Mirrors fakeIPAddrFlush's sysexec seam.
 var fakeIPLinkDelete = func(ctx context.Context, iface string) error {
-	_, err := sysexec.Run(ctx, "ip", "link", "delete", iface)
+	_, err := sysexec.Run(ctx, ipBinary, "link", "delete", iface)
 	return err
 }
 

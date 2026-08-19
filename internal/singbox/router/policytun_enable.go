@@ -449,17 +449,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable policy-tun: collect WAN IPs: %w", cerr)
 			return err
 		}
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
-		spec := RestoreInputSpec{
-			DSCPOnly:       true,
-			MatchAll:       true,
-			WANIPs:         wanIPs,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
-			BypassCIDRs:    bypassSubnets,
-			QoSClasses:     qosSpecs,
-		}
+		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
 		if err = s.deps.IPTables.Install(ctx, spec); err != nil {
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}

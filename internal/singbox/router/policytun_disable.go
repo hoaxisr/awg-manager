@@ -153,6 +153,10 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		s.appliedSpec = nil
 		s.appliedBlackhole = nil
 		s.netfilterStateKnown = false
+		// Состав geoip-тегов — четвёртый член той же группы. Без обнуления
+		// «симметрично tproxy-Disable» было неправдой: следующее включение не
+		// увидело бы изменения состава и не пересобрало набор AWGM-BYPASS.
+		s.currentBypassGeoIPTags = nil
 	}
 
 	// (5) Удержать интерфейс: индекс закреплён за режимом, потому что permit в

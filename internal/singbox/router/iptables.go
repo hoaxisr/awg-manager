@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +87,14 @@ var (
 	netfilterHookPath      = "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh"
 	netfilterRulesPath     = "/opt/etc/awg-manager/singbox/router-netfilter.rules"
 	netfilterBlackholePath = "/opt/etc/awg-manager/singbox/router-blackhole.rules"
+
+	// ipBinary — Entware-овский iproute2, тем же абсолютным путём, что и
+	// sysiptables.Binary рядом. Раньше здесь стояло голое "ip": какой бинарь
+	// возьмётся, зависело от PATH демона, а в прошивке есть свой /sbin/ip от
+	// busybox с другим набором возможностей. Любое утверждение о поведении
+	// `ip` на роутере при таком вызове недоказуемо — неизвестно, чьё поведение
+	// наблюдали.
+	ipBinary = "/opt/sbin/ip"
 	// Per-table copies of the rules blob (issue #627): the netfilter.d hook
 	// restores ONLY the table NDMS actually wiped, so a routine mangle-only
 	// reload (DHCP renew) never tears down the working nat chain and vice
@@ -418,33 +425,41 @@ type QoSClassSpec struct {
 	RedirectPort int
 }
 
-// equalRestoreInputSpec сравнивает ЖЕЛАЕМЫЙ спек с ПРИМЕНЁННЫМ. nil означает
-// «в netfilter ничего нашего не установлено» и равен только nil.
+// equalInstalledSpec и equalBlackholeSpec сравнивают ЖЕЛАЕМЫЙ спек с
+// ПРИМЕНЁННЫМ. nil означает «в netfilter ничего нашего не установлено» и равен
+// только nil.
 //
-// Поле-в-поле, а НЕ reflect.DeepEqual: DeepEqual считает nil-слайс и пустой
-// РАЗНЫМИ, и первый же коллектор, вернувший []string{} вместо nil, давал бы
-// переустановку правил на каждом тике reconcile. Примитивы те же, что стояли
-// на отдельных детекторах входов до снимка (slices.Equal, equalLANBridges),
-// поэтому вердикт совпадает с прежним.
+// Сравнивается не спек, а его РЕНДЕР — ровно тот текст, что уходит в
+// iptables-restore и в файл правил для netfilter.d-хука. Отсюда два следствия,
+// которых у сравнения поле-в-поле не было:
 //
-// Полнота (каждое поле типа участвует) закреплена
-// TestEqualRestoreInputSpec_CoversEveryField — новое поле в RestoreInputSpec
-// роняет тест, пока не заведено здесь.
-func equalRestoreInputSpec(a, b *RestoreInputSpec) bool {
+//   - Полнота по построению. Поле, которого нет в рендере, доказуемо не может
+//     изменить netfilter, и игнорировать его правильно. Обратное — «забыли
+//     поле в компараторе» — становится невыразимым: рукописный список полей,
+//     который надо было сопровождать вручную, исчез.
+//   - Ловится дрейф самого рендерера: правка bypassCIDRs или emitBypassReturns
+//     теперь даёт переустановку, а не молчание до следующего рестарта демона.
+//
+// nil-слайс и пустой дают одинаковый текст, поэтому причина, по которой был
+// отвергнут reflect.DeepEqual (первый же коллектор с []string{} вместо nil
+// давал бы переустановку на каждом тике), снимается сама.
+//
+// Компаратора ДВА, потому что ресурса два и рендеры у них разные: перехват —
+// mangle+nat целиком, блокировка — свой mangle-блоб без QoS-диспатча,
+// ingress-MARK и DNS-RESCUE. Сравнивать блокировку рендером перехвата значило
+// бы переустанавливать её на смену входов, которых в её правилах нет.
+func equalInstalledSpec(a, b *RestoreInputSpec) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.PolicyMark == b.PolicyMark &&
-		a.MatchAll == b.MatchAll &&
-		a.BypassGeoIPSet == b.BypassGeoIPSet &&
-		a.DSCPOnly == b.DSCPOnly &&
-		slices.Equal(a.WANIPs, b.WANIPs) &&
-		equalLANBridges(a.LANBridges, b.LANBridges) &&
-		slices.Equal(a.BypassUDPPorts, b.BypassUDPPorts) &&
-		slices.Equal(a.BypassTCPPorts, b.BypassTCPPorts) &&
-		slices.Equal(a.BypassCIDRs, b.BypassCIDRs) &&
-		slices.Equal(a.IngressInterfaces, b.IngressInterfaces) &&
-		slices.Equal(a.QoSClasses, b.QoSClasses)
+	return buildRestoreInput(*a) == buildRestoreInput(*b)
+}
+
+func equalBlackholeSpec(a, b *RestoreInputSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return buildBlackholeRestoreInput(*a) == buildBlackholeRestoreInput(*b)
 }
 
 var bypassCIDRs = []string{
@@ -801,11 +816,11 @@ func NewIPTables() *IPTables {
 		runIPTables:    sysiptables.Run,
 		runIPTablesOut: sysiptables.RunOutput,
 		runIP: func(ctx context.Context, args ...string) error {
-			result, err := sysexec.Run(ctx, "ip", args...)
+			result, err := sysexec.Run(ctx, ipBinary, args...)
 			return sysexec.FormatError(result, err)
 		},
 		runIPOut: func(ctx context.Context, args ...string) (string, error) {
-			result, err := sysexec.Run(ctx, "ip", args...)
+			result, err := sysexec.Run(ctx, ipBinary, args...)
 			if err != nil {
 				return "", sysexec.FormatError(result, err)
 			}
@@ -965,6 +980,18 @@ func writeNetfilterBlackholeRulesFile(input string) error {
 // reload. Called when the engine recovers (blackhole removed). Idempotent.
 func removeNetfilterBlackholeRulesFile() {
 	_ = os.Remove(netfilterBlackholePath)
+}
+
+// blackholeRulesFilePresent — шов наблюдения ДОЛГОВЕЧНОЙ половины блокировки.
+// Цепочку и джамп при живом sing-box сносит ALIVE-ветка netfilter.d-хука, а
+// файл правил переживает и её, и рестарт демона: удаляет его только
+// RemoveBlackhole. Наблюдать одни цепочки значит оставлять протухший файл, из
+// которого DEAD-ветка хука поднимет блокировку со СТАРЫМИ исключениями при
+// следующей смерти движка. Один stat на тик — дешевле безусловного
+// RemoveBlackhole, который стоит четырёх вызовов iptables.
+var blackholeRulesFilePresent = func() bool {
+	_, err := os.Stat(netfilterBlackholePath)
+	return err == nil
 }
 
 func writeNetfilterHook(includeBlackhole bool) error {

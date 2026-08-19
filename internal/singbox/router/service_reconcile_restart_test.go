@@ -515,7 +515,10 @@ func TestReconcileInstalled_BlackholeInstalledOnce(t *testing.T) {
 // смениться (обновление аренды DHCP). Исключения блокировки обязаны догнать
 // новый адрес, иначе доступ из локальной сети на новый адрес роутера будет
 // дропаться до возвращения движка. Это ровно то свойство, ради которого
-// blackhole описывается снимком, а не булевым флагом.
+// blackhole описывается снимком, а не булевым флагом. Дамп ОБЯЗАН показывать
+// блокировку живой: на chainsOnlyDump переустановку вызывал бы сам факт её
+// отсутствия (!blackholeLive), сравнение спеков не участвовало бы вовсе, и
+// тест зеленел бы при булевом флаге — то есть не проверял бы ничего.
 func TestReconcileInstalled_BlackholeFollowsWANIPChange(t *testing.T) {
 	sb := newTestSingbox(t) // dead
 	svc := newReconcileInstalledService(t, sb)
@@ -523,7 +526,7 @@ func TestReconcileInstalled_BlackholeFollowsWANIPChange(t *testing.T) {
 	svc.deps.WANIPCollector = wan
 	var restores []string
 	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
-	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return blackholeDump(true, true), nil }
 	svc.deps.IPTables = ipt
 
 	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
@@ -684,5 +687,283 @@ func TestReconcileInstalled_BlackholeInstallFailure_RetriesNextTick(t *testing.T
 	}
 	if restores != 2 || svc.appliedBlackhole == nil {
 		t.Fatalf("следующий тик обязан повторить установку: restores=%d снимок=%v", restores, svc.appliedBlackhole != nil)
+	}
+}
+
+// КРАСНЫЙ: блокировка переживает рестарт демона — InstallBlackhole пишет файл
+// правил, а DEAD-ветка netfilter.d-хука реассертит его при каждой перестройке
+// таблиц NDMS. У нового процесса appliedBlackhole пуст, поэтому решение о
+// СНЯТИИ, построенное на памяти («мы ставили»), не срабатывает никогда:
+// движок жив, перехват восстановлен, а терминальный DROP остаётся в
+// PREROUTING навсегда — весь policy-трафик в никуда, и ни один тик не лечит.
+// Снятие обязано строиться на том же наблюдении факта, что и установка.
+func TestReconcileInstalled_BlackholeSurvivedRestart_Removed(t *testing.T) {
+	sb := newReadyTestSingbox(t) // движок вернулся и привязал сокеты
+	svc := newReconcileInstalledService(t, sb)
+	// Свежий процесс: о применённом состоянии не известно ничего.
+	svc.appliedSpec = nil
+	svc.netfilterStateKnown = false
+	svc.appliedBlackhole = nil
+
+	cleanups := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
+	// Перехват снесён (его и подменяла блокировка), сама блокировка жива —
+	// вернулась хуком из своего файла правил.
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return blackholeDump(true, true), nil
+	}
+	ipt.cleanupBlackhole = func() { cleanups++ }
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if cleanups != 1 {
+		t.Fatalf("пережившая рестарт блокировка обязана сниматься при живом движке: RemoveBlackhole вызван %d раз, want 1", cleanups)
+	}
+}
+
+// stubLANBridges подменяет шов обнаружения LAN-мостов на время теста.
+func stubLANBridges(t *testing.T, fn func(context.Context, string) ([]LANBridgeDNSRedir, error)) {
+	t.Helper()
+	old := discoverLANBridges
+	discoverLANBridges = fn
+	t.Cleanup(func() { discoverLANBridges = old })
+}
+
+// КРАСНЫЙ: обнаруженный LAN-мост обязан доехать до правил. Направление
+// «обнаружили → установили» не проверялось нигде: единственный тест про
+// LANBridges проверял обратное («было в снимке → стало пусто»), то есть
+// компаратор, а не сборку спека. Из-за этого потеря поля в билдере проходила
+// всю сюиту репозитория молча — вместе со всем DNS-RESCUE.
+func TestReconcileInstalled_DiscoveredLANBridgeReachesRules(t *testing.T) {
+	sb := newReadyTestSingbox(t)
+	svc := newReconcileInstalledService(t, sb)
+	svc.appliedSpec = nil
+	svc.netfilterStateKnown = false
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) {
+		return []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}, nil
+	})
+	var restores []string
+	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if len(restores) == 0 {
+		t.Fatal("precondition: правила обязаны установиться")
+	}
+	blob := strings.Join(restores, "")
+	for _, marker := range []string{DNSRescueTag, "br0", "--to-ports 41100"} {
+		if !strings.Contains(blob, marker) {
+			t.Errorf("обнаруженный LAN-мост не доехал до правил: нет %q\n%s", marker, blob)
+		}
+	}
+}
+
+// Исключения блокировки обязаны догонять КАЖДЫЙ свой вход, а не только
+// WAN-адрес. Пока движок мёртв, пользователь может добавить порт или подсеть
+// обхода — и если они не доедут до блокировки, она будет дропать трафик,
+// который пользователь явно исключил из проксирования. Спек блокировки — это
+// спек перехвата целиком, но замечает изменения компаратор по СВОЕМУ рендеру,
+// и раньше из его входов был закреплён ровно один.
+func TestReconcileInstalled_BlackholeFollowsEveryBypassInput(t *testing.T) {
+	base := reconcileInstalledSettings
+	for name, mutate := range map[string]func(*storage.SingboxRouterSettings){
+		"порт обхода UDP": func(sr *storage.SingboxRouterSettings) { sr.BypassExtraPorts = "5060 UDP" },
+		"порт обхода TCP": func(sr *storage.SingboxRouterSettings) { sr.BypassExtraPorts = "8443 TCP" },
+		"подсеть обхода":  func(sr *storage.SingboxRouterSettings) { sr.BypassExtraSubnets = "10.9.9.0/24" },
+		"geoip-теги":      func(sr *storage.SingboxRouterSettings) { sr.BypassGeoIPTags = []string{"ru"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			sb := newTestSingbox(t) // dead
+			svc := newReconcileInstalledService(t, sb)
+			var restores []string
+			ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+			ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return blackholeDump(true, true), nil }
+			svc.deps.IPTables = ipt
+
+			if err := svc.reconcileInstalled(context.Background(), base); err != nil {
+				t.Fatalf("первый тик: %v", err)
+			}
+			if len(restores) != 1 {
+				t.Fatalf("precondition: блокировка обязана встать один раз, got %d", len(restores))
+			}
+
+			changed := base
+			mutate(&changed)
+			if err := svc.reconcileInstalled(context.Background(), changed); err != nil {
+				t.Fatalf("второй тик: %v", err)
+			}
+			if len(restores) != 2 {
+				t.Fatalf("смена входа обязана обновить исключения блокировки: restores=%d, want 2", len(restores))
+			}
+
+			if err := svc.reconcileInstalled(context.Background(), changed); err != nil {
+				t.Fatalf("третий тик: %v", err)
+			}
+			if len(restores) != 2 {
+				t.Errorf("повторный тик без изменений: restores=%d, want 2", len(restores))
+			}
+		})
+	}
+}
+
+// Селектор блокировки обязан совпадать с селектором ПЕРЕХВАТА: блокировка
+// подменяет перехват на время простоя движка и обязана ловить ровно тот
+// трафик, который уехал бы в sing-box.
+//
+// Эталон берётся из НЕЗАВИСИМЫХ входов (метка политики из провайдера, режим из
+// настроек), а не из снимка блокировки: считать эталон из того же снимка —
+// цикл, он проходит при любой порче композиции. Предыдущая версия проверки
+// была ещё хуже — сравнивала два чистых рендерера на одном спеке и потому
+// физически не могла увидеть `blackholeSpec := want` с приписанным
+// MatchAll=true, то есть DROP всего транзита роутера вместо членов политики.
+func TestReconcileInstalled_BlackholeSelectorIsInterceptSelector(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sr   storage.SingboxRouterSettings
+		ref  RestoreInputSpec // чем перехват отобрал бы трафик при этих настройках
+	}{
+		{"по метке политики", reconcileInstalledSettings, RestoreInputSpec{PolicyMark: "0xffffaaa"}},
+		{"весь трафик", storage.SingboxRouterSettings{Enabled: true, WANAutoDetect: true, DeviceMode: "all"}, RestoreInputSpec{MatchAll: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := newTestSingbox(t) // dead — блокировка встанет
+			svc := newReconcileInstalledService(t, sb)
+			var blackholeBlob string
+			ipt := newStubIPTables(func(_ context.Context, in string) error {
+				if strings.Contains(in, "-A "+BlackholeChain+" -j DROP") {
+					blackholeBlob = in
+				}
+				return nil
+			})
+			ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+			svc.deps.IPTables = ipt
+
+			if err := svc.reconcileInstalled(context.Background(), tc.sr); err != nil {
+				t.Fatalf("reconcileInstalled: %v", err)
+			}
+			if blackholeBlob == "" {
+				t.Fatal("precondition: блокировка обязана встать")
+			}
+
+			var ref strings.Builder
+			emitPreroutingJump(&ref, ChainName, tc.ref)
+			expected := strings.TrimSuffix(strings.TrimSpace(ref.String()), "-j "+ChainName)
+
+			var got string
+			for _, line := range strings.Split(blackholeBlob, "\n") {
+				if strings.HasPrefix(line, "-A PREROUTING ") && strings.HasSuffix(line, "-j "+BlackholeChain) {
+					got = strings.TrimSuffix(line, "-j "+BlackholeChain)
+				}
+			}
+			if got == "" {
+				t.Fatalf("в блоке блокировки нет PREROUTING-джампа:\n%s", blackholeBlob)
+			}
+			if got != expected {
+				t.Errorf("селектор блокировки разошёлся с селектором перехвата\n получено: %q\n ожидалось: %q", got, expected)
+			}
+		})
+	}
+}
+
+// stubBlackholeFile подменяет шов наблюдения файла правил блокировки.
+func stubBlackholeFile(t *testing.T, present bool) {
+	t.Helper()
+	old := blackholeRulesFilePresent
+	blackholeRulesFilePresent = func() bool { return present }
+	t.Cleanup(func() { blackholeRulesFilePresent = old })
+}
+
+// КРАСНЫЙ: у блокировки две половины, и переживает рестарт демона именно
+// долговечная — файл правил. Цепочку и джамп при живом sing-box сносит
+// ALIVE-ветка netfilter.d-хука, а NDMS дёргает хук по два десятка раз на один
+// flap, так что «хук успел раньше нашего тика» — обычный порядок, а не
+// экзотика. Наблюдение одних цепочек тогда ничего не видит: снимок у свежего
+// процесса пуст, дамп чист — и файл остаётся на диске. При следующей смерти
+// движка DEAD-ветка хука поднимет из него блокировку со СТАРЫМИ исключениями
+// (прежний адрес роутера, прежние порты обхода).
+func TestReconcileInstalled_StaleBlackholeFileRemoved(t *testing.T) {
+	sb := newReadyTestSingbox(t) // движок жив и привязал сокеты
+	svc := newReconcileInstalledService(t, sb)
+	svc.appliedSpec = nil
+	svc.netfilterStateKnown = false
+	svc.appliedBlackhole = nil
+	stubBlackholeFile(t, true) // файл пережил хук и рестарт
+
+	cleanups := 0
+	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
+	// Хук уже снёс цепочку и джамп блокировки — в дампе её нет.
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	ipt.cleanupBlackhole = func() { cleanups++ }
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if cleanups != 1 {
+		t.Fatalf("протухший файл правил блокировки обязан сноситься: RemoveBlackhole вызван %d раз, want 1", cleanups)
+	}
+}
+
+// Компаратора два не для красоты: блокировка обязана сравниваться по СВОЕМУ
+// рендеру. DNS-RESCUE по LAN-мостам в её правилах не участвует вовсе, поэтому
+// появление моста не должно дёргать переустановку fail-closed DROP, пока
+// движок мёртв. Подмена equalBlackholeSpec на equalInstalledSpec выглядит
+// безобидной и ломает именно это.
+func TestReconcileInstalled_BlackholeIgnoresInterceptOnlyInput(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	bridges := []LANBridgeDNSRedir(nil)
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) { return bridges, nil })
+	var restores []string
+	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return blackholeDump(true, true), nil }
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("первый тик: %v", err)
+	}
+	if len(restores) != 1 {
+		t.Fatalf("precondition: блокировка обязана встать один раз, got %d", len(restores))
+	}
+
+	bridges = []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("второй тик: %v", err)
+	}
+	if len(restores) != 1 {
+		t.Errorf("DNS-RESCUE нет в правилах блокировки — переустанавливать нечего: restores=%d, want 1", len(restores))
+	}
+}
+
+// В режиме «весь трафик» гейт policyMode в билдере спека нужен не ради
+// результата (рендерер и так не эмитит DNS-RESCUE и ingress-MARK при
+// MatchAll), а ради ЦЕНЫ: без него каждый тик reconcile дёргал бы дамп
+// iptables ради LAN-мостов и резолв интерфейсов через NDMS — впустую.
+// Дублирующая защита без теста — это защита, которую снимут при первой уборке.
+func TestBuildTproxySpec_AllDevicesSkipsPolicyOnlyDiscovery(t *testing.T) {
+	svc := newReconcileInstalledService(t, newTestSingbox(t))
+	discovered := 0
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) {
+		discovered++
+		return []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}, nil
+	})
+
+	policy := svc.buildTproxySpec(context.Background(), reconcileInstalledSettings, "0xffffaaa", true, nil, nil)
+	if discovered != 1 || len(policy.LANBridges) != 1 {
+		t.Fatalf("precondition: в режиме политики мосты обязаны запрашиваться: вызовов=%d мостов=%d",
+			discovered, len(policy.LANBridges))
+	}
+
+	discovered = 0
+	all := svc.buildTproxySpec(context.Background(), reconcileInstalledSettings, "", false, nil, nil)
+	if discovered != 0 {
+		t.Errorf("в режиме «весь трафик» мосты не нужны — запрашивать их незачем: вызовов=%d, want 0", discovered)
+	}
+	if len(all.LANBridges) != 0 {
+		t.Errorf("DNS-RESCUE не применим при MatchAll: мостов=%d, want 0", len(all.LANBridges))
 	}
 }

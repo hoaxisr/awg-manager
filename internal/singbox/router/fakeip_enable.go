@@ -28,7 +28,7 @@ const fakeIPPoolRouteComment = "awgm fakeip pool"
 // sing-box starts and assigns the tun address from its own config (PoC-derived
 // ordering; stand-verified in 1F.1). Seam var for tests.
 var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
-	_, err := sysexec.Run(ctx, "ip", "addr", "flush", "dev", iface)
+	_, err := sysexec.Run(ctx, ipBinary, "addr", "flush", "dev", iface)
 	return err
 }
 

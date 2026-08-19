@@ -577,6 +577,7 @@ func TestDisablePolicyTun_ResetsAppliedNetfilterState(t *testing.T) {
 	}
 	// Как будто остался от прежнего режима: Uninstall его тоже снимает.
 	h.svc.appliedBlackhole = &RestoreInputSpec{}
+	h.svc.currentBypassGeoIPTags = []string{"ru"}
 
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable(policy-tun): %v", err)
@@ -590,5 +591,8 @@ func TestDisablePolicyTun_ResetsAppliedNetfilterState(t *testing.T) {
 	}
 	if h.svc.appliedBlackhole != nil {
 		t.Error("Uninstall уже снял blackhole — снимок обязан обнулиться")
+	}
+	if h.svc.currentBypassGeoIPTags != nil {
+		t.Errorf("состав geoip-тегов — член той же группы, обязан обнулиться: %v", h.svc.currentBypassGeoIPTags)
 	}
 }

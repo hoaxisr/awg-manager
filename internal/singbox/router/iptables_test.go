@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -814,33 +813,6 @@ func TestBuildRestoreInput_NoLANBridges_NoDNSRescueRules(t *testing.T) {
 		if strings.Contains(input, marker) {
 			t.Errorf("DNS-RESCUE artifact %q leaked into output when LANBridges empty:\n%s", marker, input)
 		}
-	}
-}
-
-func TestEqualLANBridges(t *testing.T) {
-	a := []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}, {Bridge: "br1", Port: 41100}}
-	b := []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}, {Bridge: "br1", Port: 41100}}
-	c := []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}, {Bridge: "br1", Port: 41101}} // different port
-	d := []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}                               // shorter
-	e := []LANBridgeDNSRedir{{Bridge: "br1", Port: 41100}, {Bridge: "br0", Port: 41100}} // different order
-
-	if !equalLANBridges(a, b) {
-		t.Error("identical slices must compare equal")
-	}
-	if equalLANBridges(a, c) {
-		t.Error("differing port must not compare equal")
-	}
-	if equalLANBridges(a, d) {
-		t.Error("differing length must not compare equal")
-	}
-	if equalLANBridges(a, e) {
-		t.Error("differing order must not compare equal (caller relies on stable order)")
-	}
-	if !equalLANBridges(nil, nil) {
-		t.Error("nil/nil must compare equal")
-	}
-	if !equalLANBridges([]LANBridgeDNSRedir{}, nil) {
-		t.Error("empty and nil must compare equal")
 	}
 }
 
@@ -2181,50 +2153,28 @@ func TestWritePolicyTunDNSHookSkipsIdenticalContent(t *testing.T) {
 	}
 }
 
-// equalRestoreInputSpec — рукописный компаратор, и у него ровно тот дефект,
-// который мы чиним снимком: «забыли поле». Тест перебирает поля типа
-// рефлексией и требует, чтобы КАЖДОЕ давало неравенство. Новое поле в
-// RestoreInputSpec роняет тест, пока его не заведут в компаратор.
-func TestEqualRestoreInputSpec_CoversEveryField(t *testing.T) {
-	rt := reflect.TypeOf(RestoreInputSpec{})
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		var a, b RestoreInputSpec
-		fv := reflect.ValueOf(&b).Elem().Field(i)
-		switch fv.Kind() {
-		case reflect.String:
-			fv.SetString("x")
-		case reflect.Bool:
-			fv.SetBool(true)
-		case reflect.Slice:
-			// Слайс из одного НУЛЕВОГО элемента: slices.Equal(nil, []T{zero})
-			// == false, значит поле обязано быть замечено.
-			fv.Set(reflect.MakeSlice(fv.Type(), 1, 1))
-		default:
-			t.Fatalf("поле %s: неподдержанный вид %s — расширить тест и компаратор",
-				f.Name, fv.Kind())
-		}
-		if equalRestoreInputSpec(&a, &b) {
-			t.Errorf("поле %s не участвует в equalRestoreInputSpec", f.Name)
-		}
-	}
-}
-
 // nil = «ничего не установлено»: не равен ни одному спеку, равен только nil.
-func TestEqualRestoreInputSpec_NilSemantics(t *testing.T) {
-	if !equalRestoreInputSpec(nil, nil) {
-		t.Error("nil == nil")
-	}
-	if equalRestoreInputSpec(nil, &RestoreInputSpec{}) || equalRestoreInputSpec(&RestoreInputSpec{}, nil) {
-		t.Error("nil не равен установленному спеку")
+// Оба ресурса — перехват и блокировка — обязаны трактовать nil одинаково.
+func TestEqualSpec_NilSemantics(t *testing.T) {
+	for name, eq := range map[string]func(a, b *RestoreInputSpec) bool{
+		"installed": equalInstalledSpec,
+		"blackhole": equalBlackholeSpec,
+	} {
+		if !eq(nil, nil) {
+			t.Errorf("%s: nil == nil", name)
+		}
+		if eq(nil, &RestoreInputSpec{}) || eq(&RestoreInputSpec{}, nil) {
+			t.Errorf("%s: nil не равен установленному спеку", name)
+		}
 	}
 }
 
 // Пустой и nil-слайс — ОДНО И ТО ЖЕ. На этом стоят все существующие
 // precondition-сиды тестов: они задают только PolicyMark и WANIPs, а
 // остальные входы приходят из продакшн-кода как nil либо как пустой слайс.
-// reflect.DeepEqual здесь дал бы переустановку правил на каждом тике.
-func TestEqualRestoreInputSpec_NilSliceEqualsEmpty(t *testing.T) {
+// reflect.DeepEqual здесь дал бы переустановку правил на каждом тике; у
+// сравнения рендера это свойство бесплатно — пустой слайс не эмитит ничего.
+func TestEqualSpec_NilSliceEqualsEmpty(t *testing.T) {
 	a := RestoreInputSpec{PolicyMark: "0xffffaaa"}
 	b := RestoreInputSpec{
 		PolicyMark:        "0xffffaaa",
@@ -2236,8 +2186,11 @@ func TestEqualRestoreInputSpec_NilSliceEqualsEmpty(t *testing.T) {
 		IngressInterfaces: []string{},
 		QoSClasses:        []QoSClassSpec{},
 	}
-	if !equalRestoreInputSpec(&a, &b) {
+	if !equalInstalledSpec(&a, &b) {
 		t.Error("nil-слайс и пустой слайс обязаны быть равны")
+	}
+	if !equalBlackholeSpec(&a, &b) {
+		t.Error("blackhole: nil-слайс и пустой слайс обязаны быть равны")
 	}
 }
 
@@ -2283,6 +2236,111 @@ func TestProbeAll_BlackholeFromSameDump(t *testing.T) {
 			}
 			if calls != 2 {
 				t.Errorf("дампов %d, want 2 (mangle+nat)", calls)
+			}
+		})
+	}
+}
+
+// Блокировка обязана заходить из PREROUTING по ТОМУ ЖЕ селектору, что и
+// перехват: она подменяет его на время простоя движка и должна ловить ровно
+// тот трафик, который уехал бы в sing-box. Разойдись селекторы в сторону
+// MatchAll — и fail-closed для членов политики станет DROP всего транзита
+// роутера.
+//
+// Это проверка РЕНДЕРЕРОВ на одном спеке. Порчу самой композиции спека она
+// увидеть не может по построению — за это отвечает
+// TestReconcileInstalled_BlackholeSelectorIsInterceptSelector, который смотрит
+// на блоб, реально уехавший в InstallBlackhole.
+func TestBlackholeJumpMatchesInterceptJump(t *testing.T) {
+	specs := map[string]RestoreInputSpec{
+		"по метке политики": {PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.7/32"}},
+		"весь трафик":       {MatchAll: true, PolicyMark: "0xffffaaa"},
+		"без метки вовсе":   {},
+	}
+	for name, spec := range specs {
+		jump := func(blob, chain string) string {
+			for _, line := range strings.Split(blob, "\n") {
+				if strings.HasPrefix(line, "-A PREROUTING ") && strings.HasSuffix(line, "-j "+chain) {
+					return strings.TrimSuffix(line, "-j "+chain)
+				}
+			}
+			return ""
+		}
+		intercept := jump(buildMangleRestoreInput(spec), ChainName)
+		blackhole := jump(buildBlackholeRestoreInput(spec), BlackholeChain)
+		if intercept != blackhole {
+			t.Errorf("%s: селекторы разошлись\n перехват:   %q\n блокировка: %q", name, intercept, blackhole)
+		}
+	}
+}
+
+// Контракт probeAll на ошибке: нули — это «неизвестно», а НЕ «не установлено».
+// Отдельно закреплён случай из докблока: mangle-дамп уже показал блокировку, а
+// упал следующий за ним nat-дамп — блокировка обязана прочитаться как false
+// вместе с остальными. Иначе вызывающий, забывший проверить err, снял бы
+// живую блокировку по «наблюдению» её отсутствия.
+func TestProbeAll_QueryErrorReadsUnknown(t *testing.T) {
+	for _, tc := range []struct{ name, failTable string }{
+		{"падает mangle", "mangle"},
+		{"падает nat — mangle уже показал блокировку", "nat"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := &IPTables{runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+				if len(args) >= 2 && args[1] == tc.failTable {
+					return "", errors.New("iptables: resource temporarily unavailable")
+				}
+				return jumpsPresentDump() +
+					"-N " + BlackholeChain + "\n" +
+					"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + BlackholeChain + "\n", nil
+			}}
+			installed, jumps, blackhole, err := it.probeAll(context.Background())
+			if err == nil {
+				t.Fatal("ошибка дампа обязана дойти до вызывающего")
+			}
+			if installed || jumps || blackhole {
+				t.Errorf("installed=%v jumps=%v blackhole=%v, want все false", installed, jumps, blackhole)
+			}
+		})
+	}
+}
+
+// installed — это обе половины перехвата: цепочка в mangle И цепочка в nat.
+// Одной mangle мало: без AWGM-REDIRECT в nat перехвата TCP нет, а служба
+// считала бы себя установленной. Дампы здесь РАЗНЫЕ по таблицам — иначе
+// половины неразличимы и композиция не проверяется.
+func TestProbeAll_InstalledNeedsBothTables(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		mangleChain, natChain bool
+		wantInstalled         bool
+	}{
+		{"обе цепочки", true, true, true},
+		{"только mangle", true, false, false},
+		{"только nat", false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := &IPTables{runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+				mangle := len(args) >= 2 && args[1] == "mangle"
+				out := "-P PREROUTING ACCEPT\n"
+				if mangle && tc.mangleChain {
+					out += "-N " + ChainName + "\n" +
+						"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName + "\n"
+				}
+				if !mangle && tc.natChain {
+					out += "-N " + RedirectChain + "\n" +
+						"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain + "\n"
+				}
+				return out, nil
+			}}
+			installed, jumps, _, err := it.probeAll(context.Background())
+			if err != nil {
+				t.Fatalf("probeAll: %v", err)
+			}
+			if installed != tc.wantInstalled {
+				t.Errorf("installed=%v, want %v", installed, tc.wantInstalled)
+			}
+			if jumps && !tc.wantInstalled {
+				t.Error("jumps не может быть true при installed=false")
 			}
 		})
 	}

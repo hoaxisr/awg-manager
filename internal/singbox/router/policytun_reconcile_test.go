@@ -1309,6 +1309,32 @@ func TestReconcilePolicyTun_QoSWANIPChanged_Reinstalls(t *testing.T) {
 	}
 }
 
+// Адрес KeenDNS приходит с роутера, а не из настроек, и в обход правил его
+// заводит тот же билдер спека. В режиме tproxy это закреплено
+// TestReconcileInstalled_KeenDNSCIDRChangeReinstalls, а в policy-tun не было
+// закреплено ничем: билдер мог перестать спрашивать адрес, и обход KeenDNS
+// молча пропал бы ровно в одном из двух режимов.
+func TestReconcilePolicyTun_QoSKeenDNSCIDRChanged_Reinstalls(t *testing.T) {
+	h, _ := policyTunQoSSpecInputHarness(t)
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	h.svc.setKeenDNSBypass([]string{"78.47.125.180"})
+
+	installs, last := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("появление адреса KeenDNS обязано переустановить правила: installs = %d, want 1", installs)
+	}
+	if !strings.Contains(last, "78.47.125.180/32") {
+		t.Errorf("адрес KeenDNS не попал в правила обхода:\n%s", last)
+	}
+
+	installs, _ = tickPolicyTunQoS(t, h, sr)
+	if installs != 0 {
+		t.Errorf("повторный тик без изменений: installs = %d, want 0", installs)
+	}
+}
+
 // Страховка инварианта (краснота компиляционная, не поведенческая: до снимка
 // поля appliedSpec не существовало): применённый спек, отличающийся ТОЛЬКО
 // режимным флагом, обязан переустанавливаться. Продакшн-пути сюда нет — смена

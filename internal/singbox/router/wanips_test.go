@@ -98,9 +98,11 @@ type fakeWANRunner struct {
 	addrByDev map[string]string
 	addrErr   map[string]error
 	routeErr  error
+	calls     [][]string // все вызовы: форма запроса — часть контракта
 }
 
 func (f *fakeWANRunner) run(_ context.Context, args ...string) (string, error) {
+	f.calls = append(f.calls, args)
 	// "ip route show table all"
 	if len(args) >= 3 && args[0] == "route" && args[1] == "show" && args[2] == "table" {
 		if f.routeErr != nil {
@@ -207,5 +209,29 @@ func TestWANIPCollector_Collect_AddrCommandFailsForOneIface_WarnsAndContinues(t 
 	}
 	if len(log.warns) == 0 {
 		t.Errorf("expected WARN about ppp0 addr error")
+	}
+}
+
+// Форма запроса маршрутов — часть контракта, а не деталь. Сужать его
+// селектором `default` БЕСПОЛЕЗНО: на сборке iproute2 для Keenetic вместе с
+// `table all` селектор молча игнорируется, и выдача остаётся полным дампом
+// (проверено на железе — в ней и обычные маршруты, и таблица local, и IPv6).
+// Тест держит форму, чтобы эту попытку не повторяли: она выглядит очевидной
+// оптимизацией и ничего не даёт.
+func TestWANIPCollector_QueryFormIsPinned(t *testing.T) {
+	r := &fakeWANRunner{
+		routeOut:  "default dev ppp0  table 16395  src 203.0.113.207\n",
+		addrByDev: map[string]string{"ppp0": "    inet 203.0.113.207/32 scope global ppp0\n"},
+	}
+	c := &wanIPCollectorImpl{run: r.run, log: &fakeWANLogger{}}
+	if _, err := c.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(r.calls) == 0 {
+		t.Fatal("precondition: маршруты обязаны запрашиваться")
+	}
+	want := []string{"route", "show", "table", "all"}
+	if !slices.Equal(r.calls[0], want) {
+		t.Errorf("запрос маршрутов:\n получено:  %v\n ожидалось: %v", r.calls[0], want)
 	}
 }
