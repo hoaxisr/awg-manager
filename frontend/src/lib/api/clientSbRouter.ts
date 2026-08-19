@@ -227,8 +227,11 @@ export class SbRouterClient extends SingboxClient {
 		return this.request<SingboxRouterWANInterface[]>('/singbox/router/wan-interfaces');
 	}
 
-	async singboxRouterListBindableInterfaces(): Promise<SingboxRouterWANInterface[]> {
-		return this.request<SingboxRouterWANInterface[]>('/singbox/router/bindable-interfaces');
+	// scope=all оставляет интерфейсы, уже занятые direct-outbound'ом: подписки
+	// и одиночные туннели делят их свободно, и валидатор bind их принимает.
+	async singboxRouterListBindableInterfaces(scope: 'direct' | 'all' = 'direct'): Promise<SingboxRouterWANInterface[]> {
+		const query = scope === 'all' ? '?scope=all' : '';
+		return this.request<SingboxRouterWANInterface[]>(`/singbox/router/bindable-interfaces${query}`);
 	}
 
 	async singboxRouterListDNSServers(): Promise<SingboxRouterDNSServer[]> {

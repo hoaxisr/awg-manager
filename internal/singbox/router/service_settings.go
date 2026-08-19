@@ -327,6 +327,17 @@ func (s *ServiceImpl) ListBindableInterfaces(ctx context.Context) ([]WANInterfac
 	return s.deps.BindableInterfaces.ListBindable(ctx)
 }
 
+// ListAllBindableInterfaces returns every bindable interface, including those
+// already used by a direct outbound. Subscriptions and manual tunnels may
+// share an interface with a direct outbound, so their picker must offer the
+// same set the bind validator accepts (#709).
+func (s *ServiceImpl) ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error) {
+	if s.deps.BindableInterfaces == nil {
+		return []WANInterfaceInfo{}, nil
+	}
+	return s.deps.BindableInterfaces.ListAllBindable(ctx)
+}
+
 // ListIngressEligibleInterfaces возвращает интерфейсы, пригодные для
 // ingress-scope: bindable минус WAN минус LAN-бриджи (по Type). Для UI
 // router-страницы (мультиселект).

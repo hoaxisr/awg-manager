@@ -58,6 +58,7 @@ func (m *txRaceMutator) RemoveProxy(context.Context, int) error              { r
 func (m *txRaceMutator) SelectClashProxy(string, string) error               { return nil }
 func (m *txRaceMutator) GetClashSelectorActive(string) (string, error)       { return "", nil }
 func (m *txRaceMutator) DeclaredOutboundTags() []string                      { return nil }
+func (m *txRaceMutator) SubscriptionOutbounds() []map[string]any             { return nil }
 
 func (m *txRaceMutator) Rollback() {
 	m.mu.Lock()

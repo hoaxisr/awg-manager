@@ -34,6 +34,7 @@ func (noopMutator) Rollback()                                           {}
 func (noopMutator) SelectClashProxy(string, string) error               { return nil }
 func (noopMutator) GetClashSelectorActive(string) (string, error)       { return "", nil }
 func (noopMutator) DeclaredOutboundTags() []string                      { return nil }
+func (noopMutator) SubscriptionOutbounds() []map[string]any             { return nil }
 
 type fakePresenceProbe struct{ installed bool }
 

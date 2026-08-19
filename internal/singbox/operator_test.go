@@ -2152,7 +2152,7 @@ func TestParseTunnelLinksInput(t *testing.T) {
 		],
 		"activeProfile": "default"
 	}`
-	res := parseTunnelLinksInput(mieruJSON)
+	res := ParseTunnelLinksInput(mieruJSON)
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %+v", res.Errors)
 	}
@@ -2166,7 +2166,7 @@ func TestParseTunnelLinksInput(t *testing.T) {
 	}
 
 	// Обычные share-link'и — прежний построчный путь.
-	res = parseTunnelLinksInput("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=h#A\ntrojan://p@h.example:444?security=tls&sni=h#B")
+	res = ParseTunnelLinksInput("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=h#A\ntrojan://p@h.example:444?security=tls&sni=h#B")
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %+v", res.Errors)
 	}

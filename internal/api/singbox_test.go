@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -325,5 +327,49 @@ func TestSingboxStatusData_MapsAllFields(t *testing.T) {
 	}
 	if got.UpdateAvailable != in.UpdateAvailable {
 		t.Fatalf("UpdateAvailable = %v, want %v", got.UpdateAvailable, in.UpdateAvailable)
+	}
+}
+
+func TestSingboxHandler_AddTunnels_BindValidation(t *testing.T) {
+	h := NewSingboxHandler(nil, nil, nil, nil)
+	h.SetBindValidator(func(ctx context.Context, name string) error {
+		if name != "eth3" {
+			return fmt.Errorf("interface %q not allowed", name)
+		}
+		return nil
+	})
+
+	body := `{"links":"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@1.2.3.4:443?security=tls&bind_interface=bad0#test"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/tunnels", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.AddTunnels(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid bind_interface") {
+		t.Fatalf("expected error message to contain invalid bind_interface, got %s", w.Body.String())
+	}
+}
+
+func TestSingboxHandler_UpdateTunnel_BindValidation(t *testing.T) {
+	h := NewSingboxHandler(nil, nil, nil, nil)
+	h.SetBindValidator(func(ctx context.Context, name string) error {
+		if name != "eth3" {
+			return fmt.Errorf("interface %q not allowed", name)
+		}
+		return nil
+	})
+
+	body := `{"outbound":{"type":"vless","server":"1.2.3.4","server_port":443,"bind_interface":"bad0"}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/tunnels?tag=t1", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.UpdateTunnel(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid bind_interface") {
+		t.Fatalf("expected error message to contain invalid bind_interface, got %s", w.Body.String())
 	}
 }

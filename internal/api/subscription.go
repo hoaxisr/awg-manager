@@ -185,6 +185,7 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ExcludedKeys:  req.ExcludedKeys,
 		FilterInclude: req.FilterInclude,
 		FilterExclude: req.FilterExclude,
+		BindInterface: req.BindInterface,
 	}
 	sub, err := h.svc.Create(r.Context(), in)
 	if err != nil {
@@ -264,6 +265,7 @@ func (h *SubscriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:       req.Enabled,
 		FilterInclude: req.FilterInclude,
 		FilterExclude: req.FilterExclude,
+		BindInterface: req.BindInterface,
 	}
 	if req.Headers != nil {
 		hh := fromSubscriptionHeaders(*req.Headers)

@@ -54,6 +54,9 @@ type ConfigMutator interface {
 	// dangling group members on later rebuilds. Empty slice = "can't
 	// report" (caller must treat as no-op, not as "drop everything").
 	DeclaredOutboundTags() []string
+	// SubscriptionOutbounds returns a snapshot of every outbound currently
+	// in the subscription config slot (#709).
+	SubscriptionOutbounds() []map[string]any
 }
 
 // Service is the subscription business-logic facade.
@@ -91,6 +94,8 @@ type Service struct {
 	// мьютексы Service и нельзя выполнять сетевой I/O (fetch подписки идёт
 	// до applyDiff, вне txMu).
 	txMu sync.Mutex
+	// bindValidator — optional catalog check for BindInterface (#709).
+	bindValidator BindInterfaceValidator
 	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
 	// файлом подписок, состояние принадлежит сервису, не пакету.
 	happKeys *happKeys
@@ -113,6 +118,9 @@ func NewService(store *Store, mutator ConfigMutator) *Service {
 // the subscription (ProxyIndex stays -1); SyncProxies (re-)creates them
 // when the toggle is turned back on.
 func (s *Service) SetNDMSProxyEnabled(fn func() bool) { s.ndmsProxyEnabled = fn }
+
+// SetBindInterfaceValidator wires router bindable-interface validation.
+func (s *Service) SetBindInterfaceValidator(v BindInterfaceValidator) { s.bindValidator = v }
 
 func (s *Service) proxyEnabled() bool {
 	if s.ndmsProxyEnabled == nil {
@@ -290,6 +298,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	// Regex-фильтры валидируются до создания строки в store: битый шаблон
 	// не должен попасть на диск (refreshLocked падал бы на каждом refresh).
 	if _, err := CompileMemberFilter(in.FilterInclude, in.FilterExclude); err != nil {
+		return nil, fmt.Errorf("subscription: %w", err)
+	}
+	in.BindInterface = strings.TrimSpace(in.BindInterface)
+	if err := validateBindInterfaceOptional(ctx, s.bindValidator, in.BindInterface); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)
 	}
 	// Serialize the whole Create: allocation scans-without-reserve, so two
@@ -761,7 +773,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		if skip(n.Tag, n.Out.Label) {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
-		jsonWithTag := replaceTag(n.Out.Outbound, n.Tag)
+		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -771,7 +783,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
 			continue
 		}
-		jsonWithTag := replaceTag(e.Out.Outbound, e.Tag)
+		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -956,7 +968,6 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// пару (patch-значение либо текущее) — ошибка одного поля не должна
 	// маскироваться валидностью другого.
 	filterChanged := false
-	prevInclude, prevExclude := current.FilterInclude, current.FilterExclude
 	if patch.FilterInclude != nil || patch.FilterExclude != nil {
 		newInclude, newExclude := current.FilterInclude, current.FilterExclude
 		if patch.FilterInclude != nil {
@@ -970,35 +981,84 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		filterChanged = newInclude != current.FilterInclude || newExclude != current.FilterExclude
 	}
+
+	bindChanged := false
+	if patch.BindInterface != nil {
+		newBind := strings.TrimSpace(*patch.BindInterface)
+		patch.BindInterface = &newBind
+		bindChanged = newBind != current.BindInterface
+		if bindChanged && newBind != "" {
+			if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
+				return nil, fmt.Errorf("subscription: %w", err)
+			}
+		}
+	}
+
+	modeChanged := patch.Mode != nil || patch.URLTest != nil
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
+
+	// Снимок прежних настроек для отката, если применение упадёт (#709).
+	// URLTest здесь несёт семантику UpdatePatch «nil = не трогать»: если у
+	// подписки его не было, откат вернёт Mode, а осиротевший urltest-конфиг
+	// останется — в режиме selector он не читается.
+	rollbackPatch := UpdatePatch{
+		FilterInclude: &current.FilterInclude,
+		FilterExclude: &current.FilterExclude,
+		BindInterface: &current.BindInterface,
+		Mode:          &current.Mode,
+		URLTest:       current.URLTest,
+		Enabled:       &current.Enabled,
+		Label:         &current.Label,
+	}
 	sub, err := s.store.Update(id, patch)
 	if err != nil {
 		return nil, err
 	}
+
+	rollback := func(err error, action string) (*Subscription, error) {
+		if _, rbErr := s.store.Update(id, rollbackPatch); rbErr != nil {
+			s.logWarn("subscription-update", id, "failed to restore previous settings after failed "+action+": "+rbErr.Error())
+		} else {
+			s.logWarn("subscription-update", id, "settings change rolled back ("+action+" failed): "+err.Error())
+		}
+		return current, fmt.Errorf("subscription: применение настроек: %w", err)
+	}
+
 	// Смена фильтра требует полной ре-материализации набора серверов:
 	// URL-подписка — обычный refresh (fetch + diff + rebuild), inline —
 	// принудительный re-parse сохранённого paste-тела (обход short-circuit).
 	// refresh сам пересобирает group outbound, поэтому mode-ветка ниже
 	// в этом случае не нужна.
 	if filterChanged {
-		if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
-			// Компенсация: новый фильтр уже записан в store, но
-			// ре-материализация не удалась (фильтр скрывает всё, URL
-			// недоступен). Оставить его — значит ронять каждый плановый
-			// refresh той же ошибкой. Возвращаем прежнюю пару фильтров
-			// и отдаём ошибку — клиент видит, что сохранение не прошло.
-			if _, rbErr := s.store.Update(id, UpdatePatch{FilterInclude: &prevInclude, FilterExclude: &prevExclude}); rbErr != nil {
-				s.logWarn("subscription-update", id, "failed to restore previous filters after failed refresh: "+rbErr.Error())
-			} else {
-				s.logWarn("subscription-update", id, "filter change rolled back (refresh failed): "+err.Error())
-			}
-			return sub, fmt.Errorf("subscription: применение фильтра: %w", err)
+		forceReparse := sub.IsInline()
+		if _, err := s.refreshLockedOpts(context.Background(), id, forceReparse); err != nil {
+			return rollback(err, "refresh")
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
 			return nil, err
 		}
-	} else if patch.Mode != nil || patch.URLTest != nil {
+	} else if bindChanged {
+		if sub.IsInline() {
+			// Inline: re-parse сохранённого тела; refresh сам пересобирает
+			// group outbound, поэтому смену mode отдельно доделывать не нужно.
+			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
+				return rollback(err, "refresh")
+			}
+		} else {
+			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
+			// Позволяет переключить uplink даже когда текущий интернет лежит.
+			// Смена mode в том же сохранении едет одной транзакцией и одним
+			// SIGHUP — иначе на одно нажатие «Сохранить» приходилось два.
+			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged); err != nil {
+				return rollback(err, "rematerialize")
+			}
+		}
+		sub, err = s.store.Get(id)
+		if err != nil {
+			return nil, err
+		}
+	} else if modeChanged {
 		// Mode / urltest config changes require a fresh group outbound in
 		// sing-box config and a SIGHUP so the new wrapper takes effect.
 		// URL / headers / refresh-cadence only mutate metadata.
@@ -1006,16 +1066,15 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// description so the rename is visible in the router UI.
 		// Stage + Reload — одна txMu-секция (общий батч адаптера).
 		if err := s.withTx(func() error {
-			s.mutator.RemoveOutbound(sub.SelectorTag)
-			if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
-				return fmt.Errorf("rebuild group outbound: %w", err)
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
 			}
 			if err := s.reloadWithGroups(context.Background()); err != nil {
 				return fmt.Errorf("reload after mode change: %w", err)
 			}
 			return nil
 		}); err != nil {
-			return sub, err
+			return rollback(err, "mode change")
 		}
 	} else if enabledChanged {
 		// Включение/выключение подписки меняет состав сводных групп:
@@ -1025,7 +1084,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// первого несвязанного reload. Для самой подписки enabled остаётся
 		// метаданными (её селектор в конфиге не трогаем — прежнее поведение).
 		if err := s.withTx(func() error { return s.reloadWithGroups(context.Background()) }); err != nil {
-			return sub, fmt.Errorf("reload after enabled change: %w", err)
+			return rollback(err, "enabled change")
 		}
 	}
 	if patch.Label != nil && s.proxyEnabled() && sub.ProxyIndex >= 0 {
@@ -1040,6 +1099,45 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	}
 	return sub, nil
+}
+
+func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup bool) error {
+	return s.withTx(func() error {
+		obs := s.mutator.SubscriptionOutbounds()
+		tagSet := make(map[string]bool, len(sub.MemberTags))
+		for _, tag := range sub.MemberTags {
+			tagSet[tag] = true
+		}
+		for _, ob := range obs {
+			tag, _ := ob["tag"].(string)
+			if tagSet[tag] {
+				raw, err := json.Marshal(ob)
+				if err != nil {
+					return fmt.Errorf("marshal outbound %s: %w", tag, err)
+				}
+				jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, s.logWarn)
+				if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
+					return err
+				}
+			}
+		}
+		if rebuildGroup {
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
+			}
+		}
+		return s.reloadWithGroups(ctx)
+	})
+}
+
+// stageGroupRebuild пересобирает group outbound подписки в открытом батче
+// (без reload — его делает вызывающий, чтобы SIGHUP был один на операцию).
+func (s *Service) stageGroupRebuild(sub *Subscription) error {
+	s.mutator.RemoveOutbound(sub.SelectorTag)
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
+		return fmt.Errorf("rebuild group outbound: %w", err)
+	}
+	return nil
 }
 
 // ErrActiveMemberOnURLTest is returned by SetActiveMember when the
@@ -1233,7 +1331,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, replaceTag(out.Outbound, tag)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface, s.logWarn)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}

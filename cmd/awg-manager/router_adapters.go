@@ -377,6 +377,25 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 	return filterBindable(ifaces, native, occupied), nil
 }
 
+// ListAllBindable returns all egress-capable router interfaces (security-level "public"
+// minus our own auto-managed ones) without excluding occupied direct binds (#709).
+// Used by subscriptions and manual proxy tunnels which can share interfaces with direct outbounds.
+func (a *routerWANInterfaceAdapter) ListAllBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
+	ifaces, err := a.store.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	native := map[string]bool{}
+	if a.nativeProxies != nil {
+		if names, e := a.nativeProxies(ctx); e == nil {
+			for _, n := range names {
+				native[n] = true
+			}
+		}
+	}
+	return filterBindable(ifaces, native, nil), nil
+}
+
 // filterBindable keeps egress interfaces (security-level "public") minus our
 // own auto-managed ones and minus already-bound interfaces, rescuing
 // KeenOS-native proxies in the native set.

@@ -1879,6 +1879,7 @@ const api_SubgroupsResponseEnvelope: v.GenericSchema = v.looseObject({
 
 const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 	activeMember: v.optional(v.nullable(v.string())),
+	bindInterface: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	excludedMembers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionMemberDTO)))),
 	excludedTags: v.optional(v.nullable(v.array(v.string()))),

@@ -62,6 +62,7 @@ type SubscriptionDTO struct {
 	Enabled         bool                      `json:"enabled" example:"true"`
 	Mode            string                    `json:"mode" example:"selector"`
 	URLTest         *SubscriptionURLTestDTO   `json:"urlTest,omitempty"`
+	BindInterface   string                    `json:"bindInterface,omitempty" example:"eth3"`
 }
 
 // SubscriptionHeader is a single custom HTTP header for the fetch request.
@@ -96,6 +97,7 @@ type CreateSubscriptionRequest struct {
 	ExcludedKeys  []string                `json:"excludedKeys,omitempty"`                            // identity-суффиксы серверов, снятых в import-preview
 	FilterInclude string                  `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`     // regex «включать только» (по имени сервера)
 	FilterExclude string                  `json:"filterExclude,omitempty" example:"(?i)(RU|Russia)"` // regex «исключать» (по имени сервера)
+	BindInterface string                  `json:"bindInterface,omitempty" example:"eth3"`
 }
 
 // UpdateSubscriptionRequest is the body for PUT /api/singbox/subscriptions/update.
@@ -110,6 +112,7 @@ type UpdateSubscriptionRequest struct {
 	URLTest       *SubscriptionURLTestDTO `json:"urlTest,omitempty"`
 	FilterInclude *string                 `json:"filterInclude,omitempty" example:"(?i)(DE|NL)"`     // regex «включать только»; "" снимает фильтр
 	FilterExclude *string                 `json:"filterExclude,omitempty" example:"(?i)(RU|Russia)"` // regex «исключать»; "" снимает фильтр
+	BindInterface *string                 `json:"bindInterface,omitempty" example:"eth3"`            // "" clears egress bind
 }
 
 // ActiveMemberRequest is the body for POST /api/singbox/subscriptions/active-member.
@@ -287,6 +290,7 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 		Enabled:         s.Enabled,
 		Mode:            mode,
 		URLTest:         urltest,
+		BindInterface:   s.BindInterface,
 	}
 }
 
@@ -315,6 +319,7 @@ type SubscriptionMetaDTO struct {
 	InfoItems       []SubscriptionInfoItemDTO `json:"infoItems"`
 	FilterInclude   string                    `json:"filterInclude,omitempty"`
 	FilterExclude   string                    `json:"filterExclude,omitempty"`
+	BindInterface   string                    `json:"bindInterface,omitempty" example:"eth3"`
 }
 
 // SubscriptionStreamMemberDTO wraps a single member with its index for
@@ -386,6 +391,7 @@ func buildSubscriptionMetaDTO(s subscription.Subscription, ndmsProxyEnabled bool
 		InfoItems:       infoItemsToDTO(s.InfoItems),
 		FilterInclude:   s.FilterInclude,
 		FilterExclude:   s.FilterExclude,
+		BindInterface:   s.BindInterface,
 	}
 }
 

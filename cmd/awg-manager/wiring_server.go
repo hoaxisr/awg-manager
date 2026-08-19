@@ -367,6 +367,7 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
+	a.subSvc.SetBindInterfaceValidator(subscriptionBindValidator{adapter: bindableAdapter})
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.
@@ -396,6 +397,7 @@ func (a *app) setupRouter() {
 	a.tunnelService.SetDeviceProxyRefChecker(a.deviceProxySvc)
 	a.tunnelService.SetRouterRefChecker(routerSvc)
 	a.singboxHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	a.singboxHandler.SetBindValidator(subscriptionBindValidator{adapter: bindableAdapter}.ValidateBindInterface)
 	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
 	// Initial reconcile on boot — idempotent, brings config.json in sync
 	// with storage + current tunnel set. Runs strictly AFTER

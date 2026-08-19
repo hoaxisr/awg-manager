@@ -138,6 +138,8 @@ export interface Subscription {
 	filterExclude?: string;
 	/** Display-зеркало серверов, скрытых фильтром (перестраивается при refresh). */
 	filteredMembers?: SubscriptionMember[];
+	/** Kernel iface для dial всех member-outbound'ов (#709). */
+	bindInterface?: string;
 }
 
 export interface SubscriptionRefreshResult {
@@ -167,6 +169,7 @@ export interface CreateSubscriptionInput {
 	excludedKeys?: string[];
 	filterInclude?: string;
 	filterExclude?: string;
+	bindInterface?: string;
 }
 
 export interface UpdateSubscriptionInput {
@@ -179,6 +182,7 @@ export interface UpdateSubscriptionInput {
 	urlTest?: SubscriptionURLTest;
 	filterInclude?: string;
 	filterExclude?: string;
+	bindInterface?: string;
 }
 
 // === Subscription aggregate groups (#372) ===
