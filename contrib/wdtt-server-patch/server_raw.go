@@ -25,7 +25,7 @@ const (
 	rawTunVirtioHdrLen   = 10 // wireguard-go tun.virtioNetHdrLen on Linux (amd64/arm64)
 	rawDownlinkQueueSize = 256  // как в APK (newDownlinkWorker)
 	rawDownlinkChunkSize = 8    // downlinkChunkSizeFor в APK
-	rawMaxWorkersPerIP   = 40   // safety cap (27 workers + reconnect slack)
+	rawMaxWorkersPerIP   = 256  // safety cap (support up to 256 parallel workers)
 	rawPacketBufCap      = 2048
 	rawConnIdleTimeout   = 90 * time.Second // быстрый сброс [СТАТ] после отключения клиента
 )
