@@ -484,8 +484,7 @@ func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
 			// needsInstall is true — override to avoid real syscalls.
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:   "0xffffaaa",
-		currentWANIPs: []string{"203.0.113.207/32"}, // same as collector — only mark differs
+		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}}, // same as collector — only mark differs
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -497,8 +496,8 @@ func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
 	if restoreCalls != 1 {
 		t.Errorf("expected 1 restore (Install) after mark change, got %d", restoreCalls)
 	}
-	if svc.currentMark != "0xffffaab" {
-		t.Errorf("expected currentMark=0xffffaab after reinstall, got %q", svc.currentMark)
+	if svc.appliedSpec.PolicyMark != "0xffffaab" {
+		t.Errorf("expected applied PolicyMark=0xffffaab after reinstall, got %q", svc.appliedSpec.PolicyMark)
 	}
 }
 
@@ -595,7 +594,7 @@ func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 		// Log is nil — Disable calls s.deps.Log.Warn if Uninstall fails.
 		// Uninstall with fakeExec (err=nil) won't error, so Log.Warn won't be called.
 	})
-	svc.currentMark = "0xffffaaa"
+	svc.appliedSpec = &RestoreInputSpec{PolicyMark: "0xffffaaa"}
 
 	if err := svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -640,7 +639,7 @@ func TestReconcile_SkipsWhileTransitionInFlight(t *testing.T) {
 		IPTables: it,
 		Singbox:  newTestSingbox(t),
 	})
-	svc.currentMark = "0xffffaaa"
+	svc.appliedSpec = &RestoreInputSpec{PolicyMark: "0xffffaaa"}
 
 	// Simulate a switch in flight by holding transitionMu (as SwitchRoutingMode
 	// does across its whole sequence).
@@ -692,8 +691,7 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:   "0xffffaaa",
-		currentWANIPs: []string{"198.51.100.1/32"}, // different
+		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"198.51.100.1/32"}}, // different
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -705,8 +703,8 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 	if restoreCalls != 1 {
 		t.Errorf("expected 1 restore (Install) due to WAN-IP change, got %d", restoreCalls)
 	}
-	if !slices.Equal(svc.currentWANIPs, []string{"203.0.113.207/32"}) {
-		t.Errorf("currentWANIPs not updated: %v", svc.currentWANIPs)
+	if !slices.Equal(svc.appliedSpec.WANIPs, []string{"203.0.113.207/32"}) {
+		t.Errorf("applied WANIPs not updated: %v", svc.appliedSpec.WANIPs)
 	}
 }
 
@@ -729,8 +727,7 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 			Singbox:            newTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"}, // same
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}}, // same
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -780,8 +777,7 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 		},
 		// Same mark + WAN IPs as stored, initial sync already done — so the
 		// missing jumps are the only thing that can trigger a reinstall.
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -819,8 +815,7 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 			Singbox:            newTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -838,15 +833,15 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 func TestReconcile_DeviceModeChanged_ReinstallsImmediately(t *testing.T) {
 	tests := []struct {
 		name             string
-		currentMark      string
+		mark             string
 		nextSettings     storage.SingboxRouterSettings
 		wantPolicyLookup bool
 		wantMatchAll     bool
 		wantConnmark     bool
 	}{
 		{
-			name:        "policy to all",
-			currentMark: "0xffffaaa",
+			name: "policy to all",
+			mark: "0xffffaaa",
 			nextSettings: storage.SingboxRouterSettings{
 				Enabled:       true,
 				DeviceMode:    "all",
@@ -855,8 +850,8 @@ func TestReconcile_DeviceModeChanged_ReinstallsImmediately(t *testing.T) {
 			wantMatchAll: true,
 		},
 		{
-			name:        "all to policy",
-			currentMark: "",
+			name: "all to policy",
+			mark: "",
 			nextSettings: storage.SingboxRouterSettings{
 				Enabled:       true,
 				DeviceMode:    "policy",
@@ -881,7 +876,7 @@ func TestReconcile_DeviceModeChanged_ReinstallsImmediately(t *testing.T) {
 					Singbox:            newReadyTestSingbox(t),
 					NetfilterPreflight: func(context.Context) error { return nil },
 				},
-				currentMark:         tc.currentMark,
+				appliedSpec:         &RestoreInputSpec{PolicyMark: tc.mark},
 				netfilterStateKnown: true,
 			}
 
@@ -993,8 +988,7 @@ func TestReconcile_StateUnknown_ForcesInitialReinstall(t *testing.T) {
 				return nil
 			},
 		},
-		currentMark:   "0xffffaaa",
-		currentWANIPs: []string{"203.0.113.207/32"},
+		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		// netfilterStateKnown intentionally left as zero value (false).
 	}
 
@@ -1862,10 +1856,9 @@ func TestReconcile_BypassPresetsChanged_Reinstalls(t *testing.T) {
 			Singbox:            newReadyTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:          "0xffffaaa",
-		currentWANIPs:        []string{"203.0.113.207/32"},
-		currentBypassPresets: nil, // was empty, now l2tp
-		netfilterStateKnown:  true,
+		// bypass-портов ещё не применено — сейчас появятся из пресета l2tp
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
+		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:       true,
@@ -1878,8 +1871,8 @@ func TestReconcile_BypassPresetsChanged_Reinstalls(t *testing.T) {
 	if restoreCalls != 1 {
 		t.Errorf("expected 1 Install due to bypass preset change, got %d", restoreCalls)
 	}
-	if !slices.Equal(svc.currentBypassPresets, []string{"l2tp"}) {
-		t.Errorf("currentBypassPresets not updated: %v", svc.currentBypassPresets)
+	if !slices.Equal(svc.appliedSpec.BypassUDPPorts, []PortRange{{500, 500}, {4500, 4500}, {1701, 1701}}) {
+		t.Errorf("применённые bypass-порты не обновились: %v", svc.appliedSpec.BypassUDPPorts)
 	}
 }
 
@@ -1899,11 +1892,13 @@ func TestReconcile_BypassPresetsSame_NoOp(t *testing.T) {
 			Singbox:            newTestSingbox(t),
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:             "0xffffaaa",
-		currentWANIPs:           []string{"203.0.113.207/32"},
-		currentBypassPresets:    []string{"l2tp"}, // same
-		currentBypassExtraPorts: "51820 UDP",      // same
-		netfilterStateKnown:     true,
+		// то же самое, что вычислит reconcile: пресет l2tp + 51820/UDP
+		appliedSpec: &RestoreInputSpec{
+			PolicyMark:     "0xffffaaa",
+			WANIPs:         []string{"203.0.113.207/32"},
+			BypassUDPPorts: []PortRange{{500, 500}, {4500, 4500}, {1701, 1701}, {51820, 51820}},
+		},
+		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
 		Enabled:          true,
@@ -2005,8 +2000,7 @@ func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			IngressResolver:    resolver,
 		},
-		currentMark:   "0xffffaaa",
-		currentWANIPs: []string{"203.0.113.207/32"},
+		appliedSpec: &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		// netfilterStateKnown=false → first reconcile forces install
 	}
 
@@ -2034,8 +2028,8 @@ func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
 		t.Errorf("expected ingress rule for nwgX in restore input, got:\n%s", lastRestoreInput)
 	}
 	// currentIngress must be updated.
-	if !slices.Equal(svc.currentIngress, []string{"nwgX"}) {
-		t.Errorf("currentIngress not updated: %v", svc.currentIngress)
+	if !slices.Equal(svc.appliedSpec.IngressInterfaces, []string{"nwgX"}) {
+		t.Errorf("применённые ingress-интерфейсы не обновились: %v", svc.appliedSpec.IngressInterfaces)
 	}
 }
 
@@ -2066,5 +2060,120 @@ func TestNormalize_RoutingModeDefaultAndValidate(t *testing.T) {
 	}
 	if got.RoutingMode != "policy-tun" {
 		t.Errorf("policy-tun mode = %q, want policy-tun", got.RoutingMode)
+	}
+}
+
+// newAppliedSpecReconcileService — сервис для тестов «вход спека изменился →
+// переустановка»: живой готовый движок, стабленный iptables, счётчик установок
+// и последний отрендеренный блоб.
+func newAppliedSpecReconcileService(t *testing.T, applied *RestoreInputSpec) (*ServiceImpl, *int, *string) {
+	t.Helper()
+	restoreCalls := 0
+	last := ""
+	ipt := newStubIPTables(func(_ context.Context, in string) error {
+		restoreCalls++
+		last = in
+		return nil
+	})
+	stubListeningProbe(t, func() bool { return true })
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			Singbox:            newReadyTestSingbox(t),
+			NetfilterPreflight: func(context.Context) error { return nil },
+		},
+		appliedSpec:         applied,
+		netfilterStateKnown: true,
+	}
+	return svc, &restoreCalls, &last
+}
+
+// Страховка: смена набора LAN-мостов (NDMS переконфигурировал hotspot, порт
+// ndnproxy переехал) обязана переустанавливать правила — от неё зависят
+// REDIRECT-правила DNS-RESCUE. Направление «было — стало пусто»:
+// DiscoverLANBridges — пакетная функция без шва, в тесте она отдаёт пусто.
+func TestReconcileInstalled_LANBridgesChangeReinstalls(t *testing.T) {
+	svc, restoreCalls, _ := newAppliedSpecReconcileService(t, &RestoreInputSpec{
+		PolicyMark: "0xffffaaa",
+		WANIPs:     []string{"203.0.113.207/32"},
+		LANBridges: []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}},
+	})
+	sr := storage.SingboxRouterSettings{Enabled: true, PolicyName: "Policy0", WANAutoDetect: true}
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Fatalf("смена набора LAN-мостов обязана переустановить правила, got %d", *restoreCalls)
+	}
+	if len(svc.appliedSpec.LANBridges) != 0 {
+		t.Errorf("применённые мосты не обновились: %v", svc.appliedSpec.LANBridges)
+	}
+}
+
+// Страховка: смена пользовательских bypass-подсетей обязана переустанавливать
+// правила (шов настоящий — через настройки).
+func TestReconcileInstalled_BypassSubnetsChangeReinstalls(t *testing.T) {
+	svc, restoreCalls, last := newAppliedSpecReconcileService(t, &RestoreInputSpec{
+		PolicyMark: "0xffffaaa",
+		WANIPs:     []string{"203.0.113.207/32"},
+	})
+	sr := storage.SingboxRouterSettings{
+		Enabled:            true,
+		PolicyName:         "Policy0",
+		WANAutoDetect:      true,
+		BypassExtraSubnets: "10.9.9.0/24",
+	}
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Fatalf("смена bypass-подсетей обязана переустановить правила, got %d", *restoreCalls)
+	}
+	if !strings.Contains(*last, "10.9.9.0/24") {
+		t.Errorf("новая подсеть не попала в правила:\n%s", *last)
+	}
+
+	// Второй тик без изменений — тишина.
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled (второй тик): %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Errorf("повторный тик без изменений: restoreCalls = %d, want 1", *restoreCalls)
+	}
+}
+
+// С1: до снимка сравнивались ИМЕНА пресетов, а в правила едут разрешённые из
+// компайл-таймовой таблицы порты. Смена таблицы между версиями демона сигнала
+// не давала; спасал только forceInitialSync (новый бинарник = рестарт).
+// Со снимком сравнивается результат, и сигнал есть.
+func TestReconcileInstalled_PresetTableChangeReinstalls(t *testing.T) {
+	old := knownPresets["ntp"]
+	knownPresets["ntp"] = bypassPreset{UDP: []int{9999}}
+	t.Cleanup(func() { knownPresets["ntp"] = old })
+
+	svc, restoreCalls, last := newAppliedSpecReconcileService(t, &RestoreInputSpec{
+		PolicyMark:     "0xffffaaa",
+		WANIPs:         []string{"203.0.113.207/32"},
+		BypassUDPPorts: []PortRange{{123, 123}}, // порты пресета ntp прежней версии
+	})
+	sr := storage.SingboxRouterSettings{
+		Enabled:       true,
+		PolicyName:    "Policy0",
+		WANAutoDetect: true,
+		BypassPresets: []string{"ntp"},
+	}
+
+	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileInstalled: %v", err)
+	}
+	if *restoreCalls != 1 {
+		t.Fatalf("смена таблицы пресетов обязана переустановить правила, got %d", *restoreCalls)
+	}
+	if !strings.Contains(*last, "9999") {
+		t.Errorf("порт из новой таблицы пресетов не попал в правила:\n%s", *last)
 	}
 }

@@ -753,9 +753,7 @@ func TestReconcile_QoSClassesChanged_Reinstalls(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
-		currentQoSClasses:   nil, // was off, now one class
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -775,8 +773,8 @@ func TestReconcile_QoSClassesChanged_Reinstalls(t *testing.T) {
 		t.Errorf("restore input missing dscp rule:\n%s", lastRestore)
 	}
 	want := []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}}
-	if !slices.Equal(svc.currentQoSClasses, want) {
-		t.Errorf("currentQoSClasses not updated: %+v", svc.currentQoSClasses)
+	if !slices.Equal(svc.appliedQoSClasses(), want) {
+		t.Errorf("применённые классы QoS не обновились: %+v", svc.appliedQoSClasses())
 	}
 }
 
@@ -814,9 +812,7 @@ func TestReconcile_QoSPortChange_HealsConfigBeforeInstall(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
-		currentQoSClasses:   nil, // port set is about to change
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -852,9 +848,11 @@ func TestReconcile_QoSClassesSame_NoReinstall(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
-		currentQoSClasses:   []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}},
+		appliedSpec: &RestoreInputSpec{
+			PolicyMark: "0xffffaaa",
+			WANIPs:     []string{"203.0.113.207/32"},
+			QoSClasses: []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}},
+		},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -893,9 +891,7 @@ func TestReconcile_QoSXtDscpUnavailable_DegradesWithoutFailing(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return false },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
-		currentQoSClasses:   nil,
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	if err := svc.reconcileInstalled(context.Background(), storage.SingboxRouterSettings{
@@ -911,8 +907,8 @@ func TestReconcile_QoSXtDscpUnavailable_DegradesWithoutFailing(t *testing.T) {
 	if restoreCalls != 0 {
 		t.Errorf("expected no Install churn while xt_dscp unavailable, got %d", restoreCalls)
 	}
-	if svc.currentQoSClasses != nil {
-		t.Errorf("currentQoSClasses must stay empty, got %+v", svc.currentQoSClasses)
+	if svc.appliedQoSClasses() != nil {
+		t.Errorf("применённые классы QoS обязаны остаться пустыми, got %+v", svc.appliedQoSClasses())
 	}
 }
 
@@ -958,8 +954,8 @@ func TestEnable_Tproxy_QoSClasses_WiresConfigAndIPTables(t *testing.T) {
 		t.Errorf("disabled class must not be dispatched:\n%s", restoreInput)
 	}
 	want := []QoSClassSpec{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}}
-	if !slices.Equal(svc.currentQoSClasses, want) {
-		t.Errorf("currentQoSClasses = %+v, want %+v", svc.currentQoSClasses, want)
+	if !slices.Equal(svc.appliedQoSClasses(), want) {
+		t.Errorf("применённые классы QoS = %+v, want %+v", svc.appliedQoSClasses(), want)
 	}
 
 	// sing-box side: persisted config carries the class inbound pair. The
@@ -1094,8 +1090,8 @@ func TestEnable_Tproxy_QoSXtDscpMissing_DegradesWithoutFailing(t *testing.T) {
 	if strings.Contains(restoreInput, "-m dscp") {
 		t.Errorf("dscp rules must be skipped when xt_dscp unavailable:\n%s", restoreInput)
 	}
-	if svc.currentQoSClasses != nil {
-		t.Errorf("currentQoSClasses must stay empty when degraded, got %+v", svc.currentQoSClasses)
+	if svc.appliedQoSClasses() != nil {
+		t.Errorf("применённые классы QoS обязаны остаться пустыми при деградации, got %+v", svc.appliedQoSClasses())
 	}
 }
 

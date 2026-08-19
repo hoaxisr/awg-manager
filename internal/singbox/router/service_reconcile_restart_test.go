@@ -33,8 +33,7 @@ func newReconcileInstalledService(t *testing.T, sb *fakeSingbox) *ServiceImpl {
 			Singbox:            sb,
 			NetfilterPreflight: func(context.Context) error { return nil },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 }
@@ -145,7 +144,7 @@ func chainsOnlyDump() string {
 // Fail-closed: движок мёртв, рестарт подавлен И PREROUTING-джампы снесены
 // (chainsOnlyDump) → НЕ восстанавливаем перехват в мёртвый порт, а ставим
 // blackhole-DROP policy-трафика, чтобы он не утёк в WAN. Ровно один restore —
-// blackhole-блоб, не реальный перехват; флаг blackholeActive выставлен.
+// blackhole-блоб, не реальный перехват; снимок appliedBlackhole записан.
 func TestReconcileInstalled_DeadEngineInstallsBlackhole(t *testing.T) {
 	sb := newTestSingbox(t) // IsRunning=false весь тест
 	svc := newReconcileInstalledService(t, sb)
@@ -166,8 +165,8 @@ func TestReconcileInstalled_DeadEngineInstallsBlackhole(t *testing.T) {
 	if strings.Contains(restores[0], ChainName) {
 		t.Errorf("must NOT restore real interception (%s) into a dead port:\n%s", ChainName, restores[0])
 	}
-	if !svc.blackholeActive {
-		t.Error("blackholeActive must be set after installing the fail-closed blackhole")
+	if svc.appliedBlackhole == nil {
+		t.Error("appliedBlackhole must be set after installing the fail-closed blackhole")
 	}
 }
 
@@ -199,8 +198,8 @@ func TestReconcileInstalled_LiveButUnboundInstallsBlackhole(t *testing.T) {
 	if strings.Contains(restores[0], ChainName) {
 		t.Errorf("must NOT install real interception (%s) while sockets are unbound:\n%s", ChainName, restores[0])
 	}
-	if !svc.blackholeActive {
-		t.Error("blackholeActive must be set for an up-but-unbound engine")
+	if svc.appliedBlackhole == nil {
+		t.Error("appliedBlackhole must be set for an up-but-unbound engine")
 	}
 }
 
@@ -215,7 +214,7 @@ func TestReconcileInstalled_LiveButUnboundJumpsIntactDefers(t *testing.T) {
 	// runIPTablesOut по умолчанию = jumpsPresentDump → джампы целы.
 	svc := newReconcileInstalledService(t, sb)
 	svc.deps.IPTables = ipt
-	svc.currentMark = "0xstale" // форсируем markChanged → needsInstall
+	svc.appliedSpec = &RestoreInputSpec{PolicyMark: "0xstale"} // форсируем specChanged → needsInstall
 	stubListeningProbe(t, func() bool { return false })
 
 	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
@@ -224,7 +223,7 @@ func TestReconcileInstalled_LiveButUnboundJumpsIntactDefers(t *testing.T) {
 	if restores != 0 {
 		t.Errorf("установка должна быть отложена (unbound, джампы целы): restore calls = %d, want 0", restores)
 	}
-	if svc.blackholeActive {
+	if svc.appliedBlackhole != nil {
 		t.Error("blackhole не нужен при целых джампах — перехват в мёртвый порт держит fail-closed")
 	}
 }
@@ -235,7 +234,7 @@ func TestReconcileInstalled_LiveButUnboundJumpsIntactDefers(t *testing.T) {
 func TestReconcileInstalled_ProbeErrorPreservesBlackhole(t *testing.T) {
 	sb := newTestSingbox(t) // dead
 	svc := newReconcileInstalledService(t, sb)
-	svc.blackholeActive = true // прошлый тик поставил blackhole
+	svc.appliedBlackhole = &RestoreInputSpec{} // прошлый тик поставил blackhole
 	removed := false
 	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
 	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
@@ -247,18 +246,18 @@ func TestReconcileInstalled_ProbeErrorPreservesBlackhole(t *testing.T) {
 	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
 		t.Fatalf("reconcileInstalled: %v", err)
 	}
-	if removed || !svc.blackholeActive {
-		t.Errorf("probe error + dead engine must PRESERVE blackhole: removed=%v active=%v", removed, svc.blackholeActive)
+	if removed || svc.appliedBlackhole == nil {
+		t.Errorf("probe error + dead engine must PRESERVE blackhole: removed=%v active=%v", removed, svc.appliedBlackhole != nil)
 	}
 }
 
 // Движок вернулся (jumps present, IsRunning=true) → ранее поставленный
-// fail-closed blackhole снимается: cleanupBlackhole вызван, флаг сброшен.
+// fail-closed blackhole снимается: cleanupBlackhole вызван, снимок обнулён.
 func TestReconcileInstalled_EngineRecoveryRemovesBlackhole(t *testing.T) {
 	sb := newTestSingbox(t)
 	sb.isRunningFn = func() (bool, int) { return true, 4242 } // alive
 	svc := newReconcileInstalledService(t, sb)
-	svc.blackholeActive = true // как будто прошлый тик поставил blackhole
+	svc.appliedBlackhole = &RestoreInputSpec{} // как будто прошлый тик поставил blackhole
 	removed := false
 	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
 	ipt.cleanupBlackhole = func() { removed = true }
@@ -267,8 +266,8 @@ func TestReconcileInstalled_EngineRecoveryRemovesBlackhole(t *testing.T) {
 	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
 		t.Fatalf("reconcileInstalled: %v", err)
 	}
-	if !removed || svc.blackholeActive {
-		t.Errorf("engine recovery must drop the blackhole: cleanup=%v active=%v", removed, svc.blackholeActive)
+	if !removed || svc.appliedBlackhole != nil {
+		t.Errorf("engine recovery must drop the blackhole: cleanup=%v active=%v", removed, svc.appliedBlackhole != nil)
 	}
 }
 
@@ -470,5 +469,64 @@ func TestDisable_WritesJournalEntry(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Disable must log the teardown, got %v", rec.entries)
+	}
+}
+
+// Д3: при мёртвом движке и снесённых джампах InstallBlackhole звался на каждом
+// тике — три тика подряд давали три записи файла правил и три iptables-restore,
+// плюс строку Warn каждые 30 секунд всё время, пока sing-box мёртв.
+func TestReconcileInstalled_BlackholeInstalledOnce(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	var restores []string
+	persists := 0
+	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	ipt.persistBlackhole = func(string) error { persists++; return nil }
+	svc.deps.IPTables = ipt
+
+	for i := 0; i < 3; i++ {
+		if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+			t.Fatalf("тик %d: %v", i, err)
+		}
+	}
+	if len(restores) != 1 || persists != 1 {
+		t.Fatalf("blackhole обязан ставиться один раз: restores=%d persists=%d, want 1/1", len(restores), persists)
+	}
+	if svc.appliedBlackhole == nil {
+		t.Error("снимок blackhole обязан остаться заполненным")
+	}
+}
+
+// СТРАХОВКА (зелёный до и после): пока движок мёртв, WAN-адрес роутера может
+// смениться (обновление аренды DHCP). Исключения блокировки обязаны догнать
+// новый адрес, иначе доступ из локальной сети на новый адрес роутера будет
+// дропаться до возвращения движка. Это ровно то свойство, ради которого
+// blackhole описывается снимком, а не булевым флагом.
+func TestReconcileInstalled_BlackholeFollowsWANIPChange(t *testing.T) {
+	sb := newTestSingbox(t) // dead
+	svc := newReconcileInstalledService(t, sb)
+	wan := &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+	svc.deps.WANIPCollector = wan
+	var restores []string
+	ipt := newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) { return chainsOnlyDump(), nil }
+	svc.deps.IPTables = ipt
+
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("первый тик: %v", err)
+	}
+	wan.ips = []string{"198.51.100.7/32"}
+	if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+		t.Fatalf("второй тик: %v", err)
+	}
+	if len(restores) != 2 {
+		t.Fatalf("смена WAN-адреса обязана обновить blackhole: restores=%d, want 2", len(restores))
+	}
+	if !strings.Contains(restores[1], "198.51.100.7/32") {
+		t.Errorf("новый адрес не попал в blackhole:\n%s", restores[1])
+	}
+	if strings.Contains(restores[1], "203.0.113.207/32") {
+		t.Errorf("старый адрес обязан уйти из blackhole:\n%s", restores[1])
 	}
 }

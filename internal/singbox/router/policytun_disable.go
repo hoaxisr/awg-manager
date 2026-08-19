@@ -147,6 +147,12 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "iptables uninstall: "+err.Error())
 		}
+		// Симметрично tproxy-Disable: снесли — забыли. Иначе выключенный режим
+		// оставлял бы за собой снимок применённого спека, а netfilterStateKnown
+		// сообщал бы следующему тику, что установленное состояние известно.
+		s.appliedSpec = nil
+		s.appliedBlackhole = nil
+		s.netfilterStateKnown = false
 	}
 
 	// (5) Удержать интерфейс: индекс закреплён за режимом, потому что permit в

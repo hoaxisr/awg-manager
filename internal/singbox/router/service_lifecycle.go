@@ -727,7 +727,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		s.ensureBypassSetExists(ctx)
 	}
 
-	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
+	spec := RestoreInputSpec{
 		PolicyMark:        mark,
 		MatchAll:          !policyMode,
 		WANIPs:            wanIPs,
@@ -738,7 +738,8 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
 		IngressInterfaces: ingress,
 		QoSClasses:        qosSpecs,
-	}); err != nil {
+	}
+	if err := s.deps.IPTables.Install(ctx, spec); err != nil {
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
 		// wired we just park the slot back under disabled/ — sing-box
@@ -759,16 +760,8 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		}
 		return fmt.Errorf("iptables install: %w", err)
 	}
-	s.currentMark = mark
-	s.currentWANIPs = wanIPs
-	s.currentLANBridges = lanBridges
-	s.currentBypassPresets = sr.BypassPresets
-	s.currentBypassExtraPorts = sr.BypassExtraPorts
-	s.currentBypassExtraSubnets = sr.BypassExtraSubnets
-	s.currentKeenDNSCIDRs = keenDNSCIDRs
+	s.appliedSpec = &spec
 	s.currentBypassGeoIPTags = sr.BypassGeoIPTags
-	s.currentIngress = ingress
-	s.currentQoSClasses = qosSpecs
 	s.netfilterStateKnown = true
 	// Правила переустановлены и на AWGM-SELECTIVE больше не ссылаются —
 	// теперь набор выпиленного селектива можно снести (однократно).
@@ -1311,19 +1304,11 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	// дамп на диске — нет, и хук воскрешал бы их на каждой перезагрузке.
 	s.teardownBypassSet(ctx)
 	s.currentBypassGeoIPTags = nil
-	s.currentMark = ""
-	s.currentWANIPs = nil
-	s.currentLANBridges = nil
-	s.currentBypassPresets = nil
-	s.currentBypassExtraPorts = ""
-	s.currentBypassExtraSubnets = ""
-	s.currentKeenDNSCIDRs = nil
-	s.currentIngress = nil
-	s.currentQoSClasses = nil
+	s.appliedSpec = nil
 	s.netfilterStateKnown = false
-	// Uninstall already tore down the fail-closed blackhole (if any); clear the
-	// tracking flag so a later reconcile doesn't try to remove it again.
-	s.blackholeActive = false
+	// Uninstall already tore down the fail-closed blackhole (if any); drop its
+	// snapshot so a later reconcile doesn't try to remove it again.
+	s.appliedBlackhole = nil
 
 	if s.deps.Orch != nil {
 		// Move 20-router.json under disabled/ — sing-box's non-recursive
@@ -1532,26 +1517,18 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		return fmt.Errorf("collect WAN IPs: %w", err)
 	}
 
-	markChanged := mark != s.currentMark
-	wanIPsChanged := !slices.Equal(s.currentWANIPs, wanIPs)
 	var lanBridges []LANBridgeDNSRedir
 	if policyMode {
 		lanBridges, _ = DiscoverLANBridges(ctx, mark)
 	}
-	lanBridgesChanged := !equalLANBridges(s.currentLANBridges, lanBridges)
 	var ingress []string
 	if policyMode {
 		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
 	}
-	ingressChanged := !slices.Equal(s.currentIngress, ingress)
-	bypassPresetsChanged := !slices.Equal(s.currentBypassPresets, sr.BypassPresets)
-	bypassExtraChanged := s.currentBypassExtraPorts != sr.BypassExtraPorts
-	bypassSubnetsChanged := s.currentBypassExtraSubnets != sr.BypassExtraSubnets
-	// Адрес KeenDNS приходит с роутера, а не из настроек: без своего флага
+	// Адрес KeenDNS приходит с роутера, а не из настроек: без него в спеке
 	// его появление (первый успешный запрос после старта) или смена не дали
 	// бы переустановки правил, и обход доехал бы только по ручному Enable.
 	keenDNSCIDRs := s.keenDNSBypass()
-	keenDNSCIDRsChanged := !slices.Equal(s.currentKeenDNSCIDRs, keenDNSCIDRs)
 	// Смена состава geoip-тегов меняет и наличие правила `--match-set`
 	// (пусто ↔ непусто), и содержимое набора — переустанавливаем правила и
 	// пересобираем набор ниже.
@@ -1576,7 +1553,23 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			qosSpecs = nil
 		}
 	}
-	qosChanged := !slices.Equal(s.currentQoSClasses, qosSpecs)
+	qosChanged := !slices.Equal(s.appliedQoSClasses(), qosSpecs)
+
+	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
+	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
+	want := RestoreInputSpec{
+		PolicyMark:        mark,
+		MatchAll:          !policyMode,
+		WANIPs:            wanIPs,
+		LANBridges:        lanBridges,
+		BypassUDPPorts:    bypassUDP,
+		BypassTCPPorts:    bypassTCP,
+		BypassCIDRs:       bypassSubnets,
+		BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
+		IngressInterfaces: ingress,
+		QoSClasses:        qosSpecs,
+	}
+	specChanged := !equalRestoreInputSpec(s.appliedSpec, &want)
 
 	// Self-heal the sing-box side BEFORE any iptables change — same safe
 	// order as Enable (config → wait → Install). Installing new per-class
@@ -1634,41 +1627,52 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// течь в WAN, пока движок не вернётся. Снимается ниже, когда движок оживёт.
 	wantBlackhole := jumpsMissing && engineDown
 	if wantBlackhole {
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
 		// Mirror the real interception spec's exclusions (bypass ports) so the
 		// blackhole drops EXACTLY what would have been proxied — not the user's
 		// bypass ports.
 		blackholeSpec := RestoreInputSpec{
-			PolicyMark:     mark,
-			MatchAll:       !policyMode,
-			WANIPs:         wanIPs,
-			BypassCIDRs:    bypassSubnets,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
-			BypassGeoIPSet: len(sr.BypassGeoIPTags) > 0,
-		}
-		// Набор обязан существовать, иначе iptables-restore blackhole'а падает
-		// целиком и fail-closed не встаёт вовсе (пустой набор безопасен: он
-		// просто ничего не исключает из DROP).
-		if len(sr.BypassGeoIPTags) > 0 {
-			s.ensureBypassSetExists(ctx)
+			PolicyMark:     want.PolicyMark,
+			MatchAll:       want.MatchAll,
+			WANIPs:         want.WANIPs,
+			BypassCIDRs:    want.BypassCIDRs,
+			BypassUDPPorts: want.BypassUDPPorts,
+			BypassTCPPorts: want.BypassTCPPorts,
+			BypassGeoIPSet: want.BypassGeoIPSet,
 		}
 		s.mu.Lock()
-		err := s.deps.IPTables.InstallBlackhole(ctx, blackholeSpec)
-		if err == nil {
-			s.blackholeActive = true
-		}
+		// Переустановка ровно при смене исключений: спек blackhole — проекция
+		// тех же входов, что и перехват, и WAN-адрес роутера среди них. Гард
+		// «уже стоит — не трогаем» заморозил бы исключения на всё время
+		// простоя движка, и смена адреса до правил не доехала бы.
+		firstEngage := s.appliedBlackhole == nil
+		needBlackhole := !equalRestoreInputSpec(s.appliedBlackhole, &blackholeSpec)
 		s.mu.Unlock()
-		if err != nil {
-			s.appLog.Warn("reconcile", "", "не удалось поставить fail-closed blackhole: "+err.Error())
-		} else {
-			s.appLog.Warn("reconcile", "", "движок не работает, PREROUTING jumps снесены — включён fail-closed blackhole (policy-трафик дропается, не течёт в WAN)")
+		if needBlackhole {
+			// Набор обязан существовать, иначе iptables-restore blackhole'а падает
+			// целиком и fail-closed не встаёт вовсе (пустой набор безопасен: он
+			// просто ничего не исключает из DROP).
+			if len(sr.BypassGeoIPTags) > 0 {
+				s.ensureBypassSetExists(ctx)
+			}
+			s.mu.Lock()
+			err := s.deps.IPTables.InstallBlackhole(ctx, blackholeSpec)
+			if err == nil {
+				s.appliedBlackhole = &blackholeSpec
+			}
+			s.mu.Unlock()
+			switch {
+			case err != nil:
+				s.appLog.Warn("reconcile", "", "не удалось поставить fail-closed blackhole: "+err.Error())
+			case firstEngage:
+				s.appLog.Warn("reconcile", "", "движок не работает, PREROUTING jumps снесены — включён fail-closed blackhole (policy-трафик дропается, не течёт в WAN)")
+			default:
+				s.appLog.Info("reconcile", "", "исключения fail-closed blackhole обновлены (сменились адреса роутера или настройки обхода)")
+			}
 		}
 		// Реальный перехват в мёртвый порт всё равно не восстанавливаем.
 		jumpsMissing = false
 	}
-	needsInstall := forceInitialSync || jumpsMissing || markChanged || wanIPsChanged || lanBridgesChanged || ingressChanged || bypassPresetsChanged || bypassExtraChanged || bypassSubnetsChanged || bypassGeoTagsChanged || qosChanged || keenDNSCIDRsChanged
+	needsInstall := forceInitialSync || jumpsMissing || specChanged || bypassGeoTagsChanged
 
 	// Движок не готов интерсептить (мёртв или inbound-сокеты не привязаны) —
 	// НЕ ставим iptables ни по какому триггеру (#221): REDIRECT/TPROXY в
@@ -1692,38 +1696,17 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			return err
 		}
 
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, keenDNSCIDRs)
 		// Набор должен существовать до правила `--match-set` (см. Enable).
 		if len(sr.BypassGeoIPTags) > 0 {
 			s.ensureBypassSetExists(ctx)
 		}
 		s.mu.Lock()
-		if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
-			PolicyMark:        mark,
-			MatchAll:          !policyMode,
-			WANIPs:            wanIPs,
-			LANBridges:        lanBridges,
-			BypassUDPPorts:    bypassUDP,
-			BypassTCPPorts:    bypassTCP,
-			BypassCIDRs:       bypassSubnets,
-			BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
-			IngressInterfaces: ingress,
-			QoSClasses:        qosSpecs,
-		}); err != nil {
+		if err := s.deps.IPTables.Install(ctx, want); err != nil {
 			s.mu.Unlock()
 			return err
 		}
-		s.currentMark = mark
-		s.currentWANIPs = wanIPs
-		s.currentLANBridges = lanBridges
-		s.currentBypassPresets = sr.BypassPresets
-		s.currentBypassExtraPorts = sr.BypassExtraPorts
-		s.currentBypassExtraSubnets = sr.BypassExtraSubnets
-		s.currentKeenDNSCIDRs = keenDNSCIDRs
+		s.appliedSpec = &want
 		s.currentBypassGeoIPTags = sr.BypassGeoIPTags
-		s.currentIngress = ingress
-		s.currentQoSClasses = qosSpecs
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
 
@@ -1755,9 +1738,9 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// утечке и удалила бы rules-файл, обездвижив и netfilter.d-хук. Идемпотентно.
 	if !engineDown && probeErr == nil {
 		s.mu.Lock()
-		if s.blackholeActive {
+		if s.appliedBlackhole != nil {
 			s.deps.IPTables.RemoveBlackhole(ctx)
-			s.blackholeActive = false
+			s.appliedBlackhole = nil
 			s.mu.Unlock()
 			s.appLog.Info("reconcile", "", "движок восстановлен — fail-closed blackhole снят")
 		} else {

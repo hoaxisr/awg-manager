@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -415,6 +416,35 @@ type QoSClassSpec struct {
 	DSCP         int
 	TProxyPort   int
 	RedirectPort int
+}
+
+// equalRestoreInputSpec сравнивает ЖЕЛАЕМЫЙ спек с ПРИМЕНЁННЫМ. nil означает
+// «в netfilter ничего нашего не установлено» и равен только nil.
+//
+// Поле-в-поле, а НЕ reflect.DeepEqual: DeepEqual считает nil-слайс и пустой
+// РАЗНЫМИ, и первый же коллектор, вернувший []string{} вместо nil, давал бы
+// переустановку правил на каждом тике reconcile. Примитивы те же, что стояли
+// на отдельных детекторах входов до снимка (slices.Equal, equalLANBridges),
+// поэтому вердикт совпадает с прежним.
+//
+// Полнота (каждое поле типа участвует) закреплена
+// TestEqualRestoreInputSpec_CoversEveryField — новое поле в RestoreInputSpec
+// роняет тест, пока не заведено здесь.
+func equalRestoreInputSpec(a, b *RestoreInputSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.PolicyMark == b.PolicyMark &&
+		a.MatchAll == b.MatchAll &&
+		a.BypassGeoIPSet == b.BypassGeoIPSet &&
+		a.DSCPOnly == b.DSCPOnly &&
+		slices.Equal(a.WANIPs, b.WANIPs) &&
+		equalLANBridges(a.LANBridges, b.LANBridges) &&
+		slices.Equal(a.BypassUDPPorts, b.BypassUDPPorts) &&
+		slices.Equal(a.BypassTCPPorts, b.BypassTCPPorts) &&
+		slices.Equal(a.BypassCIDRs, b.BypassCIDRs) &&
+		slices.Equal(a.IngressInterfaces, b.IngressInterfaces) &&
+		slices.Equal(a.QoSClasses, b.QoSClasses)
 }
 
 var bypassCIDRs = []string{

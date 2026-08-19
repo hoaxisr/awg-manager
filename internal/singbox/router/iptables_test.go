@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -2177,5 +2178,65 @@ func TestWritePolicyTunDNSHookSkipsIdenticalContent(t *testing.T) {
 	removePolicyTunDNSHook()
 	if _, err := os.Stat(netfilterPolicyTunDNSHookPath); !os.IsNotExist(err) {
 		t.Error("файл не снят")
+	}
+}
+
+// equalRestoreInputSpec — рукописный компаратор, и у него ровно тот дефект,
+// который мы чиним снимком: «забыли поле». Тест перебирает поля типа
+// рефлексией и требует, чтобы КАЖДОЕ давало неравенство. Новое поле в
+// RestoreInputSpec роняет тест, пока его не заведут в компаратор.
+func TestEqualRestoreInputSpec_CoversEveryField(t *testing.T) {
+	rt := reflect.TypeOf(RestoreInputSpec{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		var a, b RestoreInputSpec
+		fv := reflect.ValueOf(&b).Elem().Field(i)
+		switch fv.Kind() {
+		case reflect.String:
+			fv.SetString("x")
+		case reflect.Bool:
+			fv.SetBool(true)
+		case reflect.Slice:
+			// Слайс из одного НУЛЕВОГО элемента: slices.Equal(nil, []T{zero})
+			// == false, значит поле обязано быть замечено.
+			fv.Set(reflect.MakeSlice(fv.Type(), 1, 1))
+		default:
+			t.Fatalf("поле %s: неподдержанный вид %s — расширить тест и компаратор",
+				f.Name, fv.Kind())
+		}
+		if equalRestoreInputSpec(&a, &b) {
+			t.Errorf("поле %s не участвует в equalRestoreInputSpec", f.Name)
+		}
+	}
+}
+
+// nil = «ничего не установлено»: не равен ни одному спеку, равен только nil.
+func TestEqualRestoreInputSpec_NilSemantics(t *testing.T) {
+	if !equalRestoreInputSpec(nil, nil) {
+		t.Error("nil == nil")
+	}
+	if equalRestoreInputSpec(nil, &RestoreInputSpec{}) || equalRestoreInputSpec(&RestoreInputSpec{}, nil) {
+		t.Error("nil не равен установленному спеку")
+	}
+}
+
+// Пустой и nil-слайс — ОДНО И ТО ЖЕ. На этом стоят все существующие
+// precondition-сиды тестов: они задают только PolicyMark и WANIPs, а
+// остальные входы приходят из продакшн-кода как nil либо как пустой слайс.
+// reflect.DeepEqual здесь дал бы переустановку правил на каждом тике.
+func TestEqualRestoreInputSpec_NilSliceEqualsEmpty(t *testing.T) {
+	a := RestoreInputSpec{PolicyMark: "0xffffaaa"}
+	b := RestoreInputSpec{
+		PolicyMark:        "0xffffaaa",
+		WANIPs:            []string{},
+		LANBridges:        []LANBridgeDNSRedir{},
+		BypassUDPPorts:    []PortRange{},
+		BypassTCPPorts:    []PortRange{},
+		BypassCIDRs:       []string{},
+		IngressInterfaces: []string{},
+		QoSClasses:        []QoSClassSpec{},
+	}
+	if !equalRestoreInputSpec(&a, &b) {
+		t.Error("nil-слайс и пустой слайс обязаны быть равны")
 	}
 }

@@ -552,3 +552,43 @@ func TestDisablePolicyTunRemovesDNSHookWithoutPersist(t *testing.T) {
 		t.Errorf("без персиста NDMS трогать нельзя, получено %v", h.log.calls)
 	}
 }
+
+// Д2: выключение policy-tun звало Uninstall, но применённое состояние
+// оставляло нетронутым — в отличие от tproxy-Disable, который сбрасывает всё.
+// Сегодня это гасил следующий Enable, переписывавший снимок; асимметрия того
+// же корня, что и Д1, и держать её незачем.
+func TestDisablePolicyTun_ResetsAppliedNetfilterState(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+	h.svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.1/32"}}
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	provisionPolicyTunForDisable(t, h)
+	if h.svc.appliedSpec == nil || !h.svc.netfilterStateKnown {
+		t.Fatalf("провижн обязан оставить применённое состояние: spec=%v known=%v",
+			h.svc.appliedSpec, h.svc.netfilterStateKnown)
+	}
+	// Как будто остался от прежнего режима: Uninstall его тоже снимает.
+	h.svc.appliedBlackhole = &RestoreInputSpec{}
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+
+	if h.svc.appliedSpec != nil {
+		t.Errorf("снимок применённого спека обязан обнулиться: %+v", h.svc.appliedSpec)
+	}
+	if h.svc.netfilterStateKnown {
+		t.Error("знание об установленном состоянии обязано сброситься — иначе следующее включение не сделает одноразовый свип")
+	}
+	if h.svc.appliedBlackhole != nil {
+		t.Error("Uninstall уже снял blackhole — снимок обязан обнулиться")
+	}
+}
