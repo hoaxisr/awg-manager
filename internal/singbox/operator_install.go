@@ -3,9 +3,11 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -316,6 +318,52 @@ func (o *Operator) Install(ctx context.Context) error {
 	}
 	o.refreshVersionProbeAfterSwap()
 	report("done", 0, 0, "")
+	return nil
+}
+
+// Uninstall снимает установленный движок: останавливает процесс и удаляет
+// его артефакты — бинарь, слоты config.d, кэш FakeIP, pid и журналы процесса.
+//
+// Каталог движка целиком НЕ сносится: удаляются ровно свои файлы, чужое рядом
+// переживает удаление. Настройки AWGM (подписки, правила маршрутизации,
+// device-proxy) живут в settings.json и здесь не трогаются — повторная
+// установка возвращает рабочее состояние.
+//
+// Идемпотентно: отсутствующий артефакт не ошибка. Гейт «маршрутизация
+// включена» стоит выше, на уровне API: снимать за пользователя правила
+// iptables и OpkgTun эта функция не умеет и не должна.
+func (o *Operator) Uninstall(ctx context.Context) error {
+	if !o.installBusy.CompareAndSwap(false, true) {
+		return ErrInstallInProgress
+	}
+	defer o.installBusy.Store(false)
+
+	// Стоп до удаления файлов: работающий процесс держал бы конфиг и pid, а
+	// снесённый под ним бинарь оставил бы демона-сироту без возможности
+	// перезапуска.
+	if err := o.proc.Stop(); err != nil {
+		return fmt.Errorf("stop sing-box: %w", err)
+	}
+
+	logDir := o.proc.effectiveLogDir()
+	targets := []string{
+		o.binary,
+		o.configPath,
+		filepath.Join(o.dir, "cache.db"),
+		o.pidPath,
+		filepath.Join(logDir, procOutLogName),
+		filepath.Join(logDir, procErrLogName),
+	}
+	var errs []error
+	for _, path := range targets {
+		if err := os.RemoveAll(path); err != nil {
+			errs = append(errs, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	o.refreshVersionProbeAfterSwap()
 	return nil
 }
 

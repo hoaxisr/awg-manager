@@ -798,6 +798,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/status", h.guarded(s.singboxHandler.Status))
 		mux.HandleFunc("/api/singbox/install", h.guarded(s.singboxHandler.Install))
 		mux.HandleFunc("/api/singbox/update", h.guarded(s.singboxHandler.Update))
+		mux.HandleFunc("/api/singbox/uninstall", h.guarded(s.singboxHandler.Uninstall))
 		mux.HandleFunc("/api/singbox/control", h.guarded(s.singboxHandler.Control))
 		mux.HandleFunc("/api/singbox/ndms-proxy", h.guarded(s.singboxHandler.ToggleNDMSProxy))
 		mux.HandleFunc("/api/singbox/tunnels/delay-check", h.guarded(s.singboxHandler.DelayCheck))
