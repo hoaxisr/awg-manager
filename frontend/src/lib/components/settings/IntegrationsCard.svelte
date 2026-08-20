@@ -7,7 +7,7 @@
 	import { formatBytes } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
 	import { Blocks } from 'lucide-svelte';
-	import { isIPv4 } from '$lib/utils/cidr';
+	import { isIPv4, isIPv6 } from '$lib/utils/cidr';
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
@@ -59,12 +59,10 @@
 	let bootstrapDraft = $state(bootstrapDNS);
 
 	// Bootstrap отвечает раньше любого другого DNS, поэтому домен здесь
-	// неработоспособен — принимаем только литеральный IP. IPv4 проверяет
-	// общая утилита (она строже наивной: отвергает ведущие нули), IPv6
-	// оставляем бэкенду, который валидирует net.ParseIP.
+	// неработоспособен — принимаем только литеральный IP.
 	const bootstrapValid = $derived.by(() => {
 		const v = bootstrapDraft.trim();
-		return v === '' || isIPv4(v) || v.includes(':');
+		return v === '' || isIPv4(v) || isIPv6(v);
 	});
 	const bootstrapDirty = $derived(bootstrapDraft.trim() !== bootstrapDNS);
 
@@ -249,6 +247,11 @@
 						<span class="setting-description">
 							Используется для резолва доменов для DNS серверов и туннелей,
 							использовать можно только IP.
+						</span>
+						<span class="setting-description">
+							В режиме FakeIP берётся отсюда, только если свой «настоящий»
+							DNS-сервер там не задан, и вступает в силу после следующего
+							применения настроек маршрутизации.
 						</span>
 					</div>
 					<div class="bootstrap-field">

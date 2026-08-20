@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // bootstrapServerOf извлекает адрес сервера dns-bootstrap из базового конфига.
@@ -307,5 +308,67 @@ func TestReconcileConfigSteps_IdempotentWithBootstrapDNS(t *testing.T) {
 	route, _ := base["route"].(map[string]any)
 	if v, has := route["default_domain_resolver"]; has {
 		t.Errorf("база держит ключ (%v) при владеющем слоте fakeip", v)
+	}
+}
+
+// Настройка может прийти невалидной из settings.json (downgrade, ручная
+// правка): API её больше не отвергает, чтобы не запирать пользователя вне
+// всех настроек, — значит отсеивать обязан оператор. Иначе домен уезжает в
+// 00-base.json, и sing-box падает: «missing domain resolver for domain server
+// address» (проверено настоящим бинарём).
+func TestOperator_BootstrapDNS_IgnoresNonIP(t *testing.T) {
+	for _, bad := range []string{"dns.google", "8.8.8.8:53", "не адрес"} {
+		t.Run(bad, func(t *testing.T) {
+			dir := t.TempDir()
+			op := NewOperator(OperatorDeps{Dir: dir, BootstrapDNS: func() string { return bad }})
+			basePath := filepath.Join(dir, "config.d", "00-base.json")
+			if got := bootstrapServerOf(t, readBaseFixture(t, basePath)); got != "1.1.1.1" {
+				t.Errorf("свежая база: dns-bootstrap.server = %q, want 1.1.1.1", got)
+			}
+
+			// И рантайм-путь тоже.
+			if err := op.ApplyBootstrapDNS(bad); err != nil {
+				t.Fatalf("ApplyBootstrapDNS: %v", err)
+			}
+			if got := bootstrapServerOf(t, readBaseFixture(t, basePath)); got != "1.1.1.1" {
+				t.Errorf("после применения: dns-bootstrap.server = %q, want 1.1.1.1", got)
+			}
+		})
+	}
+}
+
+// Контракт «менять нечего → не писать» на уровне ФАКТА записи, а не
+// возвращаемого значения: лишняя запись означает лишний reload sing-box.
+func TestOperator_ApplyBootstrapDNS_DoesNotRewriteWhenUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := baseWithServers(t, filepath.Join(dir, "config.d"), []any{bootstrapEntry("8.8.8.8")})
+	op := NewOperator(OperatorDeps{Dir: dir})
+
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := op.ApplyBootstrapDNS("8.8.8.8"); err != nil {
+		t.Fatalf("ApplyBootstrapDNS: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("файл переписан при неизменном адресе: %v → %v", before.ModTime(), after.ModTime())
+	}
+
+	// Контроль: при другом адресе запись обязана произойти.
+	if err := op.ApplyBootstrapDNS("9.9.9.9"); err != nil {
+		t.Fatalf("ApplyBootstrapDNS: %v", err)
+	}
+	changed, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.ModTime().Equal(before.ModTime()) {
+		t.Error("файл не переписан при смене адреса")
 	}
 }

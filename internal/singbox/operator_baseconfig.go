@@ -3,8 +3,10 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,6 +437,7 @@ func setBootstrapServer(m map[string]any, want string) bool {
 // Записи с тегом dns-bootstrap нет — тоже no-op: патчер правит адрес, а не
 // проектирует структуру файла.
 func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
+	want = sanitizeBootstrapDNS(want)
 	if want == "" {
 		return
 	}
@@ -1006,6 +1009,20 @@ func patchSlotOutboundCompat(slotPath string, loggers ...*slog.Logger) {
 	}
 }
 
+// sanitizeBootstrapDNS отсеивает всё, что не является литеральным IP.
+// Настройка может прийти невалидной из settings.json: API валидирует только
+// присланное в патче (иначе одно протухшее значение заперло бы пользователя
+// вне всех настроек), поэтому последний рубеж здесь. Домен или host:port в
+// dns-bootstrap роняет движок на старте: «missing domain resolver for domain
+// server address» — резолвить это имя нечем, оно и есть первый резолвер.
+func sanitizeBootstrapDNS(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || net.ParseIP(v) == nil {
+		return ""
+	}
+	return v
+}
+
 // defaultBootstrapDNS — исторический адрес bootstrap-резолвера. Остаётся
 // дефолтом, когда пользователь не задал свой (issue #770: у части мобильных
 // операторов 1.1.1.1 блокируется, и sing-box остаётся без резолвинга).
@@ -1015,6 +1032,7 @@ const defaultBootstrapDNS = "1.1.1.1"
 // of truth for ensureBaseConfig (initial write + self-heal path). Empty
 // bootstrapDNS falls back to defaultBootstrapDNS.
 func freshBaseConfig(logLevel, bootstrapDNS string) map[string]any {
+	bootstrapDNS = sanitizeBootstrapDNS(bootstrapDNS)
 	if bootstrapDNS == "" {
 		bootstrapDNS = defaultBootstrapDNS
 	}
@@ -1087,10 +1105,11 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	switch {
 	case os.IsNotExist(err):
 		base = freshBaseConfig(desired, o.desiredBootstrapDNS())
-		// Свежая база несёт свой default_domain_resolver; если ключом уже
-		// владеет routing-слот, уступаем сразу — иначе затенение вернулось бы
-		// до следующего перезапуска демона.
+		// Свежая база несёт ОБА условно-своих скаляра (default_domain_resolver
+		// и dns.strategy); если ключом уже владеет routing-слот, уступаем
+		// сразу — иначе затенение вернулось бы до следующего перезапуска.
 		reconcileBaseDomainResolverMap(base, routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log))
+		reconcileBaseDNSStrategyMap(base, routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log))
 	case err != nil:
 		return fmt.Errorf("read 00-base.json: %w", err)
 	default:
@@ -1154,13 +1173,14 @@ func (o *Operator) desiredBootstrapDNS() string {
 	if o.bootstrapDNS == nil {
 		return ""
 	}
-	return o.bootstrapDNS()
+	return sanitizeBootstrapDNS(o.bootstrapDNS())
 }
 
 // ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению
 // настройки без перезапуска демона (issue #770). Пустое значение — no-op:
 // настройка снята, файл остаётся как есть.
 func (o *Operator) ApplyBootstrapDNS(server string) error {
+	server = sanitizeBootstrapDNS(server)
 	if server == "" {
 		return nil
 	}
@@ -1231,10 +1251,19 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 // выбрасывается. Зовётся роутер-сервисом после того, как содержимое слота
 // стало активным, и на буте.
 func (o *Operator) ReconcileBaseOwnedScalars() error {
-	if err := o.ReconcileBaseDNSStrategy(); err != nil {
-		return err
+	// Оба примирения независимы: провал одного не повод пропускать второе.
+	// Раньше это были два отдельных dep'а роутера ровно с этой семантикой, и
+	// ранний выход после слияния пропускал бы примирение резолвера — то
+	// самое, что защищает от затенения "real" в режиме fakeip.
+	errStrategy := o.ReconcileBaseDNSStrategy()
+	if errStrategy != nil {
+		errStrategy = fmt.Errorf("dns.strategy: %w", errStrategy)
 	}
-	return o.ReconcileBaseDomainResolver()
+	errResolver := o.ReconcileBaseDomainResolver()
+	if errResolver != nil {
+		errResolver = fmt.Errorf("default_domain_resolver: %w", errResolver)
+	}
+	return errors.Join(errStrategy, errResolver)
 }
 
 // preflightConfigDir validates config.d/ before any action that would

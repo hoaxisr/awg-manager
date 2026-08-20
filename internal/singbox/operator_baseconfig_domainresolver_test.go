@@ -215,3 +215,53 @@ func TestOperator_ApplyLogLevel_YieldsResolverToRoutingSlot(t *testing.T) {
 		t.Errorf("база вернула себе ключ (%v) при владеющем слоте fakeip", v)
 	}
 }
+
+// Свежая база несёт ДВА условно-своих скаляра: default_domain_resolver и
+// dns.strategy. Уступать надо оба — иначе половина затенения возвращается.
+func TestOperator_ApplyLogLevel_YieldsStrategyToRoutingSlot(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	writeFixtureJSON(t, filepath.Join(configDir, "21-fakeip.json"), map[string]any{
+		"dns": map[string]any{"strategy": "ipv4_only"},
+	})
+	op := NewOperator(OperatorDeps{Dir: dir})
+	basePath := filepath.Join(configDir, "00-base.json")
+	if err := os.Remove(basePath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := op.ApplyLogLevel("debug"); err != nil {
+		t.Fatalf("ApplyLogLevel: %v", err)
+	}
+	dns, _ := readBaseFixture(t, basePath)["dns"].(map[string]any)
+	if v, has := dns["strategy"]; has {
+		t.Errorf("база вернула себе dns.strategy (%v) при владеющем слоте fakeip", v)
+	}
+}
+
+// Объединённый метод обязан примирять ОБА скаляра: мутация «выбросить
+// резолвер» раньше проходила незамеченной, потому что интеграционный харнесс
+// смотрит только dns.strategy.
+func TestOperator_ReconcileBaseOwnedScalars_BothScalars(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	op := NewOperator(OperatorDeps{Dir: dir})
+	writeFixtureJSON(t, filepath.Join(configDir, "21-fakeip.json"), map[string]any{
+		"dns":   map[string]any{"strategy": "ipv4_only"},
+		"route": map[string]any{"default_domain_resolver": map[string]any{"server": "real"}},
+	})
+
+	if err := op.ReconcileBaseOwnedScalars(); err != nil {
+		t.Fatalf("ReconcileBaseOwnedScalars: %v", err)
+	}
+
+	base := readBaseFixture(t, filepath.Join(configDir, "00-base.json"))
+	dns, _ := base["dns"].(map[string]any)
+	if v, has := dns["strategy"]; has {
+		t.Errorf("dns.strategy осталась в базе (%v)", v)
+	}
+	route, _ := base["route"].(map[string]any)
+	if v, has := route["default_domain_resolver"]; has {
+		t.Errorf("default_domain_resolver остался в базе (%v)", v)
+	}
+}
