@@ -41,7 +41,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "create opkgtun "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "create opkgtun "+name,
 		c.queries.Interfaces.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -62,7 +62,8 @@ func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) erro
 	// InvalidateAll already drops the deleted interface from the
 	// rebuilt map; a per-name Invalidate would issue a now-pointless
 	// GET that 404s for the just-deleted resource.
-	return postMutation(ctx, c.poster, c.save, payload, "delete interface "+name,
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete interface "+name,
+		isMissingInterface,
 		c.queries.Interfaces.InvalidateAll,
 		func() { c.queries.Peers.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
@@ -82,7 +83,7 @@ func (c *InterfaceCommands) SetSecurityLevel(ctx context.Context, name, level st
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set security-level "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set security-level "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -98,7 +99,7 @@ func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error 
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set ip global "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set ip global "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -131,7 +132,7 @@ func (c *InterfaceCommands) SetAddress(ctx context.Context, name, address, mask 
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, setPayload, "set address "+name,
+	return postMutationChecked(ctx, c.poster, c.save, setPayload, "set address "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.Routes.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
@@ -140,7 +141,7 @@ func (c *InterfaceCommands) SetAddress(ctx context.Context, name, address, mask 
 // ClearAddress removes the configured IPv4 address from the interface.
 // Idempotent: NDMS accepts no:true when no address is set.
 func (c *InterfaceCommands) ClearAddress(ctx context.Context, name string) error {
-	return postMutation(ctx, c.poster, c.save, clearAddressPayload(name), "clear address "+name,
+	return postMutationChecked(ctx, c.poster, c.save, clearAddressPayload(name), "clear address "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.Routes.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
@@ -161,7 +162,7 @@ func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, name, address st
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set ipv6 address "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set ipv6 address "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -177,7 +178,7 @@ func (c *InterfaceCommands) ClearIPv6Address(ctx context.Context, name string) e
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "clear ipv6 address "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "clear ipv6 address "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -196,7 +197,7 @@ func (c *InterfaceCommands) SetMTU(ctx context.Context, name string, mtu int) er
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set mtu "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set mtu "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -208,7 +209,7 @@ func (c *InterfaceCommands) SetDescription(ctx context.Context, name, descriptio
 			name: map[string]any{"description": description},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set description "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set description "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -266,7 +267,7 @@ func (c *InterfaceCommands) InterfaceUp(ctx context.Context, name string) error 
 			name: map[string]any{"up": true},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "interface up "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "interface up "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		func() { c.queries.Peers.Invalidate(name) })
 }
@@ -285,7 +286,7 @@ func (c *InterfaceCommands) InterfaceDown(ctx context.Context, name string) erro
 			name: map[string]any{"up": false},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "interface down "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "interface down "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		func() { c.queries.Peers.Invalidate(name) })
 }

@@ -48,6 +48,7 @@ type SystemInfoData struct {
 	IsOS5                       bool                          `json:"isOS5" example:"true"`
 	FirmwareVersion             string                        `json:"firmwareVersion" example:"4.2.1"`
 	SupportsExtendedASC         bool                          `json:"supportsExtendedASC" example:"true"`
+	SupportsOpkgTun             bool                          `json:"supportsOpkgTun" example:"true"`
 	SupportsHRanges             bool                          `json:"supportsHRanges" example:"true"`
 	SupportsPingCheck           bool                          `json:"supportsPingCheck" example:"true"`
 	TotalMemoryMB               int                           `json:"totalMemoryMB" example:"512"`
@@ -444,6 +445,9 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"isOS5":                       osdetect.Is5(),
 		"firmwareVersion":             osdetect.ReleaseString(),
 		"supportsExtendedASC":         osdetect.AtLeast(5, 1),
+		// Режимы fakeip-tun/policy-tun строятся на OpkgTun, которого нет в
+		// KeeneticOS 4.x — фронт гейтит их по этому флагу (issue #768).
+		"supportsOpkgTun":             osdetect.SupportsOpkgTun(),
 		"supportsHRanges":             ndmsinfo.SupportsHRanges(),
 		"supportsPingCheck":           ndmsinfo.HasPingCheckComponent(),
 		"totalMemoryMB":               osdetect.GetTotalMemoryMB(),

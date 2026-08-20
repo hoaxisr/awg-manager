@@ -84,6 +84,8 @@ export interface SystemInfo {
 	goOS: string;
 	keeneticOS: string;
 	isOS5: boolean;
+	/** Прошивка умеет интерфейсы OpkgTun (KeeneticOS 5.x) — от них зависят режимы fakeip-tun и policy-tun. */
+	supportsOpkgTun?: boolean;
 	firmwareVersion: string;
 	supportsExtendedASC: boolean;
 	supportsHRanges: boolean;

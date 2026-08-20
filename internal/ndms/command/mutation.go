@@ -57,11 +57,27 @@ func postMutationChecked(
 	opDesc string,
 	invalidators ...func(),
 ) error {
+	return postMutationCheckedTolerant(ctx, poster, save, payload, opDesc, nil, invalidators...)
+}
+
+// postMutationCheckedTolerant — postMutationChecked, у которого часть отказов
+// признаётся безобидной. Нужен идемпотентным сносам: NDMS отвечает
+// status:"error" на удаление того, чего уже нет, и без этого реап и откат
+// падали бы на собственной повторной попытке. Прочие отказы всплывают.
+func postMutationCheckedTolerant(
+	ctx context.Context,
+	poster Poster,
+	save *SaveCoordinator,
+	payload any,
+	opDesc string,
+	tolerate func(msg string) bool,
+	invalidators ...func(),
+) error {
 	resp, err := poster.Post(ctx, payload)
 	if err != nil {
 		return fmt.Errorf("%s: %w", opDesc, err)
 	}
-	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 {
+	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
 		return fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))
 	}
 	save.Request()
@@ -69,6 +85,28 @@ func postMutationChecked(
 		inv()
 	}
 	return nil
+}
+
+// allTolerated: терпим ответ, только если КАЖДЫЙ отказ в нём признан
+// безобидным — иначе одна безобидная строка спрятала бы настоящий отказ.
+func allTolerated(msgs []string, tolerate func(string) bool) bool {
+	if tolerate == nil {
+		return false
+	}
+	for _, m := range msgs {
+		if !tolerate(m) {
+			return false
+		}
+	}
+	return true
+}
+
+// isMissingInterface распознаёт формулировку NDMS «такого интерфейса нет»
+// (снято на роутере: `unable to find interface "OpkgTun9"`). Формулировка
+// отказа в СОЗДАНИИ другая — `unable to find X in "Network::Interface::Base"`,
+// — и под этот предикат намеренно не попадает.
+func isMissingInterface(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "unable to find interface")
 }
 
 // ndmsStatusErrors recursively walks a decoded NDMS response and returns the

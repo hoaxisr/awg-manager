@@ -22,6 +22,8 @@
 	import { ConnectionsSubTab } from '$lib/components/routing/singboxRouter';
 	import { LogsTerminal } from '$lib/components/diagnostics';
 	import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
+	import { systemInfo } from '$lib/stores/system';
+	import { OPKGTUN_UNSUPPORTED_REASON, opkgTunSupported } from '$lib/utils/opkgTunSupport';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
 
@@ -92,16 +94,21 @@
 	// page-level <ModeSwitchHost> (confirm + progress). The tab only requests a
 	// target mode; `switchBusy` mirrors the in-flight state for the toggle.
 	function handleEnableRequested(): void {
+		if (!tunSupported) return;
 		modeSwitch.request('fakeip-tun');
 	}
 
 	// Engine-card toggle: ON→OFF requests a switch to 'off'; OFF→ON re-enables
 	// fakeip-tun. The shared host drives confirm + progress.
 	function handleToggleEngine(turnOn: boolean): void {
+		if (turnOn && !tunSupported) return;
 		modeSwitch.request(turnOn ? 'fakeip-tun' : 'off');
 	}
 
 	const switchBusy = $derived(modeSwitchBusy($modeSwitch));
+
+	// KeeneticOS 4.x не знает интерфейсов OpkgTun — включать fakeip-tun там нечем.
+	const tunSupported = $derived(opkgTunSupported($systemInfo.data));
 
 	async function handleRestart(): Promise<void> {
 		try {
@@ -121,7 +128,10 @@
 	-->
 
 	{#if engineState === 'not-fakeip'}
-		<NotEnabledScreen onEnableRequested={handleEnableRequested} />
+		<NotEnabledScreen
+			onEnableRequested={handleEnableRequested}
+			unavailableReason={tunSupported ? undefined : OPKGTUN_UNSUPPORTED_REASON}
+		/>
 	{:else}
 		<!--
 			Каркас под мокап fakeip-page-layout-v2: hero (title + панель действий) +

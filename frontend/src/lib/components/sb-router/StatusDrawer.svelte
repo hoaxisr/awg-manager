@@ -13,6 +13,7 @@
   import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
   import { formatBytes, formatByteRate } from '$lib/utils/format';
   import { systemInfo } from '$lib/stores/system';
+  import { OPKGTUN_UNSUPPORTED_REASON, opkgTunSupported } from '$lib/utils/opkgTunSupport';
   import { notifications } from '$lib/stores/notifications';
   import { drawerOpen, closeDrawer } from './drawerStore';
   import { openSourceDrawer } from './sourceDrawerStore';
@@ -73,6 +74,8 @@
     activeMode ?? pickedMode ?? ($settings?.routingMode === 'policy-tun' ? 'policy-tun' : 'tproxy'),
   );
   let policyTunMode = $derived(targetMode === 'policy-tun');
+  // KeeneticOS 4.x не знает интерфейсов OpkgTun — policy-tun там не поднять.
+  let tunSupported = $derived(opkgTunSupported($systemInfo.data));
 
   // policy-tun-unbound показывает карточка режима (там же ссылка на политики) —
   // в общем списке замечаний он был бы вторым экземпляром той же строки.
@@ -180,6 +183,7 @@
   // при включённом — сразу просим переключение (общий confirm + прогресс).
   function selectMode(m: CaptureMode) {
     if (switchBusy || m === targetMode) return;
+    if (m === 'policy-tun' && !tunSupported) return;
     pickedMode = m;
     if (activeMode !== null) modeSwitch.request(m);
   }
@@ -276,10 +280,15 @@
           sub="захват трафика через политику доступа Keenetic, без TPROXY-правил"
           tone="accent"
           selected={targetMode === 'policy-tun'}
+          disabled={!tunSupported}
+          title={tunSupported ? undefined : OPKGTUN_UNSUPPORTED_REASON}
           onclick={() => selectMode('policy-tun')}
         />
       </div>
       <p class="hint">Режим FakeIP включается на своей вкладке «Sing-box → FakeIP».</p>
+      {#if !tunSupported}
+        <p class="hint">{OPKGTUN_UNSUPPORTED_REASON}</p>
+      {/if}
 
       {#if showCrashInfo}
         <div class="crash-info">

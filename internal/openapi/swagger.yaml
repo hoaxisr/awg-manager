@@ -5816,6 +5816,9 @@ definitions:
       supportsHRanges:
         example: true
         type: boolean
+      supportsOpkgTun:
+        example: true
+        type: boolean
       supportsPingCheck:
         example: true
         type: boolean

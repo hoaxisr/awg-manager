@@ -2097,6 +2097,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	slowRequestThresholdMs: v.optional(v.nullable(v.number())),
 	supportsExtendedASC: v.optional(v.nullable(v.boolean())),
 	supportsHRanges: v.optional(v.nullable(v.boolean())),
+	supportsOpkgTun: v.optional(v.nullable(v.boolean())),
 	supportsPingCheck: v.optional(v.nullable(v.boolean())),
 	totalMemoryMB: v.optional(v.nullable(v.number())),
 	version: v.optional(v.nullable(v.string())),

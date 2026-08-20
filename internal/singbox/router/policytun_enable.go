@@ -26,6 +26,11 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	if s.deps.OpkgTun == nil || s.deps.OpkgTunIndices == nil || s.deps.DefaultRoute == nil {
 		return fmt.Errorf("policy-tun: provisioning deps not wired")
 	}
+	// Последний рубеж гейта прошивки: сюда приходит и восстановление режима из
+	// персиста при старте, минуя SwitchRoutingMode.
+	if err := s.requireOpkgTunSupport(); err != nil {
+		return fmt.Errorf("policy-tun: %w", err)
+	}
 
 	// Single source of truth for the tun addresses + MTU, shared with fakeip.
 	// ГОЧА: resolveFakeIPParams обнуляет TunAddr6 при пустом sr.FakeIPPool6, то
