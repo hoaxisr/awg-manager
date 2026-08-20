@@ -35,8 +35,11 @@ func (c *NATCommands) SetStaticNAT(ctx context.Context, seg, wan string) error {
 }
 
 // RemoveStaticNAT removes Static NAT from a segment to a WAN interface.
+//
+// Снятие терпит «unknown interface»: сегмент или WAN-выход мог исчезнуть раньше
+// правила (проверено на роутере — NDMS отвечает ошибкой на обе стороны пары).
 func (c *NATCommands) RemoveStaticNAT(ctx context.Context, seg, wan string) error {
-	return c.mutate(ctx, map[string]any{"ip": map[string]any{"static": []map[string]any{{"no": true, "interface": seg, "to-interface": wan}}}}, "no ip static "+seg+" "+wan)
+	return c.mutateTolerant(ctx, map[string]any{"ip": map[string]any{"static": []map[string]any{{"no": true, "interface": seg, "to-interface": wan}}}}, "no ip static "+seg+" "+wan, isUnknownInterface)
 }
 
 // mutate posts the payload, schedules a save, and invalidates the caches
@@ -44,7 +47,12 @@ func (c *NATCommands) RemoveStaticNAT(ctx context.Context, seg, wan string) erro
 // 30 с) — иначе source-preserve читал бы собственную мутацию как дрейф и
 // применял бы её повторно.
 func (c *NATCommands) mutate(ctx context.Context, payload any, op string) error {
-	return postMutation(ctx, c.poster, c.save, payload, op,
+	return c.mutateTolerant(ctx, payload, op, nil)
+}
+
+// mutateTolerant — mutate, признающий часть отказов безобидными (см. tolerate.go).
+func (c *NATCommands) mutateTolerant(ctx context.Context, payload any, op string, tolerate func(string) bool) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, op, tolerate,
 		c.queries.RunningConfig.InvalidateAll,
 		c.queries.NAT.InvalidateAll,
 		c.queries.StaticNAT.InvalidateAll)

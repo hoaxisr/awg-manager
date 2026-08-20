@@ -18,6 +18,7 @@ type fakePoster struct {
 	mu       sync.Mutex
 	calls    int32
 	nextErr  error
+	nextResp json.RawMessage
 	sleep    time.Duration
 	payloads []any
 }
@@ -32,7 +33,21 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	if sleep > 0 {
 		time.Sleep(sleep)
 	}
-	return json.RawMessage(`{}`), err
+	f.mu.Lock()
+	resp := f.nextResp
+	f.mu.Unlock()
+	if resp == nil {
+		resp = json.RawMessage(`{}`)
+	}
+	return resp, err
+}
+
+// SetResponse задаёт тело ответа NDMS: мутации отвечают HTTP 200 и прячут
+// отказ во вложенном status.
+func (f *fakePoster) SetResponse(resp string) {
+	f.mu.Lock()
+	f.nextResp = json.RawMessage(resp)
+	f.mu.Unlock()
 }
 
 func (f *fakePoster) Calls() int32 { return atomic.LoadInt32(&f.calls) }

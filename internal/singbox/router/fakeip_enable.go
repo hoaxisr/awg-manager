@@ -50,6 +50,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.OpkgTunIndices == nil {
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
+	// Последний рубеж гейта прошивки: сюда приходит и восстановление режима из
+	// персиста при старте, минуя SwitchRoutingMode.
+	if err := s.requireOpkgTunSupport(); err != nil {
+		return fmt.Errorf("fakeip-tun: %w", err)
+	}
 
 	// A. Load the fakeip config from SlotFakeIP (user-editable, 21-fakeip.json).
 	// When the slot is empty (first enable) seed a starter A/AAAA→fakeip DNS rule

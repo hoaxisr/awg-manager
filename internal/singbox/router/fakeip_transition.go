@@ -121,6 +121,14 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 	if !validTransitionTarget(target) {
 		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun|policy-tun)", target)
 	}
+	// Гейт до всякого teardown: на прошивке без OpkgTun отказ обязан застать
+	// текущий режим нетронутым, иначе пользователь остаётся без маршрутизации
+	// и зависит от отката (issue #768).
+	if target == stateFakeIPTun || target == statePolicyTun {
+		if err := s.requireOpkgTunSupport(); err != nil {
+			return err
+		}
+	}
 
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()

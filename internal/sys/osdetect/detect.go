@@ -96,6 +96,27 @@ func AtLeast(major, minor int) bool {
 	return v.minor >= minor
 }
 
+// opkgTunMinMajor — интерфейсы OpkgTun появились только в KeeneticOS 5.x.
+// На 4.x NDMS отвечает на их создание HTTP 200 с вложенной ошибкой, интерфейс
+// не появляется, и провижининг tun-режимов падает шагом позже (issue #768).
+const opkgTunMinMajor = 5
+
+// SupportsOpkgTunRelease сообщает, умеет ли прошивка интерфейсы OpkgTun.
+//
+// Нераспознанная версия трактуется как поддерживаемая: кэш ndmsinfo может быть
+// ещё не прогрет, а ложная блокировка на живом OS5-роутере хуже, чем внятная
+// ошибка от NDMS на редком OS4.
+func SupportsOpkgTunRelease(release string) bool {
+	v := parseRelease(strings.TrimSpace(release))
+	if !v.valid {
+		return true
+	}
+	return v.major >= opkgTunMinMajor
+}
+
+// SupportsOpkgTun — SupportsOpkgTunRelease для текущей прошивки.
+func SupportsOpkgTun() bool { return SupportsOpkgTunRelease(ReleaseString()) }
+
 // ReleaseString returns the raw release string from NDMS, or "" if unavailable.
 func ReleaseString() string {
 	info := ndmsinfo.Get()

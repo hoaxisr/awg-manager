@@ -349,6 +349,11 @@ type Deps struct {
 	// xt_connmark, xt_conntrack, xt_pkttype via
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
+
+	// FirmwareRelease is an optional override for the KeeneticOS release
+	// string (osdetect by default). Only tests set it — the tun-mode gate
+	// needs a firmware version it can steer.
+	FirmwareRelease func() string
 	// XtDscpProbe is an optional override for the xt_dscp availability
 	// check (kernel module + iptables `-m dscp` extension) that gates the
 	// QoS-DSCP dispatch rules and the status field xtDscpAvailable. When
