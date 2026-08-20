@@ -109,6 +109,11 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.settingsHandler.SetPingCheckService(s.pingCheckService)
 	h.settingsHandler.SetMonitoringService(s.monitoringService)
 	h.settingsHandler.SetEventBus(s.bus)
+	if s.ndmsQueries != nil {
+		s.exposureGuard = api.NewExposureGuard(s.settings, s.ndmsQueries.StaticNAT, s.ndmsQueries.HTTPProxy, s.ndmsQueries.Interfaces, h.appLog)
+		s.exposureGuard.SetEventBus(s.bus)
+		h.settingsHandler.SetExposureGuard(s.exposureGuard)
+	}
 	h.importHandler = api.NewImportHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.importHandler.SetSettingsStore(s.settings)
 	h.importHandler.SetPingCheckService(s.pingCheckService)

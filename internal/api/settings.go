@@ -154,6 +154,13 @@ type SettingsHandler struct {
 	downloadSvc             *downloader.Service
 	log                     *logging.ScopedLogger
 	bus                     *events.Bus
+	exposure                exposureChecker
+}
+
+// exposureChecker re-runs the "are we exposed without a password" check
+// after a settings save — the HTTP port may have just changed.
+type exposureChecker interface {
+	Check(ctx context.Context)
 }
 
 const settingsMonitoringRefreshTimeout = 10 * time.Second
@@ -168,6 +175,9 @@ func NewSettingsHandler(store *storage.SettingsStore, appLogger logging.AppLogge
 		log:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubSettings),
 	}
 }
+
+// SetExposureGuard wires the guard re-checked after every settings save.
+func (h *SettingsHandler) SetExposureGuard(g exposureChecker) { h.exposure = g }
 
 // SetTunnelStore sets the tunnel store for ping check toggle logic.
 func (h *SettingsHandler) SetTunnelStore(tunnels *storage.AWGTunnelStore) {
@@ -527,6 +537,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Success(w, merged)
 	}
 	publishInvalidated(h.bus, ResourceSettings, "updated")
+
+	// Порт мог смениться — перепроверяем экспозицию. В горутине с
+	// собственным контекстом: проверка ходит в NDMS, а контекст запроса
+	// умирает вместе с ответом.
+	if h.exposure != nil {
+		go h.exposure.Check(context.Background())
+	}
 }
 
 // RegenerateApiKey generates a fresh UUID v4 server-side, persists it
