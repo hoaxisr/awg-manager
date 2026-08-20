@@ -490,7 +490,7 @@ func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.Opkg
 	if st == nil || !st.Provisioned {
 		return FakeIPIngressSpec{}
 	}
-	tunDNS, err := DeriveTunDNS(resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr4)
+	tunDNS, err := DeriveTunDNS(s.resolveFakeIPParams(sr).TunAddr4)
 	if err != nil {
 		return FakeIPIngressSpec{}
 	}

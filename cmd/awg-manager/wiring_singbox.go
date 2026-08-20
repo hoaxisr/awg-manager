@@ -182,11 +182,8 @@ func (a *app) setupSingbox() {
 		// периодическим Reconcile: его drift-heal берётся только при
 		// фактически запаркованном слоте, а мы слот уже распарковали.
 		// Best-effort: провал не повод ронять бут.
-		if err := a.singboxOp.ReconcileBaseDNSStrategy(); err != nil {
-			a.bootLog.Warn("reconcile-dns-strategy", "", err.Error())
-		}
-		if err := a.singboxOp.ReconcileBaseDomainResolver(); err != nil {
-			a.bootLog.Warn("patch-base-domain-resolver", "", err.Error())
+		if err := a.singboxOp.ReconcileBaseOwnedScalars(); err != nil {
+			a.bootLog.Warn("reconcile-base-scalars", "", err.Error())
 		}
 	}
 

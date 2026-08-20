@@ -42,7 +42,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// resolveFakeIPParams overlays user-editable settings (pool4/6, MTU) from sr
 	// onto the wired static defaults. Single source of truth — shared with the
 	// fakeip config overlay (ensureFakeIPOverlayFromState).
-	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+	p := s.resolveFakeIPParams(sr)
 
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly

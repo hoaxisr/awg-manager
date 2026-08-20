@@ -482,9 +482,18 @@ func reconcileBaseDomainResolverMap(m map[string]any, routingOwns bool) bool {
 		route = map[string]any{}
 		m["route"] = route
 	}
-	_, has := route["default_domain_resolver"]
+	v, has := route["default_domain_resolver"]
 	switch {
 	case routingOwns && has:
+		// Уступаем только СВОЁ значение. Ручную правку не трогаем: вернуть
+		// её потом мы не сможем (восстанавливается константа), а ссылка на
+		// несуществующий тег роняет sing-box с FATAL «default domain
+		// resolver not found» — проверено на боевой сборке
+		// 1.14.0-beta.17-awgm.13. Затенение своим же резолвером — осознанный
+		// выбор пользователя, влезать в него нечем.
+		if v != baseDefaultDomainResolver {
+			return false
+		}
 		delete(route, "default_domain_resolver")
 		return true
 	case !routingOwns && !has:
@@ -1077,7 +1086,11 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	data, err := os.ReadFile(basePath)
 	switch {
 	case os.IsNotExist(err):
-		base = freshBaseConfig(desired, "")
+		base = freshBaseConfig(desired, o.desiredBootstrapDNS())
+		// Свежая база несёт свой default_domain_resolver; если ключом уже
+		// владеет routing-слот, уступаем сразу — иначе затенение вернулось бы
+		// до следующего перезапуска демона.
+		reconcileBaseDomainResolverMap(base, routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log))
 	case err != nil:
 		return fmt.Errorf("read 00-base.json: %w", err)
 	default:
@@ -1129,91 +1142,31 @@ func (o *Operator) ApplyLogLevel(level string) error {
 // 00-base затеняет 20/21). Запись через оркестратор — валидация +
 // коалесцированный reload (как ApplyLogLevel).
 func (o *Operator) ReconcileBaseDNSStrategy() error {
-	basePath := filepath.Join(o.configPath, "00-base.json")
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read 00-base.json: %w", err)
-	}
-	var base map[string]any
-	if err := json.Unmarshal(data, &base); err != nil {
-		return fmt.Errorf("parse 00-base.json: %w", err)
-	}
-	owns := routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log)
-	if !reconcileBaseDNSStrategyMap(base, owns) {
-		return nil
-	}
+	return o.mutateBase(func(base map[string]any) bool {
+		return reconcileBaseDNSStrategyMap(base,
+			routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log))
+	})
+}
 
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
+// desiredBootstrapDNS — текущая настройка адреса bootstrap-резолвера;
+// пусто, когда замыкание не подключено (тестовые wiring'и) или адрес не задан.
+func (o *Operator) desiredBootstrapDNS() string {
+	if o.bootstrapDNS == nil {
+		return ""
 	}
-
-	if o.orch != nil {
-		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-			return fmt.Errorf("save base slot: %w", err)
-		}
-		return nil
-	}
-
-	if err := writeJSONFile(basePath, base); err != nil {
-		return fmt.Errorf("write base file: %w", err)
-	}
-	if running, _ := o.proc.IsRunning(); running {
-		if err := o.proc.Reload(); err != nil {
-			return fmt.Errorf("reload sing-box: %w", err)
-		}
-	}
-	return nil
+	return o.bootstrapDNS()
 }
 
 // ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению
 // настройки без перезапуска демона (issue #770). Пустое значение — no-op:
-// настройка снята, файл остаётся как есть. Запись через оркестратор —
-// валидация + коалесцированный reload, как у ApplyLogLevel.
+// настройка снята, файл остаётся как есть.
 func (o *Operator) ApplyBootstrapDNS(server string) error {
 	if server == "" {
 		return nil
 	}
-	basePath := filepath.Join(o.configPath, "00-base.json")
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read 00-base.json: %w", err)
-	}
-	var base map[string]any
-	if err := json.Unmarshal(data, &base); err != nil {
-		return fmt.Errorf("parse 00-base.json: %w", err)
-	}
-	if !setBootstrapServer(base, server) {
-		return nil
-	}
-
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
-	}
-
-	if o.orch != nil {
-		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-			return fmt.Errorf("save base slot: %w", err)
-		}
-		return nil
-	}
-
-	if err := writeJSONFile(basePath, base); err != nil {
-		return fmt.Errorf("write base file: %w", err)
-	}
-	if running, _ := o.proc.IsRunning(); running {
-		if err := o.proc.Reload(); err != nil {
-			return fmt.Errorf("reload sing-box: %w", err)
-		}
-	}
-	return nil
+	return o.mutateBase(func(base map[string]any) bool {
+		return setBootstrapServer(base, server)
+	})
 }
 
 // ReconcileBaseDomainResolver — рантайм-вариант шага
@@ -1222,6 +1175,18 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 // оставляло бы в базе свой default_domain_resolver, который затеняет
 // роутерный (скаляры route мержатся first-file-wins, 00-base первый).
 func (o *Operator) ReconcileBaseDomainResolver() error {
+	return o.mutateBase(func(base map[string]any) bool {
+		return reconcileBaseDomainResolverMap(base,
+			routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log))
+	})
+}
+
+// mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
+// решить, менять ли (false — выходим без записи), записать. Запись через
+// оркестратор, когда он подключён: там валидация merged-конфига и
+// коалесцированный reload. Без оркестратора (ранний бут, тесты) — прямая
+// запись плюс reload живого процесса.
+func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	basePath := filepath.Join(o.configPath, "00-base.json")
 	data, err := os.ReadFile(basePath)
 	if err != nil {
@@ -1234,21 +1199,21 @@ func (o *Operator) ReconcileBaseDomainResolver() error {
 	if err := json.Unmarshal(data, &base); err != nil {
 		return fmt.Errorf("parse 00-base.json: %w", err)
 	}
-	owns := routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log)
-	if !reconcileBaseDomainResolverMap(base, owns) {
+	if !mutate(base) {
 		return nil
 	}
 
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
-	}
 	if o.orch != nil {
+		raw, err := json.MarshalIndent(base, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal 00-base.json: %w", err)
+		}
 		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
 			return fmt.Errorf("save base slot: %w", err)
 		}
 		return nil
 	}
+
 	if err := writeJSONFile(basePath, base); err != nil {
 		return fmt.Errorf("write base file: %w", err)
 	}
@@ -1258,6 +1223,18 @@ func (o *Operator) ReconcileBaseDomainResolver() error {
 		}
 	}
 	return nil
+}
+
+// ReconcileBaseOwnedScalars примиряет ВСЕ скаляры 00-base.json, которыми
+// база владеет условно (dns.strategy и route.default_domain_resolver): оба
+// мержатся first-file-wins, и пока база несёт свой ключ, выбор routing-слота
+// выбрасывается. Зовётся роутер-сервисом после того, как содержимое слота
+// стало активным, и на буте.
+func (o *Operator) ReconcileBaseOwnedScalars() error {
+	if err := o.ReconcileBaseDNSStrategy(); err != nil {
+		return err
+	}
+	return o.ReconcileBaseDomainResolver()
 }
 
 // preflightConfigDir validates config.d/ before any action that would

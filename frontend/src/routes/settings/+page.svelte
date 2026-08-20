@@ -549,7 +549,9 @@ $effect(() => {
 			settings = await api.updateSettings({ ...settings, singboxBootstrapDNS: value });
 			setGlobalSettings(settings);
 			notifications.success(
-				value ? `Bootstrap-DNS: ${value}` : "Bootstrap-DNS сброшен на значение по умолчанию",
+				value
+					? `Bootstrap-DNS: ${value}`
+					: "Bootstrap-DNS больше не навязывается — адрес в конфигурации остаётся прежним",
 			);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения bootstrap-DNS");

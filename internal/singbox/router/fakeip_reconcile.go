@@ -130,7 +130,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// v6-разрешение — отдельная сущность NDMS и свой флаг: успех v4 не должен
 	// гасить ретрай упавшего v6. Гейт по адресу: без v6 разрешать нечего.
 	if !s.fakeipACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
-		resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != "" {
+		s.resolveFakeIPParams(sr).TunAddr6 != "" {
 		if nerr := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); nerr != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "permit acl v6: "+nerr.Error())
 		} else {

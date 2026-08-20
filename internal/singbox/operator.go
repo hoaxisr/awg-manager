@@ -98,11 +98,15 @@ func (o *Operator) singboxFeaturesCached() []string {
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
-	log        *slog.Logger
-	dir        string
-	binary     string
-	configPath string
-	pidPath    string
+	log    *slog.Logger
+	dir    string
+	binary string
+	// bootstrapDNS — живой доступ к Settings.SingboxBootstrapDNS. Нужен не
+	// только на буте: ApplyLogLevel пересоздаёт 00-base.json, если файла нет,
+	// и без этого поля подставил бы исторический дефолт, потеряв настройку.
+	bootstrapDNS func() string
+	configPath   string
+	pidPath      string
 
 	proc      *Process
 	validator *Validator
@@ -321,6 +325,7 @@ func NewOperator(d OperatorDeps) *Operator {
 
 	op := &Operator{
 		log:               log,
+		bootstrapDNS:      d.BootstrapDNS,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,

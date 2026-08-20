@@ -7,6 +7,7 @@
 	import { formatBytes } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
 	import { Blocks } from 'lucide-svelte';
+	import { isIPv4 } from '$lib/utils/cidr';
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
@@ -51,28 +52,20 @@
 		bootstrapSaving = false,
 	}: Props = $props();
 
-	// Черновик поля bootstrap-DNS. Пересобирается, когда снаружи приезжает
-	// другое сохранённое значение, но не затирает то, что пользователь печатает.
-	let bootstrapDraft = $state('');
-	let lastSavedBootstrap = $state('');
-	$effect(() => {
-		if (bootstrapDNS !== lastSavedBootstrap) {
-			lastSavedBootstrap = bootstrapDNS;
-			bootstrapDraft = bootstrapDNS;
-		}
-	});
+	// Черновик поля bootstrap-DNS. Настройки на странице грузятся один раз,
+	// внешних обновлений у этого props нет — ресинк не нужен, начальное
+	// значение снимается однократно.
+	// svelte-ignore state_referenced_locally
+	let bootstrapDraft = $state(bootstrapDNS);
 
 	// Bootstrap отвечает раньше любого другого DNS, поэтому домен здесь
-	// неработоспособен — принимаем только литеральный IPv4/IPv6.
-	function isPlainIP(value: string): boolean {
-		const v = value.trim();
-		if (/^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
-			return v.split('.').every((o) => Number(o) <= 255);
-		}
-		return /^[0-9a-fA-F:]+$/.test(v) && v.includes(':');
-	}
-
-	const bootstrapValid = $derived(bootstrapDraft.trim() === '' || isPlainIP(bootstrapDraft));
+	// неработоспособен — принимаем только литеральный IP. IPv4 проверяет
+	// общая утилита (она строже наивной: отвергает ведущие нули), IPv6
+	// оставляем бэкенду, который валидирует net.ParseIP.
+	const bootstrapValid = $derived.by(() => {
+		const v = bootstrapDraft.trim();
+		return v === '' || isIPv4(v) || v.includes(':');
+	});
 	const bootstrapDirty = $derived(bootstrapDraft.trim() !== bootstrapDNS);
 
 	let confirmUninstall = $state(false);

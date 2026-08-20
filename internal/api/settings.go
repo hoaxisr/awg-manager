@@ -360,7 +360,11 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// неработоспособен — только литеральный IP (issue #770). Пустое значение
 	// снимает настройку: 00-base.json остаётся как есть.
 	merged.SingboxBootstrapDNS = strings.TrimSpace(merged.SingboxBootstrapDNS)
-	if merged.SingboxBootstrapDNS != "" && net.ParseIP(merged.SingboxBootstrapDNS) == nil {
+	// Валидируем ТОЛЬКО присланное: невалидное значение, уже лежащее в
+	// settings.json (downgrade, ручная правка), иначе заперло бы пользователя
+	// вне всех настроек целиком. Тот же контракт, что у sessionTtlHours выше.
+	if patch.SingboxBootstrapDNS != nil && merged.SingboxBootstrapDNS != "" &&
+		net.ParseIP(merged.SingboxBootstrapDNS) == nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest,
 			"адрес bootstrap-DNS должен быть IP-адресом без порта",
 			"INVALID_SINGBOX_BOOTSTRAP_DNS")

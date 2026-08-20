@@ -196,3 +196,116 @@ func TestOperator_ApplyBootstrapDNS(t *testing.T) {
 		t.Errorf("снятие настройки переписало файл: %q, want 8.8.8.8", got)
 	}
 }
+
+// Пересоздание базы на пути ApplyLogLevel (файл удалён руками, снесён при
+// переустановке движка) не должно терять настройку: оператор обязан помнить
+// адрес, а не подставлять исторический дефолт.
+func TestOperator_ApplyLogLevel_KeepsBootstrapDNS(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir, BootstrapDNS: func() string { return "8.8.8.8" }})
+	basePath := filepath.Join(dir, "config.d", "00-base.json")
+	if err := os.Remove(basePath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := op.ApplyLogLevel("debug"); err != nil {
+		t.Fatalf("ApplyLogLevel: %v", err)
+	}
+	if got := bootstrapServerOf(t, readBaseFixture(t, basePath)); got != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8", got)
+	}
+}
+
+// Контракт «менять нечего → не писать»: на нём висит вся защита от лишних
+// перезаписей файла и лишних reload'ов sing-box на каждом буте и сохранении
+// настроек. Мутационный прогон показал, что через содержимое файла он не
+// наблюдается, поэтому проверяется решение напрямую.
+func TestSetBootstrapServer_ReportsChange(t *testing.T) {
+	cases := []struct {
+		name string
+		base map[string]any
+		want bool
+	}{
+		{
+			name: "адрес другой — меняем",
+			base: map[string]any{"dns": map[string]any{"servers": []any{bootstrapEntry("1.1.1.1")}}},
+			want: true,
+		},
+		{
+			name: "адрес совпадает — не трогаем",
+			base: map[string]any{"dns": map[string]any{"servers": []any{bootstrapEntry("8.8.8.8")}}},
+			want: false,
+		},
+		{
+			name: "записи dns-bootstrap нет — не трогаем",
+			base: map[string]any{"dns": map[string]any{"servers": []any{
+				map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"},
+			}}},
+			want: false,
+		},
+		{
+			name: "блока dns нет — не трогаем",
+			base: map[string]any{},
+			want: false,
+		},
+		{
+			name: "серверов нет вовсе — не трогаем",
+			base: map[string]any{"dns": map[string]any{"strategy": "prefer_ipv4"}},
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := setBootstrapServer(c.base, "8.8.8.8"); got != c.want {
+				t.Errorf("setBootstrapServer = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// Рантайм-применение при отсутствующем 00-base.json: файла нет — молчим,
+// а не падаем (движок мог быть удалён вместе с каталогом).
+func TestOperator_ApplyBootstrapDNS_NoBaseFile(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir})
+	if err := os.Remove(filepath.Join(dir, "config.d", "00-base.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyBootstrapDNS("8.8.8.8"); err != nil {
+		t.Errorf("ApplyBootstrapDNS без файла = %v, want nil", err)
+	}
+}
+
+// Набор шагов примирения гоняется каждый бут. Существующие харнессы
+// идемпотентности передают пустой bootstrapDNS, из-за чего новый подшаг в них
+// гарантированный no-op — здесь набор гоняется с непустой настройкой и с
+// routing-слотом, владеющим резолвером, то есть по обеим новым веткам.
+func TestReconcileConfigSteps_IdempotentWithBootstrapDNS(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	baseWithServers(t, configDir, []any{bootstrapEntry("1.1.1.1")})
+	writeFixtureJSON(t, filepath.Join(configDir, "21-fakeip.json"), map[string]any{
+		"route": map[string]any{"default_domain_resolver": map[string]any{"server": "real"}},
+	})
+
+	run := func() {
+		for _, s := range reconcileConfigSteps(dir, configDir, "info", "8.8.8.8", nil) {
+			s.run()
+		}
+	}
+	run()
+	first := snapshotTree(t, dir)
+	run()
+	if d := diffTree(t, first, snapshotTree(t, dir)); d != "" {
+		t.Fatalf("набор не идемпотентен при заданном bootstrapDNS: %s", d)
+	}
+
+	base := readBaseFixture(t, filepath.Join(configDir, "00-base.json"))
+	if got := bootstrapServerOf(t, base); got != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8", got)
+	}
+	route, _ := base["route"].(map[string]any)
+	if v, has := route["default_domain_resolver"]; has {
+		t.Errorf("база держит ключ (%v) при владеющем слоте fakeip", v)
+	}
+}

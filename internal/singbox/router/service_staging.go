@@ -78,14 +78,10 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 // изменение слота уже применено, ошибка примирения обязана попасть в
 // app-лог, но не отменять успех.
 func (s *ServiceImpl) reconcileBaseOwnedScalars() {
-	if s.deps.ReconcileBaseDNSStrategy != nil {
-		if err := s.deps.ReconcileBaseDNSStrategy(); err != nil {
-			s.appLog.Warn("dns-globals", "", "reconcile base dns.strategy: "+err.Error())
-		}
+	if s.deps.ReconcileBaseOwnedScalars == nil {
+		return
 	}
-	if s.deps.ReconcileBaseDomainResolver != nil {
-		if err := s.deps.ReconcileBaseDomainResolver(); err != nil {
-			s.appLog.Warn("dns-globals", "", "reconcile base default_domain_resolver: "+err.Error())
-		}
+	if err := s.deps.ReconcileBaseOwnedScalars(); err != nil {
+		s.appLog.Warn("dns-globals", "", "reconcile base scalars: "+err.Error())
 	}
 }

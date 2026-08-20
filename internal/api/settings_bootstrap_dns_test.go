@@ -83,3 +83,22 @@ func TestUpdate_SingboxBootstrapDNS_AppliesOnChange(t *testing.T) {
 		t.Errorf("applied = %#v, повторное применение без изменения", applied)
 	}
 }
+
+// Невалидное значение, УЖЕ лежащее в settings.json (downgrade, ручная правка),
+// не должно запирать пользователя вне всех настроек: валидируем только то,
+// что клиент прислал в этом патче. Тот же контракт, что у sessionTtlHours.
+func TestUpdate_SingboxBootstrapDNS_StaleValueDoesNotBlockUnrelatedSave(t *testing.T) {
+	h, store := newSettingsHandlerFromRaw(t, `{"schemaVersion":2,"singboxBootstrapDNS":"dns.google"}`)
+
+	rec := postSettingsUpdate(t, h, `{"disableMemorySaving":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	got, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.DisableMemorySaving {
+		t.Error("несвязанное поле не сохранилось")
+	}
+}

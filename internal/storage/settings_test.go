@@ -800,3 +800,28 @@ func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
 		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
 	}
 }
+
+// Аксессор, через который настройка доезжает до оператора sing-box: если он
+// начнёт врать пустой строкой, адрес bootstrap молча перестанет применяться.
+func TestSettingsStore_GetSingboxBootstrapDNS(t *testing.T) {
+	tmp := t.TempDir()
+	store := NewSettingsStore(tmp)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "" {
+		t.Errorf("по умолчанию = %q, want пусто", got)
+	}
+
+	settings, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	settings.SingboxBootstrapDNS = "8.8.8.8"
+	if err := store.Save(settings); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "8.8.8.8" {
+		t.Errorf("GetSingboxBootstrapDNS = %q, want 8.8.8.8", got)
+	}
+}
