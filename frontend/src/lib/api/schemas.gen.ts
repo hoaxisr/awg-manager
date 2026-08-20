@@ -3432,6 +3432,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/tunnels": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/delay-check": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/share-link": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/uninstall": v.lazy(() => api_SingboxStatusResponse),
 	"POST /singbox/update": v.lazy(() => api_SingboxStatusResponse),
 	"POST /static-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),

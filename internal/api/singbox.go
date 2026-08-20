@@ -355,6 +355,67 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, singboxStatusData(s))
 }
 
+// Uninstall handles POST /api/singbox/uninstall.
+// Останавливает движок и удаляет его артефакты: бинарь, слоты config.d, кэш
+// FakeIP, pid и журналы процесса. Настройки AWGM (подписки, правила
+// маршрутизации, device-proxy) сохраняются — повторная установка возвращает
+// рабочее состояние.
+//
+//	@Summary		Uninstall sing-box
+//	@Description	Останавливает движок и удаляет бинарь с его конфигурацией. Отклоняется, пока включена маршрутизация sing-box.
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SingboxStatusResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/uninstall [post]
+func (h *SingboxHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	// Гейт: движок под включённой маршрутизацией снимать нельзя — правила
+	// iptables, OpkgTun и ACL остались бы висеть без процесса, который их
+	// обслуживает, и трафик встал бы (issue #771).
+	if h.routingEnabled() {
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"сначала выключите маршрутизацию sing-box", "SINGBOX_ROUTING_ENABLED")
+		return
+	}
+	if h.op == nil {
+		response.InternalError(w, "sing-box operator not wired")
+		return
+	}
+	if err := h.op.Uninstall(r.Context()); err != nil {
+		if errors.Is(err, singbox.ErrInstallInProgress) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+	s := h.op.GetStatus(r.Context())
+	publishInvalidated(h.bus, ResourceSingboxStatus, "uninstalled")
+	publishInvalidated(h.bus, ResourceSysInfo, "singbox-uninstalled")
+	response.Success(w, singboxStatusData(s))
+}
+
+// routingEnabled сообщает, работает ли сейчас маршрутизация sing-box. Нет
+// доступа к настройкам — считаем, что работает: отказать по незнанию безопаснее,
+// чем снести движок из-под живых правил.
+func (h *SingboxHandler) routingEnabled() bool {
+	if h.settingsStore == nil {
+		return true
+	}
+	st, err := h.settingsStore.Get()
+	if err != nil {
+		return true
+	}
+	return st.SingboxRouter.Enabled
+}
+
 // Update handles POST /api/singbox/update.
 // Replaces the installed managed sing-box binary with the version this
 // awg-manager build is pinned to. No-op when versions match. Returns the fresh

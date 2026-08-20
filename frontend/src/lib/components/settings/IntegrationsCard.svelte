@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
-	import { Button, Modal, StatusDot } from '$lib/components/ui';
+	import { Button, ConfirmModal, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
@@ -20,6 +20,8 @@
 		singboxUpdateError?: string | null;
 		oninstallSingbox: () => void;
 		onupdateSingbox?: () => void;
+		onuninstallSingbox?: () => void;
+		singboxUninstalling?: boolean;
 		showSingbox?: boolean;
 		showHydra?: boolean;
 	}
@@ -36,9 +38,13 @@
 		singboxUpdateError = null,
 		oninstallSingbox,
 		onupdateSingbox,
+		onuninstallSingbox,
+		singboxUninstalling = false,
 		showSingbox = true,
 		showHydra = true,
 	}: Props = $props();
+
+	let confirmUninstall = $state(false);
 
 	const singboxInstalled = $derived(singboxStatus?.installed ?? false);
 	const singboxRunning = $derived(singboxStatus?.running ?? false);
@@ -184,12 +190,26 @@
 							></div>
 						</div>
 					</div>
-				{:else if singboxInstalled && singboxNeedsUpdate && onupdateSingbox}
-					<Button variant="primary" size="sm" onclick={onupdateSingbox} loading={singboxUpdating}>
-						{singboxUpdating ? 'Обновление...' : 'Обновить'}
-					</Button>
 				{:else if singboxInstalled}
-					<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
+					<div class="integration-actions">
+						{#if singboxNeedsUpdate && onupdateSingbox}
+							<Button variant="primary" size="sm" onclick={onupdateSingbox} loading={singboxUpdating}>
+								{singboxUpdating ? 'Обновление...' : 'Обновить'}
+							</Button>
+						{:else}
+							<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
+						{/if}
+						{#if onuninstallSingbox}
+							<Button
+								variant="outline-danger"
+								size="sm"
+								loading={singboxUninstalling}
+								onclick={() => (confirmUninstall = true)}
+							>
+								{singboxUninstalling ? 'Удаление...' : 'Удалить'}
+							</Button>
+						{/if}
+					</div>
 				{:else if singboxStatusLoading}
 					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
 				{:else}
@@ -278,7 +298,30 @@
 	{/snippet}
 </Modal>
 
+{#if confirmUninstall}
+	<ConfirmModal
+		open={confirmUninstall}
+		title="Удалить sing-box?"
+		message="Движок будет остановлен, а его файлы удалены: бинарь, конфигурация config.d, кэш FakeIP и журналы."
+		secondary="Подписки, правила маршрутизации и настройки прокси сохранятся — после повторной установки они снова заработают."
+		confirmLabel="Удалить"
+		variant="danger"
+		busy={singboxUninstalling}
+		onConfirm={() => {
+			confirmUninstall = false;
+			onuninstallSingbox?.();
+		}}
+		onClose={() => (confirmUninstall = false)}
+	/>
+{/if}
+
 <style>
+	.integration-actions {
+		display: flex;
+		gap: 0.35rem;
+		align-items: center;
+	}
+
 	.card {
 		container-type: inline-size;
 	}

@@ -17713,6 +17713,34 @@ paths:
       summary: Sing-box tunnel speed test stream
       tags:
       - singbox
+  /singbox/uninstall:
+    post:
+      description: Останавливает движок и удаляет бинарь с его конфигурацией. Отклоняется,
+        пока включена маршрутизация sing-box.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxStatusResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Uninstall sing-box
+      tags:
+      - singbox
   /singbox/update:
     post:
       description: Replaces the currently-installed managed sing-box with the version

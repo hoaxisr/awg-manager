@@ -96,6 +96,7 @@
 	let restartConfirmOpen = $state(false);
 	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
+	let singboxUninstalling = $state(false);
 	let singboxInstallError = $state<string | null>(null);
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<string | null>(null);
@@ -204,6 +205,19 @@
 			singboxInstallError = e instanceof Error ? e.message : String(e);
 		} finally {
 			singboxInstalling = false;
+		}
+	}
+
+	async function uninstallSingbox() {
+		singboxUninstalling = true;
+		try {
+			const fresh = await api.singboxUninstall();
+			singboxStatus.applyMutationResponse(fresh);
+			notifications.success('Sing-box удалён');
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить sing-box');
+		} finally {
+			singboxUninstalling = false;
 		}
 	}
 
@@ -742,6 +756,8 @@ $effect(() => {
 					{singboxUpdateError}
 					oninstallSingbox={installSingbox}
 					onupdateSingbox={updateSingbox}
+					onuninstallSingbox={uninstallSingbox}
+					{singboxUninstalling}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
 				/>
