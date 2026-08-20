@@ -645,7 +645,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) должны
 	// перегенерировать свои слоты (вернуть ссылки на композиты) ДО reload.
 	s.notifyRoutingSlotsChanged()
-	if err := s.orchestratorApplyNow(); err != nil {
+	if err := s.applyConfigNow(); err != nil {
 		return fmt.Errorf("orchestrator reload after enable: %w", err)
 	}
 

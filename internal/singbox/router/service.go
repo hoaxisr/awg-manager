@@ -814,6 +814,20 @@ func (s *ServiceImpl) orchestratorApplyNow() error {
 	return s.deps.Orch.ReloadNow()
 }
 
+// applyConfigNow примиряет скаляры 00-base и сразу применяет config.d. Порядок
+// обязателен: база владеет dns.strategy, пока routing-слот запаркован, и
+// уступает его при перепарковке. Если примирять после применения (так делает
+// хвостовой defer в enableLocked/Disable), запись базы прилетает уже ПОСЛЕ
+// reload — а reload при живом tun это Stop+Start, то есть второй перезапуск
+// движка вне гейта готовности, когда дефолт клиентов уже припаркован на tun
+// (стенд 2026-08-20: pid менялся дважды за переход). Хвостовой defer при этом
+// остаётся страховкой для путей, уходящих через ошибку: mutateBase не пишет,
+// когда менять нечего.
+func (s *ServiceImpl) applyConfigNow() error {
+	s.reconcileBaseOwnedScalars()
+	return s.orchestratorApplyNow()
+}
+
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
 	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
 	if err != nil {

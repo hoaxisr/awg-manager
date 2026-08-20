@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -110,3 +111,64 @@ func TestFakeIPSetDNSGlobals_CallsReconcileBaseDNSStrategy(t *testing.T) {
 		t.Fatalf("ReconcileBaseDNSStrategy вызовов = %d, want 1", calls)
 	}
 }
+
+// applyConfigNow обязан примирить базу ДО применения config.d: 00-base владеет
+// dns.strategy, пока routing-слот запаркован, и запись базы после reload
+// означала бы ещё один reload — при живом tun это полный перезапуск движка
+// (стенд 2026-08-20: pid менялся дважды за один переход в policy-tun).
+func TestApplyConfigNow_ReconcilesBaseBeforeApply(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+
+	// Живой процесс нужен, чтобы применение конфига дошло до ProcessController:
+	// с nil-контроллером оркестратор молчит и порядок вызовов не наблюдаем.
+	proc := &orderProc{}
+	orch := orchestrator.New(dir, proc)
+	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Save(orchestrator.SlotRouter, []byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	svc.deps.Orch = orch
+	svc.deps.ReconcileBaseOwnedScalars = func() error {
+		proc.record("reconcile")
+		return nil
+	}
+
+	if err := svc.applyConfigNow(); err != nil {
+		t.Fatalf("applyConfigNow: %v", err)
+	}
+	got := proc.calls()
+	if len(got) < 2 || got[0] != "reconcile" {
+		t.Fatalf("примирение базы обязано идти ДО применения, порядок: %v", got)
+	}
+}
+
+// orderProc — ProcessController, записывающий порядок обращений к процессу.
+type orderProc struct {
+	mu    sync.Mutex
+	order []string
+}
+
+func (p *orderProc) record(what string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.order = append(p.order, what)
+}
+
+func (p *orderProc) calls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.order...)
+}
+
+func (p *orderProc) IsRunning() (bool, int) { return true, 4242 }
+func (p *orderProc) Start() error           { p.record("start"); return nil }
+func (p *orderProc) Stop() error            { p.record("stop"); return nil }
+func (p *orderProc) Reload() error          { p.record("reload"); return nil }

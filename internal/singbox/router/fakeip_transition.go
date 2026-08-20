@@ -133,6 +133,16 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()
 
+	// Переход пишет слоты по нескольку раз (teardown, провижининг, примирение
+	// базы на выходе из Disable/Enable) и длится дольше окна debounce, поэтому
+	// без hold чужой reload прилетает посреди транзакции — а при живом tun
+	// каждый reload это полный Stop+Start движка. Явные applyConfigNow внутри
+	// Enable/Disable под hold работают как раньше; накопленное применяется
+	// одним reload'ом на выходе.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
+
 	id := nextTransitionID()
 
 	source, err := s.currentState()

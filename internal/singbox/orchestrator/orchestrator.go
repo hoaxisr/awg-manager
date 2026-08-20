@@ -56,6 +56,15 @@ type Orchestrator struct {
 	reloadTimer *time.Timer
 	reloading   bool
 
+	// holds > 0 подавляет debounce-reload: продюсер, записавший слот во время
+	// перехода режима, не должен дёргать движок посреди чужой транзакции (при
+	// живом tun каждый такой reload — полный Stop+Start). Подавленная запись
+	// помечается в pendingReload и применяется одним reload'ом на release.
+	// ReloadNow под hold НЕ подавляется: он явный и сам применяет всё
+	// накопленное, поэтому сбрасывает pendingReload.
+	holds         int
+	pendingReload bool
+
 	// prevHasTun records whether the LAST applied config had a tun
 	// inbound. Reload compares it against the new config's tun presence:
 	// a toggle (added or removed) forces a restart because sing-box
@@ -359,6 +368,38 @@ func (o *Orchestrator) saveLocked(slot Slot, jsonBytes []byte) error {
 		return fmt.Errorf("save %s: %w", slot, err)
 	}
 	return nil
+}
+
+// HoldReloads подавляет debounce-reload'ы до вызова возвращённой функции.
+// Нужен на время перехода режима: teardown и провижининг пишут слоты по
+// нескольку раз и дольше окна debounce, и без hold чужой reload прилетает
+// посреди транзакции. Возвращённый release идемпотентен; когда снят последний
+// hold, накопленная запись применяется одним отложенным reload'ом.
+func (o *Orchestrator) HoldReloads() func() {
+	o.mu.Lock()
+	o.holds++
+	if o.reloadTimer != nil {
+		o.reloadTimer.Stop()
+		o.reloadTimer = nil
+		o.pendingReload = true
+	}
+	o.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			o.mu.Lock()
+			if o.holds > 0 {
+				o.holds--
+			}
+			resume := o.holds == 0 && o.pendingReload
+			if resume {
+				o.pendingReload = false
+				o.scheduleReload()
+			}
+			o.mu.Unlock()
+		})
+	}
 }
 
 // SetEnabled toggles slot activity by renaming the file between
