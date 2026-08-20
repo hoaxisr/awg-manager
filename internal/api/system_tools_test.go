@@ -14,6 +14,7 @@ import (
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 	"github.com/hoaxisr/awg-manager/internal/sys/opkg"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	"github.com/hoaxisr/awg-manager/internal/sys/procmon"
 	"github.com/hoaxisr/awg-manager/internal/sys/services"
 )
 
@@ -47,6 +48,7 @@ func newSystemToolsForTest(t *testing.T, level string) (*SystemToolsHandler, str
 		services: services.NewScanner(),
 		opkg:     opkg.NewClient(),
 		ports:    sysports.NewScanner(),
+		procmon:  procmon.NewSampler(),
 	}
 	return h, root
 }

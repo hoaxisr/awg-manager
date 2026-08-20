@@ -52,7 +52,7 @@ func (s *Scanner) List() ([]Binding, error) {
 		procDir = "/proc"
 	}
 
-	var bindings []Binding
+	bindings := []Binding{}
 
 	// 1. Collect sockets from /proc/net/{tcp,tcp6,udp,udp6}
 	tcp4, _ := s.parseNetFile(filepath.Join(procDir, "net", "tcp"), "tcp", true)
@@ -102,7 +102,7 @@ func (s *Scanner) InspectPort(port int, proto string) ([]Binding, error) {
 		return nil, err
 	}
 	proto = strings.ToLower(strings.TrimSpace(proto))
-	var matches []Binding
+	matches := []Binding{}
 	for _, b := range all {
 		if b.Port == port {
 			if proto == "" || strings.HasPrefix(b.Proto, proto) {

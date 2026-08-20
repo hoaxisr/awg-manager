@@ -86,6 +86,16 @@ func (h *SystemToolsHandler) OpkgSearch(w http.ResponseWriter, r *http.Request) 
 	response.Success(w, pkgs)
 }
 
+// opkgOutcome помечает исход в журнале: SSE-подписчиков у события нет,
+// строка в app-логе — единственный след операции, и она не должна врать,
+// будто пакет установлен, когда opkg упал.
+func opkgOutcome(cmd string, err error) string {
+	if err != nil {
+		return cmd + ": ошибка"
+	}
+	return cmd
+}
+
 type opkgPackagesRequest struct {
 	Packages []string `json:"packages"`
 }
@@ -108,7 +118,7 @@ func (h *SystemToolsHandler) OpkgUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out, err := h.opkg.Update()
-	h.emitEvent("update", "", "opkg update")
+	h.emitEvent("update", "", opkgOutcome("opkg update", err))
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -144,7 +154,7 @@ func (h *SystemToolsHandler) OpkgUpgrade(w http.ResponseWriter, r *http.Request)
 	} else {
 		out, err = h.opkg.UpgradePackages(req.Packages)
 	}
-	h.emitEvent("upgrade", strings.Join(req.Packages, ","), "opkg upgrade")
+	h.emitEvent("upgrade", strings.Join(req.Packages, ","), opkgOutcome("opkg upgrade", err))
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -175,7 +185,7 @@ func (h *SystemToolsHandler) OpkgInstall(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	out, err := h.opkg.Install(req.Packages)
-	h.emitEvent("install", strings.Join(req.Packages, ","), "opkg install")
+	h.emitEvent("install", strings.Join(req.Packages, ","), opkgOutcome("opkg install", err))
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
@@ -234,7 +244,7 @@ func (h *SystemToolsHandler) OpkgRemove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	out, err := h.opkg.Remove(req.Packages)
-	h.emitEvent("remove", strings.Join(req.Packages, ","), "opkg remove")
+	h.emitEvent("remove", strings.Join(req.Packages, ","), opkgOutcome("opkg remove", err))
 	if err != nil {
 		response.Error(w, out+"\n"+err.Error(), "OPKG_ERROR")
 		return
