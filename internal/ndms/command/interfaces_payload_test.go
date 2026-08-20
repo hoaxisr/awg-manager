@@ -79,7 +79,7 @@ func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
 		t.Fatalf("SetIPv6Address: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[2], `{
-		"interface":{"OpkgTun10":{"ipv6":{"address":[{},{"block":"fd00::1/128"}]}}}
+		"interface":{"OpkgTun10":{"ipv6":{"address":[{"no":true},{"block":"fd00::1/128"}]}}}
 	}`)
 
 	if err := cmds.ClearIPv6Address(context.Background(), "OpkgTun10"); err != nil {
