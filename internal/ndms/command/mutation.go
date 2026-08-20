@@ -45,12 +45,17 @@ func postMutationCheckedTolerant(
 	if err != nil {
 		return fmt.Errorf("%s: %w", opDesc, err)
 	}
-	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
-		return fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))
-	}
+	// Инвалидация и сохранение идут и по пути отказа: NDMS применяет пакетный
+	// payload поэлементно, поэтому отвергнутый элемент не отменяет уже
+	// применённые. Пропустить их значило бы оставить применённую половину вне
+	// startup-config (теряется на перезагрузке) и считать следующий diff по
+	// протухшему кэшу.
 	save.Request()
 	for _, inv := range invalidators {
 		inv()
+	}
+	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
+		return fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))
 	}
 	return nil
 }
@@ -68,7 +73,6 @@ func allTolerated(msgs []string, tolerate func(string) bool) bool {
 	}
 	return true
 }
-
 
 // ndmsStatusErrors recursively walks a decoded NDMS response and returns the
 // messages of every object carrying status:"error" (case-insensitive),

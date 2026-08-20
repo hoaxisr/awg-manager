@@ -47,7 +47,7 @@ func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) err
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.mutate(ctx, payload, "remove default route "+name)
+	return c.mutateTolerant(ctx, payload, "remove default route "+name, isNetlinkFileExists)
 }
 
 func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) error {
@@ -65,7 +65,7 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.mutate(ctx, payload, "remove ipv6 default route "+name)
+	return c.mutateTolerant(ctx, payload, "remove ipv6 default route "+name, isNetlinkFileExists)
 }
 
 // RemoveHostRoute removes an IPv4 host route (best-effort).

@@ -48,7 +48,7 @@ func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, specs []DNSRouteSpe
 		"dns-proxy": map[string]any{"route": routes},
 	}
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete dns-proxy routes",
-		isMissingDNSRouteRule,
+		toleratesMissingDNSRoute,
 		c.queries.DNSProxy.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }

@@ -174,6 +174,9 @@
 
   // ── Engine control ──
   function toggleEngine(turnOn: boolean) {
+    // targetMode может быть policy-tun из сохранённых настроек: на прошивке без
+    // OpkgTun тумблер иначе позвал бы режим, который бэкенд всё равно отвергнет.
+    if (turnOn && targetMode === 'policy-tun' && !tunSupported) return;
     modeSwitch.request(turnOn ? targetMode : 'off');
   }
   function handleToggleClick(_e: MouseEvent) {
