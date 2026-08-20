@@ -9,10 +9,31 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 )
 
-// StaticNATEntry is one row from /show/rc/ip/static.
+// StaticNATEntry is one row from /show/rc/ip/static. Two different rule
+// kinds share the table (verified on a live router 2026-08-20):
+//
+//   - Static NAT: {interface, to-interface} — SNAT for a whole interface.
+//   - Port forward: {interface, protocol, port, to-port, to-address}.
+//
+// Ports are STRINGS, and to-port is OMITTED when it equals port — a
+// 2222→2222 forward carries no to-port at all. Use TargetPort, never
+// ToPort directly.
 type StaticNATEntry struct {
 	Interface   string `json:"interface"`
 	ToInterface string `json:"to-interface"`
+	Protocol    string `json:"protocol"`
+	Port        string `json:"port"`
+	ToPort      string `json:"to-port"`
+	ToAddress   string `json:"to-address"`
+}
+
+// TargetPort returns the port the forward lands on: to-port when present,
+// otherwise port (NDMS omits to-port when the two are equal).
+func (e StaticNATEntry) TargetPort() string {
+	if e.ToPort != "" {
+		return e.ToPort
+	}
+	return e.Port
 }
 
 const staticNATTTL = 30 * time.Second

@@ -487,6 +487,26 @@ func (s *SettingsStore) SetSingboxManuallyStopped(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetAuthEnabled atomically turns authentication on/off under the store
+// lock. Used by the exposure guard, which flips the flag outside the
+// settings HTTP handler and must not clobber concurrent writes to other
+// fields. Returns whether the value actually changed.
+func (s *SettingsStore) SetAuthEnabled(v bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return false, fmt.Errorf("settings not loaded")
+	}
+	if s.settings.AuthEnabled == v {
+		return false, nil
+	}
+	s.settings.AuthEnabled = v
+	if err := s.saveUnlocked(s.settings); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SetSingboxCreateNDMSProxy atomically updates the toggle under the
 // store lock. Mirrors SetSingboxManuallyStopped — required because
 // the API handler is the single writer (CLAUDE.md single-writer

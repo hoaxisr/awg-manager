@@ -107,6 +107,8 @@ type Server struct {
 	hydraService               *hydraroute.Service
 	orch                       *orchestrator.Orchestrator
 	bus                        *events.Bus
+	exposureGuard              *api.ExposureGuard
+	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
@@ -477,6 +479,14 @@ func (s *Server) Start() error {
 	}
 	s.registerRoutes(mux)
 
+	// Фоновая проверка «не открыты ли мы наружу без пароля» — гвард
+	// конструируется в registerRoutes, поэтому запускается сразу после.
+	if s.exposureGuard != nil {
+		guardCtx, cancel := context.WithCancel(context.Background())
+		s.exposureGuardStop = cancel
+		s.exposureGuard.Start(guardCtx)
+	}
+
 	core := http.Handler(mux)
 	if s.config.SlowRequestThreshold > 0 {
 		core = s.slowRequestMiddleware(s.config.SlowRequestThreshold, core)
@@ -523,6 +533,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.clearPendingLocked()
 	s.listen.mu.Unlock()
+
+	if s.exposureGuardStop != nil {
+		s.exposureGuardStop()
+		s.exposureGuardStop = nil
+	}
 
 	if s.pprofServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
