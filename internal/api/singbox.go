@@ -128,6 +128,7 @@ type SingboxHandler struct {
 	settingsStore   *storage.SettingsStore
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
 	routerRefs      tunnelservice.RouterRefChecker
+	bindValidator   func(ctx context.Context, name string) error
 }
 
 // ndmsProxyToggler — узкий интерфейс для чтения текущего значения
@@ -165,6 +166,30 @@ func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndms
 // SetSettingsStore wires global settings for connectivity checks.
 func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
 	h.settingsStore = settings
+}
+
+// SetBindValidator wires the router's validateBindInterface for direct API tunnel saves.
+func (h *SingboxHandler) SetBindValidator(validator func(ctx context.Context, name string) error) {
+	h.bindValidator = validator
+}
+
+// validateOutboundBind rejects an outbound whose bind_interface is not in the
+// router's bindable catalog. No validator wired (tests / minimal bootstrap) —
+// no check, mirroring the router service.
+func (h *SingboxHandler) validateOutboundBind(ctx context.Context, raw json.RawMessage) error {
+	if h.bindValidator == nil || len(raw) == 0 {
+		return nil
+	}
+	var peek struct {
+		BindInterface string `json:"bind_interface"`
+	}
+	if err := json.Unmarshal(raw, &peek); err != nil || peek.BindInterface == "" {
+		return nil
+	}
+	if err := h.bindValidator(ctx, peek.BindInterface); err != nil {
+		return fmt.Errorf("invalid bind_interface: %w", err)
+	}
+	return nil
 }
 
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
@@ -480,6 +505,15 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	batch := singbox.ParseTunnelLinksInput(body.Links)
+	for _, p := range batch.Outbounds {
+		if err := h.validateOutboundBind(r.Context(), p.Outbound); err != nil {
+			response.BadRequest(w, err.Error())
+			return
+		}
+	}
+
 	h.log.Info("single-add", "", "requested via API")
 	added, errs, err := h.op.AddTunnels(r.Context(), body.Links)
 	if err != nil {
@@ -614,6 +648,12 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "tag required")
 		return
 	}
+
+	if err := h.validateOutboundBind(r.Context(), body.Outbound); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+
 	h.log.Info("single-update", tag, "requested via API")
 	if err := h.op.UpdateTunnel(r.Context(), tag, body.Outbound); err != nil {
 		response.InternalError(w, err.Error())

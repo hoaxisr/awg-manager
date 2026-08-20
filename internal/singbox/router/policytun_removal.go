@@ -17,9 +17,9 @@ import (
 // holdOpkgTun). Гейт по Provisioned оставил бы OpkgTun на роутере после
 // удаления пакета.
 //
-// Почему в Go, а не в prerm: `Index` объявлен `omitempty`, то есть нулевой
-// индекс в JSON отсутствует вовсе, а разобрать файл на прошивке нечем — jq там
-// нет. Сам prerm трогать не нужно: он уже зовёт `--cleanup`, а на upgrade
+// Почему в Go, а не в prerm: разобрать settings.json на прошивке нечем — jq
+// там нет (единая запись владения пишет `index` всегда, но это не помогает).
+// Сам prerm трогать не нужно: он уже зовёт `--cleanup`, а на upgrade
 // только останавливает демона, поэтому интерфейс переживает обновление пакета.
 //
 // Собирает ServiceImpl напрямую, а не через NewService: тот идемпотентно
@@ -33,23 +33,31 @@ func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
 	if err != nil {
 		return err
 	}
-	st := settings.PolicyTun
-	if st == nil {
+	st, ok := opkgTunOwned(settings, statePolicyTun)
+	if !ok {
 		return nil
 	}
 	s := &ServiceImpl{
 		deps:   d,
 		appLog: logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter),
 	}
-	ndmsName := fakeIPNDMSName(st.Index)
+	ndmsName := tunNDMSName(st.Index)
 
 	// Сегменты возвращаем ПЕРВЫМИ, пока дефолт ещё на tun: иначе удаление
 	// пакета при включённом source-preserve оставило бы их на static-NAT
 	// навсегда — восстановить эту запись после удаления будет уже неоткуда.
-	if len(st.NATSegments) > 0 {
-		if e := s.restorePolicyTunNAT(ctx, st.NATSegments); e != nil {
+	if segs := natSegmentsOf(st); len(segs) > 0 {
+		if e := s.restorePolicyTunNAT(ctx, segs); e != nil {
 			s.appLog.Warn("policy-tun-remove", ndmsName, "restore segment NAT: "+e.Error())
 		}
+	}
+
+	// Индекс из записи мог занять ЧУЖОЙ OpkgTun после смерти нашего: и снятие
+	// дефолта, и удаление по имени разобрали бы посторонний туннель. Записи
+	// сегментов выше вернуть всё равно надо — они про сегменты, а не про
+	// интерфейс. «Не знаем» ≠ «чужой»: без скана работаем как раньше.
+	if s.skipForeignTeardown(ctx, ndmsName, policyTunDescription, "policy-tun-remove") {
+		return nil
 	}
 
 	// Дефолт снимаем до сноса интерфейса: переживший маршрут остался бы в

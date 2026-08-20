@@ -306,14 +306,9 @@ func NewOperator(d OperatorDeps) *Operator {
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	ensureBaseConfigWithLogLevel(configPath, desiredSingboxLogLevel, log)
-	ensureLegacyConfigMigrated(dir)
-	patchTunnelsSlotStripBaseOwnedBlocks(filepath.Join(configPath, "10-tunnels.json"))
-	patchTunnelsSlotEnsureNaiveUDPOverTCP(filepath.Join(configPath, "10-tunnels.json"))
-	patchTunnelsSlotEnsureHysteria2ChromeParrot(filepath.Join(configPath, "10-tunnels.json"))
-	stripStrayDirectPlaceholder(configPath)
-	removeFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
-	removeDNSFinalFromBase(filepath.Join(configPath, "00-base.json"), log)
+	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, log) {
+		s.run()
+	}
 
 	op := &Operator{
 		log:               log,

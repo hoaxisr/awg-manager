@@ -2,6 +2,8 @@ package subscription
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +54,9 @@ type ConfigMutator interface {
 	// dangling group members on later rebuilds. Empty slice = "can't
 	// report" (caller must treat as no-op, not as "drop everything").
 	DeclaredOutboundTags() []string
+	// SubscriptionOutbounds returns a snapshot of every outbound currently
+	// in the subscription config slot (#709).
+	SubscriptionOutbounds() []map[string]any
 }
 
 // Service is the subscription business-logic facade.
@@ -89,10 +94,23 @@ type Service struct {
 	// мьютексы Service и нельзя выполнять сетевой I/O (fetch подписки идёт
 	// до applyDiff, вне txMu).
 	txMu sync.Mutex
+	// bindValidator — optional catalog check for BindInterface (#709).
+	bindValidator BindInterfaceValidator
+	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
+	// файлом подписок, состояние принадлежит сервису, не пакету.
+	happKeys *happKeys
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
-	return &Service{store: store, mutator: mutator}
+	storePath := ""
+	if store != nil {
+		storePath = store.path
+	}
+	return &Service{
+		store:    store,
+		mutator:  mutator,
+		happKeys: newHappKeys(happKeysPath(storePath)),
+	}
 }
 
 // SetNDMSProxyEnabled wires the global "Create NDMS Proxy for sing-box"
@@ -100,6 +118,9 @@ func NewService(store *Store, mutator ConfigMutator) *Service {
 // the subscription (ProxyIndex stays -1); SyncProxies (re-)creates them
 // when the toggle is turned back on.
 func (s *Service) SetNDMSProxyEnabled(fn func() bool) { s.ndmsProxyEnabled = fn }
+
+// SetBindInterfaceValidator wires router bindable-interface validation.
+func (s *Service) SetBindInterfaceValidator(v BindInterfaceValidator) { s.bindValidator = v }
 
 func (s *Service) proxyEnabled() bool {
 	if s.ndmsProxyEnabled == nil {
@@ -279,6 +300,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	if _, err := CompileMemberFilter(in.FilterInclude, in.FilterExclude); err != nil {
 		return nil, fmt.Errorf("subscription: %w", err)
 	}
+	in.BindInterface = strings.TrimSpace(in.BindInterface)
+	if err := validateBindInterfaceOptional(ctx, s.bindValidator, in.BindInterface); err != nil {
+		return nil, fmt.Errorf("subscription: %w", err)
+	}
 	// Serialize the whole Create: allocation scans-without-reserve, so two
 	// concurrent Creates must not interleave between allocate and commit
 	// (issue #287). Per-subscription locks below don't help — each Create has
@@ -447,7 +472,21 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		// can safely recover — at best a hot path of recovery, at worst
 		// silently garbled outbounds (see PR adding RewriteForRaw for the
 		// HardVPN-bypass-WhiteLists/good_keys.txt regression).
-		fetchURL, rewrote := RewriteForRaw(sub.URL)
+		// happ://crypt… must be decrypted here, not inside RewriteForRaw:
+		// that helper swallows the decryption error and would leave the
+		// subscription silently fetching the still-encrypted link.
+		target := sub.URL
+		if IsHappCryptLink(target) {
+			dec, decErr := s.DecryptHappLink(target)
+			if decErr != nil {
+				err := fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", decErr)
+				s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
+				s.logWarn("subscription-refresh", id, err.Error())
+				return nil, err
+			}
+			target = dec
+		}
+		fetchURL, rewrote := RewriteForRaw(target)
 		if rewrote {
 			s.logWarn("subscription-refresh", id,
 				"rewrote web-view URL to raw URL")
@@ -464,40 +503,29 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 	isClash := vlink.IsClashYAML(body)
 	isSbJSON := !isClash && vlink.IsSingboxJSON(body)
+	isXrayJSON := !isClash && !isSbJSON && vlink.IsXrayJSON(body)
 	// Детект по СЫРОМУ телу: base64-обёрнутый JSON (sing-box или mieru)
 	// сюда не попадает — он уйдёт в NormalizeBody/DoubleDecode, где после
 	// декодирования строки без share-схем отбрасываются. Ограничение
 	// сознательное и симметричное для обоих JSON-форматов.
-	isMieruJSON := !isClash && !isSbJSON && vlink.IsMieruClientJSON(body)
-	isTrustTunnelTOML := !isClash && !isSbJSON && !isMieruJSON && vlink.IsTrustTunnelClientTOML(body)
+	isMieruJSON := !isClash && !isSbJSON && !isXrayJSON && vlink.IsMieruClientJSON(body)
+	isTrustTunnelTOML := !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && vlink.IsTrustTunnelClientTOML(body)
 	// Body that's valid JSON but not a recognised sing-box subscription
 	// (no outbounds key in the right place) or mieru client config (no
 	// profiles) gets a precise error rather than a fall-through into
 	// share-link parsing — otherwise the user sees "ни одной валидной
 	// ссылки" with a meaningless prefix from scanning JSON bytes for "://".
-	if !isClash && !isSbJSON && !isMieruJSON && !isTrustTunnelTOML && vlink.LooksLikeJSON(body) {
-		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже ни на sing-box config (нет outbounds), ни на mieru client config (нет profiles). Поддерживаются: sing-box JSON config (одиночный, массив конфигов, или массив outbounds), mieru JSON config (формат mieru apply config, экспорт панелей), Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, TrustTunnel connect URL (https://trustunnel.ru/connect/?d=…), tt://, TrustTunnel TOML.")
+	if !isClash && !isSbJSON && !isXrayJSON && !isMieruJSON && !isTrustTunnelTOML && vlink.LooksLikeJSON(body) {
+		err := errors.New("subscription: тело подписки выглядит как JSON, но не похоже на sing-box config / Xray config (нет outbounds) или mieru client config (нет profiles). Поддерживаются: sing-box config, Xray JSON config, mieru JSON config, Clash / mihomo YAML, base64 share-links, plain text vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, TrustTunnel connect URL (https://trustunnel.ru/connect/?d=…), tt://, TrustTunnel TOML.")
 		s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: err})
 		s.logWarn("subscription-refresh", id, err.Error())
 		return nil, err
 	}
 	var parseRes vlink.BatchResult
-	switch {
-	case isClash:
-		parseRes = vlink.ParseClashBody(body)
-	case isSbJSON:
-		parseRes = vlink.ParseSingboxBody(body)
-	case isMieruJSON:
-		parseRes = vlink.ParseMieruClientJSON(body)
-	case isTrustTunnelTOML:
-		parseRes = vlink.ParseTrustTunnelClientTOML(body)
-	default:
-		if sub.IsInline() {
-			parseRes = parseInlineImportBody(body)
-		} else {
-			lines := NormalizeBody(body, ct)
-			parseRes = vlink.ParseBatch(lines)
-		}
+	if sub.IsInline() {
+		parseRes = parseInlineImportBody(body)
+	} else {
+		parseRes = parseSubscriptionBody(body, ct)
 	}
 
 	parts := partitionParsedOutbounds(id, parseRes.Outbounds)
@@ -528,6 +556,11 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 	}
 
 	diff := ApplyDiff(id, sub.MemberTags, parts.Valid)
+
+	// Сироты, для которых в выдаче есть тот же сервер под новым тегом,
+	// забирают свой прежний тег обратно (issue #745). Обязано идти ДО
+	// remapStaleTags: тому остаются только по-настоящему протухшие теги.
+	diff = reassociateOrphans(diff, sub.Members)
 
 	// Перенос исключений на текущую схему тегов (issues #614/#625). Обязан
 	// идти ДО applyDiff: тот читает sub.ExcludedTags (см. ниже) и без переноса
@@ -608,6 +641,20 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		declared[t] = true
 	}
 	newMembers, prunedTags := filterDeclaredMembers(newMembers, declared)
+	// Added считается по членам, реально попавшим в подписку: серверы,
+	// скрытые фильтром или исключением, в MemberTags не пишутся и потому
+	// приходят из ApplyDiff новыми на КАЖДОМ обновлении. len(diff.New) завышал
+	// счётчик в ответе API и держал вечно истинным условие журнала ниже.
+	newTags := make(map[string]bool, len(diff.New))
+	for _, n := range diff.New {
+		newTags[n.Tag] = true
+	}
+	added := 0
+	for _, m := range newMembers {
+		if newTags[m.Tag] {
+			added++
+		}
+	}
 	rejected := appendRejectedUnique(parts.Rejected, rejectedFromPrunedTags(sub, prunedTags)...)
 	info := mergeInfoItems(sub.InfoItems, filterDismissedInfo(parts.Info, sub.DismissedInfoIDs))
 	if len(prunedTags) > 0 {
@@ -633,7 +680,7 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 
 	res := &RefreshResult{
 		When:             time.Now(),
-		Added:            len(diff.New),
+		Added:            added,
 		Updated:          len(diff.Existing),
 		Orphaned:         len(diff.Orphan),
 		SkippedVmess:     parseRes.SkippedVmess,
@@ -732,7 +779,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 		if skip(n.Tag, n.Out.Label) {
 			continue // исключённый / отфильтрованный сервер не материализуем
 		}
-		jsonWithTag := replaceTag(n.Out.Outbound, n.Tag)
+		jsonWithTag := materializeMemberOutbound(n.Out.Outbound, n.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.AddOutbound(n.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -742,7 +789,7 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 			s.mutator.RemoveOutbound(e.Tag) // на случай, если ранее был активен
 			continue
 		}
-		jsonWithTag := replaceTag(e.Out.Outbound, e.Tag)
+		jsonWithTag := materializeMemberOutbound(e.Out.Outbound, e.Tag, sub.BindInterface, s.logWarn)
 		if err := s.mutator.UpdateOutbound(e.Tag, jsonWithTag); err != nil {
 			return err
 		}
@@ -927,7 +974,6 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// пару (patch-значение либо текущее) — ошибка одного поля не должна
 	// маскироваться валидностью другого.
 	filterChanged := false
-	prevInclude, prevExclude := current.FilterInclude, current.FilterExclude
 	if patch.FilterInclude != nil || patch.FilterExclude != nil {
 		newInclude, newExclude := current.FilterInclude, current.FilterExclude
 		if patch.FilterInclude != nil {
@@ -941,35 +987,84 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 		filterChanged = newInclude != current.FilterInclude || newExclude != current.FilterExclude
 	}
+
+	bindChanged := false
+	if patch.BindInterface != nil {
+		newBind := strings.TrimSpace(*patch.BindInterface)
+		patch.BindInterface = &newBind
+		bindChanged = newBind != current.BindInterface
+		if bindChanged && newBind != "" {
+			if err := validateBindInterfaceOptional(context.Background(), s.bindValidator, newBind); err != nil {
+				return nil, fmt.Errorf("subscription: %w", err)
+			}
+		}
+	}
+
+	modeChanged := patch.Mode != nil || patch.URLTest != nil
 	enabledChanged := patch.Enabled != nil && *patch.Enabled != current.Enabled
+
+	// Снимок прежних настроек для отката, если применение упадёт (#709).
+	// URLTest здесь несёт семантику UpdatePatch «nil = не трогать»: если у
+	// подписки его не было, откат вернёт Mode, а осиротевший urltest-конфиг
+	// останется — в режиме selector он не читается.
+	rollbackPatch := UpdatePatch{
+		FilterInclude: &current.FilterInclude,
+		FilterExclude: &current.FilterExclude,
+		BindInterface: &current.BindInterface,
+		Mode:          &current.Mode,
+		URLTest:       current.URLTest,
+		Enabled:       &current.Enabled,
+		Label:         &current.Label,
+	}
 	sub, err := s.store.Update(id, patch)
 	if err != nil {
 		return nil, err
 	}
+
+	rollback := func(err error, action string) (*Subscription, error) {
+		if _, rbErr := s.store.Update(id, rollbackPatch); rbErr != nil {
+			s.logWarn("subscription-update", id, "failed to restore previous settings after failed "+action+": "+rbErr.Error())
+		} else {
+			s.logWarn("subscription-update", id, "settings change rolled back ("+action+" failed): "+err.Error())
+		}
+		return current, fmt.Errorf("subscription: применение настроек: %w", err)
+	}
+
 	// Смена фильтра требует полной ре-материализации набора серверов:
 	// URL-подписка — обычный refresh (fetch + diff + rebuild), inline —
 	// принудительный re-parse сохранённого paste-тела (обход short-circuit).
 	// refresh сам пересобирает group outbound, поэтому mode-ветка ниже
 	// в этом случае не нужна.
 	if filterChanged {
-		if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
-			// Компенсация: новый фильтр уже записан в store, но
-			// ре-материализация не удалась (фильтр скрывает всё, URL
-			// недоступен). Оставить его — значит ронять каждый плановый
-			// refresh той же ошибкой. Возвращаем прежнюю пару фильтров
-			// и отдаём ошибку — клиент видит, что сохранение не прошло.
-			if _, rbErr := s.store.Update(id, UpdatePatch{FilterInclude: &prevInclude, FilterExclude: &prevExclude}); rbErr != nil {
-				s.logWarn("subscription-update", id, "failed to restore previous filters after failed refresh: "+rbErr.Error())
-			} else {
-				s.logWarn("subscription-update", id, "filter change rolled back (refresh failed): "+err.Error())
-			}
-			return sub, fmt.Errorf("subscription: применение фильтра: %w", err)
+		forceReparse := sub.IsInline()
+		if _, err := s.refreshLockedOpts(context.Background(), id, forceReparse); err != nil {
+			return rollback(err, "refresh")
 		}
 		sub, err = s.store.Get(id)
 		if err != nil {
 			return nil, err
 		}
-	} else if patch.Mode != nil || patch.URLTest != nil {
+	} else if bindChanged {
+		if sub.IsInline() {
+			// Inline: re-parse сохранённого тела; refresh сам пересобирает
+			// group outbound, поэтому смену mode отдельно доделывать не нужно.
+			if _, err := s.refreshLockedOpts(context.Background(), id, true); err != nil {
+				return rollback(err, "refresh")
+			}
+		} else {
+			// URL-подписка: ре-материализация из уже сохранённых членов БЕЗ сетевого fetch (#709).
+			// Позволяет переключить uplink даже когда текущий интернет лежит.
+			// Смена mode в том же сохранении едет одной транзакцией и одним
+			// SIGHUP — иначе на одно нажатие «Сохранить» приходилось два.
+			if err := s.rematerializeMembersBind(context.Background(), sub, modeChanged); err != nil {
+				return rollback(err, "rematerialize")
+			}
+		}
+		sub, err = s.store.Get(id)
+		if err != nil {
+			return nil, err
+		}
+	} else if modeChanged {
 		// Mode / urltest config changes require a fresh group outbound in
 		// sing-box config and a SIGHUP so the new wrapper takes effect.
 		// URL / headers / refresh-cadence only mutate metadata.
@@ -977,16 +1072,15 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// description so the rename is visible in the router UI.
 		// Stage + Reload — одна txMu-секция (общий батч адаптера).
 		if err := s.withTx(func() error {
-			s.mutator.RemoveOutbound(sub.SelectorTag)
-			if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
-				return fmt.Errorf("rebuild group outbound: %w", err)
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
 			}
 			if err := s.reloadWithGroups(context.Background()); err != nil {
 				return fmt.Errorf("reload after mode change: %w", err)
 			}
 			return nil
 		}); err != nil {
-			return sub, err
+			return rollback(err, "mode change")
 		}
 	} else if enabledChanged {
 		// Включение/выключение подписки меняет состав сводных групп:
@@ -996,7 +1090,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// первого несвязанного reload. Для самой подписки enabled остаётся
 		// метаданными (её селектор в конфиге не трогаем — прежнее поведение).
 		if err := s.withTx(func() error { return s.reloadWithGroups(context.Background()) }); err != nil {
-			return sub, fmt.Errorf("reload after enabled change: %w", err)
+			return rollback(err, "enabled change")
 		}
 	}
 	if patch.Label != nil && s.proxyEnabled() && sub.ProxyIndex >= 0 {
@@ -1011,6 +1105,45 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		}
 	}
 	return sub, nil
+}
+
+func (s *Service) rematerializeMembersBind(ctx context.Context, sub *Subscription, rebuildGroup bool) error {
+	return s.withTx(func() error {
+		obs := s.mutator.SubscriptionOutbounds()
+		tagSet := make(map[string]bool, len(sub.MemberTags))
+		for _, tag := range sub.MemberTags {
+			tagSet[tag] = true
+		}
+		for _, ob := range obs {
+			tag, _ := ob["tag"].(string)
+			if tagSet[tag] {
+				raw, err := json.Marshal(ob)
+				if err != nil {
+					return fmt.Errorf("marshal outbound %s: %w", tag, err)
+				}
+				jsonWithTag := materializeMemberOutbound(raw, tag, sub.BindInterface, s.logWarn)
+				if err := s.mutator.UpdateOutbound(tag, jsonWithTag); err != nil {
+					return err
+				}
+			}
+		}
+		if rebuildGroup {
+			if err := s.stageGroupRebuild(sub); err != nil {
+				return err
+			}
+		}
+		return s.reloadWithGroups(ctx)
+	})
+}
+
+// stageGroupRebuild пересобирает group outbound подписки в открытом батче
+// (без reload — его делает вызывающий, чтобы SIGHUP был один на операцию).
+func (s *Service) stageGroupRebuild(sub *Subscription) error {
+	s.mutator.RemoveOutbound(sub.SelectorTag)
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, sub.MemberTags, sub.ActiveMember)); err != nil {
+		return fmt.Errorf("rebuild group outbound: %w", err)
+	}
+	return nil
 }
 
 // ErrActiveMemberOnURLTest is returned by SetActiveMember when the
@@ -1204,7 +1337,7 @@ func (s *Service) AddManualMember(ctx context.Context, id, shareLink string) (*S
 	// адаптера не должен коммититься/откатываться параллельной операцией
 	// между нашим staging и нашим Reload.
 	if err := s.withTx(func() error {
-		if err := s.mutator.AddOutbound(tag, replaceTag(out.Outbound, tag)); err != nil {
+		if err := s.mutator.AddOutbound(tag, materializeMemberOutbound(out.Outbound, tag, sub.BindInterface, s.logWarn)); err != nil {
 			s.logWarn("subscription-member-add", id, "failed to add outbound: "+err.Error())
 			return fmt.Errorf("add outbound: %w", err)
 		}
@@ -1479,34 +1612,48 @@ type PreviewMember struct {
 // PreviewURL качает и парсит URL-подписку БЕЗ создания/записи — для шага превью
 // при импорте. Key — subID-независимый суффикс тега (узкий, либо расширенный при коллизии маскировки); по нему исключают при создании.
 // ponytail: small read-only dup of fetch+detect — safer than refactoring tested refreshLocked.
+func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
+	switch {
+	case vlink.IsClashYAML(body):
+		return vlink.ParseClashBody(body)
+	case vlink.IsSingboxJSON(body):
+		return vlink.ParseSingboxBody(body)
+	case vlink.IsXrayJSON(body):
+		return vlink.ParseXrayBody(body)
+	case vlink.IsMieruClientJSON(body):
+		return vlink.ParseMieruClientJSON(body)
+	case vlink.IsTrustTunnelClientTOML(body):
+		return vlink.ParseTrustTunnelClientTOML(body)
+	default:
+		return vlink.ParseBatch(NormalizeBody(body, ct))
+	}
+}
+
 func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) ([]PreviewMember, error) {
 	if url == "" {
 		return nil, errors.New("subscription: preview requires a URL")
 	}
+	if IsHappCryptLink(url) {
+		dec, err := s.DecryptHappLink(url)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка расшифровки ссылки Happ: %w (проверьте наличие RSA-ключей)", err)
+		}
+		url = dec
+	}
 	fetchURL, _ := RewriteForRaw(url)
+
 	body, ct, err := FetchWithContext(ctx, fetchURL, headers, s.fetchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
-	var parseRes vlink.BatchResult
-	isClash := vlink.IsClashYAML(body)
-	isSbJSON := !isClash && vlink.IsSingboxJSON(body)
-	isMieruJSON := !isClash && !isSbJSON && vlink.IsMieruClientJSON(body)
-	isTrustTunnelTOML := !isClash && !isSbJSON && !isMieruJSON && vlink.IsTrustTunnelClientTOML(body)
-	switch {
-	case isClash:
-		parseRes = vlink.ParseClashBody(body)
-	case isSbJSON:
-		parseRes = vlink.ParseSingboxBody(body)
-	case isMieruJSON:
-		parseRes = vlink.ParseMieruClientJSON(body)
-	case isTrustTunnelTOML:
-		parseRes = vlink.ParseTrustTunnelClientTOML(body)
-	default:
-		parseRes = vlink.ParseBatch(NormalizeBody(body, ct))
-	}
+	parseRes := parseSubscriptionBody(body, ct)
 	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
+
 	out := make([]PreviewMember, 0, len(parts.Valid))
+	if len(parts.Valid) == 0 {
+		return out, nil
+	}
+
 	keys := chooseKeys(parts.Valid)
 	// Dedupe by exclusion key, mirroring ApplyDiff's SkippedDuplicate: a
 	// byte-identical duplicate in the feed becomes ONE member on refresh, so
@@ -1528,6 +1675,135 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 		})
 	}
 	return out, nil
+}
+
+// DetectedProfile describes the automatically probed headers profile for a URL.
+type DetectedProfile struct {
+	Kind string `json:"kind"`
+	// DecryptedURL is set only for happ://crypt… links.
+	DecryptedURL string `json:"decryptedUrl,omitempty"`
+	// NormalizedURL is the URL the input should be replaced with: wrapper
+	// schemes stripped, happ://crypt… decrypted. The UI shows it instead of
+	// re-implementing NormalizeSubscriptionURL in TypeScript.
+	NormalizedURL string   `json:"normalizedUrl,omitempty"`
+	IsEncrypted   bool     `json:"isEncrypted,omitempty"`
+	Headers       []Header `json:"headers"`
+	HeadersText   string   `json:"headersText"`
+	Label         string   `json:"label"`
+	ServerCount   int      `json:"serverCount"`
+}
+
+// randomHex returns n hex characters (n/2 random bytes).
+func randomHex(n int) string {
+	b := make([]byte, n/2)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("0", n)
+	}
+	return hex.EncodeToString(b)
+}
+
+// mergeHeaders returns base with override applied on top: same-name headers
+// (case-insensitive, as HTTP defines them) take the override value, the rest
+// of base is preserved.
+func mergeHeaders(base, override []Header) []Header {
+	out := make([]Header, 0, len(base)+len(override))
+	taken := make(map[string]struct{}, len(override))
+	for _, h := range override {
+		taken[strings.ToLower(h.Name)] = struct{}{}
+	}
+	for _, h := range base {
+		if _, dup := taken[strings.ToLower(h.Name)]; dup {
+			continue
+		}
+		out = append(out, h)
+	}
+	return append(out, override...)
+}
+
+// DetectHeaders probes the given URL with different client header profiles and returns
+// the one that successfully delivers valid proxy nodes. userHeaders are the headers
+// already configured by the user: probe profiles are merged ON TOP of them, so a
+// provider-required auth header survives the probe instead of being replaced by it.
+func (s *Service) DetectHeaders(ctx context.Context, rawUrl string, userHeaders []Header) (DetectedProfile, error) {
+	if rawUrl == "" {
+		fallback := defaultHeaderProfile()
+		return DetectedProfile{
+			Kind:        fallback.Kind,
+			HeadersText: fallback.HeadersText(),
+			Label:       fallback.Label + " (по умолчанию)",
+			ServerCount: 0,
+		}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	isEnc := IsHappCryptLink(rawUrl)
+	decryptedURL := ""
+	if isEnc {
+		dec, err := s.DecryptHappLink(rawUrl)
+		if errors.Is(err, ErrHappKeysNotConfigured) {
+			// Not an error the user can act on by retrying: the UI turns this
+			// answer into the «нужны ключи RSA» prompt. Returning an error here
+			// would surface as a bare 502 and hide the prompt.
+			return DetectedProfile{IsEncrypted: true, Label: "HAPP Crypt (нужны ключи RSA)"}, nil
+		}
+		if err != nil {
+			return DetectedProfile{}, fmt.Errorf("happ: %w", err)
+		}
+		decryptedURL = dec
+		rawUrl = dec
+	}
+
+	normalizedURL, _ := NormalizeSubscriptionURL(rawUrl)
+	if normalizedURL == "" {
+		normalizedURL = rawUrl
+	}
+	fetchURL, _ := RewriteForRaw(rawUrl)
+
+	for _, prof := range HeaderProfiles() {
+		hdrs := mergeHeaders(userHeaders, prof.Headers)
+		fetchOpts := s.fetchOpts
+		fetchOpts.Timeout = 5 * time.Second
+		body, ct, err := FetchWithContext(ctx, fetchURL, hdrs, fetchOpts)
+		if err != nil {
+			continue
+		}
+		parseRes := parseSubscriptionBody(body, ct)
+		parts := partitionParsedOutbounds("detect", parseRes.Outbounds)
+		if len(parts.Valid) > 0 {
+			label := prof.Label
+			if isEnc {
+				label = "HAPP Crypt (расшифровано: " + prof.Label + ")"
+			}
+			return DetectedProfile{
+				Kind:          prof.Kind,
+				DecryptedURL:  decryptedURL,
+				NormalizedURL: normalizedURL,
+				IsEncrypted:   isEnc,
+				Headers:       hdrs,
+				HeadersText:   HeaderProfile{Headers: hdrs}.HeadersText(),
+				Label:         label,
+				ServerCount:   len(parts.Valid),
+			}, nil
+		}
+	}
+
+	fallback := defaultHeaderProfile()
+	label := fallback.Label + " (по умолчанию)"
+	if isEnc {
+		label = "HAPP Crypt (расшифровано)"
+	}
+
+	return DetectedProfile{
+		Kind:          fallback.Kind,
+		DecryptedURL:  decryptedURL,
+		NormalizedURL: normalizedURL,
+		IsEncrypted:   isEnc,
+		HeadersText:   fallback.HeadersText(),
+		Label:         label,
+		ServerCount:   0,
+	}, nil
 }
 
 // GetActiveNow returns the currently-active member tag as reported by the

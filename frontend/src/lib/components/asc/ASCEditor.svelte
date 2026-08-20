@@ -6,8 +6,8 @@
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { notifications } from '$lib/stores/notifications';
 	import { SettingsSectionLabel } from '$lib/components/settings';
-	import { Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
-	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck } from 'lucide-svelte';
+	import { Badge, Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
+	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck, Shuffle } from 'lucide-svelte';
 
 	const MAX_SIGNATURE_BYTES = 4096;
 
@@ -49,6 +49,24 @@
 		{ key: 'maxHandshakeAttempts', label: 'MaxHandshakeAttempts' },
 		{ key: 'contentPaddingAddition', label: 'ContentPaddingAddition' },
 	];
+
+	// AWG 3.1 device flags. Read-only: they arrive with an imported .conf and
+	// switching RandomTrailers off on one end alone kills the tunnel.
+	const AWG31_FLAGS: { key: 'randomTrailers' | 'disableCookies'; label: string; note: string }[] = [
+		{
+			key: 'randomTrailers',
+			label: 'RandomTrailers',
+			note: 'Добивает пакеты случайным числом лишних байт. Согласования по проводу нет: параметр обязан стоять на обоих концах, иначе туннель молча не поднимется.',
+		},
+		{
+			key: 'disableCookies',
+			label: 'DisableCookies',
+			note: 'Не отвечать служебным пакетом-подтверждением под нагрузкой. Односторонний, совместимость не ломает.',
+		},
+	];
+	const ext31Flags = $derived(
+		AWG31_FLAGS.filter((f) => (params as ASCParamsExtended)[f.key]),
+	);
 
 	let selectedProtocol = $state<ProtocolKey>('quic_initial');
 	let generateMode = $state<GenerateMode>('protocol');
@@ -371,6 +389,29 @@
 			{/each}
 		</section>
 	{/if}
+
+	{#if ext31Flags.length > 0}
+		<section class="card param-section">
+			<SettingsSectionLabel label="AmneziaWG 3.1" icon={Shuffle} tone="purple" header />
+			<p class="group-desc">
+				Параметры версии 3.1 включены в конфигурационном файле туннеля. Отсюда их не
+				поменять: они требуют модуля ядра 3.1 и на этом роутере, и на стороне сервера,
+				а снятие RandomTrailers на одной стороне рвёт туннель.
+			</p>
+
+			<div class="toggle-stack">
+				{#each ext31Flags as f}
+					<div>
+						<div class="flag-row">
+							<Badge variant="purple" size="xs" mono>{f.label}</Badge>
+							<span class="flag-state">включён</span>
+						</div>
+						<p class="toggle-note">{f.note}</p>
+					</div>
+				{/each}
+			</div>
+		</section>
+	{/if}
 </div>
 
 <style>
@@ -383,6 +424,30 @@
 	.param-section {
 		background: var(--color-settings-surface-bg);
 		overflow: visible;
+	}
+
+	.toggle-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.flag-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.flag-state {
+		font-size: 0.8125rem;
+		color: var(--color-text-muted, #6b7280);
+	}
+
+	.toggle-note {
+		margin: 0.35rem 0 0;
+		font-size: 0.8125rem;
+		line-height: 1.45;
+		color: var(--color-text-muted, #6b7280);
 	}
 
 	.param-section :global(.settings-section-label.header) {

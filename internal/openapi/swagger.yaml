@@ -395,6 +395,9 @@ definitions:
     type: object
   api.Awg3TunnelDTO:
     properties:
+      disableCookies:
+        example: true
+        type: boolean
       headerProtection:
         example: true
         type: boolean
@@ -410,6 +413,12 @@ definitions:
       maxHandshakeAttempts:
         example: "5"
         type: string
+      randomTrailers:
+        description: |-
+          AWG 3.1 device flags, read-only like the timers above. RandomTrailers is
+          not negotiated on the wire and needs 3.1 on both ends.
+        example: true
+        type: boolean
       rejectAfterTime:
         example: "180"
         type: string
@@ -904,6 +913,9 @@ definitions:
     type: object
   api.CreateSubscriptionRequest:
     properties:
+      bindInterface:
+        example: eth3
+        type: string
       enabled:
         example: true
         type: boolean
@@ -970,6 +982,50 @@ definitions:
       id:
         example: a1b2c3d4e5f60718293a4b5c
         type: string
+    type: object
+  api.DetectHeadersRequest:
+    properties:
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      url:
+        type: string
+    type: object
+  api.DetectHeadersResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.DetectedProfileDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.DetectedProfileDTO:
+    properties:
+      decryptedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      headers:
+        items:
+          $ref: '#/definitions/api.SubscriptionHeader'
+        type: array
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      isEncrypted:
+        type: boolean
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+      normalizedUrl:
+        example: https://provider.example/sub/abc
+        type: string
+      serverCount:
+        example: 3
+        type: integer
     type: object
   api.DeviceProxyAuthDTO:
     properties:
@@ -1691,6 +1747,37 @@ definitions:
       data:
         items:
           $ref: '#/definitions/api.GeoTagDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.HappKeysRequest:
+    properties:
+      keys:
+        items:
+          type: string
+        type: array
+      text:
+        type: string
+    type: object
+  api.HeaderProfileDTO:
+    properties:
+      headersText:
+        example: 'User-Agent: Happ/4.6.0/ios/1'
+        type: string
+      kind:
+        example: happ
+        type: string
+      label:
+        example: HAPP iOS
+        type: string
+    type: object
+  api.HeaderProfilesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.HeaderProfileDTO'
         type: array
       success:
         example: true
@@ -3005,6 +3092,27 @@ definitions:
       pendingCount:
         type: integer
       state:
+        type: string
+    type: object
+  api.ScriptStatusDTO:
+    properties:
+      canExecute:
+        type: boolean
+      isScript:
+        type: boolean
+      isService:
+        type: boolean
+      path:
+        type: string
+      pids:
+        items:
+          type: integer
+        type: array
+      running:
+        type: boolean
+      serviceName:
+        type: string
+      statusText:
         type: string
     type: object
   api.ServerAddPeerRequestDTO:
@@ -4623,7 +4731,8 @@ definitions:
         description: |-
           BypassPresets lists active named bypass presets.
           Valid values: "l2tp", "ntp", "netbios-smb" (port-based), "keendns"
-          (managed DNS rewrite of own KeenDNS/CrazeDNS FQDN → LAN). Default includes "keendns".
+          (имена KeenDNS/CrazeDNS резолвит сам роутер, плюс обход его адресов).
+          Default includes "keendns".
         example:
         - keendns
         items:
@@ -4647,8 +4756,10 @@ definitions:
         example: 198.18.0.0/15
         type: string
       fakeipPool6:
-        description: FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18");
-          "" disables v6.
+        description: |-
+          FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18").
+          Explicit "" disables v6; an OMITTED field keeps the stored value
+          (absent != empty — the handler substitutes the current setting).
         example: fc00::/18
         type: string
       fakeipRealServer:
@@ -5230,6 +5341,9 @@ definitions:
       activeMember:
         example: sub-demo-001
         type: string
+      bindInterface:
+        example: eth3
+        type: string
       enabled:
         example: true
         type: boolean
@@ -5530,6 +5644,86 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SystemFileChecksumData:
+    properties:
+      algo:
+        example: sha256
+        type: string
+      checksum:
+        example: 9f86d081884c7d65
+        type: string
+      info:
+        $ref: '#/definitions/files.Entry'
+      path:
+        example: /opt/bin/awg-manager
+        type: string
+    type: object
+  api.SystemFileChecksumResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFileChecksumData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFileReadData:
+    properties:
+      content:
+        type: string
+      info:
+        $ref: '#/definitions/files.Entry'
+      path:
+        example: /opt/etc/config
+        type: string
+    type: object
+  api.SystemFileReadResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFileReadData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFileRootDTO:
+    properties:
+      label:
+        example: Entware /opt/etc
+        type: string
+      path:
+        example: /opt/etc
+        type: string
+      readOnly:
+        example: false
+        type: boolean
+    type: object
+  api.SystemFileRootsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SystemFileRootDTO'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemFilesListData:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/files.Entry'
+        type: array
+      path:
+        example: /opt/etc
+        type: string
+    type: object
+  api.SystemFilesListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemFilesListData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SystemInfoBackendAvailability:
     properties:
       kernel:
@@ -5589,7 +5783,7 @@ definitions:
         example: false
         type: boolean
       kernelModuleLoadedVersion:
-        example: 3.0.20260805
+        example: 3.1.20260812
         type: string
       kernelModuleModel:
         example: MT7981
@@ -5649,6 +5843,229 @@ definitions:
         example: 1.9.3
         type: string
     type: object
+  api.SystemKillData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+      pid:
+        example: 1234
+        type: integer
+      signal:
+        example: SIGTERM
+        type: string
+    type: object
+  api.SystemKillResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemKillData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKFlagData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKFlagResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOKFlagData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOKResponse:
+    properties:
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOpkgAvailableData:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/opkg.Package'
+        type: array
+      limit:
+        example: 100
+        type: integer
+      offset:
+        example: 0
+        type: integer
+      total:
+        example: 1800
+        type: integer
+    type: object
+  api.SystemOpkgAvailableResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOpkgAvailableData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOpkgPackagesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/opkg.Package'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemOutputData:
+    properties:
+      output:
+        type: string
+    type: object
+  api.SystemOutputResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemOutputData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemPortInspectData:
+    properties:
+      bindings:
+        items:
+          $ref: '#/definitions/ports.Binding'
+        type: array
+      occupied:
+        example: true
+        type: boolean
+      port:
+        example: 8080
+        type: integer
+      proto:
+        example: tcp
+        type: string
+    type: object
+  api.SystemPortInspectResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemPortInspectData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemPortsListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/ports.Binding'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemProcSnapshotResponse:
+    properties:
+      data:
+        $ref: '#/definitions/procmon.SystemSnapshot'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptActionData:
+    properties:
+      error:
+        type: string
+      ok:
+        example: true
+        type: boolean
+      output:
+        type: string
+      pids:
+        items:
+          type: integer
+        type: array
+      running:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptActionResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemScriptActionData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemScriptStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ScriptStatusDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceActionData:
+    properties:
+      error:
+        type: string
+      ok:
+        example: true
+        type: boolean
+      output:
+        type: string
+    type: object
+  api.SystemServiceActionResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceActionData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceSavedData:
+    properties:
+      ok:
+        example: true
+        type: boolean
+      script:
+        example: /opt/etc/init.d/S90myservice
+        type: string
+    type: object
+  api.SystemServiceSavedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceSavedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceScriptData:
+    properties:
+      content:
+        type: string
+      script:
+        example: /opt/etc/init.d/S90myservice
+        type: string
+    type: object
+  api.SystemServiceScriptResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceScriptData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServicesListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/services.Item'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SystemTunnelDTO:
     properties:
       connected:
@@ -5699,6 +6116,20 @@ definitions:
         items:
           $ref: '#/definitions/api.SystemTunnelDTO'
         type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SystemUploadData:
+    properties:
+      path:
+        example: /tmp/upload.bin
+        type: string
+    type: object
+  api.SystemUploadResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemUploadData'
       success:
         example: true
         type: boolean
@@ -5815,6 +6246,7 @@ definitions:
         - awg1.5
         - awg2.0
         - awg3
+        - awg3.1
         example: awg2.0
         type: string
       backend:
@@ -6233,6 +6665,10 @@ definitions:
     type: object
   api.UpdateSubscriptionRequest:
     properties:
+      bindInterface:
+        description: '"" clears egress bind'
+        example: eth3
+        type: string
       enabled:
         type: boolean
       filterExclude:
@@ -6639,6 +7075,21 @@ definitions:
       sni:
         type: string
     type: object
+  files.Entry:
+    properties:
+      isDir:
+        type: boolean
+      modTime:
+        type: string
+      mode:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      size:
+        type: integer
+    type: object
   freeturn.AllowlistEntry:
     properties:
       clientId:
@@ -6985,6 +7436,61 @@ definitions:
           InstallVersion.
         type: boolean
     type: object
+  opkg.Package:
+    properties:
+      description:
+        type: string
+      installedAt:
+        type: string
+      name:
+        type: string
+      upgradeVersion:
+        type: string
+      version:
+        type: string
+    type: object
+  ports.Binding:
+    properties:
+      cmdline:
+        description: Full command line arguments
+        type: string
+      exe:
+        description: Binary path (e.g. "/opt/bin/wt-client")
+        type: string
+      inode:
+        description: Socket inode
+        type: integer
+      ip:
+        description: Local IP (e.g. "0.0.0.0", "127.0.0.1", "::")
+        type: string
+      isCritical:
+        description: True if terminating may affect connectivity
+        type: boolean
+      isSelf:
+        description: True if it is this awg-manager daemon
+        type: boolean
+      pid:
+        description: Process ID
+        type: integer
+      port:
+        description: Port number (e.g. 56013)
+        type: integer
+      processName:
+        description: Name (e.g. "wt-client", "dropbear")
+        type: string
+      proto:
+        description: '"tcp", "udp", "tcp6", "udp6"'
+        type: string
+      service:
+        description: Associated init.d service (if detected)
+        type: string
+      state:
+        description: '"LISTEN", "UNCONN", etc.'
+        type: string
+      user:
+        description: User / UID
+        type: string
+    type: object
   presets.DNSEngine:
     properties:
       domains:
@@ -7065,6 +7571,160 @@ definitions:
         items:
           $ref: '#/definitions/presets.RuleRef'
         type: array
+    type: object
+  procmon.CpuCore:
+    properties:
+      id:
+        description: '"total", "cpu0", "cpu1", etc.'
+        type: string
+      idle:
+        description: '%'
+        type: number
+      iowait:
+        description: '%'
+        type: number
+      nice:
+        description: '%'
+        type: number
+      system:
+        description: '%'
+        type: number
+      usage:
+        description: Total non-idle %
+        type: number
+      user:
+        description: '%'
+        type: number
+    type: object
+  procmon.MemoryInfo:
+    properties:
+      available:
+        type: integer
+      buffers:
+        type: integer
+      cached:
+        type: integer
+      free:
+        type: integer
+      swapFree:
+        type: integer
+      swapTotal:
+        type: integer
+      swapUsed:
+        type: integer
+      total:
+        type: integer
+      usagePercent:
+        type: number
+      used:
+        type: integer
+    type: object
+  procmon.ProcSummary:
+    properties:
+      running:
+        type: integer
+      sleeping:
+        type: integer
+      stopped:
+        type: integer
+      threads:
+        type: integer
+      total:
+        type: integer
+      zombie:
+        type: integer
+    type: object
+  procmon.ProcessItem:
+    properties:
+      cmdline:
+        type: string
+      cpuPercent:
+        type: number
+      exe:
+        type: string
+      isCritical:
+        type: boolean
+      isKernel:
+        type: boolean
+      isSelf:
+        type: boolean
+      memoryPercent:
+        type: number
+      memoryRss:
+        description: bytes
+        type: integer
+      memoryVsize:
+        description: bytes
+        type: integer
+      name:
+        type: string
+      nice:
+        type: integer
+      pid:
+        type: integer
+      ppid:
+        type: integer
+      priority:
+        type: integer
+      service:
+        type: string
+      state:
+        description: '"R", "S", "D", "Z", "T"'
+        type: string
+      threads:
+        type: integer
+      user:
+        type: string
+    type: object
+  procmon.SystemSnapshot:
+    properties:
+      cores:
+        description: index 0 is total, followed by cpu0, cpu1...
+        items:
+          $ref: '#/definitions/procmon.CpuCore'
+        type: array
+      cpuArchitecture:
+        type: string
+      cpuCount:
+        type: integer
+      cpuModel:
+        type: string
+      loadAvg:
+        description: 1m, 5m, 15m
+        items:
+          type: number
+        type: array
+      memory:
+        $ref: '#/definitions/procmon.MemoryInfo'
+      processSummary:
+        $ref: '#/definitions/procmon.ProcSummary'
+      processes:
+        items:
+          $ref: '#/definitions/procmon.ProcessItem'
+        type: array
+      timestamp:
+        type: string
+      uptimeSeconds:
+        type: integer
+    type: object
+  services.Item:
+    properties:
+      enabled:
+        type: boolean
+      logPath:
+        type: string
+      managed:
+        type: boolean
+      managedHint:
+        type: string
+      name:
+        type: string
+      running:
+        type: boolean
+      script:
+        type: string
+      statusText:
+        type: string
     type: object
   wdtt.ClientConfig:
     properties:
@@ -7307,8 +7967,13 @@ definitions:
         description: full | internet-only | none via managed service
         type: string
       natStaticWan:
-        description: persisted WAN for internet-only teardown
+        description: persisted WAN for internet-only teardown (legacy)
         type: string
+      natStaticWans:
+        description: выходы static-NAT (internet-only); NatStaticWAN — legacy
+        items:
+          type: string
+        type: array
       ndmsIface:
         description: NdmsIface — NDMS id (OpkgTun17..49) when WDTT зарегистрирован
           в роутере.
@@ -12274,7 +12939,10 @@ paths:
       description: 'Persists Settings via patch semantics: any field omitted from
         the payload is preserved, including top-level bool flags. Send only the fields
         you want to change, or send the full Settings object to update everything
-        atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).'
+        atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
+        singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing
+        mode changes only via POST /singbox/router/mode, enable/disable only via the
+        dedicated endpoints.'
       parameters:
       - description: Settings patch — any subset of fields
         in: body
@@ -13756,8 +14424,15 @@ paths:
   /singbox/router/bindable-interfaces:
     get:
       description: Returns router interfaces (minus our own and AWG/WG auto-covered)
-        that a direct outbound can bind to. Fields id and priority are not populated
-        for this endpoint (only name, label, up are meaningful).
+        that a direct outbound can bind to. With scope=all the interfaces already
+        taken by a direct outbound are kept — subscriptions and manual tunnels may
+        share them. Fields id and priority are not populated for this endpoint (only
+        name, label, up are meaningful).
+      parameters:
+      - description: all — keep interfaces already bound by a direct outbound
+        in: query
+        name: scope
+        type: string
       produces:
       - application/json
       responses:
@@ -13857,30 +14532,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Geoip bypass-set status
-      tags:
-      - singbox-router
-  /singbox/router/disable:
-    post:
-      description: Stops the singbox-router engine and uninstalls iptables/policy
-        rules. Idempotent.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Disable singbox-router
       tags:
       - singbox-router
   /singbox/router/dns/chain-preset:
@@ -14542,41 +15193,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Update singbox-router DNS server
-      tags:
-      - singbox-router
-  /singbox/router/enable:
-    post:
-      description: 'Starts the singbox-router engine and installs iptables/policy
-        rules. Returns 400 with code POLICY_NOT_CONFIGURED or POLICY_MISSING when
-        the router policy mode is incomplete. Returns 503 SINGBOX_NOT_READY when sing-box
-        did not become ready within the boot-wait window — iptables install is deliberately
-        skipped to avoid orphaning DNS:53 redirects (issue #221).'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "405":
-          description: Method Not Allowed
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: sing-box did not come up in time
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Enable singbox-router
       tags:
       - singbox-router
   /singbox/router/geosites/list:
@@ -15702,7 +16318,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
@@ -15738,7 +16355,8 @@ paths:
       consumes:
       - application/json
       description: Persists singbox-router settings. The router is restarted only
-        when fields that affect the running config change.
+        when fields that affect the running config change. `routingMode`/`enabled`
+        in the body are ignored — the routing mode is changed only via POST /singbox/router/mode.
       parameters:
       - description: Singbox-router settings payload
         in: body
@@ -16085,6 +16703,39 @@ paths:
       summary: Delete sing-box subscription
       tags:
       - subscriptions
+  /singbox/subscriptions/detect-headers:
+    post:
+      consumes:
+      - application/json
+      description: Probes a subscription URL with different client profiles to auto-detect
+        working headers
+      parameters:
+      - description: Subscription URL and user-configured headers
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DetectHeadersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DetectHeadersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Auto-detect required HTTP headers for a subscription URL
+      tags:
+      - subscriptions
   /singbox/subscriptions/get:
     get:
       parameters:
@@ -16282,6 +16933,116 @@ paths:
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       summary: Update aggregate subscription group
+      tags:
+      - subscriptions
+  /singbox/subscriptions/happ-keys:
+    delete:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    get:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+    post:
+      consumes:
+      - application/json
+      description: GET returns key status; POST saves user-provided RSA keys (JSON
+        array or raw text); DELETE removes stored keys
+      parameters:
+      - description: RSA keys array or raw text (POST only)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.HappKeysRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Manage HAPP RSA decryption keys
+      tags:
+      - subscriptions
+  /singbox/subscriptions/header-profiles:
+    get:
+      description: Client fingerprints used by header auto-detection; the UI offers
+        the same list as presets
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HeaderProfilesResponse'
+      security:
+      - CookieAuth: []
+      summary: List client header profiles
       tags:
       - subscriptions
   /singbox/subscriptions/members/add:
@@ -17310,6 +18071,436 @@ paths:
       summary: Restore full data-dir backup
       tags:
       - system
+  /system/files/checksum:
+    get:
+      consumes:
+      - application/json
+      description: FilesChecksum (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemFileChecksumResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesChecksum (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/chmod:
+    post:
+      consumes:
+      - application/json
+      description: FilesChmod (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesChmod (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/copy:
+    post:
+      consumes:
+      - application/json
+      description: FilesCopy (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesCopy (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/download:
+    get:
+      consumes:
+      - application/json
+      description: FilesDownload (Expert only)
+      parameters:
+      - description: Path
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: содержимое файла
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesDownload (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/list:
+    get:
+      consumes:
+      - application/json
+      description: FilesList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemFilesListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/mkdir:
+    post:
+      consumes:
+      - application/json
+      description: FilesMkdir (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesMkdir (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/read:
+    get:
+      consumes:
+      - application/json
+      description: FilesRead (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemFileReadResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRead (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/remove:
+    post:
+      consumes:
+      - application/json
+      description: FilesRemove (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRemove (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/rename:
+    post:
+      consumes:
+      - application/json
+      description: FilesRename (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRename (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/roots:
+    get:
+      consumes:
+      - application/json
+      description: FilesRoots (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemFileRootsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesRoots (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/script-action:
+    post:
+      consumes:
+      - application/json
+      description: FilesScriptAction (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemScriptActionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesScriptAction (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/script-status:
+    get:
+      consumes:
+      - application/json
+      description: FilesScriptStatus (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemScriptStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesScriptStatus (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/upload:
+    post:
+      consumes:
+      - application/json
+      description: FilesUpload (Expert only)
+      parameters:
+      - description: Path
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemUploadResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesUpload (Expert only)
+      tags:
+      - system
+      - expert
+  /system/files/write:
+    post:
+      consumes:
+      - application/json
+      description: FilesWrite (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: FilesWrite (Expert only)
+      tags:
+      - system
+      - expert
   /system/hydraroute-control:
     post:
       consumes:
@@ -17378,6 +18569,396 @@ paths:
       summary: System info
       tags:
       - system
+  /system/opkg/available:
+    get:
+      consumes:
+      - application/json
+      description: OpkgAvailable (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOpkgAvailableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgAvailable (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/install:
+    post:
+      consumes:
+      - application/json
+      description: OpkgInstall (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOutputResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgInstall (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/installed:
+    get:
+      consumes:
+      - application/json
+      description: OpkgInstalled (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgInstalled (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/remove:
+    post:
+      consumes:
+      - application/json
+      description: OpkgRemove (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOutputResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgRemove (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/search:
+    get:
+      consumes:
+      - application/json
+      description: OpkgSearch (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgSearch (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/update:
+    post:
+      consumes:
+      - application/json
+      description: OpkgUpdate (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOutputResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpdate (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/upgradable:
+    get:
+      consumes:
+      - application/json
+      description: OpkgUpgradable (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOpkgPackagesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpgradable (Expert only)
+      tags:
+      - system
+      - expert
+  /system/opkg/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: OpkgUpgrade (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOutputResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: OpkgUpgrade (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/inspect:
+    get:
+      consumes:
+      - application/json
+      description: PortsInspect (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemPortInspectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsInspect (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/kill:
+    post:
+      consumes:
+      - application/json
+      description: PortsKill (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemKillResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsKill (Expert only)
+      tags:
+      - system
+      - expert
+  /system/ports/list:
+    get:
+      consumes:
+      - application/json
+      description: PortsList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemPortsListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: PortsList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/proc/kill:
+    post:
+      consumes:
+      - application/json
+      description: ProcKill (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemKillResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ProcKill (Expert only)
+      tags:
+      - system
+      - expert
+  /system/proc/snapshot:
+    get:
+      consumes:
+      - application/json
+      description: ProcSnapshot (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemProcSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ProcSnapshot (Expert only)
+      tags:
+      - system
+      - expert
   /system/restart:
     post:
       produces:
@@ -17400,6 +18981,156 @@ paths:
       summary: Restart daemon
       tags:
       - system
+  /system/services/action:
+    post:
+      consumes:
+      - application/json
+      description: ServicesAction (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemServiceActionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesAction (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/delete:
+    post:
+      consumes:
+      - application/json
+      description: ServicesDeleteScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemOKFlagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesDeleteScript (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/get:
+    get:
+      consumes:
+      - application/json
+      description: ServicesGetScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemServiceScriptResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesGetScript (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/list:
+    get:
+      consumes:
+      - application/json
+      description: ServicesList (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemServicesListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesList (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/save:
+    post:
+      consumes:
+      - application/json
+      description: ServicesSaveScript (Expert only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemServiceSavedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesSaveScript (Expert only)
+      tags:
+      - system
+      - expert
   /system/update/apply:
     post:
       produces:

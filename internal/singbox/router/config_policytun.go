@@ -22,7 +22,7 @@ type PolicyTunInboundSpec struct {
 // router, so sing-box must never touch the kernel routing table — traffic
 // reaches the tun device because NDMS points a policy at it, not because
 // sing-tun installed routes. The fields are *bool for the same reason as in
-// BuildFakeIPTunConfig: an explicit false must survive JSON marshaling,
+// ensureFakeIPOverlay: an explicit false must survive JSON marshaling,
 // otherwise sing-box applies its own non-false defaults (auto_route true).
 //
 // No DNS or route rules are emitted here: slot 20's existing system rules

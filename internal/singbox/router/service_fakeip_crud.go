@@ -81,7 +81,13 @@ func (s *ServiceImpl) FakeIPGetDNSGlobals(ctx context.Context) (string, string, 
 }
 
 func (s *ServiceImpl) FakeIPSetDNSGlobals(ctx context.Context, final, strategy string) error {
-	return s.fakeipWithConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy) })
+	if err := s.fakeipWithConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy) }); err != nil {
+		return err
+	}
+	// Слот 21 пишется напрямую, мимо staging — примирить base здесь, иначе
+	// в fakeip-режиме выбор strategy затеняется навсегда.
+	s.reconcileBaseDNSStrategy()
+	return nil
 }
 
 // --- Route rules ---

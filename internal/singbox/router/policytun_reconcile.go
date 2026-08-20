@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -220,7 +219,14 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
-	st := settings.PolicyTun
+	st, _ := opkgTunOwned(settings, statePolicyTun)
+	if st != nil {
+		// Мутируем копию: запись — объект живого кэша стора, который
+		// параллельно маршалят читатели без нашего лока. Копию публикуют
+		// SetOpkgTunState/SetOpkgTunNATSegments — уже под локом стора.
+		cp := *st
+		st = &cp
+	}
 
 	if !sr.Enabled {
 		// Teardown только когда что-то реально поднято — иначе каждый
@@ -241,13 +247,17 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.deps.OpkgTunIndices != nil {
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
-	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) {
+	// Доказанно чужой живой индекс — тоже повод для re-provision: иначе
+	// drift-heal ниже чинил бы ЧУЖОЙ интерфейс.
+	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
+		(probeErr == nil && live[st.Index] &&
+			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), policyTunDescription)) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
 
-	iface := fakeIPIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
+	iface := tunIfaceName(st.Index)   // kernel: метки логов, carrier, ingress
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI: маршруты, ip global, permit
 
 	// Провижинен и жив, но tun-инбаунда в слоте нет — состояние НЕДОДЕЛАНО, и
 	// само оно не заживёт. Так выглядит краш между удержанием интерфейса и
@@ -262,8 +272,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if !s.policyTunInboundPresent() {
 		s.appLog.Warn("policy-tun-reconcile", iface,
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
-		if e := s.deps.Settings.SetPolicyTunState(&storage.PolicyTunState{
-			Index: st.Index, NATSegments: st.NATSegments,
+		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
+			Mode: storage.OpkgTunModePolicyTun, Index: st.Index, PolicyTun: st.PolicyTun,
 		}); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
 		}
@@ -282,6 +292,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 				s.appLog.Info("policy-tun-reconcile", iface,
 					"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
 				s.notifyRoutingSlotsChanged()
+				// По той же причине здесь и примирение base: владелец
+				// dns.strategy сменился мимо enableLocked/Disable.
+				s.reconcileBaseDNSStrategy()
 			}
 		}
 	}
@@ -434,8 +447,8 @@ func (s *ServiceImpl) ensurePolicyTunPermit(ctx context.Context, sr storage.Sing
 //   - sing-box-сторона (qos-инбаунды слота 20 + оверлей 18-qos-routes) сходится
 //     общим healQoSConfig: при нуле классов он вычищает инбаунды и паркует слот;
 //   - netfilter переустанавливается только при РАСХОЖДЕНИИ желаемого спека с
-//     применённым (s.currentQoSClasses) — Probe ловит пропажу цепочек, но не их
-//     содержимое;
+//     применённым (s.appliedSpec) — не только по составу классов, но и по
+//     WAN-адресам и bypass; Probe ловит пропажу цепочек, но не их содержимое;
 //   - ноль классов при расхождении → безусловный (идемпотентный) Uninstall:
 //     иначе устаревшие `-m dscp → TPROXY` вечно реассертятся netfilter.d-хуком и
 //     блэкхолят DSCP-трафик в порт без слушателя.
@@ -465,12 +478,31 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 		return
 	}
 
+	// Желаемый спек ЦЕЛИКОМ, а не одни классы: WAN-адрес роутера и bypass —
+	// такие же входы правил, и их смена обязана переустанавливать цепочки.
+	// nil = «netfilter в этом режиме не нужен» (активных классов нет).
+	var want *RestoreInputSpec
+	if len(qosSpecs) > 0 {
+		if s.deps.WANIPCollector == nil {
+			return
+		}
+		// WAN-IP исключения обязательны: без них DSCP-меченный трафик на
+		// собственный WAN-адрес роутера ушёл бы в sing-box петлёй.
+		wanIPs, err := s.deps.WANIPCollector.Collect(ctx)
+		if err != nil {
+			s.appLog.Warn("policy-tun-reconcile", "qos", "collect WAN IPs: "+err.Error())
+			return
+		}
+		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		want = &spec
+	}
+
 	s.mu.Lock()
 	force := !s.netfilterStateKnown
-	changed := !slices.Equal(s.currentQoSClasses, qosSpecs)
+	changed := !equalInstalledSpec(s.appliedSpec, want)
 	s.mu.Unlock()
 	if !force && !changed {
-		if len(qosSpecs) == 0 {
+		if want == nil {
 			return
 		}
 		// Классы не менялись, но цепочки/джампы могли пропасть мимо NDMS (ручной
@@ -486,49 +518,30 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 			"цепочки DSCP-диспатча пропали при неизменных классах — переустанавливаем")
 	}
 
-	if len(qosSpecs) == 0 {
+	if want == nil {
 		if err := s.deps.IPTables.Uninstall(ctx); err != nil {
 			s.appLog.Warn("policy-tun-reconcile", "qos", "iptables uninstall: "+err.Error())
 			return
 		}
 		s.mu.Lock()
-		s.currentQoSClasses = nil
-		s.blackholeActive = false
+		s.appliedSpec = nil
+		// Uninstall снимает и blackhole прежнего режима — снимок обнуляем.
+		s.appliedBlackhole = nil
 		s.netfilterStateKnown = true
 		s.mu.Unlock()
 		return
 	}
 
-	if s.deps.WANIPCollector == nil {
-		return
-	}
 	if err := s.prepareNetfilter(ctx); err != nil {
 		s.appLog.Warn("qos-dscp", "", "netfilter TPROXY недоступен — классы QoS пропущены: "+err.Error())
 		return
 	}
-	// WAN-IP исключения обязательны: без них DSCP-меченный трафик на собственный
-	// WAN-адрес роутера ушёл бы в sing-box петлёй.
-	wanIPs, err := s.deps.WANIPCollector.Collect(ctx)
-	if err != nil {
-		s.appLog.Warn("policy-tun-reconcile", "qos", "collect WAN IPs: "+err.Error())
-		return
-	}
-	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.deps.IPTables.Install(ctx, RestoreInputSpec{
-		DSCPOnly:       true,
-		MatchAll:       true,
-		WANIPs:         wanIPs,
-		BypassUDPPorts: bypassUDP,
-		BypassTCPPorts: bypassTCP,
-		BypassCIDRs:    bypassSubnets,
-		QoSClasses:     qosSpecs,
-	}); err != nil {
+	if err := s.deps.IPTables.Install(ctx, *want); err != nil {
 		s.appLog.Warn("policy-tun-reconcile", "qos", "iptables install: "+err.Error())
 		return
 	}
-	s.currentQoSClasses = qosSpecs
+	s.appliedSpec = want
 	s.netfilterStateKnown = true
 }

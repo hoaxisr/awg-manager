@@ -95,7 +95,7 @@ type app struct {
 	// tunnel core
 	kmodLoader    *kmod.Loader
 	wgClient      *wg.ClientImpl
-	backendImpl   backend.Backend
+	backendImpl   *backend.KernelBackend
 	stateMgr      *state.ManagerImpl
 	eventBus      *events.Bus
 	operator      ops.Operator

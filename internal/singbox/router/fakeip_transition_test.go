@@ -127,6 +127,7 @@ func (h *transitionHarness) seedState(t *testing.T, mode string, enabled bool) {
 		Enabled:       enabled,
 		DeviceMode:    "all", // tproxy: no policy required
 		WANAutoDetect: true,
+		FakeIPPool6:   DefaultFakeIPTunParams().Inet6Range,
 	}
 	if err := h.store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -266,7 +267,7 @@ func TestSwitch_FakeIPToOff(t *testing.T) {
 		t.Fatalf("seed Enable(fakeip): %v", err)
 	}
 	// fakeip persist must exist before teardown.
-	if all, _ := h.store.Load(); all.FakeIP == nil || !all.FakeIP.Provisioned {
+	if all, _ := h.store.Load(); all.OpkgTun == nil || !all.OpkgTun.Provisioned {
 		t.Fatalf("expected provisioned fakeip persist before switch")
 	}
 	stop := h.subscribe(t)
@@ -280,8 +281,8 @@ func TestSwitch_FakeIPToOff(t *testing.T) {
 	if enabled {
 		t.Fatalf("expected disabled after →off")
 	}
-	if all, _ := h.store.Load(); all.FakeIP != nil {
-		t.Fatalf("fakeip persist not cleared: %+v", all.FakeIP)
+	if all, _ := h.store.Load(); all.OpkgTun != nil {
+		t.Fatalf("fakeip persist not cleared: %+v", all.OpkgTun)
 	}
 	want := []string{"start:current", "teardown:current", "teardown:done", "ready:done"}
 	assertSteps(t, h.steps(), want)

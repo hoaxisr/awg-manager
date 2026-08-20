@@ -203,22 +203,7 @@ func (h *ServerListenHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "токен подтверждения не действителен (окно истекло или уже подтверждено)", "CONFIRM_TOKEN_INVALID")
 		return
 	}
-	settings, err := h.settings.Load()
-	if err != nil {
-		response.InternalError(w, "настройки применены к листенерам, но не прочитаны для сохранения: "+err.Error())
-		return
-	}
-	settings.Server.Port = port
-	settings.Server.Interfaces = ifaces
-	// Легаси-поле для downgrade-совместимости: старый бинарь биндится на
-	// FirstIPv4(Interface); при нескольких интерфейсах берём первый, при
-	// «всех» — пусто (0.0.0.0).
-	if len(ifaces) > 0 {
-		settings.Server.Interface = ifaces[0]
-	} else {
-		settings.Server.Interface = ""
-	}
-	if err := h.settings.Save(settings); err != nil {
+	if err := h.settings.SetServerListen(port, ifaces); err != nil {
 		response.InternalError(w, "настройки применены к листенерам, но не сохранены: "+err.Error())
 		return
 	}

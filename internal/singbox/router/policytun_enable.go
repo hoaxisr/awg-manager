@@ -3,25 +3,10 @@ package router
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
-
-// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание policy-tun.
-// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
-// интерфейсу переписал бы его настройки.
-func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName string) bool {
-	if s.deps.OpkgTunScan == nil {
-		return false
-	}
-	ids, err := s.deps.OpkgTunScan(ctx, policyTunDescription)
-	if err != nil {
-		return false
-	}
-	return slices.Contains(ids, ndmsName)
-}
 
 // enablePolicyTun provisions the policy-tun path: persist index → create a
 // PUBLIC + `ip global` OpkgTun (so NDMS lists it as a policy exit) → addr/mtu/up
@@ -47,6 +32,15 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// есть v6 в policy-tun скрыто зависит от настройки fakeip-пула. Осознанно:
 	// отдельную настройку адресов policy-tun не заводим.
 	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+	// Д3: MTU — пользовательская настройка СТРАНИЦЫ FAKEIP; policy-tun её
+	// молча наследовал. У policy-tun своей ручки MTU нет — используем
+	// проводной статический дефолт. (Скрытая v6-зависимость от FakeIPPool6
+	// остаётся осознанной — см. ГОЧУ выше.)
+	if base := s.deps.FakeIPTun.MTU; base != 0 {
+		p.MTU = base
+	} else {
+		p.MTU = DefaultFakeIPTunParams().MTU // тестовые wiring'и с zero-value deps
+	}
 
 	// Validate the tun addresses BEFORE any state is touched — a malformed
 	// TunAddr4 must fail the enable, not surface later as a half-provisioned
@@ -73,9 +67,25 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// routes every tick here. Re-provisioning would allocate a new index,
 	// clobber persist and orphan the live iface. Sits BEFORE any mutation, so
 	// the no-op return runs before a single rollback entry is pushed.
-	prev := settings.PolicyTun
-	if prev != nil && prev.Provisioned && live[prev.Index] {
+	// live ≠ наш: индекс мог занять посторонний интерфейс после смерти нашего.
+	// Доказанно чужой (успешный скан без нашего имени) → re-provision.
+	prev, _ := opkgTunOwned(settings, statePolicyTun)
+	if prev != nil && prev.Provisioned && live[prev.Index] &&
+		!s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription) {
 		return nil
+	}
+
+	// Handover: единая запись владения одна на всех, поэтому запись ЧУЖОГО
+	// режима (fakeip) обязана быть освобождена ДО аллокации (restore NAT
+	// best-effort → teardown). Провал release оставляет чужой интерфейс живым —
+	// live не перечитываем, аллокатор его пропустит.
+	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
+	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModePolicyTun {
+		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable"); rerr != nil {
+			s.appLog.Warn("policy-tun-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
+		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
+			return fmt.Errorf("enable policy-tun: list opkgtun indices: %w", err)
+		}
 	}
 
 	// Prefer the persisted index while it is free: the user pins permits in the
@@ -91,7 +101,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	switch {
 	case prev != nil && !live[prev.Index]:
 		idx = prev.Index
-	case prev != nil && s.ownsOpkgTun(ctx, fakeIPNDMSName(prev.Index)):
+	case prev != nil && s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription):
 		idx = prev.Index
 	default:
 		if idx, err = allocateFakeIPIndex(live); err != nil {
@@ -100,8 +110,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	}
 	// Two names per index: NDMS RCI takes the CamelCase ndmsName, the kernel
 	// (sing-box config, ip flush, /sys carrier) sees the lowercase iface.
-	ndmsName := fakeIPNDMSName(idx)
-	iface := fakeIPIfaceName(idx)
+	ndmsName := tunNDMSName(idx)
+	iface := tunIfaceName(idx)
 	if prev != nil && prev.Index != idx {
 		s.appLog.Warn("policy-tun", iface, "индекс OpkgTun изменился — проверьте permit в политиках")
 	}
@@ -123,23 +133,30 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// leaves a persist the reap can find by index.
 	//
 	// ГОЧА: держим ОДИН объект состояния и подшиваем его в загруженные settings.
-	// SetPolicyTunState пишет в кэш стора, а промежуточные Load'ы (конфиг слота,
+	// SetOpkgTunState пишет в кэш стора, а промежуточные Load'ы (конфиг слота,
 	// статус) кэш подменяют — финальный Save(settings) отсюда откатил бы всё,
 	// что легло в персист после них (например NATSegments source-preserve).
-	ptState := &storage.PolicyTunState{Provisioned: true, Index: idx}
-	if prev != nil {
-		// ГОЧА (re-provision): записи NAT-сегментов ОБЯЗАНЫ пережить повторный
-		// провижининг (heal «интерфейс пропал» → reconcile → enableLocked). Они
-		// — единственный след того, каким сегмент был ДО нас; потеряв их,
-		// applyPolicyTunSourcePreserve пересканирует сегмент, стоящий на НАШЕМ
-		// static-NAT, запишет «исходное = static» и после выключения режима
-		// сегмент навсегда остался бы на нём.
-		ptState.NATSegments = prev.NATSegments
+	ptState := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: idx}
+	// ГОЧА (re-provision): записи NAT-сегментов ОБЯЗАНЫ пережить повторный
+	// провижининг (heal «интерфейс пропал» → reconcile → enableLocked). Они —
+	// единственный след того, каким сегмент был ДО нас; потеряв их,
+	// applyPolicyTunSourcePreserve пересканирует сегмент, стоящий на НАШЕМ
+	// static-NAT, запишет «исходное = static» и после выключения режима сегмент
+	// навсегда остался бы на нём. Читаем payload прежней записи ЛЮБОГО режима:
+	// на чужой он лежит артефактом миграции v34.
+	if segs := natSegmentsOf(prevRecord); len(segs) > 0 {
+		ptState.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: segs}
 	}
-	if err = s.deps.Settings.SetPolicyTunState(ptState); err != nil {
+	if err = s.deps.Settings.SetOpkgTunState(ptState); err != nil {
 		return fmt.Errorf("enable policy-tun: persist policy-tun state: %w", err)
 	}
-	settings.PolicyTun = ptState
+	// Мутируем локальную копию: `settings` всё ещё алиас живого кэша стора,
+	// который параллельно читают другие горутины без лока. Копия именно
+	// здесь, а не сразу после Load: так в неё попадает всё, что записали в
+	// кэш узкие мутаторы выше, — ровно то, что сохранил бы прежний Save.
+	cp := *settings
+	settings = &cp
+	settings.OpkgTun = ptState
 	push(func() {
 		// Откат ВОЗВРАЩАЕТ ПРЕЖНИЙ персист, а не обнуляет его.
 		//
@@ -163,7 +180,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// в policy-tun следующий reconcile переподнимет его по ТОМУ ЖЕ индексу
 		// (желаемое поведение), а вне режима реап найдёт запись по индексу и
 		// приберёт её вместе с NAT-сегментами.
-		if e := s.deps.Settings.SetPolicyTunState(prev); e != nil {
+		if e := s.deps.Settings.SetOpkgTunState(prevRecord); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
 	})
@@ -180,8 +197,12 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	//
 	// ОСОЗНАННАЯ ПОТЕРЯ: откат УДАЛЯЕТ интерфейс, даже если включение его не
 	// создавало, а переиспользовало удержанный. Номер не теряется (персист цел,
-	// следующее включение возьмёт его же), теряется идентичность интерфейса —
-	// переживает ли пересоздание permit в политике, не проверено. Откат также
+	// следующее включение возьмёт его же), а вот permit пользователя теряется
+	// НАВЕРНЯКА: стенд 2026-08-18 (RCI `ip policy`) показал, что удаление
+	// интерфейса вырождает запись permit'а в заглушку-ошибку «unable to find
+	// OpkgTun<N>», а пересоздание ОДНОИМЁННОГО интерфейса убирает её совсем —
+	// разрешение не воскресает. Отсюда же ценность удержания: пока объект жив,
+	// permit валиден; мёртвый наш интерфейс держать незачем. Откат также
 	// не снимает уже поставленный нами permit: DenyInterface мог бы снять
 	// разрешение, которое пользователь дал интерфейсу сознательно.
 	rbCtx := context.WithoutCancel(ctx)
@@ -308,7 +329,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// их восстанавливает teardown/реап.
 	if sr.PolicyTunSourcePreserve && len(sr.PolicyTunNATSegments) > 0 {
 		var recorded []storage.PolicyTunNATSegment
-		recorded, err = s.applyPolicyTunSourcePreserve(ctx, sr.PolicyTunNATSegments, ptState.NATSegments)
+		recorded, err = s.applyPolicyTunSourcePreserve(ctx, sr.PolicyTunNATSegments, natSegmentsOf(ptState))
 		// Откат регистрируем ДО проверки ошибки: apply отдаёт записи и о
 		// сегментах, до которых успел дойти, а полуприменённые обязаны вернуться.
 		push(func() {
@@ -319,12 +340,23 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// Merge, а не присваивание: перенесённые из prev записи сегментов, уже
 		// выбывших из желаемого списка, обязаны дожить до восстановления в
 		// restoreRevokedPolicyTunNAT — иначе их static-NAT остался бы навсегда.
-		ptState.NATSegments = mergePolicyTunNATRecords(ptState.NATSegments, recorded)
+		// Мутируем копию: ptState уже уходил в кэш стора (SetOpkgTunState
+		// выше кладёт туда сам указатель), и запись по месту гонялась бы с
+		// маршалом кэша. Копию публикуют мутатор ниже и финальный Save —
+		// поэтому её же подшиваем в settings.
+		next := *ptState
+		if merged := mergePolicyTunNATRecords(natSegmentsOf(ptState), recorded); len(merged) > 0 {
+			next.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: merged}
+		} else {
+			next.PolicyTun = nil
+		}
+		ptState = &next
+		settings.OpkgTun = ptState
 		// Персист ДО проверки ошибки, как в сверке: откат выше может и сам упасть
 		// (RCI, уронивший apply, обычно роняет и его), и тогда запись — всё, что
 		// помнит исходный режим сегмента. Provisioned/Index уже в персисте (см.
 		// выше), так что записями мы не утверждаем ничего нового о провижининге.
-		if perr := s.deps.Settings.SetPolicyTunState(ptState); perr != nil {
+		if perr := s.deps.Settings.SetOpkgTunState(ptState); perr != nil {
 			return fmt.Errorf("enable policy-tun: persist nat segments: %w", perr)
 		}
 		if err != nil {
@@ -417,17 +449,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable policy-tun: collect WAN IPs: %w", cerr)
 			return err
 		}
-		bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
-		bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets)
-		if err = s.deps.IPTables.Install(ctx, RestoreInputSpec{
-			DSCPOnly:       true,
-			MatchAll:       true,
-			WANIPs:         wanIPs,
-			BypassUDPPorts: bypassUDP,
-			BypassTCPPorts: bypassTCP,
-			BypassCIDRs:    bypassSubnets,
-			QoSClasses:     qosSpecs,
-		}); err != nil {
+		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		if err = s.deps.IPTables.Install(ctx, spec); err != nil {
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}
 		// Применённое состояние netfilter — база сравнения для reconcile: без
@@ -436,8 +459,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// успешной установки; когда классов нет, netfilterStateKnown остаётся
 		// false, и первый тик reconcile сделает одноразовый Uninstall-свип
 		// (снимет чужие цепочки и blackhole прежнего режима). s.mu уже держит
-		// enableLocked.
-		s.currentQoSClasses = qosSpecs
+		// enableLocked. Базой сравнения служит спек ЦЕЛИКОМ, а не одни классы:
+		// WAN-адреса и bypass — такие же входы правил.
+		s.appliedSpec = &spec
 		s.netfilterStateKnown = true
 	}
 

@@ -22,7 +22,6 @@ import (
 
 // mockRouterSvc satisfies router.Service with controllable return values.
 type mockRouterSvc struct {
-	enableErr     error
 	bindMAC       string
 	bindPolicy    string
 	bindErr       error
@@ -54,8 +53,6 @@ type mockRouterSvc struct {
 	natPreviewErr error
 }
 
-func (m *mockRouterSvc) Enable(ctx context.Context) error    { return m.enableErr }
-func (m *mockRouterSvc) Disable(ctx context.Context) error   { return nil }
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
 func (m *mockRouterSvc) SwitchRoutingMode(ctx context.Context, target string) error {
 	m.switchMu.Lock()
@@ -86,6 +83,9 @@ func (m *mockRouterSvc) ListWANInterfaces(ctx context.Context) ([]router.WANInte
 	return nil, nil
 }
 func (m *mockRouterSvc) ListBindableInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
+	return []router.WANInterfaceInfo{{Name: "ipsec0", Label: "IPSec", Up: true}}, nil
+}
+func (m *mockRouterSvc) ListAllBindableInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	return []router.WANInterfaceInfo{{Name: "ipsec0", Label: "IPSec", Up: true}}, nil
 }
 func (m *mockRouterSvc) ListIngressEligibleInterfaces(ctx context.Context) ([]router.WANInterfaceInfo, error) {
@@ -249,28 +249,6 @@ func TestRouterDeleteOutbound_ReferencedByProxy_Returns409(t *testing.T) {
 	}
 }
 
-func TestRouterEnable_PolicyNotConfigured_Returns400(t *testing.T) {
-	svc := &mockRouterSvc{enableErr: router.ErrPolicyNotConfigured}
-	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
-	}
-}
-
-func TestRouterEnable_PolicyMissing_Returns400(t *testing.T) {
-	svc := &mockRouterSvc{enableErr: router.ErrPolicyMissing}
-	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d", rr.Code)
-	}
-}
-
 func TestRouterPutSettings_QoSClassesInvalid_Returns400(t *testing.T) {
 	svc := &mockRouterSvc{updateSettingsErr: fmt.Errorf("%w: qosClasses[0]: DSCP должен быть 0-63 (получено 99)", router.ErrQoSClassesInvalid)}
 	h := newMockRouterHandler(svc)
@@ -406,16 +384,6 @@ func TestRouterSwitchMode_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/mode", nil)
 	rr := httptest.NewRecorder()
 	h.SwitchMode(rr, req)
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("want 405, got %d", rr.Code)
-	}
-}
-
-func TestRouterEnable_MethodNotAllowed(t *testing.T) {
-	h := newMockRouterHandler(&mockRouterSvc{})
-	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/enable", nil)
-	rr := httptest.NewRecorder()
-	h.Enable(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("want 405, got %d", rr.Code)
 	}
@@ -1058,5 +1026,41 @@ func TestRouterUpdateDNSRule_Managed_ReturnsManagedCode(t *testing.T) {
 	}
 	if env.Code != "DNS_RULE_MANAGED" {
 		t.Fatalf("want code DNS_RULE_MANAGED, got %q", env.Code)
+	}
+}
+
+// Footgun Д2: после того как "" стало значимым («v6 выключен»), PUT без поля
+// fakeipPool6 декодировался бы в Go zero "" и МОЛЧА выключал v6 (узор
+// PR #757 с routingMode). Absent обязан сохранять текущее значение.
+func TestRouterPutSettings_OmittedPool6KeepsStored(t *testing.T) {
+	svc := &mockRouterSvc{settings: storage.SingboxRouterSettings{FakeIPPool6: "fc00::/18"}}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"policyName":"awgm-router"}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.settings.FakeIPPool6 != "fc00::/18" {
+		t.Errorf("fakeipPool6 = %q, want сохранённое \"fc00::/18\" (absent ≠ empty)", svc.settings.FakeIPPool6)
+	}
+}
+
+// Обратное направление: явное "" доходит до сервиса как "" (осознанное
+// выключение). На уровне handler'а это СТРАХОВКА (decode и сегодня отдаёт ""),
+// краснота выключения целиком — сквозной тест роутера.
+func TestRouterPutSettings_ExplicitEmptyPool6Passes(t *testing.T) {
+	svc := &mockRouterSvc{settings: storage.SingboxRouterSettings{FakeIPPool6: "fc00::/18"}}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPut, "/api/singbox/router/settings",
+		strings.NewReader(`{"enabled":true,"wanAutoDetect":true,"fakeipPool6":""}`))
+	rr := httptest.NewRecorder()
+	h.PutSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if svc.settings.FakeIPPool6 != "" {
+		t.Errorf("fakeipPool6 = %q, want \"\" (подстановки быть не должно)", svc.settings.FakeIPPool6)
 	}
 }

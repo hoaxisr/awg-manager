@@ -175,6 +175,10 @@
 		$form.rejectAfterTime = tunnel.interface.rejectAfterTime || '';
 		$form.keepaliveTimeout = tunnel.interface.keepaliveTimeout || '';
 		$form.maxHandshakeAttempts = tunnel.interface.maxHandshakeAttempts || '';
+		// AWG 3.1 flags: read-only in the editor, shown only when the imported
+		// config carries them. buildUpdatePayload keeps them via the interface spread.
+		$form.randomTrailers = tunnel.interface.randomTrailers ?? false;
+		$form.disableCookies = tunnel.interface.disableCookies ?? false;
 		publicKey = tunnel.peer.publicKey;
 		$form.endpoint = tunnel.peer.endpoint;
 		$form.allowedIPs = tunnel.peer.allowedIPs.join(', ');

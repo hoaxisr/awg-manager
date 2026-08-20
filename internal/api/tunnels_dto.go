@@ -25,7 +25,7 @@ type TunnelListItemDTO struct {
 	InterfaceName             string                `json:"interfaceName,omitempty" example:"nwg0"`
 	NdmsName                  string                `json:"ndmsName,omitempty" example:"Wireguard0"`
 	Backend                   string                `json:"backend,omitempty" example:"nativewg" enums:"nativewg,kernel"`
-	AWGVersion                string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0,awg3"`
+	AWGVersion                string                `json:"awgVersion,omitempty" example:"awg2.0" enums:"wg,awg1.0,awg1.5,awg2.0,awg3,awg3.1"`
 	MTU                       int                   `json:"mtu,omitempty" example:"1420"`
 	IspInterface              string                `json:"ispInterface,omitempty" example:"PPPoE0"`
 	IspInterfaceLabel         string                `json:"ispInterfaceLabel,omitempty" example:"WAN"`

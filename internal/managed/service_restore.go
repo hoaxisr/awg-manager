@@ -362,11 +362,12 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	}
 	sv.NATMode = mode // персист (saved := sv ниже)
 	sv.NATEnabled = mode == "full"
-	wan, err := s.applyNATModeRaw(ctx, target, mode, sv.NATStaticWAN)
+	wans, err := s.applyNATModeRaw(ctx, target, mode, sv.StaticNATList())
 	if err != nil {
 		return true, fmt.Errorf("set NAT mode: %w", err)
 	}
-	sv.NATStaticWAN = wan
+	sv.NATStaticWANs = wans
+	sv.NATStaticWAN = ""
 	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments); err != nil {
 		return true, fmt.Errorf("set LAN segments: %w", err)
 	}

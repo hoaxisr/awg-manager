@@ -12,10 +12,14 @@
 	} from '$lib/types';
 	import { Check, LayoutGrid, Link, Globe, Waypoints } from 'lucide-svelte';
 	import HeadersTextarea from './HeadersTextarea.svelte';
+	import HappKeysModal from './HappKeysModal.svelte';
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
 	import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
-	import { DEFAULT_PRESET, parseHeadersText } from './headersParser';
+	import {
+		DEFAULT_PRESET,
+		parseHeadersText,
+	} from './headersParser';
 	import {
 		appendImportedFileText,
 		mergePastedShareList,
@@ -109,6 +113,83 @@
 		}
 	});
 
+	let detectingHeaders = $state(false);
+	let detectedNotice = $state('');
+	let detectStatus = $state<'ok' | 'keys' | 'error'>('ok');
+	let showHappKeysModal = $state(false);
+	let detectTimer: ReturnType<typeof setTimeout> | null = null;
+	// Поколение запроса: ответ детекта, устаревший к моменту прихода, не должен
+	// переписать headersText от нового URL и не должен гасить чужой индикатор.
+	let detectSeq = 0;
+	let lastDetectedUrl = '';
+	let lastNormalizedUrl = '';
+
+	function triggerDetectHeaders(targetUrl: string, immediate = false): void {
+		if (detectTimer) clearTimeout(detectTimer);
+		const raw = targetUrl.trim();
+		// Нормализацию (снятие обёрток happ:// / clash:// и расшифровку
+		// happ://crypt) делает сервер и возвращает в normalizedUrl — здесь
+		// только грубый отсев того, что ещё не похоже на ссылку.
+		if (!raw.includes('://')) {
+			detectSeq++;
+			detectingHeaders = false;
+			detectedNotice = '';
+			detectStatus = 'ok';
+			lastDetectedUrl = '';
+			lastNormalizedUrl = '';
+			return;
+		}
+		// onpaste и следующий за ним onblur дают один и тот же URL — вторая
+		// серия проб роутеру не нужна.
+		if (raw === lastDetectedUrl || raw === lastNormalizedUrl) return;
+		detectedNotice = '';
+		detectStatus = 'ok';
+
+		const runDetect = async () => {
+			const seq = ++detectSeq;
+			lastDetectedUrl = raw;
+			detectingHeaders = true;
+			try {
+				const res = await api.detectSubscriptionHeaders(raw, parseHeadersText(headersText));
+				if (seq !== detectSeq) return;
+				if (res?.normalizedUrl) {
+					lastNormalizedUrl = res.normalizedUrl;
+					url = res.normalizedUrl;
+				}
+				if (res && res.serverCount > 0) {
+					headersText = res.headersText;
+					if (res.isEncrypted && res.decryptedUrl) {
+						detectedNotice = `Расшифровано: ${res.decryptedUrl} (${res.label}, серверов: ${res.serverCount})`;
+					} else {
+						detectedNotice = `Распознано: ${res.label} (найдено серверов: ${res.serverCount})`;
+					}
+				} else if (res && res.isEncrypted && res.decryptedUrl) {
+					detectedNotice = `Расшифровано: ${res.decryptedUrl}`;
+				} else if (res && res.isEncrypted && !res.decryptedUrl) {
+					detectStatus = 'keys';
+					detectedNotice = 'Обнаружена зашифрованная ссылка Happ (требуются ключи RSA)';
+				}
+			} catch (e) {
+				if (seq !== detectSeq) return;
+				// Повторить детект по тому же URL после ошибки должно быть можно.
+				lastDetectedUrl = '';
+				detectStatus = 'error';
+				detectedNotice =
+					e instanceof Error ? e.message : 'Не удалось определить тип подписки';
+			} finally {
+				if (seq === detectSeq) {
+					detectingHeaders = false;
+				}
+			}
+		};
+
+		if (immediate) {
+			void runDetect();
+		} else {
+			detectTimer = setTimeout(runDetect, 250);
+		}
+	}
+
 	function reset(): void {
 		kind = 'choose';
 		singleLinks = '';
@@ -128,6 +209,11 @@
 		previewMembers = [];
 		excludedKeys = new Set();
 		previewing = false;
+		detectingHeaders = false;
+		detectedNotice = '';
+		detectStatus = 'ok';
+		lastDetectedUrl = '';
+		lastNormalizedUrl = '';
 		error = '';
 	}
 
@@ -473,8 +559,37 @@
 						class="inp"
 						type="url"
 						bind:value={url}
-						placeholder="https://provider.example/sub/abc"
+						onpaste={() => setTimeout(() => triggerDetectHeaders(url, true), 0)}
+						onblur={() => triggerDetectHeaders(url, true)}
+						oninput={() => triggerDetectHeaders(url)}
+						placeholder="https://provider.example/sub/abc или happ://..."
 					/>
+					{#if detectingHeaders}
+						<div class="detect-badge detect-loading">
+							<span>Определение типа подписки...</span>
+						</div>
+					{:else if detectedNotice}
+						<div
+							class="detect-badge"
+							class:detect-warning={detectStatus !== 'ok'}
+							class:detect-success={detectStatus === 'ok'}
+						>
+							<span>{detectedNotice}</span>
+							{#if detectStatus === 'keys'}
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={() => (showHappKeysModal = true)}
+								>
+									Ввести ключи…
+								</Button>
+							{/if}
+						</div>
+					{:else}
+						<span class="hint">
+							Поддерживаются ссылки HTTPS, зашифрованные HAPP (happ://crypt), Clash, V2Ray/Xray, Sing-box.
+						</span>
+					{/if}
 				</label>
 				<div class="row">
 					<HeadersTextarea bind:value={headersText} />
@@ -638,6 +753,15 @@
 	{/snippet}
 </Modal>
 
+<HappKeysModal
+	bind:open={showHappKeysModal}
+	onclose={() => (showHappKeysModal = false)}
+	onsaved={() => {
+		showHappKeysModal = false;
+		if (url) triggerDetectHeaders(url, true);
+	}}
+/>
+
 <style>
 	.lead { color: var(--color-text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0 0 0.8rem; }
 	.lead code {
@@ -779,6 +903,33 @@
 		background: var(--color-bg-secondary, var(--color-bg-primary));
 		border: 1px dashed var(--color-border);
 		border-radius: 4px;
+	}
+	.detect-badge {
+		margin-top: 0.35rem;
+		padding: 0.35rem 0.6rem;
+		border-radius: 0.375rem;
+		font-size: 0.8125rem;
+		line-height: 1.35;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.detect-loading {
+		background: rgba(59, 130, 246, 0.08);
+		color: var(--color-primary, #3b82f6);
+		border: 1px solid rgba(59, 130, 246, 0.25);
+	}
+	.detect-success {
+		background: rgba(16, 185, 129, 0.08);
+		color: var(--color-success, #10b981);
+		border: 1px solid rgba(16, 185, 129, 0.2);
+		font-weight: 500;
+	}
+	.detect-warning {
+		background: rgba(245, 158, 11, 0.08);
+		color: #d97706;
+		border: 1px solid rgba(245, 158, 11, 0.2);
+		font-weight: 500;
 	}
 	@media (max-width: 480px) {
 		.mode-grid { grid-template-columns: 1fr; }

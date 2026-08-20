@@ -14,79 +14,34 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-func TestBuildFakeIPTunConfig_Shape(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", TunAddr6: "fdfe:dcba:9876::1/126", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10", CachePath: "/opt/etc/awg-manager/singbox/cache.db",
-		RealServer:     "1.1.1.1",
-		Outbounds:      []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}, {Type: "direct", Tag: "direct"}},
-		ProxyTag:       "proxy",
-		DomainRuleSets: []string{"geosite-proxy"},
-	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if cfg.Inbounds[0].Type != "tun" || cfg.Inbounds[0].InterfaceName != "opkgtun10" || cfg.Inbounds[0].Stack != "gvisor" {
-		t.Errorf("tun inbound: %#v", cfg.Inbounds[0])
-	}
-	if cfg.Inbounds[0].AutoRoute == nil || *cfg.Inbounds[0].AutoRoute {
-		t.Error("auto_route must be false")
-	}
-	if cfg.DNS.Servers[0].Type != "fakeip" || cfg.DNS.Final != "real" {
-		t.Errorf("dns: %#v", cfg.DNS)
-	}
-	if cfg.DNS.Rules[0].Server != "fakeip" || cfg.DNS.Rules[0].Action != "route" {
-		t.Errorf("dns rule: %#v", cfg.DNS.Rules[0])
-	}
-	if cfg.Route.DefaultDomainResolver == nil || cfg.Route.DefaultDomainResolver.Server != "real" {
-		t.Error("default_domain_resolver")
-	}
-	// [hijack-dns, route-options(udp_timeout), route→proxy]
-	if cfg.Route.Rules[0].Action != "hijack-dns" ||
-		cfg.Route.Rules[1].Action != "route-options" || cfg.Route.Rules[1].Network != "udp" ||
-		cfg.Route.Rules[1].UDPTimeout != DefaultUDPTimeout ||
-		cfg.Route.Rules[2].Outbound != "proxy" {
-		t.Errorf("route rules: %#v", cfg.Route.Rules)
-	}
-	if cfg.Experimental == nil || cfg.Experimental.CacheFile == nil || !cfg.Experimental.CacheFile.StoreFakeIP {
-		t.Error("cache_file/store_fakeip")
-	}
-}
-
-// TestBuildFakeIPTunConfig_Stack covers the stack + GSO safety matrix:
-//   - empty Stack defaults to "gvisor", and gvisor emits NO gso flag (nil).
-//   - "gvisor" explicit → no gso flag.
-//   - "system" → MUST emit gso:false (kernel 4.9 panics sing-tun otherwise).
-//
-// It also checks that the spec's pool/MTU flow into the inbound + DNS server.
-func TestBuildFakeIPTunConfig_Stack(t *testing.T) {
+// TestEnsureFakeIPOverlay_StackAndGSO covers the stack + GSO safety matrix on
+// the LIVE overlay path: empty Stack defaults to "gvisor" and emits NO gso flag
+// (nil), while "system" REQUIRES an explicit gso:false — the system stack with
+// GSO panics sing-tun on this router's 4.9 kernel. The explicit false must also
+// survive JSON marshaling (omitempty on a plain bool would drop it and sing-box
+// would apply its own non-false default).
+func TestEnsureFakeIPOverlay_StackAndGSO(t *testing.T) {
 	base := FakeIPTunSpec{
-		Iface: "opkgtun3", TunAddr4: "172.18.0.1/30", MTU: 1280,
-		Inet4Range: "10.64.0.0/12", Inet6Range: "fc00::/7",
-		CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
+		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
+		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
 	}
-
 	cases := []struct {
 		name    string
 		stack   string
 		wantStk string
 		wantGSO *bool // nil = field omitted
 	}{
-		{"empty defaults to gvisor", "", "gvisor", nil},
-		{"explicit gvisor", "gvisor", "gvisor", nil},
+		{"empty defaults to gvisor, no gso", "", "gvisor", nil},
+		{"gvisor emits no gso", "gvisor", "gvisor", nil},
 		{"system forces gso false", "system", "system", boolPtr(false)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := base
 			spec.Stack = tc.stack
-			cfg, err := BuildFakeIPTunConfig(spec)
-			if err != nil {
-				t.Fatalf("build: %v", err)
-			}
-			in := cfg.Inbounds[0]
+			cfg := NewEmptyConfig()
+			ensureFakeIPOverlay(cfg, spec)
+			in := findInbound(cfg, "tun-in")
 			if in.Stack != tc.wantStk {
 				t.Errorf("Stack = %q, want %q", in.Stack, tc.wantStk)
 			}
@@ -98,180 +53,38 @@ func TestBuildFakeIPTunConfig_Stack(t *testing.T) {
 			case tc.wantGSO != nil && *in.GSO != *tc.wantGSO:
 				t.Errorf("GSO = %v, want %v", *in.GSO, *tc.wantGSO)
 			}
-			// pool + MTU flow from spec into the config.
-			if in.MTU != 1280 {
-				t.Errorf("MTU = %d, want 1280 from spec", in.MTU)
-			}
-			if cfg.DNS.Servers[0].Inet4Range != "10.64.0.0/12" {
-				t.Errorf("fakeip inet4_range = %q, want spec pool", cfg.DNS.Servers[0].Inet4Range)
-			}
-			if cfg.DNS.Servers[0].Inet6Range != "fc00::/7" {
-				t.Errorf("fakeip inet6_range = %q, want spec pool", cfg.DNS.Servers[0].Inet6Range)
-			}
 		})
 	}
-}
 
-// TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse asserts the system-stack tun
-// inbound serializes `"gso": false` (not omitted) — the only stable system-stack
-// combo on this router's kernel.
-func TestBuildFakeIPTunConfig_SystemGSOMarshalsFalse(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun0", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "direct"}}, ProxyTag: "direct",
-		Stack: "system",
-	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	b, err := json.Marshal(cfg.Inbounds[0])
+	spec := base
+	spec.Stack = "system"
+	cfg := NewEmptyConfig()
+	ensureFakeIPOverlay(cfg, spec)
+	raw, err := json.Marshal(findInbound(cfg, "tun-in"))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(b), `"gso":false`) {
-		t.Errorf("system stack inbound must marshal \"gso\":false, got: %s", b)
+	if !strings.Contains(string(raw), `"gso":false`) {
+		t.Errorf(`marshaled tun inbound must carry "gso":false, got: %s`, raw)
 	}
 }
 
-// TestBuildFakeIPTunConfig_StripsAutoManagedDirect verifies BuildFakeIPTunConfig
-// owns the full outbound pipeline: it receives RAW outbounds and strips
-// auto-managed direct outbounds (awg/nwg/wireguard bind_interface) before
-// applying the domain_resolver guard. An auto-managed direct (BindInterface
-// "nwg2") must NOT appear in the output (it lives in 15-awg.json and would FATAL
-// the merged config with a duplicate-tag error); a user direct bound to a
-// non-auto-managed iface and a hostname proxy must survive.
-func TestBuildFakeIPTunConfig_StripsAutoManagedDirect(t *testing.T) {
-	spec := FakeIPTunSpec{
+// TestEnsureFakeIPOverlay_OmitV6 verifies the v6 fields are omitted on the LIVE
+// overlay path when the spec leaves them empty: a single tun address and no
+// inet6_range on the fakeip pool.
+func TestEnsureFakeIPOverlay_OmitV6(t *testing.T) {
+	cfg := NewEmptyConfig()
+	ensureFakeIPOverlay(cfg, FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{
-			{Type: "direct", Tag: "awg-direct", BindInterface: "nwg2"},    // auto-managed → stripped
-			{Type: "direct", Tag: "ipsec-direct", BindInterface: "IKE0"},  // user VPN → kept
-			{Type: "shadowsocks", Tag: "proxy", Server: "vpn.example.io"}, // hostname → kept + resolver
-		},
-		ProxyTag: "proxy",
+	})
+	in := findInbound(cfg, "tun-in")
+	if len(in.Address) != 1 || in.Address[0] != "172.18.0.1/30" {
+		t.Errorf("address should be v4-only: %#v", in.Address)
 	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	for _, o := range cfg.Outbounds {
-		if o.Tag == "awg-direct" {
-			t.Errorf("auto-managed direct must be stripped, got: %#v", cfg.Outbounds)
-		}
-	}
-	if len(cfg.Outbounds) != 2 {
-		t.Fatalf("want 2 surviving outbounds, got %d: %#v", len(cfg.Outbounds), cfg.Outbounds)
-	}
-	// The hostname proxy must additionally get the "real" domain_resolver.
-	var proxy *Outbound
-	for i := range cfg.Outbounds {
-		if cfg.Outbounds[i].Tag == "proxy" {
-			proxy = &cfg.Outbounds[i]
-		}
-	}
-	if proxy == nil || proxy.DomainResolver == nil || proxy.DomainResolver.Server != "real" {
-		t.Errorf("hostname proxy must get real domain_resolver: %#v", cfg.Outbounds)
-	}
-}
-
-// TestBuildFakeIPTunConfig_OmitV6 verifies the v6 fields are omitted when the
-// spec leaves them empty: a single tun address and no inet6_range on the pool.
-func TestBuildFakeIPTunConfig_OmitV6(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
-	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if len(cfg.Inbounds[0].Address) != 1 || cfg.Inbounds[0].Address[0] != "172.18.0.1/30" {
-		t.Errorf("address should be v4-only: %#v", cfg.Inbounds[0].Address)
-	}
-	if cfg.DNS.Servers[0].Inet6Range != "" {
-		t.Errorf("inet6_range should be empty: %q", cfg.DNS.Servers[0].Inet6Range)
-	}
-}
-
-// TestBuildFakeIPTunConfig_NoMatchersNoSources verifies that without rule sets
-// or source CIDRs the fakeip DNS rule still carries the QueryType matcher only
-// (fake everything), and the rule sets / source CIDRs are left empty.
-func TestBuildFakeIPTunConfig_NoRuleSetNoSource(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
-	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	r := cfg.DNS.Rules[0]
-	if len(r.RuleSet) != 0 || len(r.SourceIPCIDR) != 0 {
-		t.Errorf("rule should have no rule_set/source_ip_cidr: %#v", r)
-	}
-	if len(r.QueryType) != 2 {
-		t.Errorf("rule should match A/AAAA: %#v", r.QueryType)
-	}
-}
-
-// TestBuildFakeIPTunConfig_SourceIPCIDR verifies per-device targeting flows
-// through to the DNS rule.
-func TestBuildFakeIPTunConfig_SourceIPCIDR(t *testing.T) {
-	spec := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds:    []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:     "proxy",
-		SourceIPCIDR: []string{"192.168.1.50/32"},
-	}
-	cfg, err := BuildFakeIPTunConfig(spec)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	if got := cfg.DNS.Rules[0].SourceIPCIDR; len(got) != 1 || got[0] != "192.168.1.50/32" {
-		t.Errorf("source_ip_cidr not propagated: %#v", got)
-	}
-}
-
-// TestBuildFakeIPTunConfig_InvalidTunAddr4 verifies the builder fails fast on a
-// missing or malformed v4 tun address rather than deferring to a sing-box FATAL.
-func TestBuildFakeIPTunConfig_InvalidTunAddr4(t *testing.T) {
-	base := FakeIPTunSpec{
-		Iface: "opkgtun10", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
-	}
-	for _, bad := range []string{"", "garbage", "3f80::1/126"} {
-		spec := base
-		spec.TunAddr4 = bad
-		if _, err := BuildFakeIPTunConfig(spec); err == nil {
-			t.Errorf("TunAddr4 %q should error", bad)
-		}
-	}
-}
-
-// TestBuildFakeIPTunConfig_InvalidTunAddr6 verifies a non-empty but malformed or
-// non-v6 TunAddr6 is rejected.
-func TestBuildFakeIPTunConfig_InvalidTunAddr6(t *testing.T) {
-	base := FakeIPTunSpec{
-		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
-		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
-		Outbounds: []Outbound{{Type: "direct", Tag: "proxy", BindInterface: "nwg2"}},
-		ProxyTag:  "proxy",
-	}
-	for _, bad := range []string{"garbage", "172.18.0.1/30"} {
-		spec := base
-		spec.TunAddr6 = bad
-		if _, err := BuildFakeIPTunConfig(spec); err == nil {
-			t.Errorf("TunAddr6 %q should error", bad)
+	for _, sv := range cfg.DNS.Servers {
+		if sv.Type == "fakeip" && sv.Inet6Range != "" {
+			t.Errorf("inet6_range should be empty: %q", sv.Inet6Range)
 		}
 	}
 }
@@ -762,7 +575,7 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 	if err != nil {
 		t.Fatalf("settingsStore.Load: %v", err)
 	}
-	all.FakeIP = &storage.FakeIPState{Provisioned: true, Index: 0}
+	all.OpkgTun = &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 0}
 	if err := settingsStore.Save(all); err != nil {
 		t.Fatalf("settingsStore.Save: %v", err)
 	}

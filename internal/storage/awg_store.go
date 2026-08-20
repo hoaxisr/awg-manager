@@ -199,7 +199,7 @@ func (s *AWGTunnelStore) ClearRuntimeState(id string) {
 const (
 	// OS 5.x: карта числовых индексов туннелей:
 	//   OpkgTun0..9   — зарезервированы под fakeip-движок sing-box
-	//                   (см. internal/singbox/router, fakeIPNDMSName);
+	//                   (см. internal/singbox/router, tunNDMSName);
 	//   OpkgTun10..16 — kernel-AWG туннели (awg10..awg16); потолок 16 —
 	//                   прошивочный лимит NDMS на индекс OpkgTun;
 	//   awg20+        — NativeWG: чистые storage-ключи, в OpkgTun НЕ

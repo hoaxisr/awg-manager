@@ -5,7 +5,7 @@ go 1.25.0
 require github.com/coder/websocket v1.8.14
 
 require (
-	github.com/enfein/mieru/v3 v3.35.0
+	github.com/enfein/mieru/v3 v3.36.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
