@@ -1,12 +1,13 @@
 <script lang="ts">
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
-	import { Button, ConfirmModal, Modal, StatusDot } from '$lib/components/ui';
+	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { formatBytes } from '$lib/utils/format';
 	import { stripAnsi } from '$lib/utils/ansi';
 	import { Blocks } from 'lucide-svelte';
+	import { isIPv4, isIPv6 } from '$lib/utils/cidr';
 
 	interface Props {
 		singboxStatus: SingboxStatus | null;
@@ -24,6 +25,10 @@
 		singboxUninstalling?: boolean;
 		showSingbox?: boolean;
 		showHydra?: boolean;
+		/** Адрес bootstrap-резолвера sing-box; пусто = адрес не навязывается. */
+		bootstrapDNS?: string;
+		onsaveBootstrapDNS?: (value: string) => void;
+		bootstrapSaving?: boolean;
 	}
 
 	let {
@@ -42,7 +47,24 @@
 		singboxUninstalling = false,
 		showSingbox = true,
 		showHydra = true,
+		bootstrapDNS = '',
+		onsaveBootstrapDNS,
+		bootstrapSaving = false,
 	}: Props = $props();
+
+	// Черновик поля bootstrap-DNS. Настройки на странице грузятся один раз,
+	// внешних обновлений у этого props нет — ресинк не нужен, начальное
+	// значение снимается однократно.
+	// svelte-ignore state_referenced_locally
+	let bootstrapDraft = $state(bootstrapDNS);
+
+	// Bootstrap отвечает раньше любого другого DNS, поэтому домен здесь
+	// неработоспособен — принимаем только литеральный IP.
+	const bootstrapValid = $derived.by(() => {
+		const v = bootstrapDraft.trim();
+		return v === '' || isIPv4(v) || isIPv6(v);
+	});
+	const bootstrapDirty = $derived(bootstrapDraft.trim() !== bootstrapDNS);
 
 	let confirmUninstall = $state(false);
 
@@ -218,6 +240,41 @@
 					</Button>
 				{/if}
 			</div>
+			{#if singboxInstalled && onsaveBootstrapDNS}
+				<div class="setting-row bootstrap-row">
+					<div class="integration-meta">
+						<span class="font-medium">Bootstrap-DNS</span>
+						<span class="setting-description">
+							Используется для резолва доменов для DNS серверов и туннелей,
+							использовать можно только IP.
+						</span>
+						<span class="setting-description">
+							В режиме FakeIP берётся отсюда, только если свой «настоящий»
+							DNS-сервер там не задан, и вступает в силу после следующего
+							применения настроек маршрутизации.
+						</span>
+					</div>
+					<div class="bootstrap-field">
+						<Input
+							type="text"
+							bind:value={bootstrapDraft}
+							placeholder="1.1.1.1"
+							disabled={bootstrapSaving}
+							error={bootstrapValid ? undefined : 'Нужен IP-адрес без порта'}
+							fullWidth
+						/>
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={bootstrapSaving}
+							disabled={!bootstrapValid || !bootstrapDirty || bootstrapSaving}
+							onclick={() => onsaveBootstrapDNS?.(bootstrapDraft.trim())}
+						>
+							Сохранить
+						</Button>
+					</div>
+				</div>
+			{/if}
 		{/if}
 
 		{#if showHydra}
@@ -316,6 +373,30 @@
 {/if}
 
 <style>
+	/* Своя раскладка вместо сетки .setting-row (1fr auto): там колонка с
+	   описанием схлопывалась под ширину поля и текст ломался по слову. */
+	.setting-row.bootstrap-row {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.5rem;
+		/* Выравнивание по текстовой колонке соседних строк: там текст
+		   сдвинут статус-точкой (её размер + gap .integration-item). */
+		padding-left: 1.25rem;
+	}
+
+	.bootstrap-field {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.bootstrap-field :global(.field) {
+		flex: 1;
+		min-width: 0;
+		max-width: 16rem;
+	}
+
 	.integration-actions {
 		display: flex;
 		gap: 0.35rem;

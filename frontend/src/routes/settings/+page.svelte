@@ -538,6 +538,28 @@ $effect(() => {
 		}
 	}
 
+	let savingBootstrapDNS = $state(false);
+
+	// Bootstrap-DNS применяется бэкендом сразу: он переписывает адрес в
+	// 00-base.json и перечитывает конфиг sing-box без перезапуска.
+	async function saveBootstrapDNS(value: string) {
+		if (!settings) return;
+		savingBootstrapDNS = true;
+		try {
+			settings = await api.updateSettings({ ...settings, singboxBootstrapDNS: value });
+			setGlobalSettings(settings);
+			notifications.success(
+				value
+					? `Bootstrap-DNS: ${value}`
+					: "Bootstrap-DNS больше не навязывается — адрес в конфигурации остаётся прежним",
+			);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения bootstrap-DNS");
+		} finally {
+			savingBootstrapDNS = false;
+		}
+	}
+
 	async function toggleUpdateCheck(enabled: boolean) {
 		if (!settings) return;
 		saving = true;
@@ -760,6 +782,9 @@ $effect(() => {
 					{singboxUninstalling}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
+					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
+					bootstrapSaving={savingBootstrapDNS}
+					onsaveBootstrapDNS={saveBootstrapDNS}
 				/>
 				</div>
 			</aside>

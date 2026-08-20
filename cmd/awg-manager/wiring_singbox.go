@@ -54,6 +54,7 @@ func (a *app) setupSingbox() {
 		Commands:        a.ndmsCommands,
 		AppLogger:       a.loggingService,
 		SingboxLogLevel: a.settingsStore.GetSingboxLogLevel,
+		BootstrapDNS:    a.settingsStore.GetSingboxBootstrapDNS,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so
@@ -181,8 +182,8 @@ func (a *app) setupSingbox() {
 		// периодическим Reconcile: его drift-heal берётся только при
 		// фактически запаркованном слоте, а мы слот уже распарковали.
 		// Best-effort: провал не повод ронять бут.
-		if err := a.singboxOp.ReconcileBaseDNSStrategy(); err != nil {
-			a.bootLog.Warn("reconcile-dns-strategy", "", err.Error())
+		if err := a.singboxOp.ReconcileBaseOwnedScalars(); err != nil {
+			a.bootLog.Warn("reconcile-base-scalars", "", err.Error())
 		}
 	}
 

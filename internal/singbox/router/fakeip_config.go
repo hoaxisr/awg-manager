@@ -238,7 +238,7 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 	if err != nil {
 		return fmt.Errorf("fakeip overlay: normalize settings: %w", err)
 	}
-	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+	p := s.resolveFakeIPParams(sr)
 	spec := FakeIPTunSpec{
 		Iface:      tunIfaceName(st.Index),
 		TunAddr4:   p.TunAddr4,

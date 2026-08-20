@@ -279,17 +279,23 @@ func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	if sr.FakeIPMTU < fakeIPMTUMin || sr.FakeIPMTU > fakeIPMTUMax {
 		return fmt.Errorf("fakeipMtu %d out of range [%d, %d]", sr.FakeIPMTU, fakeIPMTUMin, fakeIPMTUMax)
 	}
-	if sr.FakeIPRealServer == "" {
-		sr.FakeIPRealServer = def.RealServer
-	}
-	// Real upstream must be a plain IP: the fakeip topology resolves every
-	// domain through the "real" server itself, so a domain upstream could
-	// never bootstrap. Zoned addresses (fe80::1%eth0) make no sense for a
-	// DNS upstream either.
-	if addr, err := netip.ParseAddr(sr.FakeIPRealServer); err != nil {
-		return fmt.Errorf("fakeipRealServer: invalid IP address %q: %w", sr.FakeIPRealServer, err)
-	} else if addr.Zone() != "" {
-		return fmt.Errorf("fakeipRealServer: zoned address %q is not allowed", sr.FakeIPRealServer)
+	// FakeIPRealServer сознательно НЕ дефолтится здесь. Раньше пустое поле
+	// штамповалось константой 1.1.1.1 — после этого «значения не было» и
+	// «пользователь выбрал 1.1.1.1» становились неразличимы, и общий
+	// Bootstrap-DNS (issue #770) не мог подставиться никогда. Пусто =
+	// «значения нет», эффективный адрес выбирает resolveFakeIPParamsWith:
+	// Bootstrap-DNS, а без него исторический 1.1.1.1. Уже сохранённое
+	// значение — чьё бы оно ни было — не трогаем.
+	if sr.FakeIPRealServer != "" {
+		// Real upstream must be a plain IP: the fakeip topology resolves every
+		// domain through the "real" server itself, so a domain upstream could
+		// never bootstrap. Zoned addresses (fe80::1%eth0) make no sense for a
+		// DNS upstream either.
+		if addr, err := netip.ParseAddr(sr.FakeIPRealServer); err != nil {
+			return fmt.Errorf("fakeipRealServer: invalid IP address %q: %w", sr.FakeIPRealServer, err)
+		} else if addr.Zone() != "" {
+			return fmt.Errorf("fakeipRealServer: zoned address %q is not allowed", sr.FakeIPRealServer)
+		}
 	}
 	return nil
 }

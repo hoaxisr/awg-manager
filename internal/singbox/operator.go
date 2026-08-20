@@ -98,11 +98,15 @@ func (o *Operator) singboxFeaturesCached() []string {
 
 // Operator is the high-level facade for sing-box integration.
 type Operator struct {
-	log        *slog.Logger
-	dir        string
-	binary     string
-	configPath string
-	pidPath    string
+	log    *slog.Logger
+	dir    string
+	binary string
+	// bootstrapDNS — живой доступ к Settings.SingboxBootstrapDNS. Нужен не
+	// только на буте: ApplyLogLevel пересоздаёт 00-base.json, если файла нет,
+	// и без этого поля подставил бы исторический дефолт, потеряв настройку.
+	bootstrapDNS func() string
+	configPath   string
+	pidPath      string
 
 	proc      *Process
 	validator *Validator
@@ -279,6 +283,10 @@ type OperatorDeps struct {
 	// SingboxLogLevel returns desired sing-box log.level from settings.
 	// Optional; defaults to "info".
 	SingboxLogLevel func() string
+	// BootstrapDNS returns the desired dns-bootstrap address from settings
+	// (Settings.SingboxBootstrapDNS). Optional; empty result means "do not
+	// touch 00-base.json" — see patchBaseBootstrapDNS.
+	BootstrapDNS func() string
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -303,15 +311,21 @@ func NewOperator(d OperatorDeps) *Operator {
 		desiredSingboxLogLevel = normalizeSingboxLogLevel(d.SingboxLogLevel())
 	}
 
+	desiredBootstrapDNS := ""
+	if d.BootstrapDNS != nil {
+		desiredBootstrapDNS = d.BootstrapDNS()
+	}
+
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, log) {
+	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, log) {
 		s.run()
 	}
 
 	op := &Operator{
 		log:               log,
+		bootstrapDNS:      d.BootstrapDNS,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,

@@ -519,7 +519,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// которые заканчиваются ошибкой (откаты enableFakeIPTun/enablePolicyTun,
 	// rollback провального Install), и хвостовой вызов их бы не покрыл. Ранние
 	// return'ы до перепарковки безопасны: примирять нечего — записи нет.
-	defer s.reconcileBaseDNSStrategy()
+	defer s.reconcileBaseOwnedScalars()
 
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
@@ -1234,7 +1234,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	// Парковка слота отбирает владение dns.strategy — примирение на выходе, по
 	// тем же причинам, что в enableLocked (teardown'ы паркуют слот и уходят
 	// разными return'ами).
-	defer s.reconcileBaseDNSStrategy()
+	defer s.reconcileBaseOwnedScalars()
 
 	// Каждый teardown — в журнал: выключение бывает не только по кнопке
 	// (fail-safe при удалённой политике, drift-heal), и без записи причину

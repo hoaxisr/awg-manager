@@ -65,6 +65,12 @@ type Settings struct {
 	// Default true (back-compat). See docs/superpowers/specs/
 	// 2026-05-22-singbox-ndms-proxy-toggle-design.md.
 	CreateNDMSProxyForSingbox bool `json:"createNDMSProxyForSingbox"`
+	// SingboxBootstrapDNS — адрес сервера dns-bootstrap в 00-base.json:
+	// им sing-box резолвит доменные адреса в dial-полях (endpoint'ы
+	// туннелей, серверы подписок), поэтому он обязан отвечать БЕЗ другого
+	// резолвера — только IP, без домена и порта. Пусто = не вмешиваться в
+	// файл (исторически адрес правили руками). Issue #770.
+	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty"`
 	// ManagedPeerAllowIPsMigrated marks the one-time NDMS sweep that strips
 	// the legacy default 0.0.0.0/0 from managed-server peers' allow-ips
 	// (per-peer /32 only). New firmware rejects multiple peers sharing

@@ -65,12 +65,12 @@ func newDNSStrategyEnv(t *testing.T, sr storage.SingboxRouterSettings, fakeip *s
 	}
 
 	svc := router.NewService(router.Deps{
-		Settings:                 settings,
-		Singbox:                  &integrationSingbox{dir: configDir},
-		Orch:                     orch,
-		WANIPCollector:           noopWANIPCollector{},
-		OpkgTunIndices:           liveIndices{},
-		ReconcileBaseDNSStrategy: op.ReconcileBaseDNSStrategy,
+		Settings:                  settings,
+		Singbox:                   &integrationSingbox{dir: configDir},
+		Orch:                      orch,
+		WANIPCollector:            noopWANIPCollector{},
+		OpkgTunIndices:            liveIndices{},
+		ReconcileBaseOwnedScalars: op.ReconcileBaseOwnedScalars,
 	})
 
 	return &dnsStrategyEnv{

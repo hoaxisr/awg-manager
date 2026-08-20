@@ -13,6 +13,21 @@ export function isIPv4(str: string): boolean {
 /**
  * Check if string is a valid CIDR notation (e.g. "10.0.0.0/8").
  */
+/**
+ * Литеральный IPv6-адрес. Наивная проверка «есть двоеточие» принимала
+ * `8.8.8.8:53` и `a:b`, из-за чего кнопка сохранения оставалась активной, а
+ * бэкенд отвечал 400.
+ */
+export function isIPv6(str: string): boolean {
+    if (!/^[0-9a-fA-F:]+$/.test(str)) return false;
+    const halves = str.split('::');
+    if (halves.length > 2) return false;
+    const split = (part: string) => (part === '' ? [] : part.split(':'));
+    const groups = [...split(halves[0]), ...split(halves[1] ?? '')];
+    if (groups.some((g) => !/^[0-9a-fA-F]{1,4}$/.test(g))) return false;
+    return halves.length === 2 ? groups.length <= 7 : groups.length === 8;
+}
+
 export function isCIDR(str: string): boolean {
     const slash = str.indexOf('/');
     if (slash === -1) return false;

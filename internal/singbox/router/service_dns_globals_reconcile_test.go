@@ -16,7 +16,7 @@ import (
 func TestApplyStaging_CallsReconcileBaseDNSStrategy(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 	calls := 0
-	svc.deps.ReconcileBaseDNSStrategy = func() error { calls++; return nil }
+	svc.deps.ReconcileBaseOwnedScalars = func() error { calls++; return nil }
 
 	_ = svc.deps.Orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotBase, Filename: "00-base.json", AlwaysOn: true})
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
@@ -41,7 +41,7 @@ func TestApplyStaging_CallsReconcileBaseDNSStrategy(t *testing.T) {
 func TestApplyStaging_NoReconcileWhenApplyFails(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	calls := 0
-	svc.deps.ReconcileBaseDNSStrategy = func() error { calls++; return nil }
+	svc.deps.ReconcileBaseOwnedScalars = func() error { calls++; return nil }
 
 	// Черновик ссылается на неизвестный outbound → ApplyDraft не Ok.
 	cfg := NewEmptyConfig()
@@ -62,7 +62,7 @@ func TestApplyStaging_NoReconcileWhenApplyFails(t *testing.T) {
 // Ошибка примирения — best-effort: успешное применение она не валит.
 func TestApplyStaging_ReconcileErrorDoesNotFailApply(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
-	svc.deps.ReconcileBaseDNSStrategy = func() error { return errors.New("boom") }
+	svc.deps.ReconcileBaseOwnedScalars = func() error { return errors.New("boom") }
 
 	_ = svc.deps.Orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotBase, Filename: "00-base.json", AlwaysOn: true})
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
@@ -101,7 +101,7 @@ func TestFakeIPSetDNSGlobals_CallsReconcileBaseDNSStrategy(t *testing.T) {
 	svc, _ := newFakeIPTestService(t)
 	seedFakeIPLocked(t, svc) // overlay кладёт "real"-сервер, без него SetDNSGlobals не примет final
 	calls := 0
-	svc.deps.ReconcileBaseDNSStrategy = func() error { calls++; return nil }
+	svc.deps.ReconcileBaseOwnedScalars = func() error { calls++; return nil }
 
 	if err := svc.FakeIPSetDNSGlobals(context.Background(), "real", "ipv4_only"); err != nil {
 		t.Fatalf("FakeIPSetDNSGlobals: %v", err)

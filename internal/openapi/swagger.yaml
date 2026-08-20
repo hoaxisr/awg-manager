@@ -3386,6 +3386,15 @@ definitions:
         maximum: 720
         minimum: 1
         type: integer
+      singboxBootstrapDNS:
+        description: |-
+          SingboxBootstrapDNS is the address of the dns-bootstrap resolver in
+          00-base.json — the resolver sing-box uses for domain addresses in
+          dial fields (tunnel endpoints, subscription servers). It answers
+          before any other resolver exists, so it must be a literal IP, no
+          hostname and no port. Empty leaves 00-base.json untouched.
+        example: 8.8.8.8
+        type: string
       updates:
         $ref: '#/definitions/api.UpdateSettingsDTO'
       usageLevel:

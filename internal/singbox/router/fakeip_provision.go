@@ -124,14 +124,37 @@ func DefaultFakeIPTunParams() FakeIPTunParams {
 	}
 }
 
-// resolveFakeIPParams overlays the user-editable engine settings (pool4/6,
+// resolveFakeIPParams — вариант для сервиса: адрес bootstrap берётся из
+// живых настроек, а не из снимка времени сборки зависимостей.
+func (s *ServiceImpl) resolveFakeIPParams(sr storage.SingboxRouterSettings) FakeIPTunParams {
+	return resolveFakeIPParamsWith(s.deps.FakeIPTun, sr, s.bootstrapDNS())
+}
+
+// bootstrapDNS читает общий адрес bootstrap-резолвера; пусто, когда стор не
+// подключён (тестовые wiring'и) или настройка не задана.
+func (s *ServiceImpl) bootstrapDNS() string {
+	if s.deps.Settings == nil {
+		return ""
+	}
+	return s.deps.Settings.GetSingboxBootstrapDNS()
+}
+
+// resolveFakeIPParamsWith overlays the user-editable engine settings (pool4/6,
 // MTU, real upstream) from sr onto the wired static params base, returning
 // the effective FakeIPTunParams. Single source of truth shared by
 // enableFakeIPTun and the fakeip config overlay so the live tun/cache/pool
 // can never diverge from what the user is editing. Mirrors the merge formerly
 // inlined in enableFakeIPTun.
-func resolveFakeIPParams(base FakeIPTunParams, sr storage.SingboxRouterSettings) FakeIPTunParams {
+// bootstrapDNS — общий адрес bootstrap-резолвера sing-box
+// (Settings.SingboxBootstrapDNS). Он подставляется в "real", когда своя
+// настройка FakeIP не задана: в режиме fakeip-tun резолвером доменных
+// адресов владеет слот fakeip, и без этого общая настройка bootstrap в
+// этом режиме не влияла бы ни на что (issue #770).
+func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSettings, bootstrapDNS string) FakeIPTunParams {
 	p := base
+	if bootstrapDNS != "" {
+		p.RealServer = bootstrapDNS
+	}
 	if sr.FakeIPPool4 != "" {
 		p.Inet4Range = sr.FakeIPPool4
 	}

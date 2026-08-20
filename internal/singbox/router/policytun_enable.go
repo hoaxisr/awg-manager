@@ -36,7 +36,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// ГОЧА: resolveFakeIPParams обнуляет TunAddr6 при пустом sr.FakeIPPool6, то
 	// есть v6 в policy-tun скрыто зависит от настройки fakeip-пула. Осознанно:
 	// отдельную настройку адресов policy-tun не заводим.
-	p := resolveFakeIPParams(s.deps.FakeIPTun, sr)
+	p := s.resolveFakeIPParams(sr)
 	// Д3: MTU — пользовательская настройка СТРАНИЦЫ FAKEIP; policy-tun её
 	// молча наследовал. У policy-tun своей ручки MTU нет — используем
 	// проводной статический дефолт. (Скрытая v6-зависимость от FakeIPPool6

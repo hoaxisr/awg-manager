@@ -167,7 +167,7 @@ func (s *ServiceImpl) policyTunIngressSpec(ctx context.Context, iface, ndmsName 
 		return spec, true
 	}
 
-	tunDNS, err := DeriveTunDNS(resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr4)
+	tunDNS, err := DeriveTunDNS(s.resolveFakeIPParams(sr).TunAddr4)
 	if err != nil {
 		// Маршрутную половину заворота сохраняем: она от DNS не зависит.
 		s.appLog.Warn("policy-tun-ingress", iface, "derive tun DNS: "+err.Error())
@@ -294,7 +294,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 				s.notifyRoutingSlotsChanged()
 				// По той же причине здесь и примирение base: владелец
 				// dns.strategy сменился мимо enableLocked/Disable.
-				s.reconcileBaseDNSStrategy()
+				s.reconcileBaseOwnedScalars()
 			}
 		}
 	}
@@ -315,7 +315,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// гасить ретрай упавшего v6. Гейт по адресу: на интерфейсе без v6 разрешать
 	// нечего.
 	if !s.policyTunACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
-		resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != "" {
+		s.resolveFakeIPParams(sr).TunAddr6 != "" {
 		if e := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl v6: "+e.Error())
 		} else {
@@ -358,7 +358,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		s.appLog.Warn("policy-tun-reconcile", iface, "running-config: "+err.Error())
 		return
 	}
-	wantV6 := resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != ""
+	wantV6 := s.resolveFakeIPParams(sr).TunAddr6 != ""
 
 	v4, v6 := policyTunDefaultRoutePresent(lines, ndmsName)
 	global := policyTunIPGlobalPresent(lines, ndmsName)

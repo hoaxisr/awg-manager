@@ -1354,8 +1354,12 @@ func TestNormalizeSingboxRouterSettings_DefaultsFakeIPFields(t *testing.T) {
 	if out.FakeIPMTU != def.MTU {
 		t.Errorf("FakeIPMTU = %d, want %d", out.FakeIPMTU, def.MTU)
 	}
-	if out.FakeIPRealServer != def.RealServer {
-		t.Errorf("FakeIPRealServer = %q, want %q", out.FakeIPRealServer, def.RealServer)
+	// Д3: realServer — второе ИСКЛЮЧЕНИЕ из дефолтинга (issue #770). Штамп
+	// константы делал «значения не было» неотличимым от «пользователь выбрал
+	// 1.1.1.1», и общий Bootstrap-DNS не мог подставиться никогда. Пустое
+	// сохраняется дословно; эффективный адрес выбирает resolveFakeIPParamsWith.
+	if out.FakeIPRealServer != "" {
+		t.Errorf("FakeIPRealServer = %q, want %q (пустое значимо)", out.FakeIPRealServer, "")
 	}
 }
 
