@@ -36,7 +36,7 @@ func (c *WireguardCommands) SetASCParams(ctx context.Context, name string, param
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set asc params "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set asc params "+name,
 		func() {
 			c.queries.Interfaces.Invalidate(name)
 			if c.queries.WGServers != nil {

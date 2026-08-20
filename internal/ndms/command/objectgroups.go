@@ -29,7 +29,8 @@ func (c *ObjectGroupCommands) DeleteGroups(ctx context.Context, names []string) 
 	payload := map[string]any{
 		"object-group": map[string]any{"fqdn": fqdn},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "delete fqdn groups",
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete fqdn groups",
+		isNoInput,
 		c.queries.ObjectGroups.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -63,7 +64,7 @@ func (c *ObjectGroupCommands) UpsertGroup(ctx context.Context, m FQDNGroupMutati
 			"fqdn": map[string]any{m.Name: group},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "upsert fqdn group "+m.Name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "upsert fqdn group "+m.Name,
 		c.queries.ObjectGroups.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }

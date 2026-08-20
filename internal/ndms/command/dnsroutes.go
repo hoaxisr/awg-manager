@@ -47,7 +47,8 @@ func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, specs []DNSRouteSpe
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "delete dns-proxy routes",
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete dns-proxy routes",
+		isMissingDNSRouteRule,
 		c.queries.DNSProxy.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -118,7 +119,7 @@ func (c *DNSRouteCommands) UpsertRoutes(ctx context.Context, specs []DNSRouteSpe
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "upsert dns-proxy routes",
+	return postMutationChecked(ctx, c.poster, c.save, payload, "upsert dns-proxy routes",
 		c.queries.DNSProxy.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }

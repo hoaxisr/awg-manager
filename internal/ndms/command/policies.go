@@ -29,7 +29,7 @@ func (c *PolicyCommands) CreatePolicy(ctx context.Context, name, description str
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "create policy "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "create policy "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -42,7 +42,8 @@ func (c *PolicyCommands) DeletePolicy(ctx context.Context, name string) error {
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "delete policy "+name,
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete policy "+name,
+		isNoInput,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -55,7 +56,7 @@ func (c *PolicyCommands) SetDescription(ctx context.Context, name, description s
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set policy description "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set policy description "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -74,7 +75,7 @@ func (c *PolicyCommands) SetStandalone(ctx context.Context, name string, enabled
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "set standalone "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "set standalone "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -93,7 +94,7 @@ func (c *PolicyCommands) PermitInterface(ctx context.Context, name, iface string
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "permit "+iface+" on "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "permit "+iface+" on "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -112,7 +113,7 @@ func (c *PolicyCommands) DenyInterface(ctx context.Context, name, iface string) 
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "deny "+iface+" on "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "deny "+iface+" on "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -128,7 +129,7 @@ func (c *PolicyCommands) AssignDevice(ctx context.Context, mac, policyName strin
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "assign device "+mac+" to "+policyName,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "assign device "+mac+" to "+policyName,
 		c.queries.Hotspot.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
@@ -144,7 +145,7 @@ func (c *PolicyCommands) UnassignDevice(ctx context.Context, mac string) error {
 			},
 		},
 	}
-	return postMutation(ctx, c.poster, c.save, payload, "unassign device "+mac,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "unassign device "+mac,
 		c.queries.Hotspot.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
