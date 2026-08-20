@@ -20,6 +20,12 @@ import (
 // per tick.
 const exposureCheckInterval = 60 * time.Minute
 
+// exposureRetryInterval is used after a failed read instead of the full
+// hour. The daemon routinely starts before NDMS is up, so the very first
+// check after a router reboot fails — waiting an hour to retry would leave
+// that window unchecked.
+const exposureRetryInterval = 5 * time.Minute
+
 // Narrow store interfaces — fake-friendly, no *ndmsquery.Queries in tests.
 type staticNATLister interface {
 	List(ctx context.Context) ([]ndmsquery.StaticNATEntry, error)
@@ -78,18 +84,20 @@ func NewExposureGuard(store *storage.SettingsStore, static staticNATLister, prox
 // SetEventBus sets the event bus for SSE publishing.
 func (g *ExposureGuard) SetEventBus(bus *events.Bus) { g.bus = bus }
 
-// Start runs Check now and then every exposureCheckInterval until ctx ends.
+// Start re-checks until ctx ends: every exposureCheckInterval normally,
+// every exposureRetryInterval after a check that could not read the
+// router config.
 func (g *ExposureGuard) Start(ctx context.Context) {
 	go func() {
-		g.Check(ctx)
-		t := time.NewTicker(exposureCheckInterval)
-		defer t.Stop()
 		for {
+			delay := exposureCheckInterval
+			if !g.check(ctx) {
+				delay = exposureRetryInterval
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
-				g.Check(ctx)
+			case <-time.After(delay):
 			}
 		}
 	}()
@@ -97,33 +105,39 @@ func (g *ExposureGuard) Start(ctx context.Context) {
 
 // Check enables authentication if the manager is exposed without it.
 // Safe to call from anywhere; does nothing when auth is already on.
-func (g *ExposureGuard) Check(ctx context.Context) {
+func (g *ExposureGuard) Check(ctx context.Context) { g.check(ctx) }
+
+// check reports whether the state could be determined. False means the
+// settings or the router config were unreadable — the caller should come
+// back sooner than the regular interval.
+func (g *ExposureGuard) check(ctx context.Context) bool {
 	settings, err := g.store.Get()
 	if err != nil {
 		g.log.Warn("auth", "", "Exposure check skipped: "+err.Error())
-		return
+		return false
 	}
 	if settings.AuthEnabled {
-		return
+		return true
 	}
 	reason, err := g.detect(ctx, strconv.Itoa(settings.Server.Port))
 	if err != nil {
 		g.log.Warn("auth", "", "Exposure check skipped: "+err.Error())
-		return
+		return false
 	}
 	if reason == "" {
-		return
+		return true
 	}
 	changed, err := g.store.SetAuthEnabled(true)
 	if err != nil {
 		g.log.Error("auth", "", "Failed to enable authentication after exposure: "+err.Error())
-		return
+		return false
 	}
 	if !changed {
-		return
+		return true
 	}
 	g.log.Warn("auth", "", "Authentication enabled automatically: "+reason)
 	publishInvalidated(g.bus, ResourceSettings, "exposure-guard")
+	return true
 }
 
 // detect returns a human-readable reason when the manager is exposed

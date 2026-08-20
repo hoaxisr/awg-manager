@@ -241,6 +241,21 @@ func TestExposureGuard_FailOpen(t *testing.T) {
 	}
 }
 
+// A check that could not read the router config must ask to be retried
+// sooner — the first check after a router reboot lands before NDMS is up.
+func TestExposureGuard_CheckReportsRetryNeeded(t *testing.T) {
+	boom := errors.New("ndms unreachable")
+	g, _ := guardWithPort(t, 2222, fakeStaticNAT{err: boom}, fakeHTTPProxy{}, routerIfaces())
+	if g.check(context.Background()) {
+		t.Error("check = true on an unreadable config, want false (retry sooner)")
+	}
+
+	g2, _ := guardWithPort(t, 2222, fakeStaticNAT{}, fakeHTTPProxy{}, routerIfaces())
+	if !g2.check(context.Background()) {
+		t.Error("check = false on a readable config, want true (regular interval)")
+	}
+}
+
 // The guard never turns authentication off.
 func TestExposureGuard_NeverDisables(t *testing.T) {
 	g, store := guardWithPort(t, 2222, fakeStaticNAT{}, fakeHTTPProxy{}, routerIfaces())
