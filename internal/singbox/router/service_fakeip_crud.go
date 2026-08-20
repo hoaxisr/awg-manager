@@ -86,7 +86,7 @@ func (s *ServiceImpl) FakeIPSetDNSGlobals(ctx context.Context, final, strategy s
 	}
 	// Слот 21 пишется напрямую, мимо staging — примирить base здесь, иначе
 	// в fakeip-режиме выбор strategy затеняется навсегда.
-	s.reconcileBaseDNSStrategy()
+	s.reconcileBaseOwnedScalars()
 	return nil
 }
 

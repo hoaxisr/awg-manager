@@ -414,6 +414,11 @@ type Deps struct {
 	// пользователя до перезапуска демона. Best-effort: ошибка не валит
 	// успешное применение. Optional — nil в тестах.
 	ReconcileBaseDNSStrategy func() error
+	// ReconcileBaseDomainResolver примиряет route.default_domain_resolver
+	// 00-base.json с владением routing-слота: пока база несёт свой ключ,
+	// резолвер роутера (fakeip-tun ставит "real") выбрасывается мержем.
+	// Опционален — nil означает «шаг не подключён».
+	ReconcileBaseDomainResolver func() error
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger

@@ -282,6 +282,13 @@ export interface Settings {
 	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
 	monitoringExcludedTunnels?: string[];
+	/**
+	 * Адрес bootstrap-резолвера sing-box (dns-bootstrap в 00-base.json):
+	 * им резолвятся доменные адреса endpoint'ов туннелей и серверов
+	 * подписок. Отвечает раньше любого другого DNS, поэтому только IP.
+	 * Пусто — адрес в конфиге не навязывается (issue #770).
+	 */
+	singboxBootstrapDNS?: string;
 }
 
 // #endregion

@@ -279,6 +279,10 @@ type OperatorDeps struct {
 	// SingboxLogLevel returns desired sing-box log.level from settings.
 	// Optional; defaults to "info".
 	SingboxLogLevel func() string
+	// BootstrapDNS returns the desired dns-bootstrap address from settings
+	// (Settings.SingboxBootstrapDNS). Optional; empty result means "do not
+	// touch 00-base.json" — see patchBaseBootstrapDNS.
+	BootstrapDNS func() string
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -303,10 +307,15 @@ func NewOperator(d OperatorDeps) *Operator {
 		desiredSingboxLogLevel = normalizeSingboxLogLevel(d.SingboxLogLevel())
 	}
 
+	desiredBootstrapDNS := ""
+	if d.BootstrapDNS != nil {
+		desiredBootstrapDNS = d.BootstrapDNS()
+	}
+
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, log) {
+	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, log) {
 		s.run()
 	}
 

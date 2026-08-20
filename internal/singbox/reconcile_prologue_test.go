@@ -20,7 +20,6 @@ func TestPatchers_WarnOnBrokenFile_SilentOnMissing(t *testing.T) {
 	cases := []tc{
 		{"patch-base-clash-port", func(p string, l *slog.Logger) { patchBaseClashPort(p, l) }},
 		{"patch-base-log-level", func(p string, l *slog.Logger) { patchBaseLogLevel(p, "info", l) }},
-		{"patch-base-domain-resolver", func(p string, l *slog.Logger) { patchBaseDomainResolver(p, l) }},
 		{"patch-base-direct-outbound", func(p string, l *slog.Logger) { patchBaseDirectOutbound(p, l) }},
 		{"patch-base-cache-file", func(p string, l *slog.Logger) { patchBaseCacheFilePath(p, l) }},
 		{"patch-base-dns-strategy", func(p string, l *slog.Logger) { patchBaseDNSStrategy(p, l) }},
@@ -112,6 +111,28 @@ func TestEnsureLegacyConfigMigrated_WarnsOnBrokenLegacy(t *testing.T) {
 	}
 	if _, err := os.Stat(legacy); err != nil {
 		t.Fatalf("legacy must stay in place for retry: %v", err)
+	}
+}
+
+// reconcileBaseDomainResolver работает по каталогу: битая база — Warn с именем
+// шага, пустой каталог — тишина.
+func TestReconcileBaseDomainResolver_WarnsOnBrokenBase(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	dir := t.TempDir()
+
+	reconcileBaseDomainResolver(dir, log)
+	if strings.Contains(buf.String(), "WARN") {
+		t.Fatalf("empty dir must be silent, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	if err := os.WriteFile(filepath.Join(dir, "00-base.json"), []byte("{oops"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reconcileBaseDomainResolver(dir, log)
+	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "patch-base-domain-resolver") {
+		t.Fatalf("want WARN with step %q, got: %s", "patch-base-domain-resolver", buf.String())
 	}
 }
 

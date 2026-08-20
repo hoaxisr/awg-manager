@@ -121,6 +121,12 @@ type SettingsData struct {
 	// enum value over the example tag); putting `expert` first means
 	// dev:mock surfaces all advanced UI without manual toggling.
 	UsageLevel string `json:"usageLevel" example:"expert" enums:"expert,advanced,basic"`
+	// SingboxBootstrapDNS is the address of the dns-bootstrap resolver in
+	// 00-base.json — the resolver sing-box uses for domain addresses in
+	// dial fields (tunnel endpoints, subscription servers). It answers
+	// before any other resolver exists, so it must be a literal IP, no
+	// hostname and no port. Empty leaves 00-base.json untouched.
+	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty" example:"8.8.8.8"`
 }
 
 // SettingsResponse is the envelope for GET /settings/get.
@@ -151,6 +157,7 @@ type SettingsHandler struct {
 	logsSnapshot            func()
 	applyLogSettings        func()
 	applySingboxLogSettings func() error
+	applyBootstrapDNS       func(string) error
 	downloadSvc             *downloader.Service
 	log                     *logging.ScopedLogger
 	bus                     *events.Bus
@@ -211,6 +218,12 @@ func (h *SettingsHandler) SetApplyLoggingSettings(fn func()) { h.applyLogSetting
 // log-level into 00-base.json and triggers orchestrator-driven reload.
 func (h *SettingsHandler) SetApplySingboxLogSettings(fn func() error) {
 	h.applySingboxLogSettings = fn
+}
+
+// SetApplyBootstrapDNS wires the hook that pushes a changed dns-bootstrap
+// address into the running sing-box (issue #770).
+func (h *SettingsHandler) SetApplyBootstrapDNS(fn func(string) error) {
+	h.applyBootstrapDNS = fn
 }
 
 func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
@@ -343,6 +356,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bootstrap-резолвер поднимается ДО всякого DNS, поэтому домен здесь
+	// неработоспособен — только литеральный IP (issue #770). Пустое значение
+	// снимает настройку: 00-base.json остаётся как есть.
+	merged.SingboxBootstrapDNS = strings.TrimSpace(merged.SingboxBootstrapDNS)
+	if merged.SingboxBootstrapDNS != "" && net.ParseIP(merged.SingboxBootstrapDNS) == nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			"адрес bootstrap-DNS должен быть IP-адресом без порта",
+			"INVALID_SINGBOX_BOOTSTRAP_DNS")
+		return
+	}
+
 	// Validate usageLevel after merge. Empty merged.UsageLevel is
 	// impossible because oldSettings always carries a value (default
 	// settings populate it; migration v15 backfills it), so we only
@@ -432,6 +456,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"",
 			fmt.Sprintf("Sing-box log level changed: %s -> %s", oldSingboxLogLevel, newSingboxLogLevel),
 		)
+	}
+
+	if oldSettings.SingboxBootstrapDNS != merged.SingboxBootstrapDNS && h.applyBootstrapDNS != nil {
+		if err := h.applyBootstrapDNS(merged.SingboxBootstrapDNS); err != nil {
+			h.log.Error("singbox-bootstrap-dns", "", "failed to apply bootstrap DNS: "+err.Error())
+			response.Error(w, err.Error(), "SINGBOX_BOOTSTRAP_DNS_APPLY_ERROR")
+			return
+		}
+		h.log.Info("singbox-bootstrap-dns", "",
+			fmt.Sprintf("Sing-box bootstrap DNS changed: %s -> %s",
+				orDefaultLabel(oldSettings.SingboxBootstrapDNS), orDefaultLabel(merged.SingboxBootstrapDNS)))
 	}
 
 	// Handle ping check toggle AFTER settings are saved
@@ -784,4 +819,13 @@ func (h *SettingsHandler) triggerMonitoringRefresh() {
 		defer cancel()
 		h.monitoring.RefreshNow(ctx)
 	}()
+}
+
+// orDefaultLabel рисует пустую настройку bootstrap-DNS как «по умолчанию» —
+// в журнале пустая строка выглядела бы как потерянное значение.
+func orDefaultLabel(v string) string {
+	if v == "" {
+		return "по умолчанию"
+	}
+	return v
 }

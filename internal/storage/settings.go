@@ -919,6 +919,16 @@ func (s *SettingsStore) GetSingboxLogLevel() string {
 	return NormalizeSingboxLogLevel(settings.Logging.SingboxLogLevel)
 }
 
+// GetSingboxBootstrapDNS returns the configured dns-bootstrap address.
+// Empty means "not configured" — 00-base.json is left alone.
+func (s *SettingsStore) GetSingboxBootstrapDNS() string {
+	settings, err := s.Get()
+	if err != nil {
+		return ""
+	}
+	return settings.SingboxBootstrapDNS
+}
+
 // GetLoggingMaxAge returns the max age for log entries in hours.
 func (s *SettingsStore) GetLoggingMaxAge() int {
 	settings, err := s.Get()

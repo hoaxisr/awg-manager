@@ -133,6 +133,12 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	// settings PUT — without this the live buffers keep stale caps until
 	// the next AppLog tick (lazy apply path was removed).
 	h.settingsHandler.SetApplyLoggingSettings(s.loggingService.ApplySettings)
+	h.settingsHandler.SetApplyBootstrapDNS(func(server string) error {
+		if s.singboxOp == nil {
+			return nil
+		}
+		return s.singboxOp.ApplyBootstrapDNS(server)
+	})
 	h.settingsHandler.SetApplySingboxLogSettings(func() error {
 		if s.singboxOp == nil || s.settings == nil {
 			return nil
