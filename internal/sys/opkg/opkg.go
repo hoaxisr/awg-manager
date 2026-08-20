@@ -90,6 +90,11 @@ func (c *Client) run(args ...string) (stdout string, exitCode int, err error) {
 // наши вызовы.
 var ErrLocked = errors.New("opkg занят другим процессом: дождитесь окончания его работы")
 
+// ErrBusy — работает наша же долгая операция (update/upgrade/install).
+// Чтения не встают в её очередь: ожидание до пяти минут неотличимо от
+// зависшей страницы, а отказ виден сразу.
+var ErrBusy = errors.New("выполняется другая операция opkg: дождитесь её окончания")
+
 // lockedByOther распознаёт занятую базу по сообщению opkg.
 func lockedByOther(out string) bool {
 	low := strings.ToLower(out)
@@ -101,6 +106,20 @@ func lockedByOther(out string) bool {
 func (c *Client) runLocked(args ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.runHeld(args...)
+}
+
+// runLockedRead — то же, но без ожидания: занятый клиент отвечает ErrBusy.
+func (c *Client) runLockedRead(args ...string) (string, error) {
+	if !c.mu.TryLock() {
+		return "", ErrBusy
+	}
+	defer c.mu.Unlock()
+	return c.runHeld(args...)
+}
+
+// runHeld выполняет opkg; вызывается с уже взятым мьютексом.
+func (c *Client) runHeld(args ...string) (string, error) {
 	out, code, err := c.run(args...)
 	if err != nil {
 		if lockedByOther(out) {
@@ -134,7 +153,7 @@ func isBenignEmptyList(args []string, out string, code int) bool {
 
 // ListInstalled returns installed packages enriched from opkg status.
 func (c *Client) ListInstalled() ([]Package, error) {
-	text, err := c.runLocked("list-installed")
+	text, err := c.runLockedRead("list-installed")
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +172,7 @@ func (c *Client) ListInstalled() ([]Package, error) {
 
 // ListUpgradable returns packages with available upgrades.
 func (c *Client) ListUpgradable() ([]Package, error) {
-	text, err := c.runLocked("list-upgradable")
+	text, err := c.runLockedRead("list-upgradable")
 	if err != nil {
 		return nil, err
 	}
@@ -195,10 +214,12 @@ func (c *Client) ListAvailable(query string, offset, limit int) (items []Package
 }
 
 func (c *Client) allAvailable() ([]Package, error) {
-	c.mu.Lock()
+	if !c.mu.TryLock() {
+		return nil, ErrBusy
+	}
 	defer c.mu.Unlock()
 	if len(c.listCache) > 0 && time.Since(c.listCached) < listCacheTTL {
-		return append([]Package(nil), c.listCache...), nil
+		return append([]Package{}, c.listCache...), nil
 	}
 	text, _, err := c.run("list")
 	if err != nil && strings.TrimSpace(text) == "" {
@@ -207,7 +228,7 @@ func (c *Client) allAvailable() ([]Package, error) {
 	pkgs := parseList(text)
 	c.listCache = pkgs
 	c.listCached = time.Now()
-	return append([]Package(nil), pkgs...), nil
+	return append([]Package{}, pkgs...), nil
 }
 
 // Search finds installable packages by query (opkg find).
@@ -221,7 +242,7 @@ func (c *Client) Search(query string) ([]Package, error) {
 	if err := validatePkgNames([]string{query}); err != nil {
 		return nil, err
 	}
-	text, err := c.runLocked("find", query)
+	text, err := c.runLockedRead("find", query)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +380,7 @@ func readStatusMeta() map[string]statusMeta {
 }
 
 func parseList(text string) []Package {
-	var out []Package
+	out := []Package{}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	n := 0
 	for sc.Scan() {
@@ -386,7 +407,7 @@ func parseList(text string) []Package {
 }
 
 func parseInstalled(text string) []Package {
-	var out []Package
+	out := []Package{}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -404,7 +425,7 @@ func parseInstalled(text string) []Package {
 }
 
 func parseUpgradable(text string) []Package {
-	var out []Package
+	out := []Package{}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
