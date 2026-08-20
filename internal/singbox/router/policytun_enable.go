@@ -217,14 +217,14 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable policy-tun: ip global: %w", err)
 	}
 
+	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
+		return fmt.Errorf("enable policy-tun: set address: %w", err)
+	}
+
 	// NDMS-native разрешение трафика в tun: permit-all access-list + binding.
 	// Без него firewall NDMS (isolate-private и т.п.) режет форвард в tun.
 	if err = s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: permit acl: %w", err)
-	}
-
-	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
-		return fmt.Errorf("enable policy-tun: set address: %w", err)
 	}
 	if addr6 != "" {
 		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
