@@ -322,16 +322,18 @@ func (o *Operator) Install(ctx context.Context) error {
 }
 
 // Uninstall снимает установленный движок: останавливает процесс и удаляет
-// его артефакты — бинарь, слоты config.d, кэш FakeIP, pid и журналы процесса.
+// каталог движка целиком (бинарь, слоты config.d, кэш FakeIP, pid) вместе с
+// журналами процесса.
 //
-// Каталог движка целиком НЕ сносится: удаляются ровно свои файлы, чужое рядом
-// переживает удаление. Настройки AWGM (подписки, правила маршрутизации,
-// device-proxy) живут в settings.json и здесь не трогаются — повторная
-// установка возвращает рабочее состояние.
+// Каталог принадлежит нам целиком — это подкаталог singbox в данных AWGM, а не
+// общее место, — поэтому сносим его одним движением, без разбора файлов по
+// именам. Настройки AWGM (подписки, правила маршрутизации, device-proxy) живут
+// в settings.json и здесь не трогаются: повторная установка возвращает рабочее
+// состояние.
 //
-// Идемпотентно: отсутствующий артефакт не ошибка. Гейт «маршрутизация
-// включена» стоит выше, на уровне API: снимать за пользователя правила
-// iptables и OpkgTun эта функция не умеет и не должна.
+// Идемпотентно: отсутствующий каталог не ошибка. Гейт «маршрутизация включена»
+// стоит выше, на уровне API: снимать за пользователя правила iptables и
+// OpkgTun эта функция не умеет и не должна.
 func (o *Operator) Uninstall(ctx context.Context) error {
 	if !o.installBusy.CompareAndSwap(false, true) {
 		return ErrInstallInProgress
@@ -347,10 +349,7 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 
 	logDir := o.proc.effectiveLogDir()
 	targets := []string{
-		o.binary,
-		o.configPath,
-		filepath.Join(o.dir, "cache.db"),
-		o.pidPath,
+		o.dir,
 		filepath.Join(logDir, procOutLogName),
 		filepath.Join(logDir, procErrLogName),
 	}

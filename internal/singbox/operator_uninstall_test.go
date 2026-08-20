@@ -64,13 +64,11 @@ func TestOperator_Uninstall_Idempotent(t *testing.T) {
 	}
 }
 
-// Чужие файлы в каталоге движка удаление не трогает: сносим ровно свои
-// артефакты, а не весь каталог.
-func TestOperator_Uninstall_KeepsForeignFiles(t *testing.T) {
+// Каталог движка сносится целиком — вместе со всем, что в нём лежало.
+func TestOperator_Uninstall_RemovesEngineDirectory(t *testing.T) {
 	dir := t.TempDir()
 	binary, _ := seedInstallation(t, dir)
-	foreign := filepath.Join(dir, "заметка.txt")
-	if err := os.WriteFile(foreign, []byte("не наше"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json.bak"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
@@ -78,8 +76,8 @@ func TestOperator_Uninstall_KeepsForeignFiles(t *testing.T) {
 	if err := op.Uninstall(context.Background()); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
-	if _, err := os.Stat(foreign); err != nil {
-		t.Errorf("чужой файл удалён: %v", err)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("каталог движка остался: %v", err)
 	}
 }
 
