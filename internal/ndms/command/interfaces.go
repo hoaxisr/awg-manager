@@ -148,14 +148,20 @@ func (c *InterfaceCommands) ClearAddress(ctx context.Context, name string) error
 }
 
 // SetIPv6Address sets a single IPv6 address on the interface, clearing
-// any existing IPv6 assignments in the same call.
+// any existing IPv6 assignments in the same call. The clearing element is
+// `no:true` — an empty element clears nothing and NDMS answers it with
+// `no input [http/rci 127.0.0.1]` (Command::Root refusing an argument-less
+// command), which since the response check landed fails the whole call even
+// though the address itself was applied. Both forms verified on the stand
+// (KeeneticOS 5.01): `no:true` answers "cleared addresses" and is idempotent
+// on an interface with no addresses.
 func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, name, address string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
 				"ipv6": map[string]any{
 					"address": []any{
-						map[string]any{},
+						map[string]any{"no": true},
 						map[string]any{"block": address + "/128"},
 					},
 				},
