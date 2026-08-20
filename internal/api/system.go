@@ -437,14 +437,14 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 	nativewgAvail, nativewgReason := nativewgStatus()
 
 	return map[string]interface{}{
-		"version":                     h.version,
-		"goVersion":                   runtime.Version(),
-		"goArch":                      runtime.GOARCH,
-		"goOS":                        runtime.GOOS,
-		"keeneticOS":                  string(osdetect.Get()),
-		"isOS5":                       osdetect.Is5(),
-		"firmwareVersion":             osdetect.ReleaseString(),
-		"supportsExtendedASC":         osdetect.AtLeast(5, 1),
+		"version":             h.version,
+		"goVersion":           runtime.Version(),
+		"goArch":              runtime.GOARCH,
+		"goOS":                runtime.GOOS,
+		"keeneticOS":          string(osdetect.Get()),
+		"isOS5":               osdetect.Is5(),
+		"firmwareVersion":     osdetect.ReleaseString(),
+		"supportsExtendedASC": osdetect.AtLeast(5, 1),
 		// Режимы fakeip-tun/policy-tun строятся на OpkgTun, которого нет в
 		// KeeneticOS 4.x — фронт гейтит их по этому флагу (issue #768).
 		"supportsOpkgTun":             osdetect.SupportsOpkgTun(),

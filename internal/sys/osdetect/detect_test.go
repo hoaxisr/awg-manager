@@ -79,8 +79,8 @@ func TestSupportsOpkgTunRelease(t *testing.T) {
 		{"4.03.C.8.0-0", false}, // прошивка репортёра #768
 		{"4.3", false},
 		{"3.9.C.1.0-0", false},
-		{"", true},         // версия неизвестна — не блокируем (fail-open)
-		{"мусор", true},    // распарсить не смогли — тоже fail-open
+		{"", true},      // версия неизвестна — не блокируем (fail-open)
+		{"мусор", true}, // распарсить не смогли — тоже fail-open
 		{"10.0.A.1.0-0", true},
 	}
 	for _, c := range cases {

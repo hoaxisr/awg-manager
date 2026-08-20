@@ -360,15 +360,31 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 			// Снимаем маскарад ТОЛЬКО у динамических: у static его нет, а у
 			// none снимать нечего.
 			if err := s.deps.SegmentNAT.RemoveSegmentNAT(ctx, seg); err != nil {
+				if segmentGone(err) {
+					recorded = recorded[:len(recorded)-1]
+					continue
+				}
 				return recorded, fmt.Errorf("policy-tun source-preserve: no ip nat %s: %w", seg, err)
 			}
 		}
 		// По записи на КАЖДЫЙ выход политики: SNAT нужен там, куда трафик
 		// сегмента реально уходит, а не только на WAN по дефолтному маршруту.
+		// Сегмент, исчезнувший с роутера между сканом и мутацией, роняет
+		// включение целиком — а восстанавливать на нём всё равно нечего.
+		// Пропускаем вместе с его записью.
+		vanished := false
 		for _, target := range targets {
 			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, seg, target); err != nil {
+				if segmentGone(err) {
+					vanished = true
+					break
+				}
 				return recorded, fmt.Errorf("policy-tun source-preserve: ip static %s %s: %w", seg, target, err)
 			}
+		}
+		if vanished {
+			recorded = recorded[:len(recorded)-1]
+			continue
 		}
 	}
 	return recorded, nil
@@ -455,25 +471,46 @@ func (s *ServiceImpl) restorePolicyTunNAT(ctx context.Context, recorded []storag
 	var errs []error
 	for _, rec := range recorded {
 		for _, wan := range wans[rec.Name] {
-			if err := s.deps.SegmentNAT.RemoveStaticNAT(ctx, rec.Name, wan); err != nil {
+			if err := s.deps.SegmentNAT.RemoveStaticNAT(ctx, rec.Name, wan); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("no ip static %s %s: %w", rec.Name, wan, err))
 			}
 		}
 		switch rec.PriorMode {
 		case natModeDynamic:
-			if err := s.deps.SegmentNAT.SetSegmentNAT(ctx, rec.Name); err != nil {
+			if err := s.deps.SegmentNAT.SetSegmentNAT(ctx, rec.Name); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("ip nat %s: %w", rec.Name, err))
 			}
 		case natModeStatic:
 			if rec.PriorStaticWAN == "" {
 				continue
 			}
-			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, rec.Name, rec.PriorStaticWAN); err != nil {
+			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, rec.Name, rec.PriorStaticWAN); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("ip static %s %s: %w", rec.Name, rec.PriorStaticWAN, err))
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// segmentGone распознаёт отказ роутера «такого интерфейса/сегмента нет».
+//
+// Формы NDMS: `no "X" IP interface found` (ip nat), `unknown interface "X"`
+// (ip static), `no such interface: X`. Предикат живёт здесь, а не тянется из
+// internal/ndms: router декаплен от ndms и знает о нём только через узкие
+// consumer-owned контракты.
+//
+// Сегмент, удалённый пользователем, пока policy-tun работал, — штатный дрейф:
+// восстанавливать на нём нечего. Считать это провалом нельзя, иначе запись
+// сегмента остаётся в персисте навсегда (автоматической повторной попытки у
+// восстановления нет).
+func segmentGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "ip interface found") ||
+		strings.Contains(msg, "unknown interface") ||
+		strings.Contains(msg, "no such interface")
 }
 
 // restoreRevokedPolicyTunNAT снимает source-preserve с сегментов, которых
