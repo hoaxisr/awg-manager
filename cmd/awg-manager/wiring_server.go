@@ -314,6 +314,13 @@ func (a *app) setupDeviceProxy() {
 // the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
 func (a *app) setupRouter() {
+	// Порты инбаундов sb-router лежат внутри эфемерного диапазона ядра
+	// (49000-61001 на Keenetic), поэтому исходящее соединение может занять
+	// их в окно рестарта sing-box и уронить старт с EADDRINUSE (#762).
+	if err := router.ReserveListenPorts(); err != nil {
+		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter).
+			Warn("reserve-ports", "", "зарезервировать порты инбаундов: "+err.Error())
+	}
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                   a.loggingService,
