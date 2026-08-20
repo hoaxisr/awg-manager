@@ -7,48 +7,16 @@ import (
 	"strings"
 )
 
-// postMutation is the common post-then-invalidate pattern shared by most
-// command methods: POST a single payload, wrap a transport error with
-// opDesc, Request a save on success, then run each cache invalidator.
+// postMutationChecked — базовый путь всех мутаций NDMS. Роутер отвечает
+// HTTP 200 и на отказ тоже, пряча его во вложенном status[]: транспортная
+// проверка такой ответ пропускает, поэтому проваленный шаг рапортовал бы об
+// успехе, а падало бы через шаг-другой и с чужой формулировкой (issue #768).
+// Найдя любой status:"error", вызов возвращает ошибку и НЕ просит save и НЕ
+// инвалидирует кэши.
 //
-// opDesc is used as an error prefix ("opDesc: <err>") — short present-tense
-// phrasing such as "create policy foo" reads best in logs.
-//
-// Invalidators are plain closures so callers can mix per-key
-// (`c.queries.Interfaces.Invalidate(name)`) and whole-store
-// (`c.queries.RunningConfig.InvalidateAll`) cache drops in the same call.
-// InvalidateAll without parens works as a method value.
-func postMutation(
-	ctx context.Context,
-	poster Poster,
-	save *SaveCoordinator,
-	payload any,
-	opDesc string,
-	invalidators ...func(),
-) error {
-	if _, err := poster.Post(ctx, payload); err != nil {
-		return fmt.Errorf("%s: %w", opDesc, err)
-	}
-	save.Request()
-	for _, inv := range invalidators {
-		inv()
-	}
-	return nil
-}
-
-// postMutationChecked is postMutation plus a nested-status check. Some NDMS
-// mutations (notably interface.<name>.wireguard.peer ops) answer HTTP 200 with
-// a benign top-level envelope while reporting the real failure inside a nested
-// status[] array — which the transport-level error check does not inspect, so
-// postMutation would treat the call as success. This variant scans the
-// response for any explicit status:"error" entry and fails closed when found,
-// without requesting a save or invalidating caches.
-//
-// It is deliberately additive: a normal success response contains no
-// status:"error" entry, so behaviour is unchanged for those. NOTE: the exact
-// nested shape for peer ops is modelled on the import path and should be
-// confirmed against a live router (e.g. a deliberately-invalid peer add)
-// before relying on it as the sole guard.
+// Формы ответов сняты с живого роутера (KeeneticOS 5.01): повторные
+// create/set/up/down отвечают message, ошибку даёт настоящий отказ. Список
+// отказов, безобидных для идемпотентных сносов, — в tolerate.go.
 func postMutationChecked(
 	ctx context.Context,
 	poster Poster,
@@ -101,13 +69,6 @@ func allTolerated(msgs []string, tolerate func(string) bool) bool {
 	return true
 }
 
-// isMissingInterface распознаёт формулировку NDMS «такого интерфейса нет»
-// (снято на роутере: `unable to find interface "OpkgTun9"`). Формулировка
-// отказа в СОЗДАНИИ другая — `unable to find X in "Network::Interface::Base"`,
-// — и под этот предикат намеренно не попадает.
-func isMissingInterface(msg string) bool {
-	return strings.Contains(strings.ToLower(msg), "unable to find interface")
-}
 
 // ndmsStatusErrors recursively walks a decoded NDMS response and returns the
 // messages of every object carrying status:"error" (case-insensitive),

@@ -131,7 +131,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 				},
 			},
 		}
-		return c.mutate(ctx, payload, "remove ipv6 static route")
+		return c.mutateTolerant(ctx, payload, "remove ipv6 static route", isNoSuchInterface)
 	}
 	inner := map[string]any{
 		"interface": route.Interface,
@@ -146,14 +146,21 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.mutate(ctx, payload, "remove static route")
+	return c.mutateTolerant(ctx, payload, "remove static route", isNoSuchInterface)
 }
 
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed
 // invalidation set (Routes + RunningConfig). Every route mutation touches
 // both caches identically, so we pin them in one place.
 func (c *RouteCommands) mutate(ctx context.Context, payload any, op string) error {
-	return postMutation(ctx, c.poster, c.save, payload, op,
+	return c.mutateTolerant(ctx, payload, op, nil)
+}
+
+// mutateTolerant — mutate, признающий часть отказов безобидными. Нужен снятию
+// маршрутов: отложенный drain fakeip снимает их уже ПОСЛЕ удаления интерфейса,
+// и NDMS отвечает «no such interface» на живую, ожидаемую ситуацию.
+func (c *RouteCommands) mutateTolerant(ctx context.Context, payload any, op string, tolerate func(string) bool) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, op, tolerate,
 		c.queries.Routes.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
