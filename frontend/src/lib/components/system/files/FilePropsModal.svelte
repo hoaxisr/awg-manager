@@ -98,8 +98,8 @@
 							variant="secondary"
 							onclick={() => {
 								if (entry) {
-									onClose();
 									onEdit(entry);
+									onClose();
 								}
 							}}
 						>
