@@ -362,6 +362,47 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	return iface, dnsAddr, fakeipNet, true
 }
 
+// healDetachedTunInterval — минимальный зазор между попытками оживить
+// отцепившийся tun. Тик реконсиляции идёт куда чаще, и без зазора интерфейс,
+// который не поднимается по другой причине, вогнал бы движок в цикл
+// перезапусков.
+const healDetachedTunInterval = time.Minute
+
+// healDetachedTun чинит состояние «процесс жив, tun не прицеплен»: sing-box
+// работает и отвечает, но carrier на tun нулевой — значит его стек к
+// устройству не привязан. Для клиентов это худший вид отказа: дефолт уже
+// припаркован на интерфейс, трафик уходит в никуда, а режим числится
+// включённым. Раньше это не лечил НИКТО — Operator.Reconcile реагирует только
+// на мёртвый процесс, а drift-heal режима смотрит на NDMS-ресурсы, не на
+// привязку стека (стенд 2026-08-20: помогал только ручной перезапуск движка).
+//
+// Лечение — Reload движка: при живом tun он выполняется как Stop+Start
+// (см. process.go) и пересоздаёт привязку. Через оркестратор идти нельзя —
+// его skip-gate по хешу увидит неизменный конфиг и не сделает ничего.
+//
+// Вызывается из reconcile-тика, сериализованного transitionMu, — им же
+// защищено поле lastTunHealAt.
+func (s *ServiceImpl) healDetachedTun(iface, scope string) {
+	if s.deps.Singbox == nil || iface == "" {
+		return
+	}
+	if running, _ := s.deps.Singbox.IsRunning(); !running {
+		return // мёртвый процесс — забота watchdog'а, не наша
+	}
+	if tunReadyProbe(iface) {
+		return
+	}
+	now := time.Now()
+	if !s.lastTunHealAt.IsZero() && now.Sub(s.lastTunHealAt) < healDetachedTunInterval {
+		return
+	}
+	s.lastTunHealAt = now
+	s.appLog.Warn(scope, iface, "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок")
+	if err := s.deps.Singbox.Reload(); err != nil {
+		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
+	}
+}
+
 func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration) error {
 	if s.deps.Singbox == nil {
 		return nil

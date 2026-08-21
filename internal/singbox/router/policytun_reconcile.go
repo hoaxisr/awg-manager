@@ -281,6 +281,10 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		return s.enableLocked(ctx, false)
 	}
 
+	// Движок жив, интерфейс наш и на месте — но стек мог отцепиться от tun.
+	// Это состояние не ловит ни один другой heal, см. healDetachedTun.
+	s.healDetachedTun(iface, "policy-tun-reconcile")
+
 	// Запаркованный слот 20 — дрейф независимо от жизни процесса: enable
 	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
 	// merged-конфиге нет tun-инбаунда.
