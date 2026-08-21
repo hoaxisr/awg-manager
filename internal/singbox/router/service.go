@@ -488,6 +488,11 @@ type ServiceImpl struct {
 	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
 	appliedSpec *RestoreInputSpec
 
+	// lastTunHealAt — когда healDetachedTun последний раз перезапускал движок
+	// из-за отцепившегося tun. Пишется и читается только из reconcile-тика,
+	// сериализованного transitionMu.
+	lastTunHealAt time.Time
+
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а
 	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от

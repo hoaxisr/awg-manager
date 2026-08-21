@@ -91,6 +91,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// указывают в OpkgTun без читателя, трафик дропается, не утекает.
 	// SetEnabled — только при фактически запаркованном слоте, иначе каждый
 	// тик взводил бы debounced reload.
+	//
+	// Отдельно от слота: движок может быть жив, а его стек отцепиться от tun —
+	// это состояние тоже не лечил никто, см. healDetachedTun.
+	s.healDetachedTun(iface, "fakeip-reconcile")
 	if s.deps.Orch != nil {
 		if st, ok := s.slotSnapshot(orchestrator.SlotFakeIP); !ok || !st.Enabled {
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); e != nil {
