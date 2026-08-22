@@ -5,7 +5,7 @@
 # Keenetic, а зеркало отдаёт скрипт по plain-HTTP (busybox wget прошивки
 # может не уметь HTTPS — для GitHub-варианта нужен curl или полноценный wget):
 #   wget -qO- http://repo.hoaxisr.ru/install.sh | sh
-#   curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/master/scripts/install.sh | sh
+#   curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/install.sh | sh
 #
 # Скрипт добавляет репозиторий http://repo.hoaxisr.ru и делает
 # `opkg update && opkg install awg-manager`. Повторный запуск —
