@@ -1,0 +1,794 @@
+package instancestore
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
+)
+
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type seedEnv struct {
+	st    *Store
+	deps  SeedDeps
+	lives map[string][]string
+	asked []string
+}
+
+func newSeedEnv(t *testing.T) *seedEnv {
+	t.Helper()
+	dir := t.TempDir()
+	e := &seedEnv{st: New(dir), lives: map[string][]string{}}
+	e.deps = SeedDeps{
+		WdttPath:     filepath.Join(dir, "wdtt.json"),
+		FreeturnPath: filepath.Join(dir, "freeturn.json"),
+		RuntimeDir:   filepath.Join(dir, "run"),
+		GOARCH:       "arm64",
+		LivePermits: func(_ context.Context, iface string) ([]string, error) {
+			e.asked = append(e.asked, iface)
+			return e.lives[iface], nil
+		},
+		AllocIndex: func(_ string, pinned int, havePin bool) (int, error) {
+			if havePin {
+				return pinned, nil
+			}
+			return 30, nil
+		},
+	}
+	return e
+}
+
+// byKey — записи посева по глобальному адресу (роль:id).
+func byKey(res SeedResult) map[string]Record {
+	m := map[string]Record{}
+	for _, r := range res.State.Records {
+		m[r.Key()] = r
+	}
+	return m
+}
+
+// samePermits — сравнение permit'ов ПО ЗНАЧЕНИЮ: Order — указатель, и `==`
+// сравнивал бы адреса, то есть проходил бы всегда мимо позиции.
+func samePermits(a, b []roles.PolicyPermit) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name {
+			return false
+		}
+		switch {
+		case a[i].Order == nil && b[i].Order == nil:
+		case a[i].Order == nil || b[i].Order == nil:
+			return false
+		case *a[i].Order != *b[i].Order:
+			return false
+		}
+	}
+	return true
+}
+
+const oldWdttJSON = `{
+  "clients": [{"id":"default","name":"Клиент","config":{
+    "enabled":true,"listen":"127.0.0.1:9000","peer":"9.9.9.9:1",
+    "password":"pw","vkHashes":"h","workers":24,"connMode":"raw",
+    "peerWg":"1.1.1.1:56000","peerRaw":"2.2.2.2:56003","sub":"https://wsub",
+    "ndmsIface":"OpkgTun18","rawIface":"opkgtun18",
+    "rawClientIp":"10.70.0.5","rawClientMTU":1300,
+    "policyPermits":[{"name":"Policy1","order":1},{"name":"Policy2","order":2}]}}],
+  "servers": [{"id":"default","name":"Сервер","config":{
+    "enabled":false,"listen":"0.0.0.0:56002","password":"spw",
+    "relayMode":"raw","natMode":"full","debug":true,
+    "linkPeer":"77.1.2.3:56002","linkVkHashes":"lvh","statsLog":"disk",
+    "clients":[{"password":"u1","comment":"Петя","expiresAt":42,"auto":false},
+               {"password":"u2","comment":"","auto":true}],
+    "ndmsIface":"OpkgTun20","wgIface":"opkgtun20",
+    "rawNdmsIface":"OpkgTun21","rawIface":"opkgtun21"}}]
+}`
+
+const oldFreeturnJSON = `{
+  "version": 2,
+  "clients": [{"id":"default","name":"FT","config":{
+    "enabled":true,"listen":"127.0.0.1:9001","peer":"3.3.3.3:56000",
+    "provider":"vk","streams":10,"transport":"tcp","mode":"udp",
+    "obfProfile":"none","sub":"https://sub.example"}}],
+  "servers": [{"id":"default","name":"FTS","config":{
+    "enabled":false,"listen":"0.0.0.0:56000","mode":"udp","obfProfile":"none"}}]
+}`
+
+// v1 — до 2026-07-21: singular client/server, version отсутствует (B6).
+const oldFreeturnV1JSON = `{
+  "client": {"enabled":true,"listen":"127.0.0.1:9002","peer":"4.4.4.4:56000",
+    "provider":"vk","streams":10,"transport":"tcp","mode":"udp","obfProfile":"none"},
+  "server": {"enabled":false,"listen":"0.0.0.0:56010","mode":"udp","obfProfile":"none"}
+}`
+
+func TestSeedMapsAllFourRoles(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
+	e.lives["OpkgTun18"] = []string{"Policy2", "Policy3"}
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.SeededNow || !res.State.Seeded {
+		t.Fatal("посев обязан пометить состояние")
+	}
+	if len(res.State.Records) != 4 {
+		t.Fatalf("записей %d, ждали 4", len(res.State.Records))
+	}
+	rec := byKey(res)
+	c, err := rec["wdtt-client:default"].WdttClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Mode != "raw" || c.Peer != "2.2.2.2:56003" {
+		t.Fatalf("режим/peer из слота: %+v", c)
+	}
+	if c.NdmsIface != "OpkgTun18" || c.RawIface != "opkgtun18" {
+		t.Fatalf("пины не сохранились: %+v", c)
+	}
+	// Намерение членства = live ∪ cache, без дублей, порядок кэша первичен.
+	// Кэш несёт СТАРЫЙ order (приоритет кандидатуры, Г-1 №2); live-довесок —
+	// позиция не закреплена (nil, в хвост).
+	want := []roles.PolicyPermit{{Name: "Policy1", Order: orderPtr(1)},
+		{Name: "Policy2", Order: orderPtr(2)}, {Name: "Policy3"}}
+	if !samePermits(c.Policies, want) {
+		t.Fatalf("policies = %+v, ждали %+v", c.Policies, want)
+	}
+	if rec["wdtt-client:default"].Sub != "https://wsub" {
+		t.Fatal("sub wdtt-клиента — в метаданные записи")
+	}
+	// RawClientIP/RawClientMTU — кэш факта, в новый мир НЕ едут (§9):
+	// в roles-конфиге для них нет полей — проверка компилятором.
+	srv := rec["wdtt-server:default"]
+	sc, err := srv.WdttServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.RelayMode != "raw" || sc.OpenFirewall != true || !sc.Debug {
+		t.Fatalf("сервер: %+v (openFirewall nil → true; Debug — тумблер пользователя, Г-1)", sc)
+	}
+	// Г-1 №4: пустой configDir фиксируется СТАРОЙ формой пути.
+	if want := filepath.Join(filepath.Dir(e.deps.WdttPath), "wdtt", "server", "default"); sc.ConfigDir != want {
+		t.Fatalf("configDir = %q, ждали %q", sc.ConfigDir, want)
+	}
+	// Г-1 №1: оба слота peer пережили посев.
+	cli := rec["wdtt-client:default"]
+	if cli.PeerWg != "1.1.1.1:56000" || cli.PeerRaw != "2.2.2.2:56003" {
+		t.Fatalf("слоты peer: wg=%q raw=%q", cli.PeerWg, cli.PeerRaw)
+	}
+	ft, err := rec["freeturn-client:default"].FreeTurnClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ft.Peer != "3.3.3.3:56000" || ft.Sub != "https://sub.example" {
+		t.Fatalf("freeturn: %+v (Sub — поле конфига, B4)", ft)
+	}
+	if srv.Enabled {
+		t.Fatal("enabled сервера обязан быть false")
+	}
+}
+
+func TestSeedKeepsPolicyOrderZeroFromOldConfig(t *testing.T) {
+	// ЛОВУШКА МИГРАЦИИ №1. Старая форма — OpkgPolicyPermit{Order int
+	// json:"order"} БЕЗ omitempty (wdtt/types.go:68-71): `"order": 0` лежит на
+	// диске у каждого, кто поднял прокси-выход первым в политике, выше
+	// провайдера. Ноль обязан доехать как закреплённая позиция (&0), а не как
+	// «не закреплено» (nil): иначе выход после апгрейда уезжает в хвост и
+	// перестаёт быть кандидатом в маршрут по умолчанию — молча.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":"1.1.1.1:1","password":"pw",
+	  "vkHashes":"h","connMode":"raw","peerRaw":"1.1.1.1:2",
+	  "ndmsIface":"OpkgTun18","rawIface":"opkgtun18",
+	  "policyPermits":[{"name":"Верхняя","order":0},{"name":"Вторая","order":1}]}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := byKey(res)["wdtt-client:z"].WdttClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []roles.PolicyPermit{{Name: "Верхняя", Order: orderPtr(0)},
+		{Name: "Вторая", Order: orderPtr(1)}}
+	if !samePermits(c.Policies, want) {
+		t.Fatalf("policies = %+v, ждали %+v (order 0 — ВЕРХ политики, не «не задано»)", c.Policies, want)
+	}
+}
+
+func TestSeedOpenFirewallAbsentOrNullMeansOn(t *testing.T) {
+	// ЛОВУШКА МИГРАЦИИ №2. В старом мире OpenFirewall — *bool с семантикой
+	// «nil = true» у ОБЕИХ серверных ролей (wdtt/types.go, freeturn/types.go).
+	// В новом конфиге поле обычный bool: отсутствующий или null-ключ обязан
+	// читаться как true, иначе у всех, кто тумблер не трогал, порт закроется
+	// молча — «сервер перестал принимать абонентов после обновления».
+	cases := []struct {
+		name string
+		key  string // хвост JSON-объекта, "" — ключа нет вовсе
+		want bool
+	}{
+		{"ключа нет", "", true},
+		{"null", `,"openFirewall":null`, true},
+		{"явное true", `,"openFirewall":true`, true},
+		{"явное false", `,"openFirewall":false`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newSeedEnv(t)
+			writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
+			  "listen":"0.0.0.0:56002","password":"spw",
+			  "ndmsIface":"OpkgTun20","wgIface":"opkgtun20",
+			  "rawNdmsIface":"OpkgTun21","rawIface":"opkgtun21"`+tc.key+`}}]}`)
+			writeFile(t, e.deps.FreeturnPath, `{"version":2,"servers":[{"id":"s","name":"FS","config":{
+			  "listen":"0.0.0.0:56000","mode":"udp"`+tc.key+`}}]}`)
+			res, err := Seed(context.Background(), e.st, e.deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := byKey(res)
+			ws, err := rec["wdtt-server:s"].WdttServerConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ws.OpenFirewall != tc.want {
+				t.Fatalf("wdtt-server openFirewall = %v, ждали %v", ws.OpenFirewall, tc.want)
+			}
+			fs, err := rec["freeturn-server:s"].FreeTurnServerConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fs.OpenFirewall != tc.want {
+				t.Fatalf("freeturn-server openFirewall = %v, ждали %v", fs.OpenFirewall, tc.want)
+			}
+		})
+	}
+}
+
+func TestSeedMigratesServerUsersAndLinkMeta(t *testing.T) {
+	// B5 (потеря пользовательских данных) + замечание 4 ревью А.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	e.lives["OpkgTun18"] = nil
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var srv Record
+	for _, r := range res.State.Records {
+		if r.Kind == KindWdttServer {
+			srv = r
+		}
+	}
+	if len(srv.Users) != 2 {
+		t.Fatalf("абоненты не посеяны: %+v", srv.Users)
+	}
+	if srv.Users[0].Password != "u1" || srv.Users[0].ExpiresAt != 42 || srv.Users[0].Comment != "Петя" {
+		t.Fatalf("поля абонента: %+v (ExpiresAt терять нельзя — воскресит отозванный доступ)", srv.Users[0])
+	}
+	if !srv.Users[1].Auto {
+		t.Fatal("флаг auto обязан пережить посев (вычислить его нечем)")
+	}
+	if srv.LinkPeer != "77.1.2.3:56002" || srv.LinkVKHashes != "lvh" || srv.StatsLog != "disk" {
+		t.Fatalf("link-метаданные: %+v", srv)
+	}
+}
+
+func TestSeedReadsFreeturnV1(t *testing.T) {
+	// B6: v1-файл без version; молчаливый ноль инстансов — потеря класса
+	// требования 1, только в форме файла, а не в пофайловом continue.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnV1JSON)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := byKey(res)
+	fc, err := rec["freeturn-client:default"].FreeTurnClientConfig()
+	if err != nil || fc.Peer != "4.4.4.4:56000" || fc.Listen != "127.0.0.1:9002" {
+		t.Fatalf("v1-клиент: %+v %v", fc, err)
+	}
+	fs, err := rec["freeturn-server:default"].FreeTurnServerConfig()
+	if err != nil || fs.Listen != "0.0.0.0:56010" {
+		t.Fatalf("v1-сервер: %+v %v", fs, err)
+	}
+}
+
+func TestSeedFreeturnV1EmptyStillSeedsDefaults(t *testing.T) {
+	// Паритет старого мигратора (migrate.go:21-23,37-39): version<2 —
+	// дефолтные default-инстансы, ДАЖЕ без singular-ключей (оговорка B6).
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.FreeturnPath, `{}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := byKey(res)
+	fc, err := rec["freeturn-client:default"].FreeTurnClientConfig()
+	if err != nil || fc.Listen != "127.0.0.1:9000" || fc.Provider != "vk" {
+		t.Fatalf("дефолтный v1-клиент: %+v %v", fc, err)
+	}
+	if _, ok := rec["freeturn-server:default"]; !ok {
+		t.Fatal("дефолтный v1-сервер обязан посеяться")
+	}
+}
+
+func TestSeedFreeturnV2EmptyListsSeedNothing(t *testing.T) {
+	// Осознанное расхождение со старым мигратором: тот достраивал дефолтные
+	// инстансы и при version>=2 с пустыми списками (migrate.go:6 — условие
+	// требует ОБА списка непустыми). Новый мир разрешает ноль инстансов, и
+	// подкладывать пользователю выключенный клиент из воздуха незачем.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.FreeturnPath, `{"version":2,"clients":[],"servers":[]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.State.Records) != 0 {
+		t.Fatalf("v2 с пустыми списками не должен рождать инстансы: %+v", res.State.Records)
+	}
+}
+
+func TestSeedFailsClosedOnCorruptOldFile(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, "{нет")
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
+	if _, err := Seed(context.Background(), e.st, e.deps); err == nil {
+		t.Fatal("битый wdtt.json обязан валить ВЕСЬ посев (требование 1)")
+	}
+	if _, statErr := os.Stat(e.st.path); !os.IsNotExist(statErr) {
+		t.Fatal("при отказе посева store-файл не должен появляться")
+	}
+}
+
+func TestSeedFailsClosedOnUnreadableOldFile(t *testing.T) {
+	// Третий исход чтения (форма «файл есть, но прочитать нельзя»): между
+	// «файла нет» и «файл разобран» лежит отказ ввода-вывода. Трактовка его
+	// как чистой установки списала бы все инстансы пользователя, а флаг посева
+	// закрыл бы дорогу второй попытке.
+	e := newSeedEnv(t)
+	if err := os.Mkdir(e.deps.WdttPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Seed(context.Background(), e.st, e.deps); err == nil {
+		t.Fatal("нечитаемый wdtt.json обязан быть ошибкой посева, а не чистой установкой")
+	}
+	if _, statErr := os.Stat(e.st.path); !os.IsNotExist(statErr) {
+		t.Fatal("при отказе чтения store-файл не должен появляться")
+	}
+}
+
+func TestSeedFailsClosedOnCorruptStore(t *testing.T) {
+	// Битый proxy-instances.json — не чистый лист: посев на нём затёр бы
+	// живые записи копией старых файлов.
+	e := newSeedEnv(t)
+	writeFile(t, e.st.path, "{нет")
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	if _, err := Seed(context.Background(), e.st, e.deps); err == nil {
+		t.Fatal("битый store обязан валить посев")
+	}
+}
+
+func TestSeedFailsClosedWhenLivePermitsUnavailable(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	boom := errors.New("rci down")
+	e.deps.LivePermits = func(context.Context, string) ([]string, error) { return nil, boom }
+	if _, err := Seed(context.Background(), e.st, e.deps); !errors.Is(err, boom) {
+		t.Fatalf("недоступное наблюдение откладывает посев (флаг только по успешному наблюдению, §9): %v", err)
+	}
+	if _, statErr := os.Stat(e.st.path); !os.IsNotExist(statErr) {
+		t.Fatal("флаг/записи не должны ложиться без наблюдения")
+	}
+}
+
+func TestSeedFailsClosedWhenAllocIndexFails(t *testing.T) {
+	// Исчерпанный пул индексов — не повод посеять raw-клиента без пина:
+	// запись без пина отвергнет валидация store, а посев с половиной
+	// инстансов оставил бы пользователя с непредсказуемой конфигурацией.
+	e := newSeedEnv(t)
+	boom := errors.New("пул исчерпан")
+	e.deps.AllocIndex = func(string, int, bool) (int, error) { return 0, boom }
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	if _, err := Seed(context.Background(), e.st, e.deps); !errors.Is(err, boom) {
+		t.Fatalf("отказ аллокатора обязан валить посев: %v", err)
+	}
+	if _, statErr := os.Stat(e.st.path); !os.IsNotExist(statErr) {
+		t.Fatal("при отказе аллокатора store-файл не должен появляться")
+	}
+}
+
+func TestSeedRepinsOutOfRangeIndexOnMips(t *testing.T) {
+	e := newSeedEnv(t)
+	e.deps.GOARCH = "mipsle"
+	e.deps.AllocIndex = func(owner string, pinned int, havePin bool) (int, error) {
+		if havePin {
+			t.Fatalf("перепин обязан идти БЕЗ старого пина (вне диапазона), пришло %d", pinned)
+		}
+		return 3, nil
+	}
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Record
+	for _, r := range res.State.Records {
+		if r.Kind == KindWdttClient {
+			c = r
+		}
+	}
+	cfg, _ := c.WdttClientConfig()
+	if cfg.NdmsIface != "OpkgTun3" || cfg.RawIface != "opkgtun3" {
+		t.Fatalf("перепин на mips: %+v", cfg)
+	}
+	for _, name := range e.asked {
+		if name == "OpkgTun18" {
+			t.Fatal("live-permits по недостижимому имени спрашивать нельзя")
+		}
+	}
+}
+
+func TestSeedKeepsOpkgTun0PinOnMips(t *testing.T) {
+	// Щ13: ноль — законный индекс на mips (диапазон 0..15); сентинел «пина
+	// нет» не имеет права совпадать с ним.
+	e := newSeedEnv(t)
+	e.deps.GOARCH = "mipsle"
+	json0 := `{"clients":[{"id":"z","name":"Z","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":"1.1.1.1:1","password":"pw",
+	  "vkHashes":"h","connMode":"raw","peerRaw":"1.1.1.1:2",
+	  "ndmsIface":"OpkgTun0","rawIface":"opkgtun0"}}]}`
+	writeFile(t, e.deps.WdttPath, json0)
+	sawPin := false
+	e.deps.AllocIndex = func(_ string, pinned int, havePin bool) (int, error) {
+		if havePin && pinned == 0 {
+			sawPin = true
+		}
+		if havePin {
+			return pinned, nil
+		}
+		return 5, nil
+	}
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawPin {
+		t.Fatal("пин OpkgTun0 обязан прийти как (0, havePin=true)")
+	}
+	cfg, _ := res.State.Records[0].WdttClientConfig()
+	if cfg.NdmsIface != "OpkgTun0" {
+		t.Fatalf("OpkgTun0 перепинован: %+v (потеря permit'ов класса B2)", cfg)
+	}
+	found := false
+	for _, name := range e.asked {
+		if name == "OpkgTun0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("live-permits обязаны спрашиваться по сохранённому пину OpkgTun0")
+	}
+}
+
+func TestSeedUnparsablePinAsksFreshIndex(t *testing.T) {
+	// Формы имени интерфейса на диске: ключа нет; пусто; чужое имя (legacy
+	// wdtt0); префикс без числа; отрицательное; нечисловой хвост. Ни одна не
+	// имеет права стать пином — иначе OpkgTun-имя собирается из мусора.
+	for _, name := range []string{"", "   ", "wdtt0", "OpkgTun", "OpkgTun-1", "OpkgTunX", "opkgtun18"} {
+		t.Run("iface="+name, func(t *testing.T) {
+			e := newSeedEnv(t)
+			gotHavePin := true
+			e.deps.AllocIndex = func(_ string, _ int, havePin bool) (int, error) {
+				gotHavePin = havePin
+				return 30, nil
+			}
+			writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+			  "enabled":true,"listen":"127.0.0.1:9000","peer":"1.1.1.1:1","password":"pw",
+			  "vkHashes":"h","connMode":"raw","peerRaw":"1.1.1.1:2",
+			  "ndmsIface":"`+name+`"}}]}`)
+			res, err := Seed(context.Background(), e.st, e.deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotHavePin {
+				t.Fatalf("имя %q — не пин, аллокатор обязан получить havePin=false", name)
+			}
+			cfg, _ := res.State.Records[0].WdttClientConfig()
+			if cfg.NdmsIface != "OpkgTun30" || cfg.RawIface != "opkgtun30" {
+				t.Fatalf("новый пин не проставлен: %+v", cfg)
+			}
+			if len(e.asked) != 0 {
+				t.Fatalf("у перепиненного интерфейса живых permit'ов не бывает, спросили %v", e.asked)
+			}
+		})
+	}
+}
+
+func TestSeedTrimsWhitespaceForms(t *testing.T) {
+	// Форма «значение с пробелами»: руками правленный файл и старые записи.
+	// Непотримленный режим «  raw  » не равен "raw" — клиент уехал бы в wg
+	// без пина; непотримленное имя OpkgTun не распознаётся как пин.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":" Z ","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":"","password":"pw",
+	  "vkHashes":"h","connMode":"  raw  ","peerRaw":"  2.2.2.2:56003  ",
+	  "ndmsIface":"  OpkgTun18  ","rawIface":"opkgtun18"}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := res.State.Records[0].WdttClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != "raw" {
+		t.Fatalf("режим не потримлен: %q", cfg.Mode)
+	}
+	if cfg.NdmsIface != "OpkgTun18" || cfg.RawIface != "opkgtun18" {
+		t.Fatalf("пробельный пин не распознан: %+v", cfg)
+	}
+	if cfg.Peer != "2.2.2.2:56003" {
+		t.Fatalf("peer из слота не потримлен: %q", cfg.Peer)
+	}
+}
+
+func TestSeedFallsBackToCommonPeerWhenSlotEmpty(t *testing.T) {
+	// Форма «слот пуст»: конфиги, созданные до появления слотов, несут только
+	// общий peer. Потеря адреса означала бы неподнимающийся клиент.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":" 9.9.9.9:1 ","password":"pw",
+	  "vkHashes":"h","connMode":"raw","ndmsIface":"OpkgTun18","rawIface":"opkgtun18"}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := res.State.Records[0].WdttClientConfig()
+	if cfg.Peer != "9.9.9.9:1" {
+		t.Fatalf("peer = %q, ждали общий адрес", cfg.Peer)
+	}
+}
+
+func TestSeedWgClientGetsNoPinAndNoLivePermits(t *testing.T) {
+	// Форма «режим не задан» (старый дефолт ConnModeWG) и режим wg: NDMS-имени
+	// у такого клиента не было никогда — выделять ему индекс значит занять
+	// чужой слот пула и спросить permit'ы по несуществующему интерфейсу.
+	for _, mode := range []string{"", "wg"} {
+		t.Run("connMode="+mode, func(t *testing.T) {
+			e := newSeedEnv(t)
+			e.deps.AllocIndex = func(string, int, bool) (int, error) {
+				t.Fatal("wg-клиенту индекс не выделяется")
+				return 0, nil
+			}
+			writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+			  "enabled":true,"listen":"127.0.0.1:9000","peer":"9.9.9.9:1","password":"pw",
+			  "vkHashes":"h","connMode":"`+mode+`","peerWg":"1.1.1.1:56000"}}]}`)
+			res, err := Seed(context.Background(), e.st, e.deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, _ := res.State.Records[0].WdttClientConfig()
+			if cfg.Mode != "wg" {
+				t.Fatalf("режим = %q, ждали дефолт wg", cfg.Mode)
+			}
+			if cfg.NdmsIface != "" || cfg.RawIface != "" || len(cfg.Policies) != 0 {
+				t.Fatalf("wg-клиент получил raw-атрибуты: %+v", cfg)
+			}
+			if len(e.asked) != 0 {
+				t.Fatalf("live-permits спрошены у wg-клиента: %v", e.asked)
+			}
+		})
+	}
+}
+
+func TestSeedDropsEmptyAndDuplicatePermitNames(t *testing.T) {
+	// Формы списка политик: пустое имя (мусор ручной правки) и дубль в кэше
+	// либо между кэшем и наблюдением. Дубль permit'а в одной политике —
+	// вторая запись в NDMS, пустое имя — команда без аргумента.
+	e := newSeedEnv(t)
+	e.lives["OpkgTun18"] = []string{"Policy1", "", "Policy9", "Policy9"}
+	writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":"1.1.1.1:1","password":"pw",
+	  "vkHashes":"h","connMode":"raw","peerRaw":"1.1.1.1:2",
+	  "ndmsIface":"OpkgTun18","rawIface":"opkgtun18",
+	  "policyPermits":[{"name":"Policy1","order":2},{"name":"","order":3},
+	                   {"name":"Policy1","order":7}]}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := res.State.Records[0].WdttClientConfig()
+	want := []roles.PolicyPermit{{Name: "Policy1", Order: orderPtr(2)}, {Name: "Policy9"}}
+	if !samePermits(cfg.Policies, want) {
+		t.Fatalf("policies = %+v, ждали %+v", cfg.Policies, want)
+	}
+}
+
+func TestSeedLegacyKernelIfacesFallBackToWdtt0(t *testing.T) {
+	// Вход одноразовой уборки непомеченных правил: у сервера, жившего до
+	// NDMS-имён, kernel-интерфейсы назывались wdtt0/wdttraw0. Пустая ведомость
+	// оставила бы их правила навсегда.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
+	  "listen":"0.0.0.0:56002","password":"spw"}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.LegacyKernelIfaces) != 2 ||
+		res.LegacyKernelIfaces[0] != "wdtt0" || res.LegacyKernelIfaces[1] != "wdttraw0" {
+		t.Fatalf("legacy-имена: %v", res.LegacyKernelIfaces)
+	}
+
+	e2 := newSeedEnv(t)
+	writeFile(t, e2.deps.WdttPath, oldWdttJSON)
+	e2.lives["OpkgTun18"] = nil
+	res2, err := Seed(context.Background(), e2.st, e2.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res2.LegacyKernelIfaces) != 2 ||
+		res2.LegacyKernelIfaces[0] != "opkgtun20" || res2.LegacyKernelIfaces[1] != "opkgtun21" {
+		t.Fatalf("прежние kernel-имена: %v", res2.LegacyKernelIfaces)
+	}
+}
+
+func TestSeedRecordsSourceFiles(t *testing.T) {
+	// SeededFrom — и флаг, и след происхождения. Пустой список означает
+	// «посева не было»: Store выводит Seeded именно из него, и молчаливо
+	// пустой SeededFrom пустил бы посев по второму кругу.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
+	e.lives["OpkgTun18"] = nil
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.State.SeededFrom) != 2 ||
+		res.State.SeededFrom[0] != "wdtt.json" || res.State.SeededFrom[1] != "freeturn.json" {
+		t.Fatalf("seededFrom = %v", res.State.SeededFrom)
+	}
+
+	clean := newSeedEnv(t)
+	cres, err := Seed(context.Background(), clean.st, clean.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cres.State.SeededFrom) != 1 || cres.State.SeededFrom[0] != "clean-install" {
+		t.Fatalf("чистая установка: %v", cres.State.SeededFrom)
+	}
+}
+
+func TestSeedIsIdempotentAndSkipsOldFilesWhenSeeded(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
+	e.lives["OpkgTun18"] = []string{"Policy2"}
+	first, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Старые файлы «испортились» после посева — второй вызов их не читает.
+	writeFile(t, e.deps.WdttPath, "{нет")
+	second, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SeededNow {
+		t.Fatal("повторный посев обязан быть no-op")
+	}
+	if len(second.State.Records) != len(first.State.Records) {
+		t.Fatalf("состояние уплыло: %d != %d", len(second.State.Records), len(first.State.Records))
+	}
+	if len(second.OldGenPIDs) != 0 {
+		t.Fatal("добивание — только при первом посеве")
+	}
+}
+
+func TestSeedCleanInstall(t *testing.T) {
+	e := newSeedEnv(t)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.State.Seeded || len(res.State.Records) != 0 {
+		t.Fatalf("чистая установка: %+v", res.State)
+	}
+}
+
+func TestSeedPreservesExistingRecords(t *testing.T) {
+	e := newSeedEnv(t)
+	if _, err := e.st.Replace(func(st *State) error {
+		st.Records = append(st.Records, Record{ID: "default", Kind: KindWdttClient,
+			Name: "Уже есть", WdttClient: &roles.WdttClientConfig{Mode: "wg",
+				Listen: "127.0.0.1:9000", Peer: "p:1", Password: "pw", VKHashes: "h"}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	e.lives["OpkgTun18"] = nil
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res.State.Records {
+		if r.Key() == "wdtt-client:default" && r.Name != "Уже есть" {
+			t.Fatal("существующая запись главнее посева")
+		}
+	}
+}
+
+func TestSeedCollectsOldGenerationPIDsOnly(t *testing.T) {
+	e := newSeedEnv(t)
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-client.pid"), "123")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "freeturn-server-default.pid"), "456")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-broken.pid"), "мусор")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "other.pid"), "789") // чужой префикс
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int]bool{}
+	for _, p := range res.OldGenPIDs {
+		got[p] = true
+	}
+	if !got[123] || !got[456] || len(res.OldGenPIDs) != 2 {
+		t.Fatalf("pids = %v (чужие префиксы и мусор — мимо)", res.OldGenPIDs)
+	}
+}
+
+func TestSeedSkipsNonPositiveAndUnreadablePIDs(t *testing.T) {
+	// Формы содержимого pid-файла: ноль, отрицательное, пустой файл, каталог
+	// вместо файла, не-.pid имя. Ноль и минус в kill(2) означают ГРУППУ
+	// процессов — добивание по такому «pid» убило бы посторонних.
+	e := newSeedEnv(t)
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-zero.pid"), "0")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-neg.pid"), "-5")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-empty.pid"), "")
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-client.log"), "777")
+	if err := os.Mkdir(filepath.Join(e.deps.RuntimeDir, "wdtt-dir.pid"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-ok.pid"), " 321\n")
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.OldGenPIDs) != 1 || res.OldGenPIDs[0] != 321 {
+		t.Fatalf("pids = %v (ноль, минус, пустое и каталог — мимо)", res.OldGenPIDs)
+	}
+}
+
+func TestSeedMissingRuntimeDirIsNotAnError(t *testing.T) {
+	// Форма «каталога нет»: чистая установка либо /tmp после ребута. Сбор
+	// pid'ов — best-effort, ронять из-за него посев нечем.
+	e := newSeedEnv(t)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.OldGenPIDs != nil {
+		t.Fatalf("pids = %v", res.OldGenPIDs)
+	}
+}
