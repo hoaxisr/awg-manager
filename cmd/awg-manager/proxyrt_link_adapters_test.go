@@ -126,6 +126,26 @@ func TestProxyEndpointSyncListsAndUpdates(t *testing.T) {
 	}
 }
 
+// Ветка поля связи исполняется целиком: freeturn-клиент отбирает туннели по
+// FreeTurnClientID. Чтение чужого поля не даёт ошибки — оно даёт ПУСТОЙ список,
+// из которого Observe считает нулевой дрейф, а Plan не порождает шага: endpoint
+// не синхронизируется никогда и молча.
+func TestProxyEndpointSyncListsByLinkedField(t *testing.T) {
+	store := linkedStore(t)
+	for field, want := range map[api.LinkedField]string{
+		api.LinkedWdtt:     "awgm1",
+		api.LinkedFreeTurn: "awgm2",
+	} {
+		list, err := newProxyEndpointSync(store, nil, field, nil).List(context.Background(), "c1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(list) != 1 || list[0].ID != want {
+			t.Fatalf("поле %d: список %+v, ждали %s", field, list, want)
+		}
+	}
+}
+
 // Молчаливое отбрасывание failed было бы вечным невидимым дрейфом: endpoint
 // туннеля остаётся на старом порту, а ресурс рапортует успех.
 func TestProxyEndpointSyncReportsFailed(t *testing.T) {
@@ -448,7 +468,9 @@ func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
 	mirror, _ := mirrorWithStaleAddress(t)
 	calls := interceptKill(t)
 	ipt := &fakeIPT{out: legacyTables()}
-	post := proxyPostSeed(mirror, ipt, proxyNDMSCommands{}, fakeIfaces{},
+	cmds := &fakeOpkgDeleter{}
+	ifaces := fakeIfaces{list: []ndms.Interface{{ID: "OpkgTun17", Description: "Германия wdtt"}}}
+	post := proxyPostSeed(mirror, ipt, cmds, ifaces,
 		[]string{"/opt/bin/" + filepath.Base(os.Args[0])})
 
 	err := post(context.Background(), instancestore.SeedResult{
@@ -465,6 +487,52 @@ func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
 	}
 	if !ipt.ran("-D", "FORWARD", "-i", "wdtt0", "-j", "ACCEPT") {
 		t.Fatalf("наследие не убрано: %v", ipt.runs)
+	}
+	// Ведомость объявленных обязана ДОЕХАТЬ до уборки: подмена её на пустую
+	// снесла бы правила живого интерфейса и удалила бы живой OpkgTun. Цена
+	// односторонняя и одноразовая, поэтому сверяется сам стык.
+	if ipt.ranWith("opkgtun17") {
+		t.Fatalf("ведомость объявленных не доехала: тронуты правила opkgtun17: %v", ipt.runs)
+	}
+	if len(cmds.deleted) != 0 {
+		t.Fatalf("ведомость объявленных не доехала: снесены NDMS-интерфейсы %v", cmds.deleted)
+	}
+}
+
+// I1: netfilter.d-хук старого движка — ЕДИНСТВЕННЫЙ артефакт, переживающий и
+// перезапись таблиц ndm, и перезагрузку. При живом сервере его перепишет
+// netres.Hook, а когда серверов не осталось — ресурса Hook нет вовсе, и файл
+// остался бы навсегда (снять его после задачи 17 будет нечем).
+func TestLegacyCleanupRemovesHookOnlyWithoutServers(t *testing.T) {
+	newHook := func(t *testing.T) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "61-awgm-wdtt-forward.sh")
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		prev := legacyHookPath
+		legacyHookPath = path
+		t.Cleanup(func() { legacyHookPath = prev })
+		return path
+	}
+
+	path := newHook(t)
+	if err := legacyCleanup(context.Background(), &fakeIPT{out: legacyTables()},
+		&fakeOpkgDeleter{}, fakeIfaces{}, map[string]bool{"OpkgTun17": true},
+		[]string{"wdtt0", "wdttraw0"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("хук снят при живом сервере: %v", err)
+	}
+
+	path = newHook(t)
+	if err := legacyCleanup(context.Background(), &fakeIPT{out: legacyTables()},
+		&fakeOpkgDeleter{}, fakeIfaces{}, map[string]bool{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("хук не снят при отсутствии серверов: %v", err)
 	}
 }
 

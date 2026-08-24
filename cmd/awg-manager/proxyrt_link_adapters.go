@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -473,7 +474,7 @@ func EnsureWdttIngressRefs(refs []string, wgKernelIface, rawKernelIface string) 
 // proxyPostSeed: обнуление адресов — ВСЕГДА (замечание 2 ревью: одноразовый
 // вызов с проглоченной ошибкой делал потерю вечной); добивание старого
 // поколения и уборка наследия — только при первом посеве.
-func proxyPostSeed(mirror *exitreg.StoreMirror, ipt netres.IPT, cmds proxyNDMSCommands,
+func proxyPostSeed(mirror *exitreg.StoreMirror, ipt netres.IPT, cmds opkgTunDeleter,
 	ifaces ifaceLister, binaries []string) func(context.Context, instancestore.SeedResult, map[string]bool) error {
 	return func(ctx context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error {
 		var errs []error
@@ -532,6 +533,10 @@ const (
 	// (wdtt.TunnelNameFromClient, names.go:11).
 	legacyDescSuffix = " wdtt"
 )
+
+// legacyHookPath — переменная ради теста: путь абсолютный, и наблюдать снос
+// иначе нечем. Приём тот же, что у sweepLegacyRawServerRules старого мира.
+var legacyHookPath = netres.HookPath
 
 // opkgTunDeleter — срез ndmsres.Commands для уборки legacy-интерфейсов.
 type opkgTunDeleter interface {
@@ -635,6 +640,17 @@ func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 	}
 	_ = ipt.Run(ctx, "-t", "mangle", "-F", netres.MSSChain)
 	_ = ipt.Run(ctx, "-t", "mangle", "-X", netres.MSSChain)
+
+	if flushLiveComment {
+		// netfilter.d-хук старого движка — ЕДИНСТВЕННЫЙ его артефакт,
+		// переживающий и перезапись таблиц ndm, и перезагрузку: всё остальное
+		// живёт лишь до следующего рерайта таблиц. При живом сервере файл
+		// перепишет ресурс netres.Hook (путь тот же), при выключенном — снимет;
+		// но когда серверов не осталось вовсе, ресурса Hook не существует, и
+		// файл остался бы навсегда — снять его после сноса internal/wdtt будет
+		// нечем.
+		_ = os.Remove(legacyHookPath)
+	}
 
 	if err := dropLegacyNDMSIfaces(ctx, cmds, ifaces, declaredNDMS); err != nil {
 		errs = append(errs, err)
