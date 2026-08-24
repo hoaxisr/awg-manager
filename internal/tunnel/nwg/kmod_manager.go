@@ -82,6 +82,9 @@ type KmodConfig struct {
 	PubClientHex       string // 64-char hex
 	I1, I2, I3, I4, I5 string // CPS template strings
 	BindIface          string // kernel iface for SO_BINDTODEVICE (e.g. "eth3")
+	// AWG 3.1 (awg_proxy >= header-protection build).
+	HeaderProtectionKeyHex string // 64-char hex; empty = no header protection
+	RandomTrailers         bool   // append/accept random handshake trailers
 }
 
 // KmodResult holds the result of adding a tunnel to the kernel module.
@@ -609,6 +612,15 @@ func buildProcLine(cfg KmodConfig) string {
 
 	if cfg.BindIface != "" {
 		fmt.Fprintf(&b, " BIND=%s", cfg.BindIface)
+	}
+
+	// AWG 3.1: header protection (HP_KEY) and random trailers (RT). Emitted
+	// only when set, so an AWG 1.x/2.0 line stays byte-identical.
+	if cfg.HeaderProtectionKeyHex != "" {
+		fmt.Fprintf(&b, " HP_KEY=%s", cfg.HeaderProtectionKeyHex)
+	}
+	if cfg.RandomTrailers {
+		b.WriteString(" RT=1")
 	}
 
 	return b.String()

@@ -1,9 +1,47 @@
 package nwg
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// buildKmodConfigResolved must carry the awg3.1 params from storage: the
+// base64 HeaderProtectionKey becomes 64-hex, RandomTrailers passes through, and
+// S1-S4 are clamped to the header-protection minimum (12 = ChaCha20 nonce).
+func TestBuildKmodConfig_AWG31(t *testing.T) {
+	keyBytes := bytes.Repeat([]byte{0x01}, 32)
+	stored := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			AWGObfuscation: storage.AWGObfuscation{
+				S1: 8, S2: 40, S3: 40, S4: 40, // S1 below the minimum
+				HeaderProtectionKey: base64.StdEncoding.EncodeToString(keyBytes),
+				RandomTrailers:      true,
+			},
+		},
+	}
+
+	cfg, err := buildKmodConfigResolved(stored, "1.2.3.4", 51820, "")
+	if err != nil {
+		t.Fatalf("buildKmodConfigResolved: %v", err)
+	}
+	if cfg.HeaderProtectionKeyHex != hex.EncodeToString(keyBytes) {
+		t.Errorf("HP key hex = %q", cfg.HeaderProtectionKeyHex)
+	}
+	if !cfg.RandomTrailers {
+		t.Error("RandomTrailers not carried through")
+	}
+	if cfg.S1 != 12 {
+		t.Errorf("S1 not clamped to 12: got %d", cfg.S1)
+	}
+	if cfg.S2 != 40 {
+		t.Errorf("S2 should be untouched (>=12): got %d", cfg.S2)
+	}
+}
 
 func TestPubKeyToHex(t *testing.T) {
 	key := "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
@@ -31,6 +69,36 @@ func TestBuildProcLine(t *testing.T) {
 	expected := "1.2.3.4:51820"
 	if len(line) < len(expected) || line[:len(expected)] != expected {
 		t.Errorf("buildProcLine prefix = %q, want prefix %q", line[:20], expected)
+	}
+}
+
+func TestBuildProcLine_AWG31(t *testing.T) {
+	cfg := KmodConfig{
+		EndpointIP:   "1.2.3.4",
+		EndpointPort: 51820,
+		H1:           "1", H2: "2", H3: "3", H4: "4",
+		S1: 12, S2: 12, S3: 12, S4: 12,
+		HeaderProtectionKeyHex: "01020304050607080910111213141516" +
+			"01020304050607080910111213141516",
+		RandomTrailers: true,
+	}
+	line := buildProcLine(cfg)
+	if !strings.Contains(line, " HP_KEY="+cfg.HeaderProtectionKeyHex) {
+		t.Errorf("missing HP_KEY in %q", line)
+	}
+	if !strings.Contains(line, " RT=1") {
+		t.Errorf("missing RT=1 in %q", line)
+	}
+}
+
+func TestBuildProcLine_NoAWG31WhenUnset(t *testing.T) {
+	cfg := KmodConfig{
+		EndpointIP: "1.2.3.4", EndpointPort: 51820,
+		H1: "1", H2: "2", H3: "3", H4: "4",
+	}
+	line := buildProcLine(cfg)
+	if strings.Contains(line, "HP_KEY=") || strings.Contains(line, "RT=") {
+		t.Errorf("awg3.1 tokens leaked into a non-awg3.1 line: %q", line)
 	}
 }
 
