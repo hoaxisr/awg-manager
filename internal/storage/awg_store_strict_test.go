@@ -105,3 +105,26 @@ func TestListStrictSkipsNonRecords(t *testing.T) {
 		t.Fatalf("записей %d, ждали 1", len(got))
 	}
 }
+
+// Беда уровня КАТАЛОГА — не «записей нет». Развилка, ради которой ListStrict
+// существует: fail-open здесь отдал бы Owned() пустой список, MarkSeeded(0)
+// открыл бы монотонный гейт по ветке чистой установки, и первая же ведомость
+// снесла бы живые записи.
+func TestListStrictFailsOnUnreadableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("под root chmod 000 не запрещает чтение")
+	}
+	base := t.TempDir()
+	dir := filepath.Join(base, "tunnels")
+	if err := os.Mkdir(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Иначе уборка t.TempDir() не сможет снести каталог.
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	s := NewAWGTunnelStoreWithLockDir(dir, filepath.Join(base, "locks"))
+	got, err := s.ListStrict()
+	if err == nil {
+		t.Fatalf("нечитаемый каталог обязан быть ошибкой, а не пустым списком: %v", got)
+	}
+}
