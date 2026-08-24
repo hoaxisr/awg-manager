@@ -97,6 +97,69 @@ func DefaultWorkers(goarch string) int {
 // ведомости и отдать свой живой интерфейс уборщику.
 func (c WdttClientConfig) NDMSNames() []string { return []string{c.NdmsIface} }
 
+// RawExit — выход, который конфиг объявляет для маршрутизации: всё, что
+// реестру выходов (internal/proxyrt/exitreg, план 4) нужно от конфига, и
+// ничего сверх. Только примитивы: roles не узнаёт ни про exitreg, ни про
+// wdttclient — идентификатор выхода строит потребитель.
+type RawExit struct {
+	NDMSName    string // пин: OpkgTun17..49
+	KernelIface string // пин: opkgtun17..49
+	Name        string // человеческое имя инстанса — в имя зеркальной записи
+	Peer        string // адрес сервера — в эндпоинт карточки
+}
+
+// RawExiter — конфиг роли, объявляющий свой выход.
+//
+// Метод обязан быть у КАЖДОГО конфига роли — по той же причине, что и
+// NDMSNames, и цена нарушения здесь выше. Ведомость выходов собирается по
+// ЭТОМУ интерфейсу: конфиг без метода не соберётся вовсе — вместо того чтобы
+// молча выпасть из ведомости и отдать свою зеркальную запись (с PingCheck и
+// DefaultRoute пользователя, которых в конфиге нет) уборке.
+//
+// Методы объявлены на ЗНАЧЕНИИ, поэтому указатель на конфиг интерфейсу тоже
+// удовлетворяет и даёт тот же ответ (метод-сет *T включает методы T).
+type RawExiter interface {
+	RawExit() (RawExit, bool)
+}
+
+// Проверка «метод у каждого» — здесь, а не только у потребителя: удаление
+// метода у любого из ЧЕТЫРЁХ конфигов ломает сборку пакета сразу.
+//
+// Границу гарантии называем честно: эти строки знают только про уже
+// существующие типы. Пятый конфиг они не поймают — его ловит поле
+// InstanceConfig.Cfg у потребителя (exitreg/declared.go), типизированное этим
+// интерфейсом, и ловит ровно до тех пор, пока конфиг не стёрли в any.
+var (
+	_ RawExiter = WdttClientConfig{}
+	_ RawExiter = WdttServerConfig{}
+	_ RawExiter = FreeTurnClientConfig{}
+	_ RawExiter = FreeTurnServerConfig{}
+)
+
+// RawExit: выход объявляет ТОЛЬКО raw-клиент. У wg-режима ресурса
+// routable_exit нет вовсе (wdttclient/role.go:141-152).
+func (c WdttClientConfig) RawExit() (RawExit, bool) {
+	if c.Mode != "raw" {
+		return RawExit{}, false
+	}
+	return RawExit{
+		NDMSName:    c.NdmsIface,
+		KernelIface: c.RawIface,
+		Name:        c.Name,
+		Peer:        strings.TrimSpace(c.Peer),
+	}, true
+}
+
+// RawExit: у сервера publication выхода УБРАНА решением владельца 2026-08-17
+// (сервер — вход, а не выход; правило на него — ловушка).
+func (c WdttServerConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
+
+// RawExit: у FreeTurn зеркальных записей не существует в принципе (связь с
+// туннелем — поле FreeTurnClientID, storage/types.go:413).
+func (c FreeTurnClientConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
+
+func (c FreeTurnServerConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
+
 // WdttServerConfig — сервер WDTT (обе половины: WG + raw).
 type WdttServerConfig struct {
 	Listen       string // DTLS, 0.0.0.0:56000

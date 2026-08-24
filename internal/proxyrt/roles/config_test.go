@@ -29,3 +29,42 @@ func TestDefaultWorkers(t *testing.T) {
 		}
 	}
 }
+
+func TestRawExitDeclaredOnlyByRawClient(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  RawExiter
+		want RawExit
+		ok   bool
+	}{
+		{"raw-клиент", WdttClientConfig{Mode: "raw", Name: "Германия",
+			Peer: "1.2.3.4:56000", NdmsIface: "OpkgTun18", RawIface: "opkgtun18"},
+			RawExit{NDMSName: "OpkgTun18", KernelIface: "opkgtun18",
+				Name: "Германия", Peer: "1.2.3.4:56000"}, true},
+		{"wg-клиент", WdttClientConfig{Mode: "wg", Name: "Голландия",
+			Peer: "1.1.1.1:1", NdmsIface: "OpkgTun19"}, RawExit{}, false},
+		{"сервер", WdttServerConfig{NdmsIface: "OpkgTun20", RawNdmsIface: "OpkgTun21"}, RawExit{}, false},
+		{"freeturn-клиент", FreeTurnClientConfig{}, RawExit{}, false},
+		{"freeturn-сервер", FreeTurnServerConfig{}, RawExit{}, false},
+	}
+	for _, c := range cases {
+		got, ok := c.cfg.RawExit()
+		if ok != c.ok {
+			t.Fatalf("%s: ok = %v, want %v", c.name, ok, c.ok)
+		}
+		if got != c.want {
+			t.Fatalf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestRawExitTrimsPeer(t *testing.T) {
+	// Паритет со старым билдером: BuildRawTunnelRecord клал в запись
+	// strings.TrimSpace(cfg.Peer) (raw_tunnel_meta.go:91). Пробел в
+	// Peer.Endpoint ломает карточку и сравнение на идемпотентность.
+	got, ok := WdttClientConfig{Mode: "raw", NdmsIface: "OpkgTun18",
+		RawIface: "opkgtun18", Peer: "  1.2.3.4:56000  "}.RawExit()
+	if !ok || got.Peer != "1.2.3.4:56000" {
+		t.Fatalf("peer = %q", got.Peer)
+	}
+}
