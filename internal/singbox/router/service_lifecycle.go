@@ -363,26 +363,20 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	return iface, dnsAddr, fakeipNet, true
 }
 
-// healDetachedTunInterval — стартовый зазор между попытками оживить
-// отцепившийся tun. Тик реконсиляции идёт куда чаще, и без зазора интерфейс,
-// который не поднимается по другой причине, вогнал бы движок в цикл
-// перезапусков.
-const healDetachedTunInterval = time.Minute
-
-// healDetachedTunMaxInterval — потолок зазора. Зазор удваивается на каждой
-// безуспешной попытке: причина, которую перезапуск не лечит (нет модуля,
-// занят индекс, конфиг без tun-инбаунда), иначе роняла бы соединения ВСЕХ
-// слотов раз в минуту бесконечно. Потолок оставляет лечение включённым для
-// причин, которые уходят сами (гонка провижининга), не превращая его в шторм.
-const healDetachedTunMaxInterval = 15 * time.Minute
-
-// healDetachedTunStrikes — сколько тиков подряд carrier обязан быть нулевым,
-// прежде чем мы сочтём tun отцепившимся. Один тик — не улика: после любого
-// рестарта движка (watchdog поднял упавший, оркестратор применил конфиг) есть
-// окно в секунды, когда процесс уже жив, а стек к устройству ещё не привязан;
-// тик, попавший в это окно, дал бы ЛИШНИЙ Stop+Start — ровно тот класс отказа,
-// который мы чиним. Два такта разносят улику на интервал реконсиляции.
-const healDetachedTunStrikes = 2
+// healDetachedTunAttempts — на каких по счёту тиках подряд с нулевым carrier
+// перезапускать движок. Считаем ТИКАМИ реконсиляции, а не часами: тик и так
+// периодический, поэтому отдельный таймер и арифметика зазоров тут лишние.
+//
+// Первый такт пропущен намеренно: после любого рестарта движка (watchdog
+// поднял упавший, оркестратор применил конфиг) есть окно в секунды, когда
+// процесс уже жив, а стек к устройству ещё не привязан — тик, попавший в это
+// окно, дал бы ЛИШНИЙ Stop+Start, ровно тот отказ, который мы чиним.
+//
+// После последней попытки молчим до тех пор, пока carrier не поднимется сам:
+// если три перезапуска подряд не привязали стек, причина не в движке, и
+// четвёртый рестарт только оборвёт соединения остальных слотов. Ждать вечно,
+// но реже — не лечение, а тот же вечный цикл с растянутым шагом.
+var healDetachedTunAttempts = [...]int{2, 4, 8}
 
 // healDetachedTun чинит состояние «процесс жив, tun не прицеплен»: sing-box
 // работает и отвечает, но carrier на tun нулевой — значит его стек к
@@ -391,60 +385,59 @@ const healDetachedTunStrikes = 2
 // включённым. Раньше это не лечил НИКТО — Operator.Reconcile реагирует только
 // на мёртвый процесс, а drift-heal режима смотрит на NDMS-ресурсы, не на
 // привязку стека (стенд 2026-08-20: помогал только ручной перезапуск движка).
+// Связь carrier с привязкой стека проверена на железе (стенд 2026-08-24):
+// NDMS создал интерфейс — carrier 0; sing-box привязался — 1; движок убит —
+// снова 0, а устройство осталось.
 //
 // Лечение — Reload движка: при живом tun он выполняется как Stop+Start
 // (см. process.go) и пересоздаёт привязку. Через оркестратор идти нельзя —
 // его skip-gate по хешу увидит неизменный конфиг и не сделает ничего.
 //
 // Вызывается из reconcile-тика, сериализованного transitionMu, — им же
-// защищено поле lastTunHealAt.
-func (s *ServiceImpl) healDetachedTun(iface, scope string) {
+// защищено поле tunDownStrikes.
+func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slot) {
 	if s.deps.Singbox == nil || iface == "" {
 		return
+	}
+	// Запаркованный слот — нулевой carrier ЗАКОНОМЕРЕН: в merged-конфиге нет
+	// tun-инбаунда, привязываться нечем. Перезапуск здесь ничего не чинит, а
+	// возврат слота — забота вызывающего (и он идёт выше по тику). Гейт кодом,
+	// а не порядком вызова: возврат слота может и провалиться.
+	if s.deps.Orch != nil {
+		if st, ok := s.slotSnapshot(slot); !ok || !st.Enabled {
+			s.tunDownStrikes = 0
+			return
+		}
 	}
 	if running, _ := s.deps.Singbox.IsRunning(); !running {
 		s.tunDownStrikes = 0 // мёртвый процесс — забота watchdog'а, не наша
 		return
 	}
 	if tunReadyProbe(iface) {
-		// Привязка есть — улики сброшены, и зазор возвращается к стартовому:
-		// следующий РАЗРЫВ обязан лечиться быстро, а не ждать хвост прошлого
-		// backoff'а.
 		s.tunDownStrikes = 0
-		s.tunHealBackoff = 0
 		return
 	}
-	// Копим улику до порога: одиночный нулевой carrier — это ещё и окно
-	// attach после чужого рестарта, см. healDetachedTunStrikes.
 	s.tunDownStrikes++
-	if s.tunDownStrikes < healDetachedTunStrikes {
+	if !slices.Contains(healDetachedTunAttempts[:], s.tunDownStrikes) {
 		return
 	}
-	backoff := s.tunHealBackoff
-	if backoff == 0 {
-		backoff = healDetachedTunInterval
-	}
-	now := time.Now()
-	if !s.lastTunHealAt.IsZero() && now.Sub(s.lastTunHealAt) < backoff {
-		return
-	}
-	// Гейт памяти — тот же, что у оркестратора и прямого применителя конфига:
-	// Stop+Start параллельно с чужой валидацией (`sing-box check` держит
-	// merged-конфиг в памяти) на mipsel уходит в OOM. Не взяли — пропускаем
-	// тик целиком, НЕ трогая счётчики: улика останется, вылечим следующим.
+	// Гейт памяти — тот же, что у оркестратора: Stop+Start параллельно с чужой
+	// валидацией (`sing-box check` держит merged-конфиг в памяти) на mipsel
+	// уходит в OOM. Не взяли — откатываем такт, чтобы попытка не сгорела
+	// впустую, и лечим следующим.
 	if !heavyop.Default.TryLock() {
+		s.tunDownStrikes--
 		return
 	}
-	s.lastTunHealAt = now
-	if next := backoff * 2; next > healDetachedTunMaxInterval {
-		s.tunHealBackoff = healDetachedTunMaxInterval
-	} else {
-		s.tunHealBackoff = next
+	defer heavyop.Default.Unlock()
+
+	last := s.tunDownStrikes == healDetachedTunAttempts[len(healDetachedTunAttempts)-1]
+	msg := "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок"
+	if last {
+		msg += " (последняя попытка: дальше жду, пока carrier поднимется сам)"
 	}
-	s.appLog.Warn(scope, iface, "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок")
-	err := s.deps.Singbox.Reload()
-	heavyop.Default.Unlock()
-	if err != nil {
+	s.appLog.Warn(scope, iface, msg)
+	if err := s.deps.Singbox.Reload(); err != nil {
 		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
 	}
 }
@@ -1328,12 +1321,8 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Hold на всю транзакцию: провижининг пишет слоты по нескольку раз и
-	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
-	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
-	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
-	// Регистрация ДО примирения базы, чтобы release снялся ПОСЛЕ него (defer
-	// LIFO): запись базы обязана попасть под тот же hold, а не в свой reload.
+	// Hold на всю транзакцию — по тем же причинам и с тем же порядком
+	// регистрации, что в enableLocked.
 	if s.deps.Orch != nil {
 		defer s.deps.Orch.HoldReloads()()
 	}

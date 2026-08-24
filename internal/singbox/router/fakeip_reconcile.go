@@ -109,13 +109,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Отдельно от слота: движок может быть жив, а его стек отцепиться от tun —
-	// это состояние тоже не лечил никто, см. healDetachedTun. СТРОГО ПОСЛЕ
-	// возврата слота: при запаркованном слоте carrier нулевой ЗАКОНОМЕРНО (в
-	// merged-конфиге нет tun-инбаунда), и heal до восстановления перезапускал
-	// бы движок с конфигом, где чинить нечего, — второй, уже осмысленный
-	// рестарт всё равно прилетал бы следом от SetEnabled.
-	s.healDetachedTun(iface, "fakeip-reconcile")
+	// Движок может быть жив, а его стек отцепиться от tun — это состояние не
+	// лечит никто другой, см. healDetachedTun. Слот он проверяет сам.
+	s.healDetachedTun(iface, "fakeip-reconcile", orchestrator.SlotFakeIP)
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
 	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)

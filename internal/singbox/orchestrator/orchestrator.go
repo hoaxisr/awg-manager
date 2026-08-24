@@ -373,25 +373,24 @@ func (o *Orchestrator) saveLocked(slot Slot, jsonBytes []byte) error {
 // HoldReloads подавляет debounce-reload'ы до вызова возвращённой функции.
 // Нужен на время перехода режима: teardown и провижининг пишут слоты по
 // нескольку раз и дольше окна debounce, и без hold чужой reload прилетает
-// посреди транзакции. Возвращённый release идемпотентен; когда снят последний
-// hold, накопленная запись применяется одним отложенным reload'ом.
+// посреди транзакции. Возвращённый release идемпотентен (sync.Once); когда
+// снят последний hold, накопленная запись применяется одним отложенным
+// reload'ом.
+//
+// Взведённый таймер здесь НЕ отменяется: гасит себя он сам, увидев hold в
+// своём теле (см. scheduleReload). Отмена снаружи не закрывала окно между
+// срабатыванием таймера и взятием mu — Stop() в нём возвращает false, а
+// callback всё равно доходил до Reload уже под hold'ом.
 func (o *Orchestrator) HoldReloads() func() {
 	o.mu.Lock()
 	o.holds++
-	if o.reloadTimer != nil {
-		o.reloadTimer.Stop()
-		o.reloadTimer = nil
-		o.pendingReload = true
-	}
 	o.mu.Unlock()
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			o.mu.Lock()
-			if o.holds > 0 {
-				o.holds--
-			}
+			o.holds--
 			resume := o.holds == 0 && o.pendingReload
 			if resume {
 				o.pendingReload = false
@@ -402,22 +401,14 @@ func (o *Orchestrator) HoldReloads() func() {
 	}
 }
 
-// DeferIfHeld сообщает прямым применителям конфига (тем, что дёргают процесс
-// мимо оркестратора), что сейчас идёт транзакция под HoldReloads. true —
-// применитель обязан НЕ трогать процесс: его запись уже на диске, и накопленное
-// применится одним reload'ом на release. false — hold'а нет, применяй сам.
-//
-// Нужен потому, что hold умеет подавлять только СВОЙ debounce: прямой
-// proc.Reload() при живом tun это полный Stop+Start, и посреди перехода режима
-// он рвёт транзакцию, ради которой hold и вводился.
-func (o *Orchestrator) DeferIfHeld() bool {
+// ScheduleReload планирует debounce-reload извне — для продюсеров, которые
+// пишут свой слот сами (легаси-путь туннелей пишет 10-tunnels.json напрямую,
+// со своей валидацией и откатом), но применять обязаны через оркестратор: он
+// один знает про hold, skip-gate по хешу и applied-state.
+func (o *Orchestrator) ScheduleReload() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.holds == 0 {
-		return false
-	}
-	o.pendingReload = true
-	return true
+	o.scheduleReload()
 }
 
 // SetEnabled toggles slot activity by renaming the file between

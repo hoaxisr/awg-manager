@@ -299,12 +299,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
-	// Движок жив, интерфейс наш и на месте — но стек мог отцепиться от tun.
-	// Это состояние не ловит ни один другой heal, см. healDetachedTun. СТРОГО
-	// ПОСЛЕ возврата слота 20: при запаркованном слоте нулевой carrier —
-	// следствие отсутствия tun-инбаунда в merged-конфиге, и перезапуск движка
-	// до восстановления слота ничего не чинит, а рестарт стоит.
-	s.healDetachedTun(iface, "policy-tun-reconcile")
+	// Интерфейс наш и на месте — но стек мог отцепиться от tun. Это состояние
+	// не ловит ни один другой heal, см. healDetachedTun. Слот он проверяет сам.
+	s.healDetachedTun(iface, "policy-tun-reconcile", orchestrator.SlotRouter)
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
 	// уже включённого режима и удаление списка мимо нас. Гейт probeErr == nil —
