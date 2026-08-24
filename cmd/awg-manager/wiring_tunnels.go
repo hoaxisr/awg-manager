@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/proxyhealth"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -97,11 +98,23 @@ func (a *app) setupTunnels() {
 	a.tunnelService.MigrateISPInterfaceNone()
 	a.tunnelService.MigrateEmptyBackend()
 
+	// Реестр выходов прокси-рантайма (§5). Писателей у него до плана 5 нет:
+	// объявление ведомости и подтверждение посева зовёт писатель конфига
+	// инстансов, и пока он не проведён, реестр пуст, гейт посева закрыт,
+	// уборка зеркальных записей не запускается ни при каких условиях, а
+	// каталог живёт на резидуальном фолбэке. Имена этих двух методов здесь не
+	// пишутся намеренно: ворота плана грепают их по прод-коду подстрокой.
+	a.exitRegistry = exitreg.New(
+		exitreg.NewStoreMirror(a.awgStore, a.eventBus),
+		logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubLifecycle),
+	)
+
 	// Routing catalog — unified tunnel listing for all routing subsystems
 	a.catalog = routing.NewCatalog(
 		&tunnelProviderAdapter{svc: a.tunnelService, store: a.awgStore},
 		a.ndmsQueries.Interfaces,
 		&storeAdapter{store: a.awgStore},
+		exitRegistryAdapter{reg: a.exitRegistry},
 		a.loggingService,
 	)
 

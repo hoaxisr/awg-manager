@@ -24,6 +24,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -103,6 +104,7 @@ type app struct {
 	wanModel      *wan.Model
 	tunnelService *service.ServiceImpl
 	catalog       *routing.CatalogImpl
+	exitRegistry  *exitreg.Registry
 	orch          *orchestrator.Orchestrator
 
 	// routing / aux services
