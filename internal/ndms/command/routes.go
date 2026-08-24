@@ -79,15 +79,21 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 }
 
 // AddStaticRoute adds a network or host route to the given interface. For v6
-// (route.V6) it emits the bare {network, interface, auto} form under the "ipv6"
+// (route.V6) it emits the bare {prefix, interface, auto} form under the "ipv6"
 // key (NDMS reasserts on iface up); for v4 it keeps the full
 // auto/reject/comment/mask/host form under "ip".
+//
+// Ключ подсети у v6 — ИМЕННО prefix, не network (как у v4). NDMS молча
+// отбрасывает неизвестное поле, и запрос вырождается: add остаётся без
+// обязательной подсети и получает ложный «no input», а remove без неё целится
+// в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
+// 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
 	if route.V6 {
 		payload := map[string]any{
 			"ipv6": map[string]any{
 				"route": map[string]any{
-					"network":   route.Network,
+					"prefix":    route.Network,
 					"interface": route.Interface,
 					"auto":      true,
 				},
@@ -125,7 +131,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 		payload := map[string]any{
 			"ipv6": map[string]any{
 				"route": map[string]any{
-					"network":   route.Network,
+					"prefix":    route.Network,
 					"interface": route.Interface,
 					"no":        true,
 				},

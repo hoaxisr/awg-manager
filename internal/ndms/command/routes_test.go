@@ -158,11 +158,13 @@ func TestRouteCommands_AddStaticRoute_V6(t *testing.T) {
 		t.Fatalf("add6: %v", err)
 	}
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
-	if r["network"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["auto"] != true {
+	// Ключ подсети у v6 — prefix (у v4 network). С network NDMS отдаёт ложный
+	// «no input»: обязательного поля в запросе нет — стенд 2026-08-24.
+	if r["prefix"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["auto"] != true {
 		t.Errorf("ipv6 route: %#v", r)
 	}
-	// v6 add emits ONLY {network, interface, auto} — no mask/host/reject/comment/no.
-	for _, k := range []string{"mask", "host", "reject", "comment", "no"} {
+	// v6 add emits ONLY {prefix, interface, auto} — no network/mask/host/reject/comment/no.
+	for _, k := range []string{"network", "mask", "host", "reject", "comment", "no"} {
 		if _, ok := r[k]; ok {
 			t.Errorf("v6 add must not emit %q: %#v", k, r)
 		}
@@ -177,11 +179,14 @@ func TestRouteCommands_RemoveStaticRoute_V6(t *testing.T) {
 		t.Fatalf("rm6: %v", err)
 	}
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
-	if r["network"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["no"] != true {
+	// prefix обязателен и здесь: без него NDMS понимает запрос как снятие
+	// ДЕФОЛТНОГО ::/0 у интерфейса («no such route: ::/0 via OpkgTun10» на
+	// стенде 2026-08-24), то есть целится не в тот маршрут.
+	if r["prefix"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["no"] != true {
 		t.Errorf("ipv6 route remove: %#v", r)
 	}
-	// v6 remove emits ONLY {network, interface, no} — no auto/mask/host/reject/comment.
-	for _, k := range []string{"auto", "mask", "host", "reject", "comment"} {
+	// v6 remove emits ONLY {prefix, interface, no} — no network/auto/mask/host/reject/comment.
+	for _, k := range []string{"network", "auto", "mask", "host", "reject", "comment"} {
 		if _, ok := r[k]; ok {
 			t.Errorf("v6 remove must not emit %q: %#v", k, r)
 		}
@@ -231,7 +236,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 					V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
 				})
 			},
-			want: `{"ipv6":{"route":{"auto":true,"interface":"OpkgTun10","network":"3f80::/10"}}}`,
+			want: `{"ipv6":{"route":{"auto":true,"interface":"OpkgTun10","prefix":"3f80::/10"}}}`,
 		},
 		{
 			name: "v6 remove (pool)",
@@ -240,7 +245,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 					V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
 				})
 			},
-			want: `{"ipv6":{"route":{"interface":"OpkgTun10","network":"3f80::/10","no":true}}}`,
+			want: `{"ipv6":{"route":{"interface":"OpkgTun10","no":true,"prefix":"3f80::/10"}}}`,
 		},
 	}
 	for _, tc := range cases {
