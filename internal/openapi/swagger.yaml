@@ -6068,6 +6068,26 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SystemServiceToggleEnableData:
+    properties:
+      enabled:
+        example: true
+        type: boolean
+      newScript:
+        example: /opt/etc/init.d/S90myservice
+        type: string
+      ok:
+        example: true
+        type: boolean
+    type: object
+  api.SystemServiceToggleEnableResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SystemServiceToggleEnableData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.SystemServicesListResponse:
     properties:
       data:
@@ -19168,6 +19188,36 @@ paths:
       security:
       - CookieAuth: []
       summary: ServicesSaveScript (Expert only)
+      tags:
+      - system
+      - expert
+  /system/services/toggle-enable:
+    post:
+      consumes:
+      - application/json
+      description: Toggle autostart for a service (rename Sxx <-> Kxx)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SystemServiceToggleEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: ServicesToggleEnable (Expert only)
       tags:
       - system
       - expert
