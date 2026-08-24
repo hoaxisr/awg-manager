@@ -132,14 +132,22 @@ type Membership struct {
 	list     PolicyLister
 	permit   Permitter
 	iface    string
-	policies []string
+	policies []PolicyRef
+}
+
+// PolicyRef — политика из намерения и позиция, на которую ставить наш permit
+// ПРИ СОЗДАНИИ. Локальный тип: ndmsres не импортирует roles. Order 0 — в
+// хвост (appendOrder); существующую позицию не двигаем (§4.4).
+type PolicyRef struct {
+	Name  string
+	Order int
 }
 
 func NewMembership(id proxyrt.ResourceID, list PolicyLister, permit Permitter) *Membership {
 	return &Membership{id: id, list: list, permit: permit}
 }
 
-func (m *Membership) SetDesired(iface string, policies []string) {
+func (m *Membership) SetDesired(iface string, policies []PolicyRef) {
 	m.iface, m.policies = iface, policies
 }
 
@@ -156,16 +164,16 @@ func (m *Membership) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	}
 	attrs := map[string]string{}
 	for _, want := range m.policies {
-		p, ok := byName[want]
+		p, ok := byName[want.Name]
 		if !ok {
-			attrs["policy:"+want] = "missing"
+			attrs["policy:"+want.Name] = "missing"
 			continue
 		}
 		already, order := appendOrder(p, m.iface)
 		if already {
-			attrs["policy:"+want] = "permitted"
+			attrs["policy:"+want.Name] = "permitted"
 		} else {
-			attrs["policy:"+want] = "order=" + strconv.Itoa(order)
+			attrs["policy:"+want.Name] = "order=" + strconv.Itoa(order)
 		}
 	}
 	// Чужой дрейф показываем, но не трогаем (§4.4): политики, где мы
@@ -173,7 +181,7 @@ func (m *Membership) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	var extra []string
 	wanted := make(map[string]bool, len(m.policies))
 	for _, w := range m.policies {
-		wanted[w] = true
+		wanted[w.Name] = true
 	}
 	for _, p := range all {
 		if wanted[p.Name] {
@@ -206,14 +214,22 @@ func appendOrder(policy ndms.Policy, iface string) (already bool, order int) {
 func (m *Membership) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	var steps []proxyrt.Step
 	for _, want := range m.policies {
-		switch v := obs.Attrs["policy:"+want]; {
+		switch v := obs.Attrs["policy:"+want.Name]; {
 		case v == "permitted":
 		case v == "missing":
 			return []proxyrt.Step{{Resource: m.id, Op: "fail",
-				Reason: fmt.Sprintf("политика %q не существует", want)}}
+				Reason: fmt.Sprintf("политика %q не существует", want.Name)}}
 		case strings.HasPrefix(v, "order="):
+			// Позиция из намерения главнее хвоста: пользователь поднял выход
+			// выше провайдера, и после апгрейда её надо восстановить (паритет
+			// ensureOpkgPermittedAtOrder старого мира). Order 0 — в хвост,
+			// как наблюдение и посчитало.
+			order := strings.TrimPrefix(v, "order=")
+			if want.Order > 0 {
+				order = strconv.Itoa(want.Order)
+			}
 			steps = append(steps, proxyrt.Step{Resource: m.id, Op: "permit",
-				Args:   map[string]string{"policy": want, "order": strings.TrimPrefix(v, "order=")},
+				Args:   map[string]string{"policy": want.Name, "order": order},
 				Reason: "нашего permit нет в политике из намерения"})
 		}
 	}

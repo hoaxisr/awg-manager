@@ -82,7 +82,7 @@ func TestMembershipPermitsAppendOrder(t *testing.T) {
 	// ISP и сломал приоритет (client_policy.go:31-44).
 	fp := policies(pol("Policy0", pi("ISP", false), pi("Wireguard0", false)))
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []string{"Policy0"})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0"}})
 
 	obs, err := m.Observe(context.Background())
 	if err != nil {
@@ -103,7 +103,7 @@ func TestMembershipPermitsAppendOrder(t *testing.T) {
 func TestMembershipSettledWhenPermitted(t *testing.T) {
 	fp := policies(pol("Policy0", pi("ISP", false), pi("OpkgTun18", false)))
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []string{"Policy0"})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0"}})
 	obs, _ := m.Observe(context.Background())
 	if steps := m.Plan(obs); len(steps) != 0 {
 		t.Fatalf("уже разрешены — шагов нет: %v", steps)
@@ -113,7 +113,7 @@ func TestMembershipSettledWhenPermitted(t *testing.T) {
 func TestMembershipMissingPolicyIsVerdict(t *testing.T) {
 	fp := policies()
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []string{"Нет такой"})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Нет такой"}})
 	obs, _ := m.Observe(context.Background())
 	steps := m.Plan(obs)
 	if len(steps) != 1 || steps[0].Op != "fail" {
@@ -133,7 +133,7 @@ func TestMembershipForeignPermitUntouched(t *testing.T) {
 		pol("Чужая", pi("OpkgTun18", false)),
 	)
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []string{"Наша"})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Наша"}})
 	obs, _ := m.Observe(context.Background())
 	if steps := m.Plan(obs); len(steps) != 0 {
 		t.Fatalf("чужое членство трогать нельзя: %v", steps)
@@ -147,7 +147,7 @@ func TestMembershipListErrorIsUnknown(t *testing.T) {
 	fp := policies()
 	fp.listErr = errors.New("rci недоступен")
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []string{"Policy0"})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0"}})
 	if _, err := m.Observe(context.Background()); err == nil {
 		t.Fatal("ошибка списка политик обязана давать unknown, а не «нет членства»")
 	}
@@ -160,5 +160,29 @@ func TestMembershipRecheckIsZero(t *testing.T) {
 	m := NewMembership("policy_membership", fp, fp)
 	if m.RecheckAfter() != 0 {
 		t.Fatal("policy_membership сверяется только по событиям")
+	}
+}
+
+func TestMembershipRestoresStoredOrder(t *testing.T) {
+	// Позиция permit'а — приоритет кандидатуры default route. Пользователь
+	// поднял выход выше провайдера; после апгрейда permit обязан вернуться на
+	// сохранённое место, а не уехать в хвост.
+	fp := policies(pol("Policy0", pi("ISP", false), pi("Wireguard0", false)))
+	m := NewMembership("policy_membership", fp, fp)
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0", Order: 1}})
+
+	obs, err := m.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := m.Plan(obs)
+	if len(steps) != 1 || steps[0].Args["order"] != "1" {
+		t.Fatalf("шаг обязан нести сохранённый order=1: %v", steps)
+	}
+	if err := m.Apply(context.Background(), steps[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.permits) != 1 || fp.permits[0] != "Policy0/OpkgTun18/1" {
+		t.Fatalf("permit не на сохранённой позиции: %v", fp.permits)
 	}
 }

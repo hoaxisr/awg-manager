@@ -12,7 +12,7 @@ func rawClient() WdttClientConfig {
 		Obfs: "audio", Fingerprint: "chrome", DeviceID: "awgm-default",
 		CaptchaMode: "rjs", VKAuthMode: "vkcalls",
 		NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
-		Policies: []string{"Policy0"},
+		Policies: []PolicyPermit{{Name: "Policy0"}},
 	}
 }
 

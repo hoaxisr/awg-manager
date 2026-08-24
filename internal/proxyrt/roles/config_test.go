@@ -1,6 +1,9 @@
 package roles
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // Дефолт потоков зависит от архитектуры: на mips полосу отнимает CPU (замеры
 // KN-1010 в комментарии DefaultWorkers), на arm64 стена дальше. Границы
@@ -66,5 +69,76 @@ func TestRawExitTrimsPeer(t *testing.T) {
 		RawIface: "opkgtun18", Peer: "  1.2.3.4:56000  "}.RawExit()
 	if !ok || got.Peer != "1.2.3.4:56000" {
 		t.Fatalf("peer = %q", got.Peer)
+	}
+}
+
+func TestStoreWireFormatCanary(t *testing.T) {
+	// Формат proxy-instances.json менять только с миграцией. Ловит и
+	// переименование поля Go без тега, и потерю тега.
+	cases := []struct {
+		name   string
+		v      any
+		want   []string // обязательные json-ключи при заполненных полях
+		forbid []string // ключи, которых в формате быть не должно
+	}{
+		{"wdtt-client", WdttClientConfig{Mode: "raw", Name: "n", Listen: "l",
+			Peer: "p", Password: "pw", VKHashes: "h", Workers: 9, Obfs: "o",
+			Fingerprint: "f", DeviceID: "d", CaptchaMode: "auto", VKAuthMode: "v",
+			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
+			Policies: []PolicyPermit{{Name: "P", Order: 1}}},
+			[]string{"connMode", "listen", "peer", "password", "vkHashes",
+				"workers", "obfs", "fingerprint", "deviceId", "captchaMode",
+				"vkAuthMode", "ndmsIface", "rawIface", "policies"},
+			// Имя пишет только Record.Name (Р3): у поля конфига json:"-",
+			// и запрет проверяется в ОБЕИХ формах ключа — без тега (Name)
+			// и с любым тегом, который писатель мог бы завести (name).
+			[]string{"Name", "name"}},
+		{"policy-permit", PolicyPermit{Name: "P", Order: 1},
+			[]string{"name", "order"}, nil},
+		{"freeturn-client", FreeTurnClientConfig{Listen: "l", Peer: "p",
+			Provider: "vk", Links: "x", Streams: 1, Transport: "tcp", Mode: "udp",
+			Bond: true, TurnHost: "t", TurnPort: 1, ObfProfile: "none", ObfKey: "k",
+			StreamsPerCred: 1, Platform: "desktop", DNSMode: "auto",
+			DNSServers: "s", ClientID: "c", Sub: "https://s", Debug: true},
+			[]string{"listen", "peer", "provider", "links", "streams", "transport",
+				"mode", "bond", "turnHost", "turnPort", "obfProfile", "obfKey",
+				"streamsPerCred", "platform", "dnsMode", "dnsServers", "clientId",
+				"sub", "debug"}, nil},
+		{"wdtt-server", WdttServerConfig{Listen: "l", WgPort: 1, ConfigDir: "c",
+			Password: "pw", AdminID: "a", BotToken: "b", NatIface: "ni",
+			WgIface: "wi", RawIface: "ri", NdmsIface: "n", RawNdmsIface: "rn",
+			RawListen: "rl", DirectListen: "dl", RelayMode: "wg", NatMode: "none",
+			NatStaticWAN: "w", Policy: "p", LanSegments: []string{"br0"},
+			ExposeToPolicies: true, OpenFirewall: true, Debug: true},
+			[]string{"listen", "wgPort", "configDir", "password", "adminId",
+				"botToken", "natIface", "wgIface", "rawIface", "ndmsIface",
+				"rawNdmsIface", "rawListen", "directListen", "relayMode",
+				"natMode", "natStaticWan", "policy", "lanSegments",
+				"exposeToPolicies", "openFirewall", "debug"}, nil},
+		{"freeturn-server", FreeTurnServerConfig{Listen: "l", Connect: "c",
+			Mode: "udp", ObfProfile: "none", ObfKey: "k", ClientsFile: "f",
+			Debug: true, OpenFirewall: true},
+			[]string{"listen", "connect", "mode", "obfProfile", "obfKey",
+				"clientsFile", "debug", "openFirewall"}, nil},
+	}
+	for _, c := range cases {
+		data, err := json.Marshal(c.v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range c.want {
+			if _, ok := m[k]; !ok {
+				t.Fatalf("%s: ключ %q пропал — формат store менять только с миграцией", c.name, k)
+			}
+		}
+		for _, k := range c.forbid {
+			if _, ok := m[k]; ok {
+				t.Fatalf("%s: ключ %q сериализуется, а не должен — писатель имени один, Record.Name (Р3)", c.name, k)
+			}
+		}
 	}
 }

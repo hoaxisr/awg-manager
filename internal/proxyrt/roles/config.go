@@ -13,32 +13,45 @@ import (
 // две копии старых хранилищ нормализовали по-разному, и этот класс закрыт
 // одним писателем.
 
+// PolicyPermit — permit нашего интерфейса в одной политике доступа.
+// Order — позиция на СОЗДАНИИ permit'а (восстановление после апгрейда);
+// 0 = в хвост (appendOrder). Существующую позицию никто не двигает (§4.4).
+type PolicyPermit struct {
+	Name  string `json:"name"`
+	Order int    `json:"order,omitempty"`
+}
+
 // WdttClientConfig — клиент WDTT. Mode: "raw" | "wg".
+//
+// json-теги — формат файла proxy-instances.json (план 5, Р2); имена — старые,
+// канарейка TestStoreWireFormatCanary ловит дрейф.
 type WdttClientConfig struct {
-	Mode string
+	Mode string `json:"connMode"`
 	// Name — человекочитаемое имя инстанса, данное пользователем: уходит в
 	// хвост NDMS-description (ClientDescription) — паритет со старым
 	// TunnelNameFromClient. НЕ DeviceID: тот у клиентов по умолчанию
 	// одинаков и различимости не даёт (I4 ревью).
-	Name        string
-	Listen      string // 127.0.0.1:PORT из пула ListenPortMin..Max
-	Peer        string
-	Password    string
-	VKHashes    string
-	Workers     int
-	Obfs        string
-	Fingerprint string
-	DeviceID    string
-	CaptchaMode string // auto|rjs|wv
-	VKAuthMode  string
+	//
+	// json:"-" — писатель имени один, Record.Name (Р3).
+	Name        string `json:"-"`
+	Listen      string `json:"listen"` // 127.0.0.1:PORT из пула ListenPortMin..Max
+	Peer        string `json:"peer"`
+	Password    string `json:"password"`
+	VKHashes    string `json:"vkHashes"`
+	Workers     int    `json:"workers"`
+	Obfs        string `json:"obfs,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	DeviceID    string `json:"deviceId,omitempty"`
+	CaptchaMode string `json:"captchaMode,omitempty"` // auto|rjs|wv
+	VKAuthMode  string `json:"vkAuthMode,omitempty"`
 
 	// Пин индекса (только raw): на имя OpkgTunN ссылаются permit'ы политик.
-	NdmsIface string // OpkgTun17..49
-	RawIface  string // opkgtun17..49
+	NdmsIface string `json:"ndmsIface,omitempty"` // OpkgTun17..49
+	RawIface  string `json:"rawIface,omitempty"`  // opkgtun17..49
 
 	// Policies — намерение членства в политиках доступа. Единственный
 	// писатель — пользователь (спека §4.4).
-	Policies []string
+	Policies []PolicyPermit `json:"policies,omitempty"`
 }
 
 func (c WdttClientConfig) Validate() error {
@@ -162,29 +175,32 @@ func (c FreeTurnServerConfig) RawExit() (RawExit, bool) { return RawExit{}, fals
 
 // WdttServerConfig — сервер WDTT (обе половины: WG + raw).
 type WdttServerConfig struct {
-	Listen       string // DTLS, 0.0.0.0:56000
-	WgPort       int
-	ConfigDir    string
-	Password     string
-	AdminID      string
-	BotToken     string
-	NatIface     string
-	WgIface      string // opkgtunN (пин)
-	RawIface     string // opkgtunM (пин)
-	NdmsIface    string // OpkgTunN
-	RawNdmsIface string // OpkgTunM
-	RawListen    string // пусто = DTLS+1 (конвенция qWDTT 1.4)
-	DirectListen string
-	RelayMode    string // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
-	NatMode      string // full|internet-only|none
-	NatStaticWAN string // NDMS-имя WAN для internet-only (пишет план 5 по факту применения)
-	Policy       string // none|<имя>
-	LanSegments  []string
+	Listen       string   `json:"listen"` // DTLS, 0.0.0.0:56000
+	WgPort       int      `json:"wgPort,omitempty"`
+	ConfigDir    string   `json:"configDir,omitempty"`
+	Password     string   `json:"password"`
+	AdminID      string   `json:"adminId,omitempty"`
+	BotToken     string   `json:"botToken,omitempty"`
+	NatIface     string   `json:"natIface,omitempty"`
+	WgIface      string   `json:"wgIface,omitempty"`      // opkgtunN (пин)
+	RawIface     string   `json:"rawIface,omitempty"`     // opkgtunM (пин)
+	NdmsIface    string   `json:"ndmsIface,omitempty"`    // OpkgTunN
+	RawNdmsIface string   `json:"rawNdmsIface,omitempty"` // OpkgTunM
+	RawListen    string   `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
+	DirectListen string   `json:"directListen,omitempty"`
+	RelayMode    string   `json:"relayMode,omitempty"`    // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
+	NatMode      string   `json:"natMode,omitempty"`      // full|internet-only|none
+	NatStaticWAN string   `json:"natStaticWan,omitempty"` // NDMS-имя WAN для internet-only (пишет план 5 по факту применения)
+	Policy       string   `json:"policy,omitempty"`       // none|<имя>
+	LanSegments  []string `json:"lanSegments,omitempty"`
+	// Debug — пользовательский тумблер старого мира (Г-1). В argv сервера не
+	// эмитится — как и раньше, хранится намерение.
+	Debug bool `json:"debug,omitempty"`
 	// ExposeToPolicies — тумблер «использовать в политиках доступа»:
 	// private → public + ip global (ndms_iface.go:101-110). Роутерный механизм
 	// с осознанным выбором; routable_exit сервера УБРАН решением владельца.
-	ExposeToPolicies bool
-	OpenFirewall     bool
+	ExposeToPolicies bool `json:"exposeToPolicies,omitempty"`
+	OpenFirewall     bool `json:"openFirewall"`
 }
 
 func (c WdttServerConfig) Validate() error {
@@ -251,25 +267,25 @@ func (c WdttServerConfig) EffectiveRawListen() string {
 
 // FreeTurnClientConfig — клиент FreeTurn (паритет с freeturn/service.go:876).
 type FreeTurnClientConfig struct {
-	Listen         string
-	Peer           string
-	Provider       string
-	Links          string
-	Streams        int
-	Transport      string
-	Mode           string
-	Bond           bool
-	TurnHost       string
-	TurnPort       int
-	ObfProfile     string
-	ObfKey         string
-	StreamsPerCred int
-	Platform       string // ""|desktop|mobile
-	DNSMode        string
-	DNSServers     string
-	ClientID       string
-	Sub            string
-	Debug          bool
+	Listen         string `json:"listen"`
+	Peer           string `json:"peer,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Links          string `json:"links,omitempty"`
+	Streams        int    `json:"streams,omitempty"`
+	Transport      string `json:"transport,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	Bond           bool   `json:"bond,omitempty"`
+	TurnHost       string `json:"turnHost,omitempty"`
+	TurnPort       int    `json:"turnPort,omitempty"`
+	ObfProfile     string `json:"obfProfile,omitempty"`
+	ObfKey         string `json:"obfKey,omitempty"`
+	StreamsPerCred int    `json:"streamsPerCred,omitempty"`
+	Platform       string `json:"platform,omitempty"` // ""|desktop|mobile
+	DNSMode        string `json:"dnsMode,omitempty"`
+	DNSServers     string `json:"dnsServers,omitempty"`
+	ClientID       string `json:"clientId,omitempty"`
+	Sub            string `json:"sub,omitempty"`
+	Debug          bool   `json:"debug,omitempty"`
 }
 
 func (c FreeTurnClientConfig) Validate() error {
@@ -289,14 +305,14 @@ func (c FreeTurnClientConfig) NDMSNames() []string { return nil }
 
 // FreeTurnServerConfig — сервер FreeTurn.
 type FreeTurnServerConfig struct {
-	Listen       string
-	Connect      string
-	Mode         string // udp|tcp — он же протокол INPUT-правила
-	ObfProfile   string
-	ObfKey       string
-	ClientsFile  string
-	Debug        bool
-	OpenFirewall bool
+	Listen       string `json:"listen"`
+	Connect      string `json:"connect,omitempty"`
+	Mode         string `json:"mode,omitempty"` // udp|tcp — он же протокол INPUT-правила
+	ObfProfile   string `json:"obfProfile,omitempty"`
+	ObfKey       string `json:"obfKey,omitempty"`
+	ClientsFile  string `json:"clientsFile,omitempty"`
+	Debug        bool   `json:"debug,omitempty"`
+	OpenFirewall bool   `json:"openFirewall"`
 }
 
 func (c FreeTurnServerConfig) Validate() error {

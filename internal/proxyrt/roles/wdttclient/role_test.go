@@ -149,7 +149,7 @@ func rawCfg() roles.WdttClientConfig {
 	return roles.WdttClientConfig{
 		Mode: "raw", Listen: "127.0.0.1:9000", Peer: "vps:56003", Password: "pw",
 		VKHashes: "h", NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
-		CaptchaMode: "rjs", Policies: []string{"Policy0"},
+		CaptchaMode: "rjs", Policies: []roles.PolicyPermit{{Name: "Policy0"}},
 	}
 }
 
@@ -434,5 +434,50 @@ func TestInvalidConfigTouchesNoNDMS(t *testing.T) {
 	}
 	if !strings.Contains(reason, "password") {
 		t.Fatalf("приговор обязан называть причину валидации: %q (%+v)", reason, res.States)
+	}
+}
+
+// --- порядок permit'ов доезжает от конфига до ресурса членства ---
+
+type onePolicy struct{ p ndms.Policy }
+
+func (o onePolicy) List(context.Context) ([]ndms.Policy, error) { return []ndms.Policy{o.p}, nil }
+
+func TestPolicyOrderReachesMembership(t *testing.T) {
+	// Позиция permit'а — приоритет кандидатуры default route. Роль обязана
+	// донести её из конфига до ресурса: потерянный Order уводит выход в хвост
+	// политики после первого же апгрейда.
+	reg := &memRegistry{m: map[string]linkres.ExitInfo{}}
+	pol := onePolicy{p: ndms.Policy{Name: "Policy0",
+		Interfaces: []ndms.PermittedIface{{Name: "ISP"}, {Name: "Wireguard0"}}}}
+	r, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Policies: pol, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: reg,
+		Sync: nilSync{}, Occ: nilOcc{}, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := rawCfg()
+	cfg.Policies = []roles.PolicyPermit{{Name: "Policy0", Order: 5}}
+	var member proxyrt.Resource
+	for _, res := range r.Resources(proxyrt.IntentEnabled, cfg, proxyrt.NewObservations()) {
+		if res.ID() == "policy_membership" {
+			member = res
+		}
+	}
+	if member == nil {
+		t.Fatal("ресурса policy_membership нет в ведомости")
+	}
+	obs, err := member.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := member.Plan(obs)
+	if len(steps) != 1 || steps[0].Args["order"] != "5" {
+		t.Fatalf("order из конфига не доехал до шага: %v", steps)
 	}
 }

@@ -170,7 +170,11 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		DefaultCandidacy: true, // клиентский выход; стенд-гейт §13 — предусловие волны
 	})
 	r.tun.SetDesired(c.RawIface)
-	r.member.SetDesired(c.NdmsIface, c.Policies)
+	refs := make([]ndmsres.PolicyRef, 0, len(c.Policies))
+	for _, p := range c.Policies {
+		refs = append(refs, ndmsres.PolicyRef{Name: p.Name, Order: p.Order})
+	}
+	r.member.SetDesired(c.NdmsIface, refs)
 	r.routes.SetDesired(RawTunnelID(r.deps.Instance), c.RawIface, enabled)
 	r.rexit.SetDesired(linkres.ExitInfo{
 		ID: RawTunnelID(r.deps.Instance), NDMSName: c.NdmsIface,
