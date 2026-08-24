@@ -148,8 +148,10 @@ func namedOf(recs []instancestore.Record) []instance.NDMSNamed {
 }
 
 // Boot — порядок §9 и требования 2 (блокирующего) в ОДНОЙ функции над ОДНИМ
-// списком: посев → список → MarkSeeded(len) → SetDeclared(тот же список) →
-// старт → уборка → PostSeed. Расщеплять шаги по вызывающим нельзя.
+// списком: посев → список (и ведомость NDMS-имён от него же) → PostSeed →
+// MarkSeeded(len) → SetDeclared(тот же список) → старт → уборка. Расщеплять
+// шаги по вызывающим нельзя. Почему PostSeed стоит ДО сертификации и
+// объявления — в комментарии на месте вызова.
 //
 // Замечание 10 ревью зафиксировано: MarkSeeded идёт ДО построения ведомости.
 // Это безопасно — сборка ведомости из провалидированного store не падает — и
@@ -173,9 +175,20 @@ func (m *Manager) Boot(ctx context.Context) error {
 	// оставлял бы их невыполненными НАВСЕГДА: посев уже лёг на диск, и
 	// следующий боот увидит SeededNow=false. Побочно закрывается окно драки за
 	// порты на УСПЕШНОМ пути — старое поколение добивается ДО старта новых
-	// воркеров. Обнуление адресов зеркал до объявления безвредно: SetDeclared
-	// их перепишет. Цена принята: фатальный отказ запуска оставит убитыми оба
-	// поколения.
+	// воркеров.
+	//
+	// Обнуление адресов зеркал ДО объявления безвредно — но НЕ потому, что
+	// «SetDeclared перепишет»: StoreMirror.Ensure адрес принципиально не
+	// трогает (mirror.go:47-50, объявленный резидуал В2, страж
+	// mirror_test.go:111) — он его сохраняет через read-modify-write. Причина
+	// другая: между обнулением и Ensure адрес не пишет никто, а новые
+	// зеркальные записи создаются вообще без адреса, поэтому Ensure донесёт
+	// ноль как есть. Порядок здесь НЕ свободный: довод держится на том, что
+	// между этими двумя шагами нет писателя адреса.
+	//
+	// Две принятые цены: фатальный отказ запуска ниже оставит убитыми оба
+	// поколения; отказ самого PostSeed — это Warn и продолжение боота, то есть
+	// старт нового поколения ПОВЕРХ недобитого старого.
 	if perr := m.deps.PostSeed(ctx, res, declaredNDMS); perr != nil {
 		m.deps.Journal.Warn("boot", "proxy", "уборочные шаги посева: "+perr.Error())
 	}
@@ -249,13 +262,14 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 // обязан отдать их обратно через ReleasePins — иначе held аллокатора течёт до
 // рестарта (Н6 ревью).
 //
-// ТРЕБОВАНИЕ К ПРОД-РЕАЛИЗАЦИИ AllocListen (I-3 ревью): она обязана быть БЕЗ
-// РЕЗЕРВА (скан занятых портов), потому что владельцы listen-аллокаций в
-// allocated НЕ попадают. Учесть их здесь нельзя: ReleasePins освобождает ВСЕ
-// пины владельца, и возврат ключа после listen-only-аллокации отобрал бы у
-// ЖИВОЙ записи её индекс OpkgTun (путь Update: пин на диске есть, пуст только
-// listen). Если резерв в AllocListen когда-нибудь появится, ему нужен свой,
-// НЕ owner-scoped, способ возврата.
+// Listen идёт под СВОИМ ключом владельца — key+"/listen" (I-3 ревью, круг 2),
+// ровно как обе половины сервера (key+"/wg", key+"/raw"). Голый key брать
+// нельзя: Allocator.Release (alloc.go:78-86) освобождает ВСЕ номера владельца,
+// и возврат после listen-only-аллокации отобрал бы у ЖИВОЙ записи её индекс
+// OpkgTun (путь Update: пин на диске есть, пуст только listen). Отдельный ключ
+// сохраняет резерв — без него два параллельных Create (ручки задачи 7 — HTTP)
+// получили бы от сканирующего аллокатора ОДИН порт: ensurePins и запись на
+// диск не атомарны, а validateState уникальность Listen не проверяет.
 func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err error) {
 	key := rec.Key()
 	switch rec.Kind {
@@ -274,10 +288,11 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 			c.RawIface = fmt.Sprintf("opkgtun%d", idx)
 		}
 		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key)
+			l, err := m.deps.AllocListen(key + "/listen")
 			if err != nil {
 				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 			}
+			allocated = append(allocated, key+"/listen")
 			c.Listen = l
 		}
 	case instancestore.KindWdttServer:
@@ -309,10 +324,11 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
 		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key)
+			l, err := m.deps.AllocListen(key + "/listen")
 			if err != nil {
 				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 			}
+			allocated = append(allocated, key+"/listen")
 			c.Listen = l
 		}
 	}
@@ -501,7 +517,7 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 	if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
 		m.deps.Journal.Warn("delete", key, "уборка NDMS: "+serr.Error())
 	}
-	m.deps.ReleasePins(key, key+"/wg", key+"/raw")
+	m.deps.ReleasePins(key, key+"/wg", key+"/raw", key+"/listen")
 	return nil
 }
 

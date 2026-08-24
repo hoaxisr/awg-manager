@@ -698,11 +698,12 @@ func TestBootDeclarationFailureKeepsSubsystemUnbooted(t *testing.T) {
 	}
 }
 
-func TestListenOnlyAllocationDoesNotReleaseOwnerPins(t *testing.T) {
-	// I-3: ReleasePins освобождает ВСЕ пины владельца, поэтому listen-аллокации
-	// в allocated не попадают — иначе отказ операции отобрал бы у живой записи
-	// её индекс OpkgTun. Обратная сторона контракта (для задачи 14):
-	// AllocListen обязан быть БЕЗ РЕЗЕРВА, иначе порт течёт.
+func TestListenAllocationUsesItsOwnOwnerKey(t *testing.T) {
+	// I-3 (круг 2): свежая listen-аллокация обязана вернуться при отказе — но
+	// под СВОИМ владельцем key+"/listen". Голый key освободил бы ВСЕ номера
+	// владельца (alloc.go:78-86), то есть отобрал бы у живой записи её индекс
+	// OpkgTun; отказ от учёта вовсе (прежняя редакция) требовал бы аллокатора
+	// без резерва и терял уникальность порта между параллельными Create.
 	e := newEnv(t)
 	noListen := rawRec("de", "OpkgTun18", "opkgtun18")
 	noListen.WdttClient.Listen = ""
@@ -715,7 +716,28 @@ func TestListenOnlyAllocationDoesNotReleaseOwnerPins(t *testing.T) {
 	}); err == nil {
 		t.Fatal("ждали отказ реестра")
 	}
-	if len(e.released) != 1 || len(e.released[0]) != 0 {
-		t.Fatalf("владелец живого пина обязан остаться держателем: %v", e.released)
+	if len(e.released) != 1 || len(e.released[0]) != 1 || e.released[0][0] != "wdtt-client:de/listen" {
+		t.Fatalf("возврат listen-аллокации: %v (ждали ровно [wdtt-client:de/listen] — голый ключ отобрал бы живой OpkgTun)", e.released)
+	}
+}
+
+func TestDeleteReleasesEveryOwnerKey(t *testing.T) {
+	// Круг 2: у Delete записи под рукой уже нет, поэтому он возвращает всех
+	// владельцев вслепую. Забытый key+"/listen" тёк бы до перезапуска — а
+	// свидетеля на состав списка не было (прежний тест считал только вызовы).
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"wdtt-client:de", "wdtt-client:de/wg", "wdtt-client:de/raw", "wdtt-client:de/listen"}
+	if len(e.released) != 1 || len(e.released[0]) != len(want) {
+		t.Fatalf("владельцы на возврате: %v (ждали %v)", e.released, want)
+	}
+	for i, k := range want {
+		if e.released[0][i] != k {
+			t.Fatalf("владельцы на возврате: %v (ждали %v)", e.released, want)
+		}
 	}
 }
