@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -211,19 +212,9 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// честная: kernel-сироту без NDMS-объекта скан тоже не видит, поэтому её
 	// уборка здесь пропускается (индекс не течёт — аллокатор live-sourced).
 	if !s.skipForeignTeardown(ctx, ndmsName, fakeIPTunDescription, "fakeip-disable") {
+		// (4c) Уборку осиротевшего kernel-netdev делает сам teardownOpkgTun —
+		// он же нужен откатам и реап-ретраям, которые ходят туда напрямую.
 		_ = s.teardownOpkgTun(ctx, ndmsName, "fakeip-disable")
-
-		// (4c) Orphan-netdev cleanup: NDMS DeleteOpkgTun normally tears the
-		// kernel device down too, but a half-removed teardown can leave a DOWN orphan
-		// opkgtunN behind. Such an orphan collides with the index allocator on the next
-		// Enable (LiveOpkgTunIndices unions kernel /sys names), so reap it directly via
-		// `ip link delete`. Probe-then-delete with the kernel (lowercase) iface name —
-		// the kernel device, not the NDMS RCI name. Best-effort + logged.
-		if fakeIPLinkPresent(ctx, iface) {
-			if err := fakeIPLinkDelete(ctx, iface); err != nil {
-				s.appLog.Warn("fakeip-disable", iface, "delete orphan netdev: "+err.Error())
-			}
-		}
 	}
 
 	// Remove specific CIDR routes on disable. After fakeip is off these
@@ -380,6 +371,20 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	// отсутствующем `no:true` отвечает «unable to find» и ничего не создаёт.
 	err := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName)
 	if err == nil {
+		// NDMS-запись снята — добить kernel-устройство, если оно пережило снос.
+		// Устройство persist и остаётся, когда на момент удаления его держал
+		// открытым sing-box (обычный порядок: движок останавливают уже после
+		// сноса интерфейса). NDMS про него больше не знает, а /sys — знает, и
+		// аллокатор индексов (union kernel+NDMS) считает номер занятым НАВСЕГДА:
+		// стенд 2026-08-24, пул 0..9 вычерпан за десяток переходов до «нет
+		// свободного OpkgTun-индекса». disableFakeIPTun это уже делал у себя —
+		// здесь тот же приём для откатов и реап-ретраев, которые ходят сюда.
+		iface := strings.ToLower(ndmsName)
+		if fakeIPLinkPresent(ctx, iface) {
+			if e := fakeIPLinkDelete(ctx, iface); e != nil {
+				s.appLog.Warn(scope, ndmsName, "delete kernel netdev: "+e.Error())
+			}
+		}
 		return nil
 	}
 	s.appLog.Warn(scope, ndmsName, "delete opkgtun: "+err.Error())

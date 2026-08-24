@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -41,6 +42,11 @@ func postMutationCheckedTolerant(
 	tolerate func(msg string) bool,
 	invalidators ...func(),
 ) error {
+	{ // DIAG-ONLY
+		if b, e := json.Marshal(payload); e == nil && strings.Contains(string(b), "OpkgTun") {
+			fmt.Fprintf(os.Stderr, "RCIDIAG %s :: %s\n", opDesc, string(b))
+		}
+	}
 	resp, err := poster.Post(ctx, payload)
 	if err != nil {
 		return fmt.Errorf("%s: %w", opDesc, err)
