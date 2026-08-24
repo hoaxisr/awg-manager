@@ -370,6 +370,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/services/get", h.expertGuarded(h.systemToolsHandler.ServicesGetScript))
 	mux.HandleFunc("/api/system/services/save", h.expertGuarded(h.systemToolsHandler.ServicesSaveScript))
 	mux.HandleFunc("/api/system/services/delete", h.expertGuarded(h.systemToolsHandler.ServicesDeleteScript))
+	mux.HandleFunc("/api/system/services/toggle-enable", h.expertGuarded(h.systemToolsHandler.ServicesToggleEnable))
 	mux.HandleFunc("/api/system/opkg/installed", h.expertGuarded(h.systemToolsHandler.OpkgInstalled))
 	mux.HandleFunc("/api/system/opkg/upgradable", h.expertGuarded(h.systemToolsHandler.OpkgUpgradable))
 	mux.HandleFunc("/api/system/opkg/search", h.expertGuarded(h.systemToolsHandler.OpkgSearch))
@@ -859,6 +860,11 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.singboxInboundsHandler != nil {
 		mux.HandleFunc("/api/singbox/inbounds", h.guarded(s.singboxInboundsHandler.List))
 	}
+
+	if s.mihomoHandler != nil {
+		s.mihomoHandler.RegisterRoutes(mux, h.guarded)
+	}
+
 	if s.clashProxy != nil {
 		mux.HandleFunc("/api/singbox/clash/", h.guarded(s.clashProxy.ServeHTTP))
 		mux.HandleFunc("/api/singbox/clash", h.guarded(s.clashProxy.ServeHTTP))

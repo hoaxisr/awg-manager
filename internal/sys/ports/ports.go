@@ -413,7 +413,7 @@ func (s *Scanner) scanInitServices() map[string]string {
 			continue
 		}
 		name := e.Name()
-		if len(name) > 3 && name[0] == 'S' {
+		if len(name) > 3 && (name[0] == 'S' || name[0] == 'K') {
 			svcName := name[3:]
 			res[svcName] = name
 		}

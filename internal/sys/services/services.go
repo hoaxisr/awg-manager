@@ -16,7 +16,7 @@ import (
 const initDir = "/opt/etc/init.d"
 
 var (
-	scriptNameRe = regexp.MustCompile(`^S[0-9]{2}[a-zA-Z0-9._-]+$`)
+	scriptNameRe = regexp.MustCompile(`^[SK][0-9]{2}[a-zA-Z0-9._-]+$`)
 	csiRe        = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 )
 
@@ -63,7 +63,7 @@ func (sc *Scanner) List() ([]Item, error) {
 		item := Item{
 			Name:    serviceName(name),
 			Script:  script,
-			Enabled: true,
+			Enabled: strings.HasPrefix(name, "S"),
 			LogPath: guessLogPath(name),
 		}
 		if hint, ok := managedService(name); ok {
@@ -80,8 +80,8 @@ func (sc *Scanner) List() ([]Item, error) {
 }
 
 func serviceName(script string) string {
-	// S99awg-manager -> awg-manager
-	if len(script) > 3 && script[0] == 'S' {
+	// S99awg-manager -> awg-manager, K99awg-manager -> awg-manager
+	if len(script) > 3 && (script[0] == 'S' || script[0] == 'K') {
 		return script[3:]
 	}
 	return script
@@ -190,6 +190,51 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 	return out, err
 }
 
+// ToggleEnable switches service between enabled (Sxx) and disabled (Kxx).
+func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, err error) {
+	base := filepath.Base(script)
+	if !scriptNameRe.MatchString(base) {
+		return "", fmt.Errorf("invalid script name")
+	}
+	if serviceName(base) == "awg-manager" && !enable {
+		return "", fmt.Errorf("cannot disable autostart for awg-manager: отключение автозапуска сделает панель недоступной после перезагрузки")
+	}
+
+	currentEnabled := strings.HasPrefix(base, "S")
+	if currentEnabled == enable {
+		// Already in desired state
+		dir := sc.InitDir
+		if dir == "" {
+			dir = initDir
+		}
+		return filepath.Join(dir, base), nil
+	}
+
+	var newBase string
+	if enable {
+		newBase = "S" + base[1:]
+	} else {
+		newBase = "K" + base[1:]
+	}
+
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	oldPath := filepath.Join(dir, base)
+	newPath := filepath.Join(dir, newBase)
+
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		return "", fmt.Errorf("script not found: %w", statErr)
+	}
+
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return "", fmt.Errorf("failed to rename script: %w", err)
+	}
+
+	return newPath, nil
+}
+
 // ReadScript returns the raw content of an init.d script.
 func (sc *Scanner) ReadScript(script string) (string, error) {
 	base := filepath.Base(script)
@@ -212,7 +257,7 @@ func (sc *Scanner) ReadScript(script string) (string, error) {
 func (sc *Scanner) SaveScript(scriptName string, content string) (string, error) {
 	base := filepath.Base(scriptName)
 	if !scriptNameRe.MatchString(base) {
-		return "", fmt.Errorf("invalid script name (must be S<number><name>, e.g. S90myservice)")
+		return "", fmt.Errorf("invalid script name (must be S<number><name> or K<number><name>, e.g. S90myservice)")
 	}
 	// Перезапись — тот же результат, что и удаление: защита от удаления без
 	// неё обходится одним сохранением пустого файла.

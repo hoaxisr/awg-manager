@@ -783,6 +783,13 @@ export class SystemClient extends TunnelsClient {
 		});
 	}
 
+	async systemServicesToggleEnable(script: string, enabled: boolean): Promise<{ ok: boolean; newScript: string; enabled: boolean }> {
+		return this.request('/system/services/toggle-enable', {
+			method: 'POST',
+			body: JSON.stringify({ script, enabled }),
+		});
+	}
+
 	async systemOpkgInstalled(): Promise<SystemOpkgPackage[]> {
 		return this.request('/system/opkg/installed');
 	}
