@@ -2,9 +2,11 @@ package instancestore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -791,4 +793,295 @@ func TestSeedMissingRuntimeDirIsNotAnError(t *testing.T) {
 	if res.OldGenPIDs != nil {
 		t.Fatalf("pids = %v", res.OldGenPIDs)
 	}
+}
+
+func TestSeedSkipsLivePermitsWhenAllocatorMovedPin(t *testing.T) {
+	// Пин лежит в диапазоне архитектуры, но занят ДРУГИМ владельцем, и
+	// аллокатор выдаёт иной индекс. Спрашивать live-permits тут нельзя ни по
+	// старому имени (оно больше не наше), ни по новому (интерфейса с ним на
+	// роутере ещё не существует): RCI ответил бы ошибкой, посев валился бы на
+	// каждом старте, и выйти из этого пользователь не может. Намерение
+	// членства остаётся кэш-only — permit'ы восстановит уже применение.
+	e := newSeedEnv(t)
+	e.lives["OpkgTun18"] = []string{"ЧужаяПолитика"}
+	e.lives["OpkgTun31"] = []string{"НесуществующийИнтерфейс"}
+	e.deps.AllocIndex = func(_ string, pinned int, havePin bool) (int, error) {
+		if !havePin || pinned != 18 {
+			t.Fatalf("ждали заявку на сохранение пина 18, пришло (%d, havePin=%v)", pinned, havePin)
+		}
+		return 31, nil // пин занят другим владельцем — аллокатор подвинул
+	}
+	writeFile(t, e.deps.WdttPath, `{"clients":[{"id":"z","name":"Z","config":{
+	  "enabled":true,"listen":"127.0.0.1:9000","peer":"1.1.1.1:1","password":"pw",
+	  "vkHashes":"h","connMode":"raw","peerRaw":"1.1.1.1:2",
+	  "ndmsIface":"OpkgTun18","rawIface":"opkgtun18",
+	  "policyPermits":[{"name":"ИзКэша","order":0}]}}]}`)
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.asked) != 0 {
+		t.Fatalf("live-permits спрошены после сдвига пина: %v", e.asked)
+	}
+	cfg, _ := res.State.Records[0].WdttClientConfig()
+	if cfg.NdmsIface != "OpkgTun31" || cfg.RawIface != "opkgtun31" {
+		t.Fatalf("сдвинутый пин не применён: %+v", cfg)
+	}
+	want := []roles.PolicyPermit{{Name: "ИзКэша", Order: orderPtr(0)}}
+	if !samePermits(cfg.Policies, want) {
+		t.Fatalf("намерение членства обязано остаться кэш-only: %+v", cfg.Policies)
+	}
+}
+
+// Полная фикстура: КАЖДОЕ поле старых форматов заполнено уникальным
+// различимым значением. Проверка — сравнение записей ЦЕЛИКОМ, а не по
+// интересным полям (B4: посев — последний ручной маппер полутора сотен полей
+// в волне, и `Sub` уже терялся ровно так). Поля, которые не переносятся
+// намеренно, здесь тоже заданы — чтобы попытка их прочитать сломала сравнение.
+const fullWdttJSON = `{
+  "clients": [{"id":"cli-1","name":"Клиент раз","config":{
+    "enabled":true,
+    "listen":"127.0.0.1:9011",
+    "peer":"common.example:9999",
+    "password":"pw-client",
+    "vkHashes":"vkh-client",
+    "workers":27,
+    "obfs":"video",
+    "fingerprint":"firefox",
+    "deviceId":"dev-client",
+    "captchaMode":"wv",
+    "vkAuthMode":"vkauth-client",
+    "sub":"https://sub.wdtt.example/one",
+    "connMode":"raw",
+    "peerWg":"wg.example:56000",
+    "peerRaw":"raw.example:56003",
+    "ndmsIface":"OpkgTun18",
+    "rawIface":"opkgtun18",
+    "rawClientIp":"10.70.0.9",
+    "rawClientMTU":1300,
+    "debug":true,
+    "policyPermits":[{"name":"CacheTop","order":0},{"name":"CacheSecond","order":4}]}}],
+  "servers": [{"id":"srv-1","name":"Сервер раз","config":{
+    "enabled":true,
+    "listen":"0.0.0.0:56002",
+    "wgPort":56001,
+    "configDir":"/opt/etc/awgm/wdtt-srv-1",
+    "password":"pw-server",
+    "adminId":"admin-77",
+    "botToken":"bot-token-77",
+    "natIface":"ISP",
+    "natMode":"internet-only",
+    "natStaticWan":"ISP2",
+    "policy":"PolicyForServer",
+    "lanSegments":["Home","Guest"],
+    "openFirewall":false,
+    "relayMode":"raw",
+    "rawListen":"0.0.0.0:56003",
+    "directListen":"0.0.0.0:56004",
+    "ndmsIface":"OpkgTun20",
+    "wgIface":"opkgtun20",
+    "rawNdmsIface":"OpkgTun21",
+    "rawIface":"opkgtun21",
+    "exposeToPolicies":true,
+    "debug":true,
+    "ingressEnabled":true,
+    "clients":[{"password":"user-pw-1","comment":"Абонент один","vkHash":"vkhash-1",
+                "expiresAt":1700000001,"auto":true}],
+    "linkPeer":"link.example:56002",
+    "linkVkHashes":"link-vkh",
+    "statsLog":"disk"}}]
+}`
+
+const fullFreeturnJSON = `{
+  "version": 2,
+  "clients": [{"id":"ftc-1","name":"FT клиент","config":{
+    "enabled":true,
+    "listen":"127.0.0.1:9012",
+    "peer":"ft.example:56000",
+    "provider":"vk",
+    "links":"https://vk.example/a,https://vk.example/b",
+    "streams":12,
+    "transport":"udp",
+    "mode":"tcp",
+    "bond":true,
+    "turnHost":"turn.example",
+    "turnPort":3478,
+    "obfProfile":"rtpopus2",
+    "obfKey":"ft-obf-key-client",
+    "streamsPerCred":6,
+    "platform":"mobile",
+    "dnsMode":"doh",
+    "dnsServers":"1.1.1.1:53,8.8.8.8",
+    "clientId":"ft-client-id",
+    "sub":"https://sub.ft.example/one",
+    "debug":true}}],
+  "servers": [{"id":"fts-1","name":"FT сервер","config":{
+    "enabled":true,
+    "listen":"0.0.0.0:56005",
+    "connect":"127.0.0.1:9013",
+    "mode":"tcp",
+    "obfProfile":"rtpopus3",
+    "obfKey":"ft-obf-key-server",
+    "clientsFile":"/opt/etc/awgm/ft-clients.json",
+    "debug":true,
+    "openFirewall":false}}]
+}`
+
+// assertNoZeroFields — канарейка на ПОЛНОТУ фикстуры и маппинга: ни одно
+// экспортированное поле результата не имеет права остаться нулевым. Ловит и
+// потерю существующего поля, и появление нового — того, которого в перечне
+// сравнения ещё нет. Исключения называются поимённо, с причиной.
+func assertNoZeroFields(t *testing.T, what string, v any, allowedZero ...string) {
+	t.Helper()
+	allowed := map[string]bool{}
+	for _, name := range allowedZero {
+		allowed[name] = true
+	}
+	rv := reflect.ValueOf(v)
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if !f.IsExported() || allowed[f.Name] {
+			continue
+		}
+		if rv.Field(i).IsZero() {
+			t.Errorf("%s: поле %s нулевое — либо посев его не переносит, либо фикстура его не задаёт", what, f.Name)
+		}
+	}
+}
+
+func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, fullWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, fullFreeturnJSON)
+	e.lives["OpkgTun18"] = []string{"LiveExtra"}
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []Record{
+		{
+			ID: "cli-1", Kind: KindWdttClient, Name: "Клиент раз", Enabled: true,
+			Sub:    "https://sub.wdtt.example/one",
+			PeerWg: "wg.example:56000", PeerRaw: "raw.example:56003",
+			WdttClient: &roles.WdttClientConfig{
+				Mode:   "raw",
+				Listen: "127.0.0.1:9011",
+				// Слот активного режима главнее общего peer (common.example
+				// в фикстуре стоит именно как ловушка на этот выбор).
+				Peer:        "raw.example:56003",
+				Password:    "pw-client",
+				VKHashes:    "vkh-client",
+				Workers:     27,
+				Obfs:        "video",
+				Fingerprint: "firefox",
+				DeviceID:    "dev-client",
+				CaptchaMode: "wv",
+				VKAuthMode:  "vkauth-client",
+				NdmsIface:   "OpkgTun18",
+				RawIface:    "opkgtun18",
+				Policies: []roles.PolicyPermit{
+					{Name: "CacheTop", Order: orderPtr(0)},
+					{Name: "CacheSecond", Order: orderPtr(4)},
+					{Name: "LiveExtra"},
+				},
+			},
+		},
+		{
+			ID: "srv-1", Kind: KindWdttServer, Name: "Сервер раз", Enabled: true,
+			Users: []ServerUser{{Password: "user-pw-1", Comment: "Абонент один",
+				VkHash: "vkhash-1", ExpiresAt: 1700000001, Auto: true}},
+			LinkPeer: "link.example:56002", LinkVKHashes: "link-vkh", StatsLog: "disk",
+			WdttServer: &roles.WdttServerConfig{
+				Listen:           "0.0.0.0:56002",
+				WgPort:           56001,
+				ConfigDir:        "/opt/etc/awgm/wdtt-srv-1",
+				Password:         "pw-server",
+				AdminID:          "admin-77",
+				BotToken:         "bot-token-77",
+				NatIface:         "ISP",
+				WgIface:          "opkgtun20",
+				RawIface:         "opkgtun21",
+				NdmsIface:        "OpkgTun20",
+				RawNdmsIface:     "OpkgTun21",
+				RawListen:        "0.0.0.0:56003",
+				DirectListen:     "0.0.0.0:56004",
+				RelayMode:        "raw",
+				NatMode:          "internet-only",
+				NatStaticWAN:     "ISP2",
+				Policy:           "PolicyForServer",
+				LanSegments:      []string{"Home", "Guest"},
+				Debug:            true,
+				ExposeToPolicies: true,
+				OpenFirewall:     false,
+			},
+		},
+		{
+			ID: "ftc-1", Kind: KindFreeTurnClient, Name: "FT клиент", Enabled: true,
+			FreeTurnClient: &roles.FreeTurnClientConfig{
+				Listen:         "127.0.0.1:9012",
+				Peer:           "ft.example:56000",
+				Provider:       "vk",
+				Links:          "https://vk.example/a,https://vk.example/b",
+				Streams:        12,
+				Transport:      "udp",
+				Mode:           "tcp",
+				Bond:           true,
+				TurnHost:       "turn.example",
+				TurnPort:       3478,
+				ObfProfile:     "rtpopus2",
+				ObfKey:         "ft-obf-key-client",
+				StreamsPerCred: 6,
+				Platform:       "mobile",
+				DNSMode:        "doh",
+				DNSServers:     "1.1.1.1:53,8.8.8.8",
+				ClientID:       "ft-client-id",
+				Sub:            "https://sub.ft.example/one",
+				Debug:          true,
+			},
+		},
+		{
+			ID: "fts-1", Kind: KindFreeTurnServer, Name: "FT сервер", Enabled: true,
+			FreeTurnServer: &roles.FreeTurnServerConfig{
+				Listen:       "0.0.0.0:56005",
+				Connect:      "127.0.0.1:9013",
+				Mode:         "tcp",
+				ObfProfile:   "rtpopus3",
+				ObfKey:       "ft-obf-key-server",
+				ClientsFile:  "/opt/etc/awgm/ft-clients.json",
+				Debug:        true,
+				OpenFirewall: false,
+			},
+		},
+	}
+
+	if len(res.State.Records) != len(want) {
+		t.Fatalf("записей %d, ждали %d", len(res.State.Records), len(want))
+	}
+	for i, w := range want {
+		if got := res.State.Records[i]; !reflect.DeepEqual(got, w) {
+			gj, _ := json.MarshalIndent(got, "", "  ")
+			wj, _ := json.MarshalIndent(w, "", "  ")
+			t.Errorf("запись %s разошлась с ожиданием.\nполучено:\n%s\nждали:\n%s", w.Key(), gj, wj)
+		}
+	}
+
+	// Канарейка полноты: нулевое поле означает либо потерю в маппинге, либо
+	// новое поле, которого фикстура ещё не знает.
+	cli, _ := res.State.Records[0].WdttClientConfig()
+	// Name — единственное поле конфига с json:"-": его впрыскивает геттер из
+	// Record.Name, в самой записи оно пустое (Р3, один писатель имени).
+	assertNoZeroFields(t, "WdttClientConfig", *res.State.Records[0].WdttClient, "Name")
+	if cli.Name != "Клиент раз" {
+		t.Errorf("геттер не впрыснул имя: %q", cli.Name)
+	}
+	// OpenFirewall у обеих серверных ролей задан явным false — чтобы значение
+	// отличалось от дефолта «ключа нет → true» и потеря маппинга была видна.
+	// Форма nil→true закрыта TestSeedOpenFirewallAbsentOrNullMeansOn.
+	assertNoZeroFields(t, "WdttServerConfig", *res.State.Records[1].WdttServer, "OpenFirewall")
+	assertNoZeroFields(t, "ServerUser", res.State.Records[1].Users[0])
+	assertNoZeroFields(t, "FreeTurnClientConfig", *res.State.Records[2].FreeTurnClient)
+	assertNoZeroFields(t, "FreeTurnServerConfig", *res.State.Records[3].FreeTurnServer, "OpenFirewall")
 }
