@@ -134,6 +134,14 @@ static void chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
 	memzero_explicit(keystream, sizeof(keystream));
 }
 
+/* Public entry point (see cookie.h): AmneziaWG 3.0+ header protection reuses
+ * the vetted ChaCha20 core above rather than carrying a second copy. */
+void awg_chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
+		      u8 *data, size_t len)
+{
+	chacha20_xor(key, nonce, counter, data, len);
+}
+
 /* ---- Poly1305 (Donna32, RFC 8439 §2.5) ---- */
 
 struct poly1305_state {

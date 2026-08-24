@@ -4,3 +4,4 @@ test_tunnel
 test_proxy_recv
 test_proxy_loop
 *.dSYM
+test_hp
