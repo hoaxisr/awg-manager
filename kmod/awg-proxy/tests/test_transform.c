@@ -693,6 +693,83 @@ static void test_transform_inbound_hp(void)
 		test_fail("transform_inbound_hp", "type not restored to WG init");
 }
 
+/* ---------- AWG 3.1 random trailers ---------- */
+
+/* With random_trailers, transform_inbound accepts an over-long handshake
+ * (message + cleartext trailer) and strips the trailer back to the fixed size. */
+static void test_transform_inbound_rt_strips_trailer(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE + 20];
+	int out_len = 0;
+	u8 *msg;
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	cfg.s1 = 12; cfg.s2 = 12; cfg.s3 = 12; cfg.s4 = 12;
+	cfg.h1.min = 1000; cfg.h1.max = 1000;
+	cfg.random_trailers = 1;
+	config_compute(&cfg);
+
+	memset(pkt, 0, sizeof(pkt));
+	for (int i = 0; i < 12; i++)
+		pkt[i] = (u8)(0xB0 + i);
+	write32_le_host(pkt + 12, 1000);
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+	for (int i = 0; i < 20; i++)            /* cleartext trailer */
+		pkt[12 + WG_INIT_SIZE + i] = (u8)(0xEE ^ i);
+
+	msg = transform_inbound(pkt, 12 + WG_INIT_SIZE + 20, &cfg, &out_len);
+	if (!msg)
+		test_fail("rt_strips_trailer", "over-long init not accepted under RT");
+	else if (out_len != WG_INIT_SIZE)
+		test_fail("rt_strips_trailer", "trailer not stripped: out_len=%d", out_len);
+	else if (read32_le_host(msg) != WG_HANDSHAKE_INIT)
+		test_fail("rt_strips_trailer", "type not restored");
+}
+
+/* Without random_trailers, an over-long handshake is NOT accepted as a
+ * handshake (exact-size dispatch), so the H1 candidate does not match. */
+static void test_transform_inbound_no_rt_rejects_trailer(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE + 20];
+	int out_len = 0;
+	u8 *msg;
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	cfg.s1 = 12; cfg.s2 = 12; cfg.s3 = 12; cfg.s4 = 12;
+	cfg.h1.min = 1000; cfg.h1.max = 1000;
+	cfg.random_trailers = 0;               /* RT disabled */
+	config_compute(&cfg);
+
+	memset(pkt, 0, sizeof(pkt));
+	write32_le_host(pkt + 12, 1000);
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+
+	msg = transform_inbound(pkt, 12 + WG_INIT_SIZE + 20, &cfg, &out_len);
+	if (msg && out_len == WG_INIT_SIZE)
+		test_fail("no_rt_rejects_trailer", "over-long init accepted without RT");
+}
+
+static void test_trailer_len_bounds(void)
+{
+	int i, r;
+
+	tests_run++;
+	shim_set_random_seed(0x9911);
+	for (i = 0; i < 200; i++) {
+		r = awg_trailer_len(500, 160);
+		if (r < 0 || r >= 500 - 160)
+			test_fail("trailer_len_bounds", "out of [0,340): %d", r);
+	}
+	if (awg_trailer_len(100, 160) != 0)
+		test_fail("trailer_len_bounds", "window<=size must yield 0");
+	if (awg_trailer_len(160, 160) != 0)
+		test_fail("trailer_len_bounds", "window==size must yield 0");
+}
+
 int main(void)
 {
 	test_s4_random_fill();
@@ -713,6 +790,9 @@ int main(void)
 	test_hp_transport_scope();
 	test_hp_peek_type();
 	test_transform_inbound_hp();
+	test_transform_inbound_rt_strips_trailer();
+	test_transform_inbound_no_rt_rejects_trailer();
+	test_trailer_len_bounds();
 
 	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);
 	return tests_failed == 0 ? 0 : 1;

@@ -90,6 +90,24 @@ u32 hp_peek_type(const awg_config_t *cfg, const u8 *pkt, int s_prefix)
 	return read32_le(pkt + s_prefix) ^ read32_le(ks);
 }
 
+/*
+ * AWG 3.1 random-trailer length: a value in [0, udp_window - packet_size),
+ * or 0 when the window has not yet exceeded the packet. udp_window is the
+ * per-slot largest datagram observed (seeded to DefaultUdpWindow=500), so
+ * trailers track the connection's natural size envelope. Mirrors
+ * amneziawg-go Peer.randomTrailer / mikrotik trailer_len.
+ */
+int awg_trailer_len(u32 udp_window, int packet_size)
+{
+	u32 span, r;
+
+	if (packet_size < 0 || udp_window <= (u32)packet_size)
+		return 0;
+	span = udp_window - (u32)packet_size;
+	get_random_bytes(&r, sizeof(r));
+	return (int)(r % span);
+}
+
 u8 *transform_outbound(u8 *buf, int dataoff, int n,
 		       const awg_config_t *cfg, u64 rand_val,
 		       int *out_len, int *sendCps, int *sendJunk,
@@ -204,7 +222,10 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 	 * protection the type is recovered via hp_peek_type (keystream XOR) and,
 	 * once a candidate matches its H-range, the message is decrypted in place
 	 * before the canonical WG type is written and MAC1 recomputed. */
-	if (n == cfg->init_total) {
+	/* Handshakes: exact size, or (under random_trailers) longer — the extra
+	 * bytes are a cleartext trailer stripped by returning the fixed size. */
+	if (n == cfg->init_total ||
+	    (cfg->random_trailers && n > cfg->init_total)) {
 		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s1)
 				       : read32_le(buf + cfg->s1);
 
@@ -216,12 +237,13 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 			if (cfg->has_client_pub)
 				recompute_mac1(buf + cfg->s1,
 					       cfg->mac1key_client);
-			*out_len = n - cfg->s1;
+			*out_len = WG_INIT_SIZE;
 			return buf + cfg->s1;
 		}
 	}
 
-	if (n == cfg->resp_total) {
+	if (n == cfg->resp_total ||
+	    (cfg->random_trailers && n > cfg->resp_total)) {
 		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s2)
 				       : read32_le(buf + cfg->s2);
 
@@ -233,12 +255,13 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 			if (cfg->has_client_pub)
 				recompute_mac1_response(buf + cfg->s2,
 							cfg->mac1key_client);
-			*out_len = n - cfg->s2;
+			*out_len = WG_RESP_SIZE;
 			return buf + cfg->s2;
 		}
 	}
 
-	if (n == cfg->cookie_total) {
+	if (n == cfg->cookie_total ||
+	    (cfg->random_trailers && n > cfg->cookie_total)) {
 		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s3)
 				       : read32_le(buf + cfg->s3);
 
@@ -247,7 +270,7 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 				hp_crypt(cfg, buf, cfg->s3, WG_COOKIE_SIZE,
 					 WG_COOKIE_REPLY);
 			write32_le(buf + cfg->s3, WG_COOKIE_REPLY);
-			*out_len = n - cfg->s3;
+			*out_len = WG_COOKIE_SIZE;
 			return buf + cfg->s3;
 		}
 	}

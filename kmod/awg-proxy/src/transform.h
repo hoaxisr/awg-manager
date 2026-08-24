@@ -134,6 +134,9 @@ void config_compute(awg_config_t *cfg);
 void hp_crypt(const awg_config_t *cfg, u8 *pkt, int s_prefix, int n, u32 msgType);
 u32 hp_peek_type(const awg_config_t *cfg, const u8 *pkt, int s_prefix);
 
+/* AWG 3.1 random-trailer length in [0, udp_window - packet_size), else 0. */
+int awg_trailer_len(u32 udp_window, int packet_size);
+
 /*
  * Transform outbound WG->AWG.
  * buf has dataoff bytes of headroom before the packet data.
