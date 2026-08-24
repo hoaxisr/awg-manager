@@ -105,10 +105,15 @@ type env struct {
 	seedResSet bool // ИСПРАВЛЕНИЕ ошибки фикстуры ред. 1: явный флаг вместо
 	// ветвления по Records == nil (оно делало seedRes недостижимым)
 	postSeed [][2]bool // {SeededNow, вызван}
-	waited   []string
-	waitHook func() // срабатывает внутри WaitDisabled (нужен тесту воскрешения)
-	released [][]string
-	allocN   int
+	// postSeedNDMS — ведомость NDMS-имён, ДОШЕДШАЯ до уборочных шагов (I-1
+	// ревью: факта вызова мало, пустая или nil-карта = чистка правил с живых
+	// объявленных интерфейсов).
+	postSeedNDMS []map[string]bool
+	factoryErr   error // отказ сборки инстанса (I-2 ревью)
+	waited       []string
+	waitHook     func() // срабатывает внутри WaitDisabled (нужен тесту воскрешения)
+	released     [][]string
+	allocN       int
 }
 
 func newEnv(t *testing.T) *env {
@@ -122,6 +127,9 @@ func newEnv(t *testing.T) *env {
 		Sweeper:  e.sw,
 		Journal:  &recJournal{},
 		Factory: func(rec instancestore.Record, live *Live) (RunningInstance, error) {
+			if e.factoryErr != nil {
+				return nil, e.factoryErr
+			}
 			fi := &fakeInstance{}
 			e.instances[rec.Key()] = fi
 			e.factoryN[rec.Key()]++
@@ -140,8 +148,9 @@ func newEnv(t *testing.T) *env {
 			}
 			return instancestore.SeedResult{State: st, SeededNow: !st.Seeded}, nil
 		},
-		PostSeed: func(_ context.Context, res instancestore.SeedResult, _ map[string]bool) error {
+		PostSeed: func(_ context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error {
 			e.postSeed = append(e.postSeed, [2]bool{res.SeededNow, true})
+			e.postSeedNDMS = append(e.postSeedNDMS, declaredNDMS)
 			return nil
 		},
 		AllocIndex: func(_ string, pinned int, havePin bool) (int, error) {
@@ -570,5 +579,143 @@ func TestStopRunsOutsideManagerLock(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Delete держит m.mu на время Stop — дедлок Щ6")
+	}
+}
+
+// --- Фикс-раунд 1 по ревью: I-1 (состав ведомостей), I-2 (ретрай запуска),
+// I-3 (контракт AllocListen), I-4 (дисциплина флагов), F2 (перенос PostSeed).
+
+func sameNames(got map[string]bool, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for _, n := range want {
+		if !got[n] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestPostSeedRunsEvenWhenDeclarationFails(t *testing.T) {
+	// F2: посев уже лёг на диск, поэтому следующий боот увидит SeededNow=false.
+	// Если уборочные шаги ждут конца боота, отказ объявления отменяет их
+	// НАВСЕГДА — на железе это два живых поколения процессов.
+	e := newEnv(t)
+	e.reg.failSet = errors.New("дубликат id")
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("отказ объявления — отказ боота")
+	}
+	if len(e.postSeed) != 1 {
+		t.Fatalf("уборочные шаги посева обязаны пройти до объявления: %v", e.postSeed)
+	}
+}
+
+func TestBootSweepsExactlyDeclaredNDMSNames(t *testing.T) {
+	// I-1: пустая ведомость — это снос ВСЕХ интерфейсов; факта вызова мало.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), ftRec("ft"))
+	boot(t, e)
+	if len(e.sw.calls) != 1 || !sameNames(e.sw.calls[0], "OpkgTun18") {
+		t.Fatalf("ведомость уборщика на бооте: %v (ждали ровно {OpkgTun18})", e.sw.calls)
+	}
+}
+
+func TestPostSeedReceivesDeclaredNDMSNames(t *testing.T) {
+	// I-1: nil в уборке наследия (задача 6) = чистка правил с ЖИВЫХ интерфейсов.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	if len(e.postSeedNDMS) != 1 || !sameNames(e.postSeedNDMS[0], "OpkgTun18") {
+		t.Fatalf("ведомость уборочных шагов: %v (ждали ровно {OpkgTun18})", e.postSeedNDMS)
+	}
+}
+
+func TestDeleteSweepsSurvivorsNDMSNames(t *testing.T) {
+	// I-1: после удаления одного инстанса ведомость обязана нести имена
+	// ОСТАВШИХСЯ — пустая карта снесла бы интерфейс живого соседа.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), rawRec("dv", "OpkgTun19", "opkgtun19"))
+	boot(t, e)
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	last := e.sw.calls[len(e.sw.calls)-1]
+	if !sameNames(last, "OpkgTun19") {
+		t.Fatalf("ведомость уборщика после удаления: %v (ждали ровно {OpkgTun19})", last)
+	}
+}
+
+func TestRepeatBootKeepsRunningInstances(t *testing.T) {
+	// I-2: повторный Boot (ретрай посева зовут задачи 7 и 14) обязан оставить
+	// живых в покое — иначе вторые воркеры на тех же ресурсах.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	first := e.instances["wdtt-client:de"]
+	boot(t, e)
+	if e.factoryN["wdtt-client:de"] != 1 {
+		t.Fatalf("инстанс пересобран на повторном бооте: %d", e.factoryN["wdtt-client:de"])
+	}
+	if e.instances["wdtt-client:de"] != first {
+		t.Fatal("живой инстанс подменён на повторном бооте")
+	}
+}
+
+func TestBootFactoryFailureIsFatalAndVisible(t *testing.T) {
+	// I-2 + I-4 (и F1): отказ сборки инстанса — отказ боота, причина видна
+	// наружу, мутации остаются заперты.
+	e := newEnv(t)
+	e.factoryErr = errors.New("нет бинаря")
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("отказ фабрики — отказ боота")
+	}
+	info := e.m.SeedInfo()
+	if info.Booted || info.Err == "" {
+		t.Fatalf("SeedInfo после отказа фабрики: %+v (ждали Booted=false, Err непуст)", info)
+	}
+	if err := e.m.Create(context.Background(), ftRec("ft")); err == nil {
+		t.Fatal("мутации после оборванного боота обязаны отклоняться")
+	}
+}
+
+func TestBootDeclarationFailureKeepsSubsystemUnbooted(t *testing.T) {
+	// I-4: booted=true в фатальной ветке пустил бы мутации на неполную ведомость.
+	e := newEnv(t)
+	e.reg.failSet = errors.New("дубликат id")
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("отказ объявления — отказ боота")
+	}
+	if info := e.m.SeedInfo(); info.Booted {
+		t.Fatalf("SeedInfo: %+v (ждали Booted=false)", info)
+	}
+	e.reg.failSet = nil
+	if err := e.m.Create(context.Background(), ftRec("ft")); err == nil {
+		t.Fatal("мутации после оборванного боота обязаны отклоняться")
+	}
+}
+
+func TestListenOnlyAllocationDoesNotReleaseOwnerPins(t *testing.T) {
+	// I-3: ReleasePins освобождает ВСЕ пины владельца, поэтому listen-аллокации
+	// в allocated не попадают — иначе отказ операции отобрал бы у живой записи
+	// её индекс OpkgTun. Обратная сторона контракта (для задачи 14):
+	// AllocListen обязан быть БЕЗ РЕЗЕРВА, иначе порт течёт.
+	e := newEnv(t)
+	noListen := rawRec("de", "OpkgTun18", "opkgtun18")
+	noListen.WdttClient.Listen = ""
+	seedState(t, e, noListen)
+	boot(t, e)
+	e.reg.failSet = errors.New("отказ")
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.Name = "Другое"
+		return nil
+	}); err == nil {
+		t.Fatal("ждали отказ реестра")
+	}
+	if len(e.released) != 1 || len(e.released[0]) != 0 {
+		t.Fatalf("владелец живого пина обязан остаться держателем: %v", e.released)
 	}
 }

@@ -165,6 +165,20 @@ func (m *Manager) Boot(ctx context.Context) error {
 		return err
 	}
 	list := res.State.Records
+	declaredNDMS := instance.DeclaredNDMSNames(namedOf(list))
+
+	// PostSeed — СРАЗУ после посева (F2 ревью, принят вариант «перенести»):
+	// уборочные шаги считаются от ТОГО ЖЕ списка и в реестр не ходят, поэтому
+	// зависимости от MarkSeeded/SetDeclared у них нет. Отказ любого шага ниже
+	// оставлял бы их невыполненными НАВСЕГДА: посев уже лёг на диск, и
+	// следующий боот увидит SeededNow=false. Побочно закрывается окно драки за
+	// порты на УСПЕШНОМ пути — старое поколение добивается ДО старта новых
+	// воркеров. Обнуление адресов зеркал до объявления безвредно: SetDeclared
+	// их перепишет. Цена принята: фатальный отказ запуска оставит убитыми оба
+	// поколения.
+	if perr := m.deps.PostSeed(ctx, res, declaredNDMS); perr != nil {
+		m.deps.Journal.Warn("boot", "proxy", "уборочные шаги посева: "+perr.Error())
+	}
 
 	certified := true
 	certErr := ""
@@ -192,6 +206,10 @@ func (m *Manager) Boot(ctx context.Context) error {
 		live := newLive(rec)
 		inst, ferr := m.deps.Factory(rec, live)
 		if ferr != nil {
+			// Наблюдаемость (F1 + I-4 ревью): боот оборван, часть воркеров уже
+			// бежит, booted остаётся false — причина обязана быть видна в
+			// SeedInfo, иначе наружу уедет «посев не состоялся» без причины.
+			m.seedErr = fmt.Sprintf("собрать инстанс %s: %v", rec.Key(), ferr)
 			m.mu.Unlock()
 			return fmt.Errorf("собрать инстанс %s: %w", rec.Key(), ferr)
 		}
@@ -204,12 +222,8 @@ func (m *Manager) Boot(ctx context.Context) error {
 	m.seedErr = certErr
 	m.mu.Unlock()
 
-	declaredNDMS := instance.DeclaredNDMSNames(namedOf(list))
 	if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
 		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS: "+serr.Error())
-	}
-	if perr := m.deps.PostSeed(ctx, res, declaredNDMS); perr != nil {
-		m.deps.Journal.Warn("boot", "proxy", "уборочные шаги посева: "+perr.Error())
 	}
 	return nil
 }
@@ -234,6 +248,14 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 // аллокаций: если операция дальше сорвётся (отказ реестра/диска), вызывающий
 // обязан отдать их обратно через ReleasePins — иначе held аллокатора течёт до
 // рестарта (Н6 ревью).
+//
+// ТРЕБОВАНИЕ К ПРОД-РЕАЛИЗАЦИИ AllocListen (I-3 ревью): она обязана быть БЕЗ
+// РЕЗЕРВА (скан занятых портов), потому что владельцы listen-аллокаций в
+// allocated НЕ попадают. Учесть их здесь нельзя: ReleasePins освобождает ВСЕ
+// пины владельца, и возврат ключа после listen-only-аллокации отобрал бы у
+// ЖИВОЙ записи её индекс OpkgTun (путь Update: пин на диске есть, пуст только
+// listen). Если резерв в AllocListen когда-нибудь появится, ему нужен свой,
+// НЕ owner-scoped, способ возврата.
 func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err error) {
 	key := rec.Key()
 	switch rec.Kind {
