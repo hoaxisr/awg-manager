@@ -102,9 +102,6 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 				// восстановить композитные ссылки (ветка reprovision покрыта
 				// через enableLocked, эта — нет).
 				s.notifyRoutingSlotsChanged()
-				// По той же причине здесь и примирение base: владелец
-				// dns.strategy сменился мимо enableLocked/Disable.
-				s.reconcileBaseOwnedScalars()
 			}
 		}
 	}

@@ -1,9 +1,9 @@
 package singbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -40,10 +40,8 @@ func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, lo
 	if _, err := os.Stat(basePath); err == nil {
 		patchBaseClashPort(basePath, log)
 		patchBaseLogLevel(basePath, desiredLogLevel, log)
-		reconcileBaseDomainResolver(configDir, log)
 		patchBaseDirectOutbound(basePath, log)
 		patchBaseCacheFilePath(basePath, log)
-		patchBaseDNSStrategy(basePath, log)
 		patchBaseBootstrapDNS(basePath, desiredBootstrapDNS, log)
 		return
 	}
@@ -53,10 +51,6 @@ func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, lo
 		return
 	}
 	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS), log)
-	// Свежая база несёт default_domain_resolver, но если routing-слот уже
-	// задал свой, база обязана уступить: скаляры route мержатся
-	// first-file-wins и 00-base лексически первый.
-	reconcileBaseDomainResolver(configDir, log)
 }
 
 func logConfigPatchInfo(log *slog.Logger, msg string, args ...any) {
@@ -76,21 +70,20 @@ func logConfigPatchWarn(log *slog.Logger, msg string, args ...any) {
 // Имена шагов примирения config.d. Попадают в Warn-строки пролога, так что
 // по логу видно, какой именно шаг потерялся.
 const (
-	stepEnsureBaseConfig       = "ensure-base-config"
-	stepPatchBaseClashPort     = "patch-base-clash-port"
-	stepPatchBaseLogLevel      = "patch-base-log-level"
-	stepPatchBaseDomainResolve = "patch-base-domain-resolver"
-	stepPatchBaseDirectOutbnd  = "patch-base-direct-outbound"
-	stepPatchBaseCacheFile     = "patch-base-cache-file"
-	stepPatchBaseDNSStrategy   = "patch-base-dns-strategy"
-	stepPatchBaseBootstrapDNS  = "patch-base-bootstrap-dns"
-	stepMigrateLegacyTunnels   = "migrate-legacy-tunnels"
-	stepStripBaseOwnedBlocks   = "strip-base-owned-blocks"
-	stepOutboundCompat         = "outbound-compat"
-	stepStripStrayDirect       = "strip-stray-direct"
-	stepRemoveRouteFinal       = "remove-route-final"
-	stepRemoveDNSFinal         = "remove-dns-final"
-	stepReconcileDNSStrategy   = "reconcile-dns-strategy"
+	stepEnsureBaseConfig      = "ensure-base-config"
+	stepPatchBaseClashPort    = "patch-base-clash-port"
+	stepPatchBaseLogLevel     = "patch-base-log-level"
+	stepPatchBaseDirectOutbnd = "patch-base-direct-outbound"
+	stepPatchBaseCacheFile    = "patch-base-cache-file"
+	stepPatchBaseDNSStrategy  = "patch-base-dns-strategy"
+	stepPatchBaseBootstrapDNS = "patch-base-bootstrap-dns"
+	stepMigrateLegacyTunnels  = "migrate-legacy-tunnels"
+	stepStripBaseOwnedBlocks  = "strip-base-owned-blocks"
+	stepOutboundCompat        = "outbound-compat"
+	stepStripStrayDirect      = "strip-stray-direct"
+	stepRemoveRouteFinal      = "remove-route-final"
+	stepRemoveDNSFinal        = "remove-dns-final"
+	stepDerivedDefaults       = "reconcile-derived-defaults"
 )
 
 // reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
@@ -127,8 +120,88 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS 
 		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
 		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
 		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},
-		{stepReconcileDNSStrategy, func() { reconcileBaseDNSStrategy(configPath, log) }},
+		{stepDerivedDefaults, func() { reconcileDerivedDefaults(configPath, log) }},
 	}
+}
+
+// derivedDefaultsSlot — содержимое 99-defaults.json. Константа: слот несёт
+// ровно те скаляры, у которых нет собственного «хозяина по умолчанию», и
+// перекрывается любым слотом выше по first-file-wins.
+func derivedDefaultsSlot() map[string]any {
+	return map[string]any{
+		"dns":   map[string]any{"strategy": baseDefaultDNSStrategy},
+		"route": map[string]any{"default_domain_resolver": baseDefaultDomainResolver},
+	}
+}
+
+// reconcileDerivedDefaults переносит дефолты условных скаляров из 00-base в
+// 99-defaults.json — то есть из ВЫИГРЫВАЮЩЕЙ позиции merge в проигрывающую.
+//
+// Скаляры dns.strategy и route.default_domain_resolver принадлежат тому слоту
+// режима, который сейчас активен, а базовое значение — лишь дефолт «когда
+// хозяина нет». Пока дефолт лежал в 00-base (лексически ПЕРВОМ, а merge —
+// first-file-wins), уступать приходилось активно: код читал чужие слот-файлы,
+// вычислял владение и переписывал базу на каждом промежуточном шаге
+// транзакции. За один переход режима база менялась дважды в противоположные
+// стороны, и каждая запись планировала reload — при живом tun это полный
+// Stop+Start движка (стенд 2026-08-24). Из 99 дефолт проигрывает ПАССИВНО:
+// владение не вычисляет никто, его решает сам merge в момент применения.
+//
+// Порядок внутри шага обязателен: сперва создать 99, потом стричь базу. Иначе
+// падение между двумя записями оставило бы конфиг без резолвера вовсе —
+// sing-box отвергает такой merged (FATAL «missing route.default_domain_resolver
+// … in dial fields»). Оба действия в ОДНОМ шаге по той же причине и ради
+// попарной коммутативности набора (TestReconcileConfigSteps_CommuteReversed).
+//
+// Из базы снимаются ТОЛЬКО наши значения: чужое (в том числе легаси
+// "ipv4_only") пользователь поставил осознанно, оно остаётся и продолжает
+// затенять — та же философия, что была у резолвера.
+func reconcileDerivedDefaults(configDir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	defaultsPath := filepath.Join(configDir, "99-defaults.json")
+	want := derivedDefaultsSlot()
+	if cur, ok := readSlotJSON(stepDerivedDefaults, defaultsPath, log); !ok || !sameJSON(cur, want) {
+		writeSlotJSON(stepDerivedDefaults, defaultsPath, want, log)
+	}
+
+	basePath := filepath.Join(configDir, "00-base.json")
+	base, ok := readSlotJSON(stepDerivedDefaults, basePath, log)
+	if !ok {
+		return
+	}
+	if !stripOurDerivedDefaults(base) {
+		return
+	}
+	writeSlotJSON(stepDerivedDefaults, basePath, base, log)
+	logConfigPatchInfo(log, "singbox config reconcile: дефолты скаляров переехали в 99-defaults.json",
+		"step", stepDerivedDefaults, "path", basePath)
+}
+
+// stripOurDerivedDefaults убирает из базы наши дефолтные значения обоих
+// скаляров; чужие оставляет. Возвращает, изменилась ли карта.
+func stripOurDerivedDefaults(base map[string]any) bool {
+	changed := false
+	if dns, _ := base["dns"].(map[string]any); dns != nil {
+		if v, _ := dns["strategy"].(string); v == baseDefaultDNSStrategy || v == "ipv4_only" {
+			delete(dns, "strategy")
+			changed = true
+		}
+	}
+	if route, _ := base["route"].(map[string]any); route != nil {
+		if v, _ := route["default_domain_resolver"].(string); v == baseDefaultDomainResolver {
+			delete(route, "default_domain_resolver")
+			changed = true
+		}
+	}
+	return changed
+}
+
+// sameJSON сравнивает две карты по сериализации — дешевле рефлексии и ровно
+// та же семантика, что у побайтового гейта записи слота.
+func sameJSON(a, b map[string]any) bool {
+	ja, ea := json.Marshal(a)
+	jb, eb := json.Marshal(b)
+	return ea == nil && eb == nil && bytes.Equal(ja, jb)
 }
 
 // readSlotJSON — общий пролог чтения шага примирения. «Файла нет» — норма
@@ -463,104 +536,6 @@ func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 // пока никакой routing-слот не задал свой.
 const baseDefaultDomainResolver = "dns-bootstrap"
 
-// reconcileBaseDomainResolverMap примиряет route.default_domain_resolver
-// базового слота с владением routing-слотов.
-//
-// Ключ обязателен: sing-box 1.13+ падает на старте с «missing
-// route.default_domain_resolver … in dial fields», и без него программа
-// неработоспособна — поэтому при отсутствии владельца база материализует
-// блок route и ставит dns-bootstrap.
-//
-// Но скаляры под `route` мержатся FIRST-FILE-WINS, а 00-base лексически
-// первый: пока база несёт свой ключ, resolver роутера (fakeip-tun ставит
-// {"server":"real"}) молча выбрасывается из merged-конфига. Ровно та же
-// ловушка, что закрыта для route.final и dns.final. Поэтому routingOwns=true
-// → база уступает ключ.
-func reconcileBaseDomainResolverMap(m map[string]any, routingOwns bool) bool {
-	route, _ := m["route"].(map[string]any)
-	if route == nil {
-		if routingOwns {
-			return false
-		}
-		route = map[string]any{}
-		m["route"] = route
-	}
-	v, has := route["default_domain_resolver"]
-	switch {
-	case routingOwns && has:
-		// Уступаем только СВОЁ значение. Ручную правку не трогаем: вернуть
-		// её потом мы не сможем (восстанавливается константа), а ссылка на
-		// несуществующий тег роняет sing-box с FATAL «default domain
-		// resolver not found» — проверено на боевой сборке
-		// 1.14.0-beta.17-awgm.13. Затенение своим же резолвером — осознанный
-		// выбор пользователя, влезать в него нечем.
-		if v != baseDefaultDomainResolver {
-			return false
-		}
-		delete(route, "default_domain_resolver")
-		return true
-	case !routingOwns && !has:
-		route["default_domain_resolver"] = baseDefaultDomainResolver
-		return true
-	}
-	return false
-}
-
-// routingSlotOwnsDomainResolver — задал ли routing-слот свой
-// route.default_domain_resolver.
-func routingSlotOwnsDomainResolver(configDir, step string, log *slog.Logger) bool {
-	for _, name := range []string{"20-router.json", "21-fakeip.json"} {
-		m, ok := readSlotJSON(step, filepath.Join(configDir, name), log)
-		if !ok {
-			continue
-		}
-		route, _ := m["route"].(map[string]any)
-		if route == nil {
-			continue
-		}
-		if _, has := route["default_domain_resolver"]; has {
-			return true
-		}
-	}
-	return false
-}
-
-// reconcileBaseDomainResolver — бут-шаг patch-base-domain-resolver.
-func reconcileBaseDomainResolver(configDir string, loggers ...*slog.Logger) {
-	log := firstLogger(loggers)
-	basePath := filepath.Join(configDir, "00-base.json")
-	m, ok := readSlotJSON(stepPatchBaseDomainResolve, basePath, log)
-	if !ok {
-		return
-	}
-	if !reconcileBaseDomainResolverMap(m, routingSlotOwnsDomainResolver(configDir, stepPatchBaseDomainResolve, log)) {
-		return
-	}
-	writeSlotJSON(stepPatchBaseDomainResolve, basePath, m, log)
-}
-
-// patchBaseDNSStrategy migrates the legacy 00-base.json default
-// dns.strategy "ipv4_only" → "prefer_ipv4". The old default silently
-// dropped all AAAA/IPv6 answers (issue #180); the new default returns IPv6
-// when available. Only the exact legacy value is migrated — any other
-// strategy (incl. a deliberately user-set one) is left untouched.
-func patchBaseDNSStrategy(basePath string, loggers ...*slog.Logger) {
-	log := firstLogger(loggers)
-	m, ok := readSlotJSON(stepPatchBaseDNSStrategy, basePath, log)
-	if !ok {
-		return
-	}
-	dns, _ := m["dns"].(map[string]any)
-	if dns == nil {
-		return
-	}
-	if strategy, _ := dns["strategy"].(string); strategy != "ipv4_only" {
-		return
-	}
-	dns["strategy"] = "prefer_ipv4"
-	writeSlotJSON(stepPatchBaseDNSStrategy, basePath, m, log)
-}
-
 // patchBaseDirectOutbound self-heals legacy 00-base.json files that
 // pre-date the canonical {type:"direct", tag:"direct"} outbound. With
 // router.NewEmptyConfig now defaulting route.final to "direct"
@@ -722,67 +697,6 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // dns-сервер (в отличие от dns.final), поэтому её отсутствие в merged-конфиге
 // — не «дефолт», а другое поведение.
 const baseDefaultDNSStrategy = "prefer_ipv4"
-
-// routingSlotOwnsDNSStrategy — непустую dns.strategy может задавать ЛЮБОЙ
-// активный routing-слот: 20-router.json (tproxy/policy-tun) ИЛИ 21-fakeip.json
-// (fakeip-tun). Файл, перепаркованный в disabled/, владельцем не считается —
-// его нет в merged-конфиге. step/log принадлежат ВЫЗЫВАЮЩЕМУ шагу:
-// подглядывание в чужой слот иначе остаётся анонимным в логе.
-func routingSlotOwnsDNSStrategy(configDir, step string, log *slog.Logger) bool {
-	for _, name := range []string{"20-router.json", "21-fakeip.json"} {
-		m, ok := readSlotJSON(step, filepath.Join(configDir, name), log)
-		if !ok {
-			continue
-		}
-		dns, _ := m["dns"].(map[string]any)
-		if dns == nil {
-			continue
-		}
-		if s, _ := dns["strategy"].(string); strings.TrimSpace(s) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// reconcileBaseDNSStrategyMap примиряет dns.strategy базового слота с
-// владением routing-слотов. routingOwns=true → strategy стрижётся из base
-// (иначе мерж скаляров first-file-wins затеняет выбор пользователя, семейство
-// бага #445); routingOwns=false → strategy восстанавливается в
-// baseDefaultDNSStrategy, если dns-блок есть, а strategy нет. Без
-// restore-направления рантайм-стрижка открыла бы дыру «поставил strategy →
-// снял strategy → в merged нет strategy вовсе». Отсутствующий dns-блок —
-// no-op: чужие секции не материализуем.
-func reconcileBaseDNSStrategyMap(m map[string]any, routingOwns bool) bool {
-	dns, _ := m["dns"].(map[string]any)
-	if dns == nil {
-		return false
-	}
-	_, has := dns["strategy"]
-	switch {
-	case routingOwns && has:
-		delete(dns, "strategy")
-		return true
-	case !routingOwns && !has:
-		dns["strategy"] = baseDefaultDNSStrategy
-		return true
-	}
-	return false
-}
-
-// reconcileBaseDNSStrategy — бут-шаг reconcile-dns-strategy.
-func reconcileBaseDNSStrategy(configDir string, loggers ...*slog.Logger) {
-	log := firstLogger(loggers)
-	basePath := filepath.Join(configDir, "00-base.json")
-	m, ok := readSlotJSON(stepReconcileDNSStrategy, basePath, log)
-	if !ok {
-		return
-	}
-	if !reconcileBaseDNSStrategyMap(m, routingSlotOwnsDNSStrategy(configDir, stepReconcileDNSStrategy, log)) {
-		return
-	}
-	writeSlotJSON(stepReconcileDNSStrategy, basePath, m, log)
-}
 
 // stripStrayDirectPlaceholder removes the canonical
 // {type:"direct", tag:"direct"} placeholder from every slot file in
@@ -1052,13 +966,9 @@ func freshBaseConfig(logLevel, bootstrapDNS string) map[string]any {
 			},
 		},
 		"dns": map[string]any{
-			// dns.strategy stays in base — base legitimately owns the
-			// router-disabled default (prefer_ipv4). strategy is a genuine
-			// scalar default with no first-server fallback, so it must be
-			// present when the router slot is absent. The self-heal
-			// (removeDNSFinalFromBase) strips it only when 20-router.json
-			// owns strategy.
-			"strategy": "prefer_ipv4",
+			// dns.strategy НЕ здесь — дефолт живёт в 99-defaults.json, в
+			// проигрывающей позиции merge (см. reconcileDerivedDefaults).
+			// В базе он был бы в выигрывающей и затенял бы выбор слота.
 			"servers": []any{
 				map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapDNS},
 			},
@@ -1081,7 +991,7 @@ func freshBaseConfig(logLevel, bootstrapDNS string) map[string]any {
 			// Sing-box uses first outbound (= direct, see outbounds above)
 			// as fallback when final is absent. See spec
 			// 2026-05-21-route-final-router-owned-design.md.
-			"default_domain_resolver": "dns-bootstrap",
+			// default_domain_resolver тоже не здесь — см. dns.strategy выше.
 		},
 	}
 }
@@ -1104,12 +1014,10 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	data, err := os.ReadFile(basePath)
 	switch {
 	case os.IsNotExist(err):
+		// Свежая база условно-своих скаляров больше не несёт: их дефолты
+		// живут в 99-defaults.json и перекрываются слотом-владельцем сами
+		// (см. reconcileDerivedDefaults) — уступать нечем и некому.
 		base = freshBaseConfig(desired, o.desiredBootstrapDNS())
-		// Свежая база несёт ОБА условно-своих скаляра (default_domain_resolver
-		// и dns.strategy); если ключом уже владеет routing-слот, уступаем
-		// сразу — иначе затенение вернулось бы до следующего перезапуска.
-		reconcileBaseDomainResolverMap(base, routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log))
-		reconcileBaseDNSStrategyMap(base, routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log))
 	case err != nil:
 		return fmt.Errorf("read 00-base.json: %w", err)
 	default:
@@ -1155,18 +1063,6 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	return nil
 }
 
-// ReconcileBaseDNSStrategy — рантайм-вариант шага reconcile-dns-strategy:
-// зовётся роутер-сервисом после применения dns-globals, чтобы выбор strategy
-// вступил в силу без перезапуска демона (мерж скаляров first-file-wins,
-// 00-base затеняет 20/21). Запись через оркестратор — валидация +
-// коалесцированный reload (как ApplyLogLevel).
-func (o *Operator) ReconcileBaseDNSStrategy() error {
-	return o.mutateBase(func(base map[string]any) bool {
-		return reconcileBaseDNSStrategyMap(base,
-			routingSlotOwnsDNSStrategy(o.configPath, stepReconcileDNSStrategy, o.log))
-	})
-}
-
 // desiredBootstrapDNS — текущая настройка адреса bootstrap-резолвера;
 // пусто, когда замыкание не подключено (тестовые wiring'и) или адрес не задан.
 func (o *Operator) desiredBootstrapDNS() string {
@@ -1186,18 +1082,6 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 	}
 	return o.mutateBase(func(base map[string]any) bool {
 		return setBootstrapServer(base, server)
-	})
-}
-
-// ReconcileBaseDomainResolver — рантайм-вариант шага
-// patch-base-domain-resolver: зовётся роутер-сервисом после того, как
-// содержимое routing-слота стало активным. Без него включение fakeip-tun
-// оставляло бы в базе свой default_domain_resolver, который затеняет
-// роутерный (скаляры route мержатся first-file-wins, 00-base первый).
-func (o *Operator) ReconcileBaseDomainResolver() error {
-	return o.mutateBase(func(base map[string]any) bool {
-		return reconcileBaseDomainResolverMap(base,
-			routingSlotOwnsDomainResolver(o.configPath, stepPatchBaseDomainResolve, o.log))
 	})
 }
 
@@ -1243,27 +1127,6 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 		}
 	}
 	return nil
-}
-
-// ReconcileBaseOwnedScalars примиряет ВСЕ скаляры 00-base.json, которыми
-// база владеет условно (dns.strategy и route.default_domain_resolver): оба
-// мержатся first-file-wins, и пока база несёт свой ключ, выбор routing-слота
-// выбрасывается. Зовётся роутер-сервисом после того, как содержимое слота
-// стало активным, и на буте.
-func (o *Operator) ReconcileBaseOwnedScalars() error {
-	// Оба примирения независимы: провал одного не повод пропускать второе.
-	// Раньше это были два отдельных dep'а роутера ровно с этой семантикой, и
-	// ранний выход после слияния пропускал бы примирение резолвера — то
-	// самое, что защищает от затенения "real" в режиме fakeip.
-	errStrategy := o.ReconcileBaseDNSStrategy()
-	if errStrategy != nil {
-		errStrategy = fmt.Errorf("dns.strategy: %w", errStrategy)
-	}
-	errResolver := o.ReconcileBaseDomainResolver()
-	if errResolver != nil {
-		errResolver = fmt.Errorf("default_domain_resolver: %w", errResolver)
-	}
-	return errors.Join(errStrategy, errResolver)
 }
 
 // preflightConfigDir validates config.d/ before any action that would

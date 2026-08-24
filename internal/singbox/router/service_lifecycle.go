@@ -604,13 +604,6 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		defer s.deps.Orch.HoldReloads()()
 	}
 
-	// Разметка слотов маршрутизации = владение dns.strategy, поэтому base
-	// примиряется на ВЫХОДЕ, а не хвостом: слоты перепаркованы и на путях,
-	// которые заканчиваются ошибкой (откаты enableFakeIPTun/enablePolicyTun,
-	// rollback провального Install), и хвостовой вызов их бы не покрыл. Ранние
-	// return'ы до перепарковки безопасны: примирять нечего — записи нет.
-	defer s.reconcileBaseOwnedScalars()
-
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
 	settings, err := s.deps.Settings.Load()
@@ -735,7 +728,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) должны
 	// перегенерировать свои слоты (вернуть ссылки на композиты) ДО reload.
 	s.notifyRoutingSlotsChanged()
-	if err := s.applyConfigNow(); err != nil {
+	if err := s.orchestratorApplyNow(); err != nil {
 		return fmt.Errorf("orchestrator reload after enable: %w", err)
 	}
 
@@ -1326,11 +1319,6 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	if s.deps.Orch != nil {
 		defer s.deps.Orch.HoldReloads()()
 	}
-
-	// Парковка слота отбирает владение dns.strategy — примирение на выходе, по
-	// тем же причинам, что в enableLocked (teardown'ы паркуют слот и уходят
-	// разными return'ами).
-	defer s.reconcileBaseOwnedScalars()
 
 	// Каждый teardown — в журнал: выключение бывает не только по кнопке
 	// (fail-safe при удалённой политике, drift-heal), и без записи причину

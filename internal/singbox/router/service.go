@@ -407,16 +407,6 @@ type Deps struct {
 	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
 	// *query.RouteStore.
 	DefaultGateway DefaultGatewayResolver
-	// ReconcileBaseOwnedScalars примиряет скаляры 00-base.json с
-	// владением routing-слотов ПОСЛЕ того, как их содержимое изменилось
-	// (ApplyStaging / FakeIPSetDNSGlobals): мерж скаляров в config.d —
-	// first-file-wins, поэтому без примирения base затеняет выбор
-	// пользователя до перезапуска демона. Best-effort: ошибка не валит
-	// успешное применение. Optional — nil в тестах.
-	// (и route.default_domain_resolver — тот же first-file-wins: пока база
-	// несёт свой ключ, резолвер роутера, который fakeip-tun ставит в "real",
-	// выбрасывается мержем).
-	ReconcileBaseOwnedScalars func() error
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -818,20 +808,6 @@ func (s *ServiceImpl) orchestratorApplyNow() error {
 		return nil
 	}
 	return s.deps.Orch.ReloadNow()
-}
-
-// applyConfigNow примиряет скаляры 00-base и сразу применяет config.d. Порядок
-// обязателен: база владеет dns.strategy, пока routing-слот запаркован, и
-// уступает его при перепарковке. Если примирять после применения (так делает
-// хвостовой defer в enableLocked/Disable), запись базы прилетает уже ПОСЛЕ
-// reload — а reload при живом tun это Stop+Start, то есть второй перезапуск
-// движка вне гейта готовности, когда дефолт клиентов уже припаркован на tun
-// (стенд 2026-08-20: pid менялся дважды за переход). Хвостовой defer при этом
-// остаётся страховкой для путей, уходящих через ошибку: mutateBase не пишет,
-// когда менять нечего.
-func (s *ServiceImpl) applyConfigNow() error {
-	s.reconcileBaseOwnedScalars()
-	return s.orchestratorApplyNow()
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {

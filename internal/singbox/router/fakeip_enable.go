@@ -349,7 +349,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Slot XOR выше поменял видимость композитов (20 припаркован, 21 активен) —
 	// зависимый слот 30 device-proxy перегенерируется ДО reload ниже (issue #465).
 	s.notifyRoutingSlotsChanged()
-	if err = s.applyConfigNow(); err != nil {
+	if err = s.orchestratorApplyNow(); err != nil {
 		return fmt.Errorf("enable fakeip-tun: orchestrator reload: %w", err)
 	}
 

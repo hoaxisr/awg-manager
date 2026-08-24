@@ -292,9 +292,6 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 				s.appLog.Info("policy-tun-reconcile", iface,
 					"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
 				s.notifyRoutingSlotsChanged()
-				// По той же причине здесь и примирение base: владелец
-				// dns.strategy сменился мимо enableLocked/Disable.
-				s.reconcileBaseOwnedScalars()
 			}
 		}
 	}

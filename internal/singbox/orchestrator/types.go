@@ -28,6 +28,7 @@ const (
 	SlotDownloadProxy Slot = "downloadproxy" // 35-download-proxy.json
 	SlotSubscriptions Slot = "subscriptions" // 40-subscriptions.json
 	SlotUser          Slot = "user"          // 90-user.json — эксперт-редактор
+	SlotDefaults      Slot = "defaults"      // 99-defaults.json — дефолты условных скаляров
 )
 
 // SlotMeta describes a producer's contract with the orchestrator.
@@ -83,10 +84,24 @@ func KnownSlots() []SlotMeta {
 		// Пользовательский слот эксперт-редактора. НИКАКОЙ продюсер не
 		// пишет в него — только draft-пайплайн (SaveDraft/ApplyDraft) по
 		// явному действию пользователя; массивы (outbounds/inbounds/
-		// dns.servers/route.rules/…) конкатенируются последними, скаляры
-		// dns/route отсюда не переопределить (merge — first-file-wins).
+		// dns.servers/route.rules/…) конкатенируются последними. Скаляры
+		// dns/route отсюда переопределяются только те, которых не несёт
+		// НИ ОДИН слот выше: merge — first-file-wins, и 90 идёт раньше
+		// 99-defaults, но позже 00-base и режимных 20/21.
 		// pruneDanglingSelectorRefsLocked этот файл тоже не мутирует.
 		{Slot: SlotUser, Filename: "90-user.json"},
+		// Дефолты скаляров, которыми владеет то, что окажется выше:
+		// dns.strategy и route.default_domain_resolver. Лежит ПОСЛЕДНИМ
+		// намеренно — в first-file-wins это и есть «проиграть пассивно»:
+		// любой слот со своим ключом перекрывает дефолт сам, без кода,
+		// который вычислял бы владение и переписывал 00-base. Раньше
+		// дефолты жили в 00-base — то есть в выигрывающей позиции, — и
+		// уступать приходилось активно: примирение читало чужие слот-файлы
+		// и мутировало базу на каждом шаге транзакции, давая за один
+		// переход две записи в противоположные стороны и лишний Stop+Start
+		// движка (стенд 2026-08-24). AlwaysOn без HasContent: сам по себе
+		// демона не поднимает, работы в нём нет.
+		{Slot: SlotDefaults, Filename: "99-defaults.json", AlwaysOn: true},
 	}
 }
 

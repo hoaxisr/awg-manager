@@ -197,16 +197,18 @@ func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	if _, has := route["final"]; has {
 		t.Errorf("route.final should be absent (owned by 20-router.json), got %v", route["final"])
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Дефолты обоих условных скаляров живут в 99-defaults.json, а не здесь:
+	// в базе они были бы в выигрывающей позиции merge и затеняли бы слот.
+	if _, has := route["default_domain_resolver"]; has {
+		t.Errorf("default_domain_resolver обязан быть в 99-defaults, а не в базе: %v", route)
 	}
 
 	dns, ok := base["dns"].(map[string]any)
 	if !ok {
 		t.Fatalf("dns block missing: %#v", base["dns"])
 	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy: want prefer_ipv4, got %v", dns["strategy"])
+	if _, has := dns["strategy"]; has {
+		t.Errorf("dns.strategy обязан быть в 99-defaults, а не в базе: %v", dns)
 	}
 	servers, _ := dns["servers"].([]any)
 	if len(servers) != 1 {
@@ -305,12 +307,12 @@ func TestEnsureBaseConfig_NoClashApiBlockUntouched(t *testing.T) {
 	if m["log"].(map[string]any)["level"] != "info" {
 		t.Errorf("log.level want info, got %v", m["log"])
 	}
-	route, ok := m["route"].(map[string]any)
-	if !ok {
-		t.Fatalf("route block must be materialised for sing-box 1.13+, got %s", raw)
-	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Блок route в БАЗЕ больше не обязателен: sing-box получает его из
+	// 99-defaults.json, а ensureBaseConfig существующую базу им не досыпает.
+	if route, ok := m["route"].(map[string]any); ok {
+		if _, has := route["default_domain_resolver"]; has {
+			t.Errorf("резолвер не должен появляться в базе: %v", route)
+		}
 	}
 }
 
@@ -506,8 +508,9 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if !ok {
 		t.Fatalf("route block lost: %v", m["route"])
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Резолвер в базу не досыпается: его дефолт живёт в 99-defaults.json.
+	if _, has := route["default_domain_resolver"]; has {
+		t.Errorf("резолвер не должен появляться в базе: %v", route)
 	}
 	// ensureBaseConfig preserves existing route.final — removal is done
 	// separately by removeFinalFromBase, called after ensureBaseConfig in
@@ -555,16 +558,17 @@ func TestEnsureBaseConfig_MaterialisesMissingRouteBlock(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	route, ok := m["route"].(map[string]any)
-	if !ok {
-		t.Fatalf("route block must be materialised, got %s", raw)
+	// Блок route в базе больше не материализуется — он приходит из
+	// 99-defaults.json вместе с дефолтным резолвером.
+	if route, ok := m["route"].(map[string]any); ok {
+		if _, has := route["default_domain_resolver"]; has {
+			t.Errorf("резолвер не должен появляться в базе: %v", route)
+		}
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
-	}
-	// dns block preserved, but legacy ipv4_only strategy migrated to prefer_ipv4.
-	if m["dns"].(map[string]any)["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must be migrated ipv4_only→prefer_ipv4: %v", m["dns"])
+	// Легаси-strategy ensureBaseConfig не мигрирует: её выносит из базы
+	// reconcileDerivedDefaults (см. TestReconcileDerivedDefaults_*).
+	if m["dns"].(map[string]any)["strategy"] != "ipv4_only" {
+		t.Errorf("ensureBaseConfig не должен трогать strategy: %v", m["dns"])
 	}
 	if m["log"].(map[string]any)["level"] != "info" {
 		t.Errorf("log.level lost: %v", m["log"])
@@ -588,8 +592,11 @@ func TestEnsureBaseConfig_MigratesIpv4OnlyStrategy(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got := m["dns"].(map[string]any)["strategy"]; got != "prefer_ipv4" {
-		t.Errorf("strategy: want prefer_ipv4 (migrated), got %v", got)
+	// ensureBaseConfig легаси-strategy больше не переписывает: её (как и наш
+	// prefer_ipv4) выносит из базы reconcileDerivedDefaults — см.
+	// TestReconcileDerivedDefaults_MigratesOurValuesOutOfBase.
+	if got := m["dns"].(map[string]any)["strategy"]; got != "ipv4_only" {
+		t.Errorf("ensureBaseConfig не должен трогать strategy, got %v", got)
 	}
 }
 
@@ -1933,8 +1940,10 @@ func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
 	if _, has := dns["final"]; has {
 		t.Errorf("dns.final must be omitted (owned by 20-router.json), got %v", dns["final"])
 	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must stay prefer_ipv4 (router-disabled default), got %v", dns["strategy"])
+	// strategy ушла в 99-defaults вместе с резолвером — см.
+	// TestFreshBaseConfig_OmitsDerivedScalars.
+	if _, has := dns["strategy"]; has {
+		t.Errorf("dns.strategy must live in 99-defaults, got %v", dns["strategy"])
 	}
 	servers, _ := dns["servers"].([]any)
 	if len(servers) != 1 {

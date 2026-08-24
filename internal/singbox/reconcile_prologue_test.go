@@ -22,7 +22,6 @@ func TestPatchers_WarnOnBrokenFile_SilentOnMissing(t *testing.T) {
 		{"patch-base-log-level", func(p string, l *slog.Logger) { patchBaseLogLevel(p, "info", l) }},
 		{"patch-base-direct-outbound", func(p string, l *slog.Logger) { patchBaseDirectOutbound(p, l) }},
 		{"patch-base-cache-file", func(p string, l *slog.Logger) { patchBaseCacheFilePath(p, l) }},
-		{"patch-base-dns-strategy", func(p string, l *slog.Logger) { patchBaseDNSStrategy(p, l) }},
 		{"strip-base-owned-blocks", func(p string, l *slog.Logger) { patchTunnelsSlotStripBaseOwnedBlocks(p, l) }},
 		{"remove-route-final", func(p string, l *slog.Logger) { removeFinalFromBase(p, l) }},
 		{"remove-dns-final", func(p string, l *slog.Logger) { removeDNSFinalFromBase(p, l) }},
@@ -115,47 +114,24 @@ func TestEnsureLegacyConfigMigrated_WarnsOnBrokenLegacy(t *testing.T) {
 }
 
 // reconcileBaseDomainResolver работает по каталогу: битая база — Warn с именем
-// шага, пустой каталог — тишина.
-func TestReconcileBaseDomainResolver_WarnsOnBrokenBase(t *testing.T) {
+// Битый 00-base обязан всплыть Warn'ом от шага derived-defaults; пустой
+// каталог — тишина (шаг создаёт 99-defaults и уходит).
+func TestReconcileDerivedDefaults_WarnsOnBrokenBase(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 	dir := t.TempDir()
 
-	reconcileBaseDomainResolver(dir, log)
+	reconcileDerivedDefaults(dir, log)
 	if strings.Contains(buf.String(), "WARN") {
-		t.Fatalf("empty dir must be silent, got: %s", buf.String())
+		t.Fatalf("пустой каталог обязан быть тихим, получено: %s", buf.String())
 	}
 
 	buf.Reset()
 	if err := os.WriteFile(filepath.Join(dir, "00-base.json"), []byte("{oops"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reconcileBaseDomainResolver(dir, log)
-	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "patch-base-domain-resolver") {
-		t.Fatalf("want WARN with step %q, got: %s", "patch-base-domain-resolver", buf.String())
-	}
-}
-
-// routingSlotOwnsDNSStrategy подглядывает в чужой 20-router.json три вызова
-// вглубь; битый routing-слот обязан всплыть Warn'ом от шага
-// reconcile-dns-strategy.
-func TestReconcileBaseDNSStrategy_WarnsOnBrokenRoutingSlot(t *testing.T) {
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, nil))
-	dir := t.TempDir()
-
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := writeJSONFile(basePath, map[string]any{
-		"dns": map[string]any{"strategy": "prefer_ipv4"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte("{oops"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	reconcileBaseDNSStrategy(dir, log)
-	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "reconcile-dns-strategy") {
-		t.Fatalf("want WARN with step %q, got: %s", "reconcile-dns-strategy", buf.String())
+	reconcileDerivedDefaults(dir, log)
+	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), stepDerivedDefaults) {
+		t.Fatalf("ждём WARN с шагом %q, получено: %s", stepDerivedDefaults, buf.String())
 	}
 }

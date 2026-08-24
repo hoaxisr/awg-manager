@@ -316,7 +316,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Слот 20 снова активен — зависимые продюсеры (device-proxy) перегенерируют
 	// свои слоты ДО reload.
 	s.notifyRoutingSlotsChanged()
-	if err = s.applyConfigNow(); err != nil {
+	if err = s.orchestratorApplyNow(); err != nil {
 		return fmt.Errorf("enable policy-tun: orchestrator reload: %w", err)
 	}
 
