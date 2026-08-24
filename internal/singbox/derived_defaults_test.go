@@ -56,8 +56,11 @@ func TestMergedScalars_DefaultsApplyWithoutOwner(t *testing.T) {
 		t.Errorf("dns.strategy = %v, want %s из 99-defaults", dns["strategy"], baseDefaultDNSStrategy)
 	}
 	route, _ := m["route"].(map[string]any)
-	if route["default_domain_resolver"] != baseDefaultDomainResolver {
-		t.Errorf("default_domain_resolver = %v, want %s из 99-defaults",
+	// Наш configmerge сохраняет объектную форму как есть; sing-box сворачивает
+	// её в строку — обе означают один сервер (стенд-проверено).
+	res, _ := route["default_domain_resolver"].(map[string]any)
+	if res == nil || res["server"] != baseDefaultDomainResolver {
+		t.Errorf("default_domain_resolver = %v, want server=%s из 99-defaults",
 			route["default_domain_resolver"], baseDefaultDomainResolver)
 	}
 }
@@ -177,4 +180,38 @@ func mergedMap(t *testing.T, configDir string) map[string]any {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// Тип резолвера в 99-defaults обязан совпадать с тем, что пишут режимные
+// слоты (объект {"server": …}). Слить объект со строкой sing-box не умеет —
+// «cannot merge json object into string», FATAL на старте. Наш configmerge
+// такую пару проглатывает, поэтому ловушку держит этот тест, а не merge-тест.
+func TestDerivedDefaultsSlot_ResolverIsObjectLikeSlots(t *testing.T) {
+	route, _ := derivedDefaultsSlot()["route"].(map[string]any)
+	res, ok := route["default_domain_resolver"].(map[string]any)
+	if !ok {
+		t.Fatalf("резолвер обязан быть объектом (как в 20/21), got %T", route["default_domain_resolver"])
+	}
+	if res["server"] != baseDefaultDomainResolver {
+		t.Errorf("resolver.server = %v, want %s", res["server"], baseDefaultDomainResolver)
+	}
+}
+
+// Стрижка базы обязана снимать обе исторические формы нашего значения.
+func TestStripOurDerivedDefaults_BothResolverForms(t *testing.T) {
+	for name, val := range map[string]any{
+		"строка": baseDefaultDomainResolver,
+		"объект": map[string]any{"server": baseDefaultDomainResolver},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := map[string]any{"route": map[string]any{"default_domain_resolver": val}}
+			if !stripOurDerivedDefaults(base) {
+				t.Fatal("наше значение обязано сниматься")
+			}
+			route, _ := base["route"].(map[string]any)
+			if _, has := route["default_domain_resolver"]; has {
+				t.Errorf("резолвер остался: %v", route)
+			}
+		})
+	}
 }

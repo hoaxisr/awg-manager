@@ -129,8 +129,17 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS 
 // перекрывается любым слотом выше по first-file-wins.
 func derivedDefaultsSlot() map[string]any {
 	return map[string]any{
-		"dns":   map[string]any{"strategy": baseDefaultDNSStrategy},
-		"route": map[string]any{"default_domain_resolver": baseDefaultDomainResolver},
+		"dns": map[string]any{"strategy": baseDefaultDNSStrategy},
+		// Резолвер — ОБЪЕКТОМ, а не строкой, хотя оба варианта sing-box
+		// принимает: режимные слоты пишут его как {"server": …}, а слить
+		// объект со строкой merge не умеет — «cannot merge json object into
+		// string», FATAL на старте (стенд 2026-08-24, поймано именно так).
+		// Пока дефолт жил в 00-base, типы не сталкивались: примирение убирало
+		// ключ из базы, как только слот брал владение. Теперь оба источника
+		// присутствуют ВСЕГДА, и совпадение типов — обязательное условие.
+		"route": map[string]any{
+			"default_domain_resolver": map[string]any{"server": baseDefaultDomainResolver},
+		},
 	}
 }
 
@@ -188,9 +197,19 @@ func stripOurDerivedDefaults(base map[string]any) bool {
 		}
 	}
 	if route, _ := base["route"].(map[string]any); route != nil {
-		if v, _ := route["default_domain_resolver"].(string); v == baseDefaultDomainResolver {
-			delete(route, "default_domain_resolver")
-			changed = true
+		// Историческая база несёт резолвер строкой, но объектную форму тоже
+		// снимаем: она наша, если внутри наш сервер.
+		switch v := route["default_domain_resolver"].(type) {
+		case string:
+			if v == baseDefaultDomainResolver {
+				delete(route, "default_domain_resolver")
+				changed = true
+			}
+		case map[string]any:
+			if srv, _ := v["server"].(string); srv == baseDefaultDomainResolver && len(v) == 1 {
+				delete(route, "default_domain_resolver")
+				changed = true
+			}
 		}
 	}
 	return changed
