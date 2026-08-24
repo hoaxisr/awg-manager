@@ -836,8 +836,14 @@ func TestSeedSkipsLivePermitsWhenAllocatorMovedPin(t *testing.T) {
 // Полная фикстура: КАЖДОЕ поле старых форматов заполнено уникальным
 // различимым значением. Проверка — сравнение записей ЦЕЛИКОМ, а не по
 // интересным полям (B4: посев — последний ручной маппер полутора сотен полей
-// в волне, и `Sub` уже терялся ровно так). Поля, которые не переносятся
-// намеренно, здесь тоже заданы — чтобы попытка их прочитать сломала сравнение.
+// в волне, и `Sub` уже терялся ровно так).
+//
+// Поля, которые не переносятся намеренно (rawClientIp, rawClientMTU и debug
+// клиента, ingressEnabled сервера), здесь тоже заданы — но охраняет их не эта
+// фикстура, а КОМПИЛЯТОР: приёмника нет ни в DTO старого формата, ни в конфиге
+// роли, поэтому попытка их перенести просто не соберётся. Ключи стоят в
+// фикстуре как документация реальной формы файла; если приёмник когда-нибудь
+// появится, непреднамеренный перенос поймает сравнение записей.
 const fullWdttJSON = `{
   "clients": [{"id":"cli-1","name":"Клиент раз","config":{
     "enabled":true,
@@ -860,7 +866,23 @@ const fullWdttJSON = `{
     "rawClientIp":"10.70.0.9",
     "rawClientMTU":1300,
     "debug":true,
-    "policyPermits":[{"name":"CacheTop","order":0},{"name":"CacheSecond","order":4}]}}],
+    "policyPermits":[{"name":"CacheTop","order":0},{"name":"CacheSecond","order":4}]}},
+   {"id":"cli-2","name":"Клиент два","config":{
+    "enabled":false,
+    "listen":"127.0.0.1:9014",
+    "peer":"common2.example:9999",
+    "password":"pw-client-2",
+    "vkHashes":"vkh-client-2",
+    "workers":9,
+    "obfs":"audio",
+    "fingerprint":"chrome",
+    "deviceId":"dev-client-2",
+    "captchaMode":"rjs",
+    "vkAuthMode":"vkauth-client-2",
+    "sub":"https://sub.wdtt.example/two",
+    "connMode":"wg",
+    "peerWg":"wg2.example:56000",
+    "peerRaw":"raw2.example:56003"}}],
   "servers": [{"id":"srv-1","name":"Сервер раз","config":{
     "enabled":true,
     "listen":"0.0.0.0:56002",
@@ -927,25 +949,40 @@ const fullFreeturnJSON = `{
     "openFirewall":false}}]
 }`
 
-// assertNoZeroFields — канарейка на ПОЛНОТУ фикстуры и маппинга: ни одно
-// экспортированное поле результата не имеет права остаться нулевым. Ловит и
-// потерю существующего поля, и появление нового — того, которого в перечне
-// сравнения ещё нет. Исключения называются поимённо, с причиной.
-func assertNoZeroFields(t *testing.T, what string, v any, allowedZero ...string) {
+// assertEveryFieldCarried — канарейка на ПОЛНОТУ фикстуры и маппинга: каждое
+// экспортированное поле типа обязано быть ненулевым хотя бы в одном из
+// переданных значений. Ловит и потерю существующего поля, и появление нового —
+// того, которого в перечне сравнения ещё нет: сравнение записей знает только
+// про поля, выписанные руками, а это — про ВСЕ.
+//
+// Союз, а не поштучная проверка, потому что у Record поштучная невозможна: три
+// из четырёх указателей на конфиг ОБЯЗАНЫ быть nil в каждой записи. Для типов,
+// где союз не нужен, передаётся один элемент — семантика та же.
+// Исключения называются поимённо, с причиной.
+func assertEveryFieldCarried(t *testing.T, what string, items []any, allowedZero ...string) {
 	t.Helper()
+	if len(items) == 0 {
+		t.Fatalf("%s: канарейке нечего проверять", what)
+	}
 	allowed := map[string]bool{}
 	for _, name := range allowedZero {
 		allowed[name] = true
 	}
-	rv := reflect.ValueOf(v)
-	rt := rv.Type()
+	rt := reflect.TypeOf(items[0])
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
 		if !f.IsExported() || allowed[f.Name] {
 			continue
 		}
-		if rv.Field(i).IsZero() {
-			t.Errorf("%s: поле %s нулевое — либо посев его не переносит, либо фикстура его не задаёт", what, f.Name)
+		covered := false
+		for _, it := range items {
+			if !reflect.ValueOf(it).Field(i).IsZero() {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Errorf("%s: поле %s нулевое во всех проверяемых значениях — либо посев его не переносит, либо фикстура его не задаёт", what, f.Name)
 		}
 	}
 }
@@ -961,8 +998,10 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []Record{
-		{
+	// Адресация по Key(), а не по индексу: перестановка блоков в посеве —
+	// не изменение поведения, и ронять тест ею незачем.
+	want := map[string]Record{
+		"wdtt-client:cli-1": {
 			ID: "cli-1", Kind: KindWdttClient, Name: "Клиент раз", Enabled: true,
 			Sub:    "https://sub.wdtt.example/one",
 			PeerWg: "wg.example:56000", PeerRaw: "raw.example:56003",
@@ -989,7 +1028,32 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				},
 			},
 		},
-		{
+		// Клиент в режиме wg с ЗАПОЛНЕННЫМ неактивным raw-слотом. Без него
+		// PeerRaw не охранялся: normalizeRecord восстанавливает АКТИВНЫЙ слот
+		// из Peer, поэтому у raw-клиента потеря PeerRaw чинилась сама собой.
+		// Цена реальна — пользователь с wg-клиентом и сохранённым raw-адресом
+		// потерял бы адрес соседнего режима (Г-1 №1: фронт восстанавливает
+		// его при переключении wg↔raw).
+		"wdtt-client:cli-2": {
+			ID: "cli-2", Kind: KindWdttClient, Name: "Клиент два", Enabled: false,
+			Sub:    "https://sub.wdtt.example/two",
+			PeerWg: "wg2.example:56000", PeerRaw: "raw2.example:56003",
+			WdttClient: &roles.WdttClientConfig{
+				Mode:        "wg",
+				Listen:      "127.0.0.1:9014",
+				Peer:        "wg2.example:56000",
+				Password:    "pw-client-2",
+				VKHashes:    "vkh-client-2",
+				Workers:     9,
+				Obfs:        "audio",
+				Fingerprint: "chrome",
+				DeviceID:    "dev-client-2",
+				CaptchaMode: "rjs",
+				VKAuthMode:  "vkauth-client-2",
+				// NdmsIface/RawIface/Policies у wg-клиента не существует.
+			},
+		},
+		"wdtt-server:srv-1": {
 			ID: "srv-1", Kind: KindWdttServer, Name: "Сервер раз", Enabled: true,
 			Users: []ServerUser{{Password: "user-pw-1", Comment: "Абонент один",
 				VkHash: "vkhash-1", ExpiresAt: 1700000001, Auto: true}},
@@ -1018,7 +1082,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				OpenFirewall:     false,
 			},
 		},
-		{
+		"freeturn-client:ftc-1": {
 			ID: "ftc-1", Kind: KindFreeTurnClient, Name: "FT клиент", Enabled: true,
 			FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen:         "127.0.0.1:9012",
@@ -1042,7 +1106,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				Debug:          true,
 			},
 		},
-		{
+		"freeturn-server:fts-1": {
 			ID: "fts-1", Kind: KindFreeTurnServer, Name: "FT сервер", Enabled: true,
 			FreeTurnServer: &roles.FreeTurnServerConfig{
 				Listen:       "0.0.0.0:56005",
@@ -1057,31 +1121,67 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 		},
 	}
 
-	if len(res.State.Records) != len(want) {
-		t.Fatalf("записей %d, ждали %d", len(res.State.Records), len(want))
+	got := byKey(res)
+	if len(got) != len(want) {
+		t.Fatalf("записей %d, ждали %d", len(got), len(want))
 	}
-	for i, w := range want {
-		if got := res.State.Records[i]; !reflect.DeepEqual(got, w) {
-			gj, _ := json.MarshalIndent(got, "", "  ")
+	for key, w := range want {
+		g, ok := got[key]
+		if !ok {
+			t.Errorf("записи %s нет вовсе", key)
+			continue
+		}
+		if !reflect.DeepEqual(g, w) {
+			gj, _ := json.MarshalIndent(g, "", "  ")
 			wj, _ := json.MarshalIndent(w, "", "  ")
-			t.Errorf("запись %s разошлась с ожиданием.\nполучено:\n%s\nждали:\n%s", w.Key(), gj, wj)
+			t.Errorf("запись %s разошлась с ожиданием.\nполучено:\n%s\nждали:\n%s", key, gj, wj)
 		}
 	}
 
+	rawCli := got["wdtt-client:cli-1"]
+	wgCli := got["wdtt-client:cli-2"]
+	srv := got["wdtt-server:srv-1"]
+
 	// Канарейка полноты: нулевое поле означает либо потерю в маппинге, либо
-	// новое поле, которого фикстура ещё не знает.
-	cli, _ := res.State.Records[0].WdttClientConfig()
+	// новое поле, которого фикстура ещё не знает. Сравнение выше знает только
+	// про поля, выписанные руками; эта проверка — про все поля типа.
+	//
 	// Name — единственное поле конфига с json:"-": его впрыскивает геттер из
 	// Record.Name, в самой записи оно пустое (Р3, один писатель имени).
-	assertNoZeroFields(t, "WdttClientConfig", *res.State.Records[0].WdttClient, "Name")
-	if cli.Name != "Клиент раз" {
-		t.Errorf("геттер не впрыснул имя: %q", cli.Name)
+	// Союз двух клиентов: NdmsIface/RawIface/Policies есть только у raw.
+	assertEveryFieldCarried(t, "WdttClientConfig",
+		[]any{*rawCli.WdttClient, *wgCli.WdttClient}, "Name")
+	if c, _ := rawCli.WdttClientConfig(); c.Name != "Клиент раз" {
+		t.Errorf("геттер не впрыснул имя: %q", c.Name)
 	}
 	// OpenFirewall у обеих серверных ролей задан явным false — чтобы значение
 	// отличалось от дефолта «ключа нет → true» и потеря маппинга была видна.
 	// Форма nil→true закрыта TestSeedOpenFirewallAbsentOrNullMeansOn.
-	assertNoZeroFields(t, "WdttServerConfig", *res.State.Records[1].WdttServer, "OpenFirewall")
-	assertNoZeroFields(t, "ServerUser", res.State.Records[1].Users[0])
-	assertNoZeroFields(t, "FreeTurnClientConfig", *res.State.Records[2].FreeTurnClient)
-	assertNoZeroFields(t, "FreeTurnServerConfig", *res.State.Records[3].FreeTurnServer, "OpenFirewall")
+	assertEveryFieldCarried(t, "WdttServerConfig", []any{*srv.WdttServer}, "OpenFirewall")
+	assertEveryFieldCarried(t, "ServerUser", []any{srv.Users[0]})
+	assertEveryFieldCarried(t, "FreeTurnClientConfig",
+		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient})
+	assertEveryFieldCarried(t, "FreeTurnServerConfig",
+		[]any{*got["freeturn-server:fts-1"].FreeTurnServer}, "OpenFirewall")
+
+	// Record и PolicyPermit — те же права. Именно в Record живут Sub,
+	// PeerWg/PeerRaw, Users и link-метаданные: класс, который уже терялся
+	// молча. Без союза здесь нельзя — три из четырёх указателей на конфиг
+	// обязаны быть nil в каждой записи.
+	//
+	// CreatedAt — единственное исключение: посев дату не проставляет, потому
+	// что в старом мире её не было (ClientInstance/ServerInstance — только
+	// ID, Name, Config), взять её неоткуда, а выдумывать «дату создания»
+	// временем апгрейда значило бы соврать.
+	all := make([]any, 0, len(got))
+	for _, r := range got {
+		all = append(all, r)
+	}
+	assertEveryFieldCarried(t, "Record", all, "CreatedAt")
+
+	permits := make([]any, 0, len(rawCli.WdttClient.Policies))
+	for _, p := range rawCli.WdttClient.Policies {
+		permits = append(permits, p)
+	}
+	assertEveryFieldCarried(t, "PolicyPermit", permits)
 }
