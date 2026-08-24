@@ -43,14 +43,61 @@ func TestScanner_ToggleEnable(t *testing.T) {
 		t.Errorf("new file %s should exist: %v", newSScript, err)
 	}
 
-	// 3. Protection: disable awg-manager should fail
-	awgScript := filepath.Join(tempDir, "S99awg-manager")
-	if err := os.WriteFile(awgScript, []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatalf("failed to create awg-manager test script: %v", err)
+	// 3. Idempotent request still requires the script to exist.
+	unchanged, err := scanner.ToggleEnable(newSScript, true)
+	if err != nil {
+		t.Fatalf("ToggleEnable(true) for enabled script failed: %v", err)
 	}
-	_, err = scanner.ToggleEnable(awgScript, false)
-	if err == nil {
-		t.Errorf("expected error when disabling awg-manager autostart, got nil")
+	if unchanged != newSScript {
+		t.Errorf("expected unchanged path %s, got %s", newSScript, unchanged)
+	}
+	if _, err := scanner.ToggleEnable(filepath.Join(tempDir, "S90ghost"), true); err == nil {
+		t.Error("expected error for a missing script in the desired state")
+	}
+
+	// 4. Never overwrite the opposite S/K script.
+	conflictS := filepath.Join(tempDir, "S70conflict")
+	conflictK := filepath.Join(tempDir, "K70conflict")
+	if err := os.WriteFile(conflictS, []byte("enabled\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conflictK, []byte("disabled\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.ToggleEnable(conflictS, false); err == nil {
+		t.Error("expected conflict when target script already exists")
+	}
+	data, err := os.ReadFile(conflictK)
+	if err != nil || string(data) != "disabled\n" {
+		t.Fatalf("target script was modified: data=%q err=%v", data, err)
+	}
+}
+
+func TestScanner_ToggleEnable_ProtectsManagedServices(t *testing.T) {
+	tempDir := t.TempDir()
+	scanner := &Scanner{InitDir: tempDir}
+
+	for _, name := range []string{"awg-manager", "ttyd", "sing-box", "dropbear"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(tempDir, "S99"+name)
+			if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := scanner.ToggleEnable(path, false); err == nil {
+				t.Fatalf("expected disabling %s to fail", name)
+			}
+		})
+	}
+}
+
+func TestScanner_ToggleEnable_RejectsInvalidNames(t *testing.T) {
+	scanner := &Scanner{InitDir: t.TempDir()}
+	for _, name := range []string{"service", "S9short", "X90service", "S90bad/name"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := scanner.ToggleEnable(name, true); err == nil {
+				t.Fatalf("expected invalid name %q to fail", name)
+			}
+		})
 	}
 }
 

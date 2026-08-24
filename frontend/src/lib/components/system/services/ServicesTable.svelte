@@ -84,10 +84,10 @@
 										type="button"
 										class="btn-autostart"
 										class:is-enabled={item.enabled}
-										disabled={acting === item.script || (item.name === 'awg-manager' && item.enabled)}
+										disabled={acting === item.script || (item.managed && item.enabled)}
 										title={
-											item.name === 'awg-manager' && item.enabled
-												? 'Автозапуск AWG Manager нельзя отключить'
+											item.managed && item.enabled
+												? `Автозапуск системной службы «${item.name}» нельзя отключить`
 												: item.enabled
 													? 'Автозапуск включен (Sxx). Нажмите для выключения (Kxx)'
 													: 'Автозапуск выключен (Kxx). Нажмите для включения (Sxx)'
@@ -358,7 +358,7 @@
 		border-color: rgba(59, 130, 246, 0.35);
 		color: #2563eb;
 	}
-	:global(.dark) .btn-autostart.is-enabled {
+	:global([data-theme='dark']) .btn-autostart.is-enabled {
 		background: rgba(59, 130, 246, 0.15);
 		border-color: rgba(59, 130, 246, 0.35);
 		color: #60a5fa;

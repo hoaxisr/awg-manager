@@ -13,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/services"
 )
 
 // Запуск скриптов и служб из файлового менеджера: статус процесса по пути
@@ -33,7 +34,7 @@ func isScriptOrService(path string, fi os.FileInfo) (isService bool, isScript bo
 	base := filepath.Base(path)
 	cleanDir := filepath.Clean(filepath.Dir(path))
 
-	if (cleanDir == "/opt/etc/init.d" || strings.HasSuffix(cleanDir, "init.d")) && len(base) > 3 && (base[0] == 'S' || base[0] == 'K') && base[1] >= '0' && base[1] <= '9' {
+	if (cleanDir == "/opt/etc/init.d" || strings.HasSuffix(cleanDir, "init.d")) && services.IsInitScriptName(base) {
 		return true, true, base[3:]
 	}
 

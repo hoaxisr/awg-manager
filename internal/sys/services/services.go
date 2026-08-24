@@ -20,6 +20,12 @@ var (
 	csiRe        = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 )
 
+// IsInitScriptName reports whether name follows the Entware init.d naming
+// convention supported by the service tools.
+func IsInitScriptName(name string) bool {
+	return scriptNameRe.MatchString(name)
+}
+
 // Item describes one init.d service.
 type Item struct {
 	Name        string `json:"name"`
@@ -56,7 +62,7 @@ func (sc *Scanner) List() ([]Item, error) {
 			continue
 		}
 		name := e.Name()
-		if !scriptNameRe.MatchString(name) {
+		if !IsInitScriptName(name) {
 			continue
 		}
 		script := filepath.Join(dir, name)
@@ -164,7 +170,7 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 		return "", fmt.Errorf("unsupported action: %s", action)
 	}
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
 	// Остановить службу, которая отдаёт эту же страницу, можно, а включить
@@ -193,21 +199,25 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 // ToggleEnable switches service between enabled (Sxx) and disabled (Kxx).
 func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, err error) {
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
-	if serviceName(base) == "awg-manager" && !enable {
-		return "", fmt.Errorf("cannot disable autostart for awg-manager: отключение автозапуска сделает панель недоступной после перезагрузки")
+	if hint, managed := managedService(base); managed && !enable {
+		return "", fmt.Errorf("cannot disable autostart for %s: %s", serviceName(base), hint)
+	}
+
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	oldPath := filepath.Join(dir, base)
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		return "", fmt.Errorf("script not found: %w", statErr)
 	}
 
 	currentEnabled := strings.HasPrefix(base, "S")
 	if currentEnabled == enable {
-		// Already in desired state
-		dir := sc.InitDir
-		if dir == "" {
-			dir = initDir
-		}
-		return filepath.Join(dir, base), nil
+		return oldPath, nil
 	}
 
 	var newBase string
@@ -217,15 +227,12 @@ func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, e
 		newBase = "K" + base[1:]
 	}
 
-	dir := sc.InitDir
-	if dir == "" {
-		dir = initDir
-	}
-	oldPath := filepath.Join(dir, base)
 	newPath := filepath.Join(dir, newBase)
 
-	if _, statErr := os.Stat(oldPath); statErr != nil {
-		return "", fmt.Errorf("script not found: %w", statErr)
+	if _, statErr := os.Lstat(newPath); statErr == nil {
+		return "", fmt.Errorf("target script already exists: %s", newBase)
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("inspect target script: %w", statErr)
 	}
 
 	if err := os.Rename(oldPath, newPath); err != nil {
@@ -238,7 +245,7 @@ func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, e
 // ReadScript returns the raw content of an init.d script.
 func (sc *Scanner) ReadScript(script string) (string, error) {
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
 	dir := sc.InitDir
@@ -256,7 +263,7 @@ func (sc *Scanner) ReadScript(script string) (string, error) {
 // SaveScript writes or creates an init.d script with executable permissions (0755).
 func (sc *Scanner) SaveScript(scriptName string, content string) (string, error) {
 	base := filepath.Base(scriptName)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name (must be S<number><name> or K<number><name>, e.g. S90myservice)")
 	}
 	// Перезапись — тот же результат, что и удаление: защита от удаления без
@@ -291,7 +298,7 @@ func (sc *Scanner) SaveScript(scriptName string, content string) (string, error)
 // DeleteScript stops and removes an init.d script.
 func (sc *Scanner) DeleteScript(script string) error {
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return fmt.Errorf("invalid script name")
 	}
 	if hint, managed := managedService(base); managed {
