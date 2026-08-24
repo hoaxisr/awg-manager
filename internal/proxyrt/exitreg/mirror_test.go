@@ -3,6 +3,8 @@ package exitreg
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
@@ -49,7 +51,7 @@ func (f *fakeStore) Delete(id string) error {
 	return nil
 }
 
-func (f *fakeStore) List() ([]storage.AWGTunnel, error) {
+func (f *fakeStore) ListStrict() ([]storage.AWGTunnel, error) {
 	out := make([]storage.AWGTunnel, 0, len(f.m))
 	for _, t := range f.m {
 		out = append(out, t)
@@ -282,11 +284,11 @@ type failingStore struct {
 	deleteErr map[string]error
 }
 
-func (f *failingStore) List() ([]storage.AWGTunnel, error) {
+func (f *failingStore) ListStrict() ([]storage.AWGTunnel, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return f.fakeStore.List()
+	return f.fakeStore.ListStrict()
 }
 
 func (f *failingStore) Save(t *storage.AWGTunnel) error {
@@ -417,5 +419,159 @@ func TestInvalidationKeepsTheContractWithTheFrontend(t *testing.T) {
 	sort.Strings(keys)
 	if !slices.Equal(keys, []string{"routing.tunnels", "tunnels"}) {
 		t.Fatalf("инвалидироваться обязаны оба потребителя записи: %v", keys)
+	}
+}
+
+// newMirrorStore — настоящее хранилище на диске: тесты строгого перечисления
+// проверяют реакцию на беды файлов, а фейк их не воспроизводит. Каталог
+// локов задаётся явно — форма без него лезет в системный /opt/var/lock.
+func newMirrorStore(t *testing.T) (*storage.AWGTunnelStore, string) {
+	t.Helper()
+	dir := t.TempDir()
+	return storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks")), dir
+}
+
+func TestOwnedFailsWhenAnyRecordUnreadable(t *testing.T) {
+	st, dir := newMirrorStore(t)
+	m := NewStoreMirror(st, nil)
+	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{нет"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Owned(); err == nil {
+		t.Fatal("битый файл каталога обязан валить Owned: «не смогли перечислить» ≠ «записей нет»")
+	}
+}
+
+func TestSweepRemovesNothingWhenListingFails(t *testing.T) {
+	st, dir := newMirrorStore(t)
+	m := NewStoreMirror(st, nil)
+	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{нет"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := m.Sweep(map[string]bool{})
+	if err == nil || len(removed) != 0 {
+		t.Fatalf("уборка при нечитаемом каталоге: removed=%v err=%v", removed, err)
+	}
+	if !st.Exists("wdttraw-de") {
+		t.Fatal("запись снесена при нечитаемом каталоге — та самая потеря требования 20")
+	}
+}
+
+func TestMarkSeededZeroOnUnreadableCatalogClosesButDoesNotLatch(t *testing.T) {
+	st, dir := newMirrorStore(t)
+	m := NewStoreMirror(st, nil)
+	r, _ := newReg(m)
+	bad := filepath.Join(dir, "broken.json")
+	if err := os.WriteFile(bad, []byte("{нет"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkSeeded(0); err == nil {
+		t.Fatal("нечитаемый каталог обязан быть ошибкой MarkSeeded(0), а не «терять нечего»")
+	}
+	// Не заперт: беда прошла — гейт открывается по ветке чистой установки.
+	if err := os.Remove(bad); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkSeeded(0); err != nil {
+		t.Fatalf("после починки каталога чистая установка обязана открыть гейт: %v", err)
+	}
+}
+
+func TestZeroStaleAddressesOnlyTouchesRawBackend(t *testing.T) {
+	st, _ := newMirrorStore(t)
+	m := NewStoreMirror(st, nil)
+	raw := &storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw",
+		Interface: storage.AWGInterface{Address: "10.70.0.5/32"}}
+	awg := &storage.AWGTunnel{ID: "awg1", Type: "awg",
+		Interface: storage.AWGInterface{Address: "10.8.0.2/24"}}
+	for _, rec := range []*storage.AWGTunnel{raw, awg} {
+		if err := st.Save(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := m.ZeroStaleAddresses()
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v, ждали (1, nil)", n, err)
+	}
+	gotRaw, _ := st.Get("wdttraw-de")
+	gotAwg, _ := st.Get("awg1")
+	if gotRaw.Interface.Address != "" {
+		t.Fatal("адрес raw-записи обязан обнулиться (требование 13)")
+	}
+	if gotAwg.Interface.Address != "10.8.0.2/24" {
+		t.Fatal("чужой Backend тронут — нарушение G11/требования 22")
+	}
+}
+
+func TestZeroStaleAddressesSkipsAlreadyEmpty(t *testing.T) {
+	st, dir := newMirrorStore(t)
+	m := NewStoreMirror(st, nil)
+	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "wdttraw-de.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := m.ZeroStaleAddresses()
+	if err != nil || n != 0 {
+		t.Fatalf("n=%d err=%v, ждали (0, nil)", n, err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "wdttraw-de.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("пустой адрес не должен порождать перезапись файла")
+	}
+}
+
+// Створки отказа ZeroStaleAddresses. Метод зовётся на каждом бооте, и
+// проглоченная ошибка тут не «пропущенный цикл», а протухший адрес, который
+// карточка показывает как текущий, пока запись не тронут руками.
+func TestZeroStaleAddressesRefusesOnUnlistableStore(t *testing.T) {
+	st := &failingStore{fakeStore: newFakeStore(), listErr: errors.New("read dir: i/o error")}
+	m := NewStoreMirror(st, nil)
+	n, err := m.ZeroStaleAddresses()
+	if n != 0 || !errors.Is(err, st.listErr) {
+		t.Fatalf("нечитаемый каталог: n=%d err=%v", n, err)
+	}
+}
+
+func TestZeroStaleAddressesReportsSaveFailure(t *testing.T) {
+	st := &failingStore{fakeStore: newFakeStore(), saveErr: errors.New("disk full")}
+	st.fakeStore.m["wdttraw-de"] = storage.AWGTunnel{ID: "wdttraw-de", Type: "awg",
+		Backend: "wdtt-raw", Interface: storage.AWGInterface{Address: "10.70.0.5/32"}}
+	m := NewStoreMirror(st, nil)
+	n, err := m.ZeroStaleAddresses()
+	if n != 0 || !errors.Is(err, st.saveErr) {
+		t.Fatalf("незаписанное обнуление обязано быть названо: n=%d err=%v", n, err)
+	}
+}
+
+func TestZeroStaleAddressesInvalidatesAfterZeroing(t *testing.T) {
+	st, pub := newFakeStore(), &fakePub{}
+	st.m["wdttraw-de"] = storage.AWGTunnel{ID: "wdttraw-de", Type: "awg",
+		Backend: "wdtt-raw", Interface: storage.AWGInterface{Address: "10.70.0.5/32"}}
+	m := NewStoreMirror(st, pub)
+	if n, err := m.ZeroStaleAddresses(); n != 1 || err != nil {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if len(pub.published) == 0 {
+		t.Fatal("адрес в карточке изменился — потребители обязаны узнать")
+	}
+	// Второй прогон уже нечего менять: ни записи, ни события.
+	before := len(pub.published)
+	if n, err := m.ZeroStaleAddresses(); n != 0 || err != nil {
+		t.Fatalf("повтор: n=%d err=%v", n, err)
+	}
+	if len(pub.published) != before {
+		t.Fatal("холостой прогон не имеет права публиковать событие")
 	}
 }
