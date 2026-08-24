@@ -39,6 +39,12 @@ func (o *Orchestrator) scheduleReload() {
 		return
 	}
 	o.reloadTimer = time.AfterFunc(reloadDebounce, func() {
+		// Выстреливший таймер обязан забыть себя: иначе указатель остаётся
+		// ненулевым и следующий scheduleReload уходит в ветку Reset, а
+		// HoldReloads видит «таймер взведён» там, где взводить уже нечего.
+		o.mu.Lock()
+		o.reloadTimer = nil
+		o.mu.Unlock()
 		if err := o.Reload(); err != nil {
 			o.log("error", fmt.Sprintf("orchestrator reload: %v", err))
 		}

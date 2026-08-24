@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -362,11 +363,26 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	return iface, dnsAddr, fakeipNet, true
 }
 
-// healDetachedTunInterval — минимальный зазор между попытками оживить
+// healDetachedTunInterval — стартовый зазор между попытками оживить
 // отцепившийся tun. Тик реконсиляции идёт куда чаще, и без зазора интерфейс,
 // который не поднимается по другой причине, вогнал бы движок в цикл
 // перезапусков.
 const healDetachedTunInterval = time.Minute
+
+// healDetachedTunMaxInterval — потолок зазора. Зазор удваивается на каждой
+// безуспешной попытке: причина, которую перезапуск не лечит (нет модуля,
+// занят индекс, конфиг без tun-инбаунда), иначе роняла бы соединения ВСЕХ
+// слотов раз в минуту бесконечно. Потолок оставляет лечение включённым для
+// причин, которые уходят сами (гонка провижининга), не превращая его в шторм.
+const healDetachedTunMaxInterval = 15 * time.Minute
+
+// healDetachedTunStrikes — сколько тиков подряд carrier обязан быть нулевым,
+// прежде чем мы сочтём tun отцепившимся. Один тик — не улика: после любого
+// рестарта движка (watchdog поднял упавший, оркестратор применил конфиг) есть
+// окно в секунды, когда процесс уже жив, а стек к устройству ещё не привязан;
+// тик, попавший в это окно, дал бы ЛИШНИЙ Stop+Start — ровно тот класс отказа,
+// который мы чиним. Два такта разносят улику на интервал реконсиляции.
+const healDetachedTunStrikes = 2
 
 // healDetachedTun чинит состояние «процесс жив, tun не прицеплен»: sing-box
 // работает и отвечает, но carrier на tun нулевой — значит его стек к
@@ -387,18 +403,48 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string) {
 		return
 	}
 	if running, _ := s.deps.Singbox.IsRunning(); !running {
-		return // мёртвый процесс — забота watchdog'а, не наша
-	}
-	if tunReadyProbe(iface) {
+		s.tunDownStrikes = 0 // мёртвый процесс — забота watchdog'а, не наша
 		return
 	}
+	if tunReadyProbe(iface) {
+		// Привязка есть — улики сброшены, и зазор возвращается к стартовому:
+		// следующий РАЗРЫВ обязан лечиться быстро, а не ждать хвост прошлого
+		// backoff'а.
+		s.tunDownStrikes = 0
+		s.tunHealBackoff = 0
+		return
+	}
+	// Копим улику до порога: одиночный нулевой carrier — это ещё и окно
+	// attach после чужого рестарта, см. healDetachedTunStrikes.
+	s.tunDownStrikes++
+	if s.tunDownStrikes < healDetachedTunStrikes {
+		return
+	}
+	backoff := s.tunHealBackoff
+	if backoff == 0 {
+		backoff = healDetachedTunInterval
+	}
 	now := time.Now()
-	if !s.lastTunHealAt.IsZero() && now.Sub(s.lastTunHealAt) < healDetachedTunInterval {
+	if !s.lastTunHealAt.IsZero() && now.Sub(s.lastTunHealAt) < backoff {
+		return
+	}
+	// Гейт памяти — тот же, что у оркестратора и прямого применителя конфига:
+	// Stop+Start параллельно с чужой валидацией (`sing-box check` держит
+	// merged-конфиг в памяти) на mipsel уходит в OOM. Не взяли — пропускаем
+	// тик целиком, НЕ трогая счётчики: улика останется, вылечим следующим.
+	if !heavyop.Default.TryLock() {
 		return
 	}
 	s.lastTunHealAt = now
+	if next := backoff * 2; next > healDetachedTunMaxInterval {
+		s.tunHealBackoff = healDetachedTunMaxInterval
+	} else {
+		s.tunHealBackoff = next
+	}
 	s.appLog.Warn(scope, iface, "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок")
-	if err := s.deps.Singbox.Reload(); err != nil {
+	err := s.deps.Singbox.Reload()
+	heavyop.Default.Unlock()
+	if err != nil {
 		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
 	}
 }
@@ -554,6 +600,16 @@ func (s *ServiceImpl) Enable(ctx context.Context) error {
 func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Hold на всю транзакцию: провижининг пишет слоты по нескольку раз и
+	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
+	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
+	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
+	// Регистрация ДО примирения базы, чтобы release снялся ПОСЛЕ него (defer
+	// LIFO): запись базы обязана попасть под тот же hold, а не в свой reload.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
 
 	// Разметка слотов маршрутизации = владение dns.strategy, поэтому base
 	// примиряется на ВЫХОДЕ, а не хвостом: слоты перепаркованы и на путях,
@@ -1271,6 +1327,16 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Hold на всю транзакцию: провижининг пишет слоты по нескольку раз и
+	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
+	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
+	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
+	// Регистрация ДО примирения базы, чтобы release снялся ПОСЛЕ него (defer
+	// LIFO): запись базы обязана попасть под тот же hold, а не в свой reload.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
 
 	// Парковка слота отбирает владение dns.strategy — примирение на выходе, по
 	// тем же причинам, что в enableLocked (teardown'ы паркуют слот и уходят

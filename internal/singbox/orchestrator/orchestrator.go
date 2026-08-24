@@ -402,6 +402,24 @@ func (o *Orchestrator) HoldReloads() func() {
 	}
 }
 
+// DeferIfHeld сообщает прямым применителям конфига (тем, что дёргают процесс
+// мимо оркестратора), что сейчас идёт транзакция под HoldReloads. true —
+// применитель обязан НЕ трогать процесс: его запись уже на диске, и накопленное
+// применится одним reload'ом на release. false — hold'а нет, применяй сам.
+//
+// Нужен потому, что hold умеет подавлять только СВОЙ debounce: прямой
+// proc.Reload() при живом tun это полный Stop+Start, и посреди перехода режима
+// он рвёт транзакцию, ради которой hold и вводился.
+func (o *Orchestrator) DeferIfHeld() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.holds == 0 {
+		return false
+	}
+	o.pendingReload = true
+	return true
+}
+
 // SetEnabled toggles slot activity by renaming the file between
 // active and disabled locations. AlwaysOn slots reject disable.
 // Schedules a debounced reload.

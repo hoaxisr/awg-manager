@@ -1090,3 +1090,81 @@ func TestReloadPrunesDanglingSelectorRefs(t *testing.T) {
 		t.Errorf("selector must keep surviving member \"direct\"")
 	}
 }
+
+// TestDeferIfHeld: прямые применители конфига (легаси-путь ApplyConfig, что
+// дёргает процесс мимо оркестратора) обязаны узнавать про идущую транзакцию.
+// Без hold'а — применяют сами, под hold'ом — откладывают, и накопленное
+// доезжает одним reload'ом на release.
+func TestDeferIfHeld(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	if o.DeferIfHeld() {
+		t.Fatal("без hold'а применитель обязан применять сам")
+	}
+
+	release := o.HoldReloads()
+	if !o.DeferIfHeld() {
+		t.Fatal("под hold'ом прямой reload обязан откладываться")
+	}
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != 0 {
+		t.Fatalf("отложенный применитель не должен трогать процесс, получено %v", got)
+	}
+
+	// Отметка отложенного применителя обязана дожить до release: конфиг на
+	// диске новый, и без reload'а движок остался бы на старом навсегда.
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fp.calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := fp.calls(); len(got) == 0 {
+		t.Fatal("после release отложенное применение обязано доехать")
+	}
+}
+
+// TestScheduleReload_TimerForgetsItself: выстреливший debounce-таймер обязан
+// обнулить указатель. Иначе HoldReloads видит «таймер взведён» там, где взводить
+// нечего, помечает pendingReload и на release стреляет лишним reload'ом —
+// посреди перехода это лишний Stop+Start движка.
+func TestScheduleReload_TimerForgetsItself(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * reloadDebounce) // даём таймеру выстрелить
+
+	o.mu.Lock()
+	stale := o.reloadTimer != nil
+	o.mu.Unlock()
+	if stale {
+		t.Fatal("выстреливший таймер обязан забыть себя")
+	}
+
+	// Прямое следствие: hold поверх отработавшего таймера не должен считать,
+	// что есть что применять.
+	release := o.HoldReloads()
+	o.mu.Lock()
+	pending := o.pendingReload
+	o.mu.Unlock()
+	release()
+	if pending {
+		t.Error("hold пометил pending по протухшему таймеру")
+	}
+}

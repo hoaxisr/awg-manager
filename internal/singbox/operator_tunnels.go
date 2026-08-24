@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	"github.com/hoaxisr/awg-manager/internal/sys/perftrace"
@@ -594,12 +595,30 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 	stage = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "preflight (sing-box check)", stage)
 	var runErr error
 	running, _ := o.proc.IsRunning()
-	if !running {
+	switch {
+	case !running:
+		// Гейт памяти вокруг работы с процессом — тот же, что у оркестратора:
+		// на mipsel параллельный старт/рестарт рядом с чужим `sing-box check`
+		// уходит в OOM. Валидация выше уже прошла и в гейт не входит.
+		heavyop.Default.Lock()
 		_, runErr = o.startAndWait(ctx)
+		heavyop.Default.Unlock()
 		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
-	} else {
+	case o.orch != nil && o.orch.DeferIfHeld():
+		// Идёт транзакция под HoldReloads (переход режима, enable/disable
+		// маршрутизации). Прямой proc.Reload при живом tun это полный
+		// Stop+Start — посреди чужого перехода он рвёт ровно ту транзакцию,
+		// ради которой hold и вводился. Конфиг на диске уже новый, применит
+		// отложенный reload на снятии hold'а.
+		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "deferred (reloads held)", stage)
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Info("apply-config", "", "reload отложен: идёт переход режима маршрутизации")
+		}
+	default:
+		heavyop.Default.Lock()
 		runErr = o.proc.Reload()
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
+		heavyop.Default.Unlock()
+		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload", stage)
 	}
 	if hadExisting == nil {
 		_ = os.Remove(backupPath)

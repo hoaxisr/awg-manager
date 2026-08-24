@@ -91,10 +91,6 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// указывают в OpkgTun без читателя, трафик дропается, не утекает.
 	// SetEnabled — только при фактически запаркованном слоте, иначе каждый
 	// тик взводил бы debounced reload.
-	//
-	// Отдельно от слота: движок может быть жив, а его стек отцепиться от tun —
-	// это состояние тоже не лечил никто, см. healDetachedTun.
-	s.healDetachedTun(iface, "fakeip-reconcile")
 	if s.deps.Orch != nil {
 		if st, ok := s.slotSnapshot(orchestrator.SlotFakeIP); !ok || !st.Enabled {
 			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); e != nil {
@@ -112,6 +108,14 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			}
 		}
 	}
+
+	// Отдельно от слота: движок может быть жив, а его стек отцепиться от tun —
+	// это состояние тоже не лечил никто, см. healDetachedTun. СТРОГО ПОСЛЕ
+	// возврата слота: при запаркованном слоте carrier нулевой ЗАКОНОМЕРНО (в
+	// merged-конфиге нет tun-инбаунда), и heal до восстановления перезапускал
+	// бы движок с конфигом, где чинить нечего, — второй, уже осмысленный
+	// рестарт всё равно прилетал бы следом от SetEnabled.
+	s.healDetachedTun(iface, "fakeip-reconcile")
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
 	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)

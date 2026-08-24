@@ -489,9 +489,14 @@ type ServiceImpl struct {
 	appliedSpec *RestoreInputSpec
 
 	// lastTunHealAt — когда healDetachedTun последний раз перезапускал движок
-	// из-за отцепившегося tun. Пишется и читается только из reconcile-тика,
-	// сериализованного transitionMu.
-	lastTunHealAt time.Time
+	// из-за отцепившегося tun. tunDownStrikes — сколько тиков подряд carrier
+	// нулевой (порог отсеивает окно attach после чужого рестарта),
+	// tunHealBackoff — текущий зазор до следующей попытки (удваивается на
+	// каждой безуспешной, обнуляется поднявшимся carrier'ом). Все три пишутся
+	// и читаются только из reconcile-тика, сериализованного transitionMu.
+	lastTunHealAt  time.Time
+	tunDownStrikes int
+	tunHealBackoff time.Duration
 
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а
