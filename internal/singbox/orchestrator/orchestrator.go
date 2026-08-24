@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -327,14 +328,50 @@ func (o *Orchestrator) sweepStaleTempFiles() error {
 
 // Save writes the slot's JSON atomically to whichever location matches
 // the slot's CURRENT enabled state, then schedules a debounced reload.
+//
+// Байт-в-байт та же запись reload НЕ планирует: продюсеры зовут Save
+// идемпотентно (device-proxy переписывает свой слот 8 раз за один переход
+// режима — стенд 2026-08-24, все восемь с одинаковым sha256), а при живом tun
+// каждый reload это полный Stop+Start движка. Скип-гейт по хешу в Reload такую
+// запись в итоге отсеет, но лишь ценой merged-мержа и `sing-box check` на
+// mipsel; дешевле не будить пайплайн вовсе. Гейт зеркалит уже имевшийся no-op
+// в setEnabledLocked — там повторный toggle тоже не планирует reload.
 func (o *Orchestrator) Save(slot Slot, jsonBytes []byte) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	unchanged, err := o.slotBytesUnchangedLocked(slot, jsonBytes)
+	if err != nil {
+		return err
+	}
 	if err := o.saveLocked(slot, jsonBytes); err != nil {
 		return err
 	}
+	if unchanged {
+		return nil
+	}
 	o.scheduleReload()
 	return nil
+}
+
+// slotBytesUnchangedLocked сообщает, лежит ли на активном пути слота ровно то,
+// что собираются записать. Caller MUST hold o.mu. Отсутствие файла и любая
+// ошибка чтения — «изменилось»: пропустить нужный reload хуже, чем сделать
+// лишний. Сравнение побайтовое: продюсеры сериализуют детерминированно
+// (json.MarshalIndent по тем же структурам), поэтому нормализация не нужна.
+func (o *Orchestrator) slotBytesUnchangedLocked(slot Slot, jsonBytes []byte) (bool, error) {
+	meta, ok := o.slots[slot]
+	if !ok {
+		return false, ErrUnknownSlot
+	}
+	path := o.disabledPath(meta)
+	if o.enabled[slot] {
+		path = o.activePath(meta)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil
+	}
+	return bytes.Equal(old, jsonBytes), nil
 }
 
 // SaveSilent is Save without the SIGHUP debounce. The slot file is

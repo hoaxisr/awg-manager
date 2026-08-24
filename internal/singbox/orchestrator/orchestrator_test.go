@@ -1179,3 +1179,58 @@ func TestScheduleReload_TimerForgetsItself(t *testing.T) {
 		t.Errorf("release без накопленных записей не должен применять, получено %v", got[before:])
 	}
 }
+
+// TestSave_IdenticalBytesDoNotScheduleReload: продюсеры зовут Save
+// идемпотентно (device-proxy переписывает свой слот по нескольку раз за один
+// переход режима), а при живом tun каждый reload — полный Stop+Start движка.
+// Байт-в-байт та же запись будить пайплайн не должна.
+func TestSave_IdenticalBytesDoNotScheduleReload(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * reloadDebounce) // даём первому применению отработать
+	before := len(fp.calls())
+
+	// Повтор той же записи не должен даже ВЗВОДИТЬ таймер: процесс всё равно
+	// уберёг бы скип-гейт по хешу в Reload, но ценой merged-мержа и
+	// `sing-box check` — на mipsel это и есть дорогая часть, ради которой
+	// гейт существует. Поэтому проверяем сам факт планирования.
+	o.mu.Lock()
+	o.reloadTimer, o.pendingReload = nil, false
+	o.mu.Unlock()
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	scheduled := o.reloadTimer != nil || o.pendingReload
+	o.mu.Unlock()
+	if scheduled {
+		t.Error("идентичная запись не должна планировать reload")
+	}
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != before {
+		t.Errorf("идентичная запись не должна трогать процесс, получено %v", got[before:])
+	}
+
+	// А изменившаяся — обязана.
+	if err := o.Save(SlotRouter, []byte(altTunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fp.calls()) == before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(fp.calls()) == before {
+		t.Error("изменившаяся запись обязана примениться")
+	}
+}
