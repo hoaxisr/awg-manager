@@ -2071,6 +2071,7 @@ const api_SystemInfoBackendAvailability: v.GenericSchema = v.looseObject({
 
 const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	activeBackend: v.optional(v.nullable(v.string())),
+	awgProxyVersion: v.optional(v.nullable(v.string())),
 	backendAvailability: v.optional(v.nullable(v.lazy(() => api_SystemInfoBackendAvailability))),
 	bootInProgress: v.optional(v.nullable(v.boolean())),
 	disableMemorySaving: v.optional(v.nullable(v.boolean())),
