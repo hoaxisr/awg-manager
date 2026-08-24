@@ -7,6 +7,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -57,9 +58,20 @@ func (f *fakeStore) List() ([]storage.AWGTunnel, error) {
 	return out, nil
 }
 
-type fakePub struct{ published []string }
+// publishedEvent — событие целиком, а не одно его имя: ключи инвалидации это
+// договор с фронтом (storeRegistry.ts), и проверять его нечем, если payload
+// выброшен.
+type publishedEvent struct {
+	eventType string
+	ev        events.ResourceInvalidatedEvent
+}
 
-func (p *fakePub) Publish(eventType string, _ any) { p.published = append(p.published, eventType) }
+type fakePub struct{ published []publishedEvent }
+
+func (p *fakePub) Publish(eventType string, data any) {
+	ev, _ := data.(events.ResourceInvalidatedEvent)
+	p.published = append(p.published, publishedEvent{eventType: eventType, ev: ev})
+}
 
 func TestMirrorCreatesRecordFromDeclaration(t *testing.T) {
 	st, pub := newFakeStore(), &fakePub{}
@@ -86,6 +98,12 @@ func TestMirrorCreatesRecordFromDeclaration(t *testing.T) {
 	}
 	if rec.ConnectivityCheck == nil || rec.CreatedAt == "" {
 		t.Fatalf("дефолты создания: %+v", rec)
+	}
+	// Значениями, а не «не nil»: это паритет со старым билдером
+	// (wdtt.BuildRawTunnelRecord, raw_tunnel_meta.go:60-98), и разъезд здесь
+	// меняет туннель пользователя после апгрейда.
+	if rec.Interface.MTU != 1300 || rec.ConnectivityCheck.Method != "http" {
+		t.Fatalf("дефолты создания разъехались со старым билдером: %+v", rec)
 	}
 	if rec.Interface.Address != "" {
 		t.Fatalf("адрес — объявленный резидуал (В2), зеркало его не пишет: %+v", rec)
@@ -363,4 +381,41 @@ func TestStoreMirrorSatisfiesPorts(t *testing.T) {
 	// здесь, а не в проводке (задача 7).
 	var _ Mirror = (*StoreMirror)(nil)
 	var _ TunnelStore = (*storage.AWGTunnelStore)(nil)
+}
+
+func TestMirrorBackendMatchesTheRestOfTheTree(t *testing.T) {
+	// I-1. Литералом, а не константой: сравнение константы с самой собой
+	// пропускает любой её разъезд с wdtt.BackendWdttRaw
+	// (raw_tunnel_meta.go:11), а на этом значении держатся и рендер карточки,
+	// и чтение состояния из ядра, и то, какие записи Owned считает нашими.
+	if backendWdttRaw != "wdtt-raw" {
+		t.Fatalf("бэкенд зеркальной записи разъехался с деревом: %q", backendWdttRaw)
+	}
+}
+
+func TestInvalidationKeepsTheContractWithTheFrontend(t *testing.T) {
+	// I-2. Форма события — договор с фронтом (storeRegistry.ts): разъезд типа
+	// или ключа не роняет ничего, он просто перестаёт обновлять список
+	// туннелей и вкладку маршрутизации. Поэтому литералы, а не константы
+	// пакета.
+	st, pub := newFakeStore(), &fakePub{}
+	m := NewStoreMirror(st, pub)
+	if err := m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18")); err != nil {
+		t.Fatal(err)
+	}
+
+	var keys []string
+	for _, e := range pub.published {
+		if e.eventType != "resource:invalidated" {
+			t.Fatalf("тип события разъехался с шиной: %q", e.eventType)
+		}
+		if e.ev.Reason == "" {
+			t.Fatalf("причина инвалидации обязана быть названа: %+v", e.ev)
+		}
+		keys = append(keys, e.ev.Resource)
+	}
+	sort.Strings(keys)
+	if !slices.Equal(keys, []string{"routing.tunnels", "tunnels"}) {
+		t.Fatalf("инвалидироваться обязаны оба потребителя записи: %v", keys)
+	}
 }
