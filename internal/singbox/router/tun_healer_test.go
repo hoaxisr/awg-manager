@@ -16,6 +16,15 @@ func healerHarness(t *testing.T) (svc *ServiceImpl, sb *fakeSingbox, carrier *bo
 	sb = newTestSingbox(t)
 	sb.isRunningFn = func() (bool, int) { return true, 1234 }
 	svc.deps.Singbox = sb
+	// Режим включён: healer перечитывает намерение перед самым перезапуском.
+	all, err := svc.deps.Settings.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	all.SingboxRouter.Enabled = true
+	if err := svc.deps.Settings.Save(all); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
 		t.Fatalf("SetEnabled SlotRouter: %v", err)
 	}
@@ -151,5 +160,29 @@ func TestHealDetachedTun_SkipsWhenHeavyGateBusy(t *testing.T) {
 	tick(1)
 	if sb.reloadCalls != 1 {
 		t.Fatalf("попытка не должна сгорать из-за занятого гейта, вызовов %d", sb.reloadCalls)
+	}
+}
+
+// Disable ходит мимо transitionMu, поэтому режим может выключиться, пока
+// healer копит такты и берёт гейт памяти. Поднять движок в выключенном режиме
+// хуже, чем пропустить такт: отменять воскрешение пришлось бы пользователю.
+func TestHealDetachedTun_NoopWhenRouterDisabledMeanwhile(t *testing.T) {
+	svc, sb, _, tick := healerHarness(t)
+
+	// Набираем такты при включённом режиме, но до порога.
+	tick(firstHealTick - 1)
+	// Режим выключили — ровно та гонка, что открыта Disable мимо transitionMu.
+	all, err := svc.deps.Settings.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	all.SingboxRouter.Enabled = false
+	if err := svc.deps.Settings.Save(all); err != nil {
+		t.Fatal(err)
+	}
+
+	tick(lastHealTick * 2)
+	if sb.reloadCalls != 0 {
+		t.Errorf("в выключенном режиме движок трогать нельзя, вызовов %d", sb.reloadCalls)
 	}
 }

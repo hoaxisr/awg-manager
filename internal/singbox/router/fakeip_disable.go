@@ -322,6 +322,18 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
+	// Гейт существования — обязателен: дальше идут down/clear, а NDMS создаёт
+	// интерфейс по ЛЮБОЙ мутации его имени (см. teardownOpkgTun). Здесь, в
+	// отличие от teardown, за ними НЕТ delete, который бы такую пустышку
+	// подобрал: hold интерфейс намеренно сохраняет. Пустышка же не несёт
+	// нашего описания, реап по описанию её не видит, и индекс занят навсегда.
+	// Вызывающий зовёт hold только при подтверждённом владении, но подтверждение
+	// даёт скан по описанию, а он «не знаю» трактует как «наш» (fail-closed для
+	// reuse) — то есть на недоступном скане сюда можно прийти и без интерфейса.
+	if !fakeIPLinkPresent(ctx, strings.ToLower(ndmsName)) {
+		s.appLog.Debug(scope, ndmsName, "hold: интерфейса нет, мутации пропущены")
+		return nil
+	}
 	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
 		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())
 	}

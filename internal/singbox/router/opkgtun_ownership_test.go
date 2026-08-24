@@ -595,6 +595,9 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 // запись владения СНИМАЕТСЯ (удерживать чужой индекс бессмысленно: наш
 // интерфейс мёртв, а permit пользователя NDMS уже стёрла — стенд 2026-08-18).
 func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
+	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+	stubOrphanNetdev(t, true)
 	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun0") {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newPolicyTunEnableHarness(t, "")
