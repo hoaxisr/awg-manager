@@ -75,7 +75,6 @@ const (
 	stepPatchBaseLogLevel     = "patch-base-log-level"
 	stepPatchBaseDirectOutbnd = "patch-base-direct-outbound"
 	stepPatchBaseCacheFile    = "patch-base-cache-file"
-	stepPatchBaseDNSStrategy  = "patch-base-dns-strategy"
 	stepPatchBaseBootstrapDNS = "patch-base-bootstrap-dns"
 	stepMigrateLegacyTunnels  = "migrate-legacy-tunnels"
 	stepStripBaseOwnedBlocks  = "strip-base-owned-blocks"
@@ -170,7 +169,12 @@ func reconcileDerivedDefaults(configDir string, loggers ...*slog.Logger) {
 	defaultsPath := filepath.Join(configDir, "99-defaults.json")
 	want := derivedDefaultsSlot()
 	if cur, ok := readSlotJSON(stepDerivedDefaults, defaultsPath, log); !ok || !sameJSON(cur, want) {
-		writeSlotJSON(stepDerivedDefaults, defaultsPath, want, log)
+		// Стрижка базы ТОЛЬКО после подтверждённой записи 99: провал (ENOSPC,
+		// права) иначе оставил бы конфиг вообще без резолвера — sing-box
+		// отвергает такой merged и не стартует до следующего удачного бута.
+		if !writeSlotJSON(stepDerivedDefaults, defaultsPath, want, log) {
+			return
+		}
 	}
 
 	basePath := filepath.Join(configDir, "00-base.json")
@@ -210,6 +214,15 @@ func stripOurDerivedDefaults(base map[string]any) bool {
 				delete(route, "default_domain_resolver")
 				changed = true
 			}
+		}
+		// Чужое значение остаётся, но СТРОКУ приводим к объектной форме:
+		// 99-defaults несёт объект, а слить объект со строкой merge sing-box
+		// не умеет («cannot merge json object into string», FATAL). Раньше
+		// коллизии не было — база была единственным источником, когда владельца
+		// нет. Значение при этом не меняется, меняется только форма записи.
+		if v, ok := route["default_domain_resolver"].(string); ok && v != "" {
+			route["default_domain_resolver"] = map[string]any{"server": v}
+			changed = true
 		}
 	}
 	return changed
@@ -551,8 +564,8 @@ func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 	)
 }
 
-// baseDefaultDomainResolver — тег резолвера, которым 00-base.json владеет,
-// пока никакой routing-слот не задал свой.
+// baseDefaultDomainResolver — тег резолвера по умолчанию. Живёт в
+// 99-defaults.json и действует, пока никакой слот выше не задал свой.
 const baseDefaultDomainResolver = "dns-bootstrap"
 
 // patchBaseDirectOutbound self-heals legacy 00-base.json files that
@@ -711,10 +724,11 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 	)
 }
 
-// baseDefaultDNSStrategy — значение dns.strategy, которым 00-base.json владеет,
-// пока никакой routing-слот его не задаёт. У strategy нет fallback'а на первый
-// dns-сервер (в отличие от dns.final), поэтому её отсутствие в merged-конфиге
-// — не «дефолт», а другое поведение.
+// baseDefaultDNSStrategy — значение dns.strategy по умолчанию. Живёт в
+// 99-defaults.json и действует, пока никакой слот выше его не задаёт. У
+// strategy нет fallback'а на первый dns-сервер (в отличие от dns.final),
+// поэтому её отсутствие в merged-конфиге — не «дефолт», а другое поведение;
+// именно поэтому дефолт обязан лежать в слоте, а не отсутствовать вовсе.
 const baseDefaultDNSStrategy = "prefer_ipv4"
 
 // stripStrayDirectPlaceholder removes the canonical

@@ -598,8 +598,6 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
 	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
 	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
-	// Регистрация ДО примирения базы, чтобы release снялся ПОСЛЕ него (defer
-	// LIFO): запись базы обязана попасть под тот же hold, а не в свой reload.
 	if s.deps.Orch != nil {
 		defer s.deps.Orch.HoldReloads()()
 	}

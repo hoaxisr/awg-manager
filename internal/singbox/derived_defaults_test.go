@@ -115,14 +115,24 @@ func TestReconcileDerivedDefaults_KeepsUserValues(t *testing.T) {
 	if dns["strategy"] != "ipv6_only" {
 		t.Errorf("чужая strategy обязана остаться: %v", dns)
 	}
+	// Значение чужого резолвера сохраняется, но форма приводится к объектной:
+	// 99-defaults несёт объект, а слить объект со строкой merge sing-box не
+	// умеет («cannot merge json object into string», FATAL). Пока база была
+	// единственным источником дефолта, коллизии не возникало.
 	route, _ := base["route"].(map[string]any)
-	if route["default_domain_resolver"] != "my-resolver" {
-		t.Errorf("чужой резолвер обязан остаться: %v", route)
+	res, _ := route["default_domain_resolver"].(map[string]any)
+	if res == nil || res["server"] != "my-resolver" {
+		t.Errorf("чужой резолвер обязан остаться (в объектной форме): %v", route)
 	}
 	m := mergedMap(t, configDir)
 	mdns, _ := m["dns"].(map[string]any)
 	if mdns["strategy"] != "ipv6_only" {
 		t.Errorf("merged strategy = %v, want ipv6_only (база первая)", mdns["strategy"])
+	}
+	mroute, _ := m["route"].(map[string]any)
+	mres, _ := mroute["default_domain_resolver"].(map[string]any)
+	if mres == nil || mres["server"] != "my-resolver" {
+		t.Errorf("merged резолвер = %v, want server=my-resolver (база первая)", mroute["default_domain_resolver"])
 	}
 }
 
@@ -213,5 +223,24 @@ func TestStripOurDerivedDefaults_BothResolverForms(t *testing.T) {
 				t.Errorf("резолвер остался: %v", route)
 			}
 		})
+	}
+}
+
+// Историческая база несёт резолвер СТРОКОЙ. 99-defaults несёт объект, а слить
+// объект со строкой merge sing-box не умеет — значит форму надо выровнять,
+// сохранив значение. Без этого апгрейд установки с ручной правкой в базе
+// уронил бы движок в FATAL.
+func TestStripOurDerivedDefaults_NormalisesForeignStringResolver(t *testing.T) {
+	base := map[string]any{"route": map[string]any{"default_domain_resolver": "custom"}}
+	if !stripOurDerivedDefaults(base) {
+		t.Fatal("смена формы обязана считаться изменением — иначе не запишется")
+	}
+	route, _ := base["route"].(map[string]any)
+	res, ok := route["default_domain_resolver"].(map[string]any)
+	if !ok {
+		t.Fatalf("чужая строка обязана стать объектом, got %T", route["default_domain_resolver"])
+	}
+	if res["server"] != "custom" {
+		t.Errorf("значение потеряно: %v", res)
 	}
 }

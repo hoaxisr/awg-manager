@@ -1234,3 +1234,33 @@ func TestSave_IdenticalBytesDoNotScheduleReload(t *testing.T) {
 		t.Error("изменившаяся запись обязана примениться")
 	}
 }
+
+// Байт-гейт Save обязан быть fail-open: файла нет (первая запись слота) или
+// он нечитаем — считаем «изменилось» и планируем reload. Пропустить нужный
+// reload хуже лишнего: слот появился в merged, а движок о нём не узнал.
+func TestSave_FirstWriteSchedulesReload(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	o.reloadTimer, o.pendingReload = nil, false
+	o.mu.Unlock()
+
+	// Файла слота ещё нет — самая первая запись.
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	scheduled := o.reloadTimer != nil || o.pendingReload
+	o.mu.Unlock()
+	if !scheduled {
+		t.Error("первая запись слота обязана планировать reload")
+	}
+}

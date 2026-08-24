@@ -113,7 +113,6 @@ func TestEnsureLegacyConfigMigrated_WarnsOnBrokenLegacy(t *testing.T) {
 	}
 }
 
-// reconcileBaseDomainResolver работает по каталогу: битая база — Warn с именем
 // Битый 00-base обязан всплыть Warn'ом от шага derived-defaults; пустой
 // каталог — тишина (шаг создаёт 99-defaults и уходит).
 func TestReconcileDerivedDefaults_WarnsOnBrokenBase(t *testing.T) {
