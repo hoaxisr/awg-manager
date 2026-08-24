@@ -12,6 +12,7 @@
 
 #include "transform.h"
 #include "blake2s.h"
+#include "cookie.h"	/* awg_chacha20_xor for header protection */
 
 void config_compute(awg_config_t *cfg)
 {
@@ -54,6 +55,39 @@ static inline void write32_le(u8 *p, u32 v)
 	__le32 le = cpu_to_le32(v);
 
 	memcpy(p, &le, 4);
+}
+
+/*
+ * AWG 3.0 header protection (see amneziawg-go device/send.go, receive.go).
+ * XOR the WireGuard header with a raw ChaCha20 keystream: key = cfg->hp_key
+ * used directly, nonce = pkt[0..12) (the first on-wire junk-padding bytes),
+ * counter 0. Handshakes (init/resp/cookie) encrypt the whole message; transport
+ * encrypts only the 16-byte header (type|receiver|counter), leaving the AEAD
+ * payload untouched. XOR is its own inverse, so the same call encrypts (egress,
+ * after mac1/mac2) and decrypts (ingress, before the type is trusted).
+ *
+ * Callers gate on cfg->hp_key_set and guarantee s_prefix >= AWG_HP_MIN_PADDING
+ * (enforced in awg_config_parse), so the 12-byte nonce is always present.
+ */
+void hp_crypt(const awg_config_t *cfg, u8 *pkt, int s_prefix, int n, u32 msgType)
+{
+	int len = (msgType == WG_TRANSPORT_DATA) ? AWG_HP_TRANSPORT_HDR : n;
+
+	awg_chacha20_xor(cfg->hp_key, pkt, 0, pkt + s_prefix, len);
+}
+
+/*
+ * Recover the plaintext WireGuard type of an encrypted candidate at
+ * pkt + s_prefix, WITHOUT mutating pkt: XOR the ciphertext type field with the
+ * first 4 keystream bytes. Used for size+H dispatch on ingress before deciding
+ * whether to decrypt the whole message.
+ */
+u32 hp_peek_type(const awg_config_t *cfg, const u8 *pkt, int s_prefix)
+{
+	u8 ks[4] = {0};
+
+	awg_chacha20_xor(cfg->hp_key, pkt, 0, ks, sizeof(ks));
+	return read32_le(pkt + s_prefix) ^ read32_le(ks);
 }
 
 u8 *transform_outbound(u8 *buf, int dataoff, int n,
@@ -156,8 +190,9 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 	if (n < 4)
 		return NULL;
 
-	/* Fast path: identity transport */
-	if (cfg->h4_noop) {
+	/* Fast path: identity transport. Never under header protection — the
+	 * type field is encrypted, and HP requires s4 >= 12 so h4_noop is false. */
+	if (cfg->h4_noop && !cfg->hp_key_set) {
 		if (read32_le(buf) == WG_TRANSPORT_DATA &&
 		    n >= WG_TRANSPORT_MIN) {
 			*out_len = n;
@@ -165,11 +200,18 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 		}
 	}
 
-	/* Size-based dispatch: handshake first, transport last */
+	/* Size-based dispatch: handshake first, transport last. Under header
+	 * protection the type is recovered via hp_peek_type (keystream XOR) and,
+	 * once a candidate matches its H-range, the message is decrypted in place
+	 * before the canonical WG type is written and MAC1 recomputed. */
 	if (n == cfg->init_total) {
-		u32 h = read32_le(buf + cfg->s1);
+		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s1)
+				       : read32_le(buf + cfg->s1);
 
 		if (hrange_contains(&cfg->h1, h)) {
+			if (cfg->hp_key_set)
+				hp_crypt(cfg, buf, cfg->s1, WG_INIT_SIZE,
+					 WG_HANDSHAKE_INIT);
 			write32_le(buf + cfg->s1, WG_HANDSHAKE_INIT);
 			if (cfg->has_client_pub)
 				recompute_mac1(buf + cfg->s1,
@@ -180,9 +222,13 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 	}
 
 	if (n == cfg->resp_total) {
-		u32 h = read32_le(buf + cfg->s2);
+		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s2)
+				       : read32_le(buf + cfg->s2);
 
 		if (hrange_contains(&cfg->h2, h)) {
+			if (cfg->hp_key_set)
+				hp_crypt(cfg, buf, cfg->s2, WG_RESP_SIZE,
+					 WG_HANDSHAKE_RESPONSE);
 			write32_le(buf + cfg->s2, WG_HANDSHAKE_RESPONSE);
 			if (cfg->has_client_pub)
 				recompute_mac1_response(buf + cfg->s2,
@@ -193,9 +239,13 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 	}
 
 	if (n == cfg->cookie_total) {
-		u32 h = read32_le(buf + cfg->s3);
+		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s3)
+				       : read32_le(buf + cfg->s3);
 
 		if (hrange_contains(&cfg->h3, h)) {
+			if (cfg->hp_key_set)
+				hp_crypt(cfg, buf, cfg->s3, WG_COOKIE_SIZE,
+					 WG_COOKIE_REPLY);
 			write32_le(buf + cfg->s3, WG_COOKIE_REPLY);
 			*out_len = n - cfg->s3;
 			return buf + cfg->s3;
@@ -204,9 +254,13 @@ u8 *transform_inbound(u8 *buf, int n, const awg_config_t *cfg, int *out_len)
 
 	/* Transport data: variable size, checked last */
 	if (n >= cfg->s4 + WG_TRANSPORT_MIN) {
-		u32 h = read32_le(buf + cfg->s4);
+		u32 h = cfg->hp_key_set ? hp_peek_type(cfg, buf, cfg->s4)
+				       : read32_le(buf + cfg->s4);
 
 		if (hrange_contains(&cfg->h4, h)) {
+			if (cfg->hp_key_set)
+				hp_crypt(cfg, buf, cfg->s4, n - cfg->s4,
+					 WG_TRANSPORT_DATA);
 			write32_le(buf + cfg->s4, WG_TRANSPORT_DATA);
 			*out_len = n - cfg->s4;
 			return buf + cfg->s4;

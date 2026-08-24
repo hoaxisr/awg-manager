@@ -710,6 +710,22 @@ static int c2s_thread_fn(void *data)
 		}
 
 		/*
+		 * AWG 3.0 header protection: encrypt the WG header LAST, after
+		 * MAC1/MAC2 are final — for handshakes HP wraps the whole message
+		 * including the MACs, so it must run after they are rewritten. The
+		 * nonce is the padding prefix (out[0..12)), so s_prefix >= 12
+		 * (enforced at config parse). Transport encrypts only the 16-byte
+		 * header. Ingress decrypt lives inside transform_inbound.
+		 */
+		if (proxy->cfg.hp_key_set &&
+		    msgType >= WG_HANDSHAKE_INIT && msgType <= WG_TRANSPORT_DATA) {
+			int s_prefix = out_len - n;
+
+			if (s_prefix >= AWG_HP_MIN_PADDING)
+				hp_crypt(&proxy->cfg, out, s_prefix, n, msgType);
+		}
+
+		/*
 		 * Send I1-I5 CPS packets before the handshake init whenever any
 		 * template is configured — independent of Jc, matching the
 		 * reference (src/send.c: the ispec loop is unconditional; only

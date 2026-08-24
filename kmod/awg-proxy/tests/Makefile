@@ -45,8 +45,8 @@ test_hp: test_hp.c shim.c shim.h $(SRC)/cookie.c
 test_transform: test_transform.c shim.c shim.h $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c $(SRC)/cookie.c
 	$(CC) $(CFLAGS) -o $@ test_transform.c shim.c $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c $(SRC)/cookie.c $(LDFLAGS)
 
-test_tunnel: test_tunnel.c shim.c shim.h $(SRC)/tunnel.c $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c
-	$(CC) $(CFLAGS) -o $@ test_tunnel.c shim.c $(SRC)/tunnel.c $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c $(LDFLAGS)
+test_tunnel: test_tunnel.c shim.c shim.h $(SRC)/tunnel.c $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c $(SRC)/cookie.c
+	$(CC) $(CFLAGS) -o $@ test_tunnel.c shim.c $(SRC)/tunnel.c $(SRC)/transform.c $(SRC)/blake2s.c $(SRC)/cps.c $(SRC)/cookie.c $(LDFLAGS)
 
 # test_proxy_recv covers src/proxy_recv.h — the dual-mode worker recv-loop
 # classifier — and src/endpoint.h — the pure RX source filter

@@ -127,6 +127,13 @@ typedef struct {
 /* Compute MAC1 keys and fast-path flags. Call after setting all fields. */
 void config_compute(awg_config_t *cfg);
 
+/* AWG 3.0 header protection (gated on cfg->hp_key_set). hp_crypt XORs the
+ * WG header with the ChaCha20 keystream (whole message for handshakes, 16-byte
+ * header for transport); it is its own inverse. hp_peek_type recovers a
+ * candidate's plaintext type on ingress without mutating the packet. */
+void hp_crypt(const awg_config_t *cfg, u8 *pkt, int s_prefix, int n, u32 msgType);
+u32 hp_peek_type(const awg_config_t *cfg, const u8 *pkt, int s_prefix);
+
 /*
  * Transform outbound WG->AWG.
  * buf has dataoff bytes of headroom before the packet data.
