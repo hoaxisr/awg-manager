@@ -20,6 +20,10 @@ var ErrMissingPins = errors.New("не выделены пины интерфей
 
 const fileVersion = 1
 
+// fileName — имя файла store. Дрейф имени читается как чистая установка:
+// посев (задача 3) прошёл бы второй раз и продублировал инстансы.
+const fileName = "proxy-instances.json"
+
 type fileFormat struct {
 	Version    int      `json:"version"`
 	SeededFrom []string `json:"seededFrom,omitempty"`
@@ -44,13 +48,19 @@ type Store struct {
 }
 
 func New(dataDir string) *Store {
-	return &Store{dir: dataDir, path: filepath.Join(dataDir, "proxy-instances.json")}
+	return &Store{dir: dataDir, path: filepath.Join(dataDir, fileName)}
 }
 
 // Load — fail-closed: битый, нечитаемый или НЕВАЛИДНЫЙ файл — ошибка, а не
 // пустое состояние: пустое состояние здесь равно «инстансов нет», и на нём
 // ведомость снесла бы зеркальные записи (класс требования 1 плана 4).
 // Отсутствие файла — законная чистая установка.
+//
+// Нормализация идёт ПЕРЕД проверкой и на этом пути тоже: файл правят руками и
+// пишут старые версии, а ненормализованное значение проскакивает мимо
+// инвариантов (mode «  raw  » не равен «raw», и проверка пинов не срабатывает).
+// Иначе обещание докстроки Record — «до геттеров битая запись не доживёт» —
+// держалось бы только на пути записи.
 func (s *Store) Load() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,6 +80,9 @@ func (s *Store) loadLocked() (State, error) {
 		return State{}, fmt.Errorf("разобрать %s: %w", s.path, err)
 	}
 	st := State{Seeded: len(f.SeededFrom) > 0, SeededFrom: f.SeededFrom, Records: f.Instances}
+	for i := range st.Records {
+		normalizeRecord(&st.Records[i])
+	}
 	if err := validateState(st); err != nil {
 		return State{}, fmt.Errorf("%s: %w", s.path, err)
 	}
@@ -157,6 +170,11 @@ func normalizeRecord(r *Record) {
 		}
 		d.Listen = strings.TrimSpace(d.Listen)
 		d.Peer = strings.TrimSpace(d.Peer)
+		// Пины тримятся здесь, а проверка ниже сравнивает с пустой строкой:
+		// пробельное имя OpkgTun не совпадёт ни с одним реальным интерфейсом,
+		// и пропускать его как «пин есть» нельзя.
+		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
+		d.RawIface = strings.TrimSpace(d.RawIface)
 		d.Workers = normalizeWorkers(d.Workers)
 		// Инвариант слотов (паритет normalizePeers, types.go:52-64): Peer
 		// главнее — свежий адрес приходит и от тех, кто про слоты не знает
@@ -177,6 +195,10 @@ func normalizeRecord(r *Record) {
 	if r.WdttServer != nil {
 		d := r.WdttServer
 		d.Listen = strings.TrimSpace(d.Listen)
+		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
+		d.WgIface = strings.TrimSpace(d.WgIface)
+		d.RawNdmsIface = strings.TrimSpace(d.RawNdmsIface)
+		d.RawIface = strings.TrimSpace(d.RawIface)
 		if d.RelayMode == "" {
 			d.RelayMode = "wg"
 		}

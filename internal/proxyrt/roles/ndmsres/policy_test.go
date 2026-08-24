@@ -169,7 +169,7 @@ func TestMembershipRestoresStoredOrder(t *testing.T) {
 	// сохранённое место, а не уехать в хвост.
 	fp := policies(pol("Policy0", pi("ISP", false), pi("Wireguard0", false)))
 	m := NewMembership("policy_membership", fp, fp)
-	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0", Order: 1}})
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0", Order: orderPtr(1)}})
 
 	obs, err := m.Observe(context.Background())
 	if err != nil {
@@ -184,5 +184,32 @@ func TestMembershipRestoresStoredOrder(t *testing.T) {
 	}
 	if len(fp.permits) != 1 || fp.permits[0] != "Policy0/OpkgTun18/1" {
 		t.Fatalf("permit не на сохранённой позиции: %v", fp.permits)
+	}
+}
+
+func orderPtr(v int) *int { return &v }
+
+func TestMembershipRestoresTopPosition(t *testing.T) {
+	// Order 0 — САМЫЙ ВЕРХ политики, а не «позиция не закреплена»: NDMS
+	// нумерует permit'ы с нуля (ndms/query/policies.go:86), и именно нулём
+	// хранится выход, поднятый пользователем ВЫШЕ провайдера. Трактовка нуля
+	// как «не задано» уводила бы такой permit в хвост молча.
+	fp := policies(pol("Policy0", pi("ISP", false), pi("Wireguard0", false)))
+	m := NewMembership("policy_membership", fp, fp)
+	m.SetDesired("OpkgTun18", []PolicyRef{{Name: "Policy0", Order: orderPtr(0)}})
+
+	obs, err := m.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := m.Plan(obs)
+	if len(steps) != 1 || steps[0].Args["order"] != "0" {
+		t.Fatalf("нулевая позиция обязана доехать до шага, а не превратиться в хвост: %v", steps)
+	}
+	if err := m.Apply(context.Background(), steps[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.permits) != 1 || fp.permits[0] != "Policy0/OpkgTun18/0" {
+		t.Fatalf("permit не на верхней позиции: %v", fp.permits)
 	}
 }

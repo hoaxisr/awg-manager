@@ -136,11 +136,13 @@ type Membership struct {
 }
 
 // PolicyRef — политика из намерения и позиция, на которую ставить наш permit
-// ПРИ СОЗДАНИИ. Локальный тип: ndmsres не импортирует roles. Order 0 — в
-// хвост (appendOrder); существующую позицию не двигаем (§4.4).
+// ПРИ СОЗДАНИИ. Локальный тип: ndmsres не импортирует roles. Order nil —
+// позиция не закреплена, permit уходит в хвост (appendOrder); НОЛЬ — законная
+// верхняя позиция политики (NDMS нумерует с нуля). Существующую позицию не
+// двигаем (§4.4).
 type PolicyRef struct {
 	Name  string
-	Order int
+	Order *int
 }
 
 func NewMembership(id proxyrt.ResourceID, list PolicyLister, permit Permitter) *Membership {
@@ -222,11 +224,11 @@ func (m *Membership) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		case strings.HasPrefix(v, "order="):
 			// Позиция из намерения главнее хвоста: пользователь поднял выход
 			// выше провайдера, и после апгрейда её надо восстановить (паритет
-			// ensureOpkgPermittedAtOrder старого мира). Order 0 — в хвост,
-			// как наблюдение и посчитало.
+			// ensureOpkgPermittedAtOrder старого мира). nil — не закреплена,
+			// берём хвост, как наблюдение и посчитало.
 			order := strings.TrimPrefix(v, "order=")
-			if want.Order > 0 {
-				order = strconv.Itoa(want.Order)
+			if want.Order != nil {
+				order = strconv.Itoa(*want.Order)
 			}
 			steps = append(steps, proxyrt.Step{Resource: m.id, Op: "permit",
 				Args:   map[string]string{"policy": want.Name, "order": order},

@@ -85,7 +85,7 @@ func TestStoreWireFormatCanary(t *testing.T) {
 			Peer: "p", Password: "pw", VKHashes: "h", Workers: 9, Obfs: "o",
 			Fingerprint: "f", DeviceID: "d", CaptchaMode: "auto", VKAuthMode: "v",
 			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
-			Policies: []PolicyPermit{{Name: "P", Order: 1}}},
+			Policies: []PolicyPermit{{Name: "P", Order: orderPtr(0)}}},
 			[]string{"connMode", "listen", "peer", "password", "vkHashes",
 				"workers", "obfs", "fingerprint", "deviceId", "captchaMode",
 				"vkAuthMode", "ndmsIface", "rawIface", "policies"},
@@ -93,8 +93,13 @@ func TestStoreWireFormatCanary(t *testing.T) {
 			// и запрет проверяется в ОБЕИХ формах ключа — без тега (Name)
 			// и с любым тегом, который писатель мог бы завести (name).
 			[]string{"Name", "name"}},
-		{"policy-permit", PolicyPermit{Name: "P", Order: 1},
+		// Order 0 — ЗАКОННАЯ верхняя позиция политики (нумерация NDMS с нуля,
+		// ndms/query/policies.go:86), а не «не задано»: ключ обязан доехать.
+		{"policy-permit-верх", PolicyPermit{Name: "P", Order: orderPtr(0)},
 			[]string{"name", "order"}, nil},
+		// Позиция не закреплена — ключа нет вовсе (в хвост, appendOrder).
+		{"policy-permit-без-позиции", PolicyPermit{Name: "P"},
+			[]string{"name"}, []string{"order"}},
 		{"freeturn-client", FreeTurnClientConfig{Listen: "l", Peer: "p",
 			Provider: "vk", Links: "x", Streams: 1, Transport: "tcp", Mode: "udp",
 			Bond: true, TurnHost: "t", TurnPort: 1, ObfProfile: "none", ObfKey: "k",
@@ -140,5 +145,13 @@ func TestStoreWireFormatCanary(t *testing.T) {
 				t.Fatalf("%s: ключ %q сериализуется, а не должен — писатель имени один, Record.Name (Р3)", c.name, k)
 			}
 		}
+		// Состав ключей закрыт с ОБЕИХ сторон: новый ключ в формате — тоже
+		// миграция, и читатель старого файла обязан быть на него рассчитан.
+		if len(m) != len(c.want) {
+			t.Fatalf("%s: ключей %d (%v), ждали %d (%v) — состав формата менять только с миграцией",
+				c.name, len(m), m, len(c.want), c.want)
+		}
 	}
 }
+
+func orderPtr(v int) *int { return &v }

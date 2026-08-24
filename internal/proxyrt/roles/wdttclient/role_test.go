@@ -462,7 +462,9 @@ func TestPolicyOrderReachesMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := rawCfg()
-	cfg.Policies = []roles.PolicyPermit{{Name: "Policy0", Order: 5}}
+	// Ноль — риск C1: он же законная ВЕРХНЯЯ позиция. Хвост здесь равен 2,
+	// так что подмена нуля на «не задано» видна.
+	cfg.Policies = []roles.PolicyPermit{{Name: "Policy0", Order: orderPtr(0)}}
 	var member proxyrt.Resource
 	for _, res := range r.Resources(proxyrt.IntentEnabled, cfg, proxyrt.NewObservations()) {
 		if res.ID() == "policy_membership" {
@@ -477,7 +479,9 @@ func TestPolicyOrderReachesMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := member.Plan(obs)
-	if len(steps) != 1 || steps[0].Args["order"] != "5" {
+	if len(steps) != 1 || steps[0].Args["order"] != "0" {
 		t.Fatalf("order из конфига не доехал до шага: %v", steps)
 	}
 }
+
+func orderPtr(v int) *int { return &v }

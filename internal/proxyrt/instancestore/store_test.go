@@ -1,8 +1,10 @@
 package instancestore
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -327,16 +329,193 @@ func TestPeerSlotsInvariant(t *testing.T) {
 }
 
 func TestPolicyOrderRoundTrip(t *testing.T) {
+	// Три состояния позиции обязаны быть различимы на диске: закреплённая
+	// ненулевая, закреплённый НОЛЬ (верх политики — NDMS нумерует с нуля) и
+	// незакреплённая. Слияние нуля с «не закреплено» уводило бы выход,
+	// поднятый выше провайдера, в хвост политики молча.
 	s := newStore(t)
 	r := rawClient("o", "O")
-	r.WdttClient.Policies = []roles.PolicyPermit{{Name: "P1", Order: 1}, {Name: "P2"}}
+	r.WdttClient.Policies = []roles.PolicyPermit{
+		{Name: "P1", Order: orderPtr(1)},
+		{Name: "P2", Order: orderPtr(0)},
+		{Name: "P3"},
+	}
 	if _, err := s.Replace(func(st *State) error { st.Records = append(st.Records, r); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := New(s.dir).Load()
 	c, _ := st.Records[0].WdttClientConfig()
-	if len(c.Policies) != 2 || c.Policies[0].Order != 1 || c.Policies[1].Order != 0 {
-		t.Fatalf("порядок permit'ов не доехал: %+v", c.Policies)
+	if len(c.Policies) != 3 {
+		t.Fatalf("permit'ов %d: %+v", len(c.Policies), c.Policies)
+	}
+	if c.Policies[0].Order == nil || *c.Policies[0].Order != 1 {
+		t.Fatalf("позиция 1 не доехала: %+v", c.Policies[0])
+	}
+	if c.Policies[1].Order == nil || *c.Policies[1].Order != 0 {
+		t.Fatalf("позиция 0 (верх политики) не доехала: %+v", c.Policies[1])
+	}
+	if c.Policies[2].Order != nil {
+		t.Fatalf("незакреплённая позиция обязана остаться nil: %+v", c.Policies[2])
+	}
+}
+
+func orderPtr(v int) *int { return &v }
+
+func TestRecordWireFormatCanary(t *testing.T) {
+	// Формат proxy-instances.json менять только с миграцией. Канарейка на
+	// конфигах ролей живёт в roles/config_test.go; ЭТИ ключи — оболочка
+	// записи и продуктовые данные, за ними до фикс-раунда не следило ничто:
+	// переименование linkVkHashes, peerRaw или expiresAt обнуляло бы на
+	// апгрейде параметры ссылки, адрес неактивного режима и срок абонента
+	// (отозванный доступ воскресал бы бессрочным).
+	cases := []struct {
+		name string
+		v    any
+		want []string
+	}{
+		{"record", Record{ID: "i", Kind: KindWdttClient, Name: "n", Enabled: true,
+			CreatedAt: "t", Sub: "s", PeerWg: "w", PeerRaw: "r",
+			Users: []ServerUser{{Password: "p"}}, LinkPeer: "lp", LinkVKHashes: "lv",
+			StatsLog:       "disk",
+			WdttClient:     &roles.WdttClientConfig{},
+			WdttServer:     &roles.WdttServerConfig{},
+			FreeTurnClient: &roles.FreeTurnClientConfig{},
+			FreeTurnServer: &roles.FreeTurnServerConfig{}},
+			[]string{"id", "kind", "name", "enabled", "createdAt", "sub",
+				"peerWg", "peerRaw", "users", "linkPeer", "linkVkHashes",
+				"statsLog", "wdttClient", "wdttServer", "freeturnClient",
+				"freeturnServer"}},
+		{"server-user", ServerUser{Password: "p", Comment: "c", VkHash: "v",
+			ExpiresAt: 1, Auto: true},
+			[]string{"password", "comment", "vkHash", "expiresAt", "auto"}},
+		{"file", fileFormat{Version: 1, SeededFrom: []string{"x"}, Instances: []Record{}},
+			[]string{"version", "seededFrom", "instances"}},
+	}
+	for _, c := range cases {
+		data, err := json.Marshal(c.v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range c.want {
+			if _, ok := m[k]; !ok {
+				t.Fatalf("%s: ключ %q пропал — формат store менять только с миграцией", c.name, k)
+			}
+		}
+		if len(m) != len(c.want) {
+			t.Fatalf("%s: ключей %d (%v), ждали %d (%v) — состав формата менять только с миграцией",
+				c.name, len(m), m, len(c.want), c.want)
+		}
+	}
+}
+
+func TestStoreFileNameIsPinned(t *testing.T) {
+	// Дрейф имени файла = «чистая установка» на апгрейде: посев проходит
+	// второй раз и дублирует инстансы пользователя (тот же класс, что потеря
+	// SeededFrom).
+	dir := t.TempDir()
+	if got := New(dir).path; got != filepath.Join(dir, "proxy-instances.json") {
+		t.Fatalf("имя файла store сменилось: %q — это миграция, а не правка", got)
+	}
+}
+
+func TestLoadNormalizesBeforeValidating(t *testing.T) {
+	// Загрузка обязана нормализовать, а не только проверять: иначе
+	// ненормализованный mode («  raw  ») уводит запись МИМО проверки пинов —
+	// а докстрока Record обещает, что запись без пинов до геттеров не доживёт.
+	s := newStore(t)
+	if err := os.WriteFile(s.path, []byte(`{"version":1,"instances":[{"id":"a",`+
+		`"kind":"wdtt-client","name":"n","enabled":true,`+
+		`"wdttClient":{"connMode":"  raw  ","listen":"127.0.0.1:9000",`+
+		`"peer":"1.2.3.4:56000","password":"pw","vkHashes":"h","workers":9}}]}`),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Load(); !errors.Is(err, ErrMissingPins) {
+		t.Fatalf("raw-клиент с ненормализованным mode и без пинов обязан валить Load: %v", err)
+	}
+}
+
+func TestLoadNormalizesRecords(t *testing.T) {
+	// Та же нормализация на чтении в положительной форме: рукописный файл
+	// доезжает до геттеров уже приведённым.
+	s := newStore(t)
+	if err := os.WriteFile(s.path, []byte(`{"version":1,"instances":[{"id":"  a  ",`+
+		`"kind":"wdtt-client","name":"n","enabled":true,`+
+		`"wdttClient":{"listen":"  127.0.0.1:9000  ","peer":"  1.2.3.4:56000  ",`+
+		`"password":"pw","vkHashes":"h","workers":24}}]}`),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Records[0].ID != "a" {
+		t.Fatalf("id не нормализован на чтении: %q", st.Records[0].ID)
+	}
+	c, _ := st.Records[0].WdttClientConfig()
+	if c.Mode != "wg" || c.Peer != "1.2.3.4:56000" || c.Listen != "127.0.0.1:9000" || c.Workers != 18 {
+		t.Fatalf("конфиг не нормализован на чтении: %+v", c)
+	}
+}
+
+func TestPinsWithWhitespaceRejected(t *testing.T) {
+	// Пробельный пин — не пин: имя OpkgTun с пробелом не совпадёт ни с одним
+	// реальным интерфейсом, а проверка на пустоту его пропускала.
+	s := newStore(t)
+	r := rawClient("z", "D")
+	r.WdttClient.NdmsIface, r.WdttClient.RawIface = "  ", "  "
+	if _, err := s.Replace(func(st *State) error {
+		st.Records = append(st.Records, r)
+		return nil
+	}); !errors.Is(err, ErrMissingPins) {
+		t.Fatalf("пробельные пины клиента обязаны валиться ErrMissingPins: %v", err)
+	}
+	srv := wdttServer("s")
+	srv.WdttServer.RawNdmsIface = "   "
+	if _, err := s.Replace(func(st *State) error {
+		st.Records = append(st.Records, srv)
+		return nil
+	}); !errors.Is(err, ErrMissingPins) {
+		t.Fatalf("пробельный пин сервера обязан валиться ErrMissingPins: %v", err)
+	}
+}
+
+func TestPinsAreTrimmedOnWrite(t *testing.T) {
+	s := newStore(t)
+	r := rawClient("t", "T")
+	r.WdttClient.NdmsIface, r.WdttClient.RawIface = "  OpkgTun18  ", "  opkgtun18  "
+	if _, err := s.Replace(func(st *State) error {
+		st.Records = append(st.Records, r)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := New(s.dir).Load()
+	c, _ := st.Records[0].WdttClientConfig()
+	if c.NdmsIface != "OpkgTun18" || c.RawIface != "opkgtun18" {
+		t.Fatalf("пины не нормализованы: %+v", c)
+	}
+	srv := wdttServer("s")
+	srv.WdttServer.NdmsIface = "  OpkgTun20  "
+	srv.WdttServer.WgIface = "  opkgtun20  "
+	srv.WdttServer.RawNdmsIface = "  OpkgTun21  "
+	srv.WdttServer.RawIface = "  opkgtun21  "
+	if _, err := s.Replace(func(st *State) error {
+		st.Records = append(st.Records, srv)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = New(s.dir).Load()
+	sc, _ := st.Records[1].WdttServerConfig()
+	if sc.NdmsIface != "OpkgTun20" || sc.WgIface != "opkgtun20" ||
+		sc.RawNdmsIface != "OpkgTun21" || sc.RawIface != "opkgtun21" {
+		t.Fatalf("пины сервера не нормализованы: %+v", sc)
 	}
 }
 
