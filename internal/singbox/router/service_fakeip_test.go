@@ -581,12 +581,13 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 
 			const ndmsName = "OpkgTun0" // NDMS iface ops + route Interface
 			// If Create SUCCEEDED (failure injected at a later step), rollback must
-			// tear the iface down (InterfaceDown + Delete) via the NDMS name. When
-			// Create itself fails, its undo is never pushed (nothing was created), so
-			// no teardown is due.
+			// tear the iface down (Delete) via the NDMS name. When Create itself
+			// fails, its undo is never pushed (nothing was created), so no teardown
+			// is due. InterfaceDown на happy-path НЕ шлётся: любая мутация имени
+			// создаёт интерфейс заново, а откат зовут и на уже снесённом.
 			if step != "Create" {
-				if !h.log.has("InterfaceDown:" + ndmsName) {
-					t.Errorf("%s: rollback missing InterfaceDown: %v", step, h.log.calls)
+				if h.log.has("InterfaceDown:" + ndmsName) {
+					t.Errorf("%s: rollback must not touch the iface before delete: %v", step, h.log.calls)
 				}
 				if !h.log.has("Delete:" + ndmsName) {
 					t.Errorf("%s: rollback missing Delete: %v", step, h.log.calls)
@@ -678,7 +679,7 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 		t.Errorf("FakeIP persist = %+v, want nil after readiness-timeout rollback", st)
 	}
 	const ndmsName = "OpkgTun0"
-	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
+	if !h.log.has("Delete:" + ndmsName) {
 		t.Errorf("readiness-timeout rollback must tear down iface: %v", h.log.calls)
 	}
 	if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
@@ -1134,9 +1135,10 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	if !h.log.has(rmAuto6) {
 		t.Errorf("v6 auto-route not removed: %v", h.log.calls)
 	}
-	// reject-renew before iface torn down, then iface down→delete (NDMS name).
-	mustOrder(renewReject, "InterfaceDown:"+ndmsName)
-	mustOrder("InterfaceDown:"+ndmsName, "Delete:"+ndmsName)
+	// reject-renew before iface torn down, then delete (NDMS name). Down на
+	// happy-path НЕТ: любая мутация имени создаёт интерфейс заново, а teardown
+	// зовут и на уже снесённом (см. teardownOpkgTun).
+	mustOrder(renewReject, "Delete:"+ndmsName)
 
 	// persist: FakeIP cleared, Enabled=false.
 	if st := h.loadFakeIP(t); st != nil {
@@ -1184,8 +1186,15 @@ func TestDisableFakeIPTun_NoAddressClearsOnHappyPath(t *testing.T) {
 	if h.log.has("ClearAddress:" + ndmsName) {
 		t.Errorf("happy path must not clear the address (delete removes it): %v", h.log.calls)
 	}
-	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
-		t.Errorf("teardown missing down/delete: %v", h.log.calls)
+	if !h.log.has("Delete:" + ndmsName) {
+		t.Errorf("teardown missing delete: %v", h.log.calls)
+	}
+	// И НЕ гасит интерфейс до удаления: NDMS создаёт интерфейс по любой мутации
+	// его имени, а teardown штатно зовут на уже снесённом (откаты, реап-ретраи).
+	// Рождённая так пустышка без нашего описания невидима для реапа и занимает
+	// индекс навсегда — пул 0..9 вычерпывался за десяток переходов.
+	if h.log.has("InterfaceDown:" + ndmsName) {
+		t.Errorf("happy path must not touch the iface before delete (create-on-reference): %v", h.log.calls)
 	}
 }
 

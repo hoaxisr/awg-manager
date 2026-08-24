@@ -369,14 +369,25 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
-	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
-		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())
-	}
+	// БЕЗ предварительного down: NDMS создаёт интерфейс по ЛЮБОЙ мутации его
+	// имени (стенд 2026-08-24: `{"interface":{"OpkgTunN":{"down":true}}}` на
+	// отсутствующем отвечает «interface created»), а teardown штатно зовут и на
+	// уже снесённом — из откатов и реап-ретраев. Рождённая так пустышка не
+	// несёт нашего описания, поэтому reapOrphansByDescription её не видит, и
+	// она занимает индекс НАВСЕГДА: пул 0..9 вычерпывался за десяток переходов
+	// до «нет свободного OpkgTun-индекса». Удаление в предварительном down не
+	// нуждается — стенд-проверено на живом интерфейсе с адресом, — а на
+	// отсутствующем `no:true` отвечает «unable to find» и ничего не создаёт.
 	err := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName)
 	if err == nil {
 		return nil
 	}
 	s.appLog.Warn(scope, ndmsName, "delete opkgtun: "+err.Error())
+	// Down — только здесь: delete провалился, значит интерфейс СУЩЕСТВУЕТ и
+	// create-on-reference не грозит, а погасить его перед снятием адресов надо.
+	if e := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); e != nil {
+		s.appLog.Warn(scope, ndmsName, "iface down: "+e.Error())
+	}
 	if e := s.deps.OpkgTun.ClearAddress(ctx, ndmsName); e != nil {
 		s.appLog.Warn(scope, ndmsName, "clear address: "+e.Error())
 	}
