@@ -161,6 +161,24 @@ func TestRenamedExitLosesReadinessUntilObserved(t *testing.T) {
 	}
 }
 
+func TestStaleObservationCannotRelightReadiness(t *testing.T) {
+	// Ресурс наблюдал СТАРЫЙ интерфейс и доложил уже после перепиновки.
+	// Без сверки имён такое наблюдение зажгло бы Ready на записи нового
+	// интерфейса, отменив исключение из правила 2 обычной гонкой.
+	r, _ := newReg(&fakeMirror{})
+	_ = r.SetDeclared([]ExitDecl{decl("wdttraw-de", "OpkgTun18", "opkgtun18")})
+	_ = r.SetDeclared([]ExitDecl{decl("wdttraw-de", "OpkgTun19", "opkgtun19")})
+
+	err := r.Ensure(linkres.ExitInfo{ID: "wdttraw-de", NDMSName: "OpkgTun18",
+		KernelIface: "opkgtun18", Ready: true})
+	if err == nil || !strings.Contains(err.Error(), "OpkgTun18") {
+		t.Fatalf("наблюдение чужого интерфейса обязано быть отказом с именами: %v", err)
+	}
+	if got, _ := r.Lookup("wdttraw-de"); got.Ready {
+		t.Fatal("запоздалое наблюдение старого интерфейса зажгло готовность нового")
+	}
+}
+
 func TestUndeclaredExitIsRemovedAndSwept(t *testing.T) {
 	m := &fakeMirror{owned: []string{"wdttraw-de", "wdttraw-nl"}}
 	r, j := seededReg(m)
@@ -225,6 +243,25 @@ func TestEmptySeedKeepsGateClosedWhenRecordsExist(t *testing.T) {
 	// из запертого гейта — удалить карточку-призрак руками, и без id её не найти.
 	if !strings.Contains(err.Error(), "wdttraw-de") {
 		t.Fatalf("причина обязана назвать записи по id: %v", err)
+	}
+	if err := r.SetDeclared(nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.sweeps(); n != 0 {
+		t.Fatalf("гейт обязан остаться закрытым: %d уборок", n)
+	}
+}
+
+func TestEmptySeedKeepsGateClosedWhenStoreCannotBeListed(t *testing.T) {
+	// Fail-open ровно того гейта, ради которого он заведён: не перечислился
+	// каталог — owned пуст, и «нечего терять» становится неотличимо от
+	// «неизвестно, что там». Ошибка Owned обязана запирать гейт, а не
+	// открывать его по пустому списку.
+	m := &fakeMirror{err: errors.New("диск")}
+	r, _ := newReg(m)
+
+	if err := r.MarkSeeded(0); err == nil {
+		t.Fatal("нечитаемое хранилище при пустом посеве обязано быть отказом")
 	}
 	if err := r.SetDeclared(nil); err != nil {
 		t.Fatal(err)
@@ -350,6 +387,25 @@ func TestMirrorFailureSurfaces(t *testing.T) {
 	// Память при этом обновлена: резолв имён не должен зависеть от диска.
 	if _, ok := r.Lookup("wdttraw-de"); !ok {
 		t.Fatal("отказ зеркала не должен ронять резолв имён")
+	}
+}
+
+// sweepFailMirror отказывает ТОЛЬКО на уборке: отказ Ensure приезжает в errs
+// раньше и накрыл бы собой пропущенную ошибку Sweep.
+type sweepFailMirror struct {
+	fakeMirror
+}
+
+func (m *sweepFailMirror) Sweep(map[string]bool) ([]string, error) {
+	return nil, errors.New("диск")
+}
+
+func TestSweepFailureSurfaces(t *testing.T) {
+	// Молча не отработавшая уборка — это оставленные карточки-призраки, о
+	// которых вызывающий не узнает ничего.
+	r, _ := seededReg(&sweepFailMirror{})
+	if err := r.SetDeclared([]ExitDecl{decl("wdttraw-de", "OpkgTun18", "opkgtun18")}); err == nil {
+		t.Fatal("отказ уборки обязан доехать до вызывающего")
 	}
 }
 
