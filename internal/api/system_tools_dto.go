@@ -135,6 +135,19 @@ type SystemServiceSavedResponse struct {
 	Data    SystemServiceSavedData `json:"data"`
 }
 
+// SystemServiceToggleEnableData — результат переключения автозапуска (Sxx <-> Kxx).
+type SystemServiceToggleEnableData struct {
+	OK        bool   `json:"ok" example:"true"`
+	NewScript string `json:"newScript" example:"/opt/etc/init.d/S90myservice"`
+	Enabled   bool   `json:"enabled" example:"true"`
+}
+
+// SystemServiceToggleEnableResponse — POST /system/services/toggle-enable.
+type SystemServiceToggleEnableResponse struct {
+	Success bool                          `json:"success" example:"true"`
+	Data    SystemServiceToggleEnableData `json:"data"`
+}
+
 // SystemOpkgPackagesResponse — списки пакетов opkg.
 type SystemOpkgPackagesResponse struct {
 	Success bool           `json:"success" example:"true"`

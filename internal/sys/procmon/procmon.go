@@ -293,7 +293,7 @@ func (s *Sampler) readProcesses(procDir string, totalMem uint64, totalCpuDelta u
 		item.IsCritical = IsCriticalProcess(item.Name, item.Exe)
 
 		// Service association
-		if strings.HasPrefix(item.Name, "S") || strings.Contains(item.Cmdline, "/opt/etc/init.d/") {
+		if strings.HasPrefix(item.Name, "S") || strings.HasPrefix(item.Name, "K") || strings.Contains(item.Cmdline, "/opt/etc/init.d/") {
 			item.Service = filepath.Base(item.Name)
 		}
 

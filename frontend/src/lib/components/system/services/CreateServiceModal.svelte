@@ -109,8 +109,8 @@
 		} else {
 			// Custom
 			scriptName = form.customScriptName.trim();
-			if (!scriptName.startsWith('S') || scriptName.length < 4) {
-				notifications.error('Имя скрипта должно начинаться с S и номера, например: S90my-service');
+			if ((!scriptName.startsWith('S') && !scriptName.startsWith('K')) || scriptName.length < 4) {
+				notifications.error('Имя скрипта должно начинаться с S или K и номера, например: S90my-service');
 				return;
 			}
 			content = form.customScriptContent;

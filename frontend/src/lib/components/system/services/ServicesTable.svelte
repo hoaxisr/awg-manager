@@ -15,6 +15,7 @@
 		acting: string | null;
 		searchQuery: string;
 		onAction: (item: SystemServiceItem, action: ServiceAction) => void;
+		onToggleEnable: (item: SystemServiceItem, enable: boolean) => void;
 		onEdit: (item: SystemServiceItem) => void;
 		onClone: (item: SystemServiceItem) => void;
 		onDelete: (item: SystemServiceItem) => void;
@@ -27,6 +28,7 @@
 		acting,
 		searchQuery,
 		onAction,
+		onToggleEnable,
 		onEdit,
 		onClone,
 		onDelete,
@@ -53,9 +55,10 @@
 			<table class="svc-table">
 				<thead>
 					<tr>
-						<th style="width: 28%;">Служба</th>
-						<th style="width: 26%;">Статус</th>
-						<th style="text-align: right; width: 46%;">Действия</th>
+						<th style="width: 26%;">Служба</th>
+						<th style="width: 20%;">Автозапуск</th>
+						<th style="width: 22%;">Статус</th>
+						<th style="text-align: right; width: 32%;">Действия</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -71,6 +74,29 @@
 										{/if}
 									</div>
 									<code class="svc-path" title={item.script}>{item.script}</code>
+								</div>
+							</td>
+
+							<!-- Autostart toggle -->
+							<td class="col-autostart">
+								<div class="autostart-cell-wrap">
+									<button
+										type="button"
+										class="btn-autostart"
+										class:is-enabled={item.enabled}
+										disabled={acting === item.script || (item.name === 'awg-manager' && item.enabled)}
+										title={
+											item.name === 'awg-manager' && item.enabled
+												? 'Автозапуск AWG Manager нельзя отключить'
+												: item.enabled
+													? 'Автозапуск включен (Sxx). Нажмите для выключения (Kxx)'
+													: 'Автозапуск выключен (Kxx). Нажмите для включения (Sxx)'
+										}
+										onclick={() => onToggleEnable(item, !item.enabled)}
+									>
+										<span class="autostart-indicator"></span>
+										<span class="autostart-label">{item.enabled ? 'ВКЛ (S)' : 'ВЫКЛ (K)'}</span>
+									</button>
 								</div>
 							</td>
 
@@ -287,6 +313,59 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	/* Autostart button toggle */
+	.autostart-cell-wrap {
+		display: flex;
+		align-items: center;
+	}
+
+	.btn-autostart {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.15rem 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-tertiary);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all 0.15s ease;
+		user-select: none;
+	}
+	.btn-autostart:hover:not(:disabled) {
+		background: var(--color-bg-hover, rgba(255, 255, 255, 0.08));
+		color: var(--color-text-primary);
+	}
+	.btn-autostart:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.autostart-indicator {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: #94a3b8;
+		transition: background 0.15s ease, box-shadow 0.15s ease;
+	}
+
+	.btn-autostart.is-enabled {
+		background: rgba(59, 130, 246, 0.12);
+		border-color: rgba(59, 130, 246, 0.35);
+		color: #2563eb;
+	}
+	:global(.dark) .btn-autostart.is-enabled {
+		background: rgba(59, 130, 246, 0.15);
+		border-color: rgba(59, 130, 246, 0.35);
+		color: #60a5fa;
+	}
+	.btn-autostart.is-enabled .autostart-indicator {
+		background: #3b82f6;
+		box-shadow: 0 0 6px rgba(59, 130, 246, 0.6);
 	}
 
 	.action-buttons-group {

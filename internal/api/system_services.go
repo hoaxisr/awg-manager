@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -183,4 +184,50 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 
 	h.emitEvent("delete", req.Script, "service deleted")
 	response.Success(w, SystemOKFlagData{OK: true})
+}
+
+type serviceToggleEnableRequest struct {
+	Script  string `json:"script"`
+	Enabled bool   `json:"enabled"`
+}
+
+// POST /api/system/services/toggle-enable
+// @Summary ServicesToggleEnable (Expert only)
+// @Description Toggle autostart for a service (rename Sxx <-> Kxx)
+// @Tags system,expert
+// @Accept json
+// @Produce json
+// @Security CookieAuth
+// @Success 200 {object} SystemServiceToggleEnableResponse
+// @Failure 400 {object} APIErrorEnvelope
+// @Failure 403 {object} APIErrorEnvelope
+// @Failure 500 {object} APIErrorEnvelope
+// @Router /system/services/toggle-enable [post]
+func (h *SystemToolsHandler) ServicesToggleEnable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	var req serviceToggleEnableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid JSON", "INVALID_JSON")
+		return
+	}
+	if req.Script == "" {
+		response.Error(w, "script is required", "INVALID_PARAMS")
+		return
+	}
+
+	newScript, err := h.services.ToggleEnable(req.Script, req.Enabled)
+	if err != nil {
+		response.Error(w, err.Error(), "TOGGLE_ERROR")
+		return
+	}
+
+	h.emitEvent("toggle_enable", req.Script, fmt.Sprintf("enabled=%v newPath=%s", req.Enabled, newScript))
+	response.Success(w, SystemServiceToggleEnableData{
+		OK:        true,
+		NewScript: newScript,
+		Enabled:   req.Enabled,
+	})
 }
