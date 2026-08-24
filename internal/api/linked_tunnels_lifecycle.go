@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 type linkedTunnelPredicate func(storage.AWGTunnel) bool
@@ -174,16 +174,49 @@ func appendLinkedTunnelSync(resp map[string]any, synced []string, syncErrs []str
 }
 
 // localEndpointFromListen maps proxy client listen (127.0.0.1:9001) to AWG Peer.Endpoint.
+// Разбор — локальный: прежние freeturn.LocalListenPort и wdtt.ListenPortFromAddr
+// живут в пакетах, которые умирают вместе со старым движком (Н1 плана 5).
+// Хост обязан быть 127.0.0.1 либо пустым — паритет обеих старых функций по
+// намерению; их фолбэк «неразобранный адрес → порт 9000» не воспроизводится:
+// он молча переписывал endpoint связанного туннеля на чужой порт.
 func localEndpointFromListen(listen string) (string, bool) {
-	port, ok := freeturn.LocalListenPort(listen)
-	if !ok || port <= 0 {
-		if p := wdtt.ListenPortFromAddr(listen); p > 0 {
-			port = p
-		} else {
-			return "", false
-		}
+	host, portStr, err := net.SplitHostPort(strings.TrimSpace(listen))
+	if err != nil {
+		return "", false
+	}
+	if host != "" && host != "127.0.0.1" {
+		return "", false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", false
 	}
 	return fmt.Sprintf("127.0.0.1:%d", port), true
+}
+
+// LinkedField — поле связи записи туннеля с прокси-клиентом.
+type LinkedField int
+
+const (
+	LinkedWdtt     LinkedField = iota // storage.AWGTunnel.WdttClientID
+	LinkedFreeTurn                    // storage.AWGTunnel.FreeTurnClientID
+)
+
+// SyncLinkedProxyEndpoints — экспорт для адаптера прокси-рантайма (план 5):
+// pred строится по полю связи и clientID; th=nil — публикацию списка туннелей
+// делает вызывающий (адаптер шлёт resource:invalidated через шину сам).
+func SyncLinkedProxyEndpoints(ctx context.Context, store *storage.AWGTunnelStore,
+	svc TunnelService, field LinkedField, clientID, listen string) (updated, failed []string) {
+	var pred linkedTunnelPredicate
+	switch field {
+	case LinkedWdtt:
+		pred = func(tun storage.AWGTunnel) bool { return tunnelLinkedToWdttClient(tun, clientID) }
+	case LinkedFreeTurn:
+		pred = func(tun storage.AWGTunnel) bool { return tunnelLinkedToFreeTurnClient(tun, clientID) }
+	default:
+		return nil, []string{fmt.Sprintf("неизвестное поле связи %d", int(field))}
+	}
+	return syncLinkedAwgTunnelEndpoints(ctx, store, svc, nil, pred, listen)
 }
 
 // syncLinkedAwgTunnelEndpoints updates linked AWG tunnels when proxy listen port changes.

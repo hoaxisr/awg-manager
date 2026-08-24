@@ -87,6 +87,12 @@ type Role struct {
 }
 
 func New(d Deps) (*Role, error) {
+	// G4: NDMSAccess.Apply и IngressRefs.Apply дереференсят зависимость без
+	// nil-гарда — непроведённый производитель это паника на первом прогоне
+	// инстанса, а не деградация. Форма — instance.New.
+	if d.Access == nil || d.Ingress == nil {
+		panic("wdttserver.New: неполные зависимости (G4)")
+	}
 	if d.Now == nil {
 		d.Now = time.Now
 	}

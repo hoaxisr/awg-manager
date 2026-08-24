@@ -591,3 +591,40 @@ func TestServerInvalidConfigTouchesNoNDMS(t *testing.T) {
 		t.Fatalf("приговор обязан называть причину валидации: %q (%+v)", reason, res.States)
 	}
 }
+
+// G4: производителя Access/Ingress не было ни в одной задаче волны, а
+// NDMSAccess.Apply и IngressRefs.Apply дереференсят их без гарда — непроведённая
+// зависимость обязана падать в конструкторе, а не паникой на первом прогоне.
+func TestNewPanicsOnNilAccessOrIngress(t *testing.T) {
+	base := func() Deps {
+		return Deps{
+			Instance: "default", Binary: "/opt/bin/wdtt-server",
+			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+			Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+			IPT: nilIPT{}, FW: nilFW{},
+			RunHook:       func(context.Context, string, string) error { return nil },
+			EnableForward: func() error { return nil },
+			IfaceExists:   func(string) bool { return true },
+			KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
+			PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
+			Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+		}
+	}
+	for name, mutate := range map[string]func(*Deps){
+		"Access":  func(d *Deps) { d.Access = nil },
+		"Ingress": func(d *Deps) { d.Ingress = nil },
+	} {
+		func() {
+			defer func() {
+				r := recover()
+				msg, _ := r.(string)
+				if !strings.Contains(msg, "G4") {
+					t.Fatalf("%s: паника с текстом G4 не случилась: %v", name, r)
+				}
+			}()
+			d := base()
+			mutate(&d)
+			_, _ = New(d)
+		}()
+	}
+}

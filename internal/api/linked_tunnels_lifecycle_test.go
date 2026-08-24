@@ -82,3 +82,72 @@ func TestSyncLinkedAwgTunnelNames(t *testing.T) {
 		t.Fatalf("idempotent rename: renamed=%v errs=%v", renamed, errs)
 	}
 }
+
+// SyncLinkedProxyEndpoints — экспорт для прокси-рантайма: поле связи выбирает
+// туннели, чужие не трогаются.
+func TestSyncLinkedProxyEndpointsByField(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awgm1", Name: "FT", FreeTurnClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
+		{ID: "awgm2", Name: "WD", WdttClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
+	} {
+		if err := store.Save(tun); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	updated, failed := SyncLinkedProxyEndpoints(context.Background(), store, nil,
+		LinkedWdtt, "client-a", "127.0.0.1:9001")
+	if len(failed) != 0 || len(updated) != 1 || updated[0] != "awgm2" {
+		t.Fatalf("wdtt: updated=%v failed=%v", updated, failed)
+	}
+	ft, err := store.Get("awgm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ft.Peer.Endpoint != "127.0.0.1:9000" {
+		t.Fatalf("чужой туннель тронут: %q", ft.Peer.Endpoint)
+	}
+
+	updated, failed = SyncLinkedProxyEndpoints(context.Background(), store, nil,
+		LinkedFreeTurn, "client-a", "127.0.0.1:9002")
+	if len(failed) != 0 || len(updated) != 1 || updated[0] != "awgm1" {
+		t.Fatalf("freeturn: updated=%v failed=%v", updated, failed)
+	}
+	ft, err = store.Get("awgm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ft.Peer.Endpoint != "127.0.0.1:9002" {
+		t.Fatalf("endpoint = %q", ft.Peer.Endpoint)
+	}
+}
+
+// Разбор listen без умирающих пакетов (Н1). Хост обязан быть 127.0.0.1 либо
+// пустым: приём любого хоста делал бы endpoint туннеля локальным для чужого
+// адреса прослушивания.
+func TestLocalEndpointFromListen(t *testing.T) {
+	cases := []struct {
+		listen string
+		want   string
+		ok     bool
+	}{
+		{"127.0.0.1:9001", "127.0.0.1:9001", true},
+		{":9001", "127.0.0.1:9001", true},
+		{"0.0.0.0:9001", "", false},
+		{"8.8.8.8:9001", "", false},
+		{"localhost:9001", "", false},
+		{"", "", false},
+		{"9001", "", false},
+		{"127.0.0.1:abc", "", false},
+		{"127.0.0.1:0", "", false},
+		{"127.0.0.1:70000", "", false},
+	}
+	for _, c := range cases {
+		got, ok := localEndpointFromListen(c.listen)
+		if ok != c.ok || got != c.want {
+			t.Fatalf("%q: got (%q,%v), want (%q,%v)", c.listen, got, ok, c.want, c.ok)
+		}
+	}
+}
