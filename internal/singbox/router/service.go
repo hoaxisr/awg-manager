@@ -407,16 +407,6 @@ type Deps struct {
 	// цель static-NAT в source-preserve. Optional — nil в тестах; wired на
 	// *query.RouteStore.
 	DefaultGateway DefaultGatewayResolver
-	// ReconcileBaseOwnedScalars примиряет скаляры 00-base.json с
-	// владением routing-слотов ПОСЛЕ того, как их содержимое изменилось
-	// (ApplyStaging / FakeIPSetDNSGlobals): мерж скаляров в config.d —
-	// first-file-wins, поэтому без примирения base затеняет выбор
-	// пользователя до перезапуска демона. Best-effort: ошибка не валит
-	// успешное применение. Optional — nil в тестах.
-	// (и route.default_domain_resolver — тот же first-file-wins: пока база
-	// несёт свой ключ, резолвер роутера, который fakeip-tun ставит в "real",
-	// выбрасывается мержем).
-	ReconcileBaseOwnedScalars func() error
 }
 
 // routerLoggerAdapter narrows *logging.ScopedLogger to the wanLogger
@@ -487,6 +477,12 @@ type ServiceImpl struct {
 	// Единственный писатель непустого значения — успешный Install (nil в него
 	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
 	appliedSpec *RestoreInputSpec
+
+	// tunDownStrikes — сколько тиков реконсиляции подряд carrier на tun
+	// нулевой; по нему healDetachedTun решает, лечить ли сейчас (см.
+	// healDetachedTunAttempts). Пишется и читается только из reconcile-тика,
+	// сериализованного transitionMu.
+	tunDownStrikes int
 
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а

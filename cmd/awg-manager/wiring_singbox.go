@@ -176,15 +176,12 @@ func (a *app) setupSingbox() {
 		mode := curSettings.SingboxRouter.RoutingMode
 		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
 		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
-		// Разметка выше меняет владельца dns.strategy, а бут-шаг
-		// reconcile-dns-strategy отработал раньше — внутри NewOperator. Без
-		// повторного примирения рассинхрон base переживает бут И не лечится
-		// периодическим Reconcile: его drift-heal берётся только при
-		// фактически запаркованном слоте, а мы слот уже распарковали.
-		// Best-effort: провал не повод ронять бут.
-		if err := a.singboxOp.ReconcileBaseOwnedScalars(); err != nil {
-			a.bootLog.Warn("reconcile-base-scalars", "", err.Error())
-		}
+		// Повторное примирение base здесь больше не нужно: разметка слотов
+		// меняет владельца dns.strategy, но дефолт лежит в 99-defaults.json —
+		// в проигрывающей позиции merge, — и перекрывается активным слотом
+		// сам. Раньше рассинхрон base пережил бы бут и не лечился периодическим
+		// Reconcile (его drift-heal берётся только при запаркованном слоте, а
+		// он здесь уже распаркован).
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.

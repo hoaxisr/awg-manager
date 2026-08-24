@@ -378,7 +378,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 			})
 			return dir
 		},
-		stepReconcileDNSStrategy: func(t *testing.T) string { // base со strategy + 21-fakeip со strategy
+		stepDerivedDefaults: func(t *testing.T) string { // base с нашими дефолтами + 21-fakeip со своим
 			dir := t.TempDir()
 			cd := filepath.Join(dir, "config.d")
 			writeFixtureJSON(t, filepath.Join(cd, "00-base.json"), map[string]any{

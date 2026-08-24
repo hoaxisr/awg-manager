@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -740,6 +741,11 @@ func TestReloadShouldRunOnlyGatesColdStart(t *testing.T) {
 // mirroring what the fakeip-tun feature writes.
 const tunInboundConfig = `{"inbounds":[{"type":"tun","tag":"tun-in"}]}`
 
+// altTunInboundConfig — тот же слот с ИЗМЕНЁННЫМ содержимым: skip-gate
+// оркестратора сравнивает хеш, и применение без реального изменения он
+// справедливо пропускает.
+const altTunInboundConfig = `{"inbounds":[{"type":"tun","tag":"tun-in","mtu":1280}]}`
+
 // equalStrs reports slice equality for call-order assertions.
 func equalStrs(a, b []string) bool {
 	if len(a) != len(b) {
@@ -812,6 +818,122 @@ func TestReload_SighupWhenTunStillPresent(t *testing.T) {
 	}
 	if fp.startsN() != 0 || fp.stopsN() != 0 {
 		t.Errorf("must not restart when tun unchanged; starts=%d stops=%d", fp.startsN(), fp.stopsN())
+	}
+}
+
+// TestHoldReloads_SuppressesUntilRelease: пока держится hold, записи слотов не
+// дёргают процесс — иначе чужой продюсер перезапускал бы движок посреди
+// перехода режима (при живом tun любой reload это Stop+Start). На release
+// накопленное применяется одним reload'ом.
+func TestHoldReloads_SuppressesUntilRelease(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	release := o.HoldReloads()
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != 0 {
+		t.Fatalf("под hold процесс трогать нельзя, получено %v", got)
+	}
+
+	release()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fp.calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := fp.calls(); len(got) == 0 {
+		t.Fatal("после release накопленная запись обязана примениться")
+	}
+	// Ровно одно применение: старт (процесс уже жив → SIGHUP или restart по
+	// toggle tun), а не по одному на каждую подавленную запись.
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) > 2 {
+		t.Errorf("ожидалось одно применение, получено %v", got)
+	}
+}
+
+// TestHoldReloads_ReloadNowClearsPending: явный ReloadNow под hold применяет всё
+// накопленное, поэтому release не обязан стрелять вторым reload'ом — иначе
+// переход режима заканчивался бы лишним перезапуском движка.
+func TestHoldReloads_ReloadNowClearsPending(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	release := o.HoldReloads()
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.ReloadNow(); err != nil {
+		t.Fatalf("reload now: %v", err)
+	}
+	applied := len(fp.calls())
+	if applied == 0 {
+		t.Fatal("ReloadNow под hold обязан применить конфиг")
+	}
+
+	// Процесс на лишнем прогоне не пострадал бы — его съел бы skip-gate по
+	// хешу, — поэтому ловим сам факт прогона по журналу оркестратора.
+	var after []string
+	o.SetLogger(func(_, msg string) { after = append(after, msg) })
+	release()
+	time.Sleep(3 * reloadDebounce)
+	if len(after) != 0 {
+		t.Errorf("release после ReloadNow не должен запускать reload повторно, журнал: %v", after)
+	}
+	if got := fp.calls(); len(got) != applied {
+		t.Errorf("release после ReloadNow не должен применять повторно: было %d, стало %v", applied, got)
+	}
+}
+
+// TestReload_LogNamesRestartWhenTunActive: при живом tun proc.Reload делает
+// Stop+Start (SIGHUP пересоздал бы tun под удерживаемым fd → FATAL), поэтому
+// строка журнала обязана называть рестарт. Прежняя формулировка «SIGHUP»
+// сбивала с толку при разборе простоя: в журнале стоял SIGHUP, а движок в
+// этот момент перезапускался.
+func TestReload_LogNamesRestartWhenTunActive(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	var lines []string
+	o.SetLogger(func(_, msg string) { lines = append(lines, msg) })
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.prevHasTun = true // tun уже жив — реального SIGHUP не будет
+	if err := o.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "restarting sing-box (config changed, tun active)") {
+		t.Errorf("журнал обязан назвать рестарт; строки: %v", lines)
+	}
+	if strings.Contains(joined, "SIGHUP") {
+		t.Errorf("при живом tun строка SIGHUP лжёт; строки: %v", lines)
 	}
 }
 
@@ -971,5 +1093,174 @@ func TestReloadPrunesDanglingSelectorRefs(t *testing.T) {
 	}
 	if len(sel.Outbounds) == 0 {
 		t.Errorf("selector must keep surviving member \"direct\"")
+	}
+}
+
+// TestScheduleReload_ExternalRespectsHold: продюсер, который пишет свой слот
+// сам (легаси-путь туннелей), применяет через оркестратор — и обязан попасть
+// под hold, а не дёрнуть движок посреди чужого перехода режима.
+func TestScheduleReload_ExternalRespectsHold(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * reloadDebounce) // даём начальному применению отработать
+	before := len(fp.calls())
+
+	// Легаси-путь пишет файл слота САМ (cfg.Save), минуя orch.Save, и лишь
+	// потом просит применить — воспроизводим именно это.
+	release := o.HoldReloads()
+	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(altTunInboundConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o.ScheduleReload()
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != before {
+		t.Fatalf("под hold внешний применитель не должен трогать процесс, получено %v", got[before:])
+	}
+
+	release()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fp.calls()) == before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(fp.calls()) == before {
+		t.Fatal("после release отложенное применение обязано доехать")
+	}
+}
+
+// TestScheduleReload_TimerForgetsItself: выстреливший debounce-таймер обязан
+// обнулить указатель. Иначе HoldReloads видит «таймер взведён» там, где взводить
+// нечего, помечает pendingReload и на release стреляет лишним reload'ом —
+// посреди перехода это лишний Stop+Start движка.
+func TestScheduleReload_TimerForgetsItself(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * reloadDebounce) // даём таймеру выстрелить
+
+	o.mu.Lock()
+	stale := o.reloadTimer != nil
+	o.mu.Unlock()
+	if stale {
+		t.Fatal("выстреливший таймер обязан забыть себя")
+	}
+
+	// Прямое следствие: hold поверх отработавшего таймера не считает, что есть
+	// что применять, и release не стреляет лишним reload'ом.
+	before := len(fp.calls())
+	release := o.HoldReloads()
+	o.mu.Lock()
+	pending := o.pendingReload
+	o.mu.Unlock()
+	release()
+	time.Sleep(3 * reloadDebounce)
+	if pending {
+		t.Error("hold пометил pending по протухшему таймеру")
+	}
+	if got := fp.calls(); len(got) != before {
+		t.Errorf("release без накопленных записей не должен применять, получено %v", got[before:])
+	}
+}
+
+// TestSave_IdenticalBytesDoNotScheduleReload: продюсеры зовут Save
+// идемпотентно (device-proxy переписывает свой слот по нескольку раз за один
+// переход режима), а при живом tun каждый reload — полный Stop+Start движка.
+// Байт-в-байт та же запись будить пайплайн не должна.
+func TestSave_IdenticalBytesDoNotScheduleReload(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * reloadDebounce) // даём первому применению отработать
+	before := len(fp.calls())
+
+	// Повтор той же записи не должен даже ВЗВОДИТЬ таймер: процесс всё равно
+	// уберёг бы скип-гейт по хешу в Reload, но ценой merged-мержа и
+	// `sing-box check` — на mipsel это и есть дорогая часть, ради которой
+	// гейт существует. Поэтому проверяем сам факт планирования.
+	o.mu.Lock()
+	o.reloadTimer, o.pendingReload = nil, false
+	o.mu.Unlock()
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	scheduled := o.reloadTimer != nil || o.pendingReload
+	o.mu.Unlock()
+	if scheduled {
+		t.Error("идентичная запись не должна планировать reload")
+	}
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != before {
+		t.Errorf("идентичная запись не должна трогать процесс, получено %v", got[before:])
+	}
+
+	// А изменившаяся — обязана.
+	if err := o.Save(SlotRouter, []byte(altTunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(fp.calls()) == before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(fp.calls()) == before {
+		t.Error("изменившаяся запись обязана примениться")
+	}
+}
+
+// Байт-гейт Save обязан быть fail-open: файла нет (первая запись слота) или
+// он нечитаем — считаем «изменилось» и планируем reload. Пропустить нужный
+// reload хуже лишнего: слот появился в merged, а движок о нём не узнал.
+func TestSave_FirstWriteSchedulesReload(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	o.reloadTimer, o.pendingReload = nil, false
+	o.mu.Unlock()
+
+	// Файла слота ещё нет — самая первая запись.
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	o.mu.Lock()
+	scheduled := o.reloadTimer != nil || o.pendingReload
+	o.mu.Unlock()
+	if !scheduled {
+		t.Error("первая запись слота обязана планировать reload")
 	}
 }

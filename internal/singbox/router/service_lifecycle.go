@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -362,6 +363,97 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	return iface, dnsAddr, fakeipNet, true
 }
 
+// healDetachedTunAttempts — на каких по счёту тиках подряд с нулевым carrier
+// перезапускать движок. Считаем ТИКАМИ реконсиляции, а не часами: тик и так
+// периодический, поэтому отдельный таймер и арифметика зазоров тут лишние.
+//
+// Первый такт пропущен намеренно: после любого рестарта движка (watchdog
+// поднял упавший, оркестратор применил конфиг) есть окно в секунды, когда
+// процесс уже жив, а стек к устройству ещё не привязан — тик, попавший в это
+// окно, дал бы ЛИШНИЙ Stop+Start, ровно тот отказ, который мы чиним.
+//
+// После последней попытки молчим до тех пор, пока carrier не поднимется сам:
+// если три перезапуска подряд не привязали стек, причина не в движке, и
+// четвёртый рестарт только оборвёт соединения остальных слотов. Ждать вечно,
+// но реже — не лечение, а тот же вечный цикл с растянутым шагом.
+var healDetachedTunAttempts = [...]int{2, 4, 8}
+
+// healDetachedTun чинит состояние «процесс жив, tun не прицеплен»: sing-box
+// работает и отвечает, но carrier на tun нулевой — значит его стек к
+// устройству не привязан. Для клиентов это худший вид отказа: дефолт уже
+// припаркован на интерфейс, трафик уходит в никуда, а режим числится
+// включённым. Раньше это не лечил НИКТО — Operator.Reconcile реагирует только
+// на мёртвый процесс, а drift-heal режима смотрит на NDMS-ресурсы, не на
+// привязку стека (стенд 2026-08-20: помогал только ручной перезапуск движка).
+// Связь carrier с привязкой стека проверена на железе (стенд 2026-08-24):
+// NDMS создал интерфейс — carrier 0; sing-box привязался — 1; движок убит —
+// снова 0, а устройство осталось.
+//
+// Лечение — Reload движка: при живом tun он выполняется как Stop+Start
+// (см. process.go) и пересоздаёт привязку. Через оркестратор идти нельзя —
+// его skip-gate по хешу увидит неизменный конфиг и не сделает ничего.
+//
+// Вызывается из reconcile-тика, сериализованного transitionMu, — им же
+// защищено поле tunDownStrikes.
+func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slot) {
+	if s.deps.Singbox == nil || iface == "" {
+		return
+	}
+	// Запаркованный слот — нулевой carrier ЗАКОНОМЕРЕН: в merged-конфиге нет
+	// tun-инбаунда, привязываться нечем. Перезапуск здесь ничего не чинит, а
+	// возврат слота — забота вызывающего (и он идёт выше по тику). Гейт кодом,
+	// а не порядком вызова: возврат слота может и провалиться.
+	if s.deps.Orch != nil {
+		if st, ok := s.slotSnapshot(slot); !ok || !st.Enabled {
+			s.tunDownStrikes = 0
+			return
+		}
+	}
+	if running, _ := s.deps.Singbox.IsRunning(); !running {
+		s.tunDownStrikes = 0 // мёртвый процесс — забота watchdog'а, не наша
+		return
+	}
+	if tunReadyProbe(iface) {
+		s.tunDownStrikes = 0
+		return
+	}
+	s.tunDownStrikes++
+	if !slices.Contains(healDetachedTunAttempts[:], s.tunDownStrikes) {
+		return
+	}
+	// Гейт памяти — тот же, что у оркестратора: Stop+Start параллельно с чужой
+	// валидацией (`sing-box check` держит merged-конфиг в памяти) на mipsel
+	// уходит в OOM. Не взяли — откатываем такт, чтобы попытка не сгорела
+	// впустую, и лечим следующим.
+	if !heavyop.Default.TryLock() {
+		s.tunDownStrikes--
+		return
+	}
+	defer heavyop.Default.Unlock()
+
+	// Свежая проверка намерения — КАК МОЖНО ПОЗЖЕ, уже под гейтом памяти:
+	// Disable ходит под s.mu мимо transitionMu (признано в service.go), и
+	// режим мог выключиться, пока мы копили такты и ждали гейт. Поднять
+	// движок в выключенном режиме хуже, чем пропустить такт: лечение
+	// повторится, а воскрешение придётся отменять пользователю.
+	if s.deps.Settings != nil {
+		if settings, err := s.deps.Settings.Load(); err != nil || settings == nil || !settings.SingboxRouter.Enabled {
+			s.tunDownStrikes = 0
+			return
+		}
+	}
+
+	last := s.tunDownStrikes == healDetachedTunAttempts[len(healDetachedTunAttempts)-1]
+	msg := "движок жив, но tun не прицеплен (carrier=0) — перезапускаю движок"
+	if last {
+		msg += " (последняя попытка: дальше жду, пока carrier поднимется сам)"
+	}
+	s.appLog.Warn(scope, iface, msg)
+	if err := s.deps.Singbox.Reload(); err != nil {
+		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
+	}
+}
+
 func (s *ServiceImpl) waitForSingbox(ctx context.Context, timeout time.Duration) error {
 	if s.deps.Singbox == nil {
 		return nil
@@ -514,12 +606,13 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Разметка слотов маршрутизации = владение dns.strategy, поэтому base
-	// примиряется на ВЫХОДЕ, а не хвостом: слоты перепаркованы и на путях,
-	// которые заканчиваются ошибкой (откаты enableFakeIPTun/enablePolicyTun,
-	// rollback провального Install), и хвостовой вызов их бы не покрыл. Ранние
-	// return'ы до перепарковки безопасны: примирять нечего — записи нет.
-	defer s.reconcileBaseOwnedScalars()
+	// Hold на всю транзакцию: провижининг пишет слоты по нескольку раз и
+	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
+	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
+	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
 
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
@@ -1231,10 +1324,11 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Парковка слота отбирает владение dns.strategy — примирение на выходе, по
-	// тем же причинам, что в enableLocked (teardown'ы паркуют слот и уходят
-	// разными return'ами).
-	defer s.reconcileBaseOwnedScalars()
+	// Hold на всю транзакцию — по тем же причинам и с тем же порядком
+	// регистрации, что в enableLocked.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
 
 	// Каждый teardown — в журнал: выключение бывает не только по кнопке
 	// (fail-safe при удалённой политике, drift-heal), и без записи причину

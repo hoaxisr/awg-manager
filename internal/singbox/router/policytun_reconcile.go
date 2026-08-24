@@ -292,12 +292,13 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 				s.appLog.Info("policy-tun-reconcile", iface,
 					"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
 				s.notifyRoutingSlotsChanged()
-				// По той же причине здесь и примирение base: владелец
-				// dns.strategy сменился мимо enableLocked/Disable.
-				s.reconcileBaseOwnedScalars()
 			}
 		}
 	}
+
+	// Интерфейс наш и на месте — но стек мог отцепиться от tun. Это состояние
+	// не ловит ни один другой heal, см. healDetachedTun. Слот он проверяет сам.
+	s.healDetachedTun(iface, "policy-tun-reconcile", orchestrator.SlotRouter)
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
 	// уже включённого режима и удаление списка мимо нас. Гейт probeErr == nil —

@@ -593,13 +593,26 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 	}
 	stage = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "preflight (sing-box check)", stage)
 	var runErr error
-	running, _ := o.proc.IsRunning()
-	if !running {
-		_, runErr = o.startAndWait(ctx)
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
+	if o.orch != nil {
+		// Применяет ОРКЕСТРАТОР, а не мы: он один знает про hold (переход
+		// режима), skip-gate по хешу и applied-state. Прямой proc.Reload при
+		// живом tun это полный Stop+Start — посреди чужой транзакции он её
+		// рвёт, а мимо skip-gate ещё и оставляет applied-state протухшим, чем
+		// дарит следующему чужому reload'у второй, уже пустой перезапуск.
+		// Цена — reload асинхронный: валидация выше синхронна и по-прежнему
+		// возвращает ошибку вызывающему, а вот отказ самого запуска доедет
+		// только в журнал.
+		o.orch.ScheduleReload()
+		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "scheduled (orchestrator)", stage)
 	} else {
-		runErr = o.proc.Reload()
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
+		running, _ := o.proc.IsRunning()
+		if !running {
+			_, runErr = o.startAndWait(ctx)
+			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
+		} else {
+			runErr = o.proc.Reload()
+			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
+		}
 	}
 	if hadExisting == nil {
 		_ = os.Remove(backupPath)

@@ -156,6 +156,10 @@ type fakeSingbox struct {
 	// supplying their own callback.
 	autoRestartFn func() (bool, bool, error)
 
+	// reloadCalls считает Reload() — на нём healDetachedTun оживляет
+	// отцепившийся tun (при живом tun Reload выполняется как Stop+Start).
+	reloadCalls int
+
 	// crashStats seeds CrashStats() for status tests.
 	crashCount             int
 	lastCrashReason        string
@@ -175,7 +179,7 @@ func newReadyTestSingbox(t *testing.T) *fakeSingbox {
 	return sb
 }
 
-func (f *fakeSingbox) Reload() error { return nil }
+func (f *fakeSingbox) Reload() error { f.reloadCalls++; return nil }
 func (f *fakeSingbox) IsRunning() (bool, int) {
 	if f.isRunningFn != nil {
 		return f.isRunningFn()

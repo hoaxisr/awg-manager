@@ -50,6 +50,9 @@ func provisionPolicyTunForDisable(t *testing.T, h *policyTunEnableHarness) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
+	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForDisable(t, h)
 
@@ -107,6 +110,9 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 // Индекс здесь НЕНУЛЕВОЙ осознанно: `Index` объявлен omitempty, поэтому на
 // нуле утверждение «индекс сохранён» проходит и для персиста, потерявшего поле.
 func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
+	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)
@@ -139,6 +145,9 @@ func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
 }
 
 func TestPolicyTunDisable_HoldsInterfaceAtIndexZero(t *testing.T) {
+	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForDisable(t, h)
 
@@ -188,6 +197,9 @@ func TestPolicyTunDisable_IPv6ClearFailureIsNotFailure(t *testing.T) {
 // А вот провал снятия v4-адреса удерживает Provisioned: адрес остался на месте,
 // то есть nginx-цикл ndm жив, и выключение обязано повториться.
 func TestPolicyTunDisable_AddressClearFailureKeepsProvisioned(t *testing.T) {
+	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForDisable(t, h)
 	h.opkg.failAt = "ClearAddress"
@@ -594,5 +606,33 @@ func TestDisablePolicyTun_ResetsAppliedNetfilterState(t *testing.T) {
 	}
 	if h.svc.currentBypassGeoIPTags != nil {
 		t.Errorf("состав geoip-тегов — член той же группы, обязан обнулиться: %v", h.svc.currentBypassGeoIPTags)
+	}
+}
+
+// Удержание НЕ должно мутировать имя, за которым нет интерфейса: NDMS создаёт
+// интерфейс по любой мутации, а delete за hold'ом не идёт — пустышка без
+// нашего описания осталась бы навсегда и заняла индекс (реап ищет по
+// описанию). Сюда можно прийти без интерфейса, когда скан владения недоступен:
+// он трактует «не знаю» как «наш».
+func TestPolicyTunDisable_HoldSkipsMutationsWhenIfaceGone(t *testing.T) {
+	stubOrphanNetdev(t, false) // kernel-устройства нет
+	h := newPolicyTunEnableHarness(t, "")
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{3: true}}
+	h.log.calls = nil
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	for _, call := range []string{"InterfaceDown:OpkgTun3", "ClearAddress:OpkgTun3", "ClearIPv6Address:OpkgTun3"} {
+		if h.log.has(call) {
+			t.Errorf("%s на отсутствующем интерфейсе создал бы пустышку: %v", call, h.log.calls)
+		}
 	}
 }

@@ -42,7 +42,6 @@ func (s *ServiceImpl) ApplyStaging(ctx context.Context) (orchestrator.Validation
 		// A staged rule-set delete/rename is final now — reap the orphaned
 		// inline/dat artifacts (issue #448: files were never deleted).
 		s.GCRuleSetArtifacts()
-		s.reconcileBaseOwnedScalars()
 		s.emitStagingEvent("applied")
 		s.emitRulesEvent()
 	}
@@ -70,18 +69,4 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 	m := s.ruleSetMaterializer()
 	_, err = m.materializeConfig(m.restoreConfig(cfg))
 	return err
-}
-
-// reconcileBaseOwnedScalars зовёт опциональные dep'ы после того, как
-// содержимое routing-слота стало активным: 00-base.json лексически первый,
-// и его скаляры затеняют роутерные, пока база их не уступит. Best-effort:
-// изменение слота уже применено, ошибка примирения обязана попасть в
-// app-лог, но не отменять успех.
-func (s *ServiceImpl) reconcileBaseOwnedScalars() {
-	if s.deps.ReconcileBaseOwnedScalars == nil {
-		return
-	}
-	if err := s.deps.ReconcileBaseOwnedScalars(); err != nil {
-		s.appLog.Warn("dns-globals", "", "reconcile base scalars: "+err.Error())
-	}
 }

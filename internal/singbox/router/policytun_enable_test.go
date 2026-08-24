@@ -410,7 +410,10 @@ func TestPolicyTunEnable_RollbackOnFailure(t *testing.T) {
 				}
 				return
 			}
-			if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
+			// Down на happy-path teardown НЕТ: любая мутация имени создаёт
+			// интерфейс заново (см. teardownOpkgTun), а откат зовут и на уже
+			// снесённом. Признак сноса — Delete.
+			if !h.log.has("Delete:" + ndmsName) {
 				t.Errorf("%s: rollback must tear the iface down: %v", step, h.log.calls)
 			}
 

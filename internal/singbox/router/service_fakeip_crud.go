@@ -84,9 +84,8 @@ func (s *ServiceImpl) FakeIPSetDNSGlobals(ctx context.Context, final, strategy s
 	if err := s.fakeipWithConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy) }); err != nil {
 		return err
 	}
-	// Слот 21 пишется напрямую, мимо staging — примирить base здесь, иначе
-	// в fakeip-режиме выбор strategy затеняется навсегда.
-	s.reconcileBaseOwnedScalars()
+	// Примирять base здесь больше не нужно: дефолт strategy лежит в
+	// 99-defaults.json и перекрывается слотом 21 сам (first-file-wins).
 	return nil
 }
 
