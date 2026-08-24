@@ -101,6 +101,8 @@ export interface SystemInfo {
 	kernelModuleVersion: string;
 	/** Version reported by the module currently in the kernel, "" if not loaded. */
 	kernelModuleLoadedVersion?: string;
+	/** Loaded awg_proxy version (NativeWG); >= 1.4.0 supports AWG 3.1. */
+	awgProxyVersion?: string;
 	isAarch64: boolean;
 	activeBackend: string;
 	routerIP: string;
