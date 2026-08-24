@@ -2,8 +2,9 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=awg-proxy
+# 1.4.0: AWG 3.1 — header protection (HP_KEY) + random trailers (RT).
 # 1.3.0: IPv6 endpoint support ("[v6]:port" procfs syntax, udp_tunnel6 TX).
-PKG_VERSION:=1.3.0
+PKG_VERSION:=1.4.0
 
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING

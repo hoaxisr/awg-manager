@@ -5747,6 +5747,9 @@ definitions:
       activeBackend:
         example: nativewg
         type: string
+      awgProxyVersion:
+        example: 1.4.0
+        type: string
       backendAvailability:
         $ref: '#/definitions/api.SystemInfoBackendAvailability'
       bootInProgress:
