@@ -2,6 +2,7 @@ package wdttclient
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -577,3 +578,70 @@ func TestPolicyOrderReachesMembership(t *testing.T) {
 }
 
 func orderPtr(v int) *int { return &v }
+
+// failRunner — старт валится по требованию: единственный способ загнать
+// процесс в паузу анти-флаппинга через публичную поверхность роли.
+type failRunner struct{ err error }
+
+func (f *failRunner) Start(context.Context, []string) (int, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	return 4821, nil
+}
+func (f *failRunner) Stop(context.Context, int) error { return nil }
+func (f *failRunner) AlivePID() (int, bool)           { return 0, false }
+
+// procOf достаёт ресурс процесса из ведомости.
+func procOf(t *testing.T, res []proxyrt.Resource) proxyrt.Resource {
+	t.Helper()
+	for _, r := range res {
+		if r.ID() == roles.RProcess {
+			return r
+		}
+	}
+	t.Fatalf("process не объявлен: %v", ids(res))
+	return nil
+}
+
+// Шов «роль → ресурс процесса»: сброс паузы анти-флаппинга обязан доезжать до
+// процесса. Без него обновление подписки не поднимает клиента до пяти минут —
+// ровно тогда, когда человек чинит его руками.
+func TestResetStartBackoffReachesProcess(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	run := &failRunner{err: errors.New("нет бинаря")}
+	role, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: run, Gate: nilGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Policies: nilPolicies{}, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: &memRegistry{m: map[string]linkres.ExitInfo{}},
+		Sync: nilSync{}, Occ: nilOcc{}, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc := procOf(t, role.Resources(proxyrt.IntentEnabled, rawCfg(), proxyrt.NewObservations()))
+	obs, err := proc.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	steps := proc.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "start" {
+		t.Fatalf("план %+v, ожидали start", steps)
+	}
+	if err := proc.Apply(context.Background(), steps[0]); err == nil {
+		t.Fatal("первый старт обязан упасть")
+	}
+	if err := proc.Apply(context.Background(), steps[0]); err == nil ||
+		!strings.Contains(err.Error(), "отложен") {
+		t.Fatalf("повтор обязан быть отложен анти-флаппингом: %v", err)
+	}
+
+	role.ResetStartBackoff()
+	run.err = nil
+	// Часы не двигаются: если сброс не дошёл, старт останется отложенным.
+	if err := proc.Apply(context.Background(), steps[0]); err != nil {
+		t.Fatalf("сброс роли не дошёл до процесса: %v", err)
+	}
+}

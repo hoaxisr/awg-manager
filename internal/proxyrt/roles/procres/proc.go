@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
@@ -87,14 +88,20 @@ type Proc struct {
 	wantHash string
 	cfgErr   error
 
-	// Состояние между прогонами. Гонок нет: воркер инстанса один.
+	// Состояние между прогонами. Гонок нет: воркер инстанса один — кроме
+	// паузы анти-флаппинга, у неё есть второй писатель (см. bmu).
 	spawnedAt *time.Time
 	// unreachSince — начало окна переподключения при живом pid БЕЗ нашего
 	// свежего старта (усыновлённый процесс, разрыв соединения): §7 требует
 	// ретраев до 20 с прежде, чем выносить вердикт (I3 ревью).
 	unreachSince *time.Time
-	fails        int
-	nextAllowed  time.Time
+
+	// bmu защищает ТОЛЬКО fails/nextAllowed. Остальные поля живут в одной
+	// горутине воркера, а паузу анти-флаппинга снимает ещё и явное действие
+	// пользователя (ResetStartBackoff) — оно приходит из чужой горутины.
+	bmu         sync.Mutex
+	fails       int
+	nextAllowed time.Time
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -123,7 +130,7 @@ func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		// Живой ответ закрывает окно старта, окно переподключения и серию
 		// неудач.
 		p.spawnedAt, p.unreachSince = nil, nil
-		p.fails, p.nextAllowed = 0, time.Time{}
+		p.ResetStartBackoff()
 		return obsFromState(st), nil
 	}
 	switch {
@@ -263,9 +270,9 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 		// букву §7: процесс не тронут, фаза failed с причиной «пин бинаря не
 		// обновлён».
 		now := p.c.Now()
-		if now.Before(p.nextAllowed) {
+		if until := p.retryAt(); now.Before(until) {
 			return fmt.Errorf("повтор старта отложен до %s (анти-флаппинг)",
-				p.nextAllowed.Format("15:04:05"))
+				until.Format("15:04:05"))
 		}
 		if err := p.c.Gate.Check(ctx, p.c.Binary, p.c.Impl, p.c.Role, p.c.NeedCmds); err != nil {
 			p.recordFail(now)
@@ -294,9 +301,9 @@ func (p *Proc) stop(ctx context.Context) error {
 
 func (p *Proc) start(ctx context.Context) error {
 	now := p.c.Now()
-	if now.Before(p.nextAllowed) {
+	if until := p.retryAt(); now.Before(until) {
 		return fmt.Errorf("повтор старта отложен до %s (анти-флаппинг)",
-			p.nextAllowed.Format("15:04:05"))
+			until.Format("15:04:05"))
 	}
 	if err := p.c.Gate.Check(ctx, p.c.Binary, p.c.Impl, p.c.Role, p.c.NeedCmds); err != nil {
 		p.recordFail(now)
@@ -324,7 +331,29 @@ func (p *Proc) spawn(ctx context.Context, now time.Time) error {
 	return nil
 }
 
+// ResetStartBackoff снимает паузу анти-флаппинга: следующий старт пойдёт без
+// задержки. Кроме живого ответа управляющего канала (Observe) зовётся на ЯВНОЕ
+// действие пользователя — обновление подписки заменяет профиль, и прежние
+// неудачи старта больше не показательны. Сам механизм этим не отменяется:
+// процесс, который валится без вмешательства, набирает паузу по-прежнему.
+//
+// Безопасен из любой горутины: сброс приходит из ручки API, а не от воркера.
+func (p *Proc) ResetStartBackoff() {
+	p.bmu.Lock()
+	defer p.bmu.Unlock()
+	p.fails, p.nextAllowed = 0, time.Time{}
+}
+
+// retryAt — момент, раньше которого повтор старта запрещён.
+func (p *Proc) retryAt() time.Time {
+	p.bmu.Lock()
+	defer p.bmu.Unlock()
+	return p.nextAllowed
+}
+
 func (p *Proc) recordFail(now time.Time) {
+	p.bmu.Lock()
+	defer p.bmu.Unlock()
 	p.fails++
 	delay := backoffBase
 	for i := 1; i < p.fails && delay < backoffMax; i++ {
@@ -347,8 +376,8 @@ func (p *Proc) RecheckAfter() time.Duration {
 	if p.unreachSince != nil && now.Sub(*p.unreachSince) < socketGrace {
 		return socketWaitRecheck
 	}
-	if now.Before(p.nextAllowed) {
-		return p.nextAllowed.Sub(now)
+	if until := p.retryAt(); now.Before(until) {
+		return until.Sub(now)
 	}
 	return 0
 }

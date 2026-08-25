@@ -398,3 +398,99 @@ func TestProcInvalidConfigIsVerdict(t *testing.T) {
 
 // Проверка контракта: Proc обязан быть настоящим proxyrt.Resource.
 var _ proxyrt.Resource = (*Proc)(nil)
+
+// Явное действие пользователя (обновление подписки) обязано снимать паузу
+// анти-флаппинга: профиль заменён, прежние неудачи больше не показательны, и
+// заставлять человека ждать до пяти минут ровно в момент починки нельзя.
+func TestProcResetStartBackoffAllowsImmediateRetry(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	link := &fakeLink{err: control.ErrNoSocket}
+	r := &fakeRunner{startErr: errors.New("нет бинаря")}
+	p := newProc(link, r, okGate{}, clock)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	obs, _ := p.Observe(context.Background())
+	step := p.Plan(obs)[0]
+
+	if err := p.Apply(context.Background(), step); err == nil {
+		t.Fatal("первый старт обязан упасть")
+	}
+	if err := p.Apply(context.Background(), step); err == nil ||
+		!strings.Contains(err.Error(), "отложен") {
+		t.Fatalf("повтор в окне backoff: %v", err)
+	}
+
+	p.ResetStartBackoff()
+	r.startErr = nil
+	// Часы НЕ двигаются: сброс обязан снять паузу сам, а не дождаться её.
+	if err := p.Apply(context.Background(), step); err != nil {
+		t.Fatalf("после сброса старт обязан пройти без задержки: %v", err)
+	}
+	if len(r.started) != 1 {
+		t.Fatalf("ожидали ровно один состоявшийся старт, получили %v", r.started)
+	}
+}
+
+// Сброс снимает паузу, но не отменяет механизм: клиент, который валится сам по
+// себе, обязан замедляться по-прежнему и с той же лестницы.
+func TestProcResetStartBackoffKeepsAntiFlapping(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	link := &fakeLink{err: control.ErrNoSocket}
+	r := &fakeRunner{startErr: errors.New("нет бинаря")}
+	p := newProc(link, r, okGate{}, clock)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	obs, _ := p.Observe(context.Background())
+	step := p.Plan(obs)[0]
+
+	if err := p.Apply(context.Background(), step); err == nil {
+		t.Fatal("первый старт обязан упасть")
+	}
+	if got := p.RecheckAfter(); got != 5*time.Second {
+		t.Fatalf("первая неудача: пауза %v, ожидали 5s", got)
+	}
+	now = now.Add(6 * time.Second)
+	if err := p.Apply(context.Background(), step); err == nil {
+		t.Fatal("второй старт обязан упасть")
+	}
+	if got := p.RecheckAfter(); got != 10*time.Second {
+		t.Fatalf("вторая неудача: пауза %v, ожидали 10s", got)
+	}
+
+	p.ResetStartBackoff()
+	if got := p.RecheckAfter(); got != 0 {
+		t.Fatalf("после сброса будильник паузы %v, ожидали 0", got)
+	}
+	if err := p.Apply(context.Background(), step); err == nil {
+		t.Fatal("старт обязан упасть и после сброса")
+	}
+	// Ровно 5s, а не 20s: сброс обнуляет и счётчик неудач, иначе лестница
+	// продолжится с прежней ступени.
+	if got := p.RecheckAfter(); got != 5*time.Second {
+		t.Fatalf("первая неудача после сброса: пауза %v, ожидали 5s", got)
+	}
+}
+
+// Сброс приходит из горутины HTTP-ручки, пока воркер инстанса гоняет свой
+// цикл. Пауза анти-флаппинга — единственное состояние ресурса с двумя
+// писателями, и гонки на нём быть не должно (тесты идут с -race).
+func TestProcResetStartBackoffIsRaceFree(t *testing.T) {
+	link := &fakeLink{err: control.ErrNoSocket}
+	r := &fakeRunner{startErr: errors.New("нет бинаря")}
+	p := newProc(link, r, okGate{}, time.Now)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	step := proxyrt.Step{Resource: "process", Op: "start"}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			p.ResetStartBackoff()
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		_ = p.Apply(context.Background(), step)
+		_ = p.RecheckAfter()
+	}
+	<-done
+}

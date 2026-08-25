@@ -22,6 +22,10 @@ type Deps struct {
 	// а не прямым вызовом wdttlink.DecodeLink: это сетевой запрос, и без шва
 	// обновление было бы непроверяемо. Прод-значение подставляет проводка.
 	Fetch func(subURL string) (wdttlink.LinkDecodeResult, error)
+	// ResetStartBackoff снимает у клиента паузу повторного старта
+	// («анти-флаппинг», до пяти минут). Необязателен; прод-значение
+	// подставляет проводка — механизма сброса в internal/proxyapp нет.
+	ResetStartBackoff func(key string)
 }
 
 // Service — обновление подписки инстанса.
@@ -94,6 +98,14 @@ func (s *Service) Refresh(ctx context.Context, key string) (wdttlink.ImportPaylo
 		return applyProfile(r, *profile, subURL)
 	}); err != nil {
 		return wdttlink.ImportPayload{}, err
+	}
+	// Только ПОСЛЕ состоявшейся правки записи: клиент, который не поднимался,
+	// сидит в паузе повторного старта до пяти минут, и новый конфиг всё это
+	// время не применяется. Обновление подписки — явное действие человека,
+	// который его чинит: прежние неудачи больше не показательны. Сброс на
+	// НЕудавшемся обновлении снял бы паузу впустую — профиль остался прежним.
+	if s.deps.ResetStartBackoff != nil {
+		s.deps.ResetStartBackoff(key)
 	}
 	return *profile, nil
 }
