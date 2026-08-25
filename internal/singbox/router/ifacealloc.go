@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
@@ -14,6 +15,31 @@ const maxFakeIPIndex = 9
 // ErrFakeIPIndexExhausted возвращается, когда в диапазоне 0..maxFakeIPIndex
 // не осталось свободного индекса OpkgTun.
 var ErrFakeIPIndexExhausted = errors.New("нет свободного OpkgTun-индекса в 0..9")
+
+// allocOccupancy — занятость для ВЫДАЧИ номера: живая половина плюс пины
+// чужих владельцев. Отдельна от live намеренно: та же карта отвечает ещё на
+// два вопроса — «жив ли мой прежний интерфейс» и «переиспользовать ли свой
+// удержанный номер», — и подмешивание туда чужих пинов сломало бы оба.
+//
+// Fail-closed: недосчёт занятых номеров — единственное направление ошибки,
+// приводящее к коллизии.
+func allocOccupancy(ctx context.Context, live map[int]bool, pins func(context.Context) (map[int]bool, error)) (map[int]bool, error) {
+	if pins == nil {
+		return live, nil
+	}
+	held, err := pins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("пины OpkgTun: %w", err)
+	}
+	out := make(map[int]bool, len(live)+len(held))
+	for i := range live {
+		out[i] = true
+	}
+	for i := range held {
+		out[i] = true
+	}
+	return out, nil
+}
 
 // allocateFakeIPIndex возвращает низший свободный индекс OpkgTun в диапазоне
 // 0..maxFakeIPIndex, отсутствующий в live, иначе ErrFakeIPIndexExhausted.

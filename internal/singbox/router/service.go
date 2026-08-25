@@ -377,6 +377,13 @@ type Deps struct {
 	// for the fakeip index allocator. Optional — nil in tests; wired in
 	// cmd/awg-manager via the union adapter. Consumed by Slice 1D Enable.
 	OpkgTunIndices OpkgTunIndexLister
+	// OpkgTunPins — номера, удерживаемые ЧУЖИМИ владельцами: записи туннелей
+	// (номер занят с создания записи, а интерфейс появляется только при первом
+	// включении) и, после перехода на новый рантайм, записи инстансов прокси.
+	// СВОЯ удерживающая запись сюда не входит — она приходит из настроек, и
+	// подмешивание её в занятость перепинило бы нас самих.
+	// nil означает «чужих пинов нет»: занятость сводится к живой половине.
+	OpkgTunPins func(ctx context.Context) (map[int]bool, error)
 	// OpkgTunScan lists NDMS OpkgTun IDs carrying the given description —
 	// the reap's persist-less orphan fallback (see teardownOpkgTun for why
 	// such orphans are dangerous). Optional — nil skips the scan; wired in
