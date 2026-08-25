@@ -20,6 +20,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/linkres"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/netres"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -1344,5 +1345,45 @@ func TestProxyEndpointSyncSetStateSkipsMirror(t *testing.T) {
 	}
 	if len(svc.stopped) != 1 || svc.stopped[0] != "awgm1" {
 		t.Fatalf("опущены: %v", svc.stopped)
+	}
+}
+
+// Д1 целиком, на живом хранилище: включённый raw-клиент, единственная связанная
+// запись — его собственное зеркало с адресом реального реле. План обязан быть
+// пуст, а адрес в хранилище — нетронут. Сквозной прогон адаптер + экспорт api +
+// ресурс: по отдельности каждый слой выглядел безобидно.
+func TestRawMirrorSurvivesEnabledClientReconcile(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Save(&storage.AWGTunnel{
+		ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1",
+		Backend: wdtt.BackendWdttRaw,
+		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &stateSvc{running: map[string]bool{}}
+	pub := &fakePublisher{}
+
+	le := linkres.NewLinkedEndpoint("linked_endpoint",
+		newProxyEndpointSync(store, svc, api.LinkedWdtt, pub))
+	le.SetDesired("c1", "127.0.0.1:9000", true)
+
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := le.Plan(obs); len(steps) != 0 {
+		t.Fatalf("включённый raw-клиент планирует шаги по своему зеркалу: %+v", steps)
+	}
+	got, err := store.Get("wdttraw-c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Peer.Endpoint != "vps.example:56003" {
+		t.Fatalf("адрес зеркала стал %q", got.Peer.Endpoint)
+	}
+	if len(pub.events) != 0 {
+		t.Fatalf("качели инвалидации фронта: %v", pub.events)
 	}
 }

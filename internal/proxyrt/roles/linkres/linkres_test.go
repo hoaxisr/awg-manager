@@ -115,7 +115,9 @@ func (f *fakeSync) SetState(_ context.Context, clientID string, up bool) (int, e
 }
 
 func TestLinkedEndpointSyncsDrift(t *testing.T) {
-	fs := &fakeSync{tunnels: []LinkedTunnel{{ID: "t1", Endpoint: "127.0.0.1:9017"}}}
+	// Lifecycle: true — это настоящий связанный туннель, а не зеркало: доводке
+	// адреса подлежат только они (Д1).
+	fs := &fakeSync{tunnels: []LinkedTunnel{{ID: "t1", Endpoint: "127.0.0.1:9017", Lifecycle: true}}}
 	le := NewLinkedEndpoint("linked_endpoint", fs)
 	le.SetDesired("client1", "127.0.0.1:9000", true)
 
@@ -386,5 +388,48 @@ func TestRoutableExitPlansAgainstFreshDesired(t *testing.T) {
 	if got := reg.m[stale.ID]; !got.Ready {
 		t.Fatalf("публикация обязана отражать желаемое второго вызова Resources в том же прогоне: %+v (фаза %v, шаги %v)",
 			got, phase, res.Steps)
+	}
+}
+
+// Д1: адрес доводится ТОЛЬКО у записей жизненного цикла. Зеркало raw-клиента
+// несёт адрес реального реле, который ему кладёт собственный билдер записи;
+// принять его за дрейф — значит переписать псевдотуннелю адрес на локальный
+// порт и качаться с тем билдером до конца времён.
+func TestLinkedEndpointDoesNotSyncNonLifecycleEndpoint(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "wdttraw-default", Endpoint: "vps.example:56003", Running: false, Lifecycle: false},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := le.Plan(obs); len(steps) != 0 {
+		t.Fatalf("зеркало не подлежит доводке адреса: %+v", steps)
+	}
+	if fs.tunnels[0].Endpoint != "vps.example:56003" {
+		t.Fatalf("адрес зеркала тронут: %q", fs.tunnels[0].Endpoint)
+	}
+}
+
+// Обратная сторона того же фильтра: у записи жизненного цикла адрес по-прежнему
+// доводится, даже когда рядом лежит зеркало с чужим адресом.
+func TestLinkedEndpointSyncsLifecycleNextToMirror(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "wdttraw-default", Endpoint: "vps.example:56003", Lifecycle: false},
+		{ID: "t1", Endpoint: "127.0.0.1:9017", Running: true, Lifecycle: true},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := le.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "sync" {
+		t.Fatalf("план: %+v", steps)
 	}
 }

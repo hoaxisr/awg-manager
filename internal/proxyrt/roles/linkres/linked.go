@@ -78,7 +78,12 @@ func (l *LinkedEndpoint) Observe(ctx context.Context) (proxyrt.Observation, erro
 			return proxyrt.Observation{}, werr
 		}
 		for _, t := range tunnels {
-			if t.Endpoint != fmt.Sprintf("127.0.0.1:%d", want) {
+			// Только записи жизненного цикла: зеркалу raw-клиента адрес
+			// реального реле кладёт его собственный билдер записи
+			// (wdtt.BuildRawTunnelRecord), и принять этот адрес за дрейф —
+			// значит переписать псевдотуннелю endpoint на локальный порт, а
+			// потом качаться с билдером круг за кругом.
+			if t.Lifecycle && t.Endpoint != fmt.Sprintf("127.0.0.1:%d", want) {
 				drift++
 			}
 		}

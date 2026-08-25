@@ -232,7 +232,18 @@ func SyncLinkedProxyEndpoints(ctx context.Context, store *storage.AWGTunnelStore
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
-	return syncLinkedAwgTunnelEndpoints(ctx, store, svc, nil, pred, listen)
+	// Тот же фильтр, что у постановки состояния: адрес зеркала — не наше дело,
+	// его пишет wdtt.BuildRawTunnelRecord, и локальный порт зеркалу не нужен.
+	return syncLinkedAwgTunnelEndpoints(ctx, store, svc, nil,
+		linkedProxyLifecycleOnly(pred, field), listen)
+}
+
+// linkedProxyLifecycleOnly сужает предикат связи до записей, которыми
+// прокси-рантайм вправе распоряжаться.
+func linkedProxyLifecycleOnly(pred linkedTunnelPredicate, field LinkedField) linkedTunnelPredicate {
+	return func(tun storage.AWGTunnel) bool {
+		return pred(tun) && linkedProxyLifecycle(tun, field)
+	}
 }
 
 // LinkedProxyTunnel — связанная запись глазами прокси-рантайма: id, endpoint и
@@ -282,9 +293,7 @@ func SetLinkedProxyTunnelsState(ctx context.Context, store *storage.AWGTunnelSto
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
-	lifecycle := func(tun storage.AWGTunnel) bool {
-		return pred(tun) && linkedProxyLifecycle(tun, field)
-	}
+	lifecycle := linkedProxyLifecycleOnly(pred, field)
 	if up {
 		return startLinkedAwgTunnels(ctx, store, svc, nil, lifecycle)
 	}

@@ -289,3 +289,34 @@ func TestSetLinkedProxyTunnelsStateUnknownField(t *testing.T) {
 		t.Fatal("неизвестное поле связи проглочено списком")
 	}
 }
+
+// Д1: доводка адреса прокси-рантайма обходит зеркало стороной. Адрес реле в
+// записи зеркала — не дрейф: его туда кладёт BuildRawTunnelRecord
+// (raw_tunnel_meta.go:90), и переписывать его на локальный порт нельзя.
+func TestSyncLinkedProxyEndpointsSkipsMirror(t *testing.T) {
+	store := proxyStateStore(t)
+	mirror := &storage.AWGTunnel{
+		ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a",
+		Backend: wdtt.BackendWdttRaw,
+		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},
+	}
+	if err := store.Save(mirror); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, failed := SyncLinkedProxyEndpoints(context.Background(), store, nil,
+		LinkedWdtt, "client-a", "127.0.0.1:9007")
+	if len(failed) != 0 {
+		t.Fatalf("failed = %v", failed)
+	}
+	if len(updated) != 1 || updated[0] != "awgm-wd" {
+		t.Fatalf("updated = %v (зеркало трогать нельзя)", updated)
+	}
+	got, err := store.Get("wdttraw-client-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Peer.Endpoint != "vps.example:56003" {
+		t.Fatalf("адрес зеркала переписан на %q", got.Peer.Endpoint)
+	}
+}
