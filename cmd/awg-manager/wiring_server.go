@@ -86,6 +86,7 @@ func (a *app) setupServer() {
 		},
 		server.Deps{
 			TunnelService:       a.tunnelService,
+			OpkgTunOccupancy:    a.opkgTunOccupancy,
 			ExternalService:     a.externalService,
 			TestingService:      a.testService,
 			Keenetic:            a.keeneticClient,

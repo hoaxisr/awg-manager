@@ -93,6 +93,16 @@ func (a *app) setupTunnels() {
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
 
+	// Занятость номеров OpkgTun: живая половина плюс пины двух владельцев,
+	// живущих в этом дереве. Третьего — записи инстансов прокси — добавит
+	// проводка нового рантайма, форма это допускает.
+	a.opkgTunOccupancy = storage.OpkgTunOccupancy(
+		&routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
+		a.awgStore.OpkgTunPinsOf,
+		a.settingsStore.OpkgTunPinsOf,
+	)
+	a.tunnelService.SetOpkgTunOccupancy(a.opkgTunOccupancy)
+
 	// Migrate legacy ISPInterface="none" to "" (auto) for tunnels from older versions.
 	a.tunnelService.MigrateISPInterfaceNone()
 	a.tunnelService.MigrateEmptyBackend()

@@ -77,6 +77,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.authHandler = api.NewAuthHandler(s.keenetic, s.sessions, s.settings, h.appLog)
 	h.tunnelsHandler = api.NewTunnelsHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.tunnelsHandler.SetSettingsStore(s.settings)
+	h.tunnelsHandler.SetOpkgTunOccupancy(s.opkgTunOccupancy)
 	h.tunnelsHandler.SetPingCheckService(s.pingCheckService)
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)

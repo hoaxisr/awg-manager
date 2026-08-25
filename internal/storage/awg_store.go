@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -268,17 +269,21 @@ const (
 // - OS 5.x, kernel:   awg10..awg16 → OpkgTun10..OpkgTun16 (прошивочный лимит NDMS — 16)
 // - OS 5.x, nativewg: awg20, awg21, ... (в OpkgTun не отображаются, см. os5NWGMinIndex)
 // - OS 4.x: awgm0, awgm1, ... (uses 'm' prefix, no NDMS; backend не различается)
-func (s *AWGTunnelStore) NextAvailableID(backend string) (string, error) {
+// occupancy — внешняя занятость номеров OpkgTun (живые интерфейсы плюс пины
+// чужих подсистем). Спрашивается ТОЛЬКО в kernel-ветке на OS 5.x: nativewg
+// живёт как Wireguard<N>, а на 4.x интерфейсов OpkgTun нет вовсе — платить
+// отказом за источник, который им не нужен, они не должны.
+func (s *AWGTunnelStore) NextAvailableID(ctx context.Context, backend string, occupancy OpkgTunPins) (string, error) {
 	tunnels, err := s.List()
 	if err != nil {
 		return "", err
 	}
-	return nextAvailableID(tunnels, backend, osdetect.Is5())
+	return nextAvailableID(tunnels, backend, osdetect.Is5(), occupancy, ctx)
 }
 
 // nextAvailableID — чистая функция выбора ID (вынесена из NextAvailableID
 // для тестируемости без глобального osdetect-состояния).
-func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool) (string, error) {
+func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool, occupancy OpkgTunPins, ctx context.Context) (string, error) {
 	existing := make(map[int]bool)
 
 	if is5 {
@@ -299,8 +304,20 @@ func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool) (string, err
 				}
 			}
 		}
+		// Дальше — kernel: его идентификатор ОДНОВРЕМЕННО является номером
+		// интерфейса OpkgTun, поэтому к занятым идентификаторам добавляется
+		// занятость номеров, собранная снаружи. Отсутствие источника — не
+		// «занятых нет», а незаконченная проводка: молча вернуться к одному
+		// лишь хранилищу значит выдать номер, который уже кем-то занят.
+		if occupancy == nil {
+			return "", fmt.Errorf("источник занятости OpkgTun не задан")
+		}
+		taken, err := occupancy(ctx)
+		if err != nil {
+			return "", fmt.Errorf("занятость OpkgTun: %w", err)
+		}
 		for i := os5MinIndex; i <= os5MaxIndex; i++ {
-			if !existing[i] {
+			if !existing[i] && !taken[i] {
 				return "awg" + strconv.Itoa(i), nil
 			}
 		}
