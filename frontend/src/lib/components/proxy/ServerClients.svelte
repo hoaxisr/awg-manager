@@ -67,11 +67,14 @@
 	let seq = 0;
 	let inflight = 0;
 
-	const mainPassword = $derived((server.password ?? '').trim());
+	// Признак, а не сам секрет: маппер ответа больше не отдаёт пароль сервера
+	// наружу (proxyInstances.ts, `password: ''`), поэтому гейт по `password`
+	// запирал форму навсегда даже на сервере с заданным паролем.
+	const hasMainPassword = $derived(server.passwordSet === true);
 	const applied = $derived(headerApplied(lastReload, running));
 	// TS-13: без главного пароля сервера абонента завести нельзя — форму даже
 	// не открываем, причина написана под списком.
-	const canAdd = $derived(!!mainPassword && !busy);
+	const canAdd = $derived(hasMainPassword && !busy);
 
 	function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 		return new Promise((resolve, reject) => {
@@ -155,7 +158,6 @@
 						comment,
 						password: password || undefined,
 						vkHash: vkHash || undefined,
-						mainPassword,
 					}),
 					FETCH_TIMEOUT_MS,
 				);
@@ -230,7 +232,6 @@
 					api.addWdttServerPanelUser(serverId, {
 						comment: name,
 						vkHash: user.vkHash || undefined,
-						mainPassword,
 					}),
 					FETCH_TIMEOUT_MS,
 				);
@@ -332,7 +333,7 @@
 		</p>
 	{/if}
 
-	{#if !mainPassword}
+	{#if !hasMainPassword}
 		<p class="note">{CLIENT_TEXT.mainPasswordUnset}</p>
 	{/if}
 </div>

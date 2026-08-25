@@ -56,11 +56,17 @@ const ALIVE = user({ password: 'p-alive', comment: 'Телефон Ивана' }
 const OFF = user({ password: 'p-off', comment: 'Планшет', isDeactivated: true });
 const EXPIRED = user({ password: 'p-old', comment: 'Гостевой', isExpired: true });
 
+// Форма ПРОДОВОГО маппера: секрет наружу не уходит (`password: ''`), наличие
+// пароля несёт отдельный признак. Фикстура со скрытым паролем прятала
+// регрессию — гейт формы читал поле, которого в проде уже нет.
 const SERVER: WdttServerConfig = {
 	listen: '0.0.0.0:56000',
 	wgPort: 51820,
-	password: 'mainpass0000',
+	password: '',
+	passwordSet: true,
 };
+
+const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER, passwordSet: false };
 
 function mount(users: WdttPanelUserEntry[], running = true) {
 	apiMock.getWdttServerPanelUsers.mockResolvedValue({ available: true, users });
@@ -252,7 +258,6 @@ describe('добавление', () => {
 			comment: 'Ноутбук',
 			password: 'mine1234',
 			vkHash: undefined,
-			mainPassword: 'mainpass0000',
 		});
 		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 	});
@@ -316,7 +321,7 @@ describe('добавление', () => {
 			props: {
 				serverId: 'default',
 				serverName: 'Раздача WDTT',
-				server: { ...SERVER, password: '' },
+				server: SERVER_NO_PASSWORD,
 				running: true,
 				locked: async (fn: () => Promise<void>) => {
 					await fn();
@@ -409,7 +414,6 @@ describe('перевыпуск', () => {
 		expect(apiMock.addWdttServerPanelUser).toHaveBeenCalledWith('default', {
 			comment: 'Гостевой',
 			vkHash: undefined,
-			mainPassword: 'mainpass0000',
 		});
 	});
 
