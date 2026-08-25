@@ -3,9 +3,12 @@ package wdttusers
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +22,25 @@ type fakeSource struct {
 	recs map[string]instancestore.Record
 }
 
+// Get отдаёт КОПИЮ записи вместе с копией среза абонентов — как настоящее
+// хранилище, которое сериализует состояние. Общий срез маскировал бы половину
+// эффектов гонки: правка «по месту» в колбэке доезжала бы до хранилища даже
+// тогда, когда запись отменена отказом колбэка.
 func (f *fakeSource) Get(key string) (instancestore.Record, bool) {
 	r, ok := f.recs[key]
-	return r, ok
+	if !ok {
+		return instancestore.Record{}, false
+	}
+	return copyRecord(r), true
+}
+
+func copyRecord(r instancestore.Record) instancestore.Record {
+	r.Users = slices.Clone(r.Users)
+	if r.WdttServer != nil {
+		cfg := *r.WdttServer
+		r.WdttServer = &cfg
+	}
+	return r
 }
 
 type updateCall struct {
@@ -36,6 +55,9 @@ type fakeMutator struct {
 	created []instancestore.Record
 	updates []updateCall
 	failOn  string // ключ, на котором Update отвечает отказом
+	// beforeUpdate имитирует ПАРАЛЛЕЛЬНУЮ ручку, успевшую изменить запись
+	// между чтением вызывающего и записью. Детерминированно, без горутин.
+	beforeUpdate func(*fakeSource)
 }
 
 func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
@@ -48,11 +70,20 @@ func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instanc
 	if f.failOn != "" && f.failOn == key {
 		return fmt.Errorf("хранилище недоступно")
 	}
+	if f.beforeUpdate != nil {
+		hook := f.beforeUpdate
+		f.beforeUpdate = nil // ровно один раз: имитируется ОДИН параллельный запрос
+		hook(f.src)
+	}
 	rec, ok := f.src.recs[key]
 	if !ok {
 		return fmt.Errorf("инстанс %s не найден", key)
 	}
+	rec = copyRecord(rec)
 	if err := mutate(&rec); err != nil {
+		// Отказ колбэка отменяет запись целиком — как ReplaceChecked
+		// менеджера. Копия выше нужна именно для этого: правка «по месту» не
+		// должна доехать до хранилища.
 		return err
 	}
 	f.src.recs[key] = rec
@@ -417,4 +448,377 @@ func (f *failLastMutator) Update(ctx context.Context, key string, mutate func(*i
 		return fmt.Errorf("хранилище недоступно")
 	}
 	return f.inner.Update(ctx, key, mutate)
+}
+
+// ── фикс-раунд 1: семантика мутаций ──────────────────────────────
+
+// TestMutations_DoNotResurrectFromSnapshot — главный тест раунда.
+//
+// Сценарий владельца: два удаления подряд. Первое уже завершилось и вычеркнуло
+// абонента; второе, ждавшее на замке, писало бы состав из СВОЕГО снимка и
+// вернуло бы вычеркнутого — материализация положила бы его обратно в
+// passwords.json, а SIGHUP восстановил бы ОТОЗВАННЫЙ доступ.
+//
+// Фейк источника отдаёт копии, поэтому эффект не маскируется общим срезом.
+func TestMutations_DoNotResurrectFromSnapshot(t *testing.T) {
+	st := newStand(t, baseCfg(),
+		instancestore.ServerUser{Password: "revoked"},
+		instancestore.ServerUser{Password: "victim"},
+		instancestore.ServerUser{Password: "keeper"},
+	)
+	// Параллельная ручка успела отозвать доступ "revoked" перед нашей записью.
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = dropUser(rec.Users, "revoked")
+		src.recs[testKey] = rec
+	}
+
+	got, msg, code := st.serve(t, http.MethodDelete, "", "victim")
+	if code != "" {
+		t.Fatalf("ответ = %s / %s", code, msg)
+	}
+	want := []instancestore.ServerUser{{Password: "keeper"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — отозванный доступ воскрешён из снимка", u, want)
+	}
+	if _, ok := st.file(t).Passwords["revoked"]; ok {
+		t.Fatalf("отозванный доступ вернулся в passwords.json: %#v", st.file(t).Passwords)
+	}
+	if len(got.Users) != 1 || got.Users[0].Password != "keeper" {
+		t.Fatalf("ответ = %#v", got.Users)
+	}
+}
+
+// Зеркальный сценарий: конкурентное ДОБАВЛЕНИЕ не должно теряться.
+func TestMutations_DoNotDropConcurrentAdd(t *testing.T) {
+	st := newStand(t, baseCfg(),
+		instancestore.ServerUser{Password: "victim"},
+		instancestore.ServerUser{Password: "keeper"},
+	)
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer", Comment: "Новичок"})
+		src.recs[testKey] = rec
+	}
+	if _, msg, code := st.serve(t, http.MethodDelete, "", "victim"); code != "" {
+		t.Fatalf("ответ = %s / %s", code, msg)
+	}
+	want := []instancestore.ServerUser{
+		{Password: "keeper"},
+		{Password: "newcomer", Comment: "Новичок"},
+	}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — конкурентное добавление стёрто снимком", u, want)
+	}
+}
+
+// То же для переименования: правка идёт по актуальному списку.
+func TestRename_DoesNotResurrectFromSnapshot(t *testing.T) {
+	st := newStand(t, baseCfg(),
+		instancestore.ServerUser{Password: "revoked"},
+		instancestore.ServerUser{Password: "client1", Comment: "Иван"},
+	)
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = dropUser(rec.Users, "revoked")
+		src.recs[testKey] = rec
+	}
+	if _, msg, code := st.serve(t, http.MethodPatch, `{"name":"Пётр"}`, "client1"); code != "" {
+		t.Fatalf("ответ = %s / %s", code, msg)
+	}
+	want := []instancestore.ServerUser{{Password: "client1", Comment: "Пётр"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v", u, want)
+	}
+}
+
+// Добавление тоже считает от актуального списка: пароль, занятый параллельным
+// запросом, обязан быть отвергнут, а не замещён.
+func TestAdd_SeesConcurrentPassword(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "client2", Comment: "Успел первым"})
+		src.recs[testKey] = rec
+	}
+	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client2","comment":"Опоздал"}`)
+	if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
+		t.Fatalf("код = %q (сообщение %q): пароль, занятый параллельно, замещён", code, msg)
+	}
+	if !strings.Contains(msg, "занят живым абонентом") {
+		t.Fatalf("сообщение = %q", msg)
+	}
+	if u := st.rec(t).Users; len(u) != 2 || u[1].Comment != "Успел первым" {
+		t.Fatalf("запись = %#v: чужой абонент затёрт", u)
+	}
+}
+
+// Отказ инварианта отменяет запись ЦЕЛИКОМ: состав обязан остаться прежним.
+func TestRemoveAll_RefusalLeavesRecordIntact(t *testing.T) {
+	st := newStand(t, baseCfg(),
+		instancestore.ServerUser{Password: "client1", Comment: "Иван", VkHash: "vk1"},
+	)
+	if _, _, code := st.serve(t, http.MethodDelete, ""); code == "" {
+		t.Fatal("снос всех при живом абоненте прошёл")
+	}
+	want := []instancestore.ServerUser{{Password: "client1", Comment: "Иван", VkHash: "vk1"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — отказ колбэка не отменил запись", u, want)
+	}
+}
+
+// ── фикс-раунд 1: усыновление на путях мутаций ───────────────────
+
+// Абонент бота живёт только в файле. Без усыновления удаление посчитало бы
+// его несуществующим и отказало «последний рабочий», а сам он выпал бы из
+// следующей материализации.
+func TestServe_RemoveAdoptsFirst(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
+	got, msg, code := st.serve(t, http.MethodDelete, "", "client1")
+	if code != "" {
+		t.Fatalf("ответ = %s / %s (усыновления не было — бот-абонент не сочтён рабочим)", code, msg)
+	}
+	want := []instancestore.ServerUser{{Password: "botuser", Comment: "Из бота"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v", u, want)
+	}
+	if _, ok := st.file(t).Passwords["botuser"]; !ok {
+		t.Fatalf("бот-абонент выпал из passwords.json: %#v", st.file(t).Passwords)
+	}
+	if len(got.Users) != 1 || got.Users[0].Password != "botuser" {
+		t.Fatalf("ответ = %#v", got.Users)
+	}
+}
+
+// Снос всех БЕЗ усыновления обесценивает инвариант: живой бот-абонент не
+// считается рабочим, и снос проходит, отбирая у него доступ.
+func TestServe_RemoveAllAdoptsFirst(t *testing.T) {
+	now := fixedNow()
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
+	_, msg, code := st.serve(t, http.MethodDelete, "")
+	if code != "WDTT_SERVER_CLIENT_DELETE_FAILED" {
+		t.Fatalf("код = %q: снос прошёл мимо живого бот-абонента", code)
+	}
+	if !strings.Contains(msg, "нельзя удалить последнего рабочего абонента") {
+		t.Fatalf("сообщение = %q", msg)
+	}
+	if _, ok := st.file(t).Passwords["botuser"]; !ok {
+		t.Fatalf("бот-абонент потерял доступ: %#v", st.file(t).Passwords)
+	}
+}
+
+// Добавление без усыновления заместило бы бот-абонента вместе с его сроком.
+func TestServe_AddAdoptsFirst(t *testing.T) {
+	now := fixedNow()
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота", ExpiresAt: now.Add(time.Hour).Unix()}},
+	})
+	_, msg, code := st.serve(t, http.MethodPost, `{"password":"botuser","comment":"Мой"}`)
+	if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
+		t.Fatalf("код = %q: пароль бот-абонента перезаведён, его срок обнулён", code)
+	}
+	if !strings.Contains(msg, "занят живым абонентом") {
+		t.Fatalf("сообщение = %q", msg)
+	}
+}
+
+// Переименование без усыновления отвечает «не найден» на живого абонента бота.
+func TestServe_RenameAdoptsFirst(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
+	got, msg, code := st.serve(t, http.MethodPatch, `{"name":"Свой"}`, "botuser")
+	if code != "" {
+		t.Fatalf("ответ = %s / %s", code, msg)
+	}
+	if len(got.Users) != 2 || got.Users[1].Comment != "Свой" {
+		t.Fatalf("ответ = %#v", got.Users)
+	}
+}
+
+// ── фикс-раунд 1: гейт пустого ConfigDir ─────────────────────────
+
+// Молчаливый пропуск оставил бы сервер без единого пароля (форк падает в
+// log.Fatalf), а симлинк журнала лёг бы в рабочий каталог демона.
+func TestMaterialize_EmptyConfigDirIsRefused(t *testing.T) {
+	cfg := baseCfg()
+	cfg.ConfigDir = " "
+	st := newStand(t, cfg, instancestore.ServerUser{Password: "client1"})
+	err := st.svc.Materialize(st.rec(t))
+	if err == nil {
+		t.Fatal("пустой configDir принят молча")
+	}
+	if !strings.Contains(err.Error(), "configDir") {
+		t.Fatalf("ошибка = %q: причина не названа", err)
+	}
+	if _, statErr := os.Lstat("server.log"); statErr == nil {
+		_ = os.Remove("server.log")
+		t.Fatal("симлинк журнала лёг в рабочий каталог")
+	}
+}
+
+func TestSyncOnStart_EmptyConfigDirIsRefused(t *testing.T) {
+	cfg := baseCfg()
+	cfg.ConfigDir = " "
+	st := newStand(t, cfg, instancestore.ServerUser{Password: "client1"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err == nil {
+		t.Fatal("старт с пустым configDir принят молча")
+	}
+}
+
+// ── фикс-раунд 1: мелкие непокрытые ──────────────────────────────
+
+// Порядок усыновления — сортированный: карта отдаёт ключи вразнобой, а список
+// уезжает в запись и виден в UI. Трёх новых достаточно, чтобы случайный
+// порядок падал почти всегда.
+func TestAdoptUsers_SortedOrder(t *testing.T) {
+	file := map[string]passwordsJSONUser{
+		"zulu":   {Label: "Z"},
+		"alpha":  {Label: "A"},
+		"mike":   {Label: "M"},
+		"bravo":  {Label: "B"},
+		"yankee": {Label: "Y"},
+	}
+	got, changed := adoptUsers([]instancestore.ServerUser{{Password: "known"}}, file, "mainpass")
+	if !changed {
+		t.Fatal("changed = false")
+	}
+	want := []string{"known", "alpha", "bravo", "mike", "yankee", "zulu"}
+	var order []string
+	for _, u := range got {
+		order = append(order, u.Password)
+	}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("порядок = %v, ожидался %v", order, want)
+	}
+}
+
+// Слияние берёт имя и хеш из файла, когда в записи их нет: у бот-абонента
+// имени в нашей записи может не быть вовсе.
+func TestMergeUsers_FallsBackToFile(t *testing.T) {
+	now := fixedNow()
+	file := map[string]passwordsJSONUser{
+		"client1": {Label: "имя из файла", VkHash: "vk-из-файла"},
+		"client2": {Label: "имя из файла", VkHash: "vk-из-файла"},
+	}
+	got := mergeUsers([]instancestore.ServerUser{
+		{Password: "client1"}, // своих нет — берём из файла
+		{Password: "client2", Comment: "Своё", VkHash: "vk-своё"}, // свои сильнее
+		{Password: "client3"}, // файла нет вовсе
+		{Password: "   "},     // пустой в список не попадает
+	}, file, true, "mainpass", now)
+
+	want := UsersStatus{Available: true, Users: []UserEntry{
+		{Password: "client1", Comment: "имя из файла", VkHash: "vk-из-файла"},
+		{Password: "client2", Comment: "Своё", VkHash: "vk-своё"},
+		{Password: "client3"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("слияние признаков:\n получено %#v\n ожидалось %#v", got, want)
+	}
+}
+
+// Главный пароль сервера не должен совпадать с паролем АБОНЕНТА: форк берёт
+// main_password для WRAP, и совпадение с хешем абонента ломает рукопожатия.
+// Путь: пароль сервера ещё не сохранён, форма присылает его равным паролю
+// уже существующего абонента.
+func TestServe_AddRefusesMainEqualToExistingUser(t *testing.T) {
+	cfg := baseCfg()
+	cfg.Password = ""
+	st := newStand(t, cfg, instancestore.ServerUser{Password: "client1"})
+	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client2","mainPassword":"client1"}`)
+	if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
+		t.Fatalf("код = %q (сообщение %q)", code, msg)
+	}
+	if !strings.Contains(msg, "не должен совпадать с паролем клиента") {
+		t.Fatalf("сообщение = %q", msg)
+	}
+	// Ни абонент, ни пароль сервера не сохранены: отказ — до единой записи.
+	if u := st.rec(t).Users; len(u) != 1 {
+		t.Fatalf("запись = %#v", u)
+	}
+	c, _ := st.rec(t).WdttServerConfig()
+	if c.Password != "" {
+		t.Fatalf("пароль сервера = %q, сохранён вопреки отказу", c.Password)
+	}
+}
+
+// Инвариант последнего рабочего считается по АКТУАЛЬНОМУ составу: если
+// параллельный запрос успел завести абонента, удаление обязано пройти.
+func TestRemove_InvariantSeesConcurrentState(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})
+		src.recs[testKey] = rec
+	}
+	_, msg, code := st.serve(t, http.MethodDelete, "", "client1")
+	if code != "" {
+		t.Fatalf("ответ = %s / %s: инвариант посчитан по устаревшему снимку", code, msg)
+	}
+	want := []instancestore.ServerUser{{Password: "newcomer"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v", u, want)
+	}
+}
+
+// Инвариант сноса ВСЕХ тоже считается по актуальному составу: если
+// параллельный запрос успел завести рабочего абонента, снос обязан отказать.
+func TestRemoveAll_InvariantSeesConcurrentState(t *testing.T) {
+	now := fixedNow()
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})
+		src.recs[testKey] = rec
+	}
+	_, msg, code := st.serve(t, http.MethodDelete, "")
+	if code != "WDTT_SERVER_CLIENT_DELETE_FAILED" {
+		t.Fatalf("код = %q: инвариант посчитан по устаревшему снимку — снесён живой абонент", code)
+	}
+	if !strings.Contains(msg, "нельзя удалить последнего рабочего абонента") {
+		t.Fatalf("сообщение = %q", msg)
+	}
+	if u := st.rec(t).Users; len(u) != 2 {
+		t.Fatalf("запись = %#v: снос прошёл вопреки отказу", u)
+	}
+}
+
+// TestMutations_DoNotClobberConcurrentRename — тот случай, где ОБЩИЙ срез в
+// фейке маскирует дефект.
+//
+// Параллельный запрос правит ПОЛЕ существующего абонента, не переаллоцируя
+// срез. При общем срезе устаревший снимок вызывающего видел бы чужую правку
+// «бесплатно» (тот же массив), и тест проходил бы даже на дефектном коде.
+// Фейк отдаёт копии — снимок остаётся устаревшим, и запись состава из него
+// затирает чужое переименование.
+func TestMutations_DoNotClobberConcurrentRename(t *testing.T) {
+	st := newStand(t, baseCfg(),
+		instancestore.ServerUser{Password: "client1", Comment: "Иван"},
+		instancestore.ServerUser{Password: "victim"},
+	)
+	st.mut.beforeUpdate = func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users[0].Comment = "Пётр" // правка ПО МЕСТУ, срез тот же
+		src.recs[testKey] = rec
+	}
+	if _, msg, code := st.serve(t, http.MethodDelete, "", "victim"); code != "" {
+		t.Fatalf("ответ = %s / %s", code, msg)
+	}
+	want := []instancestore.ServerUser{{Password: "client1", Comment: "Пётр"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — чужое переименование затёрто снимком", u, want)
+	}
 }

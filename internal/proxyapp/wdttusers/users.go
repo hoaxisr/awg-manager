@@ -229,20 +229,19 @@ func (s *Service) materialize(rec instancestore.Record, mainOverride string) err
 func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	unlock := s.lock(key)
 	defer unlock()
-	rec, cfg, err := s.serverRecord(key)
+	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return err
 	}
 	// (1) Усыновление — ПЕРВЫМ действием. Без него следующая же материализация
 	// отобрала бы доступ у абонентов, заведённых телеграм-ботом или admin-API
 	// форка: их нет в записи, значит их не будет и в файле.
-	rec, err = s.adopt(ctx, rec, cfg.ConfigDir, cfg.Password)
-	if err != nil {
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
 		return err
 	}
 	// (2) Инвариант непустоты — ПОСЛЕ усыновления: наоборот он завёл бы
 	// «Абонент 1» рядом с живым абонентом бота, которого ещё не увидел.
-	rec, err = s.ensureUsable(ctx, rec, cfg.Password)
+	rec, err := s.ensureUsable(ctx, key, cfg.Password)
 	if err != nil {
 		return err
 	}
@@ -250,27 +249,59 @@ func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	return s.Materialize(rec)
 }
 
+// mutateUsers — ЕДИНСТВЕННЫЙ способ поправить состав абонентов.
+//
+// Новый состав И проверки считает КОЛБЭК, от АКТУАЛЬНОГО r.Users, а не от
+// снимка, взятого вызывающим. Разница не косметическая: снимок, взятый до
+// захвата замка (или просто раньше по времени), при записи целиком ВОСКРЕШАЕТ
+// абонента, которого параллельная ручка успела удалить, — материализация
+// вернёт его в passwords.json, а SIGHUP восстановит отозванный доступ.
+//
+// Отказ колбэка отменяет запись целиком: и менеджер (ReplaceChecked), и
+// хранилище не сохраняют состояние, если мутатор вернул ошибку. Поэтому
+// проверка инварианта внутри колбэка — атомарная «проверь-и-запиши», а не
+// «проверь, потом когда-нибудь запиши».
+func (s *Service) mutateUsers(ctx context.Context, key string, mutate func([]instancestore.ServerUser) ([]instancestore.ServerUser, error)) error {
+	if s.deps.Mutator == nil {
+		return errors.New("мутатор записей не подключён")
+	}
+	return s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
+		next, err := mutate(r.Users)
+		if err != nil {
+			return err
+		}
+		r.Users = next
+		return nil
+	})
+}
+
 // adopt переносит в запись абонентов passwords.json, которых она ещё не знает,
 // и подтягивает срок действия для уже известных. Возвращает АКТУАЛЬНУЮ запись.
-func (s *Service) adopt(ctx context.Context, rec instancestore.Record, cfgDir, mainPassword string) (instancestore.Record, error) {
+//
+// Работает по КЛЮЧУ, а не по переданной записи: запись читается здесь, уже под
+// замком вызывающего.
+func (s *Service) adopt(ctx context.Context, key, cfgDir, mainPassword string) (instancestore.Record, error) {
+	rec, err := s.reread(key)
+	if err != nil {
+		return rec, err
+	}
 	file, _, err := loadUserEntries(cfgDir)
 	if err != nil {
 		return rec, err
 	}
-	next, changed := adoptUsers(rec.Users, file, mainPassword)
-	if !changed {
+	if _, changed := adoptUsers(rec.Users, file, mainPassword); !changed {
+		// Пустая запись store на каждом чтении списка стоила бы полного цикла
+		// с объявлением выходов реестру. Решение «писать или нет» принимается
+		// по свежепрочитанной записи, а САМ состав всё равно считает колбэк.
 		return rec, nil
 	}
-	if s.deps.Mutator == nil {
-		return rec, errors.New("мутатор записей не подключён")
-	}
-	if err := s.deps.Mutator.Update(ctx, rec.Key(), func(r *instancestore.Record) error {
-		r.Users = next
-		return nil
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		next, _ := adoptUsers(list, file, mainPassword)
+		return next, nil
 	}); err != nil {
 		return rec, err
 	}
-	return s.reread(rec.Key())
+	return s.reread(key)
 }
 
 // adoptUsers — чистая половина усыновления.
@@ -326,7 +357,11 @@ func adoptUsers(list []instancestore.ServerUser, file map[string]passwordsJSONUs
 // Это последняя линия для путей МИМО UI: лечение существующих установок (пароль
 // задан давно, абонентов нет), апгрейд, автостарт. Она же покрывает «все
 // абоненты просрочены». На путях UI абонента не заводит никто.
-func (s *Service) ensureUsable(ctx context.Context, rec instancestore.Record, mainPassword string) (instancestore.Record, error) {
+func (s *Service) ensureUsable(ctx context.Context, key, mainPassword string) (instancestore.Record, error) {
+	rec, err := s.reread(key)
+	if err != nil {
+		return rec, err
+	}
 	main := strings.TrimSpace(mainPassword)
 	if main == "" || len(UsableUsers(rec.Users, main, s.now())) > 0 {
 		return rec, nil
@@ -338,10 +373,17 @@ func (s *Service) ensureUsable(ctx context.Context, rec instancestore.Record, ma
 	// Auto=true — поле записи задачи 2: вычислить признак нечем (пользователь
 	// переименовывает абонента), поэтому он ХРАНИТСЯ.
 	user := instancestore.ServerUser{Password: pass, Comment: defaultUserName, Auto: true}
-	if err := s.putUser(ctx, rec.Key(), user); err != nil {
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		// Условие перепроверяется по АКТУАЛЬНОМУ составу: между чтением и
+		// записью абонент мог появиться, и второй «Абонент 1» был бы лишним.
+		if len(UsableUsers(list, main, s.now())) > 0 {
+			return list, nil
+		}
+		return putUser(list, user), nil
+	}); err != nil {
 		return rec, err
 	}
-	return s.reread(rec.Key())
+	return s.reread(key)
 }
 
 // ── ручки ────────────────────────────────────────────────────────
@@ -350,15 +392,21 @@ func (s *Service) ensureUsable(ctx context.Context, rec instancestore.Record, ma
 // Список не пустеет, даже если файла нет: это и есть смысл единственного
 // источника правды.
 func (s *Service) List(ctx context.Context, key string) (UsersStatus, error) {
-	rec, cfg, err := s.serverRecord(key)
-	if err != nil {
+	// Гейт роли и существования — до замка: он же отвечает 404.
+	if _, _, err := s.serverRecord(key); err != nil {
 		return UsersStatus{}, err
 	}
 	// Замок берёт и чтение: без него запрос, попавший между вычёркиванием
 	// абонента из записи и перезаписью файла, усыновит удалённого обратно.
 	unlock := s.lock(key)
 	defer unlock()
-	if adopted, err := s.adopt(ctx, rec, cfg.ConfigDir, cfg.Password); err != nil {
+	// Запись перечитывается ПОД замком: снимок, взятый до захвата, к этому
+	// моменту мог устареть на целую мутацию.
+	rec, cfg, err := s.serverRecord(key)
+	if err != nil {
+		return UsersStatus{}, err
+	}
+	if adopted, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
 		s.warn("записи passwords.json не усыновлены: " + err.Error())
 	} else {
 		rec = adopted
@@ -376,24 +424,12 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainP
 	vkHash = strings.TrimSpace(vkHash)
 	mainPassword = strings.TrimSpace(mainPassword)
 
-	_, cfg, err := s.serverRecord(key)
-	if err != nil {
+	if _, _, err := s.serverRecord(key); err != nil {
 		return UsersStatus{}, err
-	}
-	// Эффективный главный пароль: сохранённый, а при пустом — присланный
-	// формой. Сверять только с сохранённым нельзя: на пустом сервере проверка
-	// пропустила бы пароль абонента, равный тому, который мы через несколько
-	// строк сделаем главным.
-	main := strings.TrimSpace(cfg.Password)
-	if main == "" {
-		main = mainPassword
-	}
-	if main == "" {
-		return UsersStatus{}, errors.New("сначала задайте пароль сервера")
 	}
 
 	unlock := s.lock(key)
-	status, addErr := s.addLocked(ctx, key, main, password, comment, vkHash)
+	status, savedMain, addErr := s.addLocked(ctx, key, mainPassword, password, comment, vkHash)
 	unlock()
 	if addErr != nil {
 		return UsersStatus{}, addErr
@@ -401,8 +437,8 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainP
 	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
 	// абонента: на отказе добавления пароль остаётся несохранённым, и сервер
 	// не получает состояния «пароль есть, абонента нет».
-	if strings.TrimSpace(cfg.Password) == "" {
-		if err := s.setMainPassword(ctx, key, main); err != nil {
+	if savedMain != "" {
+		if err := s.setMainPassword(ctx, key, savedMain); err != nil {
 			// Частичный успех, а не отказ: абонент уже и в записи, и в
 			// passwords.json, и SIGHUP по нему ушёл — отката нет и быть не
 			// может. Не сохранился только пароль сервера.
@@ -413,50 +449,72 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainP
 }
 
 // addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал.
-func (s *Service) addLocked(ctx context.Context, key, main, password, comment, vkHash string) (UsersStatus, error) {
-	rec, cfg, err := s.serverRecord(key)
+// изменить запись → переписать файл → сигнал. Второй результат — пароль
+// сервера, который вызывающему осталось сохранить (пусто — сохранять нечего).
+func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, comment, vkHash string) (UsersStatus, string, error) {
+	_, cfg, err := s.serverRecord(key)
 	if err != nil {
-		return UsersStatus{}, err
+		return UsersStatus{}, "", err
 	}
-	rec, err = s.adopt(ctx, rec, cfg.ConfigDir, main)
+	// Эффективный главный пароль: сохранённый, а при пустом — присланный
+	// формой. Сверять только с сохранённым нельзя: на пустом сервере проверка
+	// пропустила бы пароль абонента, равный тому, который мы через несколько
+	// строк сделаем главным.
+	stored := strings.TrimSpace(cfg.Password)
+	main := stored
+	if main == "" {
+		main = mainPassword
+	}
+	if main == "" {
+		return UsersStatus{}, "", errors.New("сначала задайте пароль сервера")
+	}
+	rec, err := s.adopt(ctx, key, cfg.ConfigDir, main)
 	if err != nil {
-		return UsersStatus{}, err
+		return UsersStatus{}, "", err
 	}
 	if password == "" {
 		if password, err = randomUserPassword(); err != nil {
-			return UsersStatus{}, err
+			return UsersStatus{}, "", err
 		}
 	}
-	// Все проверки — до единой записи.
+	// Проверка, не зависящая от состава, — здесь: она про запрос, а не про
+	// состояние.
 	if password == main {
-		return UsersStatus{}, errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
+		return UsersStatus{}, "", errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
 	}
-	if err := userPasswordFree(rec.Users, password, s.now()); err != nil {
-		return UsersStatus{}, err
-	}
-	if err := validateMainPassword(main, rec.Users); err != nil {
-		return UsersStatus{}, err
-	}
-
-	if err := s.putUser(ctx, key, instancestore.ServerUser{Password: password, Comment: comment, VkHash: vkHash}); err != nil {
-		return UsersStatus{}, err
+	user := instancestore.ServerUser{Password: password, Comment: comment, VkHash: vkHash}
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		// Проверки состава — ВНУТРИ колбэка, по актуальному списку: между
+		// чтением и записью пароль мог занять параллельный запрос.
+		if err := userPasswordFree(list, password, s.now()); err != nil {
+			return nil, err
+		}
+		if err := validateMainPassword(main, list); err != nil {
+			return nil, err
+		}
+		return putUser(list, user), nil
+	}); err != nil {
+		return UsersStatus{}, "", err
 	}
 	if rec, err = s.reread(key); err != nil {
-		return UsersStatus{}, err
+		return UsersStatus{}, "", err
 	}
 	// Файл пишем с ЭФФЕКТИВНЫМ главным паролем: сохранить его в запись мы ещё
 	// не успели, а предикат пригодности сверяется именно с ним.
 	if err := s.materialize(rec, main); err != nil {
 		// Частичный успех: абонент уже в записи (строкой выше) и оттуда никуда
 		// не денется — старт сервера перепишет файл сам.
-		return UsersStatus{}, fmt.Errorf("%w: %w", ErrFileNotWritten, err)
+		return UsersStatus{}, "", fmt.Errorf("%w: %w", ErrFileNotWritten, err)
 	}
 	// Сигнал — сразу после записи файла, до сбора ответа.
 	reload := s.notifyChanged(key)
 	st := s.status(rec, cfg.ConfigDir, main)
 	st.Reload = reload
-	return st, nil
+	toSave := ""
+	if stored == "" {
+		toSave = main
+	}
+	return st, toSave, nil
 }
 
 // setMainPassword дописывает пароль сервера в запись. Правка ПО МЕСТУ:
@@ -480,28 +538,38 @@ func (s *Service) Remove(ctx context.Context, key, password string) (UsersStatus
 	if password == "" {
 		return UsersStatus{}, errors.New("пароль абонента не задан")
 	}
-	rec, cfg, err := s.serverRecord(key)
+	if _, _, err := s.serverRecord(key); err != nil {
+		return UsersStatus{}, err
+	}
+
+	unlock := s.lock(key)
+	defer unlock()
+	// Конфиг перечитывается ПОД замком.
+	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
 	}
 	if password == strings.TrimSpace(cfg.Password) {
 		return UsersStatus{}, errors.New("нельзя удалить основной пароль сервера")
 	}
-
-	unlock := s.lock(key)
-	defer unlock()
 	// Усыновление — ПЕРВЫМ действием. После вычёркивания оно вернуло бы
 	// удалённого абонента из ещё не переписанного файла, и удаление стало бы
 	// no-op.
-	rec, err = s.adopt(ctx, rec, cfg.ConfigDir, cfg.Password)
-	if err != nil {
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
 		return UsersStatus{}, err
 	}
-	remaining := dropUser(rec.Users, password)
-	if err := refuseLastUsable(rec.Users, remaining, cfg.Password, s.now()); err != nil {
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		remaining := dropUser(list, password)
+		// Страж инварианта считается по ТОМУ ЖЕ списку, что и записывается:
+		// проверка по снимку разошлась бы с записью.
+		if err := refuseLastUsable(list, remaining, cfg.Password, s.now()); err != nil {
+			return nil, err
+		}
+		return remaining, nil
+	}); err != nil {
 		return UsersStatus{}, err
 	}
-	return s.applyUsers(ctx, key, cfg, remaining)
+	return s.finishMutation(ctx, key, cfg)
 }
 
 // RemoveAll снимает ВСЕХ абонентов сервера. Инвариант тот же, что у удаления
@@ -509,34 +577,35 @@ func (s *Service) Remove(ctx context.Context, key, password string) (UsersStatus
 // перечитывания файла остался бы без единого wrap-ключа, а следующий старт
 // умер бы вовсе. Смысл ручки — вычистить остатки, когда рабочих уже нет.
 func (s *Service) RemoveAll(ctx context.Context, key string) (UsersStatus, error) {
-	rec, cfg, err := s.serverRecord(key)
-	if err != nil {
+	if _, _, err := s.serverRecord(key); err != nil {
 		return UsersStatus{}, err
 	}
 	unlock := s.lock(key)
 	defer unlock()
-	rec, err = s.adopt(ctx, rec, cfg.ConfigDir, cfg.Password)
+	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
 	}
-	if err := refuseLastUsable(rec.Users, nil, cfg.Password, s.now()); err != nil {
+	// Усыновление обязательно и здесь: без него живой абонент бота, лежащий
+	// только в файле, не будет сочтён рабочим — инвариант пропустит снос, и
+	// доступ у него отберёт следующая материализация.
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
 		return UsersStatus{}, err
 	}
-	return s.applyUsers(ctx, key, cfg, nil)
-}
-
-// applyUsers — общий хвост удаления: записать состав, переписать файл,
-// сигналить, собрать ответ.
-func (s *Service) applyUsers(ctx context.Context, key string, cfg roles.WdttServerConfig, users []instancestore.ServerUser) (UsersStatus, error) {
-	if s.deps.Mutator == nil {
-		return UsersStatus{}, errors.New("мутатор записей не подключён")
-	}
-	if err := s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
-		r.Users = users
-		return nil
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		if err := refuseLastUsable(list, nil, cfg.Password, s.now()); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}); err != nil {
 		return UsersStatus{}, err
 	}
+	return s.finishMutation(ctx, key, cfg)
+}
+
+// finishMutation — общий хвост мутаций состава: перечитать запись, переписать
+// файл, сигналить, собрать ответ.
+func (s *Service) finishMutation(ctx context.Context, key string, cfg roles.WdttServerConfig) (UsersStatus, error) {
 	rec, err := s.reread(key)
 	if err != nil {
 		return UsersStatus{}, err
@@ -572,34 +641,33 @@ func (s *Service) Rename(ctx context.Context, key, password, name string) (Users
 	if name == "" {
 		return UsersStatus{}, errors.New("имя абонента не задано")
 	}
-	rec, cfg, err := s.serverRecord(key)
-	if err != nil {
+	if _, _, err := s.serverRecord(key); err != nil {
 		return UsersStatus{}, err
 	}
 
 	unlock := s.lock(key)
 	defer unlock()
-	// Усыновление — первым действием, как у соседей: без него абонент,
-	// заведённый телеграм-ботом и лежащий пока только в passwords.json, получил
-	// бы «не найден».
-	rec, err = s.adopt(ctx, rec, cfg.ConfigDir, cfg.Password)
+	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
 	}
-	next, ok := setUserComment(rec.Users, password, name)
-	if !ok {
-		return UsersStatus{}, errors.New("абонент с таким паролем не найден")
+	// Усыновление — первым действием, как у соседей: без него абонент,
+	// заведённый телеграм-ботом и лежащий пока только в passwords.json, получил
+	// бы «не найден».
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+		return UsersStatus{}, err
 	}
-	if s.deps.Mutator == nil {
-		return UsersStatus{}, errors.New("мутатор записей не подключён")
-	}
-	if err := s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
-		r.Users = next
-		return nil
+	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
+		next, ok := setUserComment(list, password, name)
+		if !ok {
+			return nil, errors.New("абонент с таким паролем не найден")
+		}
+		return next, nil
 	}); err != nil {
 		return UsersStatus{}, err
 	}
-	if rec, err = s.reread(key); err != nil {
+	rec, err := s.reread(key)
+	if err != nil {
 		return UsersStatus{}, err
 	}
 	// Reload остаётся пустым: passwords.json здесь не переписывается,
@@ -609,33 +677,28 @@ func (s *Service) Rename(ctx context.Context, key, password, name string) (Users
 
 // ── общее ────────────────────────────────────────────────────────
 
-// reread перечитывает запись после мутации: мутатор — единственный писатель, и
-// продолжать со снимка, взятого до него, значило бы затирать чужие правки.
+// reread перечитывает запись: мутатор — единственный писатель, и продолжать со
+// снимка, взятого до него, значило бы затирать чужие правки.
 func (s *Service) reread(key string) (instancestore.Record, error) {
 	rec, _, err := s.serverRecord(key)
 	return rec, err
 }
 
-// putUser добавляет или замещает одну запись абонента.
+// putUser добавляет или замещает одну запись абонента, возвращая НОВЫЙ список.
 //
 // Сравнение — по ПОДРЕЗАННОМУ паролю, как во всём остальном конвейере: пароль
 // с пробелами мог попасть в запись ручной правкой или из старых конфигов, и
 // сырое сравнение завело бы рядом второй экземпляр того же абонента.
-func (s *Service) putUser(ctx context.Context, key string, user instancestore.ServerUser) error {
-	if s.deps.Mutator == nil {
-		return errors.New("мутатор записей не подключён")
-	}
+func putUser(list []instancestore.ServerUser, user instancestore.ServerUser) []instancestore.ServerUser {
 	password := strings.TrimSpace(user.Password)
-	return s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
-		for i, u := range r.Users {
-			if strings.TrimSpace(u.Password) == password {
-				r.Users[i] = user
-				return nil
-			}
+	out := slices.Clone(list)
+	for i, u := range out {
+		if strings.TrimSpace(u.Password) == password {
+			out[i] = user
+			return out
 		}
-		r.Users = append(r.Users, user)
-		return nil
-	})
+	}
+	return append(out, user)
 }
 
 // dropUser убирает одного абонента по ПОДРЕЗАННОМУ паролю. Сырое сравнение не
