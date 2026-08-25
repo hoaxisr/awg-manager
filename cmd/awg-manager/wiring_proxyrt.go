@@ -420,6 +420,17 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 	return deleted, errs
 }
 
+// proxyLinkedField — поле связи AWG-туннеля для роли клиента (амендмент B).
+// Одно место на всех потребителей: перепутанное поле не даёт ни ошибки, ни
+// отказа — только ПУСТОЙ список связанных туннелей и вечное молчание, а с
+// четырьмя литералами по проводке спутать их вопрос времени.
+func proxyLinkedField(kind instancestore.Kind) api.LinkedField {
+	if kind == instancestore.KindFreeTurnClient {
+		return api.LinkedFreeTurn
+	}
+	return api.LinkedWdtt
+}
+
 func proxyTunnelLinkedTo(tun storage.AWGTunnel, field api.LinkedField, clientID string) bool {
 	if field == api.LinkedFreeTurn {
 		return strings.TrimSpace(tun.FreeTurnClientID) == clientID
@@ -727,10 +738,10 @@ func (a *app) wireProxyrt() {
 			traffic: a.trafficHistory, pub: a.eventBus},
 		Cleaners: map[instancestore.Kind]wdttlink.LinkedCleaner{
 			instancestore.KindWdttClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.tunnelService, field: api.LinkedWdtt,
+				svc: a.tunnelService, field: proxyLinkedField(instancestore.KindWdttClient),
 				traffic: a.trafficHistory, pub: a.eventBus},
 			instancestore.KindFreeTurnClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.tunnelService, field: api.LinkedFreeTurn,
+				svc: a.tunnelService, field: proxyLinkedField(instancestore.KindFreeTurnClient),
 				traffic: a.trafficHistory, pub: a.eventBus},
 		},
 		Builders: map[instancestore.Kind]wdttlink.LinkBuilder{
@@ -875,10 +886,9 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Permit:   a.ndmsCommands.Policies,
 				Hooks:    proxyRouteHooks{svc: a.clientRouteService},
 				Registry: a.exitRegistry,
-				// Поле связи строго по роли: перепутанное не ошибка, а ПУСТОЙ
-				// список связанных туннелей и вечное молчание.
-				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService, api.LinkedWdtt, a.eventBus),
-				Occ:  newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
+				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService,
+					proxyLinkedField(rec.Kind), a.eventBus),
+				Occ: newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 			})
 			if err != nil {
 				return nil, err
@@ -918,8 +928,9 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService, api.LinkedFreeTurn, a.eventBus),
-				Occ:  newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
+				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService,
+					proxyLinkedField(rec.Kind), a.eventBus),
+				Occ: newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 			})
 			if err != nil {
 				return nil, err

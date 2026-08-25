@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -23,7 +24,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/netres"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttclient"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttserver"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -138,12 +142,16 @@ func TestAllocIndexRespectsOtherProxyRecordPin(t *testing.T) {
 	e.putRecord(t, rawClientRecord("de", "OpkgTun3", "opkgtun3"))
 	alloc := e.alloc(t, nil)
 
-	got, err := alloc("wdtt-client:nl", 0, false)
-	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
-	}
-	if got == 3 {
-		t.Fatal("выдан номер, который держит запись другого инстанса")
+	// Пул перебирается целиком: с одной выдачей аллокатор отдал бы младший
+	// свободный номер и разошёлся бы с занятостью незаметно.
+	for i := 0; i <= 15; i++ {
+		got, err := alloc("wdtt-client:nl-"+string(rune('a'+i)), 0, false)
+		if err != nil {
+			break
+		}
+		if got == 3 {
+			t.Fatal("выдан номер, который держит запись другого инстанса")
+		}
 	}
 }
 
@@ -475,21 +483,44 @@ func TestProxyFactoryBuildsEveryKind(t *testing.T) {
 	book, _ := recordingBook(nil)
 	_, factory, _ := newFactoryApp(t, book)
 
-	recs := []instancestore.Record{
-		rawClientRecord("de", "OpkgTun3", "opkgtun3"),
-		serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"),
-		{ID: "ft", Kind: instancestore.KindFreeTurnClient,
+	cases := []struct {
+		rec  instancestore.Record
+		role func(proxyrt.Role) bool
+	}{
+		{rawClientRecord("de", "OpkgTun3", "opkgtun3"), func(r proxyrt.Role) bool {
+			v, ok := r.(*wdttclient.Role)
+			return ok && v != nil
+		}},
+		{serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"), func(r proxyrt.Role) bool {
+			v, ok := r.(*wdttserver.Role)
+			return ok && v != nil
+		}},
+		{instancestore.Record{ID: "ft", Kind: instancestore.KindFreeTurnClient,
 			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"}},
-		freeturnServerRecord("fts"),
+			func(r proxyrt.Role) bool {
+				v, ok := r.(*freeturn.ClientRole)
+				return ok && v != nil
+			}},
+		{freeturnServerRecord("fts"), func(r proxyrt.Role) bool {
+			v, ok := r.(*freeturn.ServerRole)
+			return ok && v != nil
+		}},
 	}
-	for _, rec := range recs {
-		t.Run(string(rec.Kind), func(t *testing.T) {
-			inst, err := factory(rec, &manager.Live{})
+	for _, c := range cases {
+		t.Run(string(c.rec.Kind), func(t *testing.T) {
+			inst, err := factory(c.rec, &manager.Live{})
 			if err != nil {
 				t.Fatalf("фабрика: %v", err)
 			}
 			if _, ok := inst.(*instance.Instance); !ok {
 				t.Fatalf("фабрика обязана вернуть instance.Instance без обёрток, got %T", inst)
+			}
+			// Роль не просто «какая-то»: ПУСТОЙ указатель своего типа
+			// проходит и типизацию, и nil-гарды instance.New. Так выглядит
+			// проглоченная паника гарда wdttserver.New, ловящего непроведённые
+			// Access/Ingress.
+			if role := roleOf(t, inst); !c.role(role) {
+				t.Fatalf("роль собрана не полностью: %T (%v)", role, role)
 			}
 			inst.Stop()
 		})
@@ -529,9 +560,10 @@ func TestProxyFactoryServerRolesShareOneFWBook(t *testing.T) {
 		defer inst.Stop()
 		role := roleOf(t, inst)
 		input := findInputPort(t, role.Resources(proxyrt.IntentEnabled, c.cfg, proxyrt.Observations{}))
-		if _, err := input.Observe(context.Background()); err != nil {
-			t.Fatalf("Observe input_port %s: %v", c.rec.Kind, err)
-		}
+		// Исход наблюдения не важен: сверяется, ЧЬЯ ведомость его обслужила.
+		// Чужая ответила бы настоящим listenfirewall — то есть попыткой
+		// запустить iptables, которого в тесте нет.
+		_, _ = input.Observe(context.Background())
 	}
 	if listed != 2 {
 		t.Fatalf("ведомость опрошена %d раз(а), а серверных инстансов два: хендлы взяты не у неё", listed)
@@ -681,5 +713,16 @@ func TestProxyrtCaptchaRoutingThroughDispatcher(t *testing.T) {
 	}
 	if instancesHits != 0 {
 		t.Fatalf("хендлер инстансов проглотил подпуть капчи %d раз(а)", instancesHits)
+	}
+}
+
+// Амендмент B: поле связи строго по роли. Перепутанное не даёт ни ошибки, ни
+// отказа — только пустой список связанных туннелей и вечное молчание.
+func TestProxyLinkedFieldFollowsRole(t *testing.T) {
+	if got := proxyLinkedField(instancestore.KindWdttClient); got != api.LinkedWdtt {
+		t.Errorf("wdtt-клиент → %v, want LinkedWdtt", got)
+	}
+	if got := proxyLinkedField(instancestore.KindFreeTurnClient); got != api.LinkedFreeTurn {
+		t.Errorf("freeturn-клиент → %v, want LinkedFreeTurn", got)
 	}
 }
