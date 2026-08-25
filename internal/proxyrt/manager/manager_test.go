@@ -825,3 +825,25 @@ func TestUpdateFailureDoesNotResetStartBackoff(t *testing.T) {
 		t.Fatalf("сбросов при непринятой правке %d, ожидали 0", n)
 	}
 }
+
+// Сброс АДРЕСОВАН одному инстансу. Без этой пробы мутация «пройтись сбросом по
+// всей карте» проходит зелёной по всему дереву: соседям пауза снимется молча, и
+// клиент, падающий сам по себе, перестанет замедляться от чужой правки.
+func TestUpdateResetsOnlyAddressedInstance(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), rawRec("fi", "OpkgTun19", "opkgtun19"))
+	boot(t, e)
+
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.WdttClient.Password = "починил"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.instances["wdtt-client:de"].resetCount(); n != 1 {
+		t.Fatalf("адресат получил сбросов %d, ожидали 1", n)
+	}
+	if n := e.instances["wdtt-client:fi"].resetCount(); n != 0 {
+		t.Fatalf("сосед получил сбросов %d, ожидали 0", n)
+	}
+}
