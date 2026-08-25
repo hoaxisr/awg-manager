@@ -227,10 +227,21 @@ func (s *ServiceImpl) unlockTunnel(tunnelID string) {
 
 // === CRUD Operations ===
 
-// Create creates a new tunnel and saves it to storage.
-// For NativeWG tunnels, stored must be non-nil with Backend="nativewg";
-// Create will call nwgOperator.Create and set stored.NWGIndex before returning.
-func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config, stored *storage.AWGTunnel) error {
+// Create создаёт туннель целиком: ресурс в NDMS, запись в хранилище и .conf —
+// одной операцией с откатом. Конфиг для оператора собирается здесь же из
+// записи каноническим StoredToConfig: вызывающий передаёт только запись, и
+// расходиться этим двум источникам больше негде.
+func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) error {
+	if stored == nil {
+		return fmt.Errorf("nil tunnel record")
+	}
+	tunnelID := stored.ID
+	cfg := orchestrator.StoredToConfig(stored)
+	// StoredToConfig это поле не переносит — те, кому оно нужно, дописывают
+	// его сами (так делает и оркестратор перед запуском). Без него отметка
+	// «маршрут по умолчанию» не действовала до первого включения туннеля.
+	cfg.DefaultRoute = stored.DefaultRoute
+
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -240,7 +251,7 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	}
 
 	// NativeWG path
-	if stored != nil && s.isNativeWG(stored) {
+	if s.isNativeWG(stored) {
 		if s.nwgOperator == nil {
 			return fmt.Errorf("NativeWG backend not available")
 		}
@@ -255,6 +266,13 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 			return err
 		}
 		stored.NWGIndex = index
+		// Симметрично kernel-ветке: запись сохраняем здесь, иначе созданный
+		// в NDMS интерфейс осиротеет. Конфиг для nativewg не пишется — его
+		// никто не читает.
+		if err := s.store.Save(stored); err != nil {
+			_ = s.nwgOperator.Delete(ctx, stored)
+			return fmt.Errorf("save tunnel: %w", err)
+		}
 		s.logInfo("create", tunnelID, "NativeWG tunnel created")
 		// Legacy tunnel:created publish removed (Task 14 sweep); handler
 		// layer calls publishTunnelList → resource:invalidated after all
@@ -266,6 +284,21 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	// Kernel path: create in NDMS (for OS5, no-op for OS4)
 	if err := s.legacyOperator.Create(ctx, cfg); err != nil {
 		return err
+	}
+
+	// Запись и конфиг — здесь же, а не у вызывающего: ресурс в NDMS уже
+	// создан, и если сохранить его не удастся, он останется жить без записи.
+	// Никто уже не будет знать, что он наш, и никто его не уберёт: стартовый
+	// подметатель ходит только по записям, а полная уборка бывает лишь при
+	// удалении пакета.
+	if err := s.store.Save(stored); err != nil {
+		_ = s.legacyOperator.Delete(ctx, stored)
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+	if err := config.WriteFile(stored); err != nil {
+		_ = s.store.Delete(tunnelID)
+		_ = s.legacyOperator.Delete(ctx, stored)
+		return fmt.Errorf("write config: %w", err)
 	}
 
 	s.logInfo("create", tunnelID, "Tunnel created")

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -285,7 +286,8 @@ func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error
 func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) Create(_ context.Context, _, _ string, cfg tunnel.Config, _ *storage.AWGTunnel) error {
+func (s *stubTunnelSvc) Create(_ context.Context, stored *storage.AWGTunnel) error {
+	cfg := orchestrator.StoredToConfig(stored)
 	s.createdCfg = &cfg
 	if s.createErr != nil {
 		return s.createErr
