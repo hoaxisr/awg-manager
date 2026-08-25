@@ -2692,6 +2692,36 @@ definitions:
         example: https://example.com/subscriptions/demo.txt
         type: string
     type: object
+  api.ProcessView:
+    properties:
+      address:
+        description: 'требование 5: адрес из НАБЛЮДЕНИЯ'
+        type: string
+      binary:
+        type: string
+      binaryPresent:
+        type: boolean
+      clients:
+        description: dtlsConnections старого мира
+        type: integer
+      lastError:
+        type: string
+      log:
+        description: tail журнала процесса (форк пишет файл)
+        type: string
+      mode:
+        type: string
+      pid:
+        type: integer
+      running:
+        description: 'НЕ поле State (его там нет): снимок есть и State.PID > 0'
+        type: boolean
+      uptimeS:
+        type: integer
+      wgConfig:
+        description: State.WG.Config — источник ensure-wg
+        type: string
+    type: object
   api.ProxyConfigResponse:
     properties:
       data:
@@ -2744,6 +2774,175 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.ProxyRtCreateRequest:
+    properties:
+      config:
+        type: object
+      enabled:
+        example: true
+        type: boolean
+      id:
+        example: default
+        type: string
+      kind:
+        example: wdtt-client
+        type: string
+      name:
+        example: Нидерланды
+        type: string
+    type: object
+  api.ProxyRtInstanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ProxyRtInstanceView'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.ProxyRtInstanceView:
+    properties:
+      config:
+        type: object
+      createdAt:
+        type: string
+      enabled:
+        example: true
+        type: boolean
+      id:
+        example: default
+        type: string
+      key:
+        example: wdtt-client:default
+        type: string
+      kind:
+        example: wdtt-client
+        type: string
+      linkPeer:
+        type: string
+      linkVkHashes:
+        type: string
+      name:
+        example: Нидерланды
+        type: string
+      peerRaw:
+        type: string
+      peerWg:
+        type: string
+      process:
+        $ref: '#/definitions/api.ProcessView'
+      state:
+        $ref: '#/definitions/api.ProxyRtStateView'
+      statsLog:
+        type: string
+      sub:
+        type: string
+      users:
+        items:
+          $ref: '#/definitions/api.ProxyRtServerUserView'
+        type: array
+    type: object
+  api.ProxyRtListData:
+    properties:
+      instances:
+        items:
+          $ref: '#/definitions/api.ProxyRtInstanceView'
+        type: array
+      seed:
+        $ref: '#/definitions/api.ProxyRtSeedView'
+    type: object
+  api.ProxyRtListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ProxyRtListData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.ProxyRtPatchRequest:
+    properties:
+      config:
+        type: object
+      enabled:
+        example: true
+        type: boolean
+      name:
+        example: Нидерланды
+        type: string
+    type: object
+  api.ProxyRtResourceView:
+    properties:
+      detail:
+        type: string
+      error:
+        type: string
+      id:
+        example: ndms_iface
+        type: string
+      status:
+        example: ok
+        type: string
+    type: object
+  api.ProxyRtSeedView:
+    properties:
+      certified:
+        example: true
+        type: boolean
+      error:
+        example: 'посев отложен: RCI недоступен'
+        type: string
+      seeded:
+        example: true
+        type: boolean
+    type: object
+  api.ProxyRtServerUserView:
+    properties:
+      auto:
+        type: boolean
+      comment:
+        type: string
+      expiresAt:
+        type: integer
+      passwordSet:
+        example: true
+        type: boolean
+      vkHash:
+        type: string
+    type: object
+  api.ProxyRtStateView:
+    properties:
+      intent:
+        example: enabled
+        type: string
+      lastPlan:
+        items:
+          $ref: '#/definitions/api.ProxyRtStepView'
+        type: array
+      phase:
+        example: settled
+        type: string
+      resources:
+        items:
+          $ref: '#/definitions/api.ProxyRtResourceView'
+        type: array
+      updatedAt:
+        example: "2026-08-24T12:00:00Z"
+        type: string
+    type: object
+  api.ProxyRtStepView:
+    properties:
+      args:
+        additionalProperties:
+          type: string
+        type: object
+      op:
+        example: create
+        type: string
+      reason:
+        type: string
+      resource:
+        example: ndms_iface
+        type: string
     type: object
   api.ProxyRuntimeResponse:
     properties:
@@ -7310,9 +7509,11 @@ definitions:
       auto:
         description: |-
           Auto — абонента завёл инвариант непустоты, а не человек: «Абонент 1»
-          сохранения конфига (server.go) или записи файла (ensureUsableServerClient).
-          Признак ХРАНИТСЯ, потому что вычислить его нечем: имя пользователь меняет,
-          и матч по "Абонент 1" соврал бы сразу после переименования.
+          опоры на пути старта (syncServerClientsOnStart → ensureUsableServerClient).
+          На путях UI абонент за пользователя не заводится (Дополнение №5), опора
+          сохранения конфига снята. Признак ХРАНИТСЯ, потому что вычислить его
+          нечем: имя пользователь меняет, и матч по "Абонент 1" соврал бы сразу
+          после переименования.
         type: boolean
       comment:
         type: string
@@ -11499,6 +11700,189 @@ paths:
       summary: Select device proxy outbound
       tags:
       - device-proxy
+  /proxyrt/instances:
+    get:
+      description: |-
+        Записи намерения, состояние реконсиляции, снимок процесса и блок посева.
+        При seeded=false список пуст, а причина лежит в seed.error.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRtListResponse'
+      security:
+      - CookieAuth: []
+      summary: Список прокси-инстансов
+      tags:
+      - proxyrt
+    post:
+      consumes:
+      - application/json
+      description: listen и пины интерфейсов выделяет менеджер — присылать их не нужно.
+      parameters:
+      - description: Роль, имя, намерение и конфиг
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.ProxyRtCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRtInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Создать прокси-инстанс
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}:
+    delete:
+      description: Порядок сноса (teardown → ожидание → запись → уборка) держит менеджер.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Удалить прокси-инстанс
+      tags:
+      - proxyrt
+    get:
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRtInstanceResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Один прокси-инстанс
+      tags:
+      - proxyrt
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Присланные поля применяются к существующей записи ПО МЕСТУ.
+        Секретные поля (password/botToken/obfKey) без значения или с пустым
+        значением означают «не менять».
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Изменяемые поля
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.ProxyRtPatchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ProxyRtInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Изменить прокси-инстанс
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/apply:
+    post:
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Разбудить реконсиляцию инстанса
+      tags:
+      - proxyrt
   /routing/access-policies:
     get:
       description: 'Works on both KeeneticOS 4.x and 5.x: `ip policy` exists since
