@@ -19,7 +19,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
-	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -237,6 +236,7 @@ func (a *app) setupDeviceProxy() {
 			return lease.Client, lease.Route.DisplayName(), lease.Close, nil
 		},
 	)
+	a.downloadSvc = sharedDownloadSvc
 	a.dnsRouteService.SetDownloader(&dnsRouteDownloaderAdapter{svc: sharedDownloadSvc})
 	a.dnsRefreshScheduler.Start()
 	a.geoRefreshScheduler.Start()
@@ -626,13 +626,16 @@ func (a *app) setupShutdown() {
 	}
 	a.freeturnService.StartSupervisor(a.shutdownCtx, proxyReady)
 	a.wdttService.StartSupervisor(a.shutdownCtx, proxyReady)
-	// Re-apply FreeTurn/WDTT listen-port INPUT rules after iptables flushes.
-	listenfirewall.StartReconciler(a.shutdownCtx, func() []listenfirewall.PortSpec {
-		var out []listenfirewall.PortSpec
-		out = append(out, a.freeturnService.RunningServerListenPorts()...)
-		out = append(out, a.wdttService.RunningServerListenPorts()...)
-		return listenfirewall.MergePortSpecs(out)
-	})
+	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
+	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует
+	// готового router-сервиса, но замыкания проводки держат ДОЛГОЖИВУЩИЙ
+	// контекст, а он появляется строкой выше. Обе поверхности регистрируются
+	// до srv.Start, где строятся маршруты.
+	//
+	// Старый listenfirewall.StartReconciler снят здесь же (а не в задаче
+	// снятия старого движка): его первый холостой тик — Reconcile(nil), то
+	// есть разом закрытые порты нового мира и снятый хук.
+	a.wireProxyrt()
 
 	// Register shutdown hooks for graceful cleanup before syscall.Exec restart.
 	a.srv.AddShutdownHook(a.shutdownCancel)

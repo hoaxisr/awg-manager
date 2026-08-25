@@ -107,6 +107,12 @@ func (i *Instance) onState(res proxyrt.Result, phase proxyrt.Phase) {
 	i.cfg.States.Update(i.id, res, phase)
 }
 
+// Role — декларация инстанса. Иначе состав ресурсов, собранный проводкой, не
+// наблюдаем снаружи вовсе: ведомость ресурсов роли живёт за неэкспортируемым
+// полем, а через воркер её видно только прогоном — то есть с настоящими
+// обращениями к роутеру.
+func (i *Instance) Role() proxyrt.Role { return i.cfg.Role }
+
 func (i *Instance) Start(ctx context.Context) { i.worker.Start(ctx) }
 
 // Post — будильник инстанса; сюда указывает LinkOpts.Post (проводка плана 5).

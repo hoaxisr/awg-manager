@@ -75,6 +75,15 @@ func main() {
 	a.setupRouter()
 	a.setupListen()
 	a.setupShutdown()
+	// Прокси-инстансы гасятся ДО остановки HTTP: Shutdown снимает воркеры и
+	// закрывает управляющие сокеты, а на пути самоперезапуска (syscall.Exec)
+	// незакрытые сокеты уехали бы в новый образ процесса. Дочерние процессы
+	// при этом ЖИВУТ — усыновление после перезапуска демона держится на них.
+	a.srv.AddShutdownHook(func() {
+		if a.proxyMgr != nil {
+			a.proxyMgr.Shutdown()
+		}
+	})
 	a.startBootSequence()
 	a.serve()
 }

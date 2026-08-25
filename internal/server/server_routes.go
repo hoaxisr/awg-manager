@@ -1017,6 +1017,37 @@ func (s *Server) wireLinkedEndpointSync(
 	})
 }
 
+// registerProxyRtRoutes — поверхность прокси-рантайма. Неймспейс /api/proxyrt/
+// выбран потому, что /api/proxy/* занят прокси для LAN-устройств, а дубликат
+// паттерна в http.ServeMux — паника на старте демона.
+//
+// Регистрируются ОБА паттерна подпути инстансов — точный путь и путь со
+// слэшем: wildcard-паттернов в дереве нет, хвост разбирает сам хендлер.
+func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
+	if s.proxyRt.Instances != nil {
+		mux.HandleFunc("/api/proxyrt/instances", h.guarded(s.proxyRt.Instances))
+		mux.HandleFunc("/api/proxyrt/instances/", h.guarded(s.proxyRt.Instances))
+	}
+	if s.proxyRt.WdttLinkDecode != nil {
+		mux.HandleFunc("/api/proxyrt/wdtt/link/decode", h.guarded(s.proxyRt.WdttLinkDecode))
+	}
+	if s.proxyRt.WdttLinkImport != nil {
+		mux.HandleFunc("/api/proxyrt/wdtt/link/import", h.guarded(s.proxyRt.WdttLinkImport))
+	}
+	if s.proxyRt.FreeTurnLinkDecode != nil {
+		mux.HandleFunc("/api/proxyrt/freeturn/link/decode", h.guarded(s.proxyRt.FreeTurnLinkDecode))
+	}
+	if s.proxyRt.CaptchaStatus != nil {
+		mux.HandleFunc("/api/proxyrt/freeturn/captcha/status", h.guarded(s.proxyRt.CaptchaStatus))
+	}
+	if s.proxyRt.InstallStatus != nil {
+		mux.HandleFunc("/api/proxyrt/install/status", h.guarded(s.proxyRt.InstallStatus))
+	}
+	if s.proxyRt.Install != nil {
+		mux.HandleFunc("/api/proxyrt/install", h.guarded(s.proxyRt.Install))
+	}
+}
+
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).
 func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Unified preset catalog (protected, read-only in U0)

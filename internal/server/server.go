@@ -154,6 +154,11 @@ type Server struct {
 
 	proxyClientAutostart api.ProxyClientAutostart
 
+	// proxyRt — ручки прокси-рантайма; собирает проводка (cmd/awg-manager).
+	// Нулевое значение означает «рантайм не проведён»: маршруты не
+	// регистрируются вовсе, а не отвечают пустотой.
+	proxyRt ProxyRtSurface
+
 	// Restart lifecycle
 	restartOnce   sync.Once // prevents multiple restart goroutines
 	shutdownHooks []func()  // cleanup functions called before syscall.Exec
@@ -380,6 +385,30 @@ func (s *Server) SetSingboxProxiesHandler(h *api.SingboxProxiesHandler) {
 	s.singboxProxiesHandler = h
 }
 
+// ProxyRtSurface — поверхность прокси-рантайма под /api/proxyrt/*.
+//
+// Функциями, а не хендлерами: собирают её пакеты internal/proxyapp/* и
+// internal/api, и тянуть их сюда значило бы завести шестую зависимость ради
+// одной строки регистрации у каждой. Instances обслуживает ВЕСЬ подпуть
+// /api/proxyrt/instances[/...] — хвост разбирает диспетчер проводки, потому
+// что подпути инстанса (users, link, captcha, allowlist) в http.ServeMux без
+// wildcard-паттернов не выразимы.
+type ProxyRtSurface struct {
+	Instances          http.HandlerFunc
+	WdttLinkDecode     http.HandlerFunc
+	WdttLinkImport     http.HandlerFunc
+	FreeTurnLinkDecode http.HandlerFunc
+	CaptchaStatus      http.HandlerFunc
+	InstallStatus      http.HandlerFunc
+	Install            http.HandlerFunc
+}
+
+// SetProxyRtSurface wires the proxy-runtime handlers so /api/proxyrt/*
+// routes can be registered.
+func (s *Server) SetProxyRtSurface(h ProxyRtSurface) {
+	s.proxyRt = h
+}
+
 // SetBypassSetHandler wires the geoip bypass-set handler so
 // /api/singbox/router/bypass-set/* routes can be registered.
 func (s *Server) SetBypassSetHandler(h *api.BypassSetHandler) {
@@ -596,6 +625,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerDiagnosticsRoutes(mux, h)
 	s.wireCrossHandlers(mux, h)
 	s.registerSingboxRoutes(mux, h)
+	s.registerProxyRtRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
 

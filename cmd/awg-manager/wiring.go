@@ -10,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
@@ -25,6 +26,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -105,7 +107,12 @@ type app struct {
 	tunnelService *service.ServiceImpl
 	catalog       *routing.CatalogImpl
 	exitRegistry  *exitreg.Registry
-	orch          *orchestrator.Orchestrator
+	// exitMirror — зеркальные записи tunnel-store реестра выходов. Держится
+	// полем, а не локальной: одноразовые шаги посева (обнуление протухших
+	// адресов) ходят в ту же ведомость, а второй экземпляр значил бы двух
+	// владельцев одного файла.
+	exitMirror *exitreg.StoreMirror
+	orch       *orchestrator.Orchestrator
 
 	// routing / aux services
 	hydraService        *hydraroute.Service
@@ -153,6 +160,10 @@ type app struct {
 	routerScheduler     *router.Scheduler
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service
+	downloadSvc         *downloader.Service
+
+	// прокси-рантайм
+	proxyMgr *manager.Manager
 
 	// HTTP
 	srv *server.Server

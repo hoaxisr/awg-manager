@@ -104,8 +104,9 @@ func (a *app) setupTunnels() {
 	// уборка зеркальных записей не запускается ни при каких условиях, а
 	// каталог живёт на резидуальном фолбэке. Имена этих двух методов здесь не
 	// пишутся намеренно: ворота плана грепают их по прод-коду подстрокой.
+	a.exitMirror = exitreg.NewStoreMirror(a.awgStore, a.eventBus)
 	a.exitRegistry = exitreg.New(
-		exitreg.NewStoreMirror(a.awgStore, a.eventBus),
+		a.exitMirror,
 		logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubLifecycle),
 	)
 
