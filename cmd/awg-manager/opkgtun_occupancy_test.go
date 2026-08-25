@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // NDMS отдаёт имена интерфейсов ТОЛЬКО в CamelCase и без поля kernel-имени —
@@ -27,20 +28,38 @@ func newAdapterWith(t *testing.T, listJSON string, sys func() ([]int, error)) *r
 	}
 }
 
-// Половина занятости, приходящая из NDMS, обязана работать: это единственный
-// источник, видящий интерфейс, который существует в NDMS без kernel-устройства.
-func TestOpkgTunIndicesFromNDMS(t *testing.T) {
+// Пины NDMS — единственный источник, видящий номер, чьё устройство удалено:
+// на стенде 5.01.C.3.0-1 запись переживает `ip link del` со state=error.
+func TestNDMSOpkgTunPins(t *testing.T) {
 	a := newAdapterWith(t, ifaceListJSON, func() ([]int, error) { return nil, nil })
 
-	got, err := a.LiveOpkgTunIndices(context.Background())
+	got, err := a.NDMSOpkgTunPins(context.Background())
 	if err != nil {
-		t.Fatalf("LiveOpkgTunIndices: %v", err)
+		t.Fatalf("NDMSOpkgTunPins: %v", err)
 	}
 	if !got[10] {
 		t.Errorf("OpkgTun10 из NDMS должен считаться занятым, got %v", got)
 	}
 	if len(got) != 1 {
-		t.Errorf("посторонние интерфейсы не должны попадать в занятость, got %v", got)
+		t.Errorf("посторонние интерфейсы не должны попадать в пины, got %v", got)
+	}
+}
+
+// Живая половина отвечает на вопрос «что существует в ядре сейчас» — записи
+// NDMS в неё попадать не должны, иначе охрана прочитает мёртвое устройство как
+// живое и не станет пересоздавать туннель после краха.
+func TestLiveIndicesAreKernelOnly(t *testing.T) {
+	a := newAdapterWith(t, ifaceListJSON, func() ([]int, error) { return []int{3}, nil })
+
+	got, err := a.LiveOpkgTunIndices(context.Background())
+	if err != nil {
+		t.Fatalf("LiveOpkgTunIndices: %v", err)
+	}
+	if got[10] {
+		t.Errorf("запись NDMS без устройства не должна считаться живой, got %v", got)
+	}
+	if !got[3] || len(got) != 1 {
+		t.Errorf("живой должна быть только kernel-половина, got %v", got)
 	}
 }
 
@@ -56,12 +75,14 @@ func TestOpkgTunIndicesFailsClosedOnSysError(t *testing.T) {
 	}
 }
 
-func TestOpkgTunIndicesUnionsSysAndNDMS(t *testing.T) {
+// Занятость для ВЫДАЧИ номера объединяет оба источника — в отличие от живой
+// половины, которая отвечает на другой вопрос.
+func TestOccupancyUnionsSysAndNDMS(t *testing.T) {
 	a := newAdapterWith(t, ifaceListJSON, func() ([]int, error) { return []int{3}, nil })
 
-	got, err := a.LiveOpkgTunIndices(context.Background())
+	got, err := storage.OpkgTunOccupancy(a, a.NDMSOpkgTunPins)(context.Background())
 	if err != nil {
-		t.Fatalf("LiveOpkgTunIndices: %v", err)
+		t.Fatalf("OpkgTunOccupancy: %v", err)
 	}
 	if !got[3] || !got[10] {
 		t.Errorf("занятость должна объединять /sys и NDMS, got %v", got)

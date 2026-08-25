@@ -261,22 +261,26 @@ func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r rout
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
-// routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
-// interface names so the index allocator sees every occupied slot.
+// routerOpkgTunIndexAdapter отвечает на ДВА разных вопроса, и их нельзя
+// смешивать в одной карте.
 //
-// NDMS-половина берётся из List, а НЕ из ListAll: последний по своему
-// назначению выбрасывает наши интерфейсы (opkgtun*, awgm* — interfaces.go:591),
-// то есть ровно то, ради чего занятость и собирается. Имя берётся из ID и
-// приводится к нижнему регистру: NDMS знает интерфейс только как "OpkgTun10"
-// (поля kernel-имени у него нет — проверено на 5.01.C.3.0-1), а
-// ExtractInterfaceNumber заякорен на "^opkgtun\d+$".
+// LiveOpkgTunIndices — что существует в ядре ПРЯМО СЕЙЧАС. Этой картой
+// проверяются «жив ли мой прежний интерфейс» и «можно ли переиспользовать свой
+// удержанный номер», поэтому запись NDMS без устройства сюда попадать не
+// должна: иначе смерть интерфейса после краха читалась бы как жизнь.
+//
+// NDMSOpkgTunPins — номера, удерживаемые записями NDMS. Проверено на стенде
+// 5.01.C.3.0-1: `ndmc -c "interface OpkgTun12"` создаёт и запись, и устройство,
+// но после `ip link del opkgtun12` запись живёт дальше со `state: error`, а в
+// /sys устройства нет. Такой номер занят — выдать его нельзя, хотя интерфейс
+// мёртв.
 type routerOpkgTunIndexAdapter struct {
 	store *ndmsquery.InterfaceStore
 	// listSys — чтение kernel-половины; поле ради тестируемости отказа.
 	listSys func() ([]int, error)
 }
 
-func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
+func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
 	listSys := a.listSys
 	if listSys == nil {
 		listSys = sysinfo.ListSystemInterfaces
@@ -284,11 +288,21 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 	sysNums, err := listSys()
 	if err != nil {
 		// Недосчёт занятых номеров — единственное направление, дающее
-		// коллизию индексов, поэтому отказ, а не деградация: NDMS-половина
-		// одна не полна (интерфейс без записи в NDMS в неё не попадёт), а
-		// пустая занятость читается как «все номера свободны».
+		// коллизию, поэтому отказ, а не пустая карта: пустая читается как
+		// «все номера свободны».
 		return nil, fmt.Errorf("list system interfaces: %w", err)
 	}
+	return router.UnionOpkgTunIndices(sysNums, nil), nil
+}
+
+// NDMSOpkgTunPins — поставщик пинов по записям NDMS.
+//
+// Берётся List, а НЕ ListAll: последний по своему назначению выбрасывает наши
+// интерфейсы (opkgtun*, awgm* — interfaces.go:591), то есть ровно то, ради чего
+// занятость и собирается. Имя берётся из ID и приводится к нижнему регистру:
+// NDMS знает интерфейс только как "OpkgTun10" (поля kernel-имени у него нет —
+// проверено на железе), а ExtractInterfaceNumber заякорен на "^opkgtun\d+$".
+func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[int]bool, error) {
 	all, err := a.store.List(ctx)
 	if err != nil {
 		return nil, err
@@ -297,7 +311,7 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 	for _, i := range all {
 		names = append(names, strings.ToLower(i.ID))
 	}
-	return router.UnionOpkgTunIndices(sysNums, names), nil
+	return router.UnionOpkgTunIndices(nil, names), nil
 }
 
 var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)

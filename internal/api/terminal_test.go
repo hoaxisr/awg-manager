@@ -20,7 +20,7 @@ type fakeTerminalManager struct {
 	sessionActive atomic.Bool
 }
 
-func (f *fakeTerminalManager) IsInstalled(context.Context) bool { return true }
+func (f *fakeTerminalManager) IsInstalled(context.Context) bool  { return true }
 func (f *fakeTerminalManager) Install(context.Context) error    { return nil }
 func (f *fakeTerminalManager) Start(context.Context) (int, error) {
 	return f.port, nil

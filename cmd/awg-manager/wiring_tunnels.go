@@ -93,13 +93,19 @@ func (a *app) setupTunnels() {
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
 
-	// Занятость номеров OpkgTun: живая половина плюс пины двух владельцев,
-	// живущих в этом дереве. Третьего — записи инстансов прокси — добавит
+	// Занятость номеров OpkgTun: живое (устройства в ядре) плюс пины трёх
+	// владельцев — записи туннелей, удерживающая запись настроек и записи
+	// NDMS. Последние отделены от живого намеренно: запись NDMS переживает
+	// удаление устройства (стенд 5.01.C.3.0-1), её номер занят, но интерфейс
+	// мёртв. Четвёртого владельца — записи инстансов прокси — добавит
 	// проводка нового рантайма, форма это допускает.
+	opkgIndices := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
+	a.opkgNDMSPins = opkgIndices.NDMSOpkgTunPins
 	a.opkgTunOccupancy = storage.OpkgTunOccupancy(
-		&routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
+		opkgIndices,
 		a.awgStore.OpkgTunPinsOf,
 		a.settingsStore.OpkgTunPinsOf,
+		opkgIndices.NDMSOpkgTunPins,
 	)
 	a.tunnelService.SetOpkgTunOccupancy(a.opkgTunOccupancy)
 

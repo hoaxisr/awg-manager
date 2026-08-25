@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"

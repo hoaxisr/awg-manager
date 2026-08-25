@@ -54,6 +54,27 @@ func OpkgTunOccupancy(live OpkgTunIndexLister, pins ...OpkgTunPins) OpkgTunPins 
 	}
 }
 
+// MergeOpkgTunPins склеивает нескольких поставщиков в одного. Fail-closed, как
+// и OpkgTunOccupancy: ошибка любого — отказ, а не частичная карта.
+func MergeOpkgTunPins(pins ...OpkgTunPins) OpkgTunPins {
+	return func(ctx context.Context) (map[int]bool, error) {
+		out := map[int]bool{}
+		for _, pin := range pins {
+			if pin == nil {
+				continue
+			}
+			held, err := pin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for idx := range held {
+				out[idx] = true
+			}
+		}
+		return out, nil
+	}
+}
+
 // OpkgTunPinsOf — поставщик пинов по записям туннелей. Перечисление строгое:
 // прощающее унесло бы битую запись в карантин и молча освободило её номер.
 func (s *AWGTunnelStore) OpkgTunPinsOf(context.Context) (map[int]bool, error) {
