@@ -96,10 +96,12 @@ static void hchacha20(u8 subkey[32], const u8 key[32], const u8 nonce[16])
 	memzero_explicit(x, sizeof(x));
 }
 
-/* Generate ChaCha20 keystream and XOR with data.
- * counter starts at the given value. Handles up to ~256 bytes (4 blocks). */
-static void chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
-			  u8 *data, size_t len)
+/* Generate ChaCha20 keystream and XOR with data (public: see cookie.h).
+ * counter starts at the given value. Handles multi-block spans. Used both for
+ * the XChaCha20-Poly1305 cookie AEAD below and AmneziaWG 3.0+ header protection
+ * (transform.c), so there is one vetted ChaCha20 core, not two. */
+void awg_chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
+		      u8 *data, size_t len)
 {
 	u32 state[16], block[16];
 	u8 keystream[64];
@@ -132,14 +134,6 @@ static void chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
 	memzero_explicit(state, sizeof(state));
 	memzero_explicit(block, sizeof(block));
 	memzero_explicit(keystream, sizeof(keystream));
-}
-
-/* Public entry point (see cookie.h): AmneziaWG 3.0+ header protection reuses
- * the vetted ChaCha20 core above rather than carrying a second copy. */
-void awg_chacha20_xor(const u8 key[32], const u8 nonce[12], u32 counter,
-		      u8 *data, size_t len)
-{
-	chacha20_xor(key, nonce, counter, data, len);
 }
 
 /* ---- Poly1305 (Donna32, RFC 8439 §2.5) ---- */
@@ -320,7 +314,7 @@ int awg_xchacha20p1305_encrypt(const u8 key[32], const u8 nonce[24],
 	}
 
 	/* Encrypt plaintext with counter starting at 1 */
-	chacha20_xor(subkey, subnonce, 1, pt_buf, pt_len);
+	awg_chacha20_xor(subkey, subnonce, 1, pt_buf, pt_len);
 
 	/* Compute tag: Poly1305(poly_key, pad16(AAD) || pad16(ct) || le64(aad_len) || le64(ct_len)) */
 	poly1305_init(&poly, poly_key_block);
@@ -427,7 +421,7 @@ int awg_xchacha20p1305_decrypt(const u8 key[32], const u8 nonce[24],
 	ret = memcmp(tag, ct_with_tag + ct_len, 16) ? -EBADMSG : 0;
 
 	if (!ret)
-		chacha20_xor(subkey, subnonce, 1, ct_with_tag, ct_len);
+		awg_chacha20_xor(subkey, subnonce, 1, ct_with_tag, ct_len);
 
 	memzero_explicit(subkey, sizeof(subkey));
 	memzero_explicit(poly_key_block, sizeof(poly_key_block));
