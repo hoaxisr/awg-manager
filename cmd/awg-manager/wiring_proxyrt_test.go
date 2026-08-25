@@ -995,3 +995,137 @@ func TestProxyServerKeysAreServersOnly(t *testing.T) {
 		}
 	}
 }
+
+// ── уборка связанных туннелей по роли (амендмент B, F1) ──────────
+
+// stubTunnelSvc — служба туннелей с одним рабочим методом: уборщику нужен
+// только Delete, остальное встроенным интерфейсом не реализовано намеренно —
+// вызов чего-то ещё уронит тест, а не пройдёт молча.
+type stubTunnelSvc struct {
+	api.TunnelService
+	deleted []string
+}
+
+func (s *stubTunnelSvc) Delete(_ context.Context, id string) error {
+	s.deleted = append(s.deleted, id)
+	return nil
+}
+
+// Наблюдается РЕЗУЛЬТАТ уборки: клиент каждой подсистемы сносит туннели своего
+// поля связи и только их. Идентификатор у обоих клиентов один — поле остаётся
+// единственным различителем, поэтому перепутанные поля краснеют.
+func TestProxyLinkedCleanersDeleteOwnFieldOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(filepath.Join(dir, "tunnels"), filepath.Join(dir, "lock"))
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awg10", Name: "wdtt", WdttClientID: "same"},
+		{ID: "awg11", Name: "ft", FreeTurnClientID: "same"},
+	} {
+		if err := store.Save(tun); err != nil {
+			t.Fatalf("awg.Save: %v", err)
+		}
+	}
+
+	tests := []struct {
+		kind instancestore.Kind
+		want string
+	}{
+		{instancestore.KindWdttClient, "awg10"},
+		{instancestore.KindFreeTurnClient, "awg11"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.kind), func(t *testing.T) {
+			svc := &stubTunnelSvc{}
+			cleaners := proxyLinkedCleaners(store, svc, nil, nil)
+			cleaner, ok := cleaners[tt.kind]
+			if !ok {
+				t.Fatalf("уборщика для роли %s нет", tt.kind)
+			}
+			deleted, errs := cleaner.DeleteLinked(context.Background(), "same")
+			if len(errs) != 0 {
+				t.Fatalf("уборка: %v", errs)
+			}
+			if len(deleted) != 1 || deleted[0] != tt.want {
+				t.Fatalf("снесено %v, want [%s]: поле связи не следует роли", deleted, tt.want)
+			}
+			if len(svc.deleted) != 1 || svc.deleted[0] != tt.want {
+				t.Fatalf("служба туннелей получила %v, want [%s]", svc.deleted, tt.want)
+			}
+		})
+	}
+}
+
+// Заряд гейта, а не его тип (F2): фабрика обязана подключить в обёртку
+// НАСТОЯЩИЙ цикл абонентов. Здесь записи инстанса в менеджере нет, поэтому
+// усыновление отказывает — и включённый сервер обязан остаться без ведомости
+// роли (стартовать нечему) и получить фазу failed с причиной.
+func TestProxyFactoryWdttServerBlockedUntilUsersAdopted(t *testing.T) {
+	book, _ := recordingBook(nil)
+	_, factory, _ := newFactoryApp(t, book)
+	rec := serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5")
+	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+		NatMode: "full", RelayMode: "wg",
+		NdmsIface: "OpkgTun4", WgIface: "opkgtun4",
+		RawNdmsIface: "OpkgTun5", RawIface: "opkgtun5", OpenFirewall: true}
+
+	inst, err := factory(rec, &manager.Live{})
+	if err != nil {
+		t.Fatalf("фабрика: %v", err)
+	}
+	defer inst.Stop()
+	role := roleOf(t, inst)
+
+	// Сперва состав: под гейтом объявлен РОВНО приговор и ничего больше.
+	// Проверка идёт первой намеренно — при выключенном гейте ведомость роли
+	// ушла бы наблюдать NDMS, которого в тесте нет.
+	res := role.Resources(proxyrt.IntentEnabled, cfg, proxyrt.Observations{})
+	if len(res) != 1 || res[0].ID() != proxyUsersResource {
+		ids := make([]proxyrt.ResourceID, 0, len(res))
+		for _, r := range res {
+			ids = append(ids, r.ID())
+		}
+		t.Fatalf("под неусыновлёнными абонентами объявлено %v: цикл абонентов не подключён", ids)
+	}
+
+	// Теперь исход прогона: фаза failed с причиной, а не тихое settled.
+	result, phase := proxyrt.NewReconciler(role, cfg, proxyrt.ReconcileOpts{MaxPasses: 3}).
+		Run(context.Background(), proxyrt.IntentEnabled)
+	if phase != proxyrt.PhaseFailed {
+		t.Fatalf("фаза %q, want failed", phase)
+	}
+	if len(result.States) != 1 || result.States[0].ID != proxyUsersResource {
+		t.Fatalf("состояние прогона: %+v", result.States)
+	}
+	if !strings.Contains(result.States[0].Error, "абоненты сервера не усыновлены") {
+		t.Fatalf("причина не доехала до пользователя: %+v", result.States[0])
+	}
+}
+
+// Мутатор — ЧУЖОЕ замыкание, и исполняться оно обязано ровно один раз:
+// холостой прогон по копии ради «какие пины понадобятся» был бы вторым
+// исполнением, а среди мутаторов есть считающие новый состав от актуальной
+// записи (абоненты сервера). Правка берётся с аллокацией — на ней соблазн
+// прогнать мутатора дважды и возникает.
+func TestUpdateRunsMutatorExactlyOnce(t *testing.T) {
+	e := newOccEnv(t)
+	e.putRecord(t, instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
+		Enabled:    true,
+		WdttClient: &roles.WdttClientConfig{Mode: "wg", Peer: "1.2.3.4:5", Password: "p"}})
+	mgr := newProdAllocManager(t, e)
+	if err := mgr.Boot(context.Background()); err != nil {
+		t.Fatalf("Boot: %v", err)
+	}
+
+	calls := 0
+	if err := mgr.Update(context.Background(), "wdtt-client:de",
+		func(r *instancestore.Record) error {
+			calls++
+			r.WdttClient.Mode = "raw"
+			return nil
+		}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("мутатор исполнен %d раз(а), want 1", calls)
+	}
+}

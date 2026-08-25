@@ -438,6 +438,24 @@ func proxyTunnelLinkedTo(tun storage.AWGTunnel, field api.LinkedField, clientID 
 	return strings.TrimSpace(tun.WdttClientID) == clientID
 }
 
+// proxyLinkedCleaners — уборщики связанных туннелей ПО РОЛИ. Карта собирается
+// здесь, а не литералом в месте вызова: поле связи у ролей разное, а ошибка в
+// нём не даёт ни отказа, ни жалобы — просто чужие туннели остаются, а свои не
+// удаляются. Один источник поля (proxyLinkedField) и одно место сборки — чтобы
+// перепутать было негде.
+func proxyLinkedCleaners(store *storage.AWGTunnelStore, svc api.TunnelService,
+	traffic *traffic.History, pub proxyrt.Publisher,
+) map[instancestore.Kind]wdttlink.LinkedCleaner {
+	out := map[instancestore.Kind]wdttlink.LinkedCleaner{}
+	for _, kind := range []instancestore.Kind{
+		instancestore.KindWdttClient, instancestore.KindFreeTurnClient,
+	} {
+		out[kind] = proxyLinkedCleaner{store: store, svc: svc,
+			field: proxyLinkedField(kind), traffic: traffic, pub: pub}
+	}
+	return out
+}
+
 // proxyPublishTunnels — фронт обязан узнать об изменении списка туннелей:
 // пути прокси-рантайма живут вне HTTP-хендлеров, где публикацию делал бы
 // TunnelsHandler.
@@ -844,14 +862,7 @@ func (a *app) wireProxyrt() {
 		Snapshots: snapshots,
 		Tunnels: proxyTunnelImporter{store: a.awgStore, svc: a.proxyTunnels(),
 			traffic: a.trafficHistory, pub: a.eventBus},
-		Cleaners: map[instancestore.Kind]wdttlink.LinkedCleaner{
-			instancestore.KindWdttClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.proxyTunnels(), field: proxyLinkedField(instancestore.KindWdttClient),
-				traffic: a.trafficHistory, pub: a.eventBus},
-			instancestore.KindFreeTurnClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.proxyTunnels(), field: proxyLinkedField(instancestore.KindFreeTurnClient),
-				traffic: a.trafficHistory, pub: a.eventBus},
-		},
+		Cleaners: proxyLinkedCleaners(a.awgStore, a.proxyTunnels(), a.trafficHistory, a.eventBus),
 		Builders: map[instancestore.Kind]wdttlink.LinkBuilder{
 			instancestore.KindWdttServer: wdttlink.NewBuilder(wdttlink.BuilderDeps{
 				Vetting:    wdttusers.Vetting{},
