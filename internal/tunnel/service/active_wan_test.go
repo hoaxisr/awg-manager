@@ -27,9 +27,9 @@ func testService(t *testing.T) (*ServiceImpl, *storage.AWGTunnelStore, *mockOp, 
 	}
 
 	// Override package-level confDir for tests
-	oldConfDir := confDir
-	confDir = confTestDir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = confTestDir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, lockDir)
 	stateMgr := NewMockStateManager()

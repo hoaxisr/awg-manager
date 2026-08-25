@@ -256,9 +256,9 @@ func TestUpdate_RejectsIDMismatch(t *testing.T) {
 
 func TestUpdate_KernelAddressChangeBeforeFirstStart(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateNotCreated})
@@ -297,9 +297,9 @@ func TestUpdate_KernelAddressChangeRejectedWhenProcessRunning(t *testing.T) {
 
 func TestUpdate_UserspaceAddressChangeAllowedWhenCreated(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true, BackendType: "userspace"})

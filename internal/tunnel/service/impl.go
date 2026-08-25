@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -24,8 +23,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
-
-var confDir = "/opt/etc/awg-manager"
 
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
@@ -404,7 +401,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	confChanged := !awgInterfaceEqual(oldStored.Interface, newStored.Interface) ||
 		!awgPeerEqual(oldStored.Peer, newStored.Peer)
 	if confChanged && !s.isNativeWG(newStored) {
-		if err := s.writeConfigFile(newStored); err != nil {
+		if err := config.WriteFile(newStored); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}
@@ -743,7 +740,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	if err := s.store.Save(parsed); err != nil {
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
-	if err := s.writeConfigFile(parsed); err != nil {
+	if err := config.WriteFile(parsed); err != nil {
 		_ = s.store.Delete(tunnelID)
 		return nil, fmt.Errorf("write config: %w", err)
 	}
@@ -798,7 +795,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	}
 
 	// Write config file (for export/display purposes)
-	if err := s.writeConfigFile(parsed); err != nil {
+	if err := config.WriteFile(parsed); err != nil {
 		s.logWarn("import", tunnelID, "Failed to write config file: "+err.Error())
 	}
 
@@ -870,7 +867,7 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	}
 
 	// Overwrite .conf file
-	if err := s.writeConfigFile(stored); err != nil {
+	if err := config.WriteFile(stored); err != nil {
 		s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
 	}
 
@@ -1039,25 +1036,6 @@ func (s *ServiceImpl) resolveKernelDevice(resolvedWAN string) string {
 		return tunnel.NewNames(tunnel.TunnelRouteID(resolvedWAN)).IfaceName
 	}
 	return resolvedWAN // already a kernel name
-}
-
-// writeConfigFile generates and writes the WireGuard config file.
-func (s *ServiceImpl) writeConfigFile(stored *storage.AWGTunnel) error {
-	// Ensure directory exists
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	// Generate config content
-	content := config.Generate(stored)
-
-	// Write to file
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
-	}
-
-	return nil
 }
 
 // logInfo logs an info message via the UI-visible scoped logger.

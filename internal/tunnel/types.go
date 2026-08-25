@@ -4,6 +4,7 @@ package tunnel
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -210,6 +211,12 @@ type Names struct {
 	SocketPath string // Control socket path
 }
 
+// ConfDir — каталог с .conf туннелей. Var, а не константа: тесты подменяют его
+// на временный каталог. Из него собирается ConfPath, по которому файл и
+// пишется, и применяется через `awg setconf`, и удаляется — один источник на
+// все три операции.
+var ConfDir = "/opt/etc/awg-manager"
+
 // NewNames creates a Names struct from a tunnel ID.
 // Handles different naming conventions:
 // - OS 5.x: awg10 -> OpkgTun10/opkgtun10 (valid indices: 10-16)
@@ -236,7 +243,7 @@ func NewNames(tunnelID string) Names {
 		TunnelNum:  num,
 		NDMSName:   ndmsName,
 		IfaceName:  ifaceName,
-		ConfPath:   fmt.Sprintf("/opt/etc/awg-manager/%s.conf", tunnelID),
+		ConfPath:   filepath.Join(ConfDir, tunnelID+".conf"),
 		SocketPath: fmt.Sprintf("/tmp/run/amneziawg/%s.sock", ifaceName),
 	}
 }

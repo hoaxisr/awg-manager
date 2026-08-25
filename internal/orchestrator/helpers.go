@@ -1,19 +1,13 @@
 package orchestrator
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
-
-var confDir = "/opt/etc/awg-manager"
 
 // StoredToConfig converts storage.AWGTunnel to tunnel.Config. Shared
 // with internal/tunnel/service — this package owns the canonical
@@ -86,19 +80,6 @@ func SplitAddresses(address string) (ipv4, ipv6 string) {
 		}
 	}
 	return
-}
-
-// writeConfigFile generates and writes the WireGuard config file for tunnel start.
-func writeConfigFile(stored *storage.AWGTunnel) error {
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	content := config.Generate(stored)
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
-	}
-	return nil
 }
 
 // ifaceNameForTunnel returns the kernel interface name for a tunnel.
