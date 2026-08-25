@@ -20,6 +20,13 @@ type decodeRequest struct {
 	Link string `json:"link"`
 }
 
+// DecodeResponse — конверт разбора freeturn://-ссылки. Тип объявлен ради
+// спеки: генератор фронтовых схем ключует валидацию ПУТЁМ.
+type DecodeResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    LinkPayload `json:"data"`
+}
+
 // Serve обслуживает список разрешённых Client ID. Пути регистрирует проводка:
 // у пакета нет своего мультиплексора, ключ инстанса и хвост пути приходят
 // аргументами.
@@ -77,6 +84,16 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, key string, sub 
 
 // Decode — POST /api/proxyrt/freeturn/link/decode: разбор freeturn://-ссылки,
 // чтобы фронт заполнил поля клиента без ручного перенабора.
+//
+//	@Summary	Разобрать ссылку freeturn://
+//	@Tags		proxyrt
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Param		request	body		decodeRequest	true	"Ссылка"
+//	@Success	200		{object}	DecodeResponse
+//	@Failure	400		{object}	DecodeResponse
+//	@Router		/proxyrt/freeturn/link/decode [post]
 func (s *Service) Decode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

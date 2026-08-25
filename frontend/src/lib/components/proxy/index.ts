@@ -27,6 +27,7 @@ export { default as SubscriptionSection } from './SubscriptionSection.svelte';
 export { default as WizardSteps } from './WizardSteps.svelte';
 export { binaryStripItems } from './binaries';
 export { reportDeletedTunnels, tunnelErrorNames } from './deleteNotice';
+export { seedGateWarning } from './seedGate';
 export { exitInstance, normalizeExitConfigs, saveExitInstance } from './exitConfig';
 export { exitConfigSetupComplete, exitStep1Ready, exitStep2Ready } from './exitWizard';
 export {

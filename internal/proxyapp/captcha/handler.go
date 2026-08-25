@@ -15,8 +15,23 @@ import (
 // здесь: второй литерал разъехался бы с первым молча.
 const instancesPath = "/api/proxyrt/instances/"
 
+// OverviewResponse — конверт обзора капчи. Тип объявлен ради спеки:
+// генератор фронтовых схем ключует валидацию ПУТЁМ.
+type OverviewResponse struct {
+	Success bool     `json:"success" example:"true"`
+	Data    Overview `json:"data"`
+}
+
 // ServeStatus обслуживает GET /api/proxyrt/freeturn/captcha/status.
 // Пути регистрирует проводка: своего мультиплексора у пакета нет.
+//
+//	@Summary		Обзор капчи всех freeturn-клиентов
+//	@Description	clientId несёт ПОЛНЫЙ ключ инстанса (freeturn-client:default).
+//	@Tags			proxyrt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	OverviewResponse
+//	@Router			/proxyrt/freeturn/captcha/status [get]
 func (s *Service) ServeStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

@@ -15,6 +15,7 @@
 		normalizeShareConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
+		seedGateWarning,
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
@@ -89,6 +90,7 @@
 	];
 
 	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
+	const seedWarning = $derived(seedGateWarning(seed));
 
 	// ─── Загрузка и поллинг.
 
@@ -233,13 +235,8 @@
 	{:else if loadError}
 		<Card><p class="load-error">{loadError}</p></Card>
 	{:else}
-		{#if seed && seed.seeded && !seed.certified}
-			<Card>
-				<p class="seed-warning">
-					Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и
-					маршрутов заблокирована.{seed.error ? ` ${seed.error}` : ''}
-				</p>
-			</Card>
+		{#if seedWarning}
+			<Card><p class="seed-warning">{seedWarning}</p></Card>
 		{/if}
 
 		<BinaryStrip {binaries} />

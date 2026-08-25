@@ -113,7 +113,72 @@ type linkRequestBody struct {
 	Name string `json:"name,omitempty"`
 }
 
+// Конверты ответов объявлены ради спеки: генератор фронтовых схем ключует
+// валидацию ПУТЁМ и без описанного ответа молча пропускает его без проверки.
+
+// DecodeResponse — конверт разбора ссылки.
+type DecodeResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Data    LinkDecodeResult `json:"data"`
+}
+
+// ImportResult — тело импорта: ключ созданного инстанса и разобранный профиль.
+type ImportResult struct {
+	Key     string        `json:"key" example:"wdtt-client:default"`
+	Payload ImportPayload `json:"payload"`
+}
+
+// ImportResponse — конверт импорта.
+type ImportResponse struct {
+	Success bool         `json:"success" example:"true"`
+	Data    ImportResult `json:"data"`
+}
+
+// LinkResult — тело ручки ссылки. Поля объединяют обе роли: wdtt-сервер
+// отдаёт link/linkQwdtt/peer, freeturn-сервер — link/peer/clientId.
+type LinkResult struct {
+	Link      string `json:"link" example:"wdtt://…"`
+	LinkQwdtt string `json:"linkQwdtt,omitempty" example:"qwdtt://…"`
+	Peer      string `json:"peer" example:"1.2.3.4:56002"`
+	ClientID  string `json:"clientId,omitempty"`
+}
+
+// LinkResponse — конверт ручки ссылки.
+type LinkResponse struct {
+	Success bool       `json:"success" example:"true"`
+	Data    LinkResult `json:"data"`
+}
+
+// ClearLinkedResult — тело очистки связей.
+type ClearLinkedResult struct {
+	DeletedTunnels []string `json:"deletedTunnels"`
+	TunnelErrors   []string `json:"tunnelErrors"`
+	Message        string   `json:"message" example:"linked AWG tunnels cleared"`
+}
+
+// ClearLinkedResponse — конверт очистки связей.
+type ClearLinkedResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Data    ClearLinkedResult `json:"data"`
+}
+
+// EnsureWGResponse — конверт подготовки связанного WG-туннеля.
+type EnsureWGResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Data    EnsureWGTunnelResponse `json:"data"`
+}
+
 // Decode — POST /api/proxyrt/wdtt/link/decode.
+//
+//	@Summary	Разобрать ссылку wdtt:// или адрес подписки
+//	@Tags		proxyrt
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Param		request	body		linkRequestBody	true	"Ссылка"
+//	@Success	200		{object}	DecodeResponse
+//	@Failure	400		{object}	DecodeResponse
+//	@Router		/proxyrt/wdtt/link/decode [post]
 func (h *Handler) Decode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -134,6 +199,16 @@ func (h *Handler) Decode(w http.ResponseWriter, r *http.Request) {
 
 // Import — POST /api/proxyrt/wdtt/link/import: разбор ссылки и СОЗДАНИЕ
 // инстанса клиента. listen и пины выделяет менеджер — здесь они не ставятся.
+//
+//	@Summary	Импортировать ссылку в новый инстанс клиента
+//	@Tags		proxyrt
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Param		request	body		linkRequestBody	true	"Ссылка, id и имя"
+//	@Success	200		{object}	ImportResponse
+//	@Failure	400		{object}	ImportResponse
+//	@Router		/proxyrt/wdtt/link/import [post]
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -220,6 +295,18 @@ func (h *Handler) freeID() string {
 // ── ссылка ───────────────────────────────────────────────────────
 
 // Link — POST /api/proxyrt/instances/{key}/link.
+//
+//	@Summary	Выдать ссылку абоненту серверного инстанса
+//	@Tags		proxyrt
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Param		key		path		string		true	"Ключ инстанса (роль:id)"
+//	@Param		request	body		LinkRequest	true	"Параметры ссылки"
+//	@Success	200		{object}	LinkResponse
+//	@Failure	400		{object}	LinkResponse
+//	@Failure	404		{object}	LinkResponse
+//	@Router		/proxyrt/instances/{key}/link [post]
 func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -255,6 +342,16 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 
 // ClearLinkedTunnels — POST /api/proxyrt/instances/{key}/linked-tunnels/clear.
 // Форма ответа прежняя (api/wdtt_linked_clear.go:26-30).
+//
+//	@Summary	Снять AWG-туннели, связанные с клиентским инстансом
+//	@Tags		proxyrt
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Param		key	path		string	true	"Ключ инстанса (роль:id)"
+//	@Success	200	{object}	ClearLinkedResponse
+//	@Failure	400	{object}	ClearLinkedResponse
+//	@Failure	404	{object}	ClearLinkedResponse
+//	@Router		/proxyrt/instances/{key}/linked-tunnels/clear [post]
 func (h *Handler) ClearLinkedTunnels(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
@@ -305,6 +402,18 @@ type EnsureWGTunnelResponse struct {
 //
 // Источник конфига — снимок процесса (State.WG.Config), а не разбор журнала:
 // журнал в новом мире — файл форка, а конфиг приезжает по управляющему сокету.
+//
+//	@Summary		Завести AWG-туннель под WireGuard-конфиг клиента
+//	@Description	409 WDTT_WG_NOT_READY означает «конфиг ещё не приехал от сервера» —
+//	@Description	это ожидание, а не сбой: ручку зовёт автоэффект страницы.
+//	@Tags			proxyrt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
+//	@Success		200	{object}	EnsureWGResponse
+//	@Failure		404	{object}	EnsureWGResponse
+//	@Failure		409	{object}	EnsureWGResponse
+//	@Router			/proxyrt/instances/{key}/ensure-wg-tunnel [post]
 func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {
 		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")

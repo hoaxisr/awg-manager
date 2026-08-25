@@ -23,6 +23,14 @@ type renameRequest struct {
 	Name string `json:"name"`
 }
 
+// UsersStatusResponse — конверт ВСЕХ ручек абонентов: форма ответа у них одна.
+// Тип объявлен ради спеки: генератор фронтовых схем ключует валидацию ПУТЁМ и
+// без описанного ответа молча пропускает его без проверки.
+type UsersStatusResponse struct {
+	Success bool        `json:"success" example:"true"`
+	Data    UsersStatus `json:"data"`
+}
+
 // Serve обслуживает ручки абонентов сервера. Пути регистрирует проводка: у
 // пакета нет своего мультиплексора, ключ инстанса и хвост пути приходят
 // аргументами.
@@ -32,6 +40,26 @@ type renameRequest struct {
 //	DELETE /api/proxyrt/instances/{key}/users
 //	DELETE /api/proxyrt/instances/{key}/users/{password}
 //	PATCH  /api/proxyrt/instances/{key}/users/{password}
+//
+// Аннотации спеки перечисляют все пять адресов одним блоком: форма ответа у
+// них ОДНА (UsersStatus), и делить блок значило бы делить сам обработчик.
+//
+//	@Summary		Абоненты wdtt-сервера
+//	@Description	Ручки состава: чтение, добавление, удаление всех, удаление и
+//	@Description	переименование одного. Поле reload заполняют только мутации состава.
+//	@Tags			proxyrt
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
+//	@Success		200	{object}	UsersStatusResponse
+//	@Failure		400	{object}	UsersStatusResponse
+//	@Failure		404	{object}	UsersStatusResponse
+//	@Router			/proxyrt/instances/{key}/users [get]
+//	@Router			/proxyrt/instances/{key}/users [post]
+//	@Router			/proxyrt/instances/{key}/users [delete]
+//	@Router			/proxyrt/instances/{key}/users/{password} [delete]
+//	@Router			/proxyrt/instances/{key}/users/{password} [patch]
 func (s *Service) Serve(w http.ResponseWriter, r *http.Request, key string, sub []string) {
 	switch {
 	case len(sub) == 0:

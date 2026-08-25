@@ -6760,6 +6760,67 @@ definitions:
       policy:
         type: string
     type: object
+  captcha.ClientStatus:
+    properties:
+      active:
+        description: 'Active: this client''s process currently owns the local captcha
+          HTTP server (:8765).'
+        type: boolean
+      canOpen:
+        description: 'CanOpen: UI may open the proxied captcha page for this client.'
+        type: boolean
+      captchaSession:
+        description: 'CaptchaSession: manual captcha (re)starts in this process run
+          — bump to reload iframe.'
+        type: integer
+      clientId:
+        description: |-
+          ClientID — КЛЮЧ инстанса (freeturn-client:default), а не его id: в новом
+          мире инстанс адресуется ключом, и по нему же строится url ниже.
+          Json-имя оставлено прежним (форма ответа не меняется).
+        type: string
+      clientName:
+        type: string
+      pendingStreams:
+        description: 'PendingStreams: VK-auth streams in this client still waiting
+          on manual captcha.'
+        type: integer
+      portContention:
+        description: 'PortContention: manual captcha port :8765 is busy with another
+          stream''s session.'
+        type: boolean
+      queued:
+        description: 'Queued: waiting but another client holds :8765 — solve the active
+          one first.'
+        type: boolean
+      url:
+        type: string
+      waiting:
+        description: 'Waiting: client log indicates manual captcha is required (auto
+          failed or -manual-captcha).'
+        type: boolean
+    type: object
+  captcha.Overview:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/captcha.ClientStatus'
+        type: array
+      ownerClientId:
+        type: string
+      ownerName:
+        type: string
+      portOpen:
+        type: boolean
+    type: object
+  captcha.OverviewResponse:
+    properties:
+      data:
+        $ref: '#/definitions/captcha.Overview'
+      success:
+        example: true
+        type: boolean
+    type: object
   diagnostics.DNSProxy:
     properties:
       displayName:
@@ -7203,6 +7264,119 @@ definitions:
           InstallVersion.
         type: boolean
     type: object
+  ftlink.DecodeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/ftlink.LinkPayload'
+      success:
+        example: true
+        type: boolean
+    type: object
+  ftlink.LinkPayload:
+    properties:
+      bond:
+        type: boolean
+      cid:
+        description: -client-id — owner must allowlist this in clients.json
+        type: string
+      dns:
+        type: string
+      dnss:
+        type: string
+      key:
+        type: string
+      listen:
+        type: string
+      mcap:
+        type: boolean
+      mode:
+        type: string
+      mtu:
+        description: 'awg-manager extensions, not part of the upstream spec:'
+        type: integer
+      "n":
+        description: -n, parallel TURN streams
+        type: integer
+      name:
+        description: comment for the owner's own clients.json entry
+        type: string
+      obf:
+        type: string
+      peer:
+        type: string
+      provider:
+        type: string
+      spc:
+        description: -streams-per-cred
+        type: integer
+      transport:
+        type: string
+      v:
+        type: integer
+      wg:
+        description: optional bundled WireGuard client config
+        type: string
+    type: object
+  ftlink.decodeRequest:
+    properties:
+      link:
+        type: string
+    type: object
+  install.InstallMessage:
+    properties:
+      message:
+        example: installed
+        type: string
+    type: object
+  install.InstallResponse:
+    properties:
+      data:
+        $ref: '#/definitions/install.InstallMessage'
+      success:
+        example: true
+        type: boolean
+    type: object
+  install.InstallStatus:
+    properties:
+      installAvailable:
+        description: |-
+          InstallAvailable — для этой арки есть пин и подключён загрузчик:
+          установка в один клик возможна.
+        type: boolean
+      installVersion:
+        description: InstallVersion — версия, которую поставит установка.
+        type: string
+      installedVersion:
+        description: InstalledVersion — версия, установленная сейчас.
+        type: string
+      installing:
+        description: Installing — установка идёт прямо сейчас (кнопка блокируется).
+        type: boolean
+      routerClock:
+        description: RouterClock — часы роутера для сверки с метками в журнале форка.
+        type: string
+      serverSupported:
+        description: |-
+          ServerSupported — собирается ли сервер под эту архитектуру (или уже
+          лежит на диске). На mips/mipsel wdtt-сервера нет, UI прячет вкладку.
+        type: boolean
+      updateAvailable:
+        description: UpdateAvailable — бинарей нет либо они не те, что в пине.
+        type: boolean
+    type: object
+  install.InstallStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/install.InstallStatus'
+      success:
+        example: true
+        type: boolean
+    type: object
+  install.installRequest:
+    properties:
+      subsystem:
+        type: string
+    type: object
   presets.DNSEngine:
     properties:
       domains:
@@ -7283,6 +7457,24 @@ definitions:
         items:
           $ref: '#/definitions/presets.RuleRef'
         type: array
+    type: object
+  subscription.RefreshResponse:
+    properties:
+      data:
+        $ref: '#/definitions/subscription.RefreshResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  subscription.RefreshResult:
+    properties:
+      key:
+        example: wdtt-client:default
+        type: string
+      message:
+        type: string
+      payload:
+        $ref: '#/definitions/wdttlink.ImportPayload'
     type: object
   wdtt.ClientConfig:
     properties:
@@ -7685,6 +7877,249 @@ definitions:
         type: number
       updatedAt:
         type: string
+    type: object
+  wdttlink.ClearLinkedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.ClearLinkedResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.ClearLinkedResult:
+    properties:
+      deletedTunnels:
+        items:
+          type: string
+        type: array
+      message:
+        example: linked AWG tunnels cleared
+        type: string
+      tunnelErrors:
+        items:
+          type: string
+        type: array
+    type: object
+  wdttlink.DecodeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.LinkDecodeResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.EnsureWGResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.EnsureWGTunnelResponse'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.EnsureWGTunnelResponse:
+    properties:
+      created:
+        type: boolean
+      message:
+        type: string
+      tunnelId:
+        type: string
+      tunnelName:
+        type: string
+    type: object
+  wdttlink.ImportPayload:
+    properties:
+      connMode:
+        type: string
+      deviceId:
+        type: string
+      listen:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+      peer:
+        type: string
+      subUrl:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+      wg:
+        description: optional bundled WireGuard client config
+        type: string
+      workers:
+        type: integer
+    type: object
+  wdttlink.ImportResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.ImportResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.ImportResult:
+    properties:
+      key:
+        example: wdtt-client:default
+        type: string
+      payload:
+        $ref: '#/definitions/wdttlink.ImportPayload'
+    type: object
+  wdttlink.LinkDecodeResult:
+    properties:
+      profile:
+        $ref: '#/definitions/wdttlink.ImportPayload'
+      subscription:
+        $ref: '#/definitions/wdttlink.SubscriptionPreview'
+    type: object
+  wdttlink.LinkRequest:
+    properties:
+      clientId:
+        type: string
+      mode:
+        type: string
+      mtu:
+        type: integer
+      "n":
+        type: integer
+      name:
+        type: string
+      password:
+        type: string
+      peer:
+        type: string
+      provider:
+        type: string
+      serverId:
+        type: string
+      streamsPerCred:
+        type: integer
+      transport:
+        type: string
+      vkHashes:
+        items:
+          type: string
+        type: array
+      wg:
+        type: string
+    type: object
+  wdttlink.LinkResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.LinkResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.LinkResult:
+    properties:
+      clientId:
+        type: string
+      link:
+        example: wdtt://…
+        type: string
+      linkQwdtt:
+        example: qwdtt://…
+        type: string
+      peer:
+        example: 1.2.3.4:56002
+        type: string
+    type: object
+  wdttlink.SubscriptionPreview:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      profiles:
+        items:
+          $ref: '#/definitions/wdttlink.ImportPayload'
+        type: array
+      subUrl:
+        type: string
+      trafficLimitMb:
+        type: number
+      trafficUsedMb:
+        type: number
+      updatedAt:
+        type: string
+    type: object
+  wdttlink.linkRequestBody:
+    properties:
+      id:
+        type: string
+      link:
+        type: string
+      name:
+        type: string
+    type: object
+  wdttusers.Reload:
+    enum:
+    - delivered
+    - serverStopped
+    - failed
+    type: string
+    x-enum-varnames:
+    - ReloadDelivered
+    - ReloadServerStopped
+    - ReloadFailed
+  wdttusers.UserEntry:
+    properties:
+      comment:
+        type: string
+      isAuto:
+        description: IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
+        type: boolean
+      isDeactivated:
+        description: IsDeactivated — признак из passwords.json (деактивацию ставит
+          форк).
+        type: boolean
+      isExpired:
+        description: |-
+          IsExpired — срок, назначенный сервером, истёк. Такой абонент в
+          passwords.json не пишется и подключиться не может; в списке он остаётся,
+          чтобы пользователь понимал, почему доступ пропал.
+        type: boolean
+      isMainPassword:
+        description: |-
+          IsMainPassword — пароль абонента совпадает с главным паролем сервера.
+          Сам главный пароль наружу не уходит, сравнить на фронте нечем.
+        type: boolean
+      password:
+        type: string
+      vkHash:
+        type: string
+    type: object
+  wdttusers.UsersStatus:
+    properties:
+      available:
+        description: |-
+          Available — passwords.json прочитан. Пусто до первого старта сервера:
+          список при этом всё равно отдаётся, из записи инстанса.
+        type: boolean
+      reload:
+        allOf:
+        - $ref: '#/definitions/wdttusers.Reload'
+        description: |-
+          Reload — результат доставки SIGHUP для ЭТОЙ мутации. Заполняют только
+          ручки, переписывающие passwords.json (добавление, удаление); у чтения и
+          переименования пусто.
+      users:
+        items:
+          $ref: '#/definitions/wdttusers.UserEntry'
+        type: array
+    type: object
+  wdttusers.UsersStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttusers.UsersStatus'
+      success:
+        example: true
+        type: boolean
     type: object
 info:
   contact: {}
@@ -11692,6 +12127,102 @@ paths:
       summary: Select device proxy outbound
       tags:
       - device-proxy
+  /proxyrt/freeturn/captcha/status:
+    get:
+      description: clientId несёт ПОЛНЫЙ ключ инстанса (freeturn-client:default).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/captcha.OverviewResponse'
+      security:
+      - CookieAuth: []
+      summary: Обзор капчи всех freeturn-клиентов
+      tags:
+      - proxyrt
+  /proxyrt/freeturn/link/decode:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Ссылка
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/ftlink.decodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ftlink.DecodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ftlink.DecodeResponse'
+      security:
+      - CookieAuth: []
+      summary: Разобрать ссылку freeturn://
+      tags:
+      - proxyrt
+  /proxyrt/install:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Подсистема
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/install.installRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/install.InstallResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/install.InstallResponse'
+      security:
+      - CookieAuth: []
+      summary: Установить бинари подсистемы
+      tags:
+      - proxyrt
+  /proxyrt/install/status:
+    get:
+      description: |-
+        Семь полей install-блока: поддержка сервера архитектурой, доступность
+        установки, версии, наличие обновления, идёт ли установка, часы роутера.
+      parameters:
+      - description: 'Подсистема: wdtt|freeturn'
+        in: query
+        name: subsystem
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/install.InstallStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/install.InstallResponse'
+      security:
+      - CookieAuth: []
+      summary: Статус установки бинарей подсистемы
+      tags:
+      - proxyrt
   /proxyrt/instances:
     get:
       description: |-
@@ -11875,6 +12406,345 @@ paths:
       security:
       - CookieAuth: []
       summary: Разбудить реконсиляцию инстанса
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/ensure-wg-tunnel:
+    post:
+      description: |-
+        409 WDTT_WG_NOT_READY означает «конфиг ещё не приехал от сервера» —
+        это ожидание, а не сбой: ручку зовёт автоэффект страницы.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.EnsureWGResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttlink.EnsureWGResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/wdttlink.EnsureWGResponse'
+      security:
+      - CookieAuth: []
+      summary: Завести AWG-туннель под WireGuard-конфиг клиента
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/link:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Параметры ссылки
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdttlink.LinkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.LinkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttlink.LinkResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttlink.LinkResponse'
+      security:
+      - CookieAuth: []
+      summary: Выдать ссылку абоненту серверного инстанса
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/linked-tunnels/clear:
+    post:
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
+      security:
+      - CookieAuth: []
+      summary: Снять AWG-туннели, связанные с клиентским инстансом
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/subscription/refresh:
+    post:
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/subscription.RefreshResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/subscription.RefreshResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/subscription.RefreshResponse'
+      security:
+      - CookieAuth: []
+      summary: Обновить подписку клиента
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/users:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Ручки состава: чтение, добавление, удаление всех, удаление и
+        переименование одного. Поле reload заполняют только мутации состава.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Абоненты wdtt-сервера
+      tags:
+      - proxyrt
+    get:
+      consumes:
+      - application/json
+      description: |-
+        Ручки состава: чтение, добавление, удаление всех, удаление и
+        переименование одного. Поле reload заполняют только мутации состава.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Абоненты wdtt-сервера
+      tags:
+      - proxyrt
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Ручки состава: чтение, добавление, удаление всех, удаление и
+        переименование одного. Поле reload заполняют только мутации состава.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Абоненты wdtt-сервера
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/users/{password}:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Ручки состава: чтение, добавление, удаление всех, удаление и
+        переименование одного. Поле reload заполняют только мутации состава.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Абоненты wdtt-сервера
+      tags:
+      - proxyrt
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Ручки состава: чтение, добавление, удаление всех, удаление и
+        переименование одного. Поле reload заполняют только мутации состава.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+      security:
+      - CookieAuth: []
+      summary: Абоненты wdtt-сервера
+      tags:
+      - proxyrt
+  /proxyrt/wdtt/link/decode:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Ссылка
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdttlink.linkRequestBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.DecodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttlink.DecodeResponse'
+      security:
+      - CookieAuth: []
+      summary: Разобрать ссылку wdtt:// или адрес подписки
+      tags:
+      - proxyrt
+  /proxyrt/wdtt/link/import:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Ссылка, id и имя
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wdttlink.linkRequestBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.ImportResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/wdttlink.ImportResponse'
+      security:
+      - CookieAuth: []
+      summary: Импортировать ссылку в новый инстанс клиента
       tags:
       - proxyrt
   /routing/access-policies:

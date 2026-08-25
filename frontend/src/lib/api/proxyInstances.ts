@@ -205,6 +205,26 @@ function instancesOf(list: ProxyListData, kind: ProxyKind): ProxyInstanceView[] 
 	return list.instances.filter((i) => i.kind === kind);
 }
 
+/**
+ * Режим NAT сервера — ОДИН дефолт на чтение и на запись.
+ *
+ * Поле сериализуется с пропуском пустого, и у записи, которой NAT никогда не
+ * задавали, значения в ответе нет вовсе. Разойдись дефолты — интерфейс врал бы
+ * о том, что сделает: контрол показывал бы «Полный» (его собственный дефолт),
+ * а сохранение формы записало бы другое. Дефолт «полный» — тот же, что у
+ * контрола и у подписи схемы (`shareConfig.natModeOptions`/`natModeLabel`), и
+ * тот же, что был в старом мире.
+ */
+function natModeOf(mode: string | undefined): NonNullable<WdttServerConfig['natMode']> {
+	switch (mode) {
+		case 'internet-only':
+		case 'none':
+			return mode;
+		default:
+			return 'full';
+	}
+}
+
 // #endregion
 
 // ─────────────────────────────────────────────
@@ -259,7 +279,7 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
 		botToken: '',
 		botTokenSet: bool(c, 'botTokenSet') === true,
 		debug: bool(c, 'debug'),
-		natMode: (str(c, 'natMode') as WdttServerConfig['natMode']) ?? undefined,
+		natMode: natModeOf(str(c, 'natMode')),
 		natStaticWan: str(c, 'natStaticWan'),
 		policy: str(c, 'policy'),
 		lanSegments: strArr(c, 'lanSegments'),
@@ -537,7 +557,7 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
 		rawListen: cfg.rawListen ?? '',
 		directListen: cfg.directListen ?? '',
 		relayMode: cfg.relayMode === 'raw' ? 'raw' : 'wg',
-		natMode: cfg.natMode ?? 'none',
+		natMode: natModeOf(cfg.natMode),
 		natStaticWan: cfg.natStaticWan ?? '',
 		policy: cfg.policy ?? '',
 		lanSegments: cfg.lanSegments ?? [],

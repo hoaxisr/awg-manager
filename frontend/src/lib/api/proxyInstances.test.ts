@@ -6,10 +6,16 @@ import {
 	instancePath,
 	startedAtFromUptime,
 	toCaptchaOverview,
+	toFreeTurnClientConfig,
 	toFreeTurnClientPatch,
+	toFreeTurnConfig,
+	toFreeTurnServerConfig,
 	toFreeTurnServerPatch,
+	toFreeTurnStatus,
+	toWdttClientConfig,
 	toWdttClientPatch,
 	toWdttConfig,
+	toWdttServerConfig,
 	toWdttServerPatch,
 	toWdttStatus,
 	type ProxyInstallStatus,
@@ -88,9 +94,66 @@ const wdttServerView: ProxyInstanceView = {
 	process: { running: false, binary: '/opt/bin/wdtt-server', binaryPresent: false }
 };
 
+const ftClientView: ProxyInstanceView = {
+	key: 'freeturn-client:nl',
+	id: 'nl',
+	kind: 'freeturn-client',
+	name: 'FT Нидерланды',
+	enabled: true,
+	config: {
+		listen: '127.0.0.1:9100',
+		peer: 'turn.example:3478',
+		provider: 'vk',
+		links: 'l1',
+		streams: 10,
+		transport: 'tcp',
+		mode: 'udp',
+		bond: true,
+		turnHost: 'turn.example',
+		turnPort: 3478,
+		obfProfile: 'rtpopus',
+		obfKeySet: true,
+		streamsPerCred: 5,
+		platform: 'mobile',
+		dnsMode: 'doh',
+		dnsServers: '1.1.1.1',
+		clientId: 'cid-1',
+		sub: 'https://sub.example/ft',
+		debug: true
+	},
+	process: {
+		running: true,
+		pid: 777,
+		uptimeS: 60,
+		clients: 2,
+		log: 'ft-журнал',
+		binary: '/opt/bin/freeturn-client',
+		binaryPresent: true
+	}
+};
+
+const ftServerView: ProxyInstanceView = {
+	key: 'freeturn-server:default',
+	id: 'default',
+	kind: 'freeturn-server',
+	name: 'FT Раздача',
+	enabled: false,
+	config: {
+		listen: '0.0.0.0:56000',
+		connect: '10.0.0.1:51820',
+		mode: 'tcp',
+		obfProfile: 'none',
+		obfKeySet: false,
+		clientsFile: '/opt/etc/ft/clients.json',
+		debug: false,
+		openFirewall: false
+	},
+	process: { running: false, binary: '/opt/bin/freeturn-server', binaryPresent: false }
+};
+
 const list: ProxyListData = {
 	seed: { seeded: true, certified: true },
-	instances: [wdttClientView, wdttServerView]
+	instances: [wdttClientView, wdttServerView, ftClientView, ftServerView]
 };
 
 const install: ProxyInstallStatus = {
@@ -141,6 +204,15 @@ describe('toWdttStatus: блок процесса и install-блок', () => {
 				}
 			}
 		]);
+	});
+
+	it('у остановленного процесса метки старта нет, даже если снимок помнит аптайм', () => {
+		const stale = {
+			...wdttServerView,
+			process: { ...wdttServerView.process, running: false, uptimeS: 900 }
+		};
+		const st = toWdttStatus({ seed: list.seed, instances: [stale] }, install, now).servers[0].status;
+		expect(st.startedAt).toBeUndefined();
 	});
 
 	it('поля без производителя приходят пустыми, а не выдуманными', () => {
@@ -206,6 +278,14 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.passwordSet).toBe(true);
 	});
 
+	it('конфиг клиента собирается клиентским маппером, сервера — серверным', () => {
+		const cfg = toWdttConfig(list);
+		expect(cfg.clients[0].config).toEqual(toWdttClientConfig(wdttClientView));
+		expect(cfg.servers[0].config).toEqual(toWdttServerConfig(wdttServerView));
+		expect(cfg.clients[0].config.vkHashes).toBe('h1,h2');
+		expect(cfg.servers[0].config.wgPort).toBe(56001);
+	});
+
 	it('sub и слоты адресов лежат на записи, а не в конфиге роли', () => {
 		const cfg = toWdttConfig(list).clients[0].config;
 		expect(cfg.sub).toBe('https://sub.example/nl');
@@ -220,6 +300,147 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.linkVkHashes).toBe('h9');
 		expect(cfg.statsLog).toBe('disk');
 		expect(cfg.botTokenSet).toBe(false);
+	});
+});
+
+describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистема', () => {
+	const now = Date.parse('2026-08-24T12:02:00.000Z');
+
+	it('клиенты и серверы не меняются местами', () => {
+		const st = toFreeTurnStatus(list, {}, now);
+		expect(st.clients.map((c) => c.id)).toEqual(['nl']);
+		expect(st.clients.map((c) => c.name)).toEqual(['FT Нидерланды']);
+		expect(st.servers.map((c) => c.id)).toEqual(['default']);
+		expect(st.servers.map((c) => c.name)).toEqual(['FT Раздача']);
+		expect(st.client.binary).toBe('/opt/bin/freeturn-client');
+		expect(st.server.binary).toBe('/opt/bin/freeturn-server');
+	});
+
+	it('в конфиге тоже: клиент — клиентом, сервер — сервером', () => {
+		const cfg = toFreeTurnConfig(list);
+		expect(cfg.clients.map((c) => c.id)).toEqual(['nl']);
+		expect(cfg.clients.map((c) => c.name)).toEqual(['FT Нидерланды']);
+		expect(cfg.servers.map((s) => s.id)).toEqual(['default']);
+		expect(cfg.servers.map((s) => s.name)).toEqual(['FT Раздача']);
+		// Сверяем КОНФИГ целиком, а не общий для обеих ролей listen: маппер
+		// не той роли отдал бы тот же адрес и остался бы незамеченным.
+		expect(cfg.clients[0].config).toEqual(toFreeTurnClientConfig(ftClientView));
+		expect(cfg.clients[0].config.streams).toBe(10);
+		expect(cfg.clients[0].config.provider).toBe('vk');
+		expect(cfg.servers[0].config).toEqual(toFreeTurnServerConfig(ftServerView));
+		expect(cfg.servers[0].config.connect).toBe('10.0.0.1:51820');
+	});
+
+	it('чужая подсистема в выдачу не попадает', () => {
+		const st = toFreeTurnStatus(list, {}, now);
+		expect(st.clients.concat(st.servers).map((i) => i.name)).not.toContain('Нидерланды');
+		const wd = toWdttStatus(list, {}, now);
+		expect(wd.clients.concat(wd.servers).map((i) => i.name)).not.toContain('FT Раздача');
+	});
+
+	it('конфиг клиента FreeTurn собирается целиком', () => {
+		expect(toFreeTurnClientConfig(ftClientView)).toEqual({
+			enabled: true,
+			listen: '127.0.0.1:9100',
+			peer: 'turn.example:3478',
+			provider: 'vk',
+			links: 'l1',
+			streams: 10,
+			transport: 'tcp',
+			mode: 'udp',
+			bond: true,
+			turnHost: 'turn.example',
+			turnPort: 3478,
+			obfProfile: 'rtpopus',
+			obfKey: '',
+			obfKeySet: true,
+			streamsPerCred: 5,
+			platform: 'mobile',
+			dnsMode: 'doh',
+			dnsServers: '1.1.1.1',
+			clientId: 'cid-1',
+			sub: 'https://sub.example/ft',
+			debug: true
+		});
+	});
+
+	it('конфиг сервера FreeTurn собирается целиком', () => {
+		expect(toFreeTurnServerConfig(ftServerView)).toEqual({
+			enabled: false,
+			listen: '0.0.0.0:56000',
+			connect: '10.0.0.1:51820',
+			mode: 'tcp',
+			obfProfile: 'none',
+			obfKey: '',
+			obfKeySet: false,
+			clientsFile: '/opt/etc/ft/clients.json',
+			debug: false,
+			openFirewall: false
+		});
+	});
+
+	it('процесс FreeTurn несёт журнал, соединения и время старта', () => {
+		const st = toFreeTurnStatus(list, {}, now).clients[0].status;
+		expect(st).toEqual({
+			running: true,
+			pid: 777,
+			startedAt: '2026-08-24T12:01:00.000Z',
+			lastError: undefined,
+			log: 'ft-журнал',
+			dtlsConnections: 2,
+			binary: '/opt/bin/freeturn-client',
+			binaryPresent: true
+		});
+	});
+});
+
+describe('режим подключения клиента и режим NAT сервера', () => {
+	it('режим подключения читается из конфига, а не подставляется', () => {
+		expect(toWdttConfig(list).clients[0].config.connMode).toBe('wg');
+		const rawView = {
+			...wdttClientView,
+			config: { ...wdttClientView.config, connMode: 'raw' }
+		};
+		expect(
+			toWdttConfig({ seed: list.seed, instances: [rawView] }).clients[0].config.connMode
+		).toBe('raw');
+	});
+
+	it('режим ретрансляции сервера тоже читается, а не подставляется', () => {
+		expect(toWdttConfig(list).servers[0].config.relayMode).toBe('raw');
+		const wgView = {
+			...wdttServerView,
+			config: { ...wdttServerView.config, relayMode: 'wg' }
+		};
+		expect(
+			toWdttConfig({ seed: list.seed, instances: [wgView] }).servers[0].config.relayMode
+		).toBe('wg');
+	});
+
+	it('режим NAT без значения читается как «полный» — тот же дефолт, что у контрола', () => {
+		const bare = { ...wdttServerView, config: { listen: '0.0.0.0:56002' } };
+		expect(toWdttConfig({ seed: list.seed, instances: [bare] }).servers[0].config.natMode).toBe(
+			'full'
+		);
+	});
+
+	it('дефолт режима NAT ОДИН на чтение и на запись', () => {
+		const bare = { ...wdttServerView, config: { listen: '0.0.0.0:56002' } };
+		const read = toWdttConfig({ seed: list.seed, instances: [bare] }).servers[0].config;
+		expect(toWdttServerPatch(read).natMode).toBe('full');
+		// И у формы, где поля нет вовсе: запись не имеет права молча выключить NAT.
+		expect(toWdttServerPatch({ listen: '0.0.0.0:56002', wgPort: 0, password: '' }).natMode).toBe(
+			'full'
+		);
+	});
+
+	it('заданные режимы NAT доезжают как есть', () => {
+		expect(toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'none' }).natMode).toBe(
+			'none'
+		);
+		expect(
+			toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'internet-only' }).natMode
+		).toBe('internet-only');
 	});
 });
 

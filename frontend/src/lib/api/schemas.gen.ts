@@ -2412,6 +2412,31 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	txBytes: v.optional(v.nullable(v.number())),
 });
 
+const captcha_ClientStatus: v.GenericSchema = v.looseObject({
+	active: v.optional(v.nullable(v.boolean())),
+	canOpen: v.optional(v.nullable(v.boolean())),
+	captchaSession: v.optional(v.nullable(v.number())),
+	clientId: v.optional(v.nullable(v.string())),
+	clientName: v.optional(v.nullable(v.string())),
+	pendingStreams: v.optional(v.nullable(v.number())),
+	portContention: v.optional(v.nullable(v.boolean())),
+	queued: v.optional(v.nullable(v.boolean())),
+	url: v.optional(v.nullable(v.string())),
+	waiting: v.optional(v.nullable(v.boolean())),
+});
+
+const captcha_Overview: v.GenericSchema = v.looseObject({
+	clients: v.optional(v.nullable(v.array(v.lazy(() => captcha_ClientStatus)))),
+	ownerClientId: v.optional(v.nullable(v.string())),
+	ownerName: v.optional(v.nullable(v.string())),
+	portOpen: v.optional(v.nullable(v.boolean())),
+});
+
+const captcha_OverviewResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => captcha_Overview))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const diagnostics_DNSProxy: v.GenericSchema = v.looseObject({
 	displayName: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
@@ -2596,6 +2621,56 @@ const freeturn_Status: v.GenericSchema = v.looseObject({
 	updateAvailable: v.optional(v.nullable(v.boolean())),
 });
 
+const ftlink_DecodeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => ftlink_LinkPayload))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const ftlink_LinkPayload: v.GenericSchema = v.looseObject({
+	bond: v.optional(v.nullable(v.boolean())),
+	cid: v.optional(v.nullable(v.string())),
+	dns: v.optional(v.nullable(v.string())),
+	dnss: v.optional(v.nullable(v.string())),
+	key: v.optional(v.nullable(v.string())),
+	listen: v.optional(v.nullable(v.string())),
+	mcap: v.optional(v.nullable(v.boolean())),
+	mode: v.optional(v.nullable(v.string())),
+	mtu: v.optional(v.nullable(v.number())),
+	n: v.optional(v.nullable(v.number())),
+	name: v.optional(v.nullable(v.string())),
+	obf: v.optional(v.nullable(v.string())),
+	peer: v.optional(v.nullable(v.string())),
+	provider: v.optional(v.nullable(v.string())),
+	spc: v.optional(v.nullable(v.number())),
+	transport: v.optional(v.nullable(v.string())),
+	v: v.optional(v.nullable(v.number())),
+	wg: v.optional(v.nullable(v.string())),
+});
+
+const install_InstallMessage: v.GenericSchema = v.looseObject({
+	message: v.optional(v.nullable(v.string())),
+});
+
+const install_InstallResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => install_InstallMessage))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const install_InstallStatus: v.GenericSchema = v.looseObject({
+	installAvailable: v.optional(v.nullable(v.boolean())),
+	installVersion: v.optional(v.nullable(v.string())),
+	installedVersion: v.optional(v.nullable(v.string())),
+	installing: v.optional(v.nullable(v.boolean())),
+	routerClock: v.optional(v.nullable(v.string())),
+	serverSupported: v.optional(v.nullable(v.boolean())),
+	updateAvailable: v.optional(v.nullable(v.boolean())),
+});
+
+const install_InstallStatusResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => install_InstallStatus))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const presets_DNSEngine: v.GenericSchema = v.looseObject({
 	domains: v.optional(v.nullable(v.array(v.string()))),
 	subnets: v.optional(v.nullable(v.array(v.string()))),
@@ -2635,6 +2710,17 @@ const presets_RuleRef: v.GenericSchema = v.looseObject({
 const presets_SingboxEngine: v.GenericSchema = v.looseObject({
 	action: v.optional(v.nullable(v.string())),
 	ruleSets: v.optional(v.nullable(v.array(v.lazy(() => presets_RuleRef)))),
+});
+
+const subscription_RefreshResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => subscription_RefreshResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const subscription_RefreshResult: v.GenericSchema = v.looseObject({
+	key: v.optional(v.nullable(v.string())),
+	message: v.optional(v.nullable(v.string())),
+	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
 });
 
 const wdtt_ClientConfig: v.GenericSchema = v.looseObject({
@@ -2788,6 +2874,107 @@ const wdtt_SubscriptionPreview: v.GenericSchema = v.looseObject({
 	updatedAt: v.optional(v.nullable(v.string())),
 });
 
+const wdttlink_ClearLinkedResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_ClearLinkedResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_ClearLinkedResult: v.GenericSchema = v.looseObject({
+	deletedTunnels: v.optional(v.nullable(v.array(v.string()))),
+	message: v.optional(v.nullable(v.string())),
+	tunnelErrors: v.optional(v.nullable(v.array(v.string()))),
+});
+
+const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_EnsureWGResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_EnsureWGTunnelResponse))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_EnsureWGTunnelResponse: v.GenericSchema = v.looseObject({
+	created: v.optional(v.nullable(v.boolean())),
+	message: v.optional(v.nullable(v.string())),
+	tunnelId: v.optional(v.nullable(v.string())),
+	tunnelName: v.optional(v.nullable(v.string())),
+});
+
+const wdttlink_ImportPayload: v.GenericSchema = v.looseObject({
+	connMode: v.optional(v.nullable(v.string())),
+	deviceId: v.optional(v.nullable(v.string())),
+	listen: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	password: v.optional(v.nullable(v.string())),
+	peer: v.optional(v.nullable(v.string())),
+	subUrl: v.optional(v.nullable(v.string())),
+	vkHashes: v.optional(v.nullable(v.array(v.string()))),
+	wg: v.optional(v.nullable(v.string())),
+	workers: v.optional(v.nullable(v.number())),
+});
+
+const wdttlink_ImportResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_ImportResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_ImportResult: v.GenericSchema = v.looseObject({
+	key: v.optional(v.nullable(v.string())),
+	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
+});
+
+const wdttlink_LinkDecodeResult: v.GenericSchema = v.looseObject({
+	profile: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
+	subscription: v.optional(v.nullable(v.lazy(() => wdttlink_SubscriptionPreview))),
+});
+
+const wdttlink_LinkResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_LinkResult: v.GenericSchema = v.looseObject({
+	clientId: v.optional(v.nullable(v.string())),
+	link: v.optional(v.nullable(v.string())),
+	linkQwdtt: v.optional(v.nullable(v.string())),
+	peer: v.optional(v.nullable(v.string())),
+});
+
+const wdttlink_SubscriptionPreview: v.GenericSchema = v.looseObject({
+	description: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	profiles: v.optional(v.nullable(v.array(v.lazy(() => wdttlink_ImportPayload)))),
+	subUrl: v.optional(v.nullable(v.string())),
+	trafficLimitMb: v.optional(v.nullable(v.number())),
+	trafficUsedMb: v.optional(v.nullable(v.number())),
+	updatedAt: v.optional(v.nullable(v.string())),
+});
+
+const wdttusers_Reload: v.GenericSchema = v.string();
+
+const wdttusers_UserEntry: v.GenericSchema = v.looseObject({
+	comment: v.optional(v.nullable(v.string())),
+	isAuto: v.optional(v.nullable(v.boolean())),
+	isDeactivated: v.optional(v.nullable(v.boolean())),
+	isExpired: v.optional(v.nullable(v.boolean())),
+	isMainPassword: v.optional(v.nullable(v.boolean())),
+	password: v.optional(v.nullable(v.string())),
+	vkHash: v.optional(v.nullable(v.string())),
+});
+
+const wdttusers_UsersStatus: v.GenericSchema = v.looseObject({
+	available: v.optional(v.nullable(v.boolean())),
+	reload: v.optional(v.nullable(v.lazy(() => wdttusers_Reload))),
+	users: v.optional(v.nullable(v.array(v.lazy(() => wdttusers_UserEntry)))),
+});
+
+const wdttusers_UsersStatusResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttusers_UsersStatus))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 /**
  * 2xx response envelope schema per "METHOD /path" (path как в swagger,
  * без basePath /api; шаблонные сегменты — {param}).
@@ -2807,6 +2994,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /proxy/instance": v.lazy(() => api_APIEnvelope),
 	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_OkResponse),
+	"DELETE /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
+	"DELETE /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
@@ -2873,8 +3062,11 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /proxy/listener": v.lazy(() => api_APIEnvelope),
 	"GET /proxy/outbounds": v.lazy(() => api_ProxyOutboundsResponse),
 	"GET /proxy/runtime": v.lazy(() => api_ProxyRuntimeResponse),
+	"GET /proxyrt/freeturn/captcha/status": v.lazy(() => captcha_OverviewResponse),
+	"GET /proxyrt/install/status": v.lazy(() => install_InstallStatusResponse),
 	"GET /proxyrt/instances": v.lazy(() => api_ProxyRtListResponse),
 	"GET /proxyrt/instances/{key}": v.lazy(() => api_ProxyRtInstanceResponse),
+	"GET /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"GET /routing/access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /routing/client-routes": v.lazy(() => api_ClientRoutesListResponse),
 	"GET /routing/dns-routes": v.lazy(() => api_DnsRoutesListResponse),
@@ -2984,6 +3176,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PATCH /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /proxyrt/instances/{key}": v.lazy(() => api_ProxyRtInstanceResponse),
+	"PATCH /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"PATCH /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
@@ -3063,8 +3256,17 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxy/instances/apply": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/kill-listener": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
+	"POST /proxyrt/freeturn/link/decode": v.lazy(() => ftlink_DecodeResponse),
+	"POST /proxyrt/install": v.lazy(() => install_InstallResponse),
 	"POST /proxyrt/instances": v.lazy(() => api_ProxyRtInstanceResponse),
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
+	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
+	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
+	"POST /proxyrt/instances/{key}/linked-tunnels/clear": v.lazy(() => wdttlink_ClearLinkedResponse),
+	"POST /proxyrt/instances/{key}/subscription/refresh": v.lazy(() => subscription_RefreshResponse),
+	"POST /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
+	"POST /proxyrt/wdtt/link/decode": v.lazy(() => wdttlink_DecodeResponse),
+	"POST /proxyrt/wdtt/link/import": v.lazy(() => wdttlink_ImportResponse),
 	"POST /routing/refresh": v.lazy(() => api_RoutingRefreshResponse),
 	"POST /server/listen/change": v.lazy(() => api_ServerListenChangeResponse),
 	"POST /server/listen/confirm": v.lazy(() => api_OkResponse),
