@@ -263,9 +263,20 @@ var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 // читается всегда, а покрыть надо именно ветку отказа.
 var listSystemInterfaces = sysinfo.ListSystemInterfaces
 
-// routerOpkgTunIndexAdapter отдаёт занятые индексы OpkgTun по kernel-именам
-// из /sys.
-type routerOpkgTunIndexAdapter struct{}
+// routerOpkgTunIndexAdapter отвечает на ДВА разных вопроса, и смешивать их в
+// одной карте нельзя.
+//
+// LiveOpkgTunIndices — что существует в ядре ПРЯМО СЕЙЧАС. Этой картой
+// проверяются «жив ли мой прежний интерфейс» и «можно ли переиспользовать свой
+// удержанный номер», поэтому запись NDMS без устройства сюда попадать не
+// должна: смерть интерфейса после краха читалась бы как жизнь.
+//
+// NDMSOpkgTunPins — номера, удерживаемые записями NDMS. Проверено на стенде
+// 5.01.C.3.0-1: после `ip link del opkgtun12` запись живёт дальше со
+// `state: error`, а устройства в /sys нет. Номер занят, интерфейс мёртв.
+type routerOpkgTunIndexAdapter struct {
+	store *ndmsquery.InterfaceStore
+}
 
 func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
 	// Отказ /sys — ошибка, а не пустая карта: пустую аллокатор читает как
@@ -280,6 +291,30 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map
 		live[n] = true
 	}
 	return live, nil
+}
+
+// NDMSOpkgTunPins — поставщик пинов по записям NDMS.
+//
+// Берётся List, а НЕ ListAll: последний по своему назначению выбрасывает наши
+// интерфейсы (opkgtun*, awgm*), то есть ровно то, ради чего занятость и
+// собирается. Имя берётся из ID и приводится к нижнему регистру: NDMS знает
+// интерфейс только как "OpkgTun10", а ExtractInterfaceNumber заякорен на
+// "^opkgtun\d+$".
+func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[int]bool, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("источник интерфейсов NDMS не подключён")
+	}
+	all, err := a.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pins := make(map[int]bool, len(all))
+	for _, i := range all {
+		if num, ok := sysinfo.ExtractInterfaceNumber(strings.ToLower(i.ID)); ok {
+			pins[num] = true
+		}
+	}
+	return pins, nil
 }
 
 var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)
