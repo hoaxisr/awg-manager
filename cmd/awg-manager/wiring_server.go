@@ -344,12 +344,16 @@ func (a *app) setupRouter() {
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
 		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
-		OpkgTunScan:            opkgTunScanner(a.ndmsQueries.Interfaces),
-		DefaultRoute:           a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
-		SegmentNAT:             a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
-		Segments:               &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
-		RunningConfig:          a.ndmsQueries.RunningConfig,
-		NATState:               &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		// Пины ЧУЖИХ владельцев: записи туннелей. Своя удерживающая запись
+		// сюда не входит — она приходит из настроек, и подмешивание её в
+		// занятость перепинило бы режим роутера сам на себя.
+		OpkgTunPins:   a.awgStore.OpkgTunPinsOf,
+		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
+		RunningConfig: a.ndmsQueries.RunningConfig,
+		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
 		// *RouteStore satisfies DefaultGatewayResolver directly.
 		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {

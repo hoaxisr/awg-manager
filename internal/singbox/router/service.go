@@ -605,6 +605,14 @@ func NewService(d Deps) *ServiceImpl {
 	if d.WANIPCollector == nil {
 		d.WANIPCollector = NewWANIPCollector(&routerLoggerAdapter{log: appLog})
 	}
+	if d.OpkgTunPins == nil {
+		// Не отказ: юнит-тесты собирают сервис без поставщика намеренно. Но в
+		// проде незаполненное поле означает, что занятость сводится к живым
+		// интерфейсам — номер, удержанный записью невключённого туннеля,
+		// снова станет выдаваемым. Такая пропажа уже случалась при правке
+		// проводки, поэтому она обязана быть видна в журнале, а не только в ревью.
+		appLog.Warn("opkgtun-pins", "", "поставщик пинов OpkgTun не задан — занятость считается только по живым интерфейсам")
+	}
 	// Idempotently refresh the netfilter hook script: if a previous
 	// version is on disk (older AWGM without pidof guard), this writes
 	// the current version. No-op when the file is absent — Install
