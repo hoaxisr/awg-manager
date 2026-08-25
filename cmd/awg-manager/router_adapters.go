@@ -9,7 +9,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
-	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -263,30 +262,40 @@ func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r rout
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
 // routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
-// interface names so the fakeip index allocator sees every occupied slot.
+// interface names so the index allocator sees every occupied slot.
+//
+// NDMS-половина берётся из List, а НЕ из ListAll: последний по своему
+// назначению выбрасывает наши интерфейсы (opkgtun*, awgm* — interfaces.go:591),
+// то есть ровно то, ради чего занятость и собирается. Имя берётся из ID и
+// приводится к нижнему регистру: NDMS знает интерфейс только как "OpkgTun10"
+// (поля kernel-имени у него нет — проверено на 5.01.C.3.0-1), а
+// ExtractInterfaceNumber заякорен на "^opkgtun\d+$".
 type routerOpkgTunIndexAdapter struct {
 	store *ndmsquery.InterfaceStore
-	log   *logging.ScopedLogger
+	// listSys — чтение kernel-половины; поле ради тестируемости отказа.
+	listSys func() ([]int, error)
 }
 
 func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
-	sysNums, err := sysinfo.ListSystemInterfaces()
-	if err != nil {
-		// A /sys read failure under-counts occupied opkgtun indices — the
-		// one direction that can cause an index collision — so log it,
-		// then degrade to NDMS-only names.
-		if a.log != nil {
-			a.log.Warn("opkgtun-index", "", "list system interfaces failed: "+err.Error())
-		}
-		sysNums = nil
+	listSys := a.listSys
+	if listSys == nil {
+		listSys = sysinfo.ListSystemInterfaces
 	}
-	all, err := a.store.ListAll(ctx)
+	sysNums, err := listSys()
+	if err != nil {
+		// Недосчёт занятых номеров — единственное направление, дающее
+		// коллизию индексов, поэтому отказ, а не деградация: NDMS-половина
+		// одна не полна (интерфейс без записи в NDMS в неё не попадёт), а
+		// пустая занятость читается как «все номера свободны».
+		return nil, fmt.Errorf("list system interfaces: %w", err)
+	}
+	all, err := a.store.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(all))
 	for _, i := range all {
-		names = append(names, i.Name)
+		names = append(names, strings.ToLower(i.ID))
 	}
 	return router.UnionOpkgTunIndices(sysNums, names), nil
 }
