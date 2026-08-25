@@ -302,6 +302,40 @@ func TestBootSeedFailureAfterSuccessDropsBooted(t *testing.T) {
 	}
 }
 
+// Тот же класс, что и у отказа посева, на двух других ветках боота: и отказ
+// объявления выходов, и отказ сборки инстанса оставляли Booted=true со списком
+// записей ПРОШЛОГО боота.
+func TestBootDeclareFailureDropsBooted(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+
+	e.reg.failSet = errors.New("реестр недоступен")
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("отказ объявления обязан быть ошибкой боота")
+	}
+	if info := e.m.SeedInfo(); info.Booted {
+		t.Fatalf("после отказа объявления Booted обязан быть снят: %+v", info)
+	}
+}
+
+func TestBootFactoryFailureDropsBooted(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+
+	// Новая запись: живые инстансы повторный боот не пересоздаёт, и без неё
+	// фабрику никто не позовёт.
+	seedState(t, e, ftRec("ft"))
+	e.factoryErr = errors.New("бинарь не поставлен")
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("отказ фабрики обязан быть ошибкой боота")
+	}
+	if info := e.m.SeedInfo(); info.Booted {
+		t.Fatalf("после отказа фабрики Booted обязан быть снят: %+v", info)
+	}
+}
+
 func TestBootMarkSeededFailureIsLoggedNotFatal(t *testing.T) {
 	e := newEnv(t)
 	e.reg.failMark = errors.New("призраки в каталоге")

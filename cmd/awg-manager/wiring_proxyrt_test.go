@@ -492,7 +492,13 @@ func TestProxyFactoryBuildsEveryKind(t *testing.T) {
 			return ok && v != nil
 		}},
 		{serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"), func(r proxyrt.Role) bool {
-			v, ok := r.(*wdttserver.Role)
+			// Серверная роль приходит за гейтом усыновления абонентов
+			// (рулинг Н3); проверяется и обёртка, и то, что внутри неё роль.
+			w, ok := r.(*proxyAdoptedRole)
+			if !ok || w == nil {
+				return false
+			}
+			v, ok := w.inner.(*wdttserver.Role)
 			return ok && v != nil
 		}},
 		{instancestore.Record{ID: "ft", Kind: instancestore.KindFreeTurnClient,
@@ -558,7 +564,9 @@ func TestProxyFactoryServerRolesShareOneFWBook(t *testing.T) {
 			t.Fatalf("фабрика %s: %v", c.rec.Kind, err)
 		}
 		defer inst.Stop()
-		role := roleOf(t, inst)
+		// Гейт усыновления абонентов снимается: его вердикт к ведомости
+		// портов отношения не имеет, а без записи в store он не проходит.
+		role := innerRole(roleOf(t, inst))
 		input := findInputPort(t, role.Resources(proxyrt.IntentEnabled, c.cfg, proxyrt.Observations{}))
 		// Исход наблюдения не важен: сверяется, ЧЬЯ ведомость его обслужила.
 		// Чужая ответила бы настоящим listenfirewall — то есть попыткой
@@ -580,6 +588,15 @@ func roleOf(t *testing.T, inst manager.RunningInstance) proxyrt.Role {
 		t.Fatalf("не instance.Instance: %T", inst)
 	}
 	return i.Role()
+}
+
+// innerRole снимает обёртки проводки: тесты, которым нужна сама декларация,
+// не должны знать, сколько гейтов роль пережила.
+func innerRole(r proxyrt.Role) proxyrt.Role {
+	if w, ok := r.(*proxyAdoptedRole); ok {
+		return w.inner
+	}
+	return r
 }
 
 func findInputPort(t *testing.T, res []proxyrt.Resource) *netres.InputPort {
@@ -724,5 +741,257 @@ func TestProxyLinkedFieldFollowsRole(t *testing.T) {
 	}
 	if got := proxyLinkedField(instancestore.KindFreeTurnClient); got != api.LinkedFreeTurn {
 		t.Errorf("freeturn-клиент → %v, want LinkedFreeTurn", got)
+	}
+}
+
+// ── аллокация и транзакция хранилища ─────────────────────────────
+
+type fakeRunning struct{}
+
+func (fakeRunning) Start(context.Context)       {}
+func (fakeRunning) Post(proxyrt.EventKind) bool { return true }
+func (fakeRunning) ResetStartBackoff()          {}
+func (fakeRunning) Stop()                       {}
+
+// newProdAllocManager — менеджер с БОЕВЫМИ аллокаторами поверх настоящего
+// store: только на них воспроизводится дедлок «выделение под замком
+// транзакции», потому что читают они тот же store.
+func newProdAllocManager(t *testing.T, e *occEnv) *manager.Manager {
+	t.Helper()
+	min, max := mipsRange(t)
+	occ := proxyOpkgOccupancy(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
+		return nil, nil
+	}, e.awg, e.settings, e.store)
+	ctx := context.Background()
+	return manager.New(manager.Deps{
+		Store: e.store, Registry: stubRegistry{}, Sweeper: stubSweeper{},
+		Factory: func(instancestore.Record, *manager.Live) (manager.RunningInstance, error) {
+			return fakeRunning{}, nil
+		},
+		Journal: stubJournal{},
+		Seed: func(context.Context) (instancestore.SeedResult, error) {
+			st, err := e.store.Load()
+			return instancestore.SeedResult{State: st}, err
+		},
+		PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
+		AllocIndex: proxyAllocIndex(ctx,
+			proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store),
+		AllocListen: proxyAllocListen(ctx,
+			proxyrt.NewAllocator(proxyrt.IndexRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
+			e.store, e.awg),
+		ReleasePins:  func(...string) {},
+		WaitDisabled: func(string, time.Duration) bool { return true },
+	})
+}
+
+// Х1: правка, которой нужны новые пины (клиент wg → raw), обязана дойти до
+// конца. Аллокаторы читают тот же store, чей нереентрантный замок держит
+// транзакция, поэтому выделение ВНУТРИ неё вешало Update навсегда — а с ним
+// m.mu, то есть всю поверхность /api/proxyrt и Shutdown, до перезапуска демона.
+func TestUpdateAllocatesOutsideStoreTransaction(t *testing.T) {
+	e := newOccEnv(t)
+	e.putRecord(t, instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
+		Enabled:    true,
+		WdttClient: &roles.WdttClientConfig{Mode: "wg", Peer: "1.2.3.4:5", Password: "p"}})
+	mgr := newProdAllocManager(t, e)
+	if err := mgr.Boot(context.Background()); err != nil {
+		t.Fatalf("Boot: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.Update(context.Background(), "wdtt-client:de",
+			func(r *instancestore.Record) error {
+				r.WdttClient.Mode = "raw"
+				return nil
+			})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Update завис: выделение пинов идёт под замком транзакции хранилища")
+	}
+
+	st, err := e.store.Load()
+	if err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	c := st.Records[0].WdttClient
+	if c.NdmsIface == "" || c.RawIface == "" || c.Listen == "" {
+		t.Fatalf("пины не выделены: %+v", c)
+	}
+}
+
+// ── гейт усыновления абонентов (рулинг Н3) ───────────────────────
+
+// countingRole — внутренняя роль гейта: считает обращения и умеет сбрасывать
+// паузу перезапуска.
+type countingRole struct {
+	calls  int
+	resets int
+}
+
+func (r *countingRole) Resources(proxyrt.Intent, any, proxyrt.Observations) []proxyrt.Resource {
+	r.calls++
+	return []proxyrt.Resource{proxyBlocked{id: "inner", reason: errors.New("внутренняя ведомость")}}
+}
+
+func (r *countingRole) ResetStartBackoff() { r.resets++ }
+
+// Fail-closed: пока абоненты не усыновлены, ведомость роли не объявляется
+// вовсе — процесс не стартует, а прогон уходит в failed с причиной. Иначе
+// материализация passwords.json НЕОБРАТИМО отберёт доступ у абонентов,
+// заведённых телеграм-ботом или admin-API форка.
+func TestUsersGateBlocksEnabledServerUntilAdopted(t *testing.T) {
+	inner := &countingRole{}
+	fails, syncs := 2, 0
+	role := &proxyAdoptedRole{inner: inner, gate: &proxyUsersGate{sync: func() error {
+		syncs++
+		if fails > 0 {
+			fails--
+			return errors.New("configDir не задан")
+		}
+		return nil
+	}}}
+
+	res := role.Resources(proxyrt.IntentEnabled, nil, proxyrt.Observations{})
+	if len(res) != 1 || res[0].ID() != proxyUsersResource {
+		t.Fatalf("ведомость при неусыновлённых абонентах: %v", res)
+	}
+	if inner.calls != 0 {
+		t.Fatal("ведомость роли объявлена до усыновления — процесс мог стартовать")
+	}
+	// Приговор виден и валит прогон: шаг с ошибкой применения = фаза failed.
+	steps := res[0].Plan(proxyrt.Observation{})
+	if len(steps) != 1 || steps[0].Op != "fail" {
+		t.Fatalf("гейт обязан планировать приговор: %v", steps)
+	}
+	if err := res[0].Apply(context.Background(), steps[0]); err == nil ||
+		!strings.Contains(err.Error(), "configDir") {
+		t.Fatalf("причина обязана доходить до пользователя: %v", err)
+	}
+	if res[0].RecheckAfter() == 0 {
+		t.Fatal("без подстраховочной сверки гейт не повторится: внешнего события у этой беды нет")
+	}
+
+	// Выключенный инстанс гейта не знает: снятие ресурсов надо доводить в
+	// любом состоянии абонентов.
+	if role.Resources(proxyrt.IntentDisabled, nil, proxyrt.Observations{})[0].ID() == proxyUsersResource {
+		t.Fatal("гейт запер teardown выключенного инстанса")
+	}
+	if inner.calls != 1 {
+		t.Fatalf("ведомость выключенного инстанса не объявлена: calls=%d", inner.calls)
+	}
+
+	// Повтор: усыновление прошло — роль работает; дальше гейт молчит.
+	role.Resources(proxyrt.IntentEnabled, nil, proxyrt.Observations{})
+	if fails != 0 {
+		t.Fatalf("гейт не повторил усыновление: осталось %d отказов", fails)
+	}
+	role.Resources(proxyrt.IntentEnabled, nil, proxyrt.Observations{})
+	role.Resources(proxyrt.IntentEnabled, nil, proxyrt.Observations{})
+	if inner.calls != 3 {
+		t.Fatalf("после успеха ведомость роли обязана объявляться: calls=%d", inner.calls)
+	}
+	// Цикл абонентов — путь СТАРТА, а не каждого прогона: он переписывает
+	// passwords.json, и повтор на каждом тике точил бы флеш роутера.
+	if syncs != 3 {
+		t.Fatalf("усыновление звалось %d раз(а): после успеха гейт обязан молчать", syncs)
+	}
+
+	// Амендмент C: сброс паузы обязан ДОХОДИТЬ до внутренней роли.
+	role.ResetStartBackoff()
+	if inner.resets != 1 {
+		t.Fatalf("сброс паузы не дошёл до роли: resets=%d", inner.resets)
+	}
+}
+
+// ── связанные туннели по роли (амендмент B, место вызова) ────────
+
+func findLinkedEndpoint(t *testing.T, res []proxyrt.Resource) proxyrt.Resource {
+	t.Helper()
+	for _, r := range res {
+		if r.ID() == roles.RLinkedEndpoint {
+			return r
+		}
+	}
+	t.Fatal("роль клиента не объявила linked_endpoint")
+	return nil
+}
+
+// Наблюдается РЕЗУЛЬТАТ, а не хелпер: у wdtt-клиента связанным считается
+// туннель со своим полем связи, у freeturn-клиента — со своим. Перепутанное
+// поле не даёт ни ошибки, ни отказа — только пустой список и вечное молчание.
+func TestProxyFactoryLinksTunnelsByRoleField(t *testing.T) {
+	book, _ := recordingBook(nil)
+	a, factory, _ := newFactoryApp(t, book)
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awg10", Name: "wdtt", WdttClientID: "de"},
+		{ID: "awg11", Name: "ft", FreeTurnClientID: "ft"},
+	} {
+		if err := a.awgStore.Save(tun); err != nil {
+			t.Fatalf("awg.Save: %v", err)
+		}
+	}
+
+	cases := []struct {
+		rec instancestore.Record
+		cfg any
+	}{
+		{instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
+			WdttClient: &roles.WdttClientConfig{Mode: "wg", Peer: "1.2.3.4:5", Listen: "127.0.0.1:9000"}},
+			roles.WdttClientConfig{Mode: "wg", Peer: "1.2.3.4:5", Listen: "127.0.0.1:9000"}},
+		{instancestore.Record{ID: "ft", Kind: instancestore.KindFreeTurnClient,
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001"}},
+			roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001"}},
+	}
+	for _, c := range cases {
+		t.Run(string(c.rec.Kind), func(t *testing.T) {
+			inst, err := factory(c.rec, &manager.Live{})
+			if err != nil {
+				t.Fatalf("фабрика: %v", err)
+			}
+			defer inst.Stop()
+			role := innerRole(roleOf(t, inst))
+			linked := findLinkedEndpoint(t,
+				role.Resources(proxyrt.IntentDisabled, c.cfg, proxyrt.Observations{}))
+			obs, err := linked.Observe(context.Background())
+			if err != nil {
+				t.Fatalf("Observe linked_endpoint: %v", err)
+			}
+			if obs.Attrs["total"] != "1" {
+				t.Fatalf("связанных туннелей %q, want 1: поле связи не следует роли",
+					obs.Attrs["total"])
+			}
+		})
+	}
+}
+
+// ── ведомость INPUT-портов: только серверные ключи ───────────────
+
+// Амендмент A: клиентских ключей в списке ожидания быть не должно — у
+// клиентских ролей ресурса input_port нет, и лишний ключ никогда не отчитается,
+// продержав окно щажения чужих портов все две минуты.
+func TestProxyServerKeysAreServersOnly(t *testing.T) {
+	e := newOccEnv(t)
+	e.putRecord(t, rawClientRecord("de", "OpkgTun3", "opkgtun3"))
+	e.putRecord(t, serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"))
+	e.putRecord(t, instancestore.Record{ID: "ftc", Kind: instancestore.KindFreeTurnClient,
+		FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"}})
+	e.putRecord(t, freeturnServerRecord("fts"))
+
+	got := proxyServerKeys(e.store)
+
+	want := map[string]bool{"wdtt-server:default": true, "freeturn-server:fts": true}
+	if len(got) != len(want) {
+		t.Fatalf("proxyServerKeys() = %v, want ключи %v", got, want)
+	}
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("лишний ключ %q: ресурса input_port у этой роли нет", k)
+		}
 	}
 }

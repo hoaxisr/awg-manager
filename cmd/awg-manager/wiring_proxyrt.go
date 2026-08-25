@@ -615,6 +615,18 @@ func proxySignalReload(links *proxyLinkBook) func(key string) (bool, error) {
 	}
 }
 
+// proxyTunnels — служба туннелей для адаптеров прокси-рантайма. Метод, а не
+// прямое чтение поля: конкретный указатель, положенный в интерфейс, делает его
+// НЕпустым даже будучи nil, и все проверки вида `if svc != nil` вниз по стеку
+// (api.ListLinkedProxyTunnels, proxyLinkedCleaner) на нём не срабатывают —
+// вместо честного «служба не подключена» получается разыменование nil.
+func (a *app) proxyTunnels() api.TunnelService {
+	if a.tunnelService == nil {
+		return nil
+	}
+	return a.tunnelService
+}
+
 // proxyExternalIP — внешний адрес роутера для сборщиков ссылок (перенос
 // resolveExternalIP старых хендлеров).
 func (a *app) proxyExternalIP(ctx context.Context) (string, error) {
@@ -632,6 +644,102 @@ func (a *app) proxyExternalIP(ctx context.Context) (string, error) {
 	}
 	return testing.GetWANIPBound(ctx, wanKernel, fallback)
 }
+
+// ── усыновление абонентов сервера (fail-closed) ──────────────────
+
+// proxyUsersResource — идентификатор ресурса-гейта абонентов. Заведён здесь, а
+// не в roles/ids.go: сам гейт — принадлежность проводки, роль о нём не знает.
+const proxyUsersResource proxyrt.ResourceID = "server_users"
+
+// proxyUsersRetry — период повтора усыновления. Внешнего события у этой беды
+// нет (каталог конфига появился, диск отпустило), поэтому без подстраховочной
+// сверки сервер стоял бы до перезапуска демона.
+const proxyUsersRetry = 30 * time.Second
+
+// proxyBlocked — ресурс-приговор: объявляет причину, по которой инстансу
+// нельзя работать, и валит прогон в фазу failed. Нужен там, где приговор
+// выносит НЕ конфиг роли: у ролей вердикт приходит из Validate(), а причина
+// «абоненты не усыновлены» роли неизвестна.
+type proxyBlocked struct {
+	id     proxyrt.ResourceID
+	reason error
+}
+
+func (b proxyBlocked) ID() proxyrt.ResourceID { return b.id }
+
+func (b proxyBlocked) Observe(context.Context) (proxyrt.Observation, error) {
+	return proxyrt.Observation{Known: true, Exists: false, Detail: b.reason.Error()}, nil
+}
+
+func (b proxyBlocked) Plan(proxyrt.Observation) []proxyrt.Step {
+	return []proxyrt.Step{{Resource: b.id, Op: "fail", Reason: b.reason.Error()}}
+}
+
+func (b proxyBlocked) Apply(context.Context, proxyrt.Step) error { return b.reason }
+
+func (b proxyBlocked) RecheckAfter() time.Duration { return proxyUsersRetry }
+
+var _ proxyrt.Resource = proxyBlocked{}
+
+// proxyUsersGate — цикл абонентов на пути старта, доведённый до успеха.
+// Повторяется, пока не пройдёт; после первого успеха молчит — переписывать
+// passwords.json на каждом прогоне значило бы точить флеш роутера.
+//
+// Гонок нет: ensure зовётся только из Resources, а тот — из воркерной горутины
+// инстанса, которая одна.
+type proxyUsersGate struct {
+	sync func() error
+	done bool
+}
+
+func (g *proxyUsersGate) ensure() error {
+	if g.done {
+		return nil
+	}
+	if err := g.sync(); err != nil {
+		return err
+	}
+	g.done = true
+	return nil
+}
+
+// proxyAdoptedRole — роль wdtt-сервера с ОБЯЗАТЕЛЬНЫМ усыновлением абонентов
+// перед работой (рулинг Н3, fail-closed).
+//
+// Цена выбрана осознанно: материализация passwords.json без усыновления
+// НЕОБРАТИМО отбирает доступ у абонентов, заведённых телеграм-ботом или
+// admin-API форка (их нет в записи — значит не будет и в файле), а
+// невзлетевший сервер обратим и виден. Поэтому пока усыновление не прошло,
+// ведомость роли не объявляется вовсе: процесс не стартует, фаза — failed с
+// причиной.
+//
+// Выключенный инстанс гейта не знает: там желаемое — снятие, и доводить его
+// надо в любом состоянии абонентов.
+type proxyAdoptedRole struct {
+	inner proxyrt.Role
+	gate  *proxyUsersGate
+}
+
+func (r *proxyAdoptedRole) Resources(intent proxyrt.Intent, cfg any, obs proxyrt.Observations) []proxyrt.Resource {
+	if intent == proxyrt.IntentEnabled {
+		if err := r.gate.ensure(); err != nil {
+			return []proxyrt.Resource{proxyBlocked{id: proxyUsersResource,
+				reason: fmt.Errorf("абоненты сервера не усыновлены: %w", err)}}
+		}
+	}
+	return r.inner.Resources(intent, cfg, obs)
+}
+
+// ResetStartBackoff — обязателен и обязан ДОХОДИТЬ до внутренней роли
+// (амендмент C): обёртка без него компилируется молча, а пауза перезапуска
+// перестаёт сниматься правкой записи.
+func (r *proxyAdoptedRole) ResetStartBackoff() {
+	if b, ok := r.inner.(proxyrt.BackoffResetter); ok {
+		b.ResetStartBackoff()
+	}
+}
+
+var _ proxyrt.BackoffResetter = (*proxyAdoptedRole)(nil)
 
 // ── сборка ───────────────────────────────────────────────────────
 
@@ -734,14 +842,14 @@ func (a *app) wireProxyrt() {
 		Records:   records,
 		Mutator:   mutator,
 		Snapshots: snapshots,
-		Tunnels: proxyTunnelImporter{store: a.awgStore, svc: a.tunnelService,
+		Tunnels: proxyTunnelImporter{store: a.awgStore, svc: a.proxyTunnels(),
 			traffic: a.trafficHistory, pub: a.eventBus},
 		Cleaners: map[instancestore.Kind]wdttlink.LinkedCleaner{
 			instancestore.KindWdttClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.tunnelService, field: proxyLinkedField(instancestore.KindWdttClient),
+				svc: a.proxyTunnels(), field: proxyLinkedField(instancestore.KindWdttClient),
 				traffic: a.trafficHistory, pub: a.eventBus},
 			instancestore.KindFreeTurnClient: proxyLinkedCleaner{store: a.awgStore,
-				svc: a.tunnelService, field: proxyLinkedField(instancestore.KindFreeTurnClient),
+				svc: a.proxyTunnels(), field: proxyLinkedField(instancestore.KindFreeTurnClient),
 				traffic: a.trafficHistory, pub: a.eventBus},
 		},
 		Builders: map[instancestore.Kind]wdttlink.LinkBuilder{
@@ -886,7 +994,7 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Permit:   a.ndmsCommands.Policies,
 				Hooks:    proxyRouteHooks{svc: a.clientRouteService},
 				Registry: a.exitRegistry,
-				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService,
+				Sync: newProxyEndpointSync(a.awgStore, a.proxyTunnels(),
 					proxyLinkedField(rec.Kind), a.eventBus),
 				Occ: newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 			})
@@ -896,11 +1004,6 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 			role = r
 			cfg = func() any { c, _ := live.Config().WdttClientConfig(); return c }
 		case instancestore.KindWdttServer:
-			// Усыновление абонентов ДО записи файла: голый Materialize
-			// отобрал бы доступ у заведённых ботом или admin-API форка.
-			if err := users.SyncOnStart(a.shutdownCtx, key); err != nil {
-				journal.Warn("users", key, "цикл абонентов на старте: "+err.Error())
-			}
 			r, err := wdttserver.New(wdttserver.Deps{
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
@@ -921,14 +1024,18 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 			if err != nil {
 				return nil, err
 			}
-			role = r
+			// Усыновление абонентов — гейт, а не побочный шаг сборки:
+			// см. proxyAdoptedRole.
+			role = &proxyAdoptedRole{inner: r, gate: &proxyUsersGate{
+				sync: func() error { return users.SyncOnStart(a.shutdownCtx, key) },
+			}}
 			cfg = func() any { c, _ := live.Config().WdttServerConfig(); return c }
 		case instancestore.KindFreeTurnClient:
 			r, err := freeturn.NewClient(freeturn.ClientDeps{
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Sync: newProxyEndpointSync(a.awgStore, a.tunnelService,
+				Sync: newProxyEndpointSync(a.awgStore, a.proxyTunnels(),
 					proxyLinkedField(rec.Kind), a.eventBus),
 				Occ: newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
 			})

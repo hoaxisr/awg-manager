@@ -237,6 +237,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 		// пользователя, молча указывающие в никуда (M7 плана 4).
 		m.deps.Journal.Warn("boot", "proxy", "объявление выходов: "+err.Error())
 		m.mu.Lock()
+		m.booted = false // тот же класс, что у отказа посева (амендмент D)
 		m.seedErr = err.Error()
 		m.mu.Unlock()
 		return err
@@ -254,6 +255,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 			// Наблюдаемость (F1 + I-4 ревью): боот оборван, часть воркеров уже
 			// бежит, booted остаётся false — причина обязана быть видна в
 			// SeedInfo, иначе наружу уедет «посев не состоялся» без причины.
+			m.booted = false // тот же класс, что у отказа посева (амендмент D)
 			m.seedErr = fmt.Sprintf("собрать инстанс %s: %v", rec.Key(), ferr)
 			m.mu.Unlock()
 			return fmt.Errorf("собрать инстанс %s: %w", rec.Key(), ferr)
@@ -376,6 +378,12 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 // расхождение «реестр впереди диска» живёт до следующей мутации или боота —
 // любой следующий SetDeclared строится от диска и выправляет реестр и
 // зеркало. Это принято и названо здесь, чтобы ревью исполнения не «дочинило».
+// errNotBooted — отказ мутации до состоявшегося посева: ведомость была бы
+// неполной, а объявление неполной ведомости сносит зеркальные записи.
+func errNotBooted(seedErr string) error {
+	return fmt.Errorf("прокси-подсистема не загружена (посев не прошёл: %s) — мутации отклоняются: ведомость была бы неполной", seedErr)
+}
+
 func (m *Manager) mutateStore(mutate func(*instancestore.State) error) (instancestore.State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -384,7 +392,7 @@ func (m *Manager) mutateStore(mutate func(*instancestore.State) error) (instance
 
 func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (instancestore.State, error) {
 	if !m.booted {
-		return instancestore.State{}, fmt.Errorf("прокси-подсистема не загружена (посев не прошёл: %s) — мутации отклоняются: ведомость была бы неполной", m.seedErr)
+		return instancestore.State{}, errNotBooted(m.seedErr)
 	}
 	next, err := m.deps.Store.ReplaceChecked(mutate,
 		// З1 (финальный круг): объявление — хуком beforeWrite, то есть ПОСЛЕ
@@ -444,27 +452,75 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 // Update — правка записи. mutate получает УКАЗАТЕЛЬ и правит поля ПО МЕСТУ:
 // пересборка записи литералом молча теряет CreatedAt/Sub/Users (задача 7
 // предупреждает хендлеры о том же — замечание 11 ревью).
+//
+// Возврат пинов идёт ВНЕ m.mu: он доходит до ведомости INPUT-портов, а та
+// ходит в iptables — держать на этом лок менеджера значило бы вешать всю
+// поверхность API на секунды.
 func (m *Manager) Update(ctx context.Context, key string, mutate func(*instancestore.Record) error) error {
-	var allocated []string
-	st, err := m.mutateStore(func(state *instancestore.State) error {
-		for i := range state.Records {
-			if state.Records[i].Key() == key {
-				if err := mutate(&state.Records[i]); err != nil {
-					return err
-				}
-				var perr error
-				allocated, perr = m.ensurePins(&state.Records[i]) // Щ1: wg→raw и пустой listen
-				return perr
-			}
-		}
-		return fmt.Errorf("инстанс %s не найден", key)
-	})
+	allocated, err := m.update(key, mutate)
 	if err != nil {
 		m.deps.ReleasePins(allocated...) // Н6
 		return err
 	}
+	return nil
+}
+
+// update — тело правки под m.mu. Порядок здесь несущий (Х1): мутатор и
+// выделение пинов идут ДО транзакции хранилища, а транзакция кладёт готовую
+// запись на место.
+//
+// Причина — дедлок, а не вкус: ensurePins ходит в аллокаторы, а прод-аллокаторы
+// читают ТОТ ЖЕ store (им нужны пины и порты соседних записей). Замок store не
+// реентрантен, поэтому выделение внутри Store.ReplaceChecked вешает Update
+// НАВСЕГДА, а с ним — m.mu, то есть всю поверхность API и Shutdown. Так уже
+// сделаны Create и посев; Update был последним, кто выделял внутри транзакции.
+//
+// Мутатор при этом прогоняется РОВНО ОДИН раз: холостой прогон по копии ради
+// «какие пины понадобятся» был бы вторым исполнением чужого замыкания.
+// Потери параллельной правки нет — все мутации менеджера сериализует m.mu, а
+// других писателей у store после посева не бывает.
+func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (allocated []string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.booted {
+		return nil, errNotBooted(m.seedErr)
+	}
+	cur, err := m.deps.Store.Load()
+	if err != nil {
+		return nil, err
+	}
+	cand, found := instancestore.Record{}, false
+	for _, rec := range cur.Records {
+		if rec.Key() == key {
+			cand, found = rec, true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("инстанс %s не найден", key)
+	}
+	if err := mutate(&cand); err != nil {
+		return nil, err
+	}
+	if allocated, err = m.ensurePins(&cand); err != nil { // Щ1: wg→raw и пустой listen
+		return allocated, err
+	}
+
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
+		for i := range state.Records {
+			if state.Records[i].Key() == key {
+				state.Records[i] = cand
+				return nil
+			}
+		}
+		// Запись исчезла между чтением и транзакцией: другого писателя у
+		// store нет, поэтому сюда попадают только дефекты вызывающего.
+		return fmt.Errorf("инстанс %s не найден", key)
+	})
+	if err != nil {
+		return allocated, err
+	}
+
 	if mg, ok := m.m[key]; ok {
 		for i := range st.Records {
 			if st.Records[i].Key() == key {
@@ -494,7 +550,7 @@ func (m *Manager) Update(ctx context.Context, key string, mutate func(*instances
 		mg.inst.ResetStartBackoff()
 		mg.inst.Post(proxyrt.EventIntentChanged)
 	}
-	return nil
+	return nil, nil
 }
 
 func (m *Manager) SetEnabled(ctx context.Context, key string, on bool) error {
