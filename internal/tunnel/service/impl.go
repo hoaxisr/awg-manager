@@ -487,7 +487,8 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 
 	if oldStored.Interface.Address != newStored.Interface.Address {
 		ipv4, ipv6 := orchestrator.SplitAddresses(newStored.Interface.Address)
-		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
+		prefix := orchestrator.AddressPrefixOf(newStored.Interface.Address)
+		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, prefix, ipv6); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync address: %w", err))
 		}

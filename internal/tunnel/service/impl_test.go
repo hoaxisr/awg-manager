@@ -65,7 +65,10 @@ type MockOperator struct {
 	}
 	UpdateDescriptionCalls []struct{ ID, Desc string }
 	SyncDNSCalls           [][]string
-	SyncAddressCalls       []struct{ ID, Addr, IPv6 string }
+	SyncAddressCalls       []struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}
 }
 
 func (m *MockOperator) Create(ctx context.Context, cfg tunnel.Config) error {
@@ -173,8 +176,11 @@ func (m *MockOperator) SyncDNS(ctx context.Context, tunnelID string, dns []strin
 	return nil
 }
 
-func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
-	m.SyncAddressCalls = append(m.SyncAddressCalls, struct{ ID, Addr, IPv6 string }{tunnelID, address, ipv6})
+func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
+	m.SyncAddressCalls = append(m.SyncAddressCalls, struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}{tunnelID, address, ipv6, prefix})
 	return nil
 }
 

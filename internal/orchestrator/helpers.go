@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -21,6 +22,7 @@ var confDir = "/opt/etc/awg-manager"
 func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 	names := tunnel.NewNames(stored.ID)
 	ipv4, ipv6 := SplitAddresses(stored.Interface.Address)
+	prefix := AddressPrefixOf(stored.Interface.Address)
 	var dns []string
 	if stored.Interface.DNS != "" {
 		for _, part := range strings.Split(stored.Interface.DNS, ",") {
@@ -31,15 +33,37 @@ func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 		}
 	}
 	return tunnel.Config{
-		ID:           stored.ID,
-		Name:         stored.Name,
-		Address:      ipv4,
-		AddressIPv6:  ipv6,
-		MTU:          stored.Interface.MTU,
-		DNS:          dns,
-		ConfPath:     names.ConfPath,
-		ISPInterface: stored.ISPInterface,
+		ID:            stored.ID,
+		Name:          stored.Name,
+		Address:       ipv4,
+		AddressPrefix: prefix,
+		AddressIPv6:   ipv6,
+		MTU:           stored.Interface.MTU,
+		DNS:           dns,
+		ConfPath:      names.ConfPath,
+		ISPInterface:  stored.ISPInterface,
 	}
+}
+
+// AddressPrefixOf возвращает длину префикса IPv4-адреса из поля Address
+// записи ("10.55.0.2/24" → 24). Ноль — префикс не задан либо не разбирается.
+//
+// Отдельно от SplitAddresses намеренно: та отдаёт адрес БЕЗ маски, потому что
+// её результат сравнивают с другими адресами, и префикс там всё ломал бы.
+func AddressPrefixOf(address string) int {
+	for _, part := range strings.Split(address, ",") {
+		part = strings.TrimSpace(part)
+		idx := strings.Index(part, "/")
+		if idx == -1 || strings.Contains(part[:idx], ":") {
+			continue
+		}
+		n, err := strconv.Atoi(part[idx+1:])
+		if err != nil || n < 0 || n > 32 {
+			continue
+		}
+		return n
+	}
+	return 0
 }
 
 // SplitAddresses splits a WireGuard Address field (which may contain

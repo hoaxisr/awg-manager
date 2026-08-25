@@ -145,10 +145,16 @@ type Config struct {
 	Name string // Human-readable name
 
 	// Network configuration
-	Address     string   // IPv4 address (e.g., "10.0.0.1")
-	AddressIPv6 string   // IPv6 address (optional)
-	MTU         int      // MTU size (default 1420)
-	DNS         []string // DNS servers to apply on the router (from .conf DNS field)
+	Address string // IPv4 address WITHOUT mask (e.g., "10.0.0.1") — в этом виде
+	// он сравнивается с адресами других туннелей и системных интерфейсов.
+	// AddressPrefix — длина префикса, введённая пользователем ("/24" → 24).
+	// Ноль означает «не задана»: адрес интерфейса с нулевым префиксом
+	// бессмыслен, а поведение по умолчанию — /32, как было до появления поля.
+	// Маску собирает оператор: NDMS хочет точечную форму, ip — префикс.
+	AddressPrefix int
+	AddressIPv6   string   // IPv6 address (optional)
+	MTU           int      // MTU size (default 1420)
+	DNS           []string // DNS servers to apply on the router (from .conf DNS field)
 
 	// WireGuard configuration
 	ConfPath string // Path to .conf file

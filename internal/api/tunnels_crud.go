@@ -268,11 +268,19 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Create NDMS/system resources via service (OS5: OpkgTun, OS4: no-op).
 	// Must be called before store.Save so the service's Exists check passes.
+	// Адрес разбирается так же, как в оркестраторном пути (StoredToConfig):
+	// tunnel.Config несёт адрес БЕЗ маски и отдельным полем IPv6 — маску
+	// ставит оператор. Сырая строка формы уезжала в NDMS целиком, поэтому
+	// два адреса через запятую превращались в один нечитаемый «IPv4», а
+	// IPv6 не настраивался вовсе.
+	ipv4, ipv6 := orchestrator.SplitAddresses(req.Interface.Address)
 	cfg := tunnel.Config{
-		ID:      tunnelID,
-		Name:    req.Name,
-		Address: req.Interface.Address,
-		MTU:     req.Interface.MTU,
+		ID:            tunnelID,
+		Name:          req.Name,
+		Address:       ipv4,
+		AddressPrefix: orchestrator.AddressPrefixOf(req.Interface.Address),
+		AddressIPv6:   ipv6,
+		MTU:           req.Interface.MTU,
 	}
 	// Gate from before the NDMS Create call through publishTunnelList so
 	// the hook-driven snapshot rebroadcast sees the finalized store state.

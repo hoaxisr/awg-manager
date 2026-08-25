@@ -376,7 +376,7 @@ func (o *OperatorOS4Impl) SyncDNS(ctx context.Context, tunnelID string, dns []st
 }
 
 // SyncAddress is a no-op on OS4 (address managed by process).
-func (o *OperatorOS4Impl) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+func (o *OperatorOS4Impl) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
 	return nil
 }
 

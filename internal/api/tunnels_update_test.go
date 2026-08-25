@@ -272,13 +272,24 @@ type stubTunnelSvc struct {
 	stateFn  func(tunnelID string) tunnel.StateInfo
 
 	replaceCalls int
+
+	// createdCfg — конфиг, с которым хендлер позвал Create: по нему видно,
+	// что уехало в NDMS.
+	createdCfg *tunnel.Config
+	createErr  error
+	// deletedID — кого сносил откат создания.
+	deletedID string
 }
 
 func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
 func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) Create(context.Context, string, string, tunnel.Config, *storage.AWGTunnel) error {
+func (s *stubTunnelSvc) Create(_ context.Context, _, _ string, cfg tunnel.Config, _ *storage.AWGTunnel) error {
+	s.createdCfg = &cfg
+	if s.createErr != nil {
+		return s.createErr
+	}
 	return nil
 }
 func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
@@ -288,6 +299,7 @@ func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storag
 	return nil
 }
 func (s *stubTunnelSvc) Delete(ctx context.Context, tunnelID string) error {
+	s.deletedID = tunnelID
 	if s.deleteFn != nil {
 		return s.deleteFn(ctx, tunnelID)
 	}
