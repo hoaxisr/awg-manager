@@ -794,11 +794,6 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
 
-	// Write config file (for export/display purposes)
-	if err := config.WriteFile(parsed); err != nil {
-		s.logWarn("import", tunnelID, "Failed to write config file: "+err.Error())
-	}
-
 	s.logInfo("import", tunnelID, "NativeWG tunnel imported: "+parsed.Name)
 	// Legacy tunnel:created publish removed (Task 14 sweep); import
 	// handler emits resource:invalidated via publishTunnelList.
@@ -866,9 +861,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 
-	// Overwrite .conf file
-	if err := config.WriteFile(stored); err != nil {
-		s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
+	// Перезаписываем .conf только для kernel-пути: его читает `awg setconf`.
+	// У NativeWG конфигурация уезжает в NDMS байтами через RCI, а экспорт
+	// пользователю регенерируется из записи — файл на диске не читает никто.
+	if !s.isNativeWG(stored) {
+		if err := config.WriteFile(stored); err != nil {
+			s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
+		}
 	}
 
 	// NativeWG: sync peer + address/MTU to NDMS.
