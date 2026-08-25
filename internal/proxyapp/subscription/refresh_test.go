@@ -187,16 +187,104 @@ func TestRefresh_KeepsNameWhenProfileHasNone(t *testing.T) {
 }
 
 // Режим связи из профиля нормализуется: сервер понимает только wg и raw.
+//
+// Входы подобраны так, чтобы ОТЛИЧАТЬ нормализацию от константы: одного кейса
+// мало — «всегда raw» прошёл бы его незамеченным. Поэтому каждый ожидаемый
+// ответ ОТЛИЧАЕТСЯ от сохранённого режима, и в наборе есть оба исхода.
 func TestRefresh_NormalizesConnMode(t *testing.T) {
-	f := &fakeFetch{res: subscriptionOf(
-		wdttlink.ImportPayload{Peer: "1.2.3.4:56000", ConnMode: "RAW"},
-	)}
-	s, src, _ := newService(t, clientRecord(), f)
-	if _, err := s.Refresh(context.Background(), clientKey); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name       string
+		storedMode string
+		connMode   string
+		want       string
+	}{
+		{"верхний регистр raw", "wg", "RAW", "raw"},
+		{"верхний регистр и пробелы wg", "raw", "  WG  ", "wg"},
+		{"неизвестное значение — wg", "raw", "мусор", "wg"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := clientRecord()
+			rec.WdttClient.Mode = tc.storedMode
+			f := &fakeFetch{res: subscriptionOf(
+				wdttlink.ImportPayload{Peer: "1.2.3.4:56000", ConnMode: tc.connMode},
+			)}
+			s, src, _ := newService(t, rec, f)
+			if _, err := s.Refresh(context.Background(), clientKey); err != nil {
+				t.Fatal(err)
+			}
+			if got := src.recs[clientKey].WdttClient.Mode; got != tc.want {
+				t.Fatalf("режим=%q, want %q (сохранён был %q)", got, tc.want, tc.storedMode)
+			}
+		})
 	}
-	if got := src.recs[clientKey].WdttClient.Mode; got != "raw" {
-		t.Fatalf("режим=%q", got)
+}
+
+// Пустое поле профиля НЕ затирает сохранённое — инвариант, заявленный
+// докстрокой applyProfile. Провайдер отдаёт разный набор полей, и документ без
+// части полей молча откатил бы настройки клиента, ничем не пожаловавшись.
+//
+// В каждом кейсе пусто РОВНО ОДНО поле, а соседние заполнены: так провал
+// называет виновный гейт, а не «что-то в applyProfile».
+func TestRefresh_EmptyProfileFieldsDoNotOverwrite(t *testing.T) {
+	// Сохранённые значения — заведомо не нулевые и не дефолтные, иначе
+	// «затёрли» и «оставили» были бы неразличимы.
+	const (
+		storedWorkers  = 9
+		storedDeviceID = "dev-1"
+		storedMode     = "raw"
+	)
+
+	for _, tc := range []struct {
+		name    string
+		profile wdttlink.ImportPayload
+	}{
+		{"число воркеров", wdttlink.ImportPayload{
+			Peer: "1.2.3.4:56000", Password: "новый", Workers: 0, DeviceID: "dev-2", ConnMode: "wg"}},
+		{"идентификатор устройства", wdttlink.ImportPayload{
+			Peer: "1.2.3.4:56000", Password: "новый", Workers: 18, DeviceID: "", ConnMode: "wg"}},
+		{"режим подключения", wdttlink.ImportPayload{
+			Peer: "1.2.3.4:56000", Password: "новый", Workers: 18, DeviceID: "dev-2", ConnMode: ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := clientRecord()
+			rec.WdttClient.Workers = storedWorkers
+			rec.WdttClient.DeviceID = storedDeviceID
+			rec.WdttClient.Mode = storedMode
+
+			s, src, _ := newService(t, rec, &fakeFetch{res: subscriptionOf(tc.profile)})
+			if _, err := s.Refresh(context.Background(), clientKey); err != nil {
+				t.Fatal(err)
+			}
+			got := src.recs[clientKey].WdttClient
+
+			// Профиль применён вообще: иначе «поле не затёрто» доказывало бы
+			// только то, что обновление не сработало.
+			if got.Password != "новый" {
+				t.Fatalf("профиль не применён вовсе: пароль=%q", got.Password)
+			}
+
+			// Ожидания — литералами, а не через normalizeConnMode: считать их
+			// проверяемой функцией значило бы сверять её саму с собой.
+			wantWorkers, wantDeviceID, wantMode := tc.profile.Workers, tc.profile.DeviceID, "wg"
+			if tc.profile.Workers == 0 {
+				wantWorkers = storedWorkers
+			}
+			if tc.profile.DeviceID == "" {
+				wantDeviceID = storedDeviceID
+			}
+			if tc.profile.ConnMode == "" {
+				wantMode = storedMode
+			}
+			if got.Workers != wantWorkers {
+				t.Fatalf("воркеры=%d, want %d", got.Workers, wantWorkers)
+			}
+			if got.DeviceID != wantDeviceID {
+				t.Fatalf("идентификатор устройства=%q, want %q", got.DeviceID, wantDeviceID)
+			}
+			if got.Mode != wantMode {
+				t.Fatalf("режим=%q, want %q", got.Mode, wantMode)
+			}
+		})
 	}
 }
 
