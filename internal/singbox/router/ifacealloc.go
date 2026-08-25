@@ -85,10 +85,16 @@ type OpkgTunIndexLister interface {
 	LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error)
 }
 
-// UnionOpkgTunIndices — pure-ядро union занятых индексов OpkgTun: объединяет
-// kernel-числа из /sys/class/net (sysinfo.ListSystemInterfaces) с индексами,
-// извлечёнными из NDMS system-имён интерфейсов. Вынесено отдельно от адаптера,
-// чтобы покрыть тестом без /sys и без NDMS.
+// UnionOpkgTunIndices — pure-ядро набора занятых индексов OpkgTun: собирает
+// kernel-числа из /sys/class/net (sysinfo.ListSystemInterfaces) и индексы,
+// извлечённые из имён интерфейсов NDMS. Вынесено отдельно от адаптера, чтобы
+// покрыть тестом без /sys и без NDMS.
+//
+// Оба источника опциональны, и прод-адаптер зовёт её ДВУМЯ половинами:
+// живые интерфейсы и записи NDMS отвечают на разные вопросы и складываются не
+// здесь, а в занятости для выдачи номера (storage.OpkgTunOccupancy). Так что
+// «union» в имени — про способность сложить два источника, а не про то, что
+// каждый вызов их объединяет.
 //
 // Имена из NDMS прогоняются через sysinfo.ExtractInterfaceNumber, которая
 // заякорена (^opkgtun\d+$, ^awgm\d+$, ^awg\d+$): nwg2/Wireguard0/br0 не матчатся
