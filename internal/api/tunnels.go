@@ -23,7 +23,7 @@ type TunnelService interface {
 	// CRUD
 	List(ctx context.Context) ([]service.TunnelWithStatus, error)
 	Get(ctx context.Context, tunnelID string) (*service.TunnelWithStatus, error)
-	Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config, stored *storage.AWGTunnel) error
+	Create(ctx context.Context, stored *storage.AWGTunnel) error
 	Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 	Delete(ctx context.Context, tunnelID string) error
 

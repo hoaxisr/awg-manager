@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -158,7 +157,7 @@ func (o *Orchestrator) executeOne(ctx context.Context, action Action) error {
 }
 
 // executeColdStartKernel creates a kernel tunnel from scratch.
-// resolveWAN → writeConfigFile → build config → resolve endpoint IP →
+// resolveWAN → config.WriteFile → build config → resolve endpoint IP →
 // check address conflict → kernelOp.ColdStart → persist state.
 func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action) error {
 	stored, err := o.store.Get(action.Tunnel)
@@ -177,7 +176,7 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 	}
 
 	// Write config file
-	if err := writeConfigFile(stored); err != nil {
+	if err := config.WriteFile(stored); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -544,8 +543,7 @@ func (o *Orchestrator) executeDeleteKernel(ctx context.Context, action Action) e
 		return err
 	}
 
-	confPath := tunnel.NewNames(action.Tunnel).ConfPath
-	_ = os.Remove(confPath)
+	config.RemoveFile(action.Tunnel)
 
 	if err := o.store.Delete(action.Tunnel); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)
@@ -570,8 +568,7 @@ func (o *Orchestrator) executeDeleteNativeWG(ctx context.Context, action Action)
 		return err
 	}
 
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	_ = os.Remove(confPath)
+	config.RemoveFile(stored.ID)
 
 	if err := o.store.Delete(action.Tunnel); err != nil {
 		return fmt.Errorf("delete from storage: %w", err)

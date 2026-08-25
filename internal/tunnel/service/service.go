@@ -18,7 +18,7 @@ type Service interface {
 	// Create creates a new tunnel and saves it to storage.
 	// For NativeWG tunnels, pass stored with Backend="nativewg"; Create will
 	// call nwgOperator and set stored.NWGIndex before returning.
-	Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config, stored *storage.AWGTunnel) error
+	Create(ctx context.Context, stored *storage.AWGTunnel) error
 
 	// Get returns a tunnel with its current state.
 	Get(ctx context.Context, tunnelID string) (*TunnelWithStatus, error)

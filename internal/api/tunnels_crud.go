@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,14 +23,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
-
-// writeConfigFile writes config content to file.
-func writeConfigFile(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0600)
-}
 
 // List returns all tunnels.
 //
@@ -266,14 +256,6 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.ISPInterface = "" // auto mode: NDMS picks default gateway
 	req.ISPInterfaceLabel = "Определяет роутер"
 
-	// Create NDMS/system resources via service (OS5: OpkgTun, OS4: no-op).
-	// Must be called before store.Save so the service's Exists check passes.
-	cfg := tunnel.Config{
-		ID:      tunnelID,
-		Name:    req.Name,
-		Address: req.Interface.Address,
-		MTU:     req.Interface.MTU,
-	}
 	// Gate from before the NDMS Create call through publishTunnelList so
 	// the hook-driven snapshot rebroadcast sees the finalized store state.
 	// Only relevant for NativeWG (kernel backend doesn't touch NDMS at
@@ -284,13 +266,8 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.selfCreateGate.EnterSelfCreate()
 		defer h.selfCreateGate.ExitSelfCreate()
 	}
-	if err := h.svc.Create(r.Context(), tunnelID, req.Name, cfg, &req); err != nil {
-		h.log.Warn("create", req.Name, "Service create failed: "+err.Error())
-		response.Error(w, err.Error(), "CREATE_FAILED")
-		return
-	}
-
-	// Add per-tunnel ping check defaults if not specified
+	// Дефолты пингчека — ДО вызова: запись сохраняет сервис, и всё, что
+	// должно попасть на диск, обязано быть проставлено раньше.
 	if req.PingCheck == nil && h.pingCheck != nil {
 		req.PingCheck = &storage.TunnelPingCheck{
 			Enabled:       false,
@@ -305,18 +282,11 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Save to storage
-	if err := h.store.Save(&req); err != nil {
-		h.log.Warn("create", req.Name, "Failed to save tunnel: "+err.Error())
-		response.Error(w, err.Error(), "CREATE_FAILED")
-		return
-	}
-
-	// Write config file
-	confPath := "/opt/etc/awg-manager/" + tunnelID + ".conf"
-	confContent := config.Generate(&req)
-	if err := writeConfigFile(confPath, confContent); err != nil {
-		_ = h.store.Delete(tunnelID)
+	// Ресурс в NDMS, запись и конфиг создаёт сервис одной операцией — вместе
+	// с откатом. Раньше запись и конфиг писал этот хендлер уже после
+	// возврата, и при их провале созданный ресурс оставался сиротой.
+	if err := h.svc.Create(r.Context(), &req); err != nil {
+		h.log.Warn("create", req.Name, "Service create failed: "+err.Error())
 		response.Error(w, err.Error(), "CREATE_FAILED")
 		return
 	}
@@ -568,14 +538,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		// Settings-only changes (method, interval, threshold) are picked up
 		// automatically by the monitor loop on each tick via getCheckConfig().
-	}
-
-	// Regenerate config file
-	confPath := "/opt/etc/awg-manager/" + id + ".conf"
-	confContent := config.Generate(&req)
-	if err := writeConfigFile(confPath, confContent); err != nil {
-		response.Error(w, err.Error(), "UPDATE_FAILED")
-		return
 	}
 
 	// Handle primary connection / ISP interface route changes for running tunnels.

@@ -32,11 +32,6 @@ func opkgTunExists(ctx context.Context, q *query.Queries, name string) bool {
 	return err == nil && iface != nil
 }
 
-// splitAddressMask splits a CIDR or bare IP into (address, mask).
-// - "10.0.0.2/32" → ("10.0.0.2", "255.255.255.255")
-// - "10.0.0.2"    → ("10.0.0.2", "255.255.255.255")  (defaults to /32)
-// Returns the original input as-is if parsing fails (best-effort; caller
-// validates elsewhere).
 // errOS4Tunnel — отказ обслуживать запись, оставшуюся от KeeneticOS 4.x.
 //
 // У идентификаторов awgm<N> NewNames не строит NDMS-имени, а весь путь OS 5.x
@@ -48,19 +43,26 @@ func errOS4Tunnel(op, tunnelID string) error {
 		fmt.Errorf("туннель создан на KeeneticOS 4.x — удалите его и импортируйте конфиг заново"))
 }
 
-func splitAddressMask(addr string) (string, string) {
+// maskFromPrefix — точечная маска для NDMS из длины префикса. Ноль (префикс не
+// задан) и любое значение вне 1..32 дают /32: до появления поля адрес
+// интерфейса всегда получал именно её.
+func maskFromPrefix(prefix int) string {
+	if prefix < 1 || prefix > 32 {
+		prefix = 32
+	}
+	return net.IP(net.CIDRMask(prefix, 32)).String()
+}
+
+// addressWithPrefix — форма для `ip address add`. Пустой адрес остаётся пустым:
+// вызывающий сам решает, ставить ли его вообще.
+func addressWithPrefix(addr string, prefix int) string {
 	if addr == "" {
-		return "", ""
+		return ""
 	}
-	cidr := addr
-	if !strings.Contains(cidr, "/") {
-		cidr += "/32"
+	if prefix < 1 || prefix > 32 {
+		prefix = 32
 	}
-	ip, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return addr, "255.255.255.255"
-	}
-	return ip.String(), net.IP(ipNet.Mask).String()
+	return fmt.Sprintf("%s/%d", addr, prefix)
 }
 
 // ipRunFunc is the signature for running ip commands.
@@ -172,7 +174,7 @@ func (o *OperatorOS5Impl) Create(ctx context.Context, cfg tunnel.Config) error {
 	// This is the only place we call SetAddress/SetMTU for new tunnels —
 	// Start() skips NDMS config when OpkgTun already exists.
 	if cfg.Address != "" {
-		__addr, __mask := splitAddressMask(cfg.Address)
+		__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
 		if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 			rollbackCreate()
 			return tunnel.NewOpError("create", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
@@ -298,7 +300,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// Always re-apply address/MTU — after ip link del + ip link add, NDMS
 	// does not re-apply stored config to the new kernel interface.
 	// SetAddress via RCI triggers NDMS to do "ip addr add" on the interface.
-	__addr, __mask := splitAddressMask(cfg.Address)
+	__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
 	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, justCreated)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
@@ -372,10 +374,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// After ip link del + ip link add, this is OUR kernel interface —
 	// NDMS does not manage it. We must apply all config ourselves.
 	if cfg.Address != "" {
-		addr := cfg.Address
-		if !strings.Contains(addr, "/") {
-			addr += "/32"
-		}
+		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
 		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set IPv4 address: "+err.Error())
 		}
@@ -699,7 +698,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// MTU is always re-applied: NDMS may have default (1420) if config was lost,
 	// causing oversized encrypted packets that degrade upload throughput.
 	if justCreated {
-		__addr, __mask := splitAddressMask(cfg.Address)
+		__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
 		if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 		}
@@ -733,10 +732,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	// Assign addresses on kernel interface (we own it after ip link del + add)
 	if cfg.Address != "" {
-		addr := cfg.Address
-		if !strings.Contains(addr, "/") {
-			addr += "/32"
-		}
+		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
 		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to set IPv4 address: "+err.Error())
 		}
@@ -909,9 +905,9 @@ func (o *OperatorOS5Impl) SyncDNS(ctx context.Context, tunnelID string, dns []st
 }
 
 // SyncAddress updates IPv4/IPv6 address on a running tunnel's NDMS interface.
-func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
+func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
 	names := tunnel.NewNames(tunnelID)
-	__addr, __mask := splitAddressMask(address)
+	__addr, __mask := address, maskFromPrefix(prefix)
 	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 		return tunnel.NewOpError("sync_address", tunnelID, "ndms", err)
 	}

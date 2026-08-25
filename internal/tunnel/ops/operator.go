@@ -87,7 +87,8 @@ type Operator interface {
 	SyncDNS(ctx context.Context, tunnelID string, dns []string) error
 
 	// SyncAddress updates IPv4/IPv6 address on a running tunnel via ip commands.
-	SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error
+	// prefix — длина префикса IPv4 (0 = не задана, оператор ставит /32).
+	SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error
 
 	// UpdateDescription updates the tunnel description in RCI.
 	UpdateDescription(ctx context.Context, tunnelID, description string) error

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -272,13 +273,28 @@ type stubTunnelSvc struct {
 	stateFn  func(tunnelID string) tunnel.StateInfo
 
 	replaceCalls int
+
+	// createdCfg — конфиг, с которым хендлер позвал Create: по нему видно,
+	// что уехало в NDMS.
+	createdCfg *tunnel.Config
+	// createdRecord — запись, которую хендлер отдал сервису: по ней видно,
+	// что успело проставиться до передачи владения.
+	createdRecord *storage.AWGTunnel
+	createErr     error
 }
 
 func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
 func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) Create(context.Context, string, string, tunnel.Config, *storage.AWGTunnel) error {
+func (s *stubTunnelSvc) Create(_ context.Context, stored *storage.AWGTunnel) error {
+	cfg := orchestrator.StoredToConfig(stored)
+	s.createdCfg = &cfg
+	rec := *stored
+	s.createdRecord = &rec
+	if s.createErr != nil {
+		return s.createErr
+	}
 	return nil
 }
 func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {

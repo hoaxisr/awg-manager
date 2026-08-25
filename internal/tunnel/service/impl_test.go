@@ -65,7 +65,10 @@ type MockOperator struct {
 	}
 	UpdateDescriptionCalls []struct{ ID, Desc string }
 	SyncDNSCalls           [][]string
-	SyncAddressCalls       []struct{ ID, Addr, IPv6 string }
+	SyncAddressCalls       []struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}
 }
 
 func (m *MockOperator) Create(ctx context.Context, cfg tunnel.Config) error {
@@ -173,8 +176,11 @@ func (m *MockOperator) SyncDNS(ctx context.Context, tunnelID string, dns []strin
 	return nil
 }
 
-func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
-	m.SyncAddressCalls = append(m.SyncAddressCalls, struct{ ID, Addr, IPv6 string }{tunnelID, address, ipv6})
+func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
+	m.SyncAddressCalls = append(m.SyncAddressCalls, struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}{tunnelID, address, ipv6, prefix})
 	return nil
 }
 
@@ -250,9 +256,9 @@ func TestUpdate_RejectsIDMismatch(t *testing.T) {
 
 func TestUpdate_KernelAddressChangeBeforeFirstStart(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateNotCreated})
@@ -291,9 +297,9 @@ func TestUpdate_KernelAddressChangeRejectedWhenProcessRunning(t *testing.T) {
 
 func TestUpdate_UserspaceAddressChangeAllowedWhenCreated(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true, BackendType: "userspace"})
