@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -109,37 +110,33 @@ type ProxyRtStateView struct {
 	UpdatedAt string                `json:"updatedAt,omitempty" example:"2026-08-24T12:00:00Z"`
 }
 
-// ProxyRtServerUserView — абонент wdtt-сервера без пароля (Н5).
-type ProxyRtServerUserView struct {
-	PasswordSet bool   `json:"passwordSet" example:"true"`
-	Comment     string `json:"comment,omitempty"`
-	VkHash      string `json:"vkHash,omitempty"`
-	ExpiresAt   int64  `json:"expiresAt,omitempty"`
-	Auto        bool   `json:"auto,omitempty"`
-}
-
 // ProxyRtInstanceView — запись инстанса + состояние + процесс.
+//
+// Абонентов сервера (Record.Users) здесь НЕТ намеренно: их отдаёт своя ручка
+// (задача 9), которая одна умеет посчитать живые признаки — истёк, отозван,
+// автоматический — и знает пароль, ключ всех операций над абонентом. Урезанный
+// блок здесь был бы приманкой: из него собралась бы таблица, в которой
+// истёкшие абоненты выглядят живыми.
 //
 // Config отдаётся ОДНИМ объектом (а не под ключом роли, как на диске): та же
 // форма, что принимают POST/PATCH, — иначе фронт собирал бы тело правки из
 // другого места, чем читает.
 type ProxyRtInstanceView struct {
-	Key          string                  `json:"key" example:"wdtt-client:default"`
-	ID           string                  `json:"id" example:"default"`
-	Kind         string                  `json:"kind" example:"wdtt-client"`
-	Name         string                  `json:"name" example:"Нидерланды"`
-	Enabled      bool                    `json:"enabled" example:"true"`
-	CreatedAt    string                  `json:"createdAt,omitempty"`
-	Sub          string                  `json:"sub,omitempty"`
-	PeerWg       string                  `json:"peerWg,omitempty"`
-	PeerRaw      string                  `json:"peerRaw,omitempty"`
-	Users        []ProxyRtServerUserView `json:"users,omitempty"`
-	LinkPeer     string                  `json:"linkPeer,omitempty"`
-	LinkVKHashes string                  `json:"linkVkHashes,omitempty"`
-	StatsLog     string                  `json:"statsLog,omitempty"`
-	Config       map[string]any          `json:"config" swaggertype:"object"`
-	State        *ProxyRtStateView       `json:"state,omitempty"`
-	Process      ProcessView             `json:"process"`
+	Key          string            `json:"key" example:"wdtt-client:default"`
+	ID           string            `json:"id" example:"default"`
+	Kind         string            `json:"kind" example:"wdtt-client"`
+	Name         string            `json:"name" example:"Нидерланды"`
+	Enabled      bool              `json:"enabled" example:"true"`
+	CreatedAt    string            `json:"createdAt,omitempty"`
+	Sub          string            `json:"sub,omitempty"`
+	PeerWg       string            `json:"peerWg,omitempty"`
+	PeerRaw      string            `json:"peerRaw,omitempty"`
+	LinkPeer     string            `json:"linkPeer,omitempty"`
+	LinkVKHashes string            `json:"linkVkHashes,omitempty"`
+	StatsLog     string            `json:"statsLog,omitempty"`
+	Config       map[string]any    `json:"config" swaggertype:"object"`
+	State        *ProxyRtStateView `json:"state,omitempty"`
+	Process      ProcessView       `json:"process"`
 }
 
 // ProxyRtListData — тело GET /proxyrt/instances.
@@ -679,10 +676,51 @@ func proxyApplyConfig(rec *instancestore.Record, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
 	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return fmt.Errorf("невалидный конфиг роли %s: %w", rec.Kind, err)
+	}
+	proxyResetPresentSlices(proxyConfigPtr(rec), keys)
 	if err := json.Unmarshal(raw, proxyConfigPtr(rec)); err != nil {
 		return fmt.Errorf("невалидный конфиг роли %s: %w", rec.Kind, err)
 	}
 	return nil
+}
+
+// proxyResetPresentSlices обнуляет срезы конфига, чьи ключи есть в присланном
+// теле. Иначе декодер сливает СТРУКТУРЫ ВНУТРИ СРЕЗА поэлементно: он
+// переиспользует старый элемент по позиции и заполняет в нём только присланные
+// ключи. PATCH policies [{"name":"B"}] поверх [{"name":"A","order":0}] дал бы
+// {"name":"B","order":0} — позиционный пин старого permit'а уехал бы на новое
+// имя, а order:0 по докстроке roles.PolicyPermit это не пустое место, а САМЫЙ
+// ВЕРХ политики. Присланный срез обязан заменять старый целиком.
+//
+// Обнуляются ВСЕ срезы, а не только срезы структур: для срезов скаляров это
+// ничего не меняет (элементы и так переписываются целиком), а перечень полей,
+// за которым надо следить, не заводится.
+func proxyResetPresentSlices(cfg any, keys map[string]json.RawMessage) {
+	v := reflect.ValueOf(cfg)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return
+	}
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := v.Field(i)
+		if f.Kind() != reflect.Slice || !f.CanSet() {
+			continue
+		}
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, ok := keys[name]; ok {
+			f.Set(reflect.Zero(f.Type()))
+		}
+	}
 }
 
 // proxyPruneBlankSecrets выбрасывает из тела пустые секретные поля (Н5):
@@ -757,15 +795,6 @@ func (h *ProxyInstancesHandler) viewOf(rec instancestore.Record, st *proxyrt.Ins
 		Config:       proxyConfigView(rec),
 		State:        proxyStateView(st),
 		Process:      h.processView(rec),
-	}
-	for _, u := range rec.Users {
-		v.Users = append(v.Users, ProxyRtServerUserView{
-			PasswordSet: strings.TrimSpace(u.Password) != "",
-			Comment:     u.Comment,
-			VkHash:      u.VkHash,
-			ExpiresAt:   u.ExpiresAt,
-			Auto:        u.Auto,
-		})
 	}
 	return v
 }

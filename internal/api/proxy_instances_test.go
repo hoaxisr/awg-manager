@@ -176,6 +176,25 @@ func fullServerRecord() instancestore.Record {
 	}
 }
 
+func fullClientRecord() instancestore.Record {
+	order := 0
+	return instancestore.Record{
+		ID:        "nl",
+		Kind:      instancestore.KindWdttClient,
+		Name:      "Нидерланды",
+		Enabled:   true,
+		CreatedAt: "2026-08-02T10:00:00Z",
+		Sub:       "https://sub.example/c1",
+		PeerWg:    "wg.example:56000",
+		PeerRaw:   "raw.example:56001",
+		WdttClient: &roles.WdttClientConfig{
+			Mode: "wg", Listen: "127.0.0.1:9000", Peer: "wg.example:56000",
+			Password: "c-secret", VKHashes: "vk", Workers: 9,
+			Policies: []roles.PolicyPermit{{Name: "A", Order: &order}},
+		},
+	}
+}
+
 func newProxyHandler(t *testing.T, mgr *fakeProxyManager, states fakeProxyStates) *ProxyInstancesHandler {
 	t.Helper()
 	return NewProxyInstancesHandler(ProxyInstancesDeps{
@@ -339,12 +358,9 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 		LinkPeer:     "link.example",
 		LinkVKHashes: "vk1,vk2",
 		StatsLog:     "/opt/var/stat.log",
-		Users: []ProxyRtServerUserView{
-			{PasswordSet: true, Comment: "Ноут", VkHash: "vh1", ExpiresAt: 1700000000, Auto: true},
-		},
-		Config:  got.Config, // конфиг сверяется отдельно ниже
-		State:   got.State,
-		Process: got.Process,
+		Config:       got.Config, // конфиг сверяется отдельно ниже
+		State:        got.State,
+		Process:      got.Process,
 	}
 	if !reflect.DeepEqual(got, wantRec) {
 		t.Fatalf("запись = %+v,\nждали %+v", got, wantRec)
@@ -863,5 +879,170 @@ func TestProxyInstancesMethodNotAllowed(t *testing.T) {
 	rr := doProxy(t, h, http.MethodPut, "/api/proxyrt/instances", "")
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("код = %d, ждали 405", rr.Code)
+	}
+}
+
+// ── фикс-раунд 1 ─────────────────────────────────────────────────
+
+// I1: присланный срез структур заменяет старый ЦЕЛИКОМ. Слияние поэлементно
+// протащило бы order:0 старого permit'а (САМЫЙ ВЕРХ политики) на новое имя.
+func TestProxyInstancesPatch_PolicySliceReplacedWholesale(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl",
+		`{"config":{"policies":[{"name":"B"}]}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	if len(mgr.mutated) != 1 {
+		t.Fatalf("Update вызван %d раз", len(mgr.mutated))
+	}
+	got := mgr.mutated[0].WdttClient.Policies
+	want := []roles.PolicyPermit{{Name: "B"}}
+	if !reflect.DeepEqual(got, want) {
+		var order any = "nil"
+		if len(got) > 0 && got[0].Order != nil {
+			order = *got[0].Order
+		}
+		t.Fatalf("policies = %+v (order %v), ждали %+v (order nil): позиционный пин старого permit'а уехал на новое имя",
+			got, order, want)
+	}
+}
+
+// I1 (контроль): срез строк тоже заменяется целиком, а не дополняется.
+func TestProxyInstancesPatch_StringSliceReplacedWholesale(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default",
+		`{"config":{"lanSegments":["10.0.0.0/8","172.16.0.0/12"]}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	want := []string{"10.0.0.0/8", "172.16.0.0/12"}
+	if !reflect.DeepEqual(mgr.mutated[0].WdttServer.LanSegments, want) {
+		t.Fatalf("lanSegments = %+v, ждали %+v", mgr.mutated[0].WdttServer.LanSegments, want)
+	}
+}
+
+// I2: ответ POST — отдельный путь кода (respondRecord), и он обязан маскировать
+// секреты так же, как список.
+func TestProxyInstancesCreate_ResponseMasksSecrets(t *testing.T) {
+	mgr := &fakeProxyManager{seed: manager.SeedInfo{Booted: true, Certified: true}}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPost, "/api/proxyrt/instances",
+		`{"id":"nl","kind":"wdtt-client","name":"c","config":{"connMode":"wg","password":"секрет-создания","vkHashes":"vk"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "секрет-создания") {
+		t.Fatalf("пароль уехал в ответе на создание: %s", rr.Body.String())
+	}
+	var got ProxyRtInstanceView
+	decodeProxyData(t, rr, &got)
+	if _, ok := got.Config["password"]; ok {
+		t.Errorf("password присутствует в конфиге ответа на создание")
+	}
+	if got.Config["passwordSet"] != true {
+		t.Errorf("passwordSet = %v, ждали true", got.Config["passwordSet"])
+	}
+}
+
+// I2: то же для ответа PATCH — и заодно проверка, что пароли абонентов не
+// уезжают ни одним путём.
+func TestProxyInstancesPatch_ResponseMasksSecrets(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default", `{"name":"Новое"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	for _, secret := range []string{"s-secret", "bot-secret", "u-secret"} {
+		if strings.Contains(rr.Body.String(), secret) {
+			t.Fatalf("секрет %q уехал в ответе на правку: %s", secret, rr.Body.String())
+		}
+	}
+	var got ProxyRtInstanceView
+	decodeProxyData(t, rr, &got)
+	if _, ok := got.Config["password"]; ok {
+		t.Errorf("password присутствует в конфиге ответа на правку")
+	}
+	if got.Config["passwordSet"] != true || got.Config["botTokenSet"] != true {
+		t.Errorf("признаки секретов потеряны: %+v", got.Config)
+	}
+}
+
+// Абоненты сервера из этой поверхности не отдаются вовсе: урезанный блок —
+// приманка для сборки таблицы, в которой истёкшие выглядят живыми.
+func TestProxyInstances_NoUsersBlock(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	for _, path := range []string{"/api/proxyrt/instances", "/api/proxyrt/instances/wdtt-server:default"} {
+		rr := doProxy(t, h, http.MethodGet, path, "")
+		if strings.Contains(rr.Body.String(), `"users"`) {
+			t.Fatalf("%s отдал блок абонентов: %s", path, rr.Body.String())
+		}
+		if strings.Contains(rr.Body.String(), "Ноут") || strings.Contains(rr.Body.String(), "vh1") {
+			t.Fatalf("%s отдал данные абонента: %s", path, rr.Body.String())
+		}
+	}
+}
+
+// I3: снимок есть, но процесс не бежит (PID нулевой) — running обязан быть
+// ложным. Снимок отдаётся последний известный, поэтому вектор реальный.
+func TestProxyInstancesProcess_SnapshotWithoutPID(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := NewProxyInstancesHandler(ProxyInstancesDeps{
+		Manager: mgr,
+		States:  fakeProxyStates{},
+		Snapshot: func(string) (awgmproto.State, bool) {
+			return awgmproto.State{Role: "server", PID: 0, LastError: "процесс вышел"}, true
+		},
+	})
+	rr := doProxy(t, h, http.MethodGet, "/api/proxyrt/instances/wdtt-server:default", "")
+	var got ProxyRtInstanceView
+	decodeProxyData(t, rr, &got)
+	want := ProcessView{Running: false, LastError: "процесс вышел"}
+	if !reflect.DeepEqual(got.Process, want) {
+		t.Fatalf("process = %+v, ждали %+v (снимок есть, но PID нулевой)", got.Process, want)
+	}
+}
+
+// Гейт OpkgTun на ПЕРЕКЛЮЧЕНИИ режима: заявленное отступление от брифа
+// («создание») закрывается своим кейсом.
+func TestProxyInstancesPatch_OpkgTunGateOnModeSwitch(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := NewProxyInstancesHandler(ProxyInstancesDeps{
+		Manager:          mgr,
+		States:           fakeProxyStates{},
+		OpkgTunSupported: func() bool { return false },
+	})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl",
+		`{"config":{"connMode":"raw"}}`)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("код = %d, ждали 422: %s", rr.Code, rr.Body.String())
+	}
+	if code, _ := decodeProxyErr(t, rr); code != "PROXY_OPKGTUN_UNSUPPORTED" {
+		t.Fatalf("код ошибки = %q, ждали PROXY_OPKGTUN_UNSUPPORTED", code)
+	}
+	if len(mgr.mutated) != 0 {
+		t.Fatalf("запись изменена вопреки отказу: %+v", mgr.mutated)
 	}
 }

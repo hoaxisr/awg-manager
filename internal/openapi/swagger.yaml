@@ -2837,10 +2837,6 @@ definitions:
         type: string
       sub:
         type: string
-      users:
-        items:
-          $ref: '#/definitions/api.ProxyRtServerUserView'
-        type: array
     type: object
   api.ProxyRtListData:
     properties:
@@ -2894,20 +2890,6 @@ definitions:
       seeded:
         example: true
         type: boolean
-    type: object
-  api.ProxyRtServerUserView:
-    properties:
-      auto:
-        type: boolean
-      comment:
-        type: string
-      expiresAt:
-        type: integer
-      passwordSet:
-        example: true
-        type: boolean
-      vkHash:
-        type: string
     type: object
   api.ProxyRtStateView:
     properties:
