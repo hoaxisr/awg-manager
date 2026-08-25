@@ -925,11 +925,15 @@ static int s2c_thread_fn(void *data)
 
 		atomic_inc(&proxy->rx_packets);
 		atomic64_add(n, &proxy->rx_bytes);
-		/* Feed the adaptive window from real inbound datagram sizes. */
-		udp_window_observe(proxy, n);
 
 		/* Transform inbound AWG -> WG */
 		out = transform_inbound(buf, n, &proxy->cfg, &out_len);
+		/* Feed the adaptive window from the POST-strip size, not the raw
+		 * datagram: a server handshake may carry its own random trailer, and
+		 * observing that would bias the window off cosmetic padding. Matches
+		 * the egress path, which observes the pre-trailer out_len. */
+		if (out)
+			udp_window_observe(proxy, out_len);
 		if (out && out_len == WG_COOKIE_SIZE &&
 		    out[0] == WG_COOKIE_REPLY &&
 		    proxy->has_cookie_key &&
