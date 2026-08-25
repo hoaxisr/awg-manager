@@ -831,11 +831,29 @@ func (f *fakeListenFW) lastApplied() []string {
 	return out
 }
 
-func bookOver(fw *fakeListenFW, keys ...string) *proxyFWBook {
+// bookOver — ведомость на модели listenfirewall с ПЕРЕХВАЧЕННЫМ будильником
+// окна: возвращённый fire() играет истечение окна. Настоящий таймер в тесте
+// негоден — ждать две минуты нельзя, а дать ему выстрелить по живому
+// listenfirewall тем более.
+func bookOver(t *testing.T, fw *fakeListenFW, keys ...string) (*proxyFWBook, func()) {
+	t.Helper()
+	var fire func()
+	prev := proxyFWAfterFunc
+	proxyFWAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		if d != proxyFWGrace {
+			t.Fatalf("будильник заведён на %v, а не на окно ожидания", d)
+		}
+		fire = f
+		return nil
+	}
 	b := newProxyFWBook(keys)
+	proxyFWAfterFunc = prev
 	b.list = fw.list
 	b.apply = fw.reconcile
-	return b
+	if fire == nil {
+		t.Fatal("ведомость не завела будильник окна")
+	}
+	return b, fire
 }
 
 func spec(port int, proto string) netres.PortSpec {
@@ -881,7 +899,7 @@ func sameNames(got, want []string) bool {
 // адаптер здесь давал вечный цикл: каждый закрывал порты другого раз в 15 с.
 func TestProxyFWBookUnionOfContributions(t *testing.T) {
 	fw := &fakeListenFW{}
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 	b := book.forInstance("freeturn-server:s2")
 
@@ -908,7 +926,7 @@ func TestProxyFWBookUnionOfContributions(t *testing.T) {
 // объединения.
 func TestProxyFWBookEmptyContributionClosesPorts(t *testing.T) {
 	fw := &fakeListenFW{}
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 	b := book.forInstance("freeturn-server:s2")
 	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
@@ -923,13 +941,22 @@ func TestProxyFWBookEmptyContributionClosesPorts(t *testing.T) {
 	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
 		t.Fatalf("порт выключенного инстанса не закрыт: %v", got)
 	}
+	// Пустой вклад в карте не остаётся: иначе она копит выключенных и снятых,
+	// а снятие уже выключенного инстанса переписывает хук впустую.
+	before := len(fw.applied)
+	if err := book.forget(context.Background(), "freeturn-server:s2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fw.applied) != before {
+		t.Fatalf("ведомость помнит выключенный инстанс: лишнее приведение %v", fw.lastApplied())
+	}
 }
 
 // Мёртвое поколение: порт, которого не желает никто, виден лишним и уходит из
 // объединения. Аддитивный Reconcile оставил бы его навсегда.
 func TestProxyFWBookSweepsUnclaimedPort(t *testing.T) {
 	fw := &fakeListenFW{}
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 	b := book.forInstance("freeturn-server:s2")
 	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
@@ -956,7 +983,7 @@ func TestProxyFWBookSweepsUnclaimedPort(t *testing.T) {
 // запуском демона. Ни ведомость, ни объединение не имеют права его потерять.
 func TestProxyFWBookSparesPortsOfUnreportedInstance(t *testing.T) {
 	fw := &fakeListenFW{live: liveSpecs(spec(3478, "udp"))}
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 
 	// Инстанс, который сам ещё не отчитался, лишних портов не видит вовсе —
@@ -980,7 +1007,7 @@ func TestProxyFWBookSparesPortsOfUnreportedInstance(t *testing.T) {
 // делает состав неизвестным: применять нельзя — ресурс повторит.
 func TestProxyFWBookFailsClosedWhenListingBrokenDuringGrace(t *testing.T) {
 	fw := &fakeListenFW{listErr: errors.New("boom")}
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err == nil {
 		t.Fatal("отказ листинга обязан отменить приведение")
@@ -996,9 +1023,7 @@ func TestProxyFWBookFailsClosedWhenListingBrokenDuringGrace(t *testing.T) {
 // щадить ничьи порты.
 func TestProxyFWBookGraceEndsWaitForSilentInstance(t *testing.T) {
 	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"))}
-	now := time.Now()
-	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
-	book.now = func() time.Time { return now }
+	book, graceOver := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
 	a := book.forInstance("wdtt-server:s1")
 
 	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
@@ -1011,14 +1036,89 @@ func TestProxyFWBookGraceEndsWaitForSilentInstance(t *testing.T) {
 		t.Fatalf("в окне ожидания лишних быть не может: %v", got)
 	}
 
-	now = now.Add(proxyFWGrace + time.Second)
-	if got := managedNames(t, a); !sameNames(got, []string{"tcp/9999", "udp/56000"}) {
-		t.Fatalf("после окна ведомость = %v", got)
+	graceOver()
+	if got := managedNames(t, a); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("после окна ведомость = %v (ничьё уже вычищено проходом окна)", got)
 	}
 	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
 		t.Fatal(err)
 	}
 	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
 		t.Fatalf("после окна ничей порт обязан быть вычищен: %v", got)
+	}
+}
+
+// B1: при ВСЕХ выключенных серверах ведомость никто не наблюдает —
+// netres.InputPort на пустом желаемом не заводит будильник и не зовёт Apply.
+// Порты мёртвого поколения ушли бы только до следующего включения сервера или
+// перезапуска демона, поэтому окно закрывается собственным одноразовым
+// проходом приведения.
+func TestProxyFWBookSweepsUnclaimedWithoutLiveServers(t *testing.T) {
+	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"), spec(56000, "udp"))}
+	_, graceOver := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
+
+	graceOver()
+
+	if len(fw.applied) != 1 {
+		t.Fatalf("проход окна не состоялся: %v", fw.applied)
+	}
+	if got := fw.lastApplied(); len(got) != 0 {
+		t.Fatalf("порты мёртвого поколения не вычищены: %v", got)
+	}
+}
+
+// B2: нештатное снятие инстанса (таймаут ожидания teardown или отказ ресурса
+// РАНЬШЕ input_port — он в серверной роли последний) оставляет вклад в
+// ведомости. Фантомный вклад входит в каждое следующее объединение, то есть
+// правило не просто не снимается, а активно восстанавливается соседом.
+func TestProxyFWBookForgetDropsPhantomContribution(t *testing.T) {
+	fw := &fakeListenFW{}
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	b := book.forInstance("freeturn-server:s2")
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reconcile(context.Background(), []netres.PortSpec{spec(3478, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := book.forget(context.Background(), "freeturn-server:s2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("вклад снятого инстанса не забыт: %v", got)
+	}
+	// И сосед его не воскрешает.
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("фантомный вклад воскрешён соседним приведением: %v", got)
+	}
+}
+
+// Снятие инстанса, который отчитаться не успел, закрывает круг ожидания —
+// иначе ведомость ждала бы покойника всё окно.
+func TestProxyFWBookForgetClosesPendingCircle(t *testing.T) {
+	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"))}
+	book, _ := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.forget(context.Background(), "freeturn-server:s2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("круг не закрыт: ничьё осталось в объединении: %v", got)
+	}
+	// Чужой и уже забытый ключ приведения не порождают.
+	before := len(fw.applied)
+	if err := book.forget(context.Background(), "freeturn-server:s2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fw.applied) != before {
+		t.Fatal("повторное снятие переписало хук впустую")
 	}
 }

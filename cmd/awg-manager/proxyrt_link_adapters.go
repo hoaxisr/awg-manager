@@ -292,12 +292,11 @@ type proxyFWBook struct {
 	mu      sync.Mutex
 	want    map[string][]netres.PortSpec
 	pending map[string]bool
+	expired bool
 	// list/apply — швы прода (listenfirewall) ради теста: весь смысл ведомости
 	// в СОСТАВЕ желаемого, а наблюдать его иначе нечем.
 	list  func(ctx context.Context) ([]listenfirewall.PortSpec, error)
 	apply func(ctx context.Context, desired []listenfirewall.PortSpec)
-	now   func() time.Time
-	start time.Time
 }
 
 // proxyFWGrace — окно ожидания отчётов. Пока не отчитался хоть один серверный
@@ -309,6 +308,10 @@ type proxyFWBook struct {
 // вечно.
 const proxyFWGrace = 2 * time.Minute
 
+// proxyFWAfterFunc — переменная ради теста (тот же приём, что у killPID и
+// legacyHookPath): будильник окна, который в тесте ждать нельзя.
+var proxyFWAfterFunc = time.AfterFunc
+
 // newProxyFWBook — ведомость на список ключей серверных инстансов (тех, у чьих
 // ролей есть ресурс input_port). Список знает фабрика.
 func newProxyFWBook(serverKeys []string) *proxyFWBook {
@@ -317,21 +320,55 @@ func newProxyFWBook(serverKeys []string) *proxyFWBook {
 		pending: map[string]bool{},
 		list:    listenfirewall.ListManaged,
 		apply:   listenfirewall.Reconcile,
-		now:     time.Now,
 	}
 	for _, k := range serverKeys {
 		b.pending[k] = true
 	}
-	b.start = b.now()
+	proxyFWAfterFunc(proxyFWGrace, b.graceOver)
 	return b
+}
+
+// graceOver — окно ожидания истекло: один проход приведения к объединению.
+// Ведомость перестаёт быть пассивной, и это осознанная цена. Без прохода
+// истечение окна не запускает НИЧЕГО: вычистка держится на будильнике
+// netres.InputPort, а он ненулевой только при непустом желаемом — при всех
+// выключенных серверах порты мёртвого поколения жили бы в INPUT до включения
+// хоть одного сервера или перезапуска демона.
+func (b *proxyFWBook) graceOver() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.expired = true
+	// Ошибки быть не может: при истёкшем окне объединение считается без
+	// листинга живых правил.
+	_ = b.applyUnionLocked(context.Background())
 }
 
 // forInstance — хендл netres.FW для одного инстанса.
 func (b *proxyFWBook) forInstance(key string) netres.FW { return proxyFW{book: b, key: key} }
 
+// forget — снять вклад инстанса и тут же привести объединение. Штатное
+// удаление обнуляет вклад само (teardown-прогон с пустым желаемым), но на
+// нештатном пути его не будет: ожидание снятия ресурсов ограничено таймаутом,
+// а прогон рвётся на первом отказе применения — ресурс input_port у серверной
+// роли последний, и до него просто не доходит очередь. Оставленный вклад
+// входил бы в каждое следующее объединение, то есть правило не просто не
+// снималось бы, а восстанавливалось любым соседним приведением — до
+// перезапуска демона.
+func (b *proxyFWBook) forget(ctx context.Context, key string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, known := b.want[key]
+	if !known && !b.pending[key] {
+		return nil // чужой или уже забытый ключ: приводить нечего
+	}
+	delete(b.want, key)
+	delete(b.pending, key)
+	return b.applyUnionLocked(ctx)
+}
+
 // pendingLocked — круг отчётов не полон и окно ожидания не истекло.
 func (b *proxyFWBook) pendingLocked() bool {
-	return len(b.pending) > 0 && b.now().Sub(b.start) < proxyFWGrace
+	return !b.expired && len(b.pending) > 0
 }
 
 func fwPortKey(port int, proto string) string {
@@ -378,9 +415,20 @@ func (b *proxyFWBook) visible(key string, live []listenfirewall.PortSpec) []netr
 func (b *proxyFWBook) reconcile(ctx context.Context, key string, own []netres.PortSpec) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.want[key] = append([]netres.PortSpec(nil), own...)
+	if len(own) == 0 {
+		// Пустой вклад держать незачем, а карта иначе копит выключенных и
+		// снятых.
+		delete(b.want, key)
+	} else {
+		b.want[key] = append([]netres.PortSpec(nil), own...)
+	}
 	delete(b.pending, key)
+	return b.applyUnionLocked(ctx)
+}
 
+// applyUnionLocked — привести listenfirewall к объединению вкладов. Зовётся
+// под удержанным b.mu.
+func (b *proxyFWBook) applyUnionLocked(ctx context.Context) error {
 	seen := map[string]bool{}
 	var desired []listenfirewall.PortSpec
 	add := func(port int, proto string) {
@@ -714,8 +762,9 @@ func (c legacyChain) deleteArgs(spec []string) []string {
 	return append([]string{"-t", c.table, "-D"}, spec...)
 }
 
-// legacyCleanup — ОДНОРАЗОВАЯ уборка наследия старого движка (только при
-// первом посеве). Три источника форм, и все три обязаны быть здесь: правила
+// legacyCleanup — уборка наследия старого движка. Гоняется, пока висит отметка
+// cleanupPending (амендмент A3): первый посев её ставит, снимает её успешный
+// проход. Три источника форм, и все три обязаны быть здесь: правила
 // по прежним kernel-именам (а), помеченные правила трёх разных меток (б) и
 // legacy-описания NDMS (в).
 //

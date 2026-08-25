@@ -710,6 +710,10 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	e := newSeedEnv(t)
 	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
 	  "listen":"0.0.0.0:56002","password":"spw"}}]}`)
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
 	first, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
@@ -727,13 +731,16 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(st.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("прежние kernel-имена не сохранены: %v", st.LegacyKernelIfaces)
 	}
-
-	// Повторный боот: посева нет, а уборка обязана быть повторена — с ТЕМ ЖЕ
-	// списком имён и со свежим списком pid-файлов старого поколения.
-	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
-		t.Fatal(err)
+	if !reflect.DeepEqual(st.OldGenPIDs, []int{321}) {
+		t.Fatalf("pid'ы старого поколения не сохранены: %v", st.OldGenPIDs)
 	}
-	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+
+	// Повторный боот: посева нет, а уборка обязана быть повторена — с ТЕМИ ЖЕ
+	// списками. Пересбор pid'ов с диска запрещён (B3): pid-файлы старого мира
+	// никто не удаляет, лежат они на флеше и переживают перезагрузку, а номер
+	// из протухшего файла система могла отдать процессу НОВОГО поколения.
+	// Проверка имени бинаря тут не спасает — бинари у обоих миров одни и те же.
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-other.pid"), "654")
 	second, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
@@ -744,8 +751,8 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(second.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("список имён не доехал до повтора: %v", second.LegacyKernelIfaces)
 	}
-	if len(second.OldGenPIDs) != 1 || second.OldGenPIDs[0] != 321 {
-		t.Fatalf("pid'ы старого поколения не пересобраны: %v", second.OldGenPIDs)
+	if !reflect.DeepEqual(second.OldGenPIDs, []int{321}) {
+		t.Fatalf("список pid'ов пересобран с диска: %v", second.OldGenPIDs)
 	}
 }
 
@@ -765,8 +772,9 @@ func TestClearCleanupPendingStopsRepeats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CleanupPending || len(st.LegacyKernelIfaces) != 0 {
-		t.Fatalf("отметка не снята: pending=%v ifaces=%v", st.CleanupPending, st.LegacyKernelIfaces)
+	if st.CleanupPending || len(st.LegacyKernelIfaces) != 0 || len(st.OldGenPIDs) != 0 {
+		t.Fatalf("отметка не снята: pending=%v ifaces=%v pids=%v",
+			st.CleanupPending, st.LegacyKernelIfaces, st.OldGenPIDs)
 	}
 	if len(st.Records) != 1 {
 		t.Fatalf("снятие отметки тронуло записи: %+v", st.Records)

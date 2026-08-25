@@ -274,15 +274,13 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		return SeedResult{}, err
 	}
 	if cur.Seeded {
-		// Посев — no-op, но недоведённая уборка обязана повториться: pid'ы
-		// старого поколения пересобираются заново (pid-файлы на месте), список
-		// прежних kernel-имён приходит с диска.
-		res := SeedResult{State: cur, CleanupPending: cur.CleanupPending,
-			LegacyKernelIfaces: cur.LegacyKernelIfaces}
-		if cur.CleanupPending {
-			res.OldGenPIDs = oldGenerationPIDs(d.RuntimeDir)
-		}
-		return res, nil
+		// Посев — no-op, но недоведённая уборка обязана повториться: оба её
+		// списка приходят с диска. Пересбор pid'ов заново запрещён (B3): за
+		// время между боотами номер из протухшего pid-файла система могла
+		// отдать процессу НОВОГО поколения, и добивание убило бы своего.
+		return SeedResult{State: cur, CleanupPending: cur.CleanupPending,
+			LegacyKernelIfaces: cur.LegacyKernelIfaces,
+			OldGenPIDs:         cur.OldGenPIDs}, nil
 	}
 
 	var wdttFile oldWdttFile
@@ -474,6 +472,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		from = []string{"clean-install"}
 	}
 
+	oldGenPIDs := oldGenerationPIDs(d.RuntimeDir)
 	next, err := st.Replace(func(state *State) error {
 		exists := map[string]bool{}
 		for _, r := range state.Records {
@@ -488,6 +487,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		state.SeededFrom = from
 		state.CleanupPending = true
 		state.LegacyKernelIfaces = legacyIfaces
+		state.OldGenPIDs = oldGenPIDs
 		return nil
 	})
 	if err != nil {
@@ -498,18 +498,19 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		State:              next,
 		SeededNow:          true,
 		CleanupPending:     true,
-		OldGenPIDs:         oldGenerationPIDs(d.RuntimeDir),
+		OldGenPIDs:         oldGenPIDs,
 		LegacyKernelIfaces: legacyIfaces,
 	}, nil
 }
 
 // ClearCleanupPending — снятие отметки ОТДЕЛЬНОЙ транзакцией, после успешного
-// прохода одноразовых шагов. Список прежних kernel-имён уходит вместе с ней:
-// он существует только ради этих шагов.
+// прохода одноразовых шагов. Оба списка уходят вместе с ней: они существуют
+// только ради этих шагов.
 func ClearCleanupPending(st *Store) error {
 	_, err := st.Replace(func(state *State) error {
 		state.CleanupPending = false
 		state.LegacyKernelIfaces = nil
+		state.OldGenPIDs = nil
 		return nil
 	})
 	return err
