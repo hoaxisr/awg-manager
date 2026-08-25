@@ -26,6 +26,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -163,7 +164,13 @@ type app struct {
 	downloadSvc         *downloader.Service
 
 	// прокси-рантайм
-	proxyMgr *manager.Manager
+	//
+	// proxyStore — ОДИН экземпляр владельца proxy-instances.json на процесс:
+	// читают его и потребители вне рантайма (подбор listen-порта старого
+	// мира, импорт связанного туннеля), а второй экземпляр развёл бы
+	// сериализацию записи по разным замкам.
+	proxyStore *instancestore.Store
+	proxyMgr   *manager.Manager
 
 	// HTTP
 	srv *server.Server

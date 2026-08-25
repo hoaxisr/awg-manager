@@ -219,16 +219,11 @@ func (a *app) setupServices() {
 		"/opt/bin/wdtt-client",
 		"/opt/bin/wdtt-server",
 	)
-	a.freeturnService.SetListenPortChecker(&crossListenPortChecker{
-		AWGStore:           a.awgStore,
-		WDTT:               a.wdttService,
-		IncludeWdttClients: true,
-	})
-	a.wdttService.SetListenPortChecker(&crossListenPortChecker{
-		AWGStore:               a.awgStore,
-		FreeTurn:               a.freeturnService,
-		IncludeFreeTurnClients: true,
-	})
+	// Один чек-лист на обе подсистемы: занятость обеих он берёт из общего
+	// хранилища прокси-инстансов, а своё исключает по аргументам вызова.
+	listenChecker := &crossListenPortChecker{AWGStore: a.awgStore, Records: a.proxyStore}
+	a.freeturnService.SetListenPortChecker(listenChecker)
+	a.wdttService.SetListenPortChecker(listenChecker)
 	relayProbe := &proxyhealth.HTTPRelayProbe{
 		CheckURL: func() string {
 			if a.settingsStore == nil {

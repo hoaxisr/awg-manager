@@ -1,88 +1,67 @@
 package proxylisten
 
 import (
-	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-func TestCrossChecker_IncludesWdttForFreeTurn(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "wdtt.json"), []byte(`{"clients":[{"id":"wdtt-a","name":"WDTT","config":{"listen":"127.0.0.1:9000"}}],"servers":[]}`), 0o644); err != nil {
-		t.Fatal(err)
+// newRecords кладёт записи ЧЕРЕЗ хранилище: нормализация и инварианты те же,
+// что у прода, и фикстура не может застыть в форме, которой store уже не
+// отдаёт.
+func newRecords(t *testing.T, recs ...instancestore.Record) *instancestore.Store {
+	t.Helper()
+	store := instancestore.New(t.TempDir())
+	if _, err := store.Replace(func(st *instancestore.State) error {
+		st.Records = recs
+		return nil
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
 	}
+	return store
+}
 
-	checker := &CrossChecker{
-		AWGStore:           storage.NewAWGTunnelStore(dir),
-		WDTT:               wdtt.NewService(dir, filepath.Join(dir, "run"), "wdtt-client", "wdtt-server"),
-		IncludeWdttClients: true,
-	}
+func TestCrossChecker_IncludesClientsOfBothSubsystems(t *testing.T) {
+	checker := &CrossChecker{Records: newRecords(t,
+		instancestore.Record{ID: "wd-a", Kind: instancestore.KindWdttClient,
+			WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000"}},
+		instancestore.Record{ID: "ft-a", Kind: instancestore.KindFreeTurnClient,
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001"}},
+	)}
+
 	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !used[9000] {
-		t.Fatalf("expected wdtt port 9000 reserved, got %v", used)
+	want := map[int]bool{9000: true, 9001: true}
+	if !reflect.DeepEqual(used, want) {
+		t.Fatalf("занятые порты = %v, ждали %v", used, want)
 	}
 }
 
-func TestCrossChecker_IncludesFreeTurnForWdtt(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "freeturn.json"), []byte(`{"clients":[{"id":"ft-a","name":"FT","config":{"listen":"127.0.0.1:9000"}}],"servers":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestCrossChecker_IncludesServerPorts(t *testing.T) {
+	checker := &CrossChecker{Records: newRecords(t,
+		instancestore.Record{ID: "wd-s", Kind: instancestore.KindWdttServer,
+			WdttServer: &roles.WdttServerConfig{
+				Listen: "0.0.0.0:56002", WgPort: 56001,
+				NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+				RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
+			}},
+		instancestore.Record{ID: "ft-s", Kind: instancestore.KindFreeTurnServer,
+			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:56003"}},
+	)}
 
-	checker := &CrossChecker{
-		AWGStore:               storage.NewAWGTunnelStore(dir),
-		FreeTurn:               freeturn.NewService(dir, filepath.Join(dir, "run"), "freeturn-client", "freeturn-server"),
-		IncludeFreeTurnClients: true,
-	}
 	used, err := checker.OccupiedLocalListenPorts("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !used[9000] {
-		t.Fatalf("expected freeturn port 9000 reserved, got %v", used)
-	}
-}
-
-func TestCrossChecker_IncludesWdttServerPortsForFreeTurn(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "wdtt.json"), []byte(`{"clients":[],"servers":[{"id":"wdtt-s","name":"WDTT","config":{"listen":"0.0.0.0:56002","wgPort":56001,"password":"x"}}]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &CrossChecker{
-		WDTT: wdtt.NewService(dir, filepath.Join(dir, "run"), "wdtt-client", "wdtt-server"),
-	}
-	used, err := checker.OccupiedLocalListenPorts("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !used[56001] || !used[56002] {
-		t.Fatalf("expected wdtt server ports reserved, got %v", used)
-	}
-}
-
-func TestCrossChecker_IncludesFreeTurnServerPortsForWdtt(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "freeturn.json"), []byte(`{"clients":[],"servers":[{"id":"ft-s","name":"FT","config":{"listen":"0.0.0.0:56003","connect":"127.0.0.1:51820"}}]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	checker := &CrossChecker{
-		FreeTurn: freeturn.NewService(dir, filepath.Join(dir, "run"), "freeturn-client", "freeturn-server"),
-	}
-	used, err := checker.OccupiedLocalListenPorts("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !used[56003] {
-		t.Fatalf("expected freeturn server port 56003 reserved, got %v", used)
+	want := map[int]bool{56001: true, 56002: true, 56003: true}
+	if !reflect.DeepEqual(used, want) {
+		t.Fatalf("занятые порты = %v, ждали %v", used, want)
 	}
 }
 
@@ -102,55 +81,55 @@ func TestCrossChecker_IncludesAWGTunnelEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !used[9002] {
-		t.Fatalf("expected awg endpoint port 9002 reserved, got %v", used)
+	want := map[int]bool{9002: true}
+	if !reflect.DeepEqual(used, want) {
+		t.Fatalf("занятые порты = %v, ждали %v", used, want)
 	}
 }
 
-// Туннель, привязанный к самому клиенту, не должен считаться занятым: иначе
-// клиент на каждом старте видит свой же порт занятым и переезжает, а endpoint
-// туннеля остаётся на старом — связка разваливается без шанса на самолечение.
-func TestCrossChecker_SkipsOwnClientTunnel(t *testing.T) {
+// Ни туннель, привязанный к самому клиенту, ни его собственная запись не
+// должны считаться занятыми: иначе клиент на каждом старте видит свой же порт
+// занятым и переезжает, а endpoint туннеля остаётся на старом — связка
+// разваливается без шанса на самолечение.
+func TestCrossChecker_SkipsOwnTunnelAndOwnRecord(t *testing.T) {
 	dir := t.TempDir()
 	awgStore := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := awgStore.Save(&storage.AWGTunnel{
-		ID:           "awg11",
-		Name:         "linked-wdtt",
-		WdttClientID: "client-a",
-		Peer:         storage.AWGPeer{Endpoint: "127.0.0.1:9000"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := awgStore.Save(&storage.AWGTunnel{
-		ID:               "awg12",
-		Name:             "linked-freeturn",
-		FreeTurnClientID: "client-b",
-		Peer:             storage.AWGPeer{Endpoint: "127.0.0.1:9001"},
-	}); err != nil {
-		t.Fatal(err)
+	for _, tun := range []storage.AWGTunnel{
+		{ID: "awg11", Name: "linked-wdtt", WdttClientID: "client-a",
+			Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
+		{ID: "awg12", Name: "linked-freeturn", FreeTurnClientID: "client-b",
+			Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9001"}},
+	} {
+		if err := awgStore.Save(&tun); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	checker := &CrossChecker{AWGStore: awgStore}
+	checker := &CrossChecker{
+		AWGStore: awgStore,
+		Records: newRecords(t,
+			instancestore.Record{ID: "client-a", Kind: instancestore.KindWdttClient,
+				WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000"}},
+			instancestore.Record{ID: "client-b", Kind: instancestore.KindFreeTurnClient,
+				FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001"}},
+		),
+	}
 
 	used, err := checker.OccupiedLocalListenPorts("client-a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if used[9000] {
-		t.Fatalf("собственный туннель клиента не должен резервировать 9000: %v", used)
-	}
-	if !used[9001] {
-		t.Fatalf("чужой туннель обязан резервировать 9001: %v", used)
+	want := map[int]bool{9001: true}
+	if !reflect.DeepEqual(used, want) {
+		t.Fatalf("для wdtt-клиента client-a занятые порты = %v, ждали %v", used, want)
 	}
 
 	used, err = checker.OccupiedLocalListenPorts("", "client-b")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if used[9001] {
-		t.Fatalf("собственный туннель freeturn-клиента не должен резервировать 9001: %v", used)
-	}
-	if !used[9000] {
-		t.Fatalf("чужой туннель обязан резервировать 9000: %v", used)
+	want = map[int]bool{9000: true}
+	if !reflect.DeepEqual(used, want) {
+		t.Fatalf("для freeturn-клиента client-b занятые порты = %v, ждали %v", used, want)
 	}
 }
