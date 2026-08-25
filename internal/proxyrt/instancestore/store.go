@@ -226,8 +226,17 @@ func normalizeRecord(r *Record) {
 		if d.RelayMode == "" {
 			d.RelayMode = "wg"
 		}
-		if d.NatMode == "" {
-			d.NatMode = "none"
+		// Дефолт и приведение неизвестного — ПАРИТЕТ со старым миром
+		// (wdtt.normalizeNatMode, access.go:30-37: всё, кроме трёх известных
+		// значений, становится full). Разойдись они — мастер раздачи, который
+		// создаёт сервер без конфига, получал бы уже заполненное "none" и
+		// сохранял его: абоненты подключаются, интернета нет. Тот же дефолт
+		// держит и посев: у пользователя, не трогавшего NAT, поле пустое, и
+		// "none" здесь снял бы NAT с работавшей раздачи после обновления.
+		switch d.NatMode = strings.TrimSpace(d.NatMode); d.NatMode {
+		case "full", "internet-only", "none":
+		default:
+			d.NatMode = "full"
 		}
 	}
 	if r.FreeTurnClient != nil {

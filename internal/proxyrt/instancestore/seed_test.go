@@ -1325,3 +1325,36 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	}
 	assertEveryFieldCarried(t, "PolicyPermit", permits)
 }
+
+// TestSeedServerWithoutNatModeGetsFull — РЕГРЕСС МИГРАЦИИ. У пользователя,
+// который режим NAT никогда не трогал, поле старого конфига пустое, а старый
+// мир трактовал пустое как full (wdtt.normalizeNatMode, access.go:30-37).
+// Дефолт "none" на посеве снял бы NAT с РАБОТАВШЕЙ раздачи после обновления:
+// абоненты подключаются, интернета нет.
+//
+// Проверка отдельная от нормализации на записи (store_test.go) сознательно:
+// посев переносит NatMode как есть (seed.go:412), и ломается этот путь
+// независимо — своим кодом и своими фикстурами.
+func TestSeedServerWithoutNatModeGetsFull(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"default","name":"Раздача","config":{
+	  "listen":"0.0.0.0:56002","wgPort":56001,"password":"pw",
+	  "wgIface":"opkgtun20","ndmsIface":"OpkgTun20",
+	  "rawIface":"opkgtun21","rawNdmsIface":"OpkgTun21"}}]}`)
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, ok := byKey(res)["wdtt-server:default"]
+	if !ok {
+		t.Fatalf("сервер не засеян: %+v", res.State.Records)
+	}
+	cfg, err := srv.WdttServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NatMode != "full" {
+		t.Fatalf("natMode после посева = %q, ждали full (паритет со старым миром)", cfg.NatMode)
+	}
+}

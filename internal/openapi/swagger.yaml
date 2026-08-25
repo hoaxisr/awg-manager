@@ -12163,7 +12163,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/ftlink.DecodeResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Разобрать ссылку freeturn://
@@ -12190,7 +12190,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/install.InstallResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Установить бинари подсистемы
@@ -12217,7 +12217,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/install.InstallResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Статус установки бинарей подсистемы
@@ -12429,11 +12429,11 @@ paths:
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttlink.EnsureWGResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/wdttlink.EnsureWGResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Завести AWG-туннель под WireGuard-конфиг клиента
@@ -12465,11 +12465,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttlink.LinkResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttlink.LinkResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Выдать ссылку абоненту серверного инстанса
@@ -12493,11 +12493,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Снять AWG-туннели, связанные с клиентским инстансом
@@ -12521,11 +12521,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/subscription.RefreshResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/subscription.RefreshResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Обновить подписку клиента
@@ -12554,11 +12554,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Абоненты wdtt-сервера
@@ -12586,11 +12586,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Абоненты wdtt-сервера
@@ -12618,11 +12618,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Абоненты wdtt-сервера
@@ -12651,11 +12651,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Абоненты wdtt-сервера
@@ -12683,11 +12683,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/wdttusers.UsersStatusResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Абоненты wdtt-сервера
@@ -12714,7 +12714,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttlink.DecodeResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Разобрать ссылку wdtt:// или адрес подписки
@@ -12741,7 +12741,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/wdttlink.ImportResponse'
+            $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
       summary: Импортировать ссылку в новый инстанс клиента

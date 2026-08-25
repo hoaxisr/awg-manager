@@ -39,8 +39,8 @@ type RefreshResponse struct {
 //	@Security	CookieAuth
 //	@Param		key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success	200	{object}	RefreshResponse
-//	@Failure	400	{object}	RefreshResponse
-//	@Failure	404	{object}	RefreshResponse
+//	@Failure	400	{object}	api.APIErrorEnvelope
+//	@Failure	404	{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/instances/{key}/subscription/refresh [post]
 func (s *Service) Serve(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {

@@ -177,7 +177,7 @@ type EnsureWGResponse struct {
 //	@Security	CookieAuth
 //	@Param		request	body		linkRequestBody	true	"Ссылка"
 //	@Success	200		{object}	DecodeResponse
-//	@Failure	400		{object}	DecodeResponse
+//	@Failure	400		{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/wdtt/link/decode [post]
 func (h *Handler) Decode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -207,7 +207,7 @@ func (h *Handler) Decode(w http.ResponseWriter, r *http.Request) {
 //	@Security	CookieAuth
 //	@Param		request	body		linkRequestBody	true	"Ссылка, id и имя"
 //	@Success	200		{object}	ImportResponse
-//	@Failure	400		{object}	ImportResponse
+//	@Failure	400		{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/wdtt/link/import [post]
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -304,8 +304,8 @@ func (h *Handler) freeID() string {
 //	@Param		key		path		string		true	"Ключ инстанса (роль:id)"
 //	@Param		request	body		LinkRequest	true	"Параметры ссылки"
 //	@Success	200		{object}	LinkResponse
-//	@Failure	400		{object}	LinkResponse
-//	@Failure	404		{object}	LinkResponse
+//	@Failure	400		{object}	api.APIErrorEnvelope
+//	@Failure	404		{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/instances/{key}/link [post]
 func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {
@@ -349,8 +349,8 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 //	@Security	CookieAuth
 //	@Param		key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success	200	{object}	ClearLinkedResponse
-//	@Failure	400	{object}	ClearLinkedResponse
-//	@Failure	404	{object}	ClearLinkedResponse
+//	@Failure	400	{object}	api.APIErrorEnvelope
+//	@Failure	404	{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/instances/{key}/linked-tunnels/clear [post]
 func (h *Handler) ClearLinkedTunnels(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {
@@ -411,8 +411,8 @@ type EnsureWGTunnelResponse struct {
 //	@Security		CookieAuth
 //	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success		200	{object}	EnsureWGResponse
-//	@Failure		404	{object}	EnsureWGResponse
-//	@Failure		409	{object}	EnsureWGResponse
+//	@Failure		404	{object}	api.APIErrorEnvelope
+//	@Failure		409	{object}	api.APIErrorEnvelope
 //	@Router			/proxyrt/instances/{key}/ensure-wg-tunnel [post]
 func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key string) {
 	if r.Method != http.MethodPost {

@@ -53,8 +53,8 @@ type UsersStatusResponse struct {
 //	@Security		CookieAuth
 //	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success		200	{object}	UsersStatusResponse
-//	@Failure		400	{object}	UsersStatusResponse
-//	@Failure		404	{object}	UsersStatusResponse
+//	@Failure		400	{object}	api.APIErrorEnvelope
+//	@Failure		404	{object}	api.APIErrorEnvelope
 //	@Router			/proxyrt/instances/{key}/users [get]
 //	@Router			/proxyrt/instances/{key}/users [post]
 //	@Router			/proxyrt/instances/{key}/users [delete]

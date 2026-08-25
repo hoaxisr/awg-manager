@@ -92,7 +92,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, key string, sub 
 //	@Security	CookieAuth
 //	@Param		request	body		decodeRequest	true	"Ссылка"
 //	@Success	200		{object}	DecodeResponse
-//	@Failure	400		{object}	DecodeResponse
+//	@Failure	400		{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/freeturn/link/decode [post]
 func (s *Service) Decode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

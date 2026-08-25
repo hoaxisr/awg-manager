@@ -732,7 +732,9 @@ func TestServerDefaultsRelayAndNatMode(t *testing.T) {
 	}
 	st, _ := New(s.dir).Load()
 	c, _ := st.Records[0].WdttServerConfig()
-	if c.RelayMode != "wg" || c.NatMode != "none" || c.Listen != "0.0.0.0:56002" {
+	// natMode: дефолт "full" — паритет со старым миром (wdtt.normalizeNatMode);
+	// подробности и регресс миграции — в TestNatModeDefaultIsFullParity.
+	if c.RelayMode != "wg" || c.NatMode != "full" || c.Listen != "0.0.0.0:56002" {
 		t.Fatalf("дефолты сервера: %+v", c)
 	}
 }
@@ -804,5 +806,72 @@ func TestReplaceRejectsTwoConfigsInOneRecord(t *testing.T) {
 		return nil
 	}); err == nil {
 		t.Fatal("два конфига в одной записи обязаны отклоняться")
+	}
+}
+
+// TestNatModeDefaultIsFullParity — ПАРИТЕТ со старым миром: wdtt-сервер без
+// выбранного режима NAT натит полностью (wdtt.normalizeNatMode,
+// access.go:30-37). Дефолт "none" здесь означал бы раздачу без интернета:
+// мастер создаёт сервер без конфига, получает уже заполненное поле и
+// сохраняет его обратно, а фронтовый дефолт до пустого значения не доходит.
+func TestNatModeDefaultIsFullParity(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"пустое значение", "", "full"},
+		{"неизвестное значение", "полный", "full"},
+		{"пробелы вокруг известного", "  none  ", "none"},
+		{"known full", "full", "full"},
+		{"known none", "none", "none"},
+		{"known internet-only", "internet-only", "internet-only"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStore(t)
+			r := wdttServer("nat")
+			r.WdttServer.NatMode = c.in
+			if _, err := s.Replace(func(st *State) error {
+				st.Records = append(st.Records, r)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			st, err := New(s.dir).Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := st.Records[0].WdttServerConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.NatMode != c.want {
+				t.Fatalf("natMode %q → %q, ждали %q", c.in, got.NatMode, c.want)
+			}
+		})
+	}
+}
+
+// TestNatModeUnknownSurvivesValidation — неизвестное значение обязано
+// ПРИВОДИТЬСЯ, а не проваливаться в валидацию: roles.WdttServerConfig.Validate
+// принимает только три значения, и запись с мусором в поле иначе не легла бы
+// на диск вовсе.
+func TestNatModeUnknownSurvivesValidation(t *testing.T) {
+	s := newStore(t)
+	r := wdttServer("nat")
+	r.WdttServer.NatMode = "МУСОР"
+	if _, err := s.Replace(func(st *State) error {
+		st.Records = append(st.Records, r)
+		return nil
+	}); err != nil {
+		t.Fatalf("запись отвергнута вместо приведения: %v", err)
+	}
+	st, _ := New(s.dir).Load()
+	got, _ := st.Records[0].WdttServerConfig()
+	if err := got.Validate(); err != nil {
+		t.Fatalf("нормализованный конфиг не проходит валидацию роли: %v", err)
+	}
+	if got.NatMode != "full" {
+		t.Fatalf("natMode = %q, ждали full", got.NatMode)
 	}
 }

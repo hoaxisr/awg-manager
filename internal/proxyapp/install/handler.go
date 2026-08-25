@@ -42,7 +42,7 @@ type InstallResponse struct {
 //	@Security		CookieAuth
 //	@Param			subsystem	query		string	true	"Подсистема: wdtt|freeturn"
 //	@Success		200			{object}	InstallStatusResponse
-//	@Failure		400			{object}	InstallResponse
+//	@Failure		400			{object}	api.APIErrorEnvelope
 //	@Router			/proxyrt/install/status [get]
 func (s *Service) ServeStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -68,7 +68,7 @@ func (s *Service) ServeStatus(w http.ResponseWriter, r *http.Request) {
 //	@Security	CookieAuth
 //	@Param		request	body		installRequest	true	"Подсистема"
 //	@Success	200		{object}	InstallResponse
-//	@Failure	400		{object}	InstallResponse
+//	@Failure	400		{object}	api.APIErrorEnvelope
 //	@Router		/proxyrt/install [post]
 func (s *Service) ServeInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
