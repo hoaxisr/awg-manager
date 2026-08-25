@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 type linkedTunnelPredicate func(storage.AWGTunnel) bool
@@ -202,21 +203,92 @@ const (
 	LinkedFreeTurn                    // storage.AWGTunnel.FreeTurnClientID
 )
 
+// linkedProxyPredicate — предикат связи по полю и clientID. Неизвестное поле —
+// дефект проводки: отказ, а не пустой предикат, иначе связанные туннели молча
+// перестали бы находиться.
+func linkedProxyPredicate(field LinkedField, clientID string) (linkedTunnelPredicate, error) {
+	switch field {
+	case LinkedWdtt:
+		return func(tun storage.AWGTunnel) bool { return tunnelLinkedToWdttClient(tun, clientID) }, nil
+	case LinkedFreeTurn:
+		return func(tun storage.AWGTunnel) bool { return tunnelLinkedToFreeTurnClient(tun, clientID) }, nil
+	}
+	return nil, fmt.Errorf("неизвестное поле связи %d", int(field))
+}
+
+// linkedProxyLifecycle — участвует ли связанная запись в подъёме и остановке.
+// Паритет tunnelLinkedAwgOnly (wdtt_linked.go:29): raw-зеркало WDTT — не
+// туннель роутера, поднимать и опускать его нечем.
+func linkedProxyLifecycle(tun storage.AWGTunnel, field LinkedField) bool {
+	return field != LinkedWdtt || tun.Backend != wdtt.BackendWdttRaw
+}
+
 // SyncLinkedProxyEndpoints — экспорт для адаптера прокси-рантайма (план 5):
 // pred строится по полю связи и clientID; th=nil — публикацию списка туннелей
 // делает вызывающий (адаптер шлёт resource:invalidated через шину сам).
 func SyncLinkedProxyEndpoints(ctx context.Context, store *storage.AWGTunnelStore,
 	svc TunnelService, field LinkedField, clientID, listen string) (updated, failed []string) {
-	var pred linkedTunnelPredicate
-	switch field {
-	case LinkedWdtt:
-		pred = func(tun storage.AWGTunnel) bool { return tunnelLinkedToWdttClient(tun, clientID) }
-	case LinkedFreeTurn:
-		pred = func(tun storage.AWGTunnel) bool { return tunnelLinkedToFreeTurnClient(tun, clientID) }
-	default:
-		return nil, []string{fmt.Sprintf("неизвестное поле связи %d", int(field))}
+	pred, err := linkedProxyPredicate(field, clientID)
+	if err != nil {
+		return nil, []string{err.Error()}
 	}
 	return syncLinkedAwgTunnelEndpoints(ctx, store, svc, nil, pred, listen)
+}
+
+// LinkedProxyTunnel — связанная запись глазами прокси-рантайма: id, endpoint и
+// признаки, по которым ресурс linked_endpoint считает расхождение.
+type LinkedProxyTunnel struct {
+	ID        string
+	Endpoint  string
+	Running   bool
+	Lifecycle bool
+}
+
+// ListLinkedProxyTunnels — экспорт для адаптера прокси-рантайма: связанные
+// записи клиента вместе с их состоянием. Условие «поднят» — то же, по которому
+// старый мир пропускал старт и стоп (running либо starting).
+func ListLinkedProxyTunnels(ctx context.Context, store *storage.AWGTunnelStore,
+	svc TunnelService, field LinkedField, clientID string) ([]LinkedProxyTunnel, error) {
+	pred, err := linkedProxyPredicate(field, clientID)
+	if err != nil {
+		return nil, err
+	}
+	tunnels, err := listLinkedAwgTunnels(store, pred)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LinkedProxyTunnel, 0, len(tunnels))
+	for _, tun := range tunnels {
+		item := LinkedProxyTunnel{
+			ID:        tun.ID,
+			Endpoint:  strings.TrimSpace(tun.Peer.Endpoint),
+			Lifecycle: linkedProxyLifecycle(tun, field),
+		}
+		if svc != nil && item.Lifecycle {
+			st := svc.GetState(ctx, tun.ID)
+			item.Running = st.State == tunnel.StateRunning || st.State == tunnel.StateStarting
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// SetLinkedProxyTunnelsState — экспорт для адаптера прокси-рантайма: поднять
+// (up=true) либо опустить связанные туннели клиента. Предикат уже предиката
+// связи: raw-зеркало WDTT исключено. th=nil — публикацию делает вызывающий.
+func SetLinkedProxyTunnelsState(ctx context.Context, store *storage.AWGTunnelStore,
+	svc TunnelService, field LinkedField, clientID string, up bool) (changed, failed []string) {
+	pred, err := linkedProxyPredicate(field, clientID)
+	if err != nil {
+		return nil, []string{err.Error()}
+	}
+	lifecycle := func(tun storage.AWGTunnel) bool {
+		return pred(tun) && linkedProxyLifecycle(tun, field)
+	}
+	if up {
+		return startLinkedAwgTunnels(ctx, store, svc, nil, lifecycle)
+	}
+	return stopLinkedAwgTunnels(ctx, store, svc, nil, lifecycle)
 }
 
 // syncLinkedAwgTunnelEndpoints updates linked AWG tunnels when proxy listen port changes.

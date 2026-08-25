@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/netres"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // fakeIPT — модель iptables: листинги по ключу аргументов и ЖУРНАЛ команд.
@@ -1177,5 +1178,101 @@ func TestProxyFWBookForgetClosesPendingCircle(t *testing.T) {
 	}
 	if len(fw.applied) != before {
 		t.Fatal("повторное снятие переписало хук впустую")
+	}
+}
+
+// stateSvc — api.TunnelService с моделью состояния. Журнал Start/Stop, а не
+// счётчик: регресс живёт в том, КАКИЕ записи тронуты.
+type stateSvc struct {
+	api.TunnelService
+	running map[string]bool
+	started []string
+	stopped []string
+}
+
+func (s *stateSvc) GetState(_ context.Context, id string) tunnel.StateInfo {
+	if s.running[id] {
+		return tunnel.StateInfo{State: tunnel.StateRunning}
+	}
+	return tunnel.StateInfo{State: tunnel.StateStopped}
+}
+
+func (s *stateSvc) Start(_ context.Context, id string) error {
+	s.started = append(s.started, id)
+	s.running[id] = true
+	return nil
+}
+
+func (s *stateSvc) Stop(_ context.Context, id string) error {
+	s.stopped = append(s.stopped, id)
+	s.running[id] = false
+	return nil
+}
+
+// failingStop — падает ровно Stop: отказ обязан доехать до ресурса, иначе
+// туннель остаётся поднятым, а ресурс рапортует успех.
+type failingStop struct {
+	api.TunnelService
+}
+
+func (failingStop) GetState(context.Context, string) tunnel.StateInfo {
+	return tunnel.StateInfo{State: tunnel.StateRunning}
+}
+
+func (failingStop) Stop(context.Context, string) error { return errors.New("boom") }
+
+func TestProxyEndpointSyncSetsTunnelState(t *testing.T) {
+	store := linkedStore(t)
+	pub := &fakePublisher{}
+	svc := &stateSvc{running: map[string]bool{}}
+	s := newProxyEndpointSync(store, svc, api.LinkedWdtt, pub)
+
+	n, err := s.SetState(context.Background(), "c1", true)
+	if err != nil || n != 1 {
+		t.Fatalf("SetState(up) = (%d, %v)", n, err)
+	}
+	if len(svc.started) != 1 || svc.started[0] != "awgm1" {
+		t.Fatalf("подняты: %v (freeturn-туннель обязан остаться)", svc.started)
+	}
+	if len(pub.events) == 0 || pub.events[0] != "resource:invalidated" {
+		t.Fatalf("инвалидация не опубликована: %v", pub.events)
+	}
+
+	n, err = s.SetState(context.Background(), "c1", false)
+	if err != nil || n != 1 {
+		t.Fatalf("SetState(down) = (%d, %v)", n, err)
+	}
+	if len(svc.stopped) != 1 || svc.stopped[0] != "awgm1" {
+		t.Fatalf("опущены: %v", svc.stopped)
+	}
+}
+
+// Список несёт состояние и участие в жизненном цикле — по ним ресурс считает
+// расхождение; без них выключение клиента не увидело бы поднятый туннель.
+func TestProxyEndpointSyncListCarriesState(t *testing.T) {
+	store := linkedStore(t)
+	svc := &stateSvc{running: map[string]bool{"awgm1": true}}
+	list, err := newProxyEndpointSync(store, svc, api.LinkedWdtt, nil).List(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || !list[0].Running || !list[0].Lifecycle {
+		t.Fatalf("список: %+v", list)
+	}
+}
+
+func TestProxyEndpointSyncSetStateReportsFailed(t *testing.T) {
+	store := linkedStore(t)
+	s := newProxyEndpointSync(store, failingStop{}, api.LinkedWdtt, nil)
+
+	n, err := s.SetState(context.Background(), "c1", false)
+	if err == nil {
+		t.Fatal("отказ остановки проглочен")
+	}
+	if n != 0 {
+		t.Fatalf("changed = %d", n)
+	}
+	if !strings.Contains(err.Error(), "awgm1") {
+		t.Fatalf("ошибка не называет туннель: %v", err)
 	}
 }

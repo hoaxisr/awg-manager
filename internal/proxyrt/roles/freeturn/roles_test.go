@@ -35,6 +35,7 @@ type nilSync struct{}
 
 func (nilSync) List(context.Context, string) ([]linkres.LinkedTunnel, error) { return nil, nil }
 func (nilSync) Sync(context.Context, string, string) (int, error)            { return 0, nil }
+func (nilSync) SetState(context.Context, string, bool) (int, error)          { return 0, nil }
 
 type nilOcc struct{}
 
@@ -63,7 +64,8 @@ func (c *countSync) List(context.Context, string) ([]linkres.LinkedTunnel, error
 	c.n++
 	return nil, nil
 }
-func (c *countSync) Sync(context.Context, string, string) (int, error) { c.n++; return 0, nil }
+func (c *countSync) Sync(context.Context, string, string) (int, error)   { c.n++; return 0, nil }
+func (c *countSync) SetState(context.Context, string, bool) (int, error) { c.n++; return 0, nil }
 
 type countFW struct{ n int }
 
@@ -98,7 +100,10 @@ func TestClientChain(t *testing.T) {
 	}
 }
 
-func TestClientDisabledLedgerIsProcessOnly(t *testing.T) {
+func TestClientDisabledLedgerKeepsLinkedEndpoint(t *testing.T) {
+	// M11 снимает с выключенного клиента доводку endpoint'а и приговор порта,
+	// но не опускание связанных туннелей: без linked_endpoint в ведомости
+	// выключение клиента оставляет туннель поднятым навсегда (амендмент B).
 	role, err := NewClient(ClientDeps{Instance: "default", Binary: "/opt/bin/ft-client",
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 		Sync: nilSync{}, Occ: nilOcc{}, Now: time.Now})
@@ -107,8 +112,14 @@ func TestClientDisabledLedgerIsProcessOnly(t *testing.T) {
 	}
 	cfg := roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "relay:3478"}
 	got := ids(role.Resources(proxyrt.IntentDisabled, cfg, proxyrt.NewObservations()))
-	if len(got) != 1 || got[0] != "process" {
-		t.Fatalf("disabled клиент — только process (M11): %v", got)
+	want := []proxyrt.ResourceID{"process", "linked_endpoint"}
+	if len(got) != len(want) {
+		t.Fatalf("disabled состав: %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("disabled порядок: %v", got)
+		}
 	}
 }
 

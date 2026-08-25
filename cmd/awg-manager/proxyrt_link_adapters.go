@@ -49,56 +49,59 @@ func newProxyEndpointSync(store *storage.AWGTunnelStore, svc api.TunnelService,
 	return proxyEndpointSync{store: store, svc: svc, field: field, pub: pub}
 }
 
-// linkedTo — то же сравнение, что у предикатов api (tunnelLinkedToWdttClient):
-// пустой clientID не связывает НИЧЕГО, иначе под «связанные» попали бы все
-// туннели без связи.
-func (s proxyEndpointSync) linkedTo(tun storage.AWGTunnel, clientID string) bool {
-	clientID = strings.TrimSpace(clientID)
-	if clientID == "" {
-		return false
+// invalidateTunnels — фронт обязан узнать об изменении связанных туннелей:
+// пути прокси-рантайма живут вне HTTP-хендлеров, где публикацию делал бы
+// TunnelsHandler.
+func (s proxyEndpointSync) invalidateTunnels(changed int, reason string) {
+	if changed == 0 || s.pub == nil {
+		return
 	}
-	switch s.field {
-	case api.LinkedWdtt:
-		return strings.TrimSpace(tun.WdttClientID) == clientID
-	case api.LinkedFreeTurn:
-		return strings.TrimSpace(tun.FreeTurnClientID) == clientID
+	for _, res := range []string{api.ResourceTunnels, api.ResourceRoutingTunnels} {
+		s.pub.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
+			Resource: res, Reason: reason,
+		})
 	}
-	return false
 }
 
-func (s proxyEndpointSync) List(_ context.Context, clientID string) ([]linkres.LinkedTunnel, error) {
-	if s.store == nil {
-		return nil, nil
-	}
-	all, err := s.store.List()
+func (s proxyEndpointSync) List(ctx context.Context, clientID string) ([]linkres.LinkedTunnel, error) {
+	items, err := api.ListLinkedProxyTunnels(ctx, s.store, s.svc, s.field, clientID)
 	if err != nil {
 		return nil, err
 	}
-	var out []linkres.LinkedTunnel
-	for _, tun := range all {
-		if !s.linkedTo(tun, clientID) {
-			continue
-		}
-		out = append(out, linkres.LinkedTunnel{ID: tun.ID, Endpoint: strings.TrimSpace(tun.Peer.Endpoint)})
+	out := make([]linkres.LinkedTunnel, 0, len(items))
+	for _, it := range items {
+		out = append(out, linkres.LinkedTunnel{
+			ID: it.ID, Endpoint: it.Endpoint,
+			Running: it.Running, Lifecycle: it.Lifecycle,
+		})
 	}
 	return out, nil
 }
 
 func (s proxyEndpointSync) Sync(ctx context.Context, clientID, listen string) (int, error) {
 	updated, failed := api.SyncLinkedProxyEndpoints(ctx, s.store, s.svc, s.field, clientID, listen)
-	if len(updated) > 0 && s.pub != nil {
-		for _, res := range []string{api.ResourceTunnels, api.ResourceRoutingTunnels} {
-			s.pub.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-				Resource: res, Reason: "proxy-linked-endpoint",
-			})
-		}
-	}
+	s.invalidateTunnels(len(updated), "proxy-linked-endpoint")
 	if len(failed) > 0 {
 		// Молчаливое отбрасывание failed — вечный невидимый дрейф: endpoint
 		// остаётся на старом порту, а ресурс рапортует успех.
 		return len(updated), fmt.Errorf("endpoint не обновлён у: %s", strings.Join(failed, ", "))
 	}
 	return len(updated), nil
+}
+
+func (s proxyEndpointSync) SetState(ctx context.Context, clientID string, up bool) (int, error) {
+	changed, failed := api.SetLinkedProxyTunnelsState(ctx, s.store, s.svc, s.field, clientID, up)
+	s.invalidateTunnels(len(changed), "proxy-linked-tunnel-state")
+	if len(failed) > 0 {
+		// Тот же довод: проглоченный отказ оставляет туннель не в том
+		// состоянии, а ресурс считает себя сошедшимся.
+		verb := "опущены"
+		if up {
+			verb = "подняты"
+		}
+		return len(changed), fmt.Errorf("связанные туннели не %s: %s", verb, strings.Join(failed, ", "))
+	}
+	return len(changed), nil
 }
 
 var _ linkres.EndpointSync = proxyEndpointSync{}

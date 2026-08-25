@@ -114,6 +114,7 @@ type nilSync struct{}
 
 func (nilSync) List(context.Context, string) ([]linkres.LinkedTunnel, error) { return nil, nil }
 func (nilSync) Sync(context.Context, string, string) (int, error)            { return 0, nil }
+func (nilSync) SetState(context.Context, string, bool) (int, error)          { return 0, nil }
 
 type nilOcc struct{}
 
@@ -196,15 +197,24 @@ func TestWgChainIsShort(t *testing.T) {
 	}
 }
 
-func TestWgDisabledLedgerIsProcessOnly(t *testing.T) {
-	// M11: у выключенного wg-клиента ни sync endpoint'ов, ни приговора порта.
+func TestWgDisabledLedgerKeepsLinkedEndpoint(t *testing.T) {
+	// M11: у выключенного wg-клиента нет ни доводки endpoint'а, ни приговора
+	// порта — но linked_endpoint в ведомости ОБЯЗАН быть: опустить связанный
+	// туннель больше некому, а туннель с адресом мёртвого процесса остаётся
+	// «работающим» и тянет на себя маршруты (амендмент B).
 	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
 	cfg := rawCfg()
 	cfg.Mode = "wg"
 	cfg.NdmsIface, cfg.RawIface = "", ""
 	got := ids(role.Resources(proxyrt.IntentDisabled, cfg, proxyrt.NewObservations()))
-	if len(got) != 1 || got[0] != "process" {
-		t.Fatalf("disabled wg-клиент — только process: %v", got)
+	want := []proxyrt.ResourceID{"process", "linked_endpoint"}
+	if len(got) != len(want) {
+		t.Fatalf("disabled wg-состав: %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("disabled wg-порядок: %v", got)
+		}
 	}
 }
 

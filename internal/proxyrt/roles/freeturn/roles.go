@@ -78,13 +78,15 @@ func (r *ClientRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observa
 	}
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.FreeTurnClientArgs(c), c.Validate())
+	r.linked.SetDesired(r.inst, c.Listen, enabled)
 	if !enabled {
-		// Только процесс: у выключенного клиента ни sync endpoint'ов, ни
-		// приговоров порта (M11).
-		return []proxyrt.Resource{r.proc}
+		// У выключенного клиента ни доводки endpoint'ов, ни приговоров порта
+		// (M11) — но linked_endpoint остаётся: он же опускает связанные
+		// туннели. Без него туннель с адресом мёртвого процесса остаётся
+		// «работающим» и тянет на себя маршруты (амендмент B).
+		return []proxyrt.Resource{r.proc, r.linked}
 	}
 	r.listen.SetDesired(c.Listen)
-	r.linked.SetDesired(r.inst, c.Listen)
 	return []proxyrt.Resource{r.listen, r.proc, r.linked}
 }
 

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 func TestSyncLinkedAwgTunnelEndpoints(t *testing.T) {
@@ -149,5 +151,141 @@ func TestLocalEndpointFromListen(t *testing.T) {
 		if ok != c.ok || got != c.want {
 			t.Fatalf("%q: got (%q,%v), want (%q,%v)", c.listen, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+// stateSvc — TunnelService с моделью состояния: ЖУРНАЛ вызовов Start/Stop, а
+// не счётчик. Факт вызова тут ничего не доказывает — доказывает состав: какие
+// именно записи подняты и опущены.
+type stateSvc struct {
+	TunnelService
+	running map[string]bool
+	// state — точное состояние поверх running: нужно, чтобы отличить
+	// «поднимается» от «поднят». Оба считаются поднятыми.
+	state   map[string]tunnel.State
+	started []string
+	stopped []string
+}
+
+func (s *stateSvc) GetState(_ context.Context, id string) tunnel.StateInfo {
+	if st, ok := s.state[id]; ok {
+		return tunnel.StateInfo{State: st}
+	}
+	if s.running[id] {
+		return tunnel.StateInfo{State: tunnel.StateRunning}
+	}
+	return tunnel.StateInfo{State: tunnel.StateStopped}
+}
+
+func (s *stateSvc) Start(_ context.Context, id string) error {
+	s.started = append(s.started, id)
+	s.running[id] = true
+	return nil
+}
+
+func (s *stateSvc) Stop(_ context.Context, id string) error {
+	s.stopped = append(s.stopped, id)
+	s.running[id] = false
+	return nil
+}
+
+func proxyStateStore(t *testing.T) *storage.AWGTunnelStore {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awgm-wd", Name: "WD", WdttClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
+		{ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a", Backend: wdtt.BackendWdttRaw},
+		{ID: "awgm-ft", Name: "FT", FreeTurnClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9001"}},
+	} {
+		if err := store.Save(tun); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
+
+// Подъём и остановка по полю связи: raw-зеркало WDTT исключено (паритет
+// tunnelLinkedAwgOnly), чужое поле связи не трогается.
+func TestSetLinkedProxyTunnelsState(t *testing.T) {
+	store := proxyStateStore(t)
+	svc := &stateSvc{running: map[string]bool{}}
+
+	changed, failed := SetLinkedProxyTunnelsState(context.Background(), store, svc,
+		LinkedWdtt, "client-a", true)
+	if len(failed) != 0 || len(changed) != 1 || changed[0] != "awgm-wd" {
+		t.Fatalf("подъём wdtt: changed=%v failed=%v", changed, failed)
+	}
+	if len(svc.started) != 1 || svc.started[0] != "awgm-wd" {
+		t.Fatalf("подняты: %v (зеркало и чужой туннель обязаны остаться)", svc.started)
+	}
+
+	changed, failed = SetLinkedProxyTunnelsState(context.Background(), store, svc,
+		LinkedWdtt, "client-a", false)
+	if len(failed) != 0 || len(changed) != 1 || changed[0] != "awgm-wd" {
+		t.Fatalf("остановка wdtt: changed=%v failed=%v", changed, failed)
+	}
+	if len(svc.stopped) != 1 || svc.stopped[0] != "awgm-wd" {
+		t.Fatalf("опущены: %v", svc.stopped)
+	}
+
+	changed, _ = SetLinkedProxyTunnelsState(context.Background(), store, svc,
+		LinkedFreeTurn, "client-a", true)
+	if len(changed) != 1 || changed[0] != "awgm-ft" {
+		t.Fatalf("подъём freeturn: %v", changed)
+	}
+}
+
+// Список для прокси-рантайма несёт признаки, по которым ресурс считает
+// расхождение: состояние и участие в жизненном цикле.
+func TestListLinkedProxyTunnels(t *testing.T) {
+	store := proxyStateStore(t)
+	svc := &stateSvc{running: map[string]bool{"awgm-wd": true}}
+
+	list, err := ListLinkedProxyTunnels(context.Background(), store, svc, LinkedWdtt, "client-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("список: %+v (связь включает зеркало)", list)
+	}
+	byID := map[string]LinkedProxyTunnel{}
+	for _, it := range list {
+		byID[it.ID] = it
+	}
+	wd, raw := byID["awgm-wd"], byID["wdttraw-client-a"]
+	if !wd.Lifecycle || !wd.Running || wd.Endpoint != "127.0.0.1:9000" {
+		t.Fatalf("wg-туннель: %+v", wd)
+	}
+	if raw.Lifecycle || raw.Running {
+		t.Fatalf("raw-зеркало вне жизненного цикла: %+v", raw)
+	}
+
+	// Starting — уже поднят: старый мир пропускал такой туннель и на старте,
+	// и на остановке. Иначе рантайм звал бы Start по второму разу.
+	starting := &stateSvc{running: map[string]bool{},
+		state: map[string]tunnel.State{"awgm-wd": tunnel.StateStarting}}
+	list, err = ListLinkedProxyTunnels(context.Background(), store, starting, LinkedWdtt, "client-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range list {
+		if it.ID == "awgm-wd" && !it.Running {
+			t.Fatalf("starting обязан читаться как поднятый: %+v", it)
+		}
+	}
+}
+
+// Неизвестное поле связи — дефект проводки, а не пустой список: молчаливое
+// «ничего не нашли» навсегда спрятало бы неподнятый туннель.
+func TestSetLinkedProxyTunnelsStateUnknownField(t *testing.T) {
+	store := proxyStateStore(t)
+	_, failed := SetLinkedProxyTunnelsState(context.Background(), store,
+		&stateSvc{running: map[string]bool{}}, LinkedField(42), "client-a", true)
+	if len(failed) == 0 {
+		t.Fatal("неизвестное поле связи проглочено")
+	}
+	if _, err := ListLinkedProxyTunnels(context.Background(), store, nil, LinkedField(42), "client-a"); err == nil {
+		t.Fatal("неизвестное поле связи проглочено списком")
 	}
 }

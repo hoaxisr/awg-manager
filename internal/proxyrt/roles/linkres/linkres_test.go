@@ -3,6 +3,7 @@ package linkres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,7 +79,12 @@ func TestListenPortOutOfPoolIsVerdict(t *testing.T) {
 type fakeSync struct {
 	tunnels []LinkedTunnel
 	synced  []string
+	// states — ЖУРНАЛ вызовов SetState со СВОИМ составом аргументов, а не
+	// счётчик: «позвали» и «позвали с тем клиентом и тем желаемым» — разные
+	// утверждения, и регресс живёт во втором.
+	states  []string
 	listErr error
+	setErr  error
 }
 
 func (f *fakeSync) List(context.Context, string) ([]LinkedTunnel, error) {
@@ -93,10 +99,25 @@ func (f *fakeSync) Sync(_ context.Context, clientID, listen string) (int, error)
 	return len(f.tunnels), nil
 }
 
+func (f *fakeSync) SetState(_ context.Context, clientID string, up bool) (int, error) {
+	f.states = append(f.states, fmt.Sprintf("%s→%t", clientID, up))
+	if f.setErr != nil {
+		return 0, f.setErr
+	}
+	n := 0
+	for i := range f.tunnels {
+		if f.tunnels[i].Lifecycle && f.tunnels[i].Running != up {
+			f.tunnels[i].Running = up
+			n++
+		}
+	}
+	return n, nil
+}
+
 func TestLinkedEndpointSyncsDrift(t *testing.T) {
 	fs := &fakeSync{tunnels: []LinkedTunnel{{ID: "t1", Endpoint: "127.0.0.1:9017"}}}
 	le := NewLinkedEndpoint("linked_endpoint", fs)
-	le.SetDesired("client1", "127.0.0.1:9000")
+	le.SetDesired("client1", "127.0.0.1:9000", true)
 
 	drive(t, le)
 
@@ -108,7 +129,7 @@ func TestLinkedEndpointSyncsDrift(t *testing.T) {
 func TestLinkedEndpointSettledWithoutTunnels(t *testing.T) {
 	// Нет связанных туннелей — нечего доводить, это settled, а не drift.
 	le := NewLinkedEndpoint("linked_endpoint", &fakeSync{})
-	le.SetDesired("client1", "127.0.0.1:9000")
+	le.SetDesired("client1", "127.0.0.1:9000", true)
 	obs, _ := le.Observe(context.Background())
 	if steps := le.Plan(obs); len(steps) != 0 {
 		t.Fatalf("пустой список туннелей: %v", steps)
@@ -117,9 +138,146 @@ func TestLinkedEndpointSettledWithoutTunnels(t *testing.T) {
 
 func TestLinkedEndpointListErrorIsUnknown(t *testing.T) {
 	le := NewLinkedEndpoint("linked_endpoint", &fakeSync{listErr: errors.New("store")})
-	le.SetDesired("client1", "127.0.0.1:9000")
+	le.SetDesired("client1", "127.0.0.1:9000", true)
 	if _, err := le.Observe(context.Background()); err == nil {
 		t.Fatal("ошибка списка обязана быть unknown")
+	}
+}
+
+// Регресс амендмента B: включённый клиент обязан ПОДНЯТЬ связанный туннель.
+// Единственный прежний подъём висел на HTTP-ручке старого движка, то есть при
+// автостарте и восстановлении не случался никогда.
+func TestLinkedEndpointRaisesTunnelsWhenEnabled(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9000", Running: false, Lifecycle: true},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+
+	drive(t, le)
+
+	if len(fs.states) != 1 || fs.states[0] != "client1→true" {
+		t.Fatalf("SetState позван не с тем клиентом или желаемым: %v", fs.states)
+	}
+}
+
+// Зеркальный исход: выключенный клиент обязан ОПУСТИТЬ связанный туннель,
+// иначе туннель остаётся «работающим» с адресом мёртвого процесса и тянет на
+// себя маршруты.
+func TestLinkedEndpointLowersTunnelsWhenDisabled(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9000", Running: true, Lifecycle: true},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "", false)
+
+	drive(t, le)
+
+	if len(fs.states) != 1 || fs.states[0] != "client1→false" {
+		t.Fatalf("SetState позван не с тем клиентом или желаемым: %v", fs.states)
+	}
+}
+
+// У выключенного клиента listen ничего не значит: endpoint не правится, даже
+// если он отстал (M11 — мутация без нужды). Роль отдаёт выключенному клиенту
+// РАБОЧИЙ listen, поэтому годный listen тут обязателен: с пустым проверка
+// прошла бы и без разбора желаемого состояния. Опускание при этом обязано быть.
+func TestLinkedEndpointDisabledDoesNotSyncEndpoint(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9017", Running: true, Lifecycle: true},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", false)
+
+	drive(t, le)
+
+	if len(fs.synced) != 0 {
+		t.Fatalf("endpoint выключенного клиента тронут: %v", fs.synced)
+	}
+	if len(fs.states) != 1 || fs.states[0] != "client1→false" {
+		t.Fatalf("опускание не случилось: %v", fs.states)
+	}
+}
+
+// Записи вне жизненного цикла (raw-зеркало WDTT) не поднимаются и не
+// опускаются: это не туннель роутера, его состояние ведёт сам raw-клиент.
+func TestLinkedEndpointSkipsNonLifecycleRecords(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "wdttraw-default", Endpoint: "127.0.0.1:9000", Running: false, Lifecycle: false},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := le.Plan(obs); len(steps) != 0 {
+		t.Fatalf("зеркало не участвует в подъёме: %v", steps)
+	}
+}
+
+// Порядок в одном плане: endpoint правится ДО подъёма, иначе туннель
+// поднимется на старый порт.
+func TestLinkedEndpointSyncsBeforeStart(t *testing.T) {
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9017", Running: false, Lifecycle: true},
+	}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := le.Plan(obs)
+	if len(steps) != 2 || steps[0].Op != "sync" || steps[1].Op != "start" {
+		t.Fatalf("план: %+v", steps)
+	}
+	if steps[0].Args["listen"] != "127.0.0.1:9000" {
+		t.Fatalf("аргумент шага sync: %+v", steps[0].Args)
+	}
+}
+
+// Желаемое берётся из ШАГА, а не из поля ресурса: план — данные, и шаг stop
+// обязан опускать даже если желаемое ресурса успело стать «поднят».
+func TestLinkedEndpointApplyUsesStepOp(t *testing.T) {
+	fs := &fakeSync{}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+	if err := le.Apply(context.Background(), proxyrt.Step{Resource: "linked_endpoint", Op: "stop"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.states) != 1 || fs.states[0] != "client1→false" {
+		t.Fatalf("шаг stop позвал SetState с: %v", fs.states)
+	}
+}
+
+func TestLinkedEndpointUnknownStepIsError(t *testing.T) {
+	le := NewLinkedEndpoint("linked_endpoint", &fakeSync{})
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+	if err := le.Apply(context.Background(), proxyrt.Step{Resource: "linked_endpoint", Op: "kill"}); err == nil {
+		t.Fatal("посторонний шаг обязан отказать")
+	}
+}
+
+// Отказ постановки состояния не проглатывается: иначе туннель остаётся не в
+// том состоянии, а ресурс рапортует успех.
+func TestLinkedEndpointSetStateErrorSurfaces(t *testing.T) {
+	fs := &fakeSync{
+		tunnels: []LinkedTunnel{{ID: "t1", Endpoint: "127.0.0.1:9000", Lifecycle: true}},
+		setErr:  errors.New("boom"),
+	}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("client1", "127.0.0.1:9000", true)
+	obs, err := le.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := le.Plan(obs)
+	if len(steps) != 1 {
+		t.Fatalf("план: %+v", steps)
+	}
+	if err := le.Apply(context.Background(), steps[0]); err == nil {
+		t.Fatal("отказ SetState проглочен")
 	}
 }
 

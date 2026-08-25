@@ -142,12 +142,15 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// §4.1 объявляет wg-клиента как process + linked_endpoint;
 		// listen_port добавлен по факту кода (порт нужен всем клиентам,
 		// service.go:583) — отступление зафиксировано в шапке задачи.
-		// Disabled — только процесс: доводка linked-endpoint'ов и приговоры
-		// порта у выключенного инстанса — реальные мутации без нужды (M11).
+		// Disabled — процесс и linked_endpoint: доводка endpoint'ов и
+		// приговоры порта у выключенного инстанса — реальные мутации без
+		// нужды (M11), а вот ОПУСКАНИЕ связанных туннелей нужно, и делать
+		// его больше некому. Без этого туннель с адресом мёртвого процесса
+		// остаётся «работающим» и тянет на себя маршруты (амендмент B).
+		r.linked.SetDesired(r.deps.Instance, c.Listen, enabled)
 		if !enabled {
-			return []proxyrt.Resource{r.proc}
+			return []proxyrt.Resource{r.proc, r.linked}
 		}
-		r.linked.SetDesired(r.deps.Instance, c.Listen)
 		return []proxyrt.Resource{r.listen, r.proc, r.linked}
 	}
 
