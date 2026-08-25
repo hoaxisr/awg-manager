@@ -9,7 +9,7 @@ import (
 var ErrNoFreeIndex = errors.New("нет свободного индекса в диапазоне")
 
 // IndexRange — диапазон номеров интерфейсов. Для wdtt это OpkgTun17..49:
-// 0..9 занят fakeip, 10..16 — awg, 100+ — managed.
+// 0..9 занят fakeip, 10..16 — awg.
 type IndexRange struct {
 	Min int
 	Max int

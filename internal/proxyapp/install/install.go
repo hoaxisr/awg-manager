@@ -170,6 +170,37 @@ func (s *Service) Binary(kind instancestore.Kind) (string, bool) {
 	return path, binaryPresent(path)
 }
 
+// PinnedSHA256 — вшитая в эту сборку сумма бинаря роли. Пусто означает «пина
+// нет» (арка без закреплённой сборки, роль без сервера) — ресурс process
+// читает это как «сверять нечем», а не как «не совпало».
+//
+// Экспорт нужен фабрике инстансов: роли требуют пин полем Deps.PinnedSHA256, а
+// читать таблицы pins.go из проводки нельзя — знание архитектур продублировалось
+// бы вторым местом.
+func (s *Service) PinnedSHA256(kind instancestore.Kind) string {
+	var sub *subsys
+	server := false
+	switch kind {
+	case instancestore.KindWdttClient:
+		sub = s.subs[SubsystemWdtt]
+	case instancestore.KindWdttServer:
+		sub, server = s.subs[SubsystemWdtt], true
+	case instancestore.KindFreeTurnClient:
+		sub = s.subs[SubsystemFreeTurn]
+	case instancestore.KindFreeTurnServer:
+		sub, server = s.subs[SubsystemFreeTurn], true
+	default:
+		return ""
+	}
+	if sub.specs == nil {
+		return ""
+	}
+	if server {
+		return sub.specs.Server.SHA256
+	}
+	return sub.specs.Client.SHA256
+}
+
 // Status — install-статус подсистемы.
 func (s *Service) Status(subsystem string) (InstallStatus, error) {
 	sub, err := s.pick(subsystem)

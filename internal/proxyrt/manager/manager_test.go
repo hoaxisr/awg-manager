@@ -282,6 +282,26 @@ func TestBootSeedFailureStartsNothingAndCertifiesNothing(t *testing.T) {
 	}
 }
 
+// Амендмент D: отказ посева обязан снимать признак боота, а не только писать
+// ошибку. Иначе повторный Boot после успешного отдаёт Booted=true со списком
+// записей ПРОШЛОГО боота и текстом новой ошибки.
+func TestBootSeedFailureAfterSuccessDropsBooted(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	if info := e.m.SeedInfo(); !info.Booted {
+		t.Fatalf("первый боот обязан пройти: %+v", info)
+	}
+
+	e.seedErr = errors.New("rci down")
+	if err := e.m.Boot(context.Background()); err == nil {
+		t.Fatal("ошибка посева обязана быть ошибкой боота")
+	}
+	if info := e.m.SeedInfo(); info.Booted {
+		t.Fatalf("после отказа посева Booted обязан быть снят: %+v", info)
+	}
+}
+
 func TestBootMarkSeededFailureIsLoggedNotFatal(t *testing.T) {
 	e := newEnv(t)
 	e.reg.failMark = errors.New("призраки в каталоге")

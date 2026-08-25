@@ -135,6 +135,32 @@ func TestBinary_LiteralPaths(t *testing.T) {
 	}
 }
 
+// Пин роли — сумма ИЗ ТАБЛИЦЫ сборки, а не с диска: ресурс process сверяет с
+// ней binary_sha256, который сообщает сам процесс. Арка без закреплённой
+// сборки и роль без сервера дают пусто — «сверять нечем», не «не совпало».
+func TestPinnedSHA256(t *testing.T) {
+	arm := New(Deps{Arch: "aarch64-3.10"})
+	if got := arm.PinnedSHA256(instancestore.KindWdttClient); got != WdttEmbeddedBinaries["aarch64-3.10"].Client.SHA256 {
+		t.Errorf("клиент wdtt: got %q", got)
+	}
+	if got := arm.PinnedSHA256(instancestore.KindWdttServer); got != WdttEmbeddedBinaries["aarch64-3.10"].Server.SHA256 {
+		t.Errorf("сервер wdtt: got %q", got)
+	}
+	if got := arm.PinnedSHA256(instancestore.KindFreeTurnServer); got != FreeTurnEmbeddedBinaries["aarch64-3.10"].Server.SHA256 {
+		t.Errorf("сервер freeturn: got %q", got)
+	}
+	// mipsel: сервера wdtt в пине нет — пусто.
+	if got := New(Deps{Arch: "mipsel-3.4"}).PinnedSHA256(instancestore.KindWdttServer); got != "" {
+		t.Errorf("сервер wdtt на mipsel: got %q, want пусто", got)
+	}
+	if got := New(Deps{Arch: "неведомая-арка"}).PinnedSHA256(instancestore.KindWdttClient); got != "" {
+		t.Errorf("арка без пина: got %q, want пусто", got)
+	}
+	if got := arm.PinnedSHA256(instancestore.Kind("невиданная-роль")); got != "" {
+		t.Errorf("неизвестная роль: got %q, want пусто", got)
+	}
+}
+
 // Наличие — ФАКТ на диске: отсутствует, лежит неисполняемым, лежит каталогом.
 func TestBinary_Presence(t *testing.T) {
 	s := newTestService(t, Deps{})

@@ -26,7 +26,7 @@ func ClientDescription(name string) string {
 	return LabelClientPrefix + ": " + name
 }
 
-// Диапазон индексов OpkgTun (вне fakeip 0..9, awg 10..16, managed 100+) и пул
+// Диапазон индексов OpkgTun (вне fakeip 0..9, awg 10..16) и пул
 // локальных listen-портов клиентов (127.0.0.1; действующий диапазон обеих
 // подсистем — wdtt/service.go:583, freeturn/service.go:614). Выделение пинов —
 // писатель конфига (план 5) через proxyrt.Allocator; роли пин только требуют.

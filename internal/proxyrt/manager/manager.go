@@ -172,6 +172,13 @@ func (m *Manager) Boot(ctx context.Context) error {
 	if err != nil {
 		m.deps.Journal.Warn("boot", "proxy", "посев отложен: "+err.Error())
 		m.mu.Lock()
+		// Признак боота сбрасывается вместе с записью ошибки (амендмент D):
+		// иначе повторный Boot после успешного отдал бы наружу Booted=true со
+		// списком записей ПРОШЛОГО боота и текстом новой ошибки — интерфейс
+		// показал бы живой рантайм там, где посев не состоялся. Проводка
+		// зовёт Boot повторно только при !Booted, но гейт живёт у неё, а не
+		// здесь, и ронять на нём честность SeedInfo нельзя.
+		m.booted = false
 		m.seedErr = err.Error()
 		m.mu.Unlock()
 		return err
