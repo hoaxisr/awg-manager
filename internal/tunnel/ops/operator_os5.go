@@ -32,11 +32,6 @@ func opkgTunExists(ctx context.Context, q *query.Queries, name string) bool {
 	return err == nil && iface != nil
 }
 
-// splitAddressMask splits a CIDR or bare IP into (address, mask).
-// - "10.0.0.2/32" → ("10.0.0.2", "255.255.255.255")
-// - "10.0.0.2"    → ("10.0.0.2", "255.255.255.255")  (defaults to /32)
-// Returns the original input as-is if parsing fails (best-effort; caller
-// validates elsewhere).
 // errOS4Tunnel — отказ обслуживать запись, оставшуюся от KeeneticOS 4.x.
 //
 // У идентификаторов awgm<N> NewNames не строит NDMS-имени, а весь путь OS 5.x

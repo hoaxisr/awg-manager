@@ -255,12 +255,6 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 		if s.nwgOperator == nil {
 			return fmt.Errorf("NativeWG backend not available")
 		}
-		// NOTE: the caller (tunnels API handler) calls store.Save AFTER we
-		// return, so the self-create gate can't be scoped to this function
-		// alone — it would exit too early and let the ifcreated hook see an
-		// empty managed list. For now, the gate only protects Import (which
-		// saves internally). Manual Create racing with ifcreated is a known
-		// edge case; if it surfaces, move the gate up to the handler layer.
 		index, err := s.nwgOperator.Create(ctx, stored)
 		if err != nil {
 			return err
@@ -270,7 +264,9 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 		// в NDMS интерфейс осиротеет. Конфиг для nativewg не пишется — его
 		// никто не читает.
 		if err := s.store.Save(stored); err != nil {
-			_ = s.nwgOperator.Delete(ctx, stored)
+			if derr := s.nwgOperator.Delete(ctx, stored); derr != nil {
+				s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+			}
 			return fmt.Errorf("save tunnel: %w", err)
 		}
 		s.logInfo("create", tunnelID, "NativeWG tunnel created")
@@ -292,12 +288,18 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 	// подметатель ходит только по записям, а полная уборка бывает лишь при
 	// удалении пакета.
 	if err := s.store.Save(stored); err != nil {
-		_ = s.legacyOperator.Delete(ctx, stored)
+		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+		}
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 	if err := config.WriteFile(stored); err != nil {
-		_ = s.store.Delete(tunnelID)
-		_ = s.legacyOperator.Delete(ctx, stored)
+		if derr := s.store.Delete(tunnelID); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, запись осталась: "+derr.Error())
+		}
+		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+		}
 		return fmt.Errorf("write config: %w", err)
 	}
 

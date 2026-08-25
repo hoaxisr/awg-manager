@@ -78,8 +78,11 @@ func TestCreateWritesRecordAndConf(t *testing.T) {
 
 // Провал сохранения обязан снести созданный ресурс: иначе он осиротеет.
 func TestCreateRollsBackResourceWhenSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("под root запись в каталог 0500 удаётся — провал сохранения не воспроизвести")
+	}
 	op := &createOp{}
-	s, tunnels, _ := serviceForCreate(t, op)
+	s, tunnels, confs := serviceForCreate(t, op)
 	if err := os.MkdirAll(tunnels, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +93,9 @@ func TestCreateRollsBackResourceWhenSaveFails(t *testing.T) {
 	}
 	if op.deleteCall != "awg10" {
 		t.Errorf("созданный ресурс обязан быть снесён, Delete позван для %q", op.deleteCall)
+	}
+	if _, statErr := os.Stat(filepath.Join(confs, "awg10.conf")); !os.IsNotExist(statErr) {
+		t.Errorf("конфиг не должен появиться раньше записи, got %v", statErr)
 	}
 }
 

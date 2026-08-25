@@ -277,9 +277,10 @@ type stubTunnelSvc struct {
 	// createdCfg — конфиг, с которым хендлер позвал Create: по нему видно,
 	// что уехало в NDMS.
 	createdCfg *tunnel.Config
-	createErr  error
-	// deletedID — кого сносил откат создания.
-	deletedID string
+	// createdRecord — запись, которую хендлер отдал сервису: по ней видно,
+	// что успело проставиться до передачи владения.
+	createdRecord *storage.AWGTunnel
+	createErr     error
 }
 
 func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
@@ -289,6 +290,8 @@ func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus,
 func (s *stubTunnelSvc) Create(_ context.Context, stored *storage.AWGTunnel) error {
 	cfg := orchestrator.StoredToConfig(stored)
 	s.createdCfg = &cfg
+	rec := *stored
+	s.createdRecord = &rec
 	if s.createErr != nil {
 		return s.createErr
 	}
@@ -301,7 +304,6 @@ func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storag
 	return nil
 }
 func (s *stubTunnelSvc) Delete(ctx context.Context, tunnelID string) error {
-	s.deletedID = tunnelID
 	if s.deleteFn != nil {
 		return s.deleteFn(ctx, tunnelID)
 	}

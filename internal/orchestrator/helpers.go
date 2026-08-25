@@ -45,19 +45,29 @@ func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 // Отдельно от SplitAddresses намеренно: та отдаёт адрес БЕЗ маски, потому что
 // её результат сравнивают с другими адресами, и префикс там всё ломал бы.
 func AddressPrefixOf(address string) int {
+	prefix := 0
 	for _, part := range strings.Split(address, ",") {
 		part = strings.TrimSpace(part)
 		idx := strings.Index(part, "/")
-		if idx == -1 || strings.Contains(part[:idx], ":") {
+		host := part
+		if idx != -1 {
+			host = part[:idx]
+		}
+		if host == "" || strings.Contains(host, ":") {
 			continue
 		}
-		n, err := strconv.Atoi(part[idx+1:])
-		if err != nil || n < 0 || n > 32 {
+		// Побеждает ПОСЛЕДНЯЯ IPv4-часть — та же, что выбирает
+		// SplitAddresses. Иначе при двух адресах взяли бы адрес одной части
+		// и маску другой.
+		prefix = 0
+		if idx == -1 {
 			continue
 		}
-		return n
+		if n, err := strconv.Atoi(part[idx+1:]); err == nil && n >= 0 && n <= 32 {
+			prefix = n
+		}
 	}
-	return 0
+	return prefix
 }
 
 // SplitAddresses splits a WireGuard Address field (which may contain
