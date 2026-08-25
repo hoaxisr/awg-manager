@@ -84,6 +84,51 @@ func (s *AWGTunnelStore) List() ([]AWGTunnel, error) {
 	return tunnels, nil
 }
 
+// ListStrict — перечисление БЕЗ прощения и БЕЗ побочных действий: любая
+// пофайловая беда (чтение, JSON) — ошибка всего вызова; карантина нет.
+//
+// Нужен там, где «не смогли перечислить» и «записей нет» имеют
+// противоположные последствия, а List() их не различает — пофайловую ошибку
+// он глотает через continue и уносит файл в карантин побочным
+// переименованием. Два таких потребителя: занятость номеров OpkgTun (битая
+// запись иначе молча освобождает номер живого туннеля) и гейт посева реестра
+// выходов, где временно нечитаемый каталог выглядел бы как «терять нечего».
+// Отсутствие каталога — законное «пусто»: записей не создавали.
+//
+// МИГРАЦИЙ ЗДЕСЬ НЕТ — в отличие от List() (DefaultRoute и всё, что добавят
+// после). Потребители читают только Backend, ID и Interface.Address, которых
+// миграции не касаются; добавляя миграцию в List(), решить осознанно, нужна
+// ли она и тут — молча разойтись эти два перечисления могут легко.
+func (s *AWGTunnelStore) ListStrict() ([]AWGTunnel, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []AWGTunnel{}, nil
+		}
+		return nil, fmt.Errorf("read tunnels directory: %w", err)
+	}
+	var tunnels []AWGTunnel
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", entry.Name(), err)
+		}
+		var tunnel AWGTunnel
+		if err := json.Unmarshal(data, &tunnel); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", entry.Name(), err)
+		}
+		if tunnel.Type == "" {
+			tunnel.Type = "awg"
+		}
+		tunnels = append(tunnels, tunnel)
+	}
+	return tunnels, nil
+}
+
 // Get returns a single tunnel by ID.
 func (s *AWGTunnelStore) Get(id string) (*AWGTunnel, error) {
 	path := filepath.Join(s.dir, id+".json")
