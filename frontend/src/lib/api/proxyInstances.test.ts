@@ -468,6 +468,60 @@ describe('адреса новой поверхности', () => {
 		);
 	});
 
+	it('подписка клиента едет отдельным полем тела, а не внутри конфига', async () => {
+		const calls = stubFetch(() => wdttClientView);
+		await api.updateWdttClientInstance('nl', {
+			listen: '127.0.0.1:9000',
+			peer: 'vps.example:56002',
+			password: '',
+			vkHashes: 'h1',
+			workers: 9,
+			obfs: '',
+			fingerprint: '',
+			captchaMode: 'auto',
+			sub: 'https://sub.example/nl'
+		});
+		const body = calls[0].body as { sub?: string; config: Record<string, unknown> };
+		expect(body.sub).toBe('https://sub.example/nl');
+		expect('sub' in body.config).toBe(false);
+	});
+
+	it('снятая подписка едет пустой строкой: «не менять» — это отсутствие поля', async () => {
+		const calls = stubFetch(() => wdttClientView);
+		await api.updateWdttClientInstance('nl', {
+			listen: '127.0.0.1:9000',
+			peer: 'vps.example:56002',
+			password: '',
+			vkHashes: 'h1',
+			workers: 9,
+			obfs: '',
+			fingerprint: '',
+			captchaMode: 'auto',
+			sub: ''
+		});
+		expect((calls[0].body as { sub?: string }).sub).toBe('');
+	});
+
+	it('режим журнала статистики едет отдельным полем тела', async () => {
+		const calls = stubFetch(() => wdttServerView);
+		await api.updateWdttServerInstance('default', {
+			enabled: true,
+			listen: '0.0.0.0:56002',
+			wgPort: 56001,
+			password: '',
+			statsLog: 'disk'
+		});
+		const body = calls[0].body as { statsLog?: string; config: Record<string, unknown> };
+		expect(body.statsLog).toBe('disk');
+		expect('statsLog' in body.config).toBe(false);
+	});
+
+	it('правки NAT, политики и LAN режима журнала не касаются', async () => {
+		const calls = stubFetch(() => wdttServerView);
+		await api.setWdttServerNATMode('default', 'full');
+		expect('statsLog' in (calls[0].body as object)).toBe(false);
+	});
+
 	it('сохранение формы без ввода пароля не шлёт password', async () => {
 		const calls = stubFetch(() => wdttServerView);
 		await api.updateWdttServerInstance('default', {

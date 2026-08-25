@@ -56,9 +56,14 @@ export class WdttClient extends FreeturnClient {
 		return toWdttConfig(await this.proxyList());
 	}
 
+	/**
+	 * `sub` едет ОТДЕЛЬНЫМ полем тела, а не внутри конфига: URL подписки живёт
+	 * на самой записи (у freeturn-клиента он поле роли, у wdtt — нет).
+	 */
 	async updateWdttClientInstance(id: string, config: WdttClientConfig): Promise<WdttSaveClientResult> {
 		const view = await this.proxyPatch('wdtt-client', id, {
 			enabled: config.enabled,
+			sub: config.sub ?? '',
 			config: toWdttClientPatch(config)
 		});
 		return { config: toWdttClientConfig(view) };
@@ -136,9 +141,15 @@ export class WdttClient extends FreeturnClient {
 		});
 	}
 
+	/**
+	 * `statsLog` едет ОТДЕЛЬНЫМ полем тела, а не внутри конфига: режим журнала
+	 * статистики живёт на самой записи. Пустая строка — законное значение
+	 * (дефолт ram, журнал в tmpfs).
+	 */
 	async updateWdttServerInstance(id: string, config: WdttServerConfig): Promise<WdttSaveServerResult> {
 		const view = await this.proxyPatch('wdtt-server', id, {
 			enabled: config.enabled,
+			statsLog: config.statsLog ?? '',
 			config: toWdttServerPatch(config)
 		});
 		return { config: toWdttServerConfig(view) };

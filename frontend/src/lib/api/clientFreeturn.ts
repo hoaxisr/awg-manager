@@ -103,7 +103,14 @@ export class FreeturnClient extends SubscriptionsClient {
 	protected async proxyPatch(
 		kind: ProxyKind,
 		id: string,
-		body: { name?: string; enabled?: boolean; config?: Record<string, unknown> }
+		body: {
+			name?: string;
+			enabled?: boolean;
+			config?: Record<string, unknown>;
+			/** Поля ЗАПИСИ, а не конфига роли: подписка и режим журнала статистики. */
+			sub?: string;
+			statsLog?: string;
+		}
 	): Promise<ProxyInstanceView> {
 		return this.request<ProxyInstanceView>(instancePath(kind, id), {
 			method: 'PATCH',

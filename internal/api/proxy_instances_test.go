@@ -1046,3 +1046,138 @@ func TestProxyInstancesPatch_OpkgTunGateOnModeSwitch(t *testing.T) {
 		t.Fatalf("запись изменена вопреки отказу: %+v", mgr.mutated)
 	}
 }
+
+// TestProxyInstancesPatch_RecordFieldsSemantics — sub и statsLog живут на
+// ЗАПИСИ, а не в конфиге роли, и семантика у них НЕ секретная: пустая строка
+// это законное значение («подписки больше нет», «режим журнала по
+// умолчанию»), а «не менять» означает только отсутствие поля в теле.
+func TestProxyInstancesPatch_RecordFieldsSemantics(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantSub  string
+		wantStat string
+	}{
+		{"поля не прислали", `{"name":"Раздача"}`, "https://sub.example/s1", "/opt/var/stat.log"},
+		{"прислали новые", `{"sub":"https://sub.example/s2","statsLog":"disk"}`, "https://sub.example/s2", "disk"},
+		{"прислали пустые", `{"sub":"","statsLog":""}`, "", ""},
+		{"пробелы обрезаются", `{"sub":"  https://s3  ","statsLog":"  off  "}`, "https://s3", "off"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mgr := &fakeProxyManager{
+				records: []instancestore.Record{fullServerRecord()},
+				seed:    manager.SeedInfo{Booted: true, Certified: true},
+			}
+			h := newProxyHandler(t, mgr, fakeProxyStates{})
+			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default", c.body)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+			}
+			if len(mgr.mutated) != 1 {
+				t.Fatalf("Update вызван %d раз", len(mgr.mutated))
+			}
+			if got := mgr.mutated[0].Sub; got != c.wantSub {
+				t.Errorf("sub = %q, ждали %q", got, c.wantSub)
+			}
+			if got := mgr.mutated[0].StatsLog; got != c.wantStat {
+				t.Errorf("statsLog = %q, ждали %q", got, c.wantStat)
+			}
+		})
+	}
+}
+
+// TestProxyInstancesPatch_SubKeepsEverythingElse — правка подписки трогает
+// ТОЛЬКО подписку: пересборка записи литералом потеряла бы абонентов, память
+// ссылки и слоты адресов.
+func TestProxyInstancesPatch_SubKeepsEverythingElse(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl",
+		`{"sub":"https://sub.example/c2"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	want := fullClientRecord()
+	want.Sub = "https://sub.example/c2"
+	if !reflect.DeepEqual(mgr.mutated[0], want) {
+		t.Fatalf("запись после PATCH = %+v (конфиг %+v),\nждали %+v (конфиг %+v)",
+			mgr.mutated[0], mgr.mutated[0].WdttClient, want, want.WdttClient)
+	}
+}
+
+// TestProxyInstancesPatch_RecordFieldsWithIntent — тело, где рядом с
+// намерением едет поле записи, обязано идти ПОЛНЫМ путём правки. Быстрая
+// ветка «только намерение» зовёт SetEnabled и записи не трогает: попади туда
+// такое тело — подписка потерялась бы молча.
+func TestProxyInstancesPatch_RecordFieldsWithIntent(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		body string
+		want instancestore.Record
+	}{
+		{"подписка рядом с намерением", `{"enabled":false,"sub":"https://sub.example/c2"}`,
+			func() instancestore.Record {
+				r := fullClientRecord()
+				r.Enabled, r.Sub = false, "https://sub.example/c2"
+				return r
+			}()},
+		{"режим журнала рядом с намерением", `{"enabled":false,"statsLog":"off"}`,
+			func() instancestore.Record {
+				r := fullClientRecord()
+				r.Enabled, r.StatsLog = false, "off"
+				return r
+			}()},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mgr := &fakeProxyManager{
+				records: []instancestore.Record{fullClientRecord()},
+				seed:    manager.SeedInfo{Booted: true, Certified: true},
+			}
+			h := newProxyHandler(t, mgr, fakeProxyStates{})
+			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl", c.body)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+			}
+			if len(mgr.enabled) != 0 {
+				t.Fatalf("тело с полем записи ушло в быструю ветку намерения: %+v", mgr.enabled)
+			}
+			if len(mgr.mutated) != 1 || !reflect.DeepEqual(mgr.mutated[0], c.want) {
+				t.Fatalf("запись после PATCH = %+v,\nждали %+v", mgr.mutated, c.want)
+			}
+		})
+	}
+}
+
+// TestProxyInstancesKeyPercentEscaped — фронт адресует инстанс
+// encodeURIComponent'ом, и двоеточие ключа уезжает как %3A, а сам бэкенд
+// строит свои ссылки через url.PathEscape, который двоеточие НЕ трогает
+// (captcha/status.go:151). Формы две, поверхность обязана принимать обе:
+// net/http декодирует путь до разбора хвоста.
+func TestProxyInstancesKeyPercentEscaped(t *testing.T) {
+	for _, path := range []string{
+		"/api/proxyrt/instances/wdtt-server:default",
+		"/api/proxyrt/instances/wdtt-server%3Adefault",
+	} {
+		t.Run(path, func(t *testing.T) {
+			mgr := &fakeProxyManager{
+				records: []instancestore.Record{fullServerRecord()},
+				seed:    manager.SeedInfo{Booted: true, Certified: true},
+			}
+			h := newProxyHandler(t, mgr, fakeProxyStates{})
+			rr := doProxy(t, h, http.MethodGet, path, "")
+			if rr.Code != http.StatusOK {
+				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+			}
+			var v ProxyRtInstanceView
+			decodeProxyData(t, rr, &v)
+			if v.Key != "wdtt-server:default" {
+				t.Fatalf("key = %q, ждали wdtt-server:default", v.Key)
+			}
+		})
+	}
+}

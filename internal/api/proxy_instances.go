@@ -173,10 +173,22 @@ type ProxyRtCreateRequest struct {
 // ProxyRtPatchRequest — тело PATCH /proxyrt/instances/{key}. Указатели, а не
 // значения: отсутствие поля обязано отличаться от присланного нуля, иначе
 // правка одного имени выключала бы инстанс.
+//
+// Sub и StatsLog живут на самой ЗАПИСИ, а не в конфиге роли, и без них у обоих
+// полей не было писателя вовсе: подписка wdtt-клиента терялась при импорте, а
+// режим журнала статистики сервера не переключался. Семантика у них НЕ
+// секретная (пустое ≠ «не менять»): пустая строка — законное значение,
+// «подписки больше нет» и «режим журнала по умолчанию», поэтому различие
+// «поля нет» / «поле пустое» несёт указатель.
 type ProxyRtPatchRequest struct {
 	Name    *string         `json:"name,omitempty" example:"Нидерланды"`
 	Enabled *bool           `json:"enabled,omitempty" example:"true"`
 	Config  json.RawMessage `json:"config,omitempty" swaggertype:"object"`
+	// Sub — URL подписки wdtt-клиента. Пустая строка снимает подписку.
+	Sub *string `json:"sub,omitempty" example:"https://example.org/sub"`
+	// StatsLog — режим журнала статистики wdtt-сервера: ram|off|disk.
+	// Пустая строка означает дефолт (ram — журнал в tmpfs, не на флеш).
+	StatsLog *string `json:"statsLog,omitempty" example:"ram"`
 }
 
 // ── хендлер ──────────────────────────────────────────────────────
@@ -371,6 +383,8 @@ func (h *ProxyInstancesHandler) create(w http.ResponseWriter, r *http.Request) {
 //	@Description	Присланные поля применяются к существующей записи ПО МЕСТУ.
 //	@Description	Секретные поля (password/botToken/obfKey) без значения или с пустым
 //	@Description	значением означают «не менять».
+//	@Description	sub и statsLog — поля записи: отсутствие означает «не менять»,
+//	@Description	пустая строка — законное значение (снять подписку / дефолтный режим).
 //	@Tags			proxyrt
 //	@Accept			json
 //	@Produce		json
@@ -403,8 +417,9 @@ func (h *ProxyInstancesHandler) patch(w http.ResponseWriter, r *http.Request, ke
 	}
 
 	// Только намерение — отдельным вызовом: это самая частая правка (тумблер),
-	// и у менеджера для неё есть своя точка входа.
-	if req.Name == nil && len(cfg) == 0 && req.Enabled != nil {
+	// и у менеджера для неё есть своя точка входа. Условие перечисляет ВСЕ
+	// прочие поля тела: забытое поле уехало бы в эту ветку и потерялось молча.
+	if req.Name == nil && len(cfg) == 0 && req.Sub == nil && req.StatsLog == nil && req.Enabled != nil {
 		if err := h.deps.Manager.SetEnabled(r.Context(), key, *req.Enabled); err != nil {
 			h.fail(w, err)
 			return
@@ -421,6 +436,12 @@ func (h *ProxyInstancesHandler) patch(w http.ResponseWriter, r *http.Request, ke
 		}
 		if req.Enabled != nil {
 			rec.Enabled = *req.Enabled
+		}
+		if req.Sub != nil {
+			rec.Sub = strings.TrimSpace(*req.Sub)
+		}
+		if req.StatsLog != nil {
+			rec.StatsLog = strings.TrimSpace(*req.StatsLog)
 		}
 		if err := proxyApplyConfig(rec, cfg); err != nil {
 			return err

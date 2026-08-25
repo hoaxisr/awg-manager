@@ -2865,6 +2865,16 @@ definitions:
       name:
         example: Нидерланды
         type: string
+      statsLog:
+        description: |-
+          StatsLog — режим журнала статистики wdtt-сервера: ram|off|disk.
+          Пустая строка означает дефолт (ram — журнал в tmpfs, не на флеш).
+        example: ram
+        type: string
+      sub:
+        description: Sub — URL подписки wdtt-клиента. Пустая строка снимает подписку.
+        example: https://example.org/sub
+        type: string
     type: object
   api.ProxyRtResourceView:
     properties:
@@ -11797,6 +11807,8 @@ paths:
         Присланные поля применяются к существующей записи ПО МЕСТУ.
         Секретные поля (password/botToken/obfKey) без значения или с пустым
         значением означают «не менять».
+        sub и statsLog — поля записи: отсутствие означает «не менять»,
+        пустая строка — законное значение (снять подписку / дефолтный режим).
       parameters:
       - description: Ключ инстанса (роль:id)
         in: path
