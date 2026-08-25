@@ -107,6 +107,29 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
+// proxyOpkgOccupancy — занятость пула OpkgTun: живое (только /sys) плюс пины
+// ЧЕТЫРЁХ владельцев — записи AWG-туннелей, удерживающая запись настроек,
+// записи NDMS и записи прокси-инстансов.
+//
+// Состав собран здесь, а не в месте вызова, потому что он и есть контракт:
+// выпавший поставщик не ломает ни сборку, ни один прогон — он просто отдаёт
+// чужой номер как свободный, и коллизия всплывает интерфейсом, который увели
+// у соседней подсистемы.
+//
+// Записи NDMS приходят ОТДЕЛЬНЫМ поставщиком, а не половиной живого: после
+// `ip link del opkgtunN` запись живёт дальше со state error, устройства нет.
+// Номер занят, интерфейс мёртв, и одна карта на оба вопроса врёт.
+func proxyOpkgOccupancy(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
+	awg *storage.AWGTunnelStore, settings *storage.SettingsStore, store *instancestore.Store,
+) storage.OpkgTunPins {
+	return storage.OpkgTunOccupancy(live,
+		awg.OpkgTunPinsOf,
+		settings.OpkgTunPinsOf,
+		ndmsPins,
+		proxyRecordPins(store),
+	)
+}
+
 // proxyRecordPins — четвёртый поставщик пинов пула OpkgTun: записи
 // прокси-инстансов. Три остальных (записи туннелей, удерживающая запись
 // настроек, записи NDMS) приходят готовыми из internal/storage и адаптера
@@ -615,16 +638,10 @@ func (a *app) wireProxyrt() {
 	portAlloc := proxyrt.NewAllocator(proxyrt.IndexRange{
 		Min: roles.ListenPortMin, Max: roles.ListenPortMax})
 
-	// (2) Занятость пула OpkgTun: живое (/sys) плюс пины ЧЕТЫРЁХ владельцев.
-	// Записи NDMS — отдельный поставщик, а не половина живого: запись без
-	// устройства держит номер, но интерфейсом не является.
+	// (2) Занятость пула OpkgTun (состав и его цена — proxyOpkgOccupancy).
 	ndmsIfaces := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
-	occupancy := storage.OpkgTunOccupancy(ndmsIfaces,
-		a.awgStore.OpkgTunPinsOf,
-		a.settingsStore.OpkgTunPinsOf,
-		ndmsIfaces.NDMSOpkgTunPins,
-		proxyRecordPins(store),
-	)
+	occupancy := proxyOpkgOccupancy(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
+		a.awgStore, a.settingsStore, store)
 	allocIndex := proxyAllocIndex(a.shutdownCtx, opkgAlloc, opkgMin, occupancy, store)
 	allocListen := proxyAllocListen(a.shutdownCtx, portAlloc, store, a.awgStore)
 

@@ -74,17 +74,19 @@ func newOccEnv(t *testing.T) *occEnv {
 	}
 }
 
-// alloc собирает боевую формулу: занятость из четырёх поставщиков минус
-// собственные пины владельца.
-func (e *occEnv) alloc(t *testing.T, live map[int]bool, extra ...storage.OpkgTunPins) func(string, int, bool) (int, error) {
+// alloc собирает БОЕВУЮ формулу: тот же состав поставщиков, что у проводки,
+// минус собственные пины владельца. Живая половина и записи NDMS —
+// подставляемые снаружи параметры прод-функции, остальные три поставщика
+// настоящие.
+func (e *occEnv) alloc(t *testing.T, live map[int]bool) func(string, int, bool) (int, error) {
+	t.Helper()
+	return e.allocWithNDMS(t, live, func(context.Context) (map[int]bool, error) { return nil, nil })
+}
+
+func (e *occEnv) allocWithNDMS(t *testing.T, live map[int]bool, ndmsPins storage.OpkgTunPins) func(string, int, bool) (int, error) {
 	t.Helper()
 	min, max := mipsRange(t)
-	pins := append([]storage.OpkgTunPins{
-		e.awg.OpkgTunPinsOf,
-		e.settings.OpkgTunPinsOf,
-		proxyRecordPins(e.store),
-	}, extra...)
-	occ := storage.OpkgTunOccupancy(fakeLiveIfaces{live: live}, pins...)
+	occ := proxyOpkgOccupancy(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
 	return proxyAllocIndex(context.Background(),
 		proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store)
 }
@@ -200,6 +202,26 @@ func TestAllocIndexIgnoresNativeWGRecord(t *testing.T) {
 	}
 }
 
+// Запись NDMS без устройства в /sys держит номер: `ip link del opkgtunN`
+// оставляет её живой со state error, и выданный по ней номер отдал бы
+// интерфейс с чужой записью.
+func TestAllocIndexRespectsNdmsRecordPin(t *testing.T) {
+	e := newOccEnv(t)
+	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]bool, error) {
+		return map[int]bool{9: true}, nil
+	})
+
+	for i := 0; i <= 15; i++ {
+		got, err := alloc("owner-"+string(rune('a'+i)), 0, false)
+		if err != nil {
+			break
+		}
+		if got == 9 {
+			t.Fatal("выдан номер, который держит запись NDMS")
+		}
+	}
+}
+
 // Удерживающая запись настроек занимает номер, даже когда интерфейса нет и
 // Provisioned=false. Ноль — законный номер режимов роутера.
 func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
@@ -223,10 +245,9 @@ func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
 // коллизию.
 func TestAllocIndexFailsClosedOnOccupancyError(t *testing.T) {
 	e := newOccEnv(t)
-	broken := storage.OpkgTunPins(func(context.Context) (map[int]bool, error) {
-		return nil, errors.New("хранилище недоступно")
+	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]bool, error) {
+		return nil, errors.New("NDMS недоступен")
 	})
-	alloc := e.alloc(t, nil, broken)
 
 	if _, err := alloc("wdtt-client:de", 0, false); err == nil {
 		t.Fatal("отказ поставщика занятости обязан отказывать аллокацию")
