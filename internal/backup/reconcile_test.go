@@ -6,8 +6,25 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// newRecords кладёт записи ЧЕРЕЗ хранилище: нормализация и инварианты те же,
+// что у прода, и фикстура не может застыть в форме, которой store уже не
+// отдаёт.
+func newRecords(t *testing.T, dataDir string, recs ...instancestore.Record) *instancestore.Store {
+	t.Helper()
+	store := instancestore.New(dataDir)
+	if _, err := store.Replace(func(st *instancestore.State) error {
+		st.Records = recs
+		return nil
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	return store
+}
 
 func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 	root := t.TempDir()
@@ -16,18 +33,12 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 	if err := os.MkdirAll(tunnelDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "freeturn.json"), []byte(`{
-		"clients":[{"id":"ft1","name":"FT","config":{"listen":"127.0.0.1:9000"}}],
-		"servers":[]
-	}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "wdtt.json"), []byte(`{
-		"clients":[{"id":"wd1","name":"DE","config":{"listen":"127.0.0.1:9001"}}],
-		"servers":[]
-	}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	records := newRecords(t, dataDir,
+		instancestore.Record{ID: "ft1", Kind: instancestore.KindFreeTurnClient,
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"}},
+		instancestore.Record{ID: "wd1", Kind: instancestore.KindWdttClient,
+			WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9001"}},
+	)
 
 	store := storage.NewAWGTunnelStoreWithLockDir(tunnelDir, filepath.Join(root, "locks"))
 	for _, tun := range []storage.AWGTunnel{
@@ -39,7 +50,7 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 		}
 	}
 
-	n, err := ReconcileLinkedEndpoints(dataDir, store)
+	n, err := ReconcileLinkedEndpoints(records, store)
 	if err != nil {
 		t.Fatalf("ReconcileLinkedEndpoints: %v", err)
 	}
@@ -59,6 +70,43 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 	}
 	if wd.Peer.Endpoint != "127.0.0.1:9001" {
 		t.Fatalf("wdtt endpoint = %q", wd.Peer.Endpoint)
+	}
+}
+
+// Туннель, чей клиент удалён, трогать нечем: адрес взять неоткуда, а дефолт
+// 9000 увёл бы рабочий endpoint на порт чужого клиента.
+func TestReconcileLinkedEndpoints_KeepsEndpointWhenClientGone(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	tunnelDir := filepath.Join(dataDir, "tunnels")
+	if err := os.MkdirAll(tunnelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	records := newRecords(t, dataDir,
+		instancestore.Record{ID: "wd1", Kind: instancestore.KindWdttClient,
+			WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000"}},
+	)
+
+	store := storage.NewAWGTunnelStoreWithLockDir(tunnelDir, filepath.Join(root, "locks"))
+	orphan := storage.AWGTunnel{ID: "awg-gone", Name: "GONE", WdttClientID: "удалён",
+		Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9007"}}
+	if err := store.Save(&orphan); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := ReconcileLinkedEndpoints(records, store)
+	if err != nil {
+		t.Fatalf("ReconcileLinkedEndpoints: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("updated = %d, want 0", n)
+	}
+	got, err := store.Get("awg-gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Peer.Endpoint != "127.0.0.1:9007" {
+		t.Fatalf("endpoint осиротевшего туннеля = %q, ждали 127.0.0.1:9007", got.Peer.Endpoint)
 	}
 }
 

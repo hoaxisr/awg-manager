@@ -47,7 +47,7 @@ func (a *app) scheduleProxyClientAutostart(trigger string) {
 // прокси-клиентов. Один вызов на бут: listen назначается при создании клиента,
 // а не при старте процесса, поэтому повторять после автостарта незачем.
 func (a *app) reconcileLinkedEndpoints(scope string) {
-	n, err := backup.ReconcileLinkedEndpoints(a.dataDir, a.awgStore)
+	n, err := backup.ReconcileLinkedEndpoints(a.proxyStore, a.awgStore)
 	if a.bootLog == nil {
 		return
 	}

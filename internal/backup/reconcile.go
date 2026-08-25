@@ -1,48 +1,40 @@
 package backup
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
-type freeturnConfigFile struct {
-	Clients []freeturn.ClientInstance `json:"clients"`
-}
-
-type wdttConfigFile struct {
-	Clients []wdtt.ClientInstance `json:"clients"`
+// RecordLister — срез хранилища прокси-инстансов: одно чтение записей.
+// Объявлен здесь, у потребителя: пакету нужен ровно этот метод.
+type RecordLister interface {
+	Load() (instancestore.State, error)
 }
 
 // ReconcileLinkedEndpoints syncs AWG tunnel Peer.Endpoint to the listen port
 // of linked FreeTurn/WDTT clients. Client listen is authoritative — fixes
 // archives where listen-repair shuffled proxy ports but left tunnel endpoints stale.
-// awgStore — уже сконфигурированное хранилище демона (свой lock-dir), а не
-// новый экземпляр: иначе запись шла бы мимо общей блокировки.
-func ReconcileLinkedEndpoints(dataDir string, awgStore *storage.AWGTunnelStore) (int, error) {
-	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
-	if dataDir == "" {
-		return 0, fmt.Errorf("data-dir не задан")
+// records и awgStore — уже сконфигурированные хранилища демона (у туннелей —
+// свой lock-dir), а не новые экземпляры: иначе запись шла бы мимо общей
+// блокировки.
+func ReconcileLinkedEndpoints(records RecordLister, awgStore *storage.AWGTunnelStore) (int, error) {
+	if records == nil {
+		return 0, fmt.Errorf("хранилище прокси-инстансов не задано")
 	}
 	if awgStore == nil {
 		return 0, fmt.Errorf("хранилище туннелей не задано")
 	}
 
-	ftClients, err := loadFreeTurnClients(filepath.Join(dataDir, "freeturn.json"))
+	st, err := records.Load()
 	if err != nil {
 		return 0, err
 	}
-	wdClients, err := loadWdttClients(filepath.Join(dataDir, "wdtt.json"))
-	if err != nil {
-		return 0, err
-	}
-	if len(ftClients) == 0 && len(wdClients) == 0 {
+	listens := clientListens(st.Records)
+	if len(listens) == 0 {
 		return 0, nil
 	}
 
@@ -55,18 +47,20 @@ func ReconcileLinkedEndpoints(dataDir string, awgStore *storage.AWGTunnelStore) 
 	for i := range tunnels {
 		tun := &tunnels[i]
 		var listen string
+		var linked bool
+		// Отсутствие записи и пустой listen существующей записи — РАЗНЫЕ
+		// случаи: у второго законный дефолт 9000, а у первого клиента нет
+		// вовсе, и endpoint такого туннеля трогать нечем.
 		switch {
 		case strings.TrimSpace(tun.FreeTurnClientID) != "":
-			listen = ftClients[strings.TrimSpace(tun.FreeTurnClientID)]
+			listen, linked = listens[clientKey(instancestore.KindFreeTurnClient, tun.FreeTurnClientID)]
 		case strings.TrimSpace(tun.WdttClientID) != "":
-			listen = wdClients[strings.TrimSpace(tun.WdttClientID)]
-		default:
+			listen, linked = listens[clientKey(instancestore.KindWdttClient, tun.WdttClientID)]
+		}
+		if !linked {
 			continue
 		}
-		want, ok := localEndpoint(listen)
-		if !ok {
-			continue
-		}
+		want := fmt.Sprintf("127.0.0.1:%d", wdttlink.ListenPortFromAddr(listen))
 		if strings.TrimSpace(tun.Peer.Endpoint) == want {
 			continue
 		}
@@ -79,60 +73,21 @@ func ReconcileLinkedEndpoints(dataDir string, awgStore *storage.AWGTunnelStore) 
 	return updated, nil
 }
 
-func loadFreeTurnClients(path string) (map[string]string, error) {
+// clientListens — адреса прослушивания КЛИЕНТСКИХ записей по ключу инстанса.
+// Серверных здесь нет: endpoint связанного туннеля смотрит на клиента.
+func clientListens(recs []instancestore.Record) map[string]string {
 	out := map[string]string{}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
+	for _, rec := range recs {
+		switch {
+		case rec.WdttClient != nil:
+			out[rec.Key()] = rec.WdttClient.Listen
+		case rec.FreeTurnClient != nil:
+			out[rec.Key()] = rec.FreeTurnClient.Listen
 		}
-		return nil, err
 	}
-	var cfg freeturnConfigFile
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("freeturn.json: %w", err)
-	}
-	for _, c := range cfg.Clients {
-		id := strings.TrimSpace(c.ID)
-		if id == "" {
-			continue
-		}
-		out[id] = strings.TrimSpace(c.Config.Listen)
-	}
-	return out, nil
+	return out
 }
 
-func loadWdttClients(path string) (map[string]string, error) {
-	out := map[string]string{}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
-		}
-		return nil, err
-	}
-	var cfg wdttConfigFile
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("wdtt.json: %w", err)
-	}
-	for _, c := range cfg.Clients {
-		id := strings.TrimSpace(c.ID)
-		if id == "" {
-			continue
-		}
-		out[id] = strings.TrimSpace(c.Config.Listen)
-	}
-	return out, nil
-}
-
-func localEndpoint(listen string) (string, bool) {
-	port, ok := freeturn.LocalListenPort(listen)
-	if !ok || port <= 0 {
-		if p := wdtt.ListenPortFromAddr(listen); p > 0 {
-			port = p
-		} else {
-			return "", false
-		}
-	}
-	return fmt.Sprintf("127.0.0.1:%d", port), true
+func clientKey(kind instancestore.Kind, id string) string {
+	return instancestore.Record{Kind: kind, ID: strings.TrimSpace(id)}.Key()
 }

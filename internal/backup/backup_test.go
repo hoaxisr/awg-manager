@@ -4,10 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
 func TestExportRestoreRoundtrip(t *testing.T) {
@@ -122,5 +126,78 @@ func TestRestorePrunesOlderPreRestoreCopies(t *testing.T) {
 	}
 	if len(kept) != 1 {
 		t.Fatalf("ожидали ровно одну копию, получили %v", kept)
+	}
+}
+
+// Хранилище прокси-инстансов обязано и уезжать в архив, и возвращаться из
+// него: бэкап, молча не взявший файл, обнаруживается только тогда, когда он
+// уже понадобился. Проверяется СОСТАВ записи, а не факт наличия файла —
+// пустой или обрезанный proxy-instances.json прошёл бы проверку по имени.
+func TestExportRestoreKeepsProxyInstances(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newRecords(t, dataDir,
+		instancestore.Record{ID: "wd1", Kind: instancestore.KindWdttClient, Name: "Нидерланды",
+			WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9001",
+				Peer: "1.2.3.4:56000", Password: "p", VKHashes: "h"}},
+	)
+
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.17.3", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if !archiveHasEntry(t, buf.Bytes(), "proxy-instances.json") {
+		t.Fatal("proxy-instances.json не попал в архив")
+	}
+
+	target := filepath.Join(root, "restored")
+	if err := Restore(target, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	st, err := instancestore.New(target).Load()
+	if err != nil {
+		t.Fatalf("восстановленное хранилище не читается: %v", err)
+	}
+	if len(st.Records) != 1 {
+		t.Fatalf("записей после восстановления %d, ждали 1", len(st.Records))
+	}
+	rec := st.Records[0]
+	if rec.Key() != "wdtt-client:wd1" || rec.Name != "Нидерланды" {
+		t.Fatalf("запись после восстановления = %+v", rec)
+	}
+	cfg, err := rec.WdttClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Listen != "127.0.0.1:9001" || cfg.Peer != "1.2.3.4:56000" {
+		t.Fatalf("конфиг после восстановления = %+v", cfg)
+	}
+}
+
+func archiveHasEntry(t *testing.T, archive []byte, name string) bool {
+	t.Helper()
+	gr, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Name == name {
+			return true
+		}
 	}
 }
