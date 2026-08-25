@@ -551,7 +551,6 @@ func (o *Orchestrator) executeDeleteKernel(ctx context.Context, action Action) e
 		return fmt.Errorf("delete from storage: %w", err)
 	}
 
-	o.cleanupTunnelLock(action.Tunnel)
 	o.appLog.Info("delete", action.Tunnel, "kernel tunnel deleted")
 	return nil
 }
@@ -578,7 +577,6 @@ func (o *Orchestrator) executeDeleteNativeWG(ctx context.Context, action Action)
 		return fmt.Errorf("delete from storage: %w", err)
 	}
 
-	o.cleanupTunnelLock(action.Tunnel)
 	o.appLog.Info("delete", action.Tunnel, "NativeWG tunnel deleted")
 	return nil
 }

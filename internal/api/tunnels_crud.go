@@ -645,6 +645,12 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(err, tunnel.ErrOperationInProgress) {
+			// Занятый замок — ретраибельный конфликт, не отказ удаления.
+			// Тот же контракт, что у start/stop/restart в control.go.
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+			return
+		}
 		h.log.Warn("delete", tunnelName, "Failed to delete tunnel: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "DELETE_FAILED")
 		return
@@ -766,6 +772,7 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/replace [post]
 func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
@@ -806,6 +813,15 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 
 	if wasRunning {
 		if err := h.svc.Stop(r.Context(), id); err != nil {
+			if errors.Is(err, tunnel.ErrOperationInProgress) {
+				// Замок занят — конфиг не тронут, повтор через несколько
+				// секунд пройдёт. Ветка ловит только случай «туннель виден
+				// работающим»: если залипшая операция уже уронила видимое
+				// состояние, Stop пропускается и замена идёт мимо замка
+				// оркестратора — отдельная дыра, не эта.
+				response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+				return
+			}
 			response.InternalError(w, "failed to stop tunnel before config replace: "+err.Error())
 			return
 		}

@@ -98,8 +98,21 @@ export class TunnelsClient extends CoreClient {
 			throw new Error('Ошибка сети: не удалось подключиться к серверу');
 		}
 		if (res.status === 409) {
-			const body = await res.json().catch(() => ({}));
-			this.throwTunnelReferencedFrom409(body, fallbackId);
+			// Тело "null" — валидный JSON, catch не сработает, поэтому ?.
+			const body = (await res.json().catch(() => null)) as {
+				error?: unknown;
+				message?: string;
+			} | null;
+			// 409 на удалении означает две разные вещи: туннель на кого-то
+			// завязан (error:"tunnel_referenced") либо замок туннеля занят
+			// другой операцией (error:true + message). Второе — ретраибельно,
+			// модалку «используется» показывать нельзя.
+			if (body?.error === 'tunnel_referenced') {
+				this.throwTunnelReferencedFrom409(body, fallbackId);
+			}
+			// Нейтральный fallback: fetchDelete общий для всех ручек удаления,
+			// подставлять сюда причину одной из них нельзя.
+			throw new Error(body?.message || 'Конфликт: операция отклонена (409)');
 		}
 		if (res.status === 401) {
 			this.onUnauthorized?.();

@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
@@ -102,6 +104,12 @@ func (h *WdttHandler) ensureWGTunnel(w http.ResponseWriter, r *http.Request, cli
 		storedKey := strings.TrimSpace(tun.Peer.PublicKey)
 		if newPeerKey != "" && storedKey != "" && newPeerKey != storedKey {
 			if err := h.tunnelSvc.Delete(r.Context(), tun.ID); err != nil {
+				if errors.Is(err, tunnel.ErrOperationInProgress) {
+					// Занятый замок ретраибелен, а 400 читается как
+					// «запрос неверен» — тот же контракт, что у delete.
+					response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+					return
+				}
 				response.Error(w, "не удалось удалить устаревший AWG-туннель: "+err.Error(), "WDTT_WG_REPLACE_FAILED")
 				return
 			}

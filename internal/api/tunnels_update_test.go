@@ -267,6 +267,11 @@ func TestMergePeerWhitelist_PSKCleared(t *testing.T) {
 // но это ПОСЛЕ store.Save — ассерты идут по стору, код ответа не важен.
 type stubTunnelSvc struct {
 	updateFn func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
+	deleteFn func(ctx context.Context, tunnelID string) error
+	stopFn   func(ctx context.Context, tunnelID string) error
+	stateFn  func(tunnelID string) tunnel.StateInfo
+
+	replaceCalls int
 }
 
 func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
@@ -282,21 +287,39 @@ func (s *stubTunnelSvc) Update(ctx context.Context, oldStored, newStored *storag
 	}
 	return nil
 }
-func (s *stubTunnelSvc) Delete(context.Context, string) error                   { return nil }
-func (s *stubTunnelSvc) Start(context.Context, string) error                    { return nil }
-func (s *stubTunnelSvc) Stop(context.Context, string) error                     { return nil }
+func (s *stubTunnelSvc) Delete(ctx context.Context, tunnelID string) error {
+	if s.deleteFn != nil {
+		return s.deleteFn(ctx, tunnelID)
+	}
+	return nil
+}
+func (s *stubTunnelSvc) Start(context.Context, string) error { return nil }
+func (s *stubTunnelSvc) Stop(ctx context.Context, tunnelID string) error {
+	if s.stopFn != nil {
+		return s.stopFn(ctx, tunnelID)
+	}
+	return nil
+}
 func (s *stubTunnelSvc) Restart(context.Context, string) error                  { return nil }
 func (s *stubTunnelSvc) CheckAddressConflicts(context.Context, string) []string { return nil }
-func (s *stubTunnelSvc) GetState(context.Context, string) tunnel.StateInfo      { return tunnel.StateInfo{} }
-func (s *stubTunnelSvc) SetEnabled(context.Context, string, bool) error         { return nil }
-func (s *stubTunnelSvc) SetDefaultRoute(context.Context, string, bool) error    { return nil }
+func (s *stubTunnelSvc) GetState(_ context.Context, tunnelID string) tunnel.StateInfo {
+	if s.stateFn != nil {
+		return s.stateFn(tunnelID)
+	}
+	return tunnel.StateInfo{}
+}
+func (s *stubTunnelSvc) SetEnabled(context.Context, string, bool) error      { return nil }
+func (s *stubTunnelSvc) SetDefaultRoute(context.Context, string, bool) error { return nil }
 func (s *stubTunnelSvc) Import(context.Context, string, string, string) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error { return nil }
-func (s *stubTunnelSvc) WANModel() *wan.Model                                        { return nil }
-func (s *stubTunnelSvc) GetResolvedISP(string) string                                { return "" }
-func (s *stubTunnelSvc) SetSelfCreateGate(tunnel.SelfCreateGater)                    {}
+func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error {
+	s.replaceCalls++
+	return nil
+}
+func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
+func (s *stubTunnelSvc) GetResolvedISP(string) string             { return "" }
+func (s *stubTunnelSvc) SetSelfCreateGate(tunnel.SelfCreateGater) {}
 
 func newTunnelsUpdateHarness(t *testing.T, stub *stubTunnelSvc) (*TunnelsHandler, *storage.AWGTunnelStore) {
 	t.Helper()
@@ -366,5 +389,70 @@ func TestTunnelUpdate_KeepsConcurrentRuntimeWrites(t *testing.T) {
 	if saved.ActiveWAN != "Wireguard2" || saved.StartedAt != "2026-08-18T11:00:00Z" || saved.Enabled {
 		t.Fatalf("runtime-поля затёрты снапшотом existing: ActiveWAN=%q StartedAt=%q Enabled=%v",
 			saved.ActiveWAN, saved.StartedAt, saved.Enabled)
+	}
+}
+
+// Issue #795: занятый пер-туннельный замок — ретраибельный конфликт, а не
+// провал удаления. 500 фронт показывает как фатальную «Ошибка удаления
+// (500)», хотя повтор через несколько секунд проходит. start/stop/restart
+// в control.go уже отдают 409 — delete должен вести себя так же.
+func TestTunnelDelete_OperationInProgressIs409(t *testing.T) {
+	stub := &stubTunnelSvc{deleteFn: func(context.Context, string) error {
+		return fmt.Errorf("%w (awg11)", tunnel.ErrOperationInProgress)
+	}}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Save(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Delete(rec, httptest.NewRequest(http.MethodPost, "/tunnels/delete?id=awg11", nil))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("код ответа = %d, ожидался 409; тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "OPERATION_IN_PROGRESS") {
+		t.Fatalf("нет кода OPERATION_IN_PROGRESS в теле: %s", rec.Body.String())
+	}
+	// Форма 409 для «туннель используется» другая — фронт различает их по
+	// полю error, поэтому этот ответ не должен на неё походить.
+	if strings.Contains(rec.Body.String(), "tunnel_referenced") {
+		t.Fatalf("ответ спутан с tunnel_referenced: %s", rec.Body.String())
+	}
+}
+
+// Issue #795, шаг 5 из репорта: «нажал заменить конфиг → та же ошибка».
+// ReplaceConf останавливает running-туннель перед заменой, и занятый замок
+// прилетал сюда как 500 — фронт показывал фатальную ошибку там, где повтор
+// через несколько секунд проходит.
+func TestTunnelReplaceConf_OperationInProgressIs409(t *testing.T) {
+	stub := &stubTunnelSvc{
+		stateFn: func(string) tunnel.StateInfo {
+			return tunnel.StateInfo{State: tunnel.StateRunning}
+		},
+		stopFn: func(context.Context, string) error {
+			return fmt.Errorf("%w (awg11)", tunnel.ErrOperationInProgress)
+		},
+	}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Save(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ReplaceConf(rec, httptest.NewRequest(http.MethodPost, "/tunnels/replace?id=awg11",
+		strings.NewReader(`{"content":"[Interface]\nAddress = 10.0.0.2/32\n"}`)))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("код ответа = %d, ожидался 409; тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "OPERATION_IN_PROGRESS") {
+		t.Fatalf("нет кода OPERATION_IN_PROGRESS в теле: %s", rec.Body.String())
+	}
+	// Без этого ассерта тест зелёный и когда хэндлер после ErrorWithStatus
+	// не выходит: первый WriteHeader выигрывает, код остаётся 409, а конфиг
+	// работающего туннеля молча заменяется под чужой операцией.
+	if stub.replaceCalls != 0 {
+		t.Fatalf("конфиг заменён вопреки занятому замку: вызовов ReplaceConfig = %d", stub.replaceCalls)
 	}
 }
