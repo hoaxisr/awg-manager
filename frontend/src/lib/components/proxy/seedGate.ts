@@ -34,7 +34,7 @@ function skippedText(s: ProxySkippedSourceView): string {
 export function seedGateWarning(seed: ProxySeedView | null | undefined): string {
 	if (!seed || !seed.seeded || seed.certified) return '';
 	const skipped = seed.skipped ?? [];
-	if (skipped.length) return `${GATE_LOCKED} ${skipped.map(skippedText).join(' ')}`;
+	if (skipped.length) return `${GATE_LOCKED} ${skipped.map(skippedText).join('; ')}`;
 	const why = seed.error?.trim();
 	return why ? `${GATE_LOCKED} ${why}` : GATE_LOCKED;
 }
