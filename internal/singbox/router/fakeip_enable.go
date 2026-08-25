@@ -130,7 +130,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		}
 	}
 
-	idx, err := allocateFakeIPIndex(live)
+	taken, err := allocOccupancy(ctx, live, s.deps.OpkgTunPins)
+	if err != nil {
+		return fmt.Errorf("enable fakeip-tun: %w", err)
+	}
+	idx, err := allocateFakeIPIndex(taken)
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: allocate index: %w", err)
 	}

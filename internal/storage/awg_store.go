@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -81,6 +82,57 @@ func (s *AWGTunnelStore) List() ([]AWGTunnel, error) {
 		tunnels = append(tunnels, tunnel)
 	}
 
+	return tunnels, nil
+}
+
+// ListStrict — перечисление БЕЗ прощения и БЕЗ побочных действий: любая
+// пофайловая беда (чтение, JSON) — ошибка всего вызова; карантина нет.
+//
+// Нужен там, где «не смогли перечислить» и «записей нет» имеют
+// противоположные последствия, а List() их не различает: пофайловую ошибку он
+// глотает через continue. Два таких потребителя: занятость номеров OpkgTun и
+// гейт посева реестра выходов, где временно нечитаемый каталог выглядел бы как
+// «терять нечего». Отсутствие каталога — законное «пусто».
+//
+// ГРАНИЦА, которую важно понимать: от ПОРЧИ JSON строгое чтение в пути выдачи
+// идентификатора не защищает. Там первым отрабатывает List() и уносит битый
+// файл в карантин переименованием — к моменту сбора занятости файла уже нет, и
+// номер честно свободен. Это не дыра, а работающий по замыслу карантин:
+// повреждённая запись выводится из обращения, о чём пользователю сообщают.
+// Строгое чтение ловит другой класс — ВРЕМЕННУЮ нечитаемость файла, которую
+// List() пропускает молча и без переименования.
+//
+// МИГРАЦИЙ ЗДЕСЬ НЕТ — в отличие от List() (DefaultRoute и всё, что добавят
+// после). Потребители читают только Backend, ID и Interface.Address, которых
+// миграции не касаются; добавляя миграцию в List(), решить осознанно, нужна
+// ли она и тут — молча разойтись эти два перечисления могут легко.
+func (s *AWGTunnelStore) ListStrict() ([]AWGTunnel, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []AWGTunnel{}, nil
+		}
+		return nil, fmt.Errorf("read tunnels directory: %w", err)
+	}
+	var tunnels []AWGTunnel
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", entry.Name(), err)
+		}
+		var tunnel AWGTunnel
+		if err := json.Unmarshal(data, &tunnel); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", entry.Name(), err)
+		}
+		if tunnel.Type == "" {
+			tunnel.Type = "awg"
+		}
+		tunnels = append(tunnels, tunnel)
+	}
 	return tunnels, nil
 }
 
@@ -223,17 +275,21 @@ const (
 // - OS 5.x, kernel:   awg10..awg16 → OpkgTun10..OpkgTun16 (прошивочный лимит NDMS — 16)
 // - OS 5.x, nativewg: awg20, awg21, ... (в OpkgTun не отображаются, см. os5NWGMinIndex)
 // - OS 4.x: awgm0, awgm1, ... (uses 'm' prefix, no NDMS; backend не различается)
-func (s *AWGTunnelStore) NextAvailableID(backend string) (string, error) {
+// occupancy — внешняя занятость номеров OpkgTun (живые интерфейсы плюс пины
+// чужих подсистем). Спрашивается ТОЛЬКО в kernel-ветке на OS 5.x: nativewg
+// живёт как Wireguard<N>, а на 4.x интерфейсов OpkgTun нет вовсе — платить
+// отказом за источник, который им не нужен, они не должны.
+func (s *AWGTunnelStore) NextAvailableID(ctx context.Context, backend string, occupancy OpkgTunPins) (string, error) {
 	tunnels, err := s.List()
 	if err != nil {
 		return "", err
 	}
-	return nextAvailableID(tunnels, backend, osdetect.Is5())
+	return nextAvailableID(tunnels, backend, osdetect.Is5(), occupancy, ctx)
 }
 
 // nextAvailableID — чистая функция выбора ID (вынесена из NextAvailableID
 // для тестируемости без глобального osdetect-состояния).
-func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool) (string, error) {
+func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool, occupancy OpkgTunPins, ctx context.Context) (string, error) {
 	existing := make(map[int]bool)
 
 	if is5 {
@@ -254,8 +310,20 @@ func nextAvailableID(tunnels []AWGTunnel, backend string, is5 bool) (string, err
 				}
 			}
 		}
+		// Дальше — kernel: его идентификатор ОДНОВРЕМЕННО является номером
+		// интерфейса OpkgTun, поэтому к занятым идентификаторам добавляется
+		// занятость номеров, собранная снаружи. Отсутствие источника — не
+		// «занятых нет», а незаконченная проводка: молча вернуться к одному
+		// лишь хранилищу значит выдать номер, который уже кем-то занят.
+		if occupancy == nil {
+			return "", fmt.Errorf("источник занятости OpkgTun не задан")
+		}
+		taken, err := occupancy(ctx)
+		if err != nil {
+			return "", fmt.Errorf("занятость OpkgTun: %w", err)
+		}
 		for i := os5MinIndex; i <= os5MaxIndex; i++ {
-			if !existing[i] {
+			if !existing[i] && !taken[i] {
 				return "awg" + strconv.Itoa(i), nil
 			}
 		}

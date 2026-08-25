@@ -109,7 +109,11 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	case prev != nil && s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription):
 		idx = prev.Index
 	default:
-		if idx, err = allocateFakeIPIndex(live); err != nil {
+		taken, oerr := allocOccupancy(ctx, live, s.deps.OpkgTunPins)
+		if oerr != nil {
+			return fmt.Errorf("enable policy-tun: %w", oerr)
+		}
+		if idx, err = allocateFakeIPIndex(taken); err != nil {
 			return fmt.Errorf("enable policy-tun: allocate index: %w", err)
 		}
 	}

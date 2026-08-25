@@ -102,8 +102,14 @@ type app struct {
 	nwgOp         *nwg.OperatorNativeWG
 	wanModel      *wan.Model
 	tunnelService *service.ServiceImpl
-	catalog       *routing.CatalogImpl
-	orch          *orchestrator.Orchestrator
+	// opkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
+	// владельцев. Собирается один раз и раздаётся всем, кто выдаёт номера.
+	opkgTunOccupancy storage.OpkgTunPins
+	// opkgNDMSPins — пины по записям NDMS: номер занят записью, устройства
+	// может уже не быть.
+	opkgNDMSPins storage.OpkgTunPins
+	catalog      *routing.CatalogImpl
+	orch         *orchestrator.Orchestrator
 
 	// routing / aux services
 	hydraService        *hydraroute.Service

@@ -77,7 +77,10 @@ type TunnelsHandler struct {
 	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
 	// the contract.
 	selfCreateGate tunnel.SelfCreateGater
-	wdttSvc           wdttListSource
+
+	// opkgOccupancy — занятость номеров OpkgTun для выдачи идентификатора.
+	opkgOccupancy storage.OpkgTunPins
+	wdttSvc       wdttListSource
 	// buildTunnelsSnapshot (optional) assembles the composite
 	// {tunnels, external, system} payload used by GetAll and by
 	// mutation handlers that return fresh state. Injected by server.go
@@ -97,6 +100,11 @@ func NewTunnelsHandler(svc TunnelService, store *storage.AWGTunnelStore, appLogg
 
 // SetEventBus sets the event bus for SSE publishing.
 func (h *TunnelsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
+
+// SetOpkgTunOccupancy задаёт источник занятости номеров OpkgTun — он нужен
+// выдаче идентификатора kernel-туннеля, потому что этот номер одновременно
+// является номером интерфейса в NDMS.
+func (h *TunnelsHandler) SetOpkgTunOccupancy(occ storage.OpkgTunPins) { h.opkgOccupancy = occ }
 
 // SetCatalog sets the routing catalog for tunnel list updates.
 func (h *TunnelsHandler) SetCatalog(cat routing.Catalog) { h.catalog = cat }

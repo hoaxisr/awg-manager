@@ -35,6 +35,11 @@ type ServiceImpl struct {
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	appLog         *logging.ScopedLogger // UI-visible logging
 
+	// opkgOccupancy — занятость номеров OpkgTun (живые интерфейсы плюс пины
+	// чужих подсистем). Нужна только kernel-ветке выдачи идентификатора:
+	// номер kernel-туннеля одновременно является номером интерфейса.
+	opkgOccupancy storage.OpkgTunPins
+
 	// tunnelMu provides per-tunnel mutexes for lifecycle operations.
 	// Key: tunnelID (string), Value: *sync.Mutex
 	tunnelMu sync.Map
@@ -71,6 +76,9 @@ type AWGSyncer interface {
 }
 
 func (s *ServiceImpl) SetAWGSyncer(sync AWGSyncer) { s.awgSyncer = sync }
+
+// SetOpkgTunOccupancy задаёт источник занятости номеров OpkgTun.
+func (s *ServiceImpl) SetOpkgTunOccupancy(occ storage.OpkgTunPins) { s.opkgOccupancy = occ }
 
 func (s *ServiceImpl) SetDeviceProxyRefChecker(c DeviceProxyRefChecker) { s.deviceProxyRefs = c }
 func (s *ServiceImpl) SetRouterRefChecker(c RouterRefChecker)           { s.routerRefs = c }
@@ -722,7 +730,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	}
 
 	// Kernel path (existing logic)
-	tunnelID, err := s.store.NextAvailableID(backend)
+	tunnelID, err := s.store.NextAvailableID(ctx, backend, s.opkgOccupancy)
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}
@@ -753,7 +761,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 
 	// Generate tunnel ID — NativeWG-диапазон (awg20+), не делит
 	// kernel-лимит OpkgTun10..16.
-	tunnelID, err := s.store.NextAvailableID("nativewg")
+	tunnelID, err := s.store.NextAvailableID(ctx, "nativewg", nil)
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}

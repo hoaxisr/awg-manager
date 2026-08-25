@@ -86,6 +86,7 @@ func (a *app) setupServer() {
 		},
 		server.Deps{
 			TunnelService:       a.tunnelService,
+			OpkgTunOccupancy:    a.opkgTunOccupancy,
 			ExternalService:     a.externalService,
 			TestingService:      a.testService,
 			Keenetic:            a.keeneticClient,
@@ -342,10 +343,12 @@ func (a *app) setupRouter() {
 		GeoTagCounts:           a.geoDataStore,
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
-		OpkgTunIndices: &routerOpkgTunIndexAdapter{
-			store: a.ndmsQueries.Interfaces,
-			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
-		},
+		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
+		// Пины ЧУЖИХ владельцев: записи туннелей и записи NDMS без живого
+		// устройства. Своя удерживающая запись сюда не входит — она приходит
+		// из настроек, и подмешивание её в занятость перепинило бы режим
+		// роутера сам на себя.
+		OpkgTunPins:   storage.MergeOpkgTunPins(a.awgStore.OpkgTunPinsOf, a.opkgNDMSPins),
 		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
 		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
 		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
@@ -524,10 +527,7 @@ func (a *app) setupRouter() {
 	if a.wdttService != nil && a.ndmsCommands != nil {
 		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
 		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
-		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
-			store: a.ndmsQueries.Interfaces,
-			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, "wdtt"),
-		})
+		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces})
 		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
 		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
 		a.wdttService.SetRouterReconciler(routerSvc)
