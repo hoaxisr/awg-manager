@@ -31,6 +31,9 @@ type SeedDeps struct {
 type SeedResult struct {
 	State     State
 	SeededNow bool
+	// CleanupPending — одноразовые шаги не доведены: либо посев только что
+	// состоялся, либо прошлый проход не удался и отметка на диске висит.
+	CleanupPending bool
 	// OldGenPIDs — кандидаты на добивание (§9 протокола). Только собраны:
 	// живость и принадлежность бинарю проверяет адаптер (задача 6, B3 —
 	// pid-файл на флешке переживает ребут, PID мог достаться постороннему).
@@ -271,7 +274,15 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		return SeedResult{}, err
 	}
 	if cur.Seeded {
-		return SeedResult{State: cur}, nil
+		// Посев — no-op, но недоведённая уборка обязана повториться: pid'ы
+		// старого поколения пересобираются заново (pid-файлы на месте), список
+		// прежних kernel-имён приходит с диска.
+		res := SeedResult{State: cur, CleanupPending: cur.CleanupPending,
+			LegacyKernelIfaces: cur.LegacyKernelIfaces}
+		if cur.CleanupPending {
+			res.OldGenPIDs = oldGenerationPIDs(d.RuntimeDir)
+		}
+		return res, nil
 	}
 
 	var wdttFile oldWdttFile
@@ -475,6 +486,8 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			state.Records = append(state.Records, r)
 		}
 		state.SeededFrom = from
+		state.CleanupPending = true
+		state.LegacyKernelIfaces = legacyIfaces
 		return nil
 	})
 	if err != nil {
@@ -484,9 +497,22 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 	return SeedResult{
 		State:              next,
 		SeededNow:          true,
+		CleanupPending:     true,
 		OldGenPIDs:         oldGenerationPIDs(d.RuntimeDir),
 		LegacyKernelIfaces: legacyIfaces,
 	}, nil
+}
+
+// ClearCleanupPending — снятие отметки ОТДЕЛЬНОЙ транзакцией, после успешного
+// прохода одноразовых шагов. Список прежних kernel-имён уходит вместе с ней:
+// он существует только ради этих шагов.
+func ClearCleanupPending(st *Store) error {
+	_, err := st.Replace(func(state *State) error {
+		state.CleanupPending = false
+		state.LegacyKernelIfaces = nil
+		return nil
+	})
+	return err
 }
 
 // oldGenerationPIDs — pid-файлы старого мира (форма имени —

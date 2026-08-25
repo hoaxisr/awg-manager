@@ -9,7 +9,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -267,29 +269,166 @@ func (proxyIPT) Output(ctx context.Context, args ...string) (string, error) {
 
 var _ netres.IPT = proxyIPT{}
 
-// proxyFW — netres.FW поверх internal/listenfirewall: своя метка, свой хук и
-// декларативный Reconcile, снимающий stale по живым правилам.
-type proxyFW struct{}
+// proxyFWBook — ОБЩАЯ ведомость INPUT-портов прокси-рантайма поверх
+// internal/listenfirewall. Ресурс netres.InputPort пер-инстансный, а
+// listenfirewall глобален: ListManaged отдаёт правила ВСЕХ наших инстансов, а
+// Reconcile переписывает единственный хук ТОЛЬКО переданными портами. Прямой
+// пер-инстансный адаптер поверх такой пары даёт вечный цикл: при живых
+// wdtt-сервере и freeturn-сервере каждый видит порты соседа лишними, закрывает
+// их и переписывает хук своей половиной — и так каждые 15 секунд, с записью на
+// флеш.
+//
+// Ведомость держит вклад каждого инстанса и раздаёт хендлы forInstance:
+//   - Managed(key) — живые правила МИНУС порты, желаемые ДРУГИМИ: лишним
+//     считается лишь то, что не нужно никому;
+//   - Reconcile(key, own) — вклад запоминается, в listenfirewall уезжает
+//     ОБЪЕДИНЕНИЕ вкладов.
+//
+// Сузить Observe до своих правил нечем: признака принадлежности в правиле нет
+// (метка listenfirewall.Comment одна на всех). Аддитивный Reconcile отвергнут:
+// порт, открытый прежним поколением, не закрыл бы никто, а собственный хук
+// вечно его восстанавливал бы.
+type proxyFWBook struct {
+	mu      sync.Mutex
+	want    map[string][]netres.PortSpec
+	pending map[string]bool
+	// list/apply — швы прода (listenfirewall) ради теста: весь смысл ведомости
+	// в СОСТАВЕ желаемого, а наблюдать его иначе нечем.
+	list  func(ctx context.Context) ([]listenfirewall.PortSpec, error)
+	apply func(ctx context.Context, desired []listenfirewall.PortSpec)
+	now   func() time.Time
+	start time.Time
+}
 
-func (proxyFW) Managed(ctx context.Context) ([]netres.PortSpec, error) {
-	specs, err := listenfirewall.ListManaged(ctx)
+// proxyFWGrace — окно ожидания отчётов. Пока не отчитался хоть один серверный
+// инстанс, ведомость щадит чужие порты (см. pendingLocked). Окно нужно
+// потому, что молчание не отличимо от «портов не хочу»: выключенный сервер и
+// сервер со снятым тумблером firewall'а объявляют ПУСТОЕ желаемое, netres
+// .InputPort на нём не зовёт Apply вовсе (и не заводит будильник), то есть не
+// отчитается никогда. Без окна порты мёртвого поколения оставались бы открыты
+// вечно.
+const proxyFWGrace = 2 * time.Minute
+
+// newProxyFWBook — ведомость на список ключей серверных инстансов (тех, у чьих
+// ролей есть ресурс input_port). Список знает фабрика.
+func newProxyFWBook(serverKeys []string) *proxyFWBook {
+	b := &proxyFWBook{
+		want:    map[string][]netres.PortSpec{},
+		pending: map[string]bool{},
+		list:    listenfirewall.ListManaged,
+		apply:   listenfirewall.Reconcile,
+		now:     time.Now,
+	}
+	for _, k := range serverKeys {
+		b.pending[k] = true
+	}
+	b.start = b.now()
+	return b
+}
+
+// forInstance — хендл netres.FW для одного инстанса.
+func (b *proxyFWBook) forInstance(key string) netres.FW { return proxyFW{book: b, key: key} }
+
+// pendingLocked — круг отчётов не полон и окно ожидания не истекло.
+func (b *proxyFWBook) pendingLocked() bool {
+	return len(b.pending) > 0 && b.now().Sub(b.start) < proxyFWGrace
+}
+
+func fwPortKey(port int, proto string) string {
+	return strings.ToLower(strings.TrimSpace(proto)) + "/" + strconv.Itoa(port)
+}
+
+// visible — ведомость для инстанса key.
+func (b *proxyFWBook) visible(key string, live []listenfirewall.PortSpec) []netres.PortSpec {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	keep := map[string]bool{}
+	if b.pendingLocked() {
+		// Круг не полон: чьи именно порты открыты — неизвестно, поэтому
+		// инстансу видны ТОЛЬКО его собственные живые порты, и лишних у него
+		// нет. Не отчитавшийся видит пустую ведомость и потому приводит своё
+		// желаемое сам — иначе его вклад не узнать, netres.InputPort сообщает
+		// желаемое только через Reconcile.
+		for _, s := range b.want[key] {
+			keep[fwPortKey(s.Port, s.Proto)] = true
+		}
+	} else {
+		for _, s := range live {
+			keep[fwPortKey(s.Port, s.Proto)] = true
+		}
+		for k, specs := range b.want {
+			if k == key {
+				continue
+			}
+			for _, s := range specs {
+				delete(keep, fwPortKey(s.Port, s.Proto))
+			}
+		}
+	}
+	out := make([]netres.PortSpec, 0, len(live))
+	for _, s := range live {
+		if keep[fwPortKey(s.Port, s.Proto)] {
+			out = append(out, netres.PortSpec{Port: s.Port, Proto: s.Proto})
+		}
+	}
+	return out
+}
+
+// reconcile — записать вклад инстанса и привести listenfirewall к объединению.
+func (b *proxyFWBook) reconcile(ctx context.Context, key string, own []netres.PortSpec) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.want[key] = append([]netres.PortSpec(nil), own...)
+	delete(b.pending, key)
+
+	seen := map[string]bool{}
+	var desired []listenfirewall.PortSpec
+	add := func(port int, proto string) {
+		k := fwPortKey(port, proto)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		desired = append(desired, listenfirewall.PortSpec{Port: port, Proto: proto})
+	}
+	for _, specs := range b.want {
+		for _, s := range specs {
+			add(s.Port, s.Proto)
+		}
+	}
+	if b.pendingLocked() {
+		// Пока сосед не отчитался, объединение обязано нести и его живые
+		// порты: без этого приведение по СВОЕЙ причине (свой порт пропал)
+		// закрыло бы чужое. Отказ листинга здесь fail-closed — состав
+		// неизвестен, приведение отменяется, ресурс повторит.
+		live, err := b.list(ctx)
+		if err != nil {
+			return err
+		}
+		for _, s := range live {
+			add(s.Port, s.Proto)
+		}
+	}
+	b.apply(ctx, desired)
+	return nil
+}
+
+// proxyFW — netres.FW одного инстанса поверх общей ведомости.
+type proxyFW struct {
+	book *proxyFWBook
+	key  string
+}
+
+func (f proxyFW) Managed(ctx context.Context) ([]netres.PortSpec, error) {
+	live, err := f.book.list(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]netres.PortSpec, 0, len(specs))
-	for _, s := range specs {
-		out = append(out, netres.PortSpec{Port: s.Port, Proto: s.Proto})
-	}
-	return out, nil
+	return f.book.visible(f.key, live), nil
 }
 
-func (proxyFW) Reconcile(ctx context.Context, desired []netres.PortSpec) error {
-	specs := make([]listenfirewall.PortSpec, 0, len(desired))
-	for _, s := range desired {
-		specs = append(specs, listenfirewall.PortSpec{Port: s.Port, Proto: s.Proto})
-	}
-	listenfirewall.Reconcile(ctx, specs)
-	return nil
+func (f proxyFW) Reconcile(ctx context.Context, desired []netres.PortSpec) error {
+	return f.book.reconcile(ctx, f.key, desired)
 }
 
 var _ netres.FW = proxyFW{}
@@ -473,19 +612,30 @@ func EnsureWdttIngressRefs(refs []string, wgKernelIface, rawKernelIface string) 
 
 // proxyPostSeed: обнуление адресов — ВСЕГДА (замечание 2 ревью: одноразовый
 // вызов с проглоченной ошибкой делал потерю вечной); добивание старого
-// поколения и уборка наследия — только при первом посеве.
+// поколения и уборка наследия — пока отметка уборки не снята.
+//
+// Амендмент A3: признаком «посев только что состоялся» шаги гонять нельзя —
+// транзиентный отказ (занятая блокировка iptables при рерайте таблиц роутером,
+// недоступная команда) навсегда съедал бы единственный шанс, а отказ шагов
+// боот не останавливает. Отметка живёт на диске и снимается ОТДЕЛЬНОЙ
+// транзакцией (clearCleanup) только после успешного прохода. Идемпотентность
+// шагов уже обеспечена: свипы — реплей листинга, добивание гардировано
+// проверкой имени бинаря.
 func proxyPostSeed(mirror *exitreg.StoreMirror, ipt netres.IPT, cmds opkgTunDeleter,
-	ifaces ifaceLister, binaries []string) func(context.Context, instancestore.SeedResult, map[string]bool) error {
+	ifaces ifaceLister, binaries []string,
+	clearCleanup func() error) func(context.Context, instancestore.SeedResult, map[string]bool) error {
 	return func(ctx context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error {
 		var errs []error
 		if _, err := mirror.ZeroStaleAddresses(); err != nil {
 			errs = append(errs, err)
 		}
-		if res.SeededNow {
+		if res.SeededNow || res.CleanupPending {
 			for _, pid := range res.OldGenPIDs {
 				killOldGeneration(pid, binaries)
 			}
 			if err := legacyCleanup(ctx, ipt, cmds, ifaces, declaredNDMS, res.LegacyKernelIfaces); err != nil {
+				errs = append(errs, err)
+			} else if err := clearCleanup(); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -577,12 +727,18 @@ func (c legacyChain) deleteArgs(spec []string) []string {
 func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 	ifaces ifaceLister, declaredNDMS map[string]bool, kernelIfaces []string) error {
 	stale := legacyStaleIfaces(kernelIfaces, declaredNDMS)
-	// Голая метка AWGM_WDTT — ЖИВАЯ: её ставит и новый движок (netres.Comment),
-	// поэтому её flush законен только при пустом желаемом. Сервер в желаемом
-	// есть ровно тогда, когда посев отдал его прежние kernel-имена
-	// (instancestore/seed.go:400-410) — при живом сервере старые правила
-	// приведёт его собственный RuleSet.
-	flushLiveComment := len(kernelIfaces) == 0
+	// Помеченные метками формы снимаются БЕЗУСЛОВНО, живой сервер тут ни при
+	// чём: усыновить помеченное правило некому. netres.RuleSet.markedOrphans
+	// заводит область поиска только по правилам своего желаемого с непустой
+	// меткой, а новый FORWARD строится БЕЗ метки (netres/wdtt.go:26-27) — то
+	// есть помеченный FORWARD не снял бы ни он, ни уборка. Помеченный
+	// MASQUERADE живой сервер пересоберёт первым же прогоном: уборка
+	// одноразовая и идёт ДО старта инстансов, окно — секунды, установившиеся
+	// потоки NAT от снятия правила не рвутся.
+	//
+	// noServers — только для netfilter.d-хука ниже: его снос при живом сервере
+	// был бы гонкой с ресурсом netres.Hook, пишущим тот же путь.
+	noServers := len(kernelIfaces) == 0
 
 	byStaleIface := func(line string) bool {
 		for _, iface := range stale {
@@ -603,9 +759,7 @@ func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 			case legacyLANComment:
 				return true
 			case netres.Comment:
-				if flushLiveComment {
-					return true
-				}
+				return true
 			}
 			// FORWARD accept обеих форм — помеченной (≤2.16.x) и голой.
 			return byStaleIface(line) && hasTarget(fields, "ACCEPT")
@@ -617,7 +771,7 @@ func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 			return byStaleIface(line) && strings.Contains(line, "--dport 53")
 		}},
 		{legacyChain{table: "nat", chain: "POSTROUTING"}, func(_ string, fields []string) bool {
-			return flushLiveComment && commentTag(fields) == netres.Comment
+			return commentTag(fields) == netres.Comment
 		}},
 		{legacyChain{table: "mangle", chain: "PREROUTING"}, func(line string, fields []string) bool {
 			if commentTag(fields) == legacyPolicyComment {
@@ -641,7 +795,7 @@ func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 	_ = ipt.Run(ctx, "-t", "mangle", "-F", netres.MSSChain)
 	_ = ipt.Run(ctx, "-t", "mangle", "-X", netres.MSSChain)
 
-	if flushLiveComment {
+	if noServers {
 		// netfilter.d-хук старого движка — ЕДИНСТВЕННЫЙ его артефакт,
 		// переживающий и перезапись таблиц ndm, и перезагрузку: всё остальное
 		// живёт лишь до следующего рерайта таблиц. При живом сервере файл

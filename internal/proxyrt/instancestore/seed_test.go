@@ -697,7 +697,91 @@ func TestSeedIsIdempotentAndSkipsOldFilesWhenSeeded(t *testing.T) {
 		t.Fatalf("состояние уплыло: %d != %d", len(second.State.Records), len(first.State.Records))
 	}
 	if len(second.OldGenPIDs) != 0 {
-		t.Fatal("добивание — только при первом посеве")
+		t.Fatal("pid-файлов нет — добивать нечего")
+	}
+}
+
+// Отметка «уборка не доведена» и список прежних kernel-имён ложатся на диск
+// ТОЙ ЖЕ транзакцией, что и записи: транзиентный отказ уборочных шагов
+// (занятая блокировка iptables, недоступная команда) иначе навсегда съедал бы
+// единственный шанс — следующий боот видит SeededNow=false. Пересобрать список
+// на повторе неоткуда: старые конфиги к тому времени могут быть удалены.
+func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
+	  "listen":"0.0.0.0:56002","password":"spw"}}]}`)
+	first, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.CleanupPending {
+		t.Fatal("посев обязан поднять отметку уборки")
+	}
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.CleanupPending {
+		t.Fatal("отметка уборки не легла на диск")
+	}
+	if !reflect.DeepEqual(st.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
+		t.Fatalf("прежние kernel-имена не сохранены: %v", st.LegacyKernelIfaces)
+	}
+
+	// Повторный боот: посева нет, а уборка обязана быть повторена — с ТЕМ ЖЕ
+	// списком имён и со свежим списком pid-файлов старого поколения.
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+	second, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SeededNow || !second.CleanupPending {
+		t.Fatalf("повтор: SeededNow=%v CleanupPending=%v", second.SeededNow, second.CleanupPending)
+	}
+	if !reflect.DeepEqual(second.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
+		t.Fatalf("список имён не доехал до повтора: %v", second.LegacyKernelIfaces)
+	}
+	if len(second.OldGenPIDs) != 1 || second.OldGenPIDs[0] != 321 {
+		t.Fatalf("pid'ы старого поколения не пересобраны: %v", second.OldGenPIDs)
+	}
+}
+
+// Снятие отметки — ОТДЕЛЬНАЯ транзакция, после успешного прохода шагов: в
+// одной с посевом она обесценивала бы саму отметку.
+func TestClearCleanupPendingStopsRepeats(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
+	  "listen":"0.0.0.0:56002","password":"spw"}}]}`)
+	if _, err := Seed(context.Background(), e.st, e.deps); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClearCleanupPending(e.st); err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CleanupPending || len(st.LegacyKernelIfaces) != 0 {
+		t.Fatalf("отметка не снята: pending=%v ifaces=%v", st.CleanupPending, st.LegacyKernelIfaces)
+	}
+	if len(st.Records) != 1 {
+		t.Fatalf("снятие отметки тронуло записи: %+v", st.Records)
+	}
+
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+	next, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.CleanupPending || len(next.OldGenPIDs) != 0 || len(next.LegacyKernelIfaces) != 0 {
+		t.Fatalf("доведённая уборка повторяется: %+v", next)
 	}
 }
 

@@ -6,11 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -23,8 +27,9 @@ import (
 // Журнал, а не счётчик: уборка отличается от порчи только тем, С ЧЕМ её
 // позвали, поэтому все сверки ниже — по составу аргументов.
 type fakeIPT struct {
-	out  map[string]string
-	runs [][]string
+	out    map[string]string
+	outErr error
+	runs   [][]string
 }
 
 func (f *fakeIPT) Run(_ context.Context, args ...string) error {
@@ -33,6 +38,9 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 }
 
 func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
+	if f.outErr != nil {
+		return "", f.outErr
+	}
 	if f.out == nil {
 		return "", nil
 	}
@@ -293,8 +301,9 @@ func legacyTables() map[string]string {
 			"-A FORWARD -s 10.66.0.0/16 -d 192.168.1.0/24 -m comment --comment AWGM_WDTT_LAN -j ACCEPT",
 			"-A FORWARD -s 192.168.1.0/24 -d 10.66.0.0/16 -m comment --comment AWGM_WDTT_LAN -j ACCEPT",
 			"-A FORWARD -i opkgtun17 -j ACCEPT",
-			// Помеченная форма ≤2.16.x на ЖИВОМ объявленном интерфейсе: пока
-			// сервер есть, метка AWGM_WDTT принадлежит ему.
+			// Помеченная форма ≤2.16.x на ЖИВОМ объявленном интерфейсе:
+			// FORWARD-правил с меткой новый мир не строит, значит это
+			// наследие — и снять его больше некому.
 			"-A FORWARD -i opkgtun17 -m comment --comment AWGM_WDTT -j ACCEPT",
 			"-A FORWARD -i br0 -j ACCEPT",
 		}, "\n"),
@@ -353,7 +362,10 @@ func TestLegacyCleanupWithLiveServer(t *testing.T) {
 		}
 	}
 
-	// (б) помеченные формы: пара LAN без -i/-o и legacy-метка политики.
+	// (б) помеченные формы — БЕЗУСЛОВНО, живой сервер тут ни при чём: пара LAN
+	// без -i/-o, legacy-метка политики, помеченный FORWARD на живом
+	// интерфейсе (такую форму новый мир не строит вовсе) и помеченный
+	// MASQUERADE (его живой сервер пересоберёт первым же прогоном).
 	for _, want := range [][]string{
 		{"-D", "FORWARD", "-s", "10.66.0.0/16", "-d", "192.168.1.0/24",
 			"-m", "comment", "--comment", "AWGM_WDTT_LAN", "-j", "ACCEPT"},
@@ -361,6 +373,10 @@ func TestLegacyCleanupWithLiveServer(t *testing.T) {
 			"-m", "comment", "--comment", "AWGM_WDTT_LAN", "-j", "ACCEPT"},
 		{"-t", "mangle", "-D", "PREROUTING", "-i", "eth3", "-m", "comment",
 			"--comment", "AWGM-WDTT-POLICY", "-j", "MARK", "--set-xmark", "0x1/0xffffffff"},
+		{"-D", "FORWARD", "-i", "opkgtun17", "-m", "comment", "--comment",
+			"AWGM_WDTT", "-j", "ACCEPT"},
+		{"-t", "nat", "-D", "POSTROUTING", "-s", "10.66.0.0/16", "!", "-o", "wdtt0",
+			"-m", "comment", "--comment", "AWGM_WDTT", "-j", "MASQUERADE"},
 	} {
 		if !ipt.ran(want...) {
 			t.Fatalf("не снесено: %v", want)
@@ -374,14 +390,13 @@ func TestLegacyCleanupWithLiveServer(t *testing.T) {
 		t.Fatalf("цепочка %s не снята: %v", netres.MSSChain, ipt.runs)
 	}
 
-	// Живая метка при живом сервере не трогается: его собственный RuleSet
-	// приведёт эти правила сам.
-	if ipt.ranWith("POSTROUTING -s 10.66.0.0/16") {
-		t.Fatalf("голая метка AWGM_WDTT снесена при живом сервере: %v", ipt.runs)
+	// Объявленные интерфейсы щадим — но только в НЕПОМЕЧЕННЫХ формах: там
+	// имя интерфейса и есть признак владения, и правило принадлежит живой
+	// роли.
+	if ipt.ran("-D", "FORWARD", "-i", "opkgtun17", "-j", "ACCEPT") {
+		t.Fatalf("снесено непомеченное правило объявленного интерфейса: %v", ipt.runs)
 	}
-
-	// Объявленные интерфейсы щадим — и в правилах, и в NDMS.
-	if ipt.ranWith("opkgtun17") || ipt.ranWith("opkgtun18") {
+	if ipt.ranWith("opkgtun18") {
 		t.Fatalf("тронуты правила объявленного интерфейса: %v", ipt.runs)
 	}
 	if ipt.ranWith("br0") {
@@ -395,10 +410,9 @@ func TestLegacyCleanupWithLiveServer(t *testing.T) {
 	}
 }
 
-// Голая метка AWGM_WDTT — единственная форма, чей снос условен: она ЖИВАЯ
-// (её ставит и новый движок), поэтому сносится только когда после посева не
-// осталось ни одного wdtt-сервера.
-func TestLegacyCleanupFlushesLiveCommentWithoutServers(t *testing.T) {
+// Тот же снос помеченных форм, когда сервера не осталось вовсе: здесь их не
+// приведёт уже никто, и уборка — последний шанс.
+func TestLegacyCleanupFlushesMarkedFormsWithoutServers(t *testing.T) {
 	ipt := &fakeIPT{out: legacyTables()}
 	cmds := &fakeOpkgDeleter{}
 
@@ -438,8 +452,10 @@ func TestProxyPostSeedZeroesAddressesEveryBoot(t *testing.T) {
 	mirror, store := mirrorWithStaleAddress(t)
 	calls := interceptKill(t)
 	ipt := &fakeIPT{out: legacyTables()}
+	cleared := 0
 	post := proxyPostSeed(mirror, ipt, proxyNDMSCommands{}, fakeIfaces{},
-		[]string{"/opt/bin/" + filepath.Base(os.Args[0])})
+		[]string{"/opt/bin/" + filepath.Base(os.Args[0])},
+		func() error { cleared++; return nil })
 
 	err := post(context.Background(), instancestore.SeedResult{
 		SeededNow:  false,
@@ -462,6 +478,9 @@ func TestProxyPostSeedZeroesAddressesEveryBoot(t *testing.T) {
 	if len(ipt.runs) != 0 {
 		t.Fatalf("повторный боот убирал наследие: %v", ipt.runs)
 	}
+	if cleared != 0 {
+		t.Fatal("отметка уборки снята без самой уборки")
+	}
 }
 
 func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
@@ -470,8 +489,10 @@ func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
 	ipt := &fakeIPT{out: legacyTables()}
 	cmds := &fakeOpkgDeleter{}
 	ifaces := fakeIfaces{list: []ndms.Interface{{ID: "OpkgTun17", Description: "Германия wdtt"}}}
+	cleared := 0
 	post := proxyPostSeed(mirror, ipt, cmds, ifaces,
-		[]string{"/opt/bin/" + filepath.Base(os.Args[0])})
+		[]string{"/opt/bin/" + filepath.Base(os.Args[0])},
+		func() error { cleared++; return nil })
 
 	err := post(context.Background(), instancestore.SeedResult{
 		SeededNow:          true,
@@ -491,11 +512,71 @@ func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
 	// Ведомость объявленных обязана ДОЕХАТЬ до уборки: подмена её на пустую
 	// снесла бы правила живого интерфейса и удалила бы живой OpkgTun. Цена
 	// односторонняя и одноразовая, поэтому сверяется сам стык.
-	if ipt.ranWith("opkgtun17") {
-		t.Fatalf("ведомость объявленных не доехала: тронуты правила opkgtun17: %v", ipt.runs)
+	if ipt.ran("-D", "FORWARD", "-i", "opkgtun17", "-j", "ACCEPT") {
+		t.Fatalf("ведомость объявленных не доехала: снесено непомеченное правило opkgtun17: %v", ipt.runs)
 	}
 	if len(cmds.deleted) != 0 {
 		t.Fatalf("ведомость объявленных не доехала: снесены NDMS-интерфейсы %v", cmds.deleted)
+	}
+	if cleared != 1 {
+		t.Fatalf("отметка уборки снята %d раз(а)", cleared)
+	}
+}
+
+// Амендмент A3: отказ уборочных шагов — транзиентный (занятая блокировка
+// iptables при рерайте таблиц роутером, недоступная команда). Отметка на
+// диске висит, пока проход не удался, и следующий боот гоняет шаги снова —
+// с ТЕМ ЖЕ списком прежних kernel-имён и со свежими pid'ами.
+func TestProxyPostSeedRepeatsCleanupWhilePending(t *testing.T) {
+	mirror, _ := mirrorWithStaleAddress(t)
+	calls := interceptKill(t)
+	ipt := &fakeIPT{out: legacyTables()}
+	cmds := &fakeOpkgDeleter{}
+	cleared := 0
+	post := proxyPostSeed(mirror, ipt, cmds, fakeIfaces{},
+		[]string{"/opt/bin/" + filepath.Base(os.Args[0])},
+		func() error { cleared++; return nil })
+
+	err := post(context.Background(), instancestore.SeedResult{
+		SeededNow:          false,
+		CleanupPending:     true,
+		OldGenPIDs:         []int{os.Getpid()},
+		LegacyKernelIfaces: []string{"wdtt0"},
+	}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("старое поколение не добито на повторе: %+v", *calls)
+	}
+	if !ipt.ran("-D", "FORWARD", "-i", "wdtt0", "-j", "ACCEPT") {
+		t.Fatalf("наследие не убрано на повторе: %v", ipt.runs)
+	}
+	if cleared != 1 {
+		t.Fatalf("отметка уборки снята %d раз(а)", cleared)
+	}
+}
+
+// Отметка снимается ТОЛЬКО после успешного прохода: иначе транзиентный отказ
+// съедал бы шанс ровно так же, как до амендмента.
+func TestProxyPostSeedKeepsPendingOnCleanupFailure(t *testing.T) {
+	mirror, _ := mirrorWithStaleAddress(t)
+	interceptKill(t)
+	ipt := &fakeIPT{outErr: errors.New("iptables занят")}
+	cleared := 0
+	post := proxyPostSeed(mirror, ipt, &fakeOpkgDeleter{}, fakeIfaces{},
+		[]string{"/opt/bin/" + filepath.Base(os.Args[0])},
+		func() error { cleared++; return nil })
+
+	err := post(context.Background(), instancestore.SeedResult{
+		SeededNow:          true,
+		LegacyKernelIfaces: []string{"wdtt0"},
+	}, map[string]bool{})
+	if err == nil {
+		t.Fatal("отказ уборки обязан быть виден вызывающему")
+	}
+	if cleared != 0 {
+		t.Fatal("отметка снята при неудавшейся уборке")
 	}
 }
 
@@ -711,4 +792,233 @@ func containsRef(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// ------------------------------------------ амендмент A1: общая ведомость портов
+
+// fakeListenFW — модель listenfirewall: живые правила и ЖУРНАЛ желаемых
+// составов. Сверяется именно состав: весь смысл ведомости в том, КАКОЕ
+// объединение уехало в Reconcile и КАКОЙ список вернул Managed.
+type fakeListenFW struct {
+	live    []listenfirewall.PortSpec
+	applied [][]listenfirewall.PortSpec
+	listErr error
+}
+
+func (f *fakeListenFW) list(context.Context) ([]listenfirewall.PortSpec, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return append([]listenfirewall.PortSpec(nil), f.live...), nil
+}
+
+func (f *fakeListenFW) reconcile(_ context.Context, desired []listenfirewall.PortSpec) {
+	f.applied = append(f.applied, append([]listenfirewall.PortSpec(nil), desired...))
+	// Прод-Reconcile приводит живые правила к желаемому — модель делает то же,
+	// иначе следующий Managed врал бы про состояние роутера.
+	f.live = append([]listenfirewall.PortSpec(nil), desired...)
+}
+
+func (f *fakeListenFW) lastApplied() []string {
+	if len(f.applied) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(f.applied[len(f.applied)-1]))
+	for _, s := range f.applied[len(f.applied)-1] {
+		out = append(out, s.Proto+"/"+strconv.Itoa(s.Port))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func bookOver(fw *fakeListenFW, keys ...string) *proxyFWBook {
+	b := newProxyFWBook(keys)
+	b.list = fw.list
+	b.apply = fw.reconcile
+	return b
+}
+
+func spec(port int, proto string) netres.PortSpec {
+	return netres.PortSpec{Port: port, Proto: proto}
+}
+
+func liveSpecs(in ...netres.PortSpec) []listenfirewall.PortSpec {
+	out := make([]listenfirewall.PortSpec, 0, len(in))
+	for _, s := range in {
+		out = append(out, listenfirewall.PortSpec{Port: s.Port, Proto: s.Proto})
+	}
+	return out
+}
+
+func managedNames(t *testing.T, fw netres.FW) []string {
+	t.Helper()
+	got, err := fw.Managed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(got))
+	for _, s := range got {
+		out = append(out, s.Proto+"/"+strconv.Itoa(s.Port))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sameNames(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Два серверных инстанса на общей ведомости: в listenfirewall уезжает
+// ОБЪЕДИНЕНИЕ вкладов, и ни один не видит порты соседа лишними. Пер-инстансный
+// адаптер здесь давал вечный цикл: каждый закрывал порты другого раз в 15 с.
+func TestProxyFWBookUnionOfContributions(t *testing.T) {
+	fw := &fakeListenFW{}
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	b := book.forInstance("freeturn-server:s2")
+
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reconcile(context.Background(), []netres.PortSpec{spec(3478, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/3478", "udp/56000"}) {
+		t.Fatalf("желаемое listenfirewall = %v, ждали объединение вкладов", got)
+	}
+
+	// Ведомость каждого — живые правила МИНУС желаемое соседа.
+	if got := managedNames(t, a); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("ведомость A = %v", got)
+	}
+	if got := managedNames(t, b); !sameNames(got, []string{"udp/3478"}) {
+		t.Fatalf("ведомость B = %v", got)
+	}
+}
+
+// Выключение инстанса закрывает его порты штатно: пустой вклад уходит из
+// объединения.
+func TestProxyFWBookEmptyContributionClosesPorts(t *testing.T) {
+	fw := &fakeListenFW{}
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	b := book.forInstance("freeturn-server:s2")
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reconcile(context.Background(), []netres.PortSpec{spec(3478, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reconcile(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("порт выключенного инстанса не закрыт: %v", got)
+	}
+}
+
+// Мёртвое поколение: порт, которого не желает никто, виден лишним и уходит из
+// объединения. Аддитивный Reconcile оставил бы его навсегда.
+func TestProxyFWBookSweepsUnclaimedPort(t *testing.T) {
+	fw := &fakeListenFW{}
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	b := book.forInstance("freeturn-server:s2")
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Reconcile(context.Background(), []netres.PortSpec{spec(3478, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	// Правило прежнего поколения на роутере.
+	fw.live = append(fw.live, listenfirewall.PortSpec{Port: 9999, Proto: "tcp"})
+
+	if got := managedNames(t, a); !sameNames(got, []string{"tcp/9999", "udp/56000"}) {
+		t.Fatalf("ничей порт обязан быть виден лишним: %v", got)
+	}
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/3478", "udp/56000"}) {
+		t.Fatalf("ничей порт не вычищен либо снесён чужой: %v", got)
+	}
+}
+
+// Гонка первого запуска: сосед ещё не отчитался, его порт уже открыт прошлым
+// запуском демона. Ни ведомость, ни объединение не имеют права его потерять.
+func TestProxyFWBookSparesPortsOfUnreportedInstance(t *testing.T) {
+	fw := &fakeListenFW{live: liveSpecs(spec(3478, "udp"))}
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+
+	// Инстанс, который сам ещё не отчитался, лишних портов не видит вовсе —
+	// иначе он снёс бы чужое, не зная, чьё оно.
+	if got := managedNames(t, a); len(got) != 0 {
+		t.Fatalf("до своего отчёта инстанс видит чужие порты: %v", got)
+	}
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/3478", "udp/56000"}) {
+		t.Fatalf("порт неотчитавшегося соседа закрыт: %v", got)
+	}
+	// Отчитавшийся видит СВОИ живые порты (чтобы чинить пропажу), но не чужие.
+	if got := managedNames(t, a); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("ведомость отчитавшегося при неполном круге = %v", got)
+	}
+}
+
+// Пока круг не полон, объединение считается от ЖИВЫХ правил, и отказ листинга
+// делает состав неизвестным: применять нельзя — ресурс повторит.
+func TestProxyFWBookFailsClosedWhenListingBrokenDuringGrace(t *testing.T) {
+	fw := &fakeListenFW{listErr: errors.New("boom")}
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	a := book.forInstance("wdtt-server:s1")
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err == nil {
+		t.Fatal("отказ листинга обязан отменить приведение")
+	}
+	if len(fw.applied) != 0 {
+		t.Fatalf("приведение состоялось на неизвестном составе: %v", fw.applied)
+	}
+}
+
+// Инстанс, которому порты не нужны (выключенный сервер, снятый тумблер), не
+// отчитается НИКОГДА: netres.InputPort зовёт Reconcile только когда есть что
+// приводить. Ожидание закрыто окном: по его истечении ведомость перестаёт
+// щадить ничьи порты.
+func TestProxyFWBookGraceEndsWaitForSilentInstance(t *testing.T) {
+	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"))}
+	now := time.Now()
+	book := bookOver(fw, "wdtt-server:s1", "freeturn-server:s2")
+	book.now = func() time.Time { return now }
+	a := book.forInstance("wdtt-server:s1")
+
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"tcp/9999", "udp/56000"}) {
+		t.Fatalf("в окне ожидания ничей порт обязан быть сохранён: %v", got)
+	}
+	if got := managedNames(t, a); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("в окне ожидания лишних быть не может: %v", got)
+	}
+
+	now = now.Add(proxyFWGrace + time.Second)
+	if got := managedNames(t, a); !sameNames(got, []string{"tcp/9999", "udp/56000"}) {
+		t.Fatalf("после окна ведомость = %v", got)
+	}
+	if err := a.Reconcile(context.Background(), []netres.PortSpec{spec(56000, "udp")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fw.lastApplied(); !sameNames(got, []string{"udp/56000"}) {
+		t.Fatalf("после окна ничей порт обязан быть вычищен: %v", got)
+	}
 }
