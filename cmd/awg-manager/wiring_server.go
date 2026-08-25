@@ -336,16 +336,13 @@ func (a *app) setupRouter() {
 		GeoTagCounts:           a.geoDataStore,
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
-		OpkgTunIndices: &routerOpkgTunIndexAdapter{
-			store: a.ndmsQueries.Interfaces,
-			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter),
-		},
-		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
-		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
-		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
-		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
-		RunningConfig: a.ndmsQueries.RunningConfig,
-		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		OpkgTunIndices:         &routerOpkgTunIndexAdapter{},
+		OpkgTunScan:            opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:           a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:             a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		Segments:               &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
+		RunningConfig:          a.ndmsQueries.RunningConfig,
+		NATState:               &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
 		// *RouteStore satisfies DefaultGatewayResolver directly.
 		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {
@@ -516,10 +513,7 @@ func (a *app) setupRouter() {
 	if a.wdttService != nil && a.ndmsCommands != nil {
 		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
 		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
-		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{
-			store: a.ndmsQueries.Interfaces,
-			log:   logging.NewScopedLogger(a.loggingService, logging.GroupRouting, "wdtt"),
-		})
+		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{})
 		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
 		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
 		a.wdttService.SetRouterReconciler(routerSvc)

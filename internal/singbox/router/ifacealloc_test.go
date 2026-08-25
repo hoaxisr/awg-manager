@@ -2,7 +2,6 @@ package router
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 )
 
@@ -40,24 +39,5 @@ func TestAllocateFakeIPIndexExhausted(t *testing.T) {
 	_, err := allocateFakeIPIndex(live)
 	if !errors.Is(err, ErrFakeIPIndexExhausted) {
 		t.Fatalf("want ErrFakeIPIndexExhausted, got %v", err)
-	}
-}
-
-func TestUnionOpkgTunIndices(t *testing.T) {
-	sysNums := []int{0, 2}
-	ndmsNames := []string{
-		"opkgtun1",   // -> 1 (наш диапазон)
-		"opkgtun100", // -> 100 (managed на OS5, заякорен)
-		"awg3",       // -> 3 (over-count, но матчится anchored)
-		"awgm4",      // -> 4 (over-count, anchored)
-		"nwg2",       // не матчится -> игнор
-		"br0",        // не матчится -> игнор
-		"Wireguard0", // не матчится -> игнор
-		"opkgtun",    // нет цифры -> не матчится
-	}
-	got := UnionOpkgTunIndices(sysNums, ndmsNames)
-	want := map[int]bool{0: true, 2: true, 1: true, 100: true, 3: true, 4: true}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
 	}
 }

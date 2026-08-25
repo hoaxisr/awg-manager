@@ -39,7 +39,7 @@ const (
 	wdttRawOpkgMTU         = 1300
 )
 
-// OpkgTunIndexLister reports occupied OpkgTun indices (kernel ∪ NDMS).
+// OpkgTunIndexLister reports occupied OpkgTun indices from kernel /sys.
 type OpkgTunIndexLister interface {
 	LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error)
 }

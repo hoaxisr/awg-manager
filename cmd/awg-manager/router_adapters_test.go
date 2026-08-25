@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -36,5 +39,37 @@ func TestFilterBindable(t *testing.T) {
 		if names[drop] {
 			t.Errorf("expected %q dropped, still present in %v", drop, names)
 		}
+	}
+}
+
+// Отказ чтения /sys обязан дойти до вызывающего ошибкой: пустую карту
+// аллокатор индексов читает как «все индексы свободны» и выдаёт занятый.
+func TestLiveOpkgTunIndicesSysFailure(t *testing.T) {
+	sysErr := errors.New("/sys недоступен")
+	orig := listSystemInterfaces
+	listSystemInterfaces = func() ([]int, error) { return nil, sysErr }
+	t.Cleanup(func() { listSystemInterfaces = orig })
+
+	live, err := (&routerOpkgTunIndexAdapter{}).LiveOpkgTunIndices(context.Background())
+	if !errors.Is(err, sysErr) {
+		t.Fatalf("want %v, got %v", sysErr, err)
+	}
+	if live != nil {
+		t.Fatalf("при отказе карта должна быть nil, получено %v", live)
+	}
+}
+
+func TestLiveOpkgTunIndicesFromSys(t *testing.T) {
+	orig := listSystemInterfaces
+	listSystemInterfaces = func() ([]int, error) { return []int{0, 3, 100}, nil }
+	t.Cleanup(func() { listSystemInterfaces = orig })
+
+	live, err := (&routerOpkgTunIndexAdapter{}).LiveOpkgTunIndices(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[int]bool{0: true, 3: true, 100: true}
+	if !reflect.DeepEqual(live, want) {
+		t.Fatalf("got %v, want %v", live, want)
 	}
 }

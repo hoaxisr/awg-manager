@@ -201,7 +201,7 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// (4c) Orphan-netdev cleanup: NDMS DeleteOpkgTun normally tears the
 	// kernel device down too, but a half-removed teardown can leave a DOWN orphan
 	// opkgtunN behind. Such an orphan collides with the index allocator on the next
-	// Enable (LiveOpkgTunIndices unions kernel /sys names), so reap it directly via
+	// Enable (LiveOpkgTunIndices reads kernel /sys names), so reap it directly via
 	// `ip link delete`. Probe-then-delete with the kernel (lowercase) iface name —
 	// the kernel device, not the NDMS RCI name. Best-effort + logged.
 	if fakeIPLinkPresent(ctx, iface) {

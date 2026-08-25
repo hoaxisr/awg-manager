@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
-	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -260,33 +259,27 @@ func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r rout
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
-// routerOpkgTunIndexAdapter unions kernel /sys opkgtun indices with NDMS-known
-// interface names so the fakeip index allocator sees every occupied slot.
-type routerOpkgTunIndexAdapter struct {
-	store *ndmsquery.InterfaceStore
-	log   *logging.ScopedLogger
-}
+// listSystemInterfaces — сшивка для теста: на живой машине /sys/class/net
+// читается всегда, а покрыть надо именно ветку отказа.
+var listSystemInterfaces = sysinfo.ListSystemInterfaces
+
+// routerOpkgTunIndexAdapter отдаёт занятые индексы OpkgTun по kernel-именам
+// из /sys.
+type routerOpkgTunIndexAdapter struct{}
 
 func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
-	sysNums, err := sysinfo.ListSystemInterfaces()
-	if err != nil {
-		// A /sys read failure under-counts occupied opkgtun indices — the
-		// one direction that can cause an index collision — so log it,
-		// then degrade to NDMS-only names.
-		if a.log != nil {
-			a.log.Warn("opkgtun-index", "", "list system interfaces failed: "+err.Error())
-		}
-		sysNums = nil
-	}
-	all, err := a.store.ListAll(ctx)
+	// Отказ /sys — ошибка, а не пустая карта: пустую аллокатор читает как
+	// «все индексы свободны» и выдаёт занятый, а коллизия интерфейса потом
+	// ничем не лечится. Отказ же виден вызывающему и самоизлечивается.
+	nums, err := listSystemInterfaces()
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(all))
-	for _, i := range all {
-		names = append(names, i.Name)
+	live := make(map[int]bool, len(nums))
+	for _, n := range nums {
+		live[n] = true
 	}
-	return router.UnionOpkgTunIndices(sysNums, names), nil
+	return live, nil
 }
 
 var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)
