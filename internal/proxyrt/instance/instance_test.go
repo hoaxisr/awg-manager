@@ -249,3 +249,40 @@ func TestDeclaredNDMSNamesPointerConfigSameAsValue(t *testing.T) {
 		t.Fatalf("указатель на клиента потерял имя: %v", names)
 	}
 }
+
+// resettableRole — роль с процессом. Сброс паузы повторного старта обязан
+// доезжать от инстанса до роли, иначе единая точка правки записи снимает её «в
+// никуда».
+type resettableRole struct {
+	recordRole
+	resets atomic.Int32
+}
+
+func (r *resettableRole) ResetStartBackoff() { r.resets.Add(1) }
+
+func TestResetStartBackoffReachesRole(t *testing.T) {
+	role := &resettableRole{}
+	inst := New(Config{ID: "i1", Role: role,
+		Cfg:     func() any { return nil },
+		Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+		States:  proxyrt.NewStateStore(nil, nil),
+		Journal: &memJournal{},
+	})
+	inst.ResetStartBackoff()
+	inst.ResetStartBackoff()
+	if got := role.resets.Load(); got != 2 {
+		t.Fatalf("сбросов дошло до роли %d, ожидали 2", got)
+	}
+}
+
+// Роль без процесса паузы не имеет: сбрасывать нечего, и это тихий no-op, а не
+// паника — иначе единая точка правки записи роняла бы демон на такой роли.
+func TestResetStartBackoffOnRoleWithoutProcess(t *testing.T) {
+	inst := New(Config{ID: "i1", Role: &recordRole{},
+		Cfg:     func() any { return nil },
+		Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+		States:  proxyrt.NewStateStore(nil, nil),
+		Journal: &memJournal{},
+	})
+	inst.ResetStartBackoff()
+}

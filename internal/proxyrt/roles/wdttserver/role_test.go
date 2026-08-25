@@ -628,3 +628,60 @@ func TestNewPanicsOnNilAccessOrIngress(t *testing.T) {
 		}()
 	}
 }
+
+// failGate — отказ пробы бинаря: единственный способ взвести паузу повторного
+// старта через публичную поверхность роли.
+type failGate struct{}
+
+func (failGate) Check(context.Context, string, string, string, []string) error {
+	return errors.New("пин бинаря не обновлён")
+}
+
+// Шов «роль → ресурс процесса»: правку конфига руками менеджер проводит через
+// ResetStartBackoff роли, и без этого шва она уйдёт в пустоту, а сервер
+// останется лежать до пяти минут после починки.
+func TestResetStartBackoffReachesProcess(t *testing.T) {
+	r, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wdtt-server",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: failGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		IPT: nilIPT{}, FW: nilFW{},
+		RunHook:       func(context.Context, string, string) error { return nil },
+		EnableForward: func() error { return nil },
+		IfaceExists:   func(string) bool { return true },
+		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
+		Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := r.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations())
+	var proc proxyrt.Resource
+	for _, x := range res {
+		if x.ID() == roles.RProcess {
+			proc = x
+		}
+	}
+	if proc == nil {
+		t.Fatalf("process не объявлен: %v", ids(res))
+	}
+	obs, err := proc.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	steps := proc.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "start" {
+		t.Fatalf("план %+v, ожидали start", steps)
+	}
+	if err := proc.Apply(context.Background(), steps[0]); err == nil {
+		t.Fatal("старт обязан упасть на гейте")
+	}
+	if proc.RecheckAfter() <= 0 {
+		t.Fatal("пауза повторного старта не взведена")
+	}
+	r.ResetStartBackoff()
+	if got := proc.RecheckAfter(); got != 0 {
+		t.Fatalf("сброс роли не дошёл до процесса, пауза %v", got)
+	}
+}

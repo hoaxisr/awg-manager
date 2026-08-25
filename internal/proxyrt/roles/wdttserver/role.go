@@ -130,6 +130,12 @@ func New(d Deps) (*Role, error) {
 	return r, nil
 }
 
+// ResetStartBackoff снимает у процесса роли паузу повторного старта. Зовёт её
+// единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
+func (r *Role) ResetStartBackoff() { r.proc.ResetStartBackoff() }
+
+var _ proxyrt.BackoffResetter = (*Role)(nil)
+
 func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations) []proxyrt.Resource {
 	c, ok := cfg.(roles.WdttServerConfig)
 	if !ok {

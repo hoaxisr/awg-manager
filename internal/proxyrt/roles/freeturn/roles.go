@@ -70,6 +70,12 @@ func NewClient(d ClientDeps) (*ClientRole, error) {
 	}, nil
 }
 
+// ResetStartBackoff снимает у процесса роли паузу повторного старта. Зовёт её
+// единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
+func (r *ClientRole) ResetStartBackoff() { r.proc.ResetStartBackoff() }
+
+var _ proxyrt.BackoffResetter = (*ClientRole)(nil)
+
 func (r *ClientRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations) []proxyrt.Resource {
 	c, ok := cfg.(roles.FreeTurnClientConfig)
 	if !ok {
@@ -134,6 +140,12 @@ func NewServer(d ServerDeps) (*ServerRole, error) {
 		input: netres.NewInputPort(roles.RInputPort, d.FW),
 	}, nil
 }
+
+// ResetStartBackoff снимает у процесса роли паузу повторного старта. Зовёт её
+// единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
+func (r *ServerRole) ResetStartBackoff() { r.proc.ResetStartBackoff() }
+
+var _ proxyrt.BackoffResetter = (*ServerRole)(nil)
 
 func (r *ServerRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations) []proxyrt.Resource {
 	c, ok := cfg.(roles.FreeTurnServerConfig)

@@ -2,6 +2,7 @@ package freeturn
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -327,6 +328,78 @@ func TestClientIntentReachesLinkedResource(t *testing.T) {
 		steps := le.Plan(obs)
 		if len(steps) != 1 || steps[0].Op != c.op {
 			t.Fatalf("%s: план %+v, ожидали %q", c.intent, steps, c.op)
+		}
+	}
+}
+
+// failGate — отказ пробы бинаря: единственный способ взвести паузу
+// повторного старта через публичную поверхность роли.
+type failGate struct{}
+
+func (failGate) Check(context.Context, string, string, string, []string) error {
+	return errors.New("пин бинаря не обновлён")
+}
+
+// procOf достаёт ресурс процесса из ведомости.
+func procOf(t *testing.T, res []proxyrt.Resource) proxyrt.Resource {
+	t.Helper()
+	for _, r := range res {
+		if r.ID() == roles.RProcess {
+			return r
+		}
+	}
+	t.Fatalf("process не объявлен: %v", ids(res))
+	return nil
+}
+
+// Шов «роль → ресурс процесса» у обеих ролей FreeTurn: правку конфига руками
+// (PATCH клиента и сервера — оба сбрасывали паузу в старом мире) менеджер
+// проводит через ResetStartBackoff роли, и без этого шва она уйдёт в пустоту.
+func TestResetStartBackoffReachesProcess(t *testing.T) {
+	client, err := NewClient(ClientDeps{Instance: "default", Binary: "/opt/bin/ft-client",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: failGate{},
+		Sync: nilSync{}, Occ: nilOcc{}, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(ServerDeps{Instance: "default", Binary: "/opt/bin/ft-server",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: failGate{},
+		FW: &countFW{}, Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		reset func()
+		res   []proxyrt.Resource
+	}{
+		{"клиент", client.ResetStartBackoff,
+			client.Resources(proxyrt.IntentEnabled,
+				roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "relay:3478"},
+				proxyrt.NewObservations())},
+		{"сервер", server.ResetStartBackoff,
+			server.Resources(proxyrt.IntentEnabled,
+				roles.FreeTurnServerConfig{Listen: "0.0.0.0:3478", Mode: "udp"},
+				proxyrt.NewObservations())},
+	} {
+		proc := procOf(t, c.res)
+		obs, err := proc.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("%s: observe: %v", c.name, err)
+		}
+		steps := proc.Plan(obs)
+		if len(steps) != 1 || steps[0].Op != "start" {
+			t.Fatalf("%s: план %+v, ожидали start", c.name, steps)
+		}
+		if err := proc.Apply(context.Background(), steps[0]); err == nil {
+			t.Fatalf("%s: старт обязан упасть на гейте", c.name)
+		}
+		if proc.RecheckAfter() <= 0 {
+			t.Fatalf("%s: пауза повторного старта не взведена", c.name)
+		}
+		c.reset()
+		if got := proc.RecheckAfter(); got != 0 {
+			t.Fatalf("%s: сброс роли не дошёл до процесса, пауза %v", c.name, got)
 		}
 	}
 }

@@ -115,6 +115,14 @@ func (i *Instance) Post(kind proxyrt.EventKind) bool {
 	return i.worker.Post(kind)
 }
 
+// ResetStartBackoff снимает у процесса роли паузу повторного старта. Роль без
+// процесса паузы не имеет — сбрасывать нечего (см. proxyrt.BackoffResetter).
+func (i *Instance) ResetStartBackoff() {
+	if r, ok := i.cfg.Role.(proxyrt.BackoffResetter); ok {
+		r.ResetStartBackoff()
+	}
+}
+
 // Stop гасит инстанс НАВСЕГДА: воркер терминален (worker.go — stopOnce), и
 // второго Start у него не будет. Поэтому здесь же кончается связь: инстанс —
 // единственное место, где воркер и Link лежат рядом, и без закрытия каждое

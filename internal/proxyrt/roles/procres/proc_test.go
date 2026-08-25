@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -471,9 +472,82 @@ func TestProcResetStartBackoffKeepsAntiFlapping(t *testing.T) {
 	}
 }
 
-// Сброс приходит из горутины HTTP-ручки, пока воркер инстанса гоняет свой
-// цикл. Пауза анти-флаппинга — единственное состояние ресурса с двумя
-// писателями, и гонки на нём быть не должно (тесты идут с -race).
+// Живой ответ управляющего канала снимает паузу повторного старта: процесс
+// отозвался, серия неудач кончилась. Строка сброса в Observe не была закреплена
+// ничем — её удаление проходило зелёным.
+func TestProcObserveClearsStartBackoffOnLiveReply(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	link := &fakeLink{err: control.ErrNoSocket}
+	r := &fakeRunner{startErr: errors.New("нет бинаря")}
+	p := newProc(link, r, okGate{}, clock)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	obs, _ := p.Observe(context.Background())
+	if err := p.Apply(context.Background(), p.Plan(obs)[0]); err == nil {
+		t.Fatal("первый старт обязан упасть")
+	}
+	if got := p.RecheckAfter(); got != 5*time.Second {
+		t.Fatalf("пауза %v, ожидали 5s", got)
+	}
+
+	// Процесс отозвался — с ЧУЖОЙ конфигурацией, чтобы родился шаг перезапуска.
+	link.err, link.st = nil, runningState("чужой-хеш")
+	r.startErr, r.pid, r.alive = nil, 4821, true
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	if got := p.RecheckAfter(); got != 0 {
+		t.Fatalf("живой ответ обязан снять паузу, осталось %v", got)
+	}
+	steps := p.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("план %+v, ожидали restart", steps)
+	}
+	if err := p.Apply(context.Background(), steps[0]); err != nil {
+		t.Fatalf("перезапуск обязан пройти без паузы: %v", err)
+	}
+}
+
+// Пауза держит и ветку ПЕРЕЗАПУСКА, причём отказ выносится ДО гашения: гасить
+// живой процесс, когда заменить его нечем, нельзя (I-2 ревью-2).
+func TestProcRestartRespectsStartBackoff(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	link := &fakeLink{err: control.ErrNoSocket}
+	r := &fakeRunner{startErr: errors.New("нет бинаря")}
+	p := newProc(link, r, okGate{}, clock)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	obs, _ := p.Observe(context.Background())
+	if err := p.Apply(context.Background(), p.Plan(obs)[0]); err == nil {
+		t.Fatal("первый старт обязан упасть")
+	}
+
+	// Несовместимая версия протокола — единственный путь к шагу restart, не
+	// проходящий через живой ответ: тот паузу снимает.
+	link.err = control.ErrProtocolVersion
+	r.startErr, r.pid, r.alive = nil, 4821, true
+	obs, _ = p.Observe(context.Background())
+	steps := p.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("план %+v, ожидали restart", steps)
+	}
+	if err := p.Apply(context.Background(), steps[0]); err == nil ||
+		!strings.Contains(err.Error(), "отложен") {
+		t.Fatalf("перезапуск в окне паузы: %v", err)
+	}
+	if len(r.stopped) != 0 || len(r.started) != 0 {
+		t.Fatalf("процесс тронут вопреки паузе: stopped=%v started=%v", r.stopped, r.started)
+	}
+}
+
+// Сброс приходит из горутины ручки API (manager.Update), пока воркер инстанса
+// гоняет свой цикл. Пауза — единственное состояние ресурса с двумя писателями.
+//
+// Обе горутины стартуют с барьера и работают одинаково долго: без этого они
+// расходятся во времени, счётчик неудач почти не пересекается, и снятие замка
+// в recordFail детектор ловит через раз. Утверждения в хвосте проверяют, что
+// состояние осталось связным, и не зависят от флага детектора.
 func TestProcResetStartBackoffIsRaceFree(t *testing.T) {
 	link := &fakeLink{err: control.ErrNoSocket}
 	r := &fakeRunner{startErr: errors.New("нет бинаря")}
@@ -481,16 +555,38 @@ func TestProcResetStartBackoffIsRaceFree(t *testing.T) {
 	p.SetDesired(true, []string{"-peer", "x"}, nil)
 	step := proxyrt.Step{Resource: "process", Op: "start"}
 
-	done := make(chan struct{})
+	const iters = 5000
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		defer close(done)
-		for i := 0; i < 200; i++ {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iters; i++ {
 			p.ResetStartBackoff()
 		}
 	}()
-	for i := 0; i < 200; i++ {
-		_ = p.Apply(context.Background(), step)
-		_ = p.RecheckAfter()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iters; i++ {
+			_ = p.Apply(context.Background(), step)
+			_ = p.RecheckAfter()
+		}
+	}()
+	close(start)
+	wg.Wait()
+
+	// Состояние связно: сброс обнуляет паузу, а следующая неудача взводит
+	// ПЕРВУЮ ступень лестницы (5 с), а не какую-то из уехавших.
+	p.ResetStartBackoff()
+	if got := p.RecheckAfter(); got != 0 {
+		t.Fatalf("после сброса пауза %v, ожидали 0", got)
 	}
-	<-done
+	if err := p.Apply(context.Background(), step); err == nil {
+		t.Fatal("старт обязан упасть")
+	}
+	if got := p.RecheckAfter(); got <= 4*time.Second || got > 5*time.Second {
+		t.Fatalf("первая неудача после сброса: пауза %v, ожидали первую ступень (5s)", got)
+	}
 }

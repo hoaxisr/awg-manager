@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -57,7 +58,11 @@ type fakeInstance struct {
 	mu               sync.Mutex
 	started, stopped bool
 	posts            []proxyrt.EventKind
-	onStop           func() // для TestStopRunsOutsideManagerLock
+	// calls — ПОРЯДОК обращений менеджера к инстансу. Сброс паузы обязан
+	// ложиться ДО побудки, и факта вызова тут мало: сброс после побудки
+	// пропадает впустую (см. TestUpdateResetsStartBackoffBeforeWakeup).
+	calls  []string
+	onStop func() // для TestStopRunsOutsideManagerLock
 }
 
 func (f *fakeInstance) Start(context.Context) { f.mu.Lock(); f.started = true; f.mu.Unlock() }
@@ -73,7 +78,37 @@ func (f *fakeInstance) Post(k proxyrt.EventKind) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.posts = append(f.posts, k)
+	f.calls = append(f.calls, "post:"+string(k))
 	return true
+}
+
+func (f *fakeInstance) ResetStartBackoff() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "reset")
+}
+
+// callTail — последние n обращений: хвост, а не весь список, потому что boot
+// кладёт свои будильники раньше проверяемой правки.
+func (f *fakeInstance) callTail(n int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) < n {
+		n = len(f.calls)
+	}
+	return append([]string(nil), f.calls[len(f.calls)-n:]...)
+}
+
+func (f *fakeInstance) resetCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == "reset" {
+			n++
+		}
+	}
+	return n
 }
 
 type recJournal struct {
@@ -739,5 +774,54 @@ func TestDeleteReleasesEveryOwnerKey(t *testing.T) {
 		if e.released[0][i] != k {
 			t.Fatalf("владельцы на возврате: %v (ждали %v)", e.released, want)
 		}
+	}
+}
+
+// Правка записи — единственная точка, через которую проходят ВСЕ ручные
+// правки конфига (PATCH любой из четырёх ролей, импорт ссылки, обновление
+// подписки). Каждая из них могла устранить причину, по которой процесс не
+// поднимался, и держать клиента в паузе повторного старта до пяти минут
+// значит держать его ровно тогда, когда человек его чинит.
+//
+// Порядок обязателен: сброс ДО побудки. Период перепроверки считается ПОСЛЕ
+// цикла реконсиляции (reconcile.go), и сброс, легший между отказом применения
+// и этим подсчётом, даёт Recheck=0 — воркер получает пустой таймер, выбор по
+// нему не срабатывает никогда, и инстанс стоит до следующего внешнего
+// события, которого в отказавшем инстансе не будет.
+func TestUpdateResetsStartBackoffBeforeWakeup(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	fi := e.instances["wdtt-client:de"]
+
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.WdttClient.Password = "починил"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := fi.callTail(2)
+	want := []string{"reset", "post:intent-changed"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("хвост обращений %v, ожидали %v", got, want)
+	}
+}
+
+// Сброс висит на СОСТОЯВШЕЙСЯ записи: отказ правки — ровно тот случай, ради
+// которого пауза существует, и снимать её там нечем и незачем.
+func TestUpdateFailureDoesNotResetStartBackoff(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	fi := e.instances["wdtt-client:de"]
+
+	err := e.m.Update(context.Background(), "wdtt-client:de", func(*instancestore.Record) error {
+		return errors.New("правка отвергнута")
+	})
+	if err == nil {
+		t.Fatal("отказ мутатора обязан доехать до вызывающего")
+	}
+	if n := fi.resetCount(); n != 0 {
+		t.Fatalf("сбросов при непринятой правке %d, ожидали 0", n)
 	}
 }
