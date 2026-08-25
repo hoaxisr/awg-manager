@@ -400,8 +400,9 @@ func (s *Service) List(ctx context.Context, key string) (UsersStatus, error) {
 	// абонента из записи и перезаписью файла, усыновит удалённого обратно.
 	unlock := s.lock(key)
 	defer unlock()
-	// Запись перечитывается ПОД замком: снимок, взятый до захвата, к этому
-	// моменту мог устареть на целую мутацию.
+	// Конфиг читается ПОД замком. Запись здесь нужна только для ветки ОТКАЗА
+	// усыновления: на успешном пути её замещает результат adopt, который сам
+	// читает актуальное состояние.
 	rec, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
@@ -429,32 +430,23 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainP
 	}
 
 	unlock := s.lock(key)
-	status, savedMain, addErr := s.addLocked(ctx, key, mainPassword, password, comment, vkHash)
-	unlock()
-	if addErr != nil {
-		return UsersStatus{}, addErr
-	}
-	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
-	// абонента: на отказе добавления пароль остаётся несохранённым, и сервер
-	// не получает состояния «пароль есть, абонента нет».
-	if savedMain != "" {
-		if err := s.setMainPassword(ctx, key, savedMain); err != nil {
-			// Частичный успех, а не отказ: абонент уже и в записи, и в
-			// passwords.json, и SIGHUP по нему ушёл — отката нет и быть не
-			// может. Не сохранился только пароль сервера.
-			return UsersStatus{}, fmt.Errorf("%w: %w", ErrMainPasswordNotSaved, err)
-		}
-	}
-	return status, nil
+	defer unlock()
+	return s.addLocked(ctx, key, mainPassword, password, comment, vkHash)
 }
 
 // addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал. Второй результат — пароль
-// сервера, который вызывающему осталось сохранить (пусто — сохранять нечего).
-func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, comment, vkHash string) (UsersStatus, string, error) {
+// изменить запись → переписать файл → сигнал → дописать пароль сервера.
+//
+// Пароль сервера сохраняется ЗДЕСЬ, под тем же замком, а не у вызывающего
+// после его отпускания: между проверкой «главный пароль не совпадает с паролем
+// абонента» и записью параллельное добавление успевало завести абонента ровно
+// с этим паролем — то самое состояние, ради запрета которого проверка и
+// существует (форк берёт main_password для WRAP, и совпадение ломает
+// рукопожатия всем).
+func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, comment, vkHash string) (UsersStatus, error) {
 	_, cfg, err := s.serverRecord(key)
 	if err != nil {
-		return UsersStatus{}, "", err
+		return UsersStatus{}, err
 	}
 	// Эффективный главный пароль: сохранённый, а при пустом — присланный
 	// формой. Сверять только с сохранённым нельзя: на пустом сервере проверка
@@ -466,21 +458,21 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 		main = mainPassword
 	}
 	if main == "" {
-		return UsersStatus{}, "", errors.New("сначала задайте пароль сервера")
+		return UsersStatus{}, errors.New("сначала задайте пароль сервера")
 	}
 	rec, err := s.adopt(ctx, key, cfg.ConfigDir, main)
 	if err != nil {
-		return UsersStatus{}, "", err
+		return UsersStatus{}, err
 	}
 	if password == "" {
 		if password, err = randomUserPassword(); err != nil {
-			return UsersStatus{}, "", err
+			return UsersStatus{}, err
 		}
 	}
 	// Проверка, не зависящая от состава, — здесь: она про запрос, а не про
 	// состояние.
 	if password == main {
-		return UsersStatus{}, "", errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
+		return UsersStatus{}, errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
 	}
 	user := instancestore.ServerUser{Password: password, Comment: comment, VkHash: vkHash}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
@@ -494,27 +486,34 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 		}
 		return putUser(list, user), nil
 	}); err != nil {
-		return UsersStatus{}, "", err
+		return UsersStatus{}, err
 	}
 	if rec, err = s.reread(key); err != nil {
-		return UsersStatus{}, "", err
+		return UsersStatus{}, err
 	}
 	// Файл пишем с ЭФФЕКТИВНЫМ главным паролем: сохранить его в запись мы ещё
 	// не успели, а предикат пригодности сверяется именно с ним.
 	if err := s.materialize(rec, main); err != nil {
 		// Частичный успех: абонент уже в записи (строкой выше) и оттуда никуда
 		// не денется — старт сервера перепишет файл сам.
-		return UsersStatus{}, "", fmt.Errorf("%w: %w", ErrFileNotWritten, err)
+		return UsersStatus{}, fmt.Errorf("%w: %w", ErrFileNotWritten, err)
 	}
 	// Сигнал — сразу после записи файла, до сбора ответа.
 	reload := s.notifyChanged(key)
 	st := s.status(rec, cfg.ConfigDir, main)
 	st.Reload = reload
-	toSave := ""
+	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
+	// абонента: на отказе добавления пароль остаётся несохранённым, и сервер
+	// не получает состояния «пароль есть, абонента нет».
 	if stored == "" {
-		toSave = main
+		if err := s.setMainPassword(ctx, key, main); err != nil {
+			// Частичный успех, а не отказ: абонент уже и в записи, и в
+			// passwords.json, и SIGHUP по нему ушёл — отката нет и быть не
+			// может. Не сохранился только пароль сервера.
+			return UsersStatus{}, fmt.Errorf("%w: %w", ErrMainPasswordNotSaved, err)
+		}
 	}
-	return st, toSave, nil
+	return st, nil
 }
 
 // setMainPassword дописывает пароль сервера в запись. Правка ПО МЕСТУ:
@@ -526,6 +525,12 @@ func (s *Service) setMainPassword(ctx context.Context, key, main string) error {
 	return s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
 		if r.WdttServer == nil {
 			return fmt.Errorf("инстанс %s: конфиг сервера отсутствует", key)
+		}
+		// Второй барьер к замку: состав сверяется по АКТУАЛЬНОМУ списку прямо
+		// в момент записи. Пароль сервера, равный паролю абонента, ломает
+		// WRAP-рукопожатия всем — сохранять его нельзя ни при какой гонке.
+		if err := validateMainPassword(main, r.Users); err != nil {
+			return err
 		}
 		r.WdttServer.Password = main
 		return nil

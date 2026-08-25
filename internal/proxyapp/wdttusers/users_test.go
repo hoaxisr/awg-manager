@@ -2,6 +2,7 @@ package wdttusers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -57,7 +58,16 @@ type fakeMutator struct {
 	failOn  string // ключ, на котором Update отвечает отказом
 	// beforeUpdate имитирует ПАРАЛЛЕЛЬНУЮ ручку, успевшую изменить запись
 	// между чтением вызывающего и записью. Детерминированно, без горутин.
+	//
+	// hookAt — НОМЕР вызова Update, перед которым хук срабатывает (1 — первый).
+	// Номер обязателен: у путей с усыновлением первый Update принадлежит ему,
+	// и «хук на первом вызове» пришёлся бы не на ту мутацию — тест тогда
+	// молча перестаёт что-либо обнаруживать. hookFired фиксирует, на каком
+	// вызове хук сработал ФАКТИЧЕСКИ, и тест это сверяет.
 	beforeUpdate func(*fakeSource)
+	hookAt       int
+	hookFired    int
+	calls        int
 }
 
 func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
@@ -70,10 +80,10 @@ func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instanc
 	if f.failOn != "" && f.failOn == key {
 		return fmt.Errorf("хранилище недоступно")
 	}
-	if f.beforeUpdate != nil {
-		hook := f.beforeUpdate
-		f.beforeUpdate = nil // ровно один раз: имитируется ОДИН параллельный запрос
-		hook(f.src)
+	f.calls++
+	if f.beforeUpdate != nil && f.calls == f.hookAt {
+		f.hookFired = f.calls
+		f.beforeUpdate(f.src)
 	}
 	rec, ok := f.src.recs[key]
 	if !ok {
@@ -139,6 +149,26 @@ func newStand(t *testing.T, cfg roles.WdttServerConfig, users ...instancestore.S
 		Now:  fixedNow,
 	})
 	return st
+}
+
+// hookOn ставит «параллельный запрос» ПЕРЕД n-м вызовом Update.
+func (s *stand) hookOn(n int, fn func(*fakeSource)) {
+	s.mut.hookAt = n
+	s.mut.beforeUpdate = fn
+}
+
+// assertHookFired требует, чтобы хук сработал ИМЕННО на заданном вызове.
+// Без этой сверки тест гонки деградирует молча: усыновление пишет первым,
+// «съедает» номер, и параллельный запрос приходится не на ту мутацию.
+func (s *stand) assertHookFired(t *testing.T) {
+	t.Helper()
+	if s.mut.hookAt == 0 {
+		t.Fatal("хук не задан")
+	}
+	if s.mut.hookFired != s.mut.hookAt {
+		t.Fatalf("хук сработал на вызове %d, а целился в %d (всего вызовов Update: %d) — тест гонки не проверяет то, что обещает",
+			s.mut.hookFired, s.mut.hookAt, s.mut.calls)
+	}
 }
 
 func (s *stand) rec(t *testing.T) instancestore.Record {
@@ -466,25 +496,35 @@ func TestMutations_DoNotResurrectFromSnapshot(t *testing.T) {
 		instancestore.ServerUser{Password: "victim"},
 		instancestore.ServerUser{Password: "keeper"},
 	)
+	// Фикстура файла НЕПУСТАЯ: усыновление пишет первым и «съедает» первый
+	// вызов Update. Хук целится во ВТОРОЙ — саму мутацию, — и serve сверяет,
+	// что он сработал именно там (иначе тест ничего не проверяет).
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
 	// Параллельная ручка успела отозвать доступ "revoked" перед нашей записью.
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(2, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = dropUser(rec.Users, "revoked")
 		src.recs[testKey] = rec
-	}
+	})
 
 	got, msg, code := st.serve(t, http.MethodDelete, "", "victim")
 	if code != "" {
 		t.Fatalf("ответ = %s / %s", code, msg)
 	}
-	want := []instancestore.ServerUser{{Password: "keeper"}}
+	want := []instancestore.ServerUser{
+		{Password: "keeper"},
+		{Password: "botuser", Comment: "Из бота"},
+	}
 	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
 		t.Fatalf("запись = %#v, ожидалась %#v — отозванный доступ воскрешён из снимка", u, want)
 	}
 	if _, ok := st.file(t).Passwords["revoked"]; ok {
 		t.Fatalf("отозванный доступ вернулся в passwords.json: %#v", st.file(t).Passwords)
 	}
-	if len(got.Users) != 1 || got.Users[0].Password != "keeper" {
+	if len(got.Users) != 2 || got.Users[0].Password != "keeper" {
 		t.Fatalf("ответ = %#v", got.Users)
 	}
 }
@@ -495,11 +535,11 @@ func TestMutations_DoNotDropConcurrentAdd(t *testing.T) {
 		instancestore.ServerUser{Password: "victim"},
 		instancestore.ServerUser{Password: "keeper"},
 	)
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer", Comment: "Новичок"})
 		src.recs[testKey] = rec
-	}
+	})
 	if _, msg, code := st.serve(t, http.MethodDelete, "", "victim"); code != "" {
 		t.Fatalf("ответ = %s / %s", code, msg)
 	}
@@ -518,11 +558,11 @@ func TestRename_DoesNotResurrectFromSnapshot(t *testing.T) {
 		instancestore.ServerUser{Password: "revoked"},
 		instancestore.ServerUser{Password: "client1", Comment: "Иван"},
 	)
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = dropUser(rec.Users, "revoked")
 		src.recs[testKey] = rec
-	}
+	})
 	if _, msg, code := st.serve(t, http.MethodPatch, `{"name":"Пётр"}`, "client1"); code != "" {
 		t.Fatalf("ответ = %s / %s", code, msg)
 	}
@@ -536,11 +576,11 @@ func TestRename_DoesNotResurrectFromSnapshot(t *testing.T) {
 // запросом, обязан быть отвергнут, а не замещён.
 func TestAdd_SeesConcurrentPassword(t *testing.T) {
 	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "client2", Comment: "Успел первым"})
 		src.recs[testKey] = rec
-	}
+	})
 	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client2","comment":"Опоздал"}`)
 	if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
 		t.Fatalf("код = %q (сообщение %q): пароль, занятый параллельно, замещён", code, msg)
@@ -553,8 +593,13 @@ func TestAdd_SeesConcurrentPassword(t *testing.T) {
 	}
 }
 
-// Отказ инварианта отменяет запись ЦЕЛИКОМ: состав обязан остаться прежним.
-func TestRemoveAll_RefusalLeavesRecordIntact(t *testing.T) {
+// TestRemoveAll_RefusalKeepsUsers: после отказа инварианта состав прежний.
+//
+// Имя честное: колбэк отказывает ДО единого изменения, поэтому про АТОМАРНОСТЬ
+// отказа этот тест ничего не доказывает — он проходил бы и на фейке, который
+// сохраняет запись при ошибке. Контракт «отказ отменяет запись» приколочен
+// отдельно, в TestFakeMutator_RefusalCancelsWrite.
+func TestRemoveAll_RefusalKeepsUsers(t *testing.T) {
 	st := newStand(t, baseCfg(),
 		instancestore.ServerUser{Password: "client1", Comment: "Иван", VkHash: "vk1"},
 	)
@@ -563,7 +608,7 @@ func TestRemoveAll_RefusalLeavesRecordIntact(t *testing.T) {
 	}
 	want := []instancestore.ServerUser{{Password: "client1", Comment: "Иван", VkHash: "vk1"}}
 	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
-		t.Fatalf("запись = %#v, ожидалась %#v — отказ колбэка не отменил запись", u, want)
+		t.Fatalf("запись = %#v, ожидалась %#v", u, want)
 	}
 }
 
@@ -759,11 +804,11 @@ func TestServe_AddRefusesMainEqualToExistingUser(t *testing.T) {
 // параллельный запрос успел завести абонента, удаление обязано пройти.
 func TestRemove_InvariantSeesConcurrentState(t *testing.T) {
 	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})
 		src.recs[testKey] = rec
-	}
+	})
 	_, msg, code := st.serve(t, http.MethodDelete, "", "client1")
 	if code != "" {
 		t.Fatalf("ответ = %s / %s: инвариант посчитан по устаревшему снимку", code, msg)
@@ -779,11 +824,11 @@ func TestRemove_InvariantSeesConcurrentState(t *testing.T) {
 func TestRemoveAll_InvariantSeesConcurrentState(t *testing.T) {
 	now := fixedNow()
 	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})
 		src.recs[testKey] = rec
-	}
+	})
 	_, msg, code := st.serve(t, http.MethodDelete, "")
 	if code != "WDTT_SERVER_CLIENT_DELETE_FAILED" {
 		t.Fatalf("код = %q: инвариант посчитан по устаревшему снимку — снесён живой абонент", code)
@@ -809,16 +854,130 @@ func TestMutations_DoNotClobberConcurrentRename(t *testing.T) {
 		instancestore.ServerUser{Password: "client1", Comment: "Иван"},
 		instancestore.ServerUser{Password: "victim"},
 	)
-	st.mut.beforeUpdate = func(src *fakeSource) {
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
+	st.hookOn(2, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users[0].Comment = "Пётр" // правка ПО МЕСТУ, срез тот же
 		src.recs[testKey] = rec
-	}
+	})
 	if _, msg, code := st.serve(t, http.MethodDelete, "", "victim"); code != "" {
 		t.Fatalf("ответ = %s / %s", code, msg)
 	}
-	want := []instancestore.ServerUser{{Password: "client1", Comment: "Пётр"}}
+	want := []instancestore.ServerUser{
+		{Password: "client1", Comment: "Пётр"},
+		{Password: "botuser", Comment: "Из бота"},
+	}
 	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
 		t.Fatalf("запись = %#v, ожидалась %#v — чужое переименование затёрто снимком", u, want)
+	}
+}
+
+// ── фикс-раунд 2: внутренние пути под гонкой ─────────────────────
+
+// TestAdopt_SeesConcurrentState: усыновление тоже пишет состав ОТ АКТУАЛЬНОГО
+// списка. Хук целится в ЕГО Update (первый): параллельный запрос завёл абонента,
+// и усыновление обязано его сохранить, а не затереть своим снимком.
+func TestAdopt_SeesConcurrentState(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	writePasswordsFixture(t, st.dir, passwordsJSON{
+		MainPassword: "mainpass",
+		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+	})
+	st.hookOn(1, func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer", Comment: "Новичок"})
+		src.recs[testKey] = rec
+	})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	st.assertHookFired(t)
+	want := []instancestore.ServerUser{
+		{Password: "client1"},
+		{Password: "newcomer", Comment: "Новичок"},
+		{Password: "botuser", Comment: "Из бота"},
+	}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — усыновление затёрло конкурентное добавление", u, want)
+	}
+}
+
+// TestEnsureUsable_SeesConcurrentAdd: инвариант непустоты перепроверяет условие
+// ВНУТРИ колбэка. Параллельный запрос успел завести рабочего абонента — второй
+// «Абонент 1» рядом с ним лишний, и пользователь увидел бы чужой автоматический
+// доступ, которого не заказывал.
+//
+// Файл пуст, поэтому усыновление не пишет и первый Update принадлежит опоре.
+func TestEnsureUsable_SeesConcurrentAdd(t *testing.T) {
+	st := newStand(t, baseCfg()) // абонентов нет — опора собирается сработать
+	st.hookOn(1, func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})
+		src.recs[testKey] = rec
+	})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	st.assertHookFired(t)
+	want := []instancestore.ServerUser{{Password: "newcomer"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("запись = %#v, ожидалась %#v — опора завела лишнего абонента поверх конкурентного", u, want)
+	}
+}
+
+// ── фикс-раунд 2: пароль сервера под замком ──────────────────────
+
+// TestAdd_MainPasswordRefusedWhenUserTakesIt: между проверкой и записью
+// параллельное добавление успело завести абонента с паролем, равным паролю
+// сервера. Форк берёт main_password для WRAP — совпадение ломает рукопожатия
+// ВСЕМ. Сохранять пароль в этом состоянии нельзя.
+//
+// Вызовы Update: 1 — абонент, 2 — пароль сервера. Хук целится во второй.
+func TestAdd_MainPasswordRefusedWhenUserTakesIt(t *testing.T) {
+	cfg := baseCfg()
+	cfg.Password = ""
+	st := newStand(t, cfg)
+	st.hookOn(2, func(src *fakeSource) {
+		rec := src.recs[testKey]
+		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "свежий-главный"})
+		src.recs[testKey] = rec
+	})
+	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client1","mainPassword":"свежий-главный"}`)
+	if code != "WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED" {
+		t.Fatalf("код = %q (сообщение %q): пароль сервера сохранён равным паролю абонента", code, msg)
+	}
+	c, _ := st.rec(t).WdttServerConfig()
+	if c.Password != "" {
+		t.Fatalf("пароль сервера = %q — сохранён вопреки совпадению", c.Password)
+	}
+}
+
+// ── фикс-раунд 2: контракт фейка приколочен ──────────────────────
+
+// TestFakeMutator_RefusalCancelsWrite сторожит САМ ФЕЙК: он обязан вести себя
+// как хранилище — отказ колбэка отменяет запись целиком, и правка «по месту»
+// внутри колбэка до хранилища не доезжает.
+//
+// Без этого теста атомарность отказа держалась ДВУМЯ барьерами (копия записи +
+// «не сохранять при ошибке»), и ни один из них не был приколочен по
+// отдельности: мутации порознь выживали. Тесты ручек этого не ловят — их
+// колбэки отказывают ДО изменений.
+func TestFakeMutator_RefusalCancelsWrite(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1", Comment: "Иван"})
+	boom := fmt.Errorf("инвариант не выполнен")
+	err := st.mut.Update(context.Background(), testKey, func(r *instancestore.Record) error {
+		r.Users[0].Comment = "Затёрто"                                                  // правка ПО МЕСТУ
+		r.Users = append(r.Users, instancestore.ServerUser{Password: "не-должен-быть"}) // и добавление
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("ошибка = %v, ожидалась %v", err, boom)
+	}
+	want := []instancestore.ServerUser{{Password: "client1", Comment: "Иван"}}
+	if u := st.rec(t).Users; !reflect.DeepEqual(u, want) {
+		t.Fatalf("после отказа запись = %#v, ожидалась %#v — фейк не отменяет запись как хранилище", u, want)
 	}
 }

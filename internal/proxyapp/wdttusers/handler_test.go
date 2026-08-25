@@ -38,6 +38,11 @@ func (s *stand) serve(t *testing.T, method, body string, sub ...string) (UsersSt
 	t.Helper()
 	rr := httptest.NewRecorder()
 	s.svc.Serve(rr, req(method, body), testKey, sub)
+	// Если тест поставил «параллельный запрос», он обязан был прийтись на
+	// заданный вызов Update. Иначе тест гонки молча ничего не проверяет.
+	if s.mut.hookAt != 0 {
+		s.assertHookFired(t)
+	}
 	return decodeStatus(t, rr)
 }
 
