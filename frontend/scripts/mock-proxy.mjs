@@ -8319,6 +8319,19 @@ const server = http.createServer(async (req, res) => {
 				sendBackendError(res, `неизвестная роль ${kind}`, 'PROXY_CONFIG_INVALID', 422);
 				return;
 			}
+			// Инвариант хранилища, а не ворот: второй wdtt-server отвергает
+			// validateState (instancestore/store.go:312) — метки AWGM_WDTT, CIDR
+			// 10.70.0.0/16 и netfilter-хук не несут инстансного дискриминатора.
+			// Наверх он выходит как 422 PROXY_DECLARE_FAILED (api/proxy_instances.go:555).
+			if (kind === 'wdtt-server' && mockWdtt.servers.length > 0) {
+				sendBackendError(
+					res,
+					'wdtt-server может быть только один: правила AWGM_WDTT, CIDR 10.70.0.0/16 и netfilter-хук не несут инстансного дискриминатора (M-7 плана 3)',
+					'PROXY_DECLARE_FAILED',
+					422,
+				);
+				return;
+			}
 			const id = String(body.id ?? '').trim() || proxyFreeID(kind);
 			const inst = {
 				id,
