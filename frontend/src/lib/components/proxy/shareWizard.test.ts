@@ -5,6 +5,7 @@ const apiMock = vi.hoisted(() => ({
 	createWdttServer: vi.fn(),
 	updateWdttServerInstance: vi.fn(),
 	addWdttServerPanelUser: vi.fn(),
+	getWdttServerPanelUsers: vi.fn(),
 	startWdttServerInstance: vi.fn(),
 	generateWdttServerLink: vi.fn(),
 }));
@@ -248,12 +249,16 @@ function fakeWdttBackend() {
 
 	apiMock.createWdttServer.mockImplementation(async () => {
 		state.calls.push('create');
-		return { id: 's1', name: 'Раздача', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '', clients: [] } };
+		return { id: 's1', name: 'Раздача', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } };
 	});
 	apiMock.updateWdttServerInstance.mockImplementation(async (_id: string, cfg: WdttServerConfig) => {
 		state.calls.push('put');
 		state.password = (cfg.password ?? '').trim();
 		return { config: { ...cfg, clients: state.clients } };
+	});
+	apiMock.getWdttServerPanelUsers.mockImplementation(async () => {
+		state.calls.push('users');
+		return { available: true, users: entries() };
 	});
 	apiMock.addWdttServerPanelUser.mockImplementation(
 		async (_id: string, opts: { password?: string; comment?: string; mainPassword?: string }) => {
@@ -304,7 +309,7 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 			peer: '203.0.113.10',
 		});
 
-		expect(state.calls).toEqual(['create', 'add', 'put', 'start']);
+		expect(state.calls).toEqual(['create', 'users', 'add', 'put', 'start']);
 		expect(state.clients.map((c) => c.comment)).toEqual(['Ноутбук Пети']);
 		expect(apiMock.addWdttServerPanelUser.mock.calls[0][1]).toMatchObject({
 			mainPassword: 'mainpass0000',
@@ -337,7 +342,7 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 			client,
 			withLink: true,
 			peer: '',
-			existing: { id: 's1', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '', clients: [] } },
+			existing: { id: 's1', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } },
 			addedClientPassword: 'gen-1',
 		});
 		expect(state.calls).toEqual(['put', 'start']);

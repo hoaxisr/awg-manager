@@ -1045,6 +1045,20 @@ const api_PresetsListResponse: v.GenericSchema = v.looseObject({
 	presets: v.optional(v.nullable(v.array(v.lazy(() => presets_Preset)))),
 });
 
+const api_ProcessView: v.GenericSchema = v.looseObject({
+	address: v.optional(v.nullable(v.string())),
+	binary: v.optional(v.nullable(v.string())),
+	binaryPresent: v.optional(v.nullable(v.boolean())),
+	clients: v.optional(v.nullable(v.number())),
+	lastError: v.optional(v.nullable(v.string())),
+	log: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	pid: v.optional(v.nullable(v.number())),
+	running: v.optional(v.nullable(v.boolean())),
+	uptimeS: v.optional(v.nullable(v.number())),
+	wgConfig: v.optional(v.nullable(v.string())),
+});
+
 const api_ProxyConfigResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_DeviceProxyConfigData))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -1073,6 +1087,67 @@ const api_ProxyListenChoicesResponse: v.GenericSchema = v.looseObject({
 const api_ProxyOutboundsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_DeviceProxyOutboundDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ProxyRtInstanceResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ProxyRtInstanceView))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ProxyRtInstanceView: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.unknown())),
+	createdAt: v.optional(v.nullable(v.string())),
+	enabled: v.optional(v.nullable(v.boolean())),
+	id: v.optional(v.nullable(v.string())),
+	key: v.optional(v.nullable(v.string())),
+	kind: v.optional(v.nullable(v.string())),
+	linkPeer: v.optional(v.nullable(v.string())),
+	linkVkHashes: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	peerRaw: v.optional(v.nullable(v.string())),
+	peerWg: v.optional(v.nullable(v.string())),
+	process: v.optional(v.nullable(v.lazy(() => api_ProcessView))),
+	state: v.optional(v.nullable(v.lazy(() => api_ProxyRtStateView))),
+	statsLog: v.optional(v.nullable(v.string())),
+	sub: v.optional(v.nullable(v.string())),
+});
+
+const api_ProxyRtListData: v.GenericSchema = v.looseObject({
+	instances: v.optional(v.nullable(v.array(v.lazy(() => api_ProxyRtInstanceView)))),
+	seed: v.optional(v.nullable(v.lazy(() => api_ProxyRtSeedView))),
+});
+
+const api_ProxyRtListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ProxyRtListData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ProxyRtResourceView: v.GenericSchema = v.looseObject({
+	detail: v.optional(v.nullable(v.string())),
+	error: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	status: v.optional(v.nullable(v.string())),
+});
+
+const api_ProxyRtSeedView: v.GenericSchema = v.looseObject({
+	certified: v.optional(v.nullable(v.boolean())),
+	error: v.optional(v.nullable(v.string())),
+	seeded: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ProxyRtStateView: v.GenericSchema = v.looseObject({
+	intent: v.optional(v.nullable(v.string())),
+	lastPlan: v.optional(v.nullable(v.array(v.lazy(() => api_ProxyRtStepView)))),
+	phase: v.optional(v.nullable(v.string())),
+	resources: v.optional(v.nullable(v.array(v.lazy(() => api_ProxyRtResourceView)))),
+	updatedAt: v.optional(v.nullable(v.string())),
+});
+
+const api_ProxyRtStepView: v.GenericSchema = v.looseObject({
+	args: v.optional(v.nullable(v.record(v.string(), v.string()))),
+	op: v.optional(v.nullable(v.string())),
+	reason: v.optional(v.nullable(v.string())),
+	resource: v.optional(v.nullable(v.string())),
 });
 
 const api_ProxyRuntimeResponse: v.GenericSchema = v.looseObject({
@@ -2128,6 +2203,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	status: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
+	wdttClientId: v.optional(v.nullable(v.string())),
 });
 
 const api_TunnelListResponse: v.GenericSchema = v.looseObject({
@@ -2627,6 +2703,7 @@ const wdtt_OpkgPolicyPermit: v.GenericSchema = v.looseObject({
 });
 
 const wdtt_ProcessStatus: v.GenericSchema = v.looseObject({
+	appliedExposeToPolicies: v.optional(v.nullable(v.boolean())),
 	binary: v.optional(v.nullable(v.string())),
 	binaryPresent: v.optional(v.nullable(v.boolean())),
 	dtlsConnections: v.optional(v.nullable(v.number())),
@@ -2729,6 +2806,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /proxy/instance": v.lazy(() => api_APIEnvelope),
+	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_OkResponse),
 	"DELETE /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
@@ -2795,6 +2873,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /proxy/listener": v.lazy(() => api_APIEnvelope),
 	"GET /proxy/outbounds": v.lazy(() => api_ProxyOutboundsResponse),
 	"GET /proxy/runtime": v.lazy(() => api_ProxyRuntimeResponse),
+	"GET /proxyrt/instances": v.lazy(() => api_ProxyRtListResponse),
+	"GET /proxyrt/instances/{key}": v.lazy(() => api_ProxyRtInstanceResponse),
 	"GET /routing/access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /routing/client-routes": v.lazy(() => api_ClientRoutesListResponse),
 	"GET /routing/dns-routes": v.lazy(() => api_DnsRoutesListResponse),
@@ -2903,6 +2983,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"PATCH /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"PATCH /freeturn/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /freeturn/servers/{id}": v.lazy(() => api_APIEnvelope),
+	"PATCH /proxyrt/instances/{key}": v.lazy(() => api_ProxyRtInstanceResponse),
 	"PATCH /singbox/tunnels/rename": v.lazy(() => api_SingboxTunnelsResponse),
 	"PATCH /wdtt/clients/{id}": v.lazy(() => api_APIEnvelope),
 	"PATCH /wdtt/servers/{id}": v.lazy(() => api_APIEnvelope),
@@ -2982,6 +3063,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxy/instances/apply": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/kill-listener": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/runtime/select": v.lazy(() => api_ProxyRuntimeResponse),
+	"POST /proxyrt/instances": v.lazy(() => api_ProxyRtInstanceResponse),
+	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
 	"POST /routing/refresh": v.lazy(() => api_RoutingRefreshResponse),
 	"POST /server/listen/change": v.lazy(() => api_ServerListenChangeResponse),
 	"POST /server/listen/confirm": v.lazy(() => api_OkResponse),

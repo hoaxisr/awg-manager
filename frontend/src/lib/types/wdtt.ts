@@ -3,6 +3,12 @@ export interface WdttClientConfig {
 	listen: string;
 	peer: string;
 	password: string;
+	/**
+	 * Пароль задан на бэкенде. Значение секрета наружу не отдаётся (Н5), а
+	 * пустое поле в теле правки означает «не менять» — по нему же считается
+	 * «инстанс настроен».
+	 */
+	passwordSet?: boolean;
 	vkHashes: string;
 	workers: number;
 	obfs: string;
@@ -36,9 +42,13 @@ export interface WdttServerConfig {
 	listen: string;
 	wgPort: number;
 	password: string;
+	/** Пароль сервера задан на бэкенде — значение наружу не отдаётся (Н5). */
+	passwordSet?: boolean;
 	configDir?: string;
 	adminId?: string;
 	botToken?: string;
+	/** Токен бота задан на бэкенде — значение наружу не отдаётся (Н5). */
+	botTokenSet?: boolean;
 	debug?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	natStaticWan?: string;
@@ -60,8 +70,6 @@ export interface WdttServerConfig {
 	rawListen?: string;
 	/** WG peer-порт (-listen-direct, WRAP без DTLS). Пусто → DTLS-порт */
 	directListen?: string;
-	/** Клиенты сервера — источник правды, panel.db собирается из них */
-	clients?: WdttServerClient[];
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
 	linkPeer?: string;
 	linkVkHashes?: string;
@@ -73,12 +81,6 @@ export interface WdttServerConfig {
 	 * старте: живой сервер от смены не перезапускается (`internal/wdtt/types.go`).
 	 */
 	exposeToPolicies?: boolean;
-}
-
-export interface WdttServerClient {
-	password: string;
-	comment?: string;
-	vkHash?: string;
 }
 
 export interface WdttServerInstance {
@@ -106,16 +108,23 @@ export interface WdttProcessStatus {
 	/** NDMS-имя raw-интерфейса сервера; пусто на старом бинаре (без -raw-iface) */
 	rawNdmsIface?: string;
 	/**
-	 * Значение `exposeToPolicies`, с которым РЕАЛЬНО стартовал живой процесс:
-	 * тумблер применяется только на старте. Поля нет — демон применённого
-	 * значения не знает (сервер не запускался, остановлен либо процесс усыновлён
-	 * по pid-файлу), и расхождение с выбранным показывать не из чего.
+	 * Значение `exposeToPolicies`, с которым РЕАЛЬНО стартовал живой процесс.
+	 *
+	 * Производителя больше нет: прокси-рантайм применяет тумблер
+	 * реконсиляцией, а не «на старте», и понятия «значение, с которым
+	 * стартовали» у него не существует. Поле всегда пусто — расхождение с
+	 * выбранным показывать не из чего, и бейдж SH-56 молчит.
 	 */
 	appliedExposeToPolicies?: boolean;
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
-	/** Процесс наш и живой, но pid-файл унаследован: startedAt нет, надзор слеп */
+	/**
+	 * Процесс наш и живой, но pid-файл унаследован: startedAt нет, надзор слеп.
+	 *
+	 * Производителя больше нет: усыновление по pid-файлу заменил управляющий
+	 * сокет — процесс либо отвечает по нему, либо не наш. Поле всегда пусто.
+	 */
 	orphanedPid?: boolean;
 }
 

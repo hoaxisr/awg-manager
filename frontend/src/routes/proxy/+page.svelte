@@ -21,6 +21,7 @@
 	import type { ExitProtocol, ProxyInstanceRow } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { errText } from '$lib/utils/errorMessage';
+	import type { ProxySeedView } from '$lib/api/proxyInstances';
 	import type {
 		AccessPolicy,
 		FreeTurnConfig,
@@ -41,6 +42,13 @@
 	let wdttStatus = $state<WdttStatus | null>(null);
 	let ftStatus = $state<FreeTurnStatus | null>(null);
 	let policies = $state<AccessPolicy[]>([]);
+	/**
+	 * Посев прокси-подсистемы. Признака два: `seeded` — она поднялась,
+	 * `certified` — посев подтверждён реестру и уборка разрешена. Слить их
+	 * нельзя: при seeded без certified инстансы работают, а осиротевшие
+	 * интерфейсы прошлой жизни никто не уберёт — это обязано быть видно.
+	 */
+	let seed = $state<ProxySeedView | null>(null);
 	let tunnels = $state<TunnelListItem[]>([]);
 	let selectedExitKey = $state<string | null>(null);
 	let selectedShareKey = $state<string | null>(null);
@@ -85,9 +93,14 @@
 	// ─── Загрузка и поллинг.
 
 	async function loadStatuses() {
-		const [w, f] = await Promise.all([api.getWdttStatus(), api.getFreeTurnStatus()]);
+		const [w, f, s] = await Promise.all([
+			api.getWdttStatus(),
+			api.getFreeTurnStatus(),
+			api.getProxySeed(),
+		]);
 		wdttStatus = w;
 		ftStatus = f;
+		seed = s;
 	}
 
 	// Конфиги страницы — это состояние сервера: их правит только загрузка и
@@ -220,6 +233,15 @@
 	{:else if loadError}
 		<Card><p class="load-error">{loadError}</p></Card>
 	{:else}
+		{#if seed && seed.seeded && !seed.certified}
+			<Card>
+				<p class="seed-warning">
+					Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и
+					маршрутов заблокирована.{seed.error ? ` ${seed.error}` : ''}
+				</p>
+			</Card>
+		{/if}
+
 		<BinaryStrip {binaries} />
 
 		<Tabs
@@ -308,6 +330,12 @@
 		margin: 0;
 		color: var(--color-error);
 		font-size: 0.875rem;
+	}
+
+	.seed-warning {
+		margin: 0;
+		color: var(--color-warning);
+		font-size: 0.8125rem;
 	}
 
 	.split {

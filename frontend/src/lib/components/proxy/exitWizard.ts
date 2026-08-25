@@ -73,10 +73,16 @@ export function exitStep2Ready(s: {
 	password: string;
 	vkHashes: string;
 	workers: string;
+	/**
+	 * Пароль уже задан на бэкенде. Значение секрета наружу не отдаётся (Н5),
+	 * поэтому у сохранённого конфига поле пустое, а «задан» приходит
+	 * признаком; у формы мастера признака нет — там судит введённое.
+	 */
+	passwordSet?: boolean;
 }): boolean {
 	if (!s.peer.trim() || !s.vkHashes.trim()) return false;
 	if (!(Number(s.workers) > 0)) return false;
-	return s.protocol === 'freeturn' || !!s.password.trim();
+	return s.protocol === 'freeturn' || !!s.password.trim() || s.passwordSet === true;
 }
 
 /** Тот же критерий для сохранённого конфига: настроен ли инстанс «Выхода». */
@@ -89,6 +95,7 @@ export function exitConfigSetupComplete(
 			protocol: 'wdtt',
 			peer: wdtt.peer,
 			password: wdtt.password,
+			passwordSet: wdtt.passwordSet,
 			vkHashes: wdtt.vkHashes,
 			workers: String(wdtt.workers),
 		});

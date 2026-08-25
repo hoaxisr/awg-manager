@@ -7,6 +7,7 @@
 	import { Badge, Button, Card, FieldHint } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
+	import { WDTT_WG_NOT_READY } from '$lib/api/clientWdtt';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import { findPolicyForInterface } from '$lib/utils/accessPolicy';
@@ -29,6 +30,7 @@
 	import SubscriptionSection from './SubscriptionSection.svelte';
 	import { allowEnsure, markEnsured } from './ensureGuard';
 	import { cloneConfig, type ExitConfig } from './exitConfig';
+	import { apiErrorCode } from './serverClients';
 	import { findLinkedTunnel, listenPort } from './linkedTunnel';
 	import type { ProxyInstanceRow } from './rows';
 
@@ -150,27 +152,27 @@
 
 	async function ensureTunnel(manual = false) {
 		// tunnelBusy держит и реентрантность: второй запрос ждать нечего.
-		if (row.protocol !== 'wdtt' || tunnelBusy) return;
+		// Raw сюда не заходит: зеркальную запись выхода ведёт сам движок,
+		// ручки подготовки у неё больше нет.
+		if (row.protocol !== 'wdtt' || raw || tunnelBusy) return;
 		const id = row.id;
 		if (!allowEnsure(id, manual)) return;
 		tunnelBusy = true;
 		try {
-			const res = raw ? await api.ensureWdttRawTunnel(id) : await api.ensureWdttWgTunnel(id);
+			const res = await api.ensureWdttWgTunnel(id);
 			if (res.created) {
 				markEnsured(id);
-				// TS-01 — про туннель из журнала (режим WG). В raw заводится
-				// запись «WDTT Raw», а не туннель, и говорит о ней бэкенд.
-				if (raw) {
-					if (res.message) notifications.success(res.message);
-				} else {
-					notifications.success(`Создан туннель «${res.tunnelName ?? ''}»`);
-				}
+				// TS-01 — про туннель из журнала (режим WG).
+				notifications.success(`Создан туннель «${res.tunnelName ?? ''}»`);
 				await onreload();
 			} else if (res.tunnelId) {
 				markEnsured(id);
 			}
 		} catch (e) {
-			notifications.error(errText(e));
+			// «Конфиг ещё не приехал» — не ошибка, а ожидание: автоэффект зовёт
+			// ручку сам, и тост на каждый заход был бы ложной тревогой. Глушим
+			// ровно этот код, не «ошибку вообще».
+			if (apiErrorCode(e) !== WDTT_WG_NOT_READY) notifications.error(errText(e));
 		} finally {
 			tunnelBusy = false;
 		}
@@ -178,9 +180,7 @@
 
 	$effect(() => {
 		const wg = wdttStatus?.wgConfig?.trim();
-		const iface = wdttStatus?.rawIface?.trim() || wdttStatus?.ndmsIface?.trim();
-		if (row.protocol !== 'wdtt' || !running) return;
-		if (raw ? !iface : !wg) return;
+		if (row.protocol !== 'wdtt' || raw || !running || !wg) return;
 		untrack(() => ensureTunnel());
 	});
 

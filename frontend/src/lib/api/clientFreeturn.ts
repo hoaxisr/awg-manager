@@ -14,158 +14,251 @@ import type {
 	FreeTurnStatus
 } from '$lib/types';
 import { SubscriptionsClient } from './clientSubscriptions';
+import {
+	instancePath,
+	toCaptchaOverview,
+	toFreeTurnClientConfig,
+	toFreeTurnClientPatch,
+	toFreeTurnConfig,
+	toFreeTurnServerConfig,
+	toFreeTurnServerPatch,
+	toFreeTurnStatus,
+	type ProxyInstallStatus,
+	type ProxyInstanceView,
+	type ProxyKind,
+	type ProxyListData,
+	type ProxySeedView
+} from './proxyInstances';
+
+/** Очистка связанных AWG-туннелей — прежняя форма ответа ручки. */
+export interface ProxyLinkedClearResult {
+	deletedTunnels?: string[];
+	tunnelErrors?: string[];
+	message?: string;
+}
 
 export class FreeturnClient extends SubscriptionsClient {
+	// ─────────────────────────────────────────────
+	// #region Прокси-рантайм — общая поверхность /api/proxyrt
+	// ─────────────────────────────────────────────
+
+	/**
+	 * Список инстансов всех ролей. Запрос дедуплицируется, пока он в полёте:
+	 * страница читает статусы и конфиги обоих протоколов одним `Promise.all`,
+	 * и без дедупликации один и тот же список ехал бы по сети четырежды.
+	 */
+	private proxyListInFlight?: Promise<ProxyListData>;
+
+	private proxyListRaw(): Promise<ProxyListData> {
+		if (!this.proxyListInFlight) {
+			this.proxyListInFlight = this.request<ProxyListData>('/proxyrt/instances').finally(() => {
+				this.proxyListInFlight = undefined;
+			});
+		}
+		return this.proxyListInFlight;
+	}
+
+	protected async proxyList(): Promise<ProxyListData> {
+		const list = await this.proxyListRaw();
+		// Посев не состоялся — список ПУСТ по построению, а причина лежит в
+		// блоке seed. Отдать пустой список молча значило бы показать
+		// «инстансов нет» вместо «подсистема не поднялась».
+		if (!list.seed?.seeded) {
+			throw new Error(list.seed?.error || 'Прокси-подсистема не загружена');
+		}
+		return list;
+	}
+
+	/**
+	 * Состояние посева: `seeded` — подсистема поднялась, `certified` — посев
+	 * подтверждён реестру и уборка разрешена. Признака два, и «гейт заперт»
+	 * (seeded без certified) обязано быть видно.
+	 */
+	async getProxySeed(): Promise<ProxySeedView> {
+		return (await this.proxyListRaw()).seed;
+	}
+
+	protected async proxyInstallStatus(subsystem: 'wdtt' | 'freeturn'): Promise<ProxyInstallStatus> {
+		return this.request<ProxyInstallStatus>(`/proxyrt/install/status?subsystem=${subsystem}`);
+	}
+
+	protected async proxyInstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
+		await this.request('/proxyrt/install', {
+			method: 'POST',
+			body: JSON.stringify({ subsystem })
+		});
+	}
+
+	protected async proxyCreate(
+		kind: ProxyKind,
+		name?: string,
+		config?: Record<string, unknown>
+	): Promise<ProxyInstanceView> {
+		return this.request<ProxyInstanceView>('/proxyrt/instances', {
+			method: 'POST',
+			body: JSON.stringify({ kind, name: name ?? '', enabled: false, config: config ?? {} })
+		});
+	}
+
+	protected async proxyPatch(
+		kind: ProxyKind,
+		id: string,
+		body: { name?: string; enabled?: boolean; config?: Record<string, unknown> }
+	): Promise<ProxyInstanceView> {
+		return this.request<ProxyInstanceView>(instancePath(kind, id), {
+			method: 'PATCH',
+			body: JSON.stringify(body)
+		});
+	}
+
+	protected async proxyDelete(kind: ProxyKind, id: string): Promise<void> {
+		await this.request(instancePath(kind, id), { method: 'DELETE' });
+	}
+
+	/**
+	 * Снос AWG-туннелей, связанных с клиентским инстансом. Отказ ручки не
+	 * роняет удаление инстанса, а уезжает в `tunnelErrors`: в старом мире
+	 * удаление сносило и связи, и инстанс, и об ошибках туннелей отчитывалось
+	 * списком — молча потерять их нельзя, но и запирать удаление из-за них
+	 * пользователь не просил.
+	 */
+	protected async proxyClearLinkedTunnels(
+		kind: ProxyKind,
+		id: string
+	): Promise<ProxyLinkedClearResult> {
+		try {
+			return await this.request<ProxyLinkedClearResult>(
+				instancePath(kind, id, '/linked-tunnels/clear'),
+				{ method: 'POST' }
+			);
+		} catch (e) {
+			return { tunnelErrors: [e instanceof Error ? e.message : String(e)] };
+		}
+	}
+
+	// #endregion
+
 	// ─────────────────────────────────────────────
 	// #region FreeTurn — TURN-tunnel client + server
 	// ─────────────────────────────────────────────
 
 	async getFreeTurnConfig(): Promise<FreeTurnConfig> {
-		return this.request<FreeTurnConfig>('/freeturn/config');
-	}
-
-	async updateFreeTurnClientConfig(config: FreeTurnClientConfig): Promise<FreeTurnClientConfig> {
-		return this.request<FreeTurnClientConfig>('/freeturn/client/config', {
-			method: 'PUT',
-			body: JSON.stringify(config)
-		});
-	}
-
-	async updateFreeTurnServerConfig(config: FreeTurnServerConfig): Promise<FreeTurnServerConfig> {
-		return this.request<FreeTurnServerConfig>('/freeturn/server/config', {
-			method: 'PUT',
-			body: JSON.stringify(config)
-		});
+		return toFreeTurnConfig(await this.proxyList());
 	}
 
 	async updateFreeTurnClientInstance(
 		id: string,
 		config: FreeTurnClientConfig
 	): Promise<FreeTurnClientConfig> {
-		return this.request<FreeTurnClientConfig>(`/freeturn/clients/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			body: JSON.stringify(config)
+		const view = await this.proxyPatch('freeturn-client', id, {
+			enabled: config.enabled,
+			config: toFreeTurnClientPatch(config)
 		});
+		return toFreeTurnClientConfig(view);
 	}
 
 	async updateFreeTurnServerInstance(
 		id: string,
 		config: FreeTurnServerConfig
 	): Promise<FreeTurnServerConfig> {
-		return this.request<FreeTurnServerConfig>(`/freeturn/servers/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			body: JSON.stringify(config)
+		const view = await this.proxyPatch('freeturn-server', id, {
+			enabled: config.enabled,
+			config: toFreeTurnServerPatch(config)
 		});
+		return toFreeTurnServerConfig(view);
 	}
 
 	async createFreeTurnClient(name?: string): Promise<FreeTurnClientInstance> {
-		return this.request<FreeTurnClientInstance>('/freeturn/clients', {
-			method: 'POST',
-			body: JSON.stringify(name ? { name } : {})
-		});
+		const view = await this.proxyCreate('freeturn-client', name);
+		return { id: view.id, name: view.name, config: toFreeTurnClientConfig(view) };
 	}
 
 	async createFreeTurnServer(name?: string): Promise<FreeTurnServerInstance> {
-		return this.request<FreeTurnServerInstance>('/freeturn/servers', {
-			method: 'POST',
-			body: JSON.stringify(name ? { name } : {})
-		});
+		const view = await this.proxyCreate('freeturn-server', name);
+		return { id: view.id, name: view.name, config: toFreeTurnServerConfig(view) };
 	}
 
+	/**
+	 * Удаление клиента: связанные AWG-туннели сносит своя ручка, удаление
+	 * инстанса их не трогает. Порядок «сначала связи, потом инстанс» —
+	 * уборщик ищет туннели по id ЖИВОЙ записи.
+	 */
 	async deleteFreeTurnClient(id: string): Promise<FreeTurnDeleteClientResult> {
-		return this.request<FreeTurnDeleteClientResult>(
-			`/freeturn/clients/${encodeURIComponent(id)}`,
-			{ method: 'DELETE' }
-		);
+		const cleared = await this.proxyClearLinkedTunnels('freeturn-client', id);
+		await this.proxyDelete('freeturn-client', id);
+		return {
+			message: cleared.message,
+			deletedTunnels: cleared.deletedTunnels,
+			tunnelErrors: cleared.tunnelErrors
+		};
 	}
 
 	async deleteFreeTurnServer(id: string): Promise<void> {
-		await this.request(`/freeturn/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+		await this.proxyDelete('freeturn-server', id);
 	}
 
 	async renameFreeTurnClient(id: string, name: string): Promise<void> {
-		await this.request(`/freeturn/clients/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			body: JSON.stringify({ name })
-		});
+		await this.proxyPatch('freeturn-client', id, { name });
 	}
 
 	async renameFreeTurnServer(id: string, name: string): Promise<void> {
-		await this.request(`/freeturn/servers/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			body: JSON.stringify({ name })
-		});
+		await this.proxyPatch('freeturn-server', id, { name });
 	}
 
 	async getFreeTurnStatus(): Promise<FreeTurnStatus> {
-		return this.request<FreeTurnStatus>('/freeturn/status');
+		const [list, install] = await Promise.all([
+			this.proxyList(),
+			this.proxyInstallStatus('freeturn')
+		]);
+		return toFreeTurnStatus(list, install);
 	}
 
 	async getFreeTurnCaptchaStatus(): Promise<FreeTurnCaptchaOverview> {
-		return this.request<FreeTurnCaptchaOverview>('/freeturn/captcha/status');
+		return toCaptchaOverview(
+			await this.request<FreeTurnCaptchaOverview>('/proxyrt/freeturn/captcha/status')
+		);
 	}
 
-	async startFreeTurnClient(id = 'default'): Promise<{ message: string }> {
-		if (id === 'default') {
-			return this.request('/freeturn/client/start', { method: 'POST' });
-		}
-		return this.request(`/freeturn/clients/${encodeURIComponent(id)}/start`, { method: 'POST' });
+	async startFreeTurnClient(id = 'default'): Promise<void> {
+		await this.proxyPatch('freeturn-client', id, { enabled: true });
 	}
 
-	async stopFreeTurnClient(id = 'default'): Promise<{ message: string }> {
-		if (id === 'default') {
-			return this.request('/freeturn/client/stop', { method: 'POST' });
-		}
-		return this.request(`/freeturn/clients/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+	async stopFreeTurnClient(id = 'default'): Promise<void> {
+		await this.proxyPatch('freeturn-client', id, { enabled: false });
 	}
 
-	async startFreeTurnServer(id = 'default'): Promise<{ message: string }> {
-		if (id === 'default') {
-			return this.request('/freeturn/server/start', { method: 'POST' });
-		}
-		return this.request(`/freeturn/servers/${encodeURIComponent(id)}/start`, { method: 'POST' });
+	async startFreeTurnServer(id = 'default'): Promise<void> {
+		await this.proxyPatch('freeturn-server', id, { enabled: true });
 	}
 
-	async stopFreeTurnServer(id = 'default'): Promise<{ message: string }> {
-		if (id === 'default') {
-			return this.request('/freeturn/server/stop', { method: 'POST' });
-		}
-		return this.request(`/freeturn/servers/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+	async stopFreeTurnServer(id = 'default'): Promise<void> {
+		await this.proxyPatch('freeturn-server', id, { enabled: false });
 	}
 
 	async generateFreeTurnLink(
 		req: FreeTurnGenerateLinkRequest = {}
 	): Promise<FreeTurnGenerateLinkResult> {
-		const serverId = req.serverId?.trim();
-		if (serverId && serverId !== 'default') {
-			return this.request<FreeTurnGenerateLinkResult>(
-				`/freeturn/servers/${encodeURIComponent(serverId)}/link`,
-				{
-					method: 'POST',
-					body: JSON.stringify(req)
-				}
-			);
-		}
-		return this.request<FreeTurnGenerateLinkResult>('/freeturn/server/link', {
-			method: 'POST',
-			body: JSON.stringify(req)
-		});
+		const serverId = req.serverId?.trim() || 'default';
+		return this.request<FreeTurnGenerateLinkResult>(
+			instancePath('freeturn-server', serverId, '/link'),
+			{ method: 'POST', body: JSON.stringify(req) }
+		);
 	}
 
 	async decodeFreeTurnLink(link: string): Promise<FreeTurnLinkPayload> {
-		return this.request<FreeTurnLinkPayload>('/freeturn/link/decode', {
+		return this.request<FreeTurnLinkPayload>('/proxyrt/freeturn/link/decode', {
 			method: 'POST',
 			body: JSON.stringify({ link })
 		});
 	}
 
 	async installFreeTurn(): Promise<void> {
-		await this.request<{ message: string }>('/freeturn/install', { method: 'POST' });
+		await this.proxyInstall('freeturn');
 	}
 
 	async getFreeTurnServerAllowlist(serverId: string): Promise<FreeTurnAllowlistStatus> {
 		return this.request<FreeTurnAllowlistStatus>(
-			`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist`
+			instancePath('freeturn-server', serverId, '/allowlist')
 		);
 	}
 
@@ -175,17 +268,14 @@ export class FreeturnClient extends SubscriptionsClient {
 		comment: string
 	): Promise<FreeTurnAllowlistAddResult> {
 		return this.request<FreeTurnAllowlistAddResult>(
-			`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist`,
-			{
-				method: 'POST',
-				body: JSON.stringify({ clientId, comment })
-			}
+			instancePath('freeturn-server', serverId, '/allowlist'),
+			{ method: 'POST', body: JSON.stringify({ clientId, comment }) }
 		);
 	}
 
 	async removeFreeTurnServerAllowlistClient(serverId: string, clientId: string): Promise<void> {
 		await this.request(
-			`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist/${encodeURIComponent(clientId)}`,
+			instancePath('freeturn-server', serverId, `/allowlist/${encodeURIComponent(clientId)}`),
 			{ method: 'DELETE' }
 		);
 	}
@@ -195,7 +285,7 @@ export class FreeturnClient extends SubscriptionsClient {
 		serverId: string
 	): Promise<{ needsRestart?: boolean }> {
 		return this.request<{ needsRestart?: boolean }>(
-			`/freeturn/servers/${encodeURIComponent(serverId)}/allowlist`,
+			instancePath('freeturn-server', serverId, '/allowlist'),
 			{ method: 'DELETE' }
 		);
 	}

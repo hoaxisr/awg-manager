@@ -187,7 +187,9 @@ export function shareConfigSetupComplete(
 	wdtt?: WdttServerConfig,
 	ft?: FreeTurnServerConfig,
 ): boolean {
-	if (wdtt) return !!wdtt.password?.trim();
+	// Пароль сервера наружу не отдаётся (Н5): у сохранённого конфига поле
+	// пустое, а «задан» приходит признаком.
+	if (wdtt) return !!wdtt.password?.trim() || wdtt.passwordSet === true;
 	if (ft) return !!ft.connect?.trim();
 	return false;
 }
@@ -286,16 +288,19 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 		// абонента, то есть незапускаемым (гейт SH-91).
 		let password = input.addedClientPassword ?? '';
 		if (!password) {
-			const before = cfg.clients ?? [];
+			const typed = client.password.trim();
+			// Состав до добавления: конфиг сервера абонентов больше не несёт —
+			// живые признаки и пароли знает только ручка абонентов. Заданный
+			// руками пароль знаем и без сверки, и лишнего запроса не делаем.
+			const before = typed ? [] : ((await api.getWdttServerPanelUsers(id)).users ?? []);
 			const st = await api.addWdttServerPanelUser(id, {
-				password: client.password.trim() || undefined,
+				password: typed || undefined,
 				comment: client.name.trim() || undefined,
 				vkHash: client.vkHash.trim() || undefined,
 				mainPassword: fields.password.trim(),
 			});
-			// Заданный руками пароль знаем и без сверки состава; сгенерированный
-			// ищем как запись, которой до добавления не было.
-			password = client.password.trim() || addedPassword(before, st.users ?? []);
+			// Сгенерированный пароль ищем как запись, которой до добавления не было.
+			password = typed || addedPassword(before, st.users ?? []);
 			input.onclientadded?.(password);
 		}
 

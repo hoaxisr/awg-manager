@@ -29,11 +29,6 @@
 	// svelte-ignore state_referenced_locally
 	let vkHashes = $state(user.vkHash?.trim() || (server.linkVkHashes ?? ''));
 
-	// Проп `server` после нашего же PUT не перечитывается: что в конфиге уже
-	// лежит, помним сами — иначе каждый `generate()` шлёт тот же PUT заново.
-	// svelte-ignore state_referenced_locally -- снимок на момент открытия панели
-	let persistedPeer = server.linkPeer ?? '';
-
 	let link = $state('');
 	let linkQwdtt = $state('');
 	let busy = $state(false);
@@ -65,7 +60,6 @@
 			});
 			link = res.link ?? '';
 			linkQwdtt = res.linkQwdtt ?? '';
-			await persistPeer(res.peer || peerParam);
 		} catch (e) {
 			notifications.error(errText(e));
 		} finally {
@@ -73,21 +67,10 @@
 		}
 	}
 
-	/**
-	 * peer ссылки живёт в конфиге сервера, чтобы ссылка восстанавливалась после
-	 * перезагрузки страницы. VK-хеши абонента — его личные: в серверные
-	 * параметры они не идут (W-33).
-	 */
-	async function persistPeer(value: string) {
-		const next = value.trim();
-		if (!next || next === persistedPeer) return;
-		try {
-			await api.updateWdttServerInstance(serverId, { ...server, linkPeer: next });
-			persistedPeer = next;
-		} catch {
-			/* не критично: ссылка уже показана, peer допишется при сохранении */
-		}
-	}
+	// peer ссылки запоминает БЭКЕНД (ручка ссылки пишет его в запись), чтобы
+	// ссылка восстанавливалась после перезагрузки страницы. Своей записи здесь
+	// больше нет: две точки записи одного поля расходились бы молча. VK-хеши
+	// абонента — его личные: в серверные параметры они не идут (W-33).
 
 	async function fillWan() {
 		wanBusy = true;

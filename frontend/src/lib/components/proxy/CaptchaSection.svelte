@@ -40,7 +40,11 @@
 	const streams = $derived(entry?.pendingStreams ?? 0);
 
 	function openCaptcha() {
-		const url = entry?.url?.trim() || `/api/freeturn/clients/${encodeURIComponent(clientId)}/captcha/`;
+		// Запасной адрес собирается по ключу инстанса (роль:id) — так адресует
+		// инстансы новая поверхность.
+		const url =
+			entry?.url?.trim() ||
+			`/api/proxyrt/instances/${encodeURIComponent(`freeturn-client:${clientId}`)}/captcha/`;
 		window.open(url, '_blank', 'noopener');
 	}
 </script>
