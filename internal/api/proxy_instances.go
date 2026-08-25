@@ -81,6 +81,16 @@ type ProxyRtSeedView struct {
 	Seeded    bool   `json:"seeded" example:"true"`
 	Certified bool   `json:"certified" example:"true"`
 	Error     string `json:"error,omitempty" example:"посев отложен: RCI недоступен"`
+	// Skipped — старые конфиги, которые посев не разобрал и пропустил: их
+	// инстансы не перенесены. Признак отдельный от Error: только по имени
+	// файла интерфейс может сказать, ЧЬИ инстансы потеряны.
+	Skipped []ProxyRtSkippedSourceView `json:"skipped,omitempty"`
+}
+
+// ProxyRtSkippedSourceView — один пропущенный старый конфиг.
+type ProxyRtSkippedSourceView struct {
+	File   string `json:"file" example:"wdtt.json"`
+	Reason string `json:"reason,omitempty" example:"invalid character 'н'"`
 }
 
 // ProxyRtResourceView — один ресурс инстанса в состоянии реконсиляции.
@@ -279,8 +289,12 @@ func (h *ProxyInstancesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 //	@Router			/proxyrt/instances [get]
 func (h *ProxyInstancesHandler) list(w http.ResponseWriter, _ *http.Request) {
 	info := h.deps.Manager.SeedInfo()
+	seed := ProxyRtSeedView{Seeded: info.Booted, Certified: info.Certified, Error: info.Err}
+	for _, s := range info.Skipped {
+		seed.Skipped = append(seed.Skipped, ProxyRtSkippedSourceView{File: s.File, Reason: s.Reason})
+	}
 	data := ProxyRtListData{
-		Seed:      ProxyRtSeedView{Seeded: info.Booted, Certified: info.Certified, Error: info.Err},
+		Seed:      seed,
 		Instances: []ProxyRtInstanceView{},
 	}
 	// Инстансы при несостоявшемся посеве не показываем: их состав неполон, а

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -300,6 +301,42 @@ func TestSeedInfoReportsCertification(t *testing.T) {
 	info := e.m.SeedInfo()
 	if !info.Booted || info.Certified || info.Err == "" {
 		t.Fatalf("SeedInfo: %+v (ждали Booted=true, Certified=false, Err непуст)", info)
+	}
+}
+
+func TestBootLeavesGateLockedWhenOldConfigWasSkipped(t *testing.T) {
+	// Пропущенный источник занижает число инстансов: сертифицируй мы такой
+	// посев — уборка снесла бы зеркальные записи непереехавших инстансов
+	// НЕОБРАТИМО. Поэтому MarkSeeded не зовётся вовсе, а рантайм при этом
+	// поднимается: битый файл никто не починит, и отказ боота запер бы
+	// управление прокси навсегда (амендмент D).
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SkippedSources = []instancestore.SkippedSource{{File: "wdtt.json", Reason: "поле не того типа"}}
+	e.seedRes = instancestore.SeedResult{State: st}
+	e.seedResSet = true
+	boot(t, e)
+	for _, c := range e.reg.calls {
+		if strings.HasPrefix(c, "seeded:") {
+			t.Fatalf("сертификация обязана быть пропущена: %v", e.reg.calls)
+		}
+	}
+	if len(e.reg.calls) != 1 || e.reg.calls[0] != "declared:1" {
+		t.Fatalf("объявление выходов обязано пройти: %v", e.reg.calls)
+	}
+	if len(e.instances) != 1 {
+		t.Fatalf("инстансы обязаны стартовать: %d", len(e.instances))
+	}
+	info := e.m.SeedInfo()
+	if !info.Booted || info.Certified || info.Err == "" {
+		t.Fatalf("SeedInfo: %+v (ждали Booted=true, Certified=false, Err непуст)", info)
+	}
+	if len(info.Skipped) != 1 || info.Skipped[0].File != "wdtt.json" {
+		t.Fatalf("пропущенный источник обязан быть виден наружу: %+v", info.Skipped)
 	}
 }
 

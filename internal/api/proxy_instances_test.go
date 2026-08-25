@@ -299,7 +299,7 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 	decodeProxyData(t, rr, &data)
 
 	wantSeed := ProxyRtSeedView{Seeded: true, Certified: true}
-	if data.Seed != wantSeed {
+	if !reflect.DeepEqual(data.Seed, wantSeed) {
 		t.Fatalf("seed = %+v, ждали %+v", data.Seed, wantSeed)
 	}
 	if len(data.Instances) != 1 {
@@ -430,11 +430,29 @@ func TestProxyInstancesList_SeedGateLocked(t *testing.T) {
 	var data ProxyRtListData
 	decodeProxyData(t, rr, &data)
 	want := ProxyRtSeedView{Seeded: true, Certified: false, Error: "реестр не сертифицирован"}
-	if data.Seed != want {
+	if !reflect.DeepEqual(data.Seed, want) {
 		t.Fatalf("seed = %+v, ждали %+v (запертый гейт обязан быть отличим)", data.Seed, want)
 	}
 	if len(data.Instances) != 1 {
 		t.Fatalf("инстансов %d: при seeded=true список отдаётся", len(data.Instances))
+	}
+}
+
+func TestProxyInstancesList_SkippedOldConfigIsVisible(t *testing.T) {
+	// Пропущенный старый конфиг — отдельный признак: по нему интерфейс
+	// называет пользователю, ЧЬИ инстансы не перенеслись.
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed: manager.SeedInfo{Booted: true, Certified: false, Err: "пропущен неразобранный старый конфиг",
+			Skipped: []instancestore.SkippedSource{{File: "wdtt.json", Reason: "поле не того типа"}}},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodGet, "/api/proxyrt/instances", "")
+	var data ProxyRtListData
+	decodeProxyData(t, rr, &data)
+	want := []ProxyRtSkippedSourceView{{File: "wdtt.json", Reason: "поле не того типа"}}
+	if !reflect.DeepEqual(data.Seed.Skipped, want) {
+		t.Fatalf("skipped = %+v, ждали %+v", data.Seed.Skipped, want)
 	}
 }
 
@@ -451,7 +469,7 @@ func TestProxyInstancesList_NotSeeded(t *testing.T) {
 	var data ProxyRtListData
 	decodeProxyData(t, rr, &data)
 	want := ProxyRtSeedView{Seeded: false, Certified: false, Error: "RCI недоступен"}
-	if data.Seed != want {
+	if !reflect.DeepEqual(data.Seed, want) {
 		t.Fatalf("seed = %+v, ждали %+v", data.Seed, want)
 	}
 	if len(data.Instances) != 0 {

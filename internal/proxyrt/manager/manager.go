@@ -7,6 +7,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -106,6 +107,11 @@ type SeedInfo struct {
 	Booted    bool
 	Certified bool
 	Err       string
+	// Skipped — старые конфиги, которые посев не разобрал и пропустил.
+	// Признак отдельный от Err: причину запертого гейта тот назовёт и так, а
+	// вот сказать пользователю, ЧЬИ инстансы не перенеслись, можно только по
+	// имени файла.
+	Skipped []instancestore.SkippedSource
 }
 
 type Manager struct {
@@ -116,6 +122,7 @@ type Manager struct {
 	booted    bool
 	certified bool
 	seedErr   string
+	skipped   []instancestore.SkippedSource
 	ctx       context.Context // контекст боота — для стартов из мутаторов
 }
 
@@ -200,7 +207,20 @@ func (m *Manager) Boot(ctx context.Context) error {
 
 	certified := true
 	certErr := ""
-	if err := m.deps.Registry.MarkSeeded(len(list)); err != nil {
+	// Пропущенный старый конфиг занижает len(list): сертификация отперла бы
+	// уборку зеркальных записей, и та НЕОБРАТИМО снесла бы записи
+	// непереехавших инстансов. Поэтому при непустом списке пропусков
+	// MarkSeeded не зовём вовсе. Объявленная цена: гейт монотонный, снять его
+	// нельзя — уборка останется запертой для этой установки навсегда. Это
+	// плата за решение «пропуск без ретраев», а не дефект.
+	if skipped := res.State.SkippedSources; len(skipped) > 0 {
+		parts := make([]string, 0, len(skipped))
+		for _, s := range skipped {
+			parts = append(parts, s.File+": "+s.Reason)
+		}
+		certified, certErr = false, "пропущен неразобранный старый конфиг — "+strings.Join(parts, "; ")
+		m.deps.Journal.Warn("boot", "proxy", "посев не сертифицирован, уборка заперта: "+certErr)
+	} else if err := m.deps.Registry.MarkSeeded(len(list)); err != nil {
 		certified, certErr = false, err.Error()
 		m.deps.Journal.Warn("boot", "proxy", "посев не сертифицирован, уборка заперта: "+err.Error())
 	}
@@ -238,6 +258,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 	m.booted = true
 	m.certified = certified
 	m.seedErr = certErr
+	m.skipped = res.State.SkippedSources
 	m.mu.Unlock()
 
 	if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
@@ -249,7 +270,8 @@ func (m *Manager) Boot(ctx context.Context) error {
 func (m *Manager) SeedInfo() SeedInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return SeedInfo{Booted: m.booted, Certified: m.booted && m.certified, Err: m.seedErr}
+	return SeedInfo{Booted: m.booted, Certified: m.booted && m.certified, Err: m.seedErr,
+		Skipped: m.skipped}
 }
 
 func (m *Manager) Enabled(key string) (on, ok bool) {

@@ -36,7 +36,19 @@ type fileFormat struct {
 	CleanupPending     bool         `json:"cleanupPending,omitempty"`
 	LegacyKernelIfaces []string     `json:"legacyKernelIfaces,omitempty"`
 	OldGenProcs        []OldGenProc `json:"oldGenProcs,omitempty"`
-	Instances          []Record     `json:"instances"`
+	// SkippedSources — старые конфиги, которые посев не смог разобрать и
+	// пропустил. Лежат на диске рядом с SeededFrom и по той же причине:
+	// повторного посева не будет никогда, и без записи пользователь после
+	// первого же перезапуска не узнал бы, что его инстансы не перенеслись.
+	SkippedSources []SkippedSource `json:"skippedSources,omitempty"`
+	Instances      []Record        `json:"instances"`
+}
+
+// SkippedSource — пропущенный на посеве старый конфиг: базовое имя файла (как
+// в SeededFrom) и причина, по которой он не разобрался.
+type SkippedSource struct {
+	File   string `json:"file"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // State — снимок хранилища. Seeded выводится из SeededFrom (§9: флаг —
@@ -55,7 +67,11 @@ type State struct {
 	CleanupPending     bool
 	LegacyKernelIfaces []string
 	OldGenProcs        []OldGenProc
-	Records            []Record
+	// SkippedSources — старые конфиги, не перенесённые посевом: разобрать их
+	// не удалось, чинить файл некому, а ретрая посева нет. Непустой список
+	// запирает сертификацию посева (manager.Boot).
+	SkippedSources []SkippedSource
+	Records        []Record
 }
 
 // Store — единственный владелец proxy-instances.json. Все записи — через
@@ -101,7 +117,7 @@ func (s *Store) loadLocked() (State, error) {
 	}
 	st := State{Seeded: len(f.SeededFrom) > 0, SeededFrom: f.SeededFrom,
 		CleanupPending: f.CleanupPending, LegacyKernelIfaces: f.LegacyKernelIfaces,
-		OldGenProcs: f.OldGenProcs, Records: f.Instances}
+		OldGenProcs: f.OldGenProcs, SkippedSources: f.SkippedSources, Records: f.Instances}
 	for i := range st.Records {
 		normalizeRecord(&st.Records[i])
 	}
@@ -153,7 +169,7 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 	}
 	f := fileFormat{Version: fileVersion, SeededFrom: st.SeededFrom,
 		CleanupPending: st.CleanupPending, LegacyKernelIfaces: st.LegacyKernelIfaces,
-		OldGenProcs: st.OldGenProcs, Instances: st.Records}
+		OldGenProcs: st.OldGenProcs, SkippedSources: st.SkippedSources, Instances: st.Records}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return State{}, err

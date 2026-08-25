@@ -2900,6 +2900,23 @@ definitions:
       seeded:
         example: true
         type: boolean
+      skipped:
+        description: |-
+          Skipped — старые конфиги, которые посев не разобрал и пропустил: их
+          инстансы не перенесены. Признак отдельный от Error: только по имени
+          файла интерфейс может сказать, ЧЬИ инстансы потеряны.
+        items:
+          $ref: '#/definitions/api.ProxyRtSkippedSourceView'
+        type: array
+    type: object
+  api.ProxyRtSkippedSourceView:
+    properties:
+      file:
+        example: wdtt.json
+        type: string
+      reason:
+        example: invalid character 'н'
+        type: string
     type: object
   api.ProxyRtStateView:
     properties:

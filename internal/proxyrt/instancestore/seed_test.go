@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
@@ -345,15 +346,78 @@ func TestSeedFreeturnV2EmptyListsSeedNothing(t *testing.T) {
 	}
 }
 
-func TestSeedFailsClosedOnCorruptOldFile(t *testing.T) {
+// Файл с разбираемым префиксом и полем НЕВЕРНОГО ТИПА: encoding/json успевает
+// заполнить clients и только потом возвращает ошибку. Синтаксический мусор для
+// этого не годится — checkValid отвергает документ целиком, не тронув приёмник.
+const typeMismatchWdttJSON = `{
+  "clients": [{"id":"half","name":"Половина","config":{
+    "enabled":true,"listen":"127.0.0.1:9000","peer":"9.9.9.9:1",
+    "password":"pw","vkHashes":"h"}}],
+  "servers": 5
+}`
+
+func TestSeedSkipsUnparsableOldFile(t *testing.T) {
+	// Битый старый файл никто не починит: отказ посева на нём не поднимал бы
+	// прокси-подсистему НИКОГДА (амендмент D). Поэтому файл пропускается с
+	// причиной, а посев идёт дальше по второму источнику.
 	e := newSeedEnv(t)
-	writeFile(t, e.deps.WdttPath, "{нет")
+	writeFile(t, e.deps.WdttPath, typeMismatchWdttJSON)
 	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
-	if _, err := Seed(context.Background(), e.st, e.deps); err == nil {
-		t.Fatal("битый wdtt.json обязан валить ВЕСЬ посев (требование 1)")
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatalf("битый wdtt.json обязан быть пропуском, а не отказом посева: %v", err)
 	}
-	if _, statErr := os.Stat(e.st.path); !os.IsNotExist(statErr) {
-		t.Fatal("при отказе посева store-файл не должен появляться")
+	recs := byKey(res)
+	if _, ok := recs["freeturn-client:default"]; !ok {
+		t.Fatalf("инстансы читаемого источника обязаны перенестись: %v", recs)
+	}
+	for k := range recs {
+		if strings.HasPrefix(k, "wdtt") {
+			t.Fatalf("половина разобранного файла не имеет права уехать в записи: %s", k)
+		}
+	}
+	if len(res.State.SkippedSources) != 1 ||
+		res.State.SkippedSources[0].File != "wdtt.json" ||
+		res.State.SkippedSources[0].Reason == "" {
+		t.Fatalf("пропуск с причиной обязан лечь в состояние: %+v", res.State.SkippedSources)
+	}
+	if len(res.State.SeededFrom) != 1 || res.State.SeededFrom[0] != "freeturn.json" {
+		t.Fatalf("пропущенный файл не источник: %v", res.State.SeededFrom)
+	}
+}
+
+func TestSeedSkipIsRecordedOnDiskAndNeverRetried(t *testing.T) {
+	// Оба файла биты: переносить нечего, но отметка посева обязана лечь — иначе
+	// следующий боот пошёл бы по второму кругу, и так бесконечно. Список
+	// пропусков лежит на диске: без него сообщение исчезло бы после первого же
+	// перезапуска, и пользователь не узнал бы, что его инстансы потеряны.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, typeMismatchWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, "{нет")
+	first, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.State.SkippedSources) != 2 {
+		t.Fatalf("пропущены оба источника: %+v", first.State.SkippedSources)
+	}
+	if len(first.State.SeededFrom) != 1 || first.State.SeededFrom[0] != "clean-install" {
+		t.Fatalf("отметка посева обязана лечь и когда переносить нечего: %v", first.State.SeededFrom)
+	}
+
+	// Второй боот: Store ничего не кэширует, повторный Seed читает тот же файл
+	// с диска — это и есть перезапуск.
+	second, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SeededNow {
+		t.Fatal("посев обязан быть однократным: битый файл ретраить нечем")
+	}
+	if len(second.State.SkippedSources) != 2 ||
+		second.State.SkippedSources[0].File != "wdtt.json" ||
+		second.State.SkippedSources[1].File != "freeturn.json" {
+		t.Fatalf("пропуски обязаны пережить перезапуск: %+v", second.State.SkippedSources)
 	}
 }
 

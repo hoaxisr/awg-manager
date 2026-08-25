@@ -1133,6 +1133,12 @@ const api_ProxyRtSeedView: v.GenericSchema = v.looseObject({
 	certified: v.optional(v.nullable(v.boolean())),
 	error: v.optional(v.nullable(v.string())),
 	seeded: v.optional(v.nullable(v.boolean())),
+	skipped: v.optional(v.nullable(v.array(v.lazy(() => api_ProxyRtSkippedSourceView)))),
+});
+
+const api_ProxyRtSkippedSourceView: v.GenericSchema = v.looseObject({
+	file: v.optional(v.nullable(v.string())),
+	reason: v.optional(v.nullable(v.string())),
 });
 
 const api_ProxyRtStateView: v.GenericSchema = v.looseObject({

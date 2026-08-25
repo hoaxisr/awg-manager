@@ -118,6 +118,18 @@ export interface ProxySeedView {
 	seeded: boolean;
 	certified: boolean;
 	error?: string;
+	/**
+	 * Старые конфиги, которые посев не разобрал и пропустил: их инстансы не
+	 * перенесены. Признак отдельный от `error` — только по имени файла можно
+	 * сказать пользователю, ЧЬИ инстансы потеряны.
+	 */
+	skipped?: ProxySkippedSourceView[];
+}
+
+/** Один пропущенный посевом старый конфиг. */
+export interface ProxySkippedSourceView {
+	file: string;
+	reason?: string;
 }
 
 export interface ProxyInstanceView {

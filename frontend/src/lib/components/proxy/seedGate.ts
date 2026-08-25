@@ -1,9 +1,19 @@
 // Состояние посева прокси-подсистемы словами пользователя.
 
-import type { ProxySeedView } from '$lib/api/proxyInstances';
+import type { ProxySeedView, ProxySkippedSourceView } from '$lib/api/proxyInstances';
 
 const GATE_LOCKED =
 	'Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и маршрутов заблокирована.';
+
+/**
+ * Пропущенный посевом старый конфиг словами пользователя: его инстансы не
+ * перенеслись и не появятся — повторов посева нет, файл никто не чинит.
+ */
+function skippedText(s: ProxySkippedSourceView): string {
+	const head = `старый конфиг ${s.file} не разобран, его инстансы не перенесены`;
+	const why = s.reason?.trim();
+	return why ? `${head}: ${why}` : head;
+}
 
 /**
  * Текст предупреждения о запертом гейте посева — или пусто, когда говорить не
@@ -17,9 +27,14 @@ const GATE_LOCKED =
  * Несостоявшийся посев (`!seeded`) сюда не доходит и молчит намеренно: список
  * инстансов при нём пуст по построению, клиент отвечает отказом с причиной, и
  * страница показывает её вместо содержимого — второй раз про то же не говорим.
+ *
+ * Пропущенные источники вытесняют `error`, а не дописываются к нему: причина
+ * запертого гейта там та же самая, и пользователь прочитал бы её дважды.
  */
 export function seedGateWarning(seed: ProxySeedView | null | undefined): string {
 	if (!seed || !seed.seeded || seed.certified) return '';
+	const skipped = seed.skipped ?? [];
+	if (skipped.length) return `${GATE_LOCKED} ${skipped.map(skippedText).join(' ')}`;
 	const why = seed.error?.trim();
 	return why ? `${GATE_LOCKED} ${why}` : GATE_LOCKED;
 }

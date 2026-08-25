@@ -209,20 +209,27 @@ type oldFreeturnServer struct {
 // семантика не разъехалась по двум местам.
 func openFirewall(old *bool) bool { return old == nil || *old }
 
-// readOldFile — fail-closed чтение одного старого файла. ok=false — файла
-// нет (законная чистая установка этой подсистемы).
-func readOldFile(path string, dst any) (bool, error) {
+// readOldFile — чтение одного старого файла. ok=false без причины — файла нет
+// (законная чистая установка этой подсистемы).
+//
+// Два исхода отказа РАЗНЫЕ. Ошибка ввода-вывода — состояние среды: оно
+// самоизлечивается, и повтор на следующем бооте правилен, поэтому она
+// остаётся фатальной. Неразбираемый JSON не починится сам никогда: отказ
+// посева на нём не поднимал бы прокси-подсистему вовсе, и пользователь не мог
+// бы даже пересоздать инстансы руками — интерфейса нет. Поэтому это ПРОПУСК с
+// причиной, а не ошибка.
+func readOldFile(path string, dst any) (ok bool, skipped string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, fmt.Errorf("посев: читать %s: %w", path, err)
+		return false, "", fmt.Errorf("посев: читать %s: %w", path, err)
 	}
 	if err := json.Unmarshal(data, dst); err != nil {
-		return false, fmt.Errorf("посев: разобрать %s: %w", path, err)
+		return false, err.Error(), nil
 	}
-	return true, nil
+	return true, "", nil
 }
 
 // parseOpkgIndex — "OpkgTun18" → (18, true). Ок-флагом, не сентинелом:
@@ -302,13 +309,24 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 
 	var wdttFile oldWdttFile
 	var ftFile oldFreeturnFile
-	wdttOK, err := readOldFile(d.WdttPath, &wdttFile)
+	var skipped []SkippedSource
+	wdttOK, wdttSkip, err := readOldFile(d.WdttPath, &wdttFile)
 	if err != nil {
 		return SeedResult{}, err
 	}
-	ftOK, err := readOldFile(d.FreeturnPath, &ftFile)
+	if wdttSkip != "" {
+		// Обнуление обязательно: encoding/json оставляет в приёмнике то, что
+		// успел разобрать до отказа, и половина файла уехала бы в записи.
+		wdttFile = oldWdttFile{}
+		skipped = append(skipped, SkippedSource{File: filepath.Base(d.WdttPath), Reason: wdttSkip})
+	}
+	ftOK, ftSkip, err := readOldFile(d.FreeturnPath, &ftFile)
 	if err != nil {
 		return SeedResult{}, err
+	}
+	if ftSkip != "" {
+		ftFile = oldFreeturnFile{}
+		skipped = append(skipped, SkippedSource{File: filepath.Base(d.FreeturnPath), Reason: ftSkip})
 	}
 	if ftOK {
 		normalizeFreeturnV1(&ftFile) // B6: триггер version<2 — внутри
@@ -486,6 +504,10 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		from = append(from, filepath.Base(d.FreeturnPath))
 	}
 	if len(from) == 0 {
+		// Переносить нечего — источников нет ЛИБО все они пропущены как
+		// неразбираемые. Отметка ложится всё равно: Seeded выводится из
+		// SeededFrom, и пустой список гнал бы посев по второму кругу на каждом
+		// бооте — тот самый бесконечный луп, ради которого пропуск и заведён.
 		from = []string{"clean-install"}
 	}
 
@@ -502,6 +524,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			state.Records = append(state.Records, r)
 		}
 		state.SeededFrom = from
+		state.SkippedSources = skipped
 		state.CleanupPending = true
 		state.LegacyKernelIfaces = legacyIfaces
 		state.OldGenProcs = oldGenProcs

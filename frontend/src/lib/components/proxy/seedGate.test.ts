@@ -22,6 +22,34 @@ describe('seedGateWarning: запертый гейт посева обязан �
 		expect(seedGateWarning({ seeded: false, certified: false, error: 'RCI недоступен' })).toBe('');
 	});
 
+	it('пропущенный старый конфиг назван по имени и с причиной', () => {
+		expect(
+			seedGateWarning({
+				seeded: true,
+				certified: false,
+				error: 'пропущен неразобранный старый конфиг — wdtt.json: поле не того типа',
+				skipped: [{ file: 'wdtt.json', reason: 'поле не того типа' }],
+			}),
+		).toBe(
+			'Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и маршрутов заблокирована. ' +
+				'старый конфиг wdtt.json не разобран, его инстансы не перенесены: поле не того типа',
+		);
+	});
+
+	it('пропущены оба источника — назван каждый', () => {
+		expect(
+			seedGateWarning({
+				seeded: true,
+				certified: false,
+				skipped: [{ file: 'wdtt.json', reason: 'a' }, { file: 'freeturn.json' }],
+			}),
+		).toBe(
+			'Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и маршрутов заблокирована. ' +
+				'старый конфиг wdtt.json не разобран, его инстансы не перенесены: a ' +
+				'старый конфиг freeturn.json не разобран, его инстансы не перенесены',
+		);
+	});
+
 	it('состояния ещё нет — предупреждения нет', () => {
 		expect(seedGateWarning(null)).toBe('');
 	});
