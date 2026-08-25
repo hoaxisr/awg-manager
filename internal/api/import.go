@@ -17,8 +17,7 @@ type ImportHandler struct {
 	settingsStore  *storage.SettingsStore
 	pingCheck      PingCheckService
 	tunnelsHandler *TunnelsHandler
-	freeturn       FreeTurnService
-	wdtt           WdttService
+	proxyRecords   ProxyRecordLister
 	log            *logging.ScopedLogger
 }
 
@@ -46,14 +45,10 @@ func (h *ImportHandler) SetTunnelsHandler(th *TunnelsHandler) {
 	h.tunnelsHandler = th
 }
 
-// SetFreeTurnService wires FreeTurn for linked-client listen → endpoint sync on import.
-func (h *ImportHandler) SetFreeTurnService(svc FreeTurnService) {
-	h.freeturn = svc
-}
-
-// SetWdttService wires WDTT for linked-client listen → endpoint sync on import.
-func (h *ImportHandler) SetWdttService(svc WdttService) {
-	h.wdtt = svc
+// SetProxyRecords wires the proxy instance store for linked-client
+// listen → endpoint sync on import.
+func (h *ImportHandler) SetProxyRecords(records ProxyRecordLister) {
+	h.proxyRecords = records
 }
 
 // ImportConfRequest is the body for POST /import/conf.

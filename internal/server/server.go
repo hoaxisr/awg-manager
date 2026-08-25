@@ -89,6 +89,7 @@ type Server struct {
 	pingCheckService           api.PingCheckService
 	freeturnService            api.FreeTurnService
 	wdttService                api.WdttService
+	proxyRecords               api.ProxyRecordLister
 	loggingService             *logging.Service
 	activeBackend              backend.Backend
 	kmodLoader                 *kmod.Loader
@@ -183,6 +184,7 @@ type Deps struct {
 	PingCheckService     api.PingCheckService
 	FreeTurnService      api.FreeTurnService
 	WdttService          api.WdttService
+	ProxyRecords         api.ProxyRecordLister
 	LoggingService       *logging.Service
 	ActiveBackend        backend.Backend
 	KmodLoader           *kmod.Loader
@@ -244,6 +246,7 @@ func New(cfg Config, deps Deps) *Server {
 		pingCheckService:       deps.PingCheckService,
 		freeturnService:        deps.FreeTurnService,
 		wdttService:            deps.WdttService,
+		proxyRecords:           deps.ProxyRecords,
 		loggingService:         deps.LoggingService,
 		activeBackend:          deps.ActiveBackend,
 		kmodLoader:             deps.KmodLoader,

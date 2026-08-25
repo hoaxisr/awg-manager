@@ -94,6 +94,7 @@ func (a *app) setupServer() {
 			PingCheckService:    a.pingCheckFacade,
 			FreeTurnService:     a.freeturnService,
 			WdttService:         a.wdttService,
+			ProxyRecords:        a.proxyStore,
 			LoggingService:      a.loggingService,
 			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,

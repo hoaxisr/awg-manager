@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,74 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
+
+// stubWdttForImport — пустышка api.WdttService: база для фейков этого пакета.
+type stubWdttForImport struct {
+	cfg wdtt.Config
+}
+
+func (s *stubWdttForImport) GetConfig() (wdtt.Config, error) { return s.cfg, nil }
+
+func (s *stubWdttForImport) UpdateClientConfig(wdtt.ClientConfig) error           { return nil }
+func (s *stubWdttForImport) UpdateClientInstance(string, wdtt.ClientConfig) error { return nil }
+func (s *stubWdttForImport) CreateClient(wdtt.CreateClientInput) (wdtt.ClientInstance, error) {
+	return wdtt.ClientInstance{}, nil
+}
+func (s *stubWdttForImport) DeleteClient(string) error         { return nil }
+func (s *stubWdttForImport) RenameClient(string, string) error { return nil }
+func (s *stubWdttForImport) ImportLink(string, string) (wdtt.ClientInstance, wdtt.ImportPayload, error) {
+	return wdtt.ClientInstance{}, wdtt.ImportPayload{}, nil
+}
+func (s *stubWdttForImport) DecodeLink(string) (wdtt.LinkDecodeResult, error) {
+	return wdtt.LinkDecodeResult{}, nil
+}
+func (s *stubWdttForImport) Status() wdtt.Status              { return wdtt.Status{} }
+func (s *stubWdttForImport) StartClient() error               { return nil }
+func (s *stubWdttForImport) StopClient() error                { return nil }
+func (s *stubWdttForImport) StartClientInstance(string) error { return nil }
+func (s *stubWdttForImport) StopClientInstance(string) error  { return nil }
+func (s *stubWdttForImport) RefreshSubscription(string) (wdtt.ClientInstance, wdtt.ImportPayload, error) {
+	return wdtt.ClientInstance{}, wdtt.ImportPayload{}, nil
+}
+func (s *stubWdttForImport) UpdateServerConfig(wdtt.ServerConfig) error { return nil }
+func (s *stubWdttForImport) UpdateServerInstance(string, wdtt.ServerConfig) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) SetServerNATMode(context.Context, string, string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) SetServerPolicy(context.Context, string, string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) SetServerLANSegments(context.Context, string, []string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) CreateServer(wdtt.CreateServerInput) (wdtt.ServerInstance, error) {
+	return wdtt.ServerInstance{}, nil
+}
+func (s *stubWdttForImport) DeleteServer(string) error         { return nil }
+func (s *stubWdttForImport) RenameServer(string, string) error { return nil }
+func (s *stubWdttForImport) ServerConfigForLink(string) (wdtt.ServerConfig, error) {
+	return wdtt.ServerConfig{}, nil
+}
+func (s *stubWdttForImport) StartServer() error                    { return nil }
+func (s *stubWdttForImport) StopServer() error                     { return nil }
+func (s *stubWdttForImport) StartServerInstance(string) error      { return nil }
+func (s *stubWdttForImport) StopServerInstance(string) error       { return nil }
+func (s *stubWdttForImport) InstallBinaries(context.Context) error { return nil }
+func (s *stubWdttForImport) Stop()                                 {}
+func (s *stubWdttForImport) ListServerClients(string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
+}
+func (s *stubWdttForImport) AddServerClient(string, string, string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
+}
+func (s *stubWdttForImport) RenameServerClient(string, string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
+}
+func (s *stubWdttForImport) RemoveServerClient(string, string) (wdtt.ServerClientsStatus, error) {
+	return wdtt.ServerClientsStatus{}, nil
+}
 
 // failingWdttClients роняет все три операции над абонентами — коды отказа тут и
 // проверяются.
