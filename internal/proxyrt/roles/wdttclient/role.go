@@ -137,6 +137,13 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.WdttClientArgs(c), c.Validate())
 	r.listen.SetDesired(c.Listen)
+	// Желаемое связанных туннелей — РОВНО намерение владельца инстанса, и
+	// одинаково в обоих режимах: связь ставится, пока клиент в режиме wg, а
+	// смена режима на raw её не снимает (мастер просто не импортирует туннель,
+	// запись со ссылкой остаётся), плюс есть ручной импорт с явным указанием
+	// клиента. Старые ручки работали независимо от режима — их предикат
+	// отсекал зеркала, а не режим.
+	r.linked.SetDesired(r.deps.Instance, c.Listen, enabled)
 
 	if c.Mode == "wg" {
 		// §4.1 объявляет wg-клиента как process + linked_endpoint;
@@ -147,14 +154,17 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// нужды (M11), а вот ОПУСКАНИЕ связанных туннелей нужно, и делать
 		// его больше некому. Без этого туннель с адресом мёртвого процесса
 		// остаётся «работающим» и тянет на себя маршруты (амендмент B).
-		r.linked.SetDesired(r.deps.Instance, c.Listen, enabled)
 		if !enabled {
 			return []proxyrt.Resource{r.proc, r.linked}
 		}
 		return []proxyrt.Resource{r.listen, r.proc, r.linked}
 	}
 
-	// raw
+	// raw. linked_endpoint стоит сразу за процессом, а не в хвосте: его
+	// единственная предпосылка — живой процесс (endpoint связанного туннеля
+	// это 127.0.0.1:<listen>). Хвост цепочки сделал бы предпосылками ресурсы
+	// NDMS, и тогда медленный или отказавший RCI блокировал бы ОПУСКАНИЕ
+	// связанного туннеля — ровно тот исход, ради которого амендмент писался.
 	r.iface.SetDesired(ndmsres.IfaceDesired{
 		Present: enabled, Name: c.NdmsIface,
 		Description:   roles.ClientDescription(c.Name),
@@ -189,11 +199,11 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// clientroute уведомлён об остановке, выход не Ready. Интерфейс и
 		// членство ЖИВУТ (уборка — только sweeper при deleted).
 		return []proxyrt.Resource{
-			r.proc, r.iface, r.addr, r.admin, r.routes, r.rexit,
+			r.proc, r.linked, r.iface, r.addr, r.admin, r.routes, r.rexit,
 		}
 	}
 	return []proxyrt.Resource{
-		r.listen, r.proc, r.iface, r.addr, r.admin,
+		r.listen, r.proc, r.linked, r.iface, r.addr, r.admin,
 		r.exit, r.tun, r.member, r.routes, r.rexit,
 	}
 }

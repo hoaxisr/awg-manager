@@ -67,6 +67,25 @@ func (c *countSync) List(context.Context, string) ([]linkres.LinkedTunnel, error
 func (c *countSync) Sync(context.Context, string, string) (int, error)   { c.n++; return 0, nil }
 func (c *countSync) SetState(context.Context, string, bool) (int, error) { c.n++; return 0, nil }
 
+// liveSync — связь с ОДНИМ поднятым туннелем. Пустой nilSync шов «роль →
+// ресурс» не проверяет вовсе: при пустом списке любое желаемое состояние даёт
+// нулевое расхождение, и константа вместо намерения проходит незамеченной.
+type liveSync struct{ running bool }
+
+// List СВЕРЯЕТ идентификатор клиента: роль обязана передать в ресурс имя
+// своего инстанса, и без сверки чужое имя прошло бы незамеченным — список
+// пуст, расхождение нулевое, шага нет, и всё молча.
+func (l *liveSync) List(_ context.Context, clientID string) ([]linkres.LinkedTunnel, error) {
+	if clientID != "default" {
+		return nil, nil
+	}
+	return []linkres.LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9001", Running: l.running, Lifecycle: true},
+	}, nil
+}
+func (l *liveSync) Sync(context.Context, string, string) (int, error)   { return 0, nil }
+func (l *liveSync) SetState(context.Context, string, bool) (int, error) { return 0, nil }
+
 type countFW struct{ n int }
 
 func (f *countFW) Managed(context.Context) ([]netres.PortSpec, error) { f.n++; return nil, nil }
@@ -269,5 +288,45 @@ func TestServerLocalBindDeclaresNoPorts(t *testing.T) {
 	over := roles.FreeTurnServerConfig{Listen: "0.0.0.0:70000", Connect: "127.0.0.1:51820", Mode: "udp", OpenFirewall: true}
 	if got := serverPorts(over, true); got != nil {
 		t.Fatalf("serverPorts(:70000) = %v, ожидали nil (порт вне диапазона)", got)
+	}
+}
+
+// Шов «роль → ресурс»: намерение обязано доехать до ЖЕЛАЕМОГО состояния
+// связанных туннелей. Состав ведомости этого не ловит — с константой вместо
+// намерения он тот же самый, а выключенный клиент туннель не опустит никогда.
+func TestClientIntentReachesLinkedResource(t *testing.T) {
+	cfg := roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "relay:3478"}
+	for _, c := range []struct {
+		intent  proxyrt.Intent
+		running bool
+		op      string
+	}{
+		{proxyrt.IntentEnabled, false, "start"},
+		{proxyrt.IntentDisabled, true, "stop"},
+	} {
+		role, err := NewClient(ClientDeps{Instance: "default", Binary: "/opt/bin/ft-client",
+			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+			Sync: &liveSync{running: c.running}, Occ: nilOcc{}, Now: time.Now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var le proxyrt.Resource
+		res := role.Resources(c.intent, cfg, proxyrt.NewObservations())
+		for _, r := range res {
+			if r.ID() == "linked_endpoint" {
+				le = r
+			}
+		}
+		if le == nil {
+			t.Fatalf("%s: linked_endpoint не объявлен: %v", c.intent, ids(res))
+		}
+		obs, err := le.Observe(context.Background())
+		if err != nil {
+			t.Fatalf("%s: observe: %v", c.intent, err)
+		}
+		steps := le.Plan(obs)
+		if len(steps) != 1 || steps[0].Op != c.op {
+			t.Fatalf("%s: план %+v, ожидали %q", c.intent, steps, c.op)
+		}
 	}
 }

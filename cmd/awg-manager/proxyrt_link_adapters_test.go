@@ -23,6 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/netres"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // fakeIPT — модель iptables: листинги по ключу аргументов и ЖУРНАЛ команд.
@@ -1186,11 +1187,16 @@ func TestProxyFWBookForgetClosesPendingCircle(t *testing.T) {
 type stateSvc struct {
 	api.TunnelService
 	running map[string]bool
+	asked   []string
 	started []string
 	stopped []string
 }
 
+// asked — ЖУРНАЛ идентификаторов, у которых спрашивали состояние. Нужен не
+// для факта, а для цены: каждый такой вопрос при промахе кэша стоит запроса к
+// роутеру, и записи вне жизненного цикла обязаны его не стоить.
 func (s *stateSvc) GetState(_ context.Context, id string) tunnel.StateInfo {
+	s.asked = append(s.asked, id)
 	if s.running[id] {
 		return tunnel.StateInfo{State: tunnel.StateRunning}
 	}
@@ -1274,5 +1280,69 @@ func TestProxyEndpointSyncSetStateReportsFailed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "awgm1") {
 		t.Fatalf("ошибка не называет туннель: %v", err)
+	}
+}
+
+// mirrorStore — клиент, переживший смену режима wg → raw: wg-туннель со
+// ссылкой остался, рядом появилось raw-зеркало. Обе записи связаны с одним
+// клиентом, но зеркало вне жизненного цикла.
+func mirrorStore(t *testing.T) *storage.AWGTunnelStore {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awgm1", Name: "WD", WdttClientID: "c1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
+		{ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1", Backend: wdtt.BackendWdttRaw},
+	} {
+		if err := store.Save(tun); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store
+}
+
+// Признак жизненного цикла обязан доехать через адаптер: зеркало попадает в
+// список (доводка endpoint'а его видит), но подъёму и остановке не подлежит.
+// Заодно пиннится цена: состояние у зеркала не спрашивают вовсе.
+func TestProxyEndpointSyncListMarksMirrorOutOfLifecycle(t *testing.T) {
+	svc := &stateSvc{running: map[string]bool{"awgm1": true}}
+	list, err := newProxyEndpointSync(mirrorStore(t), svc, api.LinkedWdtt, nil).
+		List(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("список: %+v (зеркало обязано попасть в связь)", list)
+	}
+	for _, it := range list {
+		switch it.ID {
+		case "awgm1":
+			if !it.Lifecycle || !it.Running {
+				t.Fatalf("wg-туннель: %+v", it)
+			}
+		case "wdttraw-c1":
+			if it.Lifecycle || it.Running {
+				t.Fatalf("зеркало: %+v", it)
+			}
+		default:
+			t.Fatalf("посторонняя запись: %+v", it)
+		}
+	}
+	if len(svc.asked) != 1 || svc.asked[0] != "awgm1" {
+		t.Fatalf("состояние спрошено у: %v (у зеркала спрашивать нечего)", svc.asked)
+	}
+}
+
+// Зеркало не поднимается и не опускается: это не туннель роутера.
+func TestProxyEndpointSyncSetStateSkipsMirror(t *testing.T) {
+	// Зеркало ПОДНЯТО: иначе остановка пропустила бы его как уже стоящее, и
+	// подмена предиката жизненного цикла предикатом связи прошла бы мимо.
+	svc := &stateSvc{running: map[string]bool{"awgm1": true, "wdttraw-c1": true}}
+	s := newProxyEndpointSync(mirrorStore(t), svc, api.LinkedWdtt, nil)
+	if _, err := s.SetState(context.Background(), "c1", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.stopped) != 1 || svc.stopped[0] != "awgm1" {
+		t.Fatalf("опущены: %v", svc.stopped)
 	}
 }

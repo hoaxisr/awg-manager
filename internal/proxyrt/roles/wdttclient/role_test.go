@@ -128,6 +128,88 @@ func newRole(t *testing.T, link *fakeLink) (*Role, *memRegistry) {
 	return r, reg
 }
 
+// liveSync — связь с ОДНИМ поднятым туннелем. Пустой nilSync шов «роль →
+// ресурс» не проверяет вовсе: при пустом списке любое желаемое состояние даёт
+// нулевое расхождение, и константа вместо намерения проходит незамеченной.
+type liveSync struct{ running bool }
+
+// List СВЕРЯЕТ идентификатор клиента: роль обязана передать в ресурс имя
+// своего инстанса, и без сверки чужое имя прошло бы незамеченным — список
+// пуст, расхождение нулевое, шага нет, и всё молча.
+func (l *liveSync) List(_ context.Context, clientID string) ([]linkres.LinkedTunnel, error) {
+	if clientID != "default" {
+		return nil, nil
+	}
+	return []linkres.LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9000", Running: l.running, Lifecycle: true},
+	}, nil
+}
+func (l *liveSync) Sync(context.Context, string, string) (int, error)   { return 0, nil }
+func (l *liveSync) SetState(context.Context, string, bool) (int, error) { return 0, nil }
+
+func newRoleSync(t *testing.T, sync linkres.EndpointSync) *Role {
+	t.Helper()
+	r, err := New(Deps{
+		Instance: "default", Binary: "/opt/bin/wt-client",
+		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
+		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
+		Policies: nilPolicies{}, Permit: nilPermit{},
+		Hooks: nilHooks{}, Registry: &memRegistry{m: map[string]linkres.ExitInfo{}},
+		Sync: sync, Occ: nilOcc{}, Now: time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// linkedOf достаёт ресурс связи из ведомости. Отсутствие — провал теста, а не
+// нулевой указатель: пропажа ресурса и есть проверяемый регресс.
+func linkedOf(t *testing.T, res []proxyrt.Resource) proxyrt.Resource {
+	t.Helper()
+	for _, r := range res {
+		if r.ID() == "linked_endpoint" {
+			return r
+		}
+	}
+	t.Fatalf("linked_endpoint не объявлен: %v", ids(res))
+	return nil
+}
+
+// Шов «роль → ресурс»: намерение обязано доехать до ЖЕЛАЕМОГО состояния
+// связанных туннелей. Состав ведомости этого не ловит — с константой вместо
+// намерения он тот же самый, а выключенный клиент туннель не опустит никогда.
+// Проверяется в обоих режимах: связь переживает смену режима на raw.
+func TestIntentReachesLinkedResource(t *testing.T) {
+	wgCfg := rawCfg()
+	wgCfg.Mode = "wg"
+	wgCfg.NdmsIface, wgCfg.RawIface = "", ""
+	for _, mode := range []struct {
+		name string
+		cfg  roles.WdttClientConfig
+	}{{"raw", rawCfg()}, {"wg", wgCfg}} {
+		for _, c := range []struct {
+			intent  proxyrt.Intent
+			running bool
+			op      string
+		}{
+			{proxyrt.IntentEnabled, false, "start"},
+			{proxyrt.IntentDisabled, true, "stop"},
+		} {
+			role := newRoleSync(t, &liveSync{running: c.running})
+			le := linkedOf(t, role.Resources(c.intent, mode.cfg, proxyrt.NewObservations()))
+			obs, err := le.Observe(context.Background())
+			if err != nil {
+				t.Fatalf("%s/%s: observe: %v", mode.name, c.intent, err)
+			}
+			steps := le.Plan(obs)
+			if len(steps) != 1 || steps[0].Op != c.op {
+				t.Fatalf("%s/%s: план %+v, ожидали %q", mode.name, c.intent, steps, c.op)
+			}
+		}
+	}
+}
+
 func newRoleCmds(t *testing.T, link *fakeLink) (*Role, *memRegistry, *countCmds) {
 	t.Helper()
 	reg := &memRegistry{m: map[string]linkres.ExitInfo{}}
@@ -166,9 +248,9 @@ func TestRawChainOrderIsTheSingleLedger(t *testing.T) {
 	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
 	got := ids(role.Resources(proxyrt.IntentEnabled, rawCfg(), proxyrt.NewObservations()))
 	want := []proxyrt.ResourceID{
-		"listen_port", "process", "ndms_interface", "ndms_address",
-		"ndms_admin_state", "policy_exit", "tun_handoff", "policy_membership",
-		"client_routes", "routable_exit",
+		"listen_port", "process", "linked_endpoint", "ndms_interface",
+		"ndms_address", "ndms_admin_state", "policy_exit", "tun_handoff",
+		"policy_membership", "client_routes", "routable_exit",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("состав: %v", got)
@@ -384,8 +466,8 @@ func TestRawDisabledLedgerIsExhaustive(t *testing.T) {
 	role, _ := newRole(t, &fakeLink{err: control.ErrNoSocket})
 	got := ids(role.Resources(proxyrt.IntentDisabled, rawCfg(), proxyrt.NewObservations()))
 	want := []proxyrt.ResourceID{
-		"process", "ndms_interface", "ndms_address", "ndms_admin_state",
-		"client_routes", "routable_exit",
+		"process", "linked_endpoint", "ndms_interface", "ndms_address",
+		"ndms_admin_state", "client_routes", "routable_exit",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("disabled-состав: %v, ожидали %v", got, want)
