@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
@@ -247,12 +248,23 @@ func interceptKill(t *testing.T) *[]killCall {
 	return &calls
 }
 
+// selfProc — отпечаток своего процесса: номер плюс время старта из /proc.
+func selfProc(t *testing.T) instancestore.OldGenProc {
+	t.Helper()
+	start, ok := childproc.StartTime(os.Getpid())
+	if !ok {
+		t.Skip("/proc недоступен")
+	}
+	return instancestore.OldGenProc{PID: os.Getpid(), StartTime: start}
+}
+
 func TestKillOldGenerationSparesForeignAndDeadPIDs(t *testing.T) {
 	calls := interceptKill(t)
 
 	// Живой, но ЧУЖОЙ процесс: pid-файл на флешке переживает ребут, и PID
 	// достаётся постороннему (B3).
-	killOldGeneration(os.Getpid(), []string{"/opt/bin/nonexistent"})
+	foreign := selfProc(t)
+	killOldGeneration(foreign, []string{"/opt/bin/nonexistent"})
 	if len(*calls) != 0 {
 		t.Fatalf("чужой живой процесс получил сигнал: %+v", *calls)
 	}
@@ -263,9 +275,35 @@ func TestKillOldGenerationSparesForeignAndDeadPIDs(t *testing.T) {
 	}
 	dead := cmd.Process.Pid
 	_ = cmd.Wait()
-	killOldGeneration(dead, []string{"/opt/bin/" + filepath.Base(os.Args[0])})
+	killOldGeneration(instancestore.OldGenProc{PID: dead, StartTime: 1},
+		[]string{"/opt/bin/" + filepath.Base(os.Args[0])})
 	if len(*calls) != 0 {
 		t.Fatalf("мёртвый pid получил сигнал: %+v", *calls)
+	}
+}
+
+// C1: номер, переиспользованный системой, отсекается отпечатком. Имя бинаря
+// тут не спасает — у старого и нового поколения он ОДИН И ТОТ ЖЕ, и без
+// сверки времени старта повторный проход уборки убивал бы усыновлённый
+// процесс нового мира.
+func TestKillOldGenerationSparesReusedPID(t *testing.T) {
+	calls := interceptKill(t)
+	own := selfProc(t)
+
+	reused := own
+	reused.StartTime++ // тот же номер, другой процесс
+	killOldGeneration(reused, []string{"/opt/bin/" + filepath.Base(os.Args[0])})
+	if len(*calls) != 0 {
+		t.Fatalf("переиспользованный номер получил сигнал: %+v", *calls)
+	}
+
+	// Отпечатка нет вовсе (на посеве процесс был уже мёртв): добивать нечего,
+	// а номер к этому моменту мог достаться кому угодно.
+	noPrint := own
+	noPrint.StartTime = 0
+	killOldGeneration(noPrint, []string{"/opt/bin/" + filepath.Base(os.Args[0])})
+	if len(*calls) != 0 {
+		t.Fatalf("номер без отпечатка получил сигнал: %+v", *calls)
 	}
 }
 
@@ -273,7 +311,7 @@ func TestKillOldGenerationKillsOwnBinary(t *testing.T) {
 	calls := interceptKill(t)
 
 	pid := os.Getpid()
-	killOldGeneration(pid, []string{"/opt/bin/" + filepath.Base(os.Args[0])})
+	killOldGeneration(selfProc(t), []string{"/opt/bin/" + filepath.Base(os.Args[0])})
 	want := []killCall{{pid: -pid, sig: syscall.SIGKILL}, {pid: pid, sig: syscall.SIGKILL}}
 	if len(*calls) != len(want) {
 		t.Fatalf("вызовы kill: %+v", *calls)
@@ -458,8 +496,8 @@ func TestProxyPostSeedZeroesAddressesEveryBoot(t *testing.T) {
 		func() error { cleared++; return nil })
 
 	err := post(context.Background(), instancestore.SeedResult{
-		SeededNow:  false,
-		OldGenPIDs: []int{os.Getpid()},
+		SeededNow:   false,
+		OldGenProcs: []instancestore.OldGenProc{selfProc(t)},
 	}, map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
@@ -496,7 +534,7 @@ func TestProxyPostSeedRunsOneShotStepsOnFirstSeed(t *testing.T) {
 
 	err := post(context.Background(), instancestore.SeedResult{
 		SeededNow:          true,
-		OldGenPIDs:         []int{os.Getpid()},
+		OldGenProcs:        []instancestore.OldGenProc{selfProc(t)},
 		LegacyKernelIfaces: []string{"wdtt0"},
 	}, map[string]bool{"OpkgTun17": true})
 	if err != nil {
@@ -540,7 +578,7 @@ func TestProxyPostSeedRepeatsCleanupWhilePending(t *testing.T) {
 	err := post(context.Background(), instancestore.SeedResult{
 		SeededNow:          false,
 		CleanupPending:     true,
-		OldGenPIDs:         []int{os.Getpid()},
+		OldGenProcs:        []instancestore.OldGenProc{selfProc(t)},
 		LegacyKernelIfaces: []string{"wdtt0"},
 	}, map[string]bool{})
 	if err != nil {
@@ -1056,6 +1094,25 @@ func TestProxyFWBookGraceEndsWaitForSilentInstance(t *testing.T) {
 func TestProxyFWBookSweepsUnclaimedWithoutLiveServers(t *testing.T) {
 	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"), spec(56000, "udp"))}
 	_, graceOver := bookOver(t, fw, "wdtt-server:s1", "freeturn-server:s2")
+
+	graceOver()
+
+	if len(fw.applied) != 1 {
+		t.Fatalf("проход окна не состоялся: %v", fw.applied)
+	}
+	if got := fw.lastApplied(); len(got) != 0 {
+		t.Fatalf("порты мёртвого поколения не вычищены: %v", got)
+	}
+}
+
+// C3 (сильнейшая форма B1): серверных инстансов нет ВОВСЕ, а правила мёртвого
+// поколения в INPUT есть. Наблюдать ведомость некому — ни одного ресурса
+// input_port в системе не существует, — поэтому будильник окна обязан быть
+// заведён и на пустом списке ключей: иначе правила живут до появления первого
+// сервера.
+func TestProxyFWBookSweepsWithoutAnyServerInstances(t *testing.T) {
+	fw := &fakeListenFW{live: liveSpecs(spec(9999, "tcp"))}
+	_, graceOver := bookOver(t, fw)
 
 	graceOver()
 

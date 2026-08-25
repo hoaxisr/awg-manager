@@ -678,8 +678,8 @@ func proxyPostSeed(mirror *exitreg.StoreMirror, ipt netres.IPT, cmds opkgTunDele
 			errs = append(errs, err)
 		}
 		if res.SeededNow || res.CleanupPending {
-			for _, pid := range res.OldGenPIDs {
-				killOldGeneration(pid, binaries)
+			for _, proc := range res.OldGenProcs {
+				killOldGeneration(proc, binaries)
 			}
 			if err := legacyCleanup(ctx, ipt, cmds, ifaces, declaredNDMS, res.LegacyKernelIfaces); err != nil {
 				errs = append(errs, err)
@@ -699,9 +699,21 @@ var killPID = syscall.Kill
 // переживает ребут, и PID мог достаться постороннему процессу. Убиваем
 // только живой процесс НАШЕГО бинаря (паритет pidIsOurs старого мира,
 // wdtt/process.go:301-308: childproc.MatchesBinary по /proc cmdline).
-func killOldGeneration(pid int, binaries []string) {
+//
+// Сверка бинаря — необходимая, но НЕ достаточная: уборка повторяется, пока
+// висит отметка (A3), а бинарь у старого и нового поколения один и тот же,
+// поэтому переиспользованный номер прошёл бы её и убил своего. Решает
+// отпечаток — время старта процесса, снятое на посеве.
+func killOldGeneration(proc instancestore.OldGenProc, binaries []string) {
+	pid := proc.PID
 	if !childproc.IsAlive(pid) {
 		return
+	}
+	if proc.StartTime == 0 {
+		return // отпечатка нет: на посеве процесса уже не было
+	}
+	if start, ok := childproc.StartTime(pid); !ok || start != proc.StartTime {
+		return // номер переиспользован системой
 	}
 	ours := false
 	for _, b := range binaries {

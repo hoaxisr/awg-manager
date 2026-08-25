@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
@@ -28,16 +29,31 @@ type SeedDeps struct {
 	GOARCH     string
 }
 
+// OldGenProc — процесс старого поколения: номер и ОТПЕЧАТОК (время старта,
+// поле 22 /proc/<pid>/stat). Голый номер идентичностью не является: pid-файлы
+// старого мира лежат на флеше, переживают перезагрузку и никем не удаляются,
+// а номер система переиспользует. Сверка по имени бинаря тут бессильна —
+// бинарь у старого и нового поколения ОДИН И ТОТ ЖЕ, то есть добивание по
+// голому номеру могло убить усыновлённый процесс нового мира.
+//
+// StartTime=0 — отпечаток снять не удалось (процесса уже не было). Добивать
+// такой номер нельзя: к моменту прохода он мог достаться кому угодно.
+type OldGenProc struct {
+	PID       int    `json:"pid"`
+	StartTime uint64 `json:"startTime,omitempty"`
+}
+
 type SeedResult struct {
 	State     State
 	SeededNow bool
 	// CleanupPending — одноразовые шаги не доведены: либо посев только что
 	// состоялся, либо прошлый проход не удался и отметка на диске висит.
 	CleanupPending bool
-	// OldGenPIDs — кандидаты на добивание (§9 протокола). Только собраны:
-	// живость и принадлежность бинарю проверяет адаптер (задача 6, B3 —
-	// pid-файл на флешке переживает ребут, PID мог достаться постороннему).
-	OldGenPIDs []int
+	// OldGenProcs — кандидаты на добивание (§9 протокола). Только собраны:
+	// живость, отпечаток и принадлежность бинарю проверяет адаптер (задача 6,
+	// B3 — pid-файл на флешке переживает ребут, PID мог достаться
+	// постороннему).
+	OldGenProcs []OldGenProc
 	// LegacyKernelIfaces — прежние kernel-имена сервера: вход одноразовой
 	// уборки непомеченных правил (план 3, residual I-1(а)).
 	LegacyKernelIfaces []string
@@ -275,12 +291,13 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 	}
 	if cur.Seeded {
 		// Посев — no-op, но недоведённая уборка обязана повториться: оба её
-		// списка приходят с диска. Пересбор pid'ов заново запрещён (B3): за
-		// время между боотами номер из протухшего pid-файла система могла
-		// отдать процессу НОВОГО поколения, и добивание убило бы своего.
+		// списка приходят с диска. Номера повтор прочитал бы и сам — те же
+		// pid-файлы никто не удаляет, — а вот ОТПЕЧАТКИ снимаются только на
+		// посеве, пока старое поколение ещё живо. Без них добивание не
+		// отличит процесс старого мира от чужого с тем же номером.
 		return SeedResult{State: cur, CleanupPending: cur.CleanupPending,
 			LegacyKernelIfaces: cur.LegacyKernelIfaces,
-			OldGenPIDs:         cur.OldGenPIDs}, nil
+			OldGenProcs:        cur.OldGenProcs}, nil
 	}
 
 	var wdttFile oldWdttFile
@@ -472,7 +489,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		from = []string{"clean-install"}
 	}
 
-	oldGenPIDs := oldGenerationPIDs(d.RuntimeDir)
+	oldGenProcs := oldGenerationProcs(d.RuntimeDir)
 	next, err := st.Replace(func(state *State) error {
 		exists := map[string]bool{}
 		for _, r := range state.Records {
@@ -487,7 +504,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		state.SeededFrom = from
 		state.CleanupPending = true
 		state.LegacyKernelIfaces = legacyIfaces
-		state.OldGenPIDs = oldGenPIDs
+		state.OldGenProcs = oldGenProcs
 		return nil
 	})
 	if err != nil {
@@ -498,7 +515,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		State:              next,
 		SeededNow:          true,
 		CleanupPending:     true,
-		OldGenPIDs:         oldGenPIDs,
+		OldGenProcs:        oldGenProcs,
 		LegacyKernelIfaces: legacyIfaces,
 	}, nil
 }
@@ -510,21 +527,23 @@ func ClearCleanupPending(st *Store) error {
 	_, err := st.Replace(func(state *State) error {
 		state.CleanupPending = false
 		state.LegacyKernelIfaces = nil
-		state.OldGenPIDs = nil
+		state.OldGenProcs = nil
 		return nil
 	})
 	return err
 }
 
-// oldGenerationPIDs — pid-файлы старого мира (форма имени —
-// wdtt/process.go:72). Best-effort: нечитаемое пропускается; проверку
-// живости и принадлежности бинарю делает адаптер kill (задача 6, B3).
-func oldGenerationPIDs(runtimeDir string) []int {
+// oldGenerationProcs — pid-файлы старого мира (форма имени —
+// wdtt/process.go:72) вместе с отпечатком каждого номера. Отпечаток снимается
+// ЗДЕСЬ, на посеве, пока процессы старого поколения ещё живы: на повторном
+// проходе уборки номер уже мог быть переиспользован. Best-effort: нечитаемое
+// пропускается; живость и принадлежность бинарю проверяет адаптер kill.
+func oldGenerationProcs(runtimeDir string) []OldGenProc {
 	entries, err := os.ReadDir(runtimeDir)
 	if err != nil {
 		return nil
 	}
-	var pids []int
+	var procs []OldGenProc
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasSuffix(name, ".pid") {
@@ -544,7 +563,8 @@ func oldGenerationPIDs(runtimeDir string) []int {
 		if err != nil || pid <= 0 {
 			continue
 		}
-		pids = append(pids, pid)
+		start, _ := childproc.StartTime(pid) // 0 — процесса уже нет
+		procs = append(procs, OldGenProc{PID: pid, StartTime: start})
 	}
-	return pids
+	return procs
 }

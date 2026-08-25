@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
@@ -696,7 +698,7 @@ func TestSeedIsIdempotentAndSkipsOldFilesWhenSeeded(t *testing.T) {
 	if len(second.State.Records) != len(first.State.Records) {
 		t.Fatalf("состояние уплыло: %d != %d", len(second.State.Records), len(first.State.Records))
 	}
-	if len(second.OldGenPIDs) != 0 {
+	if len(second.OldGenProcs) != 0 {
 		t.Fatal("pid-файлов нет — добивать нечего")
 	}
 }
@@ -731,8 +733,8 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(st.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("прежние kernel-имена не сохранены: %v", st.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(st.OldGenPIDs, []int{321}) {
-		t.Fatalf("pid'ы старого поколения не сохранены: %v", st.OldGenPIDs)
+	if !reflect.DeepEqual(st.OldGenProcs, []OldGenProc{{PID: 321}}) {
+		t.Fatalf("процессы старого поколения не сохранены: %+v", st.OldGenProcs)
 	}
 
 	// Повторный боот: посева нет, а уборка обязана быть повторена — с ТЕМИ ЖЕ
@@ -751,8 +753,8 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(second.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("список имён не доехал до повтора: %v", second.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(second.OldGenPIDs, []int{321}) {
-		t.Fatalf("список pid'ов пересобран с диска: %v", second.OldGenPIDs)
+	if !reflect.DeepEqual(second.OldGenProcs, []OldGenProc{{PID: 321}}) {
+		t.Fatalf("список процессов пересобран с диска: %+v", second.OldGenProcs)
 	}
 }
 
@@ -762,8 +764,18 @@ func TestClearCleanupPendingStopsRepeats(t *testing.T) {
 	e := newSeedEnv(t)
 	writeFile(t, e.deps.WdttPath, `{"servers":[{"id":"s","name":"S","config":{
 	  "listen":"0.0.0.0:56002","password":"spw"}}]}`)
-	if _, err := Seed(context.Background(), e.st, e.deps); err != nil {
+	// pid-файл обязан существовать ДО посева: иначе список процессов пуст уже
+	// на входе, и страж «снятие отметки чистит и его» ничего не проверяет.
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+	seeded, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeded.OldGenProcs) != 1 {
+		t.Fatalf("посев не собрал процессы, страж снятия пуст: %+v", seeded.OldGenProcs)
 	}
 	if err := ClearCleanupPending(e.st); err != nil {
 		t.Fatal(err)
@@ -772,23 +784,19 @@ func TestClearCleanupPendingStopsRepeats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.CleanupPending || len(st.LegacyKernelIfaces) != 0 || len(st.OldGenPIDs) != 0 {
-		t.Fatalf("отметка не снята: pending=%v ifaces=%v pids=%v",
-			st.CleanupPending, st.LegacyKernelIfaces, st.OldGenPIDs)
+	if st.CleanupPending || len(st.LegacyKernelIfaces) != 0 || len(st.OldGenProcs) != 0 {
+		t.Fatalf("отметка не снята: pending=%v ifaces=%v procs=%+v",
+			st.CleanupPending, st.LegacyKernelIfaces, st.OldGenProcs)
 	}
 	if len(st.Records) != 1 {
 		t.Fatalf("снятие отметки тронуло записи: %+v", st.Records)
 	}
 
-	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
 	next, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.CleanupPending || len(next.OldGenPIDs) != 0 || len(next.LegacyKernelIfaces) != 0 {
+	if next.CleanupPending || len(next.OldGenProcs) != 0 || len(next.LegacyKernelIfaces) != 0 {
 		t.Fatalf("доведённая уборка повторяется: %+v", next)
 	}
 }
@@ -841,11 +849,51 @@ func TestSeedCollectsOldGenerationPIDsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[int]bool{}
-	for _, p := range res.OldGenPIDs {
-		got[p] = true
+	for _, p := range res.OldGenProcs {
+		got[p.PID] = true
 	}
-	if !got[123] || !got[456] || len(res.OldGenPIDs) != 2 {
-		t.Fatalf("pids = %v (чужие префиксы и мусор — мимо)", res.OldGenPIDs)
+	if !got[123] || !got[456] || len(res.OldGenProcs) != 2 {
+		t.Fatalf("процессы = %+v (чужие префиксы и мусор — мимо)", res.OldGenProcs)
+	}
+}
+
+// Отпечаток снимается при посеве: номер + время старта из /proc (поле 22).
+// Голый номер идентичностью не является — система его переиспользует, а
+// сверка по имени бинаря не спасает, когда у старого и нового поколения один
+// и тот же бинарь. У мёртвого номера отпечатка нет, и это законно: добивать
+// там нечего.
+func TestSeedTakesStartTimeFingerprint(t *testing.T) {
+	e := newSeedEnv(t)
+	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-live.pid"), strconv.Itoa(os.Getpid()))
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-dead.pid"), "999999999")
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, ok := childproc.StartTime(os.Getpid())
+	if !ok {
+		t.Skip("/proc недоступен")
+	}
+	var seen int
+	for _, p := range res.OldGenProcs {
+		switch p.PID {
+		case os.Getpid():
+			seen++
+			if p.StartTime != want {
+				t.Fatalf("отпечаток живого процесса = %d, ждали %d", p.StartTime, want)
+			}
+		case 999999999:
+			seen++
+			if p.StartTime != 0 {
+				t.Fatalf("у мёртвого номера взялся отпечаток %d", p.StartTime)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("процессы = %+v", res.OldGenProcs)
 	}
 }
 
@@ -869,8 +917,8 @@ func TestSeedSkipsNonPositiveAndUnreadablePIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.OldGenPIDs) != 1 || res.OldGenPIDs[0] != 321 {
-		t.Fatalf("pids = %v (ноль, минус, пустое и каталог — мимо)", res.OldGenPIDs)
+	if len(res.OldGenProcs) != 1 || res.OldGenProcs[0].PID != 321 {
+		t.Fatalf("процессы = %+v (ноль, минус, пустое и каталог — мимо)", res.OldGenProcs)
 	}
 }
 
@@ -882,8 +930,8 @@ func TestSeedMissingRuntimeDirIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.OldGenPIDs != nil {
-		t.Fatalf("pids = %v", res.OldGenPIDs)
+	if res.OldGenProcs != nil {
+		t.Fatalf("процессы = %+v", res.OldGenProcs)
 	}
 }
 

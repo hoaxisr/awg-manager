@@ -27,16 +27,16 @@ const fileName = "proxy-instances.json"
 type fileFormat struct {
 	Version    int      `json:"version"`
 	SeededFrom []string `json:"seededFrom,omitempty"`
-	// CleanupPending/LegacyKernelIfaces/OldGenPIDs — отметка «одноразовая
+	// CleanupPending/LegacyKernelIfaces/OldGenProcs — отметка «одноразовая
 	// уборка не доведена» и весь её вход. Ложатся транзакцией посева,
 	// снимаются отдельной транзакцией после успешного прохода шагов:
 	// одноразовые шаги (добивание процессов старого поколения, снос его правил
 	// и интерфейсов) иначе теряли бы единственный шанс на любом транзиентном
 	// отказе.
-	CleanupPending     bool     `json:"cleanupPending,omitempty"`
-	LegacyKernelIfaces []string `json:"legacyKernelIfaces,omitempty"`
-	OldGenPIDs         []int    `json:"oldGenPids,omitempty"`
-	Instances          []Record `json:"instances"`
+	CleanupPending     bool         `json:"cleanupPending,omitempty"`
+	LegacyKernelIfaces []string     `json:"legacyKernelIfaces,omitempty"`
+	OldGenProcs        []OldGenProc `json:"oldGenProcs,omitempty"`
+	Instances          []Record     `json:"instances"`
 }
 
 // State — снимок хранилища. Seeded выводится из SeededFrom (§9: флаг —
@@ -45,17 +45,16 @@ type State struct {
 	Seeded     bool
 	SeededFrom []string
 	// CleanupPending — одноразовая уборка наследия старого движка ещё не
-	// доведена; LegacyKernelIfaces и OldGenPIDs — её вход. Прежние
+	// доведена; LegacyKernelIfaces и OldGenProcs — её вход. Прежние
 	// kernel-имена пересобрать на повторе неоткуда: старые конфиги к тому
-	// времени могут быть уже удалены. Список процессов старого поколения
-	// хранится по другой причине — пересбор с диска ОТРАВЛЕН: pid-файлы
-	// старого мира никто не удаляет, лежат они на флеше и переживают
-	// перезагрузку, а номер из протухшего файла система могла отдать процессу
-	// нового поколения (бинари у обоих миров одни и те же, проверка имени не
-	// спасает). Список перестаёт быть свежим, зато перестаёт быть отравленным.
+	// времени могут быть уже удалены. Список процессов хранится ради
+	// ОТПЕЧАТКОВ: сами номера повтор прочитал бы из тех же pid-файлов (их
+	// никто не удаляет), а вот время старта каждого номера снимается только
+	// на посеве, пока старое поколение ещё живо. Именно отпечаток отличает
+	// процесс старого мира от чужого, которому система отдала тот же номер.
 	CleanupPending     bool
 	LegacyKernelIfaces []string
-	OldGenPIDs         []int
+	OldGenProcs        []OldGenProc
 	Records            []Record
 }
 
@@ -102,7 +101,7 @@ func (s *Store) loadLocked() (State, error) {
 	}
 	st := State{Seeded: len(f.SeededFrom) > 0, SeededFrom: f.SeededFrom,
 		CleanupPending: f.CleanupPending, LegacyKernelIfaces: f.LegacyKernelIfaces,
-		OldGenPIDs: f.OldGenPIDs, Records: f.Instances}
+		OldGenProcs: f.OldGenProcs, Records: f.Instances}
 	for i := range st.Records {
 		normalizeRecord(&st.Records[i])
 	}
@@ -154,7 +153,7 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 	}
 	f := fileFormat{Version: fileVersion, SeededFrom: st.SeededFrom,
 		CleanupPending: st.CleanupPending, LegacyKernelIfaces: st.LegacyKernelIfaces,
-		OldGenPIDs: st.OldGenPIDs, Instances: st.Records}
+		OldGenProcs: st.OldGenProcs, Instances: st.Records}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return State{}, err
