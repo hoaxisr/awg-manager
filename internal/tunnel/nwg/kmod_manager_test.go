@@ -10,15 +10,16 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// buildKmodConfigResolved must carry the awg3.1 params from storage: the
-// base64 HeaderProtectionKey becomes 64-hex, RandomTrailers passes through, and
-// S1-S4 are clamped to the header-protection minimum (12 = ChaCha20 nonce).
+// buildKmodConfigResolved must carry the awg3.1 params from storage verbatim:
+// the base64 HeaderProtectionKey becomes 64-hex, RandomTrailers passes through,
+// and S1-S4 are NOT altered (they must byte-match the server; the S>=12 rule is
+// enforced fail-closed by config.ValidateAWG3 at create/update, not here).
 func TestBuildKmodConfig_AWG31(t *testing.T) {
 	keyBytes := bytes.Repeat([]byte{0x01}, 32)
 	stored := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{
 			AWGObfuscation: storage.AWGObfuscation{
-				S1: 8, S2: 40, S3: 40, S4: 40, // S1 below the minimum
+				S1: 87, S2: 118, S3: 36, S4: 23,
 				HeaderProtectionKey: base64.StdEncoding.EncodeToString(keyBytes),
 				RandomTrailers:      true,
 			},
@@ -35,11 +36,9 @@ func TestBuildKmodConfig_AWG31(t *testing.T) {
 	if !cfg.RandomTrailers {
 		t.Error("RandomTrailers not carried through")
 	}
-	if cfg.S1 != 12 {
-		t.Errorf("S1 not clamped to 12: got %d", cfg.S1)
-	}
-	if cfg.S2 != 40 {
-		t.Errorf("S2 should be untouched (>=12): got %d", cfg.S2)
+	if cfg.S1 != 87 || cfg.S2 != 118 || cfg.S3 != 36 || cfg.S4 != 23 {
+		t.Errorf("S1-S4 must pass through unchanged: got %d/%d/%d/%d",
+			cfg.S1, cfg.S2, cfg.S3, cfg.S4)
 	}
 }
 

@@ -1013,40 +1013,26 @@ func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
 // buildKmodConfigResolved builds a KmodConfig with a pre-resolved endpoint IP.
 // bindIface is the kernel interface name for SO_BINDTODEVICE (empty = no binding).
 func buildKmodConfigResolved(stored *storage.AWGTunnel, endpointIP string, endpointPort int, bindIface string) (KmodConfig, error) {
-	s1, s2, s3, s4 := stored.Interface.S1, stored.Interface.S2, stored.Interface.S3, stored.Interface.S4
-	hpKeyHex := pubKeyToHex(stored.Interface.HeaderProtectionKey)
-	// Header protection uses the first 12 padding bytes as the ChaCha20 nonce,
-	// so S1-S4 must be >= 12 or the kmod rejects the add. A real awg3.1 server
-	// config already satisfies this; clamp defensively so a stray S<12 doesn't
-	// break the tunnel (the server side sends >=12 regardless).
-	if hpKeyHex != "" {
-		s1, s2, s3, s4 = clampMinHP(s1), clampMinHP(s2), clampMinHP(s3), clampMinHP(s4)
-	}
+	// S1-S4 pass through verbatim: header protection needs them >= 12 (the
+	// ChaCha20 nonce length), but that is enforced fail-closed by
+	// config.ValidateAWG3 at create/update — and these bytes must byte-match
+	// the server config, so this is not the place to silently adjust them.
 	return KmodConfig{
 		EndpointIP:   endpointIP,
 		EndpointPort: endpointPort,
 		H1:           stored.Interface.H1, H2: stored.Interface.H2,
 		H3: stored.Interface.H3, H4: stored.Interface.H4,
-		S1: s1, S2: s2, S3: s3, S4: s4,
+		S1: stored.Interface.S1, S2: stored.Interface.S2,
+		S3: stored.Interface.S3, S4: stored.Interface.S4,
 		Jc: stored.Interface.Jc, Jmin: stored.Interface.Jmin, Jmax: stored.Interface.Jmax,
 		PubServerHex: pubKeyToHex(stored.Peer.PublicKey),
 		PubClientHex: pubKeyToHex(clientPubKeyFromPrivate(stored.Interface.PrivateKey)),
 		I1:           stored.Interface.I1, I2: stored.Interface.I2,
 		I3: stored.Interface.I3, I4: stored.Interface.I4, I5: stored.Interface.I5,
 		BindIface:              bindIface,
-		HeaderProtectionKeyHex: hpKeyHex,
+		HeaderProtectionKeyHex: pubKeyToHex(stored.Interface.HeaderProtectionKey),
 		RandomTrailers:         stored.Interface.RandomTrailers,
 	}, nil
-}
-
-// clampMinHP raises a padding size to the header-protection minimum (12, the
-// ChaCha20 nonce length) so the nonce is never truncated.
-func clampMinHP(s int) int {
-	const hpMinPadding = 12
-	if s < hpMinPadding {
-		return hpMinPadding
-	}
-	return s
 }
 
 // fallbackResolve uses the cached ResolvedEndpointIP from storage when DNS is unavailable
