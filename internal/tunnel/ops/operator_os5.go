@@ -37,6 +37,17 @@ func opkgTunExists(ctx context.Context, q *query.Queries, name string) bool {
 // - "10.0.0.2"    → ("10.0.0.2", "255.255.255.255")  (defaults to /32)
 // Returns the original input as-is if parsing fails (best-effort; caller
 // validates elsewhere).
+// errOS4Tunnel — отказ обслуживать запись, оставшуюся от KeeneticOS 4.x.
+//
+// У идентификаторов awgm<N> NewNames не строит NDMS-имени, а весь путь OS 5.x
+// стоит на OpkgTun: пустое имя уезжало в RCI идентификатором интерфейса. Само
+// такое состояние не чинится — прошивка обновилась, а запись осталась в старом
+// формате, поэтому текст называет пользователю его действие.
+func errOS4Tunnel(op, tunnelID string) error {
+	return tunnel.NewOpError(op, tunnelID, "ndms",
+		fmt.Errorf("туннель создан на KeeneticOS 4.x — удалите его и импортируйте конфиг заново"))
+}
+
 func splitAddressMask(addr string) (string, string) {
 	if addr == "" {
 		return "", ""
@@ -263,6 +274,10 @@ func (o *OperatorOS5Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 // Used for: BootReady, NotCreated, Broken.
 func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) error {
 	names := tunnel.NewNames(cfg.ID)
+
+	if names.NDMSName == "" {
+		return errOS4Tunnel("start", cfg.ID)
+	}
 
 	// Validate config
 	if err := cfg.Validate(); err != nil {
@@ -569,9 +584,15 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// 2. Remove NDMS interface — cleans everything:
 	//    address, MTU, security-level, ip global, default route, DNS name-servers
 	// DeleteOpkgTun triggers conf: disabled hook before removal.
-	o.expectHook(names.NDMSName, "disabled")
-	if err := o.commands.Interfaces.DeleteOpkgTun(ctx, names.NDMSName); err != nil {
-		o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
+	//
+	// У записи от KeeneticOS 4.x NDMS-имени нет: удалять в NDMS нечего, а пустая
+	// строка уехала бы в RCI идентификатором интерфейса. Пропускаем шаг, но не
+	// отказываем — иначе такой туннель нельзя удалить, то есть и пересоздать.
+	if names.NDMSName != "" {
+		o.expectHook(names.NDMSName, "disabled")
+		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, names.NDMSName); err != nil {
+			o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
+		}
 	}
 
 	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created)
@@ -627,6 +648,10 @@ func (o *OperatorOS5Impl) Recover(ctx context.Context, tunnelID string, state tu
 // Assumes: process is running, interface exists. Re-applies WG config, NDMS, routing, firewall.
 func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) error {
 	names := tunnel.NewNames(cfg.ID)
+
+	if names.NDMSName == "" {
+		return errOS4Tunnel("reconcile", cfg.ID)
+	}
 
 	o.logInfo("reconcile", cfg.ID, "Reconciling NDMS state around running process")
 	o.appLog.Info("reconcile", cfg.ID, "Восстановление конфигурации NDMS")
