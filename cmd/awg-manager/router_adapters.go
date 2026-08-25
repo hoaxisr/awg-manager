@@ -317,8 +317,6 @@ func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[in
 	return pins, nil
 }
 
-var _ wdtt.OpkgTunExistChecker = (*opkgTunExistAdapter)(nil)
-
 type opkgTunExistAdapter struct {
 	store *ndmsquery.InterfaceStore
 }
@@ -330,9 +328,6 @@ func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string
 	iface, err := a.store.Get(ctx, ndmsName)
 	return err == nil && iface != nil
 }
-
-var _ wdtt.NDMSPolicyTableGetter = (*policyTableAdapter)(nil)
-var _ wdtt.NDMSPolicyMarkGetter = (*policyTableAdapter)(nil)
 
 type policyTableAdapter struct {
 	marks *ndmsquery.PolicyMarkStore
