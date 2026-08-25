@@ -12,7 +12,7 @@ import (
 
 // defaultIPCheckServices is the built-in list of IP detection services.
 var defaultIPCheckServices = []IPCheckService{
-	{Label: "2ip", URL: "https://2ip.ru"},
+	{Label: "2ip", URL: "https://2ip.io"},
 	{Label: "wtfismyip", URL: "https://wtfismyip.com/text"},
 	{Label: "ipinfo", URL: "https://ipinfo.io/ip"},
 }

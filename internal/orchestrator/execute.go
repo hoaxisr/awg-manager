@@ -484,16 +484,7 @@ func (o *Orchestrator) executeRestoreEndpointTracking(ctx context.Context) error
 		}
 
 		// Restore tracking (route already exists in system)
-		isp := t.ActiveWAN
-		if isp == "" {
-			// Migration: tunnel from older version without ActiveWAN
-			if resolved, err := o.resolveWAN(ctx, t.ISPInterface); err == nil {
-				isp = resolved
-			} else {
-				o.appLog.Warn("resolve-wan", t.ID, "no stored ActiveWAN: "+err.Error())
-			}
-		}
-		ip, err := o.kernelOp.RestoreEndpointTracking(ctx, t.ID, t.Peer.Endpoint, isp)
+		ip, err := o.kernelOp.RestoreEndpointTracking(ctx, t.ID, t.Peer.Endpoint)
 		if err != nil {
 			o.appLog.Warn("restore-endpoint-tracking", t.ID, err.Error())
 			continue

@@ -27,7 +27,7 @@ type NDMSOpkgTunCommands interface {
 }
 
 const (
-	// Диапазон 17..49: вне fakeip (0..9) и типичных awg10..16 / managed 100+.
+	// Диапазон 17..49: вне fakeip (0..9) и AWG-туннелей (10..16).
 	wdttOpkgIndexMin    = 17
 	wdttOpkgIndexMax    = 49
 	wdttLegacyIndexMin  = 90
