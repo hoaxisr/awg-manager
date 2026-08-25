@@ -76,12 +76,14 @@ func (f *fakeCleaner) DeleteLinked(_ context.Context, clientID string) ([]string
 type importCall struct{ Conf, Name string }
 
 type fakeTunnels struct {
-	tunnels []storage.AWGTunnel
-	imports []importCall
-	started []string
-	deleted []string
-	saved   []storage.AWGTunnel
-	nextID  string
+	tunnels   []storage.AWGTunnel
+	imports   []importCall
+	started   []string
+	deleted   []string
+	saved     []storage.AWGTunnel
+	nextID    string
+	forgotten []string
+	published int
 }
 
 func (f *fakeTunnels) List() ([]storage.AWGTunnel, error) {
@@ -139,6 +141,10 @@ func (f *fakeTunnels) Start(_ context.Context, id string) error {
 	f.started = append(f.started, id)
 	return nil
 }
+
+func (f *fakeTunnels) ForgetTraffic(id string) { f.forgotten = append(f.forgotten, id) }
+
+func (f *fakeTunnels) PublishList(context.Context) { f.published++ }
 
 // fakeVetting — предикат пригодности абонента: та же семантика, что у
 // перенесённого passwords_json.go (задача 9 даёт прод-реализацию).
@@ -226,7 +232,8 @@ func newTestHandler(t *testing.T, recs ...instancestore.Record) (*Handler, *fake
 		Now: testNow,
 	})
 	h := NewHandler(Deps{
-		Records: src, Mutator: mut, Linked: cleaner, Tunnels: tunnels,
+		Records: src, Mutator: mut, Tunnels: tunnels,
+		Cleaners: map[instancestore.Kind]LinkedCleaner{instancestore.KindWdttClient: cleaner},
 		Builders: map[instancestore.Kind]LinkBuilder{instancestore.KindWdttServer: b},
 	})
 	return h, src, mut, cleaner, tunnels
@@ -543,7 +550,8 @@ func TestEnsureWG_NoSnapshotIs409(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status=%d сообщение=%q", rr.Code, msg)
 	}
-	if code != "WDTT_WG_NOT_READY" || !strings.Contains(msg, "wg-конфиг ещё не получен") {
+	if code != "WDTT_WG_NOT_READY" ||
+		msg != "WireGuard конфиг ещё не получен от wdtt-server — дождитесь успешного подключения клиента" {
 		t.Fatalf("код=%q сообщение=%q", code, msg)
 	}
 	if len(tunnels.imports) != 0 {
@@ -720,4 +728,234 @@ func TestHandlers_RejectNonPost(t *testing.T) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// ── фикс-раунд 1 ─────────────────────────────────────────────────
+
+// C1: id уникален только внутри роли, «default» есть у всех четырёх. Запрос к
+// СЕРВЕРУ не имеет права снести туннели КЛИЕНТА с тем же id.
+func TestClearLinkedTunnels_RejectsNonClientKind(t *testing.T) {
+	server := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002",
+		Password: "main", RelayMode: ConnModeWG})
+	client := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
+		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+	h, _, _, cleaner, _ := newTestHandler(t, server, client)
+
+	rr := httptest.NewRecorder()
+	h.ClearLinkedTunnels(rr, post(t, ``), server.Key())
+	_, msg, code := decodeEnvelope(t, rr)
+	if code != "BAD_REQUEST" {
+		t.Fatalf("код=%q сообщение=%q", code, msg)
+	}
+	if !strings.Contains(msg, "только у клиентов") {
+		t.Fatalf("причина отказа невнятна: %q", msg)
+	}
+	if len(cleaner.gotClientIDs) != 0 {
+		t.Fatalf("уборщик позван на серверном ключе: %v", cleaner.gotClientIDs)
+	}
+}
+
+// C1: поле связи у подсистем разное, поэтому уборщик выбирается ПО РОЛИ.
+func TestClearLinkedTunnels_CleanerPickedByKind(t *testing.T) {
+	wdttClient := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
+		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+	ftClient := instancestore.Record{ID: "default", Kind: instancestore.KindFreeTurnClient,
+		Name: "FT", FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "1.1.1.1:1"}}
+	h, _, _, wdttCleaner, _ := newTestHandler(t, wdttClient, ftClient)
+	ftCleaner := &fakeCleaner{deleted: []string{"ft-1"}}
+	h.deps.Cleaners[instancestore.KindFreeTurnClient] = ftCleaner
+
+	rr := httptest.NewRecorder()
+	h.ClearLinkedTunnels(rr, post(t, ``), ftClient.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if !reflect.DeepEqual(ftCleaner.gotClientIDs, []string{"default"}) {
+		t.Fatalf("freeturn-уборщик позван с %v", ftCleaner.gotClientIDs)
+	}
+	if len(wdttCleaner.gotClientIDs) != 0 {
+		t.Fatalf("позван чужой уборщик: %v", wdttCleaner.gotClientIDs)
+	}
+	if !reflect.DeepEqual(data["deletedTunnels"], []any{"ft-1"}) {
+		t.Fatalf("ответ от чужого уборщика: %v", data)
+	}
+}
+
+// I2: штатный повтор (автоэффект открытой страницы) не имеет права
+// пересоздавать туннель — иначе на каждом тике теряются id и история трафика.
+func TestEnsureWG_SamePeerKeyIsIdempotent(t *testing.T) {
+	rec := wgClient()
+	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
+		return awgmproto.State{PID: 0, WG: &awgmproto.WGState{Config: wgConf}}, true
+	}
+	// Туннель уже связан, ключ пира ТОТ ЖЕ, имя и endpoint уже верные.
+	tunnels.tunnels = []storage.AWGTunnel{{
+		ID: "wg-1", Name: "Германия wdtt", WdttClientID: "default",
+		Peer: storage.AWGPeer{PublicKey: "srvkey=", Endpoint: "127.0.0.1:9100"},
+	}}
+
+	rr := httptest.NewRecorder()
+	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(tunnels.deleted) != 0 {
+		t.Fatalf("повтор снёс живой туннель: %v", tunnels.deleted)
+	}
+	if len(tunnels.imports) != 0 {
+		t.Fatalf("повтор переимпортировал туннель: %+v", tunnels.imports)
+	}
+	if len(tunnels.saved) != 0 {
+		t.Fatalf("менять было нечего, а запись сохранена: %+v", tunnels.saved)
+	}
+	if tunnels.published != 0 {
+		t.Fatalf("публикация списка без единого изменения: %d", tunnels.published)
+	}
+	if data["created"] != false || data["tunnelId"] != "wg-1" {
+		t.Fatalf("тело ответа: %v", data)
+	}
+}
+
+// I3: обязанности, которые в старом мире жили побочными эффектами хендлера.
+func TestEnsureWG_ForgetsTrafficAndPublishes(t *testing.T) {
+	rec := wgClient()
+	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
+		return awgmproto.State{PID: 7, WG: &awgmproto.WGState{Config: wgConf}}, true
+	}
+	tunnels.tunnels = []storage.AWGTunnel{{ID: "stale", Name: "Старый пир", WdttClientID: "default",
+		Peer: storage.AWGPeer{PublicKey: "другой="}}}
+	tunnels.nextID = "wg-2"
+
+	rr := httptest.NewRecorder()
+	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if !reflect.DeepEqual(tunnels.forgotten, []string{"stale"}) {
+		t.Fatalf("история трафика снесённого туннеля осиротела: %v", tunnels.forgotten)
+	}
+	if tunnels.published == 0 {
+		t.Fatal("список туннелей не опубликован — для фронта ничего не произошло")
+	}
+}
+
+// I4: пять fail-closed веток. Срабатывают ровно тогда, когда проводка
+// промахнётся, и обязаны называть причину, а не изображать успех.
+func TestFailClosed_MissingWiring(t *testing.T) {
+	client := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
+		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+	server := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002",
+		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+
+	t.Run("нет проверки абонентов", func(t *testing.T) {
+		h, _, _, _, _ := newTestHandler(t, server)
+		h.deps.Builders[instancestore.KindWdttServer] = NewBuilder(BuilderDeps{Now: testNow})
+		rr := httptest.NewRecorder()
+		h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), server.Key())
+		_, msg, code := decodeEnvelope(t, rr)
+		if code != "WDTT_LINK_NO_CLIENT" || msg != "проверка абонентов не подключена" {
+			t.Fatalf("код=%q сообщение=%q", code, msg)
+		}
+	})
+
+	t.Run("нет сборщика для роли", func(t *testing.T) {
+		h, _, _, _, _ := newTestHandler(t, client)
+		rr := httptest.NewRecorder()
+		h.Link(rr, post(t, `{}`), client.Key())
+		_, msg, code := decodeEnvelope(t, rr)
+		if code != "BAD_REQUEST" || !strings.Contains(msg, "wdtt-client") {
+			t.Fatalf("код=%q сообщение=%q", code, msg)
+		}
+	})
+
+	t.Run("нет уборщика для роли", func(t *testing.T) {
+		h, _, _, _, _ := newTestHandler(t, client)
+		h.deps.Cleaners = nil
+		rr := httptest.NewRecorder()
+		h.ClearLinkedTunnels(rr, post(t, ``), client.Key())
+		_, msg, _ := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusInternalServerError || !strings.Contains(msg, "не подключена") {
+			t.Fatalf("status=%d сообщение=%q", rr.Code, msg)
+		}
+	})
+
+	t.Run("нет источника записей", func(t *testing.T) {
+		h := NewHandler(Deps{})
+		rr := httptest.NewRecorder()
+		h.Link(rr, post(t, `{}`), client.Key())
+		_, msg, _ := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusInternalServerError || !strings.Contains(msg, "источник записей") {
+			t.Fatalf("status=%d сообщение=%q", rr.Code, msg)
+		}
+	})
+
+	t.Run("нет мутатора", func(t *testing.T) {
+		h := NewHandler(Deps{Records: &fakeSource{recs: map[string]instancestore.Record{}}})
+		rr := httptest.NewRecorder()
+		h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h"}`))
+		_, msg, _ := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusInternalServerError || !strings.Contains(msg, "импорт не подключён") {
+			t.Fatalf("status=%d сообщение=%q", rr.Code, msg)
+		}
+	})
+}
+
+// Повторная генерация с тем же адресом не имеет права писать диск: запись
+// проходит через полный цикл store (нормализация, валидация, объявление
+// выходов реестру) на каждый показ панели.
+func TestLink_SamePeerNotRewritten(t *testing.T) {
+	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
+		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+	rec.LinkPeer = "1.2.3.4:56002"
+	h, _, mut, _, _ := newTestHandler(t, rec)
+
+	rr := httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent"}`), rec.Key())
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(mut.updates) != 0 {
+		t.Fatalf("запись переписана без изменения адреса: %+v", mut.updates)
+	}
+}
+
+// Хеши из записи — единственный читатель LinkVKHashes.
+func TestLink_HashesFromRecord(t *testing.T) {
+	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
+		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+	rec.LinkVKHashes = "hash1,hash2"
+	h, _, _, _, _ := newTestHandler(t, rec)
+
+	rr := httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), rec.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	link, _ := data["link"].(string)
+	if !strings.HasSuffix(link, ":abonent:hash1,hash2#Router WDTT") {
+		t.Fatalf("хеши записи не уехали в ссылку: %q", link)
+	}
+	q, _ := data["linkQwdtt"].(string)
+	if !strings.Contains(q, "hashes=hash1%2Chash2") {
+		t.Fatalf("хеши записи не уехали в qwdtt: %q", q)
+	}
+}
+
+// Режим импортируемого профиля нормализуется: пустой connMode — это wg, а не
+// пустая строка (её конфиг роли отвергает валидацией).
+func TestImport_NormalizesEmptyMode(t *testing.T) {
+	h, _, mut, _, _ := newTestHandler(t)
+	rr := httptest.NewRecorder()
+	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h"}`))
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(mut.created) != 1 || mut.created[0].WdttClient.Mode != ConnModeWG {
+		t.Fatalf("режим импортированной записи: %+v", mut.created)
+	}
 }
