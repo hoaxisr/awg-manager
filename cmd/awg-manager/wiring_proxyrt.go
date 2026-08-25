@@ -767,7 +767,10 @@ var _ proxyrt.BackoffResetter = (*proxyAdoptedRole)(nil)
 // reconcile, а до присвоения a.routerSvc там nil.
 func (a *app) wireProxyrt() {
 	journal := logging.NewScopedLogger(a.loggingService, logging.GroupRouting, proxySubgroup)
-	store := instancestore.New(a.dataDir)
+	// Хранилище — то же, что читают потребители вне рантайма (setupCore):
+	// писатель у proxy-instances.json один, и второй экземпляр развёл бы
+	// сериализацию записи по разным замкам.
+	store := a.proxyStore
 
 	// (1) Аллокаторы: номера OpkgTun и локальные listen-порты клиентов.
 	opkgMin, opkgMax, _ := roles.OpkgIndexRange(runtime.GOARCH)
