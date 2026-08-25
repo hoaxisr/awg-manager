@@ -3,8 +3,10 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -249,6 +251,9 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	} else if !isValidTunnelID(tunnelID) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
+	} else if err := h.checkExplicitIDFree(r.Context(), tunnelID, req.Backend); err != nil {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INDEX_TAKEN")
+		return
 	}
 
 	// Prepare tunnel data
@@ -326,6 +331,36 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, resp)
+}
+
+// checkExplicitIDFree проверяет присланный клиентом идентификатор той же
+// занятостью, что и сгенерированный.
+//
+// Идентификатор задаёт номер интерфейса OpkgTun — включая клиентские вроде
+// "myvpn", которым extractTunnelNum подставляет ноль. Без этой проверки запись
+// создавалась бы на номере, который держит чужая подсистема, и первое же
+// включение усыновило бы её интерфейс: kernel-путь опознаёт свой интерфейс по
+// номеру, а не по описанию.
+//
+// nativewg не спрашивается: он живёт как Wireguard<N> и номеров OpkgTun не
+// занимает. Пустой источник занятости — тоже не отказ: явный идентификатор
+// принимали и до появления занятости, ломать это на неполной проводке незачем.
+func (h *TunnelsHandler) checkExplicitIDFree(ctx context.Context, tunnelID, backend string) error {
+	if backend == "nativewg" || h.opkgOccupancy == nil {
+		return nil
+	}
+	idx, occupies := tunnel.OpkgTunIndexOf(tunnelID)
+	if !occupies {
+		return nil
+	}
+	taken, err := h.opkgOccupancy(ctx)
+	if err != nil {
+		return fmt.Errorf("не удалось проверить занятость номеров: %w", err)
+	}
+	if taken[idx] {
+		return fmt.Errorf("номер интерфейса OpkgTun%d уже занят — выберите другой идентификатор или не задавайте его вовсе", idx)
+	}
+	return nil
 }
 
 // Update updates an existing tunnel.
