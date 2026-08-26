@@ -237,11 +237,19 @@ func (s *Service) GetStatus() []TunnelStatus {
 			lastLatency = m.lastResult.Latency
 		}
 
+		// Бэкенд берём из записи: живой монитор бывает не только у kernel —
+		// зеркальную запись прокси-выхода этот цикл тоже перечисляет, и
+		// зашитое "kernel" врало о её природе.
+		backend := "kernel"
+		if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend != "" {
+			backend = stored.Backend
+		}
+
 		result = append(result, TunnelStatus{
 			TunnelID:      tunnelID,
 			TunnelName:    m.tunnelName,
 			Enabled:       config != nil,
-			Backend:       "kernel",
+			Backend:       backend,
 			Status:        status,
 			Method:        method,
 			LastCheck:     lastCheck,
