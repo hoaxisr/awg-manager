@@ -239,3 +239,38 @@ func TestBuildStreamFromQuery_XHTTPExtraZeroPadding(t *testing.T) {
 		}
 	}
 }
+
+// The option layer refuses any mode outside its four, and that refusal takes
+// the whole config down — so the link is rejected instead.
+func TestBuildStreamFromQuery_XHTTPMode(t *testing.T) {
+	for _, mode := range []string{"auto", "packet-up", "stream-up", "stream-one", ""} {
+		if _, err := BuildStreamFromQuery(parseQuery(t, "type=xhttp&mode="+mode), "example.com"); err != nil {
+			t.Errorf("mode=%q rejected: %v", mode, err)
+		}
+	}
+	if _, err := BuildStreamFromQuery(parseQuery(t, "type=xhttp&mode=oops"), "example.com"); err == nil {
+		t.Error("mode=oops accepted, want an error")
+	}
+}
+
+// #709: the egress interface survived import but was dropped when the tunnel
+// was shared back out.
+func TestEncodeOutbound_BindInterface(t *testing.T) {
+	p, err := ParseLink("vless://00000000-1111-2222-3333-444444444444@example.com:443?type=ws&bind_interface=nwg0#x")
+	if err != nil {
+		t.Fatalf("ParseLink: %v", err)
+	}
+	link, err := EncodeOutbound(p.Outbound, "x")
+	if err != nil {
+		t.Fatalf("EncodeOutbound: %v", err)
+	}
+	back, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("re-parse %s: %v", link, err)
+	}
+	var ob map[string]any
+	_ = json.Unmarshal(back.Outbound, &ob)
+	if ob["bind_interface"] != "nwg0" {
+		t.Errorf("bind_interface after round-trip=%v, link=%s", ob["bind_interface"], link)
+	}
+}

@@ -371,6 +371,12 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 		q.Set("type", network)
 	}
 
+	// #709: the egress interface is ours alone, but a link that drops it comes
+	// back bound to nothing.
+	if bind, _ := ob["bind_interface"].(string); bind != "" {
+		q.Set("bind_interface", bind)
+	}
+
 	if tls, _ := ob["tls"].(map[string]any); tls != nil {
 		reality, _ := tls["reality"].(map[string]any)
 		hasReality := reality != nil && reality["enabled"] == true

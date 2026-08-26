@@ -101,6 +101,13 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	s.ServiceName = q.Get("serviceName")
 	s.Mode = q.Get("mode")
 	if s.Network == "xhttp" {
+		// The option layer refuses anything else and takes the whole config
+		// down with it, so the bad link is rejected on its own instead.
+		switch s.Mode {
+		case "", "auto", "packet-up", "stream-up", "stream-one":
+		default:
+			return nil, fmt.Errorf("vlink: unsupported xhttp mode %q", s.Mode)
+		}
 		s.XHTTPExtra = parseXHTTPExtra(q.Get("extra"))
 	}
 
