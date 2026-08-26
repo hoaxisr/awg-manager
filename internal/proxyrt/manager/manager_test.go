@@ -1225,3 +1225,110 @@ func TestDeleteSurvivesMirrorDropFailure(t *testing.T) {
 		t.Fatalf("причина обязана быть в журнале: %v", e.j.journalMsgs())
 	}
 }
+
+func TestUpdateDropsMirrorOnlyWhenExitDisappears(t *testing.T) {
+	// Хвост 4: raw-клиент объявляет выход, wg-клиент — нет. После смены режима
+	// выход пропадает из ведомости, а снять зеркальную запись могла бы только
+	// массовая уборка — она заперта гейтом посева, и у ЖИВОГО инстанса карточка
+	// туннеля висит до перезапуска процесса.
+	//
+	// Три случая в одном тесте: снос обязан идти ровно на исчезнувшем
+	// объявлении. Сносить на каждой правке значит убивать карточку от
+	// переименования, а на появлении выхода — сразу после его создания.
+	wgRec := func(id string) instancestore.Record {
+		r := rawRec(id, "OpkgTun18", "opkgtun18")
+		r.WdttClient.Mode = "wg"
+		return r
+	}
+	for _, tc := range []struct {
+		name    string
+		start   instancestore.Record
+		mutate  func(*instancestore.Record) error
+		dropped []string
+	}{
+		{
+			name:    "raw→wg: выход исчез",
+			start:   rawRec("de", "OpkgTun18", "opkgtun18"),
+			mutate:  func(r *instancestore.Record) error { r.WdttClient.Mode = "wg"; return nil },
+			dropped: []string{"wdttraw-de"},
+		},
+		{
+			name:   "wg→raw: выход появился",
+			start:  wgRec("de"),
+			mutate: func(r *instancestore.Record) error { r.WdttClient.Mode = "raw"; return nil },
+		},
+		{
+			name:   "правка не режима: выход на месте",
+			start:  rawRec("de", "OpkgTun18", "opkgtun18"),
+			mutate: func(r *instancestore.Record) error { r.Name = "Другое имя"; return nil },
+		},
+		{
+			// PATCH кладёт connMode из тела запроса КАК ЕСТЬ
+			// (api/proxy_instances.go:735), а к "raw" его приводит store на
+			// записи — выход остаётся объявленным, и снимать нечего.
+			name:   "ненормализованный режим: выход объявлен",
+			start:  rawRec("de", "OpkgTun18", "opkgtun18"),
+			mutate: func(r *instancestore.Record) error { r.WdttClient.Mode = "RAW"; return nil },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			seedState(t, e, tc.start)
+			boot(t, e)
+
+			if err := e.m.Update(context.Background(), "wdtt-client:de", tc.mutate); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(e.reg.dropped, tc.dropped) {
+				t.Fatalf("адресно снято: %v, ждали %v", e.reg.dropped, tc.dropped)
+			}
+			// Требование 2: снимается ЗЕРКАЛЬНАЯ ЗАПИСЬ, а не инстанс — он
+			// продолжает работать в новом режиме.
+			fi := e.instances["wdtt-client:de"]
+			if fi == nil || fi.stopped {
+				t.Fatalf("инстанс обязан продолжать работу: %+v", fi)
+			}
+			st, err := e.st.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(st.Records) != 1 {
+				t.Fatalf("запись инстанса обязана остаться: %+v", st.Records)
+			}
+		})
+	}
+}
+
+func TestUpdateSurvivesMirrorDropFailure(t *testing.T) {
+	// Требование 3 брифа: конфиг уже записан, откатывать нечего — отказ сноса
+	// это предупреждение с причиной, а не отказ правки. Молчать нельзя: без
+	// строки карточку-призрак не найти.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	e.reg.failDrop = errors.New("диск")
+
+	err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.WdttClient.Mode = "wg"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("отказ сноса зеркальной записи не имеет права отменять правку: %v", err)
+	}
+	st, lerr := e.st.Load()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if st.Records[0].WdttClient.Mode != "wg" {
+		t.Fatalf("правка обязана быть записана: %+v", st.Records[0].WdttClient)
+	}
+	found := false
+	for _, msg := range e.j.journalMsgs() {
+		if strings.Contains(msg, "зеркальная запись не убрана") && strings.Contains(msg, "диск") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("причина обязана быть в журнале: %v", e.j.journalMsgs())
+	}
+}

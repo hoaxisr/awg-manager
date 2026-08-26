@@ -377,3 +377,163 @@ func TestDeleteRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 		})
 	}
 }
+
+// TestModeSwitchRemovesMirrorWhateverTheSeedGate — хвост 4 на настоящей
+// цепочке.
+//
+// Клиент в режиме raw объявляет выход, в режиме wg — нет: после смены режима
+// выход исчезает из ведомости, но инстанс ЖИВ, и снять его зеркальную запись
+// могла бы только массовая уборка. При незаверенном посеве она не зовётся
+// вовсе, а отметка монотонна — до правки карточка туннеля без выхода висела
+// до перезапуска процесса. Обе половины гейта в одном прогоне: снос обязан
+// работать при любой, а сам гейт — остаться на месте.
+func TestModeSwitchRemovesMirrorWhateverTheSeedGate(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		breakFreeturn bool
+		wantCertified bool
+	}{
+		{name: "гейт посева заперт", breakFreeturn: true},
+		{name: "посев заверен", wantCertified: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldDir := t.TempDir()
+			wdttPath := filepath.Join(oldDir, "wdtt.json")
+			if err := os.WriteFile(wdttPath, []byte(oldWdttTwoRaw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ftPath := filepath.Join(oldDir, "freeturn.json")
+			if tc.breakFreeturn {
+				// Настоящая причина запертого гейта, а не подложенный признак:
+				// посев не разобрал старый конфиг, число инстансов занижено,
+				// и MarkSeeded не зовётся вовсе.
+				if err := os.WriteFile(ftPath, []byte(`{"clients": 5}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			tunDir := t.TempDir()
+			tunStore := storage.NewAWGTunnelStoreWithLockDir(tunDir, filepath.Join(tunDir, "locks"))
+			// Ничейная зеркальная запись: её сносит ТОЛЬКО массовая уборка,
+			// и она же показывает, заперт гейт или нет.
+			saveTunnel(t, tunStore, &storage.AWGTunnel{ID: "wdttraw-ghost",
+				Name: "Призрак wdtt", Type: "awg", Backend: "wdtt-raw", WdttClientID: "ghost"})
+			// Туннель пользователя: адресного сноса он касаться не вправе.
+			saveTunnel(t, tunStore, &storage.AWGTunnel{ID: "awg10", Name: "Свой",
+				Type: "awg", Backend: "kernel"})
+
+			jrnl := &e2eJournal{}
+			t.Cleanup(func() {
+				if t.Failed() {
+					t.Log("журнал прогона:\n" + jrnl.dump())
+				}
+			})
+
+			mirror := exitreg.NewStoreMirror(tunStore, nil)
+			reg := exitreg.New(mirror, jrnl)
+			instStore := instancestore.New(t.TempDir())
+			seedDeps := instancestore.SeedDeps{
+				WdttPath: wdttPath, FreeturnPath: ftPath, RuntimeDir: t.TempDir(),
+				LivePermits: func(context.Context, string) ([]string, error) { return nil, nil },
+				AllocIndex:  keepPin, GOARCH: "arm64",
+			}
+			stopped := map[string]bool{}
+			m := manager.New(manager.Deps{
+				Store:    instStore,
+				Registry: reg,
+				Sweeper:  e2eSweeper{},
+				Journal:  jrnl,
+				Factory: func(rec instancestore.Record, _ *manager.Live) (manager.RunningInstance, error) {
+					key := rec.Key()
+					return &e2eStoppable{onStop: func() { stopped[key] = true }}, nil
+				},
+				Seed: func(ctx context.Context) (instancestore.SeedResult, error) {
+					return instancestore.Seed(ctx, instStore, seedDeps)
+				},
+				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
+					return nil // добивание и снос правил ходят в kill(2) и iptables
+				},
+				AllocIndex:   keepPin,
+				AllocListen:  func(string) (string, error) { return "127.0.0.1:9100", nil },
+				ReleasePins:  func(...string) {},
+				WaitDisabled: func(string, time.Duration) bool { return true },
+			})
+
+			if err := m.Boot(context.Background()); err != nil {
+				t.Fatalf("боот: %v", err)
+			}
+			if got := m.SeedInfo().Certified; got != tc.wantCertified {
+				t.Fatalf("Certified = %v, ждали %v — фикстура не воспроизвела нужную половину гейта", got, tc.wantCertified)
+			}
+			for _, id := range []string{"wdttraw-one", "wdttraw-two"} {
+				if !tunStore.Exists(id) {
+					t.Fatalf("зеркальной записи %s нет уже после боота: проверять смену режима нечем", id)
+				}
+			}
+			if got, want := tunStore.Exists("wdttraw-ghost"), !tc.wantCertified; got != want {
+				t.Fatalf("призрак после боота: жив=%v, ждали %v", got, want)
+			}
+
+			setMode := func(mode string) {
+				t.Helper()
+				if err := m.Update(context.Background(), "wdtt-client:one",
+					func(r *instancestore.Record) error {
+						r.WdttClient.Mode = mode
+						return nil
+					}); err != nil {
+					t.Fatalf("смена режима на %s: %v", mode, err)
+				}
+			}
+			setMode("wg")
+
+			// Проверки независимы: Errorf, чтобы видеть все.
+			if _, ok := reg.Lookup("wdttraw-one"); ok {
+				t.Error("режим сменён на wg, а реестр всё ещё разрешает выход инстанса")
+			}
+			if tunStore.Exists("wdttraw-one") {
+				t.Error("зеркальная запись пережила исчезновение выхода: карточка туннеля без выхода")
+			}
+			if !tunStore.Exists("wdttraw-two") {
+				t.Error("снесена зеркальная запись соседнего инстанса")
+			}
+			if !tunStore.Exists("awg10") {
+				t.Error("снесён туннель пользователя")
+			}
+			if got, want := tunStore.Exists("wdttraw-ghost"), !tc.wantCertified; got != want {
+				t.Errorf("призрак после смены режима: жив=%v, ждали %v (гейт массовой уборки не имеет права меняться)", got, want)
+			}
+			// Требование 2: снята запись, а не инстанс. Проверяется делом:
+			// живой инстанс останавливать не за что, и он обязан быть готов
+			// принять следующую правку.
+			if stopped["wdtt-client:one"] {
+				t.Error("инстанс остановлен: смена режима снимает зеркальную запись, а не его")
+			}
+			st, err := instStore.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(st.Records) != 2 {
+				t.Fatalf("записи инстансов после смены режима: %+v", st.Records)
+			}
+
+			// Требование 5: обратный переход выход СОЗДАЁТ — сносить нечего, и
+			// зеркальная запись обязана вернуться.
+			setMode("raw")
+			if !tunStore.Exists("wdttraw-one") {
+				t.Error("после возврата в raw зеркальной записи нет: снос сработал на появлении выхода")
+			}
+			if !tunStore.Exists("wdttraw-two") {
+				t.Error("возврат в raw снёс зеркальную запись соседа")
+			}
+		})
+	}
+}
+
+// e2eStoppable — тот же фейк процесса, что e2eInstance, но помнящий остановку:
+// требование «инстанс живёт дальше» проверяется по факту, а не по вере.
+type e2eStoppable struct{ onStop func() }
+
+func (*e2eStoppable) Start(context.Context)       {}
+func (*e2eStoppable) Post(proxyrt.EventKind) bool { return true }
+func (*e2eStoppable) ResetStartBackoff()          {}
+func (s *e2eStoppable) Stop()                     { s.onStop() }

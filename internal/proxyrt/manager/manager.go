@@ -27,7 +27,7 @@ type RegistryPort interface {
 	MarkSeeded(instances int) error
 	// DropMirror снимает ОДНУ зеркальную запись адресно, мимо гейта посева:
 	// массовая уборка при незаверенном посеве не зовётся вовсе, а гейт
-	// монотонен (см. Delete).
+	// монотонен (см. Delete и смену режима в update).
 	DropMirror(id, ownerInstanceID string) error
 }
 
@@ -183,6 +183,30 @@ func mirrorIDOf(rec instancestore.Record) (string, bool) {
 		return "", false
 	}
 	return wdttclient.RawTunnelID(rec.ID), true
+}
+
+// declaresExit — объявляет ли запись выход ПРЯМО СЕЙЧАС. Тот же источник, что
+// у ведомости (RawExiter/RawExit): признак «выход исчез» обязан считаться по
+// тому самому правилу, по которому реестр строит ведомость, иначе адресный
+// снос разъедется с объявлением.
+func declaresExit(rec instancestore.Record) bool {
+	ex := rec.RawExiter()
+	if ex == nil { // запись мимо store: роли нет, объявлять нечего
+		return false
+	}
+	_, ok := ex.RawExit()
+	return ok
+}
+
+// recordByKey — запись из состояния store по её адресу; пустая, если такой
+// нет. Пустая означает «объявлять нечего»: у неё нет роли.
+func recordByKey(recs []instancestore.Record, key string) instancestore.Record {
+	for _, r := range recs {
+		if r.Key() == key {
+			return r
+		}
+	}
+	return instancestore.Record{}
 }
 
 // namedOf — та же дисциплина для ведомости NDMS-имён уборщика; сама ведомость
@@ -573,6 +597,14 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	if !found {
 		return nil, fmt.Errorf("инстанс %s не найден", key)
 	}
+	// Объявление ДО правки. Снимается ЗДЕСЬ и отдельным значением, а не копией
+	// записи: конфиг лежит за указателем, копия Record им не владеет, и после
+	// mutate она показала бы уже новый режим. Роль проверять не нужно — выход
+	// объявляет только raw-клиент.
+	prevExitOwner := "" // id инстанса, объявлявшего выход до правки
+	if declaresExit(cand) {
+		prevExitOwner = cand.ID
+	}
 	if err := mutate(&cand); err != nil {
 		return nil, err
 	}
@@ -593,6 +625,27 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	})
 	if err != nil {
 		return allocated, err
+	}
+
+	// Выход, которого больше нет (смена режима raw→wg): ведомость его уже не
+	// содержит, а снять зеркальную запись могла бы только массовая уборка —
+	// она заперта гейтом посева, и гейт монотонен, так что карточка туннеля
+	// без выхода висела бы до перезапуска процесса. Снос адресный, ровно той
+	// записи, что перестала быть выходом; сам инстанс живёт дальше в новом
+	// режиме. Отказ — предупреждение, а не отказ правки: конфиг уже записан.
+	//
+	// Состояние ПОСЛЕ берётся из ЗАПИСАННОГО состояния: ровно из него собрана
+	// ведомость, которую увидел реестр, — значит и «в ведомости этого выхода
+	// больше нет» считается по нему же. По cand ответ сегодня тот же, но
+	// только по случайности: конфиг лежит за указателем, общим с записью в
+	// state, и режим ему приводит normalizeRecord уже внутри транзакции.
+	// Опираться на это нельзя — PATCH кладёт connMode из тела запроса как
+	// есть (api/proxy_instances.go:735), и "RAW" по cand читался бы как
+	// исчезнувший выход.
+	if prevExitOwner != "" && !declaresExit(recordByKey(st.Records, key)) {
+		if derr := m.deps.Registry.DropMirror(wdttclient.RawTunnelID(prevExitOwner), prevExitOwner); derr != nil {
+			m.deps.Journal.Warn("update", key, "зеркальная запись не убрана: "+derr.Error())
+		}
 	}
 
 	if mg, ok := m.m[key]; ok {
