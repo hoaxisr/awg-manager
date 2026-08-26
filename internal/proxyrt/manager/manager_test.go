@@ -752,6 +752,62 @@ func TestBootSweepsExactlyDeclaredNDMSNames(t *testing.T) {
 	}
 }
 
+// Амендмент F1: ведомость NDMS-имён собрана из того же списка, который
+// сертификация признаёт неполным, — значит уборщик заперт тем же гейтом, что и
+// уборка зеркальных записей. Обе половины гейта в одном тесте намеренно: ноль
+// вызовов уборщика — это ещё и значение по умолчанию у свежего окружения, и
+// отличить запертый гейт от неподключённого уборщика позволяет только
+// соседний прогон, где уборка идёт.
+func TestBootGatesNDMSSweepOnCertification(t *testing.T) {
+	t.Run("пропущенный старый конфиг запирает уборку", func(t *testing.T) {
+		e := newEnv(t)
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		st, err := e.st.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.SkippedSources = []instancestore.SkippedSource{{File: "wdtt.json", Reason: "поле не того типа"}}
+		e.seedRes = instancestore.SeedResult{State: st}
+		e.seedResSet = true
+		boot(t, e)
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборщик зван при незаверенном посеве: %v (интерфейсы непереехавших "+
+				"инстансов ушли бы вместе с permit'ами политик)", e.sw.calls)
+		}
+		// Боот дошёл до конца: инстансы стартовали, признак боота стоит —
+		// значит уборку пропустил гейт, а не обрыв где-то раньше.
+		if len(e.instances) != 1 {
+			t.Fatalf("инстансы обязаны стартовать: %d", len(e.instances))
+		}
+		if info := e.m.SeedInfo(); !info.Booted || info.Certified {
+			t.Fatalf("SeedInfo: %+v (ждали Booted=true, Certified=false)", info)
+		}
+	})
+
+	t.Run("отказ MarkSeeded запирает уборку", func(t *testing.T) {
+		e := newEnv(t)
+		e.reg.failMark = errors.New("призраки в каталоге")
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		boot(t, e)
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборщик зван при отказе сертификации: %v", e.sw.calls)
+		}
+	})
+
+	t.Run("сертифицированный посев убирает", func(t *testing.T) {
+		e := newEnv(t)
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		boot(t, e)
+		if info := e.m.SeedInfo(); !info.Certified {
+			t.Fatalf("чистый боот обязан сертифицироваться: %+v", info)
+		}
+		if len(e.sw.calls) != 1 || !sameNames(e.sw.calls[0], "OpkgTun18") {
+			t.Fatalf("ведомость уборщика: %v (ждали ровно {OpkgTun18}): гейт нельзя «починить» "+
+				"запретом навсегда", e.sw.calls)
+		}
+	})
+}
+
 func TestPostSeedReceivesDeclaredNDMSNames(t *testing.T) {
 	// I-1: nil в уборке наследия (задача 6) = чистка правил с ЖИВЫХ интерфейсов.
 	e := newEnv(t)
