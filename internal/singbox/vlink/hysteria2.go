@@ -56,26 +56,22 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 		out["hop_interval"] = "10s"
 	}
 
-	// TLS — always enabled for Hysteria2
-	tls := map[string]any{
-		"enabled":     true,
-		"server_name": firstNonEmpty(q.Get("sni"), host),
-		"alpn":        []string{"h3"},
+	// TLS собирает общий слой — тот же, что у clash-пути. Здесь остаётся
+	// только hysteria-специфика, которой общий слой не знает.
+	stream, err := BuildStreamFromQuery(hysteria2StreamQuery(q), host)
+	if err != nil {
+		return nil, fmt.Errorf("hysteria2: %w", err)
 	}
-	if alpn := q.Get("alpn"); alpn != "" {
-		tls["alpn"] = splitCSV(alpn)
-	}
-	if boolish(q.Get("insecure")) {
-		tls["insecure"] = true
-	}
+	stream.MergeIntoOutbound(out)
 	// pinSHA256 намеренно игнорируется: hysteria пинит hex-отпечаток всего
 	// сертификата, sing-box certificate_public_key_sha256 — base64 sha256
 	// от SPKI публичного ключа. Эквивалента нет, а сырое значение валит
 	// decode всего конфига (issue #350).
 	if boolish(q.Get("ech")) {
-		tls["ech"] = map[string]any{"enabled": true}
+		if tls, ok := out["tls"].(map[string]any); ok {
+			tls["ech"] = map[string]any{"enabled": true}
+		}
 	}
-	out["tls"] = tls
 
 	// Obfs
 	if obfsType := q.Get("obfs"); obfsType != "" {
@@ -122,6 +118,24 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 // parseMport accepts "20000-30000" or "20000,21000-22000,30000-31000"
 // and returns sing-box port spec strings ("20000:30000" for ranges,
 // single port as "20000:20000" — same convention as the spec example).
+// hysteria2StreamQuery отбирает из ссылки то, что понимает общий слой. Список
+// закрытый намеренно: fp= сюда не попадает — uTLS поверх QUIC неприменим, а
+// общий слой добавил бы блок utls.
+func hysteria2StreamQuery(q url.Values) url.Values {
+	v := url.Values{}
+	v.Set("security", "tls")
+	v.Set("sni", q.Get("sni"))
+	// hysteria2 без ALPN h3 сервер обычно не принимает; движок дефолт не ставит.
+	v.Set("alpn", firstNonEmpty(q.Get("alpn"), "h3"))
+	if boolish(q.Get("insecure")) {
+		v.Set("insecure", "1")
+	}
+	if b := q.Get("bind_interface"); b != "" {
+		v.Set("bind_interface", b)
+	}
+	return v
+}
+
 func parseMport(mport string) []string {
 	parts := strings.Split(mport, ",")
 	out := make([]string, 0, len(parts))

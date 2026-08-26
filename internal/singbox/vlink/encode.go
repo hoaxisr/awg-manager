@@ -310,11 +310,20 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			// no transport / explicit tcp — plain network, nothing to add
 		case "ws":
 			network = "ws"
+			ed := intFromAny(transport["max_early_data"])
 			if path, _ := transport["path"].(string); path != "" {
-				if ed := intFromAny(transport["max_early_data"]); ed > 0 {
+				if ed > 0 {
 					path = path + "?ed=" + strconv.Itoa(ed)
 				}
 				q.Set("path", path)
+			}
+			// "?ed=" в пути подразумевает Sec-WebSocket-Protocol — так его
+			// читают и mihomo, и мы. Любое другое имя (в том числе пустое,
+			// то есть early data прямо в пути) круг иначе потеряет, поэтому
+			// оно уезжает отдельным параметром.
+			if header, _ := transport["early_data_header_name"].(string); ed > 0 && header != "Sec-WebSocket-Protocol" {
+				q.Set("ed", strconv.Itoa(ed))
+				q.Set("eh", header)
 			}
 			if headers, _ := transport["headers"].(map[string]any); headers != nil {
 				if host, _ := headers["Host"].(string); host != "" {
@@ -371,11 +380,10 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 		q.Set("type", network)
 	}
 
-	// #709: the egress interface is ours alone, but a link that drops it comes
-	// back bound to nothing.
-	if bind, _ := ob["bind_interface"].(string); bind != "" {
-		q.Set("bind_interface", bind)
-	}
+	// bind_interface намеренно не эмитится: это привязка к интерфейсу
+	// конкретного роутера, она меняется в рантайме и на чужом устройстве
+	// в лучшем случае бессмысленна, в худшем — даёт конфиг с несуществующим
+	// интерфейсом, от которого sing-box падает (#709).
 
 	if tls, _ := ob["tls"].(map[string]any); tls != nil {
 		reality, _ := tls["reality"].(map[string]any)

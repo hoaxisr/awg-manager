@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -253,24 +254,64 @@ func TestBuildStreamFromQuery_XHTTPMode(t *testing.T) {
 	}
 }
 
-// #709: the egress interface survived import but was dropped when the tunnel
-// was shared back out.
-func TestEncodeOutbound_BindInterface(t *testing.T) {
+// bind_interface — настройка нашего роутера, а не свойство сервера: ссылка
+// его не несёт. Импорт при этом его понимает (#709).
+func TestEncodeOutbound_BindInterfaceStaysHome(t *testing.T) {
 	p, err := ParseLink("vless://00000000-1111-2222-3333-444444444444@example.com:443?type=ws&bind_interface=nwg0#x")
 	if err != nil {
 		t.Fatalf("ParseLink: %v", err)
+	}
+	var imported map[string]any
+	_ = json.Unmarshal(p.Outbound, &imported)
+	if imported["bind_interface"] != "nwg0" {
+		t.Fatalf("импорт потерял bind_interface: %v", imported)
 	}
 	link, err := EncodeOutbound(p.Outbound, "x")
 	if err != nil {
 		t.Fatalf("EncodeOutbound: %v", err)
 	}
-	back, err := ParseLink(link)
-	if err != nil {
-		t.Fatalf("re-parse %s: %v", link, err)
+	if strings.Contains(link, "bind_interface") {
+		t.Errorf("ссылка унесла привязку к чужому интерфейсу: %s", link)
 	}
-	var ob map[string]any
-	_ = json.Unmarshal(back.Outbound, &ob)
-	if ob["bind_interface"] != "nwg0" {
-		t.Errorf("bind_interface after round-trip=%v, link=%s", ob["bind_interface"], link)
+}
+
+// Импорт умеет нестандартное имя заголовка early data (Clash его задаёт явно),
+// а экспорт молча подменял его дефолтным — круг терял настройку.
+func TestEncodeOutbound_WSEarlyDataHeader(t *testing.T) {
+	cases := []struct{ header, wantParam string }{
+		{"Sec-WebSocket-Protocol", ""},       // дефолт формы "?ed=" — писать незачем
+		{"X-Custom-Early", "X-Custom-Early"}, // всё остальное обязано доехать
+		{"", "-"},                            // early data в пути: заголовка нет
+	}
+	for _, tc := range cases {
+		ob := map[string]any{
+			"type": "vless", "server": "e.example.com", "server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": map[string]any{
+				"type": "ws", "path": "/ws", "max_early_data": 2048,
+			},
+		}
+		if tc.header != "" {
+			ob["transport"].(map[string]any)["early_data_header_name"] = tc.header
+		}
+		raw, _ := json.Marshal(ob)
+		link, err := EncodeOutbound(raw, "e")
+		if err != nil {
+			t.Fatalf("header=%q: %v", tc.header, err)
+		}
+		back, err := ParseLink(link)
+		if err != nil {
+			t.Fatalf("header=%q: re-parse %s: %v", tc.header, link, err)
+		}
+		var got map[string]any
+		_ = json.Unmarshal(back.Outbound, &got)
+		tr, _ := got["transport"].(map[string]any)
+		if tr["max_early_data"] != float64(2048) {
+			t.Errorf("header=%q: max_early_data=%v, link=%s", tc.header, tr["max_early_data"], link)
+		}
+		gotHeader, _ := tr["early_data_header_name"].(string)
+		if gotHeader != tc.header {
+			t.Errorf("header=%q: после круга %q, link=%s", tc.header, gotHeader, link)
+		}
 	}
 }

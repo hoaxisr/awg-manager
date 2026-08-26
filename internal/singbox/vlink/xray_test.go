@@ -203,3 +203,41 @@ func TestParseXrayBody_ArrayFirstEmpty(t *testing.T) {
 		t.Errorf("Tag = %q, want '🇸🇬 Singapore Trojan'", res.Outbounds[0].Tag)
 	}
 }
+
+// Остальные входные пути отвергают пустой адрес, нулевой порт и пустые
+// креды; Xray-путь пропускал такое насквозь и отдавал мусорный аутбаунд.
+func TestParseXrayBody_RejectsEmptyEndpoint(t *testing.T) {
+	cases := map[string]string{
+		"пустой адрес":  `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]}}]}`,
+		"нулевой порт":  `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":0,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]}}]}`,
+		"пустой uuid":   `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,"users":[{"id":""}]}]}}]}`,
+		"пустой пароль": `{"outbounds":[{"protocol":"trojan","settings":{"servers":[{"address":"a.example.com","port":443,"password":""}]}}]}`,
+		"без метода ss": `{"outbounds":[{"protocol":"shadowsocks","settings":{"servers":[{"address":"a.example.com","port":443,"method":"","password":"p"}]}}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := ParseXrayBody([]byte(body))
+			if len(res.Outbounds) > 0 {
+				t.Errorf("принят мусорный аутбаунд: %s", res.Outbounds[0].Outbound)
+			}
+			if len(res.Errors) == 0 {
+				t.Error("ошибка не сообщена")
+			}
+		})
+	}
+}
+
+// VLESS Encryption путь ссылок отвергает специально (#603) — sing-box такого
+// поля не имеет, и молча проглоченный конфиг дал бы неподключающийся сервер.
+// Xray-путь обязан вести себя так же.
+func TestParseXrayBody_RejectsVlessEncryption(t *testing.T) {
+	body := `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,` +
+		`"users":[{"id":"11111111-2222-3333-4444-555555555555","encryption":"mlkem768x25519plus.native.0rtt.xxx"}]}]}}]}`
+	res := ParseXrayBody([]byte(body))
+	if len(res.Outbounds) > 0 {
+		t.Errorf("принят: %s", res.Outbounds[0].Outbound)
+	}
+	if len(res.Errors) == 0 {
+		t.Error("ошибка не сообщена")
+	}
+}
