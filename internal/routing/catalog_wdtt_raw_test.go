@@ -57,9 +57,11 @@ func TestDownExitResolvesButIsNotRunning(t *testing.T) {
 }
 
 func TestMirrorFallbackWhileRegistryIsSilent(t *testing.T) {
-	// РЕЗИДУАЛ ВОЛНЫ (снимает план 5): движок ещё не проведён, записи ведёт
-	// старый код. Готовность у такого ответа берётся по-старому — из
-	// состояния провайдера.
+	// Страховка окна холодного старта: реестр наполняет manager.Boot, а Boot
+	// идёт горутиной после старта HTTP и на холодном старте роутера ждёт RCI
+	// до ~2 минут (cmd/awg-manager/boot.go) — в это окно реестр молчит для
+	// любого выхода, а зеркальная запись остаётся единственным источником.
+	// Готовность у такого ответа берётся из состояния провайдера.
 	store := &mockStoreClient{entries: map[string]StoreEntry{
 		"wdttraw-de": {Backend: backendWdttRaw, RawNdmsIface: "OpkgTun18", RawKernelIface: "opkgtun18"},
 	}}

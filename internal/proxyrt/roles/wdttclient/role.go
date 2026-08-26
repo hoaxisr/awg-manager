@@ -28,6 +28,13 @@ const rawClientMask = "255.255.255.255"
 var rawTunnelIDSafe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 // RawTunnelID — id зеркальной записи tunnel-store и правил clientroute.
+//
+// Усечение до 20 — по байтам (`safe[:20]`), не по рунам. Сегодня это
+// безопасно ровно потому, что `safe` уже прошёл через rawTunnelIDSafe и
+// состоит только из ASCII (`[a-zA-Z0-9_-]`) — байт и руна здесь одно и то же.
+// Смена набора допустимых символов на многобайтовый без пересмотра этой
+// строки резала бы UTF-8 руну пополам. Само усечение не трогаем: смена
+// правила ломает id живых правил (Р6 плана, решение владельца).
 func RawTunnelID(instance string) string {
 	id := strings.TrimSpace(instance)
 	if id == "" {
