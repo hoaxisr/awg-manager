@@ -7,27 +7,4 @@
 # пока строка не удалена. Новая строка добавляется ТОЛЬКО после ручной
 # проверки, что это дефект пути, а не ошибка фикстуры.
 #
-# 2026-08-26: 24 расхождения на старте, 7 осталось.
-#
-# xray: early data по конвенции экосистемы едет в заголовке
-#   Sec-WebSocket-Protocol — mihomo при "?ed=N" ставит именно его. Мы
-#   early_data_header_name не ставим нигде, а sing-box при пустом имени
-#   дописывает early data в URL-путь (transport/v2raywebsocket/conn.go:172),
-#   чего сервер не поймёт. Поле StreamBuilder.EarlyDataHeaderName мёртвое.
-# clash: нативные ws-opts.max-early-data / early-data-header-name не читаются —
-#   распознаётся только "?ed=N", встроенный в path.
-# clash: per-proxy interface-name (BasicOption у mihomo) не читается вовсе.
-# clash: путь строит TLS общим слоем и теряет hysteria2-дефолт alpn ["h3"],
-#   который share-путь ставит всегда (hysteria2.go:63). Последствие
-#   косметическое: sing-quic при пустом ALPN сам подставляет http3.NextProtoH3
-#   (hysteria2/client.go:98). Расхождение путей — да, поломка — нет.
-# clash: mihomo-поле ports (port hopping) не читается вовсе — share-путь
-#   разворачивает mport в server_ports + hop_interval, clash-путь ничего.
-
-hy2-obfs clash tls.alpn missing
-hy2-ports clash hop_interval missing
-hy2-ports clash server_ports missing
-hy2-ports clash tls.alpn missing
-vless-bind-interface clash bind_interface missing
-vless-ws-tls-ed clash transport.early_data_header_name missing
-vless-ws-tls-ed clash transport.max_early_data missing
+# 2026-08-26: 24 расхождения на старте, 0 осталось — список пуст.

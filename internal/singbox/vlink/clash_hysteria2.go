@@ -55,6 +55,17 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 			"password": obfsPass,
 		}
 	}
+	if ports := asString(p["ports"]); ports != "" {
+		if parsed := parseMport(ports); len(parsed) > 0 {
+			anyPorts := make([]any, 0, len(parsed))
+			for _, spec := range parsed {
+				anyPorts = append(anyPorts, spec)
+			}
+			out["server_ports"] = anyPorts
+			out["hop_interval"] = firstNonEmpty(asString(p["hop-interval"]), "10s")
+		}
+	}
+
 	if up, ok := parseMbps(p["up"]); ok {
 		out["up_mbps"] = up
 	}
@@ -62,6 +73,9 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 		out["down_mbps"] = down
 	}
 
+	if len(stream.ALPN()) == 0 {
+		stream.SetALPN([]string{"h3"})
+	}
 	stream.MergeIntoOutbound(out)
 
 	tag := fmt.Sprintf("hy2-%s-%d", host, portN)
