@@ -182,6 +182,17 @@ export function shareStep2Ready(s: {
 	return s.protocol === 'wdtt' ? !!s.password.trim() : !!s.connect.trim();
 }
 
+/**
+ * Шаг 3 у WDTT: VK-хеш абонента обязателен. Мастер создаёт сервер с нуля —
+ * серверных хешей нет ни в одном его поле, и подставить в ссылку нечего
+ * (`LinkPanel` берёт `linkVkHashes` только у уже настроенного сервера).
+ * Пустое поле дало бы ссылку, которая у абонента не заработает.
+ * У FreeTurn поля хеша на шаге нет — там шаг готов всегда.
+ */
+export function shareStep3Ready(s: { protocol: ProxyProtocol; vkHash: string }): boolean {
+	return s.protocol !== 'wdtt' || !!s.vkHash.trim();
+}
+
 /** Тот же критерий для сохранённого конфига: настроен ли сервер раздачи. */
 export function shareConfigSetupComplete(
 	wdtt?: WdttServerConfig,

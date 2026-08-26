@@ -22,16 +22,14 @@
 
 {#if protocol === 'wdtt'}
 	<div class="grid">
-		<div class="field-with-btn">
-			<Input
-				label="Главный пароль"
-				hint="Ключ администрирования, не пароль подключения"
-				bind:value={fields.password}
-				fullWidth
-			/>
-			<Button variant="secondary" size="sm" onclick={() => (fields.password = randomHex(16))}>
-				Сгенерировать
-			</Button>
+		<div class="field-block">
+			<div class="field-with-btn">
+				<Input label="Главный пароль" bind:value={fields.password} fullWidth />
+				<Button variant="secondary" size="sm" onclick={() => (fields.password = randomHex(16))}>
+					Сгенерировать
+				</Button>
+			</div>
+			<p class="field-hint">Ключ администрирования, не пароль подключения</p>
 		</div>
 		<!-- Порт живёт строкой: `bind:value` у `type="number"` приводит значение к
 		     числу, а подсказка WS-19 и проверка готовности работают со строкой. -->
@@ -98,16 +96,29 @@
 	}
 
 	/* Кнопка «Сгенерировать» стоит у своего поля: под общей сеткой она читалась
-	   как относящаяся к соседнему. */
+	   как относящаяся к соседнему. Выравнивание — по НИЖНЕЙ кромке поля, а не
+	   отступом под метку: отступ пришлось бы подгонять под её высоту, а на узкой
+	   колонке метка переносится на две строки. */
 	.field-with-btn {
 		display: flex;
-		align-items: flex-start;
+		align-items: flex-end;
 		gap: 0.375rem;
 		min-width: 0;
 	}
 
-	.field-with-btn :global(.btn) {
-		margin-top: 1.5rem;
+	/* Подпись поля вынесена из `Input` под строку с кнопкой: внутри поля она
+	   уводила бы его нижнюю кромку вниз, и кнопка встала бы под вводом. */
+	.field-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+
+	.field-hint {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-text-muted);
 	}
 
 	.toggle-row {

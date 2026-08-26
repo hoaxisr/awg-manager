@@ -11,7 +11,7 @@
 	import ShareWizardParams from './ShareWizardParams.svelte';
 	import WizardSteps from './WizardSteps.svelte';
 	import { cloneConfig } from './exitConfig';
-	import { addErrorText, apiErrorCode } from './serverClients';
+	import { CLIENT_TEXT, addErrorText, apiErrorCode } from './serverClients';
 	import {
 		commitShareWizard,
 		nextSharePort,
@@ -19,6 +19,7 @@
 		shareLinkGap,
 		shareLinkNeedsConf,
 		shareStep2Ready,
+		shareStep3Ready,
 		wdttCardBlock,
 		DEFAULT_FT_PORT,
 		DEFAULT_WDTT_PORT,
@@ -143,7 +144,10 @@
 
 	const blocked = $derived(protocol === 'wdtt' && !!wdttBlock);
 	const step2Ready = $derived(shareStep2Ready({ protocol, ...fields }));
-	const canNext = $derived(step === 0 ? !blocked : step === 1 ? step2Ready : true);
+	const step3Ready = $derived(shareStep3Ready({ protocol, vkHash: client.vkHash }));
+	const canNext = $derived(
+		step === 0 ? !blocked : step === 1 ? step2Ready : step === 2 ? step3Ready : true,
+	);
 	const hasLink = $derived(!!link || !!linkQwdtt);
 
 	/** Мастер настраивает открытый инстанс, только если протокол не сменили. */
@@ -311,7 +315,14 @@
 						bind:value={client.password}
 						fullWidth
 					/>
-					<Input label="VK-хеш" hint="По желанию" bind:value={client.vkHash} fullWidth />
+					<!-- Хешей у нового сервера нет ни в одном поле: подставить в ссылку
+					     нечего, и без них она у абонента не заработает. -->
+					<Input
+						label="VK-хеш"
+						hint={CLIENT_TEXT.vkHashRequired}
+						bind:value={client.vkHash}
+						fullWidth
+					/>
 				</div>
 			{:else}
 				<div class="grid">

@@ -68,13 +68,17 @@ const SERVER: WdttServerConfig = {
 
 const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER, passwordSet: false };
 
-function mount(users: WdttPanelUserEntry[], running = true) {
+/** Хеши, сохранённые сервером: ровно их ссылка подставит абоненту без своего. */
+const SERVER_HASHES = 'srv-hash-aaa,srv-hash-bbb';
+const SERVER_WITH_HASHES: WdttServerConfig = { ...SERVER, linkVkHashes: SERVER_HASHES };
+
+function mount(users: WdttPanelUserEntry[], running = true, server: WdttServerConfig = SERVER) {
 	apiMock.getWdttServerPanelUsers.mockResolvedValue({ available: true, users });
 	return render(ServerClients, {
 		props: {
 			serverId: 'default',
 			serverName: 'Раздача WDTT',
-			server: SERVER,
+			server,
 			running,
 			locked: async (fn: () => Promise<void>) => {
 				await fn();
@@ -242,7 +246,8 @@ describe('добавление', () => {
 	}
 
 	it('успех со своим паролем даёт TS-05 и закрывает модалку', async () => {
-		mount([ALIVE]);
+		// Хеши у сервера есть: гейт VK-хеша не при чём, проверяется добавление.
+		mount([ALIVE], true, SERVER_WITH_HASHES);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		apiMock.addWdttServerPanelUser.mockResolvedValue({
 			available: true,
@@ -263,7 +268,8 @@ describe('добавление', () => {
 	});
 
 	it('успех со сгенерированным паролем даёт TS-06', async () => {
-		mount([ALIVE]);
+		// Хеши у сервера есть: гейт VK-хеша не при чём, проверяется добавление.
+		mount([ALIVE], true, SERVER_WITH_HASHES);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		apiMock.addWdttServerPanelUser.mockResolvedValue({
 			available: true,
@@ -279,7 +285,8 @@ describe('добавление', () => {
 	});
 
 	it('ADD_NOT_APPLIED показывает SH-26 в модалке и перечитывает список', async () => {
-		mount([ALIVE]);
+		// Хеши у сервера есть: гейт VK-хеша не при чём, проверяется добавление.
+		mount([ALIVE], true, SERVER_WITH_HASHES);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		const err: Error & { body?: unknown } = new Error(
 			'абонент создан, но не записан в файл сервера: read-only file system',
@@ -303,7 +310,8 @@ describe('добавление', () => {
 	});
 
 	it('MAIN_PASSWORD_NOT_SAVED показывает текст бэкенда дословно', async () => {
-		mount([ALIVE]);
+		// Хеши у сервера есть: гейт VK-хеша не при чём, проверяется добавление.
+		mount([ALIVE], true, SERVER_WITH_HASHES);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		const msg = 'абонент создан, но пароль сервера не сохранён — задайте его в настройках сервера: read-only file system';
 		const err: Error & { body?: unknown } = new Error(msg);
@@ -336,8 +344,66 @@ describe('добавление', () => {
 		expect(screen.queryByRole('dialog')).toBeNull();
 	});
 
-	it('пустое имя отправить нельзя, «Отменить» закрывает модалку', async () => {
+	it('у сервера С хешами поле необязательное, подпись называет сами хеши', async () => {
+		mount([ALIVE], true, SERVER_WITH_HASHES);
+		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
+		apiMock.addWdttServerPanelUser.mockResolvedValue({
+			available: true,
+			users: [ALIVE, user({ password: 'gen1', comment: 'Ноутбук' })],
+			reload: 'delivered',
+		});
+
+		const dialog = await openAddModal();
+		// Не обещание «подставятся серверные», а сама строка, которая подставится.
+		expect(dialog.getByText(SERVER_HASHES)).toBeTruthy();
+		expect(dialog.queryByText('Обязательно — без него ссылка не заработает')).toBeNull();
+
+		await fireEvent.input(dialog.getByLabelText('Имя абонента'), { target: { value: 'Ноутбук' } });
+		expect(dialog.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(false);
+		await fireEvent.click(dialog.getByRole('button', { name: 'Добавить' }));
+		await waitFor(() =>
+			expect(apiMock.addWdttServerPanelUser).toHaveBeenCalledWith('default', {
+				comment: 'Ноутбук',
+				password: undefined,
+				vkHash: undefined,
+			}),
+		);
+	});
+
+	it('у сервера БЕЗ хешей поле обязательное: пустым не отправить', async () => {
+		// У SERVER хешей нет — подставлять абоненту нечего.
 		mount([ALIVE]);
+		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
+		apiMock.addWdttServerPanelUser.mockResolvedValue({
+			available: true,
+			users: [ALIVE, user({ password: 'gen1', comment: 'Ноутбук' })],
+			reload: 'delivered',
+		});
+
+		const dialog = await openAddModal();
+		expect(dialog.getByText('Обязательно — без него ссылка не заработает')).toBeTruthy();
+		expect(dialog.queryByText(SERVER_HASHES)).toBeNull();
+
+		await fireEvent.input(dialog.getByLabelText('Имя абонента'), { target: { value: 'Ноутбук' } });
+		expect(dialog.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(true);
+		await fireEvent.click(dialog.getByRole('button', { name: 'Добавить' }));
+		expect(apiMock.addWdttServerPanelUser).not.toHaveBeenCalled();
+
+		await fireEvent.input(dialog.getByLabelText('VK-хеш'), { target: { value: 'own-hash' } });
+		expect(dialog.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(false);
+		await fireEvent.click(dialog.getByRole('button', { name: 'Добавить' }));
+		await waitFor(() =>
+			expect(apiMock.addWdttServerPanelUser).toHaveBeenCalledWith('default', {
+				comment: 'Ноутбук',
+				password: undefined,
+				vkHash: 'own-hash',
+			}),
+		);
+	});
+
+	it('пустое имя отправить нельзя, «Отменить» закрывает модалку', async () => {
+		// Хеши у сервера есть: гейт VK-хеша не при чём, проверяется добавление.
+		mount([ALIVE], true, SERVER_WITH_HASHES);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 
 		const dialog = await openAddModal();

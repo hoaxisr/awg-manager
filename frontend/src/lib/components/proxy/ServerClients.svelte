@@ -340,6 +340,7 @@
 
 <ServerClientAddModal
 	open={addOpen}
+	serverVkHashes={server.linkVkHashes ?? ''}
 	{busy}
 	error={addError}
 	onsubmit={addUser}

@@ -20,6 +20,7 @@ import {
 	shareLinkGap,
 	shareLinkNeedsConf,
 	shareStep2Ready,
+	shareStep3Ready,
 	wdttCardBlock,
 } from './shareWizard';
 
@@ -101,6 +102,18 @@ describe('shareStep2Ready: критерий старта бэкенда', () => 
 				connect: '127.0.0.1:1',
 			}),
 		).toBe(false);
+	});
+});
+
+describe('shareStep3Ready: VK-хеш первого абонента', () => {
+	it('WDTT: пустое поле дальше не пускает, пробелы за значение не считаются', () => {
+		expect(shareStep3Ready({ protocol: 'wdtt', vkHash: '' })).toBe(false);
+		expect(shareStep3Ready({ protocol: 'wdtt', vkHash: '   ' })).toBe(false);
+		expect(shareStep3Ready({ protocol: 'wdtt', vkHash: 'ab12' })).toBe(true);
+	});
+
+	it('FreeTurn: поля хеша на шаге нет — шаг готов и с пустым', () => {
+		expect(shareStep3Ready({ protocol: 'freeturn', vkHash: '' })).toBe(true);
 	});
 });
 
