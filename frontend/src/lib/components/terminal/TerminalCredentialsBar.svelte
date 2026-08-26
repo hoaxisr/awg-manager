@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { ChevronDown } from 'lucide-svelte';
 	import { Button, Card, Toggle } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -19,6 +20,7 @@
 	let password = $state('');
 	let remember = $state(false);
 	let saved = $state(false);
+	let open = $state(true);
 
 	onMount(() => {
 		const stored = loadTerminalAutoLogin();
@@ -27,6 +29,7 @@
 			password = stored.password;
 			remember = true;
 			saved = true;
+			open = false;
 			onchange?.(stored);
 		}
 	});
@@ -71,20 +74,21 @@
 </script>
 
 <Card padding="sm">
-	<div class="head">
-		<div>
-			<h3>Учётные данные shell</h3>
-			<p class="hint">
-				Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки).
-				В терминал они уходят по кнопкам «Логин» и «Пароль» в его заголовке — сами,
-				по виду приглашения, не подставляются: иначе пароль роутера мог бы уехать
-				в чужой запрос (<code>ssh</code>, <code>sudo</code>) внутри той же сессии.
-			</p>
-		</div>
+	<details bind:open>
+	<summary class="head">
+		<h3>Учётные данные shell</h3>
 		{#if saved}
 			<span class="badge">Сохранено</span>
 		{/if}
-	</div>
+		<span class="chevron" aria-hidden="true"><ChevronDown size={16} strokeWidth={2} /></span>
+	</summary>
+
+	<p class="hint">
+		Логин и пароль сохраняются только на время сессии браузера (в памяти вкладки).
+		В терминал они уходят по кнопкам «Логин» и «Пароль» в его заголовке — сами,
+		по виду приглашения, не подставляются: иначе пароль роутера мог бы уехать
+		в чужой запрос (<code>ssh</code>, <code>sudo</code>) внутри той же сессии.
+	</p>
 
 	<div class="form">
 		<label>
@@ -105,22 +109,39 @@
 		<Button variant="primary" onclick={handleSave}>Сохранить</Button>
 		<Button variant="ghost" onclick={handleClear}>Очистить</Button>
 	</div>
+	</details>
 </Card>
 
 <style>
 	.head {
 		display: flex;
-		justify-content: space-between;
-		gap: 0.75rem;
-		align-items: flex-start;
+		gap: 0.5rem;
+		align-items: center;
+		cursor: pointer;
+		list-style: none;
+	}
+	.head::-webkit-details-marker {
+		display: none;
+	}
+	details[open] .head {
 		margin-bottom: 0.75rem;
 	}
+	.chevron {
+		display: inline-flex;
+		flex-shrink: 0;
+		color: var(--color-text-muted);
+		transition: transform var(--t-fast) ease;
+	}
+	details[open] .chevron {
+		transform: rotate(180deg);
+	}
 	h3 {
-		margin: 0 0 0.25rem;
+		margin: 0;
+		margin-right: auto;
 		font-size: 0.95rem;
 	}
 	.hint {
-		margin: 0;
+		margin: 0 0 0.65rem;
 		font-size: 0.8rem;
 		opacity: 0.75;
 		max-width: 52rem;
