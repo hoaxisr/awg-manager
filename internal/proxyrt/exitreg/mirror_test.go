@@ -379,7 +379,7 @@ func TestMirrorWorksWithoutPublisher(t *testing.T) {
 	if err := m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18")); err != nil {
 		t.Fatal(err)
 	}
-	if removed, err := m.Remove("wdttraw-de"); err != nil || !removed {
+	if removed, err := m.Remove("wdttraw-de", "de"); err != nil || !removed {
 		t.Fatalf("снос без издателя: removed=%v err=%v", removed, err)
 	}
 }
@@ -595,14 +595,14 @@ func TestRemoveTakesOnlyTheNamedOwnedRecord(t *testing.T) {
 	before := len(pub.published)
 
 	// Запись с этим id — туннель пользователя, а не наша: снос обязан отказать.
-	if removed, err := m.Remove("awg10"); err != nil || removed {
+	if removed, err := m.Remove("awg10", "de"); err != nil || removed {
 		t.Fatalf("адресный снос тронул чужую запись: removed=%v err=%v", removed, err)
 	}
 	if _, ok := st.m["awg10"]; !ok {
 		t.Fatal("чужой туннель awg10 удалён адресным сносом")
 	}
 
-	removed, err := m.Remove("wdttraw-de")
+	removed, err := m.Remove("wdttraw-de", "de")
 	if err != nil || !removed {
 		t.Fatalf("наша запись обязана быть снесена: removed=%v err=%v", removed, err)
 	}
@@ -619,7 +619,7 @@ func TestRemoveTakesOnlyTheNamedOwnedRecord(t *testing.T) {
 	// Повтор безвреден: при заверенном посеве Sweep успевает раньше, и
 	// Delete зовёт снос по уже пустому месту (требование 4 брифа).
 	published := len(pub.published)
-	if removed, err := m.Remove("wdttraw-de"); err != nil || removed {
+	if removed, err := m.Remove("wdttraw-de", "de"); err != nil || removed {
 		t.Fatalf("повторный снос обязан быть тихим no-op: removed=%v err=%v", removed, err)
 	}
 	if len(pub.published) != published {
@@ -635,7 +635,7 @@ func TestRemoveRefusesUnreadableRecord(t *testing.T) {
 	_ = m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18"))
 	st.getErr = errors.New("битый json")
 
-	removed, err := m.Remove("wdttraw-de")
+	removed, err := m.Remove("wdttraw-de", "de")
 	if err == nil {
 		t.Fatal("нечитаемая запись обязана быть отказом, а не слепым сносом")
 	}
@@ -644,5 +644,35 @@ func TestRemoveRefusesUnreadableRecord(t *testing.T) {
 	}
 	if len(st.deleted) != 0 {
 		t.Fatalf("удаление вслепую: %v", st.deleted)
+	}
+}
+
+// RawTunnelID усекает имя до 20 символов, а длину id ручка создания не
+// ограничивает: два клиента с длинными именами дают ОДИН идентификатор
+// зеркальной записи. Без сверки владельца удаление одного снесло бы живое
+// зеркало другого — карточка исчезла бы у работающего инстанса.
+func TestMirrorRemoveKeepsRowOfAnotherOwner(t *testing.T) {
+	m := NewStoreMirror(newFakeStore(), nil)
+	d := decl("wdttraw-de", "OpkgTun18", "opkgtun18")
+	d.InstanceID = "клиент-с-очень-длинным-именем-один"
+	if err := m.Ensure(d); err != nil {
+		t.Fatal(err)
+	}
+
+	// Сносим от имени ДРУГОГО инстанса с тем же усечённым id.
+	removed, err := m.Remove("wdttraw-de", "клиент-с-очень-длинным-именем-два")
+	if err != nil {
+		t.Fatalf("неожиданная ошибка: %v", err)
+	}
+	if removed {
+		t.Fatal("снесена запись чужого инстанса: совпал усечённый id, но владелец другой")
+	}
+	if _, err := m.Owned(); err != nil {
+		t.Fatalf("запись должна остаться читаемой: %v", err)
+	}
+
+	// От своего владельца — сносится.
+	if removed, err := m.Remove("wdttraw-de", "клиент-с-очень-длинным-именем-один"); err != nil || !removed {
+		t.Fatalf("свою запись снести не удалось: removed=%v err=%v", removed, err)
 	}
 }

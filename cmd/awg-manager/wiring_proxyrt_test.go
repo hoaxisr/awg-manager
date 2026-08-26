@@ -416,7 +416,7 @@ type stubRegistry struct{}
 
 func (stubRegistry) SetDeclared([]exitreg.ExitDecl) error { return nil }
 func (stubRegistry) MarkSeeded(int) error                 { return nil }
-func (stubRegistry) DropMirror(string) error              { return nil }
+func (stubRegistry) DropMirror(string, string) error      { return nil }
 
 type stubSweeper struct{}
 

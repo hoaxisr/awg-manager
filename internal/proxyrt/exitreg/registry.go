@@ -78,7 +78,7 @@ type Mirror interface {
 	// Remove сносит ОДНУ зеркальную запись по id и говорит, была ли она наша.
 	// Отдельно от Sweep: адресный снос — не ведомость, и гейт посева ему не
 	// указ (DropMirror).
-	Remove(id string) (bool, error)
+	Remove(id, ownerInstanceID string) (bool, error)
 }
 
 type record struct {
@@ -247,10 +247,10 @@ func (r *Registry) SetDeclared(list []ExitDecl) error {
 //
 // Под writeMu — по той же причине, что и SetDeclared: два писателя зеркала не
 // имеют права идти внахлёст.
-func (r *Registry) DropMirror(id string) error {
+func (r *Registry) DropMirror(id, ownerInstanceID string) error {
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
-	removed, err := r.mirror.Remove(id)
+	removed, err := r.mirror.Remove(id, ownerInstanceID)
 	if err != nil {
 		return err
 	}

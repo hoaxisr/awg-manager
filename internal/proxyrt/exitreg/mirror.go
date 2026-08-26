@@ -162,7 +162,7 @@ func (m *StoreMirror) Owned() ([]string, error) {
 // Читает точечно (Get/Exists), а не через Owned: строгое перечисление падает
 // целиком от одного битого файла в каталоге, и запись удаляемого инстанса
 // осталась бы сиротой из-за чужой беды.
-func (m *StoreMirror) Remove(id string) (bool, error) {
+func (m *StoreMirror) Remove(id, ownerInstanceID string) (bool, error) {
 	rec, err := m.st.Get(id)
 	if err != nil {
 		if !m.st.Exists(id) {
@@ -174,6 +174,12 @@ func (m *StoreMirror) Remove(id string) (bool, error) {
 		return false, fmt.Errorf("зеркальная запись %s есть, но не читается: %w", id, err)
 	}
 	if rec == nil || !ownedByMirror(*rec) {
+		return false, nil
+	}
+	// Сверка владельца, а не только «наша ли запись». RawTunnelID усекает имя
+	// до 20 символов, и два клиента с длинными именами дают ОДИН id: без этой
+	// проверки удаление одного снесло бы живое зеркало другого.
+	if rec.WdttClientID != ownerInstanceID {
 		return false, nil
 	}
 	if err := m.st.Delete(id); err != nil {

@@ -28,7 +28,7 @@ type fakeRegistry struct {
 	failDrop error
 }
 
-func (f *fakeRegistry) DropMirror(id string) error {
+func (f *fakeRegistry) DropMirror(id, ownerInstanceID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.dropped = append(f.dropped, id)

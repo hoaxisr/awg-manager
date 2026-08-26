@@ -46,7 +46,7 @@ func (f *fakeMirror) Sweep(declared map[string]bool) ([]string, error) {
 
 // Remove — адресный снос: фейк держит ту же дисциплину, что зеркало, — из
 // owned уходит ровно названная запись, чужой id не меняет ничего.
-func (f *fakeMirror) Remove(id string) (bool, error) {
+func (f *fakeMirror) Remove(id, ownerInstanceID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -484,7 +484,7 @@ func (g *gatedMirror) Sweep(declared map[string]bool) ([]string, error) {
 
 func (g *gatedMirror) Owned() ([]string, error) { return nil, nil }
 
-func (g *gatedMirror) Remove(id string) (bool, error) {
+func (g *gatedMirror) Remove(id, ownerInstanceID string) (bool, error) {
 	g.add("remove:" + id)
 	return false, nil
 }
@@ -539,7 +539,7 @@ func TestDropMirrorPassesTheLockedSweepGate(t *testing.T) {
 	m := &fakeMirror{owned: []string{"wdttraw-de", "wdttraw-nl"}}
 	r, j := newReg(m)
 
-	if err := r.DropMirror("wdttraw-de"); err != nil {
+	if err := r.DropMirror("wdttraw-de", "de"); err != nil {
 		t.Fatalf("адресный снос при запертом гейте: %v", err)
 	}
 	if !slices.Equal(m.owned, []string{"wdttraw-nl"}) {
@@ -568,7 +568,7 @@ func TestDropMirrorSurfacesFailureAndKeepsJournalHonest(t *testing.T) {
 	m := &fakeMirror{owned: []string{"wdttraw-de"}, err: errors.New("диск")}
 	r, j := newReg(m)
 
-	if err := r.DropMirror("wdttraw-de"); err == nil {
+	if err := r.DropMirror("wdttraw-de", "de"); err == nil {
 		t.Fatal("отказ зеркала обязан дойти до вызывающего")
 	}
 	if j.has("info:exit-mirror-removed:wdttraw-de") {

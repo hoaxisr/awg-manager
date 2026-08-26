@@ -28,7 +28,7 @@ type RegistryPort interface {
 	// DropMirror снимает ОДНУ зеркальную запись адресно, мимо гейта посева:
 	// массовая уборка при незаверенном посеве не зовётся вовсе, а гейт
 	// монотонен (см. Delete).
-	DropMirror(id string) error
+	DropMirror(id, ownerInstanceID string) error
 }
 
 type SweepPort interface {
@@ -708,7 +708,7 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 	// ничего нет. Отказ не отменяет удаления: инстанса уже нет, откатывать
 	// нечего.
 	if id, ok := mirrorIDOf(removed); ok {
-		if derr := m.deps.Registry.DropMirror(id); derr != nil {
+		if derr := m.deps.Registry.DropMirror(id, removed.ID); derr != nil {
 			m.deps.Journal.Warn("delete", key, "зеркальная запись не убрана: "+derr.Error())
 		}
 	}
