@@ -815,7 +815,9 @@ func (a *app) wireProxyrt() {
 	// серверных ключей нужен ДО конструктора: окно ожидания отчётов
 	// отсчитывается от него.
 	// ref заводится ДО ведомости: её гейт прохода окна спрашивает менеджера,
-	// состоялся ли посев, а сам менеджер строится ниже.
+	// состоялся ли посев, а сам менеджер строится ниже. Окно ведомость заводит
+	// не здесь, а armGrace ПОСЛЕ записи ref.mgr — иначе будильник читал бы
+	// ссылку из своей горутины раньше, чем её проставят.
 	ref := &proxyManagerRef{}
 	book := newProxyFWBook(proxyServerKeys(store), func() bool {
 		return ref.mgr != nil && ref.mgr.SeedInfo().Booted
@@ -859,6 +861,7 @@ func (a *app) wireProxyrt() {
 	})
 	ref.mgr = mgr
 	a.proxyMgr = mgr
+	book.armGrace() // всё, что читает гейт окна, уже записано
 
 	logTail := proxyLogTail(mgr.Records)
 	snapshots := wdttlink.Snapshots(links.snapshot)

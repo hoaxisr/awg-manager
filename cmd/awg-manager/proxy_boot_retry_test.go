@@ -84,6 +84,29 @@ func TestProxyNudgeWakesWorkersOnceBooted(t *testing.T) {
 	}
 }
 
+// Конструктор ведомости НЕ заводит окно: гейт прохода читает ссылку на
+// менеджера, а её проставляют позже конструктора. Будильник, заведённый
+// раньше записи, читал бы поле из своей горутины без синхронизации —
+// формальная гонка. Страж структурный: вернуть завод в конструктор он не даст.
+func TestProxyFWBookConstructorDoesNotArmGrace(t *testing.T) {
+	armed := 0
+	prev := proxyFWAfterFunc
+	defer func() { proxyFWAfterFunc = prev }()
+	proxyFWAfterFunc = func(time.Duration, func()) *time.Timer {
+		armed++
+		return nil
+	}
+
+	b := newProxyFWBook([]string{"wdtt-server:s1"}, func() bool { return true })
+	if armed != 0 {
+		t.Fatalf("конструктор завёл окно (%d раз) — будильник увидел бы недописанную ссылку", armed)
+	}
+	b.armGrace()
+	if armed != 1 {
+		t.Fatalf("armGrace завёл окно %d раз, ждали 1", armed)
+	}
+}
+
 // Н1, вторая половина: до состоявшегося посева проход окна ожидания обязан
 // быть отложен. Пустая ведомость в этот момент означает не «серверов нет», а
 // «объявить их некому», и приведение к пустому объединению закрыло бы
@@ -110,6 +133,7 @@ func TestProxyFWBookGraceWaitsForSeed(t *testing.T) {
 	}
 	booted := false
 	b := newProxyFWBook([]string{"wdtt-server:s1"}, func() bool { return booted })
+	b.armGrace()
 	b.list = fw.list
 	b.apply = fw.reconcile
 

@@ -321,6 +321,11 @@ var proxyFWAfterFunc = time.AfterFunc
 
 // newProxyFWBook — ведомость на список ключей серверных инстансов (тех, у чьих
 // ролей есть ресурс input_port). Список знает фабрика.
+//
+// Окно ожидания НЕ заводится здесь: гейт прохода спрашивает менеджера, а тот
+// строится позже конструктора, и будильник, заведённый раньше записи ссылки,
+// читал бы её из другой горутины без синхронизации. Заводит окно armGrace —
+// после того, как ссылка проставлена.
 func newProxyFWBook(serverKeys []string, booted func() bool) *proxyFWBook {
 	b := &proxyFWBook{
 		want:    map[string][]netres.PortSpec{},
@@ -332,9 +337,13 @@ func newProxyFWBook(serverKeys []string, booted func() bool) *proxyFWBook {
 	for _, k := range serverKeys {
 		b.pending[k] = true
 	}
-	proxyFWAfterFunc(proxyFWGrace, b.graceOver)
 	return b
 }
+
+// armGrace заводит окно ожидания отчётов. Зовётся ОДИН раз и только когда всё,
+// что читает гейт, уже записано: создание горутины будильника и есть та
+// синхронизация, которой не было бы при заводе из конструктора.
+func (b *proxyFWBook) armGrace() { proxyFWAfterFunc(proxyFWGrace, b.graceOver) }
 
 // graceOver — окно ожидания истекло: один проход приведения к объединению.
 // Ведомость перестаёт быть пассивной, и это осознанная цена. Без прохода

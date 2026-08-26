@@ -36,7 +36,9 @@ func wdttServer(id string) Record {
 		Users:    []ServerUser{{Password: "u1", Comment: "Петя", ExpiresAt: 42}},
 		LinkPeer: "1.2.3.4:56002", LinkVKHashes: "vh", StatsLog: "disk",
 		WdttServer: &roles.WdttServerConfig{
-			Listen: "0.0.0.0:56002", Password: "pw", NatMode: "none", RelayMode: "wg",
+			// 56002 — ДЕФОЛТ store: фикстура на нём не отличала бы чтение
+			// поля от подстановки дефолта.
+			Listen: "0.0.0.0:57002", Password: "pw", NatMode: "none", RelayMode: "wg",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 			RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 		}}
@@ -648,8 +650,10 @@ func TestNormalizationTrimsEveryField(t *testing.T) {
 	ft.FreeTurnClient.Listen = "  127.0.0.1:9001  "
 	ft.FreeTurnClient.Peer = "  5.6.7.8:56000  "
 	ft.FreeTurnClient.Sub = "  https://sub.example  "
+	// 56000 — ДЕФОЛТ listen freeturn-сервера: на нём тест не отличил бы
+	// подрезку пробелов от подстановки дефолта.
 	fs := Record{ID: "fs", Kind: KindFreeTurnServer, Name: "S",
-		FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "  0.0.0.0:56000  "}}
+		FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "  0.0.0.0:57000  "}}
 	if _, err := s.Replace(func(st *State) error {
 		st.Records = append(st.Records, r, ft, fs)
 		return nil
@@ -670,7 +674,7 @@ func TestNormalizationTrimsEveryField(t *testing.T) {
 		t.Fatalf("freeturn-клиент: %+v", fc)
 	}
 	fsc, _ := st.Records[2].FreeTurnServerConfig()
-	if fsc.Listen != "0.0.0.0:56000" {
+	if fsc.Listen != "0.0.0.0:57000" {
 		t.Fatalf("freeturn-сервер: %+v", fsc)
 	}
 }
@@ -705,7 +709,9 @@ func TestServerDefaultsRelayAndNatMode(t *testing.T) {
 	s := newStore(t)
 	r := wdttServer("d")
 	r.WdttServer.RelayMode, r.WdttServer.NatMode = "", ""
-	r.WdttServer.Listen = "  0.0.0.0:56002  "
+	// Listen НЕ равен дефолту (0.0.0.0:56002): иначе подстановка дефолта
+	// вместо подрезки пробелов прошла бы незамеченной.
+	r.WdttServer.Listen = "  0.0.0.0:57002  "
 	if _, err := s.Replace(func(st *State) error {
 		st.Records = append(st.Records, r)
 		return nil
@@ -716,7 +722,7 @@ func TestServerDefaultsRelayAndNatMode(t *testing.T) {
 	c, _ := st.Records[0].WdttServerConfig()
 	// natMode: дефолт "full" — паритет со старым миром (wdtt.normalizeNatMode);
 	// подробности и регресс миграции — в TestNatModeDefaultIsFullParity.
-	if c.RelayMode != "wg" || c.NatMode != "full" || c.Listen != "0.0.0.0:56002" {
+	if c.RelayMode != "wg" || c.NatMode != "full" || c.Listen != "0.0.0.0:57002" {
 		t.Fatalf("дефолты сервера: %+v", c)
 	}
 }

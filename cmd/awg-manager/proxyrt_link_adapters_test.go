@@ -888,6 +888,7 @@ func bookOver(t *testing.T, fw *fakeListenFW, keys ...string) (*proxyFWBook, fun
 		return nil
 	}
 	b := newProxyFWBook(keys, func() bool { return true })
+	b.armGrace()
 	proxyFWAfterFunc = prev
 	b.list = fw.list
 	b.apply = fw.reconcile
