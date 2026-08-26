@@ -200,7 +200,16 @@ func post(t *testing.T, body string) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/api/proxyrt/x", strings.NewReader(body))
 }
 
+// serverRecord — сервер с сохранёнными хешами ссылки: без них генерация
+// отвергается (WDTT_LINK_NO_VK_HASHES), и тесты про режим, порт и запись
+// падали бы не на своей причине. Запись БЕЗ хешей строит serverRecordNoHashes.
 func serverRecord(cfg roles.WdttServerConfig, users ...instancestore.ServerUser) instancestore.Record {
+	rec := serverRecordNoHashes(cfg, users...)
+	rec.LinkVKHashes = "srv-hash-a,srv-hash-b"
+	return rec
+}
+
+func serverRecordNoHashes(cfg roles.WdttServerConfig, users ...instancestore.ServerUser) instancestore.Record {
 	return instancestore.Record{
 		ID: "default", Kind: instancestore.KindWdttServer, Name: "Сервер",
 		Enabled: true, Users: users, WdttServer: &cfg,
@@ -957,5 +966,30 @@ func TestImport_NormalizesEmptyMode(t *testing.T) {
 	}
 	if len(mut.created) != 1 || mut.created[0].WdttClient.Mode != ConnModeWG {
 		t.Fatalf("режим импортированной записи: %+v", mut.created)
+	}
+}
+
+
+// Ссылка без VK-хешей синтаксически верна, но у абонента не работает:
+// транспорт wdtt держится на звонках VK. Отдать такую ссылку значит сообщить
+// о поломке последнему, кто может её исправить, — самому абоненту.
+func TestLink_NoVKHashesRefused(t *testing.T) {
+	rec := serverRecordNoHashes(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
+		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+	h, _, _, _, _ := newTestHandler(t, rec)
+
+	rr := httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent"}`), rec.Key())
+	_, msg, code := decodeEnvelope(t, rr)
+	if code != "WDTT_LINK_NO_VK_HASHES" {
+		t.Fatalf("code = %q (%s), ждали WDTT_LINK_NO_VK_HASHES", code, msg)
+	}
+
+	// Хеши из запроса — достаточное основание: своих у сервера нет, но абонент
+	// принёс свои.
+	rr = httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent","vkHashes":["own-hash"]}`), rec.Key())
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ при хешах из запроса: %s (%s)", code, msg)
 	}
 }

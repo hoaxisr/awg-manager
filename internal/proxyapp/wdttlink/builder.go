@@ -154,6 +154,13 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if len(hashes) == 0 {
 		hashes = splitHashes(rec.LinkVKHashes)
 	}
+	// Ссылка без хешей собирается синтаксически верной, но у абонента не
+	// работает: транспорт wdtt держится на звонках VK. Молчать здесь значит
+	// отдать нерабочую ссылку тому, кто узнает об этом последним — абоненту.
+	if len(splitHashes(strings.Join(hashes, ","))) == 0 {
+		return nil, &LinkError{Code: "WDTT_LINK_NO_VK_HASHES",
+			Msg: "укажите VK-хеши: без них ссылка не заработает"}
+	}
 
 	link, err := EncodeLink(peer, cfg.WgPort, linkPassword, hashes, name)
 	if err != nil {
