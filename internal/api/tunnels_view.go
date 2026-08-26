@@ -12,7 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // stateToStatus converts a tunnel State to the status string sent to the frontend.
@@ -237,7 +236,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
 		// WDTT Raw rows are appended below with live iface/status from wdtt.
-		if stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+		if stored != nil && stored.Backend == backendWdttRaw {
 			continue
 		}
 

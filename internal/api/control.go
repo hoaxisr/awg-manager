@@ -14,7 +14,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -93,7 +92,7 @@ func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	stored, err := h.store.Get(id)
-	if err != nil || stored == nil || stored.Backend != wdtt.BackendWdttRaw {
+	if err != nil || stored == nil || stored.Backend != backendWdttRaw {
 		return false
 	}
 	clientID := strings.TrimSpace(stored.WdttClientID)

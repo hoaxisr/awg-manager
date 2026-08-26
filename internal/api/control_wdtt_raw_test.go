@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 type enablerCall struct {
@@ -37,7 +36,7 @@ func controlWithRawTunnel(t *testing.T, en ProxyInstanceEnabler) *ControlHandler
 	if err := store.Save(&storage.AWGTunnel{
 		ID:           "wdttraw-nl",
 		Name:         "NL",
-		Backend:      wdtt.BackendWdttRaw,
+		Backend:      backendWdttRaw,
 		WdttClientID: "nl",
 	}); err != nil {
 		t.Fatal(err)

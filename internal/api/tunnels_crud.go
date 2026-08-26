@@ -21,7 +21,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // writeConfigFile writes config content to file.
@@ -190,7 +189,7 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
 		response.Success(w, h.buildWdttRawResponse(stored))
 		return
 	}
@@ -365,7 +364,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if existing.Backend == wdtt.BackendWdttRaw {
+	if existing.Backend == backendWdttRaw {
 		updated := *existing
 		if req.ConnectivityCheck != nil {
 			updated.ConnectivityCheck = req.ConnectivityCheck
@@ -581,7 +580,7 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
 		tunnelName := stored.Name
 		if err := h.store.Delete(id); err != nil {
 			response.Error(w, err.Error(), "DELETE_FAILED")

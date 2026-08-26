@@ -7,7 +7,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 func TestSyncLinkedAwgTunnelEndpoints(t *testing.T) {
@@ -195,7 +194,7 @@ func proxyStateStore(t *testing.T) *storage.AWGTunnelStore {
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	for _, tun := range []*storage.AWGTunnel{
 		{ID: "awgm-wd", Name: "WD", WdttClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
-		{ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a", Backend: wdtt.BackendWdttRaw},
+		{ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a", Backend: backendWdttRaw},
 		{ID: "awgm-ft", Name: "FT", FreeTurnClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9001"}},
 	} {
 		if err := store.Save(tun); err != nil {
@@ -297,7 +296,7 @@ func TestSyncLinkedProxyEndpointsSkipsMirror(t *testing.T) {
 	store := proxyStateStore(t)
 	mirror := &storage.AWGTunnel{
 		ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a",
-		Backend: wdtt.BackendWdttRaw,
+		Backend: backendWdttRaw,
 		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},
 	}
 	if err := store.Save(mirror); err != nil {

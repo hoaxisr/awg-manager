@@ -9,7 +9,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 type linkedTunnelPredicate func(storage.AWGTunnel) bool
@@ -220,7 +219,7 @@ func linkedProxyPredicate(field LinkedField, clientID string) (linkedTunnelPredi
 // Паритет tunnelLinkedAwgOnly (wdtt_linked.go:29): raw-зеркало WDTT — не
 // туннель роутера, поднимать и опускать его нечем.
 func linkedProxyLifecycle(tun storage.AWGTunnel, field LinkedField) bool {
-	return field != LinkedWdtt || tun.Backend != wdtt.BackendWdttRaw
+	return field != LinkedWdtt || tun.Backend != backendWdttRaw
 }
 
 // SyncLinkedProxyEndpoints — экспорт для адаптера прокси-рантайма (план 5):
