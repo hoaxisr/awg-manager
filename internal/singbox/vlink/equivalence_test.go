@@ -393,6 +393,105 @@ var eqScenarios = []eqScenario{
 			}
 		}]}`,
 	},
+	{
+		name: "trojan-ws-tls",
+		canonical: `{
+			"type": "trojan",
+			"server": "t1.example.com",
+			"server_port": 443,
+			"password": "trojan-secret",
+			"transport": {
+				"type": "ws",
+				"path": "/t",
+				"headers": {"Host": "t1.example.com"}
+			},
+			"tls": {"enabled": true, "server_name": "sni.example.com"}
+		}`,
+		link: "trojan://trojan-secret@t1.example.com:443" +
+			"?type=ws&path=%2Ft&sni=sni.example.com#t1",
+		clash: `proxies:
+  - name: t1
+    type: trojan
+    server: t1.example.com
+    port: 443
+    password: trojan-secret
+    network: ws
+    sni: sni.example.com
+    ws-opts:
+      path: /t
+`,
+		xray: `{"outbounds":[{
+			"protocol": "trojan",
+			"tag": "t1",
+			"settings": {"servers": [{
+				"address": "t1.example.com",
+				"port": 443,
+				"password": "trojan-secret"
+			}]},
+			"streamSettings": {
+				"network": "ws",
+				"security": "tls",
+				"tlsSettings": {"serverName": "sni.example.com"},
+				"wsSettings": {"path": "/t"}
+			}
+		}]}`,
+	},
+	{
+		name: "ss-plain",
+		canonical: `{
+			"type": "shadowsocks",
+			"server": "ss1.example.com",
+			"server_port": 8388,
+			"method": "aes-256-gcm",
+			"password": "secret"
+		}`,
+		// base64("aes-256-gcm:secret") = YWVzLTI1Ni1nY206c2VjcmV0
+		link: "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss1.example.com:8388#ss1",
+		clash: `proxies:
+  - name: ss1
+    type: ss
+    server: ss1.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+`,
+		xray: `{"outbounds":[{
+			"protocol": "shadowsocks",
+			"tag": "ss1",
+			"settings": {"servers": [{
+				"address": "ss1.example.com",
+				"port": 8388,
+				"method": "aes-256-gcm",
+				"password": "secret"
+			}]}
+		}]}`,
+	},
+	{
+		name: "ss-obfs",
+		canonical: `{
+			"type": "shadowsocks",
+			"server": "ss2.example.com",
+			"server_port": 8388,
+			"method": "chacha20-ietf-poly1305",
+			"password": "secret2",
+			"plugin": "obfs-local",
+			"plugin_opts": "obfs=http;obfs-host=o.example.com"
+		}`,
+		link: "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpzZWNyZXQy@ss2.example.com:8388" +
+			"?plugin=obfs-local%3Bobfs%3Dhttp%3Bobfs-host%3Do.example.com#ss2",
+		clash: `proxies:
+  - name: ss2
+    type: ss
+    server: ss2.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: secret2
+    plugin: obfs
+    plugin-opts:
+      mode: http
+      host: o.example.com
+`,
+	},
 }
 
 // eqDiff — одно расхождение между эталоном и выходом пути.

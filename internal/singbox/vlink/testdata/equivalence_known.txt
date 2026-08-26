@@ -24,3 +24,9 @@ vless-ws-tls-ed amnezia transport missing
 vless-ws-tls-ed xray transport.max_early_data missing
 vless-ws-tls-ed xray transport.path differs
 vless-xhttp xray transport missing
+
+# --- trojan / shadowsocks, задача 3 ----------------------------------------
+# xray: общий слой при пустом host= подставляет headers.Host = имя сервера
+# (stream.go, defaultHost), xray-путь не подставляет ничего. Оба варианта
+# рабочие, но результат разный — это расхождение путей, а не поломка.
+trojan-ws-tls xray transport.headers missing
