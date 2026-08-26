@@ -110,7 +110,8 @@ var eqScenarios = []eqScenario{
 				"type": "ws",
 				"path": "/ws",
 				"headers": {"Host": "cdn2.example.com"},
-				"max_early_data": 2048
+				"max_early_data": 2048,
+				"early_data_header_name": "Sec-WebSocket-Protocol"
 			},
 			"tls": {
 				"enabled": true,
@@ -136,7 +137,9 @@ var eqScenarios = []eqScenario{
     client-fingerprint: chrome
     skip-cert-verify: true
     ws-opts:
-      path: "/ws?ed=2048"
+      path: /ws
+      max-early-data: 2048
+      early-data-header-name: Sec-WebSocket-Protocol
       headers:
         Host: cdn2.example.com
 `,
@@ -217,6 +220,7 @@ var eqScenarios = []eqScenario{
 				"tlsSettings": {"serverName": "h3.example.com", "fingerprint": "chrome"}
 			}
 		}]}`,
+		amnezia: true,
 	},
 	{
 		name: "vless-httpupgrade",
@@ -256,6 +260,7 @@ var eqScenarios = []eqScenario{
 			}]},
 			"streamSettings": {"network": "httpupgrade"}
 		}]}`,
+		amnezia: true,
 	},
 	{
 		name: "vless-http",
@@ -307,6 +312,7 @@ var eqScenarios = []eqScenario{
 				"httpSettings": {"path": "/h", "host": ["h5.example.com"]}
 			}
 		}]}`,
+		amnezia: true,
 	},
 	{
 		name: "vless-grpc-reality-nofp",
@@ -377,6 +383,16 @@ var eqScenarios = []eqScenario{
 		}`,
 		link: "vless://11111111-2222-3333-4444-555555555555@s7.example.com:443" +
 			"?type=tcp&security=tls&sni=s7.example.com&bind_interface=nwg0#s7",
+		clash: `proxies:
+  - name: s7
+    type: vless
+    server: s7.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    servername: s7.example.com
+    interface-name: nwg0
+`,
 		xray: `{"outbounds":[{
 			"protocol": "vless",
 			"tag": "s7",
@@ -392,6 +408,7 @@ var eqScenarios = []eqScenario{
 				"sockopt": {"interface": "nwg0"}
 			}
 		}]}`,
+		amnezia: true,
 	},
 	{
 		name: "trojan-ws-tls",
@@ -645,8 +662,10 @@ func loadKnownDivergences(t *testing.T) map[string]bool {
 }
 
 // scenarioRenderings собирает пары формат→вход. Рендеринг sing-box JSON
-// строится из эталона механически (эталон и есть желаемый вход) — эта
-// клетка проверяет детекцию, валидацию и сквозной проход raw-копии.
+// строится из эталона механически (эталон и есть желаемый вход). По
+// значениям клетка тавтологична; проверяет она только то, что raw-копию
+// никто не переписал по дороге, и что аутбаунд проходит валидацию.
+// Детекция формата в тест не входит: parseVia зовёт парсеры напрямую.
 // Amnezia-рендеринг — обёртка vpn://base64 над Xray-фикстурой: внутренний
 // формат vpn:// и есть Xray-конфиг.
 func scenarioRenderings(sc eqScenario) map[string]string {
@@ -737,6 +756,13 @@ func TestPathEquivalence(t *testing.T) {
 				diffMaps("", canon, got, &diffs)
 				for _, d := range diffs {
 					key := fmt.Sprintf("%s %s %s %s", sc.name, format, d.field, d.kind)
+					// Для differs ключ несёт и значения: иначе строка ledger
+					// прикрывает ЛЮБОЕ расхождение в этом поле навсегда.
+					if d.kind == "differs" {
+						w, _ := json.Marshal(d.want)
+						g, _ := json.Marshal(d.got)
+						key += fmt.Sprintf(" %s->%s", w, g)
+					}
 					if known[key] {
 						seen[key] = true
 						continue
