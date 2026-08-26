@@ -4,6 +4,8 @@
 # Список может только сокращаться: исчезнувшее расхождение валит тест,
 # пока строка не удалена. Новая строка добавляется ТОЛЬКО после ручной
 # проверки, что это дефект пути, а не ошибка фикстуры.
+#
+# 2026-08-26: 15 расхождений на старте.
 
 # --- vless, задача 2 -------------------------------------------------------
 # xray: convertXrayOutbound знает только ws/grpc/http (xray.go:361-389) —
@@ -14,6 +16,24 @@
 # link/clash/amnezia: при reality без fingerprint не подставляют utls, а движок
 # без него REALITY не поднимет ("uTLS is required by reality client",
 # common/tls/reality_client.go:60). Xray-путь единственный, кто ставит дефолт.
+# --- trojan / shadowsocks, задача 3 ----------------------------------------
+# xray: общий слой при пустом host= подставляет headers.Host = имя сервера
+# (stream.go, defaultHost), xray-путь не подставляет ничего. Оба варианта
+# рабочие, но результат разный — это расхождение путей, а не поломка.
+# --- hysteria2 / mieru, задача 4 -------------------------------------------
+# clash: путь строит TLS общим слоем и теряет hysteria2-дефолт alpn ["h3"],
+# который share-путь ставит всегда (hysteria2.go:63). Движок сам ALPN не
+# подставляет (в protocol/hysteria2 и sing-quic "h3" не встречается), так что
+# clash-аутбаунд уходит с пустым ALPN — типовой сервер такое рукопожатие
+# отвергает. Железом не проверялось.
+# clash: mihomo-поле ports (port hopping) не читается вовсе — share-путь
+# разворачивает mport в server_ports + hop_interval, clash-путь ничего.
+
+hy2-obfs clash tls.alpn missing
+hy2-ports clash hop_interval missing
+hy2-ports clash server_ports missing
+hy2-ports clash tls.alpn missing
+trojan-ws-tls xray transport.headers missing
 vless-bind-interface xray bind_interface missing
 vless-grpc-reality-nofp amnezia tls.utls missing
 vless-grpc-reality-nofp clash tls.utls missing
@@ -24,22 +44,3 @@ vless-ws-tls-ed amnezia transport missing
 vless-ws-tls-ed xray transport.max_early_data missing
 vless-ws-tls-ed xray transport.path differs
 vless-xhttp xray transport missing
-
-# --- trojan / shadowsocks, задача 3 ----------------------------------------
-# xray: общий слой при пустом host= подставляет headers.Host = имя сервера
-# (stream.go, defaultHost), xray-путь не подставляет ничего. Оба варианта
-# рабочие, но результат разный — это расхождение путей, а не поломка.
-trojan-ws-tls xray transport.headers missing
-
-# --- hysteria2 / mieru, задача 4 -------------------------------------------
-# clash: путь строит TLS общим слоем и теряет hysteria2-дефолт alpn ["h3"],
-# который share-путь ставит всегда (hysteria2.go:63). Движок сам ALPN не
-# подставляет (в protocol/hysteria2 и sing-quic "h3" не встречается), так что
-# clash-аутбаунд уходит с пустым ALPN — типовой сервер такое рукопожатие
-# отвергает. Железом не проверялось.
-# clash: mihomo-поле ports (port hopping) не читается вовсе — share-путь
-# разворачивает mport в server_ports + hop_interval, clash-путь ничего.
-hy2-obfs clash tls.alpn missing
-hy2-ports clash hop_interval missing
-hy2-ports clash server_ports missing
-hy2-ports clash tls.alpn missing
