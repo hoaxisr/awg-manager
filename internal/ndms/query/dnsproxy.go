@@ -111,6 +111,10 @@ func (s *DNSProxyStore) fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) 
 	default:
 		return nil, fmt.Errorf("dns-proxy routes: unexpected JSON shape, first byte %q", trimmed[0])
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Group < out[j].Group })
+	// SliceStable, а не Slice: относительный порядок строк внутри одной группы
+	// — это приоритет выбора туннеля (порядок строк `dns-proxy route` в
+	// running-config). Нестабильная сортировка его перемешивала, и diff считал
+	// приоритет по случайной выдаче (#801).
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Group < out[j].Group })
 	return out, nil
 }

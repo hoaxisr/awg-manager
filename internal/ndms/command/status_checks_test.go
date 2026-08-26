@@ -86,8 +86,8 @@ func TestMutators_SurfaceNestedErrors(t *testing.T) {
 		{"SetStaticNAT", respStaticNATUnknown, func(p *fakePoster) error {
 			return newNATCommandsWith(p).SetStaticNAT(ctx, "AwgmNoSeg", "ISP")
 		}},
-		{"UpsertDNSRoutes", respDNSRouteNoIface, func(p *fakePoster) error {
-			return newDNSRouteCommandsWith(p).UpsertRoutes(ctx, []DNSRouteSpec{{Group: "g", Interface: "OpkgTun42"}})
+		{"ReplaceDNSRoutes", respDNSRouteNoIface, func(p *fakePoster) error {
+			return newDNSRouteCommandsWith(p).ReplaceRoutes(ctx, nil, []DNSRouteSpec{{Group: "g", Interface: "OpkgTun42"}})
 		}},
 		{"UpsertFQDNGroup", respGroupNoInput, func(p *fakePoster) error {
 			return newObjectGroupCommandsWith(p).UpsertGroup(ctx, FQDNGroupMutation{Name: "g", AddIncludes: []string{"example.com"}})

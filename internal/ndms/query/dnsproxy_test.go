@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -110,5 +111,34 @@ func TestDNSProxyStore_InvalidateAllForcesRefetch(t *testing.T) {
 	_, _ = s.List(context.Background())
 	if fg.Calls(dnsProxyPath) != 2 {
 		t.Errorf("calls: %d", fg.Calls(dnsProxyPath))
+	}
+}
+
+// Порядок строк внутри одной группы — это приоритет выбора туннеля. Сортировка
+// по имени группы обязана его сохранять, иначе diff считает приоритет по
+// случайной выдаче (#801).
+func TestDNSProxyStore_KeepsIntraGroupOrder(t *testing.T) {
+	fg := NewFakeGetter()
+	fg.SetJSON("/show/sc/dns-proxy/route", `[
+		{"group":"b_p1","interface":"OpkgTun9","index":"i9"},
+		{"group":"a_p1","interface":"Wireguard3","index":"i3"},
+		{"group":"a_p1","interface":"Wireguard0","index":"i0"},
+		{"group":"a_p1","interface":"Wireguard2","index":"i2"},
+		{"group":"a_p1","interface":"Wireguard1","index":"i1"}
+	]`)
+	s := NewDNSProxyStore(fg, NopLogger(), func() bool { return true })
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var order []string
+	for _, r := range got {
+		if r.Group == "a_p1" {
+			order = append(order, r.Interface)
+		}
+	}
+	want := []string{"Wireguard3", "Wireguard0", "Wireguard2", "Wireguard1"}
+	if fmt.Sprint(order) != fmt.Sprint(want) {
+		t.Errorf("порядок внутри группы = %v, want %v", order, want)
 	}
 }
