@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -15,14 +16,20 @@ type XrayOutbound struct {
 }
 
 type XrayStream struct {
-	Network         string             `json:"network"`
-	Security        string             `json:"security"`
-	TLSSettings     *XrayTLSConfig     `json:"tlsSettings"`
-	RealitySettings *XrayRealityConfig `json:"realitySettings"`
-	WSSettings      *XrayWSConfig      `json:"wsSettings"`
-	GRPCSettings    *XrayGRPCConfig    `json:"grpcSettings"`
-	HTTPSettings    *XrayHTTPConfig    `json:"httpSettings"`
-	Sockopt         map[string]any     `json:"sockopt"`
+	Network             string             `json:"network"`
+	Security            string             `json:"security"`
+	TLSSettings         *XrayTLSConfig     `json:"tlsSettings"`
+	RealitySettings     *XrayRealityConfig `json:"realitySettings"`
+	WSSettings          *XrayWSConfig      `json:"wsSettings"`
+	GRPCSettings        *XrayGRPCConfig    `json:"grpcSettings"`
+	HTTPSettings        *XrayHTTPConfig    `json:"httpSettings"`
+	HTTPUpgradeSettings *XrayWSConfig      `json:"httpupgradeSettings"`
+	// xhttp несёт настройки плоско (xmux, xPaddingBytes, ...) и/или внутри
+	// "extra" — ключи в обеих формах те же, что в share-ссылке, поэтому объект
+	// уезжает в разбор целиком.
+	XHTTPSettings     json.RawMessage `json:"xhttpSettings"`
+	SplitHTTPSettings json.RawMessage `json:"splithttpSettings"`
+	Sockopt           map[string]any  `json:"sockopt"`
 }
 
 type XrayTLSConfig struct {
@@ -37,17 +44,16 @@ type XrayRealityConfig struct {
 	PublicKey   string `json:"publicKey"`
 	ShortID     string `json:"shortId"`
 	Fingerprint string `json:"fingerprint"`
-	SpiderX     string `json:"spiderX"`
 }
 
 type XrayWSConfig struct {
+	Host    string            `json:"host"`
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers"`
 }
 
 type XrayGRPCConfig struct {
 	ServiceName string `json:"serviceName"`
-	MultiMode   bool   `json:"multiMode"`
 }
 
 type XrayHTTPConfig struct {
@@ -271,6 +277,12 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = vn.Address
 		port = vn.Port
 
+		if user.ID == "" {
+			return nil, fmt.Errorf("vless: missing uuid")
+		}
+		if err := checkVlessEncryption(user.Encryption); err != nil {
+			return nil, err
+		}
 		sbOutbound["type"] = "vless"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -288,6 +300,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = srv.Address
 		port = srv.Port
 
+		if srv.Password == "" {
+			return nil, fmt.Errorf("trojan: missing password")
+		}
 		sbOutbound["type"] = "trojan"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -302,6 +317,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = srv.Address
 		port = srv.Port
 
+		if srv.Method == "" || srv.Password == "" {
+			return nil, fmt.Errorf("shadowsocks: missing method or password")
+		}
 		sbOutbound["type"] = "shadowsocks"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -312,81 +330,21 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		return nil, fmt.Errorf("unsupported protocol: %s", proto)
 	}
 
-	// Process StreamSettings (TLS, Reality, WS, gRPC, etc.)
+	if server == "" {
+		return nil, fmt.Errorf("%s: missing server", proto)
+	}
+	if port == 0 {
+		return nil, fmt.Errorf("%s: missing or invalid port", proto)
+	}
+
+	// Транспорт и TLS собирает общий слой — тот же, что у share-ссылок и
+	// Clash. Своей реализации здесь больше нет.
 	if ob.StreamSettings != nil {
-		stream := ob.StreamSettings
-		sec := strings.ToLower(stream.Security)
-
-		if sec == "reality" && stream.RealitySettings != nil {
-			rs := stream.RealitySettings
-			tlsMap := map[string]any{
-				"enabled":     true,
-				"server_name": rs.ServerName,
-			}
-			fp := rs.Fingerprint
-			if fp == "" {
-				fp = "chrome"
-			}
-			tlsMap["utls"] = map[string]any{
-				"enabled":     true,
-				"fingerprint": fp,
-			}
-			tlsMap["reality"] = map[string]any{
-				"enabled":    true,
-				"public_key": rs.PublicKey,
-				"short_id":   rs.ShortID,
-			}
-			sbOutbound["tls"] = tlsMap
-		} else if (sec == "tls" || sec == "true") && stream.TLSSettings != nil {
-			ts := stream.TLSSettings
-			tlsMap := map[string]any{
-				"enabled":     true,
-				"server_name": ts.ServerName,
-			}
-			if ts.AllowInsecure {
-				tlsMap["insecure"] = true
-			}
-			if len(ts.ALPN) > 0 {
-				tlsMap["alpn"] = ts.ALPN
-			}
-			if ts.Fingerprint != "" {
-				tlsMap["utls"] = map[string]any{
-					"enabled":     true,
-					"fingerprint": ts.Fingerprint,
-				}
-			}
-			sbOutbound["tls"] = tlsMap
+		stream, err := BuildStreamFromQuery(xrayStreamToValues(ob.StreamSettings, server), server)
+		if err != nil {
+			return nil, fmt.Errorf("xray: %w", err)
 		}
-
-		net := strings.ToLower(stream.Network)
-		if net == "ws" && stream.WSSettings != nil {
-			ws := stream.WSSettings
-			transportMap := map[string]any{
-				"type": "ws",
-				"path": ws.Path,
-			}
-			if len(ws.Headers) > 0 {
-				transportMap["headers"] = ws.Headers
-			}
-			sbOutbound["transport"] = transportMap
-		} else if net == "grpc" && stream.GRPCSettings != nil {
-			grpc := stream.GRPCSettings
-			transportMap := map[string]any{
-				"type":         "grpc",
-				"service_name": grpc.ServiceName,
-			}
-			sbOutbound["transport"] = transportMap
-		} else if (net == "http" || net == "h2") && stream.HTTPSettings != nil {
-			httpConfig := stream.HTTPSettings
-			transportMap := map[string]any{
-				"type": "http",
-				"path": httpConfig.Path,
-			}
-			if len(httpConfig.Host) > 0 {
-				transportMap["host"] = httpConfig.Host
-			}
-			sbOutbound["transport"] = transportMap
-		}
+		stream.MergeIntoOutbound(sbOutbound)
 	}
 
 	rawJSON, err := json.Marshal(sbOutbound)
@@ -402,4 +360,111 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		Outbound: rawJSON,
 		Label:    tag,
 	}, nil
+}
+
+// xrayStreamToValues переводит streamSettings Xray-конфига в тот же набор
+// query-параметров, что несёт share-ссылка, чтобы дальше работал общий слой
+// (BuildStreamFromQuery + MergeIntoOutbound). Без этого Xray-путь пришлось бы
+// держать второй реализацией транспорта и TLS, а она уже разъехалась с общей:
+// теряла xhttp и httpupgrade целиком, early data и bind_interface.
+func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
+	v := url.Values{}
+	if stream == nil {
+		return v
+	}
+
+	network := strings.ToLower(stream.Network)
+	if network == "splithttp" {
+		network = "xhttp"
+	}
+	if network != "" {
+		v.Set("type", network)
+	}
+
+	switch network {
+	case "ws":
+		if ws := stream.WSSettings; ws != nil {
+			v.Set("path", ws.Path)
+			v.Set("host", firstNonEmpty(ws.Host, ws.Headers["Host"], ws.Headers["host"]))
+		}
+	case "httpupgrade":
+		if hu := stream.HTTPUpgradeSettings; hu != nil {
+			v.Set("path", hu.Path)
+			v.Set("host", firstNonEmpty(hu.Host, hu.Headers["Host"], hu.Headers["host"]))
+		}
+	case "grpc":
+		if g := stream.GRPCSettings; g != nil {
+			v.Set("serviceName", g.ServiceName)
+		}
+	case "http", "h2":
+		if h := stream.HTTPSettings; h != nil {
+			v.Set("path", h.Path)
+			if len(h.Host) > 0 {
+				v.Set("host", h.Host[0])
+			}
+		}
+	case "xhttp":
+		raw := stream.XHTTPSettings
+		if len(raw) == 0 {
+			raw = stream.SplitHTTPSettings
+		}
+		setXHTTPValues(v, raw)
+	}
+
+	switch strings.ToLower(stream.Security) {
+	case "reality":
+		if rs := stream.RealitySettings; rs != nil {
+			v.Set("security", "reality")
+			v.Set("sni", rs.ServerName)
+			v.Set("pbk", rs.PublicKey)
+			v.Set("sid", rs.ShortID)
+			v.Set("fp", rs.Fingerprint)
+		}
+	case "tls", "true":
+		v.Set("security", "tls")
+		if ts := stream.TLSSettings; ts != nil {
+			v.Set("sni", firstNonEmpty(ts.ServerName, defaultHost))
+			v.Set("fp", ts.Fingerprint)
+			if ts.AllowInsecure {
+				v.Set("insecure", "1")
+			}
+			if len(ts.ALPN) > 0 {
+				v.Set("alpn", strings.Join(ts.ALPN, ","))
+			}
+		}
+	}
+
+	if iface, _ := stream.Sockopt["interface"].(string); iface != "" {
+		v.Set("bind_interface", iface)
+	}
+	return v
+}
+
+// setXHTTPValues раскладывает объект xhttpSettings: path/host/mode идут
+// отдельными параметрами, остальное — тем же путём, что "extra" у ссылки.
+// Вложенный "extra" перекрывает плоские поля, как и в самом Xray.
+func setXHTTPValues(v url.Values, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var settings map[string]any
+	if json.Unmarshal(raw, &settings) != nil {
+		return
+	}
+	if extra, ok := settings["extra"].(map[string]any); ok {
+		for k, val := range extra {
+			settings[k] = val
+		}
+	}
+	delete(settings, "extra")
+
+	for _, key := range []string{"path", "host", "mode"} {
+		if s, ok := settings[key].(string); ok && s != "" {
+			v.Set(key, s)
+		}
+		delete(settings, key)
+	}
+	if encoded, err := json.Marshal(settings); err == nil {
+		v.Set("extra", string(encoded))
+	}
 }

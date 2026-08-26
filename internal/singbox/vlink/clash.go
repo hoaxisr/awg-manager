@@ -82,6 +82,10 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if asBool(ws["v2ray-http-upgrade"]) {
 			v.Set("type", "httpupgrade")
 		}
+		if n, ok := asInt(ws["max-early-data"]); ok && n > 0 {
+			v.Set("ed", strconv.Itoa(n))
+			v.Set("eh", asString(ws["early-data-header-name"]))
+		}
 	case "grpc":
 		gp := nestedMap(p, "grpc-opts")
 		if name := asString(gp["grpc-service-name"]); name != "" {
@@ -124,6 +128,11 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if extra := xhttpExtraFromClash(xh); extra != "" {
 			v.Set("extra", extra)
 		}
+	}
+
+	// mihomo привязывает исходящий интерфейс per-proxy через interface-name.
+	if iface := asString(p["interface-name"]); iface != "" {
+		v.Set("bind_interface", iface)
 	}
 
 	// TLS / Reality

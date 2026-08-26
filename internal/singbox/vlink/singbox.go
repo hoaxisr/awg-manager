@@ -343,13 +343,6 @@ func validateSingboxOutbound(ob map[string]any, typ string) error {
 		if !hasServerPort && (!hasServerPorts || len(ports) == 0) {
 			return fmt.Errorf("missing server_port or server_ports")
 		}
-	case "trusttunnel":
-		if asString(ob["username"]) == "" {
-			return fmt.Errorf("missing trusttunnel username")
-		}
-		if asString(ob["password"]) == "" {
-			return fmt.Errorf("missing trusttunnel password")
-		}
 	}
 	return nil
 }
