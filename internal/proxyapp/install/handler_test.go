@@ -92,14 +92,17 @@ func TestServeStatus_SubsystemPicksState(t *testing.T) {
 		return st
 	}
 	w, f := get("wdtt"), get("freeturn")
-	if w.InstallVersion != WdttPinnedClientVersion {
-		t.Errorf("wdtt: installVersion = %q", w.InstallVersion)
+	// Метка составная, когда сервер собран под арку: клиент и сервер wdtt
+	// выпускаются раздельно и их версии расходятся (versionLabel).
+	wantWdtt := WdttPinnedClientVersion + "+server-" + WdttPinnedServerVersionMIPS
+	if w.InstallVersion != wantWdtt {
+		t.Errorf("wdtt: installVersion = %q, want %q", w.InstallVersion, wantWdtt)
 	}
 	if f.InstallVersion != FreeTurnPinnedVersion {
 		t.Errorf("freeturn: installVersion = %q", f.InstallVersion)
 	}
-	// На mipsel wdtt-сервера в пине нет, а freeturn-сервер есть.
-	if w.ServerSupported || !f.ServerSupported {
+	// На mipsel запинены оба сервера — и wdtt, и freeturn.
+	if !w.ServerSupported || !f.ServerSupported {
 		t.Errorf("serverSupported: wdtt=%v freeturn=%v", w.ServerSupported, f.ServerSupported)
 	}
 }

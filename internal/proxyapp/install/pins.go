@@ -42,6 +42,14 @@ const wdttReleaseBase = "http://repo.hoaxisr.ru/wt/" + WdttPinnedClientVersion +
 // wdttServerReleaseBase — wdtt-server из форка (монолит с Keenetic-флагами).
 const wdttServerReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + WdttPinnedServerVersion + "/"
 
+// WdttPinnedServerVersionMIPS — серверная сборка для mips/mipsel. Версия НИЖЕ
+// arm64-й намеренно: под 1.4.4-awgm серверные бинари для mips на зеркало не
+// выкладывались, а 1.4.0-3 собрана для всех трёх арок. Пин снят с
+// checksums.txt зеркала и перепроверен локально.
+const WdttPinnedServerVersionMIPS = "1.4.0-3"
+
+const wdttServerReleaseBaseMIPS = "http://repo.hoaxisr.ru/wt/server/" + WdttPinnedServerVersionMIPS + "/"
+
 // WdttEmbeddedBinaries связывает арку сборки awg-manager с пинами wdtt.
 var WdttEmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
@@ -54,18 +62,24 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 			SHA256: "b639505b9952485bc16e9e3d43d6503975a878b0b18aba3fa5269953b61fd000", Size: 8126626,
 		},
 	},
-	// mipsel/mips — пока только клиент: серверные бинари в релизе есть,
-	// но пины ждут прогона на mips-железе.
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mipsle-softfloat",
 			SHA256: "0af429515d65f7f844c3d24f0ec052c6b27cb65f6a9ef70e6ebdeb9f39782b7d", Size: 17563841,
+		},
+		Server: BinarySpec{
+			Version: WdttPinnedServerVersionMIPS, URL: wdttServerReleaseBaseMIPS + "wdtt-server-linux-mipsle-softfloat",
+			SHA256: "7024c1da12bae2f7677654da6450946cf856e4e700c3b61b29d203fbdc6cac5e", Size: 9437399,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mips-softfloat",
 			SHA256: "8b4d2d838c696f91b771507c2992ba62d9b1f2993fad32ef396d5b53b976906e", Size: 17563841,
+		},
+		Server: BinarySpec{
+			Version: WdttPinnedServerVersionMIPS, URL: wdttServerReleaseBaseMIPS + "wdtt-server-linux-mips-softfloat",
+			SHA256: "100f7459d7e53d4e04716c0b8fefa6c71e7b7d5d5f382c77c8992f374f14ba06", Size: 9437399,
 		},
 	},
 }

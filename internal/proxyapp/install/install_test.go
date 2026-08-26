@@ -149,9 +149,9 @@ func TestPinnedSHA256(t *testing.T) {
 	if got := arm.PinnedSHA256(instancestore.KindFreeTurnServer); got != FreeTurnEmbeddedBinaries["aarch64-3.10"].Server.SHA256 {
 		t.Errorf("сервер freeturn: got %q", got)
 	}
-	// mipsel: сервера wdtt в пине нет — пусто.
-	if got := New(Deps{Arch: "mipsel-3.4"}).PinnedSHA256(instancestore.KindWdttServer); got != "" {
-		t.Errorf("сервер wdtt на mipsel: got %q, want пусто", got)
+	// mipsel: сервер запинен своей версией (1.4.0-3) — сумма непуста и равна пину.
+	if got := New(Deps{Arch: "mipsel-3.4"}).PinnedSHA256(instancestore.KindWdttServer); got != WdttEmbeddedBinaries["mipsel-3.4"].Server.SHA256 || got == "" {
+		t.Errorf("сервер wdtt на mipsel: got %q", got)
 	}
 	if got := New(Deps{Arch: "неведомая-арка"}).PinnedSHA256(instancestore.KindWdttClient); got != "" {
 		t.Errorf("арка без пина: got %q, want пусто", got)
@@ -235,7 +235,9 @@ func TestStatus_NothingWired(t *testing.T) {
 // спрятанную вкладку.
 func TestStatus_ServerSupported(t *testing.T) {
 	t.Run("пин без сервера и без бинаря", func(t *testing.T) {
-		s := newTestService(t, Deps{Arch: "mipsel-3.4", Downloader: &fakeDownloader{}})
+		// Арка без секции пинов вовсе: mipsel сюда больше не годится — под неё
+		// сервер собран и запинен.
+		s := newTestService(t, Deps{Arch: "арка-без-пинов", Downloader: &fakeDownloader{}})
 		if mustStatus(t, s, "wdtt").ServerSupported {
 			t.Error("на арке без серверного пина сервер объявлен поддержанным")
 		}
