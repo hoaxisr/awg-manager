@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -119,7 +121,7 @@ func (s *Store) loadLocked() (State, error) {
 		CleanupPending: f.CleanupPending, LegacyKernelIfaces: f.LegacyKernelIfaces,
 		OldGenProcs: f.OldGenProcs, SkippedSources: f.SkippedSources, Records: f.Instances}
 	for i := range st.Records {
-		normalizeRecord(&st.Records[i])
+		normalizeRecord(&st.Records[i], s.dir)
 	}
 	if err := validateState(st); err != nil {
 		return State{}, fmt.Errorf("%s: %w", s.path, err)
@@ -165,7 +167,7 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 		return State{}, err
 	}
 	for i := range st.Records {
-		normalizeRecord(&st.Records[i])
+		normalizeRecord(&st.Records[i], s.dir)
 	}
 	if err := validateState(st); err != nil {
 		return State{}, err
@@ -192,10 +194,17 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 // normalizeWorkers — кратно 9 вниз, минимум 9: ровно то, что сделает сам
 // клиент (форк, go_client/main.go:260-263, workersPerGroup = 9), чтобы число
 // в store не расходилось с числом в процессе (требование (10) плана 3).
-// Ноль не трогаем: «не задано» решает DefaultWorkers по архитектуре в argv.
-func normalizeWorkers(n int) int {
+//
+// Ноль — «не задано» — превращается в дефолт ЗДЕСЬ, а не в argv: argv не
+// эмитит -n при нулевом значении вовсе (roles/args.go:29), и число потоков
+// определял бы встроенный дефолт стороннего бинаря. Старый мир такого
+// состояния не знал — normalizeClientConfig (wdtt/service.go:903-905)
+// подставлял свой дефолт на каждой записи. goarch параметром, а не
+// runtime.GOARCH внутри: дефолт зависит от архитектуры, и проверять его надо
+// для всех сразу.
+func normalizeWorkers(n int, goarch string) int {
 	if n <= 0 {
-		return 0
+		n = roles.DefaultWorkers(goarch)
 	}
 	if n < 9 {
 		return 9
@@ -206,15 +215,23 @@ func normalizeWorkers(n int) int {
 // normalizeRecord — нормализация на записи. Store — единственный
 // нормализующий писатель (закрывает класс «две копии хранилищ нормализуют
 // по-разному на чтении», обзор 2026-08-18).
-func normalizeRecord(r *Record) {
+//
+// dataDir нужен ровно одному дефолту — configDir сервера: старый мир считал
+// его от каталога данных на КАЖДОМ старте (wdtt/server.go:362-366).
+func normalizeRecord(r *Record, dataDir string) {
 	r.ID = strings.TrimSpace(r.ID)
 	r.Name = strings.TrimSpace(r.Name)
 	r.Sub = strings.TrimSpace(r.Sub)
 	if r.WdttClient != nil {
 		d := r.WdttClient
-		d.Mode = strings.TrimSpace(d.Mode)
-		if d.Mode == "" {
-			d.Mode = "wg" // дефолт старого мира (ConnModeWG)
+		// Паритет normalizeConnMode (wdtt/modes.go:14-20): ВСЁ, кроме "raw",
+		// становится "wg". Одного гарда пустоты мало — "RAW" из чужого
+		// импорта прошёл бы дальше и молча поехал бы WG-путём: argv сверяет
+		// режим точным равенством (roles/args.go:39).
+		if strings.ToLower(strings.TrimSpace(d.Mode)) == "raw" {
+			d.Mode = "raw"
+		} else {
+			d.Mode = "wg"
 		}
 		d.Listen = strings.TrimSpace(d.Listen)
 		d.Peer = strings.TrimSpace(d.Peer)
@@ -223,7 +240,31 @@ func normalizeRecord(r *Record) {
 		// и пропускать его как «пин есть» нельзя.
 		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
 		d.RawIface = strings.TrimSpace(d.RawIface)
-		d.Workers = normalizeWorkers(d.Workers)
+		d.Workers = normalizeWorkers(d.Workers, runtime.GOARCH)
+		// Дефолты клиента — паритет normalizeClientConfig (wdtt/service.go:899-919)
+		// и builder'а старого мира. Здесь, а не в argv: argv не эмитит пустое
+		// значение вовсе, и поведение определял бы встроенный дефолт чужого
+		// бинаря, а форма показывала бы «не задано» там, где значение было.
+		if d.Obfs = strings.TrimSpace(d.Obfs); d.Obfs == "" {
+			d.Obfs = "audio"
+		}
+		if d.Fingerprint = strings.TrimSpace(d.Fingerprint); d.Fingerprint == "" {
+			d.Fingerprint = "chrome"
+		}
+		// Приведение неизвестного — паритет normalizeCaptchaMode
+		// (wdtt/service.go:962-969): старый builder звал его на КАЖДОЙ сборке
+		// argv, то есть мусор в поле никогда не доезжал до бинаря.
+		switch d.CaptchaMode = strings.ToLower(strings.TrimSpace(d.CaptchaMode)); d.CaptchaMode {
+		case "auto", "rjs", "wv":
+		default:
+			d.CaptchaMode = "rjs"
+		}
+		// Паритет appendVkAuthArgs (wdtt/service.go:953-960): пусто → vkcalls,
+		// регистр приводится, неизвестное значение НЕ подменяется (старый мир
+		// его тоже пропускал — режимы добавляет форк).
+		if d.VKAuthMode = strings.ToLower(strings.TrimSpace(d.VKAuthMode)); d.VKAuthMode == "" {
+			d.VKAuthMode = "vkcalls"
+		}
 		// Инвариант слотов (паритет normalizePeers, types.go:52-64): Peer
 		// главнее — свежий адрес приходит и от тех, кто про слоты не знает
 		// (подписка, импорт); слот активного режима зеркалит Peer, слот
@@ -242,12 +283,45 @@ func normalizeRecord(r *Record) {
 	}
 	if r.WdttServer != nil {
 		d := r.WdttServer
-		d.Listen = strings.TrimSpace(d.Listen)
+		// Паритет normalizeServerConfig (wdtt/server.go:464-484): дефолты
+		// listen/wgPort/policy и тримы секретов подставлялись на КАЖДОЙ записи.
+		if d.Listen = strings.TrimSpace(d.Listen); d.Listen == "" {
+			d.Listen = "0.0.0.0:56002"
+		}
+		if d.WgPort <= 0 {
+			d.WgPort = 56001
+		}
+		d.Password = strings.TrimSpace(d.Password)
+		d.AdminID = strings.TrimSpace(d.AdminID)
+		d.BotToken = strings.TrimSpace(d.BotToken)
+		// Паритет serverConfigDir (wdtt/server.go:362-366): пустой путь
+		// старый мир считал от каталога данных на каждом старте. Без дефолта
+		// сервер, созданный ручкой нового мира (конфиг приходит пустым),
+		// падал бы на записи passwords.json fail-closed — «писать некуда»
+		// (proxyapp/wdttusers/users.go:200-206). Форма пути та же, что у
+		// посева (seed.go:437-440): файл абонентов с выданными адресами не
+		// должен «переехать» на апгрейде.
+		if d.ConfigDir = strings.TrimSpace(d.ConfigDir); d.ConfigDir == "" && dataDir != "" && r.ID != "" {
+			d.ConfigDir = filepath.Join(dataDir, "wdtt", "server", r.ID)
+		}
+		d.RawListen = strings.TrimSpace(d.RawListen)
+		d.DirectListen = strings.TrimSpace(d.DirectListen)
 		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
 		d.WgIface = strings.TrimSpace(d.WgIface)
 		d.RawNdmsIface = strings.TrimSpace(d.RawNdmsIface)
 		d.RawIface = strings.TrimSpace(d.RawIface)
-		if d.RelayMode == "" {
+		// Паритет normalizePolicy (wdtt/access.go:39-45). Пустое значение —
+		// НЕ синоним "none": managed.ApplyPolicyToInterface отвергает его
+		// ошибкой «policy must not be empty», и ресурс ndms_access сервера,
+		// созданного без политики, не применялся бы вовсе — вместе с ним
+		// молчали бы NAT, LAN-ACL и firewall permit.
+		if d.Policy = strings.TrimSpace(d.Policy); d.Policy == "" {
+			d.Policy = "none"
+		}
+		// Паритет normalizeConnMode, как и у клиента: всё, кроме "raw" — "wg".
+		if strings.ToLower(strings.TrimSpace(d.RelayMode)) == "raw" {
+			d.RelayMode = "raw"
+		} else {
 			d.RelayMode = "wg"
 		}
 		// Дефолт и приведение неизвестного — ПАРИТЕТ со старым миром
@@ -268,9 +342,54 @@ func normalizeRecord(r *Record) {
 		d.Listen = strings.TrimSpace(d.Listen)
 		d.Peer = strings.TrimSpace(d.Peer)
 		d.Sub = strings.TrimSpace(d.Sub)
+		// Дефолты клиента FreeTurn — паритет DefaultClientConfig
+		// (freeturn/types.go:46-58). В старом мире их подставлял CreateClient,
+		// то есть у любого сохранённого клиента поля были заполнены; новая
+		// ручка создания принимает пустой конфиг, и без этих строк инстанс
+		// уезжал бы на встроенных дефолтах бинаря, а форма показывала бы
+		// пустоту.
+		if d.Provider = strings.TrimSpace(d.Provider); d.Provider == "" {
+			d.Provider = "vk"
+		}
+		if d.Streams <= 0 {
+			d.Streams = 10
+		}
+		if d.Transport = strings.TrimSpace(d.Transport); d.Transport == "" {
+			d.Transport = "tcp"
+		}
+		if d.Mode = strings.TrimSpace(d.Mode); d.Mode == "" {
+			d.Mode = "udp"
+		}
+		if d.ObfProfile = strings.TrimSpace(d.ObfProfile); d.ObfProfile == "" {
+			d.ObfProfile = "none"
+		}
+		if d.StreamsPerCred <= 0 {
+			d.StreamsPerCred = 10
+		}
+		// Паритет migrateClientConfig (freeturn/migrate.go:64-75) —
+		// он приводил и пустое, и неизвестное значение, причём на КАЖДОЙ
+		// загрузке файла.
+		switch d.Platform = strings.ToLower(strings.TrimSpace(d.Platform)); d.Platform {
+		case "desktop", "mobile":
+		default:
+			d.Platform = "desktop"
+		}
+		if d.DNSMode = strings.TrimSpace(d.DNSMode); d.DNSMode == "" {
+			d.DNSMode = "auto"
+		}
 	}
 	if r.FreeTurnServer != nil {
-		r.FreeTurnServer.Listen = strings.TrimSpace(r.FreeTurnServer.Listen)
+		d := r.FreeTurnServer
+		// Паритет DefaultServerConfig (freeturn/types.go:78-84).
+		if d.Listen = strings.TrimSpace(d.Listen); d.Listen == "" {
+			d.Listen = "0.0.0.0:56000"
+		}
+		if d.Mode = strings.TrimSpace(d.Mode); d.Mode == "" {
+			d.Mode = "udp"
+		}
+		if d.ObfProfile = strings.TrimSpace(d.ObfProfile); d.ObfProfile == "" {
+			d.ObfProfile = "none"
+		}
 	}
 }
 

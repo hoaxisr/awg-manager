@@ -698,24 +698,6 @@ func TestModeNormalization(t *testing.T) {
 	}
 }
 
-func TestWorkersZeroStaysZero(t *testing.T) {
-	// Ноль — «не задано»: его решает DefaultWorkers по архитектуре (27 на
-	// arm64). Подмена нулю на девять молча срезала бы полосу на arm64.
-	s := newStore(t)
-	r := rawClient("z", "Z")
-	r.WdttClient.Workers = 0
-	if _, err := s.Replace(func(st *State) error {
-		st.Records = append(st.Records, r)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	st, _ := New(s.dir).Load()
-	if c, _ := st.Records[0].WdttClientConfig(); c.Workers != 0 {
-		t.Fatalf("workers = %d, ждали 0 (не задано)", c.Workers)
-	}
-}
-
 func TestServerDefaultsRelayAndNatMode(t *testing.T) {
 	// roles.WdttServerConfig.Validate отвергает пустые relayMode/natMode:
 	// дефолты обязан проставить store, иначе старая запись без этих полей
