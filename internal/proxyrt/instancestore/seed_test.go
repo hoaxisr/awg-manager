@@ -311,22 +311,19 @@ func TestSeedReadsFreeturnV1(t *testing.T) {
 	}
 }
 
-func TestSeedFreeturnV1EmptyStillSeedsDefaults(t *testing.T) {
-	// Паритет старого мигратора (migrate.go:21-23,37-39): version<2 —
-	// дефолтные default-инстансы, ДАЖЕ без singular-ключей (оговорка B6).
+func TestSeedFreeturnV1EmptySeedsNothing(t *testing.T) {
+	// G1: осознанное расхождение со старым мигратором (migrate.go:21-23,37-39).
+	// Тот достраивал дефолтного клиента с 127.0.0.1:9000 из воздуха; после
+	// слияния подсистем эта пустышка дралась за порт с клиентом wdtt, у
+	// которого дефолт тот же. Переносить из пустого файла нечего.
 	e := newSeedEnv(t)
 	writeFile(t, e.deps.FreeturnPath, `{}`)
 	res, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := byKey(res)
-	fc, err := rec["freeturn-client:default"].FreeTurnClientConfig()
-	if err != nil || fc.Listen != "127.0.0.1:9000" || fc.Provider != "vk" {
-		t.Fatalf("дефолтный v1-клиент: %+v %v", fc, err)
-	}
-	if _, ok := rec["freeturn-server:default"]; !ok {
-		t.Fatal("дефолтный v1-сервер обязан посеяться")
+	if len(res.State.Records) != 0 {
+		t.Fatalf("пустой v1-файл не должен рождать инстансы: %+v", res.State.Records)
 	}
 }
 

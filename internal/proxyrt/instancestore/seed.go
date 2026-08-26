@@ -246,22 +246,22 @@ func parseOpkgIndex(name string) (int, bool) {
 	return n, true
 }
 
-// normalizeFreeturnV1 — паритет старого мигратора (migrate.go:19-49):
-// триггер — version < 2 (НЕ наличие ключей: старый Load создавал дефолтные
-// default-инстансы и при отсутствующих singular-полях — оговорка B6 ревьюера
-// В). v2-файл с законно пустыми списками не трогается: новый мир разрешает
-// ноль инстансов.
+// normalizeFreeturnV1 — подъём singular-полей v1 (до 2026-07-21) в списки:
+// миграцию v1→v2 делал ТОЛЬКО старый Store.Load (migrate.go), и без неё
+// настройки таких файлов потерялись бы молча.
+//
+// Расхождение со старым мигратором осознанное (амендмент G1, решение
+// владельца): пустой singular-конфиг НЕ достраивается инстансом из дефолтов.
+// Старый мир синтезировал клиента с Listen 127.0.0.1:9000 из воздуха, и
+// именно эта пустышка после слияния подсистем становилась вторым претендентом
+// на порт у людей, которые freeturn никогда не настраивали. Пустой конфиг —
+// это «переносить нечего»; кому нужен инстанс, создаст его кнопкой.
 func normalizeFreeturnV1(f *oldFreeturnFile) {
 	if f.Version >= 2 {
 		return
 	}
-	if len(f.Clients) == 0 {
-		c := oldFreeturnClient{Listen: "127.0.0.1:9000", Provider: "vk",
-			Streams: 10, Transport: "tcp", Mode: "udp", ObfProfile: "none",
-			StreamsPerCred: 10, Platform: "desktop", DNSMode: "auto"}
-		if f.Client != nil && *f.Client != (oldFreeturnClient{}) {
-			c = *f.Client
-		}
+	if len(f.Clients) == 0 && f.Client != nil && *f.Client != (oldFreeturnClient{}) {
+		c := *f.Client
 		name := "Клиент"
 		if c.Peer != "" {
 			name = c.Peer
@@ -272,11 +272,8 @@ func normalizeFreeturnV1(f *oldFreeturnFile) {
 			Config oldFreeturnClient `json:"config"`
 		}{ID: "default", Name: name, Config: c})
 	}
-	if len(f.Servers) == 0 {
-		s := oldFreeturnServer{Listen: "0.0.0.0:56000", Mode: "udp", ObfProfile: "none"}
-		if f.Server != nil && *f.Server != (oldFreeturnServer{}) {
-			s = *f.Server
-		}
+	if len(f.Servers) == 0 && f.Server != nil && *f.Server != (oldFreeturnServer{}) {
+		s := *f.Server
 		name := "Сервер"
 		if s.Listen != "" {
 			name = s.Listen
