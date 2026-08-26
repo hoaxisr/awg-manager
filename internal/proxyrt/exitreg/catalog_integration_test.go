@@ -56,6 +56,10 @@ func TestExitIDParityWithOldWorld(t *testing.T) {
 	// снесён, поэтому ожидания сняты с него до сноса и вбиты литералами.
 	cases := map[string]string{
 		"":        "wdttraw-default",
+		// Строка из одних пробелов — тоже «пусто»: без TrimSpace регулярка
+		// съела бы пробелы в дефис и id разъехался бы с прежним миром.
+		"   ":     "wdttraw-default",
+		" de ":    "wdttraw-de",
 		"default": "wdttraw-default",
 		"de":      "wdttraw-de",
 		"-de-":    "wdttraw-de",

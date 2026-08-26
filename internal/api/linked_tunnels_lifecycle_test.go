@@ -290,8 +290,9 @@ func TestSetLinkedProxyTunnelsStateUnknownField(t *testing.T) {
 }
 
 // Д1: доводка адреса прокси-рантайма обходит зеркало стороной. Адрес реле в
-// записи зеркала — не дрейф: его туда кладёт BuildRawTunnelRecord
-// (raw_tunnel_meta.go:90), и переписывать его на локальный порт нельзя.
+// записи зеркала — не дрейф: его пишет зеркало прокси-рантайма, и
+// переписывать его на локальный порт нельзя (парный комментарий —
+// linked_tunnels_lifecycle.go:253-254).
 func TestSyncLinkedProxyEndpointsSkipsMirror(t *testing.T) {
 	store := proxyStateStore(t)
 	mirror := &storage.AWGTunnel{
