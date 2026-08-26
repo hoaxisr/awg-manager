@@ -380,11 +380,10 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 		q.Set("type", network)
 	}
 
-	// #709: the egress interface is ours alone, but a link that drops it comes
-	// back bound to nothing.
-	if bind, _ := ob["bind_interface"].(string); bind != "" {
-		q.Set("bind_interface", bind)
-	}
+	// bind_interface намеренно не эмитится: это привязка к интерфейсу
+	// конкретного роутера, она меняется в рантайме и на чужом устройстве
+	// в лучшем случае бессмысленна, в худшем — даёт конфиг с несуществующим
+	// интерфейсом, от которого sing-box падает (#709).
 
 	if tls, _ := ob["tls"].(map[string]any); tls != nil {
 		reality, _ := tls["reality"].(map[string]any)

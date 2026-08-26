@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -253,25 +254,24 @@ func TestBuildStreamFromQuery_XHTTPMode(t *testing.T) {
 	}
 }
 
-// #709: the egress interface survived import but was dropped when the tunnel
-// was shared back out.
-func TestEncodeOutbound_BindInterface(t *testing.T) {
+// bind_interface — настройка нашего роутера, а не свойство сервера: ссылка
+// его не несёт. Импорт при этом его понимает (#709).
+func TestEncodeOutbound_BindInterfaceStaysHome(t *testing.T) {
 	p, err := ParseLink("vless://00000000-1111-2222-3333-444444444444@example.com:443?type=ws&bind_interface=nwg0#x")
 	if err != nil {
 		t.Fatalf("ParseLink: %v", err)
+	}
+	var imported map[string]any
+	_ = json.Unmarshal(p.Outbound, &imported)
+	if imported["bind_interface"] != "nwg0" {
+		t.Fatalf("импорт потерял bind_interface: %v", imported)
 	}
 	link, err := EncodeOutbound(p.Outbound, "x")
 	if err != nil {
 		t.Fatalf("EncodeOutbound: %v", err)
 	}
-	back, err := ParseLink(link)
-	if err != nil {
-		t.Fatalf("re-parse %s: %v", link, err)
-	}
-	var ob map[string]any
-	_ = json.Unmarshal(back.Outbound, &ob)
-	if ob["bind_interface"] != "nwg0" {
-		t.Errorf("bind_interface after round-trip=%v, link=%s", ob["bind_interface"], link)
+	if strings.Contains(link, "bind_interface") {
+		t.Errorf("ссылка унесла привязку к чужому интерфейсу: %s", link)
 	}
 }
 
