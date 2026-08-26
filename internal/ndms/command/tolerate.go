@@ -23,6 +23,20 @@ func isNoSuchInterface(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "no such interface")
 }
 
+// missingInterfaceName вытаскивает имя из `no such interface: OpkgTun42.`.
+// Нужно смешанному батчу ReplaceRoutes: там та же фраза безобидна для сноса
+// строки и означает настоящий отказ для её постановки, а различить половины
+// можно только по имени интерфейса. Сравнивать подстрокой нельзя — «OpkgTun1»
+// входит в «OpkgTun10».
+func missingInterfaceName(msg string) string {
+	const marker = "no such interface:"
+	i := strings.Index(strings.ToLower(msg), marker)
+	if i < 0 {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(msg[i+len(marker):]), ".")
+}
+
 // isUnknownInterface: `unknown interface "AwgmNoSeg".` — снятие Static NAT,
 // когда сегмента или WAN-выхода уже нет.
 func isUnknownInterface(msg string) bool {

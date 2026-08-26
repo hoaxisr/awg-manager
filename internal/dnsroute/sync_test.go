@@ -1,6 +1,7 @@
 package dnsroute
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -542,8 +543,8 @@ func TestComputeDiff(t *testing.T) {
 		if len(diff.groupUpdates) != 1 || !diff.groupUpdates[0].isNew {
 			t.Errorf("expected 1 new group update, got %+v", diff.groupUpdates)
 		}
-		if len(diff.routeUpserts) != 1 {
-			t.Errorf("expected 1 route upsert, got %+v", diff.routeUpserts)
+		if len(diff.routeRebuilds) != 1 || len(diff.routeRebuilds[0].upserts) != 1 {
+			t.Errorf("expected 1 route write, got %+v", diff.routeRebuilds)
 		}
 	})
 
@@ -593,8 +594,8 @@ func TestComputeDiff(t *testing.T) {
 			t.Error("should not be new")
 		}
 		// Routes unchanged
-		if len(diff.routeUpserts) != 0 {
-			t.Errorf("routes unchanged, should have 0 upserts, got %d", len(diff.routeUpserts))
+		if len(diff.routeRebuilds) != 0 {
+			t.Errorf("routes unchanged, should have 0 rewrites, got %d", len(diff.routeRebuilds))
 		}
 	})
 
@@ -614,8 +615,8 @@ func TestComputeDiff(t *testing.T) {
 			routes: []targetRoute{{group: "test_p1", iface: "OpkgTun0", disabled: false}},
 		}
 		diff := computeDiff(current, target)
-		if len(diff.routeUpserts) != 0 {
-			t.Errorf("expected 0 upserts, got %+v", diff.routeUpserts)
+		if len(diff.routeRebuilds) != 0 {
+			t.Errorf("expected 0 rewrites, got %+v", diff.routeRebuilds)
 		}
 		if len(diff.routeDisables) != 1 {
 			t.Fatalf("expected 1 disable toggle, got %+v", diff.routeDisables)
@@ -626,7 +627,7 @@ func TestComputeDiff(t *testing.T) {
 		}
 	})
 
-	t.Run("route interface change triggers upsert", func(t *testing.T) {
+	t.Run("route interface change rewrites the block", func(t *testing.T) {
 		current := currentState{
 			groups: map[string]currentGroupData{
 				"test_p1": {includes: []string{"a.com"}},
@@ -638,11 +639,141 @@ func TestComputeDiff(t *testing.T) {
 			routes: []targetRoute{{group: "test_p1", iface: "OpkgTun1"}},
 		}
 		diff := computeDiff(current, target)
-		if len(diff.routeDeletes) != 1 {
-			t.Errorf("expected 1 route delete (old iface), got %d", len(diff.routeDeletes))
+		if len(diff.routeDeletes) != 0 {
+			t.Errorf("снос обязан ехать внутри перезаписи, а не отдельной фазой: %+v", diff.routeDeletes)
 		}
-		if len(diff.routeUpserts) != 1 || diff.routeUpserts[0].Iface != "OpkgTun1" {
-			t.Errorf("expected 1 route upsert for OpkgTun1, got %+v", diff.routeUpserts)
+		if len(diff.routeRebuilds) != 1 {
+			t.Fatalf("expected 1 rewrite, got %+v", diff.routeRebuilds)
+		}
+		rb := diff.routeRebuilds[0]
+		if fmt.Sprint(rb.deletes) != "[OpkgTun0]" {
+			t.Errorf("deletes = %v, want [OpkgTun0]", rb.deletes)
+		}
+		if len(rb.upserts) != 1 || rb.upserts[0].Iface != "OpkgTun1" {
+			t.Errorf("upserts = %+v, want OpkgTun1", rb.upserts)
+		}
+	})
+
+	// #801: порядок routes и есть приоритет. Переставить строку в NDMS нечем,
+	// поэтому перестановка обязана давать перезапись блока целиком.
+	t.Run("reorder rewrites the whole block in target order", func(t *testing.T) {
+		current := currentState{
+			groups: map[string]currentGroupData{"test_p1": {includes: []string{"a.com"}}},
+			routes: []currentRoute{
+				{group: "test_p1", iface: "Wireguard0", index: "i0"},
+				{group: "test_p1", iface: "Wireguard1", index: "i1"},
+				{group: "test_p1", iface: "Wireguard2", index: "i2"},
+			},
+		}
+		target := targetState{
+			groups: []targetGroup{{name: "test_p1", includes: []string{"a.com"}}},
+			routes: []targetRoute{
+				{group: "test_p1", iface: "Wireguard2"},
+				{group: "test_p1", iface: "Wireguard0"},
+				{group: "test_p1", iface: "Wireguard1"},
+			},
+		}
+		diff := computeDiff(current, target)
+		if diff.isEmpty() {
+			t.Fatal("перестановка приоритета осталась без команд")
+		}
+		if len(diff.routeRebuilds) != 1 {
+			t.Fatalf("expected 1 rewrite, got %+v", diff.routeRebuilds)
+		}
+		rb := diff.routeRebuilds[0]
+		if fmt.Sprint(rb.deletes) != "[Wireguard0 Wireguard1 Wireguard2]" {
+			t.Errorf("сносятся не все строки блока: %v", rb.deletes)
+		}
+		var got []string
+		for _, u := range rb.upserts {
+			got = append(got, u.Iface)
+		}
+		if fmt.Sprint(got) != "[Wireguard2 Wireguard0 Wireguard1]" {
+			t.Errorf("порядок записи = %v, want [Wireguard2 Wireguard0 Wireguard1]", got)
+		}
+	})
+
+	// Новый приоритетный туннель нельзя дописать одной строкой: NDMS положит
+	// её в хвост, и высший приоритет станет низшим.
+	t.Run("new top-priority route rewrites the block", func(t *testing.T) {
+		current := currentState{
+			groups: map[string]currentGroupData{"test_p1": {includes: []string{"a.com"}}},
+			routes: []currentRoute{
+				{group: "test_p1", iface: "Wireguard1", index: "i1"},
+				{group: "test_p1", iface: "Wireguard2", index: "i2"},
+			},
+		}
+		target := targetState{
+			groups: []targetGroup{{name: "test_p1", includes: []string{"a.com"}}},
+			routes: []targetRoute{
+				{group: "test_p1", iface: "Wireguard0"},
+				{group: "test_p1", iface: "Wireguard1"},
+				{group: "test_p1", iface: "Wireguard2"},
+			},
+		}
+		diff := computeDiff(current, target)
+		if len(diff.routeRebuilds) != 1 {
+			t.Fatalf("expected 1 rewrite, got %+v", diff.routeRebuilds)
+		}
+		rb := diff.routeRebuilds[0]
+		if len(rb.deletes) != 2 || len(rb.upserts) != 3 || rb.upserts[0].Iface != "Wireguard0" {
+			t.Errorf("rewrite = %+v", rb)
+		}
+	})
+
+	// Форма fallback различается — тоже перезапись, но именно блоком: иначе
+	// upsert одной строки сохранил бы её позицию, а порядок остальных поехал.
+	t.Run("fallback change rewrites the block", func(t *testing.T) {
+		current := currentState{
+			groups: map[string]currentGroupData{"test_p1": {includes: []string{"a.com"}}},
+			routes: []currentRoute{
+				{group: "test_p1", iface: "Wireguard0", index: "i0"},
+				{group: "test_p1", iface: "Wireguard1", index: "i1"},
+			},
+		}
+		target := targetState{
+			groups: []targetGroup{{name: "test_p1", includes: []string{"a.com"}}},
+			routes: []targetRoute{
+				{group: "test_p1", iface: "Wireguard0"},
+				{group: "test_p1", iface: "Wireguard1", fallback: "reject"},
+			},
+		}
+		diff := computeDiff(current, target)
+		if len(diff.routeRebuilds) != 1 {
+			t.Fatalf("expected 1 rewrite, got %+v", diff.routeRebuilds)
+		}
+		rb := diff.routeRebuilds[0]
+		if len(rb.upserts) != 2 || !rb.upserts[1].Reject || rb.upserts[0].Reject {
+			t.Errorf("rewrite = %+v", rb)
+		}
+	})
+
+	// Пауза при неизменном порядке — по-прежнему дешёвый toggle по index, а не
+	// перезапись блока (#489).
+	t.Run("disabled flip in a multi-route block stays a toggle", func(t *testing.T) {
+		current := currentState{
+			groups: map[string]currentGroupData{"test_p1": {includes: []string{"a.com"}}},
+			routes: []currentRoute{
+				{group: "test_p1", iface: "Wireguard0", index: "i0", disabled: true},
+				{group: "test_p1", iface: "Wireguard1", index: "i1", disabled: true},
+			},
+		}
+		target := targetState{
+			groups: []targetGroup{{name: "test_p1", includes: []string{"a.com"}}},
+			routes: []targetRoute{
+				{group: "test_p1", iface: "Wireguard0"},
+				{group: "test_p1", iface: "Wireguard1"},
+			},
+		}
+		diff := computeDiff(current, target)
+		if len(diff.routeRebuilds) != 0 {
+			t.Errorf("пауза не должна переписывать блок: %+v", diff.routeRebuilds)
+		}
+		if len(diff.routeDisables) != 2 {
+			t.Fatalf("expected 2 toggles, got %+v", diff.routeDisables)
+		}
+		if diff.routeDisables[0].Index != "i0" || diff.routeDisables[1].Index != "i1" {
+			t.Errorf("toggles = %+v", diff.routeDisables)
 		}
 	})
 }

@@ -96,16 +96,34 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 	return nil
 }
 
-// UpsertRoutes adds or updates dns-proxy route entries in a single batch.
-func (c *DNSRouteCommands) UpsertRoutes(ctx context.Context, specs []DNSRouteSpec) error {
+// ReplaceRoutes переписывает набор dns-proxy маршрутов одним батчем: сначала
+// снос перечисленных строк, затем запись новых в порядке приоритета.
+//
+// Обе половины обязаны ехать в ОДНОМ payload. Порядок строк `dns-proxy route`
+// в NDMS и есть приоритет выбора туннеля, а переставить строку нечем: upsert
+// существующей её не двигает, новая всегда дописывается в хвост (проверено на
+// KeeneticOS 5.01). Значит смена приоритета — это снос блока и запись заново.
+// Разбиение на два POST оставило бы группу без правил на всё время между ними,
+// а на больших списках между сносом и записью успевает пройти обновление
+// object-group — сотни миллисекунд без DNS-маршрутизации. NDMS применяет
+// элементы payload по порядку, поэтому один POST закрывает окно.
+func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes, upserts []DNSRouteSpec) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4
 	}
-	if len(specs) == 0 {
+	if len(deletes)+len(upserts) == 0 {
 		return nil
 	}
-	routes := make([]any, 0, len(specs))
-	for _, s := range specs {
+	routes := make([]any, 0, len(deletes)+len(upserts))
+	for _, s := range deletes {
+		routes = append(routes, map[string]any{
+			"group":     s.Group,
+			"interface": s.Interface,
+			"no":        true,
+		})
+	}
+	upsertIfaces := make(map[string]bool, len(upserts))
+	for _, s := range upserts {
 		route := map[string]any{
 			"group":     s.Group,
 			"interface": s.Interface,
@@ -115,11 +133,29 @@ func (c *DNSRouteCommands) UpsertRoutes(ctx context.Context, specs []DNSRouteSpe
 			route["reject"] = true
 		}
 		routes = append(routes, route)
+		upsertIfaces[s.Interface] = true
 	}
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},
 	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "upsert dns-proxy routes",
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "replace dns-proxy routes",
+		func(msg string) bool { return toleratesReplaceRoutes(msg, upsertIfaces) },
 		c.queries.DNSProxy.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
+}
+
+// toleratesReplaceRoutes — поблажки смешанного батча. Ответ NDMS плоский:
+// отличить отказ сноса от отказа постановки можно только по смыслу сообщения.
+//   - «правила нет» приходит только со сноса и всегда безобиден;
+//   - «нет интерфейса» безобиден, когда мы этот интерфейс сносим и заново не
+//     ставим (штатный дрейф: интерфейс удалили раньше маршрута). Если он есть
+//     среди записываемых — это настоящий отказ постановки, и он обязан всплыть.
+func toleratesReplaceRoutes(msg string, upsertIfaces map[string]bool) bool {
+	if isMissingDNSRouteRule(msg) {
+		return true
+	}
+	if name := missingInterfaceName(msg); name != "" {
+		return !upsertIfaces[name]
+	}
+	return false
 }

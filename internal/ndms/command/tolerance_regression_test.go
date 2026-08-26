@@ -61,13 +61,40 @@ func TestDeleteDNSRoutes_ToleratesVanishedInterface(t *testing.T) {
 }
 
 // Постановка dns-маршрута на несуществующий интерфейс — настоящая ошибка.
-func TestUpsertDNSRoutes_SurfacesVanishedInterface(t *testing.T) {
+func TestReplaceDNSRoutes_SurfacesVanishedInterface(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDNSRouteNoSuchIface)
-	err := newDNSRouteCommandsWith(poster).UpsertRoutes(context.Background(),
+	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(), nil,
 		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}})
 	if err == nil {
 		t.Error("отказ постановки dns-маршрута проглочен")
+	}
+}
+
+// В смешанном батче ответ NDMS плоский, и та же фраза «no such interface»
+// приходит и со сноса. Сносим интерфейс, которого уже нет, и заново его не
+// ставим — это штатный дрейф, фатальным он застопорил бы весь синк.
+func TestReplaceDNSRoutes_ToleratesVanishedInterfaceOnDeleteOnly(t *testing.T) {
+	poster := &fakePoster{}
+	poster.SetResponse(respDNSRouteNoSuchIface)
+	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(),
+		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}},
+		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun11"}})
+	if err != nil {
+		t.Errorf("снос исчезнувшего интерфейса считается провалом: %v", err)
+	}
+}
+
+// Имя из сообщения сверяется целиком: «OpkgTun1» — подстрока «OpkgTun10», и
+// сравнение подстрокой признало бы чужой отказ своим.
+func TestReplaceDNSRoutes_InterfaceNameMatchedWhole(t *testing.T) {
+	poster := &fakePoster{}
+	poster.SetResponse(respDNSRouteNoSuchIface) // про OpkgTun10
+	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(),
+		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}},
+		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun1"}})
+	if err != nil {
+		t.Errorf("отказ про OpkgTun10 приписан записи OpkgTun1: %v", err)
 	}
 }
 
