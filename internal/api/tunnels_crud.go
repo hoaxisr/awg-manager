@@ -373,12 +373,45 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, "имя raw-записи задаётся инстансом WDTT — переименуйте инстанс", "WDTT_RAW_NAME_READONLY")
 			return
 		}
+		// Маршрутизацией raw-выхода распоряжается прокси-рантайм: и маршрут
+		// по умолчанию, и WAN-подключение он выставляет сам по конфигу
+		// инстанса. Правка отсюда не применится никогда — отказ по образцу
+		// имени вместо молчаливой потери.
+		//
+		// Условия «поле прислали» обязательны: запрос парсится в полную
+		// AWGTunnel, и непришедшее поле приходит нулевым. Присылку булева
+		// маршрута видно только по компаньону DefaultRouteSet, строкового
+		// WAN — по непустоте. Без них частичный PATCH (форма связности шлёт
+		// один connectivityCheck) ловил бы ложный отказ, и это было бы хуже
+		// исходной потери.
+		if req.DefaultRouteSet && req.DefaultRoute != existing.DefaultRoute {
+			response.Error(w, "маршрут по умолчанию raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_ROUTING_READONLY")
+			return
+		}
+		if req.ISPInterface != "" {
+			// "auto" — это способ прислать пустое значение (нормализация
+			// обычной ветки, :425), а не отдельный интерфейс.
+			wantISP := req.ISPInterface
+			if wantISP == tunnel.ISPInterfaceAuto {
+				wantISP = ""
+			}
+			if wantISP != existing.ISPInterface {
+				response.Error(w, "WAN-подключение raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_WAN_READONLY")
+				return
+			}
+		}
 		updated := *existing
 		if req.ConnectivityCheck != nil {
 			updated.ConnectivityCheck = req.ConnectivityCheck
 			if updated.ConnectivityCheck.Method == "" {
 				updated.ConnectivityCheck.Method = "http"
 			}
+		}
+		// Измерение зеркальной записи разрешено — запрещено только автолечение
+		// (pingcheck/monitor.go:118), значит настройка измерения обязана
+		// сохраняться, а не теряться молча.
+		if req.PingCheck != nil {
+			updated.PingCheck = req.PingCheck
 		}
 		if err := h.store.Save(&updated); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")

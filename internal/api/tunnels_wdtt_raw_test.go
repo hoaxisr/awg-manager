@@ -87,12 +87,20 @@ func rawUpdateStore(t *testing.T) *storage.AWGTunnelStore {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	if err := store.Save(&storage.AWGTunnel{
-		ID:                "wdttraw-de",
-		Name:              "Германия",
-		Backend:           backendWdttRaw,
-		WdttClientID:      "de",
-		RawKernelIface:    "opkgtun18",
+		ID:             "wdttraw-de",
+		Name:           "Германия",
+		Backend:        backendWdttRaw,
+		WdttClientID:   "de",
+		RawKernelIface: "opkgtun18",
+		// DefaultRouteSet=true явно: без компаньона миграция стора (awg_store.go:151)
+		// сама включила бы DefaultRoute, и «маршрут не изменился» после отказа
+		// проверялось бы значением, которое чтение навязывает в любом случае.
+		DefaultRoute:      true,
+		DefaultRouteSet:   true,
 		ConnectivityCheck: &storage.ConnectivityCheckConfig{Method: "http"},
+		// Фикстура измерения отличается от всего, что кладёт PATCH ниже:
+		// совпадение значений не различило бы сохранение и бездействие.
+		PingCheck: &storage.TunnelPingCheck{Enabled: false, Method: "http", Target: "8.8.8.8"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +168,134 @@ func TestUpdate_WdttRawSameNameSavesConnectivityCheck(t *testing.T) {
 	}
 	if stored.Name != "Германия" {
 		t.Fatalf("имя в сторе = %q", stored.Name)
+	}
+}
+
+// Измерение зеркальной записи разрешено (запрещено только автолечение), значит
+// PATCH с pingCheck обязан сохраниться и пережить перечитывание. Заодно это
+// проверка на ложный отказ: defaultRoute в теле не пришёл, то есть в структуру
+// разобрался нулевым (false) при существующем true, — без гарда по
+// DefaultRouteSet ветка отказала бы на поле, которого пользователь не касался.
+func TestUpdate_WdttRawSavesPingCheck(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"pingCheck":{"enabled":true,"method":"icmp","target":"1.1.1.1","interval":30}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PingCheck == nil {
+		t.Fatal("pingCheck пропал")
+	}
+	if !stored.PingCheck.Enabled || stored.PingCheck.Method != "icmp" || stored.PingCheck.Target != "1.1.1.1" || stored.PingCheck.Interval != 30 {
+		t.Fatalf("pingCheck = %+v, ожидали enabled icmp 1.1.1.1/30", stored.PingCheck)
+	}
+	if !stored.DefaultRoute {
+		t.Fatal("маршрут по умолчанию затёрт нулевым значением непришедшего поля")
+	}
+}
+
+// Маршрутом raw-выхода распоряжается прокси-рантайм: явная присылка (компаньон
+// DefaultRouteSet) с другим значением — отказ, а не молчаливая потеря.
+func TestUpdate_WdttRawDefaultRouteRejected(t *testing.T) {
+	store := rawUpdateStore(t)
+	// connectivityCheck в том же теле: отказ обязан быть fail-closed, то есть
+	// не сохранять ВООБЩЕ ничего, а не «маршрут откатить».
+	w := updateRaw(t, store, `{"defaultRoute":false,"defaultRouteSet":true,"connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "WDTT_RAW_ROUTING_READONLY" {
+		t.Fatalf("code = %q, want WDTT_RAW_ROUTING_READONLY", resp.Code)
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.DefaultRoute {
+		t.Fatal("маршрут в сторе изменён, ожидали неизменный true")
+	}
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "http" {
+		t.Fatalf("connectivityCheck = %+v, ожидали нетронутый http", stored.ConnectivityCheck)
+	}
+}
+
+// WAN-подключением raw-выхода тоже распоряжается прокси-рантайм. Ровно это тело
+// шлёт выпадающий список страницы туннеля (updateIspInterface).
+func TestUpdate_WdttRawISPInterfaceRejected(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"ispInterface":"ISP2","ispInterfaceLabel":"Резервный","connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "WDTT_RAW_WAN_READONLY" {
+		t.Fatalf("code = %q, want WDTT_RAW_WAN_READONLY", resp.Code)
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ISPInterface != "" {
+		t.Fatalf("ispInterface в сторе = %q, ожидали пустой", stored.ISPInterface)
+	}
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "http" {
+		t.Fatalf("connectivityCheck = %+v, ожидали нетронутый http", stored.ConnectivityCheck)
+	}
+}
+
+// Ложный отказ: "auto" — это способ прислать пустое значение, а у зеркальной
+// записи WAN и так пустой. Отказ на нём запер бы соседние настройки.
+func TestUpdate_WdttRawISPAutoIsNotAChange(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"ispInterface":"auto","connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "ping" {
+		t.Fatalf("connectivityCheck = %+v, ожидали method ping", stored.ConnectivityCheck)
+	}
+}
+
+// Частичный PATCH формы связности: ни маршрута, ни WAN, ни имени в теле нет.
+// Оба гарда обязаны промолчать, иначе правка связности станет недоступна.
+func TestUpdate_WdttRawPartialConnectivityOnly(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "ping" {
+		t.Fatalf("connectivityCheck = %+v, ожидали method ping", stored.ConnectivityCheck)
+	}
+	if stored.PingCheck == nil || stored.PingCheck.Method != "http" || stored.PingCheck.Enabled {
+		t.Fatalf("pingCheck = %+v, ожидали нетронутую фикстуру", stored.PingCheck)
 	}
 }
 
