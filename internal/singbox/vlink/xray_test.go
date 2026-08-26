@@ -226,3 +226,18 @@ func TestParseXrayBody_RejectsEmptyEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// VLESS Encryption путь ссылок отвергает специально (#603) — sing-box такого
+// поля не имеет, и молча проглоченный конфиг дал бы неподключающийся сервер.
+// Xray-путь обязан вести себя так же.
+func TestParseXrayBody_RejectsVlessEncryption(t *testing.T) {
+	body := `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,` +
+		`"users":[{"id":"11111111-2222-3333-4444-555555555555","encryption":"mlkem768x25519plus.native.0rtt.xxx"}]}]}}]}`
+	res := ParseXrayBody([]byte(body))
+	if len(res.Outbounds) > 0 {
+		t.Errorf("принят: %s", res.Outbounds[0].Outbound)
+	}
+	if len(res.Errors) == 0 {
+		t.Error("ошибка не сообщена")
+	}
+}

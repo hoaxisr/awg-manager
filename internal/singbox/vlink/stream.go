@@ -99,7 +99,7 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	}
 	if n, err := strconv.Atoi(q.Get("ed")); err == nil && n > 0 {
 		s.EarlyData = n
-		s.EarlyDataHeaderName = firstNonEmpty(q.Get("eh"), "Sec-WebSocket-Protocol")
+		s.EarlyDataHeaderName = q.Get("eh")
 	}
 	s.Host = q.Get("host")
 	if s.Host == "" {
@@ -317,20 +317,5 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 
 	if s.BindInterface != "" {
 		out["bind_interface"] = s.BindInterface
-	}
-}
-
-// ALPN / SetALPN дают протокольным путям доступ к списку ALPN: у hysteria2
-// он обязан по умолчанию быть ["h3"], а решает это не общий слой.
-func (s *StreamBuilder) ALPN() []string {
-	if s.TLS == nil {
-		return nil
-	}
-	return s.TLS.ALPN
-}
-
-func (s *StreamBuilder) SetALPN(alpn []string) {
-	if s.TLS != nil {
-		s.TLS.ALPN = alpn
 	}
 }

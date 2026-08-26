@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -32,6 +33,9 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 	q := clashFieldsToValues(p)
 	if q.Get("security") == "" {
 		q.Set("security", "tls")
+	}
+	if q.Get("alpn") == "" {
+		q.Set("alpn", "h3")
 	}
 	stream, err := BuildStreamFromQuery(q, host)
 	if err != nil {
@@ -62,7 +66,11 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 				anyPorts = append(anyPorts, spec)
 			}
 			out["server_ports"] = anyPorts
-			out["hop_interval"] = firstNonEmpty(asString(p["hop-interval"]), "10s")
+			hop, hopMax := clashHopInterval(p["hop-interval"])
+			out["hop_interval"] = hop
+			if hopMax != "" {
+				out["hop_interval_max"] = hopMax
+			}
 		}
 	}
 
@@ -73,9 +81,6 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 		out["down_mbps"] = down
 	}
 
-	if len(stream.ALPN()) == 0 {
-		stream.SetALPN([]string{"h3"})
-	}
 	stream.MergeIntoOutbound(out)
 
 	tag := fmt.Sprintf("hy2-%s-%d", host, portN)
@@ -93,6 +98,32 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 		Outbound: raw,
 		Label:    asString(p["name"]),
 	}, nil
+}
+
+// clashHopInterval переводит hop-interval из формы mihomo (число секунд или
+// диапазон "a-b") в Duration, которую ждёт sing-box. Голое "30" в конфиг
+// пускать нельзя: движок разбирает поле как Duration и роняет ВСЮ
+// конфигурацию, а не один аутбаунд.
+func clashHopInterval(v any) (hop, hopMax string) {
+	raw := asString(v)
+	if n, ok := asInt(v); ok {
+		raw = strconv.Itoa(n)
+	}
+	if raw == "" {
+		return "10s", ""
+	}
+	lo, hi, isRange := strings.Cut(raw, "-")
+	n, err := strconv.Atoi(strings.TrimSpace(lo))
+	if err != nil || n <= 0 {
+		return "10s", ""
+	}
+	hop = strconv.Itoa(n) + "s"
+	if isRange {
+		if m, err := strconv.Atoi(strings.TrimSpace(hi)); err == nil && m >= n {
+			hopMax = strconv.Itoa(m) + "s"
+		}
+	}
+	return hop, hopMax
 }
 
 // parseMbps accepts int/float numbers and strings like "50", "50 Mbps", "50Mbps".

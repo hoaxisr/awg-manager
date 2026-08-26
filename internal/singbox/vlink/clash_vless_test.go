@@ -283,3 +283,26 @@ func TestMapClashVless_XHTTPReuseSettings(t *testing.T) {
 		t.Errorf("headers=%v", tr["headers"])
 	}
 }
+
+// У mihomo пустой early-data-header-name означает early data в пути, а не
+// заголовок; sing-box умеет обе формы, навязывать заголовок нельзя.
+func TestMapClashVless_WSEarlyDataInPath(t *testing.T) {
+	in := map[string]any{
+		"name": "w", "type": "vless", "server": "w.example.com", "port": 443,
+		"uuid": "3a3b1c2e-9999-4321-aaaa-1234567890ab", "network": "ws",
+		"ws-opts": map[string]any{"path": "/ws", "max-early-data": 2048},
+	}
+	got, err := mapClashVless(in)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	_ = json.Unmarshal(got.Outbound, &ob)
+	tr, _ := ob["transport"].(map[string]any)
+	if tr["max_early_data"] != float64(2048) {
+		t.Errorf("max_early_data=%v", tr["max_early_data"])
+	}
+	if _, present := tr["early_data_header_name"]; present {
+		t.Errorf("заголовок навязан там, где mihomo его не задал: %v", tr)
+	}
+}

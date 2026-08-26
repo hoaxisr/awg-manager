@@ -282,6 +282,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		if user.ID == "" {
 			return nil, fmt.Errorf("vless: missing uuid")
 		}
+		if err := checkVlessEncryption(user.Encryption); err != nil {
+			return nil, err
+		}
 		sbOutbound["type"] = "vless"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)

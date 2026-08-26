@@ -19,14 +19,7 @@ func (e *ErrAmneziaUnsupportedProtocol) Error() string {
 }
 
 type xrayConfig struct {
-	Outbounds []xrayOutbound `json:"outbounds"`
-}
-
-type xrayOutbound struct {
-	Protocol       string          `json:"protocol"`
-	Settings       json.RawMessage `json:"settings"`
-	StreamSettings json.RawMessage `json:"streamSettings"`
-	Tag            string          `json:"tag"`
+	Outbounds []XrayOutbound `json:"outbounds"`
 }
 
 func parseAmnezia(input string) (*ParsedOutbound, error) {
@@ -64,30 +57,15 @@ func parseAmnezia(input string) (*ParsedOutbound, error) {
 // amneziaToOutbound отдаёт внутренний Xray-аутбаунд общему конвертеру.
 // Ограничение на vless сохранено выше: снять его — значит просто расширить
 // switch, конвертер понимает и trojan, и shadowsocks.
-func amneziaToOutbound(ob xrayOutbound, tag string) (*ParsedOutbound, error) {
-	parsed, err := convertXrayOutbound(XrayOutbound{
-		Tag:            firstNonEmpty(tag, ob.Tag),
-		Protocol:       ob.Protocol,
-		Settings:       ob.Settings,
-		StreamSettings: streamSettingsFromRaw(ob.StreamSettings),
-	})
+func amneziaToOutbound(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
+	if tag != "" {
+		ob.Tag = tag
+	}
+	parsed, err := convertXrayOutbound(ob)
 	if err != nil {
 		return nil, fmt.Errorf("amnezia: %w", err)
 	}
 	// Имя из фрагмента ссылки — единственное, что несёт сам vpn://.
 	parsed.Label = tag
 	return parsed, nil
-}
-
-// streamSettingsFromRaw разбирает streamSettings, который у vpn:// приезжает
-// сырым. Битый блок роняет ссылку, а не молча превращает её в plain-TCP.
-func streamSettingsFromRaw(raw json.RawMessage) *XrayStream {
-	if len(raw) == 0 {
-		return nil
-	}
-	var stream XrayStream
-	if json.Unmarshal(raw, &stream) != nil {
-		return nil
-	}
-	return &stream
 }

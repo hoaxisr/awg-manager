@@ -84,7 +84,7 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		}
 		if n, ok := asInt(ws["max-early-data"]); ok && n > 0 {
 			v.Set("ed", strconv.Itoa(n))
-			v.Set("eh", firstNonEmpty(asString(ws["early-data-header-name"]), "Sec-WebSocket-Protocol"))
+			v.Set("eh", asString(ws["early-data-header-name"]))
 		}
 	case "grpc":
 		gp := nestedMap(p, "grpc-opts")

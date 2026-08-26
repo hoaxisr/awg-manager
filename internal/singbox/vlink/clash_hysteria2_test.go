@@ -90,3 +90,39 @@ func TestMapClashHysteria2_ObfsWithoutPassword(t *testing.T) {
 		t.Errorf("want 'obfs requires obfs-password' error, got %v", err)
 	}
 }
+
+// mihomo несёт hop-interval числом секунд или диапазоном "a-b"; sing-box ждёт
+// Duration с единицей, и голое "30" уронит разбор всей конфигурации.
+func TestMapClashHysteria2_HopInterval(t *testing.T) {
+	cases := []struct {
+		hop     any
+		wantMin string
+		wantMax any
+	}{
+		{30, "30s", nil},
+		{"30", "30s", nil},
+		{"30-60", "30s", "60s"},
+		{nil, "10s", nil},
+	}
+	for _, tc := range cases {
+		p := map[string]any{
+			"name": "h", "type": "hysteria2", "server": "h.example.com",
+			"port": 443, "password": "p", "ports": "20000-30000",
+		}
+		if tc.hop != nil {
+			p["hop-interval"] = tc.hop
+		}
+		got, err := mapClashHysteria2(p)
+		if err != nil {
+			t.Fatalf("hop=%v: %v", tc.hop, err)
+		}
+		var ob map[string]any
+		_ = json.Unmarshal(got.Outbound, &ob)
+		if ob["hop_interval"] != tc.wantMin {
+			t.Errorf("hop=%v: hop_interval=%v, want %v", tc.hop, ob["hop_interval"], tc.wantMin)
+		}
+		if ob["hop_interval_max"] != tc.wantMax {
+			t.Errorf("hop=%v: hop_interval_max=%v, want %v", tc.hop, ob["hop_interval_max"], tc.wantMax)
+		}
+	}
+}
