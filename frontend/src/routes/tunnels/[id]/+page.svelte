@@ -357,7 +357,17 @@
 						<SettingsSectionLabel label="Название" icon={Tag} tone="slate" header />
 						<div class="flex flex-col gap-1.5">
 							<label class="field-label" for="name">Название туннеля</label>
-							<input type="text" id="name" class="field-input" bind:value={$form.name} />
+							<input
+								type="text"
+								id="name"
+								class="field-input"
+								bind:value={$form.name}
+								disabled={tunnel?.backend === 'wdtt-raw'}
+								title={tunnel?.backend === 'wdtt-raw' ? 'Имя задаётся инстансом WDTT' : undefined}
+							/>
+							{#if tunnel?.backend === 'wdtt-raw'}
+								<p class="field-hint">Имя задаётся инстансом WDTT и меняется в его настройках.</p>
+							{/if}
 							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
 						</div>
 					</section>

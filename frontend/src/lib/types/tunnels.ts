@@ -95,7 +95,7 @@ export interface AWGTunnel {
 	pingCheck?: TunnelPingCheck;
 	connectivityCheck?: ConnectivityCheckConfig;
 	warnings?: string[];
-	backend?: 'nativewg' | 'kernel';
+	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
 	freeTurnClientId?: string;
 	wdttClientId?: string;
 }
