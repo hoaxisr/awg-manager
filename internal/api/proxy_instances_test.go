@@ -1219,3 +1219,34 @@ func TestProxyInstancesKeyPercentEscaped(t *testing.T) {
 		})
 	}
 }
+
+// Гейт считается ДО записи, на сыром конфиге из тела запроса, а режим store
+// приводит потом (instancestore/store.go:253-256). Сырое сравнение пропускало
+// бы "RAW" и " raw ": гейт молчит, store делает raw, и на прошивке без
+// поддержки OpkgTun появляется клиент, которому интерфейс выделить нечем.
+func TestProxyInstancesPatch_OpkgTunGateNormalizesMode(t *testing.T) {
+	for _, mode := range []string{"RAW", " raw ", "Raw"} {
+		t.Run(mode, func(t *testing.T) {
+			mgr := &fakeProxyManager{
+				records: []instancestore.Record{fullClientRecord()},
+				seed:    manager.SeedInfo{Booted: true, Certified: true},
+			}
+			h := NewProxyInstancesHandler(ProxyInstancesDeps{
+				Manager:          mgr,
+				States:           fakeProxyStates{},
+				OpkgTunSupported: func() bool { return false },
+			})
+			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl",
+				`{"config":{"connMode":"`+mode+`"}}`)
+			if rr.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("режим %q обошёл гейт: код = %d, ждали 422: %s", mode, rr.Code, rr.Body.String())
+			}
+			if code, _ := decodeProxyErr(t, rr); code != "PROXY_OPKGTUN_UNSUPPORTED" {
+				t.Fatalf("код ошибки = %q, ждали PROXY_OPKGTUN_UNSUPPORTED", code)
+			}
+			if len(mgr.mutated) != 0 {
+				t.Fatalf("запись изменена вопреки отказу: %+v", mgr.mutated)
+			}
+		})
+	}
+}

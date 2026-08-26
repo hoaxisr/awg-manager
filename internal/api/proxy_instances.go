@@ -659,7 +659,14 @@ func proxyNeedsOpkgTun(rec instancestore.Record) bool {
 	case instancestore.KindWdttServer:
 		return true
 	case instancestore.KindWdttClient:
-		return rec.WdttClient != nil && rec.WdttClient.Mode == "raw"
+		// Сравнение НОРМАЛИЗОВАННОЕ, тем же правилом, что у store
+		// (instancestore/store.go:253-256): гейт считается до записи, на сыром
+		// конфиге из тела запроса, а режим store приводит потом. Сырое
+		// сравнение пропускало бы "RAW" и " raw " — гейт молчит, store делает
+		// raw, и на прошивке без OpkgTun создаётся клиент, которому интерфейс
+		// выделить нечем.
+		return rec.WdttClient != nil &&
+			strings.ToLower(strings.TrimSpace(rec.WdttClient.Mode)) == "raw"
 	}
 	return false
 }
