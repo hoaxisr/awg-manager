@@ -103,6 +103,94 @@ func TestSetClashController(t *testing.T) {
 	}
 }
 
+// ApplyClashPort целиком: запись в базу и переустановка клиента, включая
+// порядок этих двух шагов и поведение при отсутствующем 00-base.json.
+func TestOperator_ApplyClashPort(t *testing.T) {
+	controllerOf := func(t *testing.T, basePath string) string {
+		t.Helper()
+		raw, err := os.ReadFile(basePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		exp, _ := m["experimental"].(map[string]any)
+		clash, _ := exp["clash_api"].(map[string]any)
+		addr, _ := clash["external_controller"].(string)
+		return addr
+	}
+
+	t.Run("база и клиент переезжают вместе", func(t *testing.T) {
+		dir := t.TempDir()
+		op := NewOperator(OperatorDeps{Dir: dir})
+		basePath := filepath.Join(dir, "config.d", "00-base.json")
+
+		if err := op.ApplyClashPort(9500); err != nil {
+			t.Fatalf("ApplyClashPort: %v", err)
+		}
+		if got := controllerOf(t, basePath); got != "127.0.0.1:9500" {
+			t.Errorf("в конфиге %q, want 127.0.0.1:9500", got)
+		}
+		if got := op.Clash().Address(); got != "127.0.0.1:9500" {
+			t.Errorf("клиент смотрит в %q, want 127.0.0.1:9500", got)
+		}
+	})
+
+	t.Run("повторное применение того же порта — no-op без ошибки", func(t *testing.T) {
+		dir := t.TempDir()
+		op := NewOperator(OperatorDeps{Dir: dir, ClashPort: func() int { return 9500 }})
+		if err := op.ApplyClashPort(9500); err != nil {
+			t.Fatalf("ApplyClashPort: %v", err)
+		}
+		if got := op.Clash().Address(); got != "127.0.0.1:9500" {
+			t.Errorf("клиент смотрит в %q, want 127.0.0.1:9500", got)
+		}
+	})
+
+	// Файл пропасть посреди жизни может только при ручном вмешательстве;
+	// mutateBase такое молча пропускает. Клиент при этом всё равно уезжает на
+	// новый порт — расхождение самолечится на следующем буте, когда
+	// NewOperator пересоздаст базу с портом из настроек. Тест фиксирует это
+	// поведение явно, чтобы оно не поменялось незамеченным.
+	t.Run("пропавшая база — не ошибка, но и не запись", func(t *testing.T) {
+		dir := t.TempDir()
+		op := NewOperator(OperatorDeps{Dir: dir})
+		basePath := filepath.Join(dir, "config.d", "00-base.json")
+		if err := os.Remove(basePath); err != nil {
+			t.Fatal(err)
+		}
+		if err := op.ApplyClashPort(9500); err != nil {
+			t.Fatalf("ApplyClashPort: %v", err)
+		}
+		if _, err := os.Stat(basePath); !os.IsNotExist(err) {
+			t.Errorf("база воссоздана, ожидался no-op: %v", err)
+		}
+		if got := op.Clash().Address(); got != "127.0.0.1:9500" {
+			t.Errorf("клиент смотрит в %q, want 127.0.0.1:9500", got)
+		}
+	})
+
+	// Провалившаяся запись не должна оставлять клиент смотреть в порт,
+	// которого нет в конфиге: SetAddress зовётся строго после успеха.
+	t.Run("битая база — клиент остаётся на старом порту", func(t *testing.T) {
+		dir := t.TempDir()
+		op := NewOperator(OperatorDeps{Dir: dir})
+		basePath := filepath.Join(dir, "config.d", "00-base.json")
+		if err := os.WriteFile(basePath, []byte("{не json"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		before := op.Clash().Address()
+		if err := op.ApplyClashPort(9500); err == nil {
+			t.Fatal("ожидалась ошибка разбора 00-base.json")
+		}
+		if got := op.Clash().Address(); got != before {
+			t.Errorf("клиент переставлен при провале записи: %q, было %q", got, before)
+		}
+	})
+}
+
 func TestEffectiveClashPort(t *testing.T) {
 	for _, c := range []struct{ in, want int }{
 		{0, DefaultClashPort},

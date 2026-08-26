@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -89,5 +90,90 @@ func TestDescribeBinding(t *testing.T) {
 				t.Errorf("want %q, got %q", c.want, got)
 			}
 		})
+	}
+}
+
+// Гейт «проверять только при реальной смене»: наш sing-box в момент проверки
+// слушает СТАРЫЙ порт, поэтому пересохранение того же значения не должно
+// упираться в собственную занятость.
+func TestUpdate_SingboxClashPort_ValidatesOnlyOnChange(t *testing.T) {
+	h, _ := newSettingsHandlerFromRaw(t, `{"schemaVersion":2,"singboxClashPort":9500}`)
+	h.SetClashPortInspector(stubInspector{bindings: []sysports.Binding{{
+		Port: 9500, ProcessName: "sing-box", PID: 42,
+	}}})
+
+	// Тот же порт при занятом сокете — проходит: смены нет.
+	if rec := postSettingsUpdate(t, h, `{"singboxClashPort":9500}`); rec.Code != http.StatusOK {
+		t.Fatalf("пересохранение того же порта: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	// Смена на занятый порт — отказ с именем держателя.
+	rec := postSettingsUpdate(t, h, `{"singboxClashPort":9600}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("смена на занятый порт: status %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "sing-box") {
+		t.Errorf("отказ должен называть держателя порта: %s", rec.Body.String())
+	}
+}
+
+// Отвергнутый валидацией порт не должен оседать в сторадже: иначе он молча
+// применился бы на следующем старте awgm.
+func TestUpdate_SingboxClashPort_RejectedValueNotStored(t *testing.T) {
+	h, store := newSettingsHandlerFromRaw(t, `{"schemaVersion":2}`)
+	if rec := postSettingsUpdate(t, h, `{"singboxClashPort":80}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+	got, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.SingboxClashPort != 0 {
+		t.Errorf("отвергнутый порт сохранён: %d", got.SingboxClashPort)
+	}
+}
+
+func TestUpdate_SingboxClashPort_AppliesOnChange(t *testing.T) {
+	h, _ := newSettingsHandlerFromRaw(t, `{"schemaVersion":2}`)
+	var applied []int
+	h.SetApplyClashPort(func(p int) error {
+		applied = append(applied, p)
+		return nil
+	})
+
+	if rec := postSettingsUpdate(t, h, `{"singboxClashPort":9500}`); rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(applied) != 1 || applied[0] != 9500 {
+		t.Fatalf("applied = %#v, want [9500]", applied)
+	}
+
+	// Повтор без смены значения sing-box дёргать не должен.
+	if rec := postSettingsUpdate(t, h, `{"singboxClashPort":9500}`); rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if len(applied) != 1 {
+		t.Errorf("applied = %#v, повторное применение без смены", applied)
+	}
+}
+
+// Провал применения отдаёт ошибку, но настройки к этому моменту УЖЕ сохранены
+// (общий для всех applyX-хуков порядок в Update). Тест фиксирует расхождение
+// явно: пользователь видит отказ, а порт уже в сторадже и оживёт на следующем
+// старте. Отдельная задача — общая для clash-порта, bootstrap-DNS и уровня
+// лога; пока поведение зафиксировано, чтобы не поменялось незамеченным.
+func TestUpdate_SingboxClashPort_ApplyFailureStillPersists(t *testing.T) {
+	h, store := newSettingsHandlerFromRaw(t, `{"schemaVersion":2}`)
+	h.SetApplyClashPort(func(int) error { return errors.New("orchestrator down") })
+
+	rec := postSettingsUpdate(t, h, `{"singboxClashPort":9500}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("ожидалась ошибка применения, got 200")
+	}
+	got, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.SingboxClashPort != 9500 {
+		t.Errorf("SingboxClashPort = %d; тест фиксирует, что настройка сохраняется ДО применения", got.SingboxClashPort)
 	}
 }

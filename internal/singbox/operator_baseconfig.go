@@ -31,9 +31,8 @@ func DefaultCacheDBPath() string { return defaultCacheDBPath }
 // ensureBaseConfigWithLogLevel writes a minimal 00-base.json if config.d is
 // empty, so sing-box starts standalone (direct outbound + bootstrap DNS) before
 // any tunnels are added. Also surgically self-heals an older base config
-// that hard-coded the wrong Clash API port (9090 instead of
-// clashAPIAddr's 9099), which silently broke our LogForwarder /
-// DelayChecker on existing installs.
+// that hard-coded the wrong Clash API port (9090 instead of ours), which
+// silently broke our LogForwarder / DelayChecker on existing installs.
 func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
 	basePath := filepath.Join(configDir, "00-base.json")
@@ -1129,9 +1128,16 @@ func (o *Operator) desiredClashPort() int {
 
 // ApplyClashPort приводит experimental.clash_api.external_controller в
 // 00-base.json к новому порту и перенаправляет туда же наш ClashClient
-// (issue #788). Демон перечитывает конфиг штатным reload'ом: SIGHUP в форке —
-// это Close + пересоздание инстанса, так что слушающий сокет Clash API
-// переезжает без перезапуска процесса.
+// (issue #788). Перезапуск демона не нужен: SIGHUP в форке — это Close +
+// пересоздание инстанса, так что слушающий сокет Clash API переезжает сам.
+//
+// Применение АСИНХРОННОЕ: при подключённом оркестраторе запись лишь взводит
+// debounced reload (250 мс), и валидация merged-конфига произойдёт уже после
+// возврата отсюда. Отсюда окно в сотни миллисекунд, когда клиент смотрит на
+// порт, который ещё никто не слушает, — его закрывают ретраи LogForwarder и
+// TrafficAggregator. Если же merged-конфиг сломан чем-то ПОСТОРОННИМ, reload
+// откажет валидацией и демон останется на старом порту, а клиент уедет на
+// новый; сам порт валидацию сломать не может.
 //
 // ClashClient переставляется ПОСЛЕ успешной записи: провалившаяся запись
 // оставила бы клиент смотреть в порт, которого в конфиге нет.

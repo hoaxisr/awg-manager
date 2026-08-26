@@ -33,7 +33,12 @@ func reservedClashPort(port, serverPort int) string {
 	case port == router.RedirectPort:
 		return "REDIRECT sing-box"
 	case port >= firstTunnelPort && port <= lastTunnelPort:
-		return "входы туннелей sing-box и прокси для устройств"
+		// Только диапазон входов туннелей. Порт device-proxy настраивается
+		// в 1024-65535 и сюда попадает лишь по умолчанию (1099), а
+		// выключенный инстанс не поймает и скан занятости — сокета нет.
+		// Обратная сверка (device-proxy знает про наш порт) не сделана: это
+		// правка в валидаторе deviceproxy, отдельная задача.
+		return "входы туннелей sing-box"
 	case inQoSPortRange(router.QoSTPROXYPortBase, port):
 		return "QoS-классы (TPROXY)"
 	case inQoSPortRange(router.QoSRedirectPortBase, port):

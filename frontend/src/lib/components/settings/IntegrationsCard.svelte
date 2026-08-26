@@ -61,7 +61,13 @@
 		clashPortError = null,
 	}: Props = $props();
 
+	// Копии Go-констант: singbox.DefaultClashPort и api.minClashPort. Фронт не
+	// импортирует Go, а бэкенд остаётся авторитетом — невалидное он отвергнет
+	// и без нас. Здесь они только чтобы подсказка и placeholder не врали, так
+	// что при смене первоисточника поправить нужно и тут.
 	const DEFAULT_CLASH_PORT = 9099;
+	const MIN_CLASH_PORT = 1024;
+	const MAX_CLASH_PORT = 65535;
 
 	// Черновик поля bootstrap-DNS. Настройки на странице грузятся один раз,
 	// внешних обновлений у этого props нет — ресинк не нужен, начальное
@@ -83,7 +89,9 @@
 	let clashPortDraft = $state(String(clashPort || DEFAULT_CLASH_PORT));
 	const clashPortValue = $derived(Number(clashPortDraft.trim()));
 	const clashPortValid = $derived(
-		/^\d+$/.test(clashPortDraft.trim()) && clashPortValue >= 1024 && clashPortValue <= 65535
+		/^\d+$/.test(clashPortDraft.trim()) &&
+			clashPortValue >= MIN_CLASH_PORT &&
+			clashPortValue <= MAX_CLASH_PORT
 	);
 	const clashPortDirty = $derived(clashPortValue !== (clashPort || DEFAULT_CLASH_PORT));
 
@@ -316,7 +324,7 @@
 							bind:value={clashPortDraft}
 							placeholder={String(DEFAULT_CLASH_PORT)}
 							disabled={clashPortSaving}
-							error={clashPortValid ? (clashPortError ?? undefined) : 'Нужен порт от 1024 до 65535'}
+							error={clashPortValid ? (clashPortError ?? undefined) : `Нужен порт от ${MIN_CLASH_PORT} до ${MAX_CLASH_PORT}`}
 							fullWidth
 						/>
 						<Button

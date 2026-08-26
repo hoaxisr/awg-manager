@@ -17,7 +17,7 @@ import (
 // подписочные селекторы, поэтому доступ к полю только через Address/SetAddress.
 type ClashClient struct {
 	mu      sync.RWMutex
-	address string // e.g. "127.0.0.1:9099" — see singbox.clashAddr
+	address string // e.g. "127.0.0.1:9099" — построен через ClashAddr
 	http    *http.Client
 }
 
