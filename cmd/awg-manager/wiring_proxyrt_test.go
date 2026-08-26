@@ -1059,10 +1059,11 @@ func TestProxyLinkedCleanersDeleteOwnFieldOnly(t *testing.T) {
 
 // Амендмент F2: зеркальная запись — проекция ЖИВОГО инстанса (уборщика зовёт
 // только ручка clear по существующей записи). Снести её значит соврать: зеркало
-// пересоздаст её на ближайшем объявлении, но уже с дефолтами. Обе половины в
-// одном прогоне: настоящий связанный туннель обязан сноситься по-прежнему —
-// иначе «починкой» был бы уборщик, не убирающий ничего.
-func TestProxyLinkedCleanerRefusesMirrorRecord(t *testing.T) {
+// пересоздаст её на ближайшем объявлении, но уже с дефолтами. Она и не кандидат
+// этой операции — снять её пользователь не может, поэтому ошибки быть не должно
+// тоже. Обе половины в одном прогоне: настоящий связанный туннель обязан
+// сноситься по-прежнему — иначе «починкой» был бы уборщик, не убирающий ничего.
+func TestProxyLinkedCleanerSkipsMirrorRecord(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(filepath.Join(dir, "tunnels"), filepath.Join(dir, "lock"))
 	for _, tun := range []*storage.AWGTunnel{
@@ -1081,8 +1082,9 @@ func TestProxyLinkedCleanerRefusesMirrorRecord(t *testing.T) {
 	if len(deleted) != 1 || deleted[0] != "awg10" {
 		t.Fatalf("снесено %v, want ровно [awg10]: настоящий туннель сносится, зеркальная запись — нет", deleted)
 	}
-	if len(errs) != 1 || !strings.Contains(errs[0], "wdtt-client:same") {
-		t.Fatalf("ошибки уборки: %v (ждали одну, с ключом инстанса)", errs)
+	if len(errs) != 0 {
+		t.Fatalf("ошибки уборки: %v (зеркальная запись — не кандидат, а не отказ: "+
+			"иначе штатная очистка выглядела бы сбоем у каждого raw-клиента)", errs)
 	}
 	if !store.Exists("wdttraw-same") {
 		t.Fatal("зеркальная запись снесена: она вернётся с дефолтами, а настройки карточки пропадут")
