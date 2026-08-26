@@ -44,6 +44,16 @@ func itoa(n int) string { return string(rune('0' + n)) } // n < 10 в теста
 type fakeSweeper struct {
 	mu    sync.Mutex
 	calls []map[string]bool
+	// owned — что сканер видит на роутере. Отдельно от calls: ведомость
+	// удаления при незаверенном посеве строится ИЗ НЕГО, а не из записей.
+	owned    []string
+	ownedErr error
+}
+
+func (f *fakeSweeper) OwnedNames(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.owned, f.ownedErr
 }
 
 func (f *fakeSweeper) Sweep(_ context.Context, declared map[string]bool) ([]string, error) {
@@ -831,6 +841,73 @@ func TestDeleteSweepsSurvivorsNDMSNames(t *testing.T) {
 	if !sameNames(last, "OpkgTun19") {
 		t.Fatalf("ведомость уборщика после удаления: %v (ждали ровно {OpkgTun19})", last)
 	}
+}
+
+// Амендмент F, вторая половина: на пути УДАЛЕНИЯ гейт был бы неверным
+// лечением — сертификация монотонна, и запертая уборка оставила бы интерфейс
+// только что удалённого инстанса сиротой навсегда. Поэтому при незаверенном
+// посеве ведомость строится из скана минус имена удаляемого.
+//
+// OpkgTun20 в скане — интерфейс НЕПЕРЕЕХАВШЕГО инстанса: в записях store его
+// нет и быть не может, и он же различает обе половины теста.
+func TestDeleteSweepLedgerFollowsCertification(t *testing.T) {
+	setup := func(t *testing.T, certified bool) *env {
+		t.Helper()
+		e := newEnv(t)
+		e.sw.owned = []string{"OpkgTun18", "OpkgTun19", "OpkgTun20"}
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), rawRec("dv", "OpkgTun19", "opkgtun19"))
+		if !certified {
+			st, err := e.st.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.SkippedSources = []instancestore.SkippedSource{{File: "wdtt.json", Reason: "поле не того типа"}}
+			e.seedRes = instancestore.SeedResult{State: st}
+			e.seedResSet = true
+		}
+		boot(t, e)
+		if got := e.m.SeedInfo().Certified; got != certified {
+			t.Fatalf("Certified = %v, ждали %v", got, certified)
+		}
+		return e
+	}
+
+	t.Run("незаверенный посев щадит непереехавших", func(t *testing.T) {
+		e := setup(t, false)
+		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.sw.calls) != 1 {
+			t.Fatalf("вызовов уборщика %d, ждали ровно один (на бооте уборка заперта)", len(e.sw.calls))
+		}
+		if !sameNames(e.sw.calls[0], "OpkgTun19", "OpkgTun20") {
+			t.Fatalf("ведомость удаления: %v (ждали ровно {OpkgTun19 OpkgTun20}: приговорён только "+
+				"интерфейс удаляемого, непереехавший OpkgTun20 неприкосновенен)", e.sw.calls[0])
+		}
+	})
+
+	t.Run("отказ скана отменяет уборку", func(t *testing.T) {
+		e := setup(t, false)
+		e.sw.ownedErr = errors.New("rci down")
+		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборка при несобранной ведомости: %v («не знаем» не равно «наш и лишний»)", e.sw.calls)
+		}
+	})
+
+	t.Run("заверенный посев убирает сирот", func(t *testing.T) {
+		e := setup(t, true)
+		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+			t.Fatal(err)
+		}
+		last := e.sw.calls[len(e.sw.calls)-1]
+		if !sameNames(last, "OpkgTun19") {
+			t.Fatalf("ведомость удаления: %v (ждали ровно {OpkgTun19}: список записей полон, и "+
+				"сирота OpkgTun20 обязан быть подобран)", last)
+		}
+	})
 }
 
 func TestRepeatBootKeepsRunningInstances(t *testing.T) {

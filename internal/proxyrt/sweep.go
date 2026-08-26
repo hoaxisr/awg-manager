@@ -153,3 +153,24 @@ func (s *Sweeper) Sweep(ctx context.Context, declared map[string]bool) ([]string
 	}
 	return removed, firstErr
 }
+
+// OwnedNames — имена ресурсов роутера, которые сканер нашёл по НАШИМ меткам.
+// Метка перепроверяется тем же способом, что в Sweep, и по той же причине:
+// довод «сканер вернул только наше» верен ровно до бага в сканере.
+//
+// Нужен уборке на пути удаления инстанса при незаверенном посеве: там
+// ведомость нельзя строить из записей store — список неполон, — и её собирают
+// как «всё найденное минус интерфейсы удаляемого» (manager.Delete).
+func (s *Sweeper) OwnedNames(ctx context.Context) ([]string, error) {
+	found, err := s.sc.Scan(ctx, s.labels)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range found {
+		if s.ours(r.Label) {
+			out = append(out, r.Name)
+		}
+	}
+	return out, nil
+}

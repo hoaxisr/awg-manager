@@ -82,6 +82,8 @@ type e2eSweeper struct{}
 
 func (e2eSweeper) Sweep(context.Context, map[string]bool) ([]string, error) { return nil, nil }
 
+func (e2eSweeper) OwnedNames(context.Context) ([]string, error) { return nil, nil }
+
 // keepPin — «выдай запрошенное». Отказ на непинованном запросе не украшение:
 // перепин на этом прогоне означал бы, что архитектура фикстуры или диапазон
 // индексов разъехались, и молча выданный новый индекс увёл бы прогон мимо

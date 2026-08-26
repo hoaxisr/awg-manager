@@ -421,6 +421,8 @@ type stubSweeper struct{}
 
 func (stubSweeper) Sweep(context.Context, map[string]bool) ([]string, error) { return nil, nil }
 
+func (stubSweeper) OwnedNames(context.Context) ([]string, error) { return nil, nil }
+
 type stubJournal struct{}
 
 func (stubJournal) Info(string, string, string) {}

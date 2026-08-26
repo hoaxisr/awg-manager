@@ -28,6 +28,9 @@ type RegistryPort interface {
 
 type SweepPort interface {
 	Sweep(ctx context.Context, declared map[string]bool) ([]string, error)
+	// OwnedNames — имена всего, что сканер нашёл по нашим меткам. Нужен
+	// уборке на пути удаления при незаверенном посеве (deleteSweepDeclared).
+	OwnedNames(ctx context.Context) ([]string, error)
 }
 
 type RunningInstance interface {
@@ -624,12 +627,17 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		mg.inst.Stop() // вне m.mu (Щ6); Link закрывает инстанс (план 2)
 	}
 
+	// removed — запись, которую удаляем, как её видит store. Берётся здесь, а
+	// не из lastRec: живого инстанса могло не быть вовсе (запись на диске без
+	// воркера), а имена интерфейсов нужны уборке ниже в обоих случаях.
+	var removed instancestore.Record
 	st, err := m.mutateStore(func(state *instancestore.State) error {
 		out := state.Records[:0]
 		found := false
 		for _, r := range state.Records {
 			if r.Key() == key {
 				found = true
+				removed = r
 				continue
 			}
 			out = append(out, r)
@@ -655,12 +663,46 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		return err
 	}
 
-	declaredNDMS := instance.DeclaredNDMSNames(namedOf(st.Records))
-	if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
+	if declaredNDMS, lerr := m.deleteSweepDeclared(ctx, removed, st.Records); lerr != nil {
+		// Ведомость не собрана — не сносим ничего: «не знаем» не равно «наш и
+		// лишний» (тот же довод, что у Sweep на упавшем скане).
+		m.deps.Journal.Warn("delete", key, "уборка NDMS пропущена: "+lerr.Error())
+	} else if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
 		m.deps.Journal.Warn("delete", key, "уборка NDMS: "+serr.Error())
 	}
 	m.deps.ReleasePins(key, key+"/wg", key+"/raw", key+"/listen")
 	return nil
+}
+
+// deleteSweepDeclared — ведомость уборщика на пути удаления инстанса.
+//
+// Заверенный посев: обычная ведомость из ОСТАВШИХСЯ записей — список полон, и
+// уборка заодно подбирает сирот.
+//
+// Незаверенный: список записей неполон (амендмент F), интерфейсов
+// непереехавших инстансов в нём нет, и обычная ведомость приговорила бы их
+// вместе с permit'ами политик — необратимо. Запереть уборку здесь нельзя:
+// сертификация монотонна, и интерфейс ТОЛЬКО ЧТО удалённого инстанса остался
+// бы сиротой навсегда. Поэтому ведомость строится наоборот — всё, что нашёл
+// сканер, МИНУС имена удаляемого: снесётся ровно то, что удаляем, а всё
+// незнакомое уцелеет.
+func (m *Manager) deleteSweepDeclared(ctx context.Context, removed instancestore.Record,
+	left []instancestore.Record) (map[string]bool, error) {
+	if m.SeedInfo().Certified {
+		return instance.DeclaredNDMSNames(namedOf(left)), nil
+	}
+	found, err := m.deps.Sweeper.OwnedNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doomed := instance.DeclaredNDMSNames(namedOf([]instancestore.Record{removed}))
+	declared := make(map[string]bool, len(found))
+	for _, name := range found {
+		if !doomed[name] {
+			declared[name] = true
+		}
+	}
+	return declared, nil
 }
 
 func (m *Manager) Post(key string, k proxyrt.EventKind) bool {
