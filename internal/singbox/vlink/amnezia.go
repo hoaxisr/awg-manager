@@ -53,7 +53,7 @@ func parseAmnezia(input string) (*ParsedOutbound, error) {
 		case "freedom", "blackhole", "":
 			continue
 		case "vless":
-			return amneziaVlessToOutbound(ob, tag)
+			return amneziaToOutbound(ob, tag)
 		default:
 			return nil, &ErrAmneziaUnsupportedProtocol{Protocol: ob.Protocol}
 		}
@@ -61,105 +61,33 @@ func parseAmnezia(input string) (*ParsedOutbound, error) {
 	return nil, errors.New("amnezia: no usable outbound found")
 }
 
-func amneziaVlessToOutbound(ob xrayOutbound, tag string) (*ParsedOutbound, error) {
-	var settings struct {
-		VNext []struct {
-			Address string `json:"address"`
-			Port    int    `json:"port"`
-			Users   []struct {
-				ID         string `json:"id"`
-				Flow       string `json:"flow"`
-				Encryption string `json:"encryption"`
-			} `json:"users"`
-		} `json:"vnext"`
-	}
-	if err := json.Unmarshal(ob.Settings, &settings); err != nil {
-		return nil, fmt.Errorf("amnezia.vless: settings: %w", err)
-	}
-	if len(settings.VNext) == 0 || len(settings.VNext[0].Users) == 0 {
-		return nil, errors.New("amnezia.vless: empty vnext or users")
-	}
-	v := settings.VNext[0]
-	user := v.Users[0]
-
-	var stream struct {
-		Network     string `json:"network"`
-		Security    string `json:"security"`
-		TLSSettings struct {
-			ServerName  string   `json:"serverName"`
-			ALPN        []string `json:"alpn"`
-			Fingerprint string   `json:"fingerprint"`
-		} `json:"tlsSettings"`
-		RealitySettings struct {
-			ServerName  string `json:"serverName"`
-			PublicKey   string `json:"publicKey"`
-			ShortID     string `json:"shortId"`
-			Fingerprint string `json:"fingerprint"`
-		} `json:"realitySettings"`
-		GRPCSettings struct {
-			ServiceName string `json:"serviceName"`
-		} `json:"grpcSettings"`
-	}
-	json.Unmarshal(ob.StreamSettings, &stream)
-
-	out := map[string]any{
-		"type":        "vless",
-		"server":      v.Address,
-		"server_port": v.Port,
-		"uuid":        user.ID,
-	}
-	if user.Flow != "" {
-		out["flow"] = normalizeFlow(user.Flow)
-	}
-
-	switch strings.ToLower(stream.Network) {
-	case "grpc":
-		out["transport"] = map[string]any{
-			"type":         "grpc",
-			"service_name": stream.GRPCSettings.ServiceName,
-		}
-	}
-
-	switch strings.ToLower(stream.Security) {
-	case "tls":
-		tls := map[string]any{"enabled": true, "server_name": stream.TLSSettings.ServerName}
-		if len(stream.TLSSettings.ALPN) > 0 {
-			tls["alpn"] = stream.TLSSettings.ALPN
-		}
-		if stream.TLSSettings.Fingerprint != "" {
-			tls["utls"] = map[string]any{"enabled": true, "fingerprint": stream.TLSSettings.Fingerprint}
-		}
-		out["tls"] = tls
-	case "reality":
-		tls := map[string]any{"enabled": true, "server_name": stream.RealitySettings.ServerName}
-		if stream.RealitySettings.Fingerprint != "" {
-			tls["utls"] = map[string]any{"enabled": true, "fingerprint": stream.RealitySettings.Fingerprint}
-		}
-		tls["reality"] = map[string]any{
-			"enabled":    true,
-			"public_key": stream.RealitySettings.PublicKey,
-			"short_id":   stream.RealitySettings.ShortID,
-		}
-		out["tls"] = tls
-	}
-
-	if tag == "" && ob.Tag != "" {
-		tag = ob.Tag
-	}
-	if tag == "" {
-		tag = fmt.Sprintf("amnezia-vless-%s-%d", v.Address, v.Port)
-	}
-	out["tag"] = tag
-
-	raw, err := json.Marshal(out)
+// amneziaToOutbound отдаёт внутренний Xray-аутбаунд общему конвертеру.
+// Ограничение на vless сохранено выше: снять его — значит просто расширить
+// switch, конвертер понимает и trojan, и shadowsocks.
+func amneziaToOutbound(ob xrayOutbound, tag string) (*ParsedOutbound, error) {
+	parsed, err := convertXrayOutbound(XrayOutbound{
+		Tag:            firstNonEmpty(tag, ob.Tag),
+		Protocol:       ob.Protocol,
+		Settings:       ob.Settings,
+		StreamSettings: streamSettingsFromRaw(ob.StreamSettings),
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("amnezia: %w", err)
 	}
-	return &ParsedOutbound{
-		Tag:      tag,
-		Protocol: "vless",
-		Server:   v.Address,
-		Port:     uint16(v.Port),
-		Outbound: raw,
-	}, nil
+	// Имя из фрагмента ссылки — единственное, что несёт сам vpn://.
+	parsed.Label = tag
+	return parsed, nil
+}
+
+// streamSettingsFromRaw разбирает streamSettings, который у vpn:// приезжает
+// сырым. Битый блок роняет ссылку, а не молча превращает её в plain-TCP.
+func streamSettingsFromRaw(raw json.RawMessage) *XrayStream {
+	if len(raw) == 0 {
+		return nil
+	}
+	var stream XrayStream
+	if json.Unmarshal(raw, &stream) != nil {
+		return nil
+	}
+	return &stream
 }

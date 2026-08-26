@@ -7,14 +7,8 @@
 # пока строка не удалена. Новая строка добавляется ТОЛЬКО после ручной
 # проверки, что это дефект пути, а не ошибка фикстуры.
 #
-# 2026-08-26: 24 расхождения на старте, 14 осталось.
+# 2026-08-26: 24 расхождения на старте, 7 осталось.
 #
-# amnezia: amneziaVlessToOutbound знает только grpc/tcp, allowInsecure и
-#   sockopt.interface не читает. Внутри vpn:// лежит тот же Xray-конфиг, что и в
-#   xray-клетке, поэтому пустых клеток у amnezia быть не должно.
-# amnezia: при reality без fingerprint не подставляет utls, а движок без него
-#   REALITY не поднимет ("uTLS is required by reality client",
-#   common/tls/reality_client.go:60). Общий слой и xray-путь дефолт ставят.
 # xray: early data по конвенции экосистемы едет в заголовке
 #   Sec-WebSocket-Protocol — mihomo при "?ed=N" ставит именно его. Мы
 #   early_data_header_name не ставим нигде, а sing-box при пустом имени
@@ -34,13 +28,6 @@ hy2-obfs clash tls.alpn missing
 hy2-ports clash hop_interval missing
 hy2-ports clash server_ports missing
 hy2-ports clash tls.alpn missing
-vless-bind-interface amnezia bind_interface missing
 vless-bind-interface clash bind_interface missing
-vless-grpc-reality-nofp amnezia tls.utls missing
-vless-http amnezia transport missing
-vless-httpupgrade amnezia transport missing
-vless-ws-tls-ed amnezia tls.insecure missing
-vless-ws-tls-ed amnezia transport missing
 vless-ws-tls-ed clash transport.early_data_header_name missing
 vless-ws-tls-ed clash transport.max_early_data missing
-vless-xhttp amnezia transport missing
