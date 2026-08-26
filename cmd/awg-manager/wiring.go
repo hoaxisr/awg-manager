@@ -12,7 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -52,7 +51,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // app is the composition root of the daemon: every subsystem constructed by
@@ -131,8 +129,6 @@ type app struct {
 	testService         *testing.Service
 	pingCheckService    *pingcheck.Service
 	pingCheckFacade     *pingcheck.Facade
-	freeturnService     *freeturn.Service
-	wdttService         *wdtt.Service
 	monitoringService   *monitoring.Service
 	keeneticClient      *auth.KeeneticClient
 	sessionStore        *auth.SessionStore

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
-	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -15,7 +14,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // Compile-time guarantees that the adapters satisfy their router-side
@@ -317,36 +315,6 @@ func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[in
 	return pins, nil
 }
 
-type opkgTunExistAdapter struct {
-	store *ndmsquery.InterfaceStore
-}
-
-func (a *opkgTunExistAdapter) OpkgTunExists(ctx context.Context, ndmsName string) bool {
-	if a.store == nil {
-		return false
-	}
-	iface, err := a.store.Get(ctx, ndmsName)
-	return err == nil && iface != nil
-}
-
-type policyTableAdapter struct {
-	marks *ndmsquery.PolicyMarkStore
-}
-
-func (a *policyTableAdapter) GetPolicyMark(ctx context.Context, policyName string) (string, error) {
-	if a.marks == nil {
-		return "", fmt.Errorf("policy mark store not wired")
-	}
-	return a.marks.Get(ctx, policyName)
-}
-
-func (a *policyTableAdapter) PolicyTable4(ctx context.Context, policyName string) (int, error) {
-	if a.marks == nil {
-		return 0, fmt.Errorf("policy mark store not wired")
-	}
-	return a.marks.Table4(ctx, policyName)
-}
-
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the
@@ -427,77 +395,6 @@ func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool
 	return out
 }
 
-// wdttAccessAdapter projects managed.Service into wdtt.AccessManager.
-type wdttAccessAdapter struct {
-	svc    *managed.Service
-	ifaces *ndmscommand.InterfaceCommands
-}
-
-func (a *wdttAccessAdapter) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode, prevWAN string) (string, error) {
-	if a.svc == nil {
-		return "", fmt.Errorf("managed service not available")
-	}
-	return a.svc.ApplyNATModeToInterface(ctx, ifaceName, mode, prevWAN)
-}
-
-func (a *wdttAccessAdapter) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
-	if a.svc == nil {
-		return fmt.Errorf("managed service not available")
-	}
-	return a.svc.ApplyPolicyToInterface(ctx, ifaceName, policy)
-}
-
-func (a *wdttAccessAdapter) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error {
-	if a.svc == nil {
-		return fmt.Errorf("managed service not available")
-	}
-	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
-}
-
-func (a *wdttAccessAdapter) EnsureInterfaceFirewallPermit(ctx context.Context, ifaceName string) error {
-	if a.ifaces == nil {
-		return nil
-	}
-	return a.ifaces.SetPermitAllACL(ctx, ifaceName)
-}
-
-func (a *wdttAccessAdapter) KernelIfaceName(ctx context.Context, ndmsName string) string {
-	if a.svc == nil {
-		return ndmsName
-	}
-	return a.svc.ResolveKernelIfaceName(ctx, ndmsName)
-}
-
-func (a *wdttAccessAdapter) ResolveLANSegmentCIDRs(ctx context.Context, names []string) ([]string, error) {
-	if a.svc == nil {
-		return nil, fmt.Errorf("managed service not available")
-	}
-	catalog, err := a.svc.ListLANSegments(ctx)
-	if err != nil {
-		return nil, err
-	}
-	byName := make(map[string]string, len(catalog))
-	for _, seg := range catalog {
-		byName[seg.Name] = seg.Subnet
-	}
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		cidr, ok := byName[name]
-		if !ok {
-			return nil, fmt.Errorf("LAN-сегмент %q не найден", name)
-		}
-		out = append(out, cidr)
-	}
-	return out, nil
-}
-
-func (a *wdttAccessAdapter) DefaultGatewayNDMS(ctx context.Context) (string, error) {
-	if a.svc == nil {
-		return "", fmt.Errorf("managed service not available")
-	}
-	return a.svc.DefaultGatewayNDMSInterface(ctx)
-}
-
 // keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
 type keenDNSDomainAdapter struct {
 	store *ndmsquery.KeenDNSStore
@@ -522,35 +419,6 @@ type keenDNSLANAdapter struct{}
 
 func (keenDNSLANAdapter) LANIPv4() string {
 	return netif.FirstIPv4(storage.DefaultInterface)
-}
-
-var _ wdtt.IngressRefEnsurer = (*wdttIngressEnsurer)(nil)
-
-type wdttIngressEnsurer struct {
-	settings *storage.SettingsStore
-	router   wdtt.RouterReconciler
-}
-
-func (e *wdttIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wgKernelIface, rawKernelIface string) error {
-	if e.settings == nil {
-		return nil
-	}
-	settings, err := e.settings.Load()
-	if err != nil {
-		return err
-	}
-	next, changed := wdtt.EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface, rawKernelIface)
-	if !changed {
-		return nil
-	}
-	settings.SingboxRouter.IngressInterfaces = next
-	if err := e.settings.Save(settings); err != nil {
-		return err
-	}
-	if e.router != nil {
-		return e.router.Reconcile(ctx)
-	}
-	return nil
 }
 
 // routerSegmentDetailsAdapter отдаёт router описание и адресацию сегмента по

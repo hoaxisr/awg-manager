@@ -342,7 +342,7 @@ func TestAllocListenExhaustedIsError(t *testing.T) {
 // recordingBook — ведомость с перехваченными швами listenfirewall.
 func recordingBook(keys []string) (*proxyFWBook, *[]int) {
 	applied := &[]int{}
-	b := newProxyFWBook(keys)
+	b := newProxyFWBook(keys, func() bool { return true })
 	b.list = func(context.Context) ([]listenfirewall.PortSpec, error) { return nil, nil }
 	b.apply = func(_ context.Context, desired []listenfirewall.PortSpec) {
 		*applied = append(*applied, len(desired))

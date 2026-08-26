@@ -217,11 +217,11 @@ func (f *fakeWANModel) Calls() []fakeWANSetUp {
 	return out
 }
 
-func TestHookHandler_HandleNDMS_IPv4Up_ResumeProxyClients(t *testing.T) {
+func TestHookHandler_HandleNDMS_IPv4Up_NudgesProxyRuntime(t *testing.T) {
 	h := newTestHookHandler(&spyDispatcher{})
 	h.SetWANModel(&fakeWANModel{})
 	done := make(chan string, 1)
-	h.SetProxyClientAutostart(func(reason string) {
+	h.SetProxyRuntimeNudge(func(reason string) {
 		done <- reason
 	})
 
@@ -238,10 +238,10 @@ func TestHookHandler_HandleNDMS_IPv4Up_ResumeProxyClients(t *testing.T) {
 	select {
 	case reason := <-done:
 		if reason != "wan-up" {
-			t.Fatalf("proxy autostart reason: want wan-up, got %q", reason)
+			t.Fatalf("proxy runtime nudge reason: want wan-up, got %q", reason)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("proxy autostart callback not invoked on WAN up")
+		t.Fatal("proxy runtime nudge not invoked on WAN up")
 	}
 }
 

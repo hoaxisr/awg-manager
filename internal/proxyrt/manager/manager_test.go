@@ -148,6 +148,7 @@ type env struct {
 	factoryErr   error // отказ сборки инстанса (I-2 ревью)
 	waited       []string
 	waitHook     func() // срабатывает внутри WaitDisabled (нужен тесту воскрешения)
+	seedHook     func() // срабатывает ВНУТРИ посева (нужен тесту сериализации Boot)
 	released     [][]string
 	allocN       int
 }
@@ -172,6 +173,9 @@ func newEnv(t *testing.T) *env {
 			return fi, nil
 		},
 		Seed: func(ctx context.Context) (instancestore.SeedResult, error) {
+			if e.seedHook != nil {
+				e.seedHook()
+			}
 			if e.seedErr != nil {
 				return instancestore.SeedResult{}, e.seedErr
 			}
@@ -937,4 +941,43 @@ func TestUpdateResetsOnlyAddressedInstance(t *testing.T) {
 	if n := e.instances["wdtt-client:fi"].resetCount(); n != 0 {
 		t.Fatalf("сосед получил сбросов %d, ожидали 0", n)
 	}
+}
+
+// F5 ревью задачи 14: ретрай посева (задача 16) приводит второго вызывающего —
+// хуки NDMS и wan-up могут выстрелить одновременно, а гейт !Booted живёт у
+// вызывающего и от гонки не спасает. Шаги боота — посев, PostSeed,
+// сертификация, объявление — на параллельный прогон не рассчитаны, поэтому
+// Boot обязан сериализоваться сам с собой.
+func TestBootIsSerializedWithItself(t *testing.T) {
+	e := newEnv(t)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	e.seedHook = func() {
+		entered <- struct{}{}
+		<-release
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = e.m.Boot(context.Background()) }()
+	<-entered // первый вошёл в посев и держит его
+
+	wg.Add(1)
+	go func() { defer wg.Done(); _ = e.m.Boot(context.Background()) }()
+
+	select {
+	case <-entered:
+		t.Fatal("второй Boot вошёл в посев, пока первый его не закончил")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("второй Boot не дождался очереди")
+	}
+	// Дождаться обоих обязательно: горутина, пережившая тест, писала бы в уже
+	// снесённый t.TempDir().
+	wg.Wait()
 }

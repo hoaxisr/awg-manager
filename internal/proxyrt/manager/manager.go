@@ -117,6 +117,13 @@ type SeedInfo struct {
 type Manager struct {
 	deps Deps
 
+	// bootMu сериализует Boot сам с собой. Ретрай посева (задача 16) приводит
+	// второго вызывающего: хуки NDMS и wan-up могут выстрелить одновременно, а
+	// шаги боота — посев, PostSeed, сертификация, объявление — не рассчитаны на
+	// параллельный прогон. Замок, а не однократность: отказ ОБЯЗАН пускать
+	// повтор, иначе ретрай бессмыслен.
+	bootMu sync.Mutex
+
 	mu        sync.Mutex
 	m         map[string]*managed
 	booted    bool
@@ -168,6 +175,9 @@ func namedOf(recs []instancestore.Record) []instance.NDMSNamed {
 // НЕ подлежит «починке» перестановкой: порядок «сертификация → объявление»
 // предписан требованием 2 (один список на оба вызова).
 func (m *Manager) Boot(ctx context.Context) error {
+	m.bootMu.Lock()
+	defer m.bootMu.Unlock()
+
 	res, err := m.deps.Seed(ctx)
 	if err != nil {
 		m.deps.Journal.Warn("boot", "proxy", "посев отложен: "+err.Error())
@@ -306,6 +316,14 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 // сохраняет резерв — без него два параллельных Create (ручки задачи 7 — HTTP)
 // получили бы от сканирующего аллокатора ОДИН порт: ensurePins и запись на
 // диск не атомарны, а validateState уникальность Listen не проверяет.
+//
+// НАЗВАННАЯ ЦЕНА (F4 ревью задачи 14): зовётся ПОД m.mu (Create и update), а
+// прод-AllocIndex внутри считает занятость пула OpkgTun — то есть ходит в RCI
+// за списком интерфейсов NDMS. На время этого запроса вся поверхность
+// /api/proxyrt/* и Shutdown стоят. Вынести вызов из-под замка нельзя дёшево:
+// выделение и запись записи обязаны быть одной сериализованной операцией,
+// иначе два параллельных Create получат один номер. Класс существовал у
+// Create и до волны; ретраи боота (задача 16) лишь повышают частоту.
 func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err error) {
 	key := rec.Key()
 	switch rec.Kind {

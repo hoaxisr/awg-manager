@@ -14,6 +14,22 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
+// newRecords кладёт записи ЧЕРЕЗ хранилище: нормализация и инварианты те же,
+// что у прода, и фикстура не может застыть в форме, которой store уже не
+// отдаёт. Перенесено из reconcile_test.go — сам reconcile снят вместе со
+// старым движком.
+func newRecords(t *testing.T, dataDir string, recs ...instancestore.Record) *instancestore.Store {
+	t.Helper()
+	store := instancestore.New(dataDir)
+	if _, err := store.Replace(func(st *instancestore.State) error {
+		st.Records = recs
+		return nil
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	return store
+}
+
 func TestExportRestoreRoundtrip(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "awg-manager")

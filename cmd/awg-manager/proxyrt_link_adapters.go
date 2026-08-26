@@ -300,6 +300,10 @@ type proxyFWBook struct {
 	// в СОСТАВЕ желаемого, а наблюдать его иначе нечем.
 	list  func(ctx context.Context) ([]listenfirewall.PortSpec, error)
 	apply func(ctx context.Context, desired []listenfirewall.PortSpec)
+	// booted — состоялся ли посев прокси-рантайма. Гейт прохода окна: до
+	// боота пустая ведомость означает не «серверов нет», а «объявить их
+	// некому».
+	booted func() bool
 }
 
 // proxyFWGrace — окно ожидания отчётов. Пока не отчитался хоть один серверный
@@ -317,12 +321,13 @@ var proxyFWAfterFunc = time.AfterFunc
 
 // newProxyFWBook — ведомость на список ключей серверных инстансов (тех, у чьих
 // ролей есть ресурс input_port). Список знает фабрика.
-func newProxyFWBook(serverKeys []string) *proxyFWBook {
+func newProxyFWBook(serverKeys []string, booted func() bool) *proxyFWBook {
 	b := &proxyFWBook{
 		want:    map[string][]netres.PortSpec{},
 		pending: map[string]bool{},
 		list:    listenfirewall.ListManaged,
 		apply:   listenfirewall.Reconcile,
+		booted:  booted,
 	}
 	for _, k := range serverKeys {
 		b.pending[k] = true
@@ -338,6 +343,16 @@ func newProxyFWBook(serverKeys []string) *proxyFWBook {
 // выключенных серверах порты мёртвого поколения жили бы в INPUT до включения
 // хоть одного сервера или перезапуска демона.
 func (b *proxyFWBook) graceOver() {
+	// Гейт по посеву (Н1): на ХОЛОДНОМ старте роутера RCI ещё мёртв, посев
+	// падает fail-closed и не объявляет ни одного сервера. Ведомость в этот
+	// момент пуста не потому, что серверов нет, а потому, что их некому
+	// объявить, и проход свёл бы INPUT к пустому объединению — то есть закрыл
+	// бы порты процессов, переживших перезапуск демона. Окно перезаводится:
+	// вычистка ничьих портов ждёт состоявшегося боота.
+	if b.booted != nil && !b.booted() {
+		proxyFWAfterFunc(proxyFWGrace, b.graceOver)
+		return
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.expired = true

@@ -12,8 +12,8 @@ import (
 
 const backupQuiesceTimeout = 2 * time.Minute
 
-// QuiesceForBackup stops awg-manager child processes (FreeTurn, WDTT, sing-box,
-// WG tunnels) without disabling them in config. The awg-manager daemon itself
+// QuiesceForBackup stops awg-manager child processes (proxy instances,
+// sing-box, WG tunnels) without disabling them in config. The awg-manager daemon itself
 // keeps running so the HTTP handler can finish the export/import response.
 func (s *Server) QuiesceForBackup(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, backupQuiesceTimeout)
@@ -25,11 +25,10 @@ func (s *Server) QuiesceForBackup(parent context.Context) error {
 		s.pingCheckService.StopMonitoringAll()
 	}
 
-	if s.freeturnService != nil {
-		s.freeturnService.Stop()
-	}
-	if s.wdttService != nil {
-		s.wdttService.Stop()
+	// Воркеры снимаются ДО добивания процессов: живой воркер поднял бы
+	// убитый инстанс обратно прямо посреди экспорта.
+	if s.proxyRuntime != nil {
+		s.proxyRuntime.Shutdown()
 	}
 	backup.KillOrphanProxyProcesses(runDir)
 
@@ -70,18 +69,14 @@ func (s *Server) ResumeAfterBackup(parent context.Context) {
 		_ = s.orch.HandleEvent(ctx, orchestrator.Event{Type: orchestrator.EventReconnect})
 	}
 
+	// Горутиной: Boot ходит в RCI и держал бы ответ на экспорт. Инстансы
+	// пересобираются с нуля — Shutdown очистил карту менеджера.
 	go func() {
-		if s.freeturnService != nil {
-			type resumer interface{ ResumeEnabled() }
-			if r, ok := s.freeturnService.(resumer); ok {
-				r.ResumeEnabled()
-			}
+		if s.proxyRuntime == nil {
+			return
 		}
-		if s.wdttService != nil {
-			type resumer interface{ ResumeEnabled() }
-			if r, ok := s.wdttService.(resumer); ok {
-				r.ResumeEnabled()
-			}
+		if err := s.proxyRuntime.Boot(context.Background()); err != nil {
+			s.appLog.Warn("backup-resume", "", "прокси-рантайм не поднялся: "+err.Error())
 		}
 	}()
 }

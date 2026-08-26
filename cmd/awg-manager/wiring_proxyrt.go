@@ -814,7 +814,12 @@ func (a *app) wireProxyrt() {
 	// исходный дефект — два сервера закрывают порты друг друга. Список
 	// серверных ключей нужен ДО конструктора: окно ожидания отчётов
 	// отсчитывается от него.
-	book := newProxyFWBook(proxyServerKeys(store))
+	// ref заводится ДО ведомости: её гейт прохода окна спрашивает менеджера,
+	// состоялся ли посев, а сам менеджер строится ниже.
+	ref := &proxyManagerRef{}
+	book := newProxyFWBook(proxyServerKeys(store), func() bool {
+		return ref.mgr != nil && ref.mgr.SeedInfo().Booted
+	})
 
 	links := newProxyLinkBook()
 	installSvc := install.New(install.Deps{
@@ -825,7 +830,6 @@ func (a *app) wireProxyrt() {
 		Info:       func(msg string) { journal.Info("install", "proxy", msg) },
 	})
 
-	ref := &proxyManagerRef{}
 	records := proxyRecords{ref: ref}
 	mutator := proxyMutator{ref: ref}
 	users := wdttusers.New(wdttusers.Deps{
@@ -914,15 +918,71 @@ func (a *app) wireProxyrt() {
 		Install:            installSvc.ServeInstall,
 	})
 
+	// Тумблер намерения инстанса (карточка зеркальной записи wdtt-raw) и
+	// глушение/подъём на время бэкапа: маршруты строятся в srv.Start, то есть
+	// после этой строки.
+	a.srv.SetProxyRuntime(mgr)
+	a.srv.SetProxyRuntimeNudge(func(reason string) {
+		a.proxyRuntimeNudge(reason, proxyrt.EventWANUp)
+	})
+
 	// (9) Боот — горутиной ПОСЛЕ старта HTTP: на бооте роутера RCI ещё
 	// недоступен, а блокировать здесь значит не поднять веб-морду вовсе.
-	// Ретрай зовут хуки NDMS/wan-up при !SeedInfo().Booted (задача 16); Boot
-	// идемпотентен — живые инстансы не пересоздаются.
+	// Ретрай зовут фазы боота и хуки wan-up через proxyRuntimeNudge; Boot
+	// идемпотентен — живые инстансы не пересоздаются — и сериализован сам с
+	// собой (manager.bootMu).
 	go func() {
 		if err := mgr.Boot(a.shutdownCtx); err != nil {
 			journal.Warn("boot", "proxy", "прокси-рантайм не поднялся: "+err.Error())
 		}
 	}()
+}
+
+// proxyRuntime — срез менеджера, нужный ретраю боота. Шов ради теста: иначе
+// ретрай наблюдаем только настоящим менеджером с одиннадцатью зависимостями.
+type proxyRuntime interface {
+	SeedInfo() manager.SeedInfo
+	Boot(ctx context.Context) error
+	PostAll(k proxyrt.EventKind)
+}
+
+// proxyNudge — один шаг ретрая посева. Пока посев не состоялся, зовём Boot:
+// на ХОЛОДНОМ старте роутера RCI ещё мёртв, посев падает fail-closed, и без
+// повторной попытки инстансы не поднимаются вовсе, а ведомость INPUT-портов
+// через две минуты сводит объединение к пустому и закрывает порты
+// переживших процессов. После успешного посева повторять боот незачем —
+// достаточно разбудить воркеров.
+//
+// Возвращает признак поднятого рантайма, чтобы вызывающий отличил успех
+// повтора от «и так уже работало».
+func proxyNudge(ctx context.Context, mgr proxyRuntime, kind proxyrt.EventKind) (bootedNow bool, err error) {
+	if mgr.SeedInfo().Booted {
+		mgr.PostAll(kind)
+		return false, nil
+	}
+	if err := mgr.Boot(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// proxyRuntimeNudge — proxyNudge с журналом, точка вызова из фаз боота и
+// WAN-хука.
+func (a *app) proxyRuntimeNudge(reason string, kind proxyrt.EventKind) {
+	if a.proxyMgr == nil {
+		return
+	}
+	bootedNow, err := proxyNudge(a.shutdownCtx, a.proxyMgr, kind)
+	if a.bootLog == nil {
+		return
+	}
+	if err != nil {
+		a.bootLog.Warn("proxy-boot", reason, "прокси-рантайм не поднялся: "+err.Error())
+		return
+	}
+	if bootedNow {
+		a.bootLog.Info("proxy-boot", reason, "прокси-рантайм поднят повторной попыткой")
+	}
 }
 
 // proxyServerKeys — ключи ВСЕХ серверных записей на момент боота, включая

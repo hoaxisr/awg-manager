@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -221,17 +222,18 @@ func (a *app) startBootSequence() {
 			}
 
 			// Маркер надо снять и здесь: холодный старт и так поднимается из
-			// восстановленного конфига, а невынутый маркер намертво глушит
-			// автостарт FreeTurn/WDTT (resumeEnabledProxyClients выходит по
-			// HasPostRestoreMarker) на всех последующих загрузках.
+			// восстановленного конфига, а невынутый маркер на всех последующих
+			// загрузках заставлял бы shutdown-хук гасить прокси-инстансы и
+			// добивать их процессы (wiring_server.go).
 			if backup.ConsumePostRestoreMarker(a.dataDir) {
 				a.bootLog.Info("startup", "", "Post-restore marker consumed on cold boot")
 			}
 
-			// FreeTurn/WDTT — после Phase 1/1b (NDMS+WAN), не сразу при старте
-			// демона: иначе WDTT vkcalls бьётся о мёртвый 127.0.0.1:53.
-			a.scheduleProxyClientAutostart("cold-boot")
-			a.reconcileLinkedEndpoints("startup")
+			// Прокси-рантайм — после Phase 1/1b (NDMS+WAN): его посев ходит в
+			// RCI, и на холодном старте первая попытка (горутина проводки)
+			// вполне могла упасть fail-closed. Эндпоинты связанных туннелей
+			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
+			a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -264,10 +266,9 @@ func (a *app) startBootSequence() {
 		if backup.ConsumePostRestoreMarker(a.dataDir) {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
-			a.reconcileLinkedEndpoints("post-restore")
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
-			a.scheduleProxyClientAutostart("post-restore")
+			a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
 
@@ -276,10 +277,9 @@ func (a *app) startBootSequence() {
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
-		// Как на cold-boot: DNS/backend WG могут быть ещё не готовы сразу после
-		// opkg upgrade; отложенный автостарт с повторами надёжнее мгновенного resume.
-		a.scheduleProxyClientAutostart("daemon-restart")
-		a.reconcileLinkedEndpoints("startup")
+		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
+		// сразу после opkg upgrade.
+		a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
 	}
 
 }

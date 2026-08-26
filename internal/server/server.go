@@ -87,8 +87,6 @@ type Server struct {
 	settings                   *storage.SettingsStore
 	tunnels                    *storage.AWGTunnelStore
 	pingCheckService           api.PingCheckService
-	freeturnService            api.FreeTurnService
-	wdttService                api.WdttService
 	proxyRecords               api.ProxyRecordLister
 	loggingService             *logging.Service
 	activeBackend              backend.Backend
@@ -153,7 +151,13 @@ type Server struct {
 
 	bootStatusFn func() bool // returns true if boot still in progress
 
-	proxyClientAutostart api.ProxyClientAutostart
+	proxyRuntimeNudge api.ProxyRuntimeNudge
+
+	// proxyRuntime — менеджер прокси-рантайма за узким срезом: тумблер
+	// намерения инстанса (карточка зеркальной записи wdtt-raw) и глушение
+	// детей на время бэкапа. Проводка ставит его ПОСЛЕ server.New — менеджер
+	// строится позже.
+	proxyRuntime ProxyRuntime
 
 	// proxyRt — ручки прокси-рантайма; собирает проводка (cmd/awg-manager).
 	// Нулевое значение означает «рантайм не проведён»: маршруты не
@@ -182,8 +186,6 @@ type Deps struct {
 	Settings             *storage.SettingsStore
 	Tunnels              *storage.AWGTunnelStore
 	PingCheckService     api.PingCheckService
-	FreeTurnService      api.FreeTurnService
-	WdttService          api.WdttService
 	ProxyRecords         api.ProxyRecordLister
 	LoggingService       *logging.Service
 	ActiveBackend        backend.Backend
@@ -244,8 +246,6 @@ func New(cfg Config, deps Deps) *Server {
 		settings:               deps.Settings,
 		tunnels:                deps.Tunnels,
 		pingCheckService:       deps.PingCheckService,
-		freeturnService:        deps.FreeTurnService,
-		wdttService:            deps.WdttService,
 		proxyRecords:           deps.ProxyRecords,
 		loggingService:         deps.LoggingService,
 		activeBackend:          deps.ActiveBackend,
@@ -483,9 +483,25 @@ func (s *Server) SetBootStatusFunc(fn func() bool) {
 	s.bootStatusFn = fn
 }
 
-// SetProxyClientAutostart wires WAN-up retry for FreeTurn/WDTT autostart.
-func (s *Server) SetProxyClientAutostart(fn api.ProxyClientAutostart) {
-	s.proxyClientAutostart = fn
+// SetProxyRuntimeNudge wires the WAN-up callback of the proxy runtime
+// (seed retry plus worker wake-up).
+func (s *Server) SetProxyRuntimeNudge(fn api.ProxyRuntimeNudge) {
+	s.proxyRuntimeNudge = fn
+}
+
+// ProxyRuntime — то, что серверу нужно от менеджера прокси-рантайма:
+// тумблер намерения одного инстанса и пара «погасить/поднять» для бэкапа.
+// *manager.Manager удовлетворяет как есть.
+type ProxyRuntime interface {
+	SetEnabled(ctx context.Context, key string, on bool) error
+	Boot(ctx context.Context) error
+	Shutdown()
+}
+
+// SetProxyRuntime wires the proxy-runtime manager. Called from the wiring
+// after the manager is built (server.New runs earlier).
+func (s *Server) SetProxyRuntime(rt ProxyRuntime) {
+	s.proxyRuntime = rt
 }
 
 // Start starts the HTTP server.

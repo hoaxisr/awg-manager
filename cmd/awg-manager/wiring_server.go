@@ -17,11 +17,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
-	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
@@ -34,7 +32,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // setupServer registers routing snapshot providers and constructs the HTTP
@@ -92,8 +89,6 @@ func (a *app) setupServer() {
 			Settings:            a.settingsStore,
 			Tunnels:             a.awgStore,
 			PingCheckService:    a.pingCheckFacade,
-			FreeTurnService:     a.freeturnService,
-			WdttService:         a.wdttService,
 			ProxyRecords:        a.proxyStore,
 			LoggingService:      a.loggingService,
 			ActiveBackend:       a.backendImpl,
@@ -242,29 +237,6 @@ func (a *app) setupDeviceProxy() {
 	a.dnsRefreshScheduler.Start()
 	a.geoRefreshScheduler.Start()
 	a.updaterService.SetDownloader(sharedDownloadSvc)
-	// FreeTurn one-click install: закреплённые в билде спеки по арху +
-	// общий загрузчик. Нет спеков для арха → кнопка недоступна, панель
-	// оставляет подсказку о ручной установке.
-	a.freeturnService.SetLogger(a.loggingService)
-	if specs, ok := freeturn.EmbeddedBinaries[detectArch()]; ok {
-		a.freeturnService.SetInstallSpecs(specs)
-		a.freeturnService.SetDownloader(&freeturnDownloaderAdapter{svc: sharedDownloadSvc})
-	}
-	a.wdttService.SetLogger(a.loggingService)
-	if a.managedService != nil {
-		a.wdttService.SetAccessManager(&wdttAccessAdapter{
-			svc:    a.managedService,
-			ifaces: a.ndmsCommands.Interfaces,
-		})
-	}
-	a.wdttService.SetInterfaceChecker(wdtt.NewSysNetChecker())
-	if specs, ok := wdtt.EmbeddedBinaries[detectArch()]; ok {
-		a.wdttService.SetInstallSpecs(specs)
-		a.wdttService.SetDownloader(&wdttDownloaderAdapter{svc: sharedDownloadSvc})
-	}
-	// Автостарт FreeTurn/WDTT — в boot.go (cold-boot/post-restore/daemon-restart)
-	// и по WAN UP hook; не здесь: ранний старт ловит DNS до sing-box.
-	a.srv.SetProxyClientAutostart(a.resumeEnabledProxyClients)
 	if a.singboxInstaller != nil {
 		a.singboxInstaller.SetDownloader(&installerDownloaderAdapter{svc: sharedDownloadSvc})
 		// Auto-migration goroutine: when legacy sing-box-naive opkg
@@ -511,27 +483,6 @@ func (a *app) setupRouter() {
 	a.srv.SetSubscriptionHandler(subHandler)
 	a.srv.AddShutdownHook(subSched.Stop)
 
-	if a.wdttService != nil && a.ndmsCommands != nil {
-		policyMarks := &policyTableAdapter{marks: ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)}
-		a.wdttService.SetNDMSInterfaceCommands(a.ndmsCommands.Interfaces)
-		a.wdttService.SetOpkgTunIndexLister(&routerOpkgTunIndexAdapter{})
-		a.wdttService.SetOpkgTunExistChecker(&opkgTunExistAdapter{store: a.ndmsQueries.Interfaces})
-		a.wdttService.SetOpkgTunScanner(opkgTunScanner(a.ndmsQueries.Interfaces))
-		a.wdttService.SetRouterReconciler(routerSvc)
-		a.wdttService.SetClientRouteHooks(a.clientRouteService)
-		a.wdttService.SetNDMSPolicyRouting(
-			a.ndmsCommands.Policies,
-			a.ndmsQueries.Policies,
-			policyMarks,
-		)
-		a.wdttService.SetPolicyMarkGetter(policyMarks)
-		a.wdttService.SetIngressRefEnsurer(&wdttIngressEnsurer{
-			settings: a.settingsStore,
-			router:   routerSvc,
-		})
-		a.accessPolicySvc.SetOpkgPolicyRouteSyncer(a.wdttService)
-	}
-
 }
 
 // setupListen wires DNS rewrites, selects the HTTP port, applies the
@@ -617,16 +568,6 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
-	// Re-apply WDTT entware iptables NAT — sing-box router reconcile can flush rules.
-	a.wdttService.StartNATReconciler(a.shutdownCtx)
-	// Супервизор гейтится теми же условиями, что и автостарт прокси-клиентов:
-	// boot-фазы (NDMS/WAN/DNS) и маркер post-restore. Без гейта его первый тик
-	// поднимал бы клиентов раньше резолвера и вопреки восстановлению из архива.
-	proxyReady := func() bool {
-		return atomic.LoadInt32(&a.bootDone) == 1 && !backup.HasPostRestoreMarker(a.dataDir)
-	}
-	a.freeturnService.StartSupervisor(a.shutdownCtx, proxyReady)
-	a.wdttService.StartSupervisor(a.shutdownCtx, proxyReady)
 	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
 	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует
 	// готового router-сервиса, но замыкания проводки держат ДОЛГОЖИВУЩИЙ
@@ -644,8 +585,12 @@ func (a *app) setupShutdown() {
 		if !backup.HasPostRestoreMarker(a.dataDir) {
 			return
 		}
-		a.freeturnService.Stop()
-		a.wdttService.Stop()
+		// Воркеры снимаются ДО добивания процессов: живой воркер поднял бы
+		// убитый инстанс обратно, и восстановленный конфиг стартовал бы
+		// поверх старого поколения.
+		if a.proxyMgr != nil {
+			a.proxyMgr.Shutdown()
+		}
 		backup.KillOrphanProxyProcesses(filepath.Join(a.dataDir, "run"))
 	})
 	// Intentionally NOT removing kmod proxy slots on restart: the

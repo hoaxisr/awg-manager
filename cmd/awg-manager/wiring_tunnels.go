@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
-	"github.com/hoaxisr/awg-manager/internal/proxyhealth"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -35,7 +32,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/state"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // setupTunnels wires the tunnel core (wg/backend/state/firewall, NDMS
@@ -205,43 +201,6 @@ func (a *app) setupServices() {
 	a.pingCheckService = pingcheck.NewService(a.settingsStore, a.awgStore, a.wgClient, a.loggingService)
 	a.pingCheckService.Start()
 	a.deferOnExit(a.pingCheckService.Stop)
-
-	// FreeTurn service (TURN-tunnel client/server)
-	a.freeturnService = freeturn.NewService(
-		a.dataDir,
-		filepath.Join(a.dataDir, "run"),
-		"/opt/bin/freeturn-client",
-		"/opt/bin/freeturn-server",
-	)
-	a.wdttService = wdtt.NewService(
-		a.dataDir,
-		filepath.Join(a.dataDir, "run"),
-		"/opt/bin/wdtt-client",
-		"/opt/bin/wdtt-server",
-	)
-	// Один чек-лист на обе подсистемы: занятость обеих он берёт из общего
-	// хранилища прокси-инстансов, а своё исключает по аргументам вызова.
-	listenChecker := &crossListenPortChecker{AWGStore: a.awgStore, Records: a.proxyStore}
-	a.freeturnService.SetListenPortChecker(listenChecker)
-	a.wdttService.SetListenPortChecker(listenChecker)
-	relayProbe := &proxyhealth.HTTPRelayProbe{
-		CheckURL: func() string {
-			if a.settingsStore == nil {
-				return ""
-			}
-			st, err := a.settingsStore.Load()
-			if err != nil || st == nil {
-				return ""
-			}
-			return st.ConnectivityCheckURL
-		},
-	}
-	linkedTunnels := &proxyhealth.AWGLinkedTunnelResolver{Store: a.awgStore}
-	a.freeturnService.SetRelayProbe(relayProbe)
-	a.freeturnService.SetLinkedTunnelResolver(linkedTunnels)
-	a.wdttService.SetRelayProbe(relayProbe)
-	a.deferOnExit(a.freeturnService.Stop)
-	a.deferOnExit(a.wdttService.Stop)
 
 	// Unified facade: kernel → custom loop, NativeWG → NDMS native
 	a.pingCheckFacade = pingcheck.NewFacade(a.pingCheckService, a.awgStore, a.nwgOp)
