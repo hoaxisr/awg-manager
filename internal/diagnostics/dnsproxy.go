@@ -43,6 +43,7 @@ type DNSUpstream struct {
 	AvgResp    string `json:"avgResp"`
 	Rank       int    `json:"rank"`
 	localPort  int    // join key, not serialized
+	encHint    string // тип, опознанный по форме самой строки, not serialized
 }
 
 type DNSStaticRecord struct {
@@ -155,6 +156,12 @@ func parseConfig(cfg string) (ups []DNSUpstream, static []DNSStaticRecord, rb DN
 //	dns_server = 127.0.0.1:40501 ru # 77.88.8.8:853@common.dot.dns.yandex.net
 //	dns_server = 127.0.0.1:40502 . # 9.9.9.9
 //	dns_server = 127.0.0.1:40508 . # https://common.dot.dns.yandex.net@dnsm
+//	dns_server = 9.9.9.9 ru
+//	dns_server = 77.88.8.8:5353 org
+//
+// Зашифрованный апстрим ndnproxy всегда заворачивает в локальный стаб-порт, а
+// настоящий адрес выносит в комментарий. Прямой (незашифрованный) апстрим идёт
+// без комментария: адрес стоит в первом поле, порт — его собственный.
 func parseDNSServer(line string) (DNSUpstream, bool) {
 	val := afterEquals(line)
 	if val == "" {
@@ -170,18 +177,26 @@ func parseDNSServer(line string) (DNSUpstream, bool) {
 		return DNSUpstream{}, false
 	}
 	u := DNSUpstream{Scope: "all"}
-	if _, portStr, ok := splitHostPort(fields[0]); ok {
-		u.localPort = atoiSafe(portStr)
-	}
 	if len(fields) >= 2 && fields[1] != "." && fields[1] != "" {
 		u.Scope = fields[1]
 	}
-	if comment != "" {
-		if strings.HasPrefix(comment, "https://") || strings.HasPrefix(comment, "http://") {
-			parseDoHComment(&u, comment)
-		} else {
-			parsePlainComment(&u, comment)
+	if comment == "" {
+		parsePlainComment(&u, fields[0])
+		if u.Port == 0 {
+			u.Port = 53
 		}
+		u.encHint = "plain"
+		u.localPort = u.Port // в таблице proxy-stat такие строки лежат под своим портом
+		return u, u.Address != ""
+	}
+	if _, portStr, ok := splitHostPort(fields[0]); ok {
+		u.localPort = atoiSafe(portStr)
+	}
+	if strings.HasPrefix(comment, "https://") || strings.HasPrefix(comment, "http://") {
+		u.encHint = "DoH"
+		parseDoHComment(&u, comment)
+	} else {
+		parsePlainComment(&u, comment)
 	}
 	return u, u.Address != "" || u.localPort != 0
 }
@@ -376,19 +391,23 @@ func applyEncryption(ups []DNSUpstream, tls []dnsTLSEntry, https []dnsHTTPSEntry
 			}
 		}
 	}
+	// Один адрес может быть заведён сразу несколькими способами, а карты ключуются
+	// только адресом и потому их не различают. Форма самой строки принадлежит
+	// конкретному апстриму и потому сильнее карт.
 	for i := range ups {
-		switch {
-		case httpsByHost[ups[i].Address]:
-			ups[i].Encryption = "DoH"
-		default:
-			if sni, ok := tlsByAddr[ups[i].Address]; ok {
-				ups[i].Encryption = "DoT"
-				if ups[i].SNI == "" {
-					ups[i].SNI = sni
-				}
-			} else {
-				ups[i].Encryption = "plain"
+		if ups[i].encHint != "" {
+			ups[i].Encryption = ups[i].encHint
+			continue
+		}
+		if sni, ok := tlsByAddr[ups[i].Address]; ok {
+			ups[i].Encryption = "DoT"
+			if ups[i].SNI == "" {
+				ups[i].SNI = sni
 			}
+		} else if httpsByHost[ups[i].Address] {
+			ups[i].Encryption = "DoH"
+		} else {
+			ups[i].Encryption = "plain"
 		}
 	}
 }

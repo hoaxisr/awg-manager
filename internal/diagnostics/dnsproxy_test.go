@@ -186,9 +186,10 @@ func TestParseDNSProxy_DoH(t *testing.T) {
 	if u := byAddr["8.8.8.8"]; u.Encryption != "plain" {
 		t.Errorf("8.8.8.8: want plain, got %q", u.Encryption)
 	}
-	// 9.9.9.9 — есть в обоих списках: DoH побеждает
-	if u := byAddr["9.9.9.9"]; u.Encryption != "DoH" {
-		t.Errorf("9.9.9.9: want DoH (DoH>DoT), got %q", u.Encryption)
+	// 9.9.9.9 — есть в обоих списках, но комментарий голый: DoH-апстрим NDMS
+	// печатает URL-ом, значит эта строка — DoT.
+	if u := byAddr["9.9.9.9"]; u.Encryption != "DoT" {
+		t.Errorf("9.9.9.9: want DoT (голый комментарий + server-tls), got %q", u.Encryption)
 	}
 	// URL-комментарий: hostname вытащен, порт=443 по дефолту схемы, SNI пустой
 	doh, ok := byAddr["common.dot.dns.yandex.net"]
@@ -203,6 +204,93 @@ func TestParseDNSProxy_DoH(t *testing.T) {
 	}
 	if doh.SNI != "" {
 		t.Errorf("URL upstream: want SNI empty (host=address), got %q", doh.SNI)
+	}
+}
+
+// TestParseDNSProxy_SameAddrDoTAndDoH — issue #791: один и тот же адрес,
+// заведённый и как DoT, и как DoH, показывался в инструментах дважды как DoH.
+// Фикстура — живая выгрузка /show/dns-proxy со стенда (KeeneticOS 5.01) после
+// `dns-proxy tls upstream 9.9.9.9 853 sni dns.quad9.net` и
+// `dns-proxy https upstream https://9.9.9.9/dns-query dnsm`.
+func TestParseDNSProxy_SameAddrDoTAndDoH(t *testing.T) {
+	const raw = `{"proxy-status":[{
+		"proxy-name": "System",
+		"proxy-config": "dns_server = 127.0.0.1:40500 . # 9.9.9.9:853@dns.quad9.net\ndns_server = 127.0.0.1:40508 . # https://ada.openbld.net/dns-query@dnsm\ndns_server = 127.0.0.1:40509 . # https://9.9.9.9/dns-query@dnsm",
+		"proxy-stat": "",
+		"proxy-tls":  {"server-tls":  [{"address":"9.9.9.9","port":853,"sni":"dns.quad9.net","domain":""}]},
+		"proxy-https":{"server-https":[
+			{"uri":"https://ada.openbld.net/dns-query","format":"dnsm"},
+			{"uri":"https://9.9.9.9/dns-query","format":"dnsm"}
+		]}
+	}]}`
+
+	proxies, err := ParseDNSProxy([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseDNSProxy: %v", err)
+	}
+	if len(proxies) != 1 || len(proxies[0].Upstreams) != 3 {
+		t.Fatalf("unexpected shape: %+v", proxies)
+	}
+	byPort := map[int]DNSUpstream{}
+	for _, u := range proxies[0].Upstreams {
+		byPort[u.localPort] = u
+	}
+	if u := byPort[40500]; u.Encryption != "DoT" || u.Address != "9.9.9.9" || u.Port != 853 {
+		t.Errorf("40500: want DoT 9.9.9.9:853, got %s %s:%d", u.Encryption, u.Address, u.Port)
+	}
+	if u := byPort[40509]; u.Encryption != "DoH" || u.Address != "9.9.9.9" || u.Port != 443 {
+		t.Errorf("40509: want DoH 9.9.9.9:443, got %s %s:%d", u.Encryption, u.Address, u.Port)
+	}
+	if u := byPort[40508]; u.Encryption != "DoH" {
+		t.Errorf("40508: want DoH, got %q", u.Encryption)
+	}
+}
+
+// TestParseDNSProxy_DirectUpstreams — прямой (незашифрованный) апстрим ndnproxy
+// пишет без стаб-порта и без комментария: `dns_server = 9.9.9.9 ru`. Такие
+// строки парсер раньше выбрасывал целиком, а после починки их нельзя красить по
+// картам proxy-tls/proxy-https — адрес там может совпасть с DoT-записью.
+// Фикстура — живая выгрузка со стенда (KeeneticOS 5.01) при одновременно
+// заведённых `ip name-server 9.9.9.9 ru` и `dns-proxy tls upstream 9.9.9.9 853`.
+func TestParseDNSProxy_DirectUpstreams(t *testing.T) {
+	const raw = `{"proxy-status":[{
+		"proxy-name": "System",
+		"proxy-config": "dns_server = 77.88.8.8:5353 org\ndns_server = 9.9.9.9 ru\ndns_server = 127.0.0.1:40500 . # 9.9.9.9:853@dns.quad9.net\ndns_server = 127.0.0.1:40501 . # 8.8.8.8",
+		"proxy-stat": "DNS Servers\n\n      Ip   Port  R.Sent  A.Rcvd  NX.Rcvd  Med.Resp  Avg.Resp  Rank\n 77.88.8.8   5353       7       7        0       9ms      11ms     1\n   9.9.9.9     53       3       3        0      20ms      22ms     1",
+		"proxy-tls":  {"server-tls":  [
+			{"address":"9.9.9.9","port":853,"sni":"dns.quad9.net","domain":""},
+			{"address":"8.8.8.8","sni":"","domain":""}
+		]},
+		"proxy-https":{}
+	}]}`
+
+	proxies, err := ParseDNSProxy([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseDNSProxy: %v", err)
+	}
+	if len(proxies) != 1 || len(proxies[0].Upstreams) != 4 {
+		t.Fatalf("want 4 upstreams, got %+v", proxies)
+	}
+	ups := proxies[0].Upstreams
+
+	// Прямой с явным портом: адрес и порт из самой строки, скоуп, статистика.
+	if u := ups[0]; u.Address != "77.88.8.8" || u.Port != 5353 || u.Encryption != "plain" ||
+		u.Scope != "org" || u.RSent != 7 {
+		t.Errorf("direct+port: got %+v", u)
+	}
+	// Прямой без порта: 53 по умолчанию; адрес есть в server-tls, но строка
+	// прямая — красить её в DoT нельзя.
+	if u := ups[1]; u.Address != "9.9.9.9" || u.Port != 53 || u.Encryption != "plain" ||
+		u.Scope != "ru" || u.RSent != 3 {
+		t.Errorf("direct+tls collision: got %+v", u)
+	}
+	// Тот же адрес через стаб-порт — настоящий DoT.
+	if u := ups[2]; u.Address != "9.9.9.9" || u.Port != 853 || u.Encryption != "DoT" {
+		t.Errorf("DoT: got %+v", u)
+	}
+	// DoT без явного порта: комментарий голый, тип берётся из server-tls.
+	if u := ups[3]; u.Address != "8.8.8.8" || u.Encryption != "DoT" {
+		t.Errorf("DoT no port: got %+v", u)
 	}
 }
 
