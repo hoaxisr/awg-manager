@@ -215,3 +215,27 @@ func TestEncodeOutbound_XHTTPExtraRoundTrip(t *testing.T) {
 		t.Errorf("transport after round-trip:\n got %s\nwant %s", got, want)
 	}
 }
+
+// The option layer refuses a disabled padding outright ("x_padding_bytes
+// cannot be disabled"), and that refusal takes the whole config down, so a
+// zero from the link must never reach it.
+func TestBuildStreamFromQuery_XHTTPExtraZeroPadding(t *testing.T) {
+	for _, extra := range []string{
+		`{"xPaddingBytes":"0"}`,
+		`{"xPaddingBytes":0}`,
+		`{"xPaddingBytes":"0-100"}`,
+		`{"xPaddingBytes":"100-0"}`,
+	} {
+		q := parseQuery(t, "type=xhttp&extra="+urlEscape(extra))
+		s, err := BuildStreamFromQuery(q, "example.com")
+		if err != nil {
+			t.Fatalf("extra=%s: %v", extra, err)
+		}
+		out := map[string]any{}
+		s.MergeIntoOutbound(out)
+		tr, _ := out["transport"].(map[string]any)
+		if tr["x_padding_bytes"] != "100-1000" {
+			t.Errorf("extra=%s: x_padding_bytes=%v, want the default", extra, tr["x_padding_bytes"])
+		}
+	}
+}

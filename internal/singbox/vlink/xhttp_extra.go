@@ -26,7 +26,8 @@ var xmuxFields = map[string]struct {
 type extraKind int
 
 const (
-	kindRange extraKind = iota // number, "N" or "N-M"
+	kindRange         extraKind = iota // number, "N" or "N-M"
+	kindPositiveRange                  // a Range the option layer refuses at zero
 	kindBool
 	kindInt
 	kindHeaders
@@ -41,7 +42,7 @@ var extraFields = map[string]struct {
 	kind extraKind
 }{
 	"headers":              {"headers", kindHeaders},
-	"xPaddingBytes":        {"x_padding_bytes", kindRange},
+	"xPaddingBytes":        {"x_padding_bytes", kindPositiveRange},
 	"noGRPCHeader":         {"no_grpc_header", kindBool},
 	"noSSEHeader":          {"no_sse_header", kindBool},
 	"scMaxEachPostBytes":   {"sc_max_each_post_bytes", kindRange},
@@ -52,9 +53,11 @@ var extraFields = map[string]struct {
 
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
 // keys Xray uses inside extra=, so a Clash import goes through exactly the same
-// mapping and validation as a share link. mihomo's session-table /
-// session-length have no field in our fork, and download-settings is a whole
-// nested outbound — both are left out.
+// mapping and validation as a share link. Deliberately partial: mihomo also
+// carries the padding/session/seq/uplink knobs our fork has fields for, but
+// they never travel in a share link, so both import paths stay identical and
+// drop them. session-table / session-length have no field in the fork at all,
+// and download-settings is a whole nested outbound.
 // Reference: mihomo adapter/outbound/vless.go (XHTTPOptions).
 var clashXHTTPFields = map[string]string{
 	"headers":                  "headers",
@@ -128,6 +131,12 @@ func parseXHTTPExtra(raw string) map[string]any {
 		switch f.kind {
 		case kindRange:
 			if isRangeValue(v) {
+				out[f.key] = v
+			}
+		case kindPositiveRange:
+			// "x_padding_bytes cannot be disabled" — a zero from the link
+			// would make the whole config unloadable.
+			if lo, _, ok := rangeBounds(v); ok && lo > 0 {
 				out[f.key] = v
 			}
 		case kindBool:
@@ -237,8 +246,10 @@ func isRangeValue(v any) bool {
 	return ok
 }
 
-// rangeBounds parses the Range forms Xray emits. Negatives are refused along
-// with everything out of int32: sing-box would fail the whole config on them.
+// rangeBounds parses the Range forms Xray emits. Values out of int32 are
+// refused because sing-box would fail the whole config on them; negatives are
+// refused as a house rule — Xray never emits one, and for x_padding_bytes the
+// option layer does reject it.
 func rangeBounds(v any) (lo, hi int64, ok bool) {
 	switch t := v.(type) {
 	case float64:
