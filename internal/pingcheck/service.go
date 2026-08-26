@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -264,7 +265,10 @@ func (s *Service) GetStatus() []TunnelStatus {
 			if t.Backend == "nativewg" {
 				continue
 			}
-			// WDTT Raw registry rows are not kernel AWG tunnels.
+			// WDTT Raw registry rows are not kernel AWG tunnels: авто-скан
+			// их не подхватывает намеренно. Мониторинг raw-записи включается
+			// её собственным конфигом, и ровно тот путь резолвит живое имя
+			// интерфейса (resolveIfaceName, требование 8) — это не баг.
 			if t.Backend == "wdtt-raw" {
 				continue
 			}
@@ -450,10 +454,19 @@ func (s *Service) performCheckAndUpdate(m *tunnelMonitor, config *checkConfig) {
 }
 
 // resolveIfaceName returns the kernel interface name for a tunnel,
-// using NativeWG names (nwgN) for nativewg backend, kernel names (opkgtunN/awgmN) otherwise.
+// using NativeWG names (nwgN) for nativewg backend, the live iface of the
+// mirror record for wdtt-raw, kernel names (opkgtunN/awgmN) otherwise.
 func (s *Service) resolveIfaceName(tunnelID string) string {
-	if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend == "nativewg" {
-		return nwg.NewNWGNames(stored.NWGIndex).IfaceName
+	if stored, err := s.tunnels.Get(tunnelID); err == nil {
+		if stored.Backend == "nativewg" {
+			return nwg.NewNWGNames(stored.NWGIndex).IfaceName
+		}
+		// Имя raw-записи цифр не несёт: NewNames("wdttraw-de") даёт
+		// opkgtun0 — ЧУЖОЙ живой интерфейс, и health бил бы по нему
+		// (требование 8). Живое имя знает только сама запись.
+		if stored.Backend == "wdtt-raw" && strings.TrimSpace(stored.RawKernelIface) != "" {
+			return strings.TrimSpace(stored.RawKernelIface)
+		}
 	}
 	return tunnel.NewNames(tunnelID).IfaceName
 }
