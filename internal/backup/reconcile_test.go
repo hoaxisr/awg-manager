@@ -35,7 +35,10 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 	}
 	records := newRecords(t, dataDir,
 		instancestore.Record{ID: "ft1", Kind: instancestore.KindFreeTurnClient,
-			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"}},
+			// Порт НЕ 9000: это дефолт ListenPortFromAddr("") — на нём «пропатчено
+			// дефолтом» неотличимо от «не тронуто», и freeturn-половина reconcile
+			// осталась бы незастрахованной.
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9007"}},
 		instancestore.Record{ID: "wd1", Kind: instancestore.KindWdttClient,
 			WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9001"}},
 	)
@@ -61,7 +64,7 @@ func TestReconcileLinkedEndpoints_SyncsFreeTurnAndWdtt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ft.Peer.Endpoint != "127.0.0.1:9000" {
+	if ft.Peer.Endpoint != "127.0.0.1:9007" {
 		t.Fatalf("freeturn endpoint = %q", ft.Peer.Endpoint)
 	}
 	wd, err := store.Get("awg-wd")
