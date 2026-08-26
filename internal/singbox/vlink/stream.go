@@ -91,6 +91,9 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 				}
 			}
 			rawPath = rawPath[:idx]
+			if s.EarlyData > 0 {
+				s.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+			}
 		}
 		s.Path = rawPath
 	}
@@ -136,7 +139,7 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		s.TLS = &outboundTLS{
 			Enabled:         true,
 			ServerName:      q.Get("sni"),
-			UTLSFingerprint: firstNonEmpty(q.Get("fp"), q.Get("fingerprint")),
+			UTLSFingerprint: firstNonEmpty(q.Get("fp"), q.Get("fingerprint"), "chrome"),
 			Reality: &outboundRTLS{
 				PublicKey: q.Get("pbk"),
 				ShortID:   sid,
@@ -226,6 +229,9 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			}
 			if s.EarlyData > 0 {
 				transport["max_early_data"] = s.EarlyData
+			}
+			if s.EarlyDataHeaderName != "" {
+				transport["early_data_header_name"] = s.EarlyDataHeaderName
 			}
 		case "grpc":
 			transport["type"] = "grpc"
