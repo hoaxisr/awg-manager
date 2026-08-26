@@ -43,6 +43,7 @@ type DNSUpstream struct {
 	AvgResp    string `json:"avgResp"`
 	Rank       int    `json:"rank"`
 	localPort  int    // join key, not serialized
+	encHint    string // тип, опознанный по форме самой строки, not serialized
 }
 
 type DNSStaticRecord struct {
@@ -170,14 +171,15 @@ func parseDNSServer(line string) (DNSUpstream, bool) {
 		return DNSUpstream{}, false
 	}
 	u := DNSUpstream{Scope: "all"}
-	if _, portStr, ok := splitHostPort(fields[0]); ok {
-		u.localPort = atoiSafe(portStr)
-	}
 	if len(fields) >= 2 && fields[1] != "." && fields[1] != "" {
 		u.Scope = fields[1]
 	}
+	if _, portStr, ok := splitHostPort(fields[0]); ok {
+		u.localPort = atoiSafe(portStr)
+	}
 	if comment != "" {
 		if strings.HasPrefix(comment, "https://") || strings.HasPrefix(comment, "http://") {
+			u.encHint = "DoH"
 			parseDoHComment(&u, comment)
 		} else {
 			parsePlainComment(&u, comment)
@@ -376,19 +378,23 @@ func applyEncryption(ups []DNSUpstream, tls []dnsTLSEntry, https []dnsHTTPSEntry
 			}
 		}
 	}
+	// Один адрес может быть заведён и как DoT, и как DoH: карты по адресу их не
+	// различают. URL-форма комментария принадлежит конкретной строке и потому
+	// сильнее — NDMS печатает DoH-апстрим URL-ом даже когда он задан по IP.
 	for i := range ups {
-		switch {
-		case httpsByHost[ups[i].Address]:
-			ups[i].Encryption = "DoH"
-		default:
-			if sni, ok := tlsByAddr[ups[i].Address]; ok {
-				ups[i].Encryption = "DoT"
-				if ups[i].SNI == "" {
-					ups[i].SNI = sni
-				}
-			} else {
-				ups[i].Encryption = "plain"
+		if ups[i].encHint != "" {
+			ups[i].Encryption = ups[i].encHint
+			continue
+		}
+		if sni, ok := tlsByAddr[ups[i].Address]; ok {
+			ups[i].Encryption = "DoT"
+			if ups[i].SNI == "" {
+				ups[i].SNI = sni
 			}
+		} else if httpsByHost[ups[i].Address] {
+			ups[i].Encryption = "DoH"
+		} else {
+			ups[i].Encryption = "plain"
 		}
 	}
 }

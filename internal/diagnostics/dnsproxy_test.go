@@ -186,9 +186,10 @@ func TestParseDNSProxy_DoH(t *testing.T) {
 	if u := byAddr["8.8.8.8"]; u.Encryption != "plain" {
 		t.Errorf("8.8.8.8: want plain, got %q", u.Encryption)
 	}
-	// 9.9.9.9 — есть в обоих списках: DoH побеждает
-	if u := byAddr["9.9.9.9"]; u.Encryption != "DoH" {
-		t.Errorf("9.9.9.9: want DoH (DoH>DoT), got %q", u.Encryption)
+	// 9.9.9.9 — есть в обоих списках, но комментарий голый: DoH-апстрим NDMS
+	// печатает URL-ом, значит эта строка — DoT.
+	if u := byAddr["9.9.9.9"]; u.Encryption != "DoT" {
+		t.Errorf("9.9.9.9: want DoT (голый комментарий + server-tls), got %q", u.Encryption)
 	}
 	// URL-комментарий: hostname вытащен, порт=443 по дефолту схемы, SNI пустой
 	doh, ok := byAddr["common.dot.dns.yandex.net"]
@@ -203,6 +204,45 @@ func TestParseDNSProxy_DoH(t *testing.T) {
 	}
 	if doh.SNI != "" {
 		t.Errorf("URL upstream: want SNI empty (host=address), got %q", doh.SNI)
+	}
+}
+
+// TestParseDNSProxy_SameAddrDoTAndDoH — issue #791: один и тот же адрес,
+// заведённый и как DoT, и как DoH, показывался в инструментах дважды как DoH.
+// Фикстура — живая выгрузка /show/dns-proxy со стенда (KeeneticOS 5.01) после
+// `dns-proxy tls upstream 9.9.9.9 853 sni dns.quad9.net` и
+// `dns-proxy https upstream https://9.9.9.9/dns-query dnsm`.
+func TestParseDNSProxy_SameAddrDoTAndDoH(t *testing.T) {
+	const raw = `{"proxy-status":[{
+		"proxy-name": "System",
+		"proxy-config": "dns_server = 127.0.0.1:40500 . # 9.9.9.9:853@dns.quad9.net\ndns_server = 127.0.0.1:40508 . # https://ada.openbld.net/dns-query@dnsm\ndns_server = 127.0.0.1:40509 . # https://9.9.9.9/dns-query@dnsm",
+		"proxy-stat": "",
+		"proxy-tls":  {"server-tls":  [{"address":"9.9.9.9","port":853,"sni":"dns.quad9.net","domain":""}]},
+		"proxy-https":{"server-https":[
+			{"uri":"https://ada.openbld.net/dns-query","format":"dnsm"},
+			{"uri":"https://9.9.9.9/dns-query","format":"dnsm"}
+		]}
+	}]}`
+
+	proxies, err := ParseDNSProxy([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseDNSProxy: %v", err)
+	}
+	if len(proxies) != 1 || len(proxies[0].Upstreams) != 3 {
+		t.Fatalf("unexpected shape: %+v", proxies)
+	}
+	byPort := map[int]DNSUpstream{}
+	for _, u := range proxies[0].Upstreams {
+		byPort[u.localPort] = u
+	}
+	if u := byPort[40500]; u.Encryption != "DoT" || u.Address != "9.9.9.9" || u.Port != 853 {
+		t.Errorf("40500: want DoT 9.9.9.9:853, got %s %s:%d", u.Encryption, u.Address, u.Port)
+	}
+	if u := byPort[40509]; u.Encryption != "DoH" || u.Address != "9.9.9.9" || u.Port != 443 {
+		t.Errorf("40509: want DoH 9.9.9.9:443, got %s %s:%d", u.Encryption, u.Address, u.Port)
+	}
+	if u := byPort[40508]; u.Encryption != "DoH" {
+		t.Errorf("40508: want DoH, got %q", u.Encryption)
 	}
 }
 
