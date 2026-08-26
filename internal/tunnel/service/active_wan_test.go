@@ -77,6 +77,7 @@ func saveTunnel(t *testing.T, store *storage.AWGTunnelStore, id string, opts ...
 // --- mockOp: full Operator mock for integration tests ---
 
 type mockOp struct {
+	defaultRouteCalls int
 	MockOperator
 
 	defaultGW    string
@@ -125,8 +126,11 @@ func (m *mockOp) Start(ctx context.Context, cfg tunnel.Config) error {
 	return m.startError
 }
 
-func (m *mockOp) GetSystemName(_ context.Context, ndmsID string) string         { return ndmsID }
-func (m *mockOp) SetDefaultRoute(ctx context.Context, ndmsName string) error    { return nil }
+func (m *mockOp) GetSystemName(_ context.Context, ndmsID string) string { return ndmsID }
+func (m *mockOp) SetDefaultRoute(ctx context.Context, ndmsName string) error {
+	m.defaultRouteCalls++
+	return nil
+}
 func (m *mockOp) RemoveDefaultRoute(ctx context.Context, ndmsName string) error { return nil }
 func (m *mockOp) Suspend(ctx context.Context, tunnelID string) error            { return nil }
 func (m *mockOp) Resume(ctx context.Context, tunnelID string) error             { return nil }
@@ -526,5 +530,42 @@ func TestHealStaleActiveWAN_SkipsEmpty(t *testing.T) {
 	}
 	if got.ActiveWAN != "" {
 		t.Errorf("HealStaleActiveWAN: empty must stay empty, got %q", got.ActiveWAN)
+	}
+}
+
+// Тумблер «маршрут по умолчанию» на карточке зеркальной записи raw-выхода
+// обязан отвергаться, а не доходить до оператора. Цена ошибки измерена:
+// NewNames считает NDMS-имя из идентификатора, а у "wdttraw-*" цифр нет —
+// фолбэк даёт OpkgTun0, то есть ЧУЖОЙ интерфейс роутера, и маршрут по
+// умолчанию ушёл бы на посторонний объект.
+func TestSetDefaultRoute_RejectsWdttRawMirror(t *testing.T) {
+	svc, store, op, _ := testService(t)
+
+	// DefaultRouteSet выставлен намеренно: чтение store мигрирует записи без
+	// него в DefaultRoute=true (awg_store.go:75-78), и фикстура без флага
+	// проверяла бы не отказ, а миграцию.
+	mirror := &storage.AWGTunnel{
+		ID: "wdttraw-de", Name: "Клиент wdtt", Backend: "wdtt-raw",
+		DefaultRoute: false, DefaultRouteSet: true,
+		Interface: storage.AWGInterface{Address: "10.70.0.2/32", MTU: 1420},
+	}
+	if err := store.Save(mirror); err != nil {
+		t.Fatal(err)
+	}
+
+	err := svc.SetDefaultRoute(context.Background(), "wdttraw-de", true)
+	if err == nil {
+		t.Fatal("маршрут зеркальной записи обязан отвергаться: иначе оператор уводит default route на OpkgTun0")
+	}
+
+	got, gerr := store.Get("wdttraw-de")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.DefaultRoute {
+		t.Fatal("отвергнутая правка легла на диск: DefaultRoute стал true")
+	}
+	if op.defaultRouteCalls != 0 {
+		t.Fatalf("оператор зван %d раз: правка обязана останавливаться до него", op.defaultRouteCalls)
 	}
 }

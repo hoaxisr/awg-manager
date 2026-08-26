@@ -666,6 +666,14 @@ func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enab
 	if err != nil {
 		return tunnel.ErrNotFound
 	}
+	// Зеркальная запись raw-выхода: её маршрутами распоряжается прокси-рантайм.
+	// Отказ здесь — не косметика: NewNames считает NDMS-имя из идентификатора,
+	// а у "wdttraw-*" цифр нет, и фолбэк даёт OpkgTun0 — ЧУЖОЙ интерфейс.
+	// Дальше по коду это ушло бы в legacyOperator.SetDefaultRoute и увело
+	// маршрут по умолчанию на посторонний объект роутера.
+	if stored.Backend == "wdtt-raw" {
+		return fmt.Errorf("маршрутом raw-выхода распоряжается инстанс WDTT — меняйте в его настройках")
+	}
 
 	oldValue := stored.DefaultRoute
 	stored.DefaultRoute = enabled
