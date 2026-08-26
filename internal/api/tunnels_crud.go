@@ -560,6 +560,10 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete deletes a tunnel.
 //
 //	@Summary		Delete tunnel
+//	@Description	409 приходит в двух формах. tunnel_referenced (тело TunnelReferencedResponse) —
+//	@Description	туннель кем-то используется. Обычный конверт ошибки с кодом WDTT_RAW_OWNED или
+//	@Description	WDTT_RAW_OWNER_UNKNOWN — запись есть проекция прокси-инстанса и удаляется только
+//	@Description	вместе с ним.
 //	@Tags			tunnels
 //	@Produce		json
 //	@Security		CookieAuth

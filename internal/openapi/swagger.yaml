@@ -17805,6 +17805,11 @@ paths:
       - tunnels
   /tunnels/delete:
     post:
+      description: |-
+        409 приходит в двух формах. tunnel_referenced (тело TunnelReferencedResponse) —
+        туннель кем-то используется. Обычный конверт ошибки с кодом WDTT_RAW_OWNED или
+        WDTT_RAW_OWNER_UNKNOWN — запись есть проекция прокси-инстанса и удаляется только
+        вместе с ним.
       parameters:
       - description: Tunnel id
         in: query
