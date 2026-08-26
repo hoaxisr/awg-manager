@@ -4,3 +4,23 @@
 # Список может только сокращаться: исчезнувшее расхождение валит тест,
 # пока строка не удалена. Новая строка добавляется ТОЛЬКО после ручной
 # проверки, что это дефект пути, а не ошибка фикстуры.
+
+# --- vless, задача 2 -------------------------------------------------------
+# xray: convertXrayOutbound знает только ws/grpc/http (xray.go:361-389) —
+# xhttp и httpupgrade дают аутбаунд вообще без transport, то есть голый TCP.
+# xray: путь не извлекает "?ed=N" из ws-пути в max_early_data (stream.go:82 умеет).
+# xray: sockopt.interface разбирается в XrayStream.Sockopt (xray.go:25) и никуда не идёт.
+# amnezia: amneziaVlessToOutbound знает только grpc/tcp, allowInsecure не читает.
+# link/clash/amnezia: при reality без fingerprint не подставляют utls, а движок
+# без него REALITY не поднимет ("uTLS is required by reality client",
+# common/tls/reality_client.go:60). Xray-путь единственный, кто ставит дефолт.
+vless-bind-interface xray bind_interface missing
+vless-grpc-reality-nofp amnezia tls.utls missing
+vless-grpc-reality-nofp clash tls.utls missing
+vless-grpc-reality-nofp link tls.utls missing
+vless-httpupgrade xray transport missing
+vless-ws-tls-ed amnezia tls.insecure missing
+vless-ws-tls-ed amnezia transport missing
+vless-ws-tls-ed xray transport.max_early_data missing
+vless-ws-tls-ed xray transport.path differs
+vless-xhttp xray transport missing

@@ -99,6 +99,300 @@ var eqScenarios = []eqScenario{
 		}]}`,
 		amnezia: true,
 	},
+	{
+		name: "vless-ws-tls-ed",
+		canonical: `{
+			"type": "vless",
+			"server": "s2.example.com",
+			"server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {
+				"type": "ws",
+				"path": "/ws",
+				"headers": {"Host": "cdn2.example.com"},
+				"max_early_data": 2048
+			},
+			"tls": {
+				"enabled": true,
+				"server_name": "cdn2.example.com",
+				"alpn": ["h2", "http/1.1"],
+				"insecure": true,
+				"utls": {"enabled": true, "fingerprint": "chrome"}
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s2.example.com:443" +
+			"?type=ws&security=tls&path=%2Fws%3Fed%3D2048&host=cdn2.example.com" +
+			"&sni=cdn2.example.com&alpn=h2,http%2F1.1&fp=chrome&insecure=1#s2",
+		clash: `proxies:
+  - name: s2
+    type: vless
+    server: s2.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: ws
+    tls: true
+    servername: cdn2.example.com
+    alpn: [h2, http/1.1]
+    client-fingerprint: chrome
+    skip-cert-verify: true
+    ws-opts:
+      path: "/ws?ed=2048"
+      headers:
+        Host: cdn2.example.com
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s2",
+			"settings": {"vnext": [{
+				"address": "s2.example.com",
+				"port": 443,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "ws",
+				"security": "tls",
+				"tlsSettings": {
+					"serverName": "cdn2.example.com",
+					"alpn": ["h2", "http/1.1"],
+					"allowInsecure": true,
+					"fingerprint": "chrome"
+				},
+				"wsSettings": {
+					"path": "/ws?ed=2048",
+					"headers": {"Host": "cdn2.example.com"}
+				}
+			}
+		}]}`,
+		amnezia: true,
+	},
+	{
+		name: "vless-xhttp",
+		canonical: `{
+			"type": "vless",
+			"server": "s3.example.com",
+			"server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {
+				"type": "xhttp",
+				"path": "/x",
+				"host": "h3.example.com",
+				"mode": "stream-up",
+				"x_padding_bytes": "100-1000"
+			},
+			"tls": {
+				"enabled": true,
+				"server_name": "h3.example.com",
+				"utls": {"enabled": true, "fingerprint": "chrome"}
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s3.example.com:443" +
+			"?type=xhttp&mode=stream-up&path=%2Fx&host=h3.example.com" +
+			"&security=tls&sni=h3.example.com&fp=chrome#s3",
+		clash: `proxies:
+  - name: s3
+    type: vless
+    server: s3.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: xhttp
+    tls: true
+    servername: h3.example.com
+    client-fingerprint: chrome
+    xhttp-opts:
+      path: /x
+      host: h3.example.com
+      mode: stream-up
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s3",
+			"settings": {"vnext": [{
+				"address": "s3.example.com",
+				"port": 443,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "xhttp",
+				"security": "tls",
+				"tlsSettings": {"serverName": "h3.example.com", "fingerprint": "chrome"}
+			}
+		}]}`,
+	},
+	{
+		name: "vless-httpupgrade",
+		canonical: `{
+			"type": "vless",
+			"server": "s4.example.com",
+			"server_port": 80,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {
+				"type": "httpupgrade",
+				"host": "h4.example.com",
+				"path": "/up"
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s4.example.com:80" +
+			"?type=httpupgrade&path=%2Fup&host=h4.example.com#s4",
+		clash: `proxies:
+  - name: s4
+    type: vless
+    server: s4.example.com
+    port: 80
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: ws
+    ws-opts:
+      path: /up
+      headers:
+        Host: h4.example.com
+      v2ray-http-upgrade: true
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s4",
+			"settings": {"vnext": [{
+				"address": "s4.example.com",
+				"port": 80,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {"network": "httpupgrade"}
+		}]}`,
+	},
+	{
+		name: "vless-http",
+		canonical: `{
+			"type": "vless",
+			"server": "s5.example.com",
+			"server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {
+				"type": "http",
+				"host": ["h5.example.com"],
+				"path": "/h"
+			},
+			"tls": {
+				"enabled": true,
+				"server_name": "h5.example.com",
+				"utls": {"enabled": true, "fingerprint": "chrome"}
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s5.example.com:443" +
+			"?type=http&path=%2Fh&host=h5.example.com" +
+			"&security=tls&sni=h5.example.com&fp=chrome#s5",
+		clash: `proxies:
+  - name: s5
+    type: vless
+    server: s5.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: h2
+    tls: true
+    servername: h5.example.com
+    client-fingerprint: chrome
+    h2-opts:
+      path: /h
+      host: [h5.example.com]
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s5",
+			"settings": {"vnext": [{
+				"address": "s5.example.com",
+				"port": 443,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "h2",
+				"security": "tls",
+				"tlsSettings": {"serverName": "h5.example.com", "fingerprint": "chrome"},
+				"httpSettings": {"path": "/h", "host": ["h5.example.com"]}
+			}
+		}]}`,
+	},
+	{
+		name: "vless-grpc-reality-nofp",
+		canonical: `{
+			"type": "vless",
+			"server": "s6.example.com",
+			"server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {"type": "grpc", "service_name": "svc"},
+			"tls": {
+				"enabled": true,
+				"server_name": "cdn6.example.com",
+				"utls": {"enabled": true, "fingerprint": "chrome"},
+				"reality": {
+					"enabled": true,
+					"public_key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+					"short_id": "cd34"
+				}
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s6.example.com:443" +
+			"?type=grpc&serviceName=svc&security=reality&sni=cdn6.example.com" +
+			"&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=cd34#s6",
+		clash: `proxies:
+  - name: s6
+    type: vless
+    server: s6.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: grpc
+    servername: cdn6.example.com
+    reality-opts:
+      public-key: jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0
+      short-id: cd34
+    grpc-opts:
+      grpc-service-name: svc
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s6",
+			"settings": {"vnext": [{
+				"address": "s6.example.com",
+				"port": 443,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "grpc",
+				"security": "reality",
+				"realitySettings": {
+					"serverName": "cdn6.example.com",
+					"publicKey": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+					"shortId": "cd34"
+				},
+				"grpcSettings": {"serviceName": "svc"}
+			}
+		}]}`,
+		amnezia: true,
+	},
+	{
+		name: "vless-bind-interface",
+		canonical: `{
+			"type": "vless",
+			"server": "s7.example.com",
+			"server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"bind_interface": "nwg0",
+			"tls": {"enabled": true, "server_name": "s7.example.com"}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s7.example.com:443" +
+			"?type=tcp&security=tls&sni=s7.example.com&bind_interface=nwg0#s7",
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s7",
+			"settings": {"vnext": [{
+				"address": "s7.example.com",
+				"port": 443,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "tcp",
+				"security": "tls",
+				"tlsSettings": {"serverName": "s7.example.com"},
+				"sockopt": {"interface": "nwg0"}
+			}
+		}]}`,
+	},
 }
 
 // eqDiff — одно расхождение между эталоном и выходом пути.
