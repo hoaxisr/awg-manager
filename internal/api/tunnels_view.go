@@ -235,10 +235,6 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 	for _, t := range tunnels {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
-		// WDTT Raw rows are appended below with live iface/status from wdtt.
-		if stored != nil && stored.Backend == backendWdttRaw {
-			continue
-		}
 
 		awgVersion := "wg"
 		var endpoint, address, wdttClientID string
@@ -250,6 +246,12 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			address = stored.Interface.Address
 			mtu = stored.Interface.MTU
 			awgVersion = config.ClassifyAWGVersion(&stored.Interface)
+			if stored.Backend == backendWdttRaw {
+				// У зеркала прокси-выхода нет конфига интерфейса, по
+				// которому считается версия: классификатор вернул бы
+				// "wg" и карточка получила бы бейдж «WireGuard».
+				awgVersion = "raw"
+			}
 			ispInterface = stored.ISPInterface
 			ispInterfaceLabel = stored.ISPInterfaceLabel
 			wdttClientID = strings.TrimSpace(stored.WdttClientID)
@@ -303,8 +305,13 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 
 		backend := "kernel"
-		if stored != nil && stored.Backend == "nativewg" {
-			backend = "nativewg"
+		if stored != nil {
+			switch stored.Backend {
+			case "nativewg":
+				backend = "nativewg"
+			case backendWdttRaw:
+				backend = backendWdttRaw
+			}
 		}
 
 		var startedAt string
@@ -354,8 +361,6 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 		items = append(items, item)
 	}
-
-	items = h.appendWdttRawListItems(ctx, items)
 
 	return items, nil
 }

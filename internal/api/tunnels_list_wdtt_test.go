@@ -92,3 +92,65 @@ func TestList_ExposesWdttClientID(t *testing.T) {
 		t.Fatalf("wdttClientId = %q, want %q", resp.Data[0].WdttClientID, "client-a")
 	}
 }
+
+// TestList_IncludesWdttRawMirror держит блокер задачи 17: зеркальная запись
+// прокси-выхода обязана попадать в общий список туннелей — прежний обходной
+// путь (отдельный сборщик из живого wdtt.Service) снесён вместе с движком, и
+// без записи в списке карточка выхода исчезала целиком.
+//
+// backend проверяется отдельно от backendType: первый список считает сам
+// (дефолт — "kernel", то есть значение отличает работу от бездействия), второй
+// берёт из состояния, которое считает tunnel/service.
+func TestList_IncludesWdttRawMirror(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Save(&storage.AWGTunnel{
+		ID:             "wdttraw-de",
+		Name:           "Германия",
+		Backend:        backendWdttRaw,
+		WdttClientID:   "de",
+		Enabled:        true,
+		RawKernelIface: "opkgtun18",
+		RawNdmsIface:   "OpkgTun18",
+		Interface:      storage.AWGInterface{MTU: 1300},
+		Peer:           storage.AWGPeer{Endpoint: "1.2.3.4:56000"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &TunnelsHandler{
+		store: store,
+		svc: &listSvcStub{tunnels: []service.TunnelWithStatus{{
+			ID: "wdttraw-de", Name: "Германия", Enabled: true,
+			State:         tunnel.StateRunning,
+			StateInfo:     tunnel.StateInfo{State: tunnel.StateRunning, BackendType: backendWdttRaw},
+			InterfaceName: "opkgtun18", NDMSName: "OpkgTun18",
+		}}},
+	}
+
+	items, err := h.listItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	got := items[0]
+	if got.Backend != backendWdttRaw {
+		t.Fatalf("backend = %q, want %q", got.Backend, backendWdttRaw)
+	}
+	if got.BackendType != backendWdttRaw {
+		t.Fatalf("backendType = %q, want %q", got.BackendType, backendWdttRaw)
+	}
+	// "raw" — не версия протокола, а признак «версии нет»: бейдж AWG на
+	// карточке зеркала не рисуется. Дефолт ветки — "wg", он бы нарисовался.
+	if got.AWGVersion != "raw" {
+		t.Fatalf("awgVersion = %q, want %q", got.AWGVersion, "raw")
+	}
+	if got.Status != "running" {
+		t.Fatalf("status = %q, want running", got.Status)
+	}
+	if got.NDMSName != "OpkgTun18" || got.InterfaceName != "opkgtun18" {
+		t.Fatalf("iface names = %q / %q", got.InterfaceName, got.NDMSName)
+	}
+}
