@@ -34,11 +34,11 @@ func DefaultCacheDBPath() string { return defaultCacheDBPath }
 // that hard-coded the wrong Clash API port (9090 instead of
 // clashAPIAddr's 9099), which silently broke our LogForwarder /
 // DelayChecker on existing installs.
-func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, loggers ...*slog.Logger) {
+func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
 	basePath := filepath.Join(configDir, "00-base.json")
 	if _, err := os.Stat(basePath); err == nil {
-		patchBaseClashPort(basePath, log)
+		patchBaseClashPort(basePath, desiredClashPort, log)
 		patchBaseLogLevel(basePath, desiredLogLevel, log)
 		patchBaseDirectOutbound(basePath, log)
 		patchBaseCacheFilePath(basePath, log)
@@ -50,7 +50,7 @@ func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, lo
 			"step", stepEnsureBaseConfig, "path", configDir, "err", err)
 		return
 	}
-	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS), log)
+	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS, desiredClashPort), log)
 }
 
 func logConfigPatchInfo(log *slog.Logger, msg string, args ...any) {
@@ -101,11 +101,11 @@ type reconcileStep struct {
 // MigrateLegacyConfigDir в config.go). Внутри набора ограничений порядка нет:
 // шаги попарно коммутируют по конечному состоянию (закреплено
 // TestReconcileConfigSteps_CommuteReversed).
-func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS string, log *slog.Logger) []reconcileStep {
+func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, log *slog.Logger) []reconcileStep {
 	base := filepath.Join(configPath, "00-base.json")
 	tunnels := filepath.Join(configPath, "10-tunnels.json")
 	return []reconcileStep{
-		{stepEnsureBaseConfig, func() { ensureBaseConfig(configPath, desiredLogLevel, desiredBootstrapDNS, log) }},
+		{stepEnsureBaseConfig, func() { ensureBaseConfig(configPath, desiredLogLevel, desiredBootstrapDNS, desiredClashPort, log) }},
 		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
 		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
 		// Компат-фиксы нужны каждому продюсеру outbound'ов: 10-tunnels пишет
@@ -486,32 +486,46 @@ func patchBaseLogLevel(basePath, desiredLevel string, loggers ...*slog.Logger) {
 	writeSlotJSON(stepPatchBaseLogLevel, basePath, m, log)
 }
 
-// patchBaseClashPort rewrites only the experimental.clash_api.external_controller
-// field if it points anywhere other than clashAPIAddr. Other fields
-// (user customizations: log level, DNS servers, etc.) are preserved
-// verbatim. No-op when the file already has the correct port or has no
-// experimental.clash_api block at all (latter case: the user removed
-// clash_api on purpose; respect that).
-func patchBaseClashPort(basePath string, loggers ...*slog.Logger) {
+// patchBaseClashPort приводит experimental.clash_api.external_controller к
+// нашему адресу (порт из настроек, хост всегда 127.0.0.1). Остальные поля —
+// пользовательские правки уровня лога, DNS-серверов и прочего — сохраняются
+// дословно. No-op, только когда адрес уже правильный.
+//
+// Отсутствующий блок clash_api ВОССТАНАВЛИВАЕТСЯ, а не считается намерением
+// пользователя: Clash API — служебный канал управления awg-manager, и его
+// значением и наличием владеем мы (ADR 0001). Без блока молча слепнут
+// LogForwarder, DelayChecker, /connections и селекторы подписок, причём
+// sing-box при этом стартует нормально и в журнале не будет ни строчки.
+func patchBaseClashPort(basePath string, port int, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
 	m, ok := readSlotJSON(stepPatchBaseClashPort, basePath, log)
 	if !ok {
 		return
 	}
+	if !setClashController(m, ClashAddr(port)) {
+		return
+	}
+	writeSlotJSON(stepPatchBaseClashPort, basePath, m, log)
+}
+
+// setClashController ставит experimental.clash_api.external_controller в want,
+// создавая недостающие уровни. Возвращает false, если адрес уже такой.
+func setClashController(m map[string]any, want string) bool {
 	exp, _ := m["experimental"].(map[string]any)
 	if exp == nil {
-		return
+		exp = map[string]any{}
+		m["experimental"] = exp
 	}
 	clash, _ := exp["clash_api"].(map[string]any)
 	if clash == nil {
-		return
+		clash = map[string]any{}
+		exp["clash_api"] = clash
 	}
-	current, _ := clash["external_controller"].(string)
-	if current == clashAPIAddr {
-		return
+	if current, _ := clash["external_controller"].(string); current == want {
+		return false
 	}
-	clash["external_controller"] = clashAPIAddr
-	writeSlotJSON(stepPatchBaseClashPort, basePath, m, log)
+	clash["external_controller"] = want
+	return true
 }
 
 // setBootstrapServer ставит адрес серверу с тегом dns-bootstrap. Возвращает
@@ -978,7 +992,7 @@ const defaultBootstrapDNS = "1.1.1.1"
 // freshBaseConfig returns the canonical base sing-box config. Single source
 // of truth for ensureBaseConfig (initial write + self-heal path). Empty
 // bootstrapDNS falls back to defaultBootstrapDNS.
-func freshBaseConfig(logLevel, bootstrapDNS string) map[string]any {
+func freshBaseConfig(logLevel, bootstrapDNS string, clashPort int) map[string]any {
 	bootstrapDNS = sanitizeBootstrapDNS(bootstrapDNS)
 	if bootstrapDNS == "" {
 		bootstrapDNS = defaultBootstrapDNS
@@ -986,10 +1000,10 @@ func freshBaseConfig(logLevel, bootstrapDNS string) map[string]any {
 	return map[string]any{
 		"log": map[string]any{"level": normalizeSingboxLogLevel(logLevel), "timestamp": true},
 		"experimental": map[string]any{
-			// MUST match clashAPIAddr — our ClashClient and LogForwarder
-			// connect here. Hard-coding 9090 (sing-box default) used to
-			// silently break log forwarding on existing installs.
-			"clash_api": map[string]any{"external_controller": clashAPIAddr},
+			// MUST match ClashClient.Address() — our ClashClient and
+			// LogForwarder connect here. Hard-coding 9090 (sing-box default)
+			// used to silently break log forwarding on existing installs.
+			"clash_api": map[string]any{"external_controller": ClashAddr(clashPort)},
 			// Absolute path to writable dir. Sing-box default resolves
 			// relative path against CWD which is "/" (read-only on Entware) —
 			// caused FATAL on user installs.
@@ -1050,7 +1064,7 @@ func (o *Operator) ApplyLogLevel(level string) error {
 		// Свежая база условно-своих скаляров больше не несёт: их дефолты
 		// живут в 99-defaults.json и перекрываются слотом-владельцем сами
 		// (см. reconcileDerivedDefaults) — уступать нечем и некому.
-		base = freshBaseConfig(desired, o.desiredBootstrapDNS())
+		base = freshBaseConfig(desired, o.desiredBootstrapDNS(), o.desiredClashPort())
 	case err != nil:
 		return fmt.Errorf("read 00-base.json: %w", err)
 	default:
@@ -1103,6 +1117,33 @@ func (o *Operator) desiredBootstrapDNS() string {
 		return ""
 	}
 	return sanitizeBootstrapDNS(o.bootstrapDNS())
+}
+
+// desiredClashPort — порт Clash API из настроек; 0 означает DefaultClashPort.
+func (o *Operator) desiredClashPort() int {
+	if o.clashPort == nil {
+		return 0
+	}
+	return o.clashPort()
+}
+
+// ApplyClashPort приводит experimental.clash_api.external_controller в
+// 00-base.json к новому порту и перенаправляет туда же наш ClashClient
+// (issue #788). Демон перечитывает конфиг штатным reload'ом: SIGHUP в форке —
+// это Close + пересоздание инстанса, так что слушающий сокет Clash API
+// переезжает без перезапуска процесса.
+//
+// ClashClient переставляется ПОСЛЕ успешной записи: провалившаяся запись
+// оставила бы клиент смотреть в порт, которого в конфиге нет.
+func (o *Operator) ApplyClashPort(port int) error {
+	addr := ClashAddr(port)
+	if err := o.mutateBase(func(base map[string]any) bool {
+		return setClashController(base, addr)
+	}); err != nil {
+		return err
+	}
+	o.clash.SetAddress(addr)
+	return nil
 }
 
 // ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению

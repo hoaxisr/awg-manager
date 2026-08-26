@@ -29,6 +29,11 @@
 		bootstrapDNS?: string;
 		onsaveBootstrapDNS?: (value: string) => void;
 		bootstrapSaving?: boolean;
+		/** Порт Clash API sing-box; 0 или пусто = порт по умолчанию. */
+		clashPort?: number;
+		onsaveClashPort?: (value: number) => void;
+		clashPortSaving?: boolean;
+		clashPortError?: string | null;
 	}
 
 	let {
@@ -50,7 +55,13 @@
 		bootstrapDNS = '',
 		onsaveBootstrapDNS,
 		bootstrapSaving = false,
+		clashPort = 0,
+		onsaveClashPort,
+		clashPortSaving = false,
+		clashPortError = null,
 	}: Props = $props();
+
+	const DEFAULT_CLASH_PORT = 9099;
 
 	// Черновик поля bootstrap-DNS. Настройки на странице грузятся один раз,
 	// внешних обновлений у этого props нет — ресинк не нужен, начальное
@@ -65,6 +76,16 @@
 		return v === '' || isIPv4(v) || isIPv6(v);
 	});
 	const bootstrapDirty = $derived(bootstrapDraft.trim() !== bootstrapDNS);
+
+	// Черновик порта Clash API — та же схема, что у bootstrap-DNS: настройки
+	// грузятся один раз, внешних обновлений props нет, ресинк не нужен.
+	// svelte-ignore state_referenced_locally
+	let clashPortDraft = $state(String(clashPort || DEFAULT_CLASH_PORT));
+	const clashPortValue = $derived(Number(clashPortDraft.trim()));
+	const clashPortValid = $derived(
+		/^\d+$/.test(clashPortDraft.trim()) && clashPortValue >= 1024 && clashPortValue <= 65535
+	);
+	const clashPortDirty = $derived(clashPortValue !== (clashPort || DEFAULT_CLASH_PORT));
 
 	let confirmUninstall = $state(false);
 
@@ -269,6 +290,41 @@
 							loading={bootstrapSaving}
 							disabled={!bootstrapValid || !bootstrapDirty || bootstrapSaving}
 							onclick={() => onsaveBootstrapDNS?.(bootstrapDraft.trim())}
+						>
+							Сохранить
+						</Button>
+					</div>
+				</div>
+			{/if}
+			{#if singboxInstalled && onsaveClashPort}
+				<div class="setting-row bootstrap-row">
+					<div class="integration-meta">
+						<span class="font-medium">Порт Clash API</span>
+						<span class="setting-description">
+							Служебный канал управления sing-box: через него работают журнал,
+							активные соединения, замеры задержки и переключение подписок.
+							Слушается только на 127.0.0.1 и наружу не выставляется.
+						</span>
+						<span class="setting-description">
+							Менять стоит, только если порт {DEFAULT_CLASH_PORT} занял сторонний
+							пакет — тогда sing-box не стартует. Занятый порт форма не примет.
+						</span>
+					</div>
+					<div class="bootstrap-field">
+						<Input
+							type="text"
+							bind:value={clashPortDraft}
+							placeholder={String(DEFAULT_CLASH_PORT)}
+							disabled={clashPortSaving}
+							error={clashPortValid ? (clashPortError ?? undefined) : 'Нужен порт от 1024 до 65535'}
+							fullWidth
+						/>
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={clashPortSaving}
+							disabled={!clashPortValid || !clashPortDirty || clashPortSaving}
+							onclick={() => onsaveClashPort?.(clashPortValue)}
 						>
 							Сохранить
 						</Button>

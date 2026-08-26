@@ -34,7 +34,8 @@ type HistoryFeeder interface {
 // When a HistoryFeeder is provided, each publish also feeds the rate-history
 // store so /api/tunnels/traffic backfill works for singbox tags.
 type TrafficAggregator struct {
-	clashAddr string
+	// clashAddr — ПОСТАВЩИК адреса, а не снимок: см. LogForwarder.clashAddr.
+	clashAddr func() string
 	publisher TrafficPublisher
 	feeder    HistoryFeeder
 	interval  time.Duration
@@ -46,7 +47,7 @@ type TrafficAggregator struct {
 	uploadTotal   int64
 }
 
-func NewTrafficAggregator(clashAddr string, pub TrafficPublisher, feeder HistoryFeeder) *TrafficAggregator {
+func NewTrafficAggregator(clashAddr func() string, pub TrafficPublisher, feeder HistoryFeeder) *TrafficAggregator {
 	return &TrafficAggregator{
 		clashAddr: clashAddr,
 		publisher: pub,
@@ -74,7 +75,7 @@ func (t *TrafficAggregator) Run(ctx context.Context) {
 }
 
 func (t *TrafficAggregator) runOnce(ctx context.Context) {
-	url := fmt.Sprintf("ws://%s/connections", t.clashAddr)
+	url := fmt.Sprintf("ws://%s/connections", t.clashAddr())
 	conn, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		return

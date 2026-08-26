@@ -560,6 +560,30 @@ $effect(() => {
 		}
 	}
 
+	let savingClashPort = $state(false);
+	let clashPortError = $state<string | null>(null);
+
+	// Порт Clash API применяется бэкендом сразу: он переписывает
+	// external_controller в 00-base.json, перечитывает конфиг sing-box и
+	// переставляет собственного клиента. Отказ по занятости порта приходит
+	// текстом ошибки и показывается прямо под полем.
+	async function saveClashPort(value: number) {
+		if (!settings) return;
+		savingClashPort = true;
+		clashPortError = null;
+		try {
+			settings = await api.updateSettings({ ...settings, singboxClashPort: value });
+			setGlobalSettings(settings);
+			notifications.success(`Порт Clash API: ${value}`);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Ошибка сохранения порта Clash API";
+			clashPortError = msg;
+			notifications.error(msg);
+		} finally {
+			savingClashPort = false;
+		}
+	}
+
 	async function toggleUpdateCheck(enabled: boolean) {
 		if (!settings) return;
 		saving = true;
@@ -785,6 +809,10 @@ $effect(() => {
 					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
 					bootstrapSaving={savingBootstrapDNS}
 					onsaveBootstrapDNS={saveBootstrapDNS}
+					clashPort={settings.singboxClashPort ?? 0}
+					clashPortSaving={savingClashPort}
+					{clashPortError}
+					onsaveClashPort={saveClashPort}
 				/>
 				</div>
 			</aside>

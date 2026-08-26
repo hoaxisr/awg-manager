@@ -55,6 +55,7 @@ func (a *app) setupSingbox() {
 		AppLogger:       a.loggingService,
 		SingboxLogLevel: a.settingsStore.GetSingboxLogLevel,
 		BootstrapDNS:    a.settingsStore.GetSingboxBootstrapDNS,
+		ClashPort:       a.settingsStore.GetSingboxClashPort,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so
@@ -308,7 +309,7 @@ func (a *app) setupSingbox() {
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	a.deferOnExit(trafficCancel)
-	go singbox.NewTrafficAggregator(a.singboxOp.Clash().Address(), a.eventBus, a.trafficHistory).Run(trafficCtx)
+	go singbox.NewTrafficAggregator(a.singboxOp.Clash().Address, a.eventBus, a.trafficHistory).Run(trafficCtx)
 
 	delayCtx, delayCancel := context.WithCancel(context.Background())
 	a.deferOnExit(delayCancel)
@@ -318,7 +319,7 @@ func (a *app) setupSingbox() {
 	// UI log view (replaces the old file-based log; see process.go).
 	logFwdCtx, logFwdCancel := context.WithCancel(context.Background())
 	a.deferOnExit(logFwdCancel)
-	go singbox.NewLogForwarder(a.singboxOp.Clash().Address(), a.loggingService).Run(logFwdCtx)
+	go singbox.NewLogForwarder(a.singboxOp.Clash().Address, a.loggingService).Run(logFwdCtx)
 
 	// Updater service (awg-manager self-update check/apply + scheduled
 	// auto-install for both awg-manager and the managed sing-box binary).

@@ -32,7 +32,7 @@ func (f *fakeFeeder) Feed(id string, rxBytes, txBytes int64) {
 
 func TestTrafficAggregator_Ingest(t *testing.T) {
 	pub := &fakePublisher{}
-	agg := NewTrafficAggregator("unused", pub, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, pub, nil)
 	msg := []byte(`{
 		"downloadTotal": 900000,
 		"uploadTotal": 40000,
@@ -59,7 +59,7 @@ func TestTrafficAggregator_Ingest(t *testing.T) {
 
 func TestTrafficAggregator_Publish(t *testing.T) {
 	pub := &fakePublisher{}
-	agg := NewTrafficAggregator("unused", pub, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, pub, nil)
 	agg.tags["A"] = &TrafficSnapshot{Tag: "A", Upload: 1, Download: 2}
 	agg.tags["B"] = &TrafficSnapshot{Tag: "B", Upload: 3, Download: 4}
 	agg.downloadTotal = 123
@@ -94,7 +94,7 @@ func TestTrafficAggregator_Publish(t *testing.T) {
 func TestTrafficAggregator_PublishFeedsHistory(t *testing.T) {
 	pub := &fakePublisher{}
 	feeder := &fakeFeeder{}
-	agg := NewTrafficAggregator("unused", pub, feeder)
+	agg := NewTrafficAggregator(func() string { return "unused" }, pub, feeder)
 	agg.tags["A"] = &TrafficSnapshot{Tag: "A", Upload: 100, Download: 500}
 	agg.tags["B"] = &TrafficSnapshot{Tag: "B", Upload: 7, Download: 13}
 	agg.publish()
@@ -117,14 +117,14 @@ func TestTrafficAggregator_PublishFeedsHistory(t *testing.T) {
 
 func TestTrafficAggregator_PublishWithoutFeederIsSafe(t *testing.T) {
 	pub := &fakePublisher{}
-	agg := NewTrafficAggregator("unused", pub, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, pub, nil)
 	agg.tags["A"] = &TrafficSnapshot{Tag: "A", Upload: 1, Download: 2}
 	// Should not panic.
 	agg.publish()
 }
 
 func TestTrafficAggregator_IngestBadJSON(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, nil, nil)
 	agg.ingest([]byte(`not json`))
 	if len(agg.tags) != 0 {
 		t.Errorf("bad json should not mutate state")
@@ -132,7 +132,7 @@ func TestTrafficAggregator_IngestBadJSON(t *testing.T) {
 }
 
 func TestTrafficAggregator_IngestEmptyChains(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, nil, nil)
 	msg := []byte(`{"connections":[{"chains":[],"upload":100,"download":500}]}`)
 	agg.ingest(msg)
 	if len(agg.tags) != 0 {
@@ -145,7 +145,7 @@ func TestTrafficAggregator_IngestEmptyChains(t *testing.T) {
 // member card both surface non-zero traffic — the v2.10.0 regression where
 // "Суммарный трафик" sat at 0 B on the subscriptions page.
 func TestTrafficAggregator_IngestCreditsEveryChainHop(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, nil, nil)
 	msg := []byte(`{"connections":[{"chains":["Proxy0","Germany"],"upload":10,"download":20}]}`)
 	agg.ingest(msg)
 	if got := agg.tags["Germany"]; got == nil || got.Upload != 10 || got.Download != 20 {
@@ -160,7 +160,7 @@ func TestTrafficAggregator_IngestCreditsEveryChainHop(t *testing.T) {
 // chains (e.g. when a selector resolves through itself). Each connection's
 // bytes must credit each tag exactly once.
 func TestTrafficAggregator_IngestDedupsWithinSingleConnection(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, nil, nil)
 	msg := []byte(`{"connections":[{"chains":["A","A","B"],"upload":7,"download":13}]}`)
 	agg.ingest(msg)
 	if got := agg.tags["A"]; got == nil || got.Upload != 7 || got.Download != 13 {
@@ -173,7 +173,7 @@ func TestTrafficAggregator_IngestDedupsWithinSingleConnection(t *testing.T) {
 
 func TestTrafficAggregator_PublishEmitsMemoryEvent(t *testing.T) {
 	pub := &fakePublisher{}
-	agg := NewTrafficAggregator("unused", pub, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, pub, nil)
 	agg.ingest([]byte(`{"memory":99999,"connections":[]}`))
 	agg.publish()
 	// publish emits singbox:traffic, singbox:traffic-totals and singbox:memory.
@@ -195,7 +195,7 @@ func TestTrafficAggregator_PublishEmitsMemoryEvent(t *testing.T) {
 // Cross-connection accumulation still works after the every-hop change —
 // two connections through the same chain double the totals on every tag.
 func TestTrafficAggregator_IngestAccumulatesAcrossConnections(t *testing.T) {
-	agg := NewTrafficAggregator("unused", nil, nil)
+	agg := NewTrafficAggregator(func() string { return "unused" }, nil, nil)
 	msg := []byte(`{"connections":[
 		{"chains":["Proxy0","Germany"],"upload":10,"download":20},
 		{"chains":["Proxy0","Germany"],"upload":100,"download":200}

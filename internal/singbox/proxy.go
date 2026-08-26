@@ -25,6 +25,13 @@ func markProxyMgrDur(label string, start time.Time) {
 // in case NDMS ever returns something unexpected.
 const maxProxySlots = 128
 
+// TunnelInboundPortRange returns the inclusive listen-port range reserved for
+// sing-box tunnel inbounds (firstPort+slot). Exported so port-conflict
+// validation elsewhere reads the same numbers instead of copying them.
+func TunnelInboundPortRange() (first, last int) {
+	return firstPort, firstPort + maxProxySlots - 1
+}
+
 // ErrProxyComponentMissing is returned when the router lacks the NDMS
 // "proxy" component. Without it, no ProxyN interface can be created, so
 // sing-box cannot route any traffic. Surfaced to the UI as a distinct

@@ -929,6 +929,16 @@ func (s *SettingsStore) GetSingboxBootstrapDNS() string {
 	return settings.SingboxBootstrapDNS
 }
 
+// GetSingboxClashPort returns the configured Clash API port.
+// 0 means "not configured" — the operator falls back to its default.
+func (s *SettingsStore) GetSingboxClashPort() int {
+	settings, err := s.Get()
+	if err != nil {
+		return 0
+	}
+	return settings.SingboxClashPort
+}
+
 // GetLoggingMaxAge returns the max age for log entries in hours.
 func (s *SettingsStore) GetLoggingMaxAge() int {
 	settings, err := s.Get()

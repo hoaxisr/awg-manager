@@ -71,6 +71,12 @@ type Settings struct {
 	// резолвера — только IP, без домена и порта. Пусто = не вмешиваться в
 	// файл (исторически адрес правили руками). Issue #770.
 	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty"`
+	// SingboxClashPort — порт experimental.clash_api.external_controller в
+	// 00-base.json. Хост всегда 127.0.0.1: это служебный канал управления
+	// awg-manager (LogForwarder, DelayChecker, селекторы подписок,
+	// /connections, прокси /api/singbox/clash/*), а не пользовательская
+	// настройка sing-box. 0 = порт по умолчанию. Issue #788, ADR 0001.
+	SingboxClashPort int `json:"singboxClashPort,omitempty"`
 	// ManagedPeerAllowIPsMigrated marks the one-time NDMS sweep that strips
 	// the legacy default 0.0.0.0/0 from managed-server peers' allow-ips
 	// (per-peer /32 only). New firmware rejects multiple peers sharing

@@ -289,6 +289,13 @@ export interface Settings {
 	 * Пусто — адрес в конфиге не навязывается (issue #770).
 	 */
 	singboxBootstrapDNS?: string;
+	/**
+	 * Порт experimental.clash_api.external_controller в 00-base.json.
+	 * Хост всегда 127.0.0.1: Clash API — служебный канал управления
+	 * awg-manager, а не пользовательский слушатель. 0 — порт по
+	 * умолчанию (9099), issue #788.
+	 */
+	singboxClashPort?: number;
 }
 
 // #endregion
