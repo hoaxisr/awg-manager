@@ -319,3 +319,18 @@ func TestSyncLinkedProxyEndpointsSkipsMirror(t *testing.T) {
 		t.Fatalf("адрес зеркала переписан на %q", got.Peer.Endpoint)
 	}
 }
+
+// TestTunnelLinkedToFreeTurnClient переехал из freeturn_linked_test.go вместе
+// с самим предикатом.
+func TestTunnelLinkedToFreeTurnClient(t *testing.T) {
+	tun := storage.AWGTunnel{ID: "awgm1", FreeTurnClientID: "client-a"}
+	if !tunnelLinkedToFreeTurnClient(tun, "client-a") {
+		t.Fatal("tagged tunnel must match its client id")
+	}
+	if tunnelLinkedToFreeTurnClient(tun, "client-b") {
+		t.Fatal("must not match another client id")
+	}
+	if tunnelLinkedToFreeTurnClient(storage.AWGTunnel{Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}}, "client-a") {
+		t.Fatal("manual tunnel without tag must not match")
+	}
+}

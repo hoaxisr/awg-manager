@@ -13,6 +13,25 @@ import (
 
 type linkedTunnelPredicate func(storage.AWGTunnel) bool
 
+// tunnelLinkedToWdttClient / tunnelLinkedToFreeTurnClient — связь записи
+// туннеля с прокси-клиентом по её полю. Переехали сюда из wdtt_linked.go:21 и
+// freeturn_linked.go:24 вместе со сносом старых обработчиков.
+func tunnelLinkedToWdttClient(tun storage.AWGTunnel, clientID string) bool {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return false
+	}
+	return strings.TrimSpace(tun.WdttClientID) == clientID
+}
+
+func tunnelLinkedToFreeTurnClient(tun storage.AWGTunnel, clientID string) bool {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return false
+	}
+	return strings.TrimSpace(tun.FreeTurnClientID) == clientID
+}
+
 func listLinkedAwgTunnels(store *storage.AWGTunnelStore, pred linkedTunnelPredicate) ([]storage.AWGTunnel, error) {
 	if store == nil {
 		return nil, nil
@@ -216,7 +235,7 @@ func linkedProxyPredicate(field LinkedField, clientID string) (linkedTunnelPredi
 }
 
 // linkedProxyLifecycle — участвует ли связанная запись в подъёме и остановке.
-// Паритет tunnelLinkedAwgOnly (wdtt_linked.go:29): raw-зеркало WDTT — не
+// Паритет прежнего tunnelLinkedAwgOnly: raw-зеркало WDTT — не
 // туннель роутера, поднимать и опускать его нечем.
 func linkedProxyLifecycle(tun storage.AWGTunnel, field LinkedField) bool {
 	return field != LinkedWdtt || tun.Backend != backendWdttRaw
@@ -232,7 +251,7 @@ func SyncLinkedProxyEndpoints(ctx context.Context, store *storage.AWGTunnelStore
 		return nil, []string{err.Error()}
 	}
 	// Тот же фильтр, что у постановки состояния: адрес зеркала — не наше дело,
-	// его пишет wdtt.BuildRawTunnelRecord, и локальный порт зеркалу не нужен.
+	// его пишет зеркало прокси-рантайма, и локальный порт зеркалу не нужен.
 	return syncLinkedAwgTunnelEndpoints(ctx, store, svc, nil,
 		linkedProxyLifecycleOnly(pred, field), listen)
 }

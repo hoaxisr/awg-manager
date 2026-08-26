@@ -375,7 +375,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if req.Name != "" {
 			updated.Name = req.Name
 		}
-		h.syncWdttRawLiveFields(&updated)
 		if err := h.store.Save(&updated); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
 			return

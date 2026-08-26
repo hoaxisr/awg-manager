@@ -77,7 +77,6 @@ type TunnelsHandler struct {
 	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
 	// the contract.
 	selfCreateGate tunnel.SelfCreateGater
-	wdttSvc        wdttListSource
 	// buildTunnelsSnapshot (optional) assembles the composite
 	// {tunnels, external, system} payload used by GetAll and by
 	// mutation handlers that return fresh state. Injected by server.go
