@@ -492,6 +492,94 @@ var eqScenarios = []eqScenario{
       host: o.example.com
 `,
 	},
+	{
+		name: "hy2-obfs",
+		canonical: `{
+			"type": "hysteria2",
+			"server": "h1.example.com",
+			"server_port": 443,
+			"password": "hy2-secret",
+			"obfs": {"type": "salamander", "password": "obfs-pass"},
+			"tls": {
+				"enabled": true,
+				"server_name": "sni.example.com",
+				"alpn": ["h3"]
+			}
+		}`,
+		link: "hysteria2://hy2-secret@h1.example.com:443" +
+			"?sni=sni.example.com&obfs=salamander&obfs-password=obfs-pass#h1",
+		clash: `proxies:
+  - name: h1
+    type: hysteria2
+    server: h1.example.com
+    port: 443
+    password: hy2-secret
+    sni: sni.example.com
+    obfs: salamander
+    obfs-password: obfs-pass
+`,
+	},
+	{
+		name: "hy2-ports",
+		canonical: `{
+			"type": "hysteria2",
+			"server": "h2host.example.com",
+			"server_port": 443,
+			"password": "hy2-secret2",
+			"server_ports": ["20000:30000"],
+			"hop_interval": "10s",
+			"tls": {
+				"enabled": true,
+				"server_name": "h2host.example.com",
+				"alpn": ["h3"]
+			}
+		}`,
+		link: "hysteria2://hy2-secret2@h2host.example.com:443?mport=20000-30000#h2",
+		clash: `proxies:
+  - name: h2
+    type: hysteria2
+    server: h2host.example.com
+    port: 443
+    password: hy2-secret2
+    ports: 20000-30000
+`,
+	},
+	{
+		name: "mieru-tcp",
+		canonical: `{
+			"type": "mieru",
+			"server": "m1.example.com",
+			"server_port": 2012,
+			"transport": "TCP",
+			"username": "mika",
+			"password": "mieru-pass",
+			"multiplexing": "MULTIPLEXING_LOW"
+		}`,
+		link: "mierus://mika:mieru-pass@m1.example.com" +
+			"?profile=default&port=2012&protocol=TCP&multiplexing=MULTIPLEXING_LOW#m1",
+		clash: `proxies:
+  - name: m1
+    type: mieru
+    server: m1.example.com
+    port: 2012
+    transport: TCP
+    username: mika
+    password: mieru-pass
+    multiplexing: MULTIPLEXING_LOW
+`,
+		mieruJSON: `{
+			"profiles": [{
+				"profileName": "default",
+				"user": {"name": "mika", "password": "mieru-pass"},
+				"servers": [{
+					"domainName": "m1.example.com",
+					"portBindings": [{"port": 2012, "protocol": "TCP"}]
+				}],
+				"multiplexing": {"level": "MULTIPLEXING_LOW"}
+			}],
+			"activeProfile": "default"
+		}`,
+	},
 }
 
 // eqDiff — одно расхождение между эталоном и выходом пути.

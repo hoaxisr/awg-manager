@@ -30,3 +30,16 @@ vless-xhttp xray transport missing
 # (stream.go, defaultHost), xray-путь не подставляет ничего. Оба варианта
 # рабочие, но результат разный — это расхождение путей, а не поломка.
 trojan-ws-tls xray transport.headers missing
+
+# --- hysteria2 / mieru, задача 4 -------------------------------------------
+# clash: путь строит TLS общим слоем и теряет hysteria2-дефолт alpn ["h3"],
+# который share-путь ставит всегда (hysteria2.go:63). Движок сам ALPN не
+# подставляет (в protocol/hysteria2 и sing-quic "h3" не встречается), так что
+# clash-аутбаунд уходит с пустым ALPN — типовой сервер такое рукопожатие
+# отвергает. Железом не проверялось.
+# clash: mihomo-поле ports (port hopping) не читается вовсе — share-путь
+# разворачивает mport в server_ports + hop_interval, clash-путь ничего.
+hy2-obfs clash tls.alpn missing
+hy2-ports clash hop_interval missing
+hy2-ports clash server_ports missing
+hy2-ports clash tls.alpn missing
