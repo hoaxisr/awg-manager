@@ -217,7 +217,8 @@ var eqScenarios = []eqScenario{
 			"streamSettings": {
 				"network": "xhttp",
 				"security": "tls",
-				"tlsSettings": {"serverName": "h3.example.com", "fingerprint": "chrome"}
+				"tlsSettings": {"serverName": "h3.example.com", "fingerprint": "chrome"},
+				"xhttpSettings": {"path": "/x", "host": "h3.example.com", "mode": "stream-up"}
 			}
 		}]}`,
 		amnezia: true,
@@ -258,7 +259,10 @@ var eqScenarios = []eqScenario{
 				"port": 80,
 				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
 			}]},
-			"streamSettings": {"network": "httpupgrade"}
+			"streamSettings": {
+				"network": "httpupgrade",
+				"httpupgradeSettings": {"path": "/up", "host": "h4.example.com"}
+			}
 		}]}`,
 		amnezia: true,
 	},

@@ -7,14 +7,8 @@
 # пока строка не удалена. Новая строка добавляется ТОЛЬКО после ручной
 # проверки, что это дефект пути, а не ошибка фикстуры.
 #
-# 2026-08-26: 24 расхождения на старте, 21 осталось.
+# 2026-08-26: 24 расхождения на старте, 14 осталось.
 #
-# xray: convertXrayOutbound знает только ws/grpc/http (xray.go:361-389) —
-#   xhttp и httpupgrade дают аутбаунд вообще без transport, то есть голый TCP.
-# xray: не извлекает "?ed=N" из ws-пути (stream.go:82 умеет) и не ставит
-#   early_data_header_name.
-# xray: sockopt.interface разбирается в XrayStream.Sockopt (xray.go:25) и никуда
-#   не идёт.
 # amnezia: amneziaVlessToOutbound знает только grpc/tcp, allowInsecure и
 #   sockopt.interface не читает. Внутри vpn:// лежит тот же Xray-конфиг, что и в
 #   xray-клетке, поэтому пустых клеток у amnezia быть не должно.
@@ -35,28 +29,18 @@
 #   (hysteria2/client.go:98). Расхождение путей — да, поломка — нет.
 # clash: mihomo-поле ports (port hopping) не читается вовсе — share-путь
 #   разворачивает mport в server_ports + hop_interval, clash-путь ничего.
-# xray: общий слой при пустом host= подставляет headers.Host = имя сервера
-#   (stream.go, defaultHost), xray-путь не подставляет ничего. Оба варианта
-#   рабочие, но результат разный.
 
 hy2-obfs clash tls.alpn missing
 hy2-ports clash hop_interval missing
 hy2-ports clash server_ports missing
 hy2-ports clash tls.alpn missing
-trojan-ws-tls xray transport.headers missing
 vless-bind-interface amnezia bind_interface missing
 vless-bind-interface clash bind_interface missing
-vless-bind-interface xray bind_interface missing
 vless-grpc-reality-nofp amnezia tls.utls missing
 vless-http amnezia transport missing
 vless-httpupgrade amnezia transport missing
-vless-httpupgrade xray transport missing
 vless-ws-tls-ed amnezia tls.insecure missing
 vless-ws-tls-ed amnezia transport missing
 vless-ws-tls-ed clash transport.early_data_header_name missing
 vless-ws-tls-ed clash transport.max_early_data missing
-vless-ws-tls-ed xray transport.early_data_header_name missing
-vless-ws-tls-ed xray transport.max_early_data missing
-vless-ws-tls-ed xray transport.path differs "/ws"->"/ws?ed=2048"
 vless-xhttp amnezia transport missing
-vless-xhttp xray transport missing
