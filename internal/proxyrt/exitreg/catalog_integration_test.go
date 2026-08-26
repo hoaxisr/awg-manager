@@ -15,7 +15,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // stubProvider — routing.TunnelProvider, который ничего не знает: выход
@@ -52,12 +51,28 @@ func (a regAdapter) LookupExit(id string) (routing.ExitEntry, bool) {
 }
 
 func TestExitIDParityWithOldWorld(t *testing.T) {
-	// Страж живёт до смерти internal/wdtt (план 5). На этот id ссылаются
-	// пользовательские правила — разъезд генераторов ломает их молча.
-	for _, in := range []string{"", "default", "de", "Германия", "a-b_c",
-		"очень-длинное-имя-инстанса-которое-точно-длиннее-двадцати", "!!!", "--"} {
-		if got, want := wdttclient.RawTunnelID(in), wdtt.RawTunnelID(in); got != want {
-			t.Fatalf("RawTunnelID(%q): новый %q, старый %q", in, got, want)
+	// На эти id ссылаются пользовательские правила маршрутизации — разъезд
+	// генератора ломает их молча. Сверять больше не с чем: internal/wdtt
+	// снесён, поэтому ожидания сняты с него до сноса и вбиты литералами.
+	cases := map[string]string{
+		"":        "wdttraw-default",
+		"default": "wdttraw-default",
+		"de":      "wdttraw-de",
+		"-de-":    "wdttraw-de",
+		"a-b_c":   "wdttraw-a-b_c",
+		"a b":     "wdttraw-a-b",
+		// Небезопасные символы съедаются целиком — остаётся заглушка.
+		"Германия": "wdttraw-client",
+		"!!!":      "wdttraw-client",
+		"--":       "wdttraw-client",
+		"очень-длинное-имя-инстанса-которое-точно-длиннее-двадцати": "wdttraw-client",
+		// Обрезка по 20 символам — только на латинице: кириллица до неё
+		// не доживает, и без этого случая правило было бы не покрыто.
+		"abcdefghijklmnopqrstuvwxyz": "wdttraw-abcdefghijklmnopqrst",
+	}
+	for in, want := range cases {
+		if got := wdttclient.RawTunnelID(in); got != want {
+			t.Fatalf("RawTunnelID(%q) = %q, ожидалось %q", in, got, want)
 		}
 	}
 }

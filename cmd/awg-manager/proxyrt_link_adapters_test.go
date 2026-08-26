@@ -24,7 +24,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/netres"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // fakeIPT — модель iptables: листинги по ключу аргументов и ЖУРНАЛ команд.
@@ -1294,7 +1293,7 @@ func mirrorStore(t *testing.T) *storage.AWGTunnelStore {
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	for _, tun := range []*storage.AWGTunnel{
 		{ID: "awgm1", Name: "WD", WdttClientID: "c1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
-		{ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1", Backend: wdtt.BackendWdttRaw},
+		{ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1", Backend: "wdtt-raw"},
 	} {
 		if err := store.Save(tun); err != nil {
 			t.Fatal(err)
@@ -1358,7 +1357,7 @@ func TestRawMirrorSurvivesEnabledClientReconcile(t *testing.T) {
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	if err := store.Save(&storage.AWGTunnel{
 		ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1",
-		Backend: wdtt.BackendWdttRaw,
+		Backend: "wdtt-raw",
 		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},
 	}); err != nil {
 		t.Fatal(err)
