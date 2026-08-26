@@ -274,3 +274,44 @@ func TestEncodeOutbound_BindInterface(t *testing.T) {
 		t.Errorf("bind_interface after round-trip=%v, link=%s", ob["bind_interface"], link)
 	}
 }
+
+// Импорт умеет нестандартное имя заголовка early data (Clash его задаёт явно),
+// а экспорт молча подменял его дефолтным — круг терял настройку.
+func TestEncodeOutbound_WSEarlyDataHeader(t *testing.T) {
+	cases := []struct{ header, wantParam string }{
+		{"Sec-WebSocket-Protocol", ""},       // дефолт формы "?ed=" — писать незачем
+		{"X-Custom-Early", "X-Custom-Early"}, // всё остальное обязано доехать
+		{"", "-"},                            // early data в пути: заголовка нет
+	}
+	for _, tc := range cases {
+		ob := map[string]any{
+			"type": "vless", "server": "e.example.com", "server_port": 443,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": map[string]any{
+				"type": "ws", "path": "/ws", "max_early_data": 2048,
+			},
+		}
+		if tc.header != "" {
+			ob["transport"].(map[string]any)["early_data_header_name"] = tc.header
+		}
+		raw, _ := json.Marshal(ob)
+		link, err := EncodeOutbound(raw, "e")
+		if err != nil {
+			t.Fatalf("header=%q: %v", tc.header, err)
+		}
+		back, err := ParseLink(link)
+		if err != nil {
+			t.Fatalf("header=%q: re-parse %s: %v", tc.header, link, err)
+		}
+		var got map[string]any
+		_ = json.Unmarshal(back.Outbound, &got)
+		tr, _ := got["transport"].(map[string]any)
+		if tr["max_early_data"] != float64(2048) {
+			t.Errorf("header=%q: max_early_data=%v, link=%s", tc.header, tr["max_early_data"], link)
+		}
+		gotHeader, _ := tr["early_data_header_name"].(string)
+		if gotHeader != tc.header {
+			t.Errorf("header=%q: после круга %q, link=%s", tc.header, gotHeader, link)
+		}
+	}
+}

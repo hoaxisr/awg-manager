@@ -45,6 +45,27 @@ type outboundRTLS struct {
 // BuildStreamFromQuery parses transport+security parameters from a URL
 // query and returns a normalized StreamBuilder. defaultHost is used as
 // the WS Host header / HTTP hosts when the query doesn't specify host=.
+//
+// Эта функция — единственный сборщик транспорта и TLS в пакете. Форматы, у
+// которых своего query нет (Clash YAML, Xray JSON, Amnezia), приводят свои
+// поля к нему же — clashFieldsToValues и xrayStreamToValues, — и потому
+// получают ровно те же возможности. Тест эквивалентности следит, чтобы это
+// оставалось правдой.
+//
+// Набор понимаемых параметров шире, чем у share-ссылок: часть введена как
+// общий язык между форматами и в самих ссылках почти не встречается.
+//
+//	type, security, sni, alpn, fp/fingerprint, insecure, pbk, sid — как в ссылке
+//	path, host, serviceName, mode                                 — как в ссылке
+//	ed, eh          — ранние данные ws: размер и имя заголовка. Форма "?ed=N"
+//	                  внутри path эквивалентна ed=N с заголовком
+//	                  Sec-WebSocket-Protocol; пустой eh означает ранние данные
+//	                  прямо в пути. При обоих формах побеждает ed=.
+//	extra           — объект xhttp-настроек Xray (xmux и прочее), см. #797
+//	bind_interface  — исходящий интерфейс (#709)
+//
+// Добавляя поле в StreamBuilder, заводите ему параметр здесь: иначе форматы,
+// приходящие через этот вход, снова начнут расходиться в возможностях.
 func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, error) {
 	s := &StreamBuilder{}
 
