@@ -89,7 +89,7 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 // FreeTurnPinnedVersion — релиз free-turn-proxy, который ставит эта сборка.
 // Порядок бампа: обновить константу, URL, SHA256 (из checksums.txt релиза) и
 // размеры ниже.
-const FreeTurnPinnedVersion = "2.1.1-1"
+const FreeTurnPinnedVersion = "2.1.1-2"
 
 // freeturnReleaseBase — прод-доставка с зеркала (паритет с
 // internal/singbox/installer/embedded.go — GitHub из RU у части пользователей
@@ -105,15 +105,15 @@ const freeturnReleaseBase = "http://repo.hoaxisr.ru/ft/" + FreeTurnPinnedVersion
 // релиза.
 var FreeTurnEmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
-		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-arm64", SHA256: "2741732a27300a3d53de97b91c104f19e679047159d055ac8e1268b0f20bf4b0", Size: 14811298},
-		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-arm64", SHA256: "e4b36d1c33a9a6caa8c56a802e004c35aa5e4fbd3b7811accdbf20a836f18b90", Size: 6160546},
+		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-arm64", SHA256: "43ad01739049a2a0bcf775a72c1385eadd18bf49ad08f346091cf75f530582d1", Size: 14942370},
+		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-arm64", SHA256: "e174b5a86764f30ca45d21346bbdd21ae105325e0ad5eec6aca8707919489e81", Size: 6291618},
 	},
 	"mipsel-3.4": {
-		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "a758e201a50a2e455708fe91b8a2d6ca7f65e9d8d1be7440026964e77048a38c", Size: 16777409},
-		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "4f37e99ac1f4c4f71d256afe607df8b2d94e92832e9c90f058a2fa29f3e23691", Size: 7012545},
+		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-mipsle-softfloat", SHA256: "78ec5f3dab8e8c5c5b71cc8e0de306f8c389bd0c962258ecc287b4b16a15f4e7", Size: 16842945},
+		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-mipsle-softfloat", SHA256: "7858eead802128cac0afb132dbbb7a64a95be3304fecc3acece69cb3c55163e8", Size: 7143617},
 	},
 	"mips-3.4": {
-		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-mips-softfloat", SHA256: "d305762131f8b6e51bd161436a1158cdda96fb9fd9d3654b0899a4c69963eede", Size: 16777409},
-		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-mips-softfloat", SHA256: "451a3ced68f3a93bc1b023e4c11be21315faf3585fec06503823848627524703", Size: 7012545},
+		Client: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-client-linux-mips-softfloat", SHA256: "84cf1d9325ca71e57d471ee89c41957738bb9177caf6ec0984f95d0911806f60", Size: 16842945},
+		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-mips-softfloat", SHA256: "3f43e69667f24121d62d29919c6196f9f8ac927ec97a92270b5a624d0cb849fd", Size: 7143617},
 	},
 }
