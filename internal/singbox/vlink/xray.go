@@ -279,6 +279,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = vn.Address
 		port = vn.Port
 
+		if user.ID == "" {
+			return nil, fmt.Errorf("vless: missing uuid")
+		}
 		sbOutbound["type"] = "vless"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -296,6 +299,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = srv.Address
 		port = srv.Port
 
+		if srv.Password == "" {
+			return nil, fmt.Errorf("trojan: missing password")
+		}
 		sbOutbound["type"] = "trojan"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -310,6 +316,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		server = srv.Address
 		port = srv.Port
 
+		if srv.Method == "" || srv.Password == "" {
+			return nil, fmt.Errorf("shadowsocks: missing method or password")
+		}
 		sbOutbound["type"] = "shadowsocks"
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
@@ -318,6 +327,13 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", proto)
+	}
+
+	if server == "" {
+		return nil, fmt.Errorf("%s: missing server", proto)
+	}
+	if port == 0 {
+		return nil, fmt.Errorf("%s: missing or invalid port", proto)
 	}
 
 	// Транспорт и TLS собирает общий слой — тот же, что у share-ссылок и
