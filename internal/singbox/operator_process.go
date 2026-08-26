@@ -861,8 +861,7 @@ func (o *Operator) startAndWait(ctx context.Context) (spawned bool, err error) {
 		}
 		return false, err
 	}
-	// Конфиг без experimental.clash_api (пользователь удалил блок намеренно —
-	// patchBaseClashPort такое уважает) НЕ ждём по Clash: waitClashReady
+	// Конфиг без experimental.clash_api НЕ ждём по Clash: waitClashReady
 	// гарантированно упёрся бы в таймаут и убил живой процесс, а каждый цикл
 	// watchdog'а сжигал бы backoff-бюджет (issue #456 FIX-H). Мягкий старт:
 	// спавн уже проверен grace-периодом Process.Start.
@@ -899,10 +898,13 @@ func (o *Operator) startAndWait(ctx context.Context) (spawned bool, err error) {
 }
 
 // configDeclaresClashAPI reports whether the merged config.d declares an
-// experimental.clash_api block. Зеркалит допущение patchBaseClashPort:
-// отсутствие блока — осознанный выбор пользователя, который надо уважать.
-// Консервативно: любая ошибка чтения/парса → true (сохраняем легаси-гейт
-// по Clash, а не тихо ослабляем проверку готовности).
+// experimental.clash_api block.
+//
+// Отсутствие блока НЕ является выражением воли пользователя: блоком владеем
+// мы, и patchBaseClashPort его восстанавливает (ADR 0001). Проверка осталась
+// защитой от битого конфига — например, слот выше подсунул clash_api: null, —
+// чтобы старт не завис на таймауте готовности. Консервативно: любая ошибка
+// чтения/парса → true (не ослабляем проверку готовности молча).
 func (o *Operator) configDeclaresClashAPI() bool {
 	merged, err := configmerge.MergeDir(o.configPath)
 	if err != nil {

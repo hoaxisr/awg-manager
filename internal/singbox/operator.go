@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,13 +28,33 @@ const (
 	// is always used instead of a user-installed sing-box on PATH.
 	defaultBinary = installer.DefaultBinaryPath
 
-	// clashAPIAddr is the Clash API endpoint baked into our generated
-	// config.json. Port 9099 is chosen to not collide with a user-managed
-	// sing-box instance that might already be bound to the default 9090
-	// — otherwise our log forwarder / traffic aggregator would latch onto
-	// their process and stream their tunnels into our UI.
-	clashAPIAddr = "127.0.0.1:9099"
+	// DefaultClashPort is the Clash API port baked into our generated
+	// config.json when the user has not chosen one. 9099 is chosen to not
+	// collide with a user-managed sing-box instance that might already be
+	// bound to the default 9090 — otherwise our log forwarder / traffic
+	// aggregator would latch onto their process and stream their tunnels
+	// into our UI.
+	DefaultClashPort = 9099
+
+	// clashHost — хост Clash API. Не настраивается: это служебный канал
+	// управления awg-manager, а не публичный интерфейс (ADR 0001), и
+	// наружу он ходит только через авторизованный /api/singbox/clash/*.
+	clashHost = "127.0.0.1"
 )
+
+// EffectiveClashPort resolves a stored setting to the port actually used:
+// 0 (and any non-positive value) means "not configured" → DefaultClashPort.
+func EffectiveClashPort(port int) int {
+	if port <= 0 {
+		return DefaultClashPort
+	}
+	return port
+}
+
+// ClashAddr returns the Clash API endpoint for a port. Port 0 means "default".
+func ClashAddr(port int) string {
+	return fmt.Sprintf("%s:%d", clashHost, EffectiveClashPort(port))
+}
 
 // defaultDir is the directory of the managed binary. var (not const) so
 // it stays in lockstep with installer.DefaultBinaryPath if that ever moves.
@@ -105,7 +126,10 @@ type Operator struct {
 	// только на буте: ApplyLogLevel пересоздаёт 00-base.json, если файла нет,
 	// и без этого поля подставил бы исторический дефолт, потеряв настройку.
 	bootstrapDNS func() string
-	configPath   string
+	// clashPort — живой доступ к Settings.SingboxClashPort, по той же причине,
+	// что и bootstrapDNS: пересоздание 00-base.json не должно терять настройку.
+	clashPort  func() int
+	configPath string
 	pidPath      string
 
 	proc      *Process
@@ -287,6 +311,10 @@ type OperatorDeps struct {
 	// (Settings.SingboxBootstrapDNS). Optional; empty result means "do not
 	// touch 00-base.json" — see patchBaseBootstrapDNS.
 	BootstrapDNS func() string
+	// ClashPort returns the desired Clash API port from settings
+	// (Settings.SingboxClashPort). Optional; 0 means DefaultClashPort.
+	// Issue #788, ADR 0001.
+	ClashPort func() int
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -316,16 +344,22 @@ func NewOperator(d OperatorDeps) *Operator {
 		desiredBootstrapDNS = d.BootstrapDNS()
 	}
 
+	desiredClashPort := 0
+	if d.ClashPort != nil {
+		desiredClashPort = d.ClashPort()
+	}
+
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, log) {
+	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, log) {
 		s.run()
 	}
 
 	op := &Operator{
 		log:               log,
 		bootstrapDNS:      d.BootstrapDNS,
+		clashPort:         d.ClashPort,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,
@@ -333,7 +367,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		proc:              NewProcess(binary, configPath, pidPath),
 		validator:         NewValidator(binary),
 		proxyMgr:          NewProxyManager(d.Queries, d.Commands),
-		clash:             NewClashClient(clashAPIAddr),
+		clash:             NewClashClient(ClashAddr(desiredClashPort)),
 		processLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
 		runtimeLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
 		persistManualStop: d.SetManuallyStopped,

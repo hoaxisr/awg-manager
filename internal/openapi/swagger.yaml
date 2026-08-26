@@ -3395,6 +3395,14 @@ definitions:
           hostname and no port. Empty leaves 00-base.json untouched.
         example: 8.8.8.8
         type: string
+      singboxClashPort:
+        description: |-
+          SingboxClashPort is the port of experimental.clash_api.external_controller
+          in 00-base.json. The host is always 127.0.0.1 — Clash API is
+          awg-manager's internal control channel, not a user-facing listener
+          (ADR 0001). 0 means "default" (9099). Issue #788.
+        example: 9099
+        type: integer
       updates:
         $ref: '#/definitions/api.UpdateSettingsDTO'
       usageLevel:

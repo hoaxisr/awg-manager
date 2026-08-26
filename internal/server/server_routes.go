@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -140,6 +141,13 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		}
 		return s.singboxOp.ApplyBootstrapDNS(server)
 	})
+	h.settingsHandler.SetApplyClashPort(func(port int) error {
+		if s.singboxOp == nil {
+			return nil
+		}
+		return s.singboxOp.ApplyClashPort(port)
+	})
+	h.settingsHandler.SetClashPortInspector(sysports.NewScanner())
 	h.settingsHandler.SetApplySingboxLogSettings(func() error {
 		if s.singboxOp == nil || s.settings == nil {
 			return nil

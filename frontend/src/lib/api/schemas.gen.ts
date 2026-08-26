@@ -1271,6 +1271,7 @@ const api_SettingsData: v.GenericSchema = v.looseObject({
 	server: v.optional(v.nullable(v.lazy(() => api_ServerSettingsDTO))),
 	sessionTtlHours: v.optional(v.nullable(v.number())),
 	singboxBootstrapDNS: v.optional(v.nullable(v.string())),
+	singboxClashPort: v.optional(v.nullable(v.number())),
 	updates: v.optional(v.nullable(v.lazy(() => api_UpdateSettingsDTO))),
 	usageLevel: v.optional(v.nullable(v.string())),
 });

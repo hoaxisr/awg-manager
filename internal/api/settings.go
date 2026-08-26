@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -127,6 +128,11 @@ type SettingsData struct {
 	// before any other resolver exists, so it must be a literal IP, no
 	// hostname and no port. Empty leaves 00-base.json untouched.
 	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty" example:"8.8.8.8"`
+	// SingboxClashPort is the port of experimental.clash_api.external_controller
+	// in 00-base.json. The host is always 127.0.0.1 — Clash API is
+	// awg-manager's internal control channel, not a user-facing listener
+	// (ADR 0001). 0 means "default" (9099). Issue #788.
+	SingboxClashPort int `json:"singboxClashPort,omitempty" example:"9099"`
 }
 
 // SettingsResponse is the envelope for GET /settings/get.
@@ -158,6 +164,8 @@ type SettingsHandler struct {
 	applyLogSettings        func()
 	applySingboxLogSettings func() error
 	applyBootstrapDNS       func(string) error
+	applyClashPort          func(int) error
+	clashPorts              clashPortInspector
 	downloadSvc             *downloader.Service
 	log                     *logging.ScopedLogger
 	bus                     *events.Bus
@@ -224,6 +232,18 @@ func (h *SettingsHandler) SetApplySingboxLogSettings(fn func() error) {
 // address into the running sing-box (issue #770).
 func (h *SettingsHandler) SetApplyBootstrapDNS(fn func(string) error) {
 	h.applyBootstrapDNS = fn
+}
+
+// SetApplyClashPort wires the hook that pushes a changed Clash API port
+// into 00-base.json and repoints our ClashClient (issue #788).
+func (h *SettingsHandler) SetApplyClashPort(fn func(int) error) {
+	h.applyClashPort = fn
+}
+
+// SetClashPortInspector wires the /proc scanner used to reject a Clash API
+// port already held by a foreign process.
+func (h *SettingsHandler) SetClashPortInspector(insp clashPortInspector) {
+	h.clashPorts = insp
 }
 
 func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
@@ -374,6 +394,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Порт Clash API проверяем ТОЛЬКО при реальной смене: наш sing-box в этот
+	// момент слушает СТАРЫЙ порт, так что сверка «а не мы ли держим новый»
+	// не нужна — совпасть значения могут лишь при сохранении того же порта,
+	// а это не смена (issue #788).
+	if patch.SingboxClashPort != nil && oldSettings.SingboxClashPort != merged.SingboxClashPort {
+		if msg := validateClashPort(merged.SingboxClashPort, merged.Server.Port, h.clashPorts); msg != "" {
+			response.Error(w, msg, "SINGBOX_CLASH_PORT_INVALID")
+			return
+		}
+	}
+
 	// Validate usageLevel after merge. Empty merged.UsageLevel is
 	// impossible because oldSettings always carries a value (default
 	// settings populate it; migration v15 backfills it), so we only
@@ -474,6 +505,18 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.log.Info("singbox-bootstrap-dns", "",
 			fmt.Sprintf("Sing-box bootstrap DNS changed: %s -> %s",
 				orDefaultLabel(oldSettings.SingboxBootstrapDNS), orDefaultLabel(merged.SingboxBootstrapDNS)))
+	}
+
+	if oldSettings.SingboxClashPort != merged.SingboxClashPort && h.applyClashPort != nil {
+		if err := h.applyClashPort(merged.SingboxClashPort); err != nil {
+			h.log.Error("singbox-clash-port", "", "failed to apply clash port: "+err.Error())
+			response.Error(w, err.Error(), "SINGBOX_CLASH_PORT_APPLY_ERROR")
+			return
+		}
+		h.log.Info("singbox-clash-port", "",
+			fmt.Sprintf("Sing-box Clash API port changed: %d -> %d",
+				singbox.EffectiveClashPort(oldSettings.SingboxClashPort),
+				singbox.EffectiveClashPort(merged.SingboxClashPort)))
 	}
 
 	// Handle ping check toggle AFTER settings are saved

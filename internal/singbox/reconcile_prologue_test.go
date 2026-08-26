@@ -18,7 +18,7 @@ func TestPatchers_WarnOnBrokenFile_SilentOnMissing(t *testing.T) {
 		run  func(path string, log *slog.Logger)
 	}
 	cases := []tc{
-		{"patch-base-clash-port", func(p string, l *slog.Logger) { patchBaseClashPort(p, l) }},
+		{"patch-base-clash-port", func(p string, l *slog.Logger) { patchBaseClashPort(p, 0, l) }},
 		{"patch-base-log-level", func(p string, l *slog.Logger) { patchBaseLogLevel(p, "info", l) }},
 		{"patch-base-direct-outbound", func(p string, l *slog.Logger) { patchBaseDirectOutbound(p, l) }},
 		{"patch-base-cache-file", func(p string, l *slog.Logger) { patchBaseCacheFilePath(p, l) }},
