@@ -1419,3 +1419,179 @@ func TestSeedServerWithoutNatModeGetsFull(t *testing.T) {
 		t.Fatalf("natMode после посева = %q, ждали full (паритет со старым миром)", cfg.NatMode)
 	}
 }
+
+// ── амендмент G2/G3: разведение listen-портов на посеве ─────────────
+
+// Оба старых мира держали дефолт 127.0.0.1:9000, поэтому фикстуры конфликта
+// НАМЕРЕННО стоят на нём: именно эта пара и приехала со стенда.
+
+// wdttListenJSON — один wdtt-клиент с заданным listen и признаком включённости.
+func wdttListenJSON(listen string, enabled bool) string {
+	return `{"clients":[{"id":"wc","name":"WDTT клиент","config":{
+	  "enabled":` + strconv.FormatBool(enabled) + `,"listen":"` + listen + `",
+	  "peer":"9.9.9.9:1","password":"pw","vkHashes":"h"}}]}`
+}
+
+// freeturnListenJSON — клиент с заданным listen плюс сервер на 9001. Сервер
+// здесь не для красоты: он неподвижен и обязан отобрать 9001 у переезжающего
+// клиента, иначе «свободный порт» брался бы, не глядя на остальные роли.
+func freeturnListenJSON(listen string, enabled bool) string {
+	return `{"version":2,
+	  "clients":[{"id":"fc","name":"FT клиент","config":{
+	    "enabled":` + strconv.FormatBool(enabled) + `,"listen":"` + listen + `",
+	    "peer":"3.3.3.3:56000"}}],
+	  "servers":[{"id":"fs","name":"FT сервер","config":{
+	    "enabled":false,"listen":"0.0.0.0:9001","mode":"udp"}}]}`
+}
+
+func seedListens(t *testing.T, res SeedResult) (wdtt, ft, fts string) {
+	t.Helper()
+	rec := byKey(res)
+	wc, err := rec["wdtt-client:wc"].WdttClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc, err := rec["freeturn-client:fc"].FreeTurnClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, err := rec["freeturn-server:fs"].FreeTurnServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wc.Listen, fc.Listen, fs.Listen
+}
+
+func TestSeedListenConflictEnabledWdttKeepsPort(t *testing.T) {
+	// Оба клиента включены — при равенстве порт держит wdtt. Хосты РАЗНЫЕ:
+	// сравнение строк конфликт бы не заметило.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", true))
+	writeFile(t, e.deps.FreeturnPath, freeturnListenJSON("0.0.0.0:9000", true))
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wdtt, ft, fts := seedListens(t, res)
+	if wdtt != "127.0.0.1:9000" {
+		t.Fatalf("включённый wdtt обязан удержать порт: %s", wdtt)
+	}
+	// 9002, а не 9001: 9001 занял неподвижный freeturn-сервер.
+	if ft != "127.0.0.1:9002" {
+		t.Fatalf("проигравший обязан получить свободный порт пула мимо занятых: %s", ft)
+	}
+	if fts != "0.0.0.0:9001" {
+		t.Fatalf("серверный listen двигать нельзя — это WAN-порт: %s", fts)
+	}
+	want := []ListenMove{{Instance: "freeturn-client:fc", Name: "FT клиент",
+		From: "0.0.0.0:9000", To: "127.0.0.1:9002"}}
+	if !reflect.DeepEqual(res.State.MovedListen, want) {
+		t.Fatalf("переезд обязан быть назван целиком: %+v", res.State.MovedListen)
+	}
+	if !reflect.DeepEqual(res.MovedListen, want) {
+		t.Fatalf("переезд обязан уехать наружу вместе с результатом: %+v", res.MovedListen)
+	}
+}
+
+func TestSeedListenConflictBothDisabledKeepsWdtt(t *testing.T) {
+	// Правило равенства не про «включены», а про равенство: оба выключены —
+	// тот же исход.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", false))
+	writeFile(t, e.deps.FreeturnPath, freeturnListenJSON("127.0.0.1:9000", false))
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wdtt, ft, _ := seedListens(t, res)
+	if wdtt != "127.0.0.1:9000" || ft != "127.0.0.1:9002" {
+		t.Fatalf("при равенстве порт за wdtt: wdtt=%s ft=%s", wdtt, ft)
+	}
+}
+
+func TestSeedListenConflictEnabledBeatsWdtt(t *testing.T) {
+	// Включённость главнее роли: выключенный wdtt уступает включённому
+	// freeturn.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", false))
+	writeFile(t, e.deps.FreeturnPath, freeturnListenJSON("127.0.0.1:9000", true))
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wdtt, ft, _ := seedListens(t, res)
+	if ft != "127.0.0.1:9000" {
+		t.Fatalf("включённый freeturn обязан удержать порт: %s", ft)
+	}
+	if wdtt != "127.0.0.1:9002" {
+		t.Fatalf("переехать обязан выключенный wdtt: %s", wdtt)
+	}
+	if len(res.State.MovedListen) != 1 || res.State.MovedListen[0].Instance != "wdtt-client:wc" {
+		t.Fatalf("переезд обязан назвать проигравшего: %+v", res.State.MovedListen)
+	}
+}
+
+func TestSeedWithoutConflictMovesNobody(t *testing.T) {
+	// Страж бездействия: разные порты — переездов нет вовсе. Без него тест
+	// разведения проходил бы и на коде, который двигает всех подряд.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", true))
+	writeFile(t, e.deps.FreeturnPath, freeturnListenJSON("127.0.0.1:9005", true))
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wdtt, ft, _ := seedListens(t, res)
+	if wdtt != "127.0.0.1:9000" || ft != "127.0.0.1:9005" {
+		t.Fatalf("без конфликта адреса не трогают: wdtt=%s ft=%s", wdtt, ft)
+	}
+	if len(res.State.MovedListen) != 0 {
+		t.Fatalf("переездов быть не должно: %+v", res.State.MovedListen)
+	}
+}
+
+func TestSeedMovedListenSurvivesRestart(t *testing.T) {
+	// Признак лежит на диске по той же причине, что и пропущенные источники:
+	// повторного посева не будет, а снаружи мог быть настроен клиент на
+	// прежний порт.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", true))
+	writeFile(t, e.deps.FreeturnPath, freeturnListenJSON("127.0.0.1:9000", true))
+	first, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.SeededNow {
+		t.Fatal("посев однократен")
+	}
+	if !reflect.DeepEqual(second.State.MovedListen, first.State.MovedListen) ||
+		!reflect.DeepEqual(second.MovedListen, first.State.MovedListen) {
+		t.Fatalf("переезды обязаны пережить перезапуск: %+v", second.MovedListen)
+	}
+}
+
+func TestSeedWithoutFreeturnFileSeedsNoFreeturn(t *testing.T) {
+	// G1 в сборе: старого конфига нет — инстансов freeturn нет, и драться за
+	// порт с wdtt-клиентом некому.
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, wdttListenJSON("127.0.0.1:9000", true))
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.State.Records) != 1 || res.State.Records[0].Kind != KindWdttClient {
+		t.Fatalf("без freeturn.json обязан посеяться только wdtt: %+v", res.State.Records)
+	}
+	if len(res.State.MovedListen) != 0 {
+		t.Fatalf("конфликта нет — переездов нет: %+v", res.State.MovedListen)
+	}
+}

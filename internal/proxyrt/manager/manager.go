@@ -115,6 +115,11 @@ type SeedInfo struct {
 	// вот сказать пользователю, ЧЬИ инстансы не перенеслись, можно только по
 	// имени файла.
 	Skipped []instancestore.SkippedSource
+	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
+	// конфликт за порт (амендмент G3). Признак живёт рядом со Skipped и по той
+	// же причине: снаружи мог быть настроен клиент на прежний порт, и узнать о
+	// переезде человек обязан.
+	MovedListen []instancestore.ListenMove
 }
 
 type Manager struct {
@@ -133,6 +138,7 @@ type Manager struct {
 	certified bool
 	seedErr   string
 	skipped   []instancestore.SkippedSource
+	moved     []instancestore.ListenMove
 	ctx       context.Context // контекст боота — для стартов из мутаторов
 }
 
@@ -198,6 +204,16 @@ func (m *Manager) Boot(ctx context.Context) error {
 	}
 	list := res.State.Records
 	declaredNDMS := instance.DeclaredNDMSNames(namedOf(list))
+
+	// Переезд listen-порта — не деталь реализации: снаружи мог быть настроен
+	// клиент на прежний адрес. Строка пишется на КАЖДОМ бооте, а не только на
+	// свежем посеве: список приходит с диска, и человек, читающий журнал после
+	// перезапуска, должен увидеть причину чужого молчания на старом порту.
+	for _, mv := range res.State.MovedListen {
+		m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
+			"посев развёл конфликт listen-порта: %s (%s) переехал с %s на %s",
+			mv.Instance, mv.Name, mv.From, mv.To))
+	}
 
 	// PostSeed — СРАЗУ после посева (F2 ревью, принят вариант «перенести»):
 	// уборочные шаги считаются от ТОГО ЖЕ списка и в реестр не ходят, поэтому
@@ -281,6 +297,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 	m.certified = certified
 	m.seedErr = certErr
 	m.skipped = res.State.SkippedSources
+	m.moved = res.State.MovedListen
 	m.mu.Unlock()
 
 	// Тот же гейт, что у зеркальной уборки (registry.go, гейт посева), и по
@@ -307,7 +324,7 @@ func (m *Manager) SeedInfo() SeedInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return SeedInfo{Booted: m.booted, Certified: m.booted && m.certified, Err: m.seedErr,
-		Skipped: m.skipped}
+		Skipped: m.skipped, MovedListen: m.moved}
 }
 
 func (m *Manager) Enabled(key string) (on, ok bool) {

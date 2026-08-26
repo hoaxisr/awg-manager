@@ -125,17 +125,29 @@ func (f *fakeInstance) resetCount() int {
 type recJournal struct {
 	mu   sync.Mutex
 	rows []string
+	// msgs — ТЕКСТЫ строк. Отдельно от rows: там только действие, и на нём
+	// «строку написали» не отличить от «написали не о том».
+	msgs []string
 }
 
-func (j *recJournal) Info(a, _, _ string) {
+func (j *recJournal) Info(a, _, m string) {
 	j.mu.Lock()
 	j.rows = append(j.rows, "info:"+a)
+	j.msgs = append(j.msgs, m)
 	j.mu.Unlock()
 }
-func (j *recJournal) Warn(a, _, _ string) {
+func (j *recJournal) Warn(a, _, m string) {
 	j.mu.Lock()
 	j.rows = append(j.rows, "warn:"+a)
+	j.msgs = append(j.msgs, m)
 	j.mu.Unlock()
+}
+
+// journalMsgs — снимок текстов под тем же замком, что и запись.
+func (j *recJournal) journalMsgs() []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]string(nil), j.msgs...)
 }
 
 type env struct {
@@ -144,6 +156,7 @@ type env struct {
 	dir        string
 	reg        *fakeRegistry
 	sw         *fakeSweeper
+	j          *recJournal
 	instances  map[string]*fakeInstance
 	factoryN   map[string]int
 	seedErr    error
@@ -167,12 +180,13 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
 	e := &env{st: instancestore.New(dir), dir: dir, reg: &fakeRegistry{},
-		sw: &fakeSweeper{}, instances: map[string]*fakeInstance{}, factoryN: map[string]int{}}
+		sw: &fakeSweeper{}, j: &recJournal{},
+		instances: map[string]*fakeInstance{}, factoryN: map[string]int{}}
 	e.m = New(Deps{
 		Store:    e.st,
 		Registry: e.reg,
 		Sweeper:  e.sw,
-		Journal:  &recJournal{},
+		Journal:  e.j,
 		Factory: func(rec instancestore.Record, live *Live) (RunningInstance, error) {
 			if e.factoryErr != nil {
 				return nil, e.factoryErr
@@ -1113,4 +1127,40 @@ func TestBootIsSerializedWithItself(t *testing.T) {
 	// Дождаться обоих обязательно: горутина, пережившая тест, писала бы в уже
 	// снесённый t.TempDir().
 	wg.Wait()
+}
+
+func TestBootAnnouncesListenMove(t *testing.T) {
+	// Амендмент G3: молча сменить порт нельзя — снаружи мог быть настроен
+	// клиент на прежний. Оба адреса обязаны быть и в журнале, и в поверхности
+	// статуса; строка пишется на КАЖДОМ бооте, потому что список приходит с
+	// диска, а читают журнал и после перезапуска.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.MovedListen = []instancestore.ListenMove{{Instance: "freeturn-client:default",
+		Name: "Клиент", From: "127.0.0.1:9000", To: "127.0.0.1:9002"}}
+	e.seedRes = instancestore.SeedResult{State: st}
+	e.seedResSet = true
+	boot(t, e)
+
+	var said string
+	for _, m := range e.j.journalMsgs() {
+		if strings.Contains(m, "freeturn-client:default") {
+			said = m
+		}
+	}
+	if said == "" {
+		t.Fatalf("переезд обязан попасть в журнал: %v", e.j.journalMsgs())
+	}
+	for _, want := range []string{"127.0.0.1:9000", "127.0.0.1:9002"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("в строке обязаны быть ОБА адреса, нет %s: %q", want, said)
+		}
+	}
+	if got := e.m.SeedInfo().MovedListen; !reflect.DeepEqual(got, st.MovedListen) {
+		t.Fatalf("признак переезда обязан быть виден в поверхности статуса: %+v", got)
+	}
 }

@@ -456,6 +456,26 @@ func TestProxyInstancesList_SkippedOldConfigIsVisible(t *testing.T) {
 	}
 }
 
+func TestProxyInstancesList_ListenMoveIsVisible(t *testing.T) {
+	// Амендмент G3: переезд listen-порта обязан доехать до интерфейса — у
+	// человека снаружи мог быть настроен клиент на прежний порт.
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed: manager.SeedInfo{Booted: true, Certified: true,
+			MovedListen: []instancestore.ListenMove{{Instance: "freeturn-client:default",
+				Name: "Клиент", From: "127.0.0.1:9000", To: "127.0.0.1:9002"}}},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodGet, "/api/proxyrt/instances", "")
+	var data ProxyRtListData
+	decodeProxyData(t, rr, &data)
+	want := []ProxyRtListenMoveView{{Instance: "freeturn-client:default", Name: "Клиент",
+		From: "127.0.0.1:9000", To: "127.0.0.1:9002"}}
+	if !reflect.DeepEqual(data.Seed.MovedListen, want) {
+		t.Fatalf("movedListen = %+v, ждали %+v", data.Seed.MovedListen, want)
+	}
+}
+
 func TestProxyInstancesList_NotSeeded(t *testing.T) {
 	mgr := &fakeProxyManager{
 		records: []instancestore.Record{fullServerRecord()},

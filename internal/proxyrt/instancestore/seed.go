@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -57,6 +59,10 @@ type SeedResult struct {
 	// LegacyKernelIfaces — прежние kernel-имена сервера: вход одноразовой
 	// уборки непомеченных правил (план 3, residual I-1(а)).
 	LegacyKernelIfaces []string
+	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
+	// конфликт за порт (амендмент G2). Наружу — ради журнала и признака в
+	// поверхности статуса: снаружи мог быть настроен клиент на прежний порт.
+	MovedListen []ListenMove
 }
 
 // Узкие DTO СТАРЫХ форматов. Не импортируем internal/wdtt|freeturn: пакеты
@@ -286,6 +292,127 @@ func normalizeFreeturnV1(f *oldFreeturnFile) {
 	}
 }
 
+// listenPortOf — порт listen-адреса, ЛЮБОЙ хост. Сравнение по строке было бы
+// слепым: 127.0.0.1:9000 и 0.0.0.0:9000 — один и тот же занятый порт роутера.
+func listenPortOf(addr string) (int, bool) {
+	_, p, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, false
+	}
+	return n, true
+}
+
+// listenAddrs — все адреса прослушивания записи. Серверные RawListen и
+// DirectListen тоже здесь: порт роутера они занимают наравне с остальными, и
+// выдать его переезжающему клиенту нельзя.
+func listenAddrs(r Record) []string {
+	switch {
+	case r.WdttClient != nil:
+		return []string{r.WdttClient.Listen}
+	case r.FreeTurnClient != nil:
+		return []string{r.FreeTurnClient.Listen}
+	case r.WdttServer != nil:
+		return []string{r.WdttServer.Listen, r.WdttServer.RawListen, r.WdttServer.DirectListen}
+	case r.FreeTurnServer != nil:
+		return []string{r.FreeTurnServer.Listen}
+	}
+	return nil
+}
+
+// clientListen — адрес клиентской роли ПО ССЫЛКЕ (конфиг лежит за указателем,
+// поэтому запись можно передавать значением). nil — роль неподвижна: у
+// серверов listen это WAN-порт, на который настроены проброс и внешние
+// клиенты, и пул 9000..9200 не про него.
+func clientListen(r Record) *string {
+	switch {
+	case r.WdttClient != nil:
+		return &r.WdttClient.Listen
+	case r.FreeTurnClient != nil:
+		return &r.FreeTurnClient.Listen
+	}
+	return nil
+}
+
+// resolveListenConflicts — разведение претендентов на один порт (амендмент G2).
+//
+// Дефолт listen у обеих подсистем был ОДИН И ТОТ ЖЕ (127.0.0.1:9000), и в
+// старом мире это не было видно: подсистемы жили порознь, каждая знала только
+// свои порты. После слияния оба клиента претендуют на порт, ресурс listen_port
+// отказывает второму, и его зависимые ресурсы уходят в blocked — то есть
+// клиент не поднимается. Сценарий массовый, а не частный.
+//
+// Правило владельца: порт держит ВКЛЮЧЁННЫЙ инстанс; при равенстве (оба
+// включены либо оба выключены) — wdtt-клиент. Проигравший получает свободный
+// порт из пула. Возвращает переезды: молча сменить порт нельзя, снаружи может
+// быть настроен клиент на прежний.
+//
+// Только посев: дальше пустой Listen заполняет единый аллокатор
+// (manager.ensurePins → AllocListen), и занятый порт он не выдаст.
+func resolveListenConflicts(recs []Record) []ListenMove {
+	taken := map[int]bool{}
+	for _, r := range recs {
+		if clientListen(r) != nil {
+			continue // подвижные разбираются ниже, по приоритету
+		}
+		for _, a := range listenAddrs(r) {
+			if p, ok := listenPortOf(a); ok {
+				taken[p] = true
+			}
+		}
+	}
+
+	order := make([]int, 0, len(recs))
+	for i := range recs {
+		if clientListen(recs[i]) != nil {
+			order = append(order, i)
+		}
+	}
+	// Stable, а не Slice: при полном равенстве (два клиента одной роли с
+	// одинаковым Enabled) порт остаётся за тем, кто раньше в старом конфиге, —
+	// иначе выбор жертвы зависел бы от прогона.
+	sort.SliceStable(order, func(a, b int) bool {
+		ra, rb := recs[order[a]], recs[order[b]]
+		if ra.Enabled != rb.Enabled {
+			return ra.Enabled
+		}
+		return ra.Kind == KindWdttClient && rb.Kind != KindWdttClient
+	})
+
+	var moves []ListenMove
+	for _, i := range order {
+		listen := clientListen(recs[i])
+		port, ok := listenPortOf(*listen)
+		if !ok {
+			continue // адрес не разбирается — разводить нечего, это приговор ресурса
+		}
+		if !taken[port] {
+			taken[port] = true
+			continue
+		}
+		free := 0
+		for p := roles.ListenPortMin; p <= roles.ListenPortMax && free == 0; p++ {
+			if !taken[p] {
+				free = p
+			}
+		}
+		if free == 0 {
+			// Пул выбран целиком: переселять некуда. Конфликт остаётся, и о нём
+			// скажет ресурс listen_port — тихой потери здесь нет.
+			continue
+		}
+		taken[free] = true
+		from := *listen
+		*listen = fmt.Sprintf("127.0.0.1:%d", free)
+		moves = append(moves, ListenMove{Instance: recs[i].Key(), Name: recs[i].Name,
+			From: from, To: *listen})
+	}
+	return moves
+}
+
 // Seed — посев §9. Идемпотентен: подтверждённый посев — no-op. Fail-closed:
 // любой отказ — ошибка всего посева, store не тронут (требование 1 плана 4).
 func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
@@ -301,7 +428,8 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		// отличит процесс старого мира от чужого с тем же номером.
 		return SeedResult{State: cur, CleanupPending: cur.CleanupPending,
 			LegacyKernelIfaces: cur.LegacyKernelIfaces,
-			OldGenProcs:        cur.OldGenProcs}, nil
+			OldGenProcs:        cur.OldGenProcs,
+			MovedListen:        cur.MovedListen}, nil
 	}
 
 	var wdttFile oldWdttFile
@@ -493,6 +621,10 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			}})
 	}
 
+	// Разведение портов идёт ПОСЛЕ сборки всех ролей: правило приоритета
+	// сравнивает претендентов между собой, и знать их всех надо разом.
+	moves := resolveListenConflicts(seeded)
+
 	from := []string{}
 	if wdttOK {
 		from = append(from, filepath.Base(d.WdttPath))
@@ -522,6 +654,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		}
 		state.SeededFrom = from
 		state.SkippedSources = skipped
+		state.MovedListen = moves
 		state.CleanupPending = true
 		state.LegacyKernelIfaces = legacyIfaces
 		state.OldGenProcs = oldGenProcs
@@ -537,6 +670,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		CleanupPending:     true,
 		OldGenProcs:        oldGenProcs,
 		LegacyKernelIfaces: legacyIfaces,
+		MovedListen:        moves,
 	}, nil
 }
 

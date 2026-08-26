@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { seedGateWarning } from './seedGate';
+import { seedGateWarning, seedListenMoveNotice } from './seedGate';
 
 describe('seedGateWarning: запертый гейт посева обязан быть виден', () => {
 	it('посев подтверждён — говорить не о чем', () => {
@@ -52,5 +52,35 @@ describe('seedGateWarning: запертый гейт посева обязан �
 
 	it('состояния ещё нет — предупреждения нет', () => {
 		expect(seedGateWarning(null)).toBe('');
+	});
+});
+
+describe('seedListenMoveNotice: переезд listen-порта обязан быть виден', () => {
+	it('молчит, когда никто не переезжал', () => {
+		expect(seedListenMoveNotice({ seeded: true, certified: true })).toBe('');
+		expect(seedListenMoveNotice({ seeded: true, certified: true, movedListen: [] })).toBe('');
+		expect(seedListenMoveNotice(null)).toBe('');
+	});
+
+	it('называет инстанс и ОБА адреса на заверенном посеве', () => {
+		const text = seedListenMoveNotice({
+			seeded: true,
+			certified: true,
+			movedListen: [
+				{ instance: 'freeturn-client:default', name: 'Клиент', from: '127.0.0.1:9000', to: '127.0.0.1:9002' },
+			],
+		});
+		expect(text).toContain('«Клиент»');
+		expect(text).toContain('127.0.0.1:9000');
+		expect(text).toContain('127.0.0.1:9002');
+	});
+
+	it('без имени называет инстанс ключом — безымянного тоже надо опознать', () => {
+		const text = seedListenMoveNotice({
+			seeded: true,
+			certified: true,
+			movedListen: [{ instance: 'wdtt-client:wc', from: '0.0.0.0:9000', to: '127.0.0.1:9001' }],
+		});
+		expect(text).toContain('«wdtt-client:wc»');
 	});
 });

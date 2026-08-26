@@ -124,12 +124,26 @@ export interface ProxySeedView {
 	 * сказать пользователю, ЧЬИ инстансы потеряны.
 	 */
 	skipped?: ProxySkippedSourceView[];
+	/**
+	 * Инстансы, которым посев сменил listen-адрес, разводя конфликт за порт:
+	 * дефолт у обеих подсистем был один и тот же. Молчать об этом нельзя — у
+	 * человека снаружи мог быть настроен клиент на прежний порт.
+	 */
+	movedListen?: ProxyListenMoveView[];
 }
 
 /** Один пропущенный посевом старый конфиг. */
 export interface ProxySkippedSourceView {
 	file: string;
 	reason?: string;
+}
+
+/** Один переезд listen-адреса, сделанный посевом. */
+export interface ProxyListenMoveView {
+	instance: string;
+	name?: string;
+	from: string;
+	to: string;
 }
 
 export interface ProxyInstanceView {

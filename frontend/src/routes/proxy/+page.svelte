@@ -16,6 +16,7 @@
 		renameProxyInstance,
 		reportDeletedTunnels,
 		seedGateWarning,
+		seedListenMoveNotice,
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
@@ -91,6 +92,7 @@
 
 	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
 	const seedWarning = $derived(seedGateWarning(seed));
+	const listenMoveNotice = $derived(seedListenMoveNotice(seed));
 
 	// ─── Загрузка и поллинг.
 
@@ -237,6 +239,10 @@
 	{:else}
 		{#if seedWarning}
 			<Card><p class="seed-warning">{seedWarning}</p></Card>
+		{/if}
+
+		{#if listenMoveNotice}
+			<Card><p class="seed-warning">{listenMoveNotice}</p></Card>
 		{/if}
 
 		<BinaryStrip {binaries} />

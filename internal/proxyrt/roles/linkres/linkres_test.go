@@ -94,7 +94,10 @@ func (f *fakeSync) List(context.Context, string) ([]LinkedTunnel, error) {
 func (f *fakeSync) Sync(_ context.Context, clientID, listen string) (int, error) {
 	f.synced = append(f.synced, clientID+"→"+listen)
 	for i := range f.tunnels {
-		f.tunnels[i].Endpoint = "127.0.0.1:9000"
+		// Именно listen, а не константа: прод-код доводит запись до
+		// ЗАПРОШЕННОГО адреса, и фикстура с зашитым 9000 не отличала бы
+		// доводку от совпадения с дефолтом.
+		f.tunnels[i].Endpoint = listen
 	}
 	return len(f.tunnels), nil
 }
@@ -431,5 +434,24 @@ func TestLinkedEndpointSyncsLifecycleNextToMirror(t *testing.T) {
 	steps := le.Plan(obs)
 	if len(steps) != 1 || steps[0].Op != "sync" {
 		t.Fatalf("план: %+v", steps)
+	}
+}
+
+func TestLinkedEndpointFollowsSeedListenMove(t *testing.T) {
+	// Амендмент G2: посев переселил клиента с 9000 на 9002, а запись
+	// связанного туннеля не трогал. Единственный писатель Peer.Endpoint —
+	// этот ресурс, и довести адрес до нового порта обязан он сам.
+	fs := &fakeSync{tunnels: []LinkedTunnel{
+		{ID: "t1", Endpoint: "127.0.0.1:9000", Lifecycle: true, Running: true}}}
+	le := NewLinkedEndpoint("linked_endpoint", fs)
+	le.SetDesired("wc", "127.0.0.1:9002", true)
+
+	drive(t, le)
+
+	if len(fs.synced) != 1 || fs.synced[0] != "wc→127.0.0.1:9002" {
+		t.Fatalf("адрес обязан доводиться до НОВОГО порта: %v", fs.synced)
+	}
+	if fs.tunnels[0].Endpoint != "127.0.0.1:9002" {
+		t.Fatalf("endpoint связанного туннеля отстал: %s", fs.tunnels[0].Endpoint)
 	}
 }

@@ -1,6 +1,10 @@
 // Состояние посева прокси-подсистемы словами пользователя.
 
-import type { ProxySeedView, ProxySkippedSourceView } from '$lib/api/proxyInstances';
+import type {
+	ProxyListenMoveView,
+	ProxySeedView,
+	ProxySkippedSourceView,
+} from '$lib/api/proxyInstances';
 
 const GATE_LOCKED =
 	'Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и маршрутов заблокирована.';
@@ -37,4 +41,26 @@ export function seedGateWarning(seed: ProxySeedView | null | undefined): string 
 	if (skipped.length) return `${GATE_LOCKED} ${skipped.map(skippedText).join('; ')}`;
 	const why = seed.error?.trim();
 	return why ? `${GATE_LOCKED} ${why}` : GATE_LOCKED;
+}
+
+/**
+ * Сообщение о переезде listen-порта — или пусто, когда никто не переезжал.
+ *
+ * Отдельно от `seedGateWarning`, а не внутри него: тот говорит только при
+ * запертом гейте (`seeded && !certified`), а переезд случается и на нормально
+ * заверенном посеве — там сообщение просто не появилось бы. Причина сказать
+ * есть всегда: снаружи мог быть настроен клиент на прежний порт, и после
+ * обновления он молча перестал бы соединяться.
+ */
+export function seedListenMoveNotice(seed: ProxySeedView | null | undefined): string {
+	const moved = seed?.movedListen ?? [];
+	if (!moved.length) return '';
+	return `Дефолтный порт у прокси-подсистем совпадал, поэтому при переносе настроек он остался за одним инстансом: ${moved
+		.map(moveText)
+		.join('; ')}. Если снаружи настроено подключение на прежний адрес, поправьте его.`;
+}
+
+function moveText(m: ProxyListenMoveView): string {
+	const who = m.name?.trim() || m.instance;
+	return `«${who}» переехал с ${m.from} на ${m.to}`;
 }

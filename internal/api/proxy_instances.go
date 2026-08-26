@@ -85,12 +85,24 @@ type ProxyRtSeedView struct {
 	// инстансы не перенесены. Признак отдельный от Error: только по имени
 	// файла интерфейс может сказать, ЧЬИ инстансы потеряны.
 	Skipped []ProxyRtSkippedSourceView `json:"skipped,omitempty"`
+	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
+	// конфликт за порт. Молчать нельзя: снаружи мог быть настроен клиент на
+	// прежний порт.
+	MovedListen []ProxyRtListenMoveView `json:"movedListen,omitempty"`
 }
 
 // ProxyRtSkippedSourceView — один пропущенный старый конфиг.
 type ProxyRtSkippedSourceView struct {
 	File   string `json:"file" example:"wdtt.json"`
 	Reason string `json:"reason,omitempty" example:"invalid character 'н'"`
+}
+
+// ProxyRtListenMoveView — один переезд listen-адреса, сделанный посевом.
+type ProxyRtListenMoveView struct {
+	Instance string `json:"instance" example:"freeturn-client:default"`
+	Name     string `json:"name,omitempty" example:"Клиент"`
+	From     string `json:"from" example:"127.0.0.1:9000"`
+	To       string `json:"to" example:"127.0.0.1:9001"`
 }
 
 // ProxyRtResourceView — один ресурс инстанса в состоянии реконсиляции.
@@ -292,6 +304,10 @@ func (h *ProxyInstancesHandler) list(w http.ResponseWriter, _ *http.Request) {
 	seed := ProxyRtSeedView{Seeded: info.Booted, Certified: info.Certified, Error: info.Err}
 	for _, s := range info.Skipped {
 		seed.Skipped = append(seed.Skipped, ProxyRtSkippedSourceView{File: s.File, Reason: s.Reason})
+	}
+	for _, mv := range info.MovedListen {
+		seed.MovedListen = append(seed.MovedListen, ProxyRtListenMoveView{
+			Instance: mv.Instance, Name: mv.Name, From: mv.From, To: mv.To})
 	}
 	data := ProxyRtListData{
 		Seed:      seed,

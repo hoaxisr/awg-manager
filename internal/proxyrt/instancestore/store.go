@@ -43,7 +43,13 @@ type fileFormat struct {
 	// повторного посева не будет никогда, и без записи пользователь после
 	// первого же перезапуска не узнал бы, что его инстансы не перенеслись.
 	SkippedSources []SkippedSource `json:"skippedSources,omitempty"`
-	Instances      []Record        `json:"instances"`
+	// MovedListen — переезды listen-порта, сделанные посевом при разведении
+	// конфликта. Лежат на диске по той же причине, что и SkippedSources:
+	// повторного посева не будет, а у человека снаружи мог быть настроен
+	// клиент на прежний порт — узнать о переезде он обязан и после
+	// перезапуска.
+	MovedListen []ListenMove `json:"movedListen,omitempty"`
+	Instances   []Record     `json:"instances"`
 }
 
 // SkippedSource — пропущенный на посеве старый конфиг: базовое имя файла (как
@@ -51,6 +57,16 @@ type fileFormat struct {
 type SkippedSource struct {
 	File   string `json:"file"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// ListenMove — один переезд listen-адреса на посеве: чей инстанс, откуда и
+// куда. Оба адреса целиком, а не голые порты: у проигравшего мог смениться и
+// хост, а пользователю нужно узнать ровно тот адрес, который он видел раньше.
+type ListenMove struct {
+	Instance string `json:"instance"`
+	Name     string `json:"name,omitempty"`
+	From     string `json:"from"`
+	To       string `json:"to"`
 }
 
 // State — снимок хранилища. Seeded выводится из SeededFrom (§9: флаг —
@@ -73,7 +89,11 @@ type State struct {
 	// не удалось, чинить файл некому, а ретрая посева нет. Непустой список
 	// запирает сертификацию посева (manager.Boot).
 	SkippedSources []SkippedSource
-	Records        []Record
+	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
+	// конфликт за порт (амендмент G2). Молчать об этом нельзя: снаружи мог
+	// быть настроен клиент на прежний порт.
+	MovedListen []ListenMove
+	Records     []Record
 }
 
 // Store — единственный владелец proxy-instances.json. Все записи — через
@@ -119,7 +139,8 @@ func (s *Store) loadLocked() (State, error) {
 	}
 	st := State{Seeded: len(f.SeededFrom) > 0, SeededFrom: f.SeededFrom,
 		CleanupPending: f.CleanupPending, LegacyKernelIfaces: f.LegacyKernelIfaces,
-		OldGenProcs: f.OldGenProcs, SkippedSources: f.SkippedSources, Records: f.Instances}
+		OldGenProcs: f.OldGenProcs, SkippedSources: f.SkippedSources,
+		MovedListen: f.MovedListen, Records: f.Instances}
 	for i := range st.Records {
 		normalizeRecord(&st.Records[i], s.dir)
 	}
@@ -179,7 +200,8 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 	}
 	f := fileFormat{Version: fileVersion, SeededFrom: st.SeededFrom,
 		CleanupPending: st.CleanupPending, LegacyKernelIfaces: st.LegacyKernelIfaces,
-		OldGenProcs: st.OldGenProcs, SkippedSources: st.SkippedSources, Instances: st.Records}
+		OldGenProcs: st.OldGenProcs, SkippedSources: st.SkippedSources,
+		MovedListen: st.MovedListen, Instances: st.Records}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return State{}, err

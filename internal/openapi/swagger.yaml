@@ -2750,6 +2750,21 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ProxyRtListenMoveView:
+    properties:
+      from:
+        example: 127.0.0.1:9000
+        type: string
+      instance:
+        example: freeturn-client:default
+        type: string
+      name:
+        example: Клиент
+        type: string
+      to:
+        example: 127.0.0.1:9001
+        type: string
+    type: object
   api.ProxyRtPatchRequest:
     properties:
       config:
@@ -2792,6 +2807,14 @@ definitions:
       error:
         example: 'посев отложен: RCI недоступен'
         type: string
+      movedListen:
+        description: |-
+          MovedListen — инстансы, которым посев сменил listen-адрес, разводя
+          конфликт за порт. Молчать нельзя: снаружи мог быть настроен клиент на
+          прежний порт.
+        items:
+          $ref: '#/definitions/api.ProxyRtListenMoveView'
+        type: array
       seeded:
         example: true
         type: boolean
