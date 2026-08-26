@@ -22,6 +22,17 @@ type fakeRegistry struct {
 	declared [][]exitreg.ExitDecl
 	failSet  error
 	failMark error
+	// dropped — id, снятые адресно (DropMirror). Список, а не счётчик: не тот
+	// id снёс бы карточку чужого туннеля.
+	dropped  []string
+	failDrop error
+}
+
+func (f *fakeRegistry) DropMirror(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropped = append(f.dropped, id)
+	return f.failDrop
 }
 
 func (f *fakeRegistry) MarkSeeded(n int) error {
@@ -1162,5 +1173,55 @@ func TestBootAnnouncesListenMove(t *testing.T) {
 	}
 	if got := e.m.SeedInfo().MovedListen; !reflect.DeepEqual(got, st.MovedListen) {
 		t.Fatalf("признак переезда обязан быть виден в поверхности статуса: %+v", got)
+	}
+}
+
+func TestDeleteDropsMirrorOfExactlyTheRemovedInstance(t *testing.T) {
+	// Хвост 1: id зеркальной записи менеджер считает сам, и ошибиться в нём
+	// значит снести карточку соседа. У инстанса без выхода (freeturn) снимать
+	// нечего — адресный снос не имеет права звучать вовсе.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), ftRec("ft"))
+	boot(t, e)
+
+	if err := e.m.Delete(context.Background(), "freeturn-client:ft"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.reg.dropped) != 0 {
+		t.Fatalf("у инстанса без выхода зеркальной записи нет: %v", e.reg.dropped)
+	}
+
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(e.reg.dropped, []string{"wdttraw-de"}) {
+		t.Fatalf("адресно снято: %v (ждали ровно [wdttraw-de])", e.reg.dropped)
+	}
+}
+
+func TestDeleteSurvivesMirrorDropFailure(t *testing.T) {
+	// Требование 3 брифа: инстанс уже удалён, откатывать нечего — отказ сноса
+	// это предупреждение, а не отказ Delete. Молчать при этом нельзя: без
+	// строки карточку-призрак не найти.
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	e.reg.failDrop = errors.New("диск")
+
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatalf("отказ сноса зеркальной записи не имеет права отменять удаление: %v", err)
+	}
+	st, _ := e.st.Load()
+	if len(st.Records) != 0 {
+		t.Fatal("запись инстанса обязана быть удалена")
+	}
+	found := false
+	for _, msg := range e.j.journalMsgs() {
+		if strings.Contains(msg, "зеркальная запись не убрана") && strings.Contains(msg, "диск") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("причина обязана быть в журнале: %v", e.j.journalMsgs())
 	}
 }

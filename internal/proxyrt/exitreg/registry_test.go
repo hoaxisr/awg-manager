@@ -44,6 +44,22 @@ func (f *fakeMirror) Sweep(declared map[string]bool) ([]string, error) {
 	return removed, f.err
 }
 
+// Remove — адресный снос: фейк держит ту же дисциплину, что зеркало, — из
+// owned уходит ровно названная запись, чужой id не меняет ничего.
+func (f *fakeMirror) Remove(id string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return false, f.err
+	}
+	i := slices.Index(f.owned, id)
+	if i < 0 {
+		return false, nil
+	}
+	f.owned = slices.Delete(f.owned, i, i+1)
+	return true, nil
+}
+
 func (f *fakeMirror) Owned() ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -468,6 +484,11 @@ func (g *gatedMirror) Sweep(declared map[string]bool) ([]string, error) {
 
 func (g *gatedMirror) Owned() ([]string, error) { return nil, nil }
 
+func (g *gatedMirror) Remove(id string) (bool, error) {
+	g.add("remove:" + id)
+	return false, nil
+}
+
 func TestSetDeclaredIsSerialized(t *testing.T) {
 	// C4. Без сериализации всего тела пара SetDeclared укладывается так:
 	// A считает дельту под r.mu (в памяти {de}), отпускает лок и входит в
@@ -508,5 +529,49 @@ func TestSetDeclaredIsSerialized(t *testing.T) {
 	}
 	if _, ok := r.Lookup("wdttraw-de"); ok {
 		t.Fatal("память обязана совпасть с последней доехавшей ведомостью")
+	}
+}
+
+func TestDropMirrorPassesTheLockedSweepGate(t *testing.T) {
+	// Хвост 1. Гейт посева заперт (MarkSeeded не звали) — и это ровно тот
+	// случай, когда массовая уборка не позовётся уже никогда: отметка
+	// монотонна. Адресный снос обязан пройти, а гейт — остаться на месте.
+	m := &fakeMirror{owned: []string{"wdttraw-de", "wdttraw-nl"}}
+	r, j := newReg(m)
+
+	if err := r.DropMirror("wdttraw-de"); err != nil {
+		t.Fatalf("адресный снос при запертом гейте: %v", err)
+	}
+	if !slices.Equal(m.owned, []string{"wdttraw-nl"}) {
+		t.Fatalf("снято не то: %v (ждали снятой ровно wdttraw-de)", m.owned)
+	}
+	if !j.has("info:exit-mirror-removed:wdttraw-de") {
+		t.Fatal("снос обязан быть в журнале с id: строки exit-mirror-removed нет")
+	}
+
+	// Гейт не ослаблен: ведомость по-прежнему не доходит до зеркала.
+	if err := r.SetDeclared(nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.sweeps(); n != 0 {
+		t.Fatalf("массовая уборка прошла при запертом гейте: %d", n)
+	}
+	if _, ok := r.Lookup("wdttraw-nl"); ok {
+		t.Fatal("память реестра обязана следовать ведомости")
+	}
+}
+
+func TestDropMirrorSurfacesFailureAndKeepsJournalHonest(t *testing.T) {
+	// Отказ зеркала возвращается вызывающему (менеджер пишет предупреждение и
+	// удаление не отменяет), а строки об удалении быть не должно: инстанс уже
+	// удалён, и ложная запись в журнале увела бы поиск карточки-призрака.
+	m := &fakeMirror{owned: []string{"wdttraw-de"}, err: errors.New("диск")}
+	r, j := newReg(m)
+
+	if err := r.DropMirror("wdttraw-de"); err == nil {
+		t.Fatal("отказ зеркала обязан дойти до вызывающего")
+	}
+	if j.has("info:exit-mirror-removed:wdttraw-de") {
+		t.Fatal("журнал доложил о сносе, которого не было")
 	}
 }

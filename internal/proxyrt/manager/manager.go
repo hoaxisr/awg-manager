@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttclient"
 )
 
 // teardownTimeout — потолок ожидания teardown-прогона при удалении (Щ5).
@@ -24,6 +25,10 @@ const teardownTimeout = 10 * time.Second
 type RegistryPort interface {
 	SetDeclared([]exitreg.ExitDecl) error
 	MarkSeeded(instances int) error
+	// DropMirror снимает ОДНУ зеркальную запись адресно, мимо гейта посева:
+	// массовая уборка при незаверенном посеве не зовётся вовсе, а гейт
+	// монотонен (см. Delete).
+	DropMirror(id string) error
 }
 
 type SweepPort interface {
@@ -161,6 +166,23 @@ func declsOf(recs []instancestore.Record) []exitreg.ExitDecl {
 		ics = append(ics, exitreg.InstanceConfig{ID: r.ID, Cfg: r.RawExiter(), Enabled: r.Enabled})
 	}
 	return exitreg.DeclaredExits(ics)
+}
+
+// mirrorIDOf — id зеркальной записи удаляемой записи. Считается по РОЛИ, а не
+// через declsOf: у wdtt-клиента в режиме wg выхода нет, но зеркальная запись,
+// оставшаяся от прежнего raw-режима, всё равно его — и удаление инстанса
+// последний момент, когда её есть кому снять.
+//
+// Проверка роли отсеивает и ПУСТУЮ запись (удалять было нечего): у неё Kind
+// пуст. Это важнее, чем кажется — RawTunnelID подставляет на пустой id
+// "default" (roles/wdttclient/role.go:39-41), то есть указал бы на ЧУЖУЮ
+// запись wdttraw-default. Отдельный гард на пустой ID не нужен: запись из
+// store без него не проходит валидацию (instancestore/store.go:425).
+func mirrorIDOf(rec instancestore.Record) (string, bool) {
+	if rec.Kind != instancestore.KindWdttClient {
+		return "", false
+	}
+	return wdttclient.RawTunnelID(rec.ID), true
 }
 
 // namedOf — та же дисциплина для ведомости NDMS-имён уборщика; сама ведомость
@@ -678,6 +700,17 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 			m.mu.Unlock()
 		}
 		return err
+	}
+
+	// Зеркальная запись — адресно, а не ведомостью: Sweep реестра заперт
+	// гейтом посева, гейт монотонен, и запись пережила бы удаление инстанса
+	// навсегда — пользователь остался бы с карточкой туннеля, за которой
+	// ничего нет. Отказ не отменяет удаления: инстанса уже нет, откатывать
+	// нечего.
+	if id, ok := mirrorIDOf(removed); ok {
+		if derr := m.deps.Registry.DropMirror(id); derr != nil {
+			m.deps.Journal.Warn("delete", key, "зеркальная запись не убрана: "+derr.Error())
+		}
 	}
 
 	if declaredNDMS, lerr := m.deleteSweepDeclared(ctx, removed, st.Records); lerr != nil {

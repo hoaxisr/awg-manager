@@ -238,3 +238,142 @@ func TestBootSeedsDeclaresMirrorsAndDeleteRemoves(t *testing.T) {
 		t.Error("зеркальная запись пережила удаление инстанса")
 	}
 }
+
+// oldWdttTwoRaw — два raw-клиента старого мира: один удаляем, второй обязан
+// уцелеть вместе со своей зеркальной записью.
+const oldWdttTwoRaw = `{
+  "clients": [
+    {"id":"one","name":"Первый","config":{
+      "enabled":true,"listen":"127.0.0.1:9000","peer":"2.2.2.2:56003",
+      "password":"pw","vkHashes":"h","connMode":"raw","peerRaw":"2.2.2.2:56003",
+      "ndmsIface":"OpkgTun18","rawIface":"opkgtun18"}},
+    {"id":"two","name":"Второй","config":{
+      "enabled":true,"listen":"127.0.0.1:9001","peer":"3.3.3.3:56003",
+      "password":"pw","vkHashes":"h","connMode":"raw","peerRaw":"3.3.3.3:56003",
+      "ndmsIface":"OpkgTun19","rawIface":"opkgtun19"}}
+  ]
+}`
+
+// TestDeleteRemovesMirrorWhateverTheSeedGate — хвост 1 на настоящей цепочке.
+//
+// Запертый гейт посева отменяет массовую уборку НАВСЕГДА (отметка монотонна),
+// и до правки зеркальная запись удалённого инстанса оставалась на диске без
+// шанса исчезнуть: пользователь видел карточку туннеля, за которой ничего
+// нет, и убрать её было нечем. Обе половины гейта — в одном тесте: снос
+// удалённого обязан работать при любой, а сам гейт обязан остаться на месте.
+func TestDeleteRemovesMirrorWhateverTheSeedGate(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		breakFreeturn bool
+		wantCertified bool
+	}{
+		{name: "гейт посева заперт", breakFreeturn: true},
+		{name: "посев заверен", wantCertified: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldDir := t.TempDir()
+			wdttPath := filepath.Join(oldDir, "wdtt.json")
+			if err := os.WriteFile(wdttPath, []byte(oldWdttTwoRaw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ftPath := filepath.Join(oldDir, "freeturn.json")
+			if tc.breakFreeturn {
+				// Настоящая причина запертого гейта, а не подложенный признак:
+				// посев не разобрал старый конфиг, число инстансов занижено,
+				// и MarkSeeded не зовётся вовсе.
+				if err := os.WriteFile(ftPath, []byte(`{"clients": 5}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			tunDir := t.TempDir()
+			tunStore := storage.NewAWGTunnelStoreWithLockDir(tunDir, filepath.Join(tunDir, "locks"))
+			// Ничейная зеркальная запись: её сносит ТОЛЬКО массовая уборка,
+			// и она же показывает, заперт гейт или нет.
+			saveTunnel(t, tunStore, &storage.AWGTunnel{ID: "wdttraw-ghost",
+				Name: "Призрак wdtt", Type: "awg", Backend: "wdtt-raw", WdttClientID: "ghost"})
+			// Туннель пользователя: адресного сноса он касаться не вправе.
+			saveTunnel(t, tunStore, &storage.AWGTunnel{ID: "awg10", Name: "Свой",
+				Type: "awg", Backend: "kernel"})
+
+			jrnl := &e2eJournal{}
+			t.Cleanup(func() {
+				if t.Failed() {
+					t.Log("журнал прогона:\n" + jrnl.dump())
+				}
+			})
+
+			mirror := exitreg.NewStoreMirror(tunStore, nil)
+			reg := exitreg.New(mirror, jrnl)
+			instStore := instancestore.New(t.TempDir())
+			seedDeps := instancestore.SeedDeps{
+				WdttPath: wdttPath, FreeturnPath: ftPath, RuntimeDir: t.TempDir(),
+				LivePermits: func(context.Context, string) ([]string, error) { return nil, nil },
+				AllocIndex:  keepPin, GOARCH: "arm64",
+			}
+			m := manager.New(manager.Deps{
+				Store:    instStore,
+				Registry: reg,
+				Sweeper:  e2eSweeper{},
+				Journal:  jrnl,
+				Factory: func(instancestore.Record, *manager.Live) (manager.RunningInstance, error) {
+					return &e2eInstance{}, nil
+				},
+				Seed: func(ctx context.Context) (instancestore.SeedResult, error) {
+					return instancestore.Seed(ctx, instStore, seedDeps)
+				},
+				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
+					return nil // добивание и снос правил ходят в kill(2) и iptables
+				},
+				AllocIndex:   keepPin,
+				AllocListen:  func(string) (string, error) { return "127.0.0.1:9100", nil },
+				ReleasePins:  func(...string) {},
+				WaitDisabled: func(string, time.Duration) bool { return true },
+			})
+
+			if err := m.Boot(context.Background()); err != nil {
+				t.Fatalf("боот: %v", err)
+			}
+			if got := m.SeedInfo().Certified; got != tc.wantCertified {
+				t.Fatalf("Certified = %v, ждали %v — фикстура не воспроизвела нужную половину гейта", got, tc.wantCertified)
+			}
+			for _, id := range []string{"wdttraw-one", "wdttraw-two"} {
+				if !tunStore.Exists(id) {
+					t.Fatalf("зеркальной записи %s нет уже после боота: проверять удаление нечем", id)
+				}
+			}
+			// Массовая уборка: при запертом гейте призрак обязан уцелеть.
+			if got, want := tunStore.Exists("wdttraw-ghost"), !tc.wantCertified; got != want {
+				t.Fatalf("призрак после боота: жив=%v, ждали %v", got, want)
+			}
+
+			if err := m.Delete(context.Background(), "wdtt-client:one"); err != nil {
+				t.Fatalf("удаление инстанса: %v", err)
+			}
+
+			// Проверки независимы: Errorf, чтобы видеть все.
+			if _, ok := reg.Lookup("wdttraw-one"); ok {
+				t.Error("инстанс удалён, а реестр всё ещё разрешает его выход")
+			}
+			if tunStore.Exists("wdttraw-one") {
+				t.Error("зеркальная запись удалённого инстанса осталась на диске: карточка туннеля без инстанса")
+			}
+			if !tunStore.Exists("wdttraw-two") {
+				t.Error("снесена зеркальная запись соседнего инстанса")
+			}
+			if !tunStore.Exists("awg10") {
+				t.Error("снесён туннель пользователя")
+			}
+			if got, want := tunStore.Exists("wdttraw-ghost"), !tc.wantCertified; got != want {
+				t.Errorf("призрак после удаления: жив=%v, ждали %v (гейт массовой уборки не имеет права меняться)", got, want)
+			}
+			st, err := instStore.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(st.Records) != 1 || st.Records[0].ID != "two" {
+				t.Errorf("записи инстансов после удаления: %+v", st.Records)
+			}
+		})
+	}
+}

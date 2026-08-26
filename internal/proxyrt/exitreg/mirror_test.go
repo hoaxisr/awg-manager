@@ -374,6 +374,14 @@ func TestMirrorWorksWithoutPublisher(t *testing.T) {
 	if _, err := m.Sweep(map[string]bool{}); err != nil {
 		t.Fatal(err)
 	}
+	// Ensure заново: Sweep выше уже унёс запись, и снос по пустому месту не
+	// дошёл бы до публикации — проверка выродилась бы в бездействие.
+	if err := m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18")); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := m.Remove("wdttraw-de"); err != nil || !removed {
+		t.Fatalf("снос без издателя: removed=%v err=%v", removed, err)
+	}
 }
 
 func TestStoreMirrorSatisfiesPorts(t *testing.T) {
@@ -573,5 +581,68 @@ func TestZeroStaleAddressesInvalidatesAfterZeroing(t *testing.T) {
 	}
 	if len(pub.published) != before {
 		t.Fatal("холостой прогон не имеет права публиковать событие")
+	}
+}
+
+func TestRemoveTakesOnlyTheNamedOwnedRecord(t *testing.T) {
+	// Хвост 1: снос ровно того, что удаляют. Проверяются обе границы сразу —
+	// чужая запись пользователя неприкосновенна, соседняя зеркальная цела.
+	st, pub := newFakeStore(), &fakePub{}
+	m := NewStoreMirror(st, pub)
+	_ = m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18"))
+	_ = m.Ensure(decl("wdttraw-nl", "OpkgTun19", "opkgtun19"))
+	st.m["awg10"] = storage.AWGTunnel{ID: "awg10", Backend: "kernel"}
+	before := len(pub.published)
+
+	// Запись с этим id — туннель пользователя, а не наша: снос обязан отказать.
+	if removed, err := m.Remove("awg10"); err != nil || removed {
+		t.Fatalf("адресный снос тронул чужую запись: removed=%v err=%v", removed, err)
+	}
+	if _, ok := st.m["awg10"]; !ok {
+		t.Fatal("чужой туннель awg10 удалён адресным сносом")
+	}
+
+	removed, err := m.Remove("wdttraw-de")
+	if err != nil || !removed {
+		t.Fatalf("наша запись обязана быть снесена: removed=%v err=%v", removed, err)
+	}
+	if _, ok := st.m["wdttraw-de"]; ok {
+		t.Fatal("названная зеркальная запись пережила адресный снос")
+	}
+	if _, ok := st.m["wdttraw-nl"]; !ok {
+		t.Fatal("снесена соседняя зеркальная запись: снос обязан быть адресным")
+	}
+	if len(pub.published) == before {
+		t.Fatal("снос записи обязан инвалидировать список туннелей")
+	}
+
+	// Повтор безвреден: при заверенном посеве Sweep успевает раньше, и
+	// Delete зовёт снос по уже пустому месту (требование 4 брифа).
+	published := len(pub.published)
+	if removed, err := m.Remove("wdttraw-de"); err != nil || removed {
+		t.Fatalf("повторный снос обязан быть тихим no-op: removed=%v err=%v", removed, err)
+	}
+	if len(pub.published) != published {
+		t.Fatal("снос, который ничего не тронул, не публикует событие")
+	}
+}
+
+func TestRemoveRefusesUnreadableRecord(t *testing.T) {
+	// Владение проверяется по содержимому записи. Не прочли — не знаем, чья
+	// она: слепой снос стоил бы пользователю туннеля.
+	st := newFakeStore()
+	m := NewStoreMirror(st, &fakePub{})
+	_ = m.Ensure(decl("wdttraw-de", "OpkgTun18", "opkgtun18"))
+	st.getErr = errors.New("битый json")
+
+	removed, err := m.Remove("wdttraw-de")
+	if err == nil {
+		t.Fatal("нечитаемая запись обязана быть отказом, а не слепым сносом")
+	}
+	if removed {
+		t.Fatal("отказ не имеет права докладывать об удалении")
+	}
+	if len(st.deleted) != 0 {
+		t.Fatalf("удаление вслепую: %v", st.deleted)
 	}
 }

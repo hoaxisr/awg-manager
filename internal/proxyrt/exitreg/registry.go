@@ -75,6 +75,10 @@ type Mirror interface {
 	// гейту посева: пустой посев при пустом списке безопасен, при непустом —
 	// подозрителен (см. MarkSeeded).
 	Owned() ([]string, error)
+	// Remove сносит ОДНУ зеркальную запись по id и говорит, была ли она наша.
+	// Отдельно от Sweep: адресный снос — не ведомость, и гейт посева ему не
+	// указ (DropMirror).
+	Remove(id string) (bool, error)
 }
 
 type record struct {
@@ -230,6 +234,30 @@ func (r *Registry) SetDeclared(list []ExitDecl) error {
 		r.log.Info("exit-mirror-removed", id, "зеркальная запись удалена: выход снят с объявления")
 	}
 	return errors.Join(errs...)
+}
+
+// DropMirror снимает зеркальную запись выхода, чей инстанс удалён, — адресно
+// и МИМО гейта посева.
+//
+// Гейт этим не ослаблен: он заперт для Sweep, который сносит по ведомости, и
+// цена его ошибки — записи чужих, непереехавших инстансов. Здесь ведомости
+// нет: снимается ровно названная запись и только если она наша. Запереть её
+// тем же гейтом нельзя — отметка монотонна, и запись висела бы до перезапуска
+// процесса, показывая пользователю карточку туннеля без инстанса.
+//
+// Под writeMu — по той же причине, что и SetDeclared: два писателя зеркала не
+// имеют права идти внахлёст.
+func (r *Registry) DropMirror(id string) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	removed, err := r.mirror.Remove(id)
+	if err != nil {
+		return err
+	}
+	if removed {
+		r.log.Info("exit-mirror-removed", id, "зеркальная запись удалена: инстанс удалён")
+	}
+	return nil
 }
 
 // Ensure — наблюдение от ресурса routable_exit. Меняет ТОЛЬКО готовность:
