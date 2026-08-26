@@ -19,8 +19,7 @@ var (
 	awgPattern     = regexp.MustCompile(`^awg(\d+)$`)
 
 	// awg-manager managed tunnel patterns
-	// OS 5.x uses opkgtun100+ (same pattern, just different numbers)
-	// OS 4.x uses awgmX
+	// OS 4.x uses awgmX; на 5.x наши туннели — те же opkgtunN выше
 	awgmPattern = regexp.MustCompile(`^awgm(\d+)$`)
 )
 
@@ -46,8 +45,9 @@ func ExtractInterfaceNumber(ifaceName string) (int, bool) {
 }
 
 // ListSystemInterfaces returns a list of tunnel interface numbers found in the system.
-// On OS 5.0+: scans for opkgtunX interfaces (external tunnels use 0-99, awg-manager uses 100+)
-// On OS 4.x: scans for awgX and awgmX interfaces (external use awgX, awg-manager uses awgmX)
+// На 5.x собирает номера opkgtunX, на 4.x — awgX и awgmX. Деления «наши/чужие»
+// по номеру НЕТ: диапазоны подсистем разведены выше (storage.nextAvailableID и
+// аллокаторы режимов роутера и wdtt), а здесь нужны все занятые номера подряд.
 func ListSystemInterfaces() ([]int, error) {
 	entries, err := os.ReadDir("/sys/class/net")
 	if err != nil {

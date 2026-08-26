@@ -112,11 +112,6 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 	}
 	o.endpointRoutesMu.Unlock()
 
-	// Clear resolved ISP tracking
-	o.resolvedISPMu.Lock()
-	delete(o.resolvedISP, tunnelID)
-	o.resolvedISPMu.Unlock()
-
 	if !exists || endpointIP == "" {
 		return nil
 	}
@@ -149,7 +144,7 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 // RestoreEndpointTracking restores endpoint route tracking without creating the route.
 // Used on daemon restart for tunnels that are already running.
 // Returns the resolved endpoint IP on success, empty string on non-fatal failure.
-func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint, ispInterface string) (string, error) {
+func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint string) (string, error) {
 	if endpoint == "" {
 		return "", nil
 	}
@@ -165,13 +160,6 @@ func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID,
 	o.endpointRoutesMu.Lock()
 	o.endpointRoutes[tunnelID] = endpointIP
 	o.endpointRoutesMu.Unlock()
-
-	// Restore resolved ISP for dashboard display
-	if ispInterface != "" {
-		o.resolvedISPMu.Lock()
-		o.resolvedISP[tunnelID] = ispInterface
-		o.resolvedISPMu.Unlock()
-	}
 
 	o.logInfo("restore_tracking", tunnelID, "Restored endpoint tracking for "+endpointIP)
 	return endpointIP, nil

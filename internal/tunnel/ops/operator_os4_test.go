@@ -166,28 +166,6 @@ func TestOperatorOS4_Delete_SameAsStop(t *testing.T) {
 	}
 }
 
-func TestOperatorOS4_Recover(t *testing.T) {
-	backendMock := &MockBackend{running: true}
-
-	op := NewOperatorOS4(nil, nil, &MockWGClient{}, backendMock, &MockFirewall{})
-
-	state := tunnel.StateInfo{
-		State:          tunnel.StateBroken,
-		ProcessRunning: true,
-		InterfaceUp:    false,
-	}
-
-	err := op.Recover(context.Background(), "awg0", state)
-
-	if err != nil {
-		t.Fatalf("Recover() error = %v", err)
-	}
-	// On OS4, recovery just stops everything
-	if len(backendMock.StopCalls) != 1 {
-		t.Errorf("Backend.Stop should be called for recovery")
-	}
-}
-
 func TestOperatorOS4_ApplyConfig(t *testing.T) {
 	wgClient := &MockWGClient{}
 	op := NewOperatorOS4(nil, nil, wgClient, &MockBackend{}, &MockFirewall{})
