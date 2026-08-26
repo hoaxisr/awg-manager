@@ -109,7 +109,8 @@ func clashFieldsToValues(p map[string]any) url.Values {
 	case "xhttp", "splithttp":
 		// mihomo carries xhttp under xhttp-opts with top-level string path/host
 		// (not []string) plus a mode. We don't run mihomo — convert to our
-		// sing-box xhttp transport. x_padding_bytes is defaulted downstream.
+		// sing-box xhttp transport. The remaining options, xmux among them,
+		// go through the share-link extra= path (#797).
 		xh := nestedMap(p, "xhttp-opts")
 		if path := asString(xh["path"]); path != "" {
 			v.Set("path", path)
@@ -119,6 +120,9 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		}
 		if mode := asString(xh["mode"]); mode != "" {
 			v.Set("mode", mode)
+		}
+		if extra := xhttpExtraFromClash(xh); extra != "" {
+			v.Set("extra", extra)
 		}
 	}
 

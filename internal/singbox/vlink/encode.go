@@ -355,8 +355,12 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			if mode, _ := transport["mode"].(string); mode != "" {
 				q.Set("mode", mode)
 			}
-			// x_padding_bytes is an internal/server-negotiated default; not part
-			// of the share-link standard, so it is intentionally not emitted.
+			// Everything else xhttp carries travels in Xray's extra= object,
+			// x_padding_bytes included: since #797 it can come from the link
+			// rather than from our default, so dropping it would lose it.
+			if extra := xhttpExtraFromTransport(transport); extra != "" {
+				q.Set("extra", extra)
+			}
 		default:
 			// Unknown transport (e.g. quic) — fail closed rather than silently
 			// emitting a plain-tcp link that misroutes.

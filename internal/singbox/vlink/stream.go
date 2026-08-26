@@ -19,9 +19,10 @@ type StreamBuilder struct {
 	EarlyData           int
 	EarlyDataHeaderName string
 	ServiceName         string
-	Mode                string // xhttp mode: auto | packet-up | stream-up | stream-one
-	XPaddingBytes       string // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
-	BindInterface       string // egress kernel interface for dial (#709)
+	Mode                string         // xhttp mode: auto | packet-up | stream-up | stream-one
+	XPaddingBytes       string         // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
+	XHTTPExtra          map[string]any // xhttp fields from ?extra=, already in sing-box snake_case (#797)
+	BindInterface       string         // egress kernel interface for dial (#709)
 }
 
 // outboundTLS is the parsed TLS / Reality block ready to be emitted as
@@ -99,6 +100,9 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	}
 	s.ServiceName = q.Get("serviceName")
 	s.Mode = q.Get("mode")
+	if s.Network == "xhttp" {
+		s.XHTTPExtra = parseXHTTPExtra(q.Get("extra"))
+	}
 
 	// TLS / Reality
 	sec := strings.ToLower(q.Get("security"))
@@ -255,11 +259,14 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			if s.Mode != "" {
 				transport["mode"] = s.Mode
 			}
-			pad := s.XPaddingBytes
-			if pad == "" {
-				pad = "100-1000"
+			for k, v := range s.XHTTPExtra {
+				transport[k] = v
 			}
-			transport["x_padding_bytes"] = pad
+			if s.XPaddingBytes != "" {
+				transport["x_padding_bytes"] = s.XPaddingBytes
+			} else if transport["x_padding_bytes"] == nil {
+				transport["x_padding_bytes"] = "100-1000"
+			}
 		}
 		out["transport"] = transport
 	}
