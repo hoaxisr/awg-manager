@@ -18161,7 +18161,7 @@
         },
         {
           "type": "string",
-          "pattern": "^-?\\d+(-\\d+)?$"
+          "pattern": "^\\d+(-\\d+)?$"
         },
         {
           "type": "object",
@@ -18177,5 +18177,6 @@
         }
       ]
     }
-  }
+  },
+  "x-singbox-version": "1.14.0-rc.1-awgm.14"
 }

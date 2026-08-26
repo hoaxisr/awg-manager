@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 )
 
 // The schema is generated from the fork we pin, by scripts/regen-singbox-schema.sh.
@@ -28,6 +30,14 @@ func loadSchema(t *testing.T) (*schemaDoc, map[string]any) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse schema: %v", err)
 	}
+	// Версию штампует regen-singbox-schema.sh. Без этой сверки забытый regen
+	// при бампе оставил бы тест проверять старый контракт, и поле, удалённое
+	// форком, прошло бы зелёным — ровно то, ради чего тест и заведён (#806).
+	if got, _ := doc["x-singbox-version"].(string); got != installer.RequiredVersion {
+		t.Fatalf("схема от версии %q, а вшита %q — прогоните scripts/regen-singbox-schema.sh",
+			got, installer.RequiredVersion)
+	}
+
 	defs, _ := doc["$defs"].(map[string]any)
 	if len(defs) == 0 {
 		t.Fatal("schema has no $defs")
@@ -150,6 +160,8 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"shadowsocks":                 "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
 		"hysteria2":                   "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
 		"socks5":                      "socks://user:pass@example.com:1080#g",
+		"mieru":                       "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
+		"naive":                       "naive+https://user:pass@example.com:443#j",
 	}
 	for name, link := range links {
 		t.Run(name, func(t *testing.T) {
