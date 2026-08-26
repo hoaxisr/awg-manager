@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -74,5 +75,87 @@ func TestWdttRawConnectivityCheck_Default(t *testing.T) {
 	got := wdttRawConnectivityCheck(&storage.AWGTunnel{ID: "wdttraw-de"})
 	if got == nil || got.Method != "http" {
 		t.Fatalf("default = %+v, want method http", got)
+	}
+}
+
+// rawUpdateStore — store с одной зеркальной записью для PATCH-ветки Update.
+func rawUpdateStore(t *testing.T) *storage.AWGTunnelStore {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Save(&storage.AWGTunnel{
+		ID:                "wdttraw-de",
+		Name:              "Германия",
+		Backend:           backendWdttRaw,
+		WdttClientID:      "de",
+		RawKernelIface:    "opkgtun18",
+		ConnectivityCheck: &storage.ConnectivityCheckConfig{Method: "http"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func updateRaw(t *testing.T, store *storage.AWGTunnelStore, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := &TunnelsHandler{store: store}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/tunnels/update?id=wdttraw-de", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update(w, req)
+	return w
+}
+
+// Требование 7: имя зеркальной записи — производная конфига инстанса, зеркало
+// перезапишет его на ближайшем объявлении. PATCH обязан отказать, а не
+// подтвердить переименование, которое молча откатится.
+func TestUpdate_WdttRawRenameRejected(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"name":"Нидерланды","connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "WDTT_RAW_NAME_READONLY" {
+		t.Fatalf("code = %q, want WDTT_RAW_NAME_READONLY", resp.Code)
+	}
+
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "Германия" {
+		t.Fatalf("имя в сторе = %q, ожидали неизменное «Германия»", stored.Name)
+	}
+	// Отказ fail-closed: запись не сохранялась вовсе, а не «имя откатили».
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "http" {
+		t.Fatalf("connectivityCheck = %+v, ожидали нетронутый http", stored.ConnectivityCheck)
+	}
+}
+
+// Тот же PATCH, что шлёт форма редактирования: имя пришло неизменным. Отказ
+// по одному лишь факту непустого name запер бы правку связности целиком.
+func TestUpdate_WdttRawSameNameSavesConnectivityCheck(t *testing.T) {
+	store := rawUpdateStore(t)
+	w := updateRaw(t, store, `{"name":"Германия","connectivityCheck":{"method":"ping"}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConnectivityCheck == nil || stored.ConnectivityCheck.Method != "ping" {
+		t.Fatalf("connectivityCheck = %+v, ожидали method ping", stored.ConnectivityCheck)
+	}
+	if stored.Name != "Германия" {
+		t.Fatalf("имя в сторе = %q", stored.Name)
 	}
 }

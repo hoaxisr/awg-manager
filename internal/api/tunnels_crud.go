@@ -365,15 +365,20 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if existing.Backend == backendWdttRaw {
+		if req.Name != "" && req.Name != existing.Name {
+			// Имя зеркальной записи — производная конфига инстанса: зеркало
+			// перезаписывает его на каждом объявлении (exitreg/mirror.go:105).
+			// Принять переименование здесь значит подтвердить правку, которую
+			// ближайшее объявление молча откатит.
+			response.Error(w, "имя raw-записи задаётся инстансом WDTT — переименуйте инстанс", "WDTT_RAW_NAME_READONLY")
+			return
+		}
 		updated := *existing
 		if req.ConnectivityCheck != nil {
 			updated.ConnectivityCheck = req.ConnectivityCheck
 			if updated.ConnectivityCheck.Method == "" {
 				updated.ConnectivityCheck.Method = "http"
 			}
-		}
-		if req.Name != "" {
-			updated.Name = req.Name
 		}
 		if err := h.store.Save(&updated); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
