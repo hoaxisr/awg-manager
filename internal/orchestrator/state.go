@@ -94,6 +94,12 @@ func (s *State) ensureTunnel(tunnelID string, store *storage.AWGTunnelStore) boo
 	if err != nil {
 		return false
 	}
+	// Тот же фильтр, что в loadFromStore, и по той же причине: зеркальная
+	// запись прокси-выхода оркестратору не принадлежит. Второй путь загрузки
+	// без этой проверки сводил бы первую на нет.
+	if stored.Backend == "wdtt-raw" {
+		return false
+	}
 	s.tunnels[tunnelID] = tunnelStateFromStored(stored)
 	return true
 }
@@ -120,6 +126,14 @@ func (s *State) loadFromStore(store *storage.AWGTunnelStore) {
 		return
 	}
 	for _, t := range tunnels {
+		// Зеркальные записи raw-выходов — проекции прокси-инстансов, а не наши
+		// туннели: их жизненным циклом целиком ведает прокси-рантайм. Сегодня
+		// они безвредны лишь потому, что каждый switch по Backend перечисляет
+		// бэкенды поимённо и не имеет ветки default — первая же такая ветка
+		// начала бы стартовать и останавливать чужой ресурс. Не грузим вовсе.
+		if t.Backend == "wdtt-raw" {
+			continue
+		}
 		s.tunnels[t.ID] = tunnelStateFromStored(&t)
 	}
 }

@@ -417,6 +417,20 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
 			return
 		}
+		// Монитор поднимается ЗДЕСЬ, как и у обычных туннелей (:543-550):
+		// иначе включённая пользователем проверка легла бы на диск и молчала
+		// до перезапуска демона или постороннего события.
+		if h.pingCheck != nil {
+			oldOn := existing.PingCheck != nil && existing.PingCheck.Enabled
+			newOn := updated.PingCheck != nil && updated.PingCheck.Enabled
+			if oldOn != newOn {
+				if newOn && h.svc.GetState(r.Context(), id).State == tunnel.StateRunning {
+					h.pingCheck.StartMonitoring(id, updated.Name)
+				} else if !newOn {
+					h.pingCheck.StopMonitoring(id)
+				}
+			}
+		}
 		h.log.Info("update", updated.Name, "WDTT raw metadata updated")
 		h.publishTunnelList(r.Context())
 		response.Success(w, h.buildWdttRawResponse(&updated))

@@ -50,6 +50,10 @@ func (h *TunnelsHandler) buildWdttRawResponse(stored *storage.AWGTunnel) map[str
 		"interface":         stored.Interface,
 		"peer":              stored.Peer,
 		"connectivityCheck": wdttRawConnectivityCheck(stored),
+		// pingCheck отдаётся, иначе круг «прочитать-изменить-записать» не
+		// замыкается: панель мониторинга не увидела бы сохранённых настроек, а
+		// её форма отправила бы правку без ранее выставленных полей.
+		"pingCheck": stored.PingCheck,
 	}
 }
 
