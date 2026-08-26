@@ -489,6 +489,30 @@ const MOCK_AWG_TUNNELS = [
 		connectivityCheck: { method: 'http' },
 		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
 	},
+	{
+		// Зеркальная запись raw-выхода wdtt-клиента (backend wdtt-raw): карточку
+		// ведёт прокси-рантайм. На странице туннеля правится только проверка
+		// связности — имя, WAN-подключение и маршрут по умолчанию заблокированы.
+		id: 'wdttraw-default',
+		name: 'Стамбул wdtt',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: true,
+		wdttClientId: 'default',
+		endpoint: '127.0.0.1:9000',
+		address: '10.66.0.3/32',
+		interfaceName: 'opkgtun19',
+		ndmsName: 'OpkgTun19',
+		rxBytes: 3_004_998,
+		txBytes: 812_003,
+		awgVersion: 'wg',
+		mtu: 1300,
+		startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+		backend: 'wdtt-raw',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
 ];
 
 /** Счётчик импортированных туннелей: даёт им номер, а из него — NDMS-имя. */

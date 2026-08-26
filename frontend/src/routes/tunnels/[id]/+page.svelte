@@ -97,6 +97,11 @@
 
 	let ispValue = $derived(tunnel?.ispInterface || 'auto');
 
+	// Зеркальная запись прокси-выхода: имя, WAN-подключение и маршрут по
+	// умолчанию ведёт прокси-рантайм, правка отсюда не применится (бэкенд
+	// отвечает на неё отказом).
+	let isMirror = $derived(tunnel?.backend === 'wdtt-raw');
+
 	let otherTunnels = $derived(allTunnels.filter(t => t.id !== tunnelId));
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -362,10 +367,10 @@
 								id="name"
 								class="field-input"
 								bind:value={$form.name}
-								disabled={tunnel?.backend === 'wdtt-raw'}
-								title={tunnel?.backend === 'wdtt-raw' ? 'Имя задаётся инстансом WDTT' : undefined}
+								disabled={isMirror}
+								title={isMirror ? 'Имя задаётся инстансом WDTT' : undefined}
 							/>
-							{#if tunnel?.backend === 'wdtt-raw'}
+							{#if isMirror}
 								<p class="field-hint">Имя задаётся инстансом WDTT и меняется в его настройках.</p>
 							{/if}
 							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
@@ -456,9 +461,12 @@
 							value={ispValue}
 							options={ispOpts}
 							onchange={updateIspInterface}
-							disabled={savingIsp}
+							disabled={savingIsp || isMirror}
 							fullWidth
 						/>
+						{#if isMirror}
+							<p class="field-hint">Подключение задаёт инстанс WDTT и меняется в его настройках.</p>
+						{/if}
 						<div class="setting-row toggle-inline-row advanced-toggle">
 							<div class="flex flex-col gap-1">
 								<span class="font-medium">Показать все интерфейсы</span>
@@ -487,8 +495,12 @@
 								<Toggle
 									checked={tunnel.defaultRoute}
 									onchange={() => toggleDefaultRoute()}
+									disabled={isMirror}
 								/>
 							</div>
+							{#if isMirror}
+								<p class="field-hint">Маршрутом по умолчанию распоряжается инстанс WDTT и меняется в его настройках.</p>
+							{/if}
 						</section>
 					{/if}
 				</div>
