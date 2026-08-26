@@ -2,12 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -157,5 +160,138 @@ func TestUpdate_WdttRawSameNameSavesConnectivityCheck(t *testing.T) {
 	}
 	if stored.Name != "Германия" {
 		t.Fatalf("имя в сторе = %q", stored.Name)
+	}
+}
+
+// ── удаление зеркальной записи (амендмент F2) ────────────────────
+
+// rawDeleteEnv — хранилище туннелей с одной зеркальной записью и хранилище
+// прокси-инстансов с перечисленными id клиентов WDTT. Записи прокси кладутся
+// через ПРОД-store: состав, который он выдать не может, тест бы не поймал.
+//
+// PingCheck в фикстуре не украшение: именно эти пользовательские настройки
+// теряются молча, когда запись сносят под живым инстансом, а зеркало
+// пересоздаёт её с дефолтами.
+func rawDeleteEnv(t *testing.T, clientIDs ...string) (*TunnelsHandler, *storage.AWGTunnelStore) {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Save(&storage.AWGTunnel{
+		ID:             "wdttraw-de",
+		Name:           "Германия",
+		Backend:        backendWdttRaw,
+		WdttClientID:   "de",
+		RawKernelIface: "opkgtun18",
+		PingCheck:      &storage.TunnelPingCheck{Enabled: true, Method: "icmp", Target: "1.1.1.1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proxy := instancestore.New(t.TempDir())
+	if _, err := proxy.Replace(func(st *instancestore.State) error {
+		// Клиент FreeTurn с тем же id, что у владельца: id уникален только
+		// ВНУТРИ роли, и сверка без роли приняла бы его за владельца
+		// зеркальной записи WDTT.
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "de", Kind: instancestore.KindFreeTurnClient, Name: "FT",
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9007"}})
+		for _, id := range clientIDs {
+			st.Records = append(st.Records, instancestore.Record{
+				ID: id, Kind: instancestore.KindWdttClient, Name: "WD",
+				WdttClient: &roles.WdttClientConfig{Listen: "127.0.0.1:9100"}})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := &TunnelsHandler{store: store}
+	h.SetProxyRecords(proxy)
+	return h, store
+}
+
+func deleteRaw(t *testing.T, h *TunnelsHandler) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.Delete(w, httptest.NewRequest(http.MethodPost, "/api/tunnels/delete?id=wdttraw-de", nil))
+	return w
+}
+
+// Живой инстанс — отказ, а не молчаливое удаление: запись воскреснет на
+// ближайшем объявлении с дефолтами, и настройки карточки пропадут.
+func TestDelete_WdttRawRefusedWhileInstanceAlive(t *testing.T) {
+	h, store := rawDeleteEnv(t, "de")
+	w := deleteRaw(t, h)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "WDTT_RAW_OWNED" {
+		t.Fatalf("code = %q, want WDTT_RAW_OWNED", resp.Code)
+	}
+	if !strings.Contains(resp.Message, "wdtt-client:de") {
+		t.Fatalf("message = %q: отказ обязан назвать ключ инстанса", resp.Message)
+	}
+	stored, err := store.Get("wdttraw-de")
+	if err != nil || stored == nil {
+		t.Fatalf("запись обязана остаться на месте: %v", err)
+	}
+	if stored.PingCheck == nil || !stored.PingCheck.Enabled {
+		t.Fatalf("настройки карточки обязаны уцелеть: %+v", stored.PingCheck)
+	}
+}
+
+// Обратная половина гейта: инстанса нет — запись осиротела, и удаление обязано
+// работать. Без этого «починкой» F2 был бы вечный отказ.
+func TestDelete_WdttRawOrphanRemoved(t *testing.T) {
+	// В хранилище прокси есть ДРУГОЙ клиент: пустой store не отличил бы
+	// сверку владельца от «не нашли ничего никогда».
+	h, store := rawDeleteEnv(t, "nl")
+	w := deleteRaw(t, h)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if store.Exists("wdttraw-de") {
+		t.Fatal("осиротевшая запись обязана удаляться")
+	}
+}
+
+// Владение не проверено — тоже отказ (fail-closed): и когда хранилище не
+// читается, и когда его вовсе не подключили. Второй случай прод-проводка
+// исключает, но nil-гард, открывающий гейт, сделал бы регресс проводки
+// невидимым.
+func TestDelete_WdttRawRefusedWhenOwnerUnverifiable(t *testing.T) {
+	cases := map[string]ProxyRecordLister{
+		"хранилище не читается":   failingProxyRecords{err: errors.New("битый json")},
+		"хранилище не подключено": nil,
+	}
+	for name, records := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, store := rawDeleteEnv(t, "de")
+			h.SetProxyRecords(records)
+			w := deleteRaw(t, h)
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409; body: %s", w.Code, w.Body.String())
+			}
+			var resp struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Code != "WDTT_RAW_OWNER_UNKNOWN" {
+				t.Fatalf("code = %q, want WDTT_RAW_OWNER_UNKNOWN", resp.Code)
+			}
+			if !store.Exists("wdttraw-de") {
+				t.Fatal("непроверенное владение обязано оставлять запись на месте")
+			}
+		})
 	}
 }

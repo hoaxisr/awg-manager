@@ -585,6 +585,23 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
+		// Зеркальная запись — не самостоятельная сущность, а проекция
+		// прокси-инстанса: пока инстанс жив, удалять её отдельно нельзя.
+		// Ближайшее объявление создало бы её заново с дефолтами, и потеря
+		// настроек карточки прошла бы молча (амендмент F2).
+		owner, ownErr := h.mirrorOwnerKey(stored)
+		switch {
+		case ownErr != nil:
+			h.log.Warn("delete", stored.Name, "Refused: владелец raw-записи не проверен: "+ownErr.Error())
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"владелец raw-записи не проверен: "+ownErr.Error(), "WDTT_RAW_OWNER_UNKNOWN")
+			return
+		case owner != "":
+			h.log.Info("delete", stored.Name, "Refused: запись принадлежит инстансу "+owner)
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"запись принадлежит прокси-инстансу "+owner+"; удалите инстанс", "WDTT_RAW_OWNED")
+			return
+		}
 		tunnelName := stored.Name
 		if err := h.store.Delete(id); err != nil {
 			response.Error(w, err.Error(), "DELETE_FAILED")

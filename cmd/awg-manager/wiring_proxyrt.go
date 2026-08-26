@@ -395,14 +395,16 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 		if !proxyTunnelLinkedTo(tun, c.field, clientID) {
 			continue
 		}
-		// Зеркальная запись raw-клиента живёт только в хранилище: у неё нет
-		// ни kernel-туннеля, ни жизненного цикла — сносится напрямую.
+		// Зеркальная запись raw-клиента — проекция ЖИВОГО инстанса, чьи связи
+		// сейчас снимают (уборщика зовёт только ручка clear по существующей
+		// записи). Снести её здесь значило бы соврать: ближайшее объявление
+		// создаст запись заново, но с дефолтами, и настройки карточки
+		// пропадут молча (амендмент F2). Уносит запись удаление инстанса —
+		// через зеркало.
 		if tun.Backend == proxyBackendWdttRaw {
-			if err := c.store.Delete(tun.ID); err != nil {
-				errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
-				continue
-			}
-			deleted = append(deleted, tun.ID)
+			key := instancestore.Record{Kind: instancestore.KindWdttClient, ID: clientID}.Key()
+			errs = append(errs, fmt.Sprintf("%s (%s): запись принадлежит прокси-инстансу %s; удалите инстанс",
+				tun.Name, tun.ID, key))
 			continue
 		}
 		if err := c.svc.Delete(ctx, tun.ID); err != nil {

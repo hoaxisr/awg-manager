@@ -68,6 +68,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.tunnelsHandler.SetPingCheckService(s.pingCheckService)
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
+	h.tunnelsHandler.SetProxyRecords(s.proxyRecords)
 	h.controlHandler = api.NewControlHandler(s.tunnelService, h.appLog)
 	h.controlHandler.SetPingCheckService(s.pingCheckService)
 	h.controlHandler.SetOrchestrator(s.orch)
