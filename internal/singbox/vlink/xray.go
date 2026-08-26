@@ -44,7 +44,6 @@ type XrayRealityConfig struct {
 	PublicKey   string `json:"publicKey"`
 	ShortID     string `json:"shortId"`
 	Fingerprint string `json:"fingerprint"`
-	SpiderX     string `json:"spiderX"`
 }
 
 type XrayWSConfig struct {
@@ -55,7 +54,6 @@ type XrayWSConfig struct {
 
 type XrayGRPCConfig struct {
 	ServiceName string `json:"serviceName"`
-	MultiMode   bool   `json:"multiMode"`
 }
 
 type XrayHTTPConfig struct {
