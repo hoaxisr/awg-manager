@@ -213,9 +213,13 @@ func (c WdttServerConfig) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("не задан listen сервера")
 	}
-	if strings.TrimSpace(c.Password) == "" {
-		return fmt.Errorf("не задан пароль сервера (-password)")
-	}
+	// Пароль владельца (-password) НЕ обязателен. Форк падает единственным
+	// условием — `serverWrapKeys.Count() == 0`, то есть когда нет НИ ОДНОГО
+	// пароля: главного или абонентского (server.go:1969). Абонентского
+	// достаточно. Требование главного было строже форка и запирало сервер,
+	// у которого абоненты есть, а «пароля владельца» никто не задавал;
+	// починить его из UI было нечем. Непустоту паролей держит гейт запуска
+	// по составу абонентов, а не эта проверка.
 	switch c.NatMode {
 	case "full", "none":
 	case "internet-only":

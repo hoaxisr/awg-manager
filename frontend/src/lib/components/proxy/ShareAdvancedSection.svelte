@@ -4,7 +4,6 @@
 	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
 	// больше нет (решение Q7 ИА).
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
-	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
@@ -77,8 +76,6 @@
 		</div>
 		<div class="grid">
 			<Input label="Config dir" bind:value={wdttServer.configDir} fullWidth />
-			<Input label="Admin ID" bind:value={wdttServer.adminId} fullWidth />
-			<SensitiveInput label="Bot token" bind:value={wdttServer.botToken} />
 		</div>
 
 		<div class="log-mode">

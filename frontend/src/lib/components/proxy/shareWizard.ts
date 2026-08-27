@@ -167,19 +167,19 @@ function validPort(port: string, protocol: ProxyProtocol): boolean {
 }
 
 /**
- * Шаг 2: тот же критерий, по которому бэкенд пускает сервер в старт — главный
- * пароль у WDTT (`internal/wdtt/server.go:220`) и backend-адрес у FreeTurn
- * (`internal/freeturn/service.go:732`). Порт назначает бэкенд, но правленый
- * руками он обязан быть портом.
+ * Шаг 2: у WDTT остаётся только порт. Пароля владельца шаг больше не
+ * спрашивает: форк падает лишь когда паролей нет ВОВСЕ, а первого абонента
+ * заводит следующий шаг — им сервер и становится работоспособным. У FreeTurn
+ * критерий прежний: backend-адрес (`internal/freeturn/service.go:732`).
+ * Порт назначает бэкенд, но правленый руками он обязан быть портом.
  */
 export function shareStep2Ready(s: {
 	protocol: ProxyProtocol;
-	password: string;
 	port: string;
 	connect: string;
 }): boolean {
 	if (!validPort(s.port, s.protocol)) return false;
-	return s.protocol === 'wdtt' ? !!s.password.trim() : !!s.connect.trim();
+	return s.protocol === 'wdtt' ? true : !!s.connect.trim();
 }
 
 /**
@@ -193,14 +193,16 @@ export function shareStep3Ready(s: { protocol: ProxyProtocol; vkHash: string }):
 	return s.protocol !== 'wdtt' || !!s.vkHash.trim();
 }
 
-/** Тот же критерий для сохранённого конфига: настроен ли сервер раздачи. */
+/**
+ * Тот же критерий для сохранённого конфига: настроен ли сервер раздачи.
+ * У WDTT конфига достаточно самого факта — работоспособным сервер делают
+ * абоненты, а их состав знает только ручка абонентов, не конфиг.
+ */
 export function shareConfigSetupComplete(
 	wdtt?: WdttServerConfig,
 	ft?: FreeTurnServerConfig,
 ): boolean {
-	// Пароль сервера наружу не отдаётся (Н5): у сохранённого конфига поле
-	// пустое, а «задан» приходит признаком.
-	if (wdtt) return !!wdtt.password?.trim() || wdtt.passwordSet === true;
+	if (wdtt) return true;
 	if (ft) return !!ft.connect?.trim();
 	return false;
 }

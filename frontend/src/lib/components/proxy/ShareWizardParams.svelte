@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Шаг 2 мастера «Настроить раздачу» — параметры сервера (ia.md §3.4).
-	// WDTT: главный пароль, порт, firewall. FreeTurn: WG-сервер роутера и пир,
+	// WDTT: порт и firewall. FreeTurn: WG-сервер роутера и пир,
 	// listen-порт, обфускация, firewall.
 	import { Button, Dropdown, Input, Toggle } from '$lib/components/ui';
 	import { obfOptions } from '../freeturn/options';
@@ -22,15 +22,6 @@
 
 {#if protocol === 'wdtt'}
 	<div class="grid">
-		<div class="field-block">
-			<div class="field-with-btn">
-				<Input label="Главный пароль" bind:value={fields.password} fullWidth />
-				<Button variant="secondary" size="sm" onclick={() => (fields.password = randomHex(16))}>
-					Сгенерировать
-				</Button>
-			</div>
-			<p class="field-hint">Ключ администрирования, не пароль подключения</p>
-		</div>
 		<!-- Порт живёт строкой: `bind:value` у `type="number"` приводит значение к
 		     числу, а подсказка WS-19 и проверка готовности работают со строкой. -->
 		<Input
@@ -104,21 +95,6 @@
 		align-items: flex-end;
 		gap: 0.375rem;
 		min-width: 0;
-	}
-
-	/* Подпись поля вынесена из `Input` под строку с кнопкой: внутри поля она
-	   уводила бы его нижнюю кромку вниз, и кнопка встала бы под вводом. */
-	.field-block {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		min-width: 0;
-	}
-
-	.field-hint {
-		margin: 0;
-		font-size: 12px;
-		color: var(--color-text-muted);
 	}
 
 	.toggle-row {

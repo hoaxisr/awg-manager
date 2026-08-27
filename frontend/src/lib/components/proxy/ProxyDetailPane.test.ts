@@ -105,11 +105,13 @@ describe('ProxyDetailPane: мастер открывается только яв
 		expect(queryByRole('heading', { name: 'Настроить раздачу' })).toBeNull();
 	});
 
-	it('в детали есть поле главного пароля', async () => {
-		// Единственное обязательное поле сервера жило только в мастере: сервер,
-		// попавший в деталь без пароля, чинить было негде.
-		const { findByLabelText } = mount(null);
-		expect(await findByLabelText('Главный пароль')).toBeTruthy();
+	it('поля пароля владельца в детали нет — оно техническое', async () => {
+		// Пароль владельца форку не обязателен (`serverWrapKeys.Count() == 0`
+		// роняет старт только при полном отсутствии паролей), а панель им не
+		// пользуется: абонентов она пишет в passwords.json сама.
+		const { findByRole, queryByLabelText } = mount(null);
+		await findByRole('heading', { name: 'Сервер', level: 2 });
+		expect(queryByLabelText('Главный пароль')).toBeNull();
 	});
 
 	it('явно открытый мастер деталь подменяет', async () => {

@@ -105,7 +105,6 @@ func TestValidateRejects(t *testing.T) {
 		{"raw-клиент без пина индекса", "индекс", func() WdttClientConfig { c := rawClient(); c.NdmsIface = ""; return c }()},
 		{"клиент с нелокальным listen", "127.0.0.1", func() WdttClientConfig { c := rawClient(); c.Listen = "0.0.0.0:9000"; return c }()},
 		{"кривой режим не чинится молча", "mode", func() WdttClientConfig { c := rawClient(); c.Mode = "RAW"; return c }()},
-		{"сервер без password", "password", WdttServerConfig{Listen: "0.0.0.0:56000"}},
 		{"internet-only без WAN", "natStaticWAN", WdttServerConfig{
 			Listen: "0.0.0.0:56000", Password: "x", NatMode: "internet-only", RelayMode: "wg"}},
 		{"сервер без WG-половины NDMS", "ndmsIface", WdttServerConfig{
@@ -146,5 +145,26 @@ func TestEffectiveRawListenFallsBackOnGarbagePort(t *testing.T) {
 	c := WdttServerConfig{Listen: "0.0.0.0:56000x"}
 	if got := c.EffectiveRawListen(); got != "0.0.0.0:56003" {
 		t.Fatalf("EffectiveRawListen = %q, ожидали фолбэк 0.0.0.0:56003", got)
+	}
+}
+
+// Пароль владельца необязателен: форк падает только когда паролей нет ВОВСЕ
+// (`serverWrapKeys.Count() == 0`), а абонентские он берёт из passwords.json.
+// Наше прежнее требование было строже форка и запирало сервер, у которого
+// абоненты есть, а «главного пароля» никто не задавал — из UI это не чинилось.
+func TestValidateServerWithoutOwnerPassword(t *testing.T) {
+	cfg := WdttServerConfig{
+		Listen: "0.0.0.0:56000", NatMode: "full", RelayMode: "wg",
+		NdmsIface: "OpkgTun18", WgIface: "opkgtun18",
+		RawNdmsIface: "OpkgTun19", RawIface: "opkgtun19",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("сервер без пароля владельца обязан быть валиден: %v", err)
+	}
+	// Заданный пароль тоже валиден: поле не удалено, просто перестало быть
+	// обязательным.
+	cfg.Password = "owner"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("сервер с паролем владельца: %v", err)
 	}
 }

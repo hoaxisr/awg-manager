@@ -4,7 +4,6 @@
 	// копии конфига и уезжают кнопкой «Сохранить».
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
-	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import ServerWgBind from '../freeturn/ServerWgBind.svelte';
 	import { obfOptions } from '../freeturn/options';
 	import { setListenPort } from '$lib/utils/listenPortUtils';
@@ -129,19 +128,6 @@
 			<FieldHint
 				text="WG — абоненты попадают в роутер через WireGuard-половину сервера. Raw — через raw-половину, без WireGuard. Смена применяется при перезапуске сервера."
 				ariaLabel="Подсказка: режим работы"
-			/>
-		</div>
-
-		<!-- Главный пароль живёт здесь, а не только в мастере: сервер без него не
-		     стартует и не принимает абонентов, а мастер существующему инстансу
-		     доступен не всегда — задать пароль было негде. -->
-		<div class="grid">
-			<SensitiveInput
-				label="Главный пароль"
-				bind:value={wdttServer.password}
-				hint={wdttServer.passwordSet
-					? 'Задан. Пустое поле оставляет прежний пароль'
-					: 'Без него сервер не запустится и не примет абонентов'}
 			/>
 		</div>
 

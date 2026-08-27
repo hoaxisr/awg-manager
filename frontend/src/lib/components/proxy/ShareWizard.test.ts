@@ -65,12 +65,9 @@ function next() {
 	return screen.getByRole('button', { name: 'Дальше' });
 }
 
-/** Шаг 1 — WDTT выбран по умолчанию; шаг 2 требует главный пароль. */
+/** Шаг 1 — WDTT выбран по умолчанию; шагу 2 хватает порта по умолчанию. */
 async function toClientStep() {
 	await fireEvent.click(next());
-	await fireEvent.input(screen.getByLabelText('Главный пароль'), {
-		target: { value: 'main1234' },
-	});
 	await fireEvent.click(next());
 }
 

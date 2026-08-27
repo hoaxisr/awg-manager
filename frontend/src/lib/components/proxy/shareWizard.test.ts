@@ -65,11 +65,12 @@ describe('rawPortHint: WS-19 считается от введённого пор
 });
 
 describe('shareStep2Ready: критерий старта бэкенда', () => {
-	const base = { password: '', port: '56002', connect: '' };
+	const base = { port: '56002', connect: '' };
 
-	it('WDTT: без главного пароля дальше не пускает', () => {
-		expect(shareStep2Ready({ ...base, protocol: 'wdtt' })).toBe(false);
-		expect(shareStep2Ready({ ...base, protocol: 'wdtt', password: 'main' })).toBe(true);
+	it('WDTT: пароля владельца шаг не спрашивает — хватает порта', () => {
+		// Форк падает лишь когда паролей нет ВОВСЕ; первого абонента заводит
+		// следующий шаг, и именно он делает сервер работоспособным.
+		expect(shareStep2Ready({ ...base, protocol: 'wdtt' })).toBe(true);
 	});
 
 	it('FreeTurn: нужен backend-адрес, пароля у сервера нет', () => {
@@ -80,24 +81,23 @@ describe('shareStep2Ready: критерий старта бэкенда', () => 
 	});
 
 	it('WDTT: 65535 отвергается — Raw-половине занять нечего', () => {
-		const wdtt = { protocol: 'wdtt' as const, password: 'main', connect: '' };
+		const wdtt = { protocol: 'wdtt' as const, connect: '' };
 		expect(shareStep2Ready({ ...wdtt, port: '65535' })).toBe(false);
 		expect(shareStep2Ready({ ...wdtt, port: '65534' })).toBe(true);
 	});
 
 	it('FreeTurn: порт один, 65535 допустим', () => {
-		const ft = { protocol: 'freeturn' as const, password: '', connect: '127.0.0.1:1' };
+		const ft = { protocol: 'freeturn' as const, connect: '127.0.0.1:1' };
 		expect(shareStep2Ready({ ...ft, port: '65535' })).toBe(true);
 	});
 
 	it('порт вне диапазона отвергается у обоих', () => {
-		expect(shareStep2Ready({ protocol: 'wdtt', password: 'main', port: '0', connect: '' })).toBe(
+		expect(shareStep2Ready({ protocol: 'wdtt', port: '0', connect: '' })).toBe(
 			false,
 		);
 		expect(
 			shareStep2Ready({
 				protocol: 'freeturn',
-				password: '',
 				port: '70000',
 				connect: '127.0.0.1:1',
 			}),
@@ -118,10 +118,11 @@ describe('shareStep3Ready: VK-хеш первого абонента', () => {
 });
 
 describe('shareConfigSetupComplete: тот же критерий для сохранённого конфига', () => {
-	it('WDTT-сервер настроен главным паролем', () => {
+	it('WDTT-сервер настроен самим фактом конфига', () => {
+		// Работоспособным его делают абоненты, а их состав знает ручка
+		// абонентов, не конфиг. Пароль владельца форку не обязателен.
 		const cfg = { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } as WdttServerConfig;
-		expect(shareConfigSetupComplete(cfg)).toBe(false);
-		expect(shareConfigSetupComplete({ ...cfg, password: 'main' })).toBe(true);
+		expect(shareConfigSetupComplete(cfg)).toBe(true);
 	});
 
 	it('FreeTurn-сервер настроен backend-адресом', () => {

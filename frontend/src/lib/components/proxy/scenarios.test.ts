@@ -191,10 +191,8 @@ describe("Сценарий 1: пустая страница → раздача �
     await fireEvent.click(await findByRole("button", { name: /^WDTT/ }));
     await fireEvent.click(getByRole("button", { name: "Дальше" }));
 
-    // Шаг 2 — главный пароль сервера.
-    await fireEvent.input(await findByLabelText("Главный пароль"), {
-      target: { value: "master-secret" },
-    });
+    // Шаг 2 — параметры сервера: пароля владельца шаг не спрашивает, порт
+    // подставлен по умолчанию.
     await waitFor(() =>
       expect(
         getByRole("button", { name: "Дальше" }).hasAttribute("disabled"),
@@ -220,15 +218,14 @@ describe("Сценарий 1: пустая страница → раздача �
       expect(api.startWdttServerInstance).toHaveBeenCalledWith("default"),
     );
 
-    // Пароль сервера доехал до конфига — без него сервер не стартует.
+    // Работоспособным сервер делает абонент: форк роняет старт только когда
+    // паролей нет ВОВСЕ, а пароля владельца мастер больше не заводит.
+    expect(api.addWdttServerPanelUser).toHaveBeenCalled();
     const [, savedCfg] = api.updateWdttServerInstance.mock.calls.at(-1) as [
       string,
-      { password: string },
+      { password?: string },
     ];
-    expect(savedCfg.password).toBe("master-secret");
-    // Абонент заводится ДО сохранения конфига (иначе сервер остался бы с
-    // паролем и без единого абонента, то есть незапускаемым).
-    expect(api.addWdttServerPanelUser).toHaveBeenCalled();
+    expect(savedCfg.password ?? "").toBe("");
     expect(api.generateWdttServerLink).toHaveBeenCalled();
   });
 });
@@ -266,7 +263,9 @@ describe("Сценарий 2: инстанс без обязательного �
     );
   });
 
-  it("клик по инстансу открывает параметры, пароль задаётся и сохраняется", async () => {
+  it("клик по инстансу открывает параметры, обязательное поле правится тут же", async () => {
+    // Обязательное поле сервера — порт раздачи (`Validate`: «не задан listen
+    // сервера»). Раньше он правился только в мастере, как и пароль.
     const { findByRole, getByRole, findByLabelText } = render(ProxyPage);
     await fireEvent.click(await findByRole("button", { name: "Раздача" }));
 
@@ -275,9 +274,9 @@ describe("Сценарий 2: инстанс без обязательного �
       await findByRole("heading", { name: "Сервер", level: 2 }),
     ).toBeTruthy();
 
-    // Поле обязательного пароля доступно прямо здесь.
-    const pass = await findByLabelText("Главный пароль");
-    await fireEvent.input(pass, { target: { value: "fixed-secret" } });
+    await fireEvent.click(getByRole("button", { name: "Дополнительно" }));
+    const port = await findByLabelText("Порт DTLS");
+    await fireEvent.change(port, { target: { value: "56010" } });
     await fireEvent.click(getByRole("button", { name: "Сохранить" }));
 
     await waitFor(() =>
@@ -285,9 +284,9 @@ describe("Сценарий 2: инстанс без обязательного �
     );
     const [, cfg] = api.updateWdttServerInstance.mock.calls.at(-1) as [
       string,
-      { password: string },
+      { listen: string },
     ];
-    expect(cfg.password).toBe("fixed-secret");
+    expect(cfg.listen).toBe("0.0.0.0:56010");
   });
 
   it("перенесённый инстанс объясняет своё происхождение", async () => {
