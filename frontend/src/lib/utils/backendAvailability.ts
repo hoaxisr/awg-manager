@@ -17,6 +17,25 @@ export function supportsAwg31Proxy(awgProxyVersion: string | undefined): boolean
 	return major > 1 || (major === 1 && minor >= 4);
 }
 
+// The .ko shipped with the app is newer than the one currently in the kernel.
+// awg_proxy is only reloaded when it has no live slots (rmmod would kill every
+// running tunnel's proxy), so with a tunnel up the upgrade waits for a reboot —
+// and until then AWG 3.1 stays unavailable with no visible reason.
+export function awgProxyOutdated(
+	loaded: string | undefined,
+	expected: string | undefined,
+): boolean {
+	if (!loaded || !expected) return false;
+	const parse = (v: string) => v.split('.').map(Number);
+	const [a, b] = [parse(loaded), parse(expected)];
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const l = a[i] ?? 0;
+		const e = b[i] ?? 0;
+		if (l !== e) return l < e;
+	}
+	return false;
+}
+
 // Maps the backend's `nativewgReason` (from system/info) to a user-facing
 // explanation shown next to the disabled NativeWG option, so it no longer
 // greys out silently. Empty reason → no hint (NativeWG is available).

@@ -118,10 +118,6 @@ int main(void)
 	test_roundtrip_identity();
 	test_nonce_dependence();
 
-	if (tests_failed) {
-		fprintf(stderr, "test_hp: %d/%d FAILED\n", tests_failed, tests_run);
-		return 1;
-	}
-	printf("test_hp: %d tests passed\n", tests_run);
-	return 0;
+	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);
+	return tests_failed == 0 ? 0 : 1;
 }

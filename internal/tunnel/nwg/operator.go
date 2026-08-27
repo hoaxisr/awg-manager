@@ -917,6 +917,11 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 		return fmt.Errorf("sync kmod slot: IPv6-endpoint %s требует awg_proxy.ko >= %s", endpointIP, kmodVersionIPv6)
 	}
 
+	// То же и для AWG 3.1: старый парсер молча проглотит HP_KEY/RT.
+	if (stored.Interface.HeaderProtectionKey != "" || stored.Interface.RandomTrailers) && !o.kmod.SupportsAWG31() {
+		return fmt.Errorf("sync kmod slot: AWG 3.1 требует awg_proxy.ko >= %s", kmodVersionAWG31)
+	}
+
 	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)
 	if err != nil {
 		return fmt.Errorf("build kmod config: %w", err)

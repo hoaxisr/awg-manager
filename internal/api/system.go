@@ -23,6 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -63,6 +64,7 @@ type SystemInfoData struct {
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
 	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.1.20260812"`
 	AwgProxyVersion             string                        `json:"awgProxyVersion" example:"1.4.0"`
+	AwgProxyExpectedVersion     string                        `json:"awgProxyExpectedVersion" example:"1.4.0"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
 	ActiveBackend               string                        `json:"activeBackend" example:"nativewg"`
 	RouterIP                    string                        `json:"routerIP" example:"192.168.1.1"`
@@ -463,6 +465,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"kernelModuleVersion":         kernelModuleVersion,
 		"kernelModuleLoadedVersion":   kernelModuleLoadedVersion,
 		"awgProxyVersion":             awgProxyLoadedVersion(),
+		"awgProxyExpectedVersion":     nwg.ExpectedKmodVersion,
 		"isAarch64":                   isAarch64,
 		"activeBackend":               activeBackendType,
 		"routerIP":                    routerIP,

@@ -5755,6 +5755,9 @@ definitions:
       activeBackend:
         example: nativewg
         type: string
+      awgProxyExpectedVersion:
+        example: 1.4.0
+        type: string
       awgProxyVersion:
         example: 1.4.0
         type: string

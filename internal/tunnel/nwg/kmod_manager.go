@@ -26,12 +26,22 @@ import (
 const (
 	awgProxyDir         = "/opt/etc/awg-manager/modules"
 	defaultKoPath       = awgProxyDir + "/awg_proxy.ko"
-	expectedKmodVersion = "1.3.0" // minimum required awg_proxy.ko version (dual-family: IPv6 endpoint support)
+	// ExpectedKmodVersion — минимальная версия awg_proxy.ko, которую несёт IPK
+	// в /opt/etc/awg-manager/modules. Экспортирована, чтобы system/info мог
+	// показать «в комплекте новее, чем загружено».
+	ExpectedKmodVersion = "1.4.0" // AWG 3.1: header protection + random trailers
 	// kmodVersionIPv6 is the first awg_proxy.ko version whose procfs
 	// parser understands "[v6]:port" endpoints. Older parsers run the
 	// legacy strrchr(':')+in_aton path on that string and silently
 	// create a bogus IPv4 slot — addFreshLocked fails loudly instead.
 	kmodVersionIPv6 = "1.3.0"
+	// kmodVersionAWG31 is the first awg_proxy.ko that understands the AWG 3.1
+	// tokens HP_KEY (header protection) and RT (random trailers). Older
+	// parsers hit no matching branch in awg_config_parse (kmod/awg-proxy/src/
+	// tunnel.c) and silently ignore both: the slot comes up WITHOUT header
+	// protection while the server expects it, every handshake is dropped and
+	// nothing is logged. Gate before writing so the failure names the fix.
+	kmodVersionAWG31 = "1.4.0"
 	// kmodMaxSlots — AWG_MAX_TUNNELS в kmod/awg-proxy/src/proxy.h: столько
 	// одновременных прокси-слотов (туннелей с обфускацией) держит
 	// awg_proxy.ko. При добавлении сверх лимита ядро отвечает -ENOSPC —
@@ -162,14 +172,14 @@ func (km *KmodManager) EnsureLoaded() error {
 	if km.isLoadedLocked() {
 		// Check version — upgrade if loaded version is below expected.
 		loaded := km.readVersionLocked()
-		if loaded != "" && semver.Compare(loaded, expectedKmodVersion) < 0 {
+		if loaded != "" && semver.Compare(loaded, ExpectedKmodVersion) < 0 {
 			// Don't reload if there are active proxy entries —
 			// rmmod would destroy ALL running tunnels' proxies.
 			if activeSlots := km.loadedSlotCountLocked(); activeSlots > 0 {
-				km.appLog.Warn("reload", "", fmt.Sprintf("outdated (loaded=%s, want>=%s), %d active slots — upgrade deferred until module is idle", loaded, expectedKmodVersion, activeSlots))
+				km.appLog.Warn("reload", "", fmt.Sprintf("outdated (loaded=%s, want>=%s), %d active slots — upgrade deferred until module is idle", loaded, ExpectedKmodVersion, activeSlots))
 				return nil
 			}
-			km.appLog.Info("reload", "", fmt.Sprintf("upgrading awg_proxy: loaded=%s, want>=%s, no active slots — rmmod + insmod %s", loaded, expectedKmodVersion, km.koPath))
+			km.appLog.Info("reload", "", fmt.Sprintf("upgrading awg_proxy: loaded=%s, want>=%s, no active slots — rmmod + insmod %s", loaded, ExpectedKmodVersion, km.koPath))
 			_, _ = km.execFn(ctx, "rmmod", "awg_proxy")
 			// Fall through to insmod below.
 		} else {
@@ -194,7 +204,7 @@ func (km *KmodManager) EnsureLoaded() error {
 		stderr = result.Stderr
 	}
 	if err == nil && result != nil && result.ExitCode == 0 {
-		km.appLog.Info("load", "", "awg_proxy.ko loaded (expected>="+expectedKmodVersion+")")
+		km.appLog.Info("load", "", "awg_proxy.ko loaded (expected>="+ExpectedKmodVersion+")")
 		return nil
 	}
 
@@ -370,6 +380,18 @@ func (km *KmodManager) addFreshLocked(tunnelID string, cfg KmodConfig) (KmodResu
 			}
 			return KmodResult{}, fmt.Errorf("kmod add tunnel %s: IPv6 endpoint %s requires awg_proxy.ko >= %s (loaded: %s)",
 				tunnelID, cfg.EndpointIP, kmodVersionIPv6, loaded)
+		}
+	}
+
+	// AWG 3.1 tokens need kmod >= kmodVersionAWG31 (see the const).
+	if cfg.HeaderProtectionKeyHex != "" || cfg.RandomTrailers {
+		loaded := km.readVersionLocked()
+		if loaded == "" || semver.Compare(loaded, kmodVersionAWG31) < 0 {
+			if loaded == "" {
+				loaded = "unknown"
+			}
+			return KmodResult{}, fmt.Errorf("kmod add tunnel %s: AWG 3.1 (header protection / random trailers) requires awg_proxy.ko >= %s (loaded: %s)",
+				tunnelID, kmodVersionAWG31, loaded)
 		}
 	}
 
@@ -559,6 +581,17 @@ func (km *KmodManager) SupportsIPv6() bool {
 	defer km.mu.Unlock()
 	loaded := km.readVersionLocked()
 	return loaded != "" && semver.Compare(loaded, kmodVersionIPv6) >= 0
+}
+
+// SupportsAWG31 сообщает, понимает ли загруженный awg_proxy.ko токены
+// HP_KEY/RT (см. kmodVersionAWG31). Как и SupportsIPv6, нужен до сноса
+// живого слота — тот же предикат внутри addFreshLocked срабатывает уже
+// после него.
+func (km *KmodManager) SupportsAWG31() bool {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	loaded := km.readVersionLocked()
+	return loaded != "" && semver.Compare(loaded, kmodVersionAWG31) >= 0
 }
 
 // IsLoaded checks if /proc/awg_proxy/version exists.

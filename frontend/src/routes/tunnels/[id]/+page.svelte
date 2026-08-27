@@ -17,7 +17,7 @@
 	import AwgConfigAnalyzer from '$lib/components/diagnostics/AwgConfigAnalyzer.svelte';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
-	import { supportsAwg3, supportsAwg31Proxy } from '$lib/utils/backendAvailability';
+	import { awgProxyOutdated, supportsAwg3, supportsAwg31Proxy } from '$lib/utils/backendAvailability';
 	import { Network, Route, Router, Server, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
@@ -45,6 +45,20 @@
 
 	let tunnel = $state<AWGTunnel | null>(null);
 	let systemInfo = $state<SystemInfo | null>(null);
+	// AWG 3.0 идёт от версии kernel-модуля, AWG 3.1 на NativeWG — от версии
+	// awg_proxy.ko: у бэкендов разные модули и разные версии.
+	// Модуль в ядре старее того, что принёс IPK: awg_proxy не перезагружается,
+	// пока у него есть живые слоты, поэтому при поднятом туннеле апгрейд ждёт
+	// перезагрузки роутера — и до неё AWG 3.1 недоступен без видимой причины.
+	let proxyOutdated = $derived(
+		tunnel?.backend === 'nativewg' &&
+			awgProxyOutdated(systemInfo?.awgProxyVersion, systemInfo?.awgProxyExpectedVersion),
+	);
+	let awg3Available = $derived(
+		tunnel?.backend === 'nativewg'
+			? supportsAwg31Proxy(systemInfo?.awgProxyVersion)
+			: supportsAwg3(systemInfo?.kernelModuleLoadedVersion),
+	);
 	let loading = $state(true);
 	let saving = $state(false);
 
@@ -422,12 +436,18 @@
 
 			{:else if activeTab === 'obfuscation'}
 				<div class="tab-form">
+					{#if proxyOutdated}
+						<p class="module-warn">
+							В ядре загружен awg_proxy {systemInfo?.awgProxyVersion}, а в этой сборке —
+							{systemInfo?.awgProxyExpectedVersion}. Модуль нельзя заменить, пока через него
+							идут туннели: перезагрузите роутер, иначе параметры AWG 3.1 останутся недоступны.
+						</p>
+					{/if}
 					<AWGAdvancedParams
 						bind:form={$form}
 						errors={$errors}
 						{hints}
-						awg3={(tunnel?.backend !== 'nativewg' && supportsAwg3(systemInfo?.kernelModuleLoadedVersion)) ||
-							(tunnel?.backend === 'nativewg' && supportsAwg31Proxy(systemInfo?.awgProxyVersion))}
+						awg3={awg3Available}
 						awg3Limited={tunnel?.backend === 'nativewg'}
 					/>
 				</div>
@@ -518,6 +538,16 @@
 {/if}
 
 <style>
+	.module-warn {
+		margin: 0 0 1rem;
+		padding: 0.7rem 0.9rem;
+		font-size: 0.85rem;
+		color: var(--warning);
+		background: color-mix(in srgb, var(--warning) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+		border-radius: 8px;
+	}
+
 	.text-secondary {
 		color: var(--color-text-secondary);
 	}
