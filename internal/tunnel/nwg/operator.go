@@ -68,6 +68,10 @@ type OperatorNativeWG struct {
 	// ndmsinfo.SupportsWireguardASC; overridable in tests.
 	supportsASC func() bool
 
+	// supportsASC3 reports whether that ASC understands AWG 3.0/3.1 device
+	// params. Default: ndmsinfo.SupportsWireguardASC3; overridable in tests.
+	supportsASC3 func() bool
+
 	// Endpoint-страж v6-туннелей на ASC (endpoint_guard.go): реестр
 	// «kernel-имя → ожидаемый endpoint», фоновая сверка wg show/set.
 	guardMu   sync.Mutex
@@ -86,13 +90,14 @@ type OperatorNativeWG struct {
 // NewOperator creates a new NativeWG operator.
 func NewOperator(queries *query.Queries, commands *command.Commands, tr *transport.Client, appLogger logging.AppLogger) *OperatorNativeWG {
 	op := &OperatorNativeWG{
-		queries:     queries,
-		commands:    commands,
-		transport:   tr,
-		kmod:        NewKmodManager(appLogger),
-		appLog:      logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
-		resolveFn:   netutil.ResolveEndpoint,
-		supportsASC: ndmsinfo.SupportsWireguardASC,
+		queries:      queries,
+		commands:     commands,
+		transport:    tr,
+		kmod:         NewKmodManager(appLogger),
+		appLog:       logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubOps),
+		resolveFn:    netutil.ResolveEndpoint,
+		supportsASC:  ndmsinfo.SupportsWireguardASC,
+		supportsASC3: ndmsinfo.SupportsWireguardASC3,
 	}
 	op.hasProxySlot = op.kmod.HasSlotListening
 	return op
@@ -278,7 +283,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 
 	// Set AWG obfuscation params via RCI (firmware >= 5.1Alpha4).
 	// Non-fatal: kmod proxy handles actual obfuscation regardless.
-	if ndmsinfo.SupportsWireguardASC() {
+	if o.useASC(&stored.Interface) {
 		if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
 			if err := o.commands.Wireguard.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
 				o.appLog.Warn("set-asc-params", "", "RCI failed (non-fatal): "+err.Error())
@@ -294,6 +299,40 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Creating NDMS interface %s", ndmsName))
 	o.appLog.Info("create", ndmsName, "interface created")
 	return idx, nil
+}
+
+// useASC сообщает, идёт ли ИМЕННО ЭТОТ туннель нативным путём ASC.
+//
+// Прошивочный ASC на 5.01 останавливается на AWG 2.0: параметры 3.0/3.1
+// (защита заголовков, случайные хвосты) он не моделирует, и buildASCJSON их
+// не отправляет — туннель встаёт как 2.0 против сервера, который ждёт 3.1, и
+// молча не поднимается. Такие туннели идут через awg_proxy.ko, который эти
+// параметры умеет, даже если прошивка ASC-способная.
+func (o *OperatorNativeWG) useASC(iface *storage.AWGInterface) bool {
+	// Без явного признака ASC 3.x считаем, что прошивка их не умеет, и уходим
+	// на kmod: там параметры хотя бы применяются.
+	return ascCoversConfig(iface, o.supportsASC(), o.supportsASC3 != nil && o.supportsASC3())
+}
+
+// UsesProxyPath сообщает, идёт ли туннель через awg_proxy.ko на ТЕКУЩЕЙ
+// прошивке: либо ASC нет вовсе, либо конфиг 3.x, которого ASC не знает.
+// Оркестратору тот же признак нужен без оператора: по нему он решает, надо ли
+// поднимать туннель после ребута роутера и снимать слот при падении WAN.
+func UsesProxyPath(iface *storage.AWGInterface) bool {
+	return !ascCoversConfig(iface, ndmsinfo.SupportsWireguardASC(), ndmsinfo.SupportsWireguardASC3())
+}
+
+// ascCoversConfig — тот же предикат в чистом виде: покрывает ли ASC прошивки
+// параметры этого конфига.
+func ascCoversConfig(iface *storage.AWGInterface, supportsASC, ascKnowsAWG3 bool) bool {
+	if !supportsASC {
+		return false
+	}
+	switch config.ClassifyAWGVersion(iface) {
+	case "awg3", "awg3.1":
+		return ascKnowsAWG3
+	}
+	return true
 }
 
 // Start starts a NativeWG tunnel.
@@ -313,7 +352,7 @@ func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel)
 		return tunnel.ErrNotObfuscated
 	}
 
-	if ndmsinfo.SupportsWireguardASC() {
+	if o.useASC(&stored.Interface) {
 		return o.startNative(ctx, stored)
 	}
 	return o.startProxy(ctx, stored)
@@ -462,6 +501,19 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		return err
 	}
 
+	// Снять параметры ASC, если они там есть: на прошивке с ASC туннель мог
+	// стоять на нативном пути (2.0), а теперь уезжает на awg_proxy — иначе
+	// прошивка обфусцирует сама, а kmod наложит свою обфускацию поверх.
+	if o.supportsASC() {
+		// Fail-closed: не сняли — не поднимаем. Туннель с оставшимися
+		// параметрами ASC прошивка обфусцирует сама, а kmod наложит свою
+		// обфускацию поверх; на выходе мусор, который снаружи выглядит как
+		// живой туннель без единого прошедшего пакета.
+		if err := o.commands.Wireguard.ResetASCParams(ctx, names.NDMSName); err != nil {
+			return fmt.Errorf("снять параметры ASC перед переходом на awg_proxy: %w", err)
+		}
+	}
+
 	// Ensure kernel module is loaded
 	o.appLog.Full("start", stored.Name, "Loading kmod proxy")
 	if err := o.kmod.EnsureLoaded(); err != nil {
@@ -582,10 +634,13 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	}
 	o.appLog.Full("stop", stored.Name, "DNS cleared")
 
-	// Only remove kmod proxy entry on older firmware
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
+	// Слот снимаем всегда: на ASC-прошивке туннель мог идти через прокси
+	// (конфиг 3.x, см. useASC), а конфиг с тех пор мог смениться — гейт по
+	// текущему конфигу оставил бы слот-сироту. Для туннеля без слота
+	// RemoveTunnel — безопасный no-op, а брошенный слот держит порт, ест пул
+	// из kmodMaxSlots и навсегда откладывает апгрейд модуля: EnsureLoaded не
+	// делает rmmod, пока в /proc есть живые слоты.
+	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
 	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
@@ -596,10 +651,9 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
-	// 1. Remove kmod proxy entry (older firmware only, before interface deletion)
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
+	// 1. Remove kmod proxy entry (before interface deletion) — безусловно,
+	// по той же причине, что и в Stop.
+	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
 	// 2. Remove ping-check profile (before interface deletion)
@@ -743,7 +797,7 @@ func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunn
 	//   running & peer offline & ASC & stalled        -> Broken
 	//   running & peer offline (coherent / ASC young) -> Starting
 	//   disabled                                       -> Stopped
-	info.State = classifyNWGState(rciState, o.supportsASC(), o.hasProxySlot, time.Now())
+	info.State = classifyNWGState(rciState, o.useASC(&stored.Interface), o.hasProxySlot, time.Now())
 
 	return info
 }
@@ -901,7 +955,7 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 //
 // No-op on ASC-native firmware (no kmod slot exists).
 func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWGTunnel) error {
-	if o.supportsASC() {
+	if o.useASC(&stored.Interface) {
 		return nil
 	}
 	bindIface := o.ResolveActiveWAN(ctx, stored)
@@ -915,6 +969,11 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 	// живой слот ради заведомо провальной пересборки нельзя.
 	if strings.Contains(endpointIP, ":") && !o.kmod.SupportsIPv6() {
 		return fmt.Errorf("sync kmod slot: IPv6-endpoint %s требует awg_proxy.ko >= %s", endpointIP, kmodVersionIPv6)
+	}
+
+	// То же и для AWG 3.1: старый парсер молча проглотит HP_KEY/RT.
+	if (stored.Interface.HeaderProtectionKey != "" || stored.Interface.RandomTrailers) && !o.kmod.SupportsAWG31() {
+		return fmt.Errorf("sync kmod slot: AWG 3.1 требует awg_proxy.ko >= %s", kmodVersionAWG31)
 	}
 
 	kmodCfg, err := buildKmodConfigResolved(stored, endpointIP, endpointPort, bindIface)

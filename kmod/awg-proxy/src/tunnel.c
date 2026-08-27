@@ -246,7 +246,11 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 			}
 			cfg->hp_key_set = 1;
 		} else if (strcmp(key, "RT") == 0) {
-			bad = kstrtoint(val, 10, &cfg->random_trailers) != 0;
+			/* Флаг, не число: только 0 или 1. Иначе "RT=7" тихо
+			 * включал бы трейлеры, а завтра то же значение могло бы
+			 * значить что-то другое. */
+			bad = kstrtoint(val, 10, &cfg->random_trailers) != 0 ||
+			      (cfg->random_trailers != 0 && cfg->random_trailers != 1);
 		} else if (key[0] == 'I' && key[1] >= '1' && key[1] <= '5' &&
 			   key[2] == '\0') {
 			int idx = key[1] - '1';

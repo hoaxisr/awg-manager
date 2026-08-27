@@ -46,6 +46,26 @@ func (c *WireguardCommands) SetASCParams(ctx context.Context, name string, param
 		c.queries.RunningConfig.InvalidateAll)
 }
 
+// ResetASCParams снимает параметры ASC с интерфейса. Нужен, когда туннель
+// уезжает с нативного пути на awg_proxy (конфиг 3.x на прошивке с ASC 2.0):
+// оставленные в NDMS параметры прошивка продолжит применять, а kmod наложит
+// свою обфускацию поверх — на выходе мусор.
+//
+// Форма ровно такая: структурный вид ({"asc":{"no":true}}) прошивка не
+// принимает, а эта строка отвечает «reset ASC parameters» (проверено на
+// 5.01.C.3.0-1).
+func (c *WireguardCommands) ResetASCParams(ctx context.Context, name string) error {
+	payload := map[string]any{"parse": "interface " + name + " no wireguard asc"}
+	return postMutationChecked(ctx, c.poster, c.save, payload, "reset asc params "+name,
+		func() {
+			c.queries.Interfaces.Invalidate(name)
+			if c.queries.WGServers != nil {
+				c.queries.WGServers.Invalidate(name)
+			}
+		},
+		c.queries.RunningConfig.InvalidateAll)
+}
+
 // ImportResult holds the parsed outcome of a wireguard config import.
 // Intersects names a pre-existing interface the imported config collides
 // with (empty if none); Messages are the human-readable status[] lines the

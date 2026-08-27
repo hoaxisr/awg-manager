@@ -292,3 +292,65 @@ func TestAddTunnel_IPv6BracketedLineOnNewKmod(t *testing.T) {
 		t.Errorf("add line must use the bracketed form; got %q", addBody)
 	}
 }
+
+// --- AWG 3.1 tokens are gated on kmod >= kmodVersionAWG31 ------------------
+
+func TestAddTunnel_AWG31RequiresKmod140(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.3.0"
+	cfg := defaultCfg()
+	cfg.HeaderProtectionKeyHex = strings.Repeat("ab", 32)
+
+	_, err := km.AddTunnel("tunnel-hp-old-kmod", cfg)
+	if err == nil {
+		t.Fatal("AddTunnel with HP_KEY on kmod 1.3.0 must fail")
+	}
+	if !strings.Contains(err.Error(), kmodVersionAWG31) {
+		t.Errorf("error should name required version %s; got: %v", kmodVersionAWG31, err)
+	}
+	if got := stub.countWritesTo("/proc/awg_proxy/add"); got != 0 {
+		t.Errorf("no /proc/add write may happen on gate failure; got %d", got)
+	}
+}
+
+func TestAddTunnel_RandomTrailersRequiresKmod140(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.3.0"
+	cfg := defaultCfg()
+	cfg.RandomTrailers = true
+
+	if _, err := km.AddTunnel("tunnel-rt-old-kmod", cfg); err == nil {
+		t.Fatal("AddTunnel with RT=1 on kmod 1.3.0 must fail")
+	}
+	if got := stub.countWritesTo("/proc/awg_proxy/add"); got != 0 {
+		t.Errorf("no /proc/add write may happen on gate failure; got %d", got)
+	}
+}
+
+func TestAddTunnel_AWG31PassesOnNewKmod(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.4.0"
+	cfg := defaultCfg()
+	cfg.HeaderProtectionKeyHex = strings.Repeat("ab", 32)
+	cfg.RandomTrailers = true
+
+	if _, err := km.AddTunnel("tunnel-hp", cfg); err != nil {
+		t.Fatalf("AddTunnel on kmod 1.4.0: %v", err)
+	}
+	var addBody string
+	for _, w := range stub.writes {
+		if w.path == "/proc/awg_proxy/add" {
+			addBody = w.body
+		}
+	}
+	if !strings.Contains(addBody, "HP_KEY="+strings.Repeat("ab", 32)) || !strings.Contains(addBody, "RT=1") {
+		t.Errorf("add line must carry HP_KEY and RT; got %q", addBody)
+	}
+}
+
+func TestAddTunnel_NoAWG31NotGated(t *testing.T) {
+	km, _ := newKmodManagerForTest() // stub reports 1.1.10
+	if _, err := km.AddTunnel("tunnel-plain", defaultCfg()); err != nil {
+		t.Fatalf("plain AWG tunnel must not be gated on the AWG 3.1 version: %v", err)
+	}
+}

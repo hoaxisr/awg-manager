@@ -1,5 +1,5 @@
-OK   KN-1812 -> awg_proxy-arm64.ko  56296b  v1.3.0  sha=a0ecb2de6ae3
-OK   KN-1810 -> awg_proxy-mt7621.ko  48608b  v1.3.0  sha=d50b172d9047
-OK   KN-1212 -> awg_proxy-mt7628.ko  47768b  v1.3.0  sha=f27bad3549b3
-OK   KN-2010 -> awg_proxy-mips.ko  49376b  v1.3.0  sha=fbab1d6a3c64
-OK   KN-1011 -> awg_proxy-KN-1011.ko  53240b  v1.3.0  sha=66afdad153fb
+OK   KN-1812 -> awg_proxy-arm64.ko  58376b  v1.4.0  sha=ae18c8fae2bb
+OK   KN-1810 -> awg_proxy-mt7621.ko  50616b  v1.4.0  sha=a7684eca7619
+OK   KN-1212 -> awg_proxy-mt7628.ko  49912b  v1.4.0  sha=e92a6f516347
+OK   KN-2010 -> awg_proxy-mips.ko  51224b  v1.4.0  sha=01d1602a1b9a
+OK   KN-1011 -> awg_proxy-KN-1011.ko  55512b  v1.4.0  sha=8cfe60df2b23

@@ -554,6 +554,25 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	tunnelID := newStored.ID
 	var errs []error
 
+	// Правка через границу 2.0↔3.x меняет сам путь туннеля: ASC прошивки или
+	// awg_proxy. Посинхронно этот переход не применяется — половина параметров
+	// осталась бы у прошивки, половина у kmod, обе обфускации легли бы друг на
+	// друга, и туннель выглядел бы живым, не пропуская ни пакета. Только
+	// полный перезапуск: Stop снимает слот и параметры прежнего пути, Start
+	// поднимает по новому.
+	if nwg.UsesProxyPath(&oldStored.Interface) != nwg.UsesProxyPath(&newStored.Interface) {
+		s.logInfo("update", tunnelID, "путь туннеля меняется (ASC ↔ awg_proxy) — перезапуск")
+		if err := s.nwgOperator.Stop(ctx, oldStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to stop on path switch: "+err.Error())
+			return fmt.Errorf("stop on path switch: %w", err)
+		}
+		if err := s.nwgOperator.Start(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to start on path switch: "+err.Error())
+			return fmt.Errorf("start on path switch: %w", err)
+		}
+		return nil
+	}
+
 	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey {
 		if err := s.nwgOperator.SyncPrivateKey(ctx, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG private-key: "+err.Error())
@@ -742,6 +761,13 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	parsed, err := config.Parse(confContent)
 	if err != nil {
 		return nil, fmt.Errorf("parse conf: %w", err)
+	}
+
+	// Тот же гейт, что и на create/update: чужой .conf с битым
+	// HeaderProtectionKey или коротким S1-S4 иначе доедет до ядра и туннель
+	// встанет с выключенной header protection — молча.
+	if err := config.ValidateAWG3(&parsed.Interface.AWGObfuscation); err != nil {
+		return nil, err
 	}
 
 	// Set name

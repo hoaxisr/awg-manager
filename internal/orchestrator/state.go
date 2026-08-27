@@ -26,6 +26,13 @@ type tunnelState struct {
 	// заглушку: после ребута нужен полный Start (decideBoot).
 	EndpointMayV6 bool
 
+	// ViaProxy: туннель идёт через awg_proxy.ko, а не через нативный ASC
+	// прошивки. Так бывает и на ASC-прошивке: её ASC знает AmneziaWG только до
+	// 2.0, а конфиг 3.0/3.1 обслуживает kmod (nwg.UsesProxyPath). От этого
+	// зависит, поднимать ли туннель после ребута роутера и снимать ли слот при
+	// падении WAN: NDMS сам умеет только свою половину, про слот он не знает.
+	ViaProxy bool
+
 	// quiescentUntil: while now < this, a conf=disabled edge for this tunnel
 	// is treated as transient NDMS settling (do not stop). Set on (re)start.
 	quiescentUntil time.Time
@@ -110,6 +117,7 @@ func tunnelStateFromStored(t *storage.AWGTunnel) *tunnelState {
 		ISPInterface:  t.ISPInterface,
 		ActiveWAN:     t.ActiveWAN,
 		EndpointMayV6: nwg.EndpointMayResolveIPv6(t.Peer.Endpoint),
+		ViaProxy:      t.Backend == "nativewg" && nwg.UsesProxyPath(&t.Interface),
 	}
 }
 

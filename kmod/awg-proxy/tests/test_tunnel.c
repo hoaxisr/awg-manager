@@ -351,6 +351,16 @@ static void test_accepts_random_trailers_flag(void)
 	ASSERT_TRUE("accepts_random_trailers_flag", cfg.random_trailers, "random_trailers must be set");
 }
 
+static void test_rejects_out_of_range_random_trailers(void)
+{
+	awg_config_t cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+	ASSERT_TRUE("rejects_rt_out_of_range",
+		    awg_config_parse("203.0.113.1:51820 RT=7", &cfg) != 0,
+		    "RT is a flag: only 0 and 1 are accepted");
+}
+
 static void test_rejects_hp_with_short_padding(void)
 {
 	awg_config_t cfg;
@@ -385,6 +395,7 @@ int main(void)
 	test_endpoint_parse_del_forms();
 	test_accepts_header_protection_key();
 	test_accepts_random_trailers_flag();
+	test_rejects_out_of_range_random_trailers();
 	test_rejects_hp_with_short_padding();
 
 	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);

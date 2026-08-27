@@ -189,7 +189,7 @@ func TestEnsureLoaded_DefersUpgradeWhenSlotsActive(t *testing.T) {
 // Loaded version already >= expected → nothing to do, no commands at all.
 func TestEnsureLoaded_UpToDateIsNoop(t *testing.T) {
 	km, stub, fr := newEnsureLoadedTestKM(true)
-	stub.version = expectedKmodVersion
+	stub.version = ExpectedKmodVersion
 
 	if err := km.EnsureLoaded(); err != nil {
 		t.Fatalf("EnsureLoaded: %v", err)

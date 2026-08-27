@@ -357,8 +357,8 @@
 			<SettingsSectionLabel label="AmneziaWG 3.0" icon={ShieldCheck} tone="purple" header />
 			<p class="group-desc">
 				{#if awg3Limited}
-					Через NativeWG (awg_proxy) доступны защита заголовков и RandomTrailers (ниже).
-					Таймеры и content-padding работают лишь в режиме kernel.
+					Через NativeWG (awg_proxy) работает защита заголовков — её ключ задаётся здесь.
+					Таймеры и content-padding доступны лишь в режиме kernel.
 				{:else}
 					Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
 					<code>min-max</code> в секундах; пусто = значение по умолчанию.
