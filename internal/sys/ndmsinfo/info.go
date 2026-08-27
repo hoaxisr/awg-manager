@@ -117,6 +117,16 @@ func SupportsWireguardASC() bool {
 	return isAtLeast501A3(info.Release)
 }
 
+// SupportsWireguardASC3 сообщает, понимает ли ASC прошивки параметры
+// AmneziaWG 3.0/3.1 (защита заголовков, случайные хвосты). Ни одна выпущенная
+// прошивка их не понимает: ASC на 5.01 останавливается на 2.0, и конфиг 3.x
+// уезжает в NDMS обрезанным. Поддержку Keenetic ведёт в своём wireguard и
+// обещает в одной из 5.02.A — как станет известен конкретный релиз, здесь
+// появится проверка рядом с isAtLeast501A3.
+func SupportsWireguardASC3() bool {
+	return false
+}
+
 // SupportsHRanges returns true if the current NDMS release supports
 // H1-H4 header parameters as ranges (AWG 2.0). Shares the same firmware
 // gate as SupportsASC — both features landed in the same release.

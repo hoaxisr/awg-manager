@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	awgProxyOutdated,
+	supportsAwg31OnNativeWG,
 	nativewgUnavailableHint,
 	supportsAwg3,
 	supportsAwg31Proxy,
@@ -67,5 +68,21 @@ describe('awgProxyOutdated', () => {
 		expect(awgProxyOutdated('', '1.4.0')).toBe(false);
 		expect(awgProxyOutdated(undefined, '1.4.0')).toBe(false);
 		expect(awgProxyOutdated('1.3.0', undefined)).toBe(false);
+	});
+});
+
+describe('supportsAwg31OnNativeWG', () => {
+	it('доступен, когда модуль ещё не загружен, но сборка несёт 1.4.0', () => {
+		expect(supportsAwg31OnNativeWG(undefined, '1.4.0')).toBe(true);
+		expect(supportsAwg31OnNativeWG('', '1.4.0')).toBe(true);
+	});
+
+	it('доступен, когда загруженный модуль уже умеет 3.1', () => {
+		expect(supportsAwg31OnNativeWG('1.4.0', undefined)).toBe(true);
+	});
+
+	it('недоступен, когда ни загруженный, ни принесённый не умеют', () => {
+		expect(supportsAwg31OnNativeWG('1.3.0', '1.3.0')).toBe(false);
+		expect(supportsAwg31OnNativeWG(undefined, undefined)).toBe(false);
 	});
 });
