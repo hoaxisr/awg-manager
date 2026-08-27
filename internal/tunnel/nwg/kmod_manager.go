@@ -345,6 +345,22 @@ func (km *KmodManager) RestoreTunnel(tunnelID string, cfg KmodConfig) (KmodResul
 	// circuit instead of falling through to addFreshLocked, which would
 	// del the slot we already adopted, change the listen port, and
 	// leave NDMS peer endpoint pointing at the old port.
+	// Слот, созданный модулем 1.3.x, физически не несёт защиту заголовков:
+	// тот парсер токен HP_KEY не знал и молча его отбрасывал. Усыновить такой
+	// слот значит вернуть ровно ту тихую поломку, ради которой стоит гейт в
+	// addFreshLocked — сервер рубит каждый хендшейк, а в журнале только
+	// "adopt-tunnel". Проверяем ДО усыновления, включая уже отслеживаемый.
+	if cfg.HeaderProtectionKeyHex != "" || cfg.RandomTrailers {
+		loaded := km.readVersionLocked()
+		if loaded == "" || semver.Compare(loaded, kmodVersionAWG31) < 0 {
+			if loaded == "" {
+				loaded = "unknown"
+			}
+			return KmodResult{}, fmt.Errorf("kmod restore tunnel %s: AWG 3.1 (header protection / random trailers) requires awg_proxy.ko >= %s (loaded: %s)",
+				tunnelID, kmodVersionAWG31, loaded)
+		}
+	}
+
 	if entry, tracked := km.tunnels[tunnelID]; tracked {
 		km.appLog.Info("restore-tunnel", tunnelID, fmt.Sprintf("already tracked → 127.0.0.1:%d (no-op)", entry.listenPort))
 		return KmodResult{ListenPort: entry.listenPort, Adopted: true}, nil

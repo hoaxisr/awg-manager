@@ -51,7 +51,7 @@ func decideBoot(state *State) []Action {
 			actions = appendPostStartActions(actions, t)
 
 		case "nativewg":
-			if !state.supportsASC {
+			if !state.supportsASC || t.ViaProxy {
 				// Reconcile-to-desired instead of unconditional Stop+Start:
 				// the executor skips the disruptive restart when the tunnel
 				// is already running WITH a handshake, and still re-attaches
@@ -95,7 +95,7 @@ func decideReconnect(state *State) []Action {
 				// Re-apply NDMS config, firewall, routing around the running process.
 				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
 			case "nativewg":
-				if state.supportsASC {
+				if state.supportsASC && !t.ViaProxy {
 					// KeenOS 5+ ASC mode has no kmod proxy to restore. A running
 					// NativeWG interface may still need a full resync after awgm
 					// restart/update so ASC bindings, routes and persistence are
@@ -289,7 +289,7 @@ func decideWANUp(event Event, state *State) []Action {
 			}
 
 		case "nativewg":
-			if state.supportsASC {
+			if state.supportsASC && !t.ViaProxy {
 				continue // NDMS handles failover natively via ASC on >= 5.01.A.3
 			}
 			// Skip only when actively running on a DIFFERENT WAN (multi-WAN:
@@ -329,7 +329,7 @@ func decideWANDown(event Event, state *State) []Action {
 			actions = append(actions, Action{Type: ActionSuspendKernel, Tunnel: t.ID})
 
 		case "nativewg":
-			if state.supportsASC {
+			if state.supportsASC && !t.ViaProxy {
 				continue // ASC handles failover natively
 			}
 			actions = append(actions, Action{Type: ActionSuspendProxy, Tunnel: t.ID})

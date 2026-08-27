@@ -314,6 +314,14 @@ func (o *OperatorNativeWG) useASC(iface *storage.AWGInterface) bool {
 	return ascCoversConfig(iface, o.supportsASC(), o.supportsASC3 != nil && o.supportsASC3())
 }
 
+// UsesProxyPath сообщает, идёт ли туннель через awg_proxy.ko на ТЕКУЩЕЙ
+// прошивке: либо ASC нет вовсе, либо конфиг 3.x, которого ASC не знает.
+// Оркестратору тот же признак нужен без оператора: по нему он решает, надо ли
+// поднимать туннель после ребута роутера и снимать слот при падении WAN.
+func UsesProxyPath(iface *storage.AWGInterface) bool {
+	return !ascCoversConfig(iface, ndmsinfo.SupportsWireguardASC(), ndmsinfo.SupportsWireguardASC3())
+}
+
 // ascCoversConfig — тот же предикат в чистом виде: покрывает ли ASC прошивки
 // параметры этого конфига.
 func ascCoversConfig(iface *storage.AWGInterface, supportsASC, ascKnowsAWG3 bool) bool {
@@ -497,8 +505,12 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	// стоять на нативном пути (2.0), а теперь уезжает на awg_proxy — иначе
 	// прошивка обфусцирует сама, а kmod наложит свою обфускацию поверх.
 	if o.supportsASC() {
+		// Fail-closed: не сняли — не поднимаем. Туннель с оставшимися
+		// параметрами ASC прошивка обфусцирует сама, а kmod наложит свою
+		// обфускацию поверх; на выходе мусор, который снаружи выглядит как
+		// живой туннель без единого прошедшего пакета.
 		if err := o.commands.Wireguard.ResetASCParams(ctx, names.NDMSName); err != nil {
-			o.appLog.Warn("reset-asc", names.NDMSName, err.Error())
+			return fmt.Errorf("снять параметры ASC перед переходом на awg_proxy: %w", err)
 		}
 	}
 
@@ -622,10 +634,13 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	}
 	o.appLog.Full("stop", stored.Name, "DNS cleared")
 
-	// Only remove kmod proxy entry on older firmware
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
+	// Слот снимаем всегда: на ASC-прошивке туннель мог идти через прокси
+	// (конфиг 3.x, см. useASC), а конфиг с тех пор мог смениться — гейт по
+	// текущему конфигу оставил бы слот-сироту. Для туннеля без слота
+	// RemoveTunnel — безопасный no-op, а брошенный слот держит порт, ест пул
+	// из kmodMaxSlots и навсегда откладывает апгрейд модуля: EnsureLoaded не
+	// делает rmmod, пока в /proc есть живые слоты.
+	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
 	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
@@ -636,10 +651,9 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
-	// 1. Remove kmod proxy entry (older firmware only, before interface deletion)
-	if !ndmsinfo.SupportsWireguardASC() {
-		_ = o.kmod.RemoveTunnel(stored.ID)
-	}
+	// 1. Remove kmod proxy entry (before interface deletion) — безусловно,
+	// по той же причине, что и в Stop.
+	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
 	// 2. Remove ping-check profile (before interface deletion)
