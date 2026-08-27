@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    a { color: #7aa2f7; } a:hover { color: #6e8bbb; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #1a1b26; color: #c0caf5; font-size: 13px; display: flex; flex-direction: column;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 22px 32px 16px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 24px; font-weight: 600; letter-spacing: -0.01em;">Прокси</div>
+      <div style="color: #737aa2;">Выход трафика роутера и раздача другим</div>
+    </div>
+    <div style="height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid #3b4261; border-radius: 6px; background: #16161e;">
+      <span style="width: 6px; height: 6px; border-radius: 999px; background: #9ece6a;"></span>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #a9b1d6;">wdtt 1.4.4 · freeturn 2.1.1</span>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 4px; padding: 0 32px; border-bottom: 1px solid #3b4261;">
+    <div style="height: 36px; display: flex; align-items: center; padding: 0 14px; font-weight: 500; border-bottom: 2px solid #7aa2f7; margin-bottom: -1px;">Выход <span style="margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: #24283b; font-size: 11px;">2</span></div>
+    <div style="height: 36px; display: flex; align-items: center; padding: 0 14px; color: #737aa2;">Раздача <span style="margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: #24283b; font-size: 11px;">2</span></div>
+  </div>
+
+  <div style="flex-grow: 1; display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 20px; padding: 18px 32px 22px; min-height: 0;">
+
+    <!-- Рельса из карточек -->
+    <div style="display: flex; flex-direction: column; gap: 12px; min-height: 0;">
+
+      <div style="border: 1px solid rgba(158,206,106,0.45); border-radius: 12px; background: #16161e; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+        <div style="height: 3px; background: #9ece6a;"></div>
+        <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;">
+            <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+              <span style="font-size: 14px; font-weight: 600;">Нидерланды</span>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: rgba(122,162,247,0.18); border: 1px solid rgba(122,162,247,0.4); font-size: 11px;">WDTT</span>
+                <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; border: 1px solid #3b4261; font-size: 11px; color: #a9b1d6;">WG</span>
+              </div>
+            </div>
+            <div style="width: 32px; height: 17px; border-radius: 999px; background: #7aa2f7; position: relative; flex-shrink: 0;">
+              <span style="position: absolute; right: 2px; top: 2px; width: 13px; height: 13px; border-radius: 999px; background: #16161e;"></span>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #3b4261; border-radius: 8px; background: #1a1b26; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 12h.01"/></svg>
+              <span style="color: #a9b1d6; font-size: 12px; flex-grow: 1;">Этот роутер</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #737aa2;">:9001</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding-left: 6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3b4261" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7dcfff" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg>
+              <span style="color: #a9b1d6; font-size: 12px; flex-grow: 1;">vps-ams</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #737aa2;">:56002</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding-left: 6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#3b4261" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ece6a" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>
+              <span style="color: #a9b1d6; font-size: 12px; flex-grow: 1;">Туннель awg10</span>
+              <span style="font-size: 11px; color: #737aa2;">в маршрутах</span>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="width: 7px; height: 7px; border-radius: 999px; background: #9ece6a;"></span>
+            <span style="color: #a9b1d6; font-size: 12px;">Запущен · 4 ч 12 м · 9 потоков</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="border: 1px solid #3b4261; border-radius: 12px; background: #16161e; overflow: hidden; opacity: 0.75;">
+        <div style="height: 3px; background: #3b4261;"></div>
+        <div style="padding: 14px 16px; display: flex; align-items: center; gap: 10px;">
+          <div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0;">
+            <span style="font-size: 14px; color: #a9b1d6;">Резервный канал</span>
+            <span style="color: #737aa2; font-size: 11px; font-family: 'IBM Plex Mono', monospace;">FreeTurn · остановлен</span>
+          </div>
+          <div style="width: 32px; height: 17px; border-radius: 999px; background: #3b4261; position: relative; flex-shrink: 0;">
+            <span style="position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 999px; background: #737aa2;"></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="height: 34px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px dashed #3b4261; color: #737aa2; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b4261" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span>Вывести трафик</span>
+      </div>
+    </div>
+
+    <!-- Деталь клиента -->
+    <div style="border: 1px solid #3b4261; border-radius: 12px; background: #16161e; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+
+      <div style="display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-bottom: 1px solid #3b4261;">
+        <span style="font-size: 15px; font-weight: 600;">Нидерланды</span>
+        <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; border: 1px solid #3b4261; font-size: 11px; color: #737aa2;">перенесено</span>
+        <div style="flex-grow: 1;"></div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="height: 28px; display: flex; align-items: center; padding: 0 12px; border-radius: 6px; color: #a9b1d6; font-size: 12px;">Мастер</div>
+          <div style="height: 28px; display: flex; align-items: center; padding: 0 12px; border-radius: 6px; border: 1px solid #3b4261; color: #a9b1d6; font-size: 12px;">Остановить</div>
+        </div>
+      </div>
+
+      <div style="flex-grow: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0;">
+
+        <!-- Параметры -->
+        <div style="padding: 20px 24px; border-right: 1px solid #3b4261; display: flex; flex-direction: column; gap: 20px;">
+          <div style="color: #737aa2; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">Параметры</div>
+
+          <div style="display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 12px 16px; align-items: center;">
+            <span style="color: #a9b1d6;">Режим подключения</span>
+            <div style="display: inline-flex; padding: 2px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; width: fit-content;">
+              <span style="height: 24px; display: flex; align-items: center; padding: 0 16px; border-radius: 4px; background: rgba(122,162,247,0.18); color: #7aa2f7; font-size: 12px; font-weight: 500;">WG</span>
+              <span style="height: 24px; display: flex; align-items: center; padding: 0 16px; font-size: 12px; color: #737aa2;">Raw</span>
+            </div>
+
+            <span style="color: #a9b1d6;">Адрес сервера</span>
+            <div style="height: 30px; display: flex; align-items: center; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">vps-ams.example:56002</div>
+
+            <span style="color: #a9b1d6;">Пароль</span>
+            <div style="height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26;">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #737aa2;">••••••••••</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+
+            <span style="color: #a9b1d6;">VK-хеши</span>
+            <div style="height: 30px; display: flex; align-items: center; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">h1, h2</div>
+
+            <span style="color: #a9b1d6;">Локальный порт</span>
+            <div style="height: 30px; width: 132px; display: flex; align-items: center; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">127.0.0.1:9001</div>
+
+            <span style="color: #a9b1d6;">Потоков</span>
+            <div style="height: 30px; width: 88px; display: flex; align-items: center; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">9</div>
+
+            <span style="color: #a9b1d6;">Режим капчи</span>
+            <div style="height: 30px; width: 190px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border: 1px solid #3b4261; border-radius: 6px; background: #1a1b26; font-size: 12px;">
+              <span>rjs (рекомендуется)</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid #24283b;">
+            <div style="height: 32px; display: flex; align-items: center; padding: 0 14px; border-radius: 6px; background: #7aa2f7; color: #16161e; font-weight: 500; font-size: 13px;">Сохранить</div>
+            <div style="height: 32px; display: flex; align-items: center; padding: 0 14px; border-radius: 6px; color: #737aa2; font-size: 13px;">Отменить</div>
+            <div style="flex-grow: 1;"></div>
+            <div style="height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 6px; color: #737aa2; font-size: 12px;">
+              <span>Дополнительно</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- Куда идёт трафик -->
+        <div style="padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0;">
+          <div style="color: #737aa2; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">Куда идёт трафик</div>
+
+          <div style="border: 1px solid #3b4261; border-radius: 8px; background: #1a1b26; padding: 14px 16px; display: flex; align-items: center; gap: 12px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>
+            <div style="display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0;">
+              <span style="font-size: 13px; color: #7aa2f7;">awg10</span>
+              <span style="color: #737aa2; font-size: 11px;">AWG-туннель этого клиента</span>
+            </div>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <span style="color: #a9b1d6;">Политики доступа</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <span style="height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 999px; border: 1px solid #3b4261; background: #1a1b26; font-size: 12px; color: #a9b1d6;">
+                Все устройства
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </span>
+              <span style="height: 26px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 999px; border: 1px dashed #3b4261; font-size: 12px; color: #737aa2;">+ добавить</span>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #3b4261; border-radius: 8px; background: #1a1b26; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="color: #a9b1d6; font-size: 12px;">Подтверждение VK</span>
+              <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: rgba(158,206,106,0.18); border: 1px solid rgba(158,206,106,0.4); font-size: 11px; color: #9ece6a;">пройдено</span>
+            </div>
+            <span style="color: #737aa2; font-size: 11px;">Последняя проверка 18:12 · капча не требуется</span>
+          </div>
+
+          <div style="flex-grow: 1;"></div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid #24283b;">
+            <span style="color: #737aa2; font-size: 12px;">Журнал процесса</span>
+            <div style="display: flex; align-items: center; gap: 6px; color: #737aa2;">
+              <span style="font-size: 11px; font-family: 'IBM Plex Mono', monospace;">строк: 128</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

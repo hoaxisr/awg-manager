@@ -338,7 +338,10 @@
 	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
 	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
 
-	<DetailSection title="Схема">
+	<!-- Свёрнута: карточка инстанса в списке несёт ту же схему коротко
+	     (решение по вёрстке 2026-08-27). Здесь она подробнее — с политикой,
+	     ingress и именами интерфейсов — и открывается по требованию. -->
+	<DetailSection title="Схема" collapsed>
 		<Topology
 			{inbound}
 			name={row.name}
@@ -357,6 +360,36 @@
 		{/if}
 	</DetailSection>
 
+	<!-- Две колонки: форма слева, абоненты и журнал справа. Раньше всё шло
+	     одной лентой, и до абонентов — главного, ради чего сюда заходят —
+	     нужно было прокручивать всю форму. -->
+	<div class="columns">
+	<div class="col">
+	<ShareNetworkSection
+		bind:wdttServer={wdttDraft}
+		bind:ftServer={ftDraft}
+		{lanOptions}
+		{exposeApplied}
+		{saving}
+		busy={mutating}
+		onnat={setNat}
+		onlan={setLan}
+		onpolicy={setPolicy}
+		onsave={save}
+		onrevert={revert}
+		onpeerconf={(conf) => (peerConf = conf)}
+		bind:peer
+	/>
+
+	<ShareAdvancedSection
+		bind:wdttServer={wdttDraft}
+		bind:ftServer={ftDraft}
+		ports={killPorts}
+		{wanOptions}
+	/>
+	</div>
+
+	<div class="col">
 	<!-- Якорь возврата из мастера: «Готово» уводит в деталь, к абонентам. -->
 	<div id="share-clients">
 	<DetailSection
@@ -388,29 +421,6 @@
 	</DetailSection>
 	</div>
 
-	<ShareNetworkSection
-		bind:wdttServer={wdttDraft}
-		bind:ftServer={ftDraft}
-		{lanOptions}
-		{exposeApplied}
-		{saving}
-		busy={mutating}
-		onnat={setNat}
-		onlan={setLan}
-		onpolicy={setPolicy}
-		onsave={save}
-		onrevert={revert}
-		onpeerconf={(conf) => (peerConf = conf)}
-		bind:peer
-	/>
-
-	<ShareAdvancedSection
-		bind:wdttServer={wdttDraft}
-		bind:ftServer={ftDraft}
-		ports={killPorts}
-		{wanOptions}
-	/>
-
 	<LogSection
 		log={status?.log}
 		{routerClock}
@@ -422,6 +432,8 @@
 			if (ftDraft) ftDraft.debug = on;
 		}}
 	/>
+	</div>
+	</div>
 </Card>
 
 <!-- RB-12: быстрый выбор пира зеркалит тумблер RB-09 у WDTT. Механика живёт
@@ -461,6 +473,28 @@
 {/snippet}
 
 <style>
+	/* Две колонки детали: форма слева, абоненты и журнал справа. На узком
+	   экране складываются в одну ленту. */
+	.columns {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		align-items: start;
+	}
+
+	.col {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		min-width: 0;
+	}
+
+	@media (max-width: 1100px) {
+		.columns {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+
 	.head {
 		display: flex;
 		align-items: center;

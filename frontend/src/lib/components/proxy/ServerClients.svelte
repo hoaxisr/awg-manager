@@ -67,14 +67,12 @@
 	let seq = 0;
 	let inflight = 0;
 
-	// Признак, а не сам секрет: маппер ответа больше не отдаёт пароль сервера
-	// наружу (proxyInstances.ts, `password: ''`), поэтому гейт по `password`
-	// запирал форму навсегда даже на сервере с заданным паролем.
-	const hasMainPassword = $derived(server.passwordSet === true);
 	const applied = $derived(headerApplied(lastReload, running));
-	// TS-13: без главного пароля сервера абонента завести нельзя — форму даже
-	// не открываем, причина написана под списком.
-	const canAdd = $derived(hasMainPassword && !busy);
+	// Пароль владельца больше не условие: форк требует наличия хотя бы одного
+	// пароля, и абонентский его закрывает. Прежний гейт (TS-13) запирал
+	// добавление на сервере без «главного» — а задать тот стало негде, когда
+	// он ушёл из UI как чисто техническое поле.
+	const canAdd = $derived(!busy);
 
 	function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 		return new Promise((resolve, reject) => {
@@ -333,9 +331,6 @@
 		</p>
 	{/if}
 
-	{#if !hasMainPassword}
-		<p class="note">{CLIENT_TEXT.mainPasswordUnset}</p>
-	{/if}
 </div>
 
 <ServerClientAddModal
@@ -415,9 +410,4 @@
 		color: var(--color-text-secondary);
 	}
 
-	.note {
-		margin: 0;
-		font-size: 0.75rem;
-		color: var(--color-text-secondary);
-	}
 </style>

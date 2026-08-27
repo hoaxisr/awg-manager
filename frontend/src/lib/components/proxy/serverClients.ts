@@ -16,8 +16,6 @@ export const CLIENT_TEXT = {
 		'Нельзя удалить последнего рабочего абонента: без единого рабочего пароля сервер не запустится.',
 	/** SH-91: гейт «Запустить» у WDTT-сервера без рабочих абонентов. */
 	startNoUsable: 'Сервер не запускается без единого рабочего пароля — добавьте абонента',
-	/** TS-13 */
-	mainPasswordUnset: 'Сначала задайте главный пароль сервера',
 	/** TS-14 */
 	passwordIsMain:
 		'Это главный пароль сервера — задайте абоненту другой или оставьте поле пустым, чтобы сгенерировать',
@@ -154,7 +152,6 @@ export function addErrorText(code: string, message: string): string {
 	}
 	if (code === 'WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED') return msg;
 	const lower = msg.toLowerCase();
-	if (lower.includes('сначала задайте пароль сервера')) return CLIENT_TEXT.mainPasswordUnset;
 	if (lower.includes('совпадает с главным паролем')) return CLIENT_TEXT.passwordIsMain;
 	if (lower.includes('просроченному абоненту')) return CLIENT_TEXT.passwordExpiredOwner;
 	if (lower.includes('занят живым абонентом')) return CLIENT_TEXT.passwordTaken;

@@ -224,11 +224,6 @@ func TestServe_AddRejectionTexts(t *testing.T) {
 		want    string
 	}{
 		{
-			name: "пароль сервера не задан", cfgPass: "",
-			body: `{"password":"client1"}`,
-			want: "сначала задайте пароль сервера",
-		},
-		{
 			name: "пароль занят живым абонентом", cfgPass: "mainpass",
 			users: []instancestore.ServerUser{{Password: "client1"}},
 			body:  `{"password":"client1"}`,

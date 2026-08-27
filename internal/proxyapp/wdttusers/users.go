@@ -457,9 +457,11 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 	if main == "" {
 		main = mainPassword
 	}
-	if main == "" {
-		return UsersStatus{}, errors.New("сначала задайте пароль сервера")
-	}
+	// Пустой главный пароль — законное состояние: форк требует не его, а
+	// НАЛИЧИЕ ХОТЯ БЫ ОДНОГО пароля (`serverWrapKeys.Count() == 0`), и
+	// абонентского ему достаточно. Прежний отказ здесь запирал единственный
+	// путь сделать сервер работоспособным после того, как пароль владельца
+	// ушёл из UI.
 	rec, err := s.adopt(ctx, key, cfg.ConfigDir, main)
 	if err != nil {
 		return UsersStatus{}, err
@@ -470,8 +472,9 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 		}
 	}
 	// Проверка, не зависящая от состава, — здесь: она про запрос, а не про
-	// состояние.
-	if password == main {
+	// состояние. При пустом главном пароле сравнивать не с чем: совпасть с
+	// ним нельзя, и пустой `password` сюда не доходит (выше он сгенерирован).
+	if main != "" && password == main {
 		return UsersStatus{}, errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
 	}
 	user := instancestore.ServerUser{Password: password, Comment: comment, VkHash: vkHash}

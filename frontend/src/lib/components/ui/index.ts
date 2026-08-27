@@ -1,3 +1,4 @@
+export { default as FormRow } from './FormRow.svelte';
 export { default as FormToggle } from './FormToggle.svelte';
 export { default as Modal } from './Modal.svelte';
 export { default as ConfirmModal } from './ConfirmModal.svelte';

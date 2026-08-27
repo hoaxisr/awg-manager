@@ -981,3 +981,20 @@ func TestFakeMutator_RefusalCancelsWrite(t *testing.T) {
 		t.Fatalf("после отказа запись = %#v, ожидалась %#v — фейк не отменяет запись как хранилище", u, want)
 	}
 }
+
+// Абонент заводится на сервере БЕЗ пароля владельца: форк требует наличия
+// хотя бы одного пароля, а не конкретно главного. Прежний отказ запирал
+// единственный путь сделать сервер работоспособным после того, как пароль
+// владельца ушёл из UI, — сервер без абонентов не стартует, а абонента было
+// не завести.
+func TestAddWithoutOwnerPassword(t *testing.T) {
+	st := newStand(t, roles.WdttServerConfig{Listen: "0.0.0.0:56002"})
+
+	got, err := st.svc.Add(context.Background(), "wdtt-server:srv1", "client1", "Телефон", "vk1", "")
+	if err != nil {
+		t.Fatalf("добавление на сервере без пароля владельца: %v", err)
+	}
+	if len(got.Users) != 1 || got.Users[0].Password != "client1" {
+		t.Fatalf("состав абонентов: %+v", got.Users)
+	}
+}

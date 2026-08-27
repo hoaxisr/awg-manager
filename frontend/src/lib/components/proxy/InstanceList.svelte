@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Badge, Button, StatusDot, Toggle } from '$lib/components/ui';
 	import type { StatusDotVariant } from '$lib/components/ui';
-	import { Pencil, Plus, X } from 'lucide-svelte';
+	import { ChevronDown, Pencil, Plus, X } from 'lucide-svelte';
 	import { formatUptime } from '$lib/components/freeturn/uptime';
 	import type { ProxyInstanceRow } from './rows';
 
@@ -139,6 +139,25 @@
 						/>
 					{/if}
 
+					{#if row.key === selectedKey && row.flow && renamingKey !== row.key}
+						<!-- Схема потока (решение по вёрстке 2026-08-27): у выбранной
+						     карточки поток развёрнут вертикально, у остальных строка
+						     остаётся свёрнутой. -->
+						<div class="row-flow">
+							{#each row.flow as step, i (step.label + i)}
+								{#if i > 0}
+									<span class="row-flow-arrow" aria-hidden="true">
+										<ChevronDown size={13} />
+									</span>
+								{/if}
+								<span class="row-flow-step">
+									<span class="row-flow-label">{step.label}</span>
+									<span class="row-flow-detail">{step.detail}</span>
+								</span>
+							{/each}
+						</div>
+					{/if}
+
 					<div class="row-actions">
 						<span
 							class="row-toggle"
@@ -221,8 +240,13 @@
 		gap: 0.375rem;
 	}
 
+	/* Карточка инстанса: имя с действиями в шапке, схема потока — под ней у
+	   выбранного. Раньше строка была одноуровневой, и схема жила только в
+	   детали. */
 	.row {
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas: 'main actions' 'flow flow';
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.5rem 0.5rem 0.5rem 0.75rem;
@@ -230,6 +254,48 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		min-width: 0;
+	}
+
+	.row-flow {
+		grid-area: flow;
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		margin: 0.25rem 0 0.125rem;
+		padding: 0.5rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg-primary);
+	}
+
+	.row-flow-step {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+
+	.row-flow-label {
+		font-size: 0.75rem;
+		color: var(--color-text-secondary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.row-flow-detail {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+
+	.row-flow-arrow {
+		display: flex;
+		align-items: center;
+		color: var(--color-border-hover);
+		padding-left: 0.125rem;
 	}
 
 	.row:hover {
@@ -242,6 +308,7 @@
 	}
 
 	.row-main {
+		grid-area: main;
 		display: flex;
 		flex-direction: column;
 		align-items: stretch;
@@ -299,6 +366,7 @@
 	}
 
 	.row-actions {
+		grid-area: actions;
 		display: inline-flex;
 		align-items: center;
 		gap: 0.125rem;

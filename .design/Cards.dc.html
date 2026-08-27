@@ -1,0 +1,165 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    a { color: #7aa2f7; } a:hover { color: #6e8bbb; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #1a1b26; color: #c0caf5; font-size: 13px; display: flex; flex-direction: column;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 24px 32px 18px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 24px; font-weight: 600; letter-spacing: -0.01em;">Прокси</div>
+      <div style="color: #737aa2;">Выход трафика роутера и раздача другим</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <div style="height: 32px; display: flex; align-items: center; padding: 0 14px; border-radius: 6px; border: 1px solid #3b4261; color: #a9b1d6; font-size: 13px;">Настроить раздачу</div>
+      <div style="height: 32px; display: flex; align-items: center; padding: 0 14px; border-radius: 6px; background: #7aa2f7; color: #16161e; font-weight: 500; font-size: 13px;">Вывести трафик</div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 4px; padding: 0 32px; border-bottom: 1px solid #3b4261;">
+    <div style="height: 36px; display: flex; align-items: center; padding: 0 14px; font-weight: 500; border-bottom: 2px solid #7aa2f7; margin-bottom: -1px;">Выход <span style="margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: #24283b; font-size: 11px; color: #a9b1d6;">2</span></div>
+    <div style="height: 36px; display: flex; align-items: center; padding: 0 14px; color: #737aa2;">Раздача <span style="margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 999px; background: #24283b; font-size: 11px; color: #737aa2;">2</span></div>
+  </div>
+
+  <!-- Сетка карточек -->
+  <div style="flex-grow: 1; padding: 24px 32px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: min-content; gap: 20px; align-content: start;">
+
+    <!-- Карточка 1: работает -->
+    <div style="border: 1px solid rgba(158,206,106,0.4); border-radius: 12px; background: #16161e; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+      <div style="height: 3px; background: #9ece6a;"></div>
+      <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 600;">Нидерланды</div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: rgba(122,162,247,0.18); border: 1px solid rgba(122,162,247,0.4); font-size: 11px;">WDTT</span>
+              <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; border: 1px solid #3b4261; font-size: 11px; color: #a9b1d6;">WG</span>
+            </div>
+          </div>
+          <div style="width: 34px; height: 18px; border-radius: 999px; background: #7aa2f7; position: relative; flex-shrink: 0;">
+            <span style="position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 999px; background: #16161e;"></span>
+          </div>
+        </div>
+
+        <!-- Мини-схема потока -->
+        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid #3b4261; border-radius: 8px; background: #1a1b26;">
+          <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Роутер</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">:9001</span>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Сервер</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">vps-ams</span>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7aa2f7" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Выход</span>
+            <span style="font-size: 12px;">интернет</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="color: #737aa2; font-size: 11px;">Аптайм</span>
+            <span style="font-size: 13px;">4 ч 12 м</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="color: #737aa2; font-size: 11px;">Потоков</span>
+            <span style="font-size: 13px;">9</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="color: #737aa2; font-size: 11px;">Туннель</span>
+            <span style="font-size: 13px; color: #7aa2f7;">awg10</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; padding-top: 4px; border-top: 1px solid #3b4261;">
+          <div style="height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; border: 1px solid #3b4261; font-size: 12px; color: #a9b1d6; margin-top: 12px;">Настроить</div>
+          <div style="height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; border: 1px solid #3b4261; font-size: 12px; color: #a9b1d6; margin-top: 12px;">Журнал</div>
+          <div style="flex-grow: 1;"></div>
+          <svg style="margin-top: 12px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Карточка 2: остановлен -->
+    <div style="border: 1px solid #3b4261; border-radius: 12px; background: #16161e; overflow: hidden;">
+      <div style="height: 3px; background: #3b4261;"></div>
+      <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 600; color: #a9b1d6;">Резервный канал</div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="height: 19px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: rgba(187,154,247,0.18); border: 1px solid rgba(187,154,247,0.4); font-size: 11px; color: #bb9af7;">FreeTurn</span>
+            </div>
+          </div>
+          <div style="width: 34px; height: 18px; border-radius: 999px; background: #3b4261; position: relative; flex-shrink: 0;">
+            <span style="position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 999px; background: #737aa2;"></span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid #3b4261; border-radius: 8px; background: #1a1b26; opacity: 0.55;">
+          <div style="display: flex; flex-direction: column; gap: 2px; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Роутер</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">:9000</span>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          <div style="display: flex; flex-direction: column; gap: 2px; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Реле</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">relay</span>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          <div style="display: flex; flex-direction: column; gap: 2px; flex-grow: 1;">
+            <span style="color: #737aa2; font-size: 11px;">Выход</span>
+            <span style="font-size: 12px;">интернет</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; color: #737aa2;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+          <span style="font-size: 12px;">Остановлен · не запускался с 25 августа</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid #3b4261;">
+          <div style="height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; border: 1px solid #3b4261; font-size: 12px; color: #a9b1d6;">Настроить</div>
+          <div style="flex-grow: 1;"></div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Карточка-приглашение -->
+    <div style="border: 1px dashed #3b4261; border-radius: 12px; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 260px; color: #737aa2;">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3b4261" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <div style="font-size: 13px;">Вывести трафик наружу</div>
+      <div style="font-size: 12px; color: #565f89;">по ссылке, файлу или вручную</div>
+    </div>
+  </div>
+
+  <!-- Выдвижная деталь (drawer) — показана приоткрытой -->
+  <div style="border-top: 1px solid #3b4261; background: #16161e; padding: 14px 32px; display: flex; align-items: center; gap: 16px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#737aa2" stroke-width="2" stroke-linecap="round"><path d="m18 15-6-6-6 6"/></svg>
+      <span style="font-weight: 500;">Нидерланды</span>
+      <span style="color: #737aa2; font-size: 12px;">параметры, политики, журнал</span>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <span style="color: #737aa2; font-size: 12px;">Панель раскрывается на половину экрана</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

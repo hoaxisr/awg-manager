@@ -5,9 +5,11 @@
 import type {
   FreeTurnConfig,
   FreeTurnProcessStatus,
+  FreeTurnServerConfig,
   FreeTurnStatus,
   WdttConfig,
   WdttProcessStatus,
+  WdttServerConfig,
   WdttStatus,
 } from "$lib/types";
 
@@ -44,6 +46,17 @@ export interface ProxyInstanceRow {
    * объясняющий происхождение «дефолтных» инстансов.
    */
   seededFrom?: string;
+  /**
+   * Схема потока для карточки списка: три звена «откуда — через что — куда»,
+   * уже словами. Собирается здесь, чтобы список не знал про роли и конфиги.
+   */
+  flow?: ProxyFlowStep[];
+}
+
+/** Звено схемы потока: подпись и техническая деталь под ней. */
+export interface ProxyFlowStep {
+  label: string;
+  detail: string;
 }
 
 type ProcessStatus = WdttProcessStatus | FreeTurnProcessStatus;
@@ -71,6 +84,7 @@ function toRow(
   autostart: boolean,
   mode?: "wg" | "raw",
   seededFrom?: string,
+  flow?: ProxyFlowStep[],
 ): ProxyInstanceRow {
   const s = inst.status;
   return {
@@ -87,7 +101,53 @@ function toRow(
     binaryPresent: s.binaryPresent,
     mode,
     seededFrom,
+    flow,
   };
+}
+
+/** Порт из адреса `host:port`; пусто — адреса нет или он без порта. */
+function portOf(addr?: string): string {
+	const p = (addr ?? '').trim().split(':').pop() ?? '';
+	return /^\d+$/.test(p) ? `:${p}` : '';
+}
+
+/** Хост из адреса, без порта: в узкой карточке порт сервера роли не играет. */
+function hostOf(addr?: string): string {
+	const a = (addr ?? '').trim();
+	if (!a) return '—';
+	const idx = a.lastIndexOf(':');
+	return idx > 0 ? a.slice(0, idx) : a;
+}
+
+/** Поток клиента: роутер → сервер → интернет. */
+function clientFlow(listen?: string, peer?: string): ProxyFlowStep[] {
+	return [
+		{ label: 'Этот роутер', detail: portOf(listen) || 'локальный порт' },
+		{ label: hostOf(peer), detail: portOf(peer) || 'адрес сервера' },
+		{ label: 'Интернет', detail: 'через выход' },
+	];
+}
+
+/** Поток WDTT-сервера: абоненты → роутер → интернет. */
+function wdttServerFlow(c?: WdttServerConfig, st?: WdttProcessStatus): ProxyFlowStep[] {
+	// NDMS-имена берём из СТАТУСА: конфиг несёт только WG-половину, а raw-имя
+	// (`rawNdmsIface`) живёт в наблюдении процесса.
+	const ifaces = [st?.ndmsIface ?? c?.ndmsIface, st?.rawNdmsIface].filter(Boolean).join(' · ');
+	const nat = c?.natMode === 'none' ? 'без NAT' : c?.natMode === 'internet-only' ? 'NAT: интернет' : 'NAT: полный';
+	return [
+		{ label: 'Абоненты', detail: portOf(c?.listen) || 'порт раздачи' },
+		{ label: 'Этот роутер', detail: ifaces || 'интерфейсы не выделены' },
+		{ label: 'Интернет', detail: nat },
+	];
+}
+
+/** Поток FreeTurn-сервера: клиенты → роутер → бэкенд. */
+function ftServerFlow(c?: FreeTurnServerConfig): ProxyFlowStep[] {
+	return [
+		{ label: 'Клиенты', detail: portOf(c?.listen) || 'порт раздачи' },
+		{ label: 'Этот роутер', detail: c?.mode === 'tcp' ? 'TCP' : 'UDP' },
+		{ label: c?.connect ? hostOf(c.connect) : 'Бэкенд', detail: c?.connect ? 'WG-сервер роутера' : 'не задан' },
+	];
 }
 
 export interface ProxySources {
@@ -110,6 +170,7 @@ export function exitRows(src: ProxySources): ProxyInstanceRow[] {
         c?.enabled === true,
         c?.connMode === "raw" ? "raw" : "wg",
         inst?.seededFrom,
+        clientFlow(c?.listen, c?.peer),
       );
     }),
     ...(src.ftStatus?.clients ?? []).map((i) => {
@@ -121,6 +182,7 @@ export function exitRows(src: ProxySources): ProxyInstanceRow[] {
         inst?.config.enabled === true,
         undefined,
         inst?.seededFrom,
+        clientFlow(inst?.config.listen, inst?.config.peer),
       );
     }),
   ];
@@ -139,6 +201,7 @@ export function shareRows(src: ProxySources): ProxyInstanceRow[] {
         c?.enabled === true,
         c?.relayMode === "raw" ? "raw" : "wg",
         inst?.seededFrom,
+        wdttServerFlow(c, i.status),
       );
     }),
     ...(src.ftStatus?.servers ?? []).map((i) => {
@@ -150,6 +213,7 @@ export function shareRows(src: ProxySources): ProxyInstanceRow[] {
         inst?.config.enabled === true,
         undefined,
         inst?.seededFrom,
+        ftServerFlow(inst?.config),
       );
     }),
   ];

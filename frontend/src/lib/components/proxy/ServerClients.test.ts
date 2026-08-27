@@ -323,7 +323,11 @@ describe('добавление', () => {
 		await waitFor(() => expect(apiMock.getWdttServerPanelUsers).toHaveBeenCalledTimes(2));
 	});
 
-	it('без главного пароля управление заблокировано (TS-13)', async () => {
+	it('без пароля владельца управление НЕ заблокировано', async () => {
+		// Пароль владельца форку не обязателен: он требует наличия хотя бы
+		// одного пароля, и абонентский его закрывает. Прежний гейт (TS-13)
+		// запирал единственный путь сделать сервер работоспособным после того,
+		// как пароль владельца ушёл из UI.
 		apiMock.getWdttServerPanelUsers.mockResolvedValue({ available: true, users: [] });
 		render(ServerClients, {
 			props: {
@@ -337,11 +341,9 @@ describe('добавление', () => {
 			},
 		});
 		await waitFor(() =>
-			expect(screen.getByText('Сначала задайте главный пароль сервера')).toBeTruthy(),
+			expect(screen.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(false),
 		);
-		// Форму даже не открыть: кнопка шапки заблокирована.
-		expect(screen.getByRole('button', { name: 'Добавить' }).hasAttribute('disabled')).toBe(true);
-		expect(screen.queryByRole('dialog')).toBeNull();
+		expect(screen.queryByText('Сначала задайте главный пароль сервера')).toBeNull();
 	});
 
 	it('у сервера С хешами поле необязательное, подпись называет сами хеши', async () => {

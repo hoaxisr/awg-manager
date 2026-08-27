@@ -2,7 +2,7 @@
 	// SH-47..SH-61 — «Сеть» раздачи. NAT, LAN и политика применяются своими
 	// ручками сразу (их и правит бэкенд), остальные поля живут в редактируемой
 	// копии конфига и уезжают кнопкой «Сохранить».
-	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, Input, SegmentedControl, Toggle } from '$lib/components/ui';
+	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import ServerWgBind from '../freeturn/ServerWgBind.svelte';
 	import { obfOptions } from '../freeturn/options';
@@ -114,70 +114,69 @@
 
 <DetailSection title="Сеть">
 	{#if wdttServer}
-		<div class="mode-row">
-			<span class="row-label">Режим работы</span>
-			<SegmentedControl
-				value={wdttServer.relayMode === 'raw' ? 'raw' : 'wg'}
-				options={relayModeOptions}
-				ariaLabel="Режим работы"
-				disabled={busy}
-				onchange={(v) => {
-					if (wdttServer) wdttServer.relayMode = v;
-				}}
-			/>
-			<FieldHint
-				text="WG — абоненты попадают в роутер через WireGuard-половину сервера. Raw — через raw-половину, без WireGuard. Смена применяется при перезапуске сервера."
-				ariaLabel="Подсказка: режим работы"
-			/>
-		</div>
+		<!-- Одна сетка «метка — контрол» на всю секцию (решение по вёрстке
+		     2026-08-27): раньше здесь уживались три схемы сразу. -->
+		<div class="form">
+			<FormRow
+				label="Режим работы"
+				hint="WG — абоненты попадают в роутер через WireGuard-половину сервера, Raw — через raw-половину. Смена применяется при перезапуске"
+			>
+				<SegmentedControl
+					value={wdttServer.relayMode === 'raw' ? 'raw' : 'wg'}
+					options={relayModeOptions}
+					ariaLabel="Режим работы"
+					disabled={busy}
+					onchange={(v) => {
+						if (wdttServer) wdttServer.relayMode = v;
+					}}
+				/>
+			</FormRow>
 
-		<div class="row">
-			<span class="row-label">Режим NAT</span>
-			<SegmentedControl
-				value={natMode}
-				options={natModeOptions}
-				ariaLabel="Режим NAT"
-				disabled={busy}
-				onchange={changeNat}
-			/>
-		</div>
+			<FormRow label="Режим NAT">
+				<SegmentedControl
+					value={natMode}
+					options={natModeOptions}
+					ariaLabel="Режим NAT"
+					disabled={busy}
+					onchange={changeNat}
+				/>
+				{#if natWanBlocked}
+					<span class="save-block">
+						Сначала выберите выход в интернет в разделе «Дополнительно» — без него
+						режим «Интернет» не работает.
+					</span>
+				{/if}
+			</FormRow>
 
-		{#if natWanBlocked}
-			<p class="save-block">
-				Сначала выберите выход в интернет в разделе «Дополнительно» — без него
-				режим «Интернет» не работает.
-			</p>
-		{/if}
-
-		<div class="row">
-			<span class="row-label">Доступ в LAN</span>
-			<div class="row-control">
+			<FormRow label="Доступ в LAN">
 				<ChipMultiSelect
 					values={wdttServer.lanSegments ?? []}
 					options={lanOptions}
 					disabled={busy}
 					onchange={onlan}
 				/>
-			</div>
-		</div>
+			</FormRow>
 
-		<!-- Политика доступа (SH-50) — общий с «Серверами» контрол: своя подпись
-		     и список политик роутера внутри. -->
-		<ServerAccessPolicyDropdown
-			policy={wdttServer.policy ?? 'none'}
-			disabled={busy}
-			onchange={onpolicy}
-		/>
+			<!-- Политика доступа (SH-50) — общий с «Серверами» контрол: список
+			     политик роутера внутри, подпись даёт строка формы. -->
+			<FormRow label="Политика доступа">
+				<ServerAccessPolicyDropdown
+					policy={wdttServer.policy ?? 'none'}
+					disabled={busy}
+					onchange={onpolicy}
+					labelless
+				/>
+			</FormRow>
 
-		<div class="grid">
-			<Input
+			<FormRow
 				label="Внутренний WG-порт"
-				type="number"
-				value={wgPort}
+				for="wdtt-wg-port"
 				hint="Смена перезапустит сервер; занятый порт менеджер подберёт сам"
-				onchange={applyWgPort}
-				fullWidth
-			/>
+			>
+				<div class="w-port">
+					<Input id="wdtt-wg-port" type="number" value={wgPort} onchange={applyWgPort} fullWidth />
+				</div>
+			</FormRow>
 		</div>
 
 		<div class="toggle-row">
@@ -268,36 +267,33 @@
 
 <style>
 	.save-block {
-		margin: 0 0 0.5rem;
-		font-size: 0.8125rem;
+		font-size: 12px;
 		color: var(--color-warning);
 	}
 
-	.row {
+	/* Контролы шириной по содержимому: растянутые на всю строку сегменты и
+	   поле порта в пять цифр — то, за что вёрстку и назвали неряшливой.
+	   Сегменты сжимаются до надписей (у них `inline-flex` внутри), поля и
+	   списки ограничены разумным потолком. */
+	.form :global(.form-row-control > *) {
+		max-width: 420px;
+	}
+
+	.form :global(.form-row-control > [role='group']) {
+		width: fit-content;
+	}
+
+	.w-port {
+		width: 108px;
+	}
+
+	/* Сетка формы: ширину колонки метки задаёт контейнер, строки — FormRow. */
+	.form {
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: 0.75rem;
-		flex-wrap: wrap;
-		margin-bottom: 0.75rem;
-	}
-
-	.mode-row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-		margin-bottom: 0.75rem;
-	}
-
-	.row-label {
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
-		min-width: 9rem;
-	}
-
-	.row-control {
-		flex: 1 1 220px;
-		min-width: 0;
+		--form-label-w: 140px;
+		margin-bottom: 1rem;
 	}
 
 	.grid {
