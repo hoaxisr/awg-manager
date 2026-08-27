@@ -208,18 +208,10 @@
 			/>
 		</div>
 	{:else if ftServer}
-		<div class="grid">
-			<Input
-				label="Listen-порт"
-				type="number"
-				value={ftPort}
-				onchange={applyFtPort}
-				fullWidth
-			/>
-		</div>
-
 		<!-- SH-59/SH-60: полей конфига с такими именами нет — это виджет, который
-		     пишет `-connect` и кладёт .conf пира в ссылку абоненту. -->
+		     пишет `-connect` и кладёт .conf пира в ссылку абоненту. Стоит ПЕРВЫМ
+		     (правка владельца 2026-08-27): сначала «куда ведёт раздача», потом
+		     «на каком порту принимает». -->
 		<p class="sub-title">WG-сервер</p>
 		<ServerWgBind
 			autoApply
@@ -232,10 +224,24 @@
 			onPeerConf={(conf) => onpeerconf?.(conf)}
 		/>
 
-		<!-- Ключа обфускации в детали нет: строки под него в микрокопии не
-		     заведено, а профиль без ключа задаёт мастер (WS-27). -->
-		<div class="grid">
-			<Dropdown label="Профиль обфускации" bind:value={ftServer.obfProfile} options={obfOptions} />
+		<div class="form">
+			<FormRow
+				label="Listen-порт"
+				for="ft-listen"
+				hint="Порт, на котором сервер принимает абонентов. Клиентам порт выделяет менеджер, серверу — задаёте вы"
+			>
+				<div class="w-port">
+					<Input id="ft-listen" type="number" value={ftPort} onchange={applyFtPort} fullWidth />
+				</div>
+			</FormRow>
+
+			<!-- Ключа обфускации в детали нет: строки под него в микрокопии не
+			     заведено, а профиль без ключа задаёт мастер (WS-27). -->
+			<FormRow label="Профиль обфускации">
+				<div class="w-select">
+					<Dropdown bind:value={ftServer.obfProfile} options={obfOptions} fullWidth />
+				</div>
+			</FormRow>
 		</div>
 
 		<div class="toggle-row">
@@ -287,6 +293,10 @@
 		width: 108px;
 	}
 
+	.w-select {
+		width: 220px;
+	}
+
 	/* Сетка формы: ширину колонки метки задаёт контейнер, строки — FormRow. */
 	.form {
 		display: flex;
@@ -296,12 +306,6 @@
 		margin-bottom: 1rem;
 	}
 
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-		gap: 0.75rem;
-		margin-top: 0.75rem;
-	}
 
 	.toggle-row {
 		display: flex;
