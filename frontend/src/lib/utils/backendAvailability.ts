@@ -5,6 +5,18 @@ export function supportsAwg3(kernelModuleLoadedVersion: string | undefined): boo
 	return /^3\./.test(kernelModuleLoadedVersion ?? '');
 }
 
+// AWG 3.1 over NativeWG runs through awg_proxy, whose 1.4.0 build adds header
+// protection (HP_KEY) + random trailers (RT). Older proxies silently ignore
+// those tokens, so gate the NativeWG awg3 editor on the loaded proxy version —
+// the NativeWG analogue of supportsAwg3 for the kernel module.
+export function supportsAwg31Proxy(awgProxyVersion: string | undefined): boolean {
+	const m = /^(\d+)\.(\d+)/.exec(awgProxyVersion ?? '');
+	if (!m) return false;
+	const major = Number(m[1]);
+	const minor = Number(m[2]);
+	return major > 1 || (major === 1 && minor >= 4);
+}
+
 // Maps the backend's `nativewgReason` (from system/info) to a user-facing
 // explanation shown next to the disabled NativeWG option, so it no longer
 // greys out silently. Empty reason → no hint (NativeWG is available).

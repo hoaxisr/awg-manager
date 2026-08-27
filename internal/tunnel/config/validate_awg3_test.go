@@ -39,6 +39,16 @@ func TestValidateAWG3(t *testing.T) {
 			},
 			wantErr: "S4 = 11",
 		},
+		{
+			name: "malformed header protection key — not a 32-byte base64 key",
+			obf: storage.AWGObfuscation{
+				HeaderProtectionKey: "dGVzdA==", // base64 "test" — 4 bytes, not 32
+				S1:                  12, S2: 12, S3: 12, S4: 12,
+			},
+			// Must be a hard error, else pubKeyToHex drops it to "" and the
+			// tunnel comes up with header protection silently OFF.
+			wantErr: "HeaderProtectionKey",
+		},
 	}
 
 	for _, tt := range tests {
@@ -103,7 +113,7 @@ Endpoint = 192.0.2.1:51820
 // padding, and refusing them next to a key would be an invented restriction.
 func TestValidateAWG3FlagsAreIndependent(t *testing.T) {
 	o := &storage.AWGObfuscation{
-		HeaderProtectionKey: "dGVzdA==",
+		HeaderProtectionKey: "ceaFRw/bcsvnr9I5fmZqPY1HTuUhhdkYjSxgUH0ixRc=",
 		S1:                  12, S2: 12, S3: 12, S4: 12,
 		RandomTrailers: true,
 		DisableCookies: true,
@@ -117,7 +127,7 @@ func TestValidateAWG3FlagsAreIndependent(t *testing.T) {
 // reachable when the new flags are set, so adding them cannot shadow it.
 func TestValidateAWG3FlagsStillEnforceSxFloor(t *testing.T) {
 	o := &storage.AWGObfuscation{
-		HeaderProtectionKey: "dGVzdA==",
+		HeaderProtectionKey: "ceaFRw/bcsvnr9I5fmZqPY1HTuUhhdkYjSxgUH0ixRc=",
 		S1:                  11, S2: 12, S3: 12, S4: 12,
 		RandomTrailers: true,
 	}

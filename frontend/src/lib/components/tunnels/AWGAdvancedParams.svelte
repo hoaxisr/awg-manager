@@ -55,12 +55,14 @@
 		hints = undefined,
 		compact = false,
 		awg3 = false,
+		awg3Limited = false,
 	}: {
 		form: AWGFormFields;
 		errors: AWGErrorFields;
 		hints?: Record<string, string>;
 		compact?: boolean;
 		awg3?: boolean;
+		awg3Limited?: boolean;
 	} = $props();
 </script>
 
@@ -68,6 +70,7 @@
 	bind:params={form}
 	extended
 	{awg3}
+	{awg3Limited}
 	mtu={form.mtu}
 	{errors}
 	{hints}

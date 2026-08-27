@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -20,6 +21,13 @@ const headerProtectionMinPadding = 12
 func ValidateAWG3(o *storage.AWGObfuscation) error {
 	if o == nil || o.HeaderProtectionKey == "" {
 		return nil
+	}
+	// The key must be a base64-encoded 32-byte ChaCha20 key. Otherwise
+	// pubKeyToHex silently drops it to "" downstream and the tunnel comes up
+	// with header protection OFF while the server expects it — every handshake
+	// is dropped with nothing logged. Reject it here with a clear message.
+	if b, err := base64.StdEncoding.DecodeString(o.HeaderProtectionKey); err != nil || len(b) != 32 {
+		return fmt.Errorf("HeaderProtectionKey должен быть base64-ключом из 32 байт")
 	}
 	for _, s := range []struct {
 		name  string

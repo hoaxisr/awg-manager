@@ -1013,6 +1013,10 @@ func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
 // buildKmodConfigResolved builds a KmodConfig with a pre-resolved endpoint IP.
 // bindIface is the kernel interface name for SO_BINDTODEVICE (empty = no binding).
 func buildKmodConfigResolved(stored *storage.AWGTunnel, endpointIP string, endpointPort int, bindIface string) (KmodConfig, error) {
+	// S1-S4 pass through verbatim: header protection needs them >= 12 (the
+	// ChaCha20 nonce length), but that is enforced fail-closed by
+	// config.ValidateAWG3 at create/update — and these bytes must byte-match
+	// the server config, so this is not the place to silently adjust them.
 	return KmodConfig{
 		EndpointIP:   endpointIP,
 		EndpointPort: endpointPort,
@@ -1025,7 +1029,9 @@ func buildKmodConfigResolved(stored *storage.AWGTunnel, endpointIP string, endpo
 		PubClientHex: pubKeyToHex(clientPubKeyFromPrivate(stored.Interface.PrivateKey)),
 		I1:           stored.Interface.I1, I2: stored.Interface.I2,
 		I3: stored.Interface.I3, I4: stored.Interface.I4, I5: stored.Interface.I5,
-		BindIface: bindIface,
+		BindIface:              bindIface,
+		HeaderProtectionKeyHex: pubKeyToHex(stored.Interface.HeaderProtectionKey),
+		RandomTrailers:         stored.Interface.RandomTrailers,
 	}, nil
 }
 

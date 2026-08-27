@@ -20,6 +20,7 @@
 		params = $bindable(),
 		extended = undefined,
 		awg3 = false,
+		awg3Limited = false,
 		mtu = 1280,
 		errors = {},
 		hints = AWG_PARAM_HINTS,
@@ -30,6 +31,9 @@
 		params: ASCParams;
 		extended?: boolean;
 		awg3?: boolean;
+		// NativeWG (awg_proxy) can only do header protection + random trailers —
+		// not the kernel-only timers / content padding. Hide those when true.
+		awg3Limited?: boolean;
 		mtu?: number;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
@@ -352,8 +356,13 @@
 		<section class="card param-section">
 			<SettingsSectionLabel label="AmneziaWG 3.0" icon={ShieldCheck} tone="purple" header />
 			<p class="group-desc">
-				Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
-				<code>min-max</code> в секундах; пусто = значение по умолчанию.
+				{#if awg3Limited}
+					Через NativeWG (awg_proxy) доступны защита заголовков и RandomTrailers (ниже).
+					Таймеры и content-padding работают лишь в режиме kernel.
+				{:else}
+					Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
+					<code>min-max</code> в секундах; пусто = значение по умолчанию.
+				{/if}
 			</p>
 
 			<div class="form-group">
@@ -370,23 +379,25 @@
 				{/if}
 			</div>
 
-			<div class="inline-row inline-row-2">
+			{#if !awg3Limited}
+				<div class="inline-row inline-row-2">
+					{#each awg3RangeFields as f}
+						{@render paramLabel(f.key, f.label)}
+						<input
+							type="text"
+							id={fieldId(f.key)}
+							class="field-input"
+							bind:value={ext[f.key]}
+							placeholder="напр. 120 или 120-150"
+						/>
+					{/each}
+				</div>
 				{#each awg3RangeFields as f}
-					{@render paramLabel(f.key, f.label)}
-					<input
-						type="text"
-						id={fieldId(f.key)}
-						class="field-input"
-						bind:value={ext[f.key]}
-						placeholder="напр. 120 или 120-150"
-					/>
+					{#if errors[f.key]}
+						<p class="field-error">{f.label}: {errors[f.key]}</p>
+					{/if}
 				{/each}
-			</div>
-			{#each awg3RangeFields as f}
-				{#if errors[f.key]}
-					<p class="field-error">{f.label}: {errors[f.key]}</p>
-				{/if}
-			{/each}
+			{/if}
 		</section>
 	{/if}
 

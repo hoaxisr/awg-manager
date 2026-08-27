@@ -19,6 +19,12 @@
 #define AWG_BUF_SIZE    2048  /* per-packet buffer (MTU + headroom) */
 #define AWG_RX_QUEUE_MAX 1024 /* max server->client skbs queued by encap_rcv */
 
+/* AWG 3.1 random-trailer adaptive window: seeded to 500, grows to the largest
+ * datagram observed (clamped to 1500), so handshake trailer sizes track the
+ * connection's natural envelope. Mirrors amneziawg-go DefaultUdpWindow. */
+#define AWG_DEFAULT_UDP_WINDOW 500
+#define AWG_UDP_WINDOW_MAX     1500
+
 /*
  * Per-tunnel UDP proxy instance.
  *
@@ -55,6 +61,7 @@ struct awg_proxy {
 	atomic64_t tx_bytes;  /* bytes sent to server */
 	atomic_t rx_packets;  /* packets from server */
 	atomic_t tx_packets;  /* packets to server */
+	atomic_t udp_window;  /* AWG 3.1 random-trailer size envelope */
 
 	/* Sockets */
 	struct socket *listen_sock;     /* UDP, binds 127.0.0.1:0 (auto port) */

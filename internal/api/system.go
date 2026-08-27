@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,7 @@ type SystemInfoData struct {
 	KernelModuleModel           string                        `json:"kernelModuleModel" example:"MT7981"`
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
 	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.1.20260812"`
+	AwgProxyVersion             string                        `json:"awgProxyVersion" example:"1.4.0"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
 	ActiveBackend               string                        `json:"activeBackend" example:"nativewg"`
 	RouterIP                    string                        `json:"routerIP" example:"192.168.1.1"`
@@ -460,6 +462,7 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"kernelModuleModel":           kernelModuleModel,
 		"kernelModuleVersion":         kernelModuleVersion,
 		"kernelModuleLoadedVersion":   kernelModuleLoadedVersion,
+		"awgProxyVersion":             awgProxyLoadedVersion(),
 		"isAarch64":                   isAarch64,
 		"activeBackend":               activeBackendType,
 		"routerIP":                    routerIP,
@@ -633,6 +636,18 @@ func evalNativewg(hasWireguardComponent, supportsASC, awgProxyLoaded bool) (avai
 func nativewgStatus() (available bool, reason string) {
 	_, err := os.Stat("/proc/awg_proxy/version")
 	return evalNativewg(ndmsinfo.HasWireguardComponent(), ndmsinfo.SupportsWireguardASC(), err == nil)
+}
+
+// awgProxyLoadedVersion returns the loaded awg_proxy version, or "" if not
+// loaded. The frontend gates the NativeWG AWG 3.1 editor on this (>= 1.4.0 adds
+// header protection + random trailers), mirroring supportsAwg3 for the kernel
+// module.
+func awgProxyLoadedVersion() string {
+	data, err := os.ReadFile("/proc/awg_proxy/version")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // wanInterfaceJSON is the JSON response for a single WAN interface.
