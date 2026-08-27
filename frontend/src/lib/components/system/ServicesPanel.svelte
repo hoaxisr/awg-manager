@@ -84,6 +84,19 @@
 		showCreateModal = true;
 	}
 
+	async function handleToggleEnable(item: SystemServiceItem, enable: boolean) {
+		acting = item.script;
+		try {
+			await api.systemServicesToggleEnable(item.script, enable);
+			notifications.success(`${item.name}: автозапуск ${enable ? 'включен (S)' : 'выключен (K)'}`);
+			await load();
+		} catch (e) {
+			notifications.error(errorMessage(e, 'Не удалось изменить статус автозапуска'));
+		} finally {
+			acting = null;
+		}
+	}
+
 	async function handleEditSaved(restartAfter: boolean) {
 		const item = editingItem;
 		if (restartAfter && item) {
@@ -111,6 +124,7 @@
 		{acting}
 		{searchQuery}
 		onAction={requestAction}
+		onToggleEnable={handleToggleEnable}
 		onEdit={(item) => (editingItem = item)}
 		onClone={(item) => openCreateModal('clone', item)}
 		onDelete={(item) => (deletingItem = item)}

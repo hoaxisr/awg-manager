@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,10 +16,21 @@ import (
 
 const initDir = "/opt/etc/init.d"
 
+// ErrManagedService — отказ трогать автозапуск службы, на которой держится
+// сам AWG Manager. Обёрнут в ошибку, чтобы API отдал 403, а не 400.
+var ErrManagedService = errors.New("cannot disable autostart for a managed service")
+
 var (
-	scriptNameRe = regexp.MustCompile(`^S[0-9]{2}[a-zA-Z0-9._-]+$`)
+	scriptNameRe = regexp.MustCompile(`^[SK][0-9]{2}[a-zA-Z0-9._-]+$`)
 	csiRe        = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 )
+
+// IsInitScriptName reports whether name follows the Entware init.d naming
+// convention supported by the service tools: Sxx (autostart) and Kxx (no
+// autostart) are both valid names of the same service.
+func IsInitScriptName(name string) bool {
+	return scriptNameRe.MatchString(name)
+}
 
 // Item describes one init.d service.
 type Item struct {
@@ -56,14 +68,14 @@ func (sc *Scanner) List() ([]Item, error) {
 			continue
 		}
 		name := e.Name()
-		if !scriptNameRe.MatchString(name) {
+		if !IsInitScriptName(name) {
 			continue
 		}
 		script := filepath.Join(dir, name)
 		item := Item{
-			Name:    serviceName(name),
+			Name:    ServiceName(name),
 			Script:  script,
-			Enabled: true,
+			Enabled: strings.HasPrefix(name, "S"),
 			LogPath: guessLogPath(name),
 		}
 		if hint, ok := managedService(name); ok {
@@ -79,16 +91,17 @@ func (sc *Scanner) List() ([]Item, error) {
 	return items, nil
 }
 
-func serviceName(script string) string {
-	// S99awg-manager -> awg-manager
-	if len(script) > 3 && script[0] == 'S' {
+func ServiceName(script string) string {
+	// ServiceName strips the Sxx/Kxx prefix:
+	// S99awg-manager -> awg-manager, K99awg-manager -> awg-manager
+	if len(script) > 3 && (script[0] == 'S' || script[0] == 'K') {
 		return script[3:]
 	}
 	return script
 }
 
 func guessLogPath(script string) string {
-	base := serviceName(script)
+	base := ServiceName(script)
 	candidates := []string{
 		filepath.Join("/opt/var/log", base+".log"),
 		filepath.Join("/opt/var/log", base, base+".log"),
@@ -102,7 +115,7 @@ func guessLogPath(script string) string {
 }
 
 func managedService(script string) (string, bool) {
-	name := serviceName(script)
+	name := ServiceName(script)
 	switch name {
 	case "awg-manager":
 		return "Управляется AWG Manager; удаление/остановка прерывает веб-интерфейс", true
@@ -164,12 +177,12 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 		return "", fmt.Errorf("unsupported action: %s", action)
 	}
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
 	// Остановить службу, которая отдаёт эту же страницу, можно, а включить
 	// обратно — уже нет. Перезапуск разрешён: панель вернётся сама.
-	if action == "stop" && serviceName(base) == "awg-manager" {
+	if action == "stop" && ServiceName(base) == "awg-manager" {
 		return "", fmt.Errorf("cannot stop %s: остановка прервёт веб-интерфейс, включить обратно из UI будет нечем", base)
 	}
 	full := filepath.Join(sc.InitDir, base)
@@ -190,10 +203,56 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 	return out, err
 }
 
+// ToggleEnable switches service between enabled (Sxx) and disabled (Kxx).
+func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, err error) {
+	base := filepath.Base(script)
+	if !IsInitScriptName(base) {
+		return "", fmt.Errorf("invalid script name")
+	}
+	if hint, managed := managedService(base); managed && !enable {
+		return "", fmt.Errorf("%w: %s: %s", ErrManagedService, ServiceName(base), hint)
+	}
+
+	dir := sc.InitDir
+	if dir == "" {
+		dir = initDir
+	}
+	oldPath := filepath.Join(dir, base)
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		return "", fmt.Errorf("script not found: %w", statErr)
+	}
+
+	currentEnabled := strings.HasPrefix(base, "S")
+	if currentEnabled == enable {
+		return oldPath, nil
+	}
+
+	var newBase string
+	if enable {
+		newBase = "S" + base[1:]
+	} else {
+		newBase = "K" + base[1:]
+	}
+
+	newPath := filepath.Join(dir, newBase)
+
+	if _, statErr := os.Lstat(newPath); statErr == nil {
+		return "", fmt.Errorf("target script already exists: %s", newBase)
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("inspect target script: %w", statErr)
+	}
+
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return "", fmt.Errorf("failed to rename script: %w", err)
+	}
+
+	return newPath, nil
+}
+
 // ReadScript returns the raw content of an init.d script.
 func (sc *Scanner) ReadScript(script string) (string, error) {
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return "", fmt.Errorf("invalid script name")
 	}
 	dir := sc.InitDir
@@ -211,8 +270,8 @@ func (sc *Scanner) ReadScript(script string) (string, error) {
 // SaveScript writes or creates an init.d script with executable permissions (0755).
 func (sc *Scanner) SaveScript(scriptName string, content string) (string, error) {
 	base := filepath.Base(scriptName)
-	if !scriptNameRe.MatchString(base) {
-		return "", fmt.Errorf("invalid script name (must be S<number><name>, e.g. S90myservice)")
+	if !IsInitScriptName(base) {
+		return "", fmt.Errorf("invalid script name (must be S<number><name> or K<number><name>, e.g. S90myservice)")
 	}
 	// Перезапись — тот же результат, что и удаление: защита от удаления без
 	// неё обходится одним сохранением пустого файла.
@@ -246,7 +305,7 @@ func (sc *Scanner) SaveScript(scriptName string, content string) (string, error)
 // DeleteScript stops and removes an init.d script.
 func (sc *Scanner) DeleteScript(script string) error {
 	base := filepath.Base(script)
-	if !scriptNameRe.MatchString(base) {
+	if !IsInitScriptName(base) {
 		return fmt.Errorf("invalid script name")
 	}
 	if hint, managed := managedService(base); managed {

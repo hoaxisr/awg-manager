@@ -2238,6 +2238,17 @@ const api_SystemServiceScriptResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_SystemServiceToggleEnableData: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	newScript: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceToggleEnableResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemServiceToggleEnableData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_SystemServicesListResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => services_Item)))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3470,6 +3481,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /system/services/action": v.lazy(() => api_SystemServiceActionResponse),
 	"POST /system/services/delete": v.lazy(() => api_SystemOKFlagResponse),
 	"POST /system/services/save": v.lazy(() => api_SystemServiceSavedResponse),
+	"POST /system/services/toggle-enable": v.lazy(() => api_SystemServiceToggleEnableResponse),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
 	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),

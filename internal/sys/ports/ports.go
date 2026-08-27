@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/procmon"
+	"github.com/hoaxisr/awg-manager/internal/sys/services"
 )
 
 // Binding describes an open/listening network port and the associated process.
@@ -413,8 +414,8 @@ func (s *Scanner) scanInitServices() map[string]string {
 			continue
 		}
 		name := e.Name()
-		if len(name) > 3 && name[0] == 'S' {
-			svcName := name[3:]
+		if services.IsInitScriptName(name) {
+			svcName := services.ServiceName(name)
 			res[svcName] = name
 		}
 	}

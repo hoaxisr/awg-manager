@@ -263,3 +263,44 @@ func TestFilesList_WrongMethod(t *testing.T) {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
 }
+
+// Отказ по managed-службе — это 403, а не 400: фронт и swagger различают их,
+// и файл при отказе обязан остаться на месте.
+func TestServicesToggleEnable_ManagedIsForbidden(t *testing.T) {
+	h, _ := newSystemToolsForTest(t, "expert")
+	dir := t.TempDir()
+	h.services = &services.Scanner{InitDir: dir}
+	script := filepath.Join(dir, "S99dropbear")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postJSON(t, h.ServicesToggleEnable, "/api/system/services/toggle-enable",
+		map[string]any{"script": script, "enabled": false})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("script must stay enabled: %v", err)
+	}
+}
+
+// Пропущенное поле enabled не должно читаться как "выключить".
+func TestServicesToggleEnable_RequiresEnabledFlag(t *testing.T) {
+	h, _ := newSystemToolsForTest(t, "expert")
+	dir := t.TempDir()
+	h.services = &services.Scanner{InitDir: dir}
+	script := filepath.Join(dir, "S90myservice")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postJSON(t, h.ServicesToggleEnable, "/api/system/services/toggle-enable",
+		map[string]any{"script": script})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(script); err != nil {
+		t.Fatalf("script must stay enabled: %v", err)
+	}
+}
