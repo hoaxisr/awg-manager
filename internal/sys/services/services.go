@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,13 +16,18 @@ import (
 
 const initDir = "/opt/etc/init.d"
 
+// ErrManagedService — отказ трогать автозапуск службы, на которой держится
+// сам AWG Manager. Обёрнут в ошибку, чтобы API отдал 403, а не 400.
+var ErrManagedService = errors.New("cannot disable autostart for a managed service")
+
 var (
 	scriptNameRe = regexp.MustCompile(`^[SK][0-9]{2}[a-zA-Z0-9._-]+$`)
 	csiRe        = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 )
 
 // IsInitScriptName reports whether name follows the Entware init.d naming
-// convention supported by the service tools.
+// convention supported by the service tools: Sxx (autostart) and Kxx (no
+// autostart) are both valid names of the same service.
 func IsInitScriptName(name string) bool {
 	return scriptNameRe.MatchString(name)
 }
@@ -67,7 +73,7 @@ func (sc *Scanner) List() ([]Item, error) {
 		}
 		script := filepath.Join(dir, name)
 		item := Item{
-			Name:    serviceName(name),
+			Name:    ServiceName(name),
 			Script:  script,
 			Enabled: strings.HasPrefix(name, "S"),
 			LogPath: guessLogPath(name),
@@ -85,7 +91,8 @@ func (sc *Scanner) List() ([]Item, error) {
 	return items, nil
 }
 
-func serviceName(script string) string {
+func ServiceName(script string) string {
+	// ServiceName strips the Sxx/Kxx prefix:
 	// S99awg-manager -> awg-manager, K99awg-manager -> awg-manager
 	if len(script) > 3 && (script[0] == 'S' || script[0] == 'K') {
 		return script[3:]
@@ -94,7 +101,7 @@ func serviceName(script string) string {
 }
 
 func guessLogPath(script string) string {
-	base := serviceName(script)
+	base := ServiceName(script)
 	candidates := []string{
 		filepath.Join("/opt/var/log", base+".log"),
 		filepath.Join("/opt/var/log", base, base+".log"),
@@ -108,7 +115,7 @@ func guessLogPath(script string) string {
 }
 
 func managedService(script string) (string, bool) {
-	name := serviceName(script)
+	name := ServiceName(script)
 	switch name {
 	case "awg-manager":
 		return "Управляется AWG Manager; удаление/остановка прерывает веб-интерфейс", true
@@ -175,7 +182,7 @@ func (sc *Scanner) RunAction(script, action string) (output string, err error) {
 	}
 	// Остановить службу, которая отдаёт эту же страницу, можно, а включить
 	// обратно — уже нет. Перезапуск разрешён: панель вернётся сама.
-	if action == "stop" && serviceName(base) == "awg-manager" {
+	if action == "stop" && ServiceName(base) == "awg-manager" {
 		return "", fmt.Errorf("cannot stop %s: остановка прервёт веб-интерфейс, включить обратно из UI будет нечем", base)
 	}
 	full := filepath.Join(sc.InitDir, base)
@@ -203,7 +210,7 @@ func (sc *Scanner) ToggleEnable(script string, enable bool) (newScript string, e
 		return "", fmt.Errorf("invalid script name")
 	}
 	if hint, managed := managedService(base); managed && !enable {
-		return "", fmt.Errorf("cannot disable autostart for %s: %s", serviceName(base), hint)
+		return "", fmt.Errorf("%w: %s: %s", ErrManagedService, ServiceName(base), hint)
 	}
 
 	dir := sc.InitDir

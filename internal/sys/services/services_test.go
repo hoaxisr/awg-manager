@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,8 +84,12 @@ func TestScanner_ToggleEnable_ProtectsManagedServices(t *testing.T) {
 			if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := scanner.ToggleEnable(path, false); err == nil {
+			_, err := scanner.ToggleEnable(path, false)
+			if err == nil {
 				t.Fatalf("expected disabling %s to fail", name)
+			}
+			if !errors.Is(err, ErrManagedService) {
+				t.Fatalf("expected ErrManagedService, got %v", err)
 			}
 		})
 	}

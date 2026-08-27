@@ -415,7 +415,7 @@ func (s *Scanner) scanInitServices() map[string]string {
 		}
 		name := e.Name()
 		if services.IsInitScriptName(name) {
-			svcName := name[3:]
+			svcName := services.ServiceName(name)
 			res[svcName] = name
 		}
 	}

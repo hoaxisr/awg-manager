@@ -35,7 +35,7 @@ func isScriptOrService(path string, fi os.FileInfo) (isService bool, isScript bo
 	cleanDir := filepath.Clean(filepath.Dir(path))
 
 	if (cleanDir == "/opt/etc/init.d" || strings.HasSuffix(cleanDir, "init.d")) && services.IsInitScriptName(base) {
-		return true, true, base[3:]
+		return true, true, services.ServiceName(base)
 	}
 
 	lower := strings.ToLower(base)

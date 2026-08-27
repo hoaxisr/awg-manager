@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/sys/services"
 )
 
 // Службы Entware (init.d): список, старт/стоп, чтение и правка скриптов.
@@ -187,8 +189,10 @@ func (h *SystemToolsHandler) ServicesDeleteScript(w http.ResponseWriter, r *http
 }
 
 type serviceToggleEnableRequest struct {
-	Script  string `json:"script"`
-	Enabled bool   `json:"enabled"`
+	Script string `json:"script"`
+	// Указатель, чтобы отличить "enabled": false от пропущенного поля:
+	// пропуск не должен молча выключать автозапуск.
+	Enabled *bool `json:"enabled"`
 }
 
 // POST /api/system/services/toggle-enable
@@ -217,17 +221,25 @@ func (h *SystemToolsHandler) ServicesToggleEnable(w http.ResponseWriter, r *http
 		response.Error(w, "script is required", "INVALID_PARAMS")
 		return
 	}
+	if req.Enabled == nil {
+		response.Error(w, "enabled is required", "INVALID_PARAMS")
+		return
+	}
 
-	newScript, err := h.services.ToggleEnable(req.Script, req.Enabled)
+	newScript, err := h.services.ToggleEnable(req.Script, *req.Enabled)
 	if err != nil {
+		if errors.Is(err, services.ErrManagedService) {
+			response.ErrorWithStatus(w, http.StatusForbidden, err.Error(), "FORBIDDEN")
+			return
+		}
 		response.Error(w, err.Error(), "TOGGLE_ERROR")
 		return
 	}
 
-	h.emitEvent("toggle_enable", req.Script, fmt.Sprintf("enabled=%v newPath=%s", req.Enabled, newScript))
+	h.emitEvent("toggle_enable", req.Script, fmt.Sprintf("enabled=%v newPath=%s", *req.Enabled, newScript))
 	response.Success(w, SystemServiceToggleEnableData{
 		OK:        true,
 		NewScript: newScript,
-		Enabled:   req.Enabled,
+		Enabled:   *req.Enabled,
 	})
 }
