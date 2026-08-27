@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { notifications } from '$lib/stores/notifications';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
-	import { proxyClientOpsMode, proxyInOpsMode, proxyServerOpsMode } from '$lib/utils/proxyOpsMode';
+	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
 	import { errText } from '$lib/utils/errorMessage';
 	import type {
 		AccessPolicy,
@@ -16,9 +16,7 @@
 	import ShareDetail from './ShareDetail.svelte';
 	import ShareWizard from './ShareWizard.svelte';
 	import { exitInstance, saveExitInstance } from './exitConfig';
-	import { exitConfigSetupComplete } from './exitWizard';
 	import { shareInstance, saveShareInstance } from './shareConfig';
-	import { shareConfigSetupComplete } from './shareWizard';
 	import { reportDeletedTunnels } from './deleteNotice';
 	import type { ExitConfig } from './exitConfig';
 	import type { ExitProtocol } from './exitWizard';
@@ -41,9 +39,7 @@
 		busyKeys: string[];
 		/** Мастер, открытый явно; страница гасит его при смене инстанса. */
 		exitWizard: 'new' | 'instance' | null;
-		exitWizardClosed: boolean;
 		shareWizard: 'new' | 'instance' | null;
-		shareWizardClosed: boolean;
 		ontoggle: (row: ProxyInstanceRow, on: boolean) => Promise<void>;
 		/** Перечитать статусы — после сохранения деталь показывает жизнь процесса. */
 		onstatuses: () => Promise<void>;
@@ -68,9 +64,7 @@
 		tunnels,
 		busyKeys,
 		exitWizard = $bindable(),
-		exitWizardClosed = $bindable(),
 		shareWizard = $bindable(),
-		shareWizardClosed = $bindable(),
 		ontoggle,
 		onstatuses,
 		onconfigs,
@@ -113,39 +107,26 @@
 			: ftStatus?.servers?.find((s) => s.id === shareRow?.id)?.status,
 	);
 
-	// Конфиг настроен ровно по критерию шага 2 мастера — это и есть setupComplete
-	// панелей, по которому инстанс уходит из мастера в деталь (решение Q12).
-	const exitSetupComplete = $derived(exitConfigSetupComplete(exitWdttClient, exitFtClient));
 	const exitLife = $derived({
 		running: exitRow?.state === 'running',
 		startedAt: exitRow?.startedAt,
 		enabled: exitRow?.autostart,
 	});
-	const exitOpsMode = $derived(
-		proxyClientOpsMode({ ...exitLife, setupComplete: exitSetupComplete }),
-	);
 	/** Инстанс ни разу не поднимался — только тогда возврат в мастер осмыслен (RB-08). */
 	const exitNeverRan = $derived(!proxyInOpsMode(exitLife));
-	// Мастер подменяет деталь, пока инстанс не настроен (ia.md §1).
-	const exitWizardOpen = $derived(
-		exitWizard !== null || (!!exitRow && !exitOpsMode && !exitWizardClosed),
-	);
-	// Раздача: тот же порядок, что у «Выхода». Настроен сервер ровно по критерию
-	// шага 2 мастера — им же он уходит из мастера в деталь.
-	const shareSetupComplete = $derived(shareConfigSetupComplete(shareWdttServer, shareFtServer));
+	// Мастер открывается ТОЛЬКО явно — кнопкой списка или «Мастер» в детали.
+	// Прежде он подменял деталь у ненастроенного инстанса, и клик по строке
+	// вёл в мастер вместо параметров: настроить инстанс было негде, а обходом
+	// служил тумблер (включённый инстанс считался «в эксплуатации»).
+	const exitWizardOpen = $derived(exitWizard !== null);
 	const shareLife = $derived({
 		running: shareRow?.state === 'running',
 		startedAt: shareRow?.startedAt,
 		enabled: shareRow?.autostart,
 	});
-	const shareOpsMode = $derived(
-		proxyServerOpsMode({ ...shareLife, setupComplete: shareSetupComplete }),
-	);
 	/** Сервер ни разу не поднимался — только тогда возврат в мастер осмыслен (RB-08). */
 	const shareNeverRan = $derived(!proxyInOpsMode(shareLife));
-	const shareWizardOpen = $derived(
-		shareWizard !== null || (!!shareRow && !shareOpsMode && !shareWizardClosed),
-	);
+	const shareWizardOpen = $derived(shareWizard !== null);
 	const wizardOpen = $derived(activeTab === 'exit' ? exitWizardOpen : shareWizardOpen);
 	/**
 	 * Дефолт порта Endpoint мастера раздачи: listen FreeTurn-клиента роутера
@@ -245,10 +226,7 @@
 			row={exitWizard === 'new' ? null : exitRow}
 			wdttClient={exitWizard === 'new' ? undefined : exitWdttClient}
 			ftClient={exitWizard === 'new' ? undefined : exitFtClient}
-			onclose={() => {
-				exitWizard = null;
-				exitWizardClosed = true;
-			}}
+			onclose={() => (exitWizard = null)}
 			ondone={onexitdone}
 		/>
 	{/key}
@@ -264,10 +242,7 @@
 			row={shareWizard === 'new' ? null : shareRow}
 			wdttServer={shareWizard === 'new' ? undefined : shareWdttServer}
 			ftServer={shareWizard === 'new' ? undefined : shareFtServer}
-			onclose={() => {
-				shareWizard = null;
-				shareWizardClosed = true;
-			}}
+			onclose={() => (shareWizard = null)}
 			onreload={onconfigs}
 			ondone={onsharedone}
 		/>

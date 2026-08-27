@@ -141,6 +141,8 @@ export interface WdttStatus {
 	server: WdttProcessStatus;
 	/** Собирается ли wdtt-server под арку роутера (на mips/mipsel — нет). */
 	serverSupported?: boolean;
+	/** Бинари подсистемы на диске. Принадлежит ПОДСИСТЕМЕ, а не инстансу. */
+	binariesPresent?: boolean;
 	installAvailable: boolean;
 	installVersion?: string;
 	installedVersion?: string;

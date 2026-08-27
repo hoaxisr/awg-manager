@@ -53,6 +53,12 @@ type InstallStatus struct {
 	Installing bool `json:"installing"`
 	// RouterClock — часы роутера для сверки с метками в журнале форка.
 	RouterClock string `json:"routerClock,omitempty"`
+	// BinariesPresent — нужные бинари лежат на диске. Признак принадлежит
+	// ПОДСИСТЕМЕ, а не инстансу: полоса установки судит по нему, и без него она
+	// брала `binaryPresent` первого клиентского инстанса — у подсистемы без
+	// клиентов продукт объявлялся неустановленным, а «Установить» работала
+	// вхолостую (бинари-то на месте).
+	BinariesPresent bool `json:"binariesPresent"`
 }
 
 // defaultBinDir — прод-каталог бинарей: /opt/bin/wdtt-client,
@@ -218,6 +224,7 @@ func (s *Service) Status(subsystem string) (InstallStatus, error) {
 		UpdateAvailable:  updateAvailable,
 		Installing:       sub.isInstalling(),
 		RouterClock:      now.Format("2006-01-02 15:04:05") + " " + zone,
+		BinariesPresent:  sub.binariesInstalled(),
 	}, nil
 }
 
@@ -375,6 +382,16 @@ func (sub *subsys) freeturnStatusFields(installVersion string) (installedVersion
 		return installedVersion, true
 	}
 	return installedVersion, false
+}
+
+// binariesInstalled — нужные бинари подсистемы лежат на диске. Серверный
+// спрашивается, только когда сервер под эту арку вообще существует: на арке
+// без него ждать файл значило бы вечно звать «Установить».
+func (sub *subsys) binariesInstalled() bool {
+	if !binaryPresent(sub.clientBin) {
+		return false
+	}
+	return !sub.specs.serverSupported() || binaryPresent(sub.serverBin)
 }
 
 func (sub *subsys) binariesOperational() bool {

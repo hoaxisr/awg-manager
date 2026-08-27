@@ -78,6 +78,14 @@ export class FreeturnClient extends SubscriptionsClient {
 		return (await this.proxyListRaw()).seed;
 	}
 
+	/**
+	 * Признать уведомления о переезде listen-порта прочитанными. Без этого
+	 * плашка висит вечно: посев не повторяется и отметку никто не перепишет.
+	 */
+	async ackProxyListenMoves(): Promise<void> {
+		await this.request('/proxyrt/seed/listen-moves', { method: 'DELETE' });
+	}
+
 	protected async proxyInstallStatus(subsystem: 'wdtt' | 'freeturn'): Promise<ProxyInstallStatus> {
 		return this.request<ProxyInstallStatus>(`/proxyrt/install/status?subsystem=${subsystem}`);
 	}

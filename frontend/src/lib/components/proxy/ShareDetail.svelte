@@ -111,13 +111,23 @@
 	// `undefined` — состав ещё не пришёл, и блокировать нельзя.
 	let usableClients = $state<number | undefined>(undefined);
 
+	// Пароль читается из СОХРАНЁННОГО конфига, не из черновика: набранный, но не
+	// сохранённый пароль сервер ещё не получил, и запуск с ним всё равно упадёт.
+	const passwordSet = $derived(wdttServer?.passwordSet === true);
+
 	const peerOptions = $derived(buildRunningServerPeerDropdownOptions(peerSnap));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
 	const running = $derived(row.state === 'running');
 	// У работающего сервера подсказки нет: «Запустить» и так заперта состоянием,
 	// а текст про незапускаемый сервер рядом с запущенным — прямая неправда.
 	const startBlockedHint = $derived(
-		wdttServer && !running && usableClients === 0 ? CLIENT_TEXT.startNoUsable : '',
+		!wdttServer || running
+			? ''
+			: !passwordSet
+				? CLIENT_TEXT.startNoPassword
+				: usableClients === 0
+					? CLIENT_TEXT.startNoUsable
+					: '',
 	);
 	const ports = $derived(
 		wdttDraft ? wdttServerPorts(wdttDraft) : ftDraft ? freeTurnServerPorts(ftDraft) : [],

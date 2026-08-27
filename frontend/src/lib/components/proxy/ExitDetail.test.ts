@@ -123,3 +123,27 @@ describe('ExitDetail: автозавод связанного туннеля', (
 		expect(apiMock.ensureWdttRawTunnel).not.toHaveBeenCalled();
 	});
 });
+
+describe('ExitDetail: режим подключения правится в детали', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		apiMock.ensureWdttWgTunnel.mockResolvedValue(undefined);
+		apiMock.ensureWdttRawTunnel.mockResolvedValue(undefined);
+	});
+
+	// Режим приезжал только из импортируемой ссылки: в списке бейдж «WG/Raw»
+	// был, а сменить режим в UI было нечем — оставался переимпорт профиля.
+	it('переключатель WG/Raw есть в параметрах', async () => {
+		const { findByRole } = mount('mode-1', 'wg');
+		const group = await findByRole('group', { name: 'Режим подключения' });
+		expect(group).toBeTruthy();
+		expect(group.textContent).toContain('WG');
+		expect(group.textContent).toContain('Raw');
+	});
+
+	it('активен режим из конфига, а не первый попавшийся', async () => {
+		const { findByRole } = mount('mode-2', 'raw');
+		const raw = await findByRole('button', { name: 'Raw' });
+		expect(raw.getAttribute('aria-pressed')).toBe('true');
+	});
+})

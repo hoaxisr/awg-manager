@@ -25,6 +25,11 @@ import (
 // демона, поэтому новый мир живёт под /api/proxyrt/.
 const proxyrtInstancesPath = "/api/proxyrt/instances"
 
+// proxyrtListenMovesPath — уведомления о переезде listen-порта. Отдельный
+// путь, а не действие инстанса: переезды переживают своих инстансов и
+// снимаются все разом.
+const proxyrtListenMovesPath = "/api/proxyrt/seed/listen-moves"
+
 // Коды ошибок поверхности. PROXY_NOT_SEEDED и PROXY_DECLARE_FAILED предписаны
 // планом (требования 15 и 17); остальные два заведены здесь под два гейта
 // создания, у которых своя причина отказа и свой текст для пользователя.
@@ -45,6 +50,7 @@ type ProxyManager interface {
 	Delete(ctx context.Context, key string) error
 	Post(key string, k proxyrt.EventKind) bool
 	SeedInfo() manager.SeedInfo
+	AckListenMoves() error
 }
 
 // StateLister — срез *proxyrt.StateStore: состояние реконсиляции по инстансам.
@@ -509,6 +515,33 @@ func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 	if err := h.deps.Manager.Delete(r.Context(), key); err != nil {
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, OkData{Ok: true})
+}
+
+// AckListenMoves — DELETE /api/proxyrt/seed/listen-moves
+//
+//	@Summary		Снять уведомления о переезде listen-порта
+//	@Description	Пользователь прочитал сообщение о разведении портов при посеве.
+//	@Description	Без признания плашка висела бы вечно: посев не повторяется.
+//	@Tags			proxyrt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	OkResponse
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/proxyrt/seed/listen-moves [delete]
+func (h *ProxyInstancesHandler) AckListenMoves(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != proxyrtListenMovesPath {
+		response.ErrorWithStatus(w, http.StatusNotFound, "неизвестный путь", proxyCodeNotFound)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if err := h.deps.Manager.AckListenMoves(); err != nil {
 		h.fail(w, err)
 		return
 	}

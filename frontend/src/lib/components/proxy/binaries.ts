@@ -1,4 +1,6 @@
 // Полоса бинарей (PG-04..PG-10) — данные обоих продуктов одной формой.
+// Наличие бинарей берётся из install-статуса подсистемы, а НЕ из инстанса:
+// инстансов может не быть вовсе, а бинари при этом лежат на диске.
 
 import type { FreeTurnStatus, WdttStatus } from '$lib/types';
 
@@ -13,7 +15,7 @@ export function binaryStripItems(
 	return [
 		{
 			name: 'wdtt',
-			binaryPresent: wdtt?.client.binaryPresent === true,
+			binaryPresent: wdtt?.binariesPresent === true,
 			installAvailable: wdtt?.installAvailable === true,
 			installing: installing === 'wdtt' || wdtt?.installing === true,
 			updateAvailable: wdtt?.updateAvailable === true,
@@ -23,7 +25,7 @@ export function binaryStripItems(
 		},
 		{
 			name: 'freeturn',
-			binaryPresent: ft?.client.binaryPresent === true,
+			binaryPresent: ft?.binariesPresent === true,
 			installAvailable: ft?.installAvailable === true,
 			installing: installing === 'freeturn' || ft?.installing === true,
 			updateAvailable: ft?.updateAvailable === true,

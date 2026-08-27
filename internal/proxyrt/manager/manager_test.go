@@ -1332,3 +1332,70 @@ func TestUpdateSurvivesMirrorDropFailure(t *testing.T) {
 		t.Fatalf("причина обязана быть в журнале: %v", e.j.journalMsgs())
 	}
 }
+
+// Уведомление о переезде listen-порта не должно переживать своего инстанса:
+// на стенде плашка рассказывала про адрес freeturn-client:default, которого в
+// файле уже не было, и снять её было нечем.
+func TestDeleteDropsListenMoveOfRemovedInstance(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.MovedListen = []instancestore.ListenMove{
+			{Instance: "wdtt-client:de", Name: "Удаляемый", From: "127.0.0.1:9000", To: "127.0.0.1:9001"},
+			{Instance: "freeturn-client:default", Name: "Соседний", From: "127.0.0.1:9002", To: "127.0.0.1:9003"},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	boot(t, e)
+
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+
+	st, _ := e.st.Load()
+	if len(st.MovedListen) != 1 {
+		t.Fatalf("на диске остались переезды: %+v", st.MovedListen)
+	}
+	// Чужой переезд не трогаем: он про живой инстанс, и его владелец сообщение
+	// ещё не читал.
+	if st.MovedListen[0].Instance != "freeturn-client:default" {
+		t.Errorf("снят переезд не того инстанса: %+v", st.MovedListen[0])
+	}
+	for _, mv := range e.m.SeedInfo().MovedListen {
+		if mv.Instance == "wdtt-client:de" {
+			t.Error("удалённый инстанс всё ещё в выдаче переездов")
+		}
+	}
+}
+
+// Признание снимает переезды и с диска, и из кэша менеджера: иначе плашка
+// вернулась бы на следующем опросе, до перезапуска демона.
+func TestAckListenMovesClearsDiskAndCache(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.MovedListen = []instancestore.ListenMove{
+			{Instance: "wdtt-client:de", Name: "Клиент", From: "127.0.0.1:9000", To: "127.0.0.1:9001"},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	boot(t, e)
+	if len(e.m.SeedInfo().MovedListen) != 1 {
+		t.Fatal("переезд не доехал до SeedInfo — тест не о том")
+	}
+
+	if err := e.m.AckListenMoves(); err != nil {
+		t.Fatal(err)
+	}
+
+	if st, _ := e.st.Load(); len(st.MovedListen) != 0 {
+		t.Errorf("на диске остались переезды: %+v", st.MovedListen)
+	}
+	if got := e.m.SeedInfo().MovedListen; len(got) != 0 {
+		t.Errorf("в кэше менеджера остались переезды: %+v", got)
+	}
+}

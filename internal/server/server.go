@@ -397,7 +397,9 @@ func (s *Server) SetSingboxProxiesHandler(h *api.SingboxProxiesHandler) {
 // что подпути инстанса (users, link, captcha, allowlist) в http.ServeMux без
 // wildcard-паттернов не выразимы.
 type ProxyRtSurface struct {
-	Instances          http.HandlerFunc
+	Instances http.HandlerFunc
+	// ListenMoves — снятие уведомлений о переезде listen-порта при посеве.
+	ListenMoves        http.HandlerFunc
 	WdttLinkDecode     http.HandlerFunc
 	WdttLinkImport     http.HandlerFunc
 	FreeTurnLinkDecode http.HandlerFunc

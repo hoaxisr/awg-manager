@@ -44,7 +44,9 @@ type fakeProxyManager struct {
 	createErr error
 	updateErr error
 	deleteErr error
+	ackErr    error
 	postOK    bool
+	acked     int
 
 	created []instancestore.Record
 	mutated []instancestore.Record
@@ -58,6 +60,15 @@ func (f *fakeProxyManager) Records() []instancestore.Record {
 }
 
 func (f *fakeProxyManager) SeedInfo() manager.SeedInfo { return f.seed }
+
+func (f *fakeProxyManager) AckListenMoves() error {
+	if f.ackErr != nil {
+		return f.ackErr
+	}
+	f.acked++
+	f.seed.MovedListen = nil
+	return nil
+}
 
 func (f *fakeProxyManager) Create(_ context.Context, rec instancestore.Record) error {
 	if f.createErr != nil {
@@ -1249,4 +1260,58 @@ func TestProxyInstancesPatch_OpkgTunGateNormalizesMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Уведомление о переезде listen-порта снимается признанием. Без ручки оно
+// висело вечно: посев не повторяется, переписать отметку на диске некому, и
+// плашка оставалась на экране навсегда — в том числе про инстанс, которого
+// пользователь уже удалил.
+func TestProxyListenMoves_Ack(t *testing.T) {
+	t.Run("DELETE снимает уведомления", func(t *testing.T) {
+		mgr := &fakeProxyManager{seed: manager.SeedInfo{Booted: true, Certified: true,
+			MovedListen: []instancestore.ListenMove{{
+				Instance: "freeturn-client:default", Name: "Клиент",
+				From: "127.0.0.1:9000", To: "127.0.0.1:9001"}}}}
+		h := newProxyHandler(t, mgr, fakeProxyStates{})
+
+		rr := httptest.NewRecorder()
+		h.AckListenMoves(rr, httptest.NewRequest(http.MethodDelete, proxyrtListenMovesPath, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("код %d, тело %s", rr.Code, rr.Body.String())
+		}
+		if mgr.acked != 1 {
+			t.Errorf("признание не доехало до менеджера: acked=%d", mgr.acked)
+		}
+
+		// Список после признания молчит о переездах — иначе плашка вернулась бы
+		// на следующем же опросе статуса.
+		var data ProxyRtListData
+		decodeProxyData(t, doProxy(t, h, http.MethodGet, proxyrtInstancesPath, ""), &data)
+		if len(data.Seed.MovedListen) != 0 {
+			t.Errorf("после признания переезды всё ещё в выдаче: %+v", data.Seed.MovedListen)
+		}
+	})
+
+	t.Run("отказ менеджера — не 200", func(t *testing.T) {
+		mgr := &fakeProxyManager{ackErr: errors.New("диск только на чтение")}
+		h := newProxyHandler(t, mgr, fakeProxyStates{})
+		rr := httptest.NewRecorder()
+		h.AckListenMoves(rr, httptest.NewRequest(http.MethodDelete, proxyrtListenMovesPath, nil))
+		if rr.Code == http.StatusOK {
+			t.Errorf("отказ записи выдан за успех: %s", rr.Body.String())
+		}
+	})
+
+	t.Run("чужой метод отвергается", func(t *testing.T) {
+		mgr := &fakeProxyManager{}
+		h := newProxyHandler(t, mgr, fakeProxyStates{})
+		rr := httptest.NewRecorder()
+		h.AckListenMoves(rr, httptest.NewRequest(http.MethodGet, proxyrtListenMovesPath, nil))
+		if rr.Code == http.StatusOK {
+			t.Errorf("GET принят за признание: %s", rr.Body.String())
+		}
+		if mgr.acked != 0 {
+			t.Error("GET дошёл до менеджера")
+		}
+	})
 }

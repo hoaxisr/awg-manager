@@ -191,7 +191,7 @@ func TestBinary_Presence(t *testing.T) {
 
 // Полная фикстура: каждое из семи полей в различимом значении, сравнение
 // структуры целиком. Потеря любого поля видна здесь.
-func TestStatus_AllSevenFields(t *testing.T) {
+func TestStatus_AllFields(t *testing.T) {
 	clientBody, serverBody := "wdtt-client-9.9.9", "wdtt-server-9.9.9"
 	s := newTestService(t, Deps{Downloader: &fakeDownloader{}})
 	sub := s.subs[SubsystemWdtt]
@@ -211,6 +211,7 @@ func TestStatus_AllSevenFields(t *testing.T) {
 		UpdateAvailable:  false,
 		Installing:       false,
 		RouterClock:      "2026-08-24 15:04:05 MSK",
+		BinariesPresent:  true,
 	}
 	if got := mustStatus(t, s, "wdtt"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Status:\n got %+v\nwant %+v", got, want)
@@ -702,4 +703,43 @@ func TestInstall_SubsystemsAreIndependent(t *testing.T) {
 	if _, err := os.Stat(s.subs[SubsystemWdtt].versionPath); err == nil {
 		t.Error("установка freeturn написала version-файл wdtt")
 	}
+}
+
+// BinariesPresent — признак ПОДСИСТЕМЫ, а не инстанса. Полоса установки судила
+// по `binaryPresent` первого клиентского инстанса: у подсистемы без клиентов
+// продукт объявлялся неустановленным, «Установить» отрабатывала успешно и
+// молча, а признак не менялся — кнопка оставалась навсегда.
+func TestStatus_BinariesPresent(t *testing.T) {
+	t.Run("оба бинаря на диске", func(t *testing.T) {
+		s := newTestService(t, Deps{Arch: "aarch64-3.10", Downloader: &fakeDownloader{}})
+		sub := s.subs[SubsystemWdtt]
+		writeBin(t, sub.clientBin, "client")
+		writeBin(t, sub.serverBin, "server")
+		if !mustStatus(t, s, "wdtt").BinariesPresent {
+			t.Error("оба бинаря лежат, а подсистема объявлена неустановленной")
+		}
+	})
+	t.Run("серверного нет там, где он собирается", func(t *testing.T) {
+		s := newTestService(t, Deps{Arch: "aarch64-3.10", Downloader: &fakeDownloader{}})
+		writeBin(t, s.subs[SubsystemWdtt].clientBin, "client")
+		if mustStatus(t, s, "wdtt").BinariesPresent {
+			t.Error("сервер под эту арку собирается, но его нет — установка не полна")
+		}
+	})
+	t.Run("серверного нет там, где его не собирают", func(t *testing.T) {
+		// Арка без серверного пина: ждать серверный бинарь значило бы вечно
+		// звать «Установить» на полностью установленной подсистеме.
+		s := newTestService(t, Deps{Arch: "арка-без-пинов", Downloader: &fakeDownloader{}})
+		writeBin(t, s.subs[SubsystemWdtt].clientBin, "client")
+		if !mustStatus(t, s, "wdtt").BinariesPresent {
+			t.Error("на арке без серверной сборки хватает клиентского бинаря")
+		}
+	})
+	t.Run("клиентского нет", func(t *testing.T) {
+		s := newTestService(t, Deps{Arch: "aarch64-3.10", Downloader: &fakeDownloader{}})
+		writeBin(t, s.subs[SubsystemWdtt].serverBin, "server")
+		if mustStatus(t, s, "wdtt").BinariesPresent {
+			t.Error("без клиентского бинаря подсистема не установлена")
+		}
+	})
 }

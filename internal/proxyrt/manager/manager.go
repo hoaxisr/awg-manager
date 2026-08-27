@@ -366,6 +366,36 @@ func (m *Manager) Boot(ctx context.Context) error {
 	return nil
 }
 
+// dropMove — переезды без записи об инстансе key.
+func dropMove(moves []instancestore.ListenMove, key string) []instancestore.ListenMove {
+	out := moves[:0]
+	for _, mv := range moves {
+		if mv.Instance != key {
+			out = append(out, mv)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// AckListenMoves — пользователь прочитал уведомления о переезде listen-порта.
+// Признание стирает их с диска: без него плашка висела вечно, потому что
+// посев не повторяется и переписать свою отметку некому.
+func (m *Manager) AckListenMoves() error {
+	if _, err := m.mutateStore(func(state *instancestore.State) error {
+		state.MovedListen = nil
+		return nil
+	}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.moved = nil
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *Manager) SeedInfo() SeedInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -738,6 +768,10 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 			return fmt.Errorf("инстанс %s не найден", key)
 		}
 		state.Records = out
+		// Уведомление о переезде listen-порта переживало своего инстанса:
+		// плашка рассказывала про адрес того, кого уже нет, и убрать её было
+		// нечем. Снимается той же транзакцией, что и запись.
+		state.MovedListen = dropMove(state.MovedListen, key)
 		return nil
 	})
 	if err != nil {
@@ -754,6 +788,12 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		}
 		return err
 	}
+
+	// Кэш переездов идёт следом за диском: SeedInfo читает его, и без этой
+	// строки плашка про удалённый инстанс дожила бы до перезапуска демона.
+	m.mu.Lock()
+	m.moved = st.MovedListen
+	m.mu.Unlock()
 
 	// Зеркальная запись — адресно, а не ведомостью: Sweep реестра заперт
 	// гейтом посева, гейт монотонен, и запись пережила бы удаление инстанса

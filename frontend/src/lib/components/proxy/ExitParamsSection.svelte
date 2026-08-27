@@ -2,8 +2,8 @@
 	// EX-15..24, EX-57, EX-59..EX-65 — «Параметры» клиента. Поля правятся в
 	// конфиге инстанса на месте; сохраняет и откатывает страница (владелец
 	// конфига).
-	import { Button, Dropdown, Input } from '$lib/components/ui';
-	import { setPeer } from '$lib/utils/wdttPeerMode';
+	import { Button, Dropdown, Input, SegmentedControl } from '$lib/components/ui';
+	import { setPeer, switchConnMode } from '$lib/utils/wdttPeerMode';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
 	import type { FreeTurnClientConfig, WdttClientConfig } from '$lib/types';
@@ -29,6 +29,13 @@
 		onrevert,
 	}: Props = $props();
 
+	// Режим подключения к серверу. Раньше он приезжал ТОЛЬКО из импортируемой
+	// ссылки, и сменить его в UI было нечем — при живом бейдже режима в списке.
+	const connModeOptions = [
+		{ value: 'wg' as const, label: 'WG' },
+		{ value: 'raw' as const, label: 'Raw' },
+	];
+
 	// -captcha-mode: auto|rjs|wv, дефолт роутера rjs (internal/wdtt/types.go:24).
 	const captchaOptions = [
 		{ value: 'rjs', label: 'rjs (рекомендуется)' },
@@ -38,6 +45,23 @@
 </script>
 
 <DetailSection title="Параметры">
+	{#if wdttClient}
+		<div class="mode-row">
+			<span class="row-label">Режим подключения</span>
+			<SegmentedControl
+				value={wdttClient.connMode === 'raw' ? 'raw' : 'wg'}
+				options={connModeOptions}
+				ariaLabel="Режим подключения"
+				onchange={(v) => {
+					if (wdttClient) switchConnMode(wdttClient, v);
+				}}
+			/>
+			<span class="mode-hint">
+				У режимов разные порты сервера: адрес подставится из сохранённого для
+				выбранного режима. Применяется при перезапуске.
+			</span>
+		</div>
+	{/if}
 	<div class="grid">
 		{#if wdttClient}
 			<Input
@@ -122,6 +146,25 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 		gap: 0.75rem;
+	}
+
+	.mode-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.75rem;
+	}
+
+	.row-label {
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+	}
+
+	.mode-hint {
+		font-size: 0.75rem;
+		color: var(--color-text-tertiary);
+		flex: 1 1 240px;
 	}
 
 </style>

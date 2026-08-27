@@ -59,6 +59,7 @@ func TestServeStatus_Form(t *testing.T) {
 		UpdateAvailable:  false,
 		Installing:       false,
 		RouterClock:      "2026-08-24 15:04:05 MSK",
+		BinariesPresent:  true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("статус:\n got %+v\nwant %+v", got, want)
@@ -70,7 +71,8 @@ func TestServeStatus_Form(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"serverSupported", "installAvailable", "installVersion",
-		"installedVersion", "updateAvailable", "installing", "routerClock"} {
+		"installedVersion", "updateAvailable", "installing", "routerClock",
+		"binariesPresent"} {
 		if _, ok := raw[key]; !ok {
 			t.Errorf("в теле нет поля %q: %v", key, raw)
 		}

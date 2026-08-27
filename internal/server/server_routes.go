@@ -941,6 +941,9 @@ func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/proxyrt/instances", h.guarded(s.proxyRt.Instances))
 		mux.HandleFunc("/api/proxyrt/instances/", h.guarded(s.proxyRt.Instances))
 	}
+	if s.proxyRt.ListenMoves != nil {
+		mux.HandleFunc("/api/proxyrt/seed/listen-moves", h.guarded(s.proxyRt.ListenMoves))
+	}
 	if s.proxyRt.WdttLinkDecode != nil {
 		mux.HandleFunc("/api/proxyrt/wdtt/link/decode", h.guarded(s.proxyRt.WdttLinkDecode))
 	}

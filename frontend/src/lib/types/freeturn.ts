@@ -90,6 +90,8 @@ export interface FreeTurnStatus {
 	client: FreeTurnProcessStatus;
 	/** Legacy mirror of default server instance */
 	server: FreeTurnProcessStatus;
+	/** Бинари подсистемы на диске. Принадлежит ПОДСИСТЕМЕ, а не инстансу. */
+	binariesPresent?: boolean;
 	installAvailable: boolean;
 	installVersion?: string;
 	installedVersion?: string;

@@ -172,6 +172,8 @@ export interface ProxyListData {
 /** Ответ GET /proxyrt/install/status — семь полей install-блока старого статуса. */
 export interface ProxyInstallStatus {
 	serverSupported?: boolean;
+	/** Бинари подсистемы лежат на диске — признак ПОДСИСТЕМЫ, не инстанса. */
+	binariesPresent?: boolean;
 	installAvailable?: boolean;
 	installVersion?: string;
 	installedVersion?: string;
@@ -458,9 +460,11 @@ function ftInstanceStatus(v: ProxyInstanceView, nowMs: number) {
 }
 
 /**
- * Пустой блок процесса для legacy-зеркал `client`/`server`: их читает полоса
- * бинарей. Инстансов подсистемы может не быть вовсе, а признак наличия бинаря
- * новая поверхность несёт только внутри инстанса.
+ * Пустой блок процесса для legacy-зеркал `client`/`server`, когда инстансов
+ * роли нет вовсе. Признак наличия бинарей ОТСЮДА НЕ ЧИТАЮТ: он принадлежит
+ * подсистеме и приходит install-статусом (`binariesPresent`). Полоса установки
+ * читала его здесь — и у подсистемы без клиентов продукт объявлялся
+ * неустановленным при живых бинарях.
  */
 function emptyProcess(): WdttProcessStatus {
 	return { running: false, binary: '', binaryPresent: false };
@@ -479,6 +483,7 @@ export function toWdttStatus(
 		client: clients[0]?.status ?? emptyProcess(),
 		server: servers[0]?.status ?? emptyProcess(),
 		serverSupported: install.serverSupported,
+		binariesPresent: install.binariesPresent === true,
 		installAvailable: install.installAvailable === true,
 		installVersion: install.installVersion,
 		installedVersion: install.installedVersion,
@@ -500,6 +505,7 @@ export function toFreeTurnStatus(
 		servers,
 		client: clients[0]?.status ?? emptyProcess(),
 		server: servers[0]?.status ?? emptyProcess(),
+		binariesPresent: install.binariesPresent === true,
 		installAvailable: install.installAvailable === true,
 		installVersion: install.installVersion,
 		installedVersion: install.installedVersion,

@@ -3,7 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
-	import { Card, ConfirmModal, Tabs } from '$lib/components/ui';
+	import { Button, Card, ConfirmModal, Tabs } from '$lib/components/ui';
 	import {
 		BinaryStrip,
 		InstanceList,
@@ -56,12 +56,8 @@
 	let selectedShareKey = $state<string | null>(null);
 	/** Мастер «Выхода», открытый явно: кнопкой списка (новый) или «Мастер». */
 	let exitWizard = $state<'new' | 'instance' | null>(null);
-	/** Авто-мастер ненастроенного инстанса закрыт пользователем. */
-	let exitWizardClosed = $state(false);
 	/** Мастер «Раздачи», открытый явно: кнопкой списка (новый) или «Мастер». */
 	let shareWizard = $state<'new' | 'instance' | null>(null);
-	/** Авто-мастер ненастроенного сервера закрыт пользователем. */
-	let shareWizardClosed = $state(false);
 	let deleteTarget = $state<ProxyInstanceRow | null>(null);
 	let deleting = $state(false);
 	let busyKeys = $state<string[]>([]);
@@ -160,6 +156,20 @@
 		busyKeys = on ? [...busyKeys, key] : busyKeys.filter((k) => k !== key);
 	}
 
+	/** Плашка о переезде порта — одноразовая: признание стирает её на бэкенде. */
+	let ackingMove = $state(false);
+	async function ackListenMoves() {
+		ackingMove = true;
+		try {
+			await api.ackProxyListenMoves();
+			await loadStatuses();
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			ackingMove = false;
+		}
+	}
+
 	async function install(kind: 'wdtt' | 'freeturn') {
 		installing = kind;
 		try {
@@ -188,7 +198,6 @@
 	/** Мастер раздачи довёл сервер до запуска — уводим в его деталь, к абонентам. */
 	async function shareWizardDone(protocol: ExitProtocol, id: string) {
 		shareWizard = null;
-		shareWizardClosed = false;
 		await reloadAll();
 		selectedShareKey = `${protocol}:server:${id}`;
 		await tick();
@@ -198,7 +207,6 @@
 	/** Мастер довёл инстанс до запуска — «Готово» уводит в его деталь (ia.md §2.3). */
 	async function exitWizardDone(protocol: ExitProtocol, id: string) {
 		exitWizard = null;
-		exitWizardClosed = false;
 		await reloadAll();
 		selectedExitKey = `${protocol}:client:${id}`;
 	}
@@ -242,7 +250,12 @@
 		{/if}
 
 		{#if listenMoveNotice}
-			<Card><p class="seed-warning">{listenMoveNotice}</p></Card>
+			<Card>
+				<div class="move-notice">
+					<p class="seed-warning">{listenMoveNotice}</p>
+					<Button variant="secondary" loading={ackingMove} onclick={ackListenMoves}>Понятно</Button>
+				</div>
+			</Card>
 		{/if}
 
 		<BinaryStrip {binaries} />
@@ -270,11 +283,9 @@
 						if (activeTab === 'exit') {
 							selectedExitKey = r.key;
 							exitWizard = null;
-							exitWizardClosed = false;
 						} else {
 							selectedShareKey = r.key;
 							shareWizard = null;
-							shareWizardClosed = false;
 						}
 					}}
 					onadd={() => {
@@ -302,9 +313,7 @@
 					{tunnels}
 					{busyKeys}
 					bind:exitWizard
-					bind:exitWizardClosed
 					bind:shareWizard
-					bind:shareWizardClosed
 					ontoggle={toggleInstance}
 					onstatuses={loadStatuses}
 					onconfigs={loadConfigs}
@@ -333,6 +342,14 @@
 		margin: 0;
 		color: var(--color-error);
 		font-size: 0.875rem;
+	}
+
+	.move-notice {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
 	}
 
 	.seed-warning {

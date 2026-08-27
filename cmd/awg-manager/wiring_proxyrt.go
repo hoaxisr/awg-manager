@@ -918,6 +918,7 @@ func (a *app) wireProxyrt() {
 			clear:     linkHandler.ClearLinkedTunnels,
 			refresh:   subs.Serve,
 		}.handler(),
+		ListenMoves:        instances.AckListenMoves,
 		WdttLinkDecode:     linkHandler.Decode,
 		WdttLinkImport:     linkHandler.Import,
 		FreeTurnLinkDecode: allowlist.Decode,
