@@ -150,12 +150,15 @@ type ProxyRtStateView struct {
 // форма, что принимают POST/PATCH, — иначе фронт собирал бы тело правки из
 // другого места, чем читает.
 type ProxyRtInstanceView struct {
-	Key          string            `json:"key" example:"wdtt-client:default"`
-	ID           string            `json:"id" example:"default"`
-	Kind         string            `json:"kind" example:"wdtt-client"`
-	Name         string            `json:"name" example:"Нидерланды"`
-	Enabled      bool              `json:"enabled" example:"true"`
-	CreatedAt    string            `json:"createdAt,omitempty"`
+	Key       string `json:"key" example:"wdtt-client:default"`
+	ID        string `json:"id" example:"default"`
+	Kind      string `json:"kind" example:"wdtt-client"`
+	Name      string `json:"name" example:"Нидерланды"`
+	Enabled   bool   `json:"enabled" example:"true"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	// SeededFrom — имя старого конфига, из которого запись перенёс посев.
+	// Пусто у заведённых через UI. UI показывает по нему бейдж «перенесено».
+	SeededFrom   string            `json:"seededFrom,omitempty"`
 	Sub          string            `json:"sub,omitempty"`
 	PeerWg       string            `json:"peerWg,omitempty"`
 	PeerRaw      string            `json:"peerRaw,omitempty"`
@@ -877,6 +880,7 @@ func (h *ProxyInstancesHandler) viewOf(rec instancestore.Record, st *proxyrt.Ins
 		Name:         rec.Name,
 		Enabled:      rec.Enabled,
 		CreatedAt:    rec.CreatedAt,
+		SeededFrom:   rec.SeededFrom,
 		Sub:          rec.Sub,
 		PeerWg:       rec.PeerWg,
 		PeerRaw:      rec.PeerRaw,

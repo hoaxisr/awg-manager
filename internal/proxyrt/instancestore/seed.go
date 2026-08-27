@@ -478,6 +478,11 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			havePin && idx == pinned, nil
 	}
 
+	// Имя источника ложится в КАЖДУЮ перенесённую запись: по нему UI показывает
+	// бейдж «перенесено». Считается из пути, как и `State.SeededFrom`.
+	wdttSrc := filepath.Base(d.WdttPath)
+	ftSrc := filepath.Base(d.FreeturnPath)
+
 	for _, c := range wdttFile.Clients {
 		cfg := roles.WdttClientConfig{
 			Mode: strings.TrimSpace(c.Config.ConnMode), Listen: c.Config.Listen,
@@ -540,7 +545,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			}
 		}
 		seeded = append(seeded, Record{ID: c.ID, Kind: KindWdttClient, Name: c.Name,
-			Enabled: c.Config.Enabled, Sub: c.Config.Sub,
+			Enabled: c.Config.Enabled, Sub: c.Config.Sub, SeededFrom: wdttSrc,
 			// Г-1 №1: оба слота — фронт восстанавливает адрес при
 			// переключении режима; инвариант дальше держит normalizeRecord.
 			PeerWg: c.Config.PeerWg, PeerRaw: c.Config.PeerRaw,
@@ -588,7 +593,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		}
 		cfg.RawNdmsIface, cfg.RawIface = ndmsRaw, kernRaw
 		rec := Record{ID: s.ID, Kind: KindWdttServer, Name: s.Name,
-			Enabled: o.Enabled, WdttServer: &cfg,
+			Enabled: o.Enabled, WdttServer: &cfg, SeededFrom: wdttSrc,
 			// B5 + замечание 4: пользовательские данные сервера.
 			LinkPeer: o.LinkPeer, LinkVKHashes: o.LinkVKHashes, StatsLog: o.StatsLog}
 		for _, u := range o.Clients {
@@ -601,7 +606,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 	for _, c := range ftFile.Clients {
 		o := c.Config
 		seeded = append(seeded, Record{ID: c.ID, Kind: KindFreeTurnClient, Name: c.Name,
-			Enabled: o.Enabled, FreeTurnClient: &roles.FreeTurnClientConfig{
+			Enabled: o.Enabled, SeededFrom: ftSrc, FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen: o.Listen, Peer: o.Peer, Provider: o.Provider, Links: o.Links,
 				Streams: o.Streams, Transport: o.Transport, Mode: o.Mode, Bond: o.Bond,
 				TurnHost: o.TurnHost, TurnPort: o.TurnPort,
@@ -614,7 +619,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 	for _, s := range ftFile.Servers {
 		o := s.Config
 		seeded = append(seeded, Record{ID: s.ID, Kind: KindFreeTurnServer, Name: s.Name,
-			Enabled: o.Enabled, FreeTurnServer: &roles.FreeTurnServerConfig{
+			Enabled: o.Enabled, SeededFrom: ftSrc, FreeTurnServer: &roles.FreeTurnServerConfig{
 				Listen: o.Listen, Connect: o.Connect, Mode: o.Mode,
 				ObfProfile: o.ObfProfile, ObfKey: o.ObfKey, ClientsFile: o.ClientsFile,
 				Debug: o.Debug, OpenFirewall: openFirewall(o.OpenFirewall),

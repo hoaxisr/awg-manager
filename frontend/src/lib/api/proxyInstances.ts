@@ -45,68 +45,69 @@
 // режим»), «не менять» означает только отсутствие поля.
 
 import type {
-	FreeTurnCaptchaOverview,
-	FreeTurnClientConfig,
-	FreeTurnConfig,
-	FreeTurnProcessStatus,
-	FreeTurnServerConfig,
-	FreeTurnStatus,
-	WdttClientConfig,
-	WdttConfig,
-	WdttProcessStatus,
-	WdttServerConfig,
-	WdttStatus,
-} from '$lib/types';
+  FreeTurnCaptchaOverview,
+  FreeTurnClientConfig,
+  FreeTurnConfig,
+  FreeTurnProcessStatus,
+  FreeTurnServerConfig,
+  FreeTurnStatus,
+  WdttClientConfig,
+  WdttConfig,
+  WdttProcessStatus,
+  WdttServerConfig,
+  WdttStatus,
+} from "$lib/types";
 
 // ─────────────────────────────────────────────
 // #region Формы ответа новой поверхности
 // ─────────────────────────────────────────────
 
-export type ProxyKind = 'wdtt-client' | 'wdtt-server' | 'freeturn-client' | 'freeturn-server';
+export type ProxyKind =
+  "wdtt-client" | "wdtt-server" | "freeturn-client" | "freeturn-server";
 
 /**
  * Блок процесса инстанса — форма зафиксирована ручкой инстансов
  * (`api.ProcessView`). `running` — не поле снимка: снимок есть И pid > 0.
  */
 export interface ProxyProcessView {
-	running: boolean;
-	pid?: number;
-	/** Адрес из НАБЛЮДЕНИЯ процесса (rawClientIp старого мира). */
-	address?: string;
-	uptimeS?: number;
-	lastError?: string;
-	mode?: string;
-	wgConfig?: string;
-	/** dtlsConnections старого мира. */
-	clients?: number;
-	log?: string;
-	binary: string;
-	binaryPresent: boolean;
+  running: boolean;
+  pid?: number;
+  /** Адрес из НАБЛЮДЕНИЯ процесса (rawClientIp старого мира). */
+  address?: string;
+  uptimeS?: number;
+  lastError?: string;
+  mode?: string;
+  wgConfig?: string;
+  /** dtlsConnections старого мира. */
+  clients?: number;
+  log?: string;
+  binary: string;
+  binaryPresent: boolean;
 }
 
 /** Один ресурс инстанса в состоянии реконсиляции. */
 export interface ProxyResourceView {
-	id: string;
-	status: string;
-	detail?: string;
-	error?: string;
+  id: string;
+  status: string;
+  detail?: string;
+  error?: string;
 }
 
 /** Шаг последнего плана реконсиляции. */
 export interface ProxyStepView {
-	resource: string;
-	op: string;
-	args?: Record<string, string>;
-	reason?: string;
+  resource: string;
+  op: string;
+  args?: Record<string, string>;
+  reason?: string;
 }
 
 /** Состояние реконсиляции инстанса; отсутствует, пока движок не публиковал. */
 export interface ProxyStateView {
-	intent: string;
-	phase: string;
-	resources?: ProxyResourceView[];
-	lastPlan?: ProxyStepView[];
-	updatedAt?: string;
+  intent: string;
+  phase: string;
+  resources?: ProxyResourceView[];
+  lastPlan?: ProxyStepView[];
+  updatedAt?: string;
 }
 
 /**
@@ -115,71 +116,73 @@ export interface ProxyStateView {
  * разрешена. «Гейт заперт» (seeded && !certified) обязано быть видно.
  */
 export interface ProxySeedView {
-	seeded: boolean;
-	certified: boolean;
-	error?: string;
-	/**
-	 * Старые конфиги, которые посев не разобрал и пропустил: их инстансы не
-	 * перенесены. Признак отдельный от `error` — только по имени файла можно
-	 * сказать пользователю, ЧЬИ инстансы потеряны.
-	 */
-	skipped?: ProxySkippedSourceView[];
-	/**
-	 * Инстансы, которым посев сменил listen-адрес, разводя конфликт за порт:
-	 * дефолт у обеих подсистем был один и тот же. Молчать об этом нельзя — у
-	 * человека снаружи мог быть настроен клиент на прежний порт.
-	 */
-	movedListen?: ProxyListenMoveView[];
+  seeded: boolean;
+  certified: boolean;
+  error?: string;
+  /**
+   * Старые конфиги, которые посев не разобрал и пропустил: их инстансы не
+   * перенесены. Признак отдельный от `error` — только по имени файла можно
+   * сказать пользователю, ЧЬИ инстансы потеряны.
+   */
+  skipped?: ProxySkippedSourceView[];
+  /**
+   * Инстансы, которым посев сменил listen-адрес, разводя конфликт за порт:
+   * дефолт у обеих подсистем был один и тот же. Молчать об этом нельзя — у
+   * человека снаружи мог быть настроен клиент на прежний порт.
+   */
+  movedListen?: ProxyListenMoveView[];
 }
 
 /** Один пропущенный посевом старый конфиг. */
 export interface ProxySkippedSourceView {
-	file: string;
-	reason?: string;
+  file: string;
+  reason?: string;
 }
 
 /** Один переезд listen-адреса, сделанный посевом. */
 export interface ProxyListenMoveView {
-	instance: string;
-	name?: string;
-	from: string;
-	to: string;
+  instance: string;
+  name?: string;
+  from: string;
+  to: string;
 }
 
 export interface ProxyInstanceView {
-	key: string;
-	id: string;
-	kind: ProxyKind;
-	name: string;
-	enabled: boolean;
-	createdAt?: string;
-	sub?: string;
-	peerWg?: string;
-	peerRaw?: string;
-	linkPeer?: string;
-	linkVkHashes?: string;
-	statsLog?: string;
-	config: Record<string, unknown>;
-	state?: ProxyStateView;
-	process: ProxyProcessView;
+  key: string;
+  id: string;
+  kind: ProxyKind;
+  name: string;
+  enabled: boolean;
+  createdAt?: string;
+  /** Имя старого конфига, из которого запись перенёс посев (бейдж «перенесено»). */
+  seededFrom?: string;
+  sub?: string;
+  peerWg?: string;
+  peerRaw?: string;
+  linkPeer?: string;
+  linkVkHashes?: string;
+  statsLog?: string;
+  config: Record<string, unknown>;
+  state?: ProxyStateView;
+  process: ProxyProcessView;
 }
 
 export interface ProxyListData {
-	seed: ProxySeedView;
-	instances: ProxyInstanceView[];
+  seed: ProxySeedView;
+  instances: ProxyInstanceView[];
 }
 
 /** Ответ GET /proxyrt/install/status — семь полей install-блока старого статуса. */
 export interface ProxyInstallStatus {
-	serverSupported?: boolean;
-	/** Бинари подсистемы лежат на диске — признак ПОДСИСТЕМЫ, не инстанса. */
-	binariesPresent?: boolean;
-	installAvailable?: boolean;
-	installVersion?: string;
-	installedVersion?: string;
-	updateAvailable?: boolean;
-	installing?: boolean;
-	routerClock?: string;
+  serverSupported?: boolean;
+  /** Бинари подсистемы лежат на диске — признак ПОДСИСТЕМЫ, не инстанса. */
+  binariesPresent?: boolean;
+  installAvailable?: boolean;
+  installVersion?: string;
+  installedVersion?: string;
+  updateAvailable?: boolean;
+  installing?: boolean;
+  routerClock?: string;
 }
 
 // #endregion
@@ -193,12 +196,12 @@ export interface ProxyInstallStatus {
  * («default» есть у всех четырёх), поэтому адрес — роль:id.
  */
 export function instanceKey(kind: ProxyKind, id: string): string {
-	return `${kind}:${id}`;
+  return `${kind}:${id}`;
 }
 
 /** Путь ручки инстанса (хвост — уже готовые сегменты). */
-export function instancePath(kind: ProxyKind, id: string, tail = ''): string {
-	return `/proxyrt/instances/${encodeURIComponent(instanceKey(kind, id))}${tail}`;
+export function instancePath(kind: ProxyKind, id: string, tail = ""): string {
+  return `/proxyrt/instances/${encodeURIComponent(instanceKey(kind, id))}${tail}`;
 }
 
 // #endregion
@@ -210,27 +213,32 @@ export function instancePath(kind: ProxyKind, id: string, tail = ''): string {
 type Cfg = Record<string, unknown>;
 
 function str(cfg: Cfg, key: string): string | undefined {
-	const v = cfg[key];
-	return typeof v === 'string' ? v : undefined;
+  const v = cfg[key];
+  return typeof v === "string" ? v : undefined;
 }
 
 function num(cfg: Cfg, key: string): number | undefined {
-	const v = cfg[key];
-	return typeof v === 'number' ? v : undefined;
+  const v = cfg[key];
+  return typeof v === "number" ? v : undefined;
 }
 
 function bool(cfg: Cfg, key: string): boolean | undefined {
-	const v = cfg[key];
-	return typeof v === 'boolean' ? v : undefined;
+  const v = cfg[key];
+  return typeof v === "boolean" ? v : undefined;
 }
 
 function strArr(cfg: Cfg, key: string): string[] | undefined {
-	const v = cfg[key];
-	return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+  const v = cfg[key];
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string")
+    : undefined;
 }
 
-function instancesOf(list: ProxyListData, kind: ProxyKind): ProxyInstanceView[] {
-	return list.instances.filter((i) => i.kind === kind);
+function instancesOf(
+  list: ProxyListData,
+  kind: ProxyKind,
+): ProxyInstanceView[] {
+  return list.instances.filter((i) => i.kind === kind);
 }
 
 /**
@@ -243,14 +251,16 @@ function instancesOf(list: ProxyListData, kind: ProxyKind): ProxyInstanceView[] 
  * контрола и у подписи схемы (`shareConfig.natModeOptions`/`natModeLabel`), и
  * тот же, что был в старом мире.
  */
-function natModeOf(mode: string | undefined): NonNullable<WdttServerConfig['natMode']> {
-	switch (mode) {
-		case 'internet-only':
-		case 'none':
-			return mode;
-		default:
-			return 'full';
-	}
+function natModeOf(
+  mode: string | undefined,
+): NonNullable<WdttServerConfig["natMode"]> {
+  switch (mode) {
+    case "internet-only":
+    case "none":
+      return mode;
+    default:
+      return "full";
+  }
 }
 
 // #endregion
@@ -265,27 +275,27 @@ function natModeOf(mode: string | undefined): NonNullable<WdttServerConfig['natM
  * него признак `passwordSet`.
  */
 export function toWdttClientConfig(v: ProxyInstanceView): WdttClientConfig {
-	const c = v.config;
-	return {
-		enabled: v.enabled,
-		listen: str(c, 'listen') ?? '',
-		peer: str(c, 'peer') ?? '',
-		password: '',
-		passwordSet: bool(c, 'passwordSet') === true,
-		vkHashes: str(c, 'vkHashes') ?? '',
-		workers: num(c, 'workers') ?? 0,
-		obfs: str(c, 'obfs') ?? '',
-		fingerprint: str(c, 'fingerprint') ?? '',
-		deviceId: str(c, 'deviceId'),
-		captchaMode: str(c, 'captchaMode') ?? '',
-		vkAuthMode: str(c, 'vkAuthMode'),
-		sub: v.sub,
-		connMode: str(c, 'connMode') === 'raw' ? 'raw' : 'wg',
-		peerWg: v.peerWg,
-		peerRaw: v.peerRaw,
-		ndmsIface: str(c, 'ndmsIface'),
-		rawIface: str(c, 'rawIface'),
-	};
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    listen: str(c, "listen") ?? "",
+    peer: str(c, "peer") ?? "",
+    password: "",
+    passwordSet: bool(c, "passwordSet") === true,
+    vkHashes: str(c, "vkHashes") ?? "",
+    workers: num(c, "workers") ?? 0,
+    obfs: str(c, "obfs") ?? "",
+    fingerprint: str(c, "fingerprint") ?? "",
+    deviceId: str(c, "deviceId"),
+    captchaMode: str(c, "captchaMode") ?? "",
+    vkAuthMode: str(c, "vkAuthMode"),
+    sub: v.sub,
+    connMode: str(c, "connMode") === "raw" ? "raw" : "wg",
+    peerWg: v.peerWg,
+    peerRaw: v.peerRaw,
+    ndmsIface: str(c, "ndmsIface"),
+    rawIface: str(c, "rawIface"),
+  };
 }
 
 /**
@@ -295,108 +305,120 @@ export function toWdttClientConfig(v: ProxyInstanceView): WdttClientConfig {
  * приманкой.
  */
 export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
-	const c = v.config;
-	return {
-		enabled: v.enabled,
-		listen: str(c, 'listen') ?? '',
-		wgPort: num(c, 'wgPort') ?? 0,
-		password: '',
-		passwordSet: bool(c, 'passwordSet') === true,
-		configDir: str(c, 'configDir'),
-		adminId: str(c, 'adminId'),
-		botToken: '',
-		botTokenSet: bool(c, 'botTokenSet') === true,
-		debug: bool(c, 'debug'),
-		natMode: natModeOf(str(c, 'natMode')),
-		natStaticWan: str(c, 'natStaticWan'),
-		policy: str(c, 'policy'),
-		lanSegments: strArr(c, 'lanSegments'),
-		natIface: str(c, 'natIface'),
-		wgIface: str(c, 'wgIface'),
-		rawIface: str(c, 'rawIface'),
-		ndmsIface: str(c, 'ndmsIface'),
-		openFirewall: bool(c, 'openFirewall'),
-		relayMode: str(c, 'relayMode') === 'raw' ? 'raw' : 'wg',
-		rawListen: str(c, 'rawListen'),
-		directListen: str(c, 'directListen'),
-		linkPeer: v.linkPeer,
-		linkVkHashes: v.linkVkHashes,
-		statsLog: v.statsLog as WdttServerConfig['statsLog'],
-		exposeToPolicies: bool(c, 'exposeToPolicies'),
-	};
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    listen: str(c, "listen") ?? "",
+    wgPort: num(c, "wgPort") ?? 0,
+    password: "",
+    passwordSet: bool(c, "passwordSet") === true,
+    configDir: str(c, "configDir"),
+    adminId: str(c, "adminId"),
+    botToken: "",
+    botTokenSet: bool(c, "botTokenSet") === true,
+    debug: bool(c, "debug"),
+    natMode: natModeOf(str(c, "natMode")),
+    natStaticWan: str(c, "natStaticWan"),
+    policy: str(c, "policy"),
+    lanSegments: strArr(c, "lanSegments"),
+    natIface: str(c, "natIface"),
+    wgIface: str(c, "wgIface"),
+    rawIface: str(c, "rawIface"),
+    ndmsIface: str(c, "ndmsIface"),
+    openFirewall: bool(c, "openFirewall"),
+    relayMode: str(c, "relayMode") === "raw" ? "raw" : "wg",
+    rawListen: str(c, "rawListen"),
+    directListen: str(c, "directListen"),
+    linkPeer: v.linkPeer,
+    linkVkHashes: v.linkVkHashes,
+    statsLog: v.statsLog as WdttServerConfig["statsLog"],
+    exposeToPolicies: bool(c, "exposeToPolicies"),
+  };
 }
 
-export function toFreeTurnClientConfig(v: ProxyInstanceView): FreeTurnClientConfig {
-	const c = v.config;
-	return {
-		enabled: v.enabled,
-		listen: str(c, 'listen') ?? '',
-		peer: str(c, 'peer') ?? '',
-		provider: str(c, 'provider') ?? '',
-		links: str(c, 'links'),
-		streams: num(c, 'streams') ?? 0,
-		transport: (str(c, 'transport') as FreeTurnClientConfig['transport']) ?? 'tcp',
-		mode: (str(c, 'mode') as FreeTurnClientConfig['mode']) ?? 'udp',
-		bond: bool(c, 'bond') === true,
-		turnHost: str(c, 'turnHost'),
-		turnPort: num(c, 'turnPort'),
-		obfProfile: (str(c, 'obfProfile') as FreeTurnClientConfig['obfProfile']) ?? 'none',
-		obfKey: '',
-		obfKeySet: bool(c, 'obfKeySet') === true,
-		streamsPerCred: num(c, 'streamsPerCred') ?? 0,
-		platform: (str(c, 'platform') as FreeTurnClientConfig['platform']) ?? 'desktop',
-		dnsMode: (str(c, 'dnsMode') as FreeTurnClientConfig['dnsMode']) ?? 'auto',
-		dnsServers: str(c, 'dnsServers'),
-		clientId: str(c, 'clientId'),
-		sub: str(c, 'sub'),
-		debug: bool(c, 'debug') === true,
-	};
+export function toFreeTurnClientConfig(
+  v: ProxyInstanceView,
+): FreeTurnClientConfig {
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    listen: str(c, "listen") ?? "",
+    peer: str(c, "peer") ?? "",
+    provider: str(c, "provider") ?? "",
+    links: str(c, "links"),
+    streams: num(c, "streams") ?? 0,
+    transport:
+      (str(c, "transport") as FreeTurnClientConfig["transport"]) ?? "tcp",
+    mode: (str(c, "mode") as FreeTurnClientConfig["mode"]) ?? "udp",
+    bond: bool(c, "bond") === true,
+    turnHost: str(c, "turnHost"),
+    turnPort: num(c, "turnPort"),
+    obfProfile:
+      (str(c, "obfProfile") as FreeTurnClientConfig["obfProfile"]) ?? "none",
+    obfKey: "",
+    obfKeySet: bool(c, "obfKeySet") === true,
+    streamsPerCred: num(c, "streamsPerCred") ?? 0,
+    platform:
+      (str(c, "platform") as FreeTurnClientConfig["platform"]) ?? "desktop",
+    dnsMode: (str(c, "dnsMode") as FreeTurnClientConfig["dnsMode"]) ?? "auto",
+    dnsServers: str(c, "dnsServers"),
+    clientId: str(c, "clientId"),
+    sub: str(c, "sub"),
+    debug: bool(c, "debug") === true,
+  };
 }
 
-export function toFreeTurnServerConfig(v: ProxyInstanceView): FreeTurnServerConfig {
-	const c = v.config;
-	return {
-		enabled: v.enabled,
-		listen: str(c, 'listen') ?? '',
-		connect: str(c, 'connect') ?? '',
-		mode: (str(c, 'mode') as FreeTurnServerConfig['mode']) ?? 'udp',
-		obfProfile: (str(c, 'obfProfile') as FreeTurnServerConfig['obfProfile']) ?? 'none',
-		obfKey: '',
-		obfKeySet: bool(c, 'obfKeySet') === true,
-		clientsFile: str(c, 'clientsFile'),
-		debug: bool(c, 'debug') === true,
-		openFirewall: bool(c, 'openFirewall'),
-	};
+export function toFreeTurnServerConfig(
+  v: ProxyInstanceView,
+): FreeTurnServerConfig {
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    listen: str(c, "listen") ?? "",
+    connect: str(c, "connect") ?? "",
+    mode: (str(c, "mode") as FreeTurnServerConfig["mode"]) ?? "udp",
+    obfProfile:
+      (str(c, "obfProfile") as FreeTurnServerConfig["obfProfile"]) ?? "none",
+    obfKey: "",
+    obfKeySet: bool(c, "obfKeySet") === true,
+    clientsFile: str(c, "clientsFile"),
+    debug: bool(c, "debug") === true,
+    openFirewall: bool(c, "openFirewall"),
+  };
 }
 
 export function toWdttConfig(list: ProxyListData): WdttConfig {
-	return {
-		clients: instancesOf(list, 'wdtt-client').map((v) => ({
-			id: v.id,
-			name: v.name,
-			config: toWdttClientConfig(v),
-		})),
-		servers: instancesOf(list, 'wdtt-server').map((v) => ({
-			id: v.id,
-			name: v.name,
-			config: toWdttServerConfig(v),
-		})),
-	};
+  return {
+    clients: instancesOf(list, "wdtt-client").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toWdttClientConfig(v),
+    })),
+    servers: instancesOf(list, "wdtt-server").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toWdttServerConfig(v),
+    })),
+  };
 }
 
 export function toFreeTurnConfig(list: ProxyListData): FreeTurnConfig {
-	return {
-		clients: instancesOf(list, 'freeturn-client').map((v) => ({
-			id: v.id,
-			name: v.name,
-			config: toFreeTurnClientConfig(v),
-		})),
-		servers: instancesOf(list, 'freeturn-server').map((v) => ({
-			id: v.id,
-			name: v.name,
-			config: toFreeTurnServerConfig(v),
-		})),
-	};
+  return {
+    clients: instancesOf(list, "freeturn-client").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toFreeTurnClientConfig(v),
+    })),
+    servers: instancesOf(list, "freeturn-server").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toFreeTurnServerConfig(v),
+    })),
+  };
 }
 
 // #endregion
@@ -411,9 +433,12 @@ export function toFreeTurnConfig(list: ProxyListData): FreeTurnConfig {
  * выдумывать «стартовал сейчас» нельзя, на этой метке стоит признак «инстанс
  * уже поднимался» (proxyOpsMode).
  */
-export function startedAtFromUptime(uptimeS: number | undefined, nowMs: number): string | undefined {
-	if (!uptimeS || uptimeS <= 0) return undefined;
-	return new Date(nowMs - uptimeS * 1000).toISOString();
+export function startedAtFromUptime(
+  uptimeS: number | undefined,
+  nowMs: number,
+): string | undefined {
+  if (!uptimeS || uptimeS <= 0) return undefined;
+  return new Date(nowMs - uptimeS * 1000).toISOString();
 }
 
 /**
@@ -424,39 +449,45 @@ export function startedAtFromUptime(uptimeS: number | undefined, nowMs: number):
  * «на старте»; `orphanedPid` — усыновление pid-файла заменил управляющий
  * сокет.
  */
-function toProcessStatus(v: ProxyInstanceView, nowMs: number): FreeTurnProcessStatus {
-	const p = v.process;
-	return {
-		running: p.running === true,
-		pid: p.pid,
-		startedAt: p.running ? startedAtFromUptime(p.uptimeS, nowMs) : undefined,
-		lastError: p.lastError,
-		log: p.log,
-		dtlsConnections: p.clients,
-		binary: p.binary ?? '',
-		binaryPresent: p.binaryPresent === true,
-	};
+function toProcessStatus(
+  v: ProxyInstanceView,
+  nowMs: number,
+): FreeTurnProcessStatus {
+  const p = v.process;
+  return {
+    running: p.running === true,
+    pid: p.pid,
+    startedAt: p.running ? startedAtFromUptime(p.uptimeS, nowMs) : undefined,
+    lastError: p.lastError,
+    log: p.log,
+    dtlsConnections: p.clients,
+    binary: p.binary ?? "",
+    binaryPresent: p.binaryPresent === true,
+  };
 }
 
-function toWdttProcessStatus(v: ProxyInstanceView, nowMs: number): WdttProcessStatus {
-	const c = v.config;
-	return {
-		...toProcessStatus(v, nowMs),
-		wgConfig: v.process.wgConfig,
-		// rawClientIp — адрес из наблюдения процесса (ProcessView.Address).
-		rawClientIp: v.process.address,
-		rawIface: str(c, 'rawIface'),
-		ndmsIface: str(c, 'ndmsIface'),
-		rawNdmsIface: str(c, 'rawNdmsIface'),
-	};
+function toWdttProcessStatus(
+  v: ProxyInstanceView,
+  nowMs: number,
+): WdttProcessStatus {
+  const c = v.config;
+  return {
+    ...toProcessStatus(v, nowMs),
+    wgConfig: v.process.wgConfig,
+    // rawClientIp — адрес из наблюдения процесса (ProcessView.Address).
+    rawClientIp: v.process.address,
+    rawIface: str(c, "rawIface"),
+    ndmsIface: str(c, "ndmsIface"),
+    rawNdmsIface: str(c, "rawNdmsIface"),
+  };
 }
 
 function wdttInstanceStatus(v: ProxyInstanceView, nowMs: number) {
-	return { id: v.id, name: v.name, status: toWdttProcessStatus(v, nowMs) };
+  return { id: v.id, name: v.name, status: toWdttProcessStatus(v, nowMs) };
 }
 
 function ftInstanceStatus(v: ProxyInstanceView, nowMs: number) {
-	return { id: v.id, name: v.name, status: toProcessStatus(v, nowMs) };
+  return { id: v.id, name: v.name, status: toProcessStatus(v, nowMs) };
 }
 
 /**
@@ -467,52 +498,60 @@ function ftInstanceStatus(v: ProxyInstanceView, nowMs: number) {
  * неустановленным при живых бинарях.
  */
 function emptyProcess(): WdttProcessStatus {
-	return { running: false, binary: '', binaryPresent: false };
+  return { running: false, binary: "", binaryPresent: false };
 }
 
 export function toWdttStatus(
-	list: ProxyListData,
-	install: ProxyInstallStatus,
-	nowMs: number = Date.now(),
+  list: ProxyListData,
+  install: ProxyInstallStatus,
+  nowMs: number = Date.now(),
 ): WdttStatus {
-	const clients = instancesOf(list, 'wdtt-client').map((v) => wdttInstanceStatus(v, nowMs));
-	const servers = instancesOf(list, 'wdtt-server').map((v) => wdttInstanceStatus(v, nowMs));
-	return {
-		clients,
-		servers,
-		client: clients[0]?.status ?? emptyProcess(),
-		server: servers[0]?.status ?? emptyProcess(),
-		serverSupported: install.serverSupported,
-		binariesPresent: install.binariesPresent === true,
-		installAvailable: install.installAvailable === true,
-		installVersion: install.installVersion,
-		installedVersion: install.installedVersion,
-		updateAvailable: install.updateAvailable === true,
-		installing: install.installing === true,
-		routerClock: install.routerClock,
-	};
+  const clients = instancesOf(list, "wdtt-client").map((v) =>
+    wdttInstanceStatus(v, nowMs),
+  );
+  const servers = instancesOf(list, "wdtt-server").map((v) =>
+    wdttInstanceStatus(v, nowMs),
+  );
+  return {
+    clients,
+    servers,
+    client: clients[0]?.status ?? emptyProcess(),
+    server: servers[0]?.status ?? emptyProcess(),
+    serverSupported: install.serverSupported,
+    binariesPresent: install.binariesPresent === true,
+    installAvailable: install.installAvailable === true,
+    installVersion: install.installVersion,
+    installedVersion: install.installedVersion,
+    updateAvailable: install.updateAvailable === true,
+    installing: install.installing === true,
+    routerClock: install.routerClock,
+  };
 }
 
 export function toFreeTurnStatus(
-	list: ProxyListData,
-	install: ProxyInstallStatus,
-	nowMs: number = Date.now(),
+  list: ProxyListData,
+  install: ProxyInstallStatus,
+  nowMs: number = Date.now(),
 ): FreeTurnStatus {
-	const clients = instancesOf(list, 'freeturn-client').map((v) => ftInstanceStatus(v, nowMs));
-	const servers = instancesOf(list, 'freeturn-server').map((v) => ftInstanceStatus(v, nowMs));
-	return {
-		clients,
-		servers,
-		client: clients[0]?.status ?? emptyProcess(),
-		server: servers[0]?.status ?? emptyProcess(),
-		binariesPresent: install.binariesPresent === true,
-		installAvailable: install.installAvailable === true,
-		installVersion: install.installVersion,
-		installedVersion: install.installedVersion,
-		updateAvailable: install.updateAvailable === true,
-		installing: install.installing === true,
-		routerClock: install.routerClock,
-	};
+  const clients = instancesOf(list, "freeturn-client").map((v) =>
+    ftInstanceStatus(v, nowMs),
+  );
+  const servers = instancesOf(list, "freeturn-server").map((v) =>
+    ftInstanceStatus(v, nowMs),
+  );
+  return {
+    clients,
+    servers,
+    client: clients[0]?.status ?? emptyProcess(),
+    server: servers[0]?.status ?? emptyProcess(),
+    binariesPresent: install.binariesPresent === true,
+    installAvailable: install.installAvailable === true,
+    installVersion: install.installVersion,
+    installedVersion: install.installedVersion,
+    updateAvailable: install.updateAvailable === true,
+    installing: install.installing === true,
+    routerClock: install.routerClock,
+  };
 }
 
 /**
@@ -520,18 +559,25 @@ export function toFreeTurnStatus(
  * инстанса (`freeturn-client:default`), а страница адресует инстансы голым id —
  * иначе секция капчи не нашла бы свой инстанс и молча замолчала бы.
  */
-export function toCaptchaOverview(raw: FreeTurnCaptchaOverview): FreeTurnCaptchaOverview {
-	return {
-		...raw,
-		ownerClientId: raw.ownerClientId ? bareId(raw.ownerClientId) : raw.ownerClientId,
-		clients: (raw.clients ?? []).map((c) => ({ ...c, clientId: bareId(c.clientId) })),
-	};
+export function toCaptchaOverview(
+  raw: FreeTurnCaptchaOverview,
+): FreeTurnCaptchaOverview {
+  return {
+    ...raw,
+    ownerClientId: raw.ownerClientId
+      ? bareId(raw.ownerClientId)
+      : raw.ownerClientId,
+    clients: (raw.clients ?? []).map((c) => ({
+      ...c,
+      clientId: bareId(c.clientId),
+    })),
+  };
 }
 
 /** Голый id из ключа инстанса; строка без роли отдаётся как есть. */
 export function bareId(key: string): string {
-	const idx = key.indexOf(':');
-	return idx < 0 ? key : key.slice(idx + 1);
+  const idx = key.indexOf(":");
+  return idx < 0 ? key : key.slice(idx + 1);
 }
 
 // #endregion
@@ -546,7 +592,7 @@ export function bareId(key: string): string {
  * попыткой стереть пароль (Н5).
  */
 function putSecret(out: Cfg, key: string, value: string | undefined): void {
-	if (value && value.trim()) out[key] = value;
+  if (value && value.trim()) out[key] = value;
 }
 
 /**
@@ -559,20 +605,20 @@ function putSecret(out: Cfg, key: string, value: string | undefined): void {
  * `peer` и `connMode`.
  */
 export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
-	const out: Cfg = {
-		connMode: cfg.connMode === 'raw' ? 'raw' : 'wg',
-		listen: cfg.listen ?? '',
-		peer: cfg.peer ?? '',
-		vkHashes: cfg.vkHashes ?? '',
-		workers: cfg.workers ?? 0,
-		obfs: cfg.obfs ?? '',
-		fingerprint: cfg.fingerprint ?? '',
-		deviceId: cfg.deviceId ?? '',
-		captchaMode: cfg.captchaMode ?? '',
-		vkAuthMode: cfg.vkAuthMode ?? '',
-	};
-	putSecret(out, 'password', cfg.password);
-	return out;
+  const out: Cfg = {
+    connMode: cfg.connMode === "raw" ? "raw" : "wg",
+    listen: cfg.listen ?? "",
+    peer: cfg.peer ?? "",
+    vkHashes: cfg.vkHashes ?? "",
+    workers: cfg.workers ?? 0,
+    obfs: cfg.obfs ?? "",
+    fingerprint: cfg.fingerprint ?? "",
+    deviceId: cfg.deviceId ?? "",
+    captchaMode: cfg.captchaMode ?? "",
+    vkAuthMode: cfg.vkAuthMode ?? "",
+  };
+  putSecret(out, "password", cfg.password);
+  return out;
 }
 
 /**
@@ -581,64 +627,64 @@ export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
  * правит.
  */
 export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
-	const out: Cfg = {
-		listen: cfg.listen ?? '',
-		wgPort: cfg.wgPort ?? 0,
-		configDir: cfg.configDir ?? '',
-		adminId: cfg.adminId ?? '',
-		rawListen: cfg.rawListen ?? '',
-		directListen: cfg.directListen ?? '',
-		relayMode: cfg.relayMode === 'raw' ? 'raw' : 'wg',
-		natMode: natModeOf(cfg.natMode),
-		natStaticWan: cfg.natStaticWan ?? '',
-		policy: cfg.policy ?? '',
-		lanSegments: cfg.lanSegments ?? [],
-		debug: cfg.debug === true,
-		exposeToPolicies: cfg.exposeToPolicies === true,
-		openFirewall: cfg.openFirewall !== false,
-	};
-	putSecret(out, 'password', cfg.password);
-	putSecret(out, 'botToken', cfg.botToken);
-	return out;
+  const out: Cfg = {
+    listen: cfg.listen ?? "",
+    wgPort: cfg.wgPort ?? 0,
+    configDir: cfg.configDir ?? "",
+    adminId: cfg.adminId ?? "",
+    rawListen: cfg.rawListen ?? "",
+    directListen: cfg.directListen ?? "",
+    relayMode: cfg.relayMode === "raw" ? "raw" : "wg",
+    natMode: natModeOf(cfg.natMode),
+    natStaticWan: cfg.natStaticWan ?? "",
+    policy: cfg.policy ?? "",
+    lanSegments: cfg.lanSegments ?? [],
+    debug: cfg.debug === true,
+    exposeToPolicies: cfg.exposeToPolicies === true,
+    openFirewall: cfg.openFirewall !== false,
+  };
+  putSecret(out, "password", cfg.password);
+  putSecret(out, "botToken", cfg.botToken);
+  return out;
 }
 
 export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
-	const out: Cfg = {
-		listen: cfg.listen ?? '',
-		peer: cfg.peer ?? '',
-		provider: cfg.provider ?? '',
-		links: cfg.links ?? '',
-		streams: cfg.streams ?? 0,
-		transport: cfg.transport ?? 'tcp',
-		mode: cfg.mode ?? 'udp',
-		bond: cfg.bond === true,
-		turnHost: cfg.turnHost ?? '',
-		turnPort: cfg.turnPort ?? 0,
-		obfProfile: cfg.obfProfile ?? 'none',
-		streamsPerCred: cfg.streamsPerCred ?? 0,
-		platform: cfg.platform ?? '',
-		dnsMode: cfg.dnsMode ?? '',
-		dnsServers: cfg.dnsServers ?? '',
-		clientId: cfg.clientId ?? '',
-		sub: cfg.sub ?? '',
-		debug: cfg.debug === true,
-	};
-	putSecret(out, 'obfKey', cfg.obfKey);
-	return out;
+  const out: Cfg = {
+    listen: cfg.listen ?? "",
+    peer: cfg.peer ?? "",
+    provider: cfg.provider ?? "",
+    links: cfg.links ?? "",
+    streams: cfg.streams ?? 0,
+    transport: cfg.transport ?? "tcp",
+    mode: cfg.mode ?? "udp",
+    bond: cfg.bond === true,
+    turnHost: cfg.turnHost ?? "",
+    turnPort: cfg.turnPort ?? 0,
+    obfProfile: cfg.obfProfile ?? "none",
+    streamsPerCred: cfg.streamsPerCred ?? 0,
+    platform: cfg.platform ?? "",
+    dnsMode: cfg.dnsMode ?? "",
+    dnsServers: cfg.dnsServers ?? "",
+    clientId: cfg.clientId ?? "",
+    sub: cfg.sub ?? "",
+    debug: cfg.debug === true,
+  };
+  putSecret(out, "obfKey", cfg.obfKey);
+  return out;
 }
 
 export function toFreeTurnServerPatch(cfg: FreeTurnServerConfig): Cfg {
-	const out: Cfg = {
-		listen: cfg.listen ?? '',
-		connect: cfg.connect ?? '',
-		mode: cfg.mode ?? 'udp',
-		obfProfile: cfg.obfProfile ?? 'none',
-		clientsFile: cfg.clientsFile ?? '',
-		debug: cfg.debug === true,
-		openFirewall: cfg.openFirewall !== false,
-	};
-	putSecret(out, 'obfKey', cfg.obfKey);
-	return out;
+  const out: Cfg = {
+    listen: cfg.listen ?? "",
+    connect: cfg.connect ?? "",
+    mode: cfg.mode ?? "udp",
+    obfProfile: cfg.obfProfile ?? "none",
+    clientsFile: cfg.clientsFile ?? "",
+    debug: cfg.debug === true,
+    openFirewall: cfg.openFirewall !== false,
+  };
+  putSecret(out, "obfKey", cfg.obfKey);
+  return out;
 }
 
 // #endregion

@@ -13,6 +13,13 @@
 	import DetailSection from './DetailSection.svelte';
 	import { natModeOptions } from './shareConfig';
 
+	// Режим работы сервера. Раньше менялся только пересозданием инстанса: в
+	// списке бейдж режима был, а переключателя не было нигде.
+	const relayModeOptions = [
+		{ value: 'wg' as const, label: 'WG' },
+		{ value: 'raw' as const, label: 'Raw' },
+	];
+
 	interface Props {
 		/** Редактируемая копия конфига детали — правится на месте. */
 		wdttServer?: WdttServerConfig;
@@ -59,6 +66,33 @@
 	}: Props = $props();
 
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
+	/**
+	 * Режим NAT «Интернет» требует выбранного WAN (`WdttServerConfig.Validate`).
+	 * Раньше кнопка была активна, поля WAN не было нигде, и сохранённый конфиг
+	 * молча становился невалидным: сервер не стартовал, исправить было негде.
+	 */
+	const wanMissing = $derived(
+		!!wdttServer &&
+			wdttServer.natMode === 'internet-only' &&
+			!(wdttServer.natStaticWan ?? '').trim(),
+	);
+	/** Показать, чего не хватает «Интернету»: клик по нему был отклонён. */
+	let natWanBlocked = $state(false);
+
+	/**
+	 * Смена NAT уезжает СВОЕЙ ручкой сразу, мимо «Сохранить», поэтому «Интернет»
+	 * без выбранного WAN перехватывается здесь: иначе невалидный конфиг попал бы
+	 * на бэкенд немедленно, и сервер перестал бы стартовать.
+	 */
+	function changeNat(mode: NatMode) {
+		if (mode === 'internet-only' && !(wdttServer?.natStaticWan ?? '').trim()) {
+			natWanBlocked = true;
+			return;
+		}
+		natWanBlocked = false;
+		onnat(mode);
+	}
+
 	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
 	const ftPort = $derived(String(ftServer?.listen?.split(':').pop() ?? ''));
 	// SH-56 держится, пока выбранное не совпало с применённым. Применённое
@@ -81,6 +115,23 @@
 
 <DetailSection title="Сеть">
 	{#if wdttServer}
+		<div class="mode-row">
+			<span class="row-label">Режим работы</span>
+			<SegmentedControl
+				value={wdttServer.relayMode === 'raw' ? 'raw' : 'wg'}
+				options={relayModeOptions}
+				ariaLabel="Режим работы"
+				disabled={busy}
+				onchange={(v) => {
+					if (wdttServer) wdttServer.relayMode = v;
+				}}
+			/>
+			<FieldHint
+				text="WG — абоненты попадают в роутер через WireGuard-половину сервера. Raw — через raw-половину, без WireGuard. Смена применяется при перезапуске сервера."
+				ariaLabel="Подсказка: режим работы"
+			/>
+		</div>
+
 		<!-- Главный пароль живёт здесь, а не только в мастере: сервер без него не
 		     стартует и не принимает абонентов, а мастер существующему инстансу
 		     доступен не всегда — задать пароль было негде. -->
@@ -101,9 +152,16 @@
 				options={natModeOptions}
 				ariaLabel="Режим NAT"
 				disabled={busy}
-				onchange={onnat}
+				onchange={changeNat}
 			/>
 		</div>
+
+		{#if natWanBlocked}
+			<p class="save-block">
+				Сначала выберите выход в интернет в разделе «Дополнительно» — без него
+				режим «Интернет» не работает.
+			</p>
+		{/if}
 
 		<div class="row">
 			<span class="row-label">Доступ в LAN</span>
@@ -207,14 +265,37 @@
 		</div>
 	{/if}
 
+	{#if wanMissing}
+		<p class="save-block">
+			Режиму NAT «Интернет» нужен выход в интернет — выберите его в разделе
+			«Дополнительно». Без него сервер не запустится.
+		</p>
+	{/if}
+
 	<div class="btn-row">
-		<Button variant="primary" loading={saving} disabled={busy} onclick={onsave}>Сохранить</Button>
+		<Button variant="primary" loading={saving} disabled={busy || wanMissing} onclick={onsave}>
+			Сохранить
+		</Button>
 		<Button variant="ghost" disabled={busy} onclick={onrevert}>Отменить</Button>
 	</div>
 </DetailSection>
 
 <style>
+	.save-block {
+		margin: 0 0 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-warning);
+	}
+
 	.row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.75rem;
+	}
+
+	.mode-row {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;

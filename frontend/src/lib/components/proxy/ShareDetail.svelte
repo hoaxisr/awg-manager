@@ -39,6 +39,7 @@
 		type ShareConfig,
 	} from './shareConfig';
 	import { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
+	import InstanceBadges from './InstanceBadges.svelte';
 	import type { ProxyInstanceRow } from './rows';
 
 	interface Props {
@@ -100,6 +101,7 @@
 	let peer = $state('');
 	let peerSnap = $state<ServersSnapshot | null>(null);
 	let lanOptions = $state<{ value: string; label: string }[]>([]);
+	let wanOptions = $state<{ value: string; label: string }[]>([]);
 	let ingress = $state(false);
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
 	// до ответа ручки статуса тумблер молчит, а не пугает.
@@ -213,6 +215,14 @@
 		} catch {
 			/* сегменты вторичны: без них остаётся выбор без подписей */
 		}
+		// WAN-интерфейсы нужны режиму NAT «Интернет» (natStaticWan). Вторичны:
+		// без них поле остаётся, но выбирать не из чего.
+		try {
+			const wans = await api.getWANInterfaces();
+			wanOptions = wans.map((w) => ({ value: w.name, label: w.label || w.name }));
+		} catch {
+			/* список WAN вторичен */
+		}
 		// WS-27: фактическое состояние тумблера — из настроек роутера sing-box.
 		if (!wdttDraft) return;
 		try {
@@ -321,6 +331,7 @@
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
 			{row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
 		</Badge>
+		<InstanceBadges {row} />
 	</div>
 
 	<RunBar
@@ -403,7 +414,12 @@
 		bind:peer
 	/>
 
-	<ShareAdvancedSection bind:wdttServer={wdttDraft} bind:ftServer={ftDraft} ports={killPorts} />
+	<ShareAdvancedSection
+		bind:wdttServer={wdttDraft}
+		bind:ftServer={ftDraft}
+		ports={killPorts}
+		{wanOptions}
+	/>
 
 	<LogSection
 		log={status?.log}

@@ -6,6 +6,7 @@ export { default as DetailSection } from './DetailSection.svelte';
 export { default as ExitDetail } from './ExitDetail.svelte';
 export { default as ExitWizard } from './ExitWizard.svelte';
 export { default as ExitParamsSection } from './ExitParamsSection.svelte';
+export { default as InstanceBadges } from './InstanceBadges.svelte';
 export { default as InstanceList } from './InstanceList.svelte';
 export { default as KillPortSection } from './KillPortSection.svelte';
 export { default as LastErrorBox } from './LastErrorBox.svelte';

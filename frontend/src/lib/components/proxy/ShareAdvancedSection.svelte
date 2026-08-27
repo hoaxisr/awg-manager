@@ -6,6 +6,7 @@
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { modeOptions } from '../freeturn/options';
+	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
@@ -20,9 +21,29 @@
 		ftServer?: FreeTurnServerConfig;
 		/** Порты инстанса — строка на каждый. */
 		ports: SharePort[];
+		/**
+		 * WAN-интерфейсы роутера для режима NAT «Интернет». Пусто — список ещё
+		 * не приехал либо не отдался: поле остаётся, но выбирать не из чего.
+		 */
+		wanOptions?: { value: string; label: string }[];
 	}
 
-	let { wdttServer = $bindable(), ftServer = $bindable(), ports }: Props = $props();
+	let {
+		wdttServer = $bindable(),
+		ftServer = $bindable(),
+		ports,
+		wanOptions = [],
+	}: Props = $props();
+
+	// Порт DTLS — главный порт раздачи и обязательное поле конфига
+	// (`WdttServerConfig.Validate`). Раньше правился только в мастере.
+	const dtlsPort = $derived(String(listenPortNumber(wdttServer?.listen ?? '', 0) || 56002));
+
+	function applyDtlsPort(v: string) {
+		const port = Number(v);
+		if (!wdttServer || !Number.isFinite(port) || port <= 0) return;
+		wdttServer.listen = setListenPort(wdttServer.listen || '0.0.0.0:56002', port, '0.0.0.0');
+	}
 
 	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
 		{ value: 'ram', label: 'RAM' },
@@ -35,6 +56,25 @@
 
 <DetailSection title="Дополнительно" collapsed hint="Экспертные поля и освобождение портов.">
 	{#if wdttServer}
+		<div class="grid">
+			<Input
+				label="Порт DTLS"
+				type="number"
+				value={dtlsPort}
+				hint="Главный порт раздачи; raw-половина займёт следующий. Смена перезапустит сервер"
+				onchange={applyDtlsPort}
+				fullWidth
+			/>
+			<Dropdown
+				label="Выход в интернет"
+				value={wdttServer.natStaticWan ?? ''}
+				options={[{ value: '', label: 'Не выбран' }, ...wanOptions]}
+				onchange={(v) => {
+					if (wdttServer) wdttServer.natStaticWan = v;
+				}}
+				fullWidth
+			/>
+		</div>
 		<div class="grid">
 			<Input label="Config dir" bind:value={wdttServer.configDir} fullWidth />
 			<Input label="Admin ID" bind:value={wdttServer.adminId} fullWidth />

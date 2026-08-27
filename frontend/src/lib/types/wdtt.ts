@@ -35,6 +35,8 @@ export interface WdttClientInstance {
 	id: string;
 	name: string;
 	config: WdttClientConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface WdttServerConfig {
@@ -87,6 +89,8 @@ export interface WdttServerInstance {
 	id: string;
 	name: string;
 	config: WdttServerConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface WdttConfig {

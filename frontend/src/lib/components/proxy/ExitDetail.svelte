@@ -32,6 +32,7 @@
 	import { cloneConfig, type ExitConfig } from './exitConfig';
 	import { apiErrorCode } from './serverClients';
 	import { findLinkedTunnel, listenPort } from './linkedTunnel';
+	import InstanceBadges from './InstanceBadges.svelte';
 	import type { ProxyInstanceRow } from './rows';
 
 	interface Props {
@@ -209,6 +210,7 @@
 	<div class="head">
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>{badge}</Badge>
+		<InstanceBadges {row} />
 	</div>
 
 	<RunBar

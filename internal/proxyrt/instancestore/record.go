@@ -45,6 +45,14 @@ type Record struct {
 	Enabled   bool   `json:"enabled"`
 	CreatedAt string `json:"createdAt,omitempty"`
 
+	// SeededFrom — имя старого конфига, из которого запись перенёс посев
+	// (`wdtt.json` / `freeturn.json`). Пусто у всего, что завели через UI.
+	// Признак принадлежит ЗАПИСИ, а не состоянию файла: `State.SeededFrom`
+	// говорит лишь, что посев вообще был, и не отличает перенесённый инстанс
+	// от заведённого руками после обновления. UI показывает по нему бейдж
+	// «перенесено» — иначе происхождение «дефолтных» инстансов не объяснить.
+	SeededFrom string `json:"seededFrom,omitempty"`
+
 	// Sub — URL подписки wdtt-клиента (продуктовые метаданные, proxyapp).
 	// У freeturn-клиента подписка — поле КОНФИГА роли (едет в -sub).
 	Sub string `json:"sub,omitempty"`

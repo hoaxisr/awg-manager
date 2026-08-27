@@ -1203,7 +1203,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// не изменение поведения, и ронять тест ею незачем.
 	want := map[string]Record{
 		"wdtt-client:cli-1": {
-			ID: "cli-1", Kind: KindWdttClient, Name: "Клиент раз", Enabled: true,
+			ID: "cli-1", Kind: KindWdttClient, Name: "Клиент раз", Enabled: true, SeededFrom: "wdtt.json",
 			Sub:    "https://sub.wdtt.example/one",
 			PeerWg: "wg.example:56000", PeerRaw: "raw.example:56003",
 			WdttClient: &roles.WdttClientConfig{
@@ -1236,7 +1236,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 		// потерял бы адрес соседнего режима (Г-1 №1: фронт восстанавливает
 		// его при переключении wg↔raw).
 		"wdtt-client:cli-2": {
-			ID: "cli-2", Kind: KindWdttClient, Name: "Клиент два", Enabled: false,
+			ID: "cli-2", Kind: KindWdttClient, Name: "Клиент два", Enabled: false, SeededFrom: "wdtt.json",
 			Sub:    "https://sub.wdtt.example/two",
 			PeerWg: "wg2.example:56000", PeerRaw: "raw2.example:56003",
 			WdttClient: &roles.WdttClientConfig{
@@ -1255,7 +1255,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 			},
 		},
 		"wdtt-server:srv-1": {
-			ID: "srv-1", Kind: KindWdttServer, Name: "Сервер раз", Enabled: true,
+			ID: "srv-1", Kind: KindWdttServer, Name: "Сервер раз", Enabled: true, SeededFrom: "wdtt.json",
 			Users: []ServerUser{{Password: "user-pw-1", Comment: "Абонент один",
 				VkHash: "vkhash-1", ExpiresAt: 1700000001, Auto: true}},
 			LinkPeer: "link.example:56002", LinkVKHashes: "link-vkh", StatsLog: "disk",
@@ -1284,7 +1284,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 			},
 		},
 		"freeturn-client:ftc-1": {
-			ID: "ftc-1", Kind: KindFreeTurnClient, Name: "FT клиент", Enabled: true,
+			ID: "ftc-1", Kind: KindFreeTurnClient, Name: "FT клиент", Enabled: true, SeededFrom: "freeturn.json",
 			FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen:         "127.0.0.1:9012",
 				Peer:           "ft.example:56000",
@@ -1308,7 +1308,7 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 			},
 		},
 		"freeturn-server:fts-1": {
-			ID: "fts-1", Kind: KindFreeTurnServer, Name: "FT сервер", Enabled: true,
+			ID: "fts-1", Kind: KindFreeTurnServer, Name: "FT сервер", Enabled: true, SeededFrom: "freeturn.json",
 			FreeTurnServer: &roles.FreeTurnServerConfig{
 				Listen:       "0.0.0.0:56005",
 				Connect:      "127.0.0.1:9013",
@@ -1593,5 +1593,38 @@ func TestSeedWithoutFreeturnFileSeedsNoFreeturn(t *testing.T) {
 	}
 	if len(res.State.MovedListen) != 0 {
 		t.Fatalf("конфликта нет — переездов нет: %+v", res.State.MovedListen)
+	}
+}
+
+// Признак происхождения нужен КАЖДОЙ записи, а не файлу целиком: `State.SeededFrom`
+// говорит лишь, что посев был, и не отличает перенесённый инстанс от заведённого
+// руками после обновления. UI показывает по нему бейдж «перенесено» — без него
+// «дефолтные» инстансы выглядят взявшимися ниоткуда.
+func TestSeedMarksEachRecordWithItsSource(t *testing.T) {
+	e := newSeedEnv(t)
+	writeFile(t, e.deps.WdttPath, oldWdttJSON)
+	writeFile(t, e.deps.FreeturnPath, oldFreeturnJSON)
+
+	res, err := Seed(context.Background(), e.st, e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := byKey(res)
+	want := map[string]string{
+		"wdtt-client:default":     "wdtt.json",
+		"wdtt-server:default":     "wdtt.json",
+		"freeturn-client:default": "freeturn.json",
+		"freeturn-server:default": "freeturn.json",
+	}
+	for key, src := range want {
+		r, ok := rec[key]
+		if !ok {
+			t.Fatalf("нет записи %s", key)
+		}
+		// Имя файла, а не флаг: подсказка бейджа называет источник, и у двух
+		// подсистем он разный.
+		if r.SeededFrom != src {
+			t.Errorf("%s: seededFrom %q, ждали %q", key, r.SeededFrom, src)
+		}
 	}
 }

@@ -47,12 +47,16 @@ export interface FreeTurnClientInstance {
 	id: string;
 	name: string;
 	config: FreeTurnClientConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface FreeTurnServerInstance {
 	id: string;
 	name: string;
 	config: FreeTurnServerConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface FreeTurnConfig {
