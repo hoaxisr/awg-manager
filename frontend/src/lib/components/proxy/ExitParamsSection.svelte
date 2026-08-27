@@ -2,7 +2,7 @@
 	// EX-15..24, EX-57, EX-59..EX-65 — «Параметры» клиента. Поля правятся в
 	// конфиге инстанса на месте; сохраняет и откатывает страница (владелец
 	// конфига).
-	import { Button, Dropdown, Input, SegmentedControl } from '$lib/components/ui';
+	import { Button, Dropdown, FormRow, Input, SegmentedControl } from '$lib/components/ui';
 	import { setPeer, switchConnMode } from '$lib/utils/wdttPeerMode';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { dnsModeOptions, modeOptions, platformOptions, transportOptions } from '../freeturn/options';
@@ -46,62 +46,74 @@
 
 <DetailSection title="Параметры">
 	{#if wdttClient}
-		<div class="mode-row">
-			<span class="row-label">Режим подключения</span>
-			<SegmentedControl
-				value={wdttClient.connMode === 'raw' ? 'raw' : 'wg'}
-				options={connModeOptions}
-				ariaLabel="Режим подключения"
-				onchange={(v) => {
-					if (wdttClient) switchConnMode(wdttClient, v);
-				}}
-			/>
-			<span class="mode-hint">
-				У режимов разные порты сервера: адрес подставится из сохранённого для
-				выбранного режима. Применяется при перезапуске.
-			</span>
-		</div>
-	{/if}
-	<div class="grid">
-		{#if wdttClient}
-			<Input
+		<!-- Одна сетка «метка — контрол» на всю секцию (решение по вёрстке
+		     2026-08-27): метки в колонке, ширина поля по содержимому. -->
+		<div class="form">
+			<FormRow
+				label="Режим подключения"
+				hint="У режимов разные порты сервера: адрес подставится из сохранённого для выбранного режима. Применяется при перезапуске"
+			>
+				<SegmentedControl
+					value={wdttClient.connMode === 'raw' ? 'raw' : 'wg'}
+					options={connModeOptions}
+					ariaLabel="Режим подключения"
+					onchange={(v) => {
+						if (wdttClient) switchConnMode(wdttClient, v);
+					}}
+				/>
+			</FormRow>
+
+			<FormRow
 				label="Адрес сервера"
-				value={wdttClient.peer}
-				oninput={(v) => setPeer(wdttClient, v)}
+				for="exit-peer"
 				hint="Смена удалит AWG-туннели этого клиента — перезапустите его"
-				fullWidth
-			/>
-			<SensitiveInput
-				label="Пароль"
-				bind:value={wdttClient.password}
-				hint="Применяется при перезапуске"
-			/>
-			<Input
+			>
+				<Input
+					id="exit-peer"
+					value={wdttClient.peer}
+					oninput={(v) => setPeer(wdttClient, v)}
+					fullWidth
+				/>
+			</FormRow>
+
+			<FormRow label="Пароль" hint="Применяется при перезапуске">
+				<SensitiveInput bind:value={wdttClient.password} />
+			</FormRow>
+
+			<FormRow
 				label="Локальный порт"
-				bind:value={wdttClient.listen}
+				for="exit-listen"
 				hint={raw ? '' : 'Сюда смотрит AWG-туннель'}
-				fullWidth
-			/>
-			<Input
-				label="VK-хеши"
-				bind:value={wdttClient.vkHashes}
-				hint="Применяется при перезапуске"
-				fullWidth
-			/>
-			<Input
-				label="Потоков"
-				type="number"
-				value={String(wdttClient.workers)}
-				onchange={(v) => (wdttClient.workers = Number(v) || wdttClient.workers)}
-				fullWidth
-			/>
-			<Dropdown
-				label="Режим капчи"
-				bind:value={wdttClient.captchaMode}
-				options={captchaOptions}
-				fullWidth
-			/>
-		{:else if ftClient}
+			>
+				<div class="w-listen">
+					<Input id="exit-listen" bind:value={wdttClient.listen} fullWidth />
+				</div>
+			</FormRow>
+
+			<FormRow label="VK-хеши" for="exit-vk" hint="Применяется при перезапуске">
+				<Input id="exit-vk" bind:value={wdttClient.vkHashes} fullWidth />
+			</FormRow>
+
+			<FormRow label="Потоков" for="exit-workers">
+				<div class="w-num">
+					<Input
+						id="exit-workers"
+						type="number"
+						value={String(wdttClient.workers)}
+						onchange={(v) => (wdttClient.workers = Number(v) || wdttClient.workers)}
+						fullWidth
+					/>
+				</div>
+			</FormRow>
+
+			<FormRow label="Режим капчи">
+				<div class="w-select">
+					<Dropdown bind:value={wdttClient.captchaMode} options={captchaOptions} fullWidth />
+				</div>
+			</FormRow>
+		</div>
+	{:else if ftClient}
+		<div class="grid">
 			<Input label="Адрес сервера" bind:value={ftClient.peer} fullWidth />
 			<Input label="Ссылки VK Calls" bind:value={ftClient.links} fullWidth />
 			<Input
@@ -133,8 +145,8 @@
 			/>
 			<Dropdown label="DNS-режим" bind:value={ftClient.dnsMode} options={dnsModeOptions} fullWidth />
 			<Input label="DNS-серверы" bind:value={ftClient.dnsServers} fullWidth />
-		{/if}
-	</div>
+		</div>
+	{/if}
 	<div class="btn-row">
 		<Button variant="primary" loading={saving} onclick={onsave}>Сохранить</Button>
 		<Button variant="ghost" onclick={onrevert}>Отменить</Button>
@@ -148,23 +160,36 @@
 		gap: 0.75rem;
 	}
 
-	.mode-row {
+	/* Сетка формы WDTT-клиента: у FreeTurn полей вдвое больше и они
+	   однотипные — там сетка карточек читается лучше строчной. */
+	.form {
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: 0.75rem;
-		flex-wrap: wrap;
-		margin-bottom: 0.75rem;
+		--form-label-w: 150px;
 	}
 
-	.row-label {
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
+	.form :global(.form-row-control > *) {
+		max-width: 420px;
 	}
 
-	.mode-hint {
-		font-size: 0.75rem;
-		color: var(--color-text-tertiary);
-		flex: 1 1 240px;
+	.form :global(.form-row-control > [role='group']) {
+		width: fit-content;
 	}
+
+	.w-listen {
+		width: 200px;
+	}
+
+	.w-num {
+		width: 96px;
+	}
+
+	.w-select {
+		width: 220px;
+	}
+
+
+
 
 </style>

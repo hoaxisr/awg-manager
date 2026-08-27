@@ -225,6 +225,42 @@
 	<!-- EX-01: ошибка живёт, пока процесс не работает. -->
 	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
 
+	<!-- Две колонки: параметры слева, «куда идёт трафик» и журнал справа.
+	     Раньше всё шло одной лентой, и до связанного туннеля надо было
+	     прокрутить всю форму (решение по вёрстке 2026-08-27). -->
+	<div class="columns">
+	<div class="col">
+	<ExitParamsSection
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
+		{raw}
+		{saving}
+		onsave={save}
+		onrevert={revert}
+	/>
+
+	{#if wdttDraft?.sub?.trim()}
+		<SubscriptionSection
+			instanceId={row.id}
+			bind:client={wdttDraft}
+			onsaveandstart={saveAndStart}
+			{onreload}
+		/>
+	{/if}
+
+	<AdvancedSection
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
+		{raw}
+		wgConf={wdttStatus?.wgConfig ?? ''}
+		ports={listen ? [{ listen }] : []}
+		onensuretunnel={() => ensureTunnel(true)}
+		onimportconf={importConf}
+		busyTunnel={tunnelBusy}
+	/>
+	</div>
+
+	<div class="col">
 	<DetailSection
 		title="Нагрузка"
 		hint="Истории трафика для прокси-процессов нет — менеджер её не собирает. Байты и скорость смотрите на карточке связанного AWG-туннеля."
@@ -284,40 +320,11 @@
 		</DetailSection>
 	{/if}
 
-	<ExitParamsSection
-		bind:wdttClient={wdttDraft}
-		bind:ftClient={ftDraft}
-		{raw}
-		{saving}
-		onsave={save}
-		onrevert={revert}
-	/>
-
 	<!-- Поллинг капчи не крутится у остановленного клиента: подтверждать
 	     нечего, пока потоки не поднимаются. -->
 	{#if row.protocol === 'freeturn' && running}
 		<CaptchaSection clientId={row.id} />
 	{/if}
-
-	{#if wdttDraft?.sub?.trim()}
-		<SubscriptionSection
-			instanceId={row.id}
-			bind:client={wdttDraft}
-			onsaveandstart={saveAndStart}
-			{onreload}
-		/>
-	{/if}
-
-	<AdvancedSection
-		bind:wdttClient={wdttDraft}
-		bind:ftClient={ftDraft}
-		{raw}
-		wgConf={wdttStatus?.wgConfig ?? ''}
-		ports={listen ? [{ listen }] : []}
-		onensuretunnel={() => ensureTunnel(true)}
-		onimportconf={importConf}
-		busyTunnel={tunnelBusy}
-	/>
 
 	<LogSection
 		log={status?.log}
@@ -328,9 +335,33 @@
 			if (ftDraft) ftDraft.debug = on;
 		}}
 	/>
+	</div>
+	</div>
 </Card>
 
 <style>
+	/* Две колонки детали: параметры слева, наблюдение справа. На узком экране
+	   складываются в одну ленту. */
+	.columns {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		align-items: start;
+	}
+
+	.col {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		min-width: 0;
+	}
+
+	@media (max-width: 1100px) {
+		.columns {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+
 	.head {
 		display: flex;
 		align-items: center;
