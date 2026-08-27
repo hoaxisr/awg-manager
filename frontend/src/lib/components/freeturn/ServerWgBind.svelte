@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { Dropdown, Button, Input } from '$lib/components/ui';
+	import { Button, Dropdown, FormRow, Input } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { servers, type ServersSnapshot } from '$lib/stores/servers';
 	import {
@@ -157,30 +157,74 @@
 			<code>{endpointHint}</code> для клиента FreeTurn.
 		{/if}
 	</p>
-	<div class="ft-wg-row">
-		<Dropdown
-			label={peerLabel}
-			bind:value={selected}
-			options={options}
-			placeholder={options.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}
-			disabled={!options.length || loading}
-		/>
-		{#if !autoApply}
-			<Button variant="secondary" size="sm" loading={loading} disabled={!selected} onclick={apply}>
-				Применить
-			</Button>
-		{/if}
-	</div>
-	<div class="ft-wg-port">
-		<Input
-			label="Endpoint клиента FreeTurn (порт)"
-			type="number"
-			value={String(endpointPort)}
-			onchange={(v) => (endpointPort = Number(v) || 9000)}
-		/>
-		<!-- SH-87: вкладки «Клиент» на странице «Прокси» нет — ссылаться на неё нельзя. -->
-		<span class="ft-hint">Локальный порт FreeTurn-клиента, который смотрит на этот сервер</span>
-	</div>
+	{#if compact}
+		<!-- В детали раздачи виджет живёт внутри общей сетки формы: метка слева,
+		     как у соседних полей. Раньше он рисовал свои метки сверху, и на
+		     стыке с формой было видно две разные схемы. -->
+		<div class="ft-wg-form">
+			<FormRow label={peerLabel}>
+				<div class="ft-wg-row">
+					<Dropdown
+						bind:value={selected}
+						options={options}
+						placeholder={options.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}
+						disabled={!options.length || loading}
+						fullWidth
+					/>
+					{#if !autoApply}
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={loading}
+							disabled={!selected}
+							onclick={apply}>Применить</Button
+						>
+					{/if}
+				</div>
+			</FormRow>
+
+			<!-- SH-87: вкладки «Клиент» на странице «Прокси» нет — ссылаться нельзя. -->
+			<FormRow
+				label="Endpoint клиента"
+				for="ft-endpoint-port"
+				hint="Локальный порт FreeTurn-клиента, который смотрит на этот сервер"
+			>
+				<div class="ft-wg-port-num">
+					<Input
+						id="ft-endpoint-port"
+						type="number"
+						value={String(endpointPort)}
+						onchange={(v) => (endpointPort = Number(v) || 9000)}
+						fullWidth
+					/>
+				</div>
+			</FormRow>
+		</div>
+	{:else}
+		<div class="ft-wg-row">
+			<Dropdown
+				label={peerLabel}
+				bind:value={selected}
+				options={options}
+				placeholder={options.length ? 'Выберите…' : 'Нет поднятых WG-серверов с пирами'}
+				disabled={!options.length || loading}
+			/>
+			{#if !autoApply}
+				<Button variant="secondary" size="sm" loading={loading} disabled={!selected} onclick={apply}>
+					Применить
+				</Button>
+			{/if}
+		</div>
+		<div class="ft-wg-port">
+			<Input
+				label="Endpoint клиента FreeTurn (порт)"
+				type="number"
+				value={String(endpointPort)}
+				onchange={(v) => (endpointPort = Number(v) || 9000)}
+			/>
+			<span class="ft-hint">Локальный порт FreeTurn-клиента, который смотрит на этот сервер</span>
+		</div>
+	{/if}
 
 	{#if keeneticPeer}
 		<div class="ft-keenetic-warn">
@@ -210,6 +254,17 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
 		background: var(--color-bg-secondary);
+	}
+
+	.ft-wg-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		--form-label-w: 140px;
+	}
+
+	.ft-wg-port-num {
+		width: 108px;
 	}
 
 	.ft-wg-bind.ft-wg-compact {
