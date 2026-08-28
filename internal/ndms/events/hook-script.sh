@@ -12,11 +12,16 @@
 # tools (ip) and BusyBox-portable text extraction (sed/awk) — the
 # /bin/grep on Keenetic is BusyBox grep and does NOT support -P/\K.
 #
-# Uses BusyBox wget (always present on Keenetic) instead of curl to
-# eliminate the curl runtime dependency. Form values are passed raw
-# inside --post-data because all hook parameters (interface names,
-# layer strings, IPv4/IPv6 addresses) use characters safe for
-# application/x-www-form-urlencoded without extra encoding.
+# Prefers curl and falls back to BusyBox wget. Порядок именно такой, потому
+# что apple wget в BusyBox 1.37.0 на этой прошивке падает с SIGSEGV на ЛЮБОМ
+# запросе, включая обычный GET (стенд 2026-08-28): каждое событие NDMS
+# оставляло в kernel-логе «sending SIGSEGV to wget». Ошибка не наша, но звали
+# его мы. wget остаётся запасным — curl ставится не везде.
+#
+# Form values are passed raw inside --data/--post-data because all hook
+# parameters (interface names, layer strings, IPv4/IPv6 addresses) use
+# characters safe for application/x-www-form-urlencoded without extra
+# encoding.
 
 HOOK_TYPE=$(basename "$(dirname "$0")" .d)
 
@@ -37,16 +42,16 @@ BODY="type=${HOOK_TYPE}&id=${id}&system_name=${system_name}&layer=${layer}&level
 
 # -T is the portable BusyBox spelling of the timeout (--timeout requires
 # FEATURE_WGET_LONG_OPTIONS, which not every firmware build enables).
-# --post-data has no short form, so if the firmware wget lacks long options
-# the first attempt fails and we fall back to the Entware tools; the extra
-# 127.0.0.1 target covers a daemon bound to a non-br0 interface.
+# --post-data has no short form, so на прошивке без длинных опций попытка
+# просто не проходит; второй адрес 127.0.0.1 покрывает демона, привязанного не
+# к br0.
 for AWG_URL in "http://${AWG_HOST}:${AWG_PORT}/api/hook/ndms" \
                "http://127.0.0.1:${AWG_PORT}/api/hook/ndms"; do
+    [ -x /opt/bin/curl ] && \
+        /opt/bin/curl -s -m 3 --data "$BODY" "$AWG_URL" >/dev/null 2>&1 && exit 0
     /bin/wget -q -O - -T 3 --post-data="$BODY" "$AWG_URL" >/dev/null 2>&1 && exit 0
     [ -x /opt/bin/wget ] && \
         /opt/bin/wget -q -O - -T 3 --post-data="$BODY" "$AWG_URL" >/dev/null 2>&1 && exit 0
-    [ -x /opt/bin/curl ] && \
-        /opt/bin/curl -s -m 3 --data "$BODY" "$AWG_URL" >/dev/null 2>&1 && exit 0
 done
 
 exit 0
