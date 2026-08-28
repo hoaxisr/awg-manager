@@ -2,6 +2,7 @@ package iptables
 
 import (
 	"context"
+	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"strings"
 	"testing"
 )
@@ -61,5 +62,22 @@ func TestRunHintsMissingCommentModule(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "xt_comment") {
 		t.Fatalf("модуль загружен — подсказка лишняя: %v", err)
+	}
+}
+
+// Занятый xtables-лок ретраибелен: NDM переписывает таблицы пачками, и `-w`
+// версии 1.4.21 спасает не всегда — стенд 2026-08-28 дал «Resource temporarily
+// unavailable», exit 4, на снятии правил остановленного инстанса.
+func TestLockBusyRecognisesOnlyLockFailures(t *testing.T) {
+	if lockBusy(nil) {
+		t.Fatal("отсутствие результата принято за занятый лок")
+	}
+	busy := &exec.Result{Stderr: "iptables: Resource temporarily unavailable."}
+	if !lockBusy(busy) {
+		t.Fatalf("занятый лок не опознан: %q", busy.Stderr)
+	}
+	другая := &exec.Result{Stderr: "iptables: No chain/target/match by that name."}
+	if lockBusy(другая) {
+		t.Fatalf("чужая ошибка принята за занятый лок: %q", другая.Stderr)
 	}
 }
