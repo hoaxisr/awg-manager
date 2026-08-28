@@ -171,19 +171,25 @@ func (r Record) NDMSNamed() instance.NDMSNamed {
 // freeturn-сервера — файл списка разрешённых. Без инстанса они мертвы, а
 // убрать их из UI нечем (стенд 2026-08-28).
 //
+// Второй возврат — ПОДДЕРЕВО каталога данных, где этим путям место. Оба факта
+// одним методом потому, что путь без своего поддерева опасен: поля configDir и
+// clientsFile правятся через API как обычные строки, и уборка обязана сверить
+// путь не с каталогом данных целиком (там же лежат туннели, настройки и данные
+// СОСЕДНИХ инстансов), а со своим поддеревом.
+//
 // Пусто у клиентских ролей: своих данных на диске у них нет.
-func (r Record) DataPath() string {
+func (r Record) DataPath() (path, root string) {
 	switch r.Kind {
 	case KindWdttServer:
 		if r.WdttServer == nil {
-			return ""
+			return "", ""
 		}
-		return strings.TrimSpace(r.WdttServer.ConfigDir)
+		return strings.TrimSpace(r.WdttServer.ConfigDir), "wdtt"
 	case KindFreeTurnServer:
 		if r.FreeTurnServer == nil {
-			return ""
+			return "", ""
 		}
-		return strings.TrimSpace(r.FreeTurnServer.ClientsFile)
+		return strings.TrimSpace(r.FreeTurnServer.ClientsFile), "freeturn"
 	}
-	return ""
+	return "", ""
 }

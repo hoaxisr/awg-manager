@@ -503,7 +503,6 @@
 		secondary="Настройки прокси сохранятся — после повторной установки они снова заработают."
 		confirmLabel="Удалить"
 		variant="danger"
-		busy={confirmProxy.busy}
 		onConfirm={() => {
 			const row = confirmProxy;
 			confirmProxy = null;

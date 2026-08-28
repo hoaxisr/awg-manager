@@ -847,19 +847,23 @@ func (a *app) wireProxyrt() {
 		Downloader: proxyBinaryDownloader{svc: a.downloadSvc},
 		Warn:       func(msg string) { journal.Warn("install", "proxy", msg) },
 		Info:       func(msg string) { journal.Info("install", "proxy", msg) },
-		// Гейт удаления бинарей. Менеджер строится ниже, поэтому читается
-		// лениво через ref; до его появления инстансов нет по построению.
-		InstanceCount: func(name install.Subsystem) int {
-			if ref.mgr == nil {
-				return 0
+		// Гейт удаления бинарей: считаем по ДИСКУ, а не по памяти менеджера.
+		// Боот прокси-рантайма идёт горутиной после старта HTTP, и до его
+		// конца Records() пуст — гейт был бы открыт всё окно посева, а на
+		// холодном старте роутера оно длится минутами. Со стора же читаются и
+		// записи без воркера (отказ фабрики в Create).
+		InstanceCount: func(name install.Subsystem) (int, error) {
+			st, err := store.Load()
+			if err != nil {
+				return 0, err
 			}
 			n := 0
-			for _, rec := range ref.mgr.Records() {
+			for _, rec := range st.Records {
 				if proxySubsystemOf(rec.Kind) == name {
 					n++
 				}
 			}
-			return n
+			return n, nil
 		},
 	})
 

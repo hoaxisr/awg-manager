@@ -11,8 +11,8 @@ import (
 )
 
 // countOf — гейт удаления: сколько инстансов у подсистемы.
-func countOf(n map[Subsystem]int) func(Subsystem) int {
-	return func(s Subsystem) int { return n[s] }
+func countOf(n map[Subsystem]int) func(Subsystem) (int, error) {
+	return func(s Subsystem) (int, error) { return n[s], nil }
 }
 
 func TestUninstallRemovesBinariesAndVersionFile(t *testing.T) {
@@ -146,4 +146,56 @@ func TestServeUninstall(t *testing.T) {
 			t.Fatalf("код %d, ждали 405", rr.Code)
 		}
 	})
+}
+
+func TestUninstallRefusedWhenCountUnknown(t *testing.T) {
+	// Отказ чтения записей — не ноль: без ответа гейт закрывается, иначе на
+	// сбое диска бинари снеслись бы из-под живых инстансов.
+	s := newTestService(t, Deps{
+		InstanceCount: func(Subsystem) (int, error) { return 0, errors.New("диск не читается") },
+	})
+	sub := s.subs[SubsystemWdtt]
+	writeBin(t, sub.clientBin, "client")
+	if err := s.Uninstall("wdtt"); err == nil {
+		t.Fatal("неизвестное число инстансов обязано закрывать удаление")
+	}
+	if _, err := os.Stat(sub.clientBin); err != nil {
+		t.Fatalf("бинарь снесён при неизвестном числе инстансов: %v", err)
+	}
+}
+
+func TestUninstallRefusedWhileInstalling(t *testing.T) {
+	// Флаг занятости взводится на ВСЁ время сноса: иначе установка, начатая
+	// между гейтом и os.Remove, теряла бы только что активированный бинарь.
+	s := newTestService(t, Deps{InstanceCount: countOf(nil)})
+	sub := s.subs[SubsystemWdtt]
+	writeBin(t, sub.clientBin, "client")
+	sub.installMu.Lock()
+	sub.installing = true
+	sub.installMu.Unlock()
+
+	if err := s.Uninstall("wdtt"); err == nil {
+		t.Fatal("удаление во время установки обязано отказать")
+	}
+	if _, err := os.Stat(sub.clientBin); err != nil {
+		t.Fatalf("бинарь снесён во время установки: %v", err)
+	}
+}
+
+func TestUninstallReleasesInstallingFlag(t *testing.T) {
+	// Снятый флаг: иначе первая же деинсталляция запирала бы установку до
+	// перезапуска демона.
+	s := newTestService(t, Deps{InstanceCount: countOf(nil)})
+	if err := s.Uninstall("wdtt"); err != nil {
+		t.Fatal(err)
+	}
+	if s.subs[SubsystemWdtt].isInstalling() {
+		t.Fatal("флаг занятости не снят после удаления")
+	}
+	// И отказ по гейту флаг тоже не оставляет взведённым.
+	s2 := newTestService(t, Deps{InstanceCount: countOf(map[Subsystem]int{SubsystemWdtt: 1})})
+	_ = s2.Uninstall("wdtt")
+	if s2.subs[SubsystemWdtt].isInstalling() {
+		t.Fatal("флаг занятости не снят после отказа гейта")
+	}
 }

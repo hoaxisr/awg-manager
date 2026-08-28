@@ -842,19 +842,26 @@ func sweptMessage(removed []string) string {
 	return "уборка NDMS: снято " + strings.Join(removed, ", ")
 }
 
-// deleteDataDir убирает каталог данных удалённого инстанса: у wdtt-сервера в
-// нём лежат абоненты и ключи, у freeturn-клиента — список разрешённых. Без
+// deleteDataDir убирает данные удалённого инстанса: у wdtt-сервера это каталог
+// с абонентами и ключами, у freeturn-сервера — файл списка разрешённых. Без
 // инстанса они мертвы, а убрать их из UI нечем — каталог оставался навсегда
 // (стенд 2026-08-28).
 //
-// Сносится только то, что лежит ВНУТРИ каталога данных: путь берётся из
-// конфига, а пользователь волен увести его куда угодно (ClientsFile у
-// freeturn-сервера — обычное поле формы), и чужой файл нам сносить нечем.
+// Сносится только то, что лежит внутри СВОЕГО поддерева каталога данных
+// (dataDir/wdtt, dataDir/freeturn), и только строго внутри. Путь берётся из
+// конфига, а поля configDir и clientsFile правятся через API как обычные
+// строки: сверка с каталогом данных целиком пропускала бы и сам dataDir
+// (os.RemoveAll снёс бы данные всего приложения), и каталоги соседей.
 //
 // Отказ не отменяет удаления: инстанса уже нет, откатывать нечего.
 func (m *Manager) deleteDataDir(key string, removed instancestore.Record) {
-	path := removed.DataPath()
-	if path == "" || !underDir(m.deps.Store.Dir(), path) {
+	path, root := removed.DataPath()
+	if path == "" || root == "" {
+		return
+	}
+	if !strictlyUnder(filepath.Join(m.deps.Store.Dir(), root), path) {
+		m.deps.Journal.Warn("delete", key,
+			"каталог данных не убран: путь вне "+root+" в каталоге данных: "+path)
 		return
 	}
 	if err := os.RemoveAll(path); err != nil {
@@ -864,15 +871,19 @@ func (m *Manager) deleteDataDir(key string, removed instancestore.Record) {
 	m.deps.Journal.Info("delete", key, "каталог данных удалён: "+path)
 }
 
-// underDir — лежит ли path внутри dir. Оба приводятся к чистому виду: «..» в
-// пути пользователя иначе увели бы снос наружу каталога данных.
-func underDir(dir, path string) bool {
+// strictlyUnder — лежит ли path СТРОГО внутри dir. Оба приводятся к чистому
+// виду: «..» в пути пользователя иначе увели бы снос наружу.
+//
+// Равенство путей — не «внутри»: иначе снос уносил бы само поддерево вместе с
+// данными всех остальных инстансов. Тот же запрет стоит у соседнего сторожа
+// снаружи прокси-рантайма (singbox/router.isManagedLocalRuleSet).
+func strictlyUnder(dir, path string) bool {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return false
 	}
 	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
-	if err != nil {
+	if err != nil || rel == "." {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))

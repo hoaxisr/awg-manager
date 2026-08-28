@@ -87,9 +87,17 @@ type Deps struct {
 	Info func(msg string)
 	// Clock — часы роутера; nil = routerclock.Get().
 	Clock func() (now time.Time, zone string)
-	// InstanceCount — сколько инстансов подсистемы существует сейчас, включая
+	// InstanceCount — сколько инстансов подсистемы записано на ДИСКЕ, включая
 	// выключенные. Гейт удаления бинарей; nil = удаление недоступно.
-	InstanceCount func(Subsystem) int
+	//
+	// Именно с диска, а не из памяти менеджера: боот прокси-рантайма идёт
+	// горутиной уже ПОСЛЕ старта HTTP (wiring_proxyrt.go), и на холодном
+	// старте роутера, пока RCI мёртв и посев ретраится, инстансы в памяти
+	// ещё не собраны. Счётчик по памяти отдавал бы в этом окне ноль — и
+	// удаление сносило бы бинари из-под живых записей.
+	//
+	// Отказ чтения — не ноль: без ответа гейт закрывается.
+	InstanceCount func(Subsystem) (int, error)
 }
 
 // subsys — состояние одной подсистемы: где её бинари, какой у неё пин и не
@@ -237,11 +245,18 @@ func (s *Service) Status(subsystem string) (InstallStatus, error) {
 	}, nil
 }
 
+// instanceCount для статуса: отказ чтения показывается нулём — гейт всё равно
+// на ручке, а статус опрашивается постоянно и ронять его из-за одного чтения
+// незачем.
 func (s *Service) instanceCount(name Subsystem) int {
 	if s.deps.InstanceCount == nil {
 		return 0
 	}
-	return s.deps.InstanceCount(name)
+	n, err := s.deps.InstanceCount(name)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Install скачивает, сверяет и активирует бинари подсистемы. Проверка — по
@@ -310,15 +325,30 @@ func (s *Service) Uninstall(subsystem string) error {
 	if s.deps.InstanceCount == nil {
 		return fmt.Errorf("удаление недоступно: счётчик инстансов не подключён")
 	}
-	if n := s.deps.InstanceCount(sub.name); n > 0 {
-		return fmt.Errorf("%w: их %d", ErrInstancesExist, n)
-	}
+	// Флаг занятости взводится ДО проверок и держится до конца: иначе между
+	// проверкой и os.Remove успевал стартовать Install, и снос уносил только
+	// что активированный бинарь или version-файл (образец — singbox.Operator,
+	// он держит свой installBusy на весь снос).
 	sub.installMu.Lock()
 	if sub.installing {
 		sub.installMu.Unlock()
 		return errors.New("установка уже выполняется")
 	}
+	sub.installing = true
 	sub.installMu.Unlock()
+	defer func() {
+		sub.installMu.Lock()
+		sub.installing = false
+		sub.installMu.Unlock()
+	}()
+
+	n, err := s.deps.InstanceCount(sub.name)
+	if err != nil {
+		return fmt.Errorf("не прочитать записи инстансов: %w", err)
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: их %d", ErrInstancesExist, n)
+	}
 
 	var errs []error
 	for _, path := range []string{sub.clientBin, sub.serverBin, sub.versionPath} {

@@ -51,14 +51,16 @@ func (r *recRemover) Remove(_ context.Context, res proxyrt.OwnedResource) error 
 	return nil
 }
 
-// opkgIndexOf — разбор имени в номер, паритет прод-адаптера (opkgTunIndex).
+// opkgIndexOf — разбор имени в номер. Копия прод-адаптера (opkgTunIndex в
+// cmd/awg-manager): тот живёт в package main, и импортировать его отсюда
+// нечем. Отрицательные отвергаются, как и там.
 func opkgIndexOf(name string) (int, bool) {
 	rest, ok := strings.CutPrefix(name, "OpkgTun")
 	if !ok {
 		return 0, false
 	}
 	idx, err := strconv.Atoi(rest)
-	if err != nil {
+	if err != nil || idx < 0 {
 		return 0, false
 	}
 	return idx, true
@@ -215,6 +217,42 @@ func TestDeleteRemovesDataDirOfServer(t *testing.T) {
 	}
 }
 
+func TestDeleteKeepsDataDirItself(t *testing.T) {
+	// configDir правится через API как обычная строка. Указанный на САМ
+	// каталог данных, он снёс бы всё приложение: записи инстансов, туннели,
+	// настройки. Равенство путей — не «внутри».
+	e := newLiveEnv(t)
+	marker := filepath.Join(e.dir, "proxy-instances.json")
+	for _, dir := range []string{e.dir, filepath.Join(e.dir, "wdtt")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.st.Replace(func(st *instancestore.State) error {
+			st.Records = []instancestore.Record{{
+				ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
+				WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "pw",
+					ConfigDir: dir, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+					RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}}}
+			st.SeededFrom = []string{"test"}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.m.Boot(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.m.Delete(context.Background(), "wdtt-server:srv"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("снесён %s: %v", dir, err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("снесён каталог данных целиком (%s): %v", marker, err)
+		}
+	}
+}
+
 func TestDeleteKeepsDataPathOutsideDataDir(t *testing.T) {
 	// Путь списка задаёт пользователь: увёл его наружу каталога данных — файл
 	// не наш, и сносить его удаление инстанса права не имеет.
@@ -240,5 +278,36 @@ func TestDeleteKeepsDataPathOutsideDataDir(t *testing.T) {
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Fatalf("снесён файл вне каталога данных: %v", err)
+	}
+}
+
+func TestDeleteKeepsDataPathOutsideOwnSubtree(t *testing.T) {
+	// Внутри каталога данных, но не в своём поддереве: там живут туннели,
+	// настройки и данные СОСЕДНИХ подсистем — сносить их удаление инстанса
+	// права не имеет.
+	e := newLiveEnv(t)
+	foreign := filepath.Join(e.dir, "tunnels")
+	if err := os.MkdirAll(foreign, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
+			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "pw",
+				ConfigDir: foreign, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+				RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}})
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "wdtt-server:srv"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("снесён чужой каталог внутри каталога данных: %v", err)
 	}
 }
