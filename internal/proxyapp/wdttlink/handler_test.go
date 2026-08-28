@@ -404,14 +404,25 @@ func TestLink_PasswordRejections(t *testing.T) {
 	}
 }
 
-func TestLink_NoServerPassword(t *testing.T) {
-	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", RelayMode: ConnModeWG})
+// Пароль владельца убран из UI, задать его негде — а ссылка выдаётся на пароль
+// абонента и владельческий в себе не несёт. Стенд 2026-08-28: прежняя проверка
+// на его непустоту делала раздачу неработающей — «Ссылка» отвечала 400.
+func TestLink_ServerWithoutOwnerPassword(t *testing.T) {
+	rec := serverRecord(
+		roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001, RelayMode: ConnModeWG},
+		instancestore.ServerUser{Password: "abonent"},
+	)
+	rec.LinkPeer = "198.51.100.9"
 	h, _, _, _, _ := newTestHandler(t, rec)
 	rr := httptest.NewRecorder()
-	h.Link(rr, post(t, `{"password":"x"}`), rec.Key())
-	_, msg, code := decodeEnvelope(t, rr)
-	if code != "WDTT_SERVER_NO_PASSWORD" || msg != "укажите пароль сервера перед генерацией ссылки" {
-		t.Fatalf("код=%q сообщение=%q", code, msg)
+	h.Link(rr, post(t, `{"password":"abonent"}`), rec.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	link, _ := data["link"].(string)
+	if !strings.Contains(link, "abonent") {
+		t.Fatalf("ссылка выдана не на пароль абонента: %q", link)
 	}
 }
 

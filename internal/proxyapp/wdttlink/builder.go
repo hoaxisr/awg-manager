@@ -109,11 +109,14 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_SERVER_NOT_FOUND", Msg: err.Error()}
 	}
-	if strings.TrimSpace(cfg.Password) == "" {
-		return nil, &LinkError{Code: "WDTT_SERVER_NO_PASSWORD",
-			Msg: "укажите пароль сервера перед генерацией ссылки"}
-	}
-
+	// Пароля владельца ссылка не требует: она выдаётся на пароль АБОНЕНТА
+	// (linkPasswordFor), а владельческий в неё не попадает ни при каких
+	// условиях. Прежняя проверка на его непустоту осталась от старой модели и
+	// с уходом пароля из UI (решение владельца 2026-08-28) стала неснимаемым
+	// отказом: задать его негде, а ссылку не выдать. Пустое значение здесь
+	// безвредно — UnusableReason отбрасывает пустой пароль абонента ДО
+	// сравнения с владельческим, поэтому «это пароль владельца» на пустом не
+	// срабатывает.
 	linkPassword, err := b.linkPasswordFor(req, rec, cfg.Password)
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_NO_CLIENT", Msg: err.Error()}
