@@ -549,16 +549,14 @@ type ServiceImpl struct {
 	// (сериализован transitionMu).
 	fakeipACLAsserted bool
 
-	// policyTunACLAsserted — тот же one-shot флаг для policy-tun (свой, чтобы
-	// смена режима не съедала ассерт соседа). Доступ только из Reconcile.
-	policyTunACLAsserted bool
-
-	// *ACLv6Asserted — отдельные флаги v6-разрешения: у NDMS под IPv6 своё
-	// пространство списков, и v4-ассерт его не ставит. Свой флаг на каждый, а
-	// не общий с v4: иначе успех v4 гасил бы ретрай упавшего v6, и интерфейс
-	// молча остался бы без v6-разрешения до перезапуска режима.
-	fakeipACLv6Asserted    bool
-	policyTunACLv6Asserted bool
+	// fakeipACLv6Asserted — отдельный флаг v6-разрешения: у NDMS под IPv6 своё
+	// пространство списков, и v4-ассерт его не ставит. Свой флаг, а не общий с
+	// v4: иначе успех v4 гасил бы ретрай упавшего v6, и интерфейс молча остался
+	// бы без v6-разрешения до перезапуска режима.
+	//
+	// У policy-tun таких флагов нет: там ассерт идёт на каждом тике — см.
+	// reconcilePolicyTun.
+	fakeipACLv6Asserted bool
 
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.

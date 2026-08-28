@@ -300,27 +300,30 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// не ловит ни один другой heal, см. healDetachedTun. Слот он проверяет сам.
 	s.healDetachedTun(iface, "policy-tun-reconcile", orchestrator.SlotRouter)
 
-	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
-	// уже включённого режима и удаление списка мимо нас. Гейт probeErr == nil —
-	// живость интерфейса подтверждена, иначе bind упал бы и осиротевший список
-	// остался бы в конфиге навсегда.
-	if !s.policyTunACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
+	// Ассерт permit-ACL на КАЖДОМ тике, как и остальные операции режима.
+	// Одноразовый флаг здесь стоять не может: он жил в памяти процесса, никем
+	// не сбрасывался и не был привязан к имени интерфейса, поэтому после смены
+	// индекса OpkgTun список для нового имени не создавался уже никогда —
+	// firewall роутера резал трафик членов политики до sing-box (движок здоров,
+	// Clash API показывает ноль соединений).
+	//
+	// Цена повтора — три RCI-вызова на тик: дубликат списка гасится
+	// IsACLDuplicate, привязка и auto-delete идемпотентны, так что в журнале
+	// роутера остаётся запись, а состояние не меняется.
+	//
+	// Гейт probeErr == nil — живость интерфейса подтверждена, иначе bind упал бы
+	// и осиротевший список остался бы в конфиге навсегда.
+	if s.deps.OpkgTun != nil && probeErr == nil {
 		if e := s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl: "+e.Error())
-		} else {
-			s.policyTunACLAsserted = true
 		}
 	}
-	// v6-разрешение — отдельной сущностью и со своим флагом: тот же апгрейд-путь
-	// (режим, поднятый версией без v6-ACL, его не имеет), но успех v4 не должен
-	// гасить ретрай упавшего v6. Гейт по адресу: на интерфейсе без v6 разрешать
-	// нечего.
-	if !s.policyTunACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
+	// v6-разрешение — отдельной сущностью: у NDMS для IPv6 своё пространство
+	// списков. Гейт по адресу: на интерфейсе без v6 разрешать нечего.
+	if s.deps.OpkgTun != nil && probeErr == nil &&
 		s.resolveFakeIPParams(sr).TunAddr6 != "" {
 		if e := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl v6: "+e.Error())
-		} else {
-			s.policyTunACLv6Asserted = true
 		}
 	}
 
