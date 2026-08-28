@@ -153,6 +153,12 @@
 			: '',
 	);
 
+	// Режим раздачи из ЧЕРНОВИКА: сегмент «Режим работы» правит его, и бейдж
+	// шапки обязан идти следом, а не ждать «Сохранить». У FreeTurn режима нет.
+	const draftRelayMode = $derived<'wg' | 'raw' | undefined>(
+		wdttDraft ? (wdttDraft.relayMode === 'raw' ? 'raw' : 'wg') : undefined,
+	);
+
 	const policyName = $derived(wdttDraft?.policy?.trim() ?? '');
 	const policyLabel = $derived.by(() => {
 		if (!policyName || policyName === 'none') return '';
@@ -321,7 +327,7 @@
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
 			{row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
 		</Badge>
-		<InstanceBadges {row} />
+		<InstanceBadges {row} mode={draftRelayMode} />
 	</div>
 
 	<RunBar

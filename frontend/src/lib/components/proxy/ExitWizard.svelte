@@ -150,7 +150,11 @@
 	const step2Ready = $derived(exitStep2Ready({ protocol, ...fields }));
 
 	function candidateListen(p: ExitProtocol): string {
-		return nextLocalListen(p === 'wdtt' ? usedListens.wdtt : usedListens.freeturn, p);
+		// Локальный порт ОБЩИЙ для обоих протоколов: wdtt-клиент и
+		// freeturn-клиент слушают один 127.0.0.1, и мастер, считавший занятость
+		// только по своему протоколу, подсказывал занятый порт — инстанс падал
+		// с «порт 9000 занят другим инстансом» (стенд 2026-08-28).
+		return nextLocalListen([...usedListens.wdtt, ...usedListens.freeturn], p);
 	}
 
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -212,7 +213,7 @@ func (r *Address) Apply(ctx context.Context, s proxyrt.Step) error {
 		}
 		return r.cmds.SetMTU(ctx, r.d.Name, mtu)
 	case "clear-address":
-		return r.cmds.ClearAddress(ctx, r.d.Name)
+		return ignoreMissingObject(r.cmds.ClearAddress(ctx, r.d.Name))
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
@@ -285,10 +286,29 @@ func (r *AdminState) Apply(ctx context.Context, s proxyrt.Step) error {
 	case "up":
 		return r.cmds.InterfaceUp(ctx, r.d.Name)
 	case "down":
-		return r.cmds.InterfaceDown(ctx, r.d.Name)
+		return ignoreMissingObject(r.cmds.InterfaceDown(ctx, r.d.Name))
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
 }
 
 func (r *AdminState) RecheckAfter() time.Duration { return 0 }
+
+// ignoreMissingObject гасит отказ роутера на снятии того, чего уже нет.
+//
+// `clear address` и `interface down` по записи, за которой не осталось
+// устройства, роутер отвергает как `system failed [0xcffd0217]` /
+// `[0xcffd01b9]` — проверено curl'ом на стенде 5.01.C.3.0-1. Для этих двух
+// операций отказ означает, что цель УЖЕ достигнута: адреса нет, интерфейс не
+// поднят. Считать это ошибкой — значит писать в журнал пугающую строку на
+// каждой остановке инстанса и планировать шаг заново, пока NDMS не проставит
+// записи state error (наблюдение выше ловит только уже проставленный).
+//
+// Гасится ровно эта форма отказа: остальные ошибки RCI (нет связи, отказ
+// разбора) доходят до вызывающего.
+func ignoreMissingObject(err error) error {
+	if err == nil || strings.Contains(err.Error(), "system failed") {
+		return nil
+	}
+	return err
+}

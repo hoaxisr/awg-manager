@@ -76,7 +76,7 @@
 				Boolean,
 			);
 		}
-		if (row.state === 'error') return ['не запускается'];
+		if (row.state === 'error') return ['включён, но не работает'];
 		return row.autostart ? ['автоподключение', 'остановлен'] : ['остановлен'];
 	}
 

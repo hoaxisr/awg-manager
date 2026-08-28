@@ -7,12 +7,21 @@
 
 	interface Props {
 		row: ProxyInstanceRow;
+		/**
+		 * Режим из ЧЕРНОВИКА детали. Без него бейдж шёл по применённому
+		 * (`row.mode`) и после переключения WG↔Raw оставался прежним до
+		 * «Сохранить» — рядом с уже переключённым сегментом.
+		 */
+		mode?: 'wg' | 'raw';
 	}
 
-	let { row }: Props = $props();
+	let { row, mode }: Props = $props();
 
 	// У FreeTurn режима нет вовсе — бейдж не рисуем, а не показываем «wg».
-	const modeLabel = $derived(row.mode === 'raw' ? 'Raw' : row.mode === 'wg' ? 'WG' : '');
+	const effectiveMode = $derived(mode ?? row.mode);
+	const modeLabel = $derived(
+		effectiveMode === 'raw' ? 'Raw' : effectiveMode === 'wg' ? 'WG' : '',
+	);
 	const modeHint = $derived(
 		row.role === 'server'
 			? 'WG — абоненты попадают в роутер через WireGuard-половину сервера. ' +

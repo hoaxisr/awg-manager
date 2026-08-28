@@ -63,7 +63,7 @@ type ProcessStatus = WdttProcessStatus | FreeTurnProcessStatus;
 type InstanceStatus = { id: string; name: string; status: ProcessStatus };
 
 /**
- * «Не запускается» (LS-06, RB-02) — процесс должен работать, но не работает.
+ * «Включён, но не работает» (LS-06, RB-02) — процесс должен работать, но не работает.
  *
  * Судит `enabled` конфига, а не `lastError`: бэкенд снимает Enabled только на
  * явный стоп пользователя (`internal/wdtt/service.go:803`,

@@ -360,6 +360,22 @@ func TestAdminStateUpAndDown(t *testing.T) {
 	}
 }
 
+// Отказ роутера на снятии того, чего уже нет, ошибкой не считается: цель
+// достигнута. Проверяется формой отказа RCI — «system failed [0xcffd0217]».
+func TestClearAddressIgnoresMissingObject(t *testing.T) {
+	if err := ignoreMissingObject(nil); err != nil {
+		t.Fatalf("успех стал ошибкой: %v", err)
+	}
+	missing := errors.New(`router reported error: "OpkgTun0": system failed [0xcffd0217].`)
+	if err := ignoreMissingObject(missing); err != nil {
+		t.Fatalf("отказ по отсутствующему объекту не погашен: %v", err)
+	}
+	other := errors.New("rci: connection refused")
+	if err := ignoreMissingObject(other); err == nil {
+		t.Fatal("чужая ошибка проглочена")
+	}
+}
+
 // То же для снятия адреса: `clear address` по записи без устройства роутер
 // отвергает («system failed [0xcffd0217]»), и шаг повторялся бы вечно.
 func TestAddressBrokenIfaceNotCleared(t *testing.T) {

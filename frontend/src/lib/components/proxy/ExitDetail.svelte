@@ -229,7 +229,7 @@
 	<div class="head">
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>{badge}</Badge>
-		<InstanceBadges {row} />
+		<InstanceBadges {row} mode={draftRaw ? 'raw' : 'wg'} />
 	</div>
 
 	<RunBar
