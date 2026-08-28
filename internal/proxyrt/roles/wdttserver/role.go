@@ -39,7 +39,7 @@ type Deps struct {
 	Instance      string
 	Binary        string
 	PinnedSHA256  string
-	Link          procres.ProcessLink
+	Link          procres.TunLink
 	Runner        procres.ProcRunner
 	Gate          procres.BinaryGate
 	Cmds          ndmsres.Commands
@@ -72,6 +72,8 @@ type Role struct {
 	ifaceWG  *ndmsres.Iface
 	ifaceRaw *ndmsres.Iface
 	proc     *procres.Proc
+	tunWG    *procres.TunHandoff
+	tunRaw   *procres.TunHandoff
 	addrWG   *ndmsres.Address
 	adminWG  *ndmsres.AdminState
 	addrRaw  *ndmsres.Address
@@ -111,10 +113,15 @@ func New(d Deps) (*Role, error) {
 		ID: roles.RProcess, Instance: d.Instance,
 		Impl: roles.ImplWdttServer, Role: roles.RoleServer,
 		Binary: d.Binary, PinnedSHA256: d.PinnedSHA256,
-		NeedCmds:   []string{"state"}, // серверу attach-tun не положен (§6)
+		// Обе половины сервера работают на TUN, который создал NDMS и передал
+		// менеджер: без attach-tun бинарь поднимет своё устройство поверх
+		// чужого имени, и после его выхода запись NDMS осиротеет.
+		NeedCmds:   []string{"state", "attach-tun", "detach-tun"},
 		SocketPath: sock, LogPath: logPath,
 		Link: d.Link, Runner: d.Runner, Gate: d.Gate, Now: d.Now,
 	})
+	r.tunWG = procres.NewTunHandoff(roles.Sub(roles.RTunHandoff, "wg"), d.Link, procres.OpenTunFD, d.Now)
+	r.tunRaw = procres.NewTunHandoff(roles.Sub(roles.RTunHandoff, "raw"), d.Link, procres.OpenTunFD, d.Now)
 	r.addrWG = ndmsres.NewAddress(roles.Sub(roles.RNdmsAddress, "wg"), d.Cmds, d.Query)
 	r.adminWG = ndmsres.NewAdminState(roles.Sub(roles.RAdminState, "wg"), d.Cmds, d.Query)
 	r.addrRaw = ndmsres.NewAddress(roles.Sub(roles.RNdmsAddress, "raw"), d.Cmds, d.Query)
@@ -189,8 +196,16 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	}
 	r.ingress.SetDesired(c.WgIface, c.RawIface, enabled)
 
-	res := []proxyrt.Resource{r.ifaceWG, r.ifaceRaw, r.proc,
-		r.addrWG, r.adminWG, r.addrRaw, r.adminRaw}
+	r.tunWG.SetDesired(c.WgIface)
+	r.tunRaw.SetDesired(c.RawIface)
+
+	// Дескрипторы передаются ПОСЛЕ старта процесса и ДО адресов: половины
+	// сервера ждут их, чтобы подняться, а адрес ставится на живой интерфейс.
+	res := []proxyrt.Resource{r.ifaceWG, r.ifaceRaw, r.proc}
+	if enabled {
+		res = append(res, r.tunWG, r.tunRaw)
+	}
+	res = append(res, r.addrWG, r.adminWG, r.addrRaw, r.adminRaw)
 	if enabled && c.ExposeToPolicies {
 		res = append(res, r.exit)
 	}

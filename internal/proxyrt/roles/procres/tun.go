@@ -54,6 +54,26 @@ func (t *TunHandoff) Observe(context.Context) (proxyrt.Observation, error) {
 	if !ok || t.now().Sub(snap.At) > snapMaxAge {
 		return proxyrt.Observation{Known: false, Detail: "нет свежего снимка состояния процесса"}, nil
 	}
+	// Роль с двумя половинами (wdtt-server) сообщает Tuns, роль с одной —
+	// Tun. Ищем СВОЙ интерфейс: два ресурса одной роли смотрят в один снимок,
+	// и без поиска второй читал бы состояние первого.
+	if len(snap.State.Tuns) > 0 {
+		for _, ts := range snap.State.Tuns {
+			if ts.Iface == t.iface {
+				return proxyrt.Observation{
+					Known:  true,
+					Exists: ts.Attached,
+					Attrs: map[string]string{
+						"iface":    ts.Iface,
+						"attached": strconv.FormatBool(ts.Attached),
+					},
+				}, nil
+			}
+		}
+		// Своего интерфейса в списке нет — дескриптор не прикреплён.
+		return proxyrt.Observation{Known: true, Exists: false,
+			Attrs: map[string]string{"iface": "", "attached": "false"}}, nil
+	}
 	if snap.State.Tun == nil {
 		// Отсутствие необязательного поля = «неизвестно», не «нет» (§5.2).
 		return proxyrt.Observation{Known: false, Detail: "процесс не сообщил состояние TUN"}, nil

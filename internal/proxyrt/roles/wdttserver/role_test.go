@@ -25,6 +25,11 @@ func (f *fakeLink) State(context.Context) (awgmproto.State, error) {
 
 func (f *fakeLink) Snapshot() (control.Snapshot, bool) { return control.Snapshot{}, false }
 
+// Обе половины сервера получают дескриптор от менеджера — связь роли обязана
+// уметь attach-tun/detach-tun.
+func (f *fakeLink) AttachTun(context.Context, string, *os.File) error { return f.err }
+func (f *fakeLink) DetachTun(context.Context) error                   { return f.err }
+
 type nilRunner struct{}
 
 func (nilRunner) Start(context.Context, []string) (int, error) { return 1, nil }
@@ -162,6 +167,9 @@ func TestServerChainOrder(t *testing.T) {
 	got := ids(role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()))
 	want := []proxyrt.ResourceID{
 		"ndms_interface:wg", "ndms_interface:raw", "process",
+		// Дескрипторы — сразу после старта процесса: обе половины сервера
+		// ждут их, чтобы подняться на интерфейсе, созданном NDMS.
+		"tun_handoff:wg", "tun_handoff:raw",
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
 		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",

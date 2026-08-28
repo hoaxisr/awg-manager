@@ -110,19 +110,24 @@ type ListenState struct {
 // означает «неизвестно», и менеджер трактует это как unknown, а не как нулевое
 // значение. На этом различии стоит правило «unknown не порождает шагов».
 type State struct {
-	Role         string       `json:"role"`
-	Instance     string       `json:"instance"`
-	PID          int          `json:"pid"`
-	ConfigHash   string       `json:"config_hash"`
-	BinarySHA256 string       `json:"binary_sha256"`
-	UptimeS      int64        `json:"uptime_s"`
-	LastError    string       `json:"last_error"`
-	Mode         string       `json:"mode,omitempty"`
-	Tun          *TunState    `json:"tun,omitempty"`
-	Address      string       `json:"address,omitempty"`
-	MTU          int          `json:"mtu,omitempty"`
-	WG           *WGState     `json:"wg,omitempty"`
-	Listen       *ListenState `json:"listen,omitempty"`
+	Role         string    `json:"role"`
+	Instance     string    `json:"instance"`
+	PID          int       `json:"pid"`
+	ConfigHash   string    `json:"config_hash"`
+	BinarySHA256 string    `json:"binary_sha256"`
+	UptimeS      int64     `json:"uptime_s"`
+	LastError    string    `json:"last_error"`
+	Mode         string    `json:"mode,omitempty"`
+	Tun          *TunState `json:"tun,omitempty"`
+	// Tuns — состояние НЕСКОЛЬКИХ дескрипторов. Роль с одним TUN (клиент)
+	// заполняет Tun; роль с двумя половинами (wdtt-server: WireGuard и raw)
+	// — Tuns. Поле добавлено рядом, а не вместо: старые бинари шлют Tun, и
+	// менеджер обязан их понимать.
+	Tuns    []TunState   `json:"tuns,omitempty"`
+	Address string       `json:"address,omitempty"`
+	MTU     int          `json:"mtu,omitempty"`
+	WG      *WGState     `json:"wg,omitempty"`
+	Listen  *ListenState `json:"listen,omitempty"`
 	// Clients — указатель, потому что ноль клиентов законен: `int` с omitempty
 	// стёр бы его, и менеджер не отличил бы пустой сервер от «неизвестно».
 	Clients *int `json:"clients,omitempty"`
