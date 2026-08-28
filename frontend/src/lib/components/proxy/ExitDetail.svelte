@@ -79,14 +79,23 @@
 	let ftDraft = $state(untrack(() => (ftClient ? cloneConfig(ftClient) : undefined)));
 
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
+	// raw — режим ПРИМЕНЁННЫЙ: по нему живут связанный туннель, интерфейс и
+	// автозавод, то есть всё, что уже существует в системе.
 	const raw = $derived(row.mode === 'raw');
+	// draftRaw — режим ВЫБРАННЫЙ в форме. Бейдж шапки и подсказки полей идут по
+	// нему: пока они шли по применённому, переключение WG→Raw оставляло бейдж
+	// прежним до нажатия «Сохранить», и человек видел «Raw» в сегменте рядом с
+	// «WDTT · WG» в заголовке.
+	const draftRaw = $derived(
+		wdttDraft ? wdttDraft.connMode === 'raw' : raw,
+	);
 	const running = $derived(row.state === 'running');
 	const listen = $derived(wdttClient?.listen ?? ftClient?.listen ?? '');
 	const port = $derived(listenPort(listen));
 
 	// LS-10..12 — протокол и режим инстанса.
 	const badge = $derived(
-		row.protocol === 'freeturn' ? 'FreeTurn' : raw ? 'WDTT · Raw' : 'WDTT · WG',
+		row.protocol === 'freeturn' ? 'FreeTurn' : draftRaw ? 'WDTT · Raw' : 'WDTT · WG',
 	);
 
 	// RB-06: локальный порт, аптайм, PID.
@@ -244,7 +253,7 @@
 	<ExitParamsSection
 		bind:wdttClient={wdttDraft}
 		bind:ftClient={ftDraft}
-		{raw}
+		raw={draftRaw}
 		{saving}
 		saveBlockedHint={noPeerHint}
 		onsave={save}

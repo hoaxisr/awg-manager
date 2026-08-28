@@ -32,7 +32,7 @@ vi.mock('$lib/api/client', () => ({ api: apiMock }));
 const notify = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('$lib/stores/notifications', () => ({ notifications: notify }));
 
-import { render, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import ExitDetail from './ExitDetail.svelte';
 import type { ProxyInstanceRow } from './rows';
 
@@ -145,5 +145,17 @@ describe('ExitDetail: режим подключения правится в де
 		const { findByRole } = mount('mode-2', 'raw');
 		const raw = await findByRole('button', { name: 'Raw' });
 		expect(raw.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	// Бейдж шапки шёл по ПРИМЕНЁННОМУ режиму, и после переключения человек
+	// видел «Raw» в сегменте рядом с «WDTT · WG» в заголовке — до тех пор,
+	// пока не нажмёт «Сохранить».
+	it('бейдж шапки меняется сразу при переключении режима', async () => {
+		const { findByRole, findByText } = mount('mode-3', 'wg');
+		expect(await findByText('WDTT · WG')).toBeTruthy();
+
+		await fireEvent.click(await findByRole('button', { name: 'Raw' }));
+
+		expect(await findByText('WDTT · Raw')).toBeTruthy();
 	});
 })
