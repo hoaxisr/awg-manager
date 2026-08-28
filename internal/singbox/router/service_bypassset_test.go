@@ -348,8 +348,8 @@ func TestTriggerBypassSetPopulate_RerunsAfterTriggerDuringRun(t *testing.T) {
 		return bypassset.PopulateResult{CountOK: true}, nil
 	}
 	svc.TriggerBypassSetPopulate()
-	<-entered                       // первый прогон вошёл
-	svc.TriggerBypassSetPopulate()  // занято → взводит повтор
+	<-entered                      // первый прогон вошёл
+	svc.TriggerBypassSetPopulate() // занято → взводит повтор
 	close(release)
 
 	select {
@@ -388,8 +388,7 @@ func TestReconcileInstalled_BypassGeoTagsChanged_ReinstallsAndPopulates(t *testi
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},
-		currentMark:         "0xffffaaa",
-		currentWANIPs:       []string{"203.0.113.207/32"},
+		appliedSpec:         &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		netfilterStateKnown: true,
 	}
 	populated := make(chan []string, 1)
@@ -435,8 +434,7 @@ func TestReconcileInstalled_BypassGeoTagsCleared_DropsSetRule(t *testing.T) {
 			NetfilterPreflight: func(context.Context) error { return nil },
 			XtDscpProbe:        func(context.Context) bool { return true },
 		},
-		currentMark:            "0xffffaaa",
-		currentWANIPs:          []string{"203.0.113.207/32"},
+		appliedSpec:            &RestoreInputSpec{PolicyMark: "0xffffaaa", WANIPs: []string{"203.0.113.207/32"}},
 		currentBypassGeoIPTags: []string{"ru"},
 		netfilterStateKnown:    true,
 	}

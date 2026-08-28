@@ -1,11 +1,9 @@
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/enfein/mieru/v3 v3.35.0 h1:AKQT6l9R6xcYaUocpfjqE/vWEvYMxpl+071bhfDXkMY=
-github.com/enfein/mieru/v3 v3.35.0/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
+github.com/enfein/mieru/v3 v3.36.0 h1:kTXfBSV6Dajk09yBYMeI1r4WAuAtMCKqZ42X5BrQZV8=
+github.com/enfein/mieru/v3 v3.36.0/go.mod h1:zJBUCsi5rxyvHM8fjFf+GLaEl4OEjjBXr1s5F6Qd3hM=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
-github.com/hoaxisr/awg-manager/awgmproto v0.1.0 h1:GtdufoqBPmJfCgGOtIi9znluauZSmHUTDx+gIXy9Nr8=
-github.com/hoaxisr/awg-manager/awgmproto v0.1.0/go.mod h1:P2uTai98aqZbMklmq7Y4FgrrRz/aIAJmMTHdLgUCFQ4=
 github.com/hoaxisr/awg-manager/awgmproto v0.1.1 h1:DMlHh9+dNe6/U+2LUnH+vmM8h6CqFCf1YvHCN/bU1ns=
 github.com/hoaxisr/awg-manager/awgmproto v0.1.1/go.mod h1:P2uTai98aqZbMklmq7Y4FgrrRz/aIAJmMTHdLgUCFQ4=
 golang.org/x/net v0.55.0 h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=

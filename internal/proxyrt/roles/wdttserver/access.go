@@ -12,7 +12,7 @@ import (
 // AccessApplier — срез wdtt.AccessManager (access.go:13-21): NDMS NAT-режим,
 // hotspot policy, LAN-ACL, firewall permit. Прод-реализация существует.
 type AccessApplier interface {
-	ApplyNATModeToInterface(ctx context.Context, iface, mode, prevWAN string) (string, error)
+	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
 	EnsureInterfaceFirewallPermit(ctx context.Context, iface string) error
@@ -24,15 +24,15 @@ type AccessApplier interface {
 // набор при смене отпечатка желаемого. Возвращённый ApplyNATModeToInterface
 // WAN уходит в Detail — подхват в конфиг (NatStaticWAN) решает план 5 (В4).
 type NDMSAccess struct {
-	id      proxyrt.ResourceID
-	access  AccessApplier
-	iface   string
-	mode    string
-	prevWAN string
-	policy  string
-	addr    string
-	mask    string
-	lan     []string
+	id       proxyrt.ResourceID
+	access   AccessApplier
+	iface    string
+	mode     string
+	prevWANs []string
+	policy   string
+	addr     string
+	mask     string
+	lan      []string
 	// active=false (disabled) — «не трогать»: старый код звал
 	// applyServerAccess только на старте; доводка NAT/policy/LAN по
 	// интерфейсу выключенного сервера — тот же класс create-on-reference
@@ -46,9 +46,9 @@ func NewNDMSAccess(id proxyrt.ResourceID, access AccessApplier) *NDMSAccess {
 	return &NDMSAccess{id: id, access: access}
 }
 
-func (a *NDMSAccess) SetDesired(iface, mode, prevWAN, policy, addr, mask string, lan []string, active bool) {
-	a.iface, a.mode, a.prevWAN, a.policy, a.addr, a.mask, a.lan, a.active =
-		iface, mode, prevWAN, policy, addr, mask, lan, active
+func (a *NDMSAccess) SetDesired(iface, mode string, prevWANs []string, policy, addr, mask string, lan []string, active bool) {
+	a.iface, a.mode, a.prevWANs, a.policy, a.addr, a.mask, a.lan, a.active =
+		iface, mode, prevWANs, policy, addr, mask, lan, active
 }
 
 func (a *NDMSAccess) fingerprint() string {
@@ -77,7 +77,7 @@ func (a *NDMSAccess) Apply(ctx context.Context, s proxyrt.Step) error {
 	if s.Op != "apply" {
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
-	wan, err := a.access.ApplyNATModeToInterface(ctx, a.iface, a.mode, a.prevWAN)
+	wans, err := a.access.ApplyNATModeToInterface(ctx, a.iface, a.mode, a.prevWANs)
 	if err != nil {
 		return fmt.Errorf("NDMS NAT %s: %w", a.mode, err)
 	}
@@ -93,7 +93,7 @@ func (a *NDMSAccess) Apply(ctx context.Context, s proxyrt.Step) error {
 		}
 	}
 	a.applied = a.fingerprint()
-	a.detail = "применено; WAN=" + wan
+	a.detail = "применено; WAN=" + strings.Join(wans, ",")
 	return nil
 }
 

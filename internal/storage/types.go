@@ -65,20 +65,34 @@ type Settings struct {
 	// Default true (back-compat). See docs/superpowers/specs/
 	// 2026-05-22-singbox-ndms-proxy-toggle-design.md.
 	CreateNDMSProxyForSingbox bool `json:"createNDMSProxyForSingbox"`
+	// SingboxBootstrapDNS — адрес сервера dns-bootstrap в 00-base.json:
+	// им sing-box резолвит доменные адреса в dial-полях (endpoint'ы
+	// туннелей, серверы подписок), поэтому он обязан отвечать БЕЗ другого
+	// резолвера — только IP, без домена и порта. Пусто = не вмешиваться в
+	// файл (исторически адрес правили руками). Issue #770.
+	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty"`
+	// SingboxClashPort — порт experimental.clash_api.external_controller в
+	// 00-base.json. Хост всегда 127.0.0.1: это служебный канал управления
+	// awg-manager (LogForwarder, DelayChecker, селекторы подписок,
+	// /connections, прокси /api/singbox/clash/*), а не пользовательская
+	// настройка sing-box. 0 = порт по умолчанию. Issue #788, ADR 0001.
+	SingboxClashPort int `json:"singboxClashPort,omitempty"`
 	// ManagedPeerAllowIPsMigrated marks the one-time NDMS sweep that strips
 	// the legacy default 0.0.0.0/0 from managed-server peers' allow-ips
 	// (per-peer /32 only). New firmware rejects multiple peers sharing
 	// 0.0.0.0/0 with "subnet overlaps with the other peer". Set after a
 	// successful sweep; the sweep runs at startup while false.
 	ManagedPeerAllowIPsMigrated bool `json:"managedPeerAllowIPsMigrated,omitempty"`
-	// FakeIP is backend-managed operational state for sing-box fakeip-tun
-	// mode (see FakeIPState). Pointer so it's absent from JSON when never
-	// provisioned; nil = not provisioned. Written ONLY via SetFakeIPState.
-	FakeIP *FakeIPState `json:"fakeip,omitempty"`
-	// PolicyTun is backend-managed operational state for sing-box policy-tun
-	// mode (see PolicyTunState). Pointer so it's absent from JSON when never
-	// provisioned; nil = not provisioned. Written ONLY via SetPolicyTunState.
-	PolicyTun *PolicyTunState `json:"policyTun,omitempty"`
+	// LegacyFakeIP — pre-v34 запись владения fakeip-tun (см. FakeIPState).
+	// Читается ТОЛЬКО migrateToV34; писателей нет — владение живёт в OpkgTun.
+	LegacyFakeIP *FakeIPState `json:"fakeip,omitempty"`
+	// LegacyPolicyTun — pre-v34 запись владения policy-tun (см. PolicyTunState).
+	// Читается ТОЛЬКО migrateToV34; писателей нет — владение живёт в OpkgTun.
+	LegacyPolicyTun *PolicyTunState `json:"policyTun,omitempty"`
+	// OpkgTun — единая backend-managed запись владения OpkgTun<N> (см.
+	// OpkgTunState). Pointer: отсутствует в JSON, пока ничего не провижинено.
+	// Пишется ТОЛЬКО через SetOpkgTunState/SetOpkgTunNATSegments.
+	OpkgTun *OpkgTunState `json:"opkgTun,omitempty"`
 	// DNSChainPreset is backend-managed state of the sing-box 1.14 DNS-chain
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
@@ -88,7 +102,7 @@ type Settings struct {
 // DNSChainPresetState is backend-managed state of the DNS-chain preset
 // (sing-box 1.14 evaluate/match_response chains). Written ONLY via
 // SettingsStore.SetDNSChainPresetState — never by the settings API, so a
-// settings PUT cannot clobber it (mirrors FakeIPState).
+// settings PUT cannot clobber it (mirrors SetOpkgTunState).
 // Mode: "" (no preset) | "resilient" (race direct+proxy) | "antipoison"
 // (re-route poisoned answers through the proxy resolver). DirectServer /
 // ProxyServer are tags of existing DNS servers; PoisonCIDRs is the antipoison
@@ -100,12 +114,11 @@ type DNSChainPresetState struct {
 	PoisonCIDRs  []string `json:"poisonCidrs,omitempty"`
 }
 
-// FakeIPState is backend-managed operational state for sing-box fakeip-tun
-// mode. Written ONLY by the fakeip-tun lifecycle (Enable/Disable/reap) via
-// SettingsStore.SetFakeIPState — never by the settings API. Index is the
-// allocated OpkgTun index (iface "opkgtun<N>"), valid only when Provisioned;
-// Inet4Range/Inet6Range record the pool ranges last applied so a pool change
-// can invalidate the sing-box cache.
+// FakeIPState is the pre-v34 fakeip-tun ownership record. Deprecated:
+// читается ТОЛЬКО миграцией v34 (её результат — OpkgTunState), писателей нет.
+// Index is the allocated OpkgTun index (iface "opkgtun<N>"), valid only when
+// Provisioned; Inet4Range/Inet6Range record the pool ranges last applied so a
+// pool change can invalidate the sing-box cache.
 type FakeIPState struct {
 	Provisioned bool   `json:"provisioned,omitempty"`
 	Index       int    `json:"index,omitempty"`
@@ -122,12 +135,48 @@ type PolicyTunNATSegment struct {
 	PriorStaticWAN string `json:"priorStaticWan,omitempty"`
 }
 
-// PolicyTunState — backend-managed состояние policy-tun (зеркало FakeIPState).
-// Пишется ТОЛЬКО lifecycle'ом (Enable/Disable/reap) через SetPolicyTunState.
+// PolicyTunState — pre-v34 запись владения policy-tun (зеркало FakeIPState).
+// Deprecated: читается ТОЛЬКО миграцией v34, писателей нет.
 type PolicyTunState struct {
 	Provisioned bool                  `json:"provisioned,omitempty"`
 	Index       int                   `json:"index,omitempty"`
 	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
+const (
+	OpkgTunModeFakeIP    = "fakeip-tun" // значения совпадают с RoutingMode
+	OpkgTunModePolicyTun = "policy-tun"
+)
+
+// OpkgTunFakeIPData — payload fakeip-tun: диапазоны пула, применённые при
+// провижининге (детектор протухшего fakeip-кэша).
+type OpkgTunFakeIPData struct {
+	Inet4Range string `json:"inet4Range,omitempty"`
+	Inet6Range string `json:"inet6Range,omitempty"`
+}
+
+// OpkgTunPolicyData — payload policy-tun: записанное исходное NAT-состояние
+// сегментов (source-preserve). Писатель payload — NAT-reconcile, у него
+// отдельный сеттер, не трогающий ownership-поля.
+type OpkgTunPolicyData struct {
+	NATSegments []PolicyTunNATSegment `json:"natSegments,omitempty"`
+}
+
+// OpkgTunState — ЕДИНАЯ запись владения OpkgTun<N>. Пишется ТОЛЬКО
+// lifecycle'ом через SetOpkgTunState / SetOpkgTunNATSegments. Инварианты:
+//   - Mode ∈ {OpkgTunModeFakeIP, OpkgTunModePolicyTun};
+//   - Provisioned=false при непустой записи — hold (штатно только у
+//     policy-tun: индекс удержан ради permit'а в политике);
+//   - persist-before-create: запись кладётся ДО CreateOpkgTun (журнал
+//     намерения, не результата);
+//   - payload чужого Mode допустим ТОЛЬКО как артефакт миграции v34 —
+//     реап восстанавливает и снимает его.
+type OpkgTunState struct {
+	Mode        string             `json:"mode"`
+	Provisioned bool               `json:"provisioned,omitempty"`
+	Index       int                `json:"index"`
+	FakeIP      *OpkgTunFakeIPData `json:"fakeip,omitempty"`
+	PolicyTun   *OpkgTunPolicyData `json:"policyTun,omitempty"`
 }
 
 type DownloadSettings struct {
@@ -168,9 +217,9 @@ type SingboxRouterSettings struct {
 	WANInterface string `json:"wanInterface,omitempty"`
 	// BypassPresets lists named protocol presets to exclude from TPROXY/REDIRECT
 	// (port-based) or to drive related behaviour. Valid values: "l2tp", "ntp",
-	// "netbios-smb" (ports), "keendns" (managed DNS rewrite of the router's
-	// own KeenDNS/CrazeDNS FQDN → LAN IP — not an iptables CIDR). Default for
-	// fresh installs and post-v33 migrations includes "keendns".
+	// "netbios-smb" (ports), "keendns" (имена KeenDNS/CrazeDNS резолвит сам
+	// роутер, а его адреса идут мимо sing-box). Default for fresh installs
+	// and post-v33 migrations includes "keendns".
 	BypassPresets []string `json:"bypassPresets,omitempty"`
 	// BypassExtraPorts is a user-supplied comma-separated list of extra port
 	// exclusions in "PORT UDP|TCP" format (e.g. "51820 UDP, 1194 TCP").
@@ -193,7 +242,7 @@ type SingboxRouterSettings struct {
 	// --- fakeip-tun engine settings (USER-editable) ---
 	// These mirror the static fakeip-tun engine knobs (default
 	// DefaultFakeIPTunParams) but persisted + validated so the UI can edit them.
-	// Unlike FakeIPState (backend-managed operational state) these are user
+	// Unlike OpkgTunState (backend-managed operational state) these are user
 	// intent, defaulted by NormalizeSingboxRouterSettings.
 	//
 	// FakeIPStack selects the sing-tun stack: "gvisor" (default, robust) or
@@ -268,9 +317,10 @@ type ManagedServer struct {
 	DNS           string   `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
 	MTU           int      `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
 	NATEnabled    bool     `json:"natEnabled,omitempty"`
-	NATMode       string   `json:"natMode,omitempty"`      // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
-	NATStaticWAN  string   `json:"natStaticWan,omitempty"` // WAN-iface (to-interface), на котором создан static NAT для internet-only; для детерминированного снятия
-	LANSegments   []string `json:"lanSegments,omitempty"`  // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
+	NATMode       string   `json:"natMode,omitempty"`       // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное
+	NATStaticWAN  string   `json:"natStaticWan,omitempty"`  // WAN-iface (to-interface), на котором создан static NAT для internet-only; для детерминированного снятия
+	NATStaticWANs []string `json:"natStaticWans,omitempty"` // выходы (to-interface), на которых создан static NAT для internet-only; источник правды, NATStaticWAN — legacy
+	LANSegments   []string `json:"lanSegments,omitempty"`   // NDMS interface-name LAN-бриджей ("Home","Guest"), доступных peers
 	// PrivateKey is the server's WireGuard private key. Populated by
 	// Service.Create immediately after NDMS auto-generates the keypair,
 	// or by Service.MigratePrivateKeys on first boot after upgrade for
@@ -298,10 +348,34 @@ type ManagedServer struct {
 
 // ServerInterfaceMeta tracks AWG Manager metadata for built-in/marked servers.
 type ServerInterfaceMeta struct {
-	NATStaticWAN string `json:"natStaticWan,omitempty"` // WAN iface used by ip static
+	NATStaticWAN  string   `json:"natStaticWan,omitempty"`  // WAN iface used by ip static
+	NATStaticWANs []string `json:"natStaticWans,omitempty"` // выходы (to-interface), на которых создан static NAT для internet-only; источник правды, NATStaticWAN — legacy
 	// Endpoint is the host (IP or domain) embedded in generated client .conf
 	// files. Empty = resolve WAN IP at generation time.
 	Endpoint string `json:"endpoint,omitempty"`
+}
+
+// StaticNATList отдаёт выходы, на которых стоит наш static NAT: новое
+// поле-список, при его отсутствии — legacy одиночный WAN (записи до 2.18).
+func (m *ManagedServer) StaticNATList() []string {
+	if len(m.NATStaticWANs) > 0 {
+		return m.NATStaticWANs
+	}
+	if m.NATStaticWAN != "" {
+		return []string{m.NATStaticWAN}
+	}
+	return nil
+}
+
+// StaticNATList — см. ManagedServer.StaticNATList.
+func (m *ServerInterfaceMeta) StaticNATList() []string {
+	if len(m.NATStaticWANs) > 0 {
+		return m.NATStaticWANs
+	}
+	if m.NATStaticWAN != "" {
+		return []string{m.NATStaticWAN}
+	}
+	return nil
 }
 
 // ServerPeerSecret holds key material for a peer on a built-in/marked server.

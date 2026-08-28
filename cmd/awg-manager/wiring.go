@@ -97,15 +97,21 @@ type app struct {
 	// tunnel core
 	kmodLoader    *kmod.Loader
 	wgClient      *wg.ClientImpl
-	backendImpl   backend.Backend
+	backendImpl   *backend.KernelBackend
 	stateMgr      *state.ManagerImpl
 	eventBus      *events.Bus
 	operator      ops.Operator
 	nwgOp         *nwg.OperatorNativeWG
 	wanModel      *wan.Model
 	tunnelService *service.ServiceImpl
-	catalog       *routing.CatalogImpl
-	exitRegistry  *exitreg.Registry
+	// opkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
+	// владельцев. Собирается один раз и раздаётся всем, кто выдаёт номера.
+	opkgTunOccupancy storage.OpkgTunPins
+	// opkgNDMSPins — пины по записям NDMS: номер занят записью, устройства
+	// может уже не быть.
+	opkgNDMSPins storage.OpkgTunPins
+	catalog      *routing.CatalogImpl
+	exitRegistry *exitreg.Registry
 	// exitMirror — зеркальные записи tunnel-store реестра выходов. Держится
 	// полем, а не локальной: одноразовые шаги посева (обнуление протухших
 	// адресов) ходят в ту же ведомость, а второй экземпляр значил бы двух

@@ -11,6 +11,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -50,9 +51,17 @@ type routeHandlers struct {
 	managedHandler       *api.ManagedServerHandler
 	accessPolicyHandler  *api.AccessPolicyHandler
 	crHandler            *api.ClientRouteHandler
+	systemToolsHandler   *api.SystemToolsHandler
 
 	// guarded оборачивает handler в auth-middleware (RequireAuthFunc).
 	guarded func(http.HandlerFunc) http.HandlerFunc
+}
+
+// expertGuarded — auth плюс проверка usage level: раздел «Система» даёт
+// root-доступ к файлам, процессам и opkg, поэтому гейт стоит на регистрации
+// маршрута, а не копией в начале каждого хендлера.
+func (h *routeHandlers) expertGuarded(fn http.HandlerFunc) http.HandlerFunc {
+	return h.guarded(h.systemToolsHandler.ExpertOnly(fn))
 }
 
 // buildRouteHandlers конструирует и перекрёстно связывает handlers,
@@ -65,6 +74,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.authHandler = api.NewAuthHandler(s.keenetic, s.sessions, s.settings, h.appLog)
 	h.tunnelsHandler = api.NewTunnelsHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.tunnelsHandler.SetSettingsStore(s.settings)
+	h.tunnelsHandler.SetOpkgTunOccupancy(s.opkgTunOccupancy)
 	h.tunnelsHandler.SetPingCheckService(s.pingCheckService)
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
@@ -77,7 +87,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.testingHandler = api.NewTestingHandler(s.testingService)
 	h.systemHandler = api.NewSystemHandler(s.config.Version)
 	h.systemHandler.SetSettingsStore(s.settings)
-	h.systemHandler.SetActiveBackend(s.activeBackend)
 	h.systemHandler.SetKmodLoader(s.kmodLoader)
 	h.systemHandler.SetSettingsWriter(s.settings)
 	h.systemHandler.SetTunnelService(s.tunnelService)
@@ -99,6 +108,11 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.settingsHandler.SetPingCheckService(s.pingCheckService)
 	h.settingsHandler.SetMonitoringService(s.monitoringService)
 	h.settingsHandler.SetEventBus(s.bus)
+	if s.ndmsQueries != nil {
+		s.exposureGuard = api.NewExposureGuard(s.settings, s.ndmsQueries.StaticNAT, s.ndmsQueries.HTTPProxy, s.ndmsQueries.Interfaces, h.appLog)
+		s.exposureGuard.SetEventBus(s.bus)
+		h.settingsHandler.SetExposureGuard(s.exposureGuard)
+	}
 	h.importHandler = api.NewImportHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.importHandler.SetSettingsStore(s.settings)
 	h.importHandler.SetPingCheckService(s.pingCheckService)
@@ -117,6 +131,19 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	// settings PUT — without this the live buffers keep stale caps until
 	// the next AppLog tick (lazy apply path was removed).
 	h.settingsHandler.SetApplyLoggingSettings(s.loggingService.ApplySettings)
+	h.settingsHandler.SetApplyBootstrapDNS(func(server string) error {
+		if s.singboxOp == nil {
+			return nil
+		}
+		return s.singboxOp.ApplyBootstrapDNS(server)
+	})
+	h.settingsHandler.SetApplyClashPort(func(port int) error {
+		if s.singboxOp == nil {
+			return nil
+		}
+		return s.singboxOp.ApplyClashPort(port)
+	})
+	h.settingsHandler.SetClashPortInspector(sysports.NewScanner())
 	h.settingsHandler.SetApplySingboxLogSettings(func() error {
 		if s.singboxOp == nil || s.settings == nil {
 			return nil
@@ -131,7 +158,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		TunnelService:        s.tunnelService,
 		NDMSQueries:          s.ndmsQueries,
 		NDMSTransport:        s.ndmsTransport,
-		Backend:              s.activeBackend,
 		KmodLoader:           s.kmodLoader,
 		TunnelStore:          s.tunnels,
 		LogService:           &diagLogAdapter{svc: s.loggingService},
@@ -153,6 +179,8 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.signatureHandler = api.NewSignatureHandler()
 	h.terminalHandler = api.NewTerminalHandler(s.terminalManager, s.loggingService)
+	h.systemToolsHandler = api.NewSystemToolsHandler(s.settings, h.appLog)
+	h.systemToolsHandler.SetEventBus(s.bus)
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
@@ -305,6 +333,41 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/update/check", h.guarded(h.updateHandler.Check))
 	mux.HandleFunc("/api/system/update/apply", h.guarded(h.updateHandler.Apply))
 	mux.HandleFunc("/api/system/update/changelog", h.guarded(h.updateHandler.Changelog))
+
+	// System tools (expert): file manager, init.d services, opkg
+	mux.HandleFunc("/api/system/files/roots", h.expertGuarded(h.systemToolsHandler.FilesRoots))
+	mux.HandleFunc("/api/system/files/list", h.expertGuarded(h.systemToolsHandler.FilesList))
+	mux.HandleFunc("/api/system/files/read", h.expertGuarded(h.systemToolsHandler.FilesRead))
+	mux.HandleFunc("/api/system/files/write", h.expertGuarded(h.systemToolsHandler.FilesWrite))
+	mux.HandleFunc("/api/system/files/mkdir", h.expertGuarded(h.systemToolsHandler.FilesMkdir))
+	mux.HandleFunc("/api/system/files/remove", h.expertGuarded(h.systemToolsHandler.FilesRemove))
+	mux.HandleFunc("/api/system/files/rename", h.expertGuarded(h.systemToolsHandler.FilesRename))
+	mux.HandleFunc("/api/system/files/copy", h.expertGuarded(h.systemToolsHandler.FilesCopy))
+	mux.HandleFunc("/api/system/files/chmod", h.expertGuarded(h.systemToolsHandler.FilesChmod))
+	mux.HandleFunc("/api/system/files/checksum", h.expertGuarded(h.systemToolsHandler.FilesChecksum))
+	mux.HandleFunc("/api/system/files/download", h.expertGuarded(h.systemToolsHandler.FilesDownload))
+	mux.HandleFunc("/api/system/files/upload", h.expertGuarded(h.systemToolsHandler.FilesUpload))
+	mux.HandleFunc("/api/system/files/script-status", h.expertGuarded(h.systemToolsHandler.FilesScriptStatus))
+	mux.HandleFunc("/api/system/files/script-action", h.expertGuarded(h.systemToolsHandler.FilesScriptAction))
+	mux.HandleFunc("/api/system/services/list", h.expertGuarded(h.systemToolsHandler.ServicesList))
+	mux.HandleFunc("/api/system/services/action", h.expertGuarded(h.systemToolsHandler.ServicesAction))
+	mux.HandleFunc("/api/system/services/get", h.expertGuarded(h.systemToolsHandler.ServicesGetScript))
+	mux.HandleFunc("/api/system/services/save", h.expertGuarded(h.systemToolsHandler.ServicesSaveScript))
+	mux.HandleFunc("/api/system/services/delete", h.expertGuarded(h.systemToolsHandler.ServicesDeleteScript))
+	mux.HandleFunc("/api/system/services/toggle-enable", h.expertGuarded(h.systemToolsHandler.ServicesToggleEnable))
+	mux.HandleFunc("/api/system/opkg/installed", h.expertGuarded(h.systemToolsHandler.OpkgInstalled))
+	mux.HandleFunc("/api/system/opkg/upgradable", h.expertGuarded(h.systemToolsHandler.OpkgUpgradable))
+	mux.HandleFunc("/api/system/opkg/search", h.expertGuarded(h.systemToolsHandler.OpkgSearch))
+	mux.HandleFunc("/api/system/opkg/update", h.expertGuarded(h.systemToolsHandler.OpkgUpdate))
+	mux.HandleFunc("/api/system/opkg/upgrade", h.expertGuarded(h.systemToolsHandler.OpkgUpgrade))
+	mux.HandleFunc("/api/system/opkg/install", h.expertGuarded(h.systemToolsHandler.OpkgInstall))
+	mux.HandleFunc("/api/system/opkg/remove", h.expertGuarded(h.systemToolsHandler.OpkgRemove))
+	mux.HandleFunc("/api/system/opkg/available", h.expertGuarded(h.systemToolsHandler.OpkgAvailable))
+	mux.HandleFunc("/api/system/ports/list", h.expertGuarded(h.systemToolsHandler.PortsList))
+	mux.HandleFunc("/api/system/ports/inspect", h.expertGuarded(h.systemToolsHandler.PortsInspect))
+	mux.HandleFunc("/api/system/ports/kill", h.expertGuarded(h.systemToolsHandler.PortsKill))
+	mux.HandleFunc("/api/system/proc/snapshot", h.expertGuarded(h.systemToolsHandler.ProcSnapshot))
+	mux.HandleFunc("/api/system/proc/kill", h.expertGuarded(h.systemToolsHandler.ProcKill))
 
 }
 
@@ -698,6 +761,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/status", h.guarded(s.singboxHandler.Status))
 		mux.HandleFunc("/api/singbox/install", h.guarded(s.singboxHandler.Install))
 		mux.HandleFunc("/api/singbox/update", h.guarded(s.singboxHandler.Update))
+		mux.HandleFunc("/api/singbox/uninstall", h.guarded(s.singboxHandler.Uninstall))
 		mux.HandleFunc("/api/singbox/control", h.guarded(s.singboxHandler.Control))
 		mux.HandleFunc("/api/singbox/ndms-proxy", h.guarded(s.singboxHandler.ToggleNDMSProxy))
 		mux.HandleFunc("/api/singbox/tunnels/delay-check", h.guarded(s.singboxHandler.DelayCheck))
@@ -758,8 +822,6 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.singboxRouterHandler != nil {
 		rh := s.singboxRouterHandler
 		mux.HandleFunc("/api/singbox/router/status", h.guarded(rh.GetStatus))
-		mux.HandleFunc("/api/singbox/router/enable", h.guarded(rh.Enable))
-		mux.HandleFunc("/api/singbox/router/disable", h.guarded(rh.Disable))
 		mux.HandleFunc("/api/singbox/router/mode", h.guarded(rh.SwitchMode))
 		mux.HandleFunc("/api/singbox/router/settings", h.guarded(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
@@ -906,6 +968,9 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/subscriptions/members/exclude", h.guarded(sh.ExcludeMembers))
 		mux.HandleFunc("/api/singbox/subscriptions/members/restore", h.guarded(sh.RestoreMembers))
 		mux.HandleFunc("/api/singbox/subscriptions/preview", h.guarded(sh.PreviewURL))
+		mux.HandleFunc("/api/singbox/subscriptions/detect-headers", h.guarded(sh.DetectHeaders))
+		mux.HandleFunc("/api/singbox/subscriptions/header-profiles", h.guarded(sh.HeaderProfiles))
+		mux.HandleFunc("/api/singbox/subscriptions/happ-keys", h.guarded(sh.HappKeys))
 		mux.HandleFunc("/api/singbox/subscriptions/groups", h.guarded(sh.ListGroups))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/create", h.guarded(sh.CreateGroup))
 		mux.HandleFunc("/api/singbox/subscriptions/groups/update", h.guarded(sh.UpdateGroup))

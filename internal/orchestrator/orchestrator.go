@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -84,6 +85,9 @@ type Orchestrator struct {
 
 	// Per-tunnel execution locks
 	tunnelMu sync.Map
+
+	// tunnelLockOwner: tunnelID -> lockHolder, кто держит tunnelMu.
+	tunnelLockOwner sync.Map
 
 	// Expected NDMS hooks — queue of hooks our own actions will trigger.
 	// Consumed in HandleEvent to filter self-triggered iflayerchanged events.
@@ -408,7 +412,7 @@ func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) {
 	if tunnelID == "" {
 		return
 	}
-	if err := o.lockTunnel(ctx, tunnelID); err == nil {
+	if err := o.lockTunnel(ctx, tunnelID, "await-idle"); err == nil {
 		o.unlockTunnel(tunnelID)
 	}
 }
@@ -486,7 +490,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 		// tunnel and run each group under that tunnel's lock so a concurrent
 		// single-tunnel NDMS hook for the same tunnel cannot interleave a
 		// Stop into the middle of our Start sequence (the boot kill race).
-		return o.executeActionsGrouped(ctx, actions)
+		return o.executeActionsGrouped(ctx, actions, event.Type.String())
 	}
 
 	// Single-tunnel event: lock that tunnel. Bounded acquisition (issue
@@ -496,7 +500,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// another and kept the tunnel wedged until the daemon was restarted.
 	// Failing fast with ErrOperationInProgress gives the UI an honest,
 	// retryable "операция уже выполняется" instead of a hung request.
-	if err := o.lockTunnel(ctx, tunnelID); err != nil {
+	if err := o.lockTunnel(ctx, tunnelID, event.Type.String()); err != nil {
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
@@ -509,36 +513,99 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 // that the HTTP caller gets an answer instead of a hung request.
 const tunnelLockTimeout = 15 * time.Second
 
+// lockHolder records who took a tunnel's execution lock and when. Issue
+// #795: a wedged tunnel rejected every UI action for minutes and the log
+// named neither the holder nor how long it had been holding, so the app
+// log alone could not tell a stuck operation from a slow one.
+//
+// refused считает, скольким вызывающим этот держатель отказал. По нему
+// решается уровень строки освобождения: долгое держание само по себе
+// штатно (boot/reconnect на медленном NDMS), а вот долгое держание,
+// которому кто-то упёрся, — та самая улика.
+type lockHolder struct {
+	owner   string
+	since   time.Time
+	refused atomic.Int32
+}
+
 // lockTunnel acquires the per-tunnel execution semaphore. Gives up when ctx
-// is cancelled (client disconnected) or after tunnelLockTimeout.
-func (o *Orchestrator) lockTunnel(ctx context.Context, tunnelID string) error {
+// is cancelled (client disconnected) or after tunnelLockTimeout. owner names
+// the operation for the log — it is what identifies the holder when a later
+// caller is refused.
+func (o *Orchestrator) lockTunnel(ctx context.Context, tunnelID, owner string) error {
 	semAny, _ := o.tunnelMu.LoadOrStore(tunnelID, make(chan struct{}, 1))
 	sem := semAny.(chan struct{})
 	timer := time.NewTimer(tunnelLockTimeout)
 	defer timer.Stop()
 	select {
 	case sem <- struct{}{}:
+		o.tunnelLockOwner.Store(tunnelID, &lockHolder{owner: owner, since: time.Now()})
+		o.appLog.Debug("tunnel-lock", tunnelID, "взят: "+owner)
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("%w (%s)", tunnel.ErrOperationInProgress, tunnelID)
+		return o.lockBusyErr(tunnelID, owner, "контекст вызывающего отменён")
 	case <-timer.C:
-		return fmt.Errorf("%w (%s)", tunnel.ErrOperationInProgress, tunnelID)
+		return o.lockBusyErr(tunnelID, owner, "таймаут ожидания")
 	}
+}
+
+// lockBusyErr logs why the caller was refused and who holds the lock right
+// now, then returns the retryable error the HTTP layer turns into 409.
+//
+// Длительность держания сюда НЕ пишется: журнал сворачивает повторы по
+// точному совпадению текста (logging.CoalesceOrAdd), а растущее число
+// секунд делает каждую строку уникальной — залипший туннель залил бы
+// журнал несворачиваемыми Warn каждые tunnelLockTimeout. Сколько держали
+// на самом деле, говорит строка освобождения в unlockTunnel.
+//
+// «сейчас» в тексте — не оговорка: держатель мог смениться, пока мы ждали.
+// Врать в улике хуже, чем назвать её приблизительной.
+func (o *Orchestrator) lockBusyErr(tunnelID, owner, reason string) error {
+	if hAny, ok := o.tunnelLockOwner.Load(tunnelID); ok {
+		h := hAny.(*lockHolder)
+		h.refused.Add(1)
+		o.appLog.Warn("tunnel-lock", tunnelID,
+			fmt.Sprintf("отказано %s (%s): сейчас держит %s", owner, reason, h.owner))
+	} else {
+		// Держателя нет — либо замок и правда свободен (ветки select
+		// равноправны, при отменённом ctx выбор мог пасть на ctx.Done()),
+		// либо держатель уже стёр свою запись и вот-вот отпустит.
+		// Warn про занятость здесь соврал бы.
+		o.appLog.Debug("tunnel-lock", tunnelID,
+			fmt.Sprintf("отказано %s (%s): держателя нет — освободился или вот-вот отпустит", owner, reason))
+	}
+	return fmt.Errorf("%w (%s)", tunnel.ErrOperationInProgress, tunnelID)
 }
 
 // unlockTunnel releases the per-tunnel execution semaphore.
+//
+// Запись в tunnelMu намеренно не удаляется даже для удалённого туннеля:
+// удалять её мог только сам держатель, и тогда конкурент успевал создать
+// новый канал, а отложенный unlock сливал ЧУЖОЙ токен — взаимоисключение
+// ломалось. Цена отказа от очистки — один пустой канал на когда-либо
+// существовавший ID туннеля (диапазоны awg10..16 и awg20+ конечны).
 func (o *Orchestrator) unlockTunnel(tunnelID string) {
+	if hAny, ok := o.tunnelLockOwner.LoadAndDelete(tunnelID); ok {
+		h := hAny.(*lockHolder)
+		held := time.Since(h.since)
+		// Warn только если держание кому-то реально помешало. Долгое
+		// держание само по себе штатно: boot/reconnect на медленном NDMS
+		// переваливает за tunnelLockTimeout каждый ребут.
+		if refused := h.refused.Load(); refused > 0 {
+			o.appLog.Warn("tunnel-lock", tunnelID,
+				fmt.Sprintf("освобождён: %s держал %s, отказано попыткам: %d",
+					h.owner, held.Round(time.Second), refused))
+		} else {
+			o.appLog.Debug("tunnel-lock", tunnelID,
+				fmt.Sprintf("освобождён: %s держал %s", h.owner, held.Round(time.Millisecond)))
+		}
+	}
 	if semAny, ok := o.tunnelMu.Load(tunnelID); ok {
 		select {
 		case <-semAny.(chan struct{}):
-		default: // already released / entry recreated after cleanup — no-op
+		default: // already released — no-op
 		}
 	}
-}
-
-// cleanupTunnelLock removes the lock entry for a deleted tunnel.
-func (o *Orchestrator) cleanupTunnelLock(tunnelID string) {
-	o.tunnelMu.Delete(tunnelID)
 }
 
 // executeActions executes a list of actions sequentially.
@@ -601,10 +668,10 @@ func groupContiguousByTunnel(actions []Action) [][]Action {
 // tunnel locks at once, so there is no lock-ordering deadlock against
 // concurrent single-tunnel hook events. Tunnel-less groups (Tunnel=="")
 // run unlocked.
-func (o *Orchestrator) executeActionsGrouped(ctx context.Context, actions []Action) error {
+func (o *Orchestrator) executeActionsGrouped(ctx context.Context, actions []Action, owner string) error {
 	var firstErr error
 	for _, group := range groupContiguousByTunnel(actions) {
-		if err := o.executeGroup(ctx, group); err != nil && firstErr == nil {
+		if err := o.executeGroup(ctx, group, owner); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -614,7 +681,7 @@ func (o *Orchestrator) executeActionsGrouped(ctx context.Context, actions []Acti
 // executeGroup runs one same-tunnel action group. The per-tunnel lock is
 // released via defer (iteration-scoped here, matching the single-tunnel
 // path in HandleEvent) so a panic in executeActions cannot leak the lock.
-func (o *Orchestrator) executeGroup(ctx context.Context, group []Action) error {
+func (o *Orchestrator) executeGroup(ctx context.Context, group []Action, owner string) error {
 	tid := group[0].Tunnel
 	if tid == "" {
 		return o.executeActions(ctx, group)
@@ -622,7 +689,7 @@ func (o *Orchestrator) executeGroup(ctx context.Context, group []Action) error {
 	// Bounded like the single-tunnel path: a wedged tunnel skips its group
 	// (logged via firstErr) instead of stalling the whole boot/reconnect
 	// sweep behind one dead endpoint.
-	if err := o.lockTunnel(ctx, tid); err != nil {
+	if err := o.lockTunnel(ctx, tid, owner); err != nil {
 		return err
 	}
 	defer o.unlockTunnel(tid)

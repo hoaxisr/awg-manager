@@ -37,7 +37,6 @@ type MockOperator struct {
 	startError       error
 	stopError        error
 	deleteError      error
-	recoverError     error
 	applyConfigError error
 	setMTUError      error
 
@@ -46,14 +45,10 @@ type MockOperator struct {
 	// TrackedEndpointIPs maps tunnelID -> IP for GetTrackedEndpointIP.
 	TrackedEndpointIPs map[string]string
 
-	CreateCalls  []tunnel.Config
-	StartCalls   []tunnel.Config
-	StopCalls    []string
-	DeleteCalls  []string
-	RecoverCalls []struct {
-		ID    string
-		State tunnel.StateInfo
-	}
+	CreateCalls                  []tunnel.Config
+	StartCalls                   []tunnel.Config
+	StopCalls                    []string
+	DeleteCalls                  []string
 	ReconcileCalls               []tunnel.Config
 	ApplyConfigCalls             []struct{ ID, Path string }
 	SetupEndpointRouteCalls      []struct{ ID, Endpoint, ISP string }
@@ -65,7 +60,10 @@ type MockOperator struct {
 	}
 	UpdateDescriptionCalls []struct{ ID, Desc string }
 	SyncDNSCalls           [][]string
-	SyncAddressCalls       []struct{ ID, Addr, IPv6 string }
+	SyncAddressCalls       []struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}
 }
 
 func (m *MockOperator) Create(ctx context.Context, cfg tunnel.Config) error {
@@ -78,11 +76,6 @@ func (m *MockOperator) ColdStart(ctx context.Context, cfg tunnel.Config) error {
 	return m.startError
 }
 
-func (m *MockOperator) Start(ctx context.Context, cfg tunnel.Config) error {
-	m.StartCalls = append(m.StartCalls, cfg)
-	return m.startError
-}
-
 func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
 	m.StopCalls = append(m.StopCalls, tunnelID)
 	return m.stopError
@@ -91,14 +84,6 @@ func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
 func (m *MockOperator) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	m.DeleteCalls = append(m.DeleteCalls, stored.ID)
 	return m.deleteError
-}
-
-func (m *MockOperator) Recover(ctx context.Context, tunnelID string, state tunnel.StateInfo) error {
-	m.RecoverCalls = append(m.RecoverCalls, struct {
-		ID    string
-		State tunnel.StateInfo
-	}{tunnelID, state})
-	return m.recoverError
 }
 
 func (m *MockOperator) Reconcile(ctx context.Context, cfg tunnel.Config) error {
@@ -121,7 +106,7 @@ func (m *MockOperator) CleanupEndpointRoute(ctx context.Context, tunnelID string
 	return nil
 }
 
-func (m *MockOperator) RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint, ispInterface string) (string, error) {
+func (m *MockOperator) RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint string) (string, error) {
 	m.RestoreEndpointTrackingCalls = append(m.RestoreEndpointTrackingCalls, struct{ ID, Endpoint string }{tunnelID, endpoint})
 	return m.SetupEndpointRouteIP, nil
 }
@@ -157,10 +142,6 @@ func (m *MockOperator) RemoveDefaultRoute(ctx context.Context, tunnelID string) 
 	return nil
 }
 
-func (m *MockOperator) GetResolvedISP(tunnelID string) string {
-	return ""
-}
-
 func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, description string) error {
 	m.UpdateDescriptionCalls = append(m.UpdateDescriptionCalls, struct{ ID, Desc string }{tunnelID, description})
 	return nil
@@ -173,16 +154,17 @@ func (m *MockOperator) SyncDNS(ctx context.Context, tunnelID string, dns []strin
 	return nil
 }
 
-func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error {
-	m.SyncAddressCalls = append(m.SyncAddressCalls, struct{ ID, Addr, IPv6 string }{tunnelID, address, ipv6})
+func (m *MockOperator) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
+	m.SyncAddressCalls = append(m.SyncAddressCalls, struct {
+		ID, Addr, IPv6 string
+		Prefix         int
+	}{tunnelID, address, ipv6, prefix})
 	return nil
 }
 
 func (m *MockOperator) GetDefaultGatewayInterface(ctx context.Context) (string, error) {
 	return "PPPoE1", nil
 }
-
-func (m *MockOperator) HasWANIPv6(ctx context.Context, ifaceName string) bool { return false }
 
 func (m *MockOperator) GetSystemName(_ context.Context, ndmsID string) string { return ndmsID }
 
@@ -250,9 +232,9 @@ func TestUpdate_RejectsIDMismatch(t *testing.T) {
 
 func TestUpdate_KernelAddressChangeBeforeFirstStart(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateNotCreated})
@@ -291,9 +273,9 @@ func TestUpdate_KernelAddressChangeRejectedWhenProcessRunning(t *testing.T) {
 
 func TestUpdate_UserspaceAddressChangeAllowedWhenCreated(t *testing.T) {
 	dir := t.TempDir()
-	oldConfDir := confDir
-	confDir = dir
-	t.Cleanup(func() { confDir = oldConfDir })
+	oldConfDir := tunnel.ConfDir
+	tunnel.ConfDir = dir
+	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	sm := NewMockStateManager()
 	sm.SetState("awg10", tunnel.StateInfo{State: tunnel.StateStopped, OpkgTunExists: true, BackendType: "userspace"})

@@ -513,7 +513,7 @@ var _ netres.FW = proxyFW{}
 // natPolicyLANApplier — срез managed.Service: NDMS NAT-режим, hotspot policy и
 // LAN-ACL. *managed.Service удовлетворяет как есть.
 type natPolicyLANApplier interface {
-	ApplyNATModeToInterface(ctx context.Context, iface, mode, prevWAN string) (string, error)
+	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
 }
@@ -532,11 +532,11 @@ type proxyAccessApplier struct {
 	ifaces permitACLSetter
 }
 
-func (a proxyAccessApplier) ApplyNATModeToInterface(ctx context.Context, iface, mode, prevWAN string) (string, error) {
+func (a proxyAccessApplier) ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error) {
 	if a.svc == nil {
-		return "", fmt.Errorf("managed service not available")
+		return nil, fmt.Errorf("managed service not available")
 	}
-	return a.svc.ApplyNATModeToInterface(ctx, iface, mode, prevWAN)
+	return a.svc.ApplyNATModeToInterface(ctx, iface, mode, prevWANs)
 }
 
 func (a proxyAccessApplier) ApplyPolicyToInterface(ctx context.Context, iface, policy string) error {

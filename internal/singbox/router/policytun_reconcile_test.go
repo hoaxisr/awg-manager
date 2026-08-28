@@ -825,8 +825,8 @@ func TestReconcilePolicyTun_QoSChainsWiped_Reinstalls(t *testing.T) {
 
 func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -860,8 +860,8 @@ func TestReap_PolicyTunKeepsIngressRoutes(t *testing.T) {
 
 func TestReap_PolicyTunKeepsOwnDNATRules(t *testing.T) {
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun, Enabled: true})
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	rec := &ingressRecorder{
 		natDump: "-P PREROUTING ACCEPT\n" +
@@ -907,8 +907,8 @@ func TestSingboxReady_PolicyTunCarrier(t *testing.T) {
 	if svc.singboxReady(context.Background(), true) {
 		t.Error("без провижининга policy-tun готовность должна быть false")
 	}
-	if err := store.SetPolicyTunState(&storage.PolicyTunState{Provisioned: true, Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	if !svc.singboxReady(context.Background(), true) {
 		t.Error("процесс жив + carrier → policy-tun готов")
@@ -1071,9 +1071,9 @@ func TestGetStatus_PolicyTunSourcePreserveIsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.PolicyTun.NATSegments = []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
-	if err := h.store.SetPolicyTunState(all.PolicyTun); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	all.OpkgTun.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}}
+	if err := h.store.SetOpkgTunState(all.OpkgTun); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	h.svc.deps.IPTables = errProbeIPTables()
 	st, err = h.svc.GetStatus(context.Background())
@@ -1188,5 +1188,171 @@ func TestPortRangesContain(t *testing.T) {
 		if got := portRangesContain(ranges, c.port); got != c.want {
 			t.Errorf("portRangesContain(%d) = %v, want %v", c.port, got, c.want)
 		}
+	}
+}
+
+// policyTunQoSSpecInputHarness поднимает policy-tun с одним активным классом
+// QoS и возвращает готовый к тику харнесс. Мутация ОДНОГО входа спека — на
+// вызывающем.
+func policyTunQoSSpecInputHarness(t *testing.T) (*policyTunEnableHarness, *fakeWANIPCollector) {
+	t.Helper()
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	wan := &fakeWANIPCollector{ips: []string{"203.0.113.1/32"}}
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
+	h.svc.deps.WANIPCollector = wan
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	return h, wan
+}
+
+// tickPolicyTunQoS гоняет один тик reconcile со счётчиком установок.
+func tickPolicyTunQoS(t *testing.T, h *policyTunEnableHarness, sr storage.SingboxRouterSettings) (int, string) {
+	t.Helper()
+	installs, last := 0, ""
+	h.svc.deps.IPTables = newStubIPTables(func(_ context.Context, in string) error {
+		installs++
+		last = in
+		return nil
+	})
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	return installs, last
+}
+
+// Д1: netfilter policy-tun сравнивал ОДИН вход спека из семи — состав классов
+// QoS. Смена bypass-портов, bypass-подсетей и WAN-адреса роутера не давала
+// переустановки; в цепочках оставался RETURN на старый адрес, а трафик на
+// новый адрес роутера уходил петлёй в sing-box до рестарта демона.
+func TestReconcilePolicyTun_QoSBypassPortsChanged_Reinstalls(t *testing.T) {
+	h, _ := policyTunQoSSpecInputHarness(t)
+
+	all, _ := h.store.Load()
+	all.SingboxRouter.BypassExtraPorts = "5555 UDP"
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	installs, last := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("смена входа спека обязана переустановить правила: installs = %d, want 1", installs)
+	}
+	if !strings.Contains(last, "5555") {
+		t.Errorf("новый порт обхода не попал в правила:\n%s", last)
+	}
+
+	// Второй тик без изменений — тишина.
+	installs, _ = tickPolicyTunQoS(t, h, sr)
+	if installs != 0 {
+		t.Errorf("повторный тик без изменений: installs = %d, want 0", installs)
+	}
+}
+
+// Д1, тот же корень: пользовательские bypass-подсети.
+func TestReconcilePolicyTun_QoSBypassSubnetsChanged_Reinstalls(t *testing.T) {
+	h, _ := policyTunQoSSpecInputHarness(t)
+
+	all, _ := h.store.Load()
+	all.SingboxRouter.BypassExtraSubnets = "10.9.9.0/24"
+	if err := h.store.Save(all); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	installs, last := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("смена входа спека обязана переустановить правила: installs = %d, want 1", installs)
+	}
+	if !strings.Contains(last, "10.9.9.0/24") {
+		t.Errorf("новая подсеть обхода не попала в правила:\n%s", last)
+	}
+
+	installs, _ = tickPolicyTunQoS(t, h, sr)
+	if installs != 0 {
+		t.Errorf("повторный тик без изменений: installs = %d, want 0", installs)
+	}
+}
+
+// Д1, самый дорогой случай: сменился внешний адрес роутера (переподнятый WAN).
+// Настройки не меняются вовсе — вход приходит от коллектора.
+func TestReconcilePolicyTun_QoSWANIPChanged_Reinstalls(t *testing.T) {
+	h, wan := policyTunQoSSpecInputHarness(t)
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	wan.ips = []string{"198.51.100.7/32"}
+
+	installs, last := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("смена входа спека обязана переустановить правила: installs = %d, want 1", installs)
+	}
+	if !strings.Contains(last, "198.51.100.7/32") {
+		t.Errorf("новый адрес роутера не попал в правила:\n%s", last)
+	}
+	if strings.Contains(last, "203.0.113.1/32") {
+		t.Errorf("RETURN на старый адрес роутера обязан уйти:\n%s", last)
+	}
+
+	installs, _ = tickPolicyTunQoS(t, h, sr)
+	if installs != 0 {
+		t.Errorf("повторный тик без изменений: installs = %d, want 0", installs)
+	}
+}
+
+// Адрес KeenDNS приходит с роутера, а не из настроек, и в обход правил его
+// заводит тот же билдер спека. В режиме tproxy это закреплено
+// TestReconcileInstalled_KeenDNSCIDRChangeReinstalls, а в policy-tun не было
+// закреплено ничем: билдер мог перестать спрашивать адрес, и обход KeenDNS
+// молча пропал бы ровно в одном из двух режимов.
+func TestReconcilePolicyTun_QoSKeenDNSCIDRChanged_Reinstalls(t *testing.T) {
+	h, _ := policyTunQoSSpecInputHarness(t)
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	h.svc.setKeenDNSBypass([]string{"78.47.125.180"})
+
+	installs, last := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("появление адреса KeenDNS обязано переустановить правила: installs = %d, want 1", installs)
+	}
+	if !strings.Contains(last, "78.47.125.180/32") {
+		t.Errorf("адрес KeenDNS не попал в правила обхода:\n%s", last)
+	}
+
+	installs, _ = tickPolicyTunQoS(t, h, sr)
+	if installs != 0 {
+		t.Errorf("повторный тик без изменений: installs = %d, want 0", installs)
+	}
+}
+
+// Страховка инварианта (краснота компиляционная, не поведенческая: до снимка
+// поля appliedSpec не существовало): применённый спек, отличающийся ТОЛЬКО
+// режимным флагом, обязан переустанавливаться. Продакшн-пути сюда нет — смена
+// режима идёт через SwitchRoutingMode, чей Disable для policy-tun безусловно
+// зовёт Uninstall. Тест держит инвариант «сравнивается весь спек» на случай,
+// если такой путь появится.
+func TestReconcilePolicyTun_QoSSpecModeFlagChanged_Reinstalls(t *testing.T) {
+	h, _ := policyTunQoSSpecInputHarness(t)
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	// Тот же спек, что вычислит тик, но с ДРУГИМ режимным флагом.
+	applied := *h.svc.appliedSpec
+	applied.DSCPOnly = false
+	h.svc.appliedSpec = &applied
+
+	installs, _ := tickPolicyTunQoS(t, h, sr)
+	if installs != 1 {
+		t.Fatalf("спек, отличающийся режимным флагом, обязан переустанавливаться: installs = %d, want 1", installs)
 	}
 }

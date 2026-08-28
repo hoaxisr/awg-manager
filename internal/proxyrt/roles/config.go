@@ -181,24 +181,29 @@ func (c FreeTurnServerConfig) RawExit() (RawExit, bool) { return RawExit{}, fals
 
 // WdttServerConfig — сервер WDTT (обе половины: WG + raw).
 type WdttServerConfig struct {
-	Listen       string   `json:"listen"` // DTLS, 0.0.0.0:56000
-	WgPort       int      `json:"wgPort,omitempty"`
-	ConfigDir    string   `json:"configDir,omitempty"`
-	Password     string   `json:"password"`
-	AdminID      string   `json:"adminId,omitempty"`
-	BotToken     string   `json:"botToken,omitempty"`
-	NatIface     string   `json:"natIface,omitempty"`
-	WgIface      string   `json:"wgIface,omitempty"`      // opkgtunN (пин)
-	RawIface     string   `json:"rawIface,omitempty"`     // opkgtunM (пин)
-	NdmsIface    string   `json:"ndmsIface,omitempty"`    // OpkgTunN
-	RawNdmsIface string   `json:"rawNdmsIface,omitempty"` // OpkgTunM
-	RawListen    string   `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
-	DirectListen string   `json:"directListen,omitempty"`
-	RelayMode    string   `json:"relayMode,omitempty"`    // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
-	NatMode      string   `json:"natMode,omitempty"`      // full|internet-only|none
-	NatStaticWAN string   `json:"natStaticWan,omitempty"` // NDMS-имя WAN для internet-only (пишет план 5 по факту применения)
-	Policy       string   `json:"policy,omitempty"`       // none|<имя>
-	LanSegments  []string `json:"lanSegments,omitempty"`
+	Listen       string `json:"listen"` // DTLS, 0.0.0.0:56000
+	WgPort       int    `json:"wgPort,omitempty"`
+	ConfigDir    string `json:"configDir,omitempty"`
+	Password     string `json:"password"`
+	AdminID      string `json:"adminId,omitempty"`
+	BotToken     string `json:"botToken,omitempty"`
+	NatIface     string `json:"natIface,omitempty"`
+	WgIface      string `json:"wgIface,omitempty"`      // opkgtunN (пин)
+	RawIface     string `json:"rawIface,omitempty"`     // opkgtunM (пин)
+	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTunN
+	RawNdmsIface string `json:"rawNdmsIface,omitempty"` // OpkgTunM
+	RawListen    string `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
+	DirectListen string `json:"directListen,omitempty"`
+	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
+	NatMode      string `json:"natMode,omitempty"`      // full|internet-only|none
+	NatStaticWAN string `json:"natStaticWan,omitempty"` // legacy: одиночный WAN; читается через StaticNATList
+	// NatStaticWANs — выходы static-NAT для internet-only. Их несколько:
+	// при нескольких `ip global` static-NAT ставится на КАЖДЫЙ выход, иначе
+	// после переключения провайдера трафик абонентов упирается в мёртвый
+	// (PR #750). Пишет план 5 по факту применения.
+	NatStaticWANs []string `json:"natStaticWans,omitempty"`
+	Policy        string   `json:"policy,omitempty"` // none|<имя>
+	LanSegments   []string `json:"lanSegments,omitempty"`
 	// Debug — пользовательский тумблер старого мира (Г-1). В argv сервера не
 	// эмитится — как и раньше, хранится намерение.
 	Debug bool `json:"debug,omitempty"`
@@ -207,6 +212,18 @@ type WdttServerConfig struct {
 	// с осознанным выбором; routable_exit сервера УБРАН решением владельца.
 	ExposeToPolicies bool `json:"exposeToPolicies,omitempty"`
 	OpenFirewall     bool `json:"openFirewall"`
+}
+
+// StaticNATList — выходы static-NAT: новый список, иначе legacy-одиночка.
+// Обе формы живут одновременно ради записей, созданных до перехода на список.
+func (c WdttServerConfig) StaticNATList() []string {
+	if len(c.NatStaticWANs) > 0 {
+		return c.NatStaticWANs
+	}
+	if w := strings.TrimSpace(c.NatStaticWAN); w != "" {
+		return []string{w}
+	}
+	return nil
 }
 
 func (c WdttServerConfig) Validate() error {
@@ -226,8 +243,8 @@ func (c WdttServerConfig) Validate() error {
 		// Молчаливая деградация internet-only в full-форму была багом H1
 		// (PR #697); без выбранного WAN режим не имеет смысла — приговор
 		// через cfgErr процесса, а не вечный waiting провайдера правил (I5).
-		if strings.TrimSpace(c.NatStaticWAN) == "" {
-			return fmt.Errorf("natMode internet-only: не выбран WAN (natStaticWAN)")
+		if len(c.StaticNATList()) == 0 {
+			return fmt.Errorf("natMode internet-only: не выбран WAN (natStaticWANs)")
 		}
 	default:
 		return fmt.Errorf("natMode %q: ожидали full|internet-only|none", c.NatMode)

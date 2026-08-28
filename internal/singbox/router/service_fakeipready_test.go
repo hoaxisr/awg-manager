@@ -19,13 +19,8 @@ func newFakeIPSettingsStore(t *testing.T, index int, provisioned bool) *storage.
 		WANAutoDetect: true,
 	})
 	if provisioned {
-		if err := store.SetFakeIPState(&storage.FakeIPState{
-			Provisioned: true,
-			Index:       index,
-			Inet4Range:  "198.18.0.0/15",
-			Inet6Range:  "fc00::/18",
-		}); err != nil {
-			t.Fatalf("SetFakeIPState: %v", err)
+		if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: index, FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15", Inet6Range: "fc00::/18"}}); err != nil {
+			t.Fatalf("SetOpkgTunState: %v", err)
 		}
 	}
 	return store

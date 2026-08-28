@@ -45,27 +45,57 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err := s.validateQoSClassOutbounds(ctx, normalized.QoSClasses); err != nil {
 		return err
 	}
-	settings, err := s.deps.Settings.Load()
-	if err != nil {
-		return err
-	}
 	if err := s.validateBypassGeoIPTags(normalized); err != nil {
 		return err
 	}
-	// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
-	// переходе: при уже выбранных тегах и сломанном ipset прочие правки
-	// настроек остаются проходимыми.
-	if len(normalized.BypassGeoIPTags) > 0 && len(settings.SingboxRouter.BypassGeoIPTags) == 0 &&
-		!bypassset.IsIPSetAvailable() {
-		return bypassset.ErrIPSetNotAvailable
-	}
-	// Port-slot stability: the UI contract carries no slot field, so incoming
-	// classes are re-associated with their persisted slots by DSCP before the
-	// save — otherwise every PUT would re-deal ports positionally and RST
-	// untouched classes' flows.
-	normalized.QoSClasses = reassociateQoSSlots(normalized.QoSClasses, settings.SingboxRouter.QoSClasses)
-	settings.SingboxRouter = normalized
-	if err := s.deps.Settings.Save(settings); err != nil {
+	// Персист-окно под transitionMu: см. ErrTransitionInProgress. Reconcile
+	// ниже остаётся ВНЕ окна — он сам берёт transitionMu через TryLock и под
+	// нашим локом молча съел бы тик (мьютекс нерекурсивный).
+	settings, err := func() (*storage.Settings, error) {
+		if !s.transitionMu.TryLock() {
+			return nil, ErrTransitionInProgress
+		}
+		defer s.transitionMu.Unlock()
+		settings, err := s.deps.Settings.Load()
+		if err != nil {
+			return nil, err
+		}
+		// Мутируем локальную копию: Load/Get возвращают живой кэш стора,
+		// который параллельно читают другие горутины без лока.
+		cp := *settings
+		settings = &cp
+		// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
+		// переходе: при уже выбранных тегах и сломанном ipset прочие правки
+		// настроек остаются проходимыми.
+		if len(normalized.BypassGeoIPTags) > 0 && len(settings.SingboxRouter.BypassGeoIPTags) == 0 &&
+			!bypassset.IsIPSetAvailable() {
+			return nil, bypassset.ErrIPSetNotAvailable
+		}
+		// Port-slot stability: the UI contract carries no slot field, so incoming
+		// classes are re-associated with their persisted slots by DSCP before the
+		// save — otherwise every PUT would re-deal ports positionally and RST
+		// untouched classes' flows.
+		normalized.QoSClasses = reassociateQoSSlots(normalized.QoSClasses, settings.SingboxRouter.QoSClasses)
+
+		// Режим и Enabled через PUT настроек НЕ меняются: путь Save→Reconcile
+		// диспатчится по НОВОМУ режиму и не гасит ресурсы старого (см. шапку
+		// fakeip_transition.go) — принятый отсюда чужой режим оставил бы,
+		// например, tproxy-перехват жить под fakeip-tun навсегда. Смена
+		// режима — только SwitchRoutingMode (POST /mode). Поля из тела молча
+		// игнорируются (patch-семантика, как ApiKey в /settings/update).
+		normalized.RoutingMode = settings.SingboxRouter.RoutingMode
+		if normalized.RoutingMode == "" {
+			normalized.RoutingMode = stateTProxy // legacy-дефолт, как в currentState
+		}
+		normalized.Enabled = settings.SingboxRouter.Enabled
+
+		settings.SingboxRouter = normalized
+		if err := s.deps.Settings.Save(settings); err != nil {
+			return nil, err
+		}
+		return settings, nil
+	}()
+	if err != nil {
 		return err
 	}
 	// Оverlay-поля fakeip (real-server, стек, UDP-таймаут) живут внутри
@@ -82,7 +112,7 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// пропускает тик целиком, если transitionMu занят сменой режима, и
 	// снятие пресета молча не доехало бы. Повторный вызов из Reconcile —
 	// no-op (набор уже совпадает).
-	s.syncKeenDNSRewrites(ctx, normalized)
+	s.syncKeenDNSPreset(ctx, normalized)
 	return s.Reconcile(ctx)
 }
 
@@ -99,7 +129,7 @@ func (s *ServiceImpl) reapplyFakeIPOverlay(ctx context.Context, settings *storag
 	if sr.RoutingMode != "fakeip-tun" || !sr.Enabled {
 		return nil
 	}
-	if settings.FakeIP == nil || !settings.FakeIP.Provisioned {
+	if st, ok := opkgTunOwned(settings, stateFakeIPTun); !ok || !st.Provisioned {
 		return nil
 	}
 	return s.fakeipWithConfig(ctx, "settings", func(*RouterConfig) error { return nil })
@@ -211,10 +241,13 @@ const (
 
 // normalizeFakeIPSettings defaults the user-editable fakeip engine fields from
 // DefaultFakeIPTunParams (single source of truth) when empty/zero, then
-// validates them. Per spec, an empty FakeIPPool6 is defaulted to the v6 pool
-// (so a fresh install gets dual-stack); v6 is disabled at a higher layer, not
-// by persisting "" here. Idempotent: re-running on a normalized struct is a
-// fixed point.
+// validates them. FakeIPPool6 — ИСКЛЮЧЕНИЕ: пустое значение ЗНАЧИМО («v6
+// выключен», обещание UI/DTO) и НЕ дефолтится; дефолт свежей установки сеет
+// defaultSettings, хранимое "" старых установок материализовала migrateToV35.
+// «Не прислано» ≠ «прислано пустым» различает PUT-handler (PutSettings,
+// теневой указатель): absent сохраняет текущее значение — сюда пустое приходит
+// только как осознанное выключение. Idempotent: re-running on a normalized
+// struct is a fixed point.
 func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	def := DefaultFakeIPTunParams()
 	if sr.FakeIPStack == "" {
@@ -225,9 +258,6 @@ func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	}
 	if sr.FakeIPPool4 == "" {
 		sr.FakeIPPool4 = def.Inet4Range
-	}
-	if sr.FakeIPPool6 == "" {
-		sr.FakeIPPool6 = def.Inet6Range
 	}
 	if sr.FakeIPMTU == 0 {
 		sr.FakeIPMTU = def.MTU
@@ -249,17 +279,23 @@ func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	if sr.FakeIPMTU < fakeIPMTUMin || sr.FakeIPMTU > fakeIPMTUMax {
 		return fmt.Errorf("fakeipMtu %d out of range [%d, %d]", sr.FakeIPMTU, fakeIPMTUMin, fakeIPMTUMax)
 	}
-	if sr.FakeIPRealServer == "" {
-		sr.FakeIPRealServer = def.RealServer
-	}
-	// Real upstream must be a plain IP: the fakeip topology resolves every
-	// domain through the "real" server itself, so a domain upstream could
-	// never bootstrap. Zoned addresses (fe80::1%eth0) make no sense for a
-	// DNS upstream either.
-	if addr, err := netip.ParseAddr(sr.FakeIPRealServer); err != nil {
-		return fmt.Errorf("fakeipRealServer: invalid IP address %q: %w", sr.FakeIPRealServer, err)
-	} else if addr.Zone() != "" {
-		return fmt.Errorf("fakeipRealServer: zoned address %q is not allowed", sr.FakeIPRealServer)
+	// FakeIPRealServer сознательно НЕ дефолтится здесь. Раньше пустое поле
+	// штамповалось константой 1.1.1.1 — после этого «значения не было» и
+	// «пользователь выбрал 1.1.1.1» становились неразличимы, и общий
+	// Bootstrap-DNS (issue #770) не мог подставиться никогда. Пусто =
+	// «значения нет», эффективный адрес выбирает resolveFakeIPParamsWith:
+	// Bootstrap-DNS, а без него исторический 1.1.1.1. Уже сохранённое
+	// значение — чьё бы оно ни было — не трогаем.
+	if sr.FakeIPRealServer != "" {
+		// Real upstream must be a plain IP: the fakeip topology resolves every
+		// domain through the "real" server itself, so a domain upstream could
+		// never bootstrap. Zoned addresses (fe80::1%eth0) make no sense for a
+		// DNS upstream either.
+		if addr, err := netip.ParseAddr(sr.FakeIPRealServer); err != nil {
+			return fmt.Errorf("fakeipRealServer: invalid IP address %q: %w", sr.FakeIPRealServer, err)
+		} else if addr.Zone() != "" {
+			return fmt.Errorf("fakeipRealServer: zoned address %q is not allowed", sr.FakeIPRealServer)
+		}
 	}
 	return nil
 }
@@ -295,6 +331,17 @@ func (s *ServiceImpl) ListBindableInterfaces(ctx context.Context) ([]WANInterfac
 		return []WANInterfaceInfo{}, nil
 	}
 	return s.deps.BindableInterfaces.ListBindable(ctx)
+}
+
+// ListAllBindableInterfaces returns every bindable interface, including those
+// already used by a direct outbound. Subscriptions and manual tunnels may
+// share an interface with a direct outbound, so their picker must offer the
+// same set the bind validator accepts (#709).
+func (s *ServiceImpl) ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error) {
+	if s.deps.BindableInterfaces == nil {
+		return []WANInterfaceInfo{}, nil
+	}
+	return s.deps.BindableInterfaces.ListAllBindable(ctx)
 }
 
 // ListIngressEligibleInterfaces возвращает интерфейсы, пригодные для

@@ -3,15 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
-	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -20,9 +22,8 @@ import (
 // interfaces — catches interface drift at the declaration line instead
 // of at the wiring callsite in main.go.
 var (
-	_ router.AccessPolicyProvider  = (*routerAccessPolicyAdapter)(nil)
-	_ router.KeenDNSDomainProvider = (*keenDNSDomainAdapter)(nil)
-	_ router.LANIPv4Provider       = keenDNSLANAdapter{}
+	_ router.AccessPolicyProvider = (*routerAccessPolicyAdapter)(nil)
+	_ router.KeenDNSInfoProvider  = keenDNSInfoAdapter{}
 )
 
 // routerAccessPolicyAdapter projects the accesspolicy.Service surface
@@ -257,68 +258,63 @@ func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r rout
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
-// listSystemInterfaces — сшивка для теста: на живой машине /sys/class/net
-// читается всегда, а покрыть надо именно ветку отказа.
-var listSystemInterfaces = sysinfo.ListSystemInterfaces
-
-// routerOpkgTunIndexAdapter отвечает на ДВА разных вопроса, и смешивать их в
-// одной карте нельзя.
+// routerOpkgTunIndexAdapter отвечает на ДВА разных вопроса, и их нельзя
+// смешивать в одной карте.
 //
 // LiveOpkgTunIndices — что существует в ядре ПРЯМО СЕЙЧАС. Этой картой
 // проверяются «жив ли мой прежний интерфейс» и «можно ли переиспользовать свой
 // удержанный номер», поэтому запись NDMS без устройства сюда попадать не
-// должна: смерть интерфейса после краха читалась бы как жизнь.
+// должна: иначе смерть интерфейса после краха читалась бы как жизнь.
 //
 // NDMSOpkgTunPins — номера, удерживаемые записями NDMS. Проверено на стенде
-// 5.01.C.3.0-1: после `ip link del opkgtun12` запись живёт дальше со
-// `state: error`, а устройства в /sys нет. Номер занят, интерфейс мёртв.
+// 5.01.C.3.0-1: `ndmc -c "interface OpkgTun12"` создаёт и запись, и устройство,
+// но после `ip link del opkgtun12` запись живёт дальше со `state: error`, а в
+// /sys устройства нет. Такой номер занят — выдать его нельзя, хотя интерфейс
+// мёртв.
 type routerOpkgTunIndexAdapter struct {
 	store *ndmsquery.InterfaceStore
+	// listSys — чтение kernel-половины; поле ради тестируемости отказа.
+	listSys func() ([]int, error)
 }
 
-func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(ctx context.Context) (map[int]bool, error) {
-	// Отказ /sys — ошибка, а не пустая карта: пустую аллокатор читает как
-	// «все индексы свободны» и выдаёт занятый, а коллизия интерфейса потом
-	// ничем не лечится. Отказ же виден вызывающему и самоизлечивается.
-	nums, err := listSystemInterfaces()
+func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
+	listSys := a.listSys
+	if listSys == nil {
+		listSys = sysinfo.ListSystemInterfaces
+	}
+	sysNums, err := listSys()
 	if err != nil {
-		return nil, err
+		// Недосчёт занятых номеров — единственное направление, дающее
+		// коллизию, поэтому отказ, а не пустая карта: пустая читается как
+		// «все номера свободны».
+		return nil, fmt.Errorf("list system interfaces: %w", err)
 	}
-	live := make(map[int]bool, len(nums))
-	for _, n := range nums {
-		live[n] = true
-	}
-	return live, nil
+	return router.UnionOpkgTunIndices(sysNums, nil), nil
 }
 
 // NDMSOpkgTunPins — поставщик пинов по записям NDMS.
 //
 // Берётся List, а НЕ ListAll: последний по своему назначению выбрасывает наши
-// интерфейсы (opkgtun*, awgm*), то есть ровно то, ради чего занятость и
-// собирается. Имя берётся из ID и приводится к нижнему регистру: NDMS знает
-// интерфейс только как "OpkgTun10", а ExtractInterfaceNumber заякорен на
-// "^opkgtun\d+$".
+// интерфейсы (opkgtun*, awgm* — interfaces.go:591), то есть ровно то, ради чего
+// занятость и собирается. Имя берётся из ID и приводится к нижнему регистру:
+// NDMS знает интерфейс только как "OpkgTun10" (поля kernel-имени у него нет —
+// проверено на железе), а ExtractInterfaceNumber заякорен на "^opkgtun\d+$".
 func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[int]bool, error) {
-	if a.store == nil {
-		return nil, fmt.Errorf("источник интерфейсов NDMS не подключён")
-	}
 	all, err := a.store.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pins := make(map[int]bool, len(all))
+	names := make([]string, 0, len(all))
 	for _, i := range all {
-		if num, ok := sysinfo.ExtractInterfaceNumber(strings.ToLower(i.ID)); ok {
-			pins[num] = true
-		}
+		names = append(names, strings.ToLower(i.ID))
 	}
-	return pins, nil
+	return router.UnionOpkgTunIndices(nil, names), nil
 }
 
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
 // interface IDs stamped with the given description — the reap's persist-less
 // fakeip-orphan fallback. "OpkgTun" is the NDMS (CamelCase) ID prefix, the
-// same convention fakeIPNDMSName produces on the router side.
+// same convention tunNDMSName produces on the router side.
 func opkgTunScanner(store *ndmsquery.InterfaceStore) func(ctx context.Context, description string) ([]string, error) {
 	return func(ctx context.Context, description string) ([]string, error) {
 		all, err := store.List(ctx)
@@ -366,6 +362,25 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 	return filterBindable(ifaces, native, occupied), nil
 }
 
+// ListAllBindable returns all egress-capable router interfaces (security-level "public"
+// minus our own auto-managed ones) without excluding occupied direct binds (#709).
+// Used by subscriptions and manual proxy tunnels which can share interfaces with direct outbounds.
+func (a *routerWANInterfaceAdapter) ListAllBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
+	ifaces, err := a.store.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	native := map[string]bool{}
+	if a.nativeProxies != nil {
+		if names, e := a.nativeProxies(ctx); e == nil {
+			for _, n := range names {
+				native[n] = true
+			}
+		}
+	}
+	return filterBindable(ifaces, native, nil), nil
+}
+
 // filterBindable keeps egress interfaces (security-level "public") minus our
 // own auto-managed ones and minus already-bound interfaces, rescuing
 // KeenOS-native proxies in the native set.
@@ -395,30 +410,48 @@ func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool
 	return out
 }
 
-// keenDNSDomainAdapter projects ndmsquery.KeenDNSStore → router.KeenDNSDomainProvider.
-type keenDNSDomainAdapter struct {
-	store *ndmsquery.KeenDNSStore
+// keenDNSInfoAdapter собирает данные пресета keendns с самого роутера: FQDN
+// из /show/ndns и IPv4, к которым роутер направляет свои KeenDNS-имена —
+// статические записи ndnproxy по зонам KeenDNS плюс адрес доступа в режиме
+// direct, где статической записи нет вовсе (issue #729).
+type keenDNSInfoAdapter struct {
+	keendns  *ndmsquery.KeenDNSStore
+	dnsProxy *ndmsquery.DNSProxyStatusStore
 }
 
-func (a *keenDNSDomainAdapter) KeenDNSDomain(ctx context.Context) (string, error) {
-	if a.store == nil {
-		return "", nil
+func (a keenDNSInfoAdapter) KeenDNSInfo(ctx context.Context) (string, []string, error) {
+	var fqdn string
+	var addrs []string
+	if a.keendns != nil {
+		info, err := a.keendns.Get(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		if info != nil && info.Enabled {
+			fqdn = info.Domain
+			if ip := net.ParseIP(info.Address); ip != nil && ip.To4() != nil {
+				addrs = append(addrs, ip.String())
+			}
+		}
 	}
-	info, err := a.store.Get(ctx)
-	if err != nil {
-		return "", err
+	if a.dnsProxy != nil {
+		raw, err := a.dnsProxy.List(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		proxies, err := diagnostics.ParseDNSProxy(raw)
+		if err != nil {
+			return "", nil, err
+		}
+		static := diagnostics.StaticIPv4InZones(proxies,
+			dnsrewrite.KeenDNSHosts(), dnsrewrite.KeenDNSZones())
+		for _, ip := range static {
+			if !slices.Contains(addrs, ip) {
+				addrs = append(addrs, ip)
+			}
+		}
 	}
-	if info == nil || !info.Enabled {
-		return "", nil
-	}
-	return info.Domain, nil
-}
-
-// keenDNSLANAdapter returns br0 (DefaultInterface) IPv4 for KeenDNS rewrites.
-type keenDNSLANAdapter struct{}
-
-func (keenDNSLANAdapter) LANIPv4() string {
-	return netif.FirstIPv4(storage.DefaultInterface)
+	return fqdn, addrs, nil
 }
 
 // routerSegmentDetailsAdapter отдаёт router описание и адресацию сегмента по

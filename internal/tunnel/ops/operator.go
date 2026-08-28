@@ -22,12 +22,6 @@ type Operator interface {
 	// Used for: NotCreated, Broken, boot.
 	ColdStart(ctx context.Context, cfg tunnel.Config) error
 
-	// Start brings up an existing amneziawg interface after Stop.
-	// Interface already exists with address and WG config loaded.
-	// ip link set up + firewall.
-	// Used for: Disabled (after Stop), Dead (after PingCheck stop).
-	Start(ctx context.Context, cfg tunnel.Config) error
-
 	// Stop brings down a tunnel: kills backend process + removes firewall rules.
 	// Used for: user Stop, PingCheck dead.
 	Stop(ctx context.Context, tunnelID string) error
@@ -35,10 +29,6 @@ type Operator interface {
 	// Delete completely removes a tunnel.
 	// Receives the full stored tunnel for reliable cleanup (persisted endpoint IP, etc.).
 	Delete(ctx context.Context, stored *storage.AWGTunnel) error
-
-	// Recover attempts to bring a broken tunnel into a consistent state.
-	// Based on current state, may kill zombie processes, clean up orphaned resources, etc.
-	Recover(ctx context.Context, tunnelID string, state tunnel.StateInfo) error
 
 	// Reconcile re-applies system configuration around an already-running process.
 	// Used when the process survived a daemon restart.
@@ -72,9 +62,8 @@ type Operator interface {
 
 	// RestoreEndpointTracking restores endpoint route tracking without creating the route.
 	// Used on daemon restart for tunnels that are already running.
-	// ispInterface is the resolved ISP interface name (for dashboard display).
 	// Returns the resolved endpoint IP on success (empty string on non-fatal failure).
-	RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint, ispInterface string) (string, error)
+	RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint string) (string, error)
 
 	// GetTrackedEndpointIP returns the currently tracked endpoint IP for a tunnel.
 	// Returns empty string if no endpoint route is tracked.
@@ -87,7 +76,8 @@ type Operator interface {
 	SyncDNS(ctx context.Context, tunnelID string, dns []string) error
 
 	// SyncAddress updates IPv4/IPv6 address on a running tunnel via ip commands.
-	SyncAddress(ctx context.Context, tunnelID string, address, ipv6 string) error
+	// prefix — длина префикса IPv4 (0 = не задана, оператор ставит /32).
+	SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error
 
 	// UpdateDescription updates the tunnel description in RCI.
 	UpdateDescription(ctx context.Context, tunnelID, description string) error
@@ -95,14 +85,6 @@ type Operator interface {
 	// GetDefaultGatewayInterface returns the current default gateway interface name.
 	// Used by resolveWAN for auto-mode tunnels.
 	GetDefaultGatewayInterface(ctx context.Context) (string, error)
-
-	// GetResolvedISP returns the resolved ISP interface name for a running tunnel.
-	// For auto-mode tunnels, this is the WAN picked during SetupEndpointRoute.
-	// Returns empty string if no resolved ISP is tracked.
-	GetResolvedISP(tunnelID string) string
-
-	// HasWANIPv6 checks if a WAN interface has IPv6 connectivity via RCI.
-	HasWANIPv6(ctx context.Context, ifaceName string) bool
 
 	// GetSystemName resolves a router interface ID (e.g., "PPPoE0") to its kernel
 	// interface name (e.g., "ppp0") via RCI. Returns the ID unchanged if resolution fails.

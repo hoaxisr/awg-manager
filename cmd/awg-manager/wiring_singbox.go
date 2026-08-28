@@ -54,6 +54,8 @@ func (a *app) setupSingbox() {
 		Commands:        a.ndmsCommands,
 		AppLogger:       a.loggingService,
 		SingboxLogLevel: a.settingsStore.GetSingboxLogLevel,
+		BootstrapDNS:    a.settingsStore.GetSingboxBootstrapDNS,
+		ClashPort:       a.settingsStore.GetSingboxClashPort,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so
@@ -175,6 +177,12 @@ func (a *app) setupSingbox() {
 		mode := curSettings.SingboxRouter.RoutingMode
 		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
 		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
+		// Повторное примирение base здесь больше не нужно: разметка слотов
+		// меняет владельца dns.strategy, но дефолт лежит в 99-defaults.json —
+		// в проигрывающей позиции merge, — и перекрывается активным слотом
+		// сам. Раньше рассинхрон base пережил бы бут и не лечился периодическим
+		// Reconcile (его drift-heal берётся только при запаркованном слоте, а
+		// он здесь уже распаркован).
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.
@@ -204,6 +212,9 @@ func (a *app) setupSingbox() {
 	// Operator uses for tunnels) so disabling it stops subscriptions from
 	// creating NDMS Proxy interfaces too.
 	a.subSvc.SetNDMSProxyEnabled(a.settingsStore.IsSingboxNDMSProxyEnabled)
+	if err := a.subSvc.LoadHappKeys(); err != nil {
+		a.bootLog.Warn("subscription-happ-keys", "load-from-disk", err.Error())
+	}
 
 	// Сводные группы (#372) — отдельный JSON-файл рядом с subscriptions.json.
 	subGroupStorePath := filepath.Join(a.dataDir, "subscription-groups.json")
@@ -298,7 +309,7 @@ func (a *app) setupSingbox() {
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	a.deferOnExit(trafficCancel)
-	go singbox.NewTrafficAggregator(a.singboxOp.Clash().Address(), a.eventBus, a.trafficHistory).Run(trafficCtx)
+	go singbox.NewTrafficAggregator(a.singboxOp.Clash().Address, a.eventBus, a.trafficHistory).Run(trafficCtx)
 
 	delayCtx, delayCancel := context.WithCancel(context.Background())
 	a.deferOnExit(delayCancel)
@@ -308,7 +319,7 @@ func (a *app) setupSingbox() {
 	// UI log view (replaces the old file-based log; see process.go).
 	logFwdCtx, logFwdCancel := context.WithCancel(context.Background())
 	a.deferOnExit(logFwdCancel)
-	go singbox.NewLogForwarder(a.singboxOp.Clash().Address(), a.loggingService).Run(logFwdCtx)
+	go singbox.NewLogForwarder(a.singboxOp.Clash().Address, a.loggingService).Run(logFwdCtx)
 
 	// Updater service (awg-manager self-update check/apply + scheduled
 	// auto-install for both awg-manager and the managed sing-box binary).

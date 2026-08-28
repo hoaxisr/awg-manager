@@ -9,20 +9,29 @@
 	// surfaces the intent via a callback prop.
 	interface Props {
 		onEnableRequested: () => void;
+		/** Причина, по которой режим недоступен: кнопка блокируется, текст показывается. */
+		unavailableReason?: string;
 	}
 
-	let { onEnableRequested }: Props = $props();
+	let { onEnableRequested, unavailableReason }: Props = $props();
 </script>
 
 <EmptyState
 	title="Режим FakeIP не включён"
-	description="Сейчас активен другой режим маршрутизации (TPROXY или маршрутизация выключена). Конфигурация и блоки FakeIP появятся после включения движка fakeip-tun."
+	description={unavailableReason ??
+		'Сейчас активен другой режим маршрутизации (TPROXY или маршрутизация выключена). Конфигурация и блоки FakeIP появятся после включения движка fakeip-tun.'}
 >
 	{#snippet icon()}
 		<Network />
 	{/snippet}
 	{#snippet action()}
-		<Button variant="primary" size="md" onclick={onEnableRequested}>
+		<Button
+			variant="primary"
+			size="md"
+			disabled={!!unavailableReason}
+			title={unavailableReason}
+			onclick={onEnableRequested}
+		>
 			Включить FakeIP
 		</Button>
 	{/snippet}

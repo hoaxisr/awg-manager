@@ -1,10 +1,12 @@
 package singbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,33 +28,28 @@ var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 // package decoupled from the operator's path layout (it just receives a string).
 func DefaultCacheDBPath() string { return defaultCacheDBPath }
 
-// ensureBaseConfig writes a minimal 00-base.json if config.d is empty,
-// so sing-box starts standalone (direct outbound + bootstrap DNS) before
+// ensureBaseConfigWithLogLevel writes a minimal 00-base.json if config.d is
+// empty, so sing-box starts standalone (direct outbound + bootstrap DNS) before
 // any tunnels are added. Also surgically self-heals an older base config
-// that hard-coded the wrong Clash API port (9090 instead of
-// clashAPIAddr's 9099), which silently broke our LogForwarder /
-// DelayChecker on existing installs.
-func ensureBaseConfig(configDir string, loggers ...*slog.Logger) {
-	ensureBaseConfigWithLogLevel(configDir, "info", loggers...)
-}
-
-func ensureBaseConfigWithLogLevel(configDir, desiredLogLevel string, loggers ...*slog.Logger) {
-	var log *slog.Logger
-	if len(loggers) > 0 {
-		log = loggers[0]
-	}
+// that hard-coded the wrong Clash API port (9090 instead of ours), which
+// silently broke our LogForwarder / DelayChecker on existing installs.
+func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
 	basePath := filepath.Join(configDir, "00-base.json")
 	if _, err := os.Stat(basePath); err == nil {
-		patchBaseClashPort(basePath)
-		patchBaseLogLevel(basePath, desiredLogLevel)
-		patchBaseDomainResolver(basePath)
+		patchBaseClashPort(basePath, desiredClashPort, log)
+		patchBaseLogLevel(basePath, desiredLogLevel, log)
 		patchBaseDirectOutbound(basePath, log)
-		patchBaseCacheFilePath(basePath)
-		patchBaseDNSStrategy(basePath)
+		patchBaseCacheFilePath(basePath, log)
+		patchBaseBootstrapDNS(basePath, desiredBootstrapDNS, log)
 		return
 	}
-	_ = os.MkdirAll(configDir, 0755)
-	_ = writeJSONFile(basePath, freshBaseConfigWithLogLevel(desiredLogLevel))
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		logConfigPatchWarn(log, "singbox config reconcile: mkdir failed",
+			"step", stepEnsureBaseConfig, "path", configDir, "err", err)
+		return
+	}
+	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS, desiredClashPort), log)
 }
 
 func logConfigPatchInfo(log *slog.Logger, msg string, args ...any) {
@@ -69,6 +66,217 @@ func logConfigPatchWarn(log *slog.Logger, msg string, args ...any) {
 	log.Warn(msg, args...)
 }
 
+// Имена шагов примирения config.d. Попадают в Warn-строки пролога, так что
+// по логу видно, какой именно шаг потерялся.
+const (
+	stepEnsureBaseConfig      = "ensure-base-config"
+	stepPatchBaseClashPort    = "patch-base-clash-port"
+	stepPatchBaseLogLevel     = "patch-base-log-level"
+	stepPatchBaseDirectOutbnd = "patch-base-direct-outbound"
+	stepPatchBaseCacheFile    = "patch-base-cache-file"
+	stepPatchBaseBootstrapDNS = "patch-base-bootstrap-dns"
+	stepMigrateLegacyTunnels  = "migrate-legacy-tunnels"
+	stepStripBaseOwnedBlocks  = "strip-base-owned-blocks"
+	stepOutboundCompat        = "outbound-compat"
+	stepStripStrayDirect      = "strip-stray-direct"
+	stepRemoveRouteFinal      = "remove-route-final"
+	stepRemoveDNSFinal        = "remove-dns-final"
+	stepDerivedDefaults       = "reconcile-derived-defaults"
+)
+
+// reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
+type reconcileStep struct {
+	name string
+	run  func()
+}
+
+// reconcileConfigSteps — плоский именованный набор шагов примирения.
+// Гоняется каждый бут из NewOperator; каждый шаг идемпотентен и самогасится
+// проверкой «уже так — no-op».
+//
+// ЕДИНСТВЕННОЕ ограничение порядка — снаружи набора: MigrateLegacyConfigDir
+// обязан выполниться ПЕРВЫМ (создаёт config.d; иначе dns-блок легаси-конфига
+// скопируется дважды и configmerge отвергнет дубликаты тегов — см.
+// MigrateLegacyConfigDir в config.go). Внутри набора ограничений порядка нет:
+// шаги попарно коммутируют по конечному состоянию (закреплено
+// TestReconcileConfigSteps_CommuteReversed).
+func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, log *slog.Logger) []reconcileStep {
+	base := filepath.Join(configPath, "00-base.json")
+	tunnels := filepath.Join(configPath, "10-tunnels.json")
+	return []reconcileStep{
+		{stepEnsureBaseConfig, func() { ensureBaseConfig(configPath, desiredLogLevel, desiredBootstrapDNS, desiredClashPort, log) }},
+		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
+		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
+		// Компат-фиксы нужны каждому продюсеру outbound'ов: 10-tunnels пишет
+		// UI, 40-subscriptions — подписочный адаптер. Только активный путь
+		// config.d/ — слоты в disabled/ и pending/ не трогаются (та же
+		// семантика, что у stripStrayDirectPlaceholder: их нет в merged).
+		{stepOutboundCompat, func() {
+			patchSlotOutboundCompat(tunnels, log)
+			patchSlotOutboundCompat(filepath.Join(configPath, "40-subscriptions.json"), log)
+		}},
+		{stepStripStrayDirect, func() { stripStrayDirectPlaceholder(configPath, log) }},
+		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
+		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},
+		{stepDerivedDefaults, func() { reconcileDerivedDefaults(configPath, log) }},
+	}
+}
+
+// derivedDefaultsSlot — содержимое 99-defaults.json. Константа: слот несёт
+// ровно те скаляры, у которых нет собственного «хозяина по умолчанию», и
+// перекрывается любым слотом выше по first-file-wins.
+func derivedDefaultsSlot() map[string]any {
+	return map[string]any{
+		"dns": map[string]any{"strategy": baseDefaultDNSStrategy},
+		// Резолвер — ОБЪЕКТОМ, а не строкой, хотя оба варианта sing-box
+		// принимает: режимные слоты пишут его как {"server": …}, а слить
+		// объект со строкой merge не умеет — «cannot merge json object into
+		// string», FATAL на старте (стенд 2026-08-24, поймано именно так).
+		// Пока дефолт жил в 00-base, типы не сталкивались: примирение убирало
+		// ключ из базы, как только слот брал владение. Теперь оба источника
+		// присутствуют ВСЕГДА, и совпадение типов — обязательное условие.
+		"route": map[string]any{
+			"default_domain_resolver": map[string]any{"server": baseDefaultDomainResolver},
+		},
+	}
+}
+
+// reconcileDerivedDefaults переносит дефолты условных скаляров из 00-base в
+// 99-defaults.json — то есть из ВЫИГРЫВАЮЩЕЙ позиции merge в проигрывающую.
+//
+// Скаляры dns.strategy и route.default_domain_resolver принадлежат тому слоту
+// режима, который сейчас активен, а базовое значение — лишь дефолт «когда
+// хозяина нет». Пока дефолт лежал в 00-base (лексически ПЕРВОМ, а merge —
+// first-file-wins), уступать приходилось активно: код читал чужие слот-файлы,
+// вычислял владение и переписывал базу на каждом промежуточном шаге
+// транзакции. За один переход режима база менялась дважды в противоположные
+// стороны, и каждая запись планировала reload — при живом tun это полный
+// Stop+Start движка (стенд 2026-08-24). Из 99 дефолт проигрывает ПАССИВНО:
+// владение не вычисляет никто, его решает сам merge в момент применения.
+//
+// Порядок внутри шага обязателен: сперва создать 99, потом стричь базу. Иначе
+// падение между двумя записями оставило бы конфиг без резолвера вовсе —
+// sing-box отвергает такой merged (FATAL «missing route.default_domain_resolver
+// … in dial fields»). Оба действия в ОДНОМ шаге по той же причине и ради
+// попарной коммутативности набора (TestReconcileConfigSteps_CommuteReversed).
+//
+// Из базы снимаются ТОЛЬКО наши значения: чужое (в том числе легаси
+// "ipv4_only") пользователь поставил осознанно, оно остаётся и продолжает
+// затенять — та же философия, что была у резолвера.
+func reconcileDerivedDefaults(configDir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	defaultsPath := filepath.Join(configDir, "99-defaults.json")
+	want := derivedDefaultsSlot()
+	if cur, ok := readSlotJSON(stepDerivedDefaults, defaultsPath, log); !ok || !sameJSON(cur, want) {
+		// Стрижка базы ТОЛЬКО после подтверждённой записи 99: провал (ENOSPC,
+		// права) иначе оставил бы конфиг вообще без резолвера — sing-box
+		// отвергает такой merged и не стартует до следующего удачного бута.
+		if !writeSlotJSON(stepDerivedDefaults, defaultsPath, want, log) {
+			return
+		}
+	}
+
+	basePath := filepath.Join(configDir, "00-base.json")
+	base, ok := readSlotJSON(stepDerivedDefaults, basePath, log)
+	if !ok {
+		return
+	}
+	if !stripOurDerivedDefaults(base) {
+		return
+	}
+	writeSlotJSON(stepDerivedDefaults, basePath, base, log)
+	logConfigPatchInfo(log, "singbox config reconcile: дефолты скаляров переехали в 99-defaults.json",
+		"step", stepDerivedDefaults, "path", basePath)
+}
+
+// stripOurDerivedDefaults убирает из базы наши дефолтные значения обоих
+// скаляров; чужие оставляет. Возвращает, изменилась ли карта.
+func stripOurDerivedDefaults(base map[string]any) bool {
+	changed := false
+	if dns, _ := base["dns"].(map[string]any); dns != nil {
+		if v, _ := dns["strategy"].(string); v == baseDefaultDNSStrategy || v == "ipv4_only" {
+			delete(dns, "strategy")
+			changed = true
+		}
+	}
+	if route, _ := base["route"].(map[string]any); route != nil {
+		// Историческая база несёт резолвер строкой, но объектную форму тоже
+		// снимаем: она наша, если внутри наш сервер.
+		switch v := route["default_domain_resolver"].(type) {
+		case string:
+			if v == baseDefaultDomainResolver {
+				delete(route, "default_domain_resolver")
+				changed = true
+			}
+		case map[string]any:
+			if srv, _ := v["server"].(string); srv == baseDefaultDomainResolver && len(v) == 1 {
+				delete(route, "default_domain_resolver")
+				changed = true
+			}
+		}
+		// Чужое значение остаётся, но СТРОКУ приводим к объектной форме:
+		// 99-defaults несёт объект, а слить объект со строкой merge sing-box
+		// не умеет («cannot merge json object into string», FATAL). Раньше
+		// коллизии не было — база была единственным источником, когда владельца
+		// нет. Значение при этом не меняется, меняется только форма записи.
+		if v, ok := route["default_domain_resolver"].(string); ok && v != "" {
+			route["default_domain_resolver"] = map[string]any{"server": v}
+			changed = true
+		}
+	}
+	return changed
+}
+
+// sameJSON сравнивает две карты по сериализации — дешевле рефлексии и ровно
+// та же семантика, что у побайтового гейта записи слота.
+func sameJSON(a, b map[string]any) bool {
+	ja, ea := json.Marshal(a)
+	jb, eb := json.Marshal(b)
+	return ea == nil && eb == nil && bytes.Equal(ja, jb)
+}
+
+// readSlotJSON — общий пролог чтения шага примирения. «Файла нет» — норма
+// (молчаливый no-op, ok=false); «файл есть, но прочитать/распарсить не
+// смогли» — Warn с именем шага: молчаливый провал патчера оставляет демон
+// работать с тихо потерянной функцией, и этот лог — единственный свидетель.
+func readSlotJSON(step, path string, log *slog.Logger) (map[string]any, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logConfigPatchWarn(log, "singbox config reconcile: read failed",
+				"step", step, "path", path, "err", err)
+		}
+		return nil, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		logConfigPatchWarn(log, "singbox config reconcile: parse failed",
+			"step", step, "path", path, "err", err)
+		return nil, false
+	}
+	return m, true
+}
+
+// writeSlotJSON — общий пролог записи шага примирения: ошибка записи не
+// молчит, а называет шаг и путь.
+func writeSlotJSON(step, path string, m map[string]any, log *slog.Logger) bool {
+	if err := writeJSONFile(path, m); err != nil {
+		logConfigPatchWarn(log, "singbox config reconcile: write failed",
+			"step", step, "path", path, "err", err)
+		return false
+	}
+	return true
+}
+
+// firstLogger распаковывает variadic-логгер патчеров: существующие вызовы без
+// логгера остаются валидными, новые передают его первым аргументом.
+func firstLogger(loggers []*slog.Logger) *slog.Logger {
+	if len(loggers) > 0 {
+		return loggers[0]
+	}
+	return nil
+}
+
 // ensureLegacyConfigMigrated copies user-added sing-box tunnels from a
 // pre-2.9.10 single-file config.json into the new slot layout
 // (config.d/10-tunnels.json), then removes the legacy file.
@@ -82,7 +290,8 @@ func logConfigPatchWarn(log *slog.Logger, msg string, args ...any) {
 // place so a manual fix or next-boot retry can recover.
 //
 // dir is the singbox parent dir (e.g. /opt/etc/awg-manager/singbox).
-func ensureLegacyConfigMigrated(dir string) {
+func ensureLegacyConfigMigrated(dir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
 	legacy := filepath.Join(dir, "config.json")
 	target := filepath.Join(dir, "config.d", "10-tunnels.json")
 
@@ -97,6 +306,8 @@ func ensureLegacyConfigMigrated(dir string) {
 	cfg, err := LoadConfig(legacy)
 	if err != nil {
 		// Parse failure — leave legacy in place for retry.
+		logConfigPatchWarn(log, "singbox config reconcile: parse failed",
+			"step", stepMigrateLegacyTunnels, "path", legacy, "err", err)
 		return
 	}
 
@@ -135,6 +346,8 @@ func ensureLegacyConfigMigrated(dir string) {
 	slot := &Config{raw: raw}
 
 	if err := slot.Save(target); err != nil {
+		logConfigPatchWarn(log, "singbox config reconcile: write failed",
+			"step", stepMigrateLegacyTunnels, "path", target, "err", err)
 		return
 	}
 	_ = os.Remove(legacy)
@@ -244,13 +457,10 @@ func filterOutOurDNSServers(in []any) []any {
 
 // patchBaseLogLevel updates 00-base.json log.level to desired settings
 // value and ensures log.timestamp exists.
-func patchBaseLogLevel(basePath, desiredLevel string) {
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+func patchBaseLogLevel(basePath, desiredLevel string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepPatchBaseLogLevel, basePath, log)
+	if !ok {
 		return
 	}
 	logBlock, _ := m["log"].(map[string]any)
@@ -272,99 +482,104 @@ func patchBaseLogLevel(basePath, desiredLevel string) {
 	if !changed {
 		return
 	}
-	_ = writeJSONFile(basePath, m)
+	writeSlotJSON(stepPatchBaseLogLevel, basePath, m, log)
 }
 
-// patchBaseClashPort rewrites only the experimental.clash_api.external_controller
-// field if it points anywhere other than clashAPIAddr. Other fields
-// (user customizations: log level, DNS servers, etc.) are preserved
-// verbatim. No-op when the file already has the correct port or has no
-// experimental.clash_api block at all (latter case: the user removed
-// clash_api on purpose; respect that).
-func patchBaseClashPort(basePath string) {
-	data, err := os.ReadFile(basePath)
-	if err != nil {
+// patchBaseClashPort приводит experimental.clash_api.external_controller к
+// нашему адресу (порт из настроек, хост всегда 127.0.0.1). Остальные поля —
+// пользовательские правки уровня лога, DNS-серверов и прочего — сохраняются
+// дословно. No-op, только когда адрес уже правильный.
+//
+// Отсутствующий блок clash_api ВОССТАНАВЛИВАЕТСЯ, а не считается намерением
+// пользователя: Clash API — служебный канал управления awg-manager, и его
+// значением и наличием владеем мы (ADR 0001). Без блока молча слепнут
+// LogForwarder, DelayChecker, /connections и селекторы подписок, причём
+// sing-box при этом стартует нормально и в журнале не будет ни строчки.
+func patchBaseClashPort(basePath string, port int, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepPatchBaseClashPort, basePath, log)
+	if !ok {
 		return
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	if !setClashController(m, ClashAddr(port)) {
 		return
 	}
+	writeSlotJSON(stepPatchBaseClashPort, basePath, m, log)
+}
+
+// setClashController ставит experimental.clash_api.external_controller в want,
+// создавая недостающие уровни. Возвращает false, если адрес уже такой.
+func setClashController(m map[string]any, want string) bool {
 	exp, _ := m["experimental"].(map[string]any)
 	if exp == nil {
-		return
+		exp = map[string]any{}
+		m["experimental"] = exp
 	}
 	clash, _ := exp["clash_api"].(map[string]any)
 	if clash == nil {
-		return
+		clash = map[string]any{}
+		exp["clash_api"] = clash
 	}
-	current, _ := clash["external_controller"].(string)
-	if current == clashAPIAddr {
-		return
+	if current, _ := clash["external_controller"].(string); current == want {
+		return false
 	}
-	clash["external_controller"] = clashAPIAddr
-	_ = writeJSONFile(basePath, m)
+	clash["external_controller"] = want
+	return true
 }
 
-// patchBaseDomainResolver self-heals legacy 00-base.json files that
-// pre-date the route.default_domain_resolver requirement. sing-box 1.12
-// deprecates and 1.13+ FATALs on startup with:
-//
-//	missing `route.default_domain_resolver` or `domain_resolver` in dial
-//	fields is deprecated in sing-box 1.12.0 and will be removed in
-//	sing-box 1.14.0
-//
-// Without the resolver, sing-box refuses to start and the user sees only
-// the FATAL line in /logs. Always materialises the route block + the
-// resolver key when missing — sing-box 1.13+ won't start without it, so
-// the "user intentionally deleted route block" interpretation does not
-// apply: the program is unusable without this key, period. A user-set
-// custom resolver value is preserved.
-func patchBaseDomainResolver(basePath string) {
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return
-	}
-	route, _ := m["route"].(map[string]any)
-	if route == nil {
-		route = map[string]any{}
-		m["route"] = route
-	}
-	if _, has := route["default_domain_resolver"]; has {
-		return
-	}
-	route["default_domain_resolver"] = "dns-bootstrap"
-	_ = writeJSONFile(basePath, m)
-}
-
-// patchBaseDNSStrategy migrates the legacy 00-base.json default
-// dns.strategy "ipv4_only" → "prefer_ipv4". The old default silently
-// dropped all AAAA/IPv6 answers (issue #180); the new default returns IPv6
-// when available. Only the exact legacy value is migrated — any other
-// strategy (incl. a deliberately user-set one) is left untouched.
-func patchBaseDNSStrategy(basePath string) {
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return
-	}
+// setBootstrapServer ставит адрес серверу с тегом dns-bootstrap. Возвращает
+// false, если менять нечего: записи нет или адрес уже такой.
+func setBootstrapServer(m map[string]any, want string) bool {
 	dns, _ := m["dns"].(map[string]any)
 	if dns == nil {
-		return
+		return false
 	}
-	if strategy, _ := dns["strategy"].(string); strategy != "ipv4_only" {
-		return
+	servers, _ := dns["servers"].([]any)
+	for _, v := range servers {
+		s, _ := v.(map[string]any)
+		if s == nil || s["tag"] != "dns-bootstrap" {
+			continue
+		}
+		if s["server"] == want {
+			return false
+		}
+		s["server"] = want
+		return true
 	}
-	dns["strategy"] = "prefer_ipv4"
-	_ = writeJSONFile(basePath, m)
+	return false
 }
+
+// patchBaseBootstrapDNS приводит адрес сервера dns-bootstrap к заданному в
+// настройках (issue #770). Пустая настройка — no-op: до её появления адрес
+// правили руками прямо в 00-base.json, и такие правки обязаны выжить.
+// Записи с тегом dns-bootstrap нет — тоже no-op: патчер правит адрес, а не
+// проектирует структуру файла.
+func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
+	want = sanitizeBootstrapDNS(want)
+	if want == "" {
+		return
+	}
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepPatchBaseBootstrapDNS, basePath, log)
+	if !ok {
+		return
+	}
+	if !setBootstrapServer(m, want) {
+		return
+	}
+	if !writeSlotJSON(stepPatchBaseBootstrapDNS, basePath, m, log) {
+		return
+	}
+	logConfigPatchInfo(log, "singbox base config reconciled",
+		"patch", stepPatchBaseBootstrapDNS,
+		"path", basePath,
+		"newServer", want,
+	)
+}
+
+// baseDefaultDomainResolver — тег резолвера по умолчанию. Живёт в
+// 99-defaults.json и действует, пока никакой слот выше не задал свой.
+const baseDefaultDomainResolver = "dns-bootstrap"
 
 // patchBaseDirectOutbound self-heals legacy 00-base.json files that
 // pre-date the canonical {type:"direct", tag:"direct"} outbound. With
@@ -383,12 +598,8 @@ func patchBaseDNSStrategy(basePath string) {
 // disabling router slot does not accidentally switch fallback to some
 // other custom outbound on legacy/custom base files.
 func patchBaseDirectOutbound(basePath string, log *slog.Logger) {
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	m, ok := readSlotJSON(stepPatchBaseDirectOutbnd, basePath, log)
+	if !ok {
 		return
 	}
 	obs, _ := m["outbounds"].([]any)
@@ -449,16 +660,9 @@ func patchBaseDirectOutbound(basePath string, log *slog.Logger) {
 // missing file / read error / malformed JSON / missing route section
 // (matches patchBaseDirectOutbound and patchTunnelsSlotStripBaseDNS).
 func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
-	var log *slog.Logger
-	if len(loggers) > 0 {
-		log = loggers[0]
-	}
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepRemoveRouteFinal, basePath, log)
+	if !ok {
 		return
 	}
 	route, _ := m["route"].(map[string]any)
@@ -470,15 +674,10 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 	}
 	oldFinal, _ := route["final"]
 	delete(route, "final")
-	if err := writeJSONFile(basePath, m); err != nil {
-		logConfigPatchWarn(log, "singbox base config migration failed",
-			"patch", "remove-route-final",
-			"path", basePath,
-			"err", err,
-		)
+	if !writeSlotJSON(stepRemoveRouteFinal, basePath, m, log) {
 		return
 	}
-	logConfigPatchInfo(log, "singbox base config migrated",
+	logConfigPatchInfo(log, "singbox base config self-healed",
 		"patch", "remove-route-final",
 		"path", basePath,
 		"oldFinal", oldFinal,
@@ -502,27 +701,17 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // (the only slot that then sets it) wins when enabled. Same observable
 // behavior as the old explicit "dns-bootstrap".
 //
-// dns.strategy — stripped ONLY when the sibling 20-router.json exists AND sets
-// a non-empty dns.strategy (the router then owns strategy, set together with
-// final via SetDNSGlobals). Unlike final, strategy has NO first-server
-// fallback: it is a genuine scalar default, so stripping it unconditionally
-// would drop the guaranteed prefer_ipv4 whenever the router slot is absent
-// (router disabled). Gating on the router slot keeps base's prefer_ipv4 as the
-// router-disabled default while letting an enabled router override it.
+// dns.strategy сюда не относится — ею занимается отдельный шаг
+// reconcile-dns-strategy (reconcileBaseDNSStrategy): у strategy нет
+// first-server fallback'а, поэтому её примирение симметрично (стрижка при
+// владении routing-слотом / восстановление дефолта без владельца).
 //
 // Idempotent; silent skip on missing file / read error / malformed JSON /
 // missing dns section (matches removeFinalFromBase).
 func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
-	var log *slog.Logger
-	if len(loggers) > 0 {
-		log = loggers[0]
-	}
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepRemoveDNSFinal, basePath, log)
+	if !ok {
 		return
 	}
 	dns, _ := m["dns"].(map[string]any)
@@ -535,50 +724,25 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 		delete(dns, "final")
 		changed = true
 	}
-	strategyStripped := false
-	if _, hasStrategy := dns["strategy"]; hasStrategy && routerOwnsDNSStrategy(filepath.Dir(basePath)) {
-		delete(dns, "strategy")
-		strategyStripped = true
-		changed = true
-	}
 	if !changed {
 		return
 	}
-	if err := writeJSONFile(basePath, m); err != nil {
-		logConfigPatchWarn(log, "singbox base config migration failed",
-			"patch", "remove-dns-final",
-			"path", basePath,
-			"err", err,
-		)
+	if !writeSlotJSON(stepRemoveDNSFinal, basePath, m, log) {
 		return
 	}
-	logConfigPatchInfo(log, "singbox base config migrated",
+	logConfigPatchInfo(log, "singbox base config self-healed",
 		"patch", "remove-dns-final",
 		"path", basePath,
 		"oldFinal", oldFinal,
-		"strategyStripped", strategyStripped,
 	)
 }
 
-// routerOwnsDNSStrategy reports whether the sibling 20-router.json in configDir
-// exists and sets a non-empty dns.strategy. See removeDNSFinalFromBase for why
-// the base dns.strategy strip is gated on this.
-func routerOwnsDNSStrategy(configDir string) bool {
-	data, err := os.ReadFile(filepath.Join(configDir, "20-router.json"))
-	if err != nil {
-		return false
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return false
-	}
-	dns, _ := m["dns"].(map[string]any)
-	if dns == nil {
-		return false
-	}
-	s, _ := dns["strategy"].(string)
-	return strings.TrimSpace(s) != ""
-}
+// baseDefaultDNSStrategy — значение dns.strategy по умолчанию. Живёт в
+// 99-defaults.json и действует, пока никакой слот выше его не задаёт. У
+// strategy нет fallback'а на первый dns-сервер (в отличие от dns.final),
+// поэтому её отсутствие в merged-конфиге — не «дефолт», а другое поведение;
+// именно поэтому дефолт обязан лежать в слоте, а не отсутствовать вовсе.
+const baseDefaultDNSStrategy = "prefer_ipv4"
 
 // stripStrayDirectPlaceholder removes the canonical
 // {type:"direct", tag:"direct"} placeholder from every slot file in
@@ -598,9 +762,14 @@ func routerOwnsDNSStrategy(configDir string) bool {
 //
 // Subdirectories (disabled/, pending/) are skipped — sing-box does not
 // merge them. Idempotent: a clean slot tree is a no-op.
-func stripStrayDirectPlaceholder(configDir string) {
+func stripStrayDirectPlaceholder(configDir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
 	entries, err := os.ReadDir(configDir)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			logConfigPatchWarn(log, "singbox config reconcile: read failed",
+				"step", stepStripStrayDirect, "path", configDir, "err", err)
+		}
 		return
 	}
 	for _, e := range entries {
@@ -612,12 +781,8 @@ func stripStrayDirectPlaceholder(configDir string) {
 			continue
 		}
 		slotPath := filepath.Join(configDir, name)
-		data, err := os.ReadFile(slotPath)
-		if err != nil {
-			continue
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
+		m, ok := readSlotJSON(stepStripStrayDirect, slotPath, log)
+		if !ok {
 			continue
 		}
 		before, _ := m["outbounds"].([]any)
@@ -629,7 +794,7 @@ func stripStrayDirectPlaceholder(configDir string) {
 			continue
 		}
 		m["outbounds"] = after
-		_ = writeJSONFile(slotPath, m)
+		writeSlotJSON(stepStripStrayDirect, slotPath, m, log)
 	}
 }
 
@@ -655,13 +820,10 @@ const legacyCacheFilePath = "/opt/etc/sing-box/cache.db"
 //
 // Any OTHER user-set absolute path is left untouched (legitimate
 // customization).
-func patchBaseCacheFilePath(basePath string) {
-	raw, err := os.ReadFile(basePath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
+func patchBaseCacheFilePath(basePath string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepPatchBaseCacheFile, basePath, log)
+	if !ok {
 		return
 	}
 	exp, ok := m["experimental"].(map[string]any)
@@ -678,7 +840,7 @@ func patchBaseCacheFilePath(basePath string) {
 			"enabled": true,
 			"path":    defaultCacheDBPath,
 		}
-		_ = writeJSONFile(basePath, m)
+		writeSlotJSON(stepPatchBaseCacheFile, basePath, m, log)
 		return
 	}
 
@@ -697,7 +859,7 @@ func patchBaseCacheFilePath(basePath string) {
 		// Any other absolute path — legitimate user customization, leave alone.
 		return
 	}
-	_ = writeJSONFile(basePath, m)
+	writeSlotJSON(stepPatchBaseCacheFile, basePath, m, log)
 }
 
 // patchTunnelsSlotStripBaseOwnedBlocks self-heals 10-tunnels.json files polluted
@@ -721,13 +883,10 @@ func patchBaseCacheFilePath(basePath string) {
 // tunnels slot: log.level is base-owned (00-base.json), and leaving a
 // stale log block in 10-tunnels.json can override user-selected base
 // level during config merge.
-func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
-	data, err := os.ReadFile(tunnelsPath)
-	if err != nil {
-		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepStripBaseOwnedBlocks, tunnelsPath, log)
+	if !ok {
 		return
 	}
 	changed := false
@@ -738,7 +897,7 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
 	dns, ok := m["dns"].(map[string]any)
 	if !ok {
 		if changed {
-			_ = writeJSONFile(tunnelsPath, m)
+			writeSlotJSON(stepStripBaseOwnedBlocks, tunnelsPath, m, log)
 		}
 		return
 	}
@@ -783,60 +942,67 @@ func patchTunnelsSlotStripBaseOwnedBlocks(tunnelsPath string) {
 		}
 	}
 	if changed {
-		_ = writeJSONFile(tunnelsPath, m)
+		writeSlotJSON(stepStripBaseOwnedBlocks, tunnelsPath, m, log)
 	}
 }
 
-func patchTunnelsSlotEnsureNaiveUDPOverTCP(tunnelsPath string) {
-	data, err := os.ReadFile(tunnelsPath)
-	if err != nil {
+// patchSlotOutboundCompat чинит уже лежащие на диске outbound'ы слота:
+// naive без udp_over_tcp (UDP мёртв) и hysteria2 с TLS-опциями, которые не
+// переживают включённый по умолчанию chrome-парротинг sing-box 1.14.0-beta.7.
+// Без этого шага несовместимый туннель остался бы мёртвым до первой ручной
+// правки. См. EnsureOutboundCompat.
+func patchSlotOutboundCompat(slotPath string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	m, ok := readSlotJSON(stepOutboundCompat, slotPath, log)
+	if !ok {
 		return
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return
+	changed := false
+	obs, _ := m["outbounds"].([]any)
+	for _, v := range obs {
+		if ob, ok := v.(map[string]any); ok && EnsureOutboundCompat(ob) {
+			changed = true
+		}
 	}
-	outbounds, _ := m["outbounds"].([]any)
-	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
-	if cfg.ensureNaiveUDPOverTCPOutbounds() {
-		_ = writeJSONFile(tunnelsPath, m)
+	if changed {
+		writeSlotJSON(stepOutboundCompat, slotPath, m, log)
 	}
 }
 
-// patchTunnelsSlotEnsureHysteria2ChromeParrot чинит уже лежащие на диске
-// hysteria2-туннели: sing-box 1.14.0-beta.7 включил chrome-парротинг по
-// умолчанию, и без этого патча несовместимый туннель остался бы мёртвым до
-// первой ручной правки. См. ensureHysteria2ChromeParrot.
-func patchTunnelsSlotEnsureHysteria2ChromeParrot(tunnelsPath string) {
-	data, err := os.ReadFile(tunnelsPath)
-	if err != nil {
-		return
+// sanitizeBootstrapDNS отсеивает всё, что не является литеральным IP.
+// Настройка может прийти невалидной из settings.json: API валидирует только
+// присланное в патче (иначе одно протухшее значение заперло бы пользователя
+// вне всех настроек), поэтому последний рубеж здесь. Домен или host:port в
+// dns-bootstrap роняет движок на старте: «missing domain resolver for domain
+// server address» — резолвить это имя нечем, оно и есть первый резолвер.
+func sanitizeBootstrapDNS(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || net.ParseIP(v) == nil {
+		return ""
 	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return
-	}
-	outbounds, _ := m["outbounds"].([]any)
-	cfg := &Config{raw: map[string]any{"outbounds": outbounds}}
-	if cfg.ensureHysteria2ChromeParrotOutbounds() {
-		_ = writeJSONFile(tunnelsPath, m)
-	}
+	return v
 }
 
-// freshBaseConfig returns the canonical base sing-box config. Single
-// source of truth for ensureBaseConfig (initial write + self-heal path).
-func freshBaseConfig() map[string]any {
-	return freshBaseConfigWithLogLevel("info")
-}
+// defaultBootstrapDNS — исторический адрес bootstrap-резолвера. Остаётся
+// дефолтом, когда пользователь не задал свой (issue #770: у части мобильных
+// операторов 1.1.1.1 блокируется, и sing-box остаётся без резолвинга).
+const defaultBootstrapDNS = "1.1.1.1"
 
-func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
+// freshBaseConfig returns the canonical base sing-box config. Single source
+// of truth for ensureBaseConfig (initial write + self-heal path). Empty
+// bootstrapDNS falls back to defaultBootstrapDNS.
+func freshBaseConfig(logLevel, bootstrapDNS string, clashPort int) map[string]any {
+	bootstrapDNS = sanitizeBootstrapDNS(bootstrapDNS)
+	if bootstrapDNS == "" {
+		bootstrapDNS = defaultBootstrapDNS
+	}
 	return map[string]any{
 		"log": map[string]any{"level": normalizeSingboxLogLevel(logLevel), "timestamp": true},
 		"experimental": map[string]any{
-			// MUST match clashAPIAddr — our ClashClient and LogForwarder
-			// connect here. Hard-coding 9090 (sing-box default) used to
-			// silently break log forwarding on existing installs.
-			"clash_api": map[string]any{"external_controller": clashAPIAddr},
+			// MUST match ClashClient.Address() — our ClashClient and
+			// LogForwarder connect here. Hard-coding 9090 (sing-box default)
+			// used to silently break log forwarding on existing installs.
+			"clash_api": map[string]any{"external_controller": ClashAddr(clashPort)},
 			// Absolute path to writable dir. Sing-box default resolves
 			// relative path against CWD which is "/" (read-only on Entware) —
 			// caused FATAL on user installs.
@@ -846,15 +1012,11 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			},
 		},
 		"dns": map[string]any{
-			// dns.strategy stays in base — base legitimately owns the
-			// router-disabled default (prefer_ipv4). strategy is a genuine
-			// scalar default with no first-server fallback, so it must be
-			// present when the router slot is absent. The self-heal
-			// (removeDNSFinalFromBase) strips it only when 20-router.json
-			// owns strategy.
-			"strategy": "prefer_ipv4",
+			// dns.strategy НЕ здесь — дефолт живёт в 99-defaults.json, в
+			// проигрывающей позиции merge (см. reconcileDerivedDefaults).
+			// В базе он был бы в выигрывающей и затенял бы выбор слота.
 			"servers": []any{
-				map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": "1.1.1.1"},
+				map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapDNS},
 			},
 			// dns.final intentionally omitted — owned by 20-router.json
 			// (bug #445). sing-box resolves conflicting scalar sub-keys of
@@ -875,7 +1037,7 @@ func freshBaseConfigWithLogLevel(logLevel string) map[string]any {
 			// Sing-box uses first outbound (= direct, see outbounds above)
 			// as fallback when final is absent. See spec
 			// 2026-05-21-route-final-router-owned-design.md.
-			"default_domain_resolver": "dns-bootstrap",
+			// default_domain_resolver тоже не здесь — см. dns.strategy выше.
 		},
 	}
 }
@@ -898,7 +1060,10 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	data, err := os.ReadFile(basePath)
 	switch {
 	case os.IsNotExist(err):
-		base = freshBaseConfigWithLogLevel(desired)
+		// Свежая база условно-своих скаляров больше не несёт: их дефолты
+		// живут в 99-defaults.json и перекрываются слотом-владельцем сами
+		// (см. reconcileDerivedDefaults) — уступать нечем и некому.
+		base = freshBaseConfig(desired, o.desiredBootstrapDNS(), o.desiredClashPort())
 	case err != nil:
 		return fmt.Errorf("read 00-base.json: %w", err)
 	default:
@@ -927,6 +1092,106 @@ func (o *Operator) ApplyLogLevel(level string) error {
 	}
 
 	if o.orch != nil {
+		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
+			return fmt.Errorf("save base slot: %w", err)
+		}
+		return nil
+	}
+
+	if err := writeJSONFile(basePath, base); err != nil {
+		return fmt.Errorf("write base file: %w", err)
+	}
+	if running, _ := o.proc.IsRunning(); running {
+		if err := o.proc.Reload(); err != nil {
+			return fmt.Errorf("reload sing-box: %w", err)
+		}
+	}
+	return nil
+}
+
+// desiredBootstrapDNS — текущая настройка адреса bootstrap-резолвера;
+// пусто, когда замыкание не подключено (тестовые wiring'и) или адрес не задан.
+func (o *Operator) desiredBootstrapDNS() string {
+	if o.bootstrapDNS == nil {
+		return ""
+	}
+	return sanitizeBootstrapDNS(o.bootstrapDNS())
+}
+
+// desiredClashPort — порт Clash API из настроек; 0 означает DefaultClashPort.
+func (o *Operator) desiredClashPort() int {
+	if o.clashPort == nil {
+		return 0
+	}
+	return o.clashPort()
+}
+
+// ApplyClashPort приводит experimental.clash_api.external_controller в
+// 00-base.json к новому порту и перенаправляет туда же наш ClashClient
+// (issue #788). Перезапуск демона не нужен: SIGHUP в форке — это Close +
+// пересоздание инстанса, так что слушающий сокет Clash API переезжает сам.
+//
+// Применение АСИНХРОННОЕ: при подключённом оркестраторе запись лишь взводит
+// debounced reload (250 мс), и валидация merged-конфига произойдёт уже после
+// возврата отсюда. Отсюда окно в сотни миллисекунд, когда клиент смотрит на
+// порт, который ещё никто не слушает, — его закрывают ретраи LogForwarder и
+// TrafficAggregator. Если же merged-конфиг сломан чем-то ПОСТОРОННИМ, reload
+// откажет валидацией и демон останется на старом порту, а клиент уедет на
+// новый; сам порт валидацию сломать не может.
+//
+// ClashClient переставляется ПОСЛЕ успешной записи: провалившаяся запись
+// оставила бы клиент смотреть в порт, которого в конфиге нет.
+func (o *Operator) ApplyClashPort(port int) error {
+	addr := ClashAddr(port)
+	if err := o.mutateBase(func(base map[string]any) bool {
+		return setClashController(base, addr)
+	}); err != nil {
+		return err
+	}
+	o.clash.SetAddress(addr)
+	return nil
+}
+
+// ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению
+// настройки без перезапуска демона (issue #770). Пустое значение — no-op:
+// настройка снята, файл остаётся как есть.
+func (o *Operator) ApplyBootstrapDNS(server string) error {
+	server = sanitizeBootstrapDNS(server)
+	if server == "" {
+		return nil
+	}
+	return o.mutateBase(func(base map[string]any) bool {
+		return setBootstrapServer(base, server)
+	})
+}
+
+// mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
+// решить, менять ли (false — выходим без записи), записать. Запись через
+// оркестратор, когда он подключён: там валидация merged-конфига и
+// коалесцированный reload. Без оркестратора (ранний бут, тесты) — прямая
+// запись плюс reload живого процесса.
+func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
+	basePath := filepath.Join(o.configPath, "00-base.json")
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read 00-base.json: %w", err)
+	}
+	var base map[string]any
+	if err := json.Unmarshal(data, &base); err != nil {
+		return fmt.Errorf("parse 00-base.json: %w", err)
+	}
+	if !mutate(base) {
+		return nil
+	}
+
+	if o.orch != nil {
+		raw, err := json.MarshalIndent(base, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal 00-base.json: %w", err)
+		}
 		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
 			return fmt.Errorf("save base slot: %w", err)
 		}

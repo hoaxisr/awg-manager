@@ -194,3 +194,63 @@ func TestMergeIntoOutbound_XHTTP_KeepsExplicitPadding(t *testing.T) {
 		t.Errorf("x_padding_bytes=%v, want 200-800", tr["x_padding_bytes"])
 	}
 }
+
+// Early data по конвенции экосистемы едет в заголовке Sec-WebSocket-Protocol
+// (mihomo при "?ed=N" ставит именно его). Без имени заголовка sing-box
+// дописывает данные в URL-путь (transport/v2raywebsocket/conn.go), и сервер их
+// не понимает — то есть ws+ed не работал ни на одном пути.
+func TestBuildStreamFromQuery_WSEarlyDataHeader(t *testing.T) {
+	q := parseQuery(t, "type=ws&path=%2Fws%3Fed%3D2048")
+	s, err := BuildStreamFromQuery(q, "example.com")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	tr := out["transport"].(map[string]any)
+	if tr["max_early_data"] != 2048 {
+		t.Errorf("max_early_data=%v", tr["max_early_data"])
+	}
+	if tr["early_data_header_name"] != "Sec-WebSocket-Protocol" {
+		t.Errorf("early_data_header_name=%v, want Sec-WebSocket-Protocol", tr["early_data_header_name"])
+	}
+}
+
+// Без early data имя заголовка не выдумываем.
+func TestBuildStreamFromQuery_WSNoEarlyData(t *testing.T) {
+	q := parseQuery(t, "type=ws&path=%2Fws")
+	s, _ := BuildStreamFromQuery(q, "example.com")
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	tr := out["transport"].(map[string]any)
+	if _, present := tr["early_data_header_name"]; present {
+		t.Errorf("unexpected early_data_header_name: %v", tr)
+	}
+}
+
+// REALITY без uTLS движок не поднимает вовсе ("uTLS is required by reality
+// client"), поэтому ссылка без fp= обязана получить дефолтный отпечаток.
+func TestBuildStreamFromQuery_RealityDefaultFingerprint(t *testing.T) {
+	q := parseQuery(t, "type=tcp&security=reality&sni=a.example.com&pbk=k&sid=ab12")
+	s, err := BuildStreamFromQuery(q, "example.com")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	utls, _ := out["tls"].(map[string]any)["utls"].(map[string]any)
+	if utls == nil || utls["fingerprint"] != "chrome" {
+		t.Errorf("utls=%v, want default chrome", utls)
+	}
+}
+
+// Обычный TLS без fp= отпечаток не требует — дефолт не навязываем.
+func TestBuildStreamFromQuery_PlainTLSNoFingerprint(t *testing.T) {
+	q := parseQuery(t, "type=tcp&security=tls&sni=a.example.com")
+	s, _ := BuildStreamFromQuery(q, "example.com")
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	if _, present := out["tls"].(map[string]any)["utls"]; present {
+		t.Errorf("unexpected utls: %v", out["tls"])
+	}
+}

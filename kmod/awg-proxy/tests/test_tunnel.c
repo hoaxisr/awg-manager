@@ -322,6 +322,59 @@ static void test_endpoint_parse_del_forms(void)
 		    "token without ':' must be rejected");
 }
 
+/* AWG 3.1: header-protection key (64-hex → 32 bytes) enables header protection;
+ * S1-S4 must be >= 12 (the first 12 padding bytes are the ChaCha20 nonce). */
+static void test_accepts_header_protection_key(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	memset(&cfg, 0, sizeof(cfg));
+	ret = awg_config_parse("203.0.113.1:51820 "
+		"HP_KEY=0102030405060708090a0b0c0d0e0f10"
+		"1112131415161718191a1b1c1d1e1f20 "
+		"S1=12 S2=12 S3=12 S4=12", &cfg);
+	ASSERT_TRUE("accepts_header_protection_key", ret == 0, "valid HP_KEY must parse");
+	ASSERT_TRUE("accepts_header_protection_key", cfg.hp_key_set, "hp_key_set must be true");
+	ASSERT_TRUE("accepts_header_protection_key", cfg.hp_key[0] == 0x01 && cfg.hp_key[31] == 0x20,
+		    "hp_key bytes must decode from hex");
+}
+
+static void test_accepts_random_trailers_flag(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	memset(&cfg, 0, sizeof(cfg));
+	ret = awg_config_parse("203.0.113.1:51820 RT=1", &cfg);
+	ASSERT_TRUE("accepts_random_trailers_flag", ret == 0, "RT=1 must parse");
+	ASSERT_TRUE("accepts_random_trailers_flag", cfg.random_trailers, "random_trailers must be set");
+}
+
+static void test_rejects_out_of_range_random_trailers(void)
+{
+	awg_config_t cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+	ASSERT_TRUE("rejects_rt_out_of_range",
+		    awg_config_parse("203.0.113.1:51820 RT=7", &cfg) != 0,
+		    "RT is a flag: only 0 and 1 are accepted");
+}
+
+static void test_rejects_hp_with_short_padding(void)
+{
+	awg_config_t cfg;
+	int ret;
+
+	memset(&cfg, 0, sizeof(cfg));
+	ret = awg_config_parse("203.0.113.1:51820 "
+		"HP_KEY=0102030405060708090a0b0c0d0e0f10"
+		"1112131415161718191a1b1c1d1e1f20 "
+		"S1=8 S2=12 S3=12 S4=12", &cfg);
+	ASSERT_TRUE("rejects_hp_with_short_padding", ret != 0,
+		    "S1<12 with header protection must be rejected (nonce needs 12 bytes)");
+}
+
 int main(void)
 {
 	test_accepts_non_overlapping_h_ranges();
@@ -340,6 +393,10 @@ int main(void)
 	test_rejects_bare_ipv6_endpoint();
 	test_rejects_malformed_bracket_endpoints();
 	test_endpoint_parse_del_forms();
+	test_accepts_header_protection_key();
+	test_accepts_random_trailers_flag();
+	test_rejects_out_of_range_random_trailers();
+	test_rejects_hp_with_short_padding();
 
 	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);
 	return tests_failed == 0 ? 0 : 1;

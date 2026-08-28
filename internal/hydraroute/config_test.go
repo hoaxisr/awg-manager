@@ -1,6 +1,7 @@
 package hydraroute
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -717,7 +718,7 @@ func TestWriteConfig_DoesNotWriteIpsetMaxElemZero(t *testing.T) {
 	if strContains(text, "IpsetMaxElem=0") {
 		t.Fatalf("invalid zero value was written\nfull output:\n%s", text)
 	}
-	if !strContains(text, "IpsetMaxElem=65536") {
+	if !strContains(text, fmt.Sprintf("IpsetMaxElem=%d", defaultMaxElem)) {
 		t.Fatalf("expected normalized default value\nfull output:\n%s", text)
 	}
 }
@@ -786,7 +787,7 @@ func TestHealInvalidRuntimeConfig_ZeroToDefault(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 	got, _ := os.ReadFile(hrConfPath)
-	if !strContains(string(got), "IpsetMaxElem=65536") {
+	if !strContains(string(got), fmt.Sprintf("IpsetMaxElem=%d", defaultMaxElem)) {
 		t.Fatalf("expected healed maxelem, got:\n%s", string(got))
 	}
 }
@@ -803,7 +804,7 @@ func TestHealInvalidRuntimeConfig_NegativeToDefault(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 	got, _ := os.ReadFile(hrConfPath)
-	if !strContains(string(got), "IpsetMaxElem=65536") {
+	if !strContains(string(got), fmt.Sprintf("IpsetMaxElem=%d", defaultMaxElem)) {
 		t.Fatalf("expected healed maxelem, got:\n%s", string(got))
 	}
 }
@@ -853,7 +854,7 @@ func TestHealInvalidRuntimeConfig_PreservesKeyCasing(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 	got, _ := os.ReadFile(hrConfPath)
-	if !strContains(string(got), "ipsetmaxelem=65536") {
+	if !strContains(string(got), fmt.Sprintf("ipsetmaxelem=%d", defaultMaxElem)) {
 		t.Fatalf("expected preserved casing, got:\n%s", string(got))
 	}
 }
@@ -907,7 +908,7 @@ func TestHealInvalidRuntimeConfig_Duplicates_AllInvalid_Default(t *testing.T) {
 		t.Fatal("expected changed=true")
 	}
 	got := mustRead(t, hrConfPath)
-	if !strContains(got, "ipsetmaxelem=65536") {
+	if !strContains(got, fmt.Sprintf("ipsetmaxelem=%d", defaultMaxElem)) {
 		t.Fatalf("expected default healed value with first-key casing, got:\n%s", got)
 	}
 	if countIpsetMaxElemKeys(got) != 1 {
@@ -930,7 +931,7 @@ func TestHealInvalidRuntimeConfig_PreservesFirstKeyPosition(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("unexpected line count: %d\n%s", len(lines), got)
 	}
-	if lines[1] != "IpsetMaxElem=65536" {
+	if lines[1] != fmt.Sprintf("IpsetMaxElem=%d", defaultMaxElem) {
 		t.Fatalf("IpsetMaxElem position/value changed unexpectedly:\n%s", got)
 	}
 }
@@ -960,4 +961,171 @@ func countIpsetMaxElemKeys(text string) int {
 		}
 	}
 	return n
+}
+
+// stockHrneoConf — ровно то, что кладёт ipk HR Neo
+// (Neo/source/ipk/rootfs/opt/etc/HydraRoute/hrneo.conf). Остальные ключи
+// демон берёт из встроенных дефолтов.
+const stockHrneoConf = `log=off
+logfile=/opt/var/log/LOGhrneo.log
+PolicyOrder=HydraRoute
+DirectRouteEnabled=false
+`
+
+// Issue #767: на стоковом конфиге наши дефолты для отсутствующих ключей
+// расходились с дефолтами демона, и первое же сохранение настроек HR
+// дописывало в файл CIDR=false (демон перестаёт читать ip.list) и
+// autoStart=false (демон завершается сразу после старта).
+func TestReadWriteConfig_StockConfKeepsDaemonDefaults(t *testing.T) {
+	setupTestConf(t, stockHrneoConf)
+
+	cfg, err := ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+	if !cfg.CIDR {
+		t.Errorf("CIDR: got false, want true (дефолт демона при отсутствии ключа)")
+	}
+	if !cfg.AutoStart {
+		t.Errorf("AutoStart: got false, want true (дефолт демона при отсутствии ключа)")
+	}
+	if !cfg.ClearIPSet {
+		t.Errorf("ClearIPSet: got false, want true (дефолт демона при отсутствии ключа)")
+	}
+	if !cfg.IpsetEnableTimeout {
+		t.Errorf("IpsetEnableTimeout: got false, want true (дефолт демона при отсутствии ключа)")
+	}
+	if cfg.IpsetTimeout != defaultIpsetTimeout {
+		t.Errorf("IpsetTimeout: got %d, want %d (дефолт демона)", cfg.IpsetTimeout, defaultIpsetTimeout)
+	}
+	// Ключ в файле есть — читаем его, а не дефолт.
+	if cfg.DirectRouteEnabled {
+		t.Errorf("DirectRouteEnabled: got true, want false (значение из файла)")
+	}
+
+	if err := WriteConfig(cfg); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	out := mustRead(t, hrConfPath)
+	for _, forbidden := range []string{"CIDR=false", "autoStart=false", "clearIPSet=false", "IpsetEnableTimeout=false"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("round-trip стокового конфига записал %q:\n%s", forbidden, out)
+		}
+	}
+	if strings.Contains(out, "IpsetTimeout=0") {
+		t.Errorf("round-trip стокового конфига записал IpsetTimeout=0:\n%s", out)
+	}
+}
+
+// awgmBrokenConf — как выглядел hrneo.conf после того, как старая
+// версия AWGM сохранила настройки поверх стокового файла (#767).
+const awgmBrokenConf = `log=off
+logfile=/opt/var/log/LOGhrneo.log
+PolicyOrder=HydraRoute
+DirectRouteEnabled=false
+autoStart=false
+clearIPSet=false
+CIDR=false
+IpsetEnableTimeout=false
+IpsetTimeout=0
+IpsetMaxElem=65536
+GlobalRouting=false
+ConntrackFlush=true
+`
+
+func TestHealBrokenDefaults_RestoresDaemonDefaults(t *testing.T) {
+	setupTestConf(t, awgmBrokenConf)
+
+	healed, err := HealBrokenDefaults()
+	if err != nil {
+		t.Fatalf("HealBrokenDefaults: %v", err)
+	}
+	if len(healed) != 6 {
+		t.Fatalf("healed keys: want 6, got %d (%v)", len(healed), healed)
+	}
+
+	got := mustRead(t, hrConfPath)
+	for _, want := range []string{
+		"autoStart=true", "clearIPSet=true", "CIDR=true",
+		"IpsetEnableTimeout=true",
+		fmt.Sprintf("IpsetTimeout=%d", defaultIpsetTimeout),
+		fmt.Sprintf("IpsetMaxElem=%d", defaultMaxElem),
+	} {
+		if !strContains(got, want) {
+			t.Errorf("missing %q after heal:\n%s", want, got)
+		}
+	}
+	// Не наши ключи остаются как были.
+	if !strContains(got, "DirectRouteEnabled=false") || !strContains(got, "PolicyOrder=HydraRoute") {
+		t.Errorf("heal touched unmanaged keys:\n%s", got)
+	}
+
+	// Идемпотентность: отпечатка больше нет, второй проход — no-op.
+	again, err := HealBrokenDefaults()
+	if err != nil {
+		t.Fatalf("second HealBrokenDefaults: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("second pass healed %v, want no-op", again)
+	}
+}
+
+func TestHealBrokenDefaults_NoFingerprint_NoOp(t *testing.T) {
+	// CIDR=false без нашего отпечатка — осознанный выбор пользователя.
+	content := "CIDR=false\nIpsetEnableTimeout=true\nIpsetTimeout=21600\n"
+	setupTestConf(t, content)
+
+	healed, err := HealBrokenDefaults()
+	if err != nil {
+		t.Fatalf("HealBrokenDefaults: %v", err)
+	}
+	if len(healed) != 0 {
+		t.Fatalf("healed %v, want no-op without fingerprint", healed)
+	}
+	if got := mustRead(t, hrConfPath); got != content {
+		t.Errorf("file changed without fingerprint:\ngot:\n%s\nwant:\n%s", got, content)
+	}
+}
+
+func TestHealBrokenDefaults_KeepsUserEditedValues(t *testing.T) {
+	// Отпечаток на месте, но CIDR и IpsetMaxElem пользователь уже
+	// поправил сам — эти значения трогать нельзя.
+	content := "CIDR=true\nautoStart=false\nIpsetEnableTimeout=false\nIpsetTimeout=0\nIpsetMaxElem=131072\n"
+	setupTestConf(t, content)
+
+	healed, err := HealBrokenDefaults()
+	if err != nil {
+		t.Fatalf("HealBrokenDefaults: %v", err)
+	}
+	got := mustRead(t, hrConfPath)
+	if !strContains(got, "IpsetMaxElem=131072") {
+		t.Errorf("user-set IpsetMaxElem overwritten:\n%s", got)
+	}
+	if !strContains(got, "autoStart=true") || !strContains(got, "CIDR=true") {
+		t.Errorf("expected autoStart healed and CIDR kept:\n%s", got)
+	}
+	for _, k := range healed {
+		if strings.EqualFold(k, "IpsetMaxElem") {
+			t.Errorf("IpsetMaxElem must not be reported as healed: %v", healed)
+		}
+	}
+}
+
+// Проводка: сервис чинит конфиг сам, без вызова HealBrokenDefaults извне.
+func TestService_HealInvalidRuntimeConfig_HealsBrokenDefaults(t *testing.T) {
+	setupTestConf(t, awgmBrokenConf)
+
+	s := NewService(nil, nil)
+	s.SetStatusForTest(true)
+	s.HealInvalidRuntimeConfig()
+	// Ремонт планирует neo restart — гасим таймер, иначе он попытается
+	// запустить демона уже после завершения теста.
+	if s.restartTimer != nil {
+		s.restartTimer.Stop()
+	}
+
+	got := mustRead(t, hrConfPath)
+	if !strContains(got, "CIDR=true") || !strContains(got, "autoStart=true") {
+		t.Errorf("service did not heal broken defaults:\n%s", got)
+	}
 }

@@ -496,8 +496,8 @@ func TestPolicyTunEnable_SourcePreserveBeforeDefaultRoute(t *testing.T) {
 		t.Fatalf("PolicyTun persist = %+v, want provisioned index 0", st)
 	}
 	want := []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
-	if !reflect.DeepEqual(st.NATSegments, want) {
-		t.Errorf("persisted NATSegments = %+v, want %+v", st.NATSegments, want)
+	if !reflect.DeepEqual(natSegmentsOf(st), want) {
+		t.Errorf("persisted NATSegments = %+v, want %+v", natSegmentsOf(st), want)
 	}
 }
 
@@ -580,8 +580,8 @@ func TestPolicyTunReconcile_RestoresRevokedWhenOptionOff(t *testing.T) {
 	if st == nil || !st.Provisioned || st.Index != 0 {
 		t.Fatalf("persist = %+v, want provisioned index 0", st)
 	}
-	if len(st.NATSegments) != 0 {
-		t.Errorf("восстановленные записи должны уйти из персиста, got %+v", st.NATSegments)
+	if len(natSegmentsOf(st)) != 0 {
+		t.Errorf("восстановленные записи должны уйти из персиста, got %+v", natSegmentsOf(st))
 	}
 
 	// Анти-churn: отзывать больше нечего.
@@ -612,8 +612,8 @@ func TestPolicyTunReconcile_RestoresRemovedSegmentOnly(t *testing.T) {
 	}
 	st := h.loadPolicyTun(t)
 	wantSegs := []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
-	if st == nil || !reflect.DeepEqual(st.NATSegments, wantSegs) {
-		t.Errorf("persist NATSegments = %+v, want %+v", st.NATSegments, wantSegs)
+	if st == nil || !reflect.DeepEqual(natSegmentsOf(st), wantSegs) {
+		t.Errorf("persist NATSegments = %+v, want %+v", natSegmentsOf(st), wantSegs)
 	}
 }
 
@@ -694,7 +694,7 @@ func TestPolicyTunEnable_ReprovisionKeepsRecordedNAT(t *testing.T) {
 
 	st := h.loadPolicyTun(t)
 	want := []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: natModeDynamic}}
-	if st == nil || !reflect.DeepEqual(st.NATSegments, want) {
+	if st == nil || !reflect.DeepEqual(natSegmentsOf(st), want) {
 		t.Fatalf("persist NATSegments = %+v, want %+v", st, want)
 	}
 
@@ -743,7 +743,7 @@ func TestPolicyTunReconcile_AppliesSegmentAddedLive(t *testing.T) {
 		{Name: "Home", PriorMode: natModeDynamic},
 		{Name: "Guest", PriorMode: natModeDynamic},
 	}
-	if st == nil || !reflect.DeepEqual(st.NATSegments, wantSegs) {
+	if st == nil || !reflect.DeepEqual(natSegmentsOf(st), wantSegs) {
 		t.Errorf("persist NATSegments = %+v, want %+v", st, wantSegs)
 	}
 }
@@ -772,7 +772,7 @@ func TestPolicyTunReconcile_PersistsPartiallyAppliedOnError(t *testing.T) {
 		{Name: "Home", PriorMode: natModeDynamic},
 		{Name: "Guest", PriorMode: natModeDynamic},
 	}
-	if st == nil || !reflect.DeepEqual(st.NATSegments, want) {
+	if st == nil || !reflect.DeepEqual(natSegmentsOf(st), want) {
 		t.Errorf("persist NATSegments = %+v, want %+v", st, want)
 	}
 }
@@ -831,9 +831,9 @@ func TestPolicyTunReconcile_RemovesMasqUnderForeignStatic(t *testing.T) {
 	// Восстанавливать такой сегмент надо на `ip nat` — его мы и сняли.
 	st := h.loadPolicyTun(t)
 	var guest *storage.PolicyTunNATSegment
-	for i := range st.NATSegments {
-		if st.NATSegments[i].Name == "Guest" {
-			guest = &st.NATSegments[i]
+	for i := range natSegmentsOf(st) {
+		if natSegmentsOf(st)[i].Name == "Guest" {
+			guest = &natSegmentsOf(st)[i]
 		}
 	}
 	if guest == nil || guest.PriorMode != natModeDynamic {

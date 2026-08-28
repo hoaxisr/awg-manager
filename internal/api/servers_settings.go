@@ -167,17 +167,18 @@ func (h *ServersHandler) SetNAT(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	meta, _ := h.settings.GetServerInterfaceMeta(name)
-	wan, err := h.managedSvc.ApplyNATModeToInterface(r.Context(), name, mode, meta.NATStaticWAN)
+	wans, err := h.managedSvc.ApplyNATModeToInterface(r.Context(), name, mode, meta.StaticNATList())
 	if err != nil {
 		response.Error(w, err.Error(), "NAT_FAILED")
 		return
 	}
 	if err := h.settings.UpdateServerInterfaceMeta(name, func(m *storage.ServerInterfaceMeta) error {
 		if mode == "internet-only" {
-			m.NATStaticWAN = wan
+			m.NATStaticWANs = wans
 		} else {
-			m.NATStaticWAN = ""
+			m.NATStaticWANs = nil
 		}
+		m.NATStaticWAN = "" // источник правды теперь список
 		return nil
 	}); err != nil {
 		response.Error(w, err.Error(), "SAVE_FAILED")

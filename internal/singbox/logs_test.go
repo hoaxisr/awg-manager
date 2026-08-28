@@ -38,7 +38,7 @@ func (c *captureLogger) snapshot() []captured {
 
 func TestLogForwarder_LevelMapping(t *testing.T) {
 	cap := &captureLogger{}
-	f := NewLogForwarder("unused", cap)
+	f := NewLogForwarder(func() string { return "unused" }, cap)
 
 	cases := []struct {
 		name string
@@ -165,7 +165,7 @@ func TestLogForwarder_SubgroupClassification(t *testing.T) {
 
 func TestLogForwarder_DropsEmptyAndMalformed(t *testing.T) {
 	cap := &captureLogger{}
-	f := NewLogForwarder("unused", cap)
+	f := NewLogForwarder(func() string { return "unused" }, cap)
 
 	f.forward(nil)
 	f.forward([]byte(""))
@@ -179,7 +179,7 @@ func TestLogForwarder_DropsEmptyAndMalformed(t *testing.T) {
 }
 
 func TestLogForwarder_NilAppLoggerIsSafe(t *testing.T) {
-	f := NewLogForwarder("unused", nil)
+	f := NewLogForwarder(func() string { return "unused" }, nil)
 	f.forward([]byte(`{"type":"info","payload":"hello"}`))
 }
 
@@ -226,7 +226,7 @@ func TestSanitizeSingboxLogText_RedactsDomainsAndIPs(t *testing.T) {
 
 func TestLogForwarder_PreservesSensitiveHostsBeforeOutputMasking(t *testing.T) {
 	cap := &captureLogger{}
-	f := NewLogForwarder("unused", cap)
+	f := NewLogForwarder(func() string { return "unused" }, cap)
 
 	f.forward([]byte(`{"type":"debug","payload":"dns: lookup succeed for node.example.org: 203.0.113.77"}`))
 
@@ -257,7 +257,7 @@ func TestLogForwarder_PreservesSensitiveHosts_AllLevels(t *testing.T) {
 	for _, lvl := range cases {
 		t.Run(lvl, func(t *testing.T) {
 			cap := &captureLogger{}
-			f := NewLogForwarder("unused", cap)
+			f := NewLogForwarder(func() string { return "unused" }, cap)
 			line := `{"type":"` + lvl + `","payload":"dns: lookup succeed for node.example.org: 203.0.113.77 and [2606:2800:220:1:248:1893:25c8:1946]:443"}`
 			f.forward([]byte(line))
 

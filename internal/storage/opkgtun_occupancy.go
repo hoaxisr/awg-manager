@@ -85,31 +85,22 @@ func (s *AWGTunnelStore) OpkgTunPinsOf(context.Context) (map[int]bool, error) {
 	return OpkgTunIndicesOf(tunnels), nil
 }
 
-// OpkgTunPinsOf — поставщик пинов по удерживающим записям настроек.
-//
-// РАСХОЖДЕНИЕ С develop, снимается ребейзом: там две зеркальные записи уже
-// схлопнуты в union-тип Settings.OpkgTun (миграция схемы v34), и поставщик
-// читает ОДНУ запись. В этой ветке записей ещё две — читаем обе; после
-// ребейза остаётся версия develop.
+// OpkgTunPinsOf — поставщик пинов по удерживающей записи настроек.
 func (s *SettingsStore) OpkgTunPinsOf(context.Context) (map[int]bool, error) {
 	settings, err := s.Load()
 	if err != nil {
 		return nil, err
 	}
-	return opkgTunPinsOf(settings.FakeIP, settings.PolicyTun), nil
+	return opkgTunPinsOf(settings.OpkgTun), nil
 }
 
 // opkgTunPinsOf — чистое ядро: запись владения занимает свой номер, пока она
 // существует. Гейт по наличию записи, а НЕ по Provisioned: удержание это как
 // раз Provisioned=false при непустой записи. Нулевой номер валиден — это
 // начало диапазона режимов роутера.
-func opkgTunPinsOf(fakeip *FakeIPState, policy *PolicyTunState) map[int]bool {
-	out := map[int]bool{}
-	if fakeip != nil {
-		out[fakeip.Index] = true
+func opkgTunPinsOf(state *OpkgTunState) map[int]bool {
+	if state == nil {
+		return map[int]bool{}
 	}
-	if policy != nil {
-		out[policy.Index] = true
-	}
-	return out
+	return map[int]bool{state.Index: true}
 }

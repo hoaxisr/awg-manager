@@ -26,6 +26,7 @@
 		PukhososPatrol,
 		SettingsSectionLabel,
 	} from "$lib/components/settings";
+	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
 	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
 	import {
 		downloadOutbounds,
@@ -95,6 +96,7 @@
 	let restartConfirmOpen = $state(false);
 	let hydraBusy = $state(false);
 	let singboxInstalling = $state(false);
+	let singboxUninstalling = $state(false);
 	let singboxInstallError = $state<string | null>(null);
 	let singboxUpdating = $state(false);
 	let singboxUpdateError = $state<string | null>(null);
@@ -107,6 +109,7 @@
 	let systemInfoInFlight: Promise<void> | null = null;
 	let developGateOpen = $state(false);
 	let footerPatrolWidth = $state(0);
+	let showHappKeysModal = $state(false);
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const singboxStatusLoading = $derived(
@@ -202,6 +205,19 @@
 			singboxInstallError = e instanceof Error ? e.message : String(e);
 		} finally {
 			singboxInstalling = false;
+		}
+	}
+
+	async function uninstallSingbox() {
+		singboxUninstalling = true;
+		try {
+			const fresh = await api.singboxUninstall();
+			singboxStatus.applyMutationResponse(fresh);
+			notifications.success('Sing-box удалён');
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить sing-box');
+		} finally {
+			singboxUninstalling = false;
 		}
 	}
 
@@ -522,6 +538,52 @@ $effect(() => {
 		}
 	}
 
+	let savingBootstrapDNS = $state(false);
+
+	// Bootstrap-DNS применяется бэкендом сразу: он переписывает адрес в
+	// 00-base.json и перечитывает конфиг sing-box без перезапуска.
+	async function saveBootstrapDNS(value: string) {
+		if (!settings) return;
+		savingBootstrapDNS = true;
+		try {
+			settings = await api.updateSettings({ ...settings, singboxBootstrapDNS: value });
+			setGlobalSettings(settings);
+			notifications.success(
+				value
+					? `Bootstrap-DNS: ${value}`
+					: "Bootstrap-DNS больше не навязывается — адрес в конфигурации остаётся прежним",
+			);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения bootstrap-DNS");
+		} finally {
+			savingBootstrapDNS = false;
+		}
+	}
+
+	let savingClashPort = $state(false);
+	let clashPortError = $state<string | null>(null);
+
+	// Порт Clash API применяется бэкендом сразу: он переписывает
+	// external_controller в 00-base.json, перечитывает конфиг sing-box и
+	// переставляет собственного клиента. Отказ по занятости порта приходит
+	// текстом ошибки и показывается прямо под полем.
+	async function saveClashPort(value: number) {
+		if (!settings) return;
+		savingClashPort = true;
+		clashPortError = null;
+		try {
+			settings = await api.updateSettings({ ...settings, singboxClashPort: value });
+			setGlobalSettings(settings);
+			notifications.success(`Порт Clash API: ${value}`);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Ошибка сохранения порта Clash API";
+			clashPortError = msg;
+			notifications.error(msg);
+		} finally {
+			savingClashPort = false;
+		}
+	}
+
 	async function toggleUpdateCheck(enabled: boolean) {
 		if (!settings) return;
 		saving = true;
@@ -740,8 +802,17 @@ $effect(() => {
 					{singboxUpdateError}
 					oninstallSingbox={installSingbox}
 					onupdateSingbox={updateSingbox}
+					onuninstallSingbox={uninstallSingbox}
+					{singboxUninstalling}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
+					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
+					bootstrapSaving={savingBootstrapDNS}
+					onsaveBootstrapDNS={saveBootstrapDNS}
+					clashPort={settings.singboxClashPort ?? 0}
+					clashPortSaving={savingClashPort}
+					{clashPortError}
+					onsaveClashPort={saveClashPort}
 				/>
 				</div>
 			</aside>
@@ -976,6 +1047,24 @@ $effect(() => {
 						/>
 					</div>
 					{/if}
+
+					<div class="setting-row toggle-inline-row">
+						<div class="flex flex-col gap-1">
+							<span class="font-medium">RSA-ключи Happ</span>
+							<span class="setting-description">
+								Ключи для расшифровки приватных подписок.
+							</span>
+						</div>
+						<Button
+							variant="secondary"
+							size="md"
+							onclick={() => (showHappKeysModal = true)}
+							disabled={saving}
+						>
+							Управление ключами
+						</Button>
+					</div>
+
 					{#if singboxInstalled && showSingboxIntegration}
 						<div class="setting-row toggle-inline-row">
 							<div class="flex flex-col gap-1">
@@ -1127,6 +1216,11 @@ $effect(() => {
 			<Button variant="primary" size="md" onclick={restartDaemon}>Перезапустить</Button>
 		{/snippet}
 	</Modal>
+
+	<HappKeysModal
+		bind:open={showHappKeysModal}
+		onclose={() => (showHappKeysModal = false)}
+	/>
 </PageContainer>
 
 <style>

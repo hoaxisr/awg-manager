@@ -101,7 +101,7 @@ func TestConfDisabled_StopsWhenNDMSUnreadable(t *testing.T) {
 // The running edge must wait for the in-flight sequence to finish.
 func TestConfRunning_WaitsForInFlightStop(t *testing.T) {
 	o := settledTunnel()
-	if err := o.lockTunnel(context.Background(), "awg11"); err != nil {
+	if err := o.lockTunnel(context.Background(), "awg11", "test"); err != nil {
 		t.Fatalf("lock: %v", err)
 	}
 

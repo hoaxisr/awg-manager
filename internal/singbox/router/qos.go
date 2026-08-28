@@ -26,7 +26,8 @@ const (
 	// reserved contiguous ranges for per-class inbounds (base+index, index <
 	// MaxQoSClasses): UDP TPROXY 51281-51288, TCP REDIRECT 51301-51308.
 	// Chosen to not collide with TPROXYPort (51271), RedirectPort (51272) or
-	// any other AWGM listener (device-proxy 1080+, clash API 9099); the two
+	// any other AWGM listener (device-proxy 1080+, clash API — по умолчанию
+	// 9099, настраивается: singbox.DefaultClashPort); the two
 	// ranges do not overlap each other (51281+8 = 51289 < 51301).
 	QoSTPROXYPortBase   = 51281
 	QoSRedirectPortBase = 51301

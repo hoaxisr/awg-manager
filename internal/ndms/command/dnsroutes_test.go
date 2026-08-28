@@ -21,23 +21,47 @@ func newTestDNSRouteCommands(_ *testing.T, isOS5 bool) (*DNSRouteCommands, *fake
 	return NewDNSRouteCommands(poster, sc, q, func() bool { return isOS5 }), poster
 }
 
-func TestDNSRouteCommands_UpsertRoutes_OS5(t *testing.T) {
+// Снос и запись обязаны ехать одним POST и в одном порядке: NDMS применяет
+// элементы payload подряд, и именно порядок записи становится приоритетом
+// выбора туннеля. Два POST оставили бы группу без правил между ними (#801).
+func TestDNSRouteCommands_ReplaceRoutes_OneBatchDeletesThenUpserts(t *testing.T) {
 	cmds, poster := newTestDNSRouteCommands(t, true)
-	err := cmds.UpsertRoutes(context.Background(), []DNSRouteSpec{
-		{Group: "g1", Interface: "Wireguard0", Reject: false},
-		{Group: "g2", Interface: "Wireguard1", Reject: true},
-	})
+	err := cmds.ReplaceRoutes(context.Background(),
+		[]DNSRouteSpec{
+			{Group: "g1", Interface: "Wireguard1"},
+			{Group: "g1", Interface: "Wireguard0"},
+		},
+		[]DNSRouteSpec{
+			{Group: "g1", Interface: "Wireguard0", Reject: false},
+			{Group: "g1", Interface: "Wireguard1", Reject: true},
+		})
 	if err != nil {
-		t.Fatalf("UpsertRoutes: %v", err)
+		t.Fatalf("ReplaceRoutes: %v", err)
 	}
-	p := poster.Payloads()[0].(map[string]any)
-	routes := p["dns-proxy"].(map[string]any)["route"].([]any)
-	if len(routes) != 2 {
-		t.Fatalf("routes len: %d", len(routes))
+	if poster.Calls() != 1 {
+		t.Fatalf("снос и запись обязаны ехать одним POST, POST-ов: %d", poster.Calls())
 	}
-	r2 := routes[1].(map[string]any)
-	if r2["reject"] != true || r2["auto"] != true || r2["group"] != "g2" {
-		t.Errorf("route[1]: %#v", r2)
+	routes := poster.Payloads()[0].(map[string]any)["dns-proxy"].(map[string]any)["route"].([]any)
+	if len(routes) != 4 {
+		t.Fatalf("routes len: %d, want 4", len(routes))
+	}
+	for i, want := range []string{"Wireguard1", "Wireguard0"} {
+		r := routes[i].(map[string]any)
+		if r["no"] != true || r["interface"] != want {
+			t.Errorf("снос[%d] = %#v, want no:true %s", i, r, want)
+		}
+	}
+	for i, want := range []string{"Wireguard0", "Wireguard1"} {
+		r := routes[2+i].(map[string]any)
+		if r["auto"] != true || r["interface"] != want {
+			t.Errorf("запись[%d] = %#v, want auto:true %s", i, r, want)
+		}
+		if _, isDelete := r["no"]; isDelete {
+			t.Errorf("запись[%d] помечена как снос: %#v", i, r)
+		}
+	}
+	if routes[3].(map[string]any)["reject"] != true {
+		t.Errorf("reject потерян: %#v", routes[3])
 	}
 }
 
@@ -54,7 +78,7 @@ func TestDNSRouteCommands_DeleteRoutes_OS5(t *testing.T) {
 
 func TestDNSRouteCommands_OS4_ReturnsErrNotSupported(t *testing.T) {
 	cmds, poster := newTestDNSRouteCommands(t, false)
-	err := cmds.UpsertRoutes(context.Background(), []DNSRouteSpec{{Group: "g1", Interface: "w0"}})
+	err := cmds.ReplaceRoutes(context.Background(), nil, []DNSRouteSpec{{Group: "g1", Interface: "w0"}})
 	if !errors.Is(err, query.ErrNotSupportedOnOS4) {
 		t.Errorf("err: want ErrNotSupportedOnOS4, got %v", err)
 	}
@@ -121,8 +145,8 @@ func TestDNSRouteCommands_SetDisabled_OS4(t *testing.T) {
 
 func TestDNSRouteCommands_EmptyBatch_NoOp(t *testing.T) {
 	cmds, poster := newTestDNSRouteCommands(t, true)
-	if err := cmds.UpsertRoutes(context.Background(), nil); err != nil {
-		t.Errorf("empty upsert: %v", err)
+	if err := cmds.ReplaceRoutes(context.Background(), nil, nil); err != nil {
+		t.Errorf("empty replace: %v", err)
 	}
 	if err := cmds.DeleteRoutes(context.Background(), nil); err != nil {
 		t.Errorf("empty delete: %v", err)

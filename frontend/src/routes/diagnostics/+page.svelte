@@ -16,7 +16,7 @@
 	import DnsInfoTab from './DnsInfoTab.svelte';
 	import { MonitoringTab } from '$lib/components/pingcheck';
 
-	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns';
+	type ActiveTab = 'logs' | 'monitoring' | 'connections' | 'checks' | 'about' | 'awgConfig' | 'dns' | 'system';
 
 	function initialDiagnosticsTab(): ActiveTab {
 		const tab = $page.url.searchParams.get('tab');
@@ -27,6 +27,7 @@
 		if (tab === 'about') return 'about';
 		if (tab === 'awgConfig') return 'awgConfig';
 		if (tab === 'dns') return 'dns';
+		if (tab === 'system') return 'system';
 
 		// legacy aliases, чтобы первый render тоже сразу попадал в checks
 		if (tab === 'tests' || tab === 'dnscheck') return 'checks';
@@ -58,6 +59,7 @@
 		}
 		if ($usageLevel === 'expert') {
 			base.push({ id: 'dns', label: 'Сведения о DNS' });
+			base.push({ id: 'system', label: 'Система' });
 		}
 		return base;
 	});
@@ -68,13 +70,14 @@
 		// Ждём загрузки settings — Tabs сам восстановит вкладку из URL.
 		if ($settings === null) return;
 		if ($usageLevel === 'expert') return;
-		if (activeTab === 'awgConfig' || activeTab === 'dns') {
+		if (activeTab === 'awgConfig' || activeTab === 'dns' || activeTab === 'system') {
 			activeTab = 'logs';
 		}
 		const tab = $page.url.searchParams.get('tab');
-		if (tab === 'awgConfig' || tab === 'dns') {
+		if (tab === 'awgConfig' || tab === 'dns' || tab === 'system') {
 			const url = new URL($page.url);
 			url.searchParams.delete('tab');
+			url.searchParams.delete('view');
 			const q = url.searchParams.toString();
 			const target = url.pathname + (q ? `?${q}` : '') + url.hash;
 			void goto(target, { replaceState: true, keepFocus: true, noScroll: true });
@@ -161,6 +164,7 @@
 		activeTab === 'about' ? 'Окружение · Инструменты' :
 		activeTab === 'awgConfig' ? 'Конфиг AWG · Инструменты' :
 		activeTab === 'dns' ? 'Сведения о DNS · Инструменты' :
+		activeTab === 'system' ? 'Система · Инструменты' :
 		activeTab === 'monitoring' ? 'Мониторинг · Инструменты' :
 		'Журнал · Инструменты',
 	);
@@ -197,5 +201,9 @@
 		<AwgConfigAnalyzerTab />
 	{:else if activeTab === 'dns'}
 		<DnsInfoTab />
+	{:else if activeTab === 'system'}
+		{#await import('$lib/components/system/SystemTab.svelte') then { default: SystemTab }}
+			<SystemTab />
+		{/await}
 	{/if}
 </PageContainer>

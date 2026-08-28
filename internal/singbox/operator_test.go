@@ -170,7 +170,7 @@ func TestOperator_GetStatus_PopulatesInstallStateAndBytes(t *testing.T) {
 func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 
 	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
 	if err != nil {
@@ -197,16 +197,18 @@ func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	if _, has := route["final"]; has {
 		t.Errorf("route.final should be absent (owned by 20-router.json), got %v", route["final"])
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver: want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Дефолты обоих условных скаляров живут в 99-defaults.json, а не здесь:
+	// в базе они были бы в выигрывающей позиции merge и затеняли бы слот.
+	if _, has := route["default_domain_resolver"]; has {
+		t.Errorf("default_domain_resolver обязан быть в 99-defaults, а не в базе: %v", route)
 	}
 
 	dns, ok := base["dns"].(map[string]any)
 	if !ok {
 		t.Fatalf("dns block missing: %#v", base["dns"])
 	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy: want prefer_ipv4, got %v", dns["strategy"])
+	if _, has := dns["strategy"]; has {
+		t.Errorf("dns.strategy обязан быть в 99-defaults, а не в базе: %v", dns)
 	}
 	servers, _ := dns["servers"].([]any)
 	if len(servers) != 1 {
@@ -232,9 +234,9 @@ func TestEnsureBaseConfig_Idempotent(t *testing.T) {
 	}
 	// First call applies surgical heals (e.g. route.default_domain_resolver
 	// for sing-box 1.13+). Second call must be a no-op — same bytes.
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	first, _ := os.ReadFile(basePath)
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	second, _ := os.ReadFile(basePath)
 	if string(first) != string(second) {
 		t.Errorf("ensureBaseConfig not idempotent: first=%s second=%s", first, second)
@@ -256,7 +258,7 @@ func TestEnsureBaseConfig_PatchesStaleClashPort(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -280,11 +282,14 @@ func TestEnsureBaseConfig_PatchesStaleClashPort(t *testing.T) {
 	}
 }
 
-func TestEnsureBaseConfig_NoClashApiBlockUntouched(t *testing.T) {
+func TestEnsureBaseConfig_MissingClashApiBlockRestored(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
 	_ = os.MkdirAll(configDir, 0755)
-	// User explicitly removed clash_api — respect that, don't re-add.
+	// Блок clash_api отсутствует — восстанавливаем: им владеем мы, а не
+	// пользователь (ADR 0001). Без блока молча слепнут LogForwarder,
+	// DelayChecker, /connections и селекторы подписок, причём sing-box
+	// стартует нормально и в журнале не будет ни строчки.
 	// log.level is "debug" so the log-level heal also leaves it alone.
 	// route.default_domain_resolver IS materialised because sing-box 1.13+
 	// FATALs without it; that injection is unrelated to clash_api.
@@ -293,24 +298,32 @@ func TestEnsureBaseConfig_NoClashApiBlockUntouched(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if _, has := m["experimental"]; has {
-		t.Errorf("experimental block must NOT be re-added, got %s", raw)
+	exp, ok := m["experimental"].(map[string]any)
+	if !ok {
+		t.Fatalf("experimental block must be restored, got %s", raw)
+	}
+	clash, ok := exp["clash_api"].(map[string]any)
+	if !ok {
+		t.Fatalf("clash_api block must be restored, got %s", raw)
+	}
+	if got := clash["external_controller"]; got != ClashAddr(0) {
+		t.Errorf("external_controller want %q, got %v", ClashAddr(0), got)
 	}
 	if m["log"].(map[string]any)["level"] != "info" {
 		t.Errorf("log.level want info, got %v", m["log"])
 	}
-	route, ok := m["route"].(map[string]any)
-	if !ok {
-		t.Fatalf("route block must be materialised for sing-box 1.13+, got %s", raw)
-	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Блок route в БАЗЕ больше не обязателен: sing-box получает его из
+	// 99-defaults.json, а ensureBaseConfig существующую базу им не досыпает.
+	if route, ok := m["route"].(map[string]any); ok {
+		if _, has := route["default_domain_resolver"]; has {
+			t.Errorf("резолвер не должен появляться в базе: %v", route)
+		}
 	}
 }
 
@@ -323,7 +336,7 @@ func TestEnsureBaseConfig_PatchesStaleLogLevel(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -346,7 +359,7 @@ func TestEnsureBaseConfig_DefaultDesiredLevelOverridesDebug(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -358,7 +371,7 @@ func TestEnsureBaseConfig_DefaultDesiredLevelOverridesDebug(t *testing.T) {
 func TestEnsureBaseConfigWithLogLevel_UsesDesiredLevel(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	ensureBaseConfigWithLogLevel(configDir, "warn")
+	ensureBaseConfig(configDir, "warn", "", 0)
 
 	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
 	if err != nil {
@@ -496,7 +509,7 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -506,8 +519,9 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if !ok {
 		t.Fatalf("route block lost: %v", m["route"])
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
+	// Резолвер в базу не досыпается: его дефолт живёт в 99-defaults.json.
+	if _, has := route["default_domain_resolver"]; has {
+		t.Errorf("резолвер не должен появляться в базе: %v", route)
 	}
 	// ensureBaseConfig preserves existing route.final — removal is done
 	// separately by removeFinalFromBase, called after ensureBaseConfig in
@@ -528,7 +542,7 @@ func TestEnsureBaseConfig_RespectsExistingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -549,22 +563,23 @@ func TestEnsureBaseConfig_MaterialisesMissingRouteBlock(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	route, ok := m["route"].(map[string]any)
-	if !ok {
-		t.Fatalf("route block must be materialised, got %s", raw)
+	// Блок route в базе больше не материализуется — он приходит из
+	// 99-defaults.json вместе с дефолтным резолвером.
+	if route, ok := m["route"].(map[string]any); ok {
+		if _, has := route["default_domain_resolver"]; has {
+			t.Errorf("резолвер не должен появляться в базе: %v", route)
+		}
 	}
-	if route["default_domain_resolver"] != "dns-bootstrap" {
-		t.Errorf("default_domain_resolver want dns-bootstrap, got %v", route["default_domain_resolver"])
-	}
-	// dns block preserved, but legacy ipv4_only strategy migrated to prefer_ipv4.
-	if m["dns"].(map[string]any)["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must be migrated ipv4_only→prefer_ipv4: %v", m["dns"])
+	// Легаси-strategy ensureBaseConfig не мигрирует: её выносит из базы
+	// reconcileDerivedDefaults (см. TestReconcileDerivedDefaults_*).
+	if m["dns"].(map[string]any)["strategy"] != "ipv4_only" {
+		t.Errorf("ensureBaseConfig не должен трогать strategy: %v", m["dns"])
 	}
 	if m["log"].(map[string]any)["level"] != "info" {
 		t.Errorf("log.level lost: %v", m["log"])
@@ -582,14 +597,17 @@ func TestEnsureBaseConfig_MigratesIpv4OnlyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got := m["dns"].(map[string]any)["strategy"]; got != "prefer_ipv4" {
-		t.Errorf("strategy: want prefer_ipv4 (migrated), got %v", got)
+	// ensureBaseConfig легаси-strategy больше не переписывает: её (как и наш
+	// prefer_ipv4) выносит из базы reconcileDerivedDefaults — см.
+	// TestReconcileDerivedDefaults_MigratesOurValuesOutOfBase.
+	if got := m["dns"].(map[string]any)["strategy"]; got != "ipv4_only" {
+		t.Errorf("ensureBaseConfig не должен трогать strategy, got %v", got)
 	}
 }
 
@@ -602,7 +620,7 @@ func TestEnsureBaseConfig_KeepsNonLegacyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -706,7 +724,7 @@ func TestClassifyProcessLine(t *testing.T) {
 }
 
 func TestFreshBaseConfig_CacheFilePathIsAbsolute(t *testing.T) {
-	cfg := freshBaseConfig()
+	cfg := freshBaseConfig("info", "", 0)
 	exp := cfg["experimental"].(map[string]any)
 	cf := exp["cache_file"].(map[string]any)
 	if cf["enabled"] != true {
@@ -728,7 +746,7 @@ func TestEnsureBaseConfig_PatchesRelativeCachePath(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -753,7 +771,7 @@ func TestEnsureBaseConfig_LeavesAbsoluteCachePathUntouched(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	json.Unmarshal(raw, &m)
@@ -973,7 +991,7 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	patchTunnelsSlotEnsureNaiveUDPOverTCP(p)
+	patchSlotOutboundCompat(p)
 
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -992,6 +1010,45 @@ func TestPatchTunnelsSlotEnsureNaiveUDPOverTCP(t *testing.T) {
 	vless := outbounds[1].(map[string]any)
 	if _, ok := vless["udp_over_tcp"]; ok {
 		t.Fatalf("vless must not get udp_over_tcp: %v", vless)
+	}
+}
+
+// TestPatchSlotOutboundCompat_Hysteria2ChromeParrot — вторая половина слитого
+// шага: несовместимый по TLS hysteria2 получает disable_chrome_parrot,
+// совместимый остаётся нетронутым.
+func TestPatchSlotOutboundCompat_Hysteria2ChromeParrot(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "10-tunnels.json")
+	slot := `{
+		"outbounds": [
+			{"type":"hysteria2","tag":"BAD","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h","disable_sni":true,"insecure":false}},
+			{"type":"hysteria2","tag":"OK","server":"h","server_port":443,"password":"p",
+			 "tls":{"enabled":true,"server_name":"h"}}
+		]
+	}`
+	if err := os.WriteFile(p, []byte(slot), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patchSlotOutboundCompat(p)
+
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	outbounds := m["outbounds"].([]any)
+	bad := outbounds[0].(map[string]any)
+	if bad["disable_chrome_parrot"] != true {
+		t.Fatalf("incompatible hysteria2 must get disable_chrome_parrot, got: %v", bad)
+	}
+	ok := outbounds[1].(map[string]any)
+	if _, has := ok["disable_chrome_parrot"]; has {
+		t.Fatalf("compatible hysteria2 must stay untouched: %v", ok)
 	}
 }
 
@@ -1147,7 +1204,7 @@ func TestEnsureBaseConfig_PatchesMissingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -1174,7 +1231,7 @@ func TestEnsureBaseConfig_PreservesExistingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -1199,7 +1256,7 @@ func TestEnsureBaseConfig_PrependsDirectWhenMissing(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
 		t.Fatal(err)
@@ -1241,7 +1298,7 @@ func TestEnsureBaseConfig_MovesExistingDirectToFirstOutbound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ensureBaseConfig(configDir)
+	ensureBaseConfig(configDir, "info", "", 0)
 
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
@@ -1886,7 +1943,7 @@ func TestRemoveFinalFromBase_MalformedJSON_NoOp(t *testing.T) {
 // --- freshBaseConfig DNS (#445) ---
 
 func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
-	cfg := freshBaseConfig()
+	cfg := freshBaseConfig("info", "", 0)
 	dns, ok := cfg["dns"].(map[string]any)
 	if !ok {
 		t.Fatalf("dns block missing/wrong type: %v", cfg["dns"])
@@ -1894,8 +1951,10 @@ func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
 	if _, has := dns["final"]; has {
 		t.Errorf("dns.final must be omitted (owned by 20-router.json), got %v", dns["final"])
 	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must stay prefer_ipv4 (router-disabled default), got %v", dns["strategy"])
+	// strategy ушла в 99-defaults вместе с резолвером — см.
+	// TestFreshBaseConfig_OmitsDerivedScalars.
+	if _, has := dns["strategy"]; has {
+		t.Errorf("dns.strategy must live in 99-defaults, got %v", dns["strategy"])
 	}
 	servers, _ := dns["servers"].([]any)
 	if len(servers) != 1 {
@@ -1939,66 +1998,6 @@ func TestRemoveDNSFinalFromBase_DropsFinal_KeepsStrategyWhenRouterAbsent(t *test
 	// Other dns keys intact.
 	if _, has := dns["servers"]; !has {
 		t.Errorf("dns.servers unexpectedly removed")
-	}
-}
-
-func TestRemoveDNSFinalFromBase_StripsStrategyWhenRouterOwnsIt(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4","servers":[{"tag":"dns-bootstrap","type":"udp","server":"1.1.1.1"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot sets a non-empty strategy → base strategy strip is enabled.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"ipv4_only","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should be stripped")
-	}
-	if _, has := dns["strategy"]; has {
-		t.Errorf("dns.strategy should be stripped when router owns it, got %v", dns["strategy"])
-	}
-}
-
-func TestRemoveDNSFinalFromBase_RouterStrategyEmpty_KeepsBaseStrategy(t *testing.T) {
-	dir := t.TempDir()
-	basePath := filepath.Join(dir, "00-base.json")
-	if err := os.WriteFile(basePath,
-		[]byte(`{"dns":{"final":"dns-bootstrap","strategy":"prefer_ipv4"}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-	// Router slot exists but strategy is empty → base keeps its strategy.
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"),
-		[]byte(`{"dns":{"final":"dns-direct","strategy":"","servers":[{"tag":"dns-direct","type":"udp","server":"8.8.8.8"}]}}`),
-		0644); err != nil {
-		t.Fatal(err)
-	}
-
-	removeDNSFinalFromBase(basePath)
-
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	_ = json.Unmarshal(raw, &m)
-	dns, _ := m["dns"].(map[string]any)
-	if _, has := dns["final"]; has {
-		t.Errorf("dns.final should still be stripped")
-	}
-	if dns["strategy"] != "prefer_ipv4" {
-		t.Errorf("dns.strategy must survive when router strategy empty, got %v", dns["strategy"])
 	}
 }
 
@@ -2173,7 +2172,7 @@ func TestParseTunnelLinksInput(t *testing.T) {
 		],
 		"activeProfile": "default"
 	}`
-	res := parseTunnelLinksInput(mieruJSON)
+	res := ParseTunnelLinksInput(mieruJSON)
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %+v", res.Errors)
 	}
@@ -2187,7 +2186,7 @@ func TestParseTunnelLinksInput(t *testing.T) {
 	}
 
 	// Обычные share-link'и — прежний построчный путь.
-	res = parseTunnelLinksInput("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=h#A\ntrojan://p@h.example:444?security=tls&sni=h#B")
+	res = ParseTunnelLinksInput("vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=h#A\ntrojan://p@h.example:444?security=tls&sni=h#B")
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %+v", res.Errors)
 	}

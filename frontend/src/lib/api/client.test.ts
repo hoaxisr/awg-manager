@@ -177,3 +177,63 @@ describe('ApiClient gateway/HTML error classification', () => {
 		expect((err as Error).message).toBe('Ошибка сервера (500): boom from upstream');
 	});
 });
+
+// Issue #795: 409 на удалении несёт две несовместимые формы тела. Раньше
+// любой 409 считался «туннель используется» и открывал модалку со списком
+// зависимостей — для занятого замка она пустая и врёт.
+describe('deleteTunnel: два смысла 409', () => {
+	const originalFetch = globalThis.fetch;
+
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	const reply = (body: unknown) =>
+		vi.fn().mockResolvedValue(
+			new Response(JSON.stringify(body), {
+				status: 409,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		);
+
+	it('tunnel_referenced по-прежнему даёт ошибку с details для модалки', async () => {
+		globalThis.fetch = reply({
+			error: 'tunnel_referenced',
+			details: { tunnelId: 'awg11', deviceProxy: true, routerRules: [], routerOther: [] },
+		});
+
+		const err = await api.deleteTunnel('awg11').catch((e: unknown) => e);
+		expect((err as Error).message).toBe('tunnel_referenced');
+		expect((err as Error & { details?: { deviceProxy?: boolean } }).details?.deviceProxy).toBe(
+			true,
+		);
+	});
+
+	it('занятый замок даёт сообщение бэкенда и НЕ выдаёт себя за tunnel_referenced', async () => {
+		globalThis.fetch = reply({
+			error: true,
+			message: 'операция с туннелем уже выполняется — дождитесь завершения предыдущей (awg11)',
+			code: 'OPERATION_IN_PROGRESS',
+		});
+
+		const err = await api.deleteTunnel('awg11').catch((e: unknown) => e);
+		expect((err as Error).message).toContain('уже выполняется');
+		expect((err as Error & { details?: unknown }).details).toBeUndefined();
+	});
+
+	it('тело null не роняет клиент TypeError-ом', async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue(
+			new Response('null', {
+				status: 409,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		);
+
+		const err = await api.deleteTunnel('awg11').catch((e: unknown) => e);
+		expect((err as Error).message).toBe('Конфликт: операция отклонена (409)');
+	});
+});

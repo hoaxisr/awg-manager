@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,7 +261,7 @@ func TestAWGTunnelStoreNextAvailableIDOS4Fallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := store.NextAvailableID("kernel")
+	got, err := store.NextAvailableID(context.Background(), "kernel", occupancyOf())
 	if err != nil {
 		t.Fatalf("NextAvailableID() error = %v", err)
 	}
@@ -306,7 +307,7 @@ func TestNextAvailableIDOS5Kernel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := nextAvailableID(tt.tunnels, "kernel", true)
+			got, err := nextAvailableID(tt.tunnels, "kernel", true, occupancyOf(), context.Background())
 			if err != nil {
 				t.Fatalf("nextAvailableID() error = %v", err)
 			}
@@ -324,7 +325,7 @@ func TestNextAvailableIDOS5KernelExhaustion(t *testing.T) {
 	ids := []string{"awg10", "awg11", "awg12", "awg13", "awg14", "awg15", "awg16"}
 	for _, legacy := range []string{"", "awg16"} {
 		tunnels := awgTunnelsFromIDs(ids, legacy)
-		_, err := nextAvailableID(tunnels, "kernel", true)
+		_, err := nextAvailableID(tunnels, "kernel", true, occupancyOf(), context.Background())
 		if err == nil {
 			t.Fatalf("nextAvailableID() error = nil, want exhaustion (legacy=%q)", legacy)
 		}
@@ -360,7 +361,7 @@ func TestNextAvailableIDOS5NativeWG(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := nextAvailableID(tt.tunnels, "nativewg", true)
+			got, err := nextAvailableID(tt.tunnels, "nativewg", true, nil, context.Background())
 			if err != nil {
 				t.Fatalf("nextAvailableID() error = %v", err)
 			}
@@ -374,7 +375,7 @@ func TestNextAvailableIDOS5NativeWG(t *testing.T) {
 func TestNextAvailableIDBackendFallbacks(t *testing.T) {
 	// Пустой/неизвестный backend трактуется как kernel (OS5).
 	for _, backend := range []string{"", "kernel", "unknown"} {
-		got, err := nextAvailableID(nil, backend, true)
+		got, err := nextAvailableID(nil, backend, true, occupancyOf(), context.Background())
 		if err != nil {
 			t.Fatalf("nextAvailableID(%q) error = %v", backend, err)
 		}
@@ -383,7 +384,7 @@ func TestNextAvailableIDBackendFallbacks(t *testing.T) {
 		}
 	}
 	// OS4: backend не различается — nativewg тоже получает awgm*.
-	got, err := nextAvailableID(awgTunnelsFromIDs([]string{"awgm0"}), "nativewg", false)
+	got, err := nextAvailableID(awgTunnelsFromIDs([]string{"awgm0"}), "nativewg", false, nil, context.Background())
 	if err != nil {
 		t.Fatalf("nextAvailableID(OS4) error = %v", err)
 	}

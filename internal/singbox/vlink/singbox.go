@@ -72,18 +72,51 @@ func IsSingboxJSON(body []byte) bool {
 	return rootHasOutbounds(root)
 }
 
+func isXrayOutbounds(rawOutbounds any) bool {
+	obs, ok := rawOutbounds.([]any)
+	if !ok {
+		return false
+	}
+	for _, el := range obs {
+		if m, ok := el.(map[string]any); ok {
+			if _, hasProto := m["protocol"].(string); hasProto {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasSingboxTypeOutbounds(rawOutbounds any) bool {
+	obs, ok := rawOutbounds.([]any)
+	if !ok {
+		return false
+	}
+	if len(obs) == 0 {
+		return true
+	}
+	if isXrayOutbounds(rawOutbounds) {
+		return false
+	}
+	for _, el := range obs {
+		if m, ok := el.(map[string]any); ok {
+			if _, hasType := m["type"].(string); hasType {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // rootHasOutbounds checks the parsed JSON root for any of the three
 // recognised sing-box shapes. Used by IsSingboxJSON.
 func rootHasOutbounds(root any) bool {
 	switch r := root.(type) {
 	case map[string]any:
-		// Shape 1: single config object with outbounds key.
-		if _, ok := r["outbounds"].([]any); ok {
+		// Shape 1: single config object with outbounds key containing sing-box "type" fields.
+		if raw, ok := r["outbounds"]; ok && hasSingboxTypeOutbounds(raw) {
 			return true
 		}
-		// A single bare outbound object (type + tag) without a config
-		// envelope is not a recognised subscription shape — sing-box
-		// JSON exports always use one of the three documented shapes.
 		return false
 	case []any:
 		if len(r) == 0 {
@@ -94,8 +127,8 @@ func rootHasOutbounds(root any) bool {
 			if !ok {
 				continue
 			}
-			// Shape 2: array element is a config with outbounds.
-			if _, ok := obj["outbounds"].([]any); ok {
+			// Shape 2: array element is a config with outbounds containing sing-box "type" fields.
+			if raw, ok := obj["outbounds"]; ok && hasSingboxTypeOutbounds(raw) {
 				return true
 			}
 			// Shape 3: array element looks like a bare outbound
@@ -309,13 +342,6 @@ func validateSingboxOutbound(ob map[string]any, typ string) error {
 		ports, hasServerPorts := ob["server_ports"].([]any)
 		if !hasServerPort && (!hasServerPorts || len(ports) == 0) {
 			return fmt.Errorf("missing server_port or server_ports")
-		}
-	case "trusttunnel":
-		if asString(ob["username"]) == "" {
-			return fmt.Errorf("missing trusttunnel username")
-		}
-		if asString(ob["password"]) == "" {
-			return fmt.Errorf("missing trusttunnel password")
 		}
 	}
 	return nil

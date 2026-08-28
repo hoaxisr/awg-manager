@@ -32,7 +32,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
-	st := settings.FakeIP
+	st, _ := opkgTunOwned(settings, stateFakeIPTun)
 
 	if !sr.Enabled {
 		// Teardown нужен только когда что-то реально поднято. Безусловный
@@ -61,7 +61,11 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
 
-	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index])
+	// Доказанно чужой живой индекс — тоже повод для re-provision: иначе
+	// drift-heal ниже чинил бы маршруты на ЧУЖОМ интерфейсе.
+	reprovision := st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
+		(probeErr == nil && live[st.Index] &&
+			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), fakeIPTunDescription))
 	if reprovision {
 		// Not provisioned, or the iface vanished (crash / manual removal) →
 		// (re-)provision. Enable's idempotency guard short-circuits the
@@ -75,8 +79,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Best-effort: each step logs + continues so one drifted resource cannot
 	// abort the heal of the others. NEVER re-allocate an index or re-create the
 	// iface here — that is Enable's job, gated on the liveness check above.
-	iface := fakeIPIfaceName(st.Index)   // kernel name: /proc route probe, log labels
-	ndmsName := fakeIPNDMSName(st.Index) // NDMS RCI name: static-route Interface
+	iface := tunIfaceName(st.Index)   // kernel name: /proc route probe, log labels
+	ndmsName := tunNDMSName(st.Index) // NDMS RCI name: static-route Interface
 
 	// Запаркованный слот 21 — дрейф НЕЗАВИСИМО от жизни процесса (ревью #523):
 	// раньше слот чинился только при мёртвом sing-box, а при живом (крутит
@@ -102,6 +106,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		}
 	}
 
+	// Движок может быть жив, а его стек отцепиться от tun — это состояние не
+	// лечит никто другой, см. healDetachedTun. Слот он проверяет сам.
+	s.healDetachedTun(iface, "fakeip-reconcile", orchestrator.SlotFakeIP)
+
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
 	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)
 	// и удаление списка до старта демона. Идемпотентно (дубль permit NDMS
@@ -123,7 +131,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// v6-разрешение — отдельная сущность NDMS и свой флаг: успех v4 не должен
 	// гасить ретрай упавшего v6. Гейт по адресу: без v6 разрешать нечего.
 	if !s.fakeipACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
-		resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr6 != "" {
+		s.resolveFakeIPParams(sr).TunAddr6 != "" {
 		if nerr := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); nerr != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "permit acl v6: "+nerr.Error())
 		} else {
@@ -136,9 +144,13 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// fires only when the route is ABSENT. In steady state the route is present, so
 	// this produces ZERO route POSTs per tick. Derive net/mask from the persisted
 	// ranges exactly as Enable does (Masked first).
+	var inet4Range, inet6Range string
+	if st.FakeIP != nil {
+		inet4Range, inet6Range = st.FakeIP.Inet4Range, st.FakeIP.Inet6Range
+	}
 	if s.deps.StaticRoutes != nil {
-		if prefix, perr := netip.ParsePrefix(st.Inet4Range); perr == nil {
-			if poolNet4, poolMask4, derr := poolV4NetMask(st.Inet4Range); derr == nil {
+		if prefix, perr := netip.ParsePrefix(inet4Range); perr == nil {
+			if poolNet4, poolMask4, derr := poolV4NetMask(inet4Range); derr == nil {
 				// Probe v4 presence (same seam GetStatus uses); only re-add when absent.
 				if !fakeIPPoolRoutePresent(iface, prefix.Masked()) {
 					if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
@@ -155,9 +167,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					// together at Enable, so v4-present ⇒ v6-present is a sound v1
 					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
 					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
-					if st.Inet6Range != "" {
+					if inet6Range != "" {
 						if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
-							V6: true, Network: st.Inet6Range, Interface: ndmsName,
+							V6: true, Network: inet6Range, Interface: ndmsName,
 						}); e != nil {
 							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
 						} else {
@@ -168,7 +180,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			} else {
 				s.appLog.Warn("fakeip-reconcile", iface, "derive pool v4 mask: "+derr.Error())
 			}
-		} else if st.Inet4Range != "" {
+		} else if inet4Range != "" {
 			s.appLog.Warn("fakeip-reconcile", iface, "parse pool v4 range: "+perr.Error())
 		}
 	}

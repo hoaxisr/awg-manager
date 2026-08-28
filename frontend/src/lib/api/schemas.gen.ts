@@ -336,6 +336,22 @@ const api_DNSRouteSettingsDTO: v.GenericSchema = v.looseObject({
 	refreshMode: v.optional(v.nullable(v.string())),
 });
 
+const api_DetectHeadersResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_DetectedProfileDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_DetectedProfileDTO: v.GenericSchema = v.looseObject({
+	decryptedUrl: v.optional(v.nullable(v.string())),
+	headers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionHeader)))),
+	headersText: v.optional(v.nullable(v.string())),
+	isEncrypted: v.optional(v.nullable(v.boolean())),
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+	normalizedUrl: v.optional(v.nullable(v.string())),
+	serverCount: v.optional(v.nullable(v.number())),
+});
+
 const api_DeviceProxyAuthDTO: v.GenericSchema = v.looseObject({
 	enabled: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
@@ -565,6 +581,17 @@ const api_GeoTagDTO: v.GenericSchema = v.looseObject({
 
 const api_GeoTagsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_GeoTagDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_HeaderProfileDTO: v.GenericSchema = v.looseObject({
+	headersText: v.optional(v.nullable(v.string())),
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+});
+
+const api_HeaderProfilesResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_HeaderProfileDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -1056,6 +1083,7 @@ const api_ProxyRtInstanceView: v.GenericSchema = v.looseObject({
 	peerRaw: v.optional(v.nullable(v.string())),
 	peerWg: v.optional(v.nullable(v.string())),
 	process: v.optional(v.nullable(v.lazy(() => api_ProcessView))),
+	seededFrom: v.optional(v.nullable(v.string())),
 	state: v.optional(v.nullable(v.lazy(() => api_ProxyRtStateView))),
 	statsLog: v.optional(v.nullable(v.string())),
 	sub: v.optional(v.nullable(v.string())),
@@ -1215,6 +1243,17 @@ const api_SaveStatusDTO: v.GenericSchema = v.looseObject({
 	state: v.optional(v.nullable(v.string())),
 });
 
+const api_ScriptStatusDTO: v.GenericSchema = v.looseObject({
+	canExecute: v.optional(v.nullable(v.boolean())),
+	isScript: v.optional(v.nullable(v.boolean())),
+	isService: v.optional(v.nullable(v.boolean())),
+	path: v.optional(v.nullable(v.string())),
+	pids: v.optional(v.nullable(v.array(v.number()))),
+	running: v.optional(v.nullable(v.boolean())),
+	serviceName: v.optional(v.nullable(v.string())),
+	statusText: v.optional(v.nullable(v.string())),
+});
+
 const api_ServerListenChangeData: v.GenericSchema = v.looseObject({
 	boundAddrs: v.optional(v.nullable(v.array(v.string()))),
 	confirmDeadline: v.optional(v.nullable(v.string())),
@@ -1270,6 +1309,8 @@ const api_SettingsData: v.GenericSchema = v.looseObject({
 	schemaVersion: v.optional(v.nullable(v.number())),
 	server: v.optional(v.nullable(v.lazy(() => api_ServerSettingsDTO))),
 	sessionTtlHours: v.optional(v.nullable(v.number())),
+	singboxBootstrapDNS: v.optional(v.nullable(v.string())),
+	singboxClashPort: v.optional(v.nullable(v.number())),
 	updates: v.optional(v.nullable(v.lazy(() => api_UpdateSettingsDTO))),
 	usageLevel: v.optional(v.nullable(v.string())),
 });
@@ -1890,6 +1931,7 @@ const api_SubgroupsResponseEnvelope: v.GenericSchema = v.looseObject({
 
 const api_SubscriptionDTO: v.GenericSchema = v.looseObject({
 	activeMember: v.optional(v.nullable(v.string())),
+	bindInterface: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	excludedMembers: v.optional(v.nullable(v.array(v.lazy(() => api_SubscriptionMemberDTO)))),
 	excludedTags: v.optional(v.nullable(v.array(v.string()))),
@@ -2018,6 +2060,50 @@ const api_SuggestAddressResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_SystemFileChecksumData: v.GenericSchema = v.looseObject({
+	algo: v.optional(v.nullable(v.string())),
+	checksum: v.optional(v.nullable(v.string())),
+	info: v.optional(v.nullable(v.lazy(() => files_Entry))),
+	path: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemFileChecksumResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemFileChecksumData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemFileReadData: v.GenericSchema = v.looseObject({
+	content: v.optional(v.nullable(v.string())),
+	info: v.optional(v.nullable(v.lazy(() => files_Entry))),
+	path: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemFileReadResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemFileReadData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemFileRootDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	path: v.optional(v.nullable(v.string())),
+	readOnly: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemFileRootsResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_SystemFileRootDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemFilesListData: v.GenericSchema = v.looseObject({
+	entries: v.optional(v.nullable(v.array(v.lazy(() => files_Entry)))),
+	path: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemFilesListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemFilesListData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_SystemInfoBackendAvailability: v.GenericSchema = v.looseObject({
 	kernel: v.optional(v.nullable(v.boolean())),
 	nativewg: v.optional(v.nullable(v.boolean())),
@@ -2025,6 +2111,8 @@ const api_SystemInfoBackendAvailability: v.GenericSchema = v.looseObject({
 
 const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	activeBackend: v.optional(v.nullable(v.string())),
+	awgProxyExpectedVersion: v.optional(v.nullable(v.string())),
+	awgProxyVersion: v.optional(v.nullable(v.string())),
 	backendAvailability: v.optional(v.nullable(v.lazy(() => api_SystemInfoBackendAvailability))),
 	bootInProgress: v.optional(v.nullable(v.boolean())),
 	disableMemorySaving: v.optional(v.nullable(v.boolean())),
@@ -2052,6 +2140,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	slowRequestThresholdMs: v.optional(v.nullable(v.number())),
 	supportsExtendedASC: v.optional(v.nullable(v.boolean())),
 	supportsHRanges: v.optional(v.nullable(v.boolean())),
+	supportsOpkgTun: v.optional(v.nullable(v.boolean())),
 	supportsPingCheck: v.optional(v.nullable(v.boolean())),
 	totalMemoryMB: v.optional(v.nullable(v.number())),
 	version: v.optional(v.nullable(v.string())),
@@ -2065,6 +2154,143 @@ const api_SystemInfoResponse: v.GenericSchema = v.looseObject({
 const api_SystemInfoSingbox: v.GenericSchema = v.looseObject({
 	installed: v.optional(v.nullable(v.boolean())),
 	version: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemKillData: v.GenericSchema = v.looseObject({
+	ok: v.optional(v.nullable(v.boolean())),
+	pid: v.optional(v.nullable(v.number())),
+	signal: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemKillResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemKillData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOKFlagData: v.GenericSchema = v.looseObject({
+	ok: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOKFlagResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemOKFlagData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOKResponse: v.GenericSchema = v.looseObject({
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOpkgAvailableData: v.GenericSchema = v.looseObject({
+	items: v.optional(v.nullable(v.array(v.lazy(() => opkg_Package)))),
+	limit: v.optional(v.nullable(v.number())),
+	offset: v.optional(v.nullable(v.number())),
+	total: v.optional(v.nullable(v.number())),
+});
+
+const api_SystemOpkgAvailableResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemOpkgAvailableData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOpkgPackagesResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => opkg_Package)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemOutputData: v.GenericSchema = v.looseObject({
+	output: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemOutputResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemOutputData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemPortInspectData: v.GenericSchema = v.looseObject({
+	bindings: v.optional(v.nullable(v.array(v.lazy(() => ports_Binding)))),
+	occupied: v.optional(v.nullable(v.boolean())),
+	port: v.optional(v.nullable(v.number())),
+	proto: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemPortInspectResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemPortInspectData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemPortsListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => ports_Binding)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemProcSnapshotResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => procmon_SystemSnapshot))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemScriptActionData: v.GenericSchema = v.looseObject({
+	error: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
+	output: v.optional(v.nullable(v.string())),
+	pids: v.optional(v.nullable(v.array(v.number()))),
+	running: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemScriptActionResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemScriptActionData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemScriptStatusResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ScriptStatusDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceActionData: v.GenericSchema = v.looseObject({
+	error: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
+	output: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemServiceActionResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemServiceActionData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceSavedData: v.GenericSchema = v.looseObject({
+	ok: v.optional(v.nullable(v.boolean())),
+	script: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemServiceSavedResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemServiceSavedData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceScriptData: v.GenericSchema = v.looseObject({
+	content: v.optional(v.nullable(v.string())),
+	script: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemServiceScriptResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemServiceScriptData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceToggleEnableData: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	newScript: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServiceToggleEnableResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemServiceToggleEnableData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemServicesListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => services_Item)))),
+	success: v.optional(v.nullable(v.boolean())),
 });
 
 const api_SystemTunnelDTO: v.GenericSchema = v.looseObject({
@@ -2088,6 +2314,15 @@ const api_SystemTunnelPeerDTO: v.GenericSchema = v.looseObject({
 
 const api_SystemTunnelsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_SystemTunnelDTO)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SystemUploadData: v.GenericSchema = v.looseObject({
+	path: v.optional(v.nullable(v.string())),
+});
+
+const api_SystemUploadResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SystemUploadData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2421,6 +2656,15 @@ const diagnostics_DNSUpstream: v.GenericSchema = v.looseObject({
 	sni: v.optional(v.nullable(v.string())),
 });
 
+const files_Entry: v.GenericSchema = v.looseObject({
+	isDir: v.optional(v.nullable(v.boolean())),
+	modTime: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	path: v.optional(v.nullable(v.string())),
+	size: v.optional(v.nullable(v.number())),
+});
+
 const ftlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => ftlink_LinkPayload))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2457,6 +2701,7 @@ const install_InstallResponse: v.GenericSchema = v.looseObject({
 });
 
 const install_InstallStatus: v.GenericSchema = v.looseObject({
+	binariesPresent: v.optional(v.nullable(v.boolean())),
 	installAvailable: v.optional(v.nullable(v.boolean())),
 	installVersion: v.optional(v.nullable(v.string())),
 	installedVersion: v.optional(v.nullable(v.string())),
@@ -2469,6 +2714,30 @@ const install_InstallStatus: v.GenericSchema = v.looseObject({
 const install_InstallStatusResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => install_InstallStatus))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const opkg_Package: v.GenericSchema = v.looseObject({
+	description: v.optional(v.nullable(v.string())),
+	installedAt: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	upgradeVersion: v.optional(v.nullable(v.string())),
+	version: v.optional(v.nullable(v.string())),
+});
+
+const ports_Binding: v.GenericSchema = v.looseObject({
+	cmdline: v.optional(v.nullable(v.string())),
+	exe: v.optional(v.nullable(v.string())),
+	inode: v.optional(v.nullable(v.number())),
+	ip: v.optional(v.nullable(v.string())),
+	isCritical: v.optional(v.nullable(v.boolean())),
+	isSelf: v.optional(v.nullable(v.boolean())),
+	pid: v.optional(v.nullable(v.number())),
+	port: v.optional(v.nullable(v.number())),
+	processName: v.optional(v.nullable(v.string())),
+	proto: v.optional(v.nullable(v.string())),
+	service: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.string())),
+	user: v.optional(v.nullable(v.string())),
 });
 
 const presets_DNSEngine: v.GenericSchema = v.looseObject({
@@ -2510,6 +2779,83 @@ const presets_RuleRef: v.GenericSchema = v.looseObject({
 const presets_SingboxEngine: v.GenericSchema = v.looseObject({
 	action: v.optional(v.nullable(v.string())),
 	ruleSets: v.optional(v.nullable(v.array(v.lazy(() => presets_RuleRef)))),
+});
+
+const procmon_CpuCore: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	idle: v.optional(v.nullable(v.number())),
+	iowait: v.optional(v.nullable(v.number())),
+	nice: v.optional(v.nullable(v.number())),
+	system: v.optional(v.nullable(v.number())),
+	usage: v.optional(v.nullable(v.number())),
+	user: v.optional(v.nullable(v.number())),
+});
+
+const procmon_MemoryInfo: v.GenericSchema = v.looseObject({
+	available: v.optional(v.nullable(v.number())),
+	buffers: v.optional(v.nullable(v.number())),
+	cached: v.optional(v.nullable(v.number())),
+	free: v.optional(v.nullable(v.number())),
+	swapFree: v.optional(v.nullable(v.number())),
+	swapTotal: v.optional(v.nullable(v.number())),
+	swapUsed: v.optional(v.nullable(v.number())),
+	total: v.optional(v.nullable(v.number())),
+	usagePercent: v.optional(v.nullable(v.number())),
+	used: v.optional(v.nullable(v.number())),
+});
+
+const procmon_ProcSummary: v.GenericSchema = v.looseObject({
+	running: v.optional(v.nullable(v.number())),
+	sleeping: v.optional(v.nullable(v.number())),
+	stopped: v.optional(v.nullable(v.number())),
+	threads: v.optional(v.nullable(v.number())),
+	total: v.optional(v.nullable(v.number())),
+	zombie: v.optional(v.nullable(v.number())),
+});
+
+const procmon_ProcessItem: v.GenericSchema = v.looseObject({
+	cmdline: v.optional(v.nullable(v.string())),
+	cpuPercent: v.optional(v.nullable(v.number())),
+	exe: v.optional(v.nullable(v.string())),
+	isCritical: v.optional(v.nullable(v.boolean())),
+	isKernel: v.optional(v.nullable(v.boolean())),
+	isSelf: v.optional(v.nullable(v.boolean())),
+	memoryPercent: v.optional(v.nullable(v.number())),
+	memoryRss: v.optional(v.nullable(v.number())),
+	memoryVsize: v.optional(v.nullable(v.number())),
+	name: v.optional(v.nullable(v.string())),
+	nice: v.optional(v.nullable(v.number())),
+	pid: v.optional(v.nullable(v.number())),
+	ppid: v.optional(v.nullable(v.number())),
+	priority: v.optional(v.nullable(v.number())),
+	service: v.optional(v.nullable(v.string())),
+	state: v.optional(v.nullable(v.string())),
+	threads: v.optional(v.nullable(v.number())),
+	user: v.optional(v.nullable(v.string())),
+});
+
+const procmon_SystemSnapshot: v.GenericSchema = v.looseObject({
+	cores: v.optional(v.nullable(v.array(v.lazy(() => procmon_CpuCore)))),
+	cpuArchitecture: v.optional(v.nullable(v.string())),
+	cpuCount: v.optional(v.nullable(v.number())),
+	cpuModel: v.optional(v.nullable(v.string())),
+	loadAvg: v.optional(v.nullable(v.array(v.number()))),
+	memory: v.optional(v.nullable(v.lazy(() => procmon_MemoryInfo))),
+	processSummary: v.optional(v.nullable(v.lazy(() => procmon_ProcSummary))),
+	processes: v.optional(v.nullable(v.array(v.lazy(() => procmon_ProcessItem)))),
+	timestamp: v.optional(v.nullable(v.string())),
+	uptimeSeconds: v.optional(v.nullable(v.number())),
+});
+
+const services_Item: v.GenericSchema = v.looseObject({
+	enabled: v.optional(v.nullable(v.boolean())),
+	logPath: v.optional(v.nullable(v.string())),
+	managed: v.optional(v.nullable(v.boolean())),
+	managedHint: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	running: v.optional(v.nullable(v.boolean())),
+	script: v.optional(v.nullable(v.string())),
+	statusText: v.optional(v.nullable(v.string())),
 });
 
 const subscription_RefreshResponse: v.GenericSchema = v.looseObject({
@@ -2641,9 +2987,11 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_OkResponse),
 	"DELETE /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
+	"DELETE /proxyrt/seed/listen-moves": v.lazy(() => api_OkResponse),
 	"DELETE /servers/{name}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"DELETE /singbox/subscriptions/delete": v.lazy(() => api_APIEnvelope),
+	"DELETE /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
 	"DELETE /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
@@ -2780,6 +3128,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 })]),
 	"GET /singbox/subscriptions/get": v.lazy(() => api_SubscriptionResponse),
 	"GET /singbox/subscriptions/groups": v.lazy(() => api_SubscriptionGroupListResponse),
+	"GET /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
+	"GET /singbox/subscriptions/header-profiles": v.lazy(() => api_HeaderProfilesResponse),
 	"GET /singbox/tunnels": v.lazy(() => api_SingboxTunnelsResponse),
 	"GET /singbox/tunnels/get": v.lazy(() => api_SingboxTunnelGetResponse),
 	"GET /singbox/tunnels/test/connectivity": v.lazy(() => api_APIEnvelope),
@@ -2788,8 +3138,22 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system-tunnels": v.lazy(() => api_SystemTunnelsResponse),
 	"GET /system-tunnels/asc": v.lazy(() => api_ASCParamsResponse),
 	"GET /system/all-interfaces": v.lazy(() => api_AllInterfacesResponse),
+	"GET /system/files/checksum": v.lazy(() => api_SystemFileChecksumResponse),
+	"GET /system/files/list": v.lazy(() => api_SystemFilesListResponse),
+	"GET /system/files/read": v.lazy(() => api_SystemFileReadResponse),
+	"GET /system/files/roots": v.lazy(() => api_SystemFileRootsResponse),
+	"GET /system/files/script-status": v.lazy(() => api_SystemScriptStatusResponse),
 	"GET /system/hydraroute-status": v.lazy(() => api_HydraRouteStatusResponse),
 	"GET /system/info": v.lazy(() => api_SystemInfoResponse),
+	"GET /system/opkg/available": v.lazy(() => api_SystemOpkgAvailableResponse),
+	"GET /system/opkg/installed": v.lazy(() => api_SystemOpkgPackagesResponse),
+	"GET /system/opkg/search": v.lazy(() => api_SystemOpkgPackagesResponse),
+	"GET /system/opkg/upgradable": v.lazy(() => api_SystemOpkgPackagesResponse),
+	"GET /system/ports/inspect": v.lazy(() => api_SystemPortInspectResponse),
+	"GET /system/ports/list": v.lazy(() => api_SystemPortsListResponse),
+	"GET /system/proc/snapshot": v.lazy(() => api_SystemProcSnapshotResponse),
+	"GET /system/services/get": v.lazy(() => api_SystemServiceScriptResponse),
+	"GET /system/services/list": v.lazy(() => api_SystemServicesListResponse),
 	"GET /system/update/changelog": v.lazy(() => api_ChangelogResponse),
 	"GET /system/update/check": v.lazy(() => api_UpdateCheckResponse),
 	"GET /system/wan-interfaces": v.lazy(() => api_WANInterfacesResponse),
@@ -2939,7 +3303,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/bypass-set/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
 })]),
-	"POST /singbox/router/disable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/add": v.lazy(() => api_OkResponse),
@@ -2954,7 +3317,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/dns/servers/delete": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/servers/move": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/servers/update": v.lazy(() => api_OkResponse),
-	"POST /singbox/router/enable": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/inspect": v.lazy(() => api_SingboxRouterInspectResponse),
 	"POST /singbox/router/inspect-dns": v.lazy(() => api_SingboxRouterInspectDNSResponse),
 	"POST /singbox/router/mode": v.lazy(() => api_OkResponse),
@@ -2984,8 +3346,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/staging/discard": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/active-member": v.lazy(() => api_OkResponse),
 	"POST /singbox/subscriptions/create": v.lazy(() => api_SubscriptionResponse),
+	"POST /singbox/subscriptions/detect-headers": v.lazy(() => api_DetectHeadersResponse),
 	"POST /singbox/subscriptions/groups/create": v.lazy(() => api_SubscriptionGroupResponse),
 	"POST /singbox/subscriptions/groups/delete": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/subscriptions/happ-keys": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/subscriptions/members/add": v.lazy(() => api_SubscriptionResponse),
 	"POST /singbox/subscriptions/members/exclude": v.lazy(() => api_SubscriptionResponse),
 	"POST /singbox/subscriptions/members/remove": v.lazy(() => api_APIEnvelope),
@@ -2998,6 +3362,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/tunnels": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/delay-check": v.lazy(() => api_APIEnvelope),
 	"POST /singbox/tunnels/share-link": v.lazy(() => api_APIEnvelope),
+	"POST /singbox/uninstall": v.lazy(() => api_SingboxStatusResponse),
 	"POST /singbox/update": v.lazy(() => api_SingboxStatusResponse),
 	"POST /static-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_StaticRouteDTO))),
@@ -3012,8 +3377,26 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 })]),
 	"POST /system-tunnels/asc": v.lazy(() => api_OkResponse),
 	"POST /system/backup/import": v.lazy(() => api_APIEnvelope),
+	"POST /system/files/chmod": v.lazy(() => api_SystemOKResponse),
+	"POST /system/files/copy": v.lazy(() => api_SystemOKResponse),
+	"POST /system/files/mkdir": v.lazy(() => api_SystemOKResponse),
+	"POST /system/files/remove": v.lazy(() => api_SystemOKResponse),
+	"POST /system/files/rename": v.lazy(() => api_SystemOKResponse),
+	"POST /system/files/script-action": v.lazy(() => api_SystemScriptActionResponse),
+	"POST /system/files/upload": v.lazy(() => api_SystemUploadResponse),
+	"POST /system/files/write": v.lazy(() => api_SystemOKResponse),
 	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
+	"POST /system/opkg/install": v.lazy(() => api_SystemOutputResponse),
+	"POST /system/opkg/remove": v.lazy(() => api_SystemOutputResponse),
+	"POST /system/opkg/update": v.lazy(() => api_SystemOutputResponse),
+	"POST /system/opkg/upgrade": v.lazy(() => api_SystemOutputResponse),
+	"POST /system/ports/kill": v.lazy(() => api_SystemKillResponse),
+	"POST /system/proc/kill": v.lazy(() => api_SystemKillResponse),
 	"POST /system/restart": v.lazy(() => api_APIEnvelope),
+	"POST /system/services/action": v.lazy(() => api_SystemServiceActionResponse),
+	"POST /system/services/delete": v.lazy(() => api_SystemOKFlagResponse),
+	"POST /system/services/save": v.lazy(() => api_SystemServiceSavedResponse),
+	"POST /system/services/toggle-enable": v.lazy(() => api_SystemServiceToggleEnableResponse),
 	"POST /system/update/apply": v.lazy(() => api_UpdateApplyResponse),
 	"POST /terminal/install": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_TerminalInstallData))),

@@ -1,18 +1,13 @@
 package orchestrator
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
-
-var confDir = "/opt/etc/awg-manager"
 
 // StoredToConfig converts storage.AWGTunnel to tunnel.Config. Shared
 // with internal/tunnel/service — this package owns the canonical
@@ -21,6 +16,7 @@ var confDir = "/opt/etc/awg-manager"
 func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 	names := tunnel.NewNames(stored.ID)
 	ipv4, ipv6 := SplitAddresses(stored.Interface.Address)
+	prefix := AddressPrefixOf(stored.Interface.Address)
 	var dns []string
 	if stored.Interface.DNS != "" {
 		for _, part := range strings.Split(stored.Interface.DNS, ",") {
@@ -31,15 +27,47 @@ func StoredToConfig(stored *storage.AWGTunnel) tunnel.Config {
 		}
 	}
 	return tunnel.Config{
-		ID:           stored.ID,
-		Name:         stored.Name,
-		Address:      ipv4,
-		AddressIPv6:  ipv6,
-		MTU:          stored.Interface.MTU,
-		DNS:          dns,
-		ConfPath:     names.ConfPath,
-		ISPInterface: stored.ISPInterface,
+		ID:            stored.ID,
+		Name:          stored.Name,
+		Address:       ipv4,
+		AddressPrefix: prefix,
+		AddressIPv6:   ipv6,
+		MTU:           stored.Interface.MTU,
+		DNS:           dns,
+		ConfPath:      names.ConfPath,
+		ISPInterface:  stored.ISPInterface,
 	}
+}
+
+// AddressPrefixOf возвращает длину префикса IPv4-адреса из поля Address
+// записи ("10.55.0.2/24" → 24). Ноль — префикс не задан либо не разбирается.
+//
+// Отдельно от SplitAddresses намеренно: та отдаёт адрес БЕЗ маски, потому что
+// её результат сравнивают с другими адресами, и префикс там всё ломал бы.
+func AddressPrefixOf(address string) int {
+	prefix := 0
+	for _, part := range strings.Split(address, ",") {
+		part = strings.TrimSpace(part)
+		idx := strings.Index(part, "/")
+		host := part
+		if idx != -1 {
+			host = part[:idx]
+		}
+		if host == "" || strings.Contains(host, ":") {
+			continue
+		}
+		// Побеждает ПОСЛЕДНЯЯ IPv4-часть — та же, что выбирает
+		// SplitAddresses. Иначе при двух адресах взяли бы адрес одной части
+		// и маску другой.
+		prefix = 0
+		if idx == -1 {
+			continue
+		}
+		if n, err := strconv.Atoi(part[idx+1:]); err == nil && n >= 0 && n <= 32 {
+			prefix = n
+		}
+	}
+	return prefix
 }
 
 // SplitAddresses splits a WireGuard Address field (which may contain
@@ -62,19 +90,6 @@ func SplitAddresses(address string) (ipv4, ipv6 string) {
 		}
 	}
 	return
-}
-
-// writeConfigFile generates and writes the WireGuard config file for tunnel start.
-func writeConfigFile(stored *storage.AWGTunnel) error {
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	content := config.Generate(stored)
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
-	}
-	return nil
 }
 
 // ifaceNameForTunnel returns the kernel interface name for a tunnel.

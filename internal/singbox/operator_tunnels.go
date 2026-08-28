@@ -186,12 +186,13 @@ func nextFreeListenPortSlot(cfg *Config, reserved map[int]bool) int {
 	return 0
 }
 
-// parseTunnelLinksInput разбирает пользовательский ввод AddTunnels. Обычный
+// ParseTunnelLinksInput разбирает пользовательский ввод AddTunnels. Обычный
 // путь — построчный ParseBatch по share-link'ам, но канонический JSON-конфиг
 // клиента mieru (экспорт панелей, формат mieru apply config) — это единый
 // многострочный документ: line-split его убивает, поэтому сначала проверяем
-// тело целиком.
-func parseTunnelLinksInput(linksText string) vlink.BatchResult {
+// тело целиком. Экспортирована ради валидации bind_interface в API-хендлере
+// до вызова AddTunnels (#709).
+func ParseTunnelLinksInput(linksText string) vlink.BatchResult {
 	if body := []byte(linksText); vlink.IsMieruClientJSON(body) {
 		return vlink.ParseMieruClientJSON(body)
 	}
@@ -212,7 +213,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("single-add", "", "start add tunnels batch")
 	}
-	batchResult := parseTunnelLinksInput(linksText)
+	batchResult := ParseTunnelLinksInput(linksText)
 	var parseErrs []BatchError
 	for _, pe := range batchResult.Errors {
 		parseErrs = append(parseErrs, BatchError{Line: pe.LineIdx + 1, Input: pe.Scheme, Err: fmt.Errorf("%s", pe.Message)})
@@ -592,13 +593,26 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 	}
 	stage = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "preflight (sing-box check)", stage)
 	var runErr error
-	running, _ := o.proc.IsRunning()
-	if !running {
-		_, runErr = o.startAndWait(ctx)
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
+	if o.orch != nil {
+		// Применяет ОРКЕСТРАТОР, а не мы: он один знает про hold (переход
+		// режима), skip-gate по хешу и applied-state. Прямой proc.Reload при
+		// живом tun это полный Stop+Start — посреди чужой транзакции он её
+		// рвёт, а мимо skip-gate ещё и оставляет applied-state протухшим, чем
+		// дарит следующему чужому reload'у второй, уже пустой перезапуск.
+		// Цена — reload асинхронный: валидация выше синхронна и по-прежнему
+		// возвращает ошибку вызывающему, а вот отказ самого запуска доедет
+		// только в журнал.
+		o.orch.ScheduleReload()
+		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "scheduled (orchestrator)", stage)
 	} else {
-		runErr = o.proc.Reload()
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
+		running, _ := o.proc.IsRunning()
+		if !running {
+			_, runErr = o.startAndWait(ctx)
+			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
+		} else {
+			runErr = o.proc.Reload()
+			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
+		}
 	}
 	if hadExisting == nil {
 		_ = os.Remove(backupPath)

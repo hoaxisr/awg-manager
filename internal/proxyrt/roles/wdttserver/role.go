@@ -170,7 +170,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	r.exit.SetDesired(ndmsres.PolicyExitDesired{Name: c.NdmsIface,
 		SecurityLevel: "public", IPGlobal: true, PermitAllACL: true,
 		DefaultCandidacy: false}) // сервер — вход, кандидатуры нет
-	r.access.SetDesired(c.NdmsIface, c.NatMode, c.NatStaticWAN, c.Policy,
+	r.access.SetDesired(c.NdmsIface, c.NatMode, c.StaticNATList(), c.Policy,
 		wgGatewayAddr, wgGatewayMask, c.LanSegments, enabled)
 
 	if enabled {
@@ -220,12 +220,18 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 		}
 		wanDev := ""
 		if c.NatMode == "internet-only" {
-			if c.NatStaticWAN == "" {
-				return nil, fmt.Errorf("internet-only: WAN не выбран (NatStaticWAN пуст)")
+			wans := c.StaticNATList()
+			if len(wans) == 0 {
+				return nil, fmt.Errorf("internet-only: WAN не выбран (natStaticWANs пуст)")
 			}
-			dev, err := r.deps.KernelWAN(ctx, c.NatStaticWAN)
+			// Своя MASQUERADE-цепочка на raw-половине умеет ровно один
+			// выходной интерфейс, поэтому здесь берётся первый. Список целиком
+			// нужен NDMS static-NAT (SetDesired выше): там правило ставится на
+			// КАЖДЫЙ ip global. Расхождение осознанное — MasqGroups под
+			// несколько выходов не рассчитан.
+			dev, err := r.deps.KernelWAN(ctx, wans[0])
 			if err != nil || dev == "" {
-				return nil, fmt.Errorf("internet-only: WAN %q не разрешён: %v", c.NatStaticWAN, err)
+				return nil, fmt.Errorf("internet-only: WAN %q не разрешён: %v", wans[0], err)
 			}
 			wanDev = dev
 		}

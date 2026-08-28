@@ -191,7 +191,8 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true}
+	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true,
+		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
 	if err := store.Save(all); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -236,13 +237,13 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	}
 }
 
-func (h *fakeIPEnableHarness) loadFakeIP(t *testing.T) *storage.FakeIPState {
+func (h *fakeIPEnableHarness) loadFakeIP(t *testing.T) *storage.OpkgTunState {
 	t.Helper()
 	all, err := h.store.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return all.FakeIP
+	return all.OpkgTun
 }
 
 // ---------------------------------------------------------------------------
@@ -267,8 +268,8 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	if st == nil || !st.Provisioned || st.Index != 0 {
 		t.Fatalf("FakeIP persist = %+v, want provisioned index 0", st)
 	}
-	if st.Inet4Range != "198.18.0.0/15" || st.Inet6Range != "fc00::/18" {
-		t.Errorf("FakeIP ranges = %q/%q, want pool defaults", st.Inet4Range, st.Inet6Range)
+	if st.FakeIP == nil || st.FakeIP.Inet4Range != "198.18.0.0/15" || st.FakeIP.Inet6Range != "fc00::/18" {
+		t.Errorf("FakeIP ranges = %+v, want pool defaults", st.FakeIP)
 	}
 
 	// Ordered sequence assertions.
@@ -501,7 +502,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 	}
 	// Persisted FakeIP state records the overridden ranges.
 	st := h.loadFakeIP(t)
-	if st == nil || st.Inet4Range != "10.64.0.0/12" || st.Inet6Range != "fc00::/7" {
+	if st == nil || st.FakeIP == nil || st.FakeIP.Inet4Range != "10.64.0.0/12" || st.FakeIP.Inet6Range != "fc00::/7" {
 		t.Errorf("FakeIP state ranges = %+v, want overridden", st)
 	}
 
@@ -580,12 +581,13 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 
 			const ndmsName = "OpkgTun0" // NDMS iface ops + route Interface
 			// If Create SUCCEEDED (failure injected at a later step), rollback must
-			// tear the iface down (InterfaceDown + Delete) via the NDMS name. When
-			// Create itself fails, its undo is never pushed (nothing was created), so
-			// no teardown is due.
+			// tear the iface down (Delete) via the NDMS name. When Create itself
+			// fails, its undo is never pushed (nothing was created), so no teardown
+			// is due. InterfaceDown на happy-path НЕ шлётся: любая мутация имени
+			// создаёт интерфейс заново, а откат зовут и на уже снесённом.
 			if step != "Create" {
-				if !h.log.has("InterfaceDown:" + ndmsName) {
-					t.Errorf("%s: rollback missing InterfaceDown: %v", step, h.log.calls)
+				if h.log.has("InterfaceDown:" + ndmsName) {
+					t.Errorf("%s: rollback must not touch the iface before delete: %v", step, h.log.calls)
 				}
 				if !h.log.has("Delete:" + ndmsName) {
 					t.Errorf("%s: rollback missing Delete: %v", step, h.log.calls)
@@ -677,7 +679,7 @@ func TestEnableFakeIPTun_RollbackOnReadinessTimeout(t *testing.T) {
 		t.Errorf("FakeIP persist = %+v, want nil after readiness-timeout rollback", st)
 	}
 	const ndmsName = "OpkgTun0"
-	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
+	if !h.log.has("Delete:" + ndmsName) {
 		t.Errorf("readiness-timeout rollback must tear down iface: %v", h.log.calls)
 	}
 	if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
@@ -815,8 +817,8 @@ func TestEnable_TproxyUnchanged(t *testing.T) {
 	if !all.SingboxRouter.Enabled {
 		t.Error("tproxy Enable must persist Enabled=true")
 	}
-	if all.FakeIP != nil {
-		t.Errorf("tproxy Enable must not write FakeIP persist, got %+v", all.FakeIP)
+	if all.OpkgTun != nil {
+		t.Errorf("tproxy Enable must not write FakeIP persist, got %+v", all.OpkgTun)
 	}
 }
 
@@ -1133,9 +1135,10 @@ func TestDisableFakeIPTun_Ordering(t *testing.T) {
 	if !h.log.has(rmAuto6) {
 		t.Errorf("v6 auto-route not removed: %v", h.log.calls)
 	}
-	// reject-renew before iface torn down, then iface down→delete (NDMS name).
-	mustOrder(renewReject, "InterfaceDown:"+ndmsName)
-	mustOrder("InterfaceDown:"+ndmsName, "Delete:"+ndmsName)
+	// reject-renew before iface torn down, then delete (NDMS name). Down на
+	// happy-path НЕТ: любая мутация имени создаёт интерфейс заново, а teardown
+	// зовут и на уже снесённом (см. teardownOpkgTun).
+	mustOrder(renewReject, "Delete:"+ndmsName)
 
 	// persist: FakeIP cleared, Enabled=false.
 	if st := h.loadFakeIP(t); st != nil {
@@ -1183,8 +1186,15 @@ func TestDisableFakeIPTun_NoAddressClearsOnHappyPath(t *testing.T) {
 	if h.log.has("ClearAddress:" + ndmsName) {
 		t.Errorf("happy path must not clear the address (delete removes it): %v", h.log.calls)
 	}
-	if !h.log.has("InterfaceDown:"+ndmsName) || !h.log.has("Delete:"+ndmsName) {
-		t.Errorf("teardown missing down/delete: %v", h.log.calls)
+	if !h.log.has("Delete:" + ndmsName) {
+		t.Errorf("teardown missing delete: %v", h.log.calls)
+	}
+	// И НЕ гасит интерфейс до удаления: NDMS создаёт интерфейс по любой мутации
+	// его имени, а teardown штатно зовут на уже снесённом (откаты, реап-ретраи).
+	// Рождённая так пустышка без нашего описания невидима для реапа и занимает
+	// индекс навсегда — пул 0..9 вычерпывался за десяток переходов.
+	if h.log.has("InterfaceDown:" + ndmsName) {
+		t.Errorf("happy path must not touch the iface before delete (create-on-reference): %v", h.log.calls)
 	}
 }
 
@@ -1360,7 +1370,7 @@ func TestDisableFakeIPTun_RejectAddFailKeepsAutoRoute(t *testing.T) {
 	}
 	// Teardown still reached the mandatory persist steps.
 	if st := h.loadFakeIP(t); st != nil {
-		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetFakeIPState(nil))", st)
+		t.Errorf("FakeIP persist = %+v, want nil (teardown must reach SetOpkgTunState(nil))", st)
 	}
 	all, _ := h.store.Load()
 	if all.SingboxRouter.Enabled {
@@ -1400,8 +1410,8 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	if after.SingboxRouter.Enabled {
 		t.Error("Enabled must be false after Disable")
 	}
-	if after.FakeIP != nil {
-		t.Errorf("FakeIP must stay nil, got %+v", after.FakeIP)
+	if after.OpkgTun != nil {
+		t.Errorf("FakeIP must stay nil, got %+v", after.OpkgTun)
 	}
 }
 

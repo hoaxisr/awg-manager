@@ -7,9 +7,10 @@ import (
 )
 
 type fakeOrch struct {
-	saved   map[string][]byte
-	enabled map[string]bool
-	saveErr error
+	saved     map[string][]byte
+	enabled   map[string]bool
+	saveErr   error
+	saveCalls int
 }
 
 func newFakeOrch() *fakeOrch {
@@ -20,6 +21,7 @@ func (f *fakeOrch) Save(slot string, data []byte) error {
 		return f.saveErr
 	}
 	f.saved[slot] = data
+	f.saveCalls++
 	return nil
 }
 func (f *fakeOrch) SetEnabled(slot string, on bool) error { f.enabled[slot] = on; return nil }
@@ -51,139 +53,6 @@ func (s *fakeStore) ReplaceManaged(id string, items []DNSRewrite) error {
 	return nil
 }
 
-func TestSyncManagedKeenDNS_UpsertsAndClears(t *testing.T) {
-	orch := newFakeOrch()
-	store := &fakeStore{items: []DNSRewrite{{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}}}}
-	svc := NewService(store, orch, nil)
-
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	// В СТОРЕ managed лежат в хвосте — чтобы их появление/снятие не сдвигало
-	// индексы пользовательских записей (ими адресует API).
-	want := []string{"nas.lan", "home.netcraze.pro", "*.home.netcraze.pro", "my.keenetic.net", "my.netcraze.net"}
-	if len(store.items) != len(want) {
-		t.Fatalf("items = %d, want %d: %+v", len(store.items), len(want), store.items)
-	}
-	for i, p := range want {
-		if store.items[i].Pattern != p {
-			t.Errorf("items[%d].Pattern = %q, want %q", i, store.items[i].Pattern, p)
-		}
-	}
-	for i := 1; i < len(want); i++ {
-		if store.items[i].Managed != ManagedKeenDNS {
-			t.Errorf("items[%d] not stamped managed: %+v", i, store.items[i])
-		}
-	}
-	if store.items[0].Managed != "" {
-		t.Errorf("user rewrite got stamped: %+v", store.items[0])
-	}
-	if !orch.enabled[SlotName] {
-		t.Error("slot should stay enabled")
-	}
-
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.items) != 1 || store.items[0].Pattern != "nas.lan" {
-		t.Fatalf("after clear: %+v", store.items)
-	}
-}
-
-// Reconcile зовёт sync каждые 30с. Повтор с теми же аргументами не должен
-// трогать стор: каждая запись — writeAtomic на флеш + пересборка слота +
-// SSE-инвалидация у фронта.
-func TestSyncManagedKeenDNS_IdempotentNoWrite(t *testing.T) {
-	store := &fakeStore{}
-	svc := NewService(store, newFakeOrch(), nil)
-
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 3; i++ {
-		if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if store.replaceCalls != 1 {
-		t.Fatalf("ReplaceManaged calls = %d, want 1 (repeats must be no-ops)", store.replaceCalls)
-	}
-
-	// Смена LAN IP — реальное изменение, запись обязана произойти.
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.2.1"); err != nil {
-		t.Fatal(err)
-	}
-	if store.replaceCalls != 2 {
-		t.Fatalf("ReplaceManaged calls = %d, want 2 after LAN IP change", store.replaceCalls)
-	}
-	// И снос пустого набора при уже пустом сторе тоже не должен писать.
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SyncManagedKeenDNS("", ""); err != nil {
-		t.Fatal(err)
-	}
-	if store.replaceCalls != 3 {
-		t.Fatalf("ReplaceManaged calls = %d, want 3 (second clear is a no-op)", store.replaceCalls)
-	}
-}
-
-// В сторе managed лежат в хвосте (стабильные индексы для API), но в слоте
-// обязаны идти ПЕРВЫМИ — sing-box берёт первое совпавшее DNS-правило.
-func TestFlushCompilesManagedFirst(t *testing.T) {
-	orch := newFakeOrch()
-	store := &fakeStore{items: []DNSRewrite{{Pattern: "*.pro", IPs: []string{"10.0.0.5"}}}}
-	svc := NewService(store, orch, nil)
-
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	if store.items[0].Pattern != "*.pro" {
-		t.Fatalf("user rewrite must stay first in the store: %+v", store.items)
-	}
-	var slot struct {
-		DNS struct {
-			Rules []map[string]any `json:"rules"`
-		} `json:"dns"`
-	}
-	if err := json.Unmarshal(orch.saved[SlotName], &slot); err != nil {
-		t.Fatal(err)
-	}
-	// Первым скомпилированным правилом должен быть managed-паттерн, а не *.pro.
-	first := slot.DNS.Rules[0]
-	if first["domain"] == nil || first["domain"].([]any)[0] != "home.netcraze.pro" {
-		t.Fatalf("managed rule must be compiled first, got %#v", first)
-	}
-}
-
-// Если стор уже изменён, а слот пересобрать не удалось, идемпотентный гвард
-// не должен замкнуть накоротко: иначе слот остаётся протухшим навсегда.
-func TestSyncManagedKeenDNS_RetriesAfterFailedFlush(t *testing.T) {
-	orch := newFakeOrch()
-	orch.saveErr = errors.New("no space left on device")
-	store := &fakeStore{}
-	svc := NewService(store, orch, nil)
-
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err == nil {
-		t.Fatal("flush failure must surface")
-	}
-	orch.saveErr = nil
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := orch.saved[SlotName]; !ok {
-		t.Fatal("slot must be rebuilt on the next sync after a failed flush")
-	}
-	// А дальше — снова no-op.
-	calls := store.replaceCalls
-	if err := svc.SyncManagedKeenDNS("home.netcraze.pro", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	if store.replaceCalls != calls {
-		t.Fatalf("sync must be a no-op once the slot is in sync (calls %d → %d)", calls, store.replaceCalls)
-	}
-}
-
 func TestServiceMoveRejectsManaged(t *testing.T) {
 	store := &fakeStore{items: []DNSRewrite{
 		{Pattern: "a.lan", IPs: []string{"1.1.1.1"}},
@@ -198,19 +67,6 @@ func TestServiceMoveRejectsManaged(t *testing.T) {
 	}
 	if store.items[0].Pattern != "a.lan" || store.items[1].Managed != ManagedKeenDNS {
 		t.Fatalf("store mutated on rejected move: %+v", store.items)
-	}
-}
-
-func TestSyncManagedKeenDNS_NoDomainClears(t *testing.T) {
-	store := &fakeStore{items: []DNSRewrite{
-		{Pattern: "x.lan", IPs: []string{"1.1.1.1"}, Managed: ManagedKeenDNS},
-	}}
-	svc := NewService(store, newFakeOrch(), nil)
-	if err := svc.SyncManagedKeenDNS("", "192.168.1.1"); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.items) != 0 {
-		t.Fatalf("empty domain must clear managed, got %+v", store.items)
 	}
 }
 
@@ -275,5 +131,163 @@ func TestServiceDeleteDisablesSlotWhenEmpty(t *testing.T) {
 	}
 	if orch.enabled[SlotName] {
 		t.Error("slot must be disabled when no rewrites remain")
+	}
+}
+
+// slotOf распаковывает сохранённый слот в удобный для проверок вид.
+func slotOf(t *testing.T, orch *fakeOrch) struct {
+	DNS struct {
+		Servers []map[string]any `json:"servers"`
+		Rules   []map[string]any `json:"rules"`
+	} `json:"dns"`
+} {
+	t.Helper()
+	var slot struct {
+		DNS struct {
+			Servers []map[string]any `json:"servers"`
+			Rules   []map[string]any `json:"rules"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(orch.saved[SlotName], &slot); err != nil {
+		t.Fatal(err)
+	}
+	return slot
+}
+
+// Пресет отправляет имена KeenDNS резолверу самого роутера. Блок обязан идти
+// ПЕРВЫМ правилом слота: sing-box берёт первое совпавшее, и широкий
+// пользовательский паттерн (*.pro) иначе перехватил бы имя роутера.
+func TestSetKeenDNSEnabled_AddsBlockFirstAndClears(t *testing.T) {
+	orch := newFakeOrch()
+	store := &fakeStore{items: []DNSRewrite{{Pattern: "*.pro", IPs: []string{"10.0.0.5"}}}}
+	svc := NewService(store, orch, nil)
+
+	if err := svc.SetKeenDNSEnabled(true, "impod.netcraze.pro"); err != nil {
+		t.Fatal(err)
+	}
+	slot := slotOf(t, orch)
+	if len(slot.DNS.Servers) != 1 || slot.DNS.Servers[0]["tag"] != keenDNSServerTag ||
+		slot.DNS.Servers[0]["server"] != "127.0.0.1" || slot.DNS.Servers[0]["type"] != "udp" {
+		t.Fatalf("сервер пресета = %#v", slot.DNS.Servers)
+	}
+	first := slot.DNS.Rules[0]
+	if first["server"] != keenDNSServerTag {
+		t.Fatalf("первым правилом должен быть блок пресета, got %#v", first)
+	}
+	if len(store.items) != 1 || store.items[0].Managed != "" {
+		t.Fatalf("пресет не должен писать в стор: %+v", store.items)
+	}
+	if !orch.enabled[SlotName] {
+		t.Error("слот должен быть включён")
+	}
+
+	if err := svc.SetKeenDNSEnabled(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	slot = slotOf(t, orch)
+	if len(slot.DNS.Servers) != 0 {
+		t.Fatalf("после снятия пресета сервера быть не должно: %#v", slot.DNS.Servers)
+	}
+	if slot.DNS.Rules[0]["server"] == keenDNSServerTag {
+		t.Fatalf("после снятия пресета правило осталось: %#v", slot.DNS.Rules[0])
+	}
+}
+
+// FQDN роутера добавляется в правило, только если он не покрыт известными
+// зонами — иначе это дубль.
+func TestSetKeenDNSEnabled_ExtraDomain(t *testing.T) {
+	orch := newFakeOrch()
+	svc := NewService(&fakeStore{}, orch, nil)
+
+	if err := svc.SetKeenDNSEnabled(true, "Impod.Netcraze.Pro."); err != nil {
+		t.Fatal(err)
+	}
+	domains := slotOf(t, orch).DNS.Rules[0]["domain"].([]any)
+	if len(domains) != len(KeenDNSHosts()) {
+		t.Fatalf("имя из известной зоны не должно попадать в domain: %#v", domains)
+	}
+
+	if err := svc.SetKeenDNSEnabled(true, "router.keenetic.center"); err != nil {
+		t.Fatal(err)
+	}
+	domains = slotOf(t, orch).DNS.Rules[0]["domain"].([]any)
+	if domains[len(domains)-1] != "router.keenetic.center" {
+		t.Fatalf("имя вне известных зон обязано попасть в domain: %#v", domains)
+	}
+}
+
+// Reconcile зовёт синк каждые 30с. Повтор с теми же аргументами не должен
+// пересобирать слот: каждая пересборка — запись файла, SIGHUP sing-box и
+// SSE-инвалидация у фронта.
+func TestSetKeenDNSEnabled_IdempotentNoWrite(t *testing.T) {
+	orch := newFakeOrch()
+	svc := NewService(&fakeStore{}, orch, nil)
+
+	if err := svc.SetKeenDNSEnabled(true, ""); err != nil {
+		t.Fatal(err)
+	}
+	calls := orch.saveCalls
+	for i := 0; i < 3; i++ {
+		if err := svc.SetKeenDNSEnabled(true, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if orch.saveCalls != calls {
+		t.Fatalf("Save calls = %d, want %d (повторы обязаны быть no-op)", orch.saveCalls, calls)
+	}
+	if err := svc.SetKeenDNSEnabled(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if orch.saveCalls != calls+1 {
+		t.Fatalf("снятие пресета обязано пересобрать слот (calls %d → %d)", calls, orch.saveCalls)
+	}
+}
+
+// Разовая уборка: до 2.18.0 пресет клал в стор перезаписи своего FQDN на
+// LAN-адрес роутера — они и ломали доступ к его морде (issue #729).
+func TestSetKeenDNSEnabled_DropsLegacyManaged(t *testing.T) {
+	orch := newFakeOrch()
+	store := &fakeStore{items: []DNSRewrite{
+		{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}},
+		{Pattern: "impod.crazedns.ru", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
+		{Pattern: "my.keenetic.net", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
+	}}
+	svc := NewService(store, orch, nil)
+
+	if err := svc.SetKeenDNSEnabled(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.items) != 1 || store.items[0].Pattern != "nas.lan" {
+		t.Fatalf("остались managed-записи: %+v", store.items)
+	}
+	if store.replaceCalls != 1 {
+		t.Fatalf("ReplaceManaged calls = %d, want 1", store.replaceCalls)
+	}
+	// Повтор уже ничего не сносит и слот не трогает.
+	calls := orch.saveCalls
+	if err := svc.SetKeenDNSEnabled(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if store.replaceCalls != 1 || orch.saveCalls != calls {
+		t.Fatalf("повторная уборка не должна писать: replace=%d save=%d", store.replaceCalls, orch.saveCalls)
+	}
+}
+
+// Если слот пересобрать не удалось, идемпотентный гвард не должен замкнуть
+// накоротко: иначе слот остаётся протухшим навсегда.
+func TestSetKeenDNSEnabled_RetriesAfterFailedFlush(t *testing.T) {
+	orch := newFakeOrch()
+	orch.saveErr = errors.New("no space left on device")
+	svc := NewService(&fakeStore{}, orch, nil)
+
+	if err := svc.SetKeenDNSEnabled(true, ""); err == nil {
+		t.Fatal("сбой флеша обязан всплыть")
+	}
+	orch.saveErr = nil
+	if err := svc.SetKeenDNSEnabled(true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := orch.saved[SlotName]; !ok {
+		t.Fatal("слот обязан пересобраться на следующем синке после сбоя")
 	}
 }

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 33
+	CurrentSchemaVersion        = 35
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
@@ -191,6 +191,12 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		if settings.SchemaVersion < 33 {
 			s.migrateToV33(&settings)
 		}
+		if settings.SchemaVersion < 34 {
+			s.migrateToV34(&settings)
+		}
+		if settings.SchemaVersion < 35 {
+			s.migrateToV35(&settings)
+		}
 	}
 
 	// Self-heal duplicated managed servers — see dedupManagedServers comment.
@@ -276,9 +282,13 @@ func (s *SettingsStore) defaultSettings() *Settings {
 			RoutingMode:    "tproxy",
 			SnifferEnabled: true,
 			WANAutoDetect:  true, // sing-box auto_detect_interface by default
-			// KeenDNS/CrazeDNS: managed DNS rewrite of own FQDN → LAN
-			// (not iptables /32 for the shared cloud IP).
+			// KeenDNS/CrazeDNS: имена резолвит сам роутер, его адреса —
+			// мимо sing-box.
 			BypassPresets: []string{"keendns"},
+			// Явный дефолт v6-пула: с v35 пустое значение ЗНАЧИМО («v6
+			// выключен»), поэтому свежая установка обязана нести его дословно.
+			// Литерал — дубль DefaultFakeIPTunParams().Inet6Range.
+			FakeIPPool6: "fc00::/18",
 		},
 		CreateNDMSProxyForSingbox: true,
 		// Fresh installs have no legacy peers — nothing to sweep. Only
@@ -477,6 +487,26 @@ func (s *SettingsStore) SetSingboxManuallyStopped(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
+// SetAuthEnabled atomically turns authentication on/off under the store
+// lock. Used by the exposure guard, which flips the flag outside the
+// settings HTTP handler and must not clobber concurrent writes to other
+// fields. Returns whether the value actually changed.
+func (s *SettingsStore) SetAuthEnabled(v bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return false, fmt.Errorf("settings not loaded")
+	}
+	if s.settings.AuthEnabled == v {
+		return false, nil
+	}
+	s.settings.AuthEnabled = v
+	if err := s.saveUnlocked(s.settings); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SetSingboxCreateNDMSProxy atomically updates the toggle under the
 // store lock. Mirrors SetSingboxManuallyStopped — required because
 // the API handler is the single writer (CLAUDE.md single-writer
@@ -526,35 +556,47 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	return s.saveUnlocked(s.settings)
 }
 
-// SetFakeIPState atomically persists the fakeip-tun operational state under the
-// store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetSingboxManuallyStopped.
-func (s *SettingsStore) SetFakeIPState(st *FakeIPState) error {
+// SetOpkgTunState atomically persists the unified OpkgTun ownership record
+// under the store lock (single-writer: lifecycle only). nil очищает запись.
+// Mirrors SetSingboxManuallyStopped.
+func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.FakeIP = st
+	s.settings.OpkgTun = st
 	return s.saveUnlocked(s.settings)
 }
 
-// SetPolicyTunState atomically persists the policy-tun operational state under
-// the store lock (single-writer pattern; the lifecycle is the only writer). Pass
-// nil to clear (mode left/teardown). Mirrors SetFakeIPState.
-func (s *SettingsStore) SetPolicyTunState(st *PolicyTunState) error {
+// SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая
+// ownership-поля (Mode/Provisioned/Index): у payload другой писатель
+// (NAT-reconcile) и другие моменты записи. Пустой/nil список снимает payload.
+// Copy-on-write: в кэш публикуется новая запись, старую могут параллельно
+// маршалить читатели без нашего лока. Запись отсутствует → ошибка (payload
+// без владельца не бывает).
+func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.PolicyTun = st
+	if s.settings.OpkgTun == nil {
+		return fmt.Errorf("no OpkgTun ownership record")
+	}
+	cp := *s.settings.OpkgTun
+	if len(segs) == 0 {
+		cp.PolicyTun = nil
+	} else {
+		cp.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
+	}
+	s.settings.OpkgTun = &cp
 	return s.saveUnlocked(s.settings)
 }
 
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
-// writer). Pass nil to clear (preset off). Mirrors SetFakeIPState.
+// writer). Pass nil to clear (preset off). Mirrors SetOpkgTunState.
 func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -617,11 +659,12 @@ func (s *SettingsStore) IsServerInterface(id string) bool {
 
 // GetServerInterfaceMeta returns AWG Manager metadata for a system server.
 func (s *SettingsStore) GetServerInterfaceMeta(serverID string) (ServerInterfaceMeta, bool) {
-	settings, err := s.Get()
-	if err != nil || settings.ServerInterfaceMeta == nil {
+	if _, err := s.Get(); err != nil {
 		return ServerInterfaceMeta{}, false
 	}
-	meta, ok := settings.ServerInterfaceMeta[serverID]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	meta, ok := s.settings.ServerInterfaceMeta[serverID]
 	return meta, ok
 }
 
@@ -645,11 +688,12 @@ func (s *SettingsStore) UpdateServerInterfaceMeta(serverID string, fn func(*Serv
 
 // GetServerPeerSecret returns stored key material for a system-server peer.
 func (s *SettingsStore) GetServerPeerSecret(serverID, pubkey string) (ServerPeerSecret, bool) {
-	settings, err := s.Get()
-	if err != nil || settings.ServerPeerSecrets == nil {
+	if _, err := s.Get(); err != nil {
 		return ServerPeerSecret{}, false
 	}
-	peers, ok := settings.ServerPeerSecrets[serverID]
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	peers, ok := s.settings.ServerPeerSecrets[serverID]
 	if !ok {
 		return ServerPeerSecret{}, false
 	}
@@ -738,6 +782,29 @@ func (s *SettingsStore) Get() (*Settings, error) {
 	return s.Load()
 }
 
+// Snapshot возвращает глубокую копию настроек (JSON round-trip под RLock).
+// Для маршала наружу (HTTP-ответы): Get() возвращает ЖИВОЙ объект, и его
+// map-поля (ServerPeerSecrets, ServerInterfaceMeta) нельзя читать
+// одновременно с узкими мутаторами — concurrent map read/write валит
+// процесс. На горячем пути (auth middleware) НЕ использовать — там
+// остаётся дешёвый Get().
+func (s *SettingsStore) Snapshot() (*Settings, error) {
+	if _, err := s.Get(); err != nil { // гарантировать загрузку кэша
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := json.Marshal(s.settings)
+	if err != nil {
+		return nil, err
+	}
+	out := &Settings{}
+	if err := json.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IsAuthEnabled returns whether authentication is enabled.
 func (s *SettingsStore) IsAuthEnabled() bool {
 	settings, err := s.Get()
@@ -773,11 +840,47 @@ func (s *SettingsStore) IsEntwareAuthEnabled() bool {
 // an alternative to a session cookie. On error returns empty (no key
 // match → request falls through to the session check).
 func (s *SettingsStore) GetApiKey() string {
-	settings, err := s.Get()
-	if err != nil {
+	if _, err := s.Get(); err != nil {
 		return ""
 	}
-	return settings.ApiKey
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.settings.ApiKey
+}
+
+// SetApiKey сохраняет новый API-ключ под локом стора. Копия вместо правки
+// s.settings по месту: указатель из Get() читают без лока, in-place
+// запись строки гонялась бы с этими чтениями.
+func (s *SettingsStore) SetApiKey(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	updated := *s.settings
+	updated.ApiKey = key
+	return s.saveUnlocked(&updated)
+}
+
+// SetServerListen сохраняет адрес прослушивания HTTP-сервера под локом.
+// Легаси-поле Interface — для downgrade-совместимости: старый бинарь
+// биндится на FirstIPv4(Interface); при нескольких интерфейсах — первый,
+// при «всех» — пусто (0.0.0.0). Копия — по той же причине, что в SetApiKey.
+func (s *SettingsStore) SetServerListen(port int, interfaces []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	updated := *s.settings
+	updated.Server.Port = port
+	updated.Server.Interfaces = interfaces
+	if len(interfaces) > 0 {
+		updated.Server.Interface = interfaces[0]
+	} else {
+		updated.Server.Interface = ""
+	}
+	return s.saveUnlocked(&updated)
 }
 
 // IsMemorySavingDisabled returns whether memory saving mode is disabled.
@@ -814,6 +917,26 @@ func (s *SettingsStore) GetSingboxLogLevel() string {
 		return DefaultSingboxLogLevel
 	}
 	return NormalizeSingboxLogLevel(settings.Logging.SingboxLogLevel)
+}
+
+// GetSingboxBootstrapDNS returns the configured dns-bootstrap address.
+// Empty means "not configured" — 00-base.json is left alone.
+func (s *SettingsStore) GetSingboxBootstrapDNS() string {
+	settings, err := s.Get()
+	if err != nil {
+		return ""
+	}
+	return settings.SingboxBootstrapDNS
+}
+
+// GetSingboxClashPort returns the configured Clash API port.
+// 0 means "not configured" — the operator falls back to its default.
+func (s *SettingsStore) GetSingboxClashPort() int {
+	settings, err := s.Get()
+	if err != nil {
+		return 0
+	}
+	return settings.SingboxClashPort
 }
 
 // GetLoggingMaxAge returns the max age for log entries in hours.

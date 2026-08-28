@@ -719,12 +719,12 @@ type fakeNATAccess struct {
 	nat    []string
 	policy []string
 	lan    []string
-	wan    string
+	wans   []string
 }
 
-func (f *fakeNATAccess) ApplyNATModeToInterface(_ context.Context, iface, mode, prevWAN string) (string, error) {
-	f.nat = append(f.nat, strings.Join([]string{iface, mode, prevWAN}, "|"))
-	return f.wan, nil
+func (f *fakeNATAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
+	f.nat = append(f.nat, strings.Join(append([]string{iface, mode}, prevWANs...), "|"))
+	return f.wans, nil
 }
 
 func (f *fakeNATAccess) ApplyPolicyToInterface(_ context.Context, iface, policy string) error {
@@ -745,16 +745,18 @@ func (f *fakePermit) SetPermitAllACL(_ context.Context, name string) error {
 }
 
 func TestProxyAccessApplierPassesArgsAndWAN(t *testing.T) {
-	svc := &fakeNATAccess{wan: "ISP2"}
+	svc := &fakeNATAccess{wans: []string{"ISP2", "ISP3"}}
 	permit := &fakePermit{}
 	a := proxyAccessApplier{svc: svc, ifaces: permit}
 
-	wan, err := a.ApplyNATModeToInterface(context.Background(), "OpkgTun17", "internet-only", "ISP1")
+	wans, err := a.ApplyNATModeToInterface(context.Background(), "OpkgTun17", "internet-only", []string{"ISP1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wan != "ISP2" {
-		t.Fatalf("WAN не проброшен: %q", wan)
+	// Список выходов проходит насквозь: при нескольких `ip global` static-NAT
+	// ставится на каждый, и потерять хвост нельзя (PR #750).
+	if strings.Join(wans, ",") != "ISP2,ISP3" {
+		t.Fatalf("WAN не проброшен: %q", wans)
 	}
 	if len(svc.nat) != 1 || svc.nat[0] != "OpkgTun17|internet-only|ISP1" {
 		t.Fatalf("аргументы NAT: %v", svc.nat)

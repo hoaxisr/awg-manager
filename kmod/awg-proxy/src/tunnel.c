@@ -238,6 +238,19 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 			}
 		} else if (strcmp(key, "BIND") == 0) {
 			strscpy(cfg->bind_iface, val, sizeof(cfg->bind_iface));
+		} else if (strcmp(key, "HP_KEY") == 0) {
+			if (parse_hex_exact(val, cfg->hp_key, 32)) {
+				pr_warn("awg_proxy: invalid HP_KEY\n");
+				kfree(val);
+				goto out_invalid;
+			}
+			cfg->hp_key_set = 1;
+		} else if (strcmp(key, "RT") == 0) {
+			/* Флаг, не число: только 0 или 1. Иначе "RT=7" тихо
+			 * включал бы трейлеры, а завтра то же значение могло бы
+			 * значить что-то другое. */
+			bad = kstrtoint(val, 10, &cfg->random_trailers) != 0 ||
+			      (cfg->random_trailers != 0 && cfg->random_trailers != 1);
 		} else if (key[0] == 'I' && key[1] >= '1' && key[1] <= '5' &&
 			   key[2] == '\0') {
 			int idx = key[1] - '1';
@@ -269,6 +282,15 @@ int awg_config_parse(const char *config_line, awg_config_t *cfg)
 	    cfg->s3 + WG_COOKIE_SIZE > 1500 ||
 	    cfg->s4 > 1024) {
 		pr_warn("awg_proxy: S1-S4 out of range\n");
+		goto out_invalid;
+	}
+	/* Header protection uses the first AWG_HP_MIN_PADDING padding bytes as the
+	 * ChaCha20 nonce, so every message class must carry at least that much. */
+	if (cfg->hp_key_set &&
+	    (cfg->s1 < AWG_HP_MIN_PADDING || cfg->s2 < AWG_HP_MIN_PADDING ||
+	     cfg->s3 < AWG_HP_MIN_PADDING || cfg->s4 < AWG_HP_MIN_PADDING)) {
+		pr_warn("awg_proxy: S1-S4 must be >= %d with header protection\n",
+			AWG_HP_MIN_PADDING);
 		goto out_invalid;
 	}
 	if (cfg->jc < 0 || cfg->jc > AWG_MAX_JC) {

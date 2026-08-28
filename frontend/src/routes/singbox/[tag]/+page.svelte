@@ -20,6 +20,7 @@
 		Zap
 	} from 'lucide-svelte';
 	import { Button, Dropdown } from '$lib/components/ui';
+	import { BindInterfacePicker } from '$lib/components/singbox';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -152,6 +153,16 @@
 			.map((v) => v.trim())
 			.filter(Boolean);
 		return parts.length > 0 ? parts : undefined;
+	}
+
+	function setBindInterface(value: string): void {
+		if (!outbound) return;
+		if (!value.trim()) {
+			const { bind_interface: _removed, ...rest } = outbound;
+			outbound = rest;
+			return;
+		}
+		setField(['bind_interface'], value.trim());
 	}
 
 	function outboundFingerprint(value: JsonRecord | null): string {
@@ -669,6 +680,16 @@
 			{#if error}
 				<div class="error-msg">{error}</div>
 			{/if}
+
+			<section class="card tunnel-section egress-section">
+				<SettingsSectionLabel label="Исходящий интерфейс" icon={Waypoints} tone="slate" header />
+				<BindInterfacePicker
+					label=""
+					value={getFieldString(['bind_interface'])}
+					onchange={setBindInterface}
+					hint="Принудительно направляет dial этого прокси через выбранный uplink (модем, WAN, Wi‑Fi)."
+				/>
+			</section>
 
 			<div class="form-actions">
 				<Button variant="secondary" size="sm" onclick={() => goto('/?tab=singbox')}>Отмена</Button>

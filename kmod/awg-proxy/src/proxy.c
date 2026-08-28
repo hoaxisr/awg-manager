@@ -560,6 +560,21 @@ static void send_junk_packets(struct awg_proxy *proxy)
 /* ---- worker threads ---- */
 
 /*
+ * AWG 3.1 adaptive window: record the largest real datagram seen on the slot
+ * (clamped to AWG_UDP_WINDOW_MAX) so handshake trailer sizes track the traffic
+ * envelope. Observe pre-trailer sizes only — observing our own trailered
+ * handshakes would make the window run away. Racy by design: a slightly stale
+ * window only perturbs a cosmetic trailer length.
+ */
+static inline void udp_window_observe(struct awg_proxy *proxy, int size)
+{
+	if (size > AWG_UDP_WINDOW_MAX)
+		size = AWG_UDP_WINDOW_MAX;
+	if (size > atomic_read(&proxy->udp_window))
+		atomic_set(&proxy->udp_window, size);
+}
+
+/*
  * Client-to-server thread: reads WG packets from listen_sock,
  * transforms to AWG via transform_outbound(), sends to remote_sock.
  *
@@ -707,6 +722,46 @@ static int c2s_thread_fn(void *data)
 				recompute_mac2_if_present(out + s_prefix, n,
 							  msgType, cookie_copy);
 			memzero_explicit(cookie_copy, sizeof(cookie_copy));
+		}
+
+		/*
+		 * AWG 3.0 header protection: encrypt the WG header LAST, after
+		 * MAC1/MAC2 are final — for handshakes HP wraps the whole message
+		 * including the MACs, so it must run after they are rewritten. The
+		 * nonce is the padding prefix (out[0..12)), so s_prefix >= 12
+		 * (enforced at config parse). Transport encrypts only the 16-byte
+		 * header. Ingress decrypt lives inside transform_inbound.
+		 */
+		if (proxy->cfg.hp_key_set &&
+		    msgType >= WG_HANDSHAKE_INIT && msgType <= WG_TRANSPORT_DATA) {
+			int s_prefix = out_len - n;
+
+			if (s_prefix >= AWG_HP_MIN_PADDING)
+				hp_crypt(&proxy->cfg, out, s_prefix, n, msgType);
+		}
+
+		/*
+		 * AWG 3.1 random trailer: append cleartext bytes to handshake
+		 * datagrams so their fixed size stops being a fingerprint. Observe
+		 * the pre-trailer size first (transport packets set the envelope),
+		 * then draw a trailer for handshakes only — transport padding would
+		 * have to live inside the AEAD, which a keyless proxy cannot do.
+		 */
+		udp_window_observe(proxy, out_len);
+		if (proxy->cfg.random_trailers &&
+		    (msgType == WG_HANDSHAKE_INIT ||
+		     msgType == WG_HANDSHAKE_RESPONSE ||
+		     msgType == WG_COOKIE_REPLY)) {
+			int tailroom = (raw_buf + headroom + bufsize) - (out + out_len);
+			int tlen = awg_trailer_len(atomic_read(&proxy->udp_window),
+						   out_len);
+
+			if (tlen > tailroom)
+				tlen = tailroom;
+			if (tlen > 0) {
+				get_random_bytes(out + out_len, tlen);
+				out_len += tlen;
+			}
 		}
 
 		/*
@@ -873,6 +928,12 @@ static int s2c_thread_fn(void *data)
 
 		/* Transform inbound AWG -> WG */
 		out = transform_inbound(buf, n, &proxy->cfg, &out_len);
+		/* Feed the adaptive window from the POST-strip size, not the raw
+		 * datagram: a server handshake may carry its own random trailer, and
+		 * observing that would bias the window off cosmetic padding. Matches
+		 * the egress path, which observes the pre-trailer out_len. */
+		if (out)
+			udp_window_observe(proxy, out_len);
 		if (out && out_len == WG_COOKIE_SIZE &&
 		    out[0] == WG_COOKIE_REPLY &&
 		    proxy->has_cookie_key &&
@@ -1058,6 +1119,7 @@ int awg_proxy_add(const char *config_line)
 	atomic64_set(&p->tx_bytes, 0);
 	atomic_set(&p->rx_packets, 0);
 	atomic_set(&p->tx_packets, 0);
+	atomic_set(&p->udp_window, AWG_DEFAULT_UDP_WINDOW);
 
 	/* Create listen socket (127.0.0.1:auto) */
 	ret = create_listen_socket(&p->listen_sock, &p->listen_port);

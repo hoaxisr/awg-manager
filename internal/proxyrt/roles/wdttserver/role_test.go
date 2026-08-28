@@ -85,9 +85,9 @@ func (nilFW) Reconcile(context.Context, []netres.PortSpec) error { return nil }
 
 type nilAccess struct{ applied []string }
 
-func (a *nilAccess) ApplyNATModeToInterface(_ context.Context, iface, mode, prevWAN string) (string, error) {
+func (a *nilAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
 	a.applied = append(a.applied, "nat:"+iface+":"+mode)
-	return prevWAN, nil
+	return prevWANs, nil
 }
 
 func (a *nilAccess) ApplyPolicyToInterface(_ context.Context, iface, policy string) error {

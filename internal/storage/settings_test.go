@@ -658,113 +658,73 @@ func TestSettingsStore_SetSingboxCreateNDMSProxy_PersistsAtomic(t *testing.T) {
 	}
 }
 
-// TestSetFakeIPState_PersistsAndClears verifies the single-writer setter
-// persists the fakeip-tun state across a reload from disk, that nil clears it,
-// and that it errors when settings are not loaded.
-func TestSetFakeIPState_PersistsAndClears(t *testing.T) {
-	tmpDir := t.TempDir()
-	store := NewSettingsStore(tmpDir)
+// TestSetOpkgTunState_PersistsAndClears — единая запись владения OpkgTun:
+// персист, перечитывание свежим стором, очистка nil'ом, ошибка на незагруженном.
+func TestSetOpkgTunState_PersistsAndClears(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
 	if _, err := store.Load(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	want := &FakeIPState{Provisioned: true, Index: 5, Inet4Range: "10.128.0.0/10", Inet6Range: "3f80::/10"}
-	if err := store.SetFakeIPState(want); err != nil {
-		t.Fatalf("set: %v", err)
-	}
-
-	// Re-open from disk to confirm persistence.
-	fresh := NewSettingsStore(tmpDir)
-	s, err := fresh.Load()
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if s.FakeIP == nil {
-		t.Fatalf("FakeIP = nil after set, want %+v", want)
-	}
-	if *s.FakeIP != *want {
-		t.Errorf("persisted = %+v, want %+v", *s.FakeIP, *want)
-	}
-
-	// nil clears it, and the cleared state survives a reload.
-	if err := fresh.SetFakeIPState(nil); err != nil {
-		t.Fatalf("clear: %v", err)
-	}
-	cleared := NewSettingsStore(tmpDir)
-	c, err := cleared.Load()
-	if err != nil {
-		t.Fatalf("reload after clear: %v", err)
-	}
-	if c.FakeIP != nil {
-		t.Errorf("FakeIP = %+v after clear, want nil", *c.FakeIP)
-	}
-
-	// Errors when settings are not loaded.
-	if err := (&SettingsStore{}).SetFakeIPState(want); err == nil {
-		t.Error("SetFakeIPState on unloaded store: want error, got nil")
-	}
-}
-
-func TestSetFakeIPState_Persists(t *testing.T) {
-	tmpDir := t.TempDir()
-	s := NewSettingsStore(tmpDir)
-	if _, err := s.Load(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if err := s.SetFakeIPState(&FakeIPState{Provisioned: true, Index: 2}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Load()
-	if got.FakeIP == nil || !got.FakeIP.Provisioned || got.FakeIP.Index != 2 {
-		t.Fatalf("fakeip state not persisted: %+v", got.FakeIP)
+	want := &OpkgTunState{
+		Mode: OpkgTunModePolicyTun, Provisioned: false, Index: 3,
+		PolicyTun: &OpkgTunPolicyData{NATSegments: []PolicyTunNATSegment{{Name: "Guest", PriorMode: "dynamic"}}},
+	}
+	if err := store.SetOpkgTunState(want); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewSettingsStore(dir)
+	s, err := fresh.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.OpkgTun == nil || s.OpkgTun.Mode != OpkgTunModePolicyTun || s.OpkgTun.Index != 3 ||
+		s.OpkgTun.Provisioned || s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("persisted = %+v", s.OpkgTun)
+	}
+	if err := fresh.SetOpkgTunState(nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := NewSettingsStore(dir).Load()
+	if c.OpkgTun != nil {
+		t.Fatalf("OpkgTun = %+v after clear, want nil", c.OpkgTun)
+	}
+	if err := (&SettingsStore{}).SetOpkgTunState(want); err == nil {
+		t.Error("unloaded store: want error")
 	}
 }
 
-// TestSetPolicyTunState_PersistsAndClears mirrors TestSetFakeIPState_PersistsAndClears
-// for the policy-tun single-writer setter.
-func TestSetPolicyTunState_PersistsAndClears(t *testing.T) {
-	tmpDir := t.TempDir()
-	store := NewSettingsStore(tmpDir)
+// TestSetOpkgTunNATSegments_PayloadOnly — payload-сеттер не трогает ownership
+// (Mode/Provisioned/Index), nil/пустой снимает payload, без записи — ошибка.
+func TestSetOpkgTunNATSegments_PayloadOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
 	if _, err := store.Load(); err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatal(err)
 	}
-
-	want := &PolicyTunState{
-		Provisioned: true,
-		Index:       3,
-		NATSegments: []PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}},
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err == nil {
+		t.Fatal("no ownership record: want error")
 	}
-	if err := store.SetPolicyTunState(want); err != nil {
-		t.Fatalf("set: %v", err)
+	if err := store.SetOpkgTunState(&OpkgTunState{Mode: OpkgTunModePolicyTun, Provisioned: true, Index: 2}); err != nil {
+		t.Fatal(err)
 	}
-
-	fresh := NewSettingsStore(tmpDir)
-	s, err := fresh.Load()
-	if err != nil {
-		t.Fatalf("reload: %v", err)
+	if err := store.SetOpkgTunNATSegments([]PolicyTunNATSegment{{Name: "Guest", PriorMode: "none"}}); err != nil {
+		t.Fatal(err)
 	}
-	if s.PolicyTun == nil {
-		t.Fatalf("PolicyTun = nil after set, want %+v", want)
+	s, _ := NewSettingsStore(dir).Load()
+	if s.OpkgTun == nil || !s.OpkgTun.Provisioned || s.OpkgTun.Index != 2 ||
+		s.OpkgTun.Mode != OpkgTunModePolicyTun {
+		t.Fatalf("ownership clobbered: %+v", s.OpkgTun)
 	}
-	if !s.PolicyTun.Provisioned || s.PolicyTun.Index != 3 || len(s.PolicyTun.NATSegments) != 1 ||
-		s.PolicyTun.NATSegments[0] != want.NATSegments[0] {
-		t.Errorf("persisted = %+v, want %+v", *s.PolicyTun, *want)
+	if s.OpkgTun.PolicyTun == nil || len(s.OpkgTun.PolicyTun.NATSegments) != 1 {
+		t.Fatalf("payload = %+v", s.OpkgTun.PolicyTun)
 	}
-
-	if err := fresh.SetPolicyTunState(nil); err != nil {
-		t.Fatalf("clear: %v", err)
+	if err := store.SetOpkgTunNATSegments(nil); err != nil {
+		t.Fatal(err)
 	}
-	cleared := NewSettingsStore(tmpDir)
-	c, err := cleared.Load()
-	if err != nil {
-		t.Fatalf("reload after clear: %v", err)
-	}
-	if c.PolicyTun != nil {
-		t.Errorf("PolicyTun = %+v after clear, want nil", *c.PolicyTun)
-	}
-
-	if err := (&SettingsStore{}).SetPolicyTunState(want); err == nil {
-		t.Error("SetPolicyTunState on unloaded store: want error, got nil")
+	s2, _ := NewSettingsStore(dir).Load()
+	if s2.OpkgTun.PolicyTun != nil {
+		t.Fatalf("payload not cleared: %+v", s2.OpkgTun.PolicyTun)
 	}
 }
 
@@ -838,5 +798,30 @@ func TestMigrateToV27_PreservesExistingMode(t *testing.T) {
 	}
 	if s.SingboxRouter.RoutingMode != "fakeip-tun" {
 		t.Fatalf("existing routingMode must be preserved, got %q", s.SingboxRouter.RoutingMode)
+	}
+}
+
+// Аксессор, через который настройка доезжает до оператора sing-box: если он
+// начнёт врать пустой строкой, адрес bootstrap молча перестанет применяться.
+func TestSettingsStore_GetSingboxBootstrapDNS(t *testing.T) {
+	tmp := t.TempDir()
+	store := NewSettingsStore(tmp)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "" {
+		t.Errorf("по умолчанию = %q, want пусто", got)
+	}
+
+	settings, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	settings.SingboxBootstrapDNS = "8.8.8.8"
+	if err := store.Save(settings); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := store.GetSingboxBootstrapDNS(); got != "8.8.8.8" {
+		t.Errorf("GetSingboxBootstrapDNS = %q, want 8.8.8.8", got)
 	}
 }

@@ -145,6 +145,7 @@ func (h *ControlHandler) getStatus(r *http.Request, id string) string {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelControlResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/start [post]
 func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +205,7 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelControlResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/stop [post]
 func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +266,7 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelControlResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/restart [post]
 func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {

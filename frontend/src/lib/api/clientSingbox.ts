@@ -62,6 +62,10 @@ export class SingboxClient extends RoutingClient {
 		return this.request('/singbox/update', { method: 'POST' });
 	}
 
+	async singboxUninstall(): Promise<SingboxStatus> {
+		return this.request('/singbox/uninstall', { method: 'POST' });
+	}
+
 	async singboxControl(action: 'start' | 'stop' | 'restart'): Promise<SingboxStatus> {
 		return this.request('/singbox/control', {
 			method: 'POST',

@@ -518,22 +518,32 @@ func configValue(lowerKey string, cfg *Config) string {
 	return ""
 }
 
-// defaultConfig returns a Config with sensible defaults.
+// defaultConfig mirrors hr-neo's own built-in defaults (PARAMS in
+// params.c). Стоковый hrneo.conf из ipk содержит всего четыре ключа —
+// остальные демон берёт из встроенных значений. Если подставить сюда
+// нули, ReadConfig вернёт их как «текущее состояние», фронт отправит
+// обратно, а WriteConfig допишет в файл — и молча переключит демон:
+// CIDR=false выключает чтение ip.list (main.c:387,498), autoStart=false
+// завершает демон сразу после старта (main.c:343).
 func defaultConfig() *Config {
 	return &Config{
+		AutoStart:          true,
+		ClearIPSet:         true,
+		CIDR:               true,
+		IpsetEnableTimeout: true,
+		IpsetTimeout:       defaultIpsetTimeout,
 		DirectRouteEnabled: true,
 		ConntrackFlush:     true,
 		IpsetMaxElem:       defaultMaxElem,
+		Log:                defaultLogLevel,
+		LogFile:            defaultLogFile,
 	}
 }
 
-// parseBool returns true for "true", "1", or "yes" (case-insensitive).
+// parseBool повторяет разбор демона (param_apply, params.c:179):
+// истина — только точное "true", всё остальное — ложь.
 func parseBool(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1", "yes":
-		return true
-	}
-	return false
+	return strings.TrimSpace(s) == "true"
 }
 
 // formatBool returns "true" or "false".
@@ -542,4 +552,90 @@ func formatBool(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// legacyMaxElem — значение IpsetMaxElem, которое AWGM писал до #767.
+// Демон при отсутствии ключа берёт defaultMaxElem.
+const legacyMaxElem = 65536
+
+// brokenDefaults: ключ (в нижнем регистре) → значение, которое писал
+// испорченный defaultConfig, и значение, которое подставляет сам демон.
+var brokenDefaults = map[string][2]string{ //nolint:gochecknoglobals
+	"autostart":          {"false", "true"},
+	"clearipset":         {"false", "true"},
+	"cidr":               {"false", "true"},
+	"ipsetenabletimeout": {"false", "true"},
+	"ipsettimeout":       {"0", strconv.Itoa(defaultIpsetTimeout)},
+	"ipsetmaxelem":       {strconv.Itoa(legacyMaxElem), strconv.Itoa(defaultMaxElem)},
+	"logfile":            {"", defaultLogFile},
+}
+
+// hasAwgmFingerprint: пара «таймаут выключен + значение таймаута 0»
+// осмысленно не пишется руками — это след старого defaultConfig AWGM.
+func hasAwgmFingerprint(keys map[string]string) bool {
+	return keys["ipsetenabletimeout"] == "false" && keys["ipsettimeout"] == "0"
+}
+
+// HealBrokenDefaults откатывает значения, которые AWGM записал в
+// hrneo.conf своими неверными дефолтами (#767): CIDR=false выключал
+// чтение ip.list, autoStart=false завершал демон сразу после старта.
+//
+// Чинит только файлы со своим отпечатком (см. hasAwgmFingerprint) и
+// только те ключи, что до сих пор держат ровно испорченное значение —
+// исправленное пользователем не трогает. Идемпотентно: после ремонта
+// отпечатка в файле уже нет. Возвращает список исправленных ключей.
+func HealBrokenDefaults() ([]string, error) {
+	existing, err := os.ReadFile(hrConfPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("hydraroute: read hrneo.conf: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSuffix(string(existing), "\n"), "\n")
+	values := make(map[string]string, len(lines))
+	for _, raw := range lines {
+		if key, val, ok := cutConfLine(raw); ok {
+			values[strings.ToLower(key)] = val
+		}
+	}
+	if !hasAwgmFingerprint(values) {
+		return nil, nil
+	}
+
+	var healed []string
+	for i, raw := range lines {
+		key, val, ok := cutConfLine(raw)
+		if !ok {
+			continue
+		}
+		pair, managed := brokenDefaults[strings.ToLower(key)]
+		if !managed || val != pair[0] {
+			continue
+		}
+		lines[i] = key + "=" + pair[1]
+		healed = append(healed, key)
+	}
+	if len(healed) == 0 {
+		return nil, nil
+	}
+	if err := atomicWrite(hrConfPath, strings.Join(lines, "\n")+"\n"); err != nil {
+		return nil, err
+	}
+	return healed, nil
+}
+
+// cutConfLine разбирает строку hrneo.conf в ключ и значение, отбрасывая
+// комментарий. Возвращает ok=false для пустых строк и строк без '='.
+func cutConfLine(raw string) (key, val string, ok bool) {
+	line := raw
+	if idx := strings.Index(line, "#"); idx >= 0 {
+		line = line[:idx]
+	}
+	key, val, ok = strings.Cut(strings.TrimSpace(line), "=")
+	if !ok {
+		return "", "", false
+	}
+	return strings.TrimSpace(key), strings.TrimSpace(val), true
 }

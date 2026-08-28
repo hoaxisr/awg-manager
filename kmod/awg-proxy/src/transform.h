@@ -29,6 +29,12 @@
 #define WG_COOKIE_SIZE    64
 #define WG_TRANSPORT_MIN  32
 
+/* AWG 3.0+ header protection: the ChaCha20 nonce is the first 12 on-wire
+ * padding bytes, so S1-S4 must each be >= this when a header-protection key
+ * is set. Matches HeaderCipherNonceSize in amneziawg-go. */
+#define AWG_HP_MIN_PADDING 12
+#define AWG_HP_TRANSPORT_HDR 16  /* transport: only type|receiver|counter is XORed */
+
 /* Max junk packet count (bounds sizes[] stack array) */
 #define AWG_MAX_JC       128
 
@@ -93,6 +99,15 @@ typedef struct {
 	u8 mac1key_server[32];
 	u8 mac1key_client[32];
 
+	/* AWG 3.0+ header protection. hp_key is used directly as the ChaCha20
+	 * key (no KDF); the nonce is the first 12 on-wire padding bytes, counter
+	 * 0. Gated by hp_key_set — which requires S1-S4 >= 12 (nonce length). */
+	u8  hp_key[32];
+	int hp_key_set;
+	/* AWG 3.1: append a random cleartext trailer to handshake datagrams and
+	 * accept over-long handshakes on ingress. Must match the peer. */
+	int random_trailers;
+
 	u32 h4_fixed;
 	int h4_noop;        /* H4={4,4} && S4==0 */
 	int init_total;     /* S1 + 148 */
@@ -111,6 +126,16 @@ typedef struct {
 
 /* Compute MAC1 keys and fast-path flags. Call after setting all fields. */
 void config_compute(awg_config_t *cfg);
+
+/* AWG 3.0 header protection (gated on cfg->hp_key_set). hp_crypt XORs the
+ * WG header with the ChaCha20 keystream (whole message for handshakes, 16-byte
+ * header for transport); it is its own inverse. hp_peek_type recovers a
+ * candidate's plaintext type on ingress without mutating the packet. */
+void hp_crypt(const awg_config_t *cfg, u8 *pkt, int s_prefix, int n, u32 msgType);
+u32 hp_peek_type(const awg_config_t *cfg, const u8 *pkt, int s_prefix);
+
+/* AWG 3.1 random-trailer length in [0, udp_window - packet_size), else 0. */
+int awg_trailer_len(u32 udp_window, int packet_size);
 
 /*
  * Transform outbound WG->AWG.

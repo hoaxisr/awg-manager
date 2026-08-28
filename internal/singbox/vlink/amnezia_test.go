@@ -39,3 +39,16 @@ func TestParseAmnezia_NotVLESS_StructuredError(t *testing.T) {
 		t.Errorf("Protocol=%q want trojan", aerr.Protocol)
 	}
 }
+
+// Битый streamSettings внутри vpn:// обязан ронять ссылку: молча отдать
+// reality-сервер как plain-TCP vless — худший исход, туннель «есть», но не
+// защищает.
+func TestParseAmnezia_BrokenStreamSettings(t *testing.T) {
+	cfg := `{"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"a.example.com","port":443,` +
+		`"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},"streamSettings":{"network":123}}]}`
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(cfg))
+	got, err := ParseLink(link)
+	if err == nil {
+		t.Fatalf("битый streamSettings принят: %s", got.Outbound)
+	}
+}

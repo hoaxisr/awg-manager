@@ -204,17 +204,31 @@ func mieruProfileToOutbounds(profile *pb.ClientProfile) ([]ParsedOutbound, error
 	return out, nil
 }
 
-func buildMieruOutbound(profile *pb.ClientProfile, host, username, password, transport string, specs []mieruPortSpec) (*ParsedOutbound, error) {
+// mieruParams — нормализованные значения одного mieru-сервера, откуда бы он
+// ни приехал: из mieru://, из Clash YAML или из client-JSON. Сборку карты
+// аутбаунда держит одна функция, иначе формы снова разъедутся.
+type mieruParams struct {
+	host           string
+	username       string
+	password       string
+	transport      string
+	specs          []mieruPortSpec
+	multiplexing   string
+	trafficPattern string
+	label          string
+}
+
+func assembleMieruOutbound(p mieruParams) (*ParsedOutbound, error) {
 	out := map[string]any{
 		"type":      "mieru",
-		"server":    host,
-		"transport": transport,
-		"username":  username,
-		"password":  password,
+		"server":    p.host,
+		"transport": p.transport,
+		"username":  p.username,
+		"password":  p.password,
 	}
 	var primaryPort uint16
 	var serverPorts []string
-	for _, spec := range specs {
+	for _, spec := range p.specs {
 		if spec.Numeric && primaryPort == 0 {
 			n, _ := strconv.ParseUint(spec.Value, 10, 16)
 			primaryPort = uint16(n)
@@ -229,18 +243,14 @@ func buildMieruOutbound(profile *pb.ClientProfile, host, username, password, tra
 	if _, hasPort := out["server_port"]; !hasPort && len(serverPorts) == 0 {
 		return nil, errors.New("mieru: no server port")
 	}
-	if mux := profile.GetMultiplexing(); mux != nil && mux.Level != nil {
-		out["multiplexing"] = mux.GetLevel().String()
+	if p.multiplexing != "" {
+		out["multiplexing"] = p.multiplexing
 	}
-	if tp := profile.GetTrafficPattern(); tp != nil {
-		encoded, err := encodeMieruTrafficPattern(tp)
-		if err != nil {
-			return nil, err
-		}
-		out["traffic_pattern"] = encoded
+	if p.trafficPattern != "" {
+		out["traffic_pattern"] = p.trafficPattern
 	}
 
-	tag := fmt.Sprintf("mieru-%s-%s-%s", sanitizeTagPart(host), strings.ToLower(transport), mieruPortTagPart(primaryPort, specs))
+	tag := fmt.Sprintf("mieru-%s-%s-%s", sanitizeTagPart(p.host), strings.ToLower(p.transport), mieruPortTagPart(primaryPort, p.specs))
 	out["tag"] = tag
 	raw, err := json.Marshal(out)
 	if err != nil {
@@ -249,11 +259,33 @@ func buildMieruOutbound(profile *pb.ClientProfile, host, username, password, tra
 	return &ParsedOutbound{
 		Tag:      tag,
 		Protocol: "mieru",
-		Server:   host,
+		Server:   p.host,
 		Port:     primaryPort,
 		Outbound: raw,
-		Label:    profile.GetProfileName(),
+		Label:    p.label,
 	}, nil
+}
+
+func buildMieruOutbound(profile *pb.ClientProfile, host, username, password, transport string, specs []mieruPortSpec) (*ParsedOutbound, error) {
+	params := mieruParams{
+		host:      host,
+		username:  username,
+		password:  password,
+		transport: transport,
+		specs:     specs,
+		label:     profile.GetProfileName(),
+	}
+	if mux := profile.GetMultiplexing(); mux != nil && mux.Level != nil {
+		params.multiplexing = mux.GetLevel().String()
+	}
+	if tp := profile.GetTrafficPattern(); tp != nil {
+		encoded, err := encodeMieruTrafficPattern(tp)
+		if err != nil {
+			return nil, err
+		}
+		params.trafficPattern = encoded
+	}
+	return assembleMieruOutbound(params)
 }
 
 func encodeMieruTrafficPattern(tp *pb.TrafficPattern) (string, error) {

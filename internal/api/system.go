@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
 // ── Response DTOs ────────────────────────────────────────────────
@@ -49,6 +50,7 @@ type SystemInfoData struct {
 	IsOS5                       bool                          `json:"isOS5" example:"true"`
 	FirmwareVersion             string                        `json:"firmwareVersion" example:"4.2.1"`
 	SupportsExtendedASC         bool                          `json:"supportsExtendedASC" example:"true"`
+	SupportsOpkgTun             bool                          `json:"supportsOpkgTun" example:"true"`
 	SupportsHRanges             bool                          `json:"supportsHRanges" example:"true"`
 	SupportsPingCheck           bool                          `json:"supportsPingCheck" example:"true"`
 	TotalMemoryMB               int                           `json:"totalMemoryMB" example:"512"`
@@ -61,6 +63,8 @@ type SystemInfoData struct {
 	KernelModuleModel           string                        `json:"kernelModuleModel" example:"MT7981"`
 	KernelModuleVersion         string                        `json:"kernelModuleVersion" example:""`
 	KernelModuleLoadedVersion   string                        `json:"kernelModuleLoadedVersion" example:"3.1.20260812"`
+	AwgProxyVersion             string                        `json:"awgProxyVersion" example:"1.4.0"`
+	AwgProxyExpectedVersion     string                        `json:"awgProxyExpectedVersion" example:"1.4.0"`
 	IsAarch64                   bool                          `json:"isAarch64" example:"true"`
 	ActiveBackend               string                        `json:"activeBackend" example:"nativewg"`
 	RouterIP                    string                        `json:"routerIP" example:"192.168.1.1"`
@@ -180,7 +184,6 @@ type SystemHandler struct {
 	version                string
 	settingsStore          SettingsProvider
 	settingsWriter         *storage.SettingsStore
-	activeBackend          backend.Backend
 	kmodLoader             KmodLoader
 	tunnelService          TunnelService
 	pingCheckService       PingCheckService
@@ -223,11 +226,6 @@ func NewSystemHandler(version string) *SystemHandler {
 // SetSettingsStore sets the settings provider.
 func (h *SystemHandler) SetSettingsStore(sp SettingsProvider) {
 	h.settingsStore = sp
-}
-
-// SetActiveBackend sets the active backend for status reporting.
-func (h *SystemHandler) SetActiveBackend(b backend.Backend) {
-	h.activeBackend = b
 }
 
 // SetKmodLoader sets the kernel module loader for status reporting.
@@ -427,9 +425,6 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 		isAarch64 = h.kmodLoader.SoC().IsAARCH64()
 	}
 	activeBackendType := "kernel"
-	if h.activeBackend != nil {
-		activeBackendType = h.activeBackend.Type().String()
-	}
 
 	// Router LAN IP (from br0 interface)
 	routerIP := netif.FirstIPv4(storage.DefaultInterface)
@@ -446,14 +441,17 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 	nativewgAvail, nativewgReason := nativewgStatus()
 
 	return map[string]interface{}{
-		"version":                     h.version,
-		"goVersion":                   runtime.Version(),
-		"goArch":                      runtime.GOARCH,
-		"goOS":                        runtime.GOOS,
-		"keeneticOS":                  string(osdetect.Get()),
-		"isOS5":                       osdetect.Is5(),
-		"firmwareVersion":             osdetect.ReleaseString(),
-		"supportsExtendedASC":         osdetect.AtLeast(5, 1),
+		"version":             h.version,
+		"goVersion":           runtime.Version(),
+		"goArch":              runtime.GOARCH,
+		"goOS":                runtime.GOOS,
+		"keeneticOS":          string(osdetect.Get()),
+		"isOS5":               osdetect.Is5(),
+		"firmwareVersion":     osdetect.ReleaseString(),
+		"supportsExtendedASC": osdetect.AtLeast(5, 1),
+		// Режимы fakeip-tun/policy-tun строятся на OpkgTun, которого нет в
+		// KeeneticOS 4.x — фронт гейтит их по этому флагу (issue #768).
+		"supportsOpkgTun":             osdetect.SupportsOpkgTun(),
 		"supportsHRanges":             ndmsinfo.SupportsHRanges(),
 		"supportsPingCheck":           ndmsinfo.HasPingCheckComponent(),
 		"totalMemoryMB":               osdetect.GetTotalMemoryMB(),
@@ -466,6 +464,8 @@ func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, go
 		"kernelModuleModel":           kernelModuleModel,
 		"kernelModuleVersion":         kernelModuleVersion,
 		"kernelModuleLoadedVersion":   kernelModuleLoadedVersion,
+		"awgProxyVersion":             awgProxyLoadedVersion(),
+		"awgProxyExpectedVersion":     nwg.ExpectedKmodVersion,
 		"isAarch64":                   isAarch64,
 		"activeBackend":               activeBackendType,
 		"routerIP":                    routerIP,
@@ -639,6 +639,18 @@ func evalNativewg(hasWireguardComponent, supportsASC, awgProxyLoaded bool) (avai
 func nativewgStatus() (available bool, reason string) {
 	_, err := os.Stat("/proc/awg_proxy/version")
 	return evalNativewg(ndmsinfo.HasWireguardComponent(), ndmsinfo.SupportsWireguardASC(), err == nil)
+}
+
+// awgProxyLoadedVersion returns the loaded awg_proxy version, or "" if not
+// loaded. The frontend gates the NativeWG AWG 3.1 editor on this (>= 1.4.0 adds
+// header protection + random trailers), mirroring supportsAwg3 for the kernel
+// module.
+func awgProxyLoadedVersion() string {
+	data, err := os.ReadFile("/proc/awg_proxy/version")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // wanInterfaceJSON is the JSON response for a single WAN interface.

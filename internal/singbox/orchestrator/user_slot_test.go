@@ -7,8 +7,12 @@ import (
 )
 
 // Контракт слота эксперт-редактора: зарегистрирован, файл 90-user.json
-// (лексикографически последний — массивы конкатенируются после всех),
+// (последний СРЕДИ СОДЕРЖАТЕЛЬНЫХ — массивы конкатенируются после всех),
 // не AlwaysOn (можно «припарковать» через SetEnabled).
+//
+// Единственный слот ниже — 99-defaults: он несёт только скаляры-дефолты и
+// лежит последним намеренно, чтобы проигрывать всем по first-file-wins.
+// Массивов в нём нет, поэтому порядок конкатенации user-слота он не рушит.
 func TestKnownSlots_UserSlotRegisteredLast(t *testing.T) {
 	slots := KnownSlots()
 	idx := -1
@@ -27,8 +31,42 @@ func TestKnownSlots_UserSlotRegisteredLast(t *testing.T) {
 		t.Fatal("SlotUser not in KnownSlots")
 	}
 	for i, m := range slots {
-		if i != idx && m.Filename >= "90-user.json" {
+		if i == idx || m.Slot == SlotDefaults {
+			continue
+		}
+		if m.Filename >= "90-user.json" {
 			t.Errorf("slot %s file %q sorts after 90-user.json — user slot must merge last", m.Slot, m.Filename)
+		}
+	}
+}
+
+// 99-defaults обязан лежать ПОСЛЕ всех: в first-file-wins это и есть
+// «дефолт, который проигрывает пассивно». Уедет выше — начнёт затенять
+// скаляры режимных слотов, и вернётся весь класс с примирением 00-base.
+func TestKnownSlots_DefaultsRegisteredLastOfAll(t *testing.T) {
+	slots := KnownSlots()
+	var defaults SlotMeta
+	for _, m := range slots {
+		if m.Slot == SlotDefaults {
+			defaults = m
+		}
+	}
+	if defaults.Slot == "" {
+		t.Fatal("SlotDefaults not in KnownSlots")
+	}
+	if defaults.Filename != "99-defaults.json" {
+		t.Errorf("defaults filename = %q, want 99-defaults.json", defaults.Filename)
+	}
+	if !defaults.AlwaysOn {
+		t.Error("defaults slot must be AlwaysOn — дефолты обязаны действовать в любом режиме")
+	}
+	if defaults.HasContent != nil {
+		t.Error("defaults slot must not gate hasActiveWork — сам по себе демона не поднимает")
+	}
+	for _, m := range slots {
+		if m.Slot != SlotDefaults && m.Filename >= defaults.Filename {
+			t.Errorf("slot %s file %q sorts at/after %q — defaults must merge last",
+				m.Slot, m.Filename, defaults.Filename)
 		}
 	}
 }

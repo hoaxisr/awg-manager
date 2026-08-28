@@ -19,6 +19,9 @@ func (o *Orchestrator) ReloadNow() error {
 		o.reloadTimer.Stop()
 		o.reloadTimer = nil
 	}
+	// Явное применение накрывает и то, что подавил hold, — иначе release
+	// выстрелил бы вторым, уже ненужным reload'ом.
+	o.pendingReload = false
 	o.mu.Unlock()
 	return o.Reload()
 }
@@ -27,11 +30,31 @@ func (o *Orchestrator) ReloadNow() error {
 // hold o.mu. Calling repeatedly within the window coalesces into one
 // reload.
 func (o *Orchestrator) scheduleReload() {
+	if o.holds > 0 {
+		o.pendingReload = true
+		return
+	}
 	if o.reloadTimer != nil {
 		o.reloadTimer.Reset(reloadDebounce)
 		return
 	}
 	o.reloadTimer = time.AfterFunc(reloadDebounce, func() {
+		// Решение про hold принимается ЗДЕСЬ, а не в HoldReloads: между
+		// срабатыванием таймера и взятием mu есть окно, в котором Stop() уже
+		// не отменяет запущенный callback. Проверяя hold внутри, мы закрываем
+		// это окно — таймеру больше незачем отменяться снаружи, а
+		// выстреливший обязан забыть себя, чтобы следующий scheduleReload
+		// взвёл новый, а не звал Reset на отработавшем.
+		o.mu.Lock()
+		o.reloadTimer = nil
+		held := o.holds > 0
+		if held {
+			o.pendingReload = true
+		}
+		o.mu.Unlock()
+		if held {
+			return
+		}
 		if err := o.Reload(); err != nil {
 			o.log("error", fmt.Sprintf("orchestrator reload: %v", err))
 		}
@@ -155,7 +178,15 @@ func (o *Orchestrator) Reload() error {
 				}
 				err = proc.Start()
 			} else {
-				o.log("info", "orchestrator: SIGHUP sing-box (config changed)")
+				// При живом tun proc.Reload делает Stop+Start (SIGHUP пересоздал
+				// бы tun под удерживаемым fd → FATAL, см. process.go), поэтому
+				// строка обязана называть то, что произойдёт на самом деле:
+				// «SIGHUP» здесь сбивал с толку при разборе простоя.
+				if prevHasTun {
+					o.log("info", "orchestrator: restarting sing-box (config changed, tun active)")
+				} else {
+					o.log("info", "orchestrator: SIGHUP sing-box (config changed)")
+				}
 				err = proc.Reload()
 			}
 			if err == nil {

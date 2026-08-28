@@ -40,9 +40,9 @@ import (
 func (a *app) setupTunnels() {
 	// Create tunnel service components
 	a.wgClient = wg.New()
-	a.backendImpl = backend.New(a.bootLog)
+	a.backendImpl = backend.NewKernel()
 	a.stateMgr = state.New(a.ndmsQueries.Interfaces, a.wgClient, a.backendImpl, a.loggingService)
-	firewallMgr := firewall.New(a.backendImpl.Type() == backend.TypeKernel, osdetect.Is5(), a.loggingService)
+	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), a.loggingService)
 
 	// Build NDMS CQRS Commands eagerly so the Operator can consume them.
 	// HookNotifier is wired later (ndmsCommands.SetHookNotifier(orch)) once
@@ -89,6 +89,22 @@ func (a *app) setupTunnels() {
 
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
+
+	// Занятость номеров OpkgTun: живое (устройства в ядре) плюс пины трёх
+	// владельцев — записи туннелей, удерживающая запись настроек и записи
+	// NDMS. Последние отделены от живого намеренно: запись NDMS переживает
+	// удаление устройства (стенд 5.01.C.3.0-1), её номер занят, но интерфейс
+	// мёртв. Четвёртого владельца — записи инстансов прокси — добавит
+	// проводка нового рантайма, форма это допускает.
+	opkgIndices := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
+	a.opkgNDMSPins = opkgIndices.NDMSOpkgTunPins
+	a.opkgTunOccupancy = storage.OpkgTunOccupancy(
+		opkgIndices,
+		a.awgStore.OpkgTunPinsOf,
+		a.settingsStore.OpkgTunPinsOf,
+		opkgIndices.NDMSOpkgTunPins,
+	)
+	a.tunnelService.SetOpkgTunOccupancy(a.opkgTunOccupancy)
 
 	// Migrate legacy ISPInterface="none" to "" (auto) for tunnels from older versions.
 	a.tunnelService.MigrateISPInterfaceNone()

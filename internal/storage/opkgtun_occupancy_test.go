@@ -74,20 +74,18 @@ func TestOpkgTunOccupancyWithoutPins(t *testing.T) {
 // ради permit'а пользователя, интерфейса при этом нет. Нулевой номер валиден.
 func TestSettingsOpkgTunPins(t *testing.T) {
 	tests := []struct {
-		name   string
-		fakeip *FakeIPState
-		policy *PolicyTunState
-		want   map[int]bool
+		name  string
+		state *OpkgTunState
+		want  map[int]bool
 	}{
-		{"записей нет", nil, nil, map[int]bool{}},
-		{"hold с нулевым номером", nil, &PolicyTunState{Index: 0}, map[int]bool{0: true}},
-		{"provisioned", &FakeIPState{Provisioned: true, Index: 7}, nil, map[int]bool{7: true}},
-		{"обе записи", &FakeIPState{Index: 2}, &PolicyTunState{Index: 5}, map[int]bool{2: true, 5: true}},
+		{"записи нет", nil, map[int]bool{}},
+		{"hold с нулевым номером", &OpkgTunState{Mode: OpkgTunModePolicyTun, Index: 0}, map[int]bool{0: true}},
+		{"provisioned", &OpkgTunState{Mode: OpkgTunModeFakeIP, Provisioned: true, Index: 7}, map[int]bool{7: true}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := opkgTunPinsOf(tt.fakeip, tt.policy)
+			got := opkgTunPinsOf(tt.state)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}

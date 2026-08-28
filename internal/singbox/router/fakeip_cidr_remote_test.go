@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -87,5 +89,98 @@ func TestRemoteTunCIDRs_NonMergeableSetUnderOwnIPCIDR(t *testing.T) {
 	cfg.Route.Rules = append(cfg.Route.Rules, Rule{Action: "route", Outbound: "proxy", RuleSet: []string{"r"}})
 	if v4, _ := s.remoteTunCIDRs(context.Background(), cfg); len(v4) != 1 || v4[0] != "149.154.160.0/20" {
 		t.Errorf("standalone reference must still yield the set cidr, got %v", v4)
+	}
+}
+
+// Tier-2 гоняется на КАЖДОМ тике планировщика (30 с). Пока результат разбора
+// набора не запоминался, каждый тик спавнил `sing-box rule-set decompile` на
+// каждый remote-набор — на MIPS это секунды CPU в тик, вечно (issue #756).
+// Файл в кэше меняется только при перекачке, поэтому разбор обязан случиться
+// один раз на файл.
+func TestRemoteTunCIDRs_DecompilesOncePerFile(t *testing.T) {
+	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
+	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
+
+	dir := t.TempDir()
+	paths := map[string]string{}
+	for _, tag := range []string{"a", "b"} {
+		p := filepath.Join(dir, tag+".srs")
+		if err := os.WriteFile(p, []byte("srs-"+tag), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths[tag] = p
+	}
+
+	calls := 0
+	ruleSetDownload = func(_ context.Context, url, _format string) (string, error) {
+		return paths[url], nil
+	}
+	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
+		calls++
+		return []byte(`{"version":3,"rules":[{"ip_cidr":["149.154.160.0/20"]}]}`), nil
+	}
+
+	cfg := &RouterConfig{Route: Route{
+		Rules: []Rule{
+			{Action: "route", Outbound: "proxy", RuleSet: []string{"a"}},
+			{Action: "route", Outbound: "proxy", RuleSet: []string{"b"}},
+		},
+		RuleSet: []RuleSet{
+			{Tag: "a", Type: "remote", URL: "a", Format: "binary"},
+			{Tag: "b", Type: "remote", URL: "b", Format: "binary"},
+		},
+	}}
+	s := newTestService(t, Deps{})
+
+	for i := 0; i < 3; i++ {
+		v4, _ := s.remoteTunCIDRs(context.Background(), cfg)
+		if len(v4) != 1 || v4[0] != "149.154.160.0/20" {
+			t.Fatalf("tick %d: v4 = %v, want [149.154.160.0/20]", i, v4)
+		}
+	}
+	if calls != 2 {
+		t.Errorf("decompile ran %d times over 3 ticks, want 2 (once per rule-set file)", calls)
+	}
+}
+
+// Перекачанный набор обязан быть разобран заново: ключ памяти — сам файл
+// (mtime+размер), а не URL.
+func TestRemoteTunCIDRs_RedecompilesWhenFileChanges(t *testing.T) {
+	origDL, origDC := ruleSetDownload, ruleSetDecompileExec
+	t.Cleanup(func() { ruleSetDownload, ruleSetDecompileExec = origDL, origDC })
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.srs")
+	if err := os.WriteFile(p, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	cidr := "149.154.160.0/20"
+	ruleSetDownload = func(_ context.Context, _url, _format string) (string, error) { return p, nil }
+	ruleSetDecompileExec = func(_ context.Context, _binary, _srsPath string) ([]byte, error) {
+		calls++
+		return []byte(`{"version":3,"rules":[{"ip_cidr":["` + cidr + `"]}]}`), nil
+	}
+
+	cfg := &RouterConfig{Route: Route{
+		Rules:   []Rule{{Action: "route", Outbound: "proxy", RuleSet: []string{"a"}}},
+		RuleSet: []RuleSet{{Tag: "a", Type: "remote", URL: "a", Format: "binary"}},
+	}}
+	s := newTestService(t, Deps{})
+	s.remoteTunCIDRs(context.Background(), cfg)
+
+	// Перекачка: другое содержимое (и размер) под тем же путём.
+	cidr = "203.0.113.0/24"
+	if err := os.WriteFile(p, []byte("version-two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v4, _ := s.remoteTunCIDRs(context.Background(), cfg)
+
+	if calls != 2 {
+		t.Errorf("decompile ran %d times, want 2 (once per file version)", calls)
+	}
+	if len(v4) != 1 || v4[0] != "203.0.113.0/24" {
+		t.Errorf("v4 = %v, want [203.0.113.0/24] from the re-downloaded set", v4)
 	}
 }

@@ -69,6 +69,13 @@ static void write32_le_host(u8 *p, u32 v)
 	memcpy(p, &le, 4);
 }
 
+static u32 read32_le_host(const u8 *p)
+{
+	__le32 le;
+	memcpy(&le, p, 4);
+	return le32_to_cpu(le);
+}
+
 /* Build a minimal awg_config_t for tests.  Zero everything first. */
 static void cfg_init(awg_config_t *cfg)
 {
@@ -579,6 +586,190 @@ static void test_xchacha20p1305_bad_aad(void)
 
 /* ---------- Main ---------- */
 
+/* ---------- AWG 3.0 header protection (hp_crypt / hp_peek_type) ---------- */
+
+static void cfg_init_hp(awg_config_t *cfg)
+{
+	cfg_init(cfg);
+	for (int i = 0; i < 32; i++)
+		cfg->hp_key[i] = (u8)(0x10 + i);
+	cfg->hp_key_set = 1;
+}
+
+/* Encrypt then decrypt (XOR is its own inverse) restores the whole handshake
+ * message; the padding prefix (the nonce) is never touched. */
+static void test_hp_handshake_roundtrip(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE], orig[12 + WG_INIT_SIZE];
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	for (unsigned i = 0; i < sizeof(pkt); i++)
+		pkt[i] = (u8)(0x30 + i);
+	memcpy(orig, pkt, sizeof(pkt));
+
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+	if (memcmp(pkt, orig, 12) != 0)
+		test_fail("hp_handshake_roundtrip", "padding/nonce was modified");
+	if (memcmp(pkt + 12, orig + 12, WG_INIT_SIZE) == 0)
+		test_fail("hp_handshake_roundtrip", "message was not encrypted");
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+	if (memcmp(pkt, orig, sizeof(pkt)) != 0)
+		test_fail("hp_handshake_roundtrip", "decrypt did not restore message");
+}
+
+/* Transport encrypts ONLY the 16-byte header; the AEAD payload stays cleartext. */
+static void test_hp_transport_scope(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + 60], orig[12 + 60];
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	for (unsigned i = 0; i < sizeof(pkt); i++)
+		pkt[i] = (u8)(0x30 + i);
+	memcpy(orig, pkt, sizeof(pkt));
+
+	hp_crypt(&cfg, pkt, 12, 60, WG_TRANSPORT_DATA);
+	if (memcmp(pkt + 12, orig + 12, 16) == 0)
+		test_fail("hp_transport_scope", "16-byte header not encrypted");
+	if (memcmp(pkt + 12 + 16, orig + 12 + 16, 60 - 16) != 0)
+		test_fail("hp_transport_scope", "payload past the header was modified");
+}
+
+/* hp_peek_type recovers the plaintext type of an encrypted candidate without
+ * mutating the packet (used for size+H dispatch on ingress). */
+static void test_hp_peek_type(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE], before[12 + WG_INIT_SIZE];
+	const u32 htype = 0x000003e8; /* 1000 */
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	memset(pkt, 0, sizeof(pkt));
+	for (int i = 0; i < 12; i++)
+		pkt[i] = (u8)(0xA0 + i);
+	pkt[12] = 0xe8; pkt[13] = 0x03; /* type=1000 LE in the message */
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+	memcpy(before, pkt, sizeof(pkt));
+
+	if (hp_peek_type(&cfg, pkt, 12) != htype)
+		test_fail("hp_peek_type", "recovered type mismatch");
+	if (memcmp(pkt, before, sizeof(pkt)) != 0)
+		test_fail("hp_peek_type", "hp_peek_type mutated the packet");
+}
+
+/* End-to-end ingress: an encrypted init (H1-remapped type) is detected,
+ * decrypted, and restored to WG_HANDSHAKE_INIT by transform_inbound. */
+static void test_transform_inbound_hp(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE];
+	int out_len = 0;
+	u8 *msg;
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	cfg.s1 = 12; cfg.s2 = 12; cfg.s3 = 12; cfg.s4 = 12;
+	cfg.h1.min = 1000; cfg.h1.max = 1000;
+	for (int i = 0; i < 32; i++)
+		cfg.client_pub[i] = (u8)(i + 1);
+	config_compute(&cfg);
+
+	memset(pkt, 0, sizeof(pkt));
+	for (int i = 0; i < 12; i++)
+		pkt[i] = (u8)(0xB0 + i);
+	write32_le_host(pkt + 12, 1000);        /* H1-remapped type on the wire */
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+
+	msg = transform_inbound(pkt, cfg.init_total, &cfg, &out_len);
+	if (!msg)
+		test_fail("transform_inbound_hp", "encrypted init not recognized");
+	else if (out_len != WG_INIT_SIZE)
+		test_fail("transform_inbound_hp", "wrong out_len %d", out_len);
+	else if (read32_le_host(msg) != WG_HANDSHAKE_INIT)
+		test_fail("transform_inbound_hp", "type not restored to WG init");
+}
+
+/* ---------- AWG 3.1 random trailers ---------- */
+
+/* With random_trailers, transform_inbound accepts an over-long handshake
+ * (message + cleartext trailer) and strips the trailer back to the fixed size. */
+static void test_transform_inbound_rt_strips_trailer(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE + 20];
+	int out_len = 0;
+	u8 *msg;
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	cfg.s1 = 12; cfg.s2 = 12; cfg.s3 = 12; cfg.s4 = 12;
+	cfg.h1.min = 1000; cfg.h1.max = 1000;
+	cfg.random_trailers = 1;
+	config_compute(&cfg);
+
+	memset(pkt, 0, sizeof(pkt));
+	for (int i = 0; i < 12; i++)
+		pkt[i] = (u8)(0xB0 + i);
+	write32_le_host(pkt + 12, 1000);
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+	for (int i = 0; i < 20; i++)            /* cleartext trailer */
+		pkt[12 + WG_INIT_SIZE + i] = (u8)(0xEE ^ i);
+
+	msg = transform_inbound(pkt, 12 + WG_INIT_SIZE + 20, &cfg, &out_len);
+	if (!msg)
+		test_fail("rt_strips_trailer", "over-long init not accepted under RT");
+	else if (out_len != WG_INIT_SIZE)
+		test_fail("rt_strips_trailer", "trailer not stripped: out_len=%d", out_len);
+	else if (read32_le_host(msg) != WG_HANDSHAKE_INIT)
+		test_fail("rt_strips_trailer", "type not restored");
+}
+
+/* Without random_trailers, an over-long handshake is NOT accepted as a
+ * handshake (exact-size dispatch), so the H1 candidate does not match. */
+static void test_transform_inbound_no_rt_rejects_trailer(void)
+{
+	awg_config_t cfg;
+	u8 pkt[12 + WG_INIT_SIZE + 20];
+	int out_len = 0;
+	u8 *msg;
+
+	tests_run++;
+	cfg_init_hp(&cfg);
+	cfg.s1 = 12; cfg.s2 = 12; cfg.s3 = 12; cfg.s4 = 12;
+	cfg.h1.min = 1000; cfg.h1.max = 1000;
+	cfg.random_trailers = 0;               /* RT disabled */
+	config_compute(&cfg);
+
+	memset(pkt, 0, sizeof(pkt));
+	write32_le_host(pkt + 12, 1000);
+	hp_crypt(&cfg, pkt, 12, WG_INIT_SIZE, WG_HANDSHAKE_INIT);
+
+	msg = transform_inbound(pkt, 12 + WG_INIT_SIZE + 20, &cfg, &out_len);
+	if (msg && out_len == WG_INIT_SIZE)
+		test_fail("no_rt_rejects_trailer", "over-long init accepted without RT");
+}
+
+static void test_trailer_len_bounds(void)
+{
+	int i, r;
+
+	tests_run++;
+	shim_set_random_seed(0x9911);
+	for (i = 0; i < 200; i++) {
+		r = awg_trailer_len(500, 160);
+		if (r < 0 || r >= 500 - 160)
+			test_fail("trailer_len_bounds", "out of [0,340): %d", r);
+	}
+	if (awg_trailer_len(100, 160) != 0)
+		test_fail("trailer_len_bounds", "window<=size must yield 0");
+	if (awg_trailer_len(160, 160) != 0)
+		test_fail("trailer_len_bounds", "window==size must yield 0");
+}
+
 int main(void)
 {
 	test_s4_random_fill();
@@ -595,6 +786,13 @@ int main(void)
 	test_mac2_non_handshake_noop();
 	test_xchacha20p1305_known_answer();
 	test_xchacha20p1305_bad_aad();
+	test_hp_handshake_roundtrip();
+	test_hp_transport_scope();
+	test_hp_peek_type();
+	test_transform_inbound_hp();
+	test_transform_inbound_rt_strips_trailer();
+	test_transform_inbound_no_rt_rejects_trailer();
+	test_trailer_len_bounds();
 
 	printf("\n=== %d run, %d failed ===\n", tests_run, tests_failed);
 	return tests_failed == 0 ? 0 : 1;

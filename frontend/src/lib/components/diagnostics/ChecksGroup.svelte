@@ -14,6 +14,7 @@
 		'awg1.5': { label: 'AWG 1.5', color: '#7dcfff', bg: 'rgba(125,207,255,0.14)' },
 		'awg2.0': { label: 'AWG 2.0', color: '#7dcfff', bg: 'rgba(125,207,255,0.14)' },
 		'awg3':   { label: 'AWG 3.0', color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
+		'awg3.1': { label: 'AWG 3.1', color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
 		'xray':   { label: 'XRAY',    color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
 		'vless':  { label: 'VLESS',   color: '#bb9af7', bg: 'rgba(187,154,247,0.14)' },
 		'hy2':    { label: 'HY2',     color: '#f7768e', bg: 'rgba(247,118,142,0.14)' },

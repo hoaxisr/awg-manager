@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -121,6 +122,17 @@ type SettingsData struct {
 	// enum value over the example tag); putting `expert` first means
 	// dev:mock surfaces all advanced UI without manual toggling.
 	UsageLevel string `json:"usageLevel" example:"expert" enums:"expert,advanced,basic"`
+	// SingboxBootstrapDNS is the address of the dns-bootstrap resolver in
+	// 00-base.json — the resolver sing-box uses for domain addresses in
+	// dial fields (tunnel endpoints, subscription servers). It answers
+	// before any other resolver exists, so it must be a literal IP, no
+	// hostname and no port. Empty leaves 00-base.json untouched.
+	SingboxBootstrapDNS string `json:"singboxBootstrapDNS,omitempty" example:"8.8.8.8"`
+	// SingboxClashPort is the port of experimental.clash_api.external_controller
+	// in 00-base.json. The host is always 127.0.0.1 — Clash API is
+	// awg-manager's internal control channel, not a user-facing listener
+	// (ADR 0001). 0 means "default" (9099). Issue #788.
+	SingboxClashPort int `json:"singboxClashPort,omitempty" example:"9099"`
 }
 
 // SettingsResponse is the envelope for GET /settings/get.
@@ -151,9 +163,19 @@ type SettingsHandler struct {
 	logsSnapshot            func()
 	applyLogSettings        func()
 	applySingboxLogSettings func() error
+	applyBootstrapDNS       func(string) error
+	applyClashPort          func(int) error
+	clashPorts              clashPortInspector
 	downloadSvc             *downloader.Service
 	log                     *logging.ScopedLogger
 	bus                     *events.Bus
+	exposure                exposureChecker
+}
+
+// exposureChecker re-runs the "are we exposed without a password" check
+// after a settings save — the HTTP port may have just changed.
+type exposureChecker interface {
+	Check(ctx context.Context)
 }
 
 const settingsMonitoringRefreshTimeout = 10 * time.Second
@@ -168,6 +190,9 @@ func NewSettingsHandler(store *storage.SettingsStore, appLogger logging.AppLogge
 		log:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubSettings),
 	}
 }
+
+// SetExposureGuard wires the guard re-checked after every settings save.
+func (h *SettingsHandler) SetExposureGuard(g exposureChecker) { h.exposure = g }
 
 // SetTunnelStore sets the tunnel store for ping check toggle logic.
 func (h *SettingsHandler) SetTunnelStore(tunnels *storage.AWGTunnelStore) {
@@ -203,6 +228,24 @@ func (h *SettingsHandler) SetApplySingboxLogSettings(fn func() error) {
 	h.applySingboxLogSettings = fn
 }
 
+// SetApplyBootstrapDNS wires the hook that pushes a changed dns-bootstrap
+// address into the running sing-box (issue #770).
+func (h *SettingsHandler) SetApplyBootstrapDNS(fn func(string) error) {
+	h.applyBootstrapDNS = fn
+}
+
+// SetApplyClashPort wires the hook that pushes a changed Clash API port
+// into 00-base.json and repoints our ClashClient (issue #788).
+func (h *SettingsHandler) SetApplyClashPort(fn func(int) error) {
+	h.applyClashPort = fn
+}
+
+// SetClashPortInspector wires the /proc scanner used to reject a Clash API
+// port already held by a foreign process.
+func (h *SettingsHandler) SetClashPortInspector(insp clashPortInspector) {
+	h.clashPorts = insp
+}
+
 func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
 	h.downloadSvc = svc
 }
@@ -228,7 +271,9 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := h.store.Get()
+	// Снапшот, а не Get(): живой объект кэша нельзя маршалить — его
+	// map-поля параллельно правят узкие мутаторы стора.
+	settings, err := h.store.Snapshot()
 	if err != nil {
 		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
@@ -240,7 +285,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Update saves settings.
 //
 //	@Summary		Update settings
-//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags. Send only the fields you want to change, or send the full Settings object to update everything atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
+//	@Description	Persists Settings via patch semantics: any field omitted from the payload is preserved, including top-level bool flags. Send only the fields you want to change, or send the full Settings object to update everything atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key). singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing mode changes only via POST /singbox/router/mode, enable/disable only via the dedicated endpoints.
 //	@Tags			settings
 //	@Accept			json
 //	@Produce		json
@@ -277,6 +322,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	merged := *oldSettings
 	storage.ApplyPatch(&merged, &patch)
+	// Режим перехвата и вкл/выкл sing-box-роутера этим путём НЕ меняются:
+	// Save здесь идёт мимо SwitchRoutingMode, а тик планировщика подхватил бы
+	// чужой режим и оставил ресурсы прежнего жить (см. шапку
+	// internal/singbox/router/fakeip_transition.go). Режим меняется только
+	// POST /singbox/router/mode, Enabled — /enable и /disable. Поля из тела
+	// молча игнорируются — patch-семантика, как у пустого ApiKey выше.
+	merged.SingboxRouter.RoutingMode = oldSettings.SingboxRouter.RoutingMode
+	merged.SingboxRouter.Enabled = oldSettings.SingboxRouter.Enabled
 	merged.PingCheck.Defaults.Target = normalizePingCheckTarget(merged.PingCheck.Defaults.Target)
 	if err := validatePingCheckTarget(merged.PingCheck.Defaults.Target); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_PING_CHECK_TARGET")
@@ -321,6 +374,35 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"время жизни сессии должно быть от 1 до 720 часов",
 			"INVALID_SESSION_TTL")
 		return
+	}
+
+	// Bootstrap-резолвер поднимается ДО всякого DNS, поэтому домен здесь
+	// неработоспособен — только литеральный IP (issue #770). Пустое значение
+	// снимает настройку: 00-base.json остаётся как есть.
+	// Трогаем и валидируем ТОЛЬКО присланное: невалидное (или неаккуратно
+	// записанное) значение, уже лежащее в settings.json — downgrade, ручная
+	// правка, — иначе заперло бы пользователя вне всех настроек целиком. Тот
+	// же контракт, что у sessionTtlHours выше.
+	if patch.SingboxBootstrapDNS != nil {
+		merged.SingboxBootstrapDNS = strings.TrimSpace(merged.SingboxBootstrapDNS)
+	}
+	if patch.SingboxBootstrapDNS != nil && merged.SingboxBootstrapDNS != "" &&
+		net.ParseIP(merged.SingboxBootstrapDNS) == nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			"адрес bootstrap-DNS должен быть IP-адресом без порта",
+			"INVALID_SINGBOX_BOOTSTRAP_DNS")
+		return
+	}
+
+	// Порт Clash API проверяем ТОЛЬКО при реальной смене: наш sing-box в этот
+	// момент слушает СТАРЫЙ порт, так что сверка «а не мы ли держим новый»
+	// не нужна — совпасть значения могут лишь при сохранении того же порта,
+	// а это не смена (issue #788).
+	if patch.SingboxClashPort != nil && oldSettings.SingboxClashPort != merged.SingboxClashPort {
+		if msg := validateClashPort(merged.SingboxClashPort, merged.Server.Port, h.clashPorts); msg != "" {
+			response.Error(w, msg, "SINGBOX_CLASH_PORT_INVALID")
+			return
+		}
 	}
 
 	// Validate usageLevel after merge. Empty merged.UsageLevel is
@@ -412,6 +494,29 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"",
 			fmt.Sprintf("Sing-box log level changed: %s -> %s", oldSingboxLogLevel, newSingboxLogLevel),
 		)
+	}
+
+	if oldSettings.SingboxBootstrapDNS != merged.SingboxBootstrapDNS && h.applyBootstrapDNS != nil {
+		if err := h.applyBootstrapDNS(merged.SingboxBootstrapDNS); err != nil {
+			h.log.Error("singbox-bootstrap-dns", "", "failed to apply bootstrap DNS: "+err.Error())
+			response.Error(w, err.Error(), "SINGBOX_BOOTSTRAP_DNS_APPLY_ERROR")
+			return
+		}
+		h.log.Info("singbox-bootstrap-dns", "",
+			fmt.Sprintf("Sing-box bootstrap DNS changed: %s -> %s",
+				orDefaultLabel(oldSettings.SingboxBootstrapDNS), orDefaultLabel(merged.SingboxBootstrapDNS)))
+	}
+
+	if oldSettings.SingboxClashPort != merged.SingboxClashPort && h.applyClashPort != nil {
+		if err := h.applyClashPort(merged.SingboxClashPort); err != nil {
+			h.log.Error("singbox-clash-port", "", "failed to apply clash port: "+err.Error())
+			response.Error(w, err.Error(), "SINGBOX_CLASH_PORT_APPLY_ERROR")
+			return
+		}
+		h.log.Info("singbox-clash-port", "",
+			fmt.Sprintf("Sing-box Clash API port changed: %d -> %d",
+				singbox.EffectiveClashPort(oldSettings.SingboxClashPort),
+				singbox.EffectiveClashPort(merged.SingboxClashPort)))
 	}
 
 	// Handle ping check toggle AFTER settings are saved
@@ -510,8 +615,20 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.logsSnapshot()
 	}
 
-	response.Success(w, merged)
+	// merged после Save и есть живой кэш — наружу отдаём снапшот.
+	if snap, err := h.store.Snapshot(); err == nil {
+		response.Success(w, snap)
+	} else {
+		response.Success(w, merged)
+	}
 	publishInvalidated(h.bus, ResourceSettings, "updated")
+
+	// Порт мог смениться — перепроверяем экспозицию. В горутине с
+	// собственным контекстом: проверка ходит в NDMS, а контекст запроса
+	// умирает вместе с ответом.
+	if h.exposure != nil {
+		go h.exposure.Check(context.Background())
+	}
 }
 
 // RegenerateApiKey generates a fresh UUID v4 server-side, persists it
@@ -541,14 +658,13 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	settings, err := h.store.Get()
-	if err != nil {
-		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+	if err := h.store.SetApiKey(key); err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
 		return
 	}
-	settings.ApiKey = key
-	if err := h.store.Save(settings); err != nil {
-		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+	settings, err := h.store.Snapshot()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
 		return
 	}
 
@@ -764,4 +880,13 @@ func (h *SettingsHandler) triggerMonitoringRefresh() {
 		defer cancel()
 		h.monitoring.RefreshNow(ctx)
 	}()
+}
+
+// orDefaultLabel рисует пустую настройку bootstrap-DNS как «по умолчанию» —
+// в журнале пустая строка выглядела бы как потерянное значение.
+func orDefaultLabel(v string) string {
+	if v == "" {
+		return "по умолчанию"
+	}
+	return v
 }

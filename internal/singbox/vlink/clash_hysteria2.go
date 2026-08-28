@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,9 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 	if q.Get("security") == "" {
 		q.Set("security", "tls")
 	}
+	if q.Get("alpn") == "" {
+		q.Set("alpn", "h3")
+	}
 	stream, err := BuildStreamFromQuery(q, host)
 	if err != nil {
 		return nil, fmt.Errorf("clash hysteria2: %w", err)
@@ -55,6 +59,21 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 			"password": obfsPass,
 		}
 	}
+	if ports := asString(p["ports"]); ports != "" {
+		if parsed := parseMport(ports); len(parsed) > 0 {
+			anyPorts := make([]any, 0, len(parsed))
+			for _, spec := range parsed {
+				anyPorts = append(anyPorts, spec)
+			}
+			out["server_ports"] = anyPorts
+			hop, hopMax := clashHopInterval(p["hop-interval"])
+			out["hop_interval"] = hop
+			if hopMax != "" {
+				out["hop_interval_max"] = hopMax
+			}
+		}
+	}
+
 	if up, ok := parseMbps(p["up"]); ok {
 		out["up_mbps"] = up
 	}
@@ -79,6 +98,32 @@ func mapClashHysteria2(p map[string]any) (*ParsedOutbound, error) {
 		Outbound: raw,
 		Label:    asString(p["name"]),
 	}, nil
+}
+
+// clashHopInterval переводит hop-interval из формы mihomo (число секунд или
+// диапазон "a-b") в Duration, которую ждёт sing-box. Голое "30" в конфиг
+// пускать нельзя: движок разбирает поле как Duration и роняет ВСЮ
+// конфигурацию, а не один аутбаунд.
+func clashHopInterval(v any) (hop, hopMax string) {
+	raw := asString(v)
+	if n, ok := asInt(v); ok {
+		raw = strconv.Itoa(n)
+	}
+	if raw == "" {
+		return "10s", ""
+	}
+	lo, hi, isRange := strings.Cut(raw, "-")
+	n, err := strconv.Atoi(strings.TrimSpace(lo))
+	if err != nil || n <= 0 {
+		return "10s", ""
+	}
+	hop = strconv.Itoa(n) + "s"
+	if isRange {
+		if m, err := strconv.Atoi(strings.TrimSpace(hi)); err == nil && m >= n {
+			hopMax = strconv.Itoa(m) + "s"
+		}
+	}
+	return hop, hopMax
 }
 
 // parseMbps accepts int/float numbers and strings like "50", "50 Mbps", "50Mbps".

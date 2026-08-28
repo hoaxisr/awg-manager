@@ -82,6 +82,10 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if asBool(ws["v2ray-http-upgrade"]) {
 			v.Set("type", "httpupgrade")
 		}
+		if n, ok := asInt(ws["max-early-data"]); ok && n > 0 {
+			v.Set("ed", strconv.Itoa(n))
+			v.Set("eh", asString(ws["early-data-header-name"]))
+		}
 	case "grpc":
 		gp := nestedMap(p, "grpc-opts")
 		if name := asString(gp["grpc-service-name"]); name != "" {
@@ -109,7 +113,8 @@ func clashFieldsToValues(p map[string]any) url.Values {
 	case "xhttp", "splithttp":
 		// mihomo carries xhttp under xhttp-opts with top-level string path/host
 		// (not []string) plus a mode. We don't run mihomo — convert to our
-		// sing-box xhttp transport. x_padding_bytes is defaulted downstream.
+		// sing-box xhttp transport. The remaining options, xmux among them,
+		// go through the share-link extra= path (#797).
 		xh := nestedMap(p, "xhttp-opts")
 		if path := asString(xh["path"]); path != "" {
 			v.Set("path", path)
@@ -120,6 +125,14 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if mode := asString(xh["mode"]); mode != "" {
 			v.Set("mode", mode)
 		}
+		if extra := xhttpExtraFromClash(xh); extra != "" {
+			v.Set("extra", extra)
+		}
+	}
+
+	// mihomo привязывает исходящий интерфейс per-proxy через interface-name.
+	if iface := asString(p["interface-name"]); iface != "" {
+		v.Set("bind_interface", iface)
 	}
 
 	// TLS / Reality

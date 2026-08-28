@@ -121,9 +121,27 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 	if !validTransitionTarget(target) {
 		return fmt.Errorf("invalid routing mode %q (want off|tproxy|fakeip-tun|policy-tun)", target)
 	}
+	// Гейт до всякого teardown: на прошивке без OpkgTun отказ обязан застать
+	// текущий режим нетронутым, иначе пользователь остаётся без маршрутизации
+	// и зависит от отката (issue #768).
+	if target == stateFakeIPTun || target == statePolicyTun {
+		if err := s.requireOpkgTunSupport(); err != nil {
+			return err
+		}
+	}
 
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()
+
+	// Переход пишет слоты по нескольку раз (teardown, провижининг, примирение
+	// базы на выходе из Disable/Enable) и длится дольше окна debounce, поэтому
+	// без hold чужой reload прилетает посреди транзакции — а при живом tun
+	// каждый reload это полный Stop+Start движка. Явные applyConfigNow внутри
+	// Enable/Disable под hold работают как раньше; накопленное применяется
+	// одним reload'ом на выходе.
+	if s.deps.Orch != nil {
+		defer s.deps.Orch.HoldReloads()()
+	}
 
 	id := nextTransitionID()
 
@@ -228,6 +246,10 @@ func (s *ServiceImpl) persistMode(mode string, enabled bool) error {
 	if err != nil {
 		return err
 	}
+	// Mutate a private copy: Load/Get hand out the store's live cache, which
+	// other goroutines read without a lock.
+	cp := *settings
+	settings = &cp
 	settings.SingboxRouter.RoutingMode = mode
 	settings.SingboxRouter.Enabled = enabled
 	return s.deps.Settings.Save(settings)

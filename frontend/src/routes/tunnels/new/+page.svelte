@@ -169,7 +169,7 @@
 				onclick={() => selectedBackend = 'kernel'}
 			>
 				<span class="backend-name">Kernel</span>
-				<span class="backend-desc">Через OpkgTun и модуль ядра, с поддержкой AWG 3.0</span>
+				<span class="backend-desc">Через OpkgTun и модуль ядра, с поддержкой до AWG 3.1</span>
 			</button>
 		</div>
 		{#if nativewgHint}

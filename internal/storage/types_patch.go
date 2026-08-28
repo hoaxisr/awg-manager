@@ -37,6 +37,8 @@ type SettingsPatch struct {
 	SingboxRouter               *SingboxRouterSettings `json:"singboxRouter,omitempty"`
 	SingboxManuallyStopped      *bool                  `json:"singboxManuallyStopped,omitempty"`
 	CreateNDMSProxyForSingbox   *bool                  `json:"createNDMSProxyForSingbox,omitempty"`
+	SingboxBootstrapDNS         *string                `json:"singboxBootstrapDNS,omitempty"`
+	SingboxClashPort            *int                   `json:"singboxClashPort,omitempty"`
 	ManagedPeerAllowIPsMigrated *bool                  `json:"managedPeerAllowIPsMigrated,omitempty"`
 }
 

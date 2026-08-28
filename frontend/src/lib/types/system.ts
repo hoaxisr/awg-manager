@@ -84,6 +84,8 @@ export interface SystemInfo {
 	goOS: string;
 	keeneticOS: string;
 	isOS5: boolean;
+	/** Прошивка умеет интерфейсы OpkgTun (KeeneticOS 5.x) — от них зависят режимы fakeip-tun и policy-tun. */
+	supportsOpkgTun?: boolean;
 	firmwareVersion: string;
 	supportsExtendedASC: boolean;
 	supportsHRanges: boolean;
@@ -99,6 +101,10 @@ export interface SystemInfo {
 	kernelModuleVersion: string;
 	/** Version reported by the module currently in the kernel, "" if not loaded. */
 	kernelModuleLoadedVersion?: string;
+	/** Loaded awg_proxy version (NativeWG); >= 1.4.0 supports AWG 3.1. */
+	awgProxyVersion?: string;
+	/** awg_proxy version shipped with this build (in /opt/etc/awg-manager/modules). */
+	awgProxyExpectedVersion?: string;
 	isAarch64: boolean;
 	activeBackend: string;
 	routerIP: string;
@@ -280,6 +286,20 @@ export interface Settings {
 	usageLevel: UsageLevel;
 	hiddenSystemTunnels?: string[];
 	monitoringExcludedTunnels?: string[];
+	/**
+	 * Адрес bootstrap-резолвера sing-box (dns-bootstrap в 00-base.json):
+	 * им резолвятся доменные адреса endpoint'ов туннелей и серверов
+	 * подписок. Отвечает раньше любого другого DNS, поэтому только IP.
+	 * Пусто — адрес в конфиге не навязывается (issue #770).
+	 */
+	singboxBootstrapDNS?: string;
+	/**
+	 * Порт experimental.clash_api.external_controller в 00-base.json.
+	 * Хост всегда 127.0.0.1: Clash API — служебный канал управления
+	 * awg-manager, а не пользовательский слушатель. 0 — порт по
+	 * умолчанию (9099), issue #788.
+	 */
+	singboxClashPort?: number;
 }
 
 // #endregion

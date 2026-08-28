@@ -68,3 +68,24 @@ func TestParseReleaseAtLeastLogic(t *testing.T) {
 		})
 	}
 }
+
+func TestSupportsOpkgTunRelease(t *testing.T) {
+	cases := []struct {
+		release string
+		want    bool
+	}{
+		{"5.01.C.3.0-1", true},
+		{"5.0", true},
+		{"4.03.C.8.0-0", false}, // прошивка репортёра #768
+		{"4.3", false},
+		{"3.9.C.1.0-0", false},
+		{"", true},      // версия неизвестна — не блокируем (fail-open)
+		{"мусор", true}, // распарсить не смогли — тоже fail-open
+		{"10.0.A.1.0-0", true},
+	}
+	for _, c := range cases {
+		if got := SupportsOpkgTunRelease(c.release); got != c.want {
+			t.Errorf("SupportsOpkgTunRelease(%q) = %v, ожидалось %v", c.release, got, c.want)
+		}
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -25,8 +24,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
-var confDir = "/opt/etc/awg-manager"
-
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
@@ -34,6 +31,11 @@ type ServiceImpl struct {
 	nwgOperator    *nwg.OperatorNativeWG // NativeWG backend (nil if unavailable)
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	appLog         *logging.ScopedLogger // UI-visible logging
+
+	// opkgOccupancy — занятость номеров OpkgTun (живые интерфейсы плюс пины
+	// чужих подсистем). Нужна только kernel-ветке выдачи идентификатора:
+	// номер kernel-туннеля одновременно является номером интерфейса.
+	opkgOccupancy storage.OpkgTunPins
 
 	// tunnelMu provides per-tunnel mutexes for lifecycle operations.
 	// Key: tunnelID (string), Value: *sync.Mutex
@@ -71,6 +73,9 @@ type AWGSyncer interface {
 }
 
 func (s *ServiceImpl) SetAWGSyncer(sync AWGSyncer) { s.awgSyncer = sync }
+
+// SetOpkgTunOccupancy задаёт источник занятости номеров OpkgTun.
+func (s *ServiceImpl) SetOpkgTunOccupancy(occ storage.OpkgTunPins) { s.opkgOccupancy = occ }
 
 func (s *ServiceImpl) SetDeviceProxyRefChecker(c DeviceProxyRefChecker) { s.deviceProxyRefs = c }
 func (s *ServiceImpl) SetRouterRefChecker(c RouterRefChecker)           { s.routerRefs = c }
@@ -222,10 +227,21 @@ func (s *ServiceImpl) unlockTunnel(tunnelID string) {
 
 // === CRUD Operations ===
 
-// Create creates a new tunnel and saves it to storage.
-// For NativeWG tunnels, stored must be non-nil with Backend="nativewg";
-// Create will call nwgOperator.Create and set stored.NWGIndex before returning.
-func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tunnel.Config, stored *storage.AWGTunnel) error {
+// Create создаёт туннель целиком: ресурс в NDMS, запись в хранилище и .conf —
+// одной операцией с откатом. Конфиг для оператора собирается здесь же из
+// записи каноническим StoredToConfig: вызывающий передаёт только запись, и
+// расходиться этим двум источникам больше негде.
+func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) error {
+	if stored == nil {
+		return fmt.Errorf("nil tunnel record")
+	}
+	tunnelID := stored.ID
+	cfg := orchestrator.StoredToConfig(stored)
+	// StoredToConfig это поле не переносит — те, кому оно нужно, дописывают
+	// его сами (так делает и оркестратор перед запуском). Без него отметка
+	// «маршрут по умолчанию» не действовала до первого включения туннеля.
+	cfg.DefaultRoute = stored.DefaultRoute
+
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -235,21 +251,24 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	}
 
 	// NativeWG path
-	if stored != nil && s.isNativeWG(stored) {
+	if s.isNativeWG(stored) {
 		if s.nwgOperator == nil {
 			return fmt.Errorf("NativeWG backend not available")
 		}
-		// NOTE: the caller (tunnels API handler) calls store.Save AFTER we
-		// return, so the self-create gate can't be scoped to this function
-		// alone — it would exit too early and let the ifcreated hook see an
-		// empty managed list. For now, the gate only protects Import (which
-		// saves internally). Manual Create racing with ifcreated is a known
-		// edge case; if it surfaces, move the gate up to the handler layer.
 		index, err := s.nwgOperator.Create(ctx, stored)
 		if err != nil {
 			return err
 		}
 		stored.NWGIndex = index
+		// Симметрично kernel-ветке: запись сохраняем здесь, иначе созданный
+		// в NDMS интерфейс осиротеет. Конфиг для nativewg не пишется — его
+		// никто не читает.
+		if err := s.store.Save(stored); err != nil {
+			if derr := s.nwgOperator.Delete(ctx, stored); derr != nil {
+				s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+			}
+			return fmt.Errorf("save tunnel: %w", err)
+		}
 		s.logInfo("create", tunnelID, "NativeWG tunnel created")
 		// Legacy tunnel:created publish removed (Task 14 sweep); handler
 		// layer calls publishTunnelList → resource:invalidated after all
@@ -261,6 +280,27 @@ func (s *ServiceImpl) Create(ctx context.Context, tunnelID, name string, cfg tun
 	// Kernel path: create in NDMS (for OS5, no-op for OS4)
 	if err := s.legacyOperator.Create(ctx, cfg); err != nil {
 		return err
+	}
+
+	// Запись и конфиг — здесь же, а не у вызывающего: ресурс в NDMS уже
+	// создан, и если сохранить его не удастся, он останется жить без записи.
+	// Никто уже не будет знать, что он наш, и никто его не уберёт: стартовый
+	// подметатель ходит только по записям, а полная уборка бывает лишь при
+	// удалении пакета.
+	if err := s.store.Save(stored); err != nil {
+		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+		}
+		return fmt.Errorf("save tunnel: %w", err)
+	}
+	if err := config.WriteFile(stored); err != nil {
+		if derr := s.store.Delete(tunnelID); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, запись осталась: "+derr.Error())
+		}
+		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
+			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
+		}
+		return fmt.Errorf("write config: %w", err)
 	}
 
 	s.logInfo("create", tunnelID, "Tunnel created")
@@ -398,7 +438,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	confChanged := !awgInterfaceEqual(oldStored.Interface, newStored.Interface) ||
 		!awgPeerEqual(oldStored.Peer, newStored.Peer)
 	if confChanged && !s.isNativeWG(newStored) {
-		if err := s.writeConfigFile(newStored); err != nil {
+		if err := config.WriteFile(newStored); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}
@@ -481,7 +521,8 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 
 	if oldStored.Interface.Address != newStored.Interface.Address {
 		ipv4, ipv6 := orchestrator.SplitAddresses(newStored.Interface.Address)
-		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, ipv6); err != nil {
+		prefix := orchestrator.AddressPrefixOf(newStored.Interface.Address)
+		if err := s.legacyOperator.SyncAddress(ctx, tunnelID, ipv4, prefix, ipv6); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync address: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync address: %w", err))
 		}
@@ -514,6 +555,25 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
 	tunnelID := newStored.ID
 	var errs []error
+
+	// Правка через границу 2.0↔3.x меняет сам путь туннеля: ASC прошивки или
+	// awg_proxy. Посинхронно этот переход не применяется — половина параметров
+	// осталась бы у прошивки, половина у kmod, обе обфускации легли бы друг на
+	// друга, и туннель выглядел бы живым, не пропуская ни пакета. Только
+	// полный перезапуск: Stop снимает слот и параметры прежнего пути, Start
+	// поднимает по новому.
+	if nwg.UsesProxyPath(&oldStored.Interface) != nwg.UsesProxyPath(&newStored.Interface) {
+		s.logInfo("update", tunnelID, "путь туннеля меняется (ASC ↔ awg_proxy) — перезапуск")
+		if err := s.nwgOperator.Stop(ctx, oldStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to stop on path switch: "+err.Error())
+			return fmt.Errorf("stop on path switch: %w", err)
+		}
+		if err := s.nwgOperator.Start(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "Failed to start on path switch: "+err.Error())
+			return fmt.Errorf("start on path switch: %w", err)
+		}
+		return nil
+	}
 
 	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey {
 		if err := s.nwgOperator.SyncPrivateKey(ctx, newStored); err != nil {
@@ -713,6 +773,13 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 		return nil, fmt.Errorf("parse conf: %w", err)
 	}
 
+	// Тот же гейт, что и на create/update: чужой .conf с битым
+	// HeaderProtectionKey или коротким S1-S4 иначе доедет до ядра и туннель
+	// встанет с выключенной header protection — молча.
+	if err := config.ValidateAWG3(&parsed.Interface.AWGObfuscation); err != nil {
+		return nil, err
+	}
+
 	// Set name
 	if name != "" {
 		parsed.Name = name
@@ -732,7 +799,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	}
 
 	// Kernel path (existing logic)
-	tunnelID, err := s.store.NextAvailableID(backend)
+	tunnelID, err := s.store.NextAvailableID(ctx, backend, s.opkgOccupancy)
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}
@@ -744,7 +811,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	if err := s.store.Save(parsed); err != nil {
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
-	if err := s.writeConfigFile(parsed); err != nil {
+	if err := config.WriteFile(parsed); err != nil {
 		_ = s.store.Delete(tunnelID)
 		return nil, fmt.Errorf("write config: %w", err)
 	}
@@ -763,7 +830,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 
 	// Generate tunnel ID — NativeWG-диапазон (awg20+), не делит
 	// kernel-лимит OpkgTun10..16.
-	tunnelID, err := s.store.NextAvailableID("nativewg")
+	tunnelID, err := s.store.NextAvailableID(ctx, "nativewg", nil)
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}
@@ -796,11 +863,6 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	if err := s.store.Save(parsed); err != nil {
 		_ = s.nwgOperator.Delete(ctx, parsed)
 		return nil, fmt.Errorf("save tunnel: %w", err)
-	}
-
-	// Write config file (for export/display purposes)
-	if err := s.writeConfigFile(parsed); err != nil {
-		s.logWarn("import", tunnelID, "Failed to write config file: "+err.Error())
 	}
 
 	s.logInfo("import", tunnelID, "NativeWG tunnel imported: "+parsed.Name)
@@ -870,9 +932,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 
-	// Overwrite .conf file
-	if err := s.writeConfigFile(stored); err != nil {
-		s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
+	// Перезаписываем .conf только для kernel-пути: его читает `awg setconf`.
+	// У NativeWG конфигурация уезжает в NDMS байтами через RCI, а экспорт
+	// пользователю регенерируется из записи — файл на диске не читает никто.
+	if !s.isNativeWG(stored) {
+		if err := config.WriteFile(stored); err != nil {
+			s.logWarn("replace-config", tunnelID, "Failed to write config file: "+err.Error())
+		}
 	}
 
 	// NativeWG: sync peer + address/MTU to NDMS.
@@ -1040,25 +1106,6 @@ func (s *ServiceImpl) resolveKernelDevice(resolvedWAN string) string {
 		return tunnel.NewNames(tunnel.TunnelRouteID(resolvedWAN)).IfaceName
 	}
 	return resolvedWAN // already a kernel name
-}
-
-// writeConfigFile generates and writes the WireGuard config file.
-func (s *ServiceImpl) writeConfigFile(stored *storage.AWGTunnel) error {
-	// Ensure directory exists
-	if err := os.MkdirAll(confDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	// Generate config content
-	content := config.Generate(stored)
-
-	// Write to file
-	confPath := filepath.Join(confDir, stored.ID+".conf")
-	if err := os.WriteFile(confPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
-	}
-
-	return nil
 }
 
 // logInfo logs an info message via the UI-visible scoped logger.

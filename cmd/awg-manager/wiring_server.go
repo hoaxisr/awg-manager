@@ -82,6 +82,7 @@ func (a *app) setupServer() {
 		},
 		server.Deps{
 			TunnelService:       a.tunnelService,
+			OpkgTunOccupancy:    a.opkgTunOccupancy,
 			ExternalService:     a.externalService,
 			TestingService:      a.testService,
 			Keenetic:            a.keeneticClient,
@@ -91,7 +92,6 @@ func (a *app) setupServer() {
 			PingCheckService:    a.pingCheckFacade,
 			ProxyRecords:        a.proxyStore,
 			LoggingService:      a.loggingService,
-			ActiveBackend:       a.backendImpl,
 			KmodLoader:          a.kmodLoader,
 			UpdaterService:      a.updaterService,
 			NdmsQueries:         a.ndmsQueries,
@@ -288,6 +288,13 @@ func (a *app) setupDeviceProxy() {
 // the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
 func (a *app) setupRouter() {
+	// Порты инбаундов sb-router лежат внутри эфемерного диапазона ядра
+	// (49000-61001 на Keenetic), поэтому исходящее соединение может занять
+	// их в окно рестарта sing-box и уронить старт с EADDRINUSE (#762).
+	if err := router.ReserveListenPorts(); err != nil {
+		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter).
+			Warn("reserve-ports", "", "зарезервировать порты инбаундов: "+err.Error())
+	}
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                 a.loggingService,
@@ -309,13 +316,18 @@ func (a *app) setupRouter() {
 		GeoTagCounts:           a.geoDataStore,
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
-		OpkgTunIndices:         &routerOpkgTunIndexAdapter{},
-		OpkgTunScan:            opkgTunScanner(a.ndmsQueries.Interfaces),
-		DefaultRoute:           a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
-		SegmentNAT:             a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
-		Segments:               &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
-		RunningConfig:          a.ndmsQueries.RunningConfig,
-		NATState:               &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
+		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
+		// Пины ЧУЖИХ владельцев: записи туннелей и записи NDMS без живого
+		// устройства. Своя удерживающая запись сюда не входит — она приходит
+		// из настроек, и подмешивание её в занятость перепинило бы режим
+		// роутера сам на себя.
+		OpkgTunPins:   storage.MergeOpkgTunPins(a.awgStore.OpkgTunPinsOf, a.opkgNDMSPins),
+		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
+		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
+		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
+		RunningConfig: a.ndmsQueries.RunningConfig,
+		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
 		// *RouteStore satisfies DefaultGatewayResolver directly.
 		DefaultGateway: a.ndmsQueries.Routes,
 		FakeIPTun: func() router.FakeIPTunParams {
@@ -337,6 +349,7 @@ func (a *app) setupRouter() {
 		},
 	})
 	a.routerSvc = routerSvc
+	a.subSvc.SetBindInterfaceValidator(subscriptionBindValidator{adapter: bindableAdapter})
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
 	// вида «libc.so: cannot open shared object file» иначе виден только как
 	// молчаливые exit 127 на каждой команде). До подключения логгер nil-safe.
@@ -366,6 +379,7 @@ func (a *app) setupRouter() {
 	a.tunnelService.SetDeviceProxyRefChecker(a.deviceProxySvc)
 	a.tunnelService.SetRouterRefChecker(routerSvc)
 	a.singboxHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	a.singboxHandler.SetBindValidator(subscriptionBindValidator{adapter: bindableAdapter}.ValidateBindInterface)
 	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
 	// Initial reconcile on boot — idempotent, brings config.json in sync
 	// with storage + current tunnel set. Runs strictly AFTER
@@ -496,12 +510,15 @@ func (a *app) setupListen() {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}
 	a.srv.SetDNSRewritesHandler(api.NewDNSRewritesHandler(dnsRewriteSvc, a.loggingService))
-	// keendns preset → managed DNS rewrite (own FQDN → LAN), not iptables
-	// /32 for 78.47.125.180 (that IP is shared with every other KeenDNS host).
+	// keendns preset → имена KeenDNS резолвит сам роутер, а его адреса идут
+	// мимо sing-box. Прежняя подмена FQDN на LAN IP ломала доступ к морде
+	// роутера по имени KeenDNS (issue #729).
 	if a.routerSvc != nil {
 		a.routerSvc.SetKeenDNSPreset(
-			&keenDNSDomainAdapter{store: a.ndmsQueries.KeenDNS},
-			keenDNSLANAdapter{},
+			keenDNSInfoAdapter{
+				keendns:  a.ndmsQueries.KeenDNS,
+				dnsProxy: a.ndmsQueries.DNSProxyStatus,
+			},
 			dnsRewriteSvc,
 		)
 		// Догоняющий sync: startup-Reconcile (setupRouter) стартовал раньше
@@ -510,7 +527,7 @@ func (a *app) setupListen() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			a.routerSvc.SyncKeenDNSRewrites(ctx)
+			a.routerSvc.SyncKeenDNSPreset(ctx)
 		}()
 	}
 

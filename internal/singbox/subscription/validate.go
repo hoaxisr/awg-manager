@@ -71,7 +71,8 @@ func classifyOutbound(ob map[string]any) string {
 		return ""
 	}
 	// Universal required fields for connect-style outbounds.
-	if _, ok := ob["server"].(string); !ok || ob["server"] == "" {
+	srv, ok := ob["server"].(string)
+	if !ok || srv == "" {
 		// Direct/block/dns don't take a server — exempt those.
 		switch typ {
 		case "direct", "block", "dns":
@@ -80,7 +81,8 @@ func classifyOutbound(ob map[string]any) string {
 			return "missing server"
 		}
 	}
-	if port := portValue(ob["server_port"]); port < 1 || port > 65535 {
+	port := portValue(ob["server_port"])
+	if port < 1 || port > 65535 {
 		switch typ {
 		case "direct", "block", "dns":
 			// ok
@@ -112,6 +114,18 @@ func classifyOutbound(ob map[string]any) string {
 		}
 		if stringOf(ob["method"]) == "" {
 			return "missing shadowsocks method"
+		}
+	}
+
+	if srv != "" {
+		lowerSrv := strings.ToLower(strings.TrimSpace(srv))
+		if lowerSrv == "0.0.0.0" || (port == 1 && (lowerSrv == "127.0.0.1" || lowerSrv == "localhost" || lowerSrv == "::1")) {
+			switch typ {
+			case "direct", "block", "dns":
+				// ok
+			default:
+				return "non-routable/dummy host"
+			}
 		}
 	}
 	return ""

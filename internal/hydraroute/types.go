@@ -88,8 +88,15 @@ type DnsListInfo struct {
 }
 
 const (
-	maxGeoFiles    = 16
-	defaultMaxElem = 65536
+	maxGeoFiles = 16
+
+	// Дефолты демона (PARAMS в params.c) для ключей, которых нет в
+	// стоковом hrneo.conf: демон подставляет их сам, и наши значения
+	// обязаны совпадать — иначе WriteConfig молча переключит поведение.
+	defaultMaxElem      = 262144
+	defaultIpsetTimeout = 21600
+	defaultLogLevel     = "off"
+	defaultLogFile      = "/opt/var/log/LOGhrneo.log"
 )
 
 // hrConfPath and hrDir are vars so tests can override them via t.TempDir().

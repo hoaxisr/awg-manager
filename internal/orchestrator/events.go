@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strconv"
 	"time"
 )
 
@@ -19,6 +20,11 @@ const (
 	EventNDMSHook                         // NDMS iflayerchanged.d hook
 	EventPingCheckFailed                  // Connectivity loss detected
 	EventQuiesce                          // Stop running tunnels without disabling (backup/restore)
+
+	// eventTypeCount — сентинель для теста полноты String(). Держать
+	// последним: новое событие, добавленное после него, останется
+	// безымянным в логе держателя замка и тест этого не заметит.
+	eventTypeCount
 )
 
 // Event is the input to the orchestrator.
@@ -37,4 +43,34 @@ type Event struct {
 
 	// WAN event data
 	WANIface string
+}
+
+// String names the event for logs — notably the per-tunnel lock holder
+// (issue #795), where a bare int told nobody which operation was wedged.
+func (t EventType) String() string {
+	switch t {
+	case EventBoot:
+		return "boot"
+	case EventReconnect:
+		return "reconnect"
+	case EventStart:
+		return "start"
+	case EventStop:
+		return "stop"
+	case EventRestart:
+		return "restart"
+	case EventDelete:
+		return "delete"
+	case EventWANUp:
+		return "wan-up"
+	case EventWANDown:
+		return "wan-down"
+	case EventNDMSHook:
+		return "ndms-hook"
+	case EventPingCheckFailed:
+		return "pingcheck-failed"
+	case EventQuiesce:
+		return "quiesce"
+	}
+	return "event-" + strconv.Itoa(int(t))
 }

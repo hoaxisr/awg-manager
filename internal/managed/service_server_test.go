@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -515,6 +517,18 @@ func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *rec
 	routeGetter.SetJSON("/show/ip/route", `[{"destination":"0.0.0.0/0","gateway":"1.2.3.4","interface":"PPPoE0"}]`)
 	svc.queries.Routes = query.NewRouteStore(routeGetter, query.NopLogger())
 
+	// running-config с тремя `ip global`-выходами (порядок появления значим).
+	rcGetter := query.NewFakeGetter()
+	rcGetter.SetJSON("/show/running-config", `{"message":[
+		"interface PPPoE0",
+		"    ip global 32767",
+		"interface Wireguard2",
+		"    ip global auto",
+		"interface OpkgTun0",
+		"    ip global 100"
+	]}`)
+	svc.queries.RunningConfig = query.NewRunningConfigStore(rcGetter, query.NopLogger())
+
 	poster, ok := svc.transport.(*recordingPoster)
 	if !ok {
 		t.Fatalf("unexpected transport type %T", svc.transport)
@@ -522,79 +536,289 @@ func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *rec
 	return svc, store, poster
 }
 
-func TestSetNATMode_InternetOnly_SetsStaticToWAN(t *testing.T) {
+func TestNatStaticTargets_AllGlobalExits(t *testing.T) {
+	svc, _, _ := newNATModeTestService(t)
+	got, err := svc.natStaticTargets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"PPPoE0", "Wireguard2", "OpkgTun0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestNatStaticTargets_FallbackDefaultWAN(t *testing.T) {
+	svc, _, _ := newNATModeTestService(t)
+	svc.queries.RunningConfig = nil // running-config недоступен
+	got, err := svc.natStaticTargets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"PPPoE0"} // Routes-фейк harness'а отвечает PPPoE0
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// staticPostTargets собирает to-interface из ip-static POST'ов интерфейса в
+// порядке отправки. Формы разные (см. rciSetStaticNAT): add — map
+// ({"ip":{"static":{...}}}), remove — slice ({"ip":{"static":[{"no":true,...}]}}).
+func staticPostTargets(posts []map[string]interface{}, iface string, removed bool) []string {
+	var out []string
+	for _, p := range posts {
+		ip, ok := p["ip"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if !removed {
+			static, ok := ip["static"].(map[string]interface{})
+			if !ok || static["interface"] != iface {
+				continue
+			}
+			if to, ok := static["to-interface"].(string); ok {
+				out = append(out, to)
+			}
+			continue
+		}
+		arr, ok := ip["static"].([]map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, e := range arr {
+			if e["no"] != true || e["interface"] != iface {
+				continue
+			}
+			if to, ok := e["to-interface"].(string); ok {
+				out = append(out, to)
+			}
+		}
+	}
+	return out
+}
+
+func snapshotPosts(p *recordingPoster) []map[string]interface{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	posts := make([]map[string]interface{}, len(p.posts))
+	copy(posts, p.posts)
+	return posts
+}
+
+func TestSetNATMode_InternetOnly_StaticOnAllExits(t *testing.T) {
 	svc, store, poster := newNATModeTestService(t)
 	ctx := context.Background()
-
-	// Seed a server in storage so SetNATMode can look it up.
 	const ifaceName = "Wireguard0"
 	if err := store.AddManagedServer(storage.ManagedServer{
-		InterfaceName: ifaceName,
-		Address:       "10.66.66.1",
-		Mask:          "255.255.255.0",
-		ListenPort:    51820,
-		NATEnabled:    true,
-		NATMode:       "full",
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATEnabled: true, NATMode: "full",
 	}); err != nil {
 		t.Fatalf("seed server: %v", err)
 	}
-
 	poster.mu.Lock()
-	poster.posts = nil // reset posts from any prior calls
+	poster.posts = nil
 	poster.mu.Unlock()
 
 	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err != nil {
 		t.Fatalf("SetNATMode: %v", err)
 	}
 
-	// Verify storage was updated.
-	saved, ok := store.GetManagedServerByID(ifaceName)
-	if !ok {
-		t.Fatalf("server not found in storage after SetNATMode")
+	want := []string{"PPPoE0", "Wireguard2", "OpkgTun0"}
+	if got := staticPostTargets(snapshotPosts(poster), ifaceName, false); !reflect.DeepEqual(got, want) {
+		t.Errorf("static adds: got %v, want %v", got, want)
 	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
 	if saved.NATMode != "internet-only" {
-		t.Errorf("storage NATMode: got %q, want %q", saved.NATMode, "internet-only")
+		t.Errorf("storage NATMode: got %q, want internet-only", saved.NATMode)
 	}
 	if saved.NATEnabled {
 		t.Errorf("storage NATEnabled: got true, want false for internet-only")
 	}
-	if saved.NATStaticWAN != "PPPoE0" {
-		t.Errorf("storage NATStaticWAN: got %q, want PPPoE0", saved.NATStaticWAN)
+	if !reflect.DeepEqual(saved.NATStaticWANs, want) {
+		t.Errorf("NATStaticWANs: got %v, want %v", saved.NATStaticWANs, want)
 	}
+	if saved.NATStaticWAN != "" {
+		t.Errorf("legacy NATStaticWAN must be cleared, got %q", saved.NATStaticWAN)
+	}
+}
 
-	// Inspect the RCI POSTs.
+func TestSetNATMode_InternetOnly_RollbackOnStaticFailure(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATEnabled: true, NATMode: "full",
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
 	poster.mu.Lock()
-	posts := make([]map[string]interface{}, len(poster.posts))
-	copy(posts, poster.posts)
-	poster.mu.Unlock()
-
-	foundNoIPNat := false
-	foundStaticNAT := false
-	for _, p := range posts {
-		ip, ok := p["ip"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		// no-ip-nat: {"ip":{"nat":[{"no":true,"interface":"Wireguard0"}]}}
-		if natSlice, ok := ip["nat"].([]map[string]interface{}); ok {
-			for _, entry := range natSlice {
-				if entry["no"] == true && entry["interface"] == ifaceName {
-					foundNoIPNat = true
+	poster.posts = nil
+	poster.failOn = func(p map[string]interface{}) error {
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if st, ok := ip["static"].(map[string]interface{}); ok {
+				if _, remove := st["no"]; !remove && st["to-interface"] == "Wireguard2" {
+					return fmt.Errorf("boom")
 				}
 			}
 		}
-		// ip-static: {"ip":{"static":{"interface":"Wireguard0","to-interface":"PPPoE0"}}}
-		if static, ok := ip["static"].(map[string]interface{}); ok {
-			if static["interface"] == ifaceName && static["to-interface"] == "PPPoE0" {
-				foundStaticNAT = true
+		return nil
+	}
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err == nil {
+		t.Fatal("expected error")
+	}
+
+	posts := snapshotPosts(poster)
+	if got := staticPostTargets(posts, ifaceName, true); !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+		t.Errorf("rollback removes: got %v, want [PPPoE0]", got)
+	}
+	for _, p := range posts { // no ip nat не отправлялся
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if natSlice, ok := ip["nat"].([]map[string]interface{}); ok {
+				for _, e := range natSlice {
+					if e["no"] == true && e["interface"] == ifaceName {
+						t.Fatal("no-ip-nat must not be sent on static failure")
+					}
+				}
 			}
 		}
 	}
-	if !foundNoIPNat {
-		t.Errorf("expected no-ip-nat POST for %s; posts = %v", ifaceName, posts)
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if saved.NATMode != "full" {
+		t.Errorf("storage must be untouched, NATMode=%q", saved.NATMode)
 	}
-	if !foundStaticNAT {
-		t.Errorf("expected ip-static POST for %s to PPPoE0; posts = %v", ifaceName, posts)
+}
+
+// TestSetNATMode_ReapplyInternetOnly_RollbackKeepsPrevTargets: при повторном
+// применении internet-only цели из prevWANs уже имеют static на роутере, а
+// `ip nat` уже снят. Откат обязан вернуть состояние ДО вызова, а не пустое:
+// снятие таких static оставило бы эти выходы вовсе без подмены источника,
+// хотя storage (fail-closed, не тронут) продолжает их числить.
+func TestSetNATMode_ReapplyInternetOnly_RollbackKeepsPrevTargets(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only",
+		NATStaticWANs: []string{"PPPoE0"},
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.failOn = func(p map[string]interface{}) error {
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if st, ok := ip["static"].(map[string]interface{}); ok && st["to-interface"] == "Wireguard2" {
+				return fmt.Errorf("boom")
+			}
+		}
+		return nil
+	}
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err == nil {
+		t.Fatal("expected error")
+	}
+
+	posts := snapshotPosts(poster)
+	if got := staticPostTargets(posts, ifaceName, true); len(got) != 0 {
+		t.Errorf("rollback must not remove pre-existing targets; removes: %v", got)
+	}
+	for _, p := range posts { // no ip nat не отправлялся
+		if ip, ok := p["ip"].(map[string]interface{}); ok {
+			if natSlice, ok := ip["nat"].([]map[string]interface{}); ok {
+				for _, e := range natSlice {
+					if e["no"] == true && e["interface"] == ifaceName {
+						t.Fatal("no-ip-nat must not be sent on static failure")
+					}
+				}
+			}
+		}
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if saved.NATMode != "internet-only" || !reflect.DeepEqual(saved.NATStaticWANs, []string{"PPPoE0"}) {
+		t.Errorf("storage must be untouched: mode=%q wans=%v", saved.NATMode, saved.NATStaticWANs)
+	}
+}
+
+func TestSetNATMode_FullAfterInternetOnly_RemovesAllStatics(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only",
+		NATStaticWANs: []string{"PPPoE0", "Wireguard2"},
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "full"); err != nil {
+		t.Fatalf("SetNATMode: %v", err)
+	}
+	got := staticPostTargets(snapshotPosts(poster), ifaceName, true)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"PPPoE0", "Wireguard2"}) {
+		t.Errorf("static removes: got %v", got)
+	}
+	saved, _ := store.GetManagedServerByID(ifaceName)
+	if len(saved.NATStaticWANs) != 0 || saved.NATStaticWAN != "" {
+		t.Errorf("static fields must be cleared: %v %q", saved.NATStaticWANs, saved.NATStaticWAN)
+	}
+}
+
+func TestSetNATMode_FullAfterLegacySingleWAN(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only", NATStaticWAN: "PPPoE0",
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "full"); err != nil {
+		t.Fatalf("SetNATMode: %v", err)
+	}
+	if got := staticPostTargets(snapshotPosts(poster), ifaceName, true); !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+		t.Errorf("legacy static remove: got %v, want [PPPoE0]", got)
+	}
+}
+
+func TestSetNATMode_InternetOnly_RemovesStaleTargets(t *testing.T) {
+	svc, store, poster := newNATModeTestService(t)
+	ctx := context.Background()
+	const ifaceName = "Wireguard0"
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
+		ListenPort: 51820, NATMode: "internet-only",
+		NATStaticWANs: []string{"PPPoE0", "WireguardX"},
+	}); err != nil {
+		t.Fatalf("seed server: %v", err)
+	}
+	poster.mu.Lock()
+	poster.posts = nil
+	poster.mu.Unlock()
+
+	if err := svc.SetNATMode(ctx, ifaceName, "internet-only"); err != nil {
+		t.Fatalf("SetNATMode: %v", err)
+	}
+	posts := snapshotPosts(poster)
+	if got := staticPostTargets(posts, ifaceName, false); !reflect.DeepEqual(got, []string{"PPPoE0", "Wireguard2", "OpkgTun0"}) {
+		t.Errorf("static adds: got %v", got)
+	}
+	if got := staticPostTargets(posts, ifaceName, true); !reflect.DeepEqual(got, []string{"WireguardX"}) {
+		t.Errorf("stale removes: got %v, want [WireguardX]", got)
 	}
 }
 

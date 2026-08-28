@@ -47,7 +47,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 	"github.com/hoaxisr/awg-manager/internal/updater"
@@ -89,8 +88,8 @@ type Server struct {
 	pingCheckService           api.PingCheckService
 	proxyRecords               api.ProxyRecordLister
 	loggingService             *logging.Service
-	activeBackend              backend.Backend
 	kmodLoader                 *kmod.Loader
+	opkgTunOccupancy           storage.OpkgTunPins
 	updaterService             *updater.Service
 	ndmsQueries                *ndmsquery.Queries
 	ndmsCommands               *ndmscommand.Commands
@@ -108,6 +107,8 @@ type Server struct {
 	hydraService               *hydraroute.Service
 	orch                       *orchestrator.Orchestrator
 	bus                        *events.Bus
+	exposureGuard              *api.ExposureGuard
+	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
@@ -178,18 +179,20 @@ type Server struct {
 // via the existing post-construction Set*Handler() / SetSingboxOperator()
 // setters — see SetSingboxRouterHandler etc. below in this file.
 type Deps struct {
-	TunnelService        api.TunnelService
-	ExternalService      api.ExternalTunnelService
-	TestingService       *testing.Service
-	Keenetic             *auth.KeeneticClient
-	Sessions             *auth.SessionStore
-	Settings             *storage.SettingsStore
-	Tunnels              *storage.AWGTunnelStore
-	PingCheckService     api.PingCheckService
-	ProxyRecords         api.ProxyRecordLister
-	LoggingService       *logging.Service
-	ActiveBackend        backend.Backend
-	KmodLoader           *kmod.Loader
+	TunnelService    api.TunnelService
+	ExternalService  api.ExternalTunnelService
+	TestingService   *testing.Service
+	Keenetic         *auth.KeeneticClient
+	Sessions         *auth.SessionStore
+	Settings         *storage.SettingsStore
+	Tunnels          *storage.AWGTunnelStore
+	PingCheckService api.PingCheckService
+	ProxyRecords     api.ProxyRecordLister
+	LoggingService   *logging.Service
+	KmodLoader       *kmod.Loader
+	// OpkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
+	// чужих подсистем. Нужна выдаче идентификатора kernel-туннеля.
+	OpkgTunOccupancy     storage.OpkgTunPins
 	UpdaterService       *updater.Service
 	NdmsQueries          *ndmsquery.Queries
 	NdmsCommands         *ndmscommand.Commands
@@ -248,8 +251,8 @@ func New(cfg Config, deps Deps) *Server {
 		pingCheckService:       deps.PingCheckService,
 		proxyRecords:           deps.ProxyRecords,
 		loggingService:         deps.LoggingService,
-		activeBackend:          deps.ActiveBackend,
 		kmodLoader:             deps.KmodLoader,
+		opkgTunOccupancy:       deps.OpkgTunOccupancy,
 		updaterService:         deps.UpdaterService,
 		ndmsQueries:            deps.NdmsQueries,
 		ndmsCommands:           deps.NdmsCommands,
@@ -531,6 +534,14 @@ func (s *Server) Start() error {
 	}
 	s.registerRoutes(mux)
 
+	// Фоновая проверка «не открыты ли мы наружу без пароля» — гвард
+	// конструируется в registerRoutes, поэтому запускается сразу после.
+	if s.exposureGuard != nil {
+		guardCtx, cancel := context.WithCancel(context.Background())
+		s.exposureGuardStop = cancel
+		s.exposureGuard.Start(guardCtx)
+	}
+
 	core := http.Handler(mux)
 	if s.config.SlowRequestThreshold > 0 {
 		core = s.slowRequestMiddleware(s.config.SlowRequestThreshold, core)
@@ -577,6 +588,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.clearPendingLocked()
 	s.listen.mu.Unlock()
+
+	if s.exposureGuardStop != nil {
+		s.exposureGuardStop()
+		s.exposureGuardStop = nil
+	}
 
 	if s.pprofServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)

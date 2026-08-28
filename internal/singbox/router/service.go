@@ -23,8 +23,6 @@ import (
 )
 
 type Service interface {
-	Enable(ctx context.Context) error
-	Disable(ctx context.Context) error
 	Reconcile(ctx context.Context) error
 	// SwitchRoutingMode orchestrates a routing-mode transition (off↔tproxy↔
 	// fakeip-tun) with directional fail-closed rollback and progress events.
@@ -42,6 +40,7 @@ type Service interface {
 	// ListBindableInterfaces returns interfaces a user can bind a direct
 	// outbound to (all interfaces minus auto-managed AWG/WG ones).
 	ListBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
+	ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
 
 	// ListIngressEligibleInterfaces returns interfaces eligible for
 	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
@@ -199,6 +198,10 @@ type WANInterfaceLister interface {
 // awgoutbounds auto-managed set). Optional dep; nil = no existence check.
 type BindableInterfaceLister interface {
 	ListBindable(ctx context.Context) ([]WANInterfaceInfo, error)
+	// ListAllBindable — то же множество, но БЕЗ вычитания интерфейсов, уже
+	// занятых direct-outbound'ом: подписки и одиночные туннели делят
+	// интерфейс с direct-выходом свободно (#709).
+	ListAllBindable(ctx context.Context) ([]WANInterfaceInfo, error)
 }
 
 // IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в
@@ -346,6 +349,11 @@ type Deps struct {
 	// xt_connmark, xt_conntrack, xt_pkttype via
 	// EnsureRouterNetfilterModules). Tests set this to avoid real syscalls.
 	NetfilterPreflight func(context.Context) error
+
+	// FirmwareRelease is an optional override for the KeeneticOS release
+	// string (osdetect by default). Only tests set it — the tun-mode gate
+	// needs a firmware version it can steer.
+	FirmwareRelease func() string
 	// XtDscpProbe is an optional override for the xt_dscp availability
 	// check (kernel module + iptables `-m dscp` extension) that gates the
 	// QoS-DSCP dispatch rules and the status field xtDscpAvailable. When
@@ -369,6 +377,13 @@ type Deps struct {
 	// for the fakeip index allocator. Optional — nil in tests; wired in
 	// cmd/awg-manager via the union adapter. Consumed by Slice 1D Enable.
 	OpkgTunIndices OpkgTunIndexLister
+	// OpkgTunPins — номера, удерживаемые ЧУЖИМИ владельцами: записи туннелей
+	// (номер занят с создания записи, а интерфейс появляется только при первом
+	// включении) и, после перехода на новый рантайм, записи инстансов прокси.
+	// СВОЯ удерживающая запись сюда не входит — она приходит из настроек, и
+	// подмешивание её в занятость перепинило бы нас самих.
+	// nil означает «чужих пинов нет»: занятость сводится к живой половине.
+	OpkgTunPins func(ctx context.Context) (map[int]bool, error)
 	// OpkgTunScan lists NDMS OpkgTun IDs carrying the given description —
 	// the reap's persist-less orphan fallback (see teardownOpkgTun for why
 	// such orphans are dangerous). Optional — nil skips the scan; wired in
@@ -436,14 +451,63 @@ type ServiceImpl struct {
 	// transitionReadinessProgress emits readiness heartbeats during
 	// waitForSingbox while SwitchRoutingMode is in flight (nil otherwise).
 	transitionReadinessProgress func(message string)
-	currentMark                 string              // last-installed iptables mark; used by Reconcile to detect change
-	currentWANIPs               []string            // last-collected WAN IPs; used by Reconcile to detect change
-	currentLANBridges           []LANBridgeDNSRedir // last-discovered LAN-bridge (name, ndnproxy port) pairs; reconcile triggers re-install when this changes (e.g. NDMS hotspot reconfigured, bridge added/removed, port reassigned)
-	currentBypassPresets        []string
-	currentBypassExtraPorts     string
-	currentBypassExtraSubnets   string
-	currentBypassGeoIPTags      []string // last-installed geoip-теги обхода; их смена = переустановка правил
-	currentIngress              []string // last-installed резолвленные ingress kernel-имена
+
+	// ─── Применённое состояние netfilter ────────────────────────────────────
+	// appliedSpec, appliedBlackhole, netfilterStateKnown и
+	// currentBypassGeoIPTags описывают то, что РЕАЛЬНО установлено в netfilter.
+	//
+	// ИНВАРИАНТ: взаимное исключение даёт transitionMu, и только он.
+	// Писатели: enableLocked, Disable, enablePolicyTun, disablePolicyTun,
+	// reconcileInstalled, reconcilePolicyTunQoS. Читатели: reconcileInstalled,
+	// reconcilePolicyTunQoS. Каждый достижим ровно двумя путями — Reconcile
+	// (берёт transitionMu через TryLock) и SwitchRoutingMode (через Lock).
+	//
+	// s.mu вокруг записей НЕ является защитой этих полей: часть чтений в
+	// reconcileInstalled (forceInitialSync, specChanged, bypassGeoTagsChanged)
+	// идёт вне s.mu, так что опираться на него нельзя — он держится ради
+	// соседних полей в тех же критических секциях.
+	//
+	// Пока путей два, гонки нет по построению. Третий путь (например новая
+	// публичная ручка, зовущая Enable/Disable мимо transitionMu) её вернёт —
+	// раньше такой путь давали ручки POST /singbox/router/{enable,disable},
+	// и они удалены именно поэтому. Новый вызывающий обязан заходить через
+	// Reconcile или SwitchRoutingMode.
+	//
+	// appliedSpec — снимок ровно того RestoreInputSpec, что уехал в
+	// IPTables.Install; nil = «ничего нашего в netfilter не установлено».
+	// Хранятся ВХОДЫ правил целиком, а не их разложенные копии: пока входы
+	// лежали двенадцатью полями, каждая новая точка сравнения забывала часть
+	// из них (так и жил дефект policy-tun, сравнивавший один вход из семи).
+	// Сравнение — equalInstalledSpec, по РЕНДЕРУ спека: поле, которого нет в
+	// правилах, изменить netfilter не может, поэтому «забыли поле» здесь
+	// невыразимо. После записи спек не мутируется.
+	// Единственный писатель непустого значения — успешный Install (nil в него
+	// пишут ещё Disable, disablePolicyTun и нулевая ветка reconcilePolicyTunQoS).
+	appliedSpec *RestoreInputSpec
+
+	// tunDownStrikes — сколько тиков реконсиляции подряд carrier на tun
+	// нулевой; по нему healDetachedTun решает, лечить ли сейчас (см.
+	// healDetachedTunAttempts). Пишется и читается только из reconcile-тика,
+	// сериализованного transitionMu.
+	tunDownStrikes int
+
+	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
+	// который reconcileInstalled поднимает, пока sing-box мёртв, а
+	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от
+	// appliedSpec во всём: свой рендер (buildBlackholeRestoreInput), свой файл
+	// правил (persistBlackhole) и своя цепочка (BlackholeChain), — поэтому и
+	// снимок свой (сравнение — equalBlackholeSpec). Снимком, а не булевым
+	// флагом: по флагу переустановка сводилась бы к «уже стоит — не трогаем»,
+	// и смена WAN-адреса роутера посреди простоя движка не доехала бы до
+	// исключений блокировки — это закреплено
+	// TestReconcileInstalled_BlackholeFollowsWANIPChange.
+	appliedBlackhole *RestoreInputSpec
+
+	// last-installed geoip-теги обхода; в спеке от них остаётся только
+	// производный BypassGeoIPSet, то есть состав тегов из снимка
+	// невосстановим. Поэтому смена состава видна ТОЛЬКО здесь — и это триггер
+	// пересборки/сноса набора AWGM-BYPASS.
+	currentBypassGeoIPTags []string
 
 	// bypassPopulating — single-flight наполнения AWGM-BYPASS: пока идёт
 	// пересборка, повторные триггеры (Enable, reconcile, смена .dat) только
@@ -496,17 +560,6 @@ type ServiceImpl struct {
 	fakeipACLv6Asserted    bool
 	policyTunACLv6Asserted bool
 
-	// blackholeActive tracks whether the fail-closed DROP chain is currently
-	// engaged (installed by reconcileInstalled while sing-box is dead and the
-	// PREROUTING interception jumps were wiped). It is removed the moment the
-	// engine recovers. Guarded by s.mu, like the other current* install state.
-	blackholeActive bool
-
-	// currentQoSClasses is the last-installed QoS-DSCP dispatch set (DSCP +
-	// ports only — the class outbound lives in sing-box config, not in
-	// iptables). Reconcile re-Installs when it drifts from settings.
-	currentQoSClasses []QoSClassSpec
-
 	// qosApplyFailed remembers a failed sing-box apply of the QoS routes
 	// slot so the next heal re-applies even when disk state is byte-equal.
 	// См. applyQoSRoutesSlot.
@@ -525,7 +578,8 @@ type ServiceImpl struct {
 	inspectCache     *ruleSetCache
 	datRuleSetMu     sync.Mutex
 
-	// Optional keendns-preset → managed DNS rewrite (own FQDN → LAN IP).
+	// Optional keendns-preset → имена KeenDNS резолвит сам роутер, а его
+	// адреса идут мимо sing-box.
 	// Wired post-construction via SetKeenDNSPreset (dnsrewrite lives in
 	// setupListen after the router service) — под keenDNSMu, потому что
 	// startup-Reconcile читает их из своей горутины уже во время wiring.
@@ -533,9 +587,14 @@ type ServiceImpl struct {
 	// keenDNSWarnState — последнее залогированное состояние пресета, чтобы
 	// не писать один и тот же warn на каждом тике Reconcile.
 	keenDNSWarnState string
-	keenDNSDomain    KeenDNSDomainProvider
-	keenDNSLAN       LANIPv4Provider
-	keenDNSSync      KeenDNSRewriteSyncer
+	keenDNSInfoProv  KeenDNSInfoProvider
+	keenDNSSync      KeenDNSPresetSyncer
+	// Кэш данных с роутера (см. keenDNSInfoTTL) и производный от него
+	// список CIDR обхода, который уезжает в RestoreInputSpec.
+	keenDNSFQDN        string
+	keenDNSAddrs       []string
+	keenDNSInfoAt      time.Time
+	keenDNSBypassCIDRs []string
 }
 
 func NewService(d Deps) *ServiceImpl {
@@ -545,6 +604,14 @@ func NewService(d Deps) *ServiceImpl {
 	appLog := logging.NewScopedLogger(d.AppLog, logging.GroupRouting, logging.SubSingboxRouter)
 	if d.WANIPCollector == nil {
 		d.WANIPCollector = NewWANIPCollector(&routerLoggerAdapter{log: appLog})
+	}
+	if d.OpkgTunPins == nil {
+		// Не отказ: юнит-тесты собирают сервис без поставщика намеренно. Но в
+		// проде незаполненное поле означает, что занятость сводится к живым
+		// интерфейсам — номер, удержанный записью невключённого туннеля,
+		// снова станет выдаваемым. Такая пропажа уже случалась при правке
+		// проводки, поэтому она обязана быть видна в журнале, а не только в ревью.
+		appLog.Warn("opkgtun-pins", "", "поставщик пинов OpkgTun не задан — занятость считается только по живым интерфейсам")
 	}
 	// Idempotently refresh the netfilter hook script: if a previous
 	// version is on disk (older AWGM without pidof guard), this writes

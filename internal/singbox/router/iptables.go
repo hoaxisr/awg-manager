@@ -87,6 +87,14 @@ var (
 	netfilterHookPath      = "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh"
 	netfilterRulesPath     = "/opt/etc/awg-manager/singbox/router-netfilter.rules"
 	netfilterBlackholePath = "/opt/etc/awg-manager/singbox/router-blackhole.rules"
+
+	// ipBinary — Entware-овский iproute2, тем же абсолютным путём, что и
+	// sysiptables.Binary рядом. Раньше здесь стояло голое "ip": какой бинарь
+	// возьмётся, зависело от PATH демона, а в прошивке есть свой /sbin/ip от
+	// busybox с другим набором возможностей. Любое утверждение о поведении
+	// `ip` на роутере при таком вызове недоказуемо — неизвестно, чьё поведение
+	// наблюдали.
+	ipBinary = "/opt/sbin/ip"
 	// Per-table copies of the rules blob (issue #627): the netfilter.d hook
 	// restores ONLY the table NDMS actually wiped, so a routine mangle-only
 	// reload (DHCP renew) never tears down the working nat chain and vice
@@ -415,6 +423,43 @@ type QoSClassSpec struct {
 	DSCP         int
 	TProxyPort   int
 	RedirectPort int
+}
+
+// equalInstalledSpec и equalBlackholeSpec сравнивают ЖЕЛАЕМЫЙ спек с
+// ПРИМЕНЁННЫМ. nil означает «в netfilter ничего нашего не установлено» и равен
+// только nil.
+//
+// Сравнивается не спек, а его РЕНДЕР — ровно тот текст, что уходит в
+// iptables-restore и в файл правил для netfilter.d-хука. Отсюда два следствия,
+// которых у сравнения поле-в-поле не было:
+//
+//   - Полнота по построению. Поле, которого нет в рендере, доказуемо не может
+//     изменить netfilter, и игнорировать его правильно. Обратное — «забыли
+//     поле в компараторе» — становится невыразимым: рукописный список полей,
+//     который надо было сопровождать вручную, исчез.
+//   - Ловится дрейф самого рендерера: правка bypassCIDRs или emitBypassReturns
+//     теперь даёт переустановку, а не молчание до следующего рестарта демона.
+//
+// nil-слайс и пустой дают одинаковый текст, поэтому причина, по которой был
+// отвергнут reflect.DeepEqual (первый же коллектор с []string{} вместо nil
+// давал бы переустановку на каждом тике), снимается сама.
+//
+// Компаратора ДВА, потому что ресурса два и рендеры у них разные: перехват —
+// mangle+nat целиком, блокировка — свой mangle-блоб без QoS-диспатча,
+// ingress-MARK и DNS-RESCUE. Сравнивать блокировку рендером перехвата значило
+// бы переустанавливать её на смену входов, которых в её правилах нет.
+func equalInstalledSpec(a, b *RestoreInputSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return buildRestoreInput(*a) == buildRestoreInput(*b)
+}
+
+func equalBlackholeSpec(a, b *RestoreInputSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return buildBlackholeRestoreInput(*a) == buildBlackholeRestoreInput(*b)
 }
 
 var bypassCIDRs = []string{
@@ -771,11 +816,11 @@ func NewIPTables() *IPTables {
 		runIPTables:    sysiptables.Run,
 		runIPTablesOut: sysiptables.RunOutput,
 		runIP: func(ctx context.Context, args ...string) error {
-			result, err := sysexec.Run(ctx, "ip", args...)
+			result, err := sysexec.Run(ctx, ipBinary, args...)
 			return sysexec.FormatError(result, err)
 		},
 		runIPOut: func(ctx context.Context, args ...string) (string, error) {
-			result, err := sysexec.Run(ctx, "ip", args...)
+			result, err := sysexec.Run(ctx, ipBinary, args...)
 			if err != nil {
 				return "", sysexec.FormatError(result, err)
 			}
@@ -935,6 +980,18 @@ func writeNetfilterBlackholeRulesFile(input string) error {
 // reload. Called when the engine recovers (blackhole removed). Idempotent.
 func removeNetfilterBlackholeRulesFile() {
 	_ = os.Remove(netfilterBlackholePath)
+}
+
+// blackholeRulesFilePresent — шов наблюдения ДОЛГОВЕЧНОЙ половины блокировки.
+// Цепочку и джамп при живом sing-box сносит ALIVE-ветка netfilter.d-хука, а
+// файл правил переживает и её, и рестарт демона: удаляет его только
+// RemoveBlackhole. Наблюдать одни цепочки значит оставлять протухший файл, из
+// которого DEAD-ветка хука поднимет блокировку со СТАРЫМИ исключениями при
+// следующей смерти движка. Один stat на тик — дешевле безусловного
+// RemoveBlackhole, который стоит четырёх вызовов iptables.
+var blackholeRulesFilePresent = func() bool {
+	_, err := os.Stat(netfilterBlackholePath)
+	return err == nil
 }
 
 func writeNetfilterHook(includeBlackhole bool) error {
@@ -1426,25 +1483,46 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 // On a query error Probe returns (false, false, err); callers must treat that
 // as "unknown" (do NOT reinstall) rather than "broken".
 func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error) {
-	mChain, mJump, err := it.probeTable(ctx, "mangle", ChainName)
-	if err != nil {
-		return false, false, err
-	}
-	nChain, nJump, err := it.probeTable(ctx, "nat", RedirectChain)
-	if err != nil {
-		return false, false, err
-	}
-	installed = mChain && nChain
-	jumps = installed && mJump && nJump
-	return installed, jumps, nil
+	installed, jumps, _, err = it.probeAll(ctx)
+	return installed, jumps, err
 }
 
-func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainExists, jumpExists bool, err error) {
-	out, err := it.runIPTablesOut(ctx, "-t", table, "-S")
+// probeAll is Probe plus the fail-closed blackhole's liveness. The blackhole
+// lives in the SAME mangle table, so both its `-N` declaration and its
+// PREROUTING jump are already in the dump Probe fetches: observing it costs
+// zero extra iptables calls. Live means chain AND jump, by the same logic as
+// `jumps` above — a chain nobody enters drops nothing, and that is fail-OPEN.
+// Observing the live rules beats remembering that we installed them, because a
+// manual `iptables -F -t mangle` or a failed netfilter.d hook wipes them with
+// no NDMS event to react to.
+//
+// On a query error probeAll returns (false, false, false, err) — same contract
+// as Probe: the zeros are "unknown", NOT "absent". A caller must gate on err
+// before acting on any of the three, or a transient `-S` failure will read as
+// "nothing is installed". In particular blackhole reads false even when the
+// mangle dump already showed it, because the nat dump failed afterwards.
+func (it *IPTables) probeAll(ctx context.Context) (installed, jumps, blackhole bool, err error) {
+	mangleDump, err := it.runIPTablesOut(ctx, "-t", "mangle", "-S")
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
-	for _, line := range strings.Split(out, "\n") {
+	mChain, mJump := scanChain(mangleDump, ChainName)
+	bChain, bJump := scanChain(mangleDump, BlackholeChain)
+	blackhole = bChain && bJump
+	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S")
+	if err != nil {
+		return false, false, false, err
+	}
+	nChain, nJump := scanChain(natDump, RedirectChain)
+	installed = mChain && nChain
+	jumps = installed && mJump && nJump
+	return installed, jumps, blackhole, nil
+}
+
+// scanChain reports the chain's declaration and its PREROUTING jump in an
+// `iptables -S <table>` dump.
+func scanChain(dump, chain string) (chainExists, jumpExists bool) {
+	for _, line := range strings.Split(dump, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "-N "+chain {
 			chainExists = true
@@ -1453,7 +1531,7 @@ func (it *IPTables) probeTable(ctx context.Context, table, chain string) (chainE
 			jumpExists = true
 		}
 	}
-	return chainExists, jumpExists, nil
+	return chainExists, jumpExists
 }
 
 // jumpToken reports whether line jumps to chain via `-j chain` or `-g chain`

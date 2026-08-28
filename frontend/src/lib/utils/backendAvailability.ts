@@ -5,15 +5,48 @@ export function supportsAwg3(kernelModuleLoadedVersion: string | undefined): boo
 	return /^3\./.test(kernelModuleLoadedVersion ?? '');
 }
 
-// AWG 3.1 added two device flags (RandomTrailers, DisableCookies) that a 3.0
-// module ignores without an error, exactly the way a 2.x module ignores the 3.0
-// params — so they need a floor of their own rather than reusing supportsAwg3.
-export function supportsAwg31(kernelModuleLoadedVersion: string | undefined): boolean {
-	const m = /^(\d+)\.(\d+)\./.exec(kernelModuleLoadedVersion ?? '');
+// AWG 3.1 over NativeWG runs through awg_proxy, whose 1.4.0 build adds header
+// protection (HP_KEY) + random trailers (RT). Older proxies silently ignore
+// those tokens, so gate the NativeWG awg3 editor on the loaded proxy version —
+// the NativeWG analogue of supportsAwg3 for the kernel module.
+export function supportsAwg31Proxy(awgProxyVersion: string | undefined): boolean {
+	const m = /^(\d+)\.(\d+)/.exec(awgProxyVersion ?? '');
 	if (!m) return false;
 	const major = Number(m[1]);
 	const minor = Number(m[2]);
-	return major > 3 || (major === 3 && minor >= 1);
+	return major > 1 || (major === 1 && minor >= 4);
+}
+
+// AWG 3.1 для NativeWG доступен, если его умеет либо загруженный awg_proxy,
+// либо тот, что принесла сборка: модуль грузится лениво — под первый туннель,
+// которому он нужен, — и до тех пор loaded пуст. Гейт только по loaded
+// запирал бы фичу насмерть: ключ 3.1 негде ввести, пока нет модуля, а модуль
+// не грузится, пока нет туннеля с ключом. Расхождение loaded и shipped
+// объясняет отдельная плашка (см. awgProxyOutdated).
+export function supportsAwg31OnNativeWG(
+	loadedProxyVersion: string | undefined,
+	shippedProxyVersion: string | undefined,
+): boolean {
+	return supportsAwg31Proxy(loadedProxyVersion) || supportsAwg31Proxy(shippedProxyVersion);
+}
+
+// The .ko shipped with the app is newer than the one currently in the kernel.
+// awg_proxy is only reloaded when it has no live slots (rmmod would kill every
+// running tunnel's proxy), so with a tunnel up the upgrade waits for a reboot —
+// and until then AWG 3.1 stays unavailable with no visible reason.
+export function awgProxyOutdated(
+	loaded: string | undefined,
+	expected: string | undefined,
+): boolean {
+	if (!loaded || !expected) return false;
+	const parse = (v: string) => v.split('.').map(Number);
+	const [a, b] = [parse(loaded), parse(expected)];
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const l = a[i] ?? 0;
+		const e = b[i] ?? 0;
+		if (l !== e) return l < e;
+	}
+	return false;
 }
 
 // Maps the backend's `nativewgReason` (from system/info) to a user-facing

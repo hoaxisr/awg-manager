@@ -31,7 +31,7 @@ func TestIntegration_ParseAddValidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", link, err)
 		}
-		if err := cfg.AddTunnel(p.Tag, p.Protocol, p.Server, int(p.Port), p.Outbound); err != nil {
+		if err := cfg.AddTunnelWithListenPort(p.Tag, p.Protocol, p.Server, int(p.Port), 0, p.Outbound); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -57,7 +57,7 @@ func TestIntegration_ParseAddValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := vlink.ParseLink("vless://u@nl.tld:443#Netherlands")
-	cfg.AddTunnel(p.Tag, p.Protocol, p.Server, int(p.Port), p.Outbound)
+	cfg.AddTunnelWithListenPort(p.Tag, p.Protocol, p.Server, int(p.Port), 0, p.Outbound)
 	var nl TunnelInfo
 	for _, ti := range cfg.Tunnels() {
 		if ti.Tag == "Netherlands" {

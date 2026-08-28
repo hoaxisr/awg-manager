@@ -128,6 +128,7 @@ type SingboxHandler struct {
 	settingsStore   *storage.SettingsStore
 	deviceProxyRefs tunnelservice.DeviceProxyRefChecker
 	routerRefs      tunnelservice.RouterRefChecker
+	bindValidator   func(ctx context.Context, name string) error
 }
 
 // ndmsProxyToggler — узкий интерфейс для чтения текущего значения
@@ -165,6 +166,30 @@ func (h *SingboxHandler) SetNDMSProxyMigrator(m *singbox.Migrator, settings ndms
 // SetSettingsStore wires global settings for connectivity checks.
 func (h *SingboxHandler) SetSettingsStore(settings *storage.SettingsStore) {
 	h.settingsStore = settings
+}
+
+// SetBindValidator wires the router's validateBindInterface for direct API tunnel saves.
+func (h *SingboxHandler) SetBindValidator(validator func(ctx context.Context, name string) error) {
+	h.bindValidator = validator
+}
+
+// validateOutboundBind rejects an outbound whose bind_interface is not in the
+// router's bindable catalog. No validator wired (tests / minimal bootstrap) —
+// no check, mirroring the router service.
+func (h *SingboxHandler) validateOutboundBind(ctx context.Context, raw json.RawMessage) error {
+	if h.bindValidator == nil || len(raw) == 0 {
+		return nil
+	}
+	var peek struct {
+		BindInterface string `json:"bind_interface"`
+	}
+	if err := json.Unmarshal(raw, &peek); err != nil || peek.BindInterface == "" {
+		return nil
+	}
+	if err := h.bindValidator(ctx, peek.BindInterface); err != nil {
+		return fmt.Errorf("invalid bind_interface: %w", err)
+	}
+	return nil
 }
 
 // SetOutboundRefCheckers wires device-proxy and router reference guards for
@@ -330,6 +355,67 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, singboxStatusData(s))
 }
 
+// Uninstall handles POST /api/singbox/uninstall.
+// Останавливает движок и удаляет его артефакты: бинарь, слоты config.d, кэш
+// FakeIP, pid и журналы процесса. Настройки AWGM (подписки, правила
+// маршрутизации, device-proxy) сохраняются — повторная установка возвращает
+// рабочее состояние.
+//
+//	@Summary		Uninstall sing-box
+//	@Description	Останавливает движок и удаляет бинарь с его конфигурацией. Отклоняется, пока включена маршрутизация sing-box.
+//	@Tags			singbox
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	SingboxStatusResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/singbox/uninstall [post]
+func (h *SingboxHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	// Гейт: движок под включённой маршрутизацией снимать нельзя — правила
+	// iptables, OpkgTun и ACL остались бы висеть без процесса, который их
+	// обслуживает, и трафик встал бы (issue #771).
+	if h.routingEnabled() {
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"сначала выключите маршрутизацию sing-box", "SINGBOX_ROUTING_ENABLED")
+		return
+	}
+	if h.op == nil {
+		response.InternalError(w, "sing-box operator not wired")
+		return
+	}
+	if err := h.op.Uninstall(r.Context()); err != nil {
+		if errors.Is(err, singbox.ErrInstallInProgress) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_IN_PROGRESS")
+			return
+		}
+		response.InternalError(w, err.Error())
+		return
+	}
+	s := h.op.GetStatus(r.Context())
+	publishInvalidated(h.bus, ResourceSingboxStatus, "uninstalled")
+	publishInvalidated(h.bus, ResourceSysInfo, "singbox-uninstalled")
+	response.Success(w, singboxStatusData(s))
+}
+
+// routingEnabled сообщает, работает ли сейчас маршрутизация sing-box. Нет
+// доступа к настройкам — считаем, что работает: отказать по незнанию безопаснее,
+// чем снести движок из-под живых правил.
+func (h *SingboxHandler) routingEnabled() bool {
+	if h.settingsStore == nil {
+		return true
+	}
+	st, err := h.settingsStore.Get()
+	if err != nil {
+		return true
+	}
+	return st.SingboxRouter.Enabled
+}
+
 // Update handles POST /api/singbox/update.
 // Replaces the installed managed sing-box binary with the version this
 // awg-manager build is pinned to. No-op when versions match. Returns the fresh
@@ -480,6 +566,15 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	batch := singbox.ParseTunnelLinksInput(body.Links)
+	for _, p := range batch.Outbounds {
+		if err := h.validateOutboundBind(r.Context(), p.Outbound); err != nil {
+			response.BadRequest(w, err.Error())
+			return
+		}
+	}
+
 	h.log.Info("single-add", "", "requested via API")
 	added, errs, err := h.op.AddTunnels(r.Context(), body.Links)
 	if err != nil {
@@ -614,6 +709,12 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "tag required")
 		return
 	}
+
+	if err := h.validateOutboundBind(r.Context(), body.Outbound); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+
 	h.log.Info("single-update", tag, "requested via API")
 	if err := h.op.UpdateTunnel(r.Context(), tag, body.Outbound); err != nil {
 		response.InternalError(w, err.Error())

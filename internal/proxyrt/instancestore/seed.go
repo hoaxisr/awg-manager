@@ -124,18 +124,21 @@ type oldServerClient struct {
 }
 
 type oldWdttServer struct {
-	Enabled      bool     `json:"enabled"`
-	Listen       string   `json:"listen"`
-	WgPort       int      `json:"wgPort"`
-	ConfigDir    string   `json:"configDir"`
-	Password     string   `json:"password"`
-	AdminID      string   `json:"adminId"`
-	BotToken     string   `json:"botToken"`
-	NatIface     string   `json:"natIface"`
-	NatMode      string   `json:"natMode"`
-	NatStaticWAN string   `json:"natStaticWan"`
-	Policy       string   `json:"policy"`
-	LanSegments  []string `json:"lanSegments"`
+	Enabled      bool   `json:"enabled"`
+	Listen       string `json:"listen"`
+	WgPort       int    `json:"wgPort"`
+	ConfigDir    string `json:"configDir"`
+	Password     string `json:"password"`
+	AdminID      string `json:"adminId"`
+	BotToken     string `json:"botToken"`
+	NatIface     string `json:"natIface"`
+	NatMode      string `json:"natMode"`
+	NatStaticWAN string `json:"natStaticWan"`
+	// NatStaticWANs — форма списка (develop, PR #750). Старые записи её не
+	// имеют: у них заполнена одиночка выше, и StaticNATList сводит обе.
+	NatStaticWANs []string `json:"natStaticWans"`
+	Policy        string   `json:"policy"`
+	LanSegments   []string `json:"lanSegments"`
 	// OpenFirewall — *bool с семантикой «nil = true» (wdtt/types.go:118-120).
 	// Читается указателем именно ради этой семантики: в новом конфиге поле
 	// обычный bool, и отсутствующий ключ обязан стать true, иначе у всех, кто
@@ -558,7 +561,8 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			Listen: o.Listen, WgPort: o.WgPort, ConfigDir: o.ConfigDir,
 			Password: o.Password, AdminID: o.AdminID, BotToken: o.BotToken,
 			NatIface: o.NatIface, NatMode: o.NatMode, NatStaticWAN: o.NatStaticWAN,
-			Policy: o.Policy, LanSegments: o.LanSegments,
+			NatStaticWANs: o.NatStaticWANs,
+			Policy:        o.Policy, LanSegments: o.LanSegments,
 			RelayMode: o.RelayMode, RawListen: o.RawListen, DirectListen: o.DirectListen,
 			ExposeToPolicies: o.ExposeToPolicies,
 			Debug:            o.Debug, // Г-1 №3: тумблер пользователя

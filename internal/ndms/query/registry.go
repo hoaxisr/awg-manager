@@ -24,6 +24,7 @@ type Queries struct {
 	WGServers        *WGServerStore
 	NAT              *NATStore
 	StaticNAT        *StaticNATStore
+	HTTPProxy        *HTTPProxyStore
 	KeenDNS          *KeenDNSStore
 }
 
@@ -85,6 +86,7 @@ func NewQueries(d Deps) *Queries {
 		WGServers:        NewWGServerStore(d.Getter, d.Logger, ifaces),
 		NAT:              NewNATStore(d.Getter, d.Logger),
 		StaticNAT:        NewStaticNATStore(d.Getter, d.Logger),
+		HTTPProxy:        NewHTTPProxyStore(d.Getter, d.Logger),
 		KeenDNS:          NewKeenDNSStore(d.Getter, d.Logger),
 	}
 }

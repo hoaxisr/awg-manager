@@ -40,7 +40,7 @@ wget -qO- http://repo.hoaxisr.ru/install.sh | sh
 Вариант через GitHub (HTTPS): нужен curl, т.к. busybox wget прошивки может не поддерживать HTTPS:
 ```sh
 opkg install curl
-curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/master/scripts/install.sh | sh
+curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/install.sh | sh
 ```
 
 После установки веб-интерфейс доступен по адресу роутера и обычно по 2222 порту.

@@ -14,7 +14,10 @@ import (
 )
 
 type LogForwarder struct {
-	clashAddr string
+	// clashAddr — ПОСТАВЩИК адреса, а не снимок: порт Clash API меняется в
+	// рантайме (issue #788), а Run переподключается каждые reconnect секунд,
+	// так что новый адрес подхватывается сам, без перезапуска горутины.
+	clashAddr func() string
 	app       logging.AppLogger
 
 	inbound  *logging.ScopedLogger
@@ -28,7 +31,7 @@ type LogForwarder struct {
 	reconnect time.Duration
 }
 
-func NewLogForwarder(clashAddr string, appLogger logging.AppLogger) *LogForwarder {
+func NewLogForwarder(clashAddr func() string, appLogger logging.AppLogger) *LogForwarder {
 	return &LogForwarder{
 		clashAddr: clashAddr,
 		app:       appLogger,
@@ -57,7 +60,7 @@ func (f *LogForwarder) Run(ctx context.Context) {
 }
 
 func (f *LogForwarder) runOnce(ctx context.Context) {
-	url := fmt.Sprintf("http://%s/logs?level=trace", f.clashAddr)
+	url := fmt.Sprintf("http://%s/logs?level=trace", f.clashAddr())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return

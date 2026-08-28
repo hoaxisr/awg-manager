@@ -199,7 +199,7 @@ func TestResolveBypassSubnets(t *testing.T) {
 // ── resolveBypassCIDRs (issue #490: IP-пресеты, keendns) ─────────────────
 
 func TestResolveBypassCIDRs_Empty(t *testing.T) {
-	got, err := resolveBypassCIDRs(nil, "")
+	got, err := resolveBypassCIDRs(nil, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,18 +209,33 @@ func TestResolveBypassCIDRs_Empty(t *testing.T) {
 }
 
 func TestResolveBypassCIDRs_KeenDNSPreset(t *testing.T) {
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "")
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// keendns is a DNS-rewrite preset, not an iptables CIDR exclusion.
+	// Статического CIDR у пресета нет: адрес приходит с роутера в adhoc.
 	if len(got) != 0 {
-		t.Fatalf("keendns preset CIDRs = %v, want empty (rewrite path)", got)
+		t.Fatalf("keendns preset CIDRs = %v, want empty (адрес приходит рантаймом)", got)
+	}
+}
+
+// Адрес KeenDNS приезжает третьим аргументом (issue #729) — он обязан попасть
+// в список, схлопнуться с ручным дублем и не сдвинуть порядок пользовательских
+// подсетей.
+func TestResolveBypassCIDRs_AdhocFromRouter(t *testing.T) {
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "10.0.0.0/8, 78.47.125.180",
+		[]string{"78.47.125.180/32"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"78.47.125.180/32", "10.0.0.0/8"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
 func TestResolveBypassCIDRs_PortPresetsContributeNoCIDRs(t *testing.T) {
-	got, err := resolveBypassCIDRs([]string{"l2tp", "ntp", "netbios-smb"}, "")
+	got, err := resolveBypassCIDRs([]string{"l2tp", "ntp", "netbios-smb"}, "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +247,7 @@ func TestResolveBypassCIDRs_PortPresetsContributeNoCIDRs(t *testing.T) {
 func TestResolveBypassCIDRs_DedupWithinExtra(t *testing.T) {
 	// Дубль в пользовательском списке схлопывается, порядок стабильный.
 	// (Пресеты сюда больше ничего не приносят — keendns ушёл в DNS-rewrite.)
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8, 78.47.125.180/32")
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8, 78.47.125.180/32", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -243,13 +258,13 @@ func TestResolveBypassCIDRs_DedupWithinExtra(t *testing.T) {
 }
 
 func TestResolveBypassCIDRs_UnknownPreset(t *testing.T) {
-	if _, err := resolveBypassCIDRs([]string{"nonexistent"}, ""); err == nil {
+	if _, err := resolveBypassCIDRs([]string{"nonexistent"}, "", nil); err == nil {
 		t.Fatal("expected error for unknown preset")
 	}
 }
 
 func TestResolveBypassCIDRs_ExtraError(t *testing.T) {
-	if _, err := resolveBypassCIDRs([]string{"keendns"}, "not-an-ip"); err == nil {
+	if _, err := resolveBypassCIDRs([]string{"keendns"}, "not-an-ip", nil); err == nil {
 		t.Fatal("expected error for malformed extra subnets")
 	}
 }

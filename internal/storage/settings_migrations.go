@@ -339,10 +339,8 @@ func (s *SettingsStore) migrateToV32(settings *Settings) {
 	settings.SchemaVersion = 32
 }
 
-// migrateToV33 enables the keendns bypass preset by default. The preset
-// now drives a managed DNS rewrite of the router's own KeenDNS FQDN →
-// LAN IP (not an iptables exclusion of the shared cloud IP 78.47.125.180).
-// Append only when missing so an existing keendns entry is left intact.
+// migrateToV33 enables the keendns bypass preset by default. Append only
+// when missing so an existing keendns entry is left intact.
 func (s *SettingsStore) migrateToV33(settings *Settings) {
 	has := false
 	for _, name := range settings.SingboxRouter.BypassPresets {
@@ -386,4 +384,42 @@ func (s *SettingsStore) migratePortFile(settings *Settings) {
 
 	// Remove old port file after successful migration
 	os.Remove(portFile)
+}
+
+// migrateToV34 сливает зеркальные записи владения OpkgTun (ключи fakeip и
+// policyTun) в единую opkgTun. Конфликт «обе записи» разрешается активным
+// RoutingMode; NAT-записи проигравшей policy-записи не выбрасываются — они
+// переезжают в payload (реап восстановит их и вне режима policy-tun).
+// Потеря payload'а проигравшей fakeip-записи безопасна: пустой prev-диапазон
+// заставляет FakeIPCacheNeedsReset сработать в сторону лишнего сброса кэша.
+func (s *SettingsStore) migrateToV34(settings *Settings) {
+	fk, pt := settings.LegacyFakeIP, settings.LegacyPolicyTun
+	settings.LegacyFakeIP, settings.LegacyPolicyTun = nil, nil
+	switch {
+	case fk == nil && pt == nil:
+		return
+	case pt == nil, fk != nil && settings.SingboxRouter.RoutingMode == OpkgTunModeFakeIP:
+		st := &OpkgTunState{Mode: OpkgTunModeFakeIP, Provisioned: fk.Provisioned, Index: fk.Index,
+			FakeIP: &OpkgTunFakeIPData{Inet4Range: fk.Inet4Range, Inet6Range: fk.Inet6Range}}
+		if pt != nil && len(pt.NATSegments) > 0 {
+			st.PolicyTun = &OpkgTunPolicyData{NATSegments: pt.NATSegments}
+		}
+		settings.OpkgTun = st
+	default:
+		st := &OpkgTunState{Mode: OpkgTunModePolicyTun, Provisioned: pt.Provisioned, Index: pt.Index}
+		if len(pt.NATSegments) > 0 {
+			st.PolicyTun = &OpkgTunPolicyData{NATSegments: pt.NATSegments}
+		}
+		settings.OpkgTun = st
+	}
+}
+
+// migrateToV35 материализует пустой FakeIPPool6 в явный дефолт: до v35
+// нормализация дефолтила "" на каждом чтении, с v35 "" означает «v6 выключен».
+// Литерал ЗАМОРОЖЕН намеренно (дубль DefaultFakeIPTunParams — миграции не
+// дрейфуют с будущими дефолтами).
+func (s *SettingsStore) migrateToV35(settings *Settings) {
+	if settings.SingboxRouter.FakeIPPool6 == "" {
+		settings.SingboxRouter.FakeIPPool6 = "fc00::/18"
+	}
 }

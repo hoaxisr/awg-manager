@@ -43,6 +43,7 @@ type DNSUpstream struct {
 	AvgResp    string `json:"avgResp"`
 	Rank       int    `json:"rank"`
 	localPort  int    // join key, not serialized
+	encHint    string // тип, опознанный по форме самой строки, not serialized
 }
 
 type DNSStaticRecord struct {
@@ -155,6 +156,12 @@ func parseConfig(cfg string) (ups []DNSUpstream, static []DNSStaticRecord, rb DN
 //	dns_server = 127.0.0.1:40501 ru # 77.88.8.8:853@common.dot.dns.yandex.net
 //	dns_server = 127.0.0.1:40502 . # 9.9.9.9
 //	dns_server = 127.0.0.1:40508 . # https://common.dot.dns.yandex.net@dnsm
+//	dns_server = 9.9.9.9 ru
+//	dns_server = 77.88.8.8:5353 org
+//
+// Зашифрованный апстрим ndnproxy всегда заворачивает в локальный стаб-порт, а
+// настоящий адрес выносит в комментарий. Прямой (незашифрованный) апстрим идёт
+// без комментария: адрес стоит в первом поле, порт — его собственный.
 func parseDNSServer(line string) (DNSUpstream, bool) {
 	val := afterEquals(line)
 	if val == "" {
@@ -170,18 +177,26 @@ func parseDNSServer(line string) (DNSUpstream, bool) {
 		return DNSUpstream{}, false
 	}
 	u := DNSUpstream{Scope: "all"}
-	if _, portStr, ok := splitHostPort(fields[0]); ok {
-		u.localPort = atoiSafe(portStr)
-	}
 	if len(fields) >= 2 && fields[1] != "." && fields[1] != "" {
 		u.Scope = fields[1]
 	}
-	if comment != "" {
-		if strings.HasPrefix(comment, "https://") || strings.HasPrefix(comment, "http://") {
-			parseDoHComment(&u, comment)
-		} else {
-			parsePlainComment(&u, comment)
+	if comment == "" {
+		parsePlainComment(&u, fields[0])
+		if u.Port == 0 {
+			u.Port = 53
 		}
+		u.encHint = "plain"
+		u.localPort = u.Port // в таблице proxy-stat такие строки лежат под своим портом
+		return u, u.Address != ""
+	}
+	if _, portStr, ok := splitHostPort(fields[0]); ok {
+		u.localPort = atoiSafe(portStr)
+	}
+	if strings.HasPrefix(comment, "https://") || strings.HasPrefix(comment, "http://") {
+		u.encHint = "DoH"
+		parseDoHComment(&u, comment)
+	} else {
+		parsePlainComment(&u, comment)
 	}
 	return u, u.Address != "" || u.localPort != 0
 }
@@ -237,6 +252,57 @@ func isSimpleToken(s string) bool {
 		}
 	}
 	return true
+}
+
+// StaticIPv4InZones возвращает IPv4 из static_a всех профилей ndnproxy для
+// имён, которые равны одному из hosts или лежат в одной из zones (дедуп со
+// стабильным порядком, сравнение регистронезависимое, хвостовая точка не
+// учитывается).
+//
+// Нужно пресету keendns: это адреса, к которым роутер направляет свои
+// KeenDNS-имена, и трафик к ним обязан идти мимо sing-box. Брать их надо
+// именно с роутера — с прошивок 5.1.3/5.2 адрес сервиса переехал с
+// 78.47.125.180 в документационный 198.51.100.0/24 и отличается у Keenetic
+// и NetCraze. AAAA сознательно не отдаём: перехвата IPv6 у нас нет.
+func StaticIPv4InZones(proxies []DNSProxy, hosts, zones []string) []string {
+	match := func(name string) bool {
+		n := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+		if n == "" {
+			return false
+		}
+		for _, h := range hosts {
+			if n == strings.ToLower(h) {
+				return true
+			}
+		}
+		for _, z := range zones {
+			z = strings.ToLower(z)
+			if n == z || strings.HasSuffix(n, "."+z) {
+				return true
+			}
+		}
+		return false
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	for _, p := range proxies {
+		for _, r := range p.Static {
+			if r.Type != "A" || !match(r.Host) {
+				continue
+			}
+			ip := net.ParseIP(r.Value)
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			v := ip.String()
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // parseStatic parses "static_a = host ip flag" / "static_aaaa = host ip flag".
@@ -325,19 +391,23 @@ func applyEncryption(ups []DNSUpstream, tls []dnsTLSEntry, https []dnsHTTPSEntry
 			}
 		}
 	}
+	// Один адрес может быть заведён сразу несколькими способами, а карты ключуются
+	// только адресом и потому их не различают. Форма самой строки принадлежит
+	// конкретному апстриму и потому сильнее карт.
 	for i := range ups {
-		switch {
-		case httpsByHost[ups[i].Address]:
-			ups[i].Encryption = "DoH"
-		default:
-			if sni, ok := tlsByAddr[ups[i].Address]; ok {
-				ups[i].Encryption = "DoT"
-				if ups[i].SNI == "" {
-					ups[i].SNI = sni
-				}
-			} else {
-				ups[i].Encryption = "plain"
+		if ups[i].encHint != "" {
+			ups[i].Encryption = ups[i].encHint
+			continue
+		}
+		if sni, ok := tlsByAddr[ups[i].Address]; ok {
+			ups[i].Encryption = "DoT"
+			if ups[i].SNI == "" {
+				ups[i].SNI = sni
 			}
+		} else if httpsByHost[ups[i].Address] {
+			ups[i].Encryption = "DoH"
+		} else {
+			ups[i].Encryption = "plain"
 		}
 	}
 }

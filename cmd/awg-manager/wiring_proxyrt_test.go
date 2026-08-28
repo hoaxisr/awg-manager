@@ -234,8 +234,10 @@ func TestAllocIndexRespectsNdmsRecordPin(t *testing.T) {
 // Provisioned=false. Ноль — законный номер режимов роутера.
 func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
 	e := newOccEnv(t)
-	if err := e.settings.SetPolicyTunState(&storage.PolicyTunState{Index: 0}); err != nil {
-		t.Fatalf("SetPolicyTunState: %v", err)
+	// Схема v34 (develop): две зеркальные записи FakeIP/PolicyTun схлопнуты
+	// в одну OpkgTunState, режим лежит полем.
+	if err := e.settings.SetOpkgTunState(&storage.OpkgTunState{Mode: "policy-tun", Index: 0}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	alloc := e.alloc(t, nil)
 

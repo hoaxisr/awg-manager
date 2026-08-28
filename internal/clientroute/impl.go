@@ -15,11 +15,11 @@ const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // ServiceImpl implements the Service interface.
 type ServiceImpl struct {
-	mu              sync.Mutex
-	store           Store
-	operator        Operator
-	catalog         TunnelCatalog
-	appLog          *logging.ScopedLogger
+	mu       sync.Mutex
+	store    Store
+	operator Operator
+	catalog  TunnelCatalog
+	appLog   *logging.ScopedLogger
 }
 
 // New creates a new client route service.

@@ -13,8 +13,10 @@
   import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
   import { formatBytes, formatByteRate } from '$lib/utils/format';
   import { systemInfo } from '$lib/stores/system';
+  import { OPKGTUN_UNSUPPORTED_REASON, opkgTunSupported } from '$lib/utils/opkgTunSupport';
   import { notifications } from '$lib/stores/notifications';
   import { drawerOpen, closeDrawer } from './drawerStore';
+  import { openSourceDrawer } from './sourceDrawerStore';
   import { mode } from './modeStore';
   import DepRow from './DepRow.svelte';
   import IssueRow from './IssueRow.svelte';
@@ -72,6 +74,8 @@
     activeMode ?? pickedMode ?? ($settings?.routingMode === 'policy-tun' ? 'policy-tun' : 'tproxy'),
   );
   let policyTunMode = $derived(targetMode === 'policy-tun');
+  // KeeneticOS 4.x не знает интерфейсов OpkgTun — policy-tun там не поднять.
+  let tunSupported = $derived(opkgTunSupported($systemInfo.data));
 
   // policy-tun-unbound показывает карточка режима (там же ссылка на политики) —
   // в общем списке замечаний он был бы вторым экземпляром той же строки.
@@ -86,6 +90,7 @@
 
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
   let saving = $state(false);
+  let restarting = $state(false);
   let lastError = $state<string | null>(null);
   let wanAutoOverride = $state<WanAutoOverride>(null);
   let wanAuto = $derived(resolveWanAuto(wanAutoOverride, cfg?.wanAutoDetect));
@@ -153,8 +158,25 @@
     }
   });
 
+  // Новичку TPROXY-настройки живут в SourceDrawer (узел «Источник» во FlowGraph);
+  // здесь — сводка и переход, чтобы под выбором режима не было пусто (#730).
+  let sourceSummary = $derived.by(() => {
+    if (cfg?.deviceMode === 'all') return 'Весь LAN-трафик роутера.';
+    const name = (cfg?.policyName ?? '').trim();
+    return name
+      ? `Только устройства политики «${name}».`
+      : 'Политика не выбрана — трафик устройств не обрабатывается.';
+  });
+  function goToSourceSettings() {
+    closeDrawer();
+    openSourceDrawer();
+  }
+
   // ── Engine control ──
   function toggleEngine(turnOn: boolean) {
+    // targetMode может быть policy-tun из сохранённых настроек: на прошивке без
+    // OpkgTun тумблер иначе позвал бы режим, который бэкенд всё равно отвергнет.
+    if (turnOn && targetMode === 'policy-tun' && !tunSupported) return;
     modeSwitch.request(turnOn ? targetMode : 'off');
   }
   function handleToggleClick(_e: MouseEvent) {
@@ -164,15 +186,21 @@
   // при включённом — сразу просим переключение (общий confirm + прогресс).
   function selectMode(m: CaptureMode) {
     if (switchBusy || m === targetMode) return;
+    if (m === 'policy-tun' && !tunSupported) return;
     pickedMode = m;
     if (activeMode !== null) modeSwitch.request(m);
   }
   async function restartEngine(_e: MouseEvent) {
+    if (restarting) return;
+    restarting = true;
     try {
       await api.singboxControl('restart');
       await singboxRouterStore.reloadStatus();
+      notifications.success('Движок перезапущен');
     } catch (e) {
-      console.error('restart failed', e);
+      notifications.error(`Не удалось перезапустить: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      restarting = false;
     }
   }
 
@@ -255,10 +283,15 @@
           sub="захват трафика через политику доступа Keenetic, без TPROXY-правил"
           tone="accent"
           selected={targetMode === 'policy-tun'}
+          disabled={!tunSupported}
+          title={tunSupported ? undefined : OPKGTUN_UNSUPPORTED_REASON}
           onclick={() => selectMode('policy-tun')}
         />
       </div>
       <p class="hint">Режим FakeIP включается на своей вкладке «Sing-box → FakeIP».</p>
+      {#if !tunSupported}
+        <p class="hint">{OPKGTUN_UNSUPPORTED_REASON}</p>
+      {/if}
 
       {#if showCrashInfo}
         <div class="crash-info">
@@ -326,6 +359,16 @@
          Видна и новичку — это состояние режима, а не эксперт-настройка. -->
     {#if policyTunMode && cfg}
       <PolicyTunCard {cfg} status={s} onPatch={(patch) => applyPatch(patch)} />
+    {/if}
+
+    <!-- TPROXY у новичка: сводка источника + переход в SourceDrawer. Иначе под
+         выбором режима пусто, тогда как policy-tun показывает свою карточку. -->
+    {#if !policyTunMode && !isExpert && cfg}
+      <section class="sec">
+        <div class="sec-cap">Источник трафика</div>
+        <p class="hint">{sourceSummary}</p>
+        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+      </section>
     {/if}
 
     {#if isExpert && cfg}
@@ -444,7 +487,7 @@
         <Button variant={captureOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
           {captureOn ? 'Выключить' : 'Включить'}
         </Button>
-        <Button variant="ghost" size="sm" fullWidth onclick={restartEngine}>Перезапустить</Button>
+        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>Перезапустить</Button>
       </div>
       {#if isExpert}
         <span class="save-status" class:err={lastError}>

@@ -11,6 +11,10 @@ func (f fakeBindable) ListBindable(ctx context.Context) ([]WANInterfaceInfo, err
 	return f.list, nil
 }
 
+func (f fakeBindable) ListAllBindable(ctx context.Context) ([]WANInterfaceInfo, error) {
+	return f.list, nil
+}
+
 func TestValidateBindInterfaceExists(t *testing.T) {
 	s := &ServiceImpl{deps: Deps{BindableInterfaces: fakeBindable{list: []WANInterfaceInfo{
 		{Name: "ipsec0", Label: "IPSec VPN", Up: true},

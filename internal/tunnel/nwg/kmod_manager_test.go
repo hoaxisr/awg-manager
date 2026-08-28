@@ -1,9 +1,46 @@
 package nwg
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// buildKmodConfigResolved must carry the awg3.1 params from storage verbatim:
+// the base64 HeaderProtectionKey becomes 64-hex, RandomTrailers passes through,
+// and S1-S4 are NOT altered (they must byte-match the server; the S>=12 rule is
+// enforced fail-closed by config.ValidateAWG3 at create/update, not here).
+func TestBuildKmodConfig_AWG31(t *testing.T) {
+	keyBytes := bytes.Repeat([]byte{0x01}, 32)
+	stored := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{
+			AWGObfuscation: storage.AWGObfuscation{
+				S1: 87, S2: 118, S3: 36, S4: 23,
+				HeaderProtectionKey: base64.StdEncoding.EncodeToString(keyBytes),
+				RandomTrailers:      true,
+			},
+		},
+	}
+
+	cfg, err := buildKmodConfigResolved(stored, "1.2.3.4", 51820, "")
+	if err != nil {
+		t.Fatalf("buildKmodConfigResolved: %v", err)
+	}
+	if cfg.HeaderProtectionKeyHex != hex.EncodeToString(keyBytes) {
+		t.Errorf("HP key hex = %q", cfg.HeaderProtectionKeyHex)
+	}
+	if !cfg.RandomTrailers {
+		t.Error("RandomTrailers not carried through")
+	}
+	if cfg.S1 != 87 || cfg.S2 != 118 || cfg.S3 != 36 || cfg.S4 != 23 {
+		t.Errorf("S1-S4 must pass through unchanged: got %d/%d/%d/%d",
+			cfg.S1, cfg.S2, cfg.S3, cfg.S4)
+	}
+}
 
 func TestPubKeyToHex(t *testing.T) {
 	key := "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
@@ -31,6 +68,36 @@ func TestBuildProcLine(t *testing.T) {
 	expected := "1.2.3.4:51820"
 	if len(line) < len(expected) || line[:len(expected)] != expected {
 		t.Errorf("buildProcLine prefix = %q, want prefix %q", line[:20], expected)
+	}
+}
+
+func TestBuildProcLine_AWG31(t *testing.T) {
+	cfg := KmodConfig{
+		EndpointIP:   "1.2.3.4",
+		EndpointPort: 51820,
+		H1:           "1", H2: "2", H3: "3", H4: "4",
+		S1: 12, S2: 12, S3: 12, S4: 12,
+		HeaderProtectionKeyHex: "01020304050607080910111213141516" +
+			"01020304050607080910111213141516",
+		RandomTrailers: true,
+	}
+	line := buildProcLine(cfg)
+	if !strings.Contains(line, " HP_KEY="+cfg.HeaderProtectionKeyHex) {
+		t.Errorf("missing HP_KEY in %q", line)
+	}
+	if !strings.Contains(line, " RT=1") {
+		t.Errorf("missing RT=1 in %q", line)
+	}
+}
+
+func TestBuildProcLine_NoAWG31WhenUnset(t *testing.T) {
+	cfg := KmodConfig{
+		EndpointIP: "1.2.3.4", EndpointPort: 51820,
+		H1: "1", H2: "2", H3: "3", H4: "4",
+	}
+	line := buildProcLine(cfg)
+	if strings.Contains(line, "HP_KEY=") || strings.Contains(line, "RT=") {
+		t.Errorf("awg3.1 tokens leaked into a non-awg3.1 line: %q", line)
 	}
 }
 
@@ -223,5 +290,67 @@ func TestAddTunnel_IPv6BracketedLineOnNewKmod(t *testing.T) {
 	}
 	if !strings.HasPrefix(addBody, "[2001:db8::1]:5060 ") {
 		t.Errorf("add line must use the bracketed form; got %q", addBody)
+	}
+}
+
+// --- AWG 3.1 tokens are gated on kmod >= kmodVersionAWG31 ------------------
+
+func TestAddTunnel_AWG31RequiresKmod140(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.3.0"
+	cfg := defaultCfg()
+	cfg.HeaderProtectionKeyHex = strings.Repeat("ab", 32)
+
+	_, err := km.AddTunnel("tunnel-hp-old-kmod", cfg)
+	if err == nil {
+		t.Fatal("AddTunnel with HP_KEY on kmod 1.3.0 must fail")
+	}
+	if !strings.Contains(err.Error(), kmodVersionAWG31) {
+		t.Errorf("error should name required version %s; got: %v", kmodVersionAWG31, err)
+	}
+	if got := stub.countWritesTo("/proc/awg_proxy/add"); got != 0 {
+		t.Errorf("no /proc/add write may happen on gate failure; got %d", got)
+	}
+}
+
+func TestAddTunnel_RandomTrailersRequiresKmod140(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.3.0"
+	cfg := defaultCfg()
+	cfg.RandomTrailers = true
+
+	if _, err := km.AddTunnel("tunnel-rt-old-kmod", cfg); err == nil {
+		t.Fatal("AddTunnel with RT=1 on kmod 1.3.0 must fail")
+	}
+	if got := stub.countWritesTo("/proc/awg_proxy/add"); got != 0 {
+		t.Errorf("no /proc/add write may happen on gate failure; got %d", got)
+	}
+}
+
+func TestAddTunnel_AWG31PassesOnNewKmod(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	stub.version = "1.4.0"
+	cfg := defaultCfg()
+	cfg.HeaderProtectionKeyHex = strings.Repeat("ab", 32)
+	cfg.RandomTrailers = true
+
+	if _, err := km.AddTunnel("tunnel-hp", cfg); err != nil {
+		t.Fatalf("AddTunnel on kmod 1.4.0: %v", err)
+	}
+	var addBody string
+	for _, w := range stub.writes {
+		if w.path == "/proc/awg_proxy/add" {
+			addBody = w.body
+		}
+	}
+	if !strings.Contains(addBody, "HP_KEY="+strings.Repeat("ab", 32)) || !strings.Contains(addBody, "RT=1") {
+		t.Errorf("add line must carry HP_KEY and RT; got %q", addBody)
+	}
+}
+
+func TestAddTunnel_NoAWG31NotGated(t *testing.T) {
+	km, _ := newKmodManagerForTest() // stub reports 1.1.10
+	if _, err := km.AddTunnel("tunnel-plain", defaultCfg()); err != nil {
+		t.Fatalf("plain AWG tunnel must not be gated on the AWG 3.1 version: %v", err)
 	}
 }

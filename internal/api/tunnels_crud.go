@@ -3,11 +3,11 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,14 +22,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
-
-// writeConfigFile writes config content to file.
-func writeConfigFile(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0600)
-}
 
 // List returns all tunnels.
 //
@@ -240,13 +232,16 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	tunnelID := req.ID
 	if tunnelID == "" {
 		var err error
-		tunnelID, err = h.store.NextAvailableID(req.Backend)
+		tunnelID, err = h.store.NextAvailableID(r.Context(), req.Backend, h.opkgOccupancy)
 		if err != nil {
 			response.Error(w, "failed to generate tunnel ID", "CREATE_FAILED")
 			return
 		}
 	} else if !isValidTunnelID(tunnelID) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	} else if err := h.checkExplicitIDFree(r.Context(), tunnelID, req.Backend); err != nil {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INDEX_TAKEN")
 		return
 	}
 
@@ -260,14 +255,6 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.ISPInterface = "" // auto mode: NDMS picks default gateway
 	req.ISPInterfaceLabel = "Определяет роутер"
 
-	// Create NDMS/system resources via service (OS5: OpkgTun, OS4: no-op).
-	// Must be called before store.Save so the service's Exists check passes.
-	cfg := tunnel.Config{
-		ID:      tunnelID,
-		Name:    req.Name,
-		Address: req.Interface.Address,
-		MTU:     req.Interface.MTU,
-	}
 	// Gate from before the NDMS Create call through publishTunnelList so
 	// the hook-driven snapshot rebroadcast sees the finalized store state.
 	// Only relevant for NativeWG (kernel backend doesn't touch NDMS at
@@ -278,13 +265,8 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.selfCreateGate.EnterSelfCreate()
 		defer h.selfCreateGate.ExitSelfCreate()
 	}
-	if err := h.svc.Create(r.Context(), tunnelID, req.Name, cfg, &req); err != nil {
-		h.log.Warn("create", req.Name, "Service create failed: "+err.Error())
-		response.Error(w, err.Error(), "CREATE_FAILED")
-		return
-	}
-
-	// Add per-tunnel ping check defaults if not specified
+	// Дефолты пингчека — ДО вызова: запись сохраняет сервис, и всё, что
+	// должно попасть на диск, обязано быть проставлено раньше.
 	if req.PingCheck == nil && h.pingCheck != nil {
 		req.PingCheck = &storage.TunnelPingCheck{
 			Enabled:       false,
@@ -299,18 +281,11 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Save to storage
-	if err := h.store.Save(&req); err != nil {
-		h.log.Warn("create", req.Name, "Failed to save tunnel: "+err.Error())
-		response.Error(w, err.Error(), "CREATE_FAILED")
-		return
-	}
-
-	// Write config file
-	confPath := "/opt/etc/awg-manager/" + tunnelID + ".conf"
-	confContent := config.Generate(&req)
-	if err := writeConfigFile(confPath, confContent); err != nil {
-		_ = h.store.Delete(tunnelID)
+	// Ресурс в NDMS, запись и конфиг создаёт сервис одной операцией — вместе
+	// с откатом. Раньше запись и конфиг писал этот хендлер уже после
+	// возврата, и при их провале созданный ресурс оставался сиротой.
+	if err := h.svc.Create(r.Context(), &req); err != nil {
+		h.log.Warn("create", req.Name, "Service create failed: "+err.Error())
 		response.Error(w, err.Error(), "CREATE_FAILED")
 		return
 	}
@@ -325,6 +300,36 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, resp)
+}
+
+// checkExplicitIDFree проверяет присланный клиентом идентификатор той же
+// занятостью, что и сгенерированный.
+//
+// Идентификатор задаёт номер интерфейса OpkgTun — включая клиентские вроде
+// "myvpn", которым extractTunnelNum подставляет ноль. Без этой проверки запись
+// создавалась бы на номере, который держит чужая подсистема, и первое же
+// включение усыновило бы её интерфейс: kernel-путь опознаёт свой интерфейс по
+// номеру, а не по описанию.
+//
+// nativewg не спрашивается: он живёт как Wireguard<N> и номеров OpkgTun не
+// занимает. Пустой источник занятости — тоже не отказ: явный идентификатор
+// принимали и до появления занятости, ломать это на неполной проводке незачем.
+func (h *TunnelsHandler) checkExplicitIDFree(ctx context.Context, tunnelID, backend string) error {
+	if backend == "nativewg" || h.opkgOccupancy == nil {
+		return nil
+	}
+	idx, occupies := tunnel.OpkgTunIndexOf(tunnelID)
+	if !occupies {
+		return nil
+	}
+	taken, err := h.opkgOccupancy(ctx)
+	if err != nil {
+		return fmt.Errorf("не удалось проверить занятость номеров: %w", err)
+	}
+	if taken[idx] {
+		return fmt.Errorf("номер интерфейса OpkgTun%d уже занят — выберите другой идентификатор или не задавайте его вовсе", idx)
+	}
+	return nil
 }
 
 // Update updates an existing tunnel.
@@ -448,6 +453,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.Type = existing.Type
 	req.Enabled = existing.Enabled
 	req.ActiveWAN = existing.ActiveWAN
+	req.StartedAt = existing.StartedAt
 	req.Backend = existing.Backend
 	req.NWGIndex = existing.NWGIndex
 	if req.Name == "" {
@@ -524,7 +530,9 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Service handles runtime RCI based on the diff between existing
 	// (pre-merge snapshot) and req (post-merge state). Storage save
-	// happens AFTER service runs — handler is the sole writer. Fail-closed:
+	// happens AFTER service runs. The store has many writers besides this
+	// handler (orchestrator, pingcheck, cleanup), so runtime fields are
+	// re-read right before the save — see below. Fail-closed:
 	// if the service can't apply the change to the running interface,
 	// we don't persist it either, otherwise on-disk state would diverge
 	// from the live state.
@@ -532,6 +540,22 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("update", req.Name, "Service update failed: "+err.Error())
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
+	}
+
+	// svc.Update выше — секунды RCI-обменов; оркестратор и pingcheck за это
+	// время могли переписать runtime-поля. Переносим их из свежего чтения,
+	// а не из снапшота existing, снятого до svc.Update. Окно сужается до
+	// микросекунд; полный фикс (одна операция под локом стора) — отдельная
+	// задача.
+	if fresh, err := h.store.Get(id); err == nil {
+		req.Enabled = fresh.Enabled
+		req.ActiveWAN = fresh.ActiveWAN
+		req.StartedAt = fresh.StartedAt
+		// Кэш резолва валиден только для endpoint'а, под которым получен —
+		// то же условие, что при merge выше.
+		if req.Peer.Endpoint == fresh.Peer.Endpoint {
+			req.ResolvedEndpointIP = fresh.ResolvedEndpointIP
+		}
 	}
 
 	// Save updated tunnel
@@ -564,14 +588,6 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		// Settings-only changes (method, interval, threshold) are picked up
 		// automatically by the monitor loop on each tick via getCheckConfig().
-	}
-
-	// Regenerate config file
-	confPath := "/opt/etc/awg-manager/" + id + ".conf"
-	confContent := config.Generate(&req)
-	if err := writeConfigFile(confPath, confContent); err != nil {
-		response.Error(w, err.Error(), "UPDATE_FAILED")
-		return
 	}
 
 	// Handle primary connection / ISP interface route changes for running tunnels.
@@ -697,6 +713,12 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(err, tunnel.ErrOperationInProgress) {
+			// Занятый замок — ретраибельный конфликт, не отказ удаления.
+			// Тот же контракт, что у start/stop/restart в control.go.
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+			return
+		}
 		h.log.Warn("delete", tunnelName, "Failed to delete tunnel: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "DELETE_FAILED")
 		return
@@ -818,6 +840,7 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/replace [post]
 func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
@@ -858,6 +881,15 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 
 	if wasRunning {
 		if err := h.svc.Stop(r.Context(), id); err != nil {
+			if errors.Is(err, tunnel.ErrOperationInProgress) {
+				// Замок занят — конфиг не тронут, повтор через несколько
+				// секунд пройдёт. Ветка ловит только случай «туннель виден
+				// работающим»: если залипшая операция уже уронила видимое
+				// состояние, Stop пропускается и замена идёт мимо замка
+				// оркестратора — отдельная дыра, не эта.
+				response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+				return
+			}
 			response.InternalError(w, "failed to stop tunnel before config replace: "+err.Error())
 			return
 		}

@@ -8,23 +8,18 @@ import (
 	"strings"
 )
 
-// FakeIPTunSpec is the input to BuildFakeIPTunConfig — every value the
-// fakeip-tun mode needs that the builder cannot derive on its own. It carries
-// the kernel tun device, the fakeip pools, the real upstream resolver and the
-// already-built outbound list (proxy + direct).
+// FakeIPTunSpec is the input to ensureFakeIPOverlay — every value the
+// fakeip-tun mode needs that the overlay cannot derive on its own. It carries
+// the kernel tun device, the fakeip pools and the real upstream resolver.
 type FakeIPTunSpec struct {
-	Iface          string     // kernel iface name, e.g. "opkgtun10"
-	TunAddr4       string     // e.g. "172.18.0.1/30"
-	TunAddr6       string     // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
-	MTU            int        //
-	Inet4Range     string     // fakeip v4 pool
-	Inet6Range     string     // fakeip v6 pool (empty to omit v6)
-	CachePath      string     //
-	RealServer     string     // real upstream resolver, e.g. "1.1.1.1"
-	Outbounds      []Outbound // proxy + direct
-	ProxyTag       string     // outbound tag that tun-in routes to
-	DomainRuleSets []string   // .srs tags for domains to fakeip (empty = fake all A/AAAA)
-	SourceIPCIDR   []string   // optional per-device targeting (empty = all sources)
+	Iface      string // kernel iface name, e.g. "opkgtun10"
+	TunAddr4   string // e.g. "172.18.0.1/30"
+	TunAddr6   string // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
+	MTU        int    //
+	Inet4Range string // fakeip v4 pool
+	Inet6Range string // fakeip v6 pool (empty to omit v6)
+	CachePath  string //
+	RealServer string // real upstream resolver, e.g. "1.1.1.1"
 	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
 	// "system". When "system" the builder forces gso:false on the tun inbound —
 	// the only stable system-stack combo on this router's kernel (4.9), where the
@@ -43,127 +38,6 @@ type FakeIPTunSpec struct {
 // sing-box would then apply its own non-false defaults — e.g. auto_route true,
 // which is exactly what fakeip-tun must NOT enable because NDMS owns routing).
 func boolPtr(v bool) *bool { return &v }
-
-// BuildFakeIPTunConfig assembles a complete RouterConfig for sing-box's
-// fakeip-tun mode from spec.
-//
-// Shape:
-//   - tun inbound "tun-in" on s.Iface, gvisor stack, every auto-* flag forced
-//     false (NDMS owns routing/redirect; fakeip-tun must not let sing-box touch
-//     the kernel routing table).
-//   - outbounds: s.Outbounds verbatim, after applying the domain_resolver guard
-//     (see applyOutboundDomainResolver) on a defensive copy.
-//   - DNS: a "fakeip" server (the pool) plus a "real" server (true upstream),
-//     final → "real". A single route rule sends A/AAAA queries to "fakeip",
-//     optionally narrowed by rule_set (domains) and/or source_ip_cidr (devices).
-//   - route: hijack-dns first, then everything to the proxy tag; outbound
-//     hostnames resolve via "real" (default_domain_resolver) so the proxy
-//     endpoint never gets a fake address.
-//   - experimental.cache_file persists the fakeip name↔address map across
-//     restarts so existing connections keep their address.
-func BuildFakeIPTunConfig(s FakeIPTunSpec) (*RouterConfig, error) {
-	if p, err := netip.ParsePrefix(s.TunAddr4); err != nil {
-		return nil, fmt.Errorf("fakeip-tun: invalid TunAddr4 %q: %w", s.TunAddr4, err)
-	} else if !p.Addr().Is4() {
-		return nil, fmt.Errorf("fakeip-tun: TunAddr4 %q is not IPv4", s.TunAddr4)
-	}
-	if s.TunAddr6 != "" {
-		if p, err := netip.ParsePrefix(s.TunAddr6); err != nil {
-			return nil, fmt.Errorf("fakeip-tun: invalid TunAddr6 %q: %w", s.TunAddr6, err)
-		} else if p.Addr().Is4() {
-			return nil, fmt.Errorf("fakeip-tun: TunAddr6 %q is not IPv6", s.TunAddr6)
-		}
-	}
-
-	cfg := NewEmptyConfig()
-
-	addrs := []string{s.TunAddr4}
-	if s.TunAddr6 != "" {
-		addrs = append(addrs, s.TunAddr6)
-	}
-	// Stack: empty defaults to gvisor (robust, no gso flag). system REQUIRES
-	// gso:false on this router's kernel (4.9) — the system stack with GSO panics
-	// sing-tun under load (PoC-proven 2026-06-13). gvisor needs no gso flag, so
-	// GSO stays nil (omitted) and only system emits the explicit false.
-	stack := s.Stack
-	if stack == "" {
-		stack = "gvisor"
-	}
-	udpTimeout := resolveUDPTimeout(s.UDPTimeout)
-	in := Inbound{
-		Type:                   "tun",
-		Tag:                    "tun-in",
-		InterfaceName:          s.Iface,
-		Address:                addrs,
-		MTU:                    s.MTU,
-		AutoRoute:              boolPtr(false),
-		AutoRedirect:           boolPtr(false),
-		StrictRoute:            boolPtr(false),
-		Stack:                  stack,
-		EndpointIndependentNAT: boolPtr(false),
-		UDPTimeout:             udpTimeout,
-	}
-	if stack == "system" {
-		in.GSO = boolPtr(false)
-	}
-	cfg.Inbounds = []Inbound{in}
-
-	// Full outbound pipeline: strip auto-managed direct outbounds (awg/nwg/
-	// wireguard bind_interface) — they live in 15-awg.json and are merged by
-	// sing-box across config.d, so re-emitting them here would FATAL the merged
-	// config with "duplicate outbound tag" (stand-verified 2026-06-15). ProxyTag
-	// may reference one of them by tag; sing-box resolves it from 15-awg.json.
-	// Then apply the domain_resolver guard on the survivors. Mirrors the tproxy
-	// path (service.go: stripAutoManagedDirect).
-	cfg.Outbounds = applyOutboundDomainResolver(stripAutoManagedDirect(s.Outbounds), "real")
-
-	fakeip := DNSServer{
-		Tag:        "fakeip",
-		Type:       "fakeip",
-		Inet4Range: s.Inet4Range,
-	}
-	if s.Inet6Range != "" {
-		fakeip.Inet6Range = s.Inet6Range
-	}
-	if err := cfg.AddDNSServer(fakeip); err != nil {
-		return nil, err
-	}
-	if err := cfg.AddDNSServer(DNSServer{Tag: "real", Type: "udp", Server: s.RealServer}); err != nil {
-		return nil, err
-	}
-	cfg.DNS.Final = "real"
-
-	rule := DNSRule{
-		Action:    "route",
-		Server:    "fakeip",
-		QueryType: []string{"A", "AAAA"},
-	}
-	if len(s.DomainRuleSets) > 0 {
-		rule.RuleSet = s.DomainRuleSets
-	}
-	if len(s.SourceIPCIDR) > 0 {
-		rule.SourceIPCIDR = s.SourceIPCIDR
-	}
-	if err := cfg.AddDNSRule(rule); err != nil {
-		return nil, err
-	}
-
-	cfg.Route.Rules = []Rule{
-		{Action: "hijack-dns", Protocol: "dns"},
-		{Action: "route", Outbound: s.ProxyTag},
-	}
-	cfg.EnsureUDPTimeoutRule(udpTimeout)
-	cfg.Route.Final = s.ProxyTag
-	cfg.Route.DefaultDomainResolver = &DomainResolver{Server: "real"}
-
-	cfg.Experimental = &Experimental{CacheFile: &CacheFile{
-		Enabled:     true,
-		StoreFakeIP: true,
-		Path:        s.CachePath,
-	}}
-
-	return cfg, nil
-}
 
 // ensureFakeIPOverlay injects/normalizes the ENGINE-LOCKED bits of fakeip-tun
 // mode into a user-edited *RouterConfig. It is idempotent: calling it multiple

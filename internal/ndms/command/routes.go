@@ -47,7 +47,7 @@ func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) err
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.mutate(ctx, payload, "remove default route "+name)
+	return c.mutateTolerant(ctx, payload, "remove default route "+name, isNetlinkFileExists)
 }
 
 func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) error {
@@ -65,7 +65,7 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 			"route": map[string]any{"default": true, "interface": name, "no": true},
 		},
 	}
-	return c.mutate(ctx, payload, "remove ipv6 default route "+name)
+	return c.mutateTolerant(ctx, payload, "remove ipv6 default route "+name, isNetlinkFileExists)
 }
 
 // RemoveHostRoute removes an IPv4 host route (best-effort).
@@ -79,15 +79,21 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 }
 
 // AddStaticRoute adds a network or host route to the given interface. For v6
-// (route.V6) it emits the bare {network, interface, auto} form under the "ipv6"
+// (route.V6) it emits the bare {prefix, interface, auto} form under the "ipv6"
 // key (NDMS reasserts on iface up); for v4 it keeps the full
 // auto/reject/comment/mask/host form under "ip".
+//
+// Ключ подсети у v6 — ИМЕННО prefix, не network (как у v4). NDMS молча
+// отбрасывает неизвестное поле, и запрос вырождается: add остаётся без
+// обязательной подсети и получает ложный «no input», а remove без неё целится
+// в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
+// 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
 	if route.V6 {
 		payload := map[string]any{
 			"ipv6": map[string]any{
 				"route": map[string]any{
-					"network":   route.Network,
+					"prefix":    route.Network,
 					"interface": route.Interface,
 					"auto":      true,
 				},
@@ -125,13 +131,13 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 		payload := map[string]any{
 			"ipv6": map[string]any{
 				"route": map[string]any{
-					"network":   route.Network,
+					"prefix":    route.Network,
 					"interface": route.Interface,
 					"no":        true,
 				},
 			},
 		}
-		return c.mutate(ctx, payload, "remove ipv6 static route")
+		return c.mutateTolerant(ctx, payload, "remove ipv6 static route", isNoSuchInterface)
 	}
 	inner := map[string]any{
 		"interface": route.Interface,
@@ -146,14 +152,21 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.mutate(ctx, payload, "remove static route")
+	return c.mutateTolerant(ctx, payload, "remove static route", isNoSuchInterface)
 }
 
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed
 // invalidation set (Routes + RunningConfig). Every route mutation touches
 // both caches identically, so we pin them in one place.
 func (c *RouteCommands) mutate(ctx context.Context, payload any, op string) error {
-	return postMutation(ctx, c.poster, c.save, payload, op,
+	return c.mutateTolerant(ctx, payload, op, nil)
+}
+
+// mutateTolerant — mutate, признающий часть отказов безобидными. Нужен снятию
+// маршрутов: отложенный drain fakeip снимает их уже ПОСЛЕ удаления интерфейса,
+// и NDMS отвечает «no such interface» на живую, ожидаемую ситуацию.
+func (c *RouteCommands) mutateTolerant(ctx context.Context, payload any, op string, tolerate func(string) bool) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, op, tolerate,
 		c.queries.Routes.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }

@@ -6,7 +6,7 @@
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { notifications } from '$lib/stores/notifications';
 	import { SettingsSectionLabel } from '$lib/components/settings';
-	import { Button, Dropdown, FieldHint, Toggle, type DropdownOption } from '$lib/components/ui';
+	import { Badge, Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
 	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck, Shuffle } from 'lucide-svelte';
 
 	const MAX_SIGNATURE_BYTES = 4096;
@@ -20,7 +20,7 @@
 		params = $bindable(),
 		extended = undefined,
 		awg3 = false,
-		awg31 = false,
+		awg3Limited = false,
 		mtu = 1280,
 		errors = {},
 		hints = AWG_PARAM_HINTS,
@@ -31,7 +31,9 @@
 		params: ASCParams;
 		extended?: boolean;
 		awg3?: boolean;
-		awg31?: boolean;
+		// NativeWG (awg_proxy) can only do header protection + random trailers —
+		// not the kernel-only timers / content padding. Hide those when true.
+		awg3Limited?: boolean;
 		mtu?: number;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
@@ -51,6 +53,24 @@
 		{ key: 'maxHandshakeAttempts', label: 'MaxHandshakeAttempts' },
 		{ key: 'contentPaddingAddition', label: 'ContentPaddingAddition' },
 	];
+
+	// AWG 3.1 device flags. Read-only: they arrive with an imported .conf and
+	// switching RandomTrailers off on one end alone kills the tunnel.
+	const AWG31_FLAGS: { key: 'randomTrailers' | 'disableCookies'; label: string; note: string }[] = [
+		{
+			key: 'randomTrailers',
+			label: 'RandomTrailers',
+			note: 'Добивает пакеты случайным числом лишних байт. Согласования по проводу нет: параметр обязан стоять на обоих концах, иначе туннель молча не поднимется.',
+		},
+		{
+			key: 'disableCookies',
+			label: 'DisableCookies',
+			note: 'Не отвечать служебным пакетом-подтверждением под нагрузкой. Односторонний, совместимость не ломает.',
+		},
+	];
+	const ext31Flags = $derived(
+		AWG31_FLAGS.filter((f) => (params as ASCParamsExtended)[f.key]),
+	);
 
 	let selectedProtocol = $state<ProtocolKey>('quic_initial');
 	let generateMode = $state<GenerateMode>('protocol');
@@ -336,8 +356,13 @@
 		<section class="card param-section">
 			<SettingsSectionLabel label="AmneziaWG 3.0" icon={ShieldCheck} tone="purple" header />
 			<p class="group-desc">
-				Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
-				<code>min-max</code> в секундах; пусто = значение по умолчанию.
+				{#if awg3Limited}
+					Через NativeWG (awg_proxy) работает защита заголовков — её ключ задаётся здесь.
+					Таймеры и content-padding доступны лишь в режиме kernel.
+				{:else}
+					Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
+					<code>min-max</code> в секундах; пусто = значение по умолчанию.
+				{/if}
 			</p>
 
 			<div class="form-group">
@@ -354,58 +379,47 @@
 				{/if}
 			</div>
 
-			<div class="inline-row inline-row-2">
+			{#if !awg3Limited}
+				<div class="inline-row inline-row-2">
+					{#each awg3RangeFields as f}
+						{@render paramLabel(f.key, f.label)}
+						<input
+							type="text"
+							id={fieldId(f.key)}
+							class="field-input"
+							bind:value={ext[f.key]}
+							placeholder="напр. 120 или 120-150"
+						/>
+					{/each}
+				</div>
 				{#each awg3RangeFields as f}
-					{@render paramLabel(f.key, f.label)}
-					<input
-						type="text"
-						id={fieldId(f.key)}
-						class="field-input"
-						bind:value={ext[f.key]}
-						placeholder="напр. 120 или 120-150"
-					/>
+					{#if errors[f.key]}
+						<p class="field-error">{f.label}: {errors[f.key]}</p>
+					{/if}
 				{/each}
-			</div>
-			{#each awg3RangeFields as f}
-				{#if errors[f.key]}
-					<p class="field-error">{f.label}: {errors[f.key]}</p>
-				{/if}
-			{/each}
+			{/if}
 		</section>
 	{/if}
 
-	{#if awg31}
-		{@const ext31 = params as ASCParamsExtended}
+	{#if ext31Flags.length > 0}
 		<section class="card param-section">
 			<SettingsSectionLabel label="AmneziaWG 3.1" icon={Shuffle} tone="purple" header />
 			<p class="group-desc">
-				Параметры версии 3.1. Требуют модуля ядра 3.1 и на этом роутере, и на стороне сервера.
+				Параметры версии 3.1 включены в конфигурационном файле туннеля. Отсюда их не
+				поменять: они требуют модуля ядра 3.1 и на этом роутере, и на стороне сервера,
+				а снятие RandomTrailers на одной стороне рвёт туннель.
 			</p>
 
 			<div class="toggle-stack">
-				<div class="toggle-item">
-					<Toggle
-						checked={ext31.randomTrailers ?? false}
-						onchange={(v) => (ext31.randomTrailers = v)}
-						label="RandomTrailers — случайные хвосты"
-						hint="Добивает пакеты случайным числом лишних байт"
-					/>
-					<p class="toggle-note">
-						Включать обязательно на обоих концах: согласования по проводу у этого параметра
-						нет, и при включении на одной стороне туннель молча не поднимется. Заметно
-						увеличивает исходящий трафик и снижает скорость.
-					</p>
-				</div>
-
-				<div class="toggle-item">
-					<Toggle
-						checked={ext31.disableCookies ?? false}
-						onchange={(v) => (ext31.disableCookies = v)}
-						label="DisableCookies — не отвечать cookie"
-						hint="Не отвечать служебным пакетом-подтверждением под нагрузкой"
-					/>
-					<p class="toggle-note">Односторонний, совместимость не ломает.</p>
-				</div>
+				{#each ext31Flags as f}
+					<div>
+						<div class="flag-row">
+							<Badge variant="purple" size="xs" mono>{f.label}</Badge>
+							<span class="flag-state">включён</span>
+						</div>
+						<p class="toggle-note">{f.note}</p>
+					</div>
+				{/each}
 			</div>
 		</section>
 	{/if}
@@ -427,6 +441,17 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.25rem;
+	}
+
+	.flag-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.flag-state {
+		font-size: 0.8125rem;
+		color: var(--color-text-muted, #6b7280);
 	}
 
 	.toggle-note {

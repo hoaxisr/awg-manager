@@ -142,13 +142,6 @@ func (spec FakeIPIngressSpec) active() bool {
 
 func fakeIPIngressTableStr() string { return strconv.Itoa(fakeIPIngressTable) }
 
-// ingressSeamsWired — все четыре сида на месте. Частично собранный IPTables
-// встречается в тестах соседних путей (tproxy), и для них заворот — не их
-// предмет: молча ничего не делаем вместо nil-паники.
-func (it *IPTables) ingressSeamsWired() bool {
-	return it.runIPTables != nil && it.runIPTablesOut != nil && it.runIP != nil && it.runIPOut != nil
-}
-
 // fakeIPIngressDNATArgs собирает вставку правила перехвата DNS для одного
 // селектора. Вставка в позицию 1: правило обязано стоять выше DNS-редиректов
 // NDMS, иначе запрос уйдёт в ndnproxy.
@@ -298,9 +291,6 @@ func fakeIPIngressRuleDrift(dump string, spec FakeIPIngressSpec) bool {
 // мутации, только три чтения (дамп nat, ip rule, таблица маршрутов).
 // Пустой spec означает «заворота быть не должно» — тогда всё снимается.
 func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressSpec) error {
-	if !it.ingressSeamsWired() {
-		return nil
-	}
 	// Хук: пишем при перехвате policy-tun, снимаем во всех прочих случаях
 	// (чужой режим, отключённый перехват, пустой спек). Решение зависит ТОЛЬКО
 	// от спека, поэтому стоит выше дампов: сбой чтения `iptables -S` не должен
@@ -398,9 +388,6 @@ func (it *IPTables) EnsureFakeIPIngress(ctx context.Context, spec FakeIPIngressS
 // RemoveFakeIPIngress снимает перехват и заворот целиком. Идемпотентно —
 // безопасно звать, когда ничего не установлено.
 func (it *IPTables) RemoveFakeIPIngress(ctx context.Context) {
-	if !it.ingressSeamsWired() {
-		return
-	}
 	// Кто снимает правила перехвата, тот снимает и файл, который их
 	// восстанавливает: иначе первое же событие nat вернуло бы DNAT.
 	if it.cleanupPolicyTunDNSHook != nil {
@@ -420,9 +407,6 @@ func (it *IPTables) RemoveFakeIPIngress(ctx context.Context) {
 // живёт (ip rule iif + таблица 700), а протухший DNAT прежнего fakeip обязан
 // уйти. Идемпотентно.
 func (it *IPTables) RemoveFakeIPIngressDNAT(ctx context.Context, tag string) {
-	if !it.ingressSeamsWired() {
-		return
-	}
 	dump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S", "PREROUTING")
 	if err != nil || !strings.Contains(dump, tag) {
 		return
@@ -502,16 +486,16 @@ func (it *IPTables) removeFakeIPIngressDNAT(ctx context.Context, dump, tag strin
 // fakeIPIngressSpecFor собирает желаемое состояние из персиста fakeip и
 // ingress-ref'ов настроек. Пустой spec (нет персиста, не резолвится DNS или
 // список ref'ов пуст) означает «заворота быть не должно».
-func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.FakeIPState, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
+func (s *ServiceImpl) fakeIPIngressSpecFor(ctx context.Context, st *storage.OpkgTunState, sr storage.SingboxRouterSettings) FakeIPIngressSpec {
 	if st == nil || !st.Provisioned {
 		return FakeIPIngressSpec{}
 	}
-	tunDNS, err := DeriveTunDNS(resolveFakeIPParams(s.deps.FakeIPTun, sr).TunAddr4)
+	tunDNS, err := DeriveTunDNS(s.resolveFakeIPParams(sr).TunAddr4)
 	if err != nil {
 		return FakeIPIngressSpec{}
 	}
 	return FakeIPIngressSpec{
-		TunIface: fakeIPIfaceName(st.Index),
+		TunIface: tunIfaceName(st.Index),
 		TunDNS:   tunDNS,
 		Ifaces:   s.resolveIngressInterfaces(ctx, sr.IngressInterfaces),
 	}

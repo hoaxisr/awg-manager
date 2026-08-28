@@ -310,11 +310,20 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			// no transport / explicit tcp — plain network, nothing to add
 		case "ws":
 			network = "ws"
+			ed := intFromAny(transport["max_early_data"])
 			if path, _ := transport["path"].(string); path != "" {
-				if ed := intFromAny(transport["max_early_data"]); ed > 0 {
+				if ed > 0 {
 					path = path + "?ed=" + strconv.Itoa(ed)
 				}
 				q.Set("path", path)
+			}
+			// "?ed=" в пути подразумевает Sec-WebSocket-Protocol — так его
+			// читают и mihomo, и мы. Любое другое имя (в том числе пустое,
+			// то есть early data прямо в пути) круг иначе потеряет, поэтому
+			// оно уезжает отдельным параметром.
+			if header, _ := transport["early_data_header_name"].(string); ed > 0 && header != "Sec-WebSocket-Protocol" {
+				q.Set("ed", strconv.Itoa(ed))
+				q.Set("eh", header)
 			}
 			if headers, _ := transport["headers"].(map[string]any); headers != nil {
 				if host, _ := headers["Host"].(string); host != "" {
@@ -355,8 +364,12 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 			if mode, _ := transport["mode"].(string); mode != "" {
 				q.Set("mode", mode)
 			}
-			// x_padding_bytes is an internal/server-negotiated default; not part
-			// of the share-link standard, so it is intentionally not emitted.
+			// Everything else xhttp carries travels in Xray's extra= object,
+			// x_padding_bytes included: since #797 it can come from the link
+			// rather than from our default, so dropping it would lose it.
+			if extra := xhttpExtraFromTransport(transport); extra != "" {
+				q.Set("extra", extra)
+			}
 		default:
 			// Unknown transport (e.g. quic) — fail closed rather than silently
 			// emitting a plain-tcp link that misroutes.
@@ -366,6 +379,11 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 	if network != "tcp" {
 		q.Set("type", network)
 	}
+
+	// bind_interface намеренно не эмитится: это привязка к интерфейсу
+	// конкретного роутера, она меняется в рантайме и на чужом устройстве
+	// в лучшем случае бессмысленна, в худшем — даёт конфиг с несуществующим
+	// интерфейсом, от которого sing-box падает (#709).
 
 	if tls, _ := ob["tls"].(map[string]any); tls != nil {
 		reality, _ := tls["reality"].(map[string]any)
