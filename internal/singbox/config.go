@@ -77,6 +77,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 func (c *Config) Save(path string) error {
 	c.ensureNaiveUDPOverTCPOutbounds()
 	c.ensureHysteria2ChromeParrotOutbounds()
+	c.ensureTrustTunnelOutbounds()
 	b, err := json.MarshalIndent(c.raw, "", "  ")
 	if err != nil {
 		return err
@@ -220,6 +221,7 @@ func (c *Config) AddTunnelWithListenPort(tag, protocol, server string, port, lis
 	obMap["tag"] = tag
 	ensureNaiveUDPOverTCP(obMap)
 	ensureHysteria2ChromeParrot(obMap)
+	ensureTrustTunnelOutbound(obMap)
 
 	// Insert inbound before existing (any order works)
 	inbound := map[string]any{
@@ -304,6 +306,7 @@ func (c *Config) UpdateTunnel(tag string, outbound json.RawMessage) error {
 	obMap["tag"] = tag
 	ensureNaiveUDPOverTCP(obMap)
 	ensureHysteria2ChromeParrot(obMap)
+	ensureTrustTunnelOutbound(obMap)
 
 	found := false
 	obs := c.outbounds()
@@ -495,6 +498,39 @@ func (c *Config) ensureHysteria2ChromeParrotOutbounds() bool {
 	return changed
 }
 
+// ensureTrustTunnelOutbound normalizes native trusttunnel outbounds for
+// trutun.online: health_check breaks the outbound; QUIC in sing-trusttunnel
+// is not ready yet — H2 + client_random_prefix is the working path.
+func ensureTrustTunnelOutbound(ob map[string]any) bool {
+	if strOr(ob["type"], "") != "trusttunnel" {
+		return false
+	}
+	changed := false
+	if ob["health_check"] != false {
+		ob["health_check"] = false
+		changed = true
+	}
+	if ob["quic"] != false {
+		ob["quic"] = false
+		changed = true
+	}
+	return changed
+}
+
+func (c *Config) ensureTrustTunnelOutbounds() bool {
+	changed := false
+	for _, raw := range c.outbounds() {
+		ob, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ensureTrustTunnelOutbound(ob) {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func renameTunnelRouteRefs(values []any, oldOut, newOut, oldIn, newIn string) {
 	for _, v := range values {
 		r, ok := v.(map[string]any)
@@ -650,10 +686,14 @@ func detectFingerprint(ob map[string]any) string {
 // рабочие mieru-подключения. Здесь только теги, подтверждённые файлом
 // include/<type>_outbound.go в исходниках sing-box.
 func outboundRequiresFeature(obType string) string {
-	if obType == "naive" {
+	switch obType {
+	case "naive":
 		return "with_naive_outbound"
+	case "trusttunnel":
+		return "with_trusttunnel_outbound"
+	default:
+		return ""
 	}
-	return ""
 }
 
 // OutboundTypeRequiresFeature exposes outboundRequiresFeature for

@@ -122,7 +122,7 @@ func outboundFingerprint(ob map[string]any) string {
 		secret, _ = ob["uuid"].(string)
 	case "trojan", "hysteria2", "shadowsocks":
 		secret, _ = ob["password"].(string)
-	case "naive":
+	case "naive", "mieru", "trusttunnel":
 		u, _ := ob["username"].(string)
 		p, _ := ob["password"].(string)
 		secret = u + ":" + p
@@ -193,8 +193,12 @@ func nextFreeListenPortSlot(cfg *Config, reserved map[int]bool) int {
 // тело целиком. Экспортирована ради валидации bind_interface в API-хендлере
 // до вызова AddTunnels (#709).
 func ParseTunnelLinksInput(linksText string) vlink.BatchResult {
-	if body := []byte(linksText); vlink.IsMieruClientJSON(body) {
+	body := []byte(linksText)
+	if vlink.IsMieruClientJSON(body) {
 		return vlink.ParseMieruClientJSON(body)
+	}
+	if vlink.IsTrustTunnelClientTOML(body) {
+		return vlink.ParseTrustTunnelClientTOML(body)
 	}
 	return vlink.ParseBatch(strings.Split(linksText, "\n"))
 }
@@ -305,7 +309,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 		return nil, parseErrs, nil
 	}
 
-	if err := o.applyConfig(ctx, cfg); err != nil {
+	if err := o.persistTunnelsAndReload(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-add", "", "apply config failed: "+err.Error())
 		}
@@ -395,14 +399,23 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 	// Commit config/process state BEFORE NDMS teardown so a mid-failure leaves
 	// a consistent recoverable state (sing-box config matches on-disk reality).
 	if len(cfg.Tunnels()) == 0 {
-		if err := o.proc.Stop(); err != nil && o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("single-remove", tag, "failed to stop process after last tunnel removal: "+err.Error())
-		}
-		if err := os.Remove(o.tunnelsFile()); err != nil && !os.IsNotExist(err) && o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("single-remove", tag, "failed to remove tunnels file: "+err.Error())
+		if o.orch != nil {
+			if err := o.orch.Save(orchestrator.SlotTunnels, []byte("{}")); err != nil {
+				return err
+			}
+			if err := o.orch.ReloadNow(); err != nil {
+				return err
+			}
+		} else {
+			if err := o.proc.Stop(); err != nil && o.runtimeLogger != nil {
+				o.runtimeLogger.Warn("single-remove", tag, "failed to stop process after last tunnel removal: "+err.Error())
+			}
+			if err := os.Remove(o.tunnelsFile()); err != nil && !os.IsNotExist(err) && o.runtimeLogger != nil {
+				o.runtimeLogger.Warn("single-remove", tag, "failed to remove tunnels file: "+err.Error())
+			}
 		}
 	} else {
-		if err := o.applyConfig(ctx, cfg); err != nil {
+		if err := o.persistTunnelsAndReload(ctx, cfg); err != nil {
 			if o.runtimeLogger != nil {
 				o.runtimeLogger.Error("single-remove", tag, "apply config failed: "+err.Error())
 			}
@@ -554,6 +567,9 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 }
 
 func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
+	if o.orch != nil {
+		return o.persistTunnelsAndReload(ctx, cfg)
+	}
 	defer perftrace.LogDuration(o.runtimeLogger, "perf", "applyConfig", "total", time.Now())
 	stage := time.Now()
 	if o.runtimeLogger != nil {
@@ -617,13 +633,36 @@ func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
 	if hadExisting == nil {
 		_ = os.Remove(backupPath)
 	}
-	if runErr != nil && o.runtimeLogger != nil {
-		o.runtimeLogger.Error("apply-config", "", "run phase failed: "+runErr.Error())
+	if runErr != nil {
+		restore()
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Error("apply-config", "", "run phase failed: "+runErr.Error())
+		}
+		return runErr
 	}
-	if runErr == nil && o.runtimeLogger != nil {
+	if o.runtimeLogger != nil {
 		o.runtimeLogger.Info("apply-config", "", "done")
 	}
-	return runErr
+	return nil
+}
+
+// persistTunnelsAndReload writes 10-tunnels.json and reloads sing-box.
+// When the orchestrator is wired, reload runs sibling-slot prune first so
+// selectors in 30-deviceproxy.json lose deleted tunnel tags before sing-box
+// parses the merged config (sing-box check does not catch dangling selector
+// members — they only fail at runtime with FATAL dependency not found).
+func (o *Operator) persistTunnelsAndReload(ctx context.Context, cfg *Config) error {
+	if o.orch != nil {
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal tunnels config: %w", err)
+		}
+		if err := o.orch.Save(orchestrator.SlotTunnels, data); err != nil {
+			return err
+		}
+		return o.orch.ReloadNow()
+	}
+	return o.applyConfig(ctx, cfg)
 }
 
 func (o *Operator) loadConfig() (*Config, error) {

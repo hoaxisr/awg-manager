@@ -141,6 +141,31 @@ func TestConfig_AddTunnel_EnsuresHysteria2ChromeParrot(t *testing.T) {
 	}
 }
 
+func TestConfig_AddTunnel_EnsuresTrustTunnel(t *testing.T) {
+	c := NewConfig()
+	ob := json.RawMessage(`{"type":"trusttunnel","tag":"TT","server":"nl2.trutun.online","server_port":443,"username":"u","password":"p","health_check":true,"quic":true,"client_random_prefix":"878744a1","tls":{"enabled":true,"server_name":"nl2.trutun.online"}}`)
+	if err := c.AddTunnelWithListenPort("TT", "trusttunnel", "nl2.trutun.online", 443, 0, ob); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := c.GetOutbound("TT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["health_check"] != false {
+		t.Fatalf("health_check=%v", got["health_check"])
+	}
+	if got["quic"] != false {
+		t.Fatalf("quic=%v", got["quic"])
+	}
+	if got["client_random_prefix"] != "878744a1" {
+		t.Fatalf("client_random_prefix=%v", got["client_random_prefix"])
+	}
+}
+
 func TestConfig_RemoveTunnel(t *testing.T) {
 	c := NewConfig()
 	c.AddTunnelWithListenPort("A", "vless", "h", 1, 0, json.RawMessage(`{"type":"vless","tag":"A"}`))

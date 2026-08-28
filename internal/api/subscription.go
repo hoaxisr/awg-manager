@@ -329,6 +329,13 @@ func (h *SubscriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.svc.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, subscription.ErrSubscriptionNotFound) {
+			h.log.Info("subscription-delete", id, "Subscription already deleted: "+label)
+			response.Success(w, struct {
+				OK bool `json:"ok"`
+			}{true})
+			return
+		}
 		response.InternalError(w, err.Error())
 		return
 	}

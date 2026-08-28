@@ -612,7 +612,10 @@
 						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
 					/>
 					<span class="hint">
-						Поддерживаются share-link'и, Clash YAML, sing-box JSON,
+						Поддерживаются share-link'и, ссылки TrustTunnel
+						(<code>https://trustunnel.ru/connect/?d=…</code>, <code>tt://</code>),
+						TOML TrustTunnel (можно вставить после ссылок в том же поле),
+						Clash YAML, sing-box JSON,
 						JSON-конфиг mieru (экспорт панелей, формат mieru apply config)
 						и TOML-конфиг TrustTunnel (AdGuard).
 						Список ссылок через пробел при вставке разбивается на строки.

@@ -120,3 +120,12 @@ func TestJsonUnescapeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalize_TrustTunnelConnectURLs(t *testing.T) {
+	de := "https://trustunnel.ru/connect/?d=ARFkZTIudHJ1dHVuLm9ubGluZQUPdXNlcl8xMzUzODE4OTc5Bgw4ZU9wclZwYXhReDYCFWRlMi50cnV0dW4ub25saW5lOjQ0MwsIOGE1OGI5MGYDEWRlMi50cnV0dW4ub25saW5lDCjwn4ep8J-HqiBERSAo0JPQtdGA0LzQsNC90LjRjykgKFByZW1pdW0pDUBBJWh0dHBzOi8vZG5zLmFkZ3VhcmQtZG5zLmNvbS9kbnMtcXVlcnkacXVpYzovL2Rucy5hZGd1YXJkLWRucy5jb20EAQAKAQEJAQI"
+	fi := "https://trustunnel.ru/connect/?d=ARFmaTEudHJ1dHVuLm9ubGluZQUPdXNlcl8xMzUzODE4OTc5Bgw4ZU9wclZwYXhReDYCFWZpMS50cnV0dW4ub25saW5lOjQ0MwsINzkxYzlhNTIDEWZpMS50cnV0dW4ub25saW5lDCvwn4er8J-HriBGSU4gKNCk0LjQvdC70Y_QvdC00LjRjykgKFByZW1pdW0pDUBBJWh0dHBzOi8vZG5zLmFkZ3VhcmQtZG5zLmNvbS9kbnMtcXVlcnkacXVpYzovL2Rucy5hZGd1YXJkLWRucy5jb20EAQAKAQEJAQI"
+	lines := NormalizeBody([]byte(de+"\n"+fi), "text/plain")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d %v want 2 trusttunnel URLs", len(lines), lines)
+	}
+}
