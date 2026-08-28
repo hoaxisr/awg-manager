@@ -16,14 +16,7 @@ func TestWdttEmbeddedBinaries_PinsComplete(t *testing.T) {
 		}
 		checkPin(t, arch+"/client", specs.Client, WdttPinnedClientVersion)
 		if specs.serverSupported() {
-			// Версия сервера своя у каждой арки: под mips/mipsel собрана
-			// 1.4.0-3, под arm64 — 1.4.4-awgm. Сверяем с ожидаемой для арки,
-			// иначе тест запрещал бы законное расхождение сборок.
-			want := WdttPinnedServerVersion
-			if arch == "mipsel-3.4" || arch == "mips-3.4" {
-				want = WdttPinnedServerVersionMIPS
-			}
-			checkPin(t, arch+"/server", specs.Server, want)
+			checkPin(t, arch+"/server", specs.Server, WdttPinnedServerVersion)
 		} else if specs.Server.SHA256 != "" || specs.Server.Size != 0 {
 			t.Errorf("%s/server: сумма без URL: %+v", arch, specs.Server)
 		}

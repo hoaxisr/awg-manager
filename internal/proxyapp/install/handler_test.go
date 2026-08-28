@@ -96,7 +96,7 @@ func TestServeStatus_SubsystemPicksState(t *testing.T) {
 	w, f := get("wdtt"), get("freeturn")
 	// Метка составная, когда сервер собран под арку: клиент и сервер wdtt
 	// выпускаются раздельно и их версии расходятся (versionLabel).
-	wantWdtt := WdttPinnedClientVersion + "+server-" + WdttPinnedServerVersionMIPS
+	wantWdtt := WdttPinnedClientVersion + "+server-" + WdttPinnedServerVersion
 	if w.InstallVersion != wantWdtt {
 		t.Errorf("wdtt: installVersion = %q, want %q", w.InstallVersion, wantWdtt)
 	}

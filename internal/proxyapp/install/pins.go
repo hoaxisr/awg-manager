@@ -28,8 +28,8 @@ func (s *ArchSpecs) serverSupported() bool { return s != nil && s.Server.URL != 
 
 // ── wdtt ─────────────────────────────────────────────────────────
 
-const WdttPinnedClientVersion = "1.4.4-awgm"
-const WdttPinnedServerVersion = "1.4.4-awgm"
+const WdttPinnedClientVersion = "1.4.0-3"
+const WdttPinnedServerVersion = "1.4.0-3"
 
 // Порядок выпуска обоих бинарей: тег в форке hoaxisr/proxy-turn-vk-android →
 // сборка в GitHub Actions → релиз с checksums.txt → зеркало repo.hoaxisr.ru
@@ -37,48 +37,48 @@ const WdttPinnedServerVersion = "1.4.4-awgm"
 // scripts/update-wdtt-pins.py --client-tag ... --server-tag ...
 
 // wdttReleaseBase — прод-доставка клиента с зеркала (паритет с freeturn).
-const wdttReleaseBase = "http://repo.hoaxisr.ru/wt/" + WdttPinnedClientVersion + "/"
+//
+// Каталог client/: там лежат сборки НАШЕГО конвейера (тег awgm-client-* →
+// GitHub Actions → релиз → зеркало). Пин смотрел на соседний /wt/1.4.4-awgm/ —
+// сборку от 10.08 из upstream v1.4.0 скриптом build-wdtt-client.sh, ДО того как
+// в клиенте появилась обвязка управляющего протокола. Проба --awgm-protocol на
+// ней падает, и гейт procres.Gate не пускал ни один инстанс (стенд 2026-08-28).
+const wdttReleaseBase = "http://repo.hoaxisr.ru/wt/client/" + WdttPinnedClientVersion + "/"
 
 // wdttServerReleaseBase — wdtt-server из форка (монолит с Keenetic-флагами).
+// Арка больше не разводится: 1.4.0-3 собрана для всех трёх, и arm64-сборка
+// прежнего пина (1.4.4-awgm) обвязку протокола тоже не несла.
 const wdttServerReleaseBase = "http://repo.hoaxisr.ru/wt/server/" + WdttPinnedServerVersion + "/"
-
-// WdttPinnedServerVersionMIPS — серверная сборка для mips/mipsel. Версия НИЖЕ
-// arm64-й намеренно: под 1.4.4-awgm серверные бинари для mips на зеркало не
-// выкладывались, а 1.4.0-3 собрана для всех трёх арок. Пин снят с
-// checksums.txt зеркала и перепроверен локально.
-const WdttPinnedServerVersionMIPS = "1.4.0-3"
-
-const wdttServerReleaseBaseMIPS = "http://repo.hoaxisr.ru/wt/server/" + WdttPinnedServerVersionMIPS + "/"
 
 // WdttEmbeddedBinaries связывает арку сборки awg-manager с пинами wdtt.
 var WdttEmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-arm64",
-			SHA256: "6f82bfd0b5851b1c61398d80ea4665575ba570c5dd641997194b25aef17f6e83", Size: 15401122,
+			SHA256: "ed627553a8b970ab50edfdeb7a7fe35811387b6e19df901bb160f4db46d42367", Size: 15401122,
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "b639505b9952485bc16e9e3d43d6503975a878b0b18aba3fa5269953b61fd000", Size: 8126626,
+			SHA256: "948d2eb91ca16d7421fd115b6811288141f378176af57f4aa85df1ba057a3284", Size: 7995576,
 		},
 	},
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "0af429515d65f7f844c3d24f0ec052c6b27cb65f6a9ef70e6ebdeb9f39782b7d", Size: 17563841,
+			SHA256: "b98f366a8f669142cca64066a592a9fa2aa92adcbf42207b5f540ba5da659ce1", Size: 17694913,
 		},
 		Server: BinarySpec{
-			Version: WdttPinnedServerVersionMIPS, URL: wdttServerReleaseBaseMIPS + "wdtt-server-linux-mipsle-softfloat",
+			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mipsle-softfloat",
 			SHA256: "7024c1da12bae2f7677654da6450946cf856e4e700c3b61b29d203fbdc6cac5e", Size: 9437399,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "8b4d2d838c696f91b771507c2992ba62d9b1f2993fad32ef396d5b53b976906e", Size: 17563841,
+			SHA256: "af34a9ce0a7386878cc77b7855d555fb41ff1d99f521887efe21d5eb18f00250", Size: 17694913,
 		},
 		Server: BinarySpec{
-			Version: WdttPinnedServerVersionMIPS, URL: wdttServerReleaseBaseMIPS + "wdtt-server-linux-mips-softfloat",
+			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mips-softfloat",
 			SHA256: "100f7459d7e53d4e04716c0b8fefa6c71e7b7d5d5f382c77c8992f374f14ba06", Size: 9437399,
 		},
 	},
