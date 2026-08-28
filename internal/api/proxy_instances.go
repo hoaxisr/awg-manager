@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
@@ -236,6 +237,9 @@ type ProxyInstancesDeps struct {
 	Log func(key string) string
 	// BinaryInfo — путь бинаря роли и его наличие (proxyapp/install).
 	BinaryInfo func(kind instancestore.Kind) (path string, present bool)
+	// Bus — шина SSE: сюда уходит подсказка «состав инстансов изменился».
+	// nil означает «шина не подключена» (тесты) — публикация становится no-op.
+	Bus *events.Bus
 	// OpkgTunSupported — поддерживает ли прошивка интерфейсы OpkgTun. nil
 	// означает «гейта нет»: до проводки поверхность не имеет права запрещать
 	// то, чего не умеет проверить.
@@ -413,6 +417,7 @@ func (h *ProxyInstancesHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	publishInvalidated(h.deps.Bus, ResourceProxyInstances, "created")
 	h.respondRecord(w, rec.Key())
 }
 
@@ -521,6 +526,7 @@ func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, k
 		h.fail(w, err)
 		return
 	}
+	publishInvalidated(h.deps.Bus, ResourceProxyInstances, "deleted")
 	response.Success(w, OkData{Ok: true})
 }
 

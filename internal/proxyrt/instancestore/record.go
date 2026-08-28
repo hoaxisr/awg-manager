@@ -7,6 +7,7 @@ package instancestore
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
@@ -166,30 +167,69 @@ func (r Record) NDMSNamed() instance.NDMSNamed {
 	return nil
 }
 
-// DataPath — путь данных инстанса, который переживает его удаление, если его
-// не убрать: у wdtt-сервера это каталог с абонентами и ключами, у
-// freeturn-сервера — файл списка разрешённых. Без инстанса они мертвы, а
-// убрать их из UI нечем (стенд 2026-08-28).
+// DataTarget — данные инстанса на диске и поддерево каталога данных, где им
+// место. Поддерево едет рядом с путём потому, что путь без него опасен: поля
+// configDir и clientsFile правятся через API как обычные строки, и уборка
+// обязана сверить путь не с каталогом данных целиком (там же лежат туннели,
+// настройки и данные СОСЕДНИХ инстансов), а со своим поддеревом.
+type DataTarget struct {
+	Path string
+	Root string
+}
+
+// FreeTurnAllowlistPath — путь списка разрешённых по умолчанию. Один на две
+// стороны: его пишет ftlink при включении списка, а читает уборка при удалении
+// инстанса — разъехавшись, они оставили бы файл сиротой.
+func FreeTurnAllowlistPath(dataDir, serverID string) string {
+	safeID := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, serverID)
+	return filepath.Join(dataDir, "freeturn", "allowlist-"+safeID+".json")
+}
+
+// DataTargets — данные, которые переживут удаление инстанса, если их не убрать:
+// у wdtt-сервера каталог с абонентами и ключами, у freeturn-сервера файл
+// списка разрешённых. Без инстанса они мертвы, а убрать их из UI нечем (стенд
+// 2026-08-28).
 //
-// Второй возврат — ПОДДЕРЕВО каталога данных, где этим путям место. Оба факта
-// одним методом потому, что путь без своего поддерева опасен: поля configDir и
-// clientsFile правятся через API как обычные строки, и уборка обязана сверить
-// путь не с каталогом данных целиком (там же лежат туннели, настройки и данные
-// СОСЕДНИХ инстансов), а со своим поддеревом.
+// У freeturn-сервера путей ДВА: заданный в конфиге и путь по умолчанию.
+// Выключение списка (ftlink.Disable) снимает поле с конфига, не трогая файл, —
+// и по одному лишь конфигу файл переставал быть виден навсегда.
 //
 // Пусто у клиентских ролей: своих данных на диске у них нет.
-func (r Record) DataPath() (path, root string) {
+func (r Record) DataTargets(dataDir string) []DataTarget {
 	switch r.Kind {
 	case KindWdttServer:
 		if r.WdttServer == nil {
-			return "", ""
+			return nil
 		}
-		return strings.TrimSpace(r.WdttServer.ConfigDir), "wdtt"
+		return targetsOf("wdtt", r.WdttServer.ConfigDir)
 	case KindFreeTurnServer:
 		if r.FreeTurnServer == nil {
-			return "", ""
+			return nil
 		}
-		return strings.TrimSpace(r.FreeTurnServer.ClientsFile), "freeturn"
+		return targetsOf("freeturn", r.FreeTurnServer.ClientsFile,
+			FreeTurnAllowlistPath(dataDir, r.ID))
 	}
-	return "", ""
+	return nil
+}
+
+// targetsOf — непустые пути без повторов.
+func targetsOf(root string, paths ...string) []DataTarget {
+	var out []DataTarget
+	seen := map[string]bool{}
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, DataTarget{Path: p, Root: root})
+	}
+	return out
 }

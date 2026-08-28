@@ -25,6 +25,10 @@ const (
 	ResourceDeviceProxy             = "deviceproxy"
 	ResourceDeviceProxyConfig       = "deviceproxy.config"
 	ResourceDeviceProxyRuntime      = "deviceproxy.runtime"
+	// ResourceProxyInstances — состав инстансов прокси изменился: создан или
+	// удалён. Его слушает счётчик инстансов подсистемы, по которому карточка
+	// «Интеграции» пускает или запирает удаление бинарей.
+	ResourceProxyInstances = "proxy.instances"
 )
 
 // publishInvalidated posts a resource:invalidated hint to the SSE bus.

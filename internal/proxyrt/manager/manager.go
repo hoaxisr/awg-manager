@@ -842,33 +842,28 @@ func sweptMessage(removed []string) string {
 	return "уборка NDMS: снято " + strings.Join(removed, ", ")
 }
 
-// deleteDataDir убирает данные удалённого инстанса: у wdtt-сервера это каталог
-// с абонентами и ключами, у freeturn-сервера — файл списка разрешённых. Без
-// инстанса они мертвы, а убрать их из UI нечем — каталог оставался навсегда
-// (стенд 2026-08-28).
+// deleteDataDir убирает данные удалённого инстанса — см. Record.DataTargets:
+// что именно и почему их два у freeturn-сервера, знает запись, а не менеджер.
 //
-// Сносится только то, что лежит внутри СВОЕГО поддерева каталога данных
-// (dataDir/wdtt, dataDir/freeturn), и только строго внутри. Путь берётся из
-// конфига, а поля configDir и clientsFile правятся через API как обычные
-// строки: сверка с каталогом данных целиком пропускала бы и сам dataDir
-// (os.RemoveAll снёс бы данные всего приложения), и каталоги соседей.
+// Сносится только то, что лежит внутри своего поддерева каталога данных и
+// только строго внутри: сверка с каталогом данных целиком пропускала бы и сам
+// dataDir (os.RemoveAll снёс бы данные всего приложения), и каталоги соседей.
 //
 // Отказ не отменяет удаления: инстанса уже нет, откатывать нечего.
 func (m *Manager) deleteDataDir(key string, removed instancestore.Record) {
-	path, root := removed.DataPath()
-	if path == "" || root == "" {
-		return
+	dir := m.deps.Store.Dir()
+	for _, t := range removed.DataTargets(dir) {
+		if !strictlyUnder(filepath.Join(dir, t.Root), t.Path) {
+			m.deps.Journal.Warn("delete", key,
+				"данные не убраны: путь вне "+t.Root+" в каталоге данных: "+t.Path)
+			continue
+		}
+		if err := os.RemoveAll(t.Path); err != nil {
+			m.deps.Journal.Warn("delete", key, "данные не убраны: "+err.Error())
+			continue
+		}
+		m.deps.Journal.Info("delete", key, "данные удалены: "+t.Path)
 	}
-	if !strictlyUnder(filepath.Join(m.deps.Store.Dir(), root), path) {
-		m.deps.Journal.Warn("delete", key,
-			"каталог данных не убран: путь вне "+root+" в каталоге данных: "+path)
-		return
-	}
-	if err := os.RemoveAll(path); err != nil {
-		m.deps.Journal.Warn("delete", key, "каталог данных не убран: "+err.Error())
-		return
-	}
-	m.deps.Journal.Info("delete", key, "каталог данных удалён: "+path)
 }
 
 // strictlyUnder — лежит ли path СТРОГО внутри dir. Оба приводятся к чистому

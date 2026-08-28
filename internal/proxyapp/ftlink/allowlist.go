@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 )
 
 // AllowlistEntry is one authorized freeturn client ID with optional comment.
@@ -36,16 +38,11 @@ type allowlistFile struct {
 
 var allowlistClientIDRe = regexp.MustCompile(`^[0-9a-fA-F]{16,64}$`)
 
+// defaultAllowlistPath — путь списка по умолчанию. Формат имени живёт в
+// instancestore: тот же путь читает уборка при удалении инстанса, и две копии
+// формулы разъехались бы, оставив файл сиротой.
 func defaultAllowlistPath(dataDir, serverID string) string {
-	safeID := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, serverID)
-	return filepath.Join(dataDir, "freeturn", "allowlist-"+safeID+".json")
+	return instancestore.FreeTurnAllowlistPath(dataDir, serverID)
 }
 
 func validateAllowlistClientID(id string) error {

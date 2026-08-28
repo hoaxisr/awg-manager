@@ -934,6 +934,7 @@ func (a *app) wireProxyrt() {
 		Snapshot:         links.snapshot,
 		Log:              logTail,
 		BinaryInfo:       installSvc.Binary,
+		Bus:              a.eventBus,
 		OpkgTunSupported: opkgTunSupported,
 	})
 

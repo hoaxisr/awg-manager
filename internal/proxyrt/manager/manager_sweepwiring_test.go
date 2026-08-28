@@ -281,6 +281,38 @@ func TestDeleteKeepsDataPathOutsideDataDir(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesAllowlistLeftByDisable(t *testing.T) {
+	// ftlink.Disable снимает clientsFile с конфига, файл оставляя. По одному
+	// конфигу он переставал быть виден навсегда — уборка знает и путь по
+	// умолчанию.
+	e := newLiveEnv(t)
+	orphan := instancestore.FreeTurnAllowlistPath(e.dir, "fts")
+	if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, []byte(`{"clients":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "fts", Kind: instancestore.KindFreeTurnServer, Name: "F", Enabled: true,
+			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:7000"}}) // список выключен
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "freeturn-server:fts"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("список разрешённых пережил удаление инстанса: %v", err)
+	}
+}
+
 func TestDeleteKeepsDataPathOutsideOwnSubtree(t *testing.T) {
 	// Внутри каталога данных, но не в своём поддереве: там живут туннели,
 	// настройки и данные СОСЕДНИХ подсистем — сносить их удаление инстанса

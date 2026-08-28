@@ -40,7 +40,7 @@
 		Settings,
 		UpdateInfo,
 	} from "$lib/types";
-	import type { ProxyInstallStatus } from "$lib/api/proxyInstances";
+	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
 		USAGE_LEVEL_LABELS,
 		isAppearanceSettingsVisible,
@@ -316,28 +316,27 @@
 	// ── подсистемы прокси (WDTT, FreeTurn) ──────────────────────────
 	// Бинари ставятся и снимаются целиком подсистемой: version-файл у половин
 	// общий, а раздельный снос сделал бы статус неоднозначным.
+	//
+	// Статус живёт в polling-store, подписанном на `proxy.instances`: удаление
+	// инстанса в другой вкладке иначе оставило бы кнопку «Удалить» запертой до
+	// перезагрузки страницы.
 	const PROXY_SUBSYSTEMS = [
 		{ key: 'wdtt' as const, label: 'WDTT' },
 		{ key: 'freeturn' as const, label: 'FreeTurn' },
 	];
-	let proxyInstall = $state<Record<string, ProxyInstallStatus>>({});
 	let proxyBusy = $state<Record<string, boolean>>({});
 
-	async function loadProxyInstall(subsystem: 'wdtt' | 'freeturn') {
-		try {
-			// Ответ берётся ДО сборки объекта: спред `...proxyInstall` внутри
-			// литерала вычислился бы раньше await, и параллельная загрузка
-			// второй подсистемы затёрла бы результат первой — в карточке
-			// оставалась одна строка из двух (визуальный прогон 2026-08-28).
-			const st = await api.proxyInstallStatus(subsystem);
-			proxyInstall = { ...proxyInstall, [subsystem]: st };
-		} catch {
-			// Статус необязателен для первой отрисовки: строка просто не появится.
-		}
-	}
+	// Автоподписка `$store` работает только с идентификатором, поэтому оба
+	// store'а разложены по переменным.
+	const wdttInstallStore = proxyInstallStatus.wdtt;
+	const freeturnInstallStore = proxyInstallStatus.freeturn;
+	const proxyStatuses = $derived({
+		wdtt: $wdttInstallStore.data,
+		freeturn: $freeturnInstallStore.data,
+	});
 
 	async function runProxyBinaries(
-		subsystem: 'wdtt' | 'freeturn',
+		subsystem: ProxySubsystem,
 		action: () => Promise<void>,
 		okMessage: string,
 		failMessage: string,
@@ -350,13 +349,13 @@
 			notifications.error(e instanceof Error ? e.message : failMessage);
 		} finally {
 			proxyBusy = { ...proxyBusy, [subsystem]: false };
-			await loadProxyInstall(subsystem);
+			await proxyInstallStatus[subsystem].refetch();
 		}
 	}
 
 	const proxyBinaryRows = $derived(
 		PROXY_SUBSYSTEMS.map(({ key, label }) => {
-			const st = proxyInstall[key];
+			const st = proxyStatuses[key];
 			return {
 				key,
 				label,
@@ -397,10 +396,6 @@ onMount(() => {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
 			loading = false;
-		}
-
-		for (const { key } of PROXY_SUBSYSTEMS) {
-			void loadProxyInstall(key);
 		}
 
 		// Non-critical for first paint: load update state in background.
