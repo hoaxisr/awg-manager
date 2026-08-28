@@ -359,16 +359,21 @@ func TestReconcilePolicyTun_ReassertsIPGlobal(t *testing.T) {
 	}
 }
 
-// Анти-churn: всё на месте → со второго тика НИ ОДНОЙ мутации RCI и ни одной
-// инвалидации кэша running-config (он читается по TTL).
+// Анти-churn: всё на месте → со второго тика мутаций RCI нет, КРОМЕ ассерта
+// permit-ACL, и нет ни одной инвалидации кэша running-config (он читается по
+// TTL).
+//
+// Исключение для ACL сделано осознанно: его состояние не читается из
+// running-config, а прежний одноразовый флаг жил в памяти процесса и не был
+// привязан к имени интерфейса — после смены индекса OpkgTun список для нового
+// имени не создавался уже никогда, и трафик членов политики резал firewall
+// роутера. Назначение идемпотентно, цена повтора — запись в журнале роутера.
 func TestReconcilePolicyTun_NoMutationWhenNoDrift(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	sr := provisionPolicyTunForReconcile(t, h)
 	rc := &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
 	h.svc.deps.RunningConfig = rc
 
-	// Первый тик одноразово ассертит permit-ACL (upgrade-путь) — допустимая
-	// мутация, и только один раз.
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun (первый тик): %v", err)
 	}
@@ -377,8 +382,14 @@ func TestReconcilePolicyTun_NoMutationWhenNoDrift(t *testing.T) {
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
 	}
-	if len(h.log.calls) != 0 {
-		t.Errorf("здоровый тик обязан быть без мутаций NDMS, получено %v", h.log.calls)
+	allowed := map[string]bool{
+		"SetPermitACL:OpkgTun0":   true,
+		"SetPermitACLv6:OpkgTun0": true,
+	}
+	for _, c := range h.log.calls {
+		if !allowed[c] {
+			t.Errorf("здоровый тик мутировал NDMS сверх ассерта ACL: %q (все вызовы %v)", c, h.log.calls)
+		}
 	}
 	if rc.invalidated != 0 {
 		t.Errorf("здоровое состояние не должно сбрасывать кэш running-config (invalidated=%d)", rc.invalidated)
