@@ -27,6 +27,13 @@ describe('detectProxyLinkScheme', () => {
 		expect(detectProxyLinkScheme('\n freeturn://x \t')).toBe('freeturn');
 	});
 
+	it('JSON профиля и подписки идёт в разбор WDTT', () => {
+		expect(detectProxyLinkScheme('{"peer":"1.2.3.4","password":"p"}')).toBe('wdtt');
+		expect(detectProxyLinkScheme('{"subscriptionName":"darkbit","profiles":[]}')).toBe('wdtt');
+		expect(detectProxyLinkScheme('  \n {"peer":"1.2.3.4"} ')).toBe('wdtt');
+		expect(detectProxyLinkScheme('[{"peer":"1.2.3.4"}]')).toBe('wdtt');
+	});
+
 	it('пустая строка и мусор — неизвестная схема', () => {
 		expect(detectProxyLinkScheme('')).toBe('unknown');
 		expect(detectProxyLinkScheme('   ')).toBe('unknown');

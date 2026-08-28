@@ -56,8 +56,8 @@
 	value={link}
 	{oninput}
 	onchange={() => oncommit()}
-	placeholder="wdtt:// · qwdtt:// · freeturn:// · https://…"
-	hint="Протокол определится по ссылке"
+	placeholder="wdtt:// · qwdtt:// · freeturn:// · https://… · JSON"
+	hint="Протокол определится по ссылке. Профиль или подписку можно вставить JSON-ом"
 	disabled={manual}
 	fullWidth
 />
@@ -65,7 +65,7 @@
 <div class="btn-row">
 	<Button variant="secondary" disabled={manual} onclick={() => fileInput?.click()}>
 		{#snippet iconBefore()}<Upload size={14} strokeWidth={2.5} />{/snippet}
-		Файл .qwdtt
+		Файл профиля
 	</Button>
 	<Button variant="ghost" onclick={ontogglemanual}>
 		{manual ? 'Вернуться к ссылке' : 'Создать вручную'}
@@ -76,7 +76,7 @@
 	bind:this={fileInput}
 	class="file-input"
 	type="file"
-	accept=".qwdtt"
+	accept=".qwdtt,.json,application/json"
 	onchange={(e) => {
 		const input = e.currentTarget;
 		onfile(input.files?.[0]);
@@ -130,7 +130,7 @@
 		<p class="detect-note">
 			Схема ссылки не распознана
 			<FieldHint
-				text="Ожидаются wdtt://, qwdtt://, freeturn:// или http(s):// для подписки."
+				text="Ожидаются wdtt://, qwdtt://, freeturn://, http(s):// для подписки или JSON профиля/подписки."
 				ariaLabel="Подсказка: схема ссылки"
 			/>
 		</p>

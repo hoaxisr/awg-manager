@@ -136,3 +136,74 @@ describe('ExitWizard: вставленный .conf и повторный раз�
 		expect((await openConf()).value).toBe('');
 	});
 });
+
+// Подписка WDTT, вставленная JSON-ом (формат приложения: subscriptionName +
+// profiles[]). Бэкенд её разбирал всегда, а фронт до ручки не доходил: схему
+// он опознавал только по префиксу `xxx://`.
+describe('ExitWizard: подписка JSON-ом', () => {
+	const SUB_JSON = `{
+  "subscriptionName": "darkbit",
+  "profiles": [
+    {"name":"Германия","peer":"85.9.206.123","password":"pw","hashes":"h","workers":16,"port":9000},
+    {"name":"Польша","peer":"77.55.240.68","password":"pw","hashes":"h","workers":16,"port":9000}
+  ]
+}`;
+
+	/** Форма ответа ручки на этот JSON — снята прогоном wdttlink.DecodeLink. */
+	const DECODED = {
+		profile: {
+			name: 'Германия',
+			peer: '85.9.206.123:56000',
+			password: 'pw',
+			vkHashes: ['h'],
+			workers: 16,
+			listen: '127.0.0.1:9000',
+		},
+		subscription: {
+			name: 'darkbit',
+			subUrl: '',
+			profiles: [
+				{
+					name: 'Германия',
+					peer: '85.9.206.123:56000',
+					password: 'pw',
+					vkHashes: ['h'],
+					workers: 16,
+					listen: '127.0.0.1:9000',
+				},
+				{
+					name: 'Польша',
+					peer: '77.55.240.68:56000',
+					password: 'pw',
+					vkHashes: ['h'],
+					workers: 16,
+					listen: '127.0.0.1:9000',
+				},
+			],
+		},
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		apiMock.decodeWdttLink.mockResolvedValue(DECODED);
+	});
+
+	it('вставленный JSON уходит в разбор WDTT и даёт выбор сервера', async () => {
+		mount();
+		const linkField = screen.getByLabelText<HTMLInputElement>('Ссылка или URL подписки');
+		await fireEvent.input(linkField, { target: { value: SUB_JSON } });
+		await fireEvent.change(linkField, { target: { value: SUB_JSON } });
+
+		// <input type=text> вырезает переводы строк при вставке — до ручки едет
+		// однострочный текст. JSON это переживает (грамматике разделитель между
+		// токенами не нужен), и ручка получает ровно то, что лежит в поле.
+		const pasted = linkField.value;
+		expect(pasted).not.toContain('\n');
+		expect(JSON.parse(pasted).profiles).toHaveLength(2);
+
+		await waitFor(() => expect(apiMock.decodeWdttLink).toHaveBeenCalledWith(pasted));
+		await screen.findByLabelText('Сервер из подписки');
+		expect(screen.queryByText('Схема ссылки не распознана')).toBeNull();
+		expect(notify.error).not.toHaveBeenCalled();
+	});
+});
