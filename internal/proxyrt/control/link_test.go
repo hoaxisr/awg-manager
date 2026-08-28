@@ -201,6 +201,48 @@ func TestLinkDeadProcessRaisesDied(t *testing.T) {
 	sink.waitFor(t, proxyrt.EventProcessDied)
 }
 
+// Снимок умершего воплощения не переживает его. Потребитель статуса выводит
+// «работает» из PID снимка: залипший снимок показывал остановленный инстанс
+// запущенным — с pid мертвеца и растущим аптаймом (стенд 2026-08-28).
+func TestLinkDeadProcessForgetsSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	p := startProcess(t, path, awgmproto.State{PID: os.Getpid()})
+	sink := &eventSink{}
+	l := newLink(t, path, sink, func(int, string) bool { return false })
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Snapshot(); !ok {
+		t.Fatal("снимка нет сразу после успешного State")
+	}
+
+	_ = p.srv.Close()
+	sink.waitFor(t, proxyrt.EventProcessDied)
+
+	if snap, ok := l.Snapshot(); ok {
+		t.Fatalf("снимок пережил смерть процесса: %+v", snap)
+	}
+}
+
+// Разрыв связи с ЖИВЫМ процессом снимок сохраняет: воплощение то же, данные
+// ещё описывают реальность, а следующее наблюдение переподключится.
+func TestLinkLostConnectionKeepsSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.sock")
+	p := startProcess(t, path, awgmproto.State{PID: os.Getpid()})
+	sink := &eventSink{}
+	l := newLink(t, path, sink, func(int, string) bool { return true })
+	if _, err := l.State(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = p.srv.Close()
+	sink.waitFor(t, proxyrt.EventProcessState)
+
+	if _, ok := l.Snapshot(); !ok {
+		t.Fatal("снимок живого процесса потерян при разрыве связи")
+	}
+}
+
 // TestLinkEvictedLatch — вытеснение защёлкивается, переподключений нет, и
 // защёлка снимается только снаружи.
 //

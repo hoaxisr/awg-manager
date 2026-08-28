@@ -153,6 +153,7 @@ func (r *Address) Observe(ctx context.Context) (proxyrt.Observation, error) {
 			"address": facts.Address,
 			"mask":    facts.Mask,
 			"mtu":     strconv.Itoa(facts.MTU),
+			"broken":  strconv.FormatBool(facts.Broken),
 		},
 	}, nil
 }
@@ -171,6 +172,13 @@ func (r *Address) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		return nil
 	}
 	if r.d.Clear {
+		if obs.Attrs["broken"] == "true" {
+			// Запись в состоянии error — устройства нет, и снятие адреса
+			// роутер отвергает («system failed [0xcffd0217]»). Шаг повторялся
+			// бы на каждом прогоне (стенд 2026-08-28), а адрес и так никуда
+			// не ведёт: тот же довод, что у admin state ниже.
+			return nil
+		}
 		if obs.Attrs["address"] != "" {
 			return []proxyrt.Step{{Resource: r.id, Op: "clear-address",
 				Args:   map[string]string{"name": r.d.Name},
@@ -240,7 +248,10 @@ func (r *AdminState) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		return proxyrt.Observation{}, err
 	}
 	return proxyrt.Observation{Known: true, Exists: ok,
-		Attrs: map[string]string{"up": strconv.FormatBool(facts.AdminUp)}}, nil
+		Attrs: map[string]string{
+			"up":     strconv.FormatBool(facts.AdminUp),
+			"broken": strconv.FormatBool(facts.Broken),
+		}}, nil
 }
 
 func (r *AdminState) Plan(obs proxyrt.Observation) []proxyrt.Step {
@@ -251,6 +262,14 @@ func (r *AdminState) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	}
 	up := obs.Attrs["up"] == "true"
 	if up == r.d.Up {
+		return nil
+	}
+	if !r.d.Up && obs.Attrs["broken"] == "true" {
+		// Опускать нечего: запись в состоянии error — устройства за ней нет.
+		// Роутер такую команду ОТВЕРГАЕТ («OpkgTun0: system failed
+		// [0xcffd01b9]»), а шаг планировался бы на каждом прогоне: стенд
+		// 2026-08-28 дал 21 повтор за семь минут и не собирался
+		// останавливаться. Цель «не поднят» при этом уже достигнута.
 		return nil
 	}
 	op := "down"

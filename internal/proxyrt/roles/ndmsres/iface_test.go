@@ -360,6 +360,37 @@ func TestAdminStateUpAndDown(t *testing.T) {
 	}
 }
 
+// То же для снятия адреса: `clear address` по записи без устройства роутер
+// отвергает («system failed [0xcffd0217]»), и шаг повторялся бы вечно.
+func TestAddressBrokenIfaceNotCleared(t *testing.T) {
+	rt := newFakeRouter()
+	rt.ifaces["OpkgTun0"] = &IfaceFacts{Address: "10.70.0.1", Mask: "255.255.0.0", Broken: true}
+	res := NewAddress("ndms_address", rt, rt)
+	res.SetDesired(AddressDesired{Name: "OpkgTun0", Clear: true})
+
+	if n := drive(t, res); n != 0 {
+		t.Fatalf("clear-address по записи без устройства: %d шагов", n)
+	}
+	if rt.ifaces["OpkgTun0"].Address == "" {
+		t.Fatal("адрес снят, хотя роутер такую команду отвергает")
+	}
+}
+
+// Запись в состоянии error — устройства за ней нет, и роутер отвергает `down`
+// («OpkgTun0: system failed [0xcffd01b9]»). Планировать шаг, который заведомо
+// провалится, значит повторять его на каждом прогоне вечно: стенд 2026-08-28
+// намолотил 21 отказ за семь минут после остановки сервера.
+func TestAdminStateBrokenIfaceNotLowered(t *testing.T) {
+	rt := newFakeRouter()
+	rt.ifaces["OpkgTun0"] = &IfaceFacts{AdminUp: true, Broken: true}
+	res := NewAdminState("ndms_admin_state", rt, rt)
+	res.SetDesired(AdminDesired{Name: "OpkgTun0", Up: false})
+
+	if n := drive(t, res); n != 0 {
+		t.Fatalf("down по записи без устройства: %d шагов", n)
+	}
+}
+
 func TestAdminStateAbsentIfaceNeverRaised(t *testing.T) {
 	// Зеркало случая ниже для Up=true: `interface X up` на несуществующем
 	// СОЗДАЁТ его с чужими описанием и уровнем. Случай с Up=false страж

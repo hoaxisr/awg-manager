@@ -72,6 +72,7 @@ func (q proxyNDMSQuery) Iface(ctx context.Context, name string) (ndmsres.IfaceFa
 				Mask:          it.Mask,
 				MTU:           it.MTU,
 				AdminUp:       it.ConfLayer == "running",
+				Broken:        it.State == "error",
 			}, true, nil
 		}
 	}

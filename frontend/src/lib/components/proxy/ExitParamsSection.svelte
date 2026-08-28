@@ -16,6 +16,8 @@
 		/** Режим Raw: отдельного AWG-туннеля нет, и подсказка EX-20 врала бы. */
 		raw?: boolean;
 		saving?: boolean;
+		/** Непусто — сохранять нечего: конфиг заведомо не заработает. */
+		saveBlockedHint?: string;
 		onsave: () => void;
 		onrevert: () => void;
 	}
@@ -25,6 +27,7 @@
 		ftClient = $bindable(),
 		raw = false,
 		saving = false,
+		saveBlockedHint = '',
 		onsave,
 		onrevert,
 	}: Props = $props();
@@ -148,12 +151,23 @@
 		</div>
 	{/if}
 	<div class="btn-row">
-		<Button variant="primary" loading={saving} onclick={onsave}>Сохранить</Button>
+		<Button variant="primary" loading={saving} disabled={!!saveBlockedHint} onclick={onsave}>
+			Сохранить
+		</Button>
 		<Button variant="ghost" onclick={onrevert}>Отменить</Button>
+		{#if saveBlockedHint}
+			<span class="save-blocked">{saveBlockedHint}</span>
+		{/if}
 	</div>
 </DetailSection>
 
 <style>
+	.save-blocked {
+		font-size: 12px;
+		color: var(--color-warning-text, var(--color-text-secondary));
+		align-self: center;
+	}
+
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

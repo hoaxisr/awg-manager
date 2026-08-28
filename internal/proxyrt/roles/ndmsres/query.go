@@ -37,6 +37,11 @@ type IfaceFacts struct {
 	Mask          string
 	MTU           int
 	AdminUp       bool
+	// Broken — запись NDMS в состоянии error: устройства за ней нет.
+	// Проверено на стенде 5.01.C.3.0-1: после сноса устройства запись живёт
+	// дальше со `state: error`, а ConfLayer остаётся `running` — то есть
+	// AdminUp говорит «поднят» про интерфейс, которого не существует.
+	Broken bool
 }
 
 // Query — наблюдения NDMS. ok=false у Iface означает «интерфейса нет»

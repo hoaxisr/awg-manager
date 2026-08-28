@@ -119,6 +119,16 @@
 			(rawKernel ? ` Kernel-имя: ${rawKernel}.` : ''),
 	);
 
+	// Пустой адрес сервера: клиент с ним не стартует («не задан адрес сервера
+	// (-peer)»), поэтому ни сохранять, ни запускать такой конфиг нельзя. Ловится
+	// в первую очередь при смене режима — у WG и Raw адреса разные, а в ссылке
+	// wdtt:// лежит только DTLS-порт.
+	const noPeerHint = $derived(
+		wdttDraft && !wdttDraft.peer?.trim()
+			? 'Укажите адрес сервера — без него клиент не запустится. У режимов WG и Raw он разный.'
+			: '',
+	);
+
 	// ─── Сохранение и откат правок.
 
 	async function save(): Promise<boolean> {
@@ -220,6 +230,7 @@
 		{onstart}
 		{onstop}
 		{onwizard}
+		startBlockedHint={noPeerHint}
 	/>
 
 	<!-- EX-01: ошибка живёт, пока процесс не работает. -->
@@ -235,6 +246,7 @@
 		bind:ftClient={ftDraft}
 		{raw}
 		{saving}
+		saveBlockedHint={noPeerHint}
 		onsave={save}
 		onrevert={revert}
 	/>
