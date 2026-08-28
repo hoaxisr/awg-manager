@@ -29,7 +29,7 @@ func (s *ArchSpecs) serverSupported() bool { return s != nil && s.Server.URL != 
 // ── wdtt ─────────────────────────────────────────────────────────
 
 const WdttPinnedClientVersion = "1.4.0-3"
-const WdttPinnedServerVersion = "1.4.0-3"
+const WdttPinnedServerVersion = "1.4.0-4"
 
 // Порядок выпуска обоих бинарей: тег в форке hoaxisr/proxy-turn-vk-android →
 // сборка в GitHub Actions → релиз с checksums.txt → зеркало repo.hoaxisr.ru
@@ -59,7 +59,7 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "948d2eb91ca16d7421fd115b6811288141f378176af57f4aa85df1ba057a3284", Size: 7995576,
+			SHA256: "2473b1e0212f9731cb204ac4885390e295d9f9b3de1d0828b461ddbdc2bea45e", Size: 7995576,
 		},
 	},
 	"mipsel-3.4": {
@@ -69,7 +69,7 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mipsle-softfloat",
-			SHA256: "7024c1da12bae2f7677654da6450946cf856e4e700c3b61b29d203fbdc6cac5e", Size: 9437399,
+			SHA256: "32a762ec05c9c68abd82aa659a9fa545b4bf7655a6aeb410a1ab57bb06065b5f", Size: 9502935,
 		},
 	},
 	"mips-3.4": {
@@ -79,7 +79,7 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mips-softfloat",
-			SHA256: "100f7459d7e53d4e04716c0b8fefa6c71e7b7d5d5f382c77c8992f374f14ba06", Size: 9437399,
+			SHA256: "e6a06aa9f57fb02c485e7bd23da6b2f106f5835cae7a74d39f8f807d4f764956", Size: 9502935,
 		},
 	},
 }
