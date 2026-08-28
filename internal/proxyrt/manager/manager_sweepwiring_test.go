@@ -474,3 +474,32 @@ func TestDeleteRemovesEnabledAllowlistOnce(t *testing.T) {
 		t.Fatalf("записей о сносе %d, ждали 1: оба пути ведут в один файл", n)
 	}
 }
+
+func TestCreateRefusesBadIDBeforePersist(t *testing.T) {
+	// Отказ обязан приходить ДО записи: раньше идентификатор проверялся при
+	// сборке пути сокета, и запись с пробелом оставалась на диске навсегда —
+	// ручка удаления такой ключ не находит (стенд 2026-08-28).
+	e := newLiveEnv(t)
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Create(context.Background(), rawRec("ft x", "OpkgTun18", "opkgtun18")); err == nil {
+		t.Fatal("идентификатор с пробелом обязан отвергаться")
+	}
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Records) != 0 {
+		t.Fatalf("запись легла на диск вопреки отказу: %+v", st.Records)
+	}
+	if len(e.changed) != 0 {
+		t.Fatalf("уведомление об отказанной записи: %v", e.changed)
+	}
+}

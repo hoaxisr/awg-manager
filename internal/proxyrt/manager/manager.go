@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -558,6 +559,15 @@ func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (in
 }
 
 func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
+	// Идентификатор проверяется ДО записи. Раньше он проверялся только при
+	// сборке пути управляющего сокета, то есть уже после того, как запись
+	// легла на диск: пользователь получал отказ, а инстанс оставался — и
+	// удалить его через API было нечем, потому что ключ с пробелом ручка не
+	// находит ни в одной форме кодирования (стенд 2026-08-28). Заодно это
+	// корень коллизии имён файлов: «ft x» и «ft_x» дают один путь данных.
+	if err := control.ValidateInstance(rec.ID); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	allocated, err := m.ensurePins(&rec)
 	m.mu.Unlock()
