@@ -86,12 +86,22 @@ export class FreeturnClient extends SubscriptionsClient {
 		await this.request('/proxyrt/seed/listen-moves', { method: 'DELETE' });
 	}
 
-	protected async proxyInstallStatus(subsystem: 'wdtt' | 'freeturn'): Promise<ProxyInstallStatus> {
+	// Публичные: этими же ручками живёт карточка «Интеграции» в настройках,
+	// где подсистемы ставят и удаляют целиком.
+	async proxyInstallStatus(subsystem: 'wdtt' | 'freeturn'): Promise<ProxyInstallStatus> {
 		return this.request<ProxyInstallStatus>(`/proxyrt/install/status?subsystem=${subsystem}`);
 	}
 
-	protected async proxyInstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
+	async proxyInstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
 		await this.request('/proxyrt/install', {
+			method: 'POST',
+			body: JSON.stringify({ subsystem })
+		});
+	}
+
+	/** Снять бинари подсистемы. Отклоняется, пока есть её инстансы. */
+	async proxyUninstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
+		await this.request('/proxyrt/install/uninstall', {
 			method: 'POST',
 			body: JSON.stringify({ subsystem })
 		});

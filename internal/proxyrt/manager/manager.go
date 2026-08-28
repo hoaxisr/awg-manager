@@ -7,12 +7,15 @@ package manager
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -102,6 +105,18 @@ type Deps struct {
 	// WaitDisabled — ограниченное ожидание teardown-прогона (Щ5): прод —
 	// опрос StateStore до фазы disabled/settled свежее момента вызова.
 	WaitDisabled func(key string, timeout time.Duration) bool
+	// RecordsChanged — состав записей изменился (создание, удаление). Живёт
+	// ЗДЕСЬ, а не в HTTP-обработчике: запись создаёт не только ручка
+	// инстансов, но и импорт ссылки через Mutator, и подсказка инвалидации
+	// его бы не заметила. nil — никого не уведомляем.
+	RecordsChanged func(reason string)
+}
+
+// recordsChanged — уведомление о смене состава записей; nil-безопасно.
+func (m *Manager) recordsChanged(reason string) {
+	if m.deps.RecordsChanged != nil {
+		m.deps.RecordsChanged(reason)
+	}
 }
 
 type managed struct {
@@ -360,8 +375,10 @@ func (m *Manager) Boot(ctx context.Context) error {
 		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS пропущена: посев не сертифицирован — "+certErr)
 		return nil
 	}
-	if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
+	if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
 		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS: "+serr.Error())
+	} else {
+		m.deps.Journal.Info("boot", "proxy", sweptMessage(removedNDMS))
 	}
 	return nil
 }
@@ -542,6 +559,15 @@ func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (in
 }
 
 func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
+	// Идентификатор проверяется ДО записи. Раньше он проверялся только при
+	// сборке пути управляющего сокета, то есть уже после того, как запись
+	// легла на диск: пользователь получал отказ, а инстанс оставался — и
+	// удалить его через API было нечем, потому что ключ с пробелом ручка не
+	// находит ни в одной форме кодирования (стенд 2026-08-28). Заодно это
+	// корень коллизии имён файлов: «ft x» и «ft_x» дают один путь данных.
+	if err := control.ValidateInstance(rec.ID); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	allocated, err := m.ensurePins(&rec)
 	m.mu.Unlock()
@@ -559,6 +585,10 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		m.deps.ReleasePins(allocated...)
 		return err
 	}
+	// Уведомление ПОСЛЕ записи на диск и до сборки воркера: счётчик инстансов
+	// читает диск, и отказ фабрики (запись есть, воркера нет) его не отменяет.
+	m.recordsChanged("created")
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range st.Records {
@@ -806,15 +836,101 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		}
 	}
 
+	// Пины отдаются ДО уборки: Sweep приговаривает ресурс, только если его
+	// номер не закреплён в аллокаторе (sweep.go), а закреплён он как раз за
+	// удаляемым инстансом — уборщик пропускал ровно те записи, ради которых
+	// вызван, и OpkgTun удалённого инстанса доживал до следующего боота, съедая
+	// индекс (стенд 2026-08-28). Обратный порядок безопасен: решение о сносе
+	// принимается под локом аллокатора, и номер, уже перехваченный параллельным
+	// Create, уборщик пропустит.
+	m.deps.ReleasePins(key, key+"/wg", key+"/raw", key+"/listen")
+
 	if declaredNDMS, lerr := m.deleteSweepDeclared(ctx, removed, st.Records); lerr != nil {
 		// Ведомость не собрана — не сносим ничего: «не знаем» не равно «наш и
 		// лишний» (тот же довод, что у Sweep на упавшем скане).
 		m.deps.Journal.Warn("delete", key, "уборка NDMS пропущена: "+lerr.Error())
-	} else if _, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
+	} else if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
 		m.deps.Journal.Warn("delete", key, "уборка NDMS: "+serr.Error())
+	} else {
+		m.deps.Journal.Info("delete", key, sweptMessage(removedNDMS))
 	}
-	m.deps.ReleasePins(key, key+"/wg", key+"/raw", key+"/listen")
+	m.deleteDataDir(key, removed, st.Records)
+	m.recordsChanged("deleted")
 	return nil
+}
+
+// sweptMessage — итог уборки для журнала. Молчание уборщика стоило дефекта:
+// «снёс две записи» и «пропустил обе» выглядели в журнале одинаково — никак,
+// и пропуск по закреплённому номеру пережил стендовую приёмку (2026-08-28).
+func sweptMessage(removed []string) string {
+	if len(removed) == 0 {
+		return "уборка NDMS: сносить нечего"
+	}
+	return "уборка NDMS: снято " + strings.Join(removed, ", ")
+}
+
+// deleteDataDir убирает данные удалённого инстанса — см. Record.DataTargets:
+// что именно и почему их два у freeturn-сервера, знает запись, а не менеджер.
+//
+// Сносится только то, что лежит внутри своего поддерева каталога данных и
+// только строго внутри: сверка с каталогом данных целиком пропускала бы и сам
+// dataDir (os.RemoveAll снёс бы данные всего приложения), и каталоги соседей.
+//
+// И только то, на что не ссылается никто из ОСТАВШИХСЯ записей. Поддерево
+// общее на всю подсистему, а путь может совпасть с чужим двумя способами:
+// clientsFile правится через API и его можно навести на файл соседа, а имя
+// файла по умолчанию строится из ID, где недопустимые символы заменяются
+// подчёркиванием — «a b» и «a_b» дают один и тот же путь.
+//
+// Отказ не отменяет удаления: инстанса уже нет, откатывать нечего.
+func (m *Manager) deleteDataDir(key string, removed instancestore.Record, left []instancestore.Record) {
+	dir := m.deps.Store.Dir()
+	claimed := map[string]bool{}
+	for _, rec := range left {
+		for _, t := range rec.DataTargets(dir) {
+			claimed[filepath.Clean(t.Path)] = true
+		}
+	}
+	for _, t := range removed.DataTargets(dir) {
+		if claimed[filepath.Clean(t.Path)] {
+			m.deps.Journal.Info("delete", key, "данные оставлены — ими владеет другой инстанс: "+t.Path)
+			continue
+		}
+		if !strictlyUnder(filepath.Join(dir, t.Root), t.Path) {
+			m.deps.Journal.Warn("delete", key,
+				"данные не убраны: путь вне "+t.Root+" в каталоге данных: "+t.Path)
+			continue
+		}
+		// Путь по умолчанию есть у каждого freeturn-сервера, а список мог не
+		// включаться ни разу: RemoveAll на отсутствующем пути молчит, и запись
+		// «данные удалены» в журнале была бы неправдой.
+		if _, err := os.Lstat(t.Path); os.IsNotExist(err) {
+			continue
+		}
+		if err := os.RemoveAll(t.Path); err != nil {
+			m.deps.Journal.Warn("delete", key, "данные не убраны: "+err.Error())
+			continue
+		}
+		m.deps.Journal.Info("delete", key, "данные удалены: "+t.Path)
+	}
+}
+
+// strictlyUnder — лежит ли path СТРОГО внутри dir. Оба приводятся к чистому
+// виду: «..» в пути пользователя иначе увели бы снос наружу.
+//
+// Равенство путей — не «внутри»: иначе снос уносил бы само поддерево вместе с
+// данными всех остальных инстансов. Тот же запрет стоит у соседнего сторожа
+// снаружи прокси-рантайма (singbox/router.isManagedLocalRuleSet).
+func strictlyUnder(dir, path string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	if err != nil || rel == "." {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // deleteSweepDeclared — ведомость уборщика на пути удаления инстанса.

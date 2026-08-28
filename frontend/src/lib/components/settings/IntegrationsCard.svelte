@@ -9,6 +9,23 @@
 	import { Blocks } from 'lucide-svelte';
 	import { isIPv4, isIPv6 } from '$lib/utils/cidr';
 
+	/** Строка подсистемы прокси: её бинари ставятся и снимаются целиком. */
+	export interface ProxyBinaryRow {
+		key: 'wdtt' | 'freeturn';
+		label: string;
+		/** Бинари подсистемы лежат на диске. */
+		present: boolean;
+		installAvailable: boolean;
+		updateAvailable: boolean;
+		installedVersion?: string;
+		installVersion?: string;
+		busy: boolean;
+		/** Инстансы подсистемы, включая выключенные: гейт удаления. */
+		instances: number;
+		oninstall: () => void;
+		onuninstall: () => void;
+	}
+
 	interface Props {
 		singboxStatus: SingboxStatus | null;
 		singboxStatusLoading?: boolean;
@@ -34,6 +51,8 @@
 		onsaveClashPort?: (value: number) => void;
 		clashPortSaving?: boolean;
 		clashPortError?: string | null;
+		/** Подсистемы прокси (WDTT, FreeTurn); пусто — блок не рисуется. */
+		proxyBinaries?: ProxyBinaryRow[];
 	}
 
 	let {
@@ -59,7 +78,11 @@
 		onsaveClashPort,
 		clashPortSaving = false,
 		clashPortError = null,
+		proxyBinaries = [],
 	}: Props = $props();
+
+	// Подсистема, ожидающая подтверждения удаления.
+	let confirmProxy = $state<ProxyBinaryRow | null>(null);
 
 	// Копии Go-констант: singbox.DefaultClashPort и api.minClashPort. Фронт не
 	// импортирует Go, а бэкенд остаётся авторитетом — невалидное он отвергнет
@@ -173,7 +196,7 @@
 	});
 </script>
 
-{#if showSingbox || showHydra}
+{#if showSingbox || showHydra || proxyBinaries.length > 0}
 	<div class="settings-block">
 		<div class="card">
 		<SettingsSectionLabel label="Интеграции" icon={Blocks} tone="purple" header />
@@ -341,6 +364,59 @@
 			{/if}
 		{/if}
 
+		{#each proxyBinaries as p (p.key)}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={p.present ? 'success' : 'muted'}
+						size="md"
+						ariaLabel={p.present ? `${p.label}: установлен` : `${p.label}: не установлен`}
+					/>
+					<div class="integration-meta">
+						<span class="font-medium">{p.label}</span>
+						{#if p.present}
+							<span class="integration-sub">
+								v{p.installedVersion ?? '?'}
+								{#if p.instances > 0}· инстансов: {p.instances}{/if}
+							</span>
+							{#if p.updateAvailable && p.installVersion}
+								<span class="integration-sub">доступно обновление {p.installVersion}</span>
+							{/if}
+						{:else}
+							<span class="integration-sub">не установлен</span>
+						{/if}
+					</div>
+				</div>
+				<div class="integration-actions">
+					{#if p.present}
+						{#if p.updateAvailable && p.installAvailable}
+							<Button variant="primary" size="sm" loading={p.busy} onclick={p.oninstall}>
+								Обновить
+							</Button>
+						{:else}
+							<Button variant="secondary" size="sm" href="/proxy">Открыть</Button>
+						{/if}
+						<Button
+							variant="outline-danger"
+							size="sm"
+							loading={p.busy}
+							disabled={p.instances > 0}
+							title={p.instances > 0
+								? 'Сначала удалите инстансы этой подсистемы'
+								: undefined}
+							onclick={() => (confirmProxy = p)}
+						>
+							Удалить
+						</Button>
+					{:else if p.installAvailable}
+						<Button variant="primary" size="sm" loading={p.busy} onclick={p.oninstall}>
+							Установить
+						</Button>
+					{/if}
+				</div>
+			</div>
+		{/each}
+
 		{#if showHydra}
 			<div class="setting-row">
 				<div class="integration-item">
@@ -418,6 +494,23 @@
 		</Button>
 	{/snippet}
 </Modal>
+
+{#if confirmProxy}
+	<ConfirmModal
+		open={confirmProxy !== null}
+		title="Удалить {confirmProxy.label}?"
+		message="Бинари подсистемы и её отметка о версии будут удалены с роутера."
+		secondary="Настройки прокси сохранятся — после повторной установки они снова заработают."
+		confirmLabel="Удалить"
+		variant="danger"
+		onConfirm={() => {
+			const row = confirmProxy;
+			confirmProxy = null;
+			row?.onuninstall();
+		}}
+		onClose={() => (confirmProxy = null)}
+	/>
+{/if}
 
 {#if confirmUninstall}
 	<ConfirmModal

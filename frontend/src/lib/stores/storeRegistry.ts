@@ -30,6 +30,7 @@ export type ResourceKey =
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
 	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
+	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
 	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
 
 /**

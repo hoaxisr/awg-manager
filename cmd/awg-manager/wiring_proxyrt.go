@@ -529,6 +529,18 @@ func (t proxyTunnelImporter) PublishList(context.Context) {
 // нечем; ссылка проставляется сразу после manager.New и до первого Boot.
 type proxyManagerRef struct{ mgr *manager.Manager }
 
+// proxySubsystemOf — подсистема роли. Нужна гейту удаления бинарей: снимать
+// их можно, только если инстансов ЭТОЙ подсистемы не осталось.
+func proxySubsystemOf(kind instancestore.Kind) install.Subsystem {
+	switch kind {
+	case instancestore.KindWdttClient, instancestore.KindWdttServer:
+		return install.SubsystemWdtt
+	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
+		return install.SubsystemFreeTurn
+	}
+	return ""
+}
+
 // proxyRecords — wdttlink.RecordSource поверх менеджера.
 type proxyRecords struct{ ref *proxyManagerRef }
 
@@ -835,6 +847,24 @@ func (a *app) wireProxyrt() {
 		Downloader: proxyBinaryDownloader{svc: a.downloadSvc},
 		Warn:       func(msg string) { journal.Warn("install", "proxy", msg) },
 		Info:       func(msg string) { journal.Info("install", "proxy", msg) },
+		// Гейт удаления бинарей: считаем по ДИСКУ, а не по памяти менеджера.
+		// Боот прокси-рантайма идёт горутиной после старта HTTP, и до его
+		// конца Records() пуст — гейт был бы открыт всё окно посева, а на
+		// холодном старте роутера оно длится минутами. Со стора же читаются и
+		// записи без воркера (отказ фабрики в Create).
+		InstanceCount: func(name install.Subsystem) (int, error) {
+			st, err := store.Load()
+			if err != nil {
+				return 0, err
+			}
+			n := 0
+			for _, rec := range st.Records {
+				if proxySubsystemOf(rec.Kind) == name {
+					n++
+				}
+			}
+			return n, nil
+		},
 	})
 
 	records := proxyRecords{ref: ref}
@@ -863,6 +893,9 @@ func (a *app) wireProxyrt() {
 		AllocListen:  allocListen,
 		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
 		WaitDisabled: proxyWaitDisabled(states),
+		RecordsChanged: func(reason string) {
+			api.PublishResourceInvalidated(a.eventBus, api.ResourceProxyInstances, reason)
+		},
 	})
 	ref.mgr = mgr
 	a.proxyMgr = mgr
@@ -925,6 +958,7 @@ func (a *app) wireProxyrt() {
 		CaptchaStatus:      captchaSvc.ServeStatus,
 		InstallStatus:      installSvc.ServeStatus,
 		Install:            installSvc.ServeInstall,
+		Uninstall:          installSvc.ServeUninstall,
 	})
 
 	// Тумблер намерения инстанса (карточка зеркальной записи wdtt-raw) и

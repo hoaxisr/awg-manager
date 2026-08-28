@@ -40,6 +40,7 @@
 		Settings,
 		UpdateInfo,
 	} from "$lib/types";
+	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
 		USAGE_LEVEL_LABELS,
 		isAppearanceSettingsVisible,
@@ -311,6 +312,71 @@
 			document.getElementById("feedback-fab")?.scrollIntoView({ behavior: "smooth", block: "center" });
 		});
 	}
+
+	// ── подсистемы прокси (WDTT, FreeTurn) ──────────────────────────
+	// Бинари ставятся и снимаются целиком подсистемой: version-файл у половин
+	// общий, а раздельный снос сделал бы статус неоднозначным.
+	//
+	// Статус живёт в polling-store, подписанном на `proxyrt.instances`: удаление
+	// инстанса в другой вкладке иначе оставило бы кнопку «Удалить» запертой до
+	// перезагрузки страницы.
+	const PROXY_SUBSYSTEMS = [
+		{ key: 'wdtt' as const, label: 'WDTT' },
+		{ key: 'freeturn' as const, label: 'FreeTurn' },
+	];
+	let proxyBusy = $state<Record<string, boolean>>({});
+
+	// Автоподписка `$store` работает только с идентификатором, поэтому оба
+	// store'а разложены по переменным.
+	const wdttInstallStore = proxyInstallStatus.wdtt;
+	const freeturnInstallStore = proxyInstallStatus.freeturn;
+	const proxyStatuses = $derived({
+		wdtt: $wdttInstallStore.data,
+		freeturn: $freeturnInstallStore.data,
+	});
+
+	async function runProxyBinaries(
+		subsystem: ProxySubsystem,
+		action: () => Promise<void>,
+		okMessage: string,
+		failMessage: string,
+	) {
+		proxyBusy = { ...proxyBusy, [subsystem]: true };
+		try {
+			await action();
+			notifications.success(okMessage);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : failMessage);
+		} finally {
+			proxyBusy = { ...proxyBusy, [subsystem]: false };
+			await proxyInstallStatus[subsystem].refetch();
+		}
+	}
+
+	const proxyBinaryRows = $derived(
+		PROXY_SUBSYSTEMS.map(({ key, label }) => {
+			const st = proxyStatuses[key];
+			return {
+				key,
+				label,
+				present: st?.binariesPresent === true,
+				installAvailable: st?.installAvailable === true,
+				updateAvailable: st?.updateAvailable === true,
+				installedVersion: st?.installedVersion,
+				installVersion: st?.installVersion,
+				instances: st?.instances ?? 0,
+				busy: proxyBusy[key] === true,
+				oninstall: () =>
+					void runProxyBinaries(key, () => api.proxyInstall(key),
+						`${label}: бинари установлены`, `Не удалось установить ${label}`),
+				onuninstall: () =>
+					void runProxyBinaries(key, () => api.proxyUninstall(key),
+						`${label}: бинари удалены`, `Не удалось удалить ${label}`),
+			};
+		// Подсистема без статуса и без возможности установки — не наша арка:
+		// строка была бы мёртвой.
+		}).filter((row) => row.present || row.installAvailable),
+	);
 
 onMount(() => {
 	const timer = setInterval(() => {
@@ -813,6 +879,7 @@ $effect(() => {
 					clashPortSaving={savingClashPort}
 					{clashPortError}
 					onsaveClashPort={saveClashPort}
+					proxyBinaries={proxyBinaryRows}
 				/>
 				</div>
 			</aside>

@@ -7340,6 +7340,12 @@ definitions:
       installing:
         description: Installing — установка идёт прямо сейчас (кнопка блокируется).
         type: boolean
+      instances:
+        description: |-
+          Instances — сколько инстансов подсистемы существует сейчас, включая
+          выключенные. Фронт гасит по нему «Удалить» и объясняет почему, не
+          дожидаясь 409 от ручки.
+        type: integer
       routerClock:
         description: RouterClock — часы роутера для сверки с метками в журнале форка.
         type: string
@@ -11615,6 +11621,39 @@ paths:
       security:
       - CookieAuth: []
       summary: Статус установки бинарей подсистемы
+      tags:
+      - proxyrt
+  /proxyrt/install/uninstall:
+    post:
+      consumes:
+      - application/json
+      description: Отклоняется, пока существует хоть один инстанс подсистемы, включая
+        выключенные.
+      parameters:
+      - description: Подсистема
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/install.installRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/install.InstallResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Удалить бинари подсистемы
       tags:
       - proxyrt
   /proxyrt/instances:

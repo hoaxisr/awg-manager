@@ -25,7 +25,21 @@ const (
 	ResourceDeviceProxy             = "deviceproxy"
 	ResourceDeviceProxyConfig       = "deviceproxy.config"
 	ResourceDeviceProxyRuntime      = "deviceproxy.runtime"
+	// ResourceProxyInstances — состав инстансов прокси-рантайма изменился:
+	// создан или
+	// удалён. Его слушает счётчик инстансов подсистемы, по которому карточка
+	// «Интеграции» пускает или запирает удаление бинарей. Префикс proxyrt, а
+	// не proxy: ресурсы device-proxy зовутся deviceproxy.*, и «proxy.*» читалось
+	// бы как они.
+	ResourceProxyInstances = "proxyrt.instances"
 )
+
+// PublishResourceInvalidated — та же подсказка инвалидации, но для проводки:
+// прокси-рантайм публикует её из менеджера, а не из HTTP-обработчика, потому
+// что запись создаётся не только ручкой инстансов (ещё импорт ссылки).
+func PublishResourceInvalidated(bus *events.Bus, resource, reason string) {
+	publishInvalidated(bus, resource, reason)
+}
 
 // publishInvalidated posts a resource:invalidated hint to the SSE bus.
 // Safe when bus is nil (e.g. in tests that construct a handler without
