@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -111,6 +112,23 @@ func (a *storeAdapter) Get(id string) (routing.StoreEntry, error) {
 
 func (a *storeAdapter) Exists(id string) bool {
 	return a.store.Exists(id)
+}
+
+// exitRegistryAdapter adapts exitreg.Registry to routing.ExitRegistry.
+// Типы каталога и рантайма намеренно разные: каталог объявляет свой узкий
+// интерфейс и потому не зависит от пакетов, которые переставляет волна.
+type exitRegistryAdapter struct{ reg *exitreg.Registry }
+
+func (a exitRegistryAdapter) LookupExit(id string) (routing.ExitEntry, bool) {
+	info, ok := a.reg.Lookup(id)
+	if !ok {
+		return routing.ExitEntry{}, false
+	}
+	return routing.ExitEntry{
+		NDMSName:    info.NDMSName,
+		KernelIface: info.KernelIface,
+		Ready:       info.Ready,
+	}, true
 }
 
 // orchLifecycleAdapter routes accesspolicy.SetInterfaceUp for managed tunnels

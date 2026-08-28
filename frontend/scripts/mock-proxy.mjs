@@ -40,7 +40,9 @@
  * - GET  /__mock/capabilities — fixture map and runtime state;
  * - GET  /__mock/tunnels — normalized tunnel catalog used by mock surfaces;
  * - POST /__mock/reset-runtime (alias /__mock/reset) — reset volatile runtime switches;
- * - POST /__mock/singbox-install-fail {"enabled": true|false}.
+ * - POST /__mock/singbox-install-fail {"enabled": true|false};
+ * - POST /__mock/singbox-running {"running": true|false} — живость sing-box в
+ *   GET /singbox/status (env MOCK_SINGBOX_DOWN=1 выключает её на старте).
  *
  * Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
  */
@@ -128,6 +130,7 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 			'POST /__mock/reset-runtime',
 			'POST /__mock/reset',
 			'POST /__mock/singbox-install-fail',
+			'POST /__mock/singbox-running',
 			'POST /__mock/download-faults',
 			'POST /__mock/keenetic-os',
 		],
@@ -165,6 +168,7 @@ function getRuntimeState() {
 		updateChannel,
 		updateCheckEnabled,
 		singboxInstallShouldFail,
+		singboxRunning,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -180,6 +184,7 @@ function resetRuntimeControls() {
 	updateChannel = DEFAULT_MOCK_STATE.updateChannel;
 	updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
+	singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -187,7 +192,7 @@ function resetRuntimeControls() {
 	mockManagedAscByServer = createInitialMockManagedAscByServer();
 	mockSystemAscByTunnel = createInitialMockSystemAscByTunnel();
 	mockFreeturn = createInitialMockFreeturn();
-	mockWdtt = createInitialMockWdtt();
+	mockWdtt = applyAllExpired(createInitialMockWdtt());
 	applyDefaultMockKeeneticProfile();
 }
 const MOCK_DOWNLOAD_OUTBOUNDS = [
@@ -242,6 +247,9 @@ const MOCK_DOWNLOAD_OUTBOUNDS = [
 	},
 ];
 let singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
+// Живость sing-box в GET /singbox/status: обе ветки hint'а RB-11 у раздачи
+// (тумблер «Маршрутизация через sing-box») переключаются на ходу.
+let singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
 let mockProxyInstances = [
 	{
 		id: 'default',
@@ -283,8 +291,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Домашний провайдер',
 		endpoint: 'de-fra.demo.example:51820',
 		address: '10.8.0.2/32',
-		interfaceName: 'awg0',
-		ndmsName: 'Wireguard0',
+		interfaceName: 'opkgtun1',
+		ndmsName: 'OpkgTun1',
 		rxBytes: 142_320_120,
 		txBytes: 38_442_331,
 		lastHandshake: new Date(Date.now() - 45_000).toISOString(),
@@ -306,7 +314,7 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резервный WAN',
 		endpoint: 'nl-ams.demo.example:51820',
 		address: '10.9.0.2/32',
-		interfaceName: 'OpkgTun0',
+		interfaceName: 'nwg1',
 		ndmsName: 'Wireguard1',
 		rxBytes: 88_201_442,
 		txBytes: 22_781_930,
@@ -329,8 +337,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Мобильный WAN',
 		endpoint: 'pl-waw.demo.example:51820',
 		address: '10.30.0.2/32',
-		interfaceName: 'awg2',
-		ndmsName: 'Wireguard2',
+		interfaceName: 'opkgtun3',
+		ndmsName: 'OpkgTun3',
 		rxBytes: 57_322_404,
 		txBytes: 18_640_122,
 		lastHandshake: new Date(Date.now() - 20_000).toISOString(),
@@ -352,7 +360,7 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резерв LTE',
 		endpoint: 'se-sto.demo.example:51820',
 		address: '10.40.0.2/32',
-		interfaceName: 'awg3',
+		interfaceName: 'nwg3',
 		ndmsName: 'Wireguard3',
 		rxBytes: 0,
 		txBytes: 0,
@@ -375,8 +383,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Резервный WAN',
 		endpoint: 'uk-lon.demo.example:51820',
 		address: '10.50.0.2/32, fd00:8::2/128',
-		interfaceName: 'awg4',
-		ndmsName: 'Wireguard4',
+		interfaceName: 'opkgtun5',
+		ndmsName: 'OpkgTun5',
 		rxBytes: 1_204_880,
 		txBytes: 412_330,
 		lastHandshake: new Date(Date.now() - 720_000).toISOString(),
@@ -398,8 +406,8 @@ const MOCK_AWG_TUNNELS = [
 		resolvedIspInterfaceLabel: 'Оптика #2',
 		endpoint: 'ca-tor.demo.example:51820',
 		address: '10.60.0.2/32',
-		interfaceName: 'awg5',
-		ndmsName: 'Wireguard5',
+		interfaceName: 'opkgtun6',
+		ndmsName: 'OpkgTun6',
 		rxBytes: 8_102_344,
 		txBytes: 2_741_118,
 		lastHandshake: new Date(Date.now() - 65_000).toISOString(),
@@ -434,7 +442,106 @@ const MOCK_AWG_TUNNELS = [
 		connectivityCheck: { method: 'http' },
 		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 0 },
 	},
+	{
+		// Туннель FreeTurn-клиента: id клиента бэкенд в списке не отдаёт, связь
+		// ищется по Endpoint (127.0.0.1:9005 = listen клиента) — фоллбэк.
+		id: 'ft-tunnel-default',
+		name: 'Клиент FT',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: false,
+		endpoint: '127.0.0.1:9005',
+		address: '10.55.0.2/32',
+		interfaceName: 'opkgtun9',
+		ndmsName: 'OpkgTun9',
+		rxBytes: 4_221_003,
+		txBytes: 990_112,
+		lastHandshake: new Date(Date.now() - 40_000).toISOString(),
+		awgVersion: 'wg',
+		mtu: 1420,
+		startedAt: new Date(Date.now() - 8_040_000).toISOString(),
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
+	{
+		// Туннель WDTT-клиента в режиме WG. Связь помнит бэкенд —
+		// wdttClientId в списке (internal/api/tunnels_dto.go).
+		id: 'wdtt-tunnel-default',
+		name: 'Клиент wdtt',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: false,
+		wdttClientId: 'default',
+		endpoint: '127.0.0.1:9000',
+		address: '10.66.0.2/32',
+		interfaceName: 'opkgtun8',
+		ndmsName: 'OpkgTun8',
+		rxBytes: 9_112_334,
+		txBytes: 2_004_112,
+		lastHandshake: new Date(Date.now() - 30_000).toISOString(),
+		awgVersion: 'wg',
+		mtu: 1420,
+		startedAt: new Date(Date.now() - 6_120_000).toISOString(),
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
+	{
+		// Зеркальная запись raw-выхода wdtt-клиента (backend wdtt-raw): карточку
+		// ведёт прокси-рантайм. На странице туннеля правится только проверка
+		// связности — имя, WAN-подключение и маршрут по умолчанию заблокированы.
+		id: 'wdttraw-default',
+		name: 'Стамбул wdtt',
+		type: 'amneziawg',
+		status: 'running',
+		enabled: true,
+		defaultRoute: true,
+		wdttClientId: 'default',
+		endpoint: '127.0.0.1:9000',
+		address: '10.66.0.3/32',
+		interfaceName: 'opkgtun19',
+		ndmsName: 'OpkgTun19',
+		rxBytes: 3_004_998,
+		txBytes: 812_003,
+		awgVersion: 'wg',
+		mtu: 1300,
+		startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+		backend: 'wdtt-raw',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
+	},
 ];
+
+/** Счётчик импортированных туннелей: даёт им номер, а из него — NDMS-имя. */
+let mockImportSeq = 0;
+
+/** Новый kernel-туннель в списке: имена — как их строит Go (awgN → OpkgTunN). */
+function mockImportKernelTunnel(name, link = {}) {
+	const num = 20 + ++mockImportSeq;
+	const item = {
+		id: `awg${num}`,
+		name: name || `Импорт ${num}`,
+		type: 'amneziawg',
+		status: 'stopped',
+		enabled: false,
+		defaultRoute: false,
+		endpoint: '',
+		address: '10.0.0.2/32',
+		interfaceName: `opkgtun${num}`,
+		ndmsName: `OpkgTun${num}`,
+		awgVersion: 'awg3',
+		mtu: 1420,
+		backend: 'kernel',
+		connectivityCheck: { method: 'http' },
+		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 3 },
+		...link,
+	};
+	MOCK_AWG_TUNNELS.push(item);
+	return item;
+}
 
 /** AWG tunnels where monitoring self-check is down while status stays running or broken. */
 const MOCK_AWG_SELF_CHECK_FAIL = new Set(['awg-demo-fin', 'awg-demo-5']);
@@ -2029,6 +2136,10 @@ let mockSBSettings = {
 	fakeipPool6: '3f80::/10',
 	fakeipMtu: 1500,
 	fakeipSourcePreserve: true,
+	// Ingress-интерфейсы sing-box: здесь живёт состояние тумблера
+	// «Маршрутизация через sing-box» раздачи (RB-09). ServerConfig.ingressEnabled
+	// не читает никто.
+	ingressInterfaces: [],
 };
 
 // Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
@@ -2407,7 +2518,12 @@ const mockAccessPolicies = [
 		description: 'home',
 		isStandard: true,
 		standalone: false,
-		interfaces: [mockPolicyInterfaceRef('awg-demo-1', 0)],
+		// OpkgTun19 — raw-интерфейс wdtt-клиента «Унаследованный»: деталь «Выход»
+		// читает членство обратным поиском по этому списку (EX-11).
+		interfaces: [
+			mockPolicyInterfaceRef('awg-demo-1', 0),
+			{ name: 'OpkgTun19', label: 'Унаследованный', order: 1 },
+		],
 		deviceCount: 1,
 	},
 	{
@@ -2726,7 +2842,7 @@ const mockRoutingDnsRoutes = [
 		domains: ['discord.com', 'discord.gg'],
 		manualDomains: ['discord.com', 'discord.gg'],
 		hrRouteMode: 'interface',
-		routes: [{ interface: 'awg0', tunnelId: 'awg-demo-1', fallback: 'auto' }],
+		routes: [{ interface: 'opkgtun1', tunnelId: 'awg-demo-1', fallback: 'auto' }],
 		enabled: true,
 		backend: 'hydraroute',
 		createdAt: '2026-05-09T10:00:00Z',
@@ -3122,7 +3238,7 @@ function createInitialMockFreeturn() {
 				startedAt: new Date(Date.now() - (2 * 60 + 14) * 60000).toISOString(),
 				config: {
 					enabled: true,
-					listen: '127.0.0.1:9000',
+					listen: '127.0.0.1:9005',
 					peer: 'vinvanvlad.com:56000',
 					provider: 'vk',
 					links: 'https://vk.ru/call/join/hFa2abc,https://vk.ru/call/join/x91kdef',
@@ -3135,6 +3251,32 @@ function createInitialMockFreeturn() {
 					streamsPerCred: 4,
 					platform: 'desktop',
 					manualCaptcha: false,
+					dnsMode: 'auto',
+					clientId: '',
+					debug: false,
+				},
+			},
+			{
+				// Осиротевший процесс (orphanedPid): живой, pid-файл унаследован.
+				id: 'freeturn-2',
+				name: 'Унаследованный',
+				running: true,
+				orphaned: true,
+				pid: 12999,
+				startedAt: null,
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9010',
+					peer: 'old.freeturn.example:56000',
+					provider: 'vk',
+					links: 'https://vk.ru/call/join/zz77old',
+					streams: 4,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'none',
+					streamsPerCred: 4,
+					platform: 'desktop',
 					dnsMode: 'auto',
 					clientId: '',
 					debug: false,
@@ -3162,20 +3304,12 @@ function createInitialMockFreeturn() {
 		],
 		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
 		allowlists: {},
-		clientSeq: 1,
+		clientSeq: 2,
 		serverSeq: 1,
 	};
 }
 
 let mockFreeturn = createInitialMockFreeturn();
-
-function mockFreeturnList(kind) {
-	return kind === 'client' ? mockFreeturn.clients : mockFreeturn.servers;
-}
-
-function mockFreeturnFind(kind, id) {
-	return mockFreeturnList(kind).find((i) => i.id === id) ?? null;
-}
 
 function mockFreeturnProcessStatus(inst, kind) {
 	if (!inst) {
@@ -3190,13 +3324,17 @@ function mockFreeturnProcessStatus(inst, kind) {
 	const endpoint = kind === 'client' ? cfg.peer : cfg.listen;
 	return {
 		running: inst.running,
-		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		// У осиротевшего процесса startedAt нет: запускал его прошлый демон.
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
 		...(inst.running
 			? {
 					log:
 						'12:41:02 [info] turn pool ready: 8 streams\n' +
 						`12:41:03 [info] tunnel up ${endpoint}\n` +
 						'12:41:07 [info] keepalive ok · rtt 14ms',
+					dtlsConnections: 8,
 				}
 			: { log: '12:12:44 [info] process stopped' }),
 		binary: `/opt/bin/freeturn-${kind}`,
@@ -3206,13 +3344,43 @@ function mockFreeturnProcessStatus(inst, kind) {
 
 function mockFreeturnAllowlist(serverId) {
 	if (!mockFreeturn.allowlists[serverId]) {
-		mockFreeturn.allowlists[serverId] = { enabled: false, clientsFile: '', clients: [] };
+		// Записи живут в файле и переживают выключение списка: выключение
+		// стирает путь в конфиге, а не файл (DisableServerAllowlist).
+		mockFreeturn.allowlists[serverId] = { clientsFile: '', clients: [] };
 	}
 	return mockFreeturn.allowlists[serverId];
 }
 
-// ── WDTT — клиент-only (нет серверов/allowlist). Prism отдаёт на wdtt-эндпоинты
-// пустые 200 (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+/**
+ * Статус списка ровно как у бэкенда (`loadAllowlistStatus`): включённость —
+ * это НАЛИЧИЕ пути к файлу, а у выключенного списка состав не отдаётся.
+ */
+function mockFreeturnAllowlistStatus(al) {
+	const enabled = !!al.clientsFile;
+	return { enabled, clientsFile: al.clientsFile, clients: enabled ? al.clients : [] };
+}
+
+// ── WDTT — клиенты и серверы. Prism отдаёт на wdtt-эндпоинты пустые 200
+// (в swagger нет examples), поэтому мокаем здесь по образцу FreeTurn.
+const MOCK_WDTT_SERVER_PASSWORD = 'mainpass0000000000000000';
+// Сервер в моке РОВНО ОДИН: бэкенд отвергает второй (internal/wdtt/server.go:136,
+// «интерфейс wdtt0 общий»). Состояния, ради которых раньше держали второй
+// инстанс, включаются переменными окружения:
+//   MOCK_WDTT_OLD_BINARY=1         — бинарь без -raw-iface: rawNdmsIface пуст;
+//   MOCK_WDTT_LEGACY_MAIN_CLIENT=1 — легаси-строка «пароль абонента == главный»
+//     (сегодня такую запись не заводит ни AddServerClient, ни UpdateServerInstance
+//     — server_clients.go:339, server.go:461; она бывает только у старых данных).
+const MOCK_WDTT_OLD_BINARY = process.env.MOCK_WDTT_OLD_BINARY === '1';
+const MOCK_WDTT_LEGACY_MAIN_CLIENT = process.env.MOCK_WDTT_LEGACY_MAIN_CLIENT === '1';
+//   MOCK_WDTT_ALL_EXPIRED=1       — у сервера остались только просроченные
+//                                   записи: удаление последней разрешено и
+//                                   оставляет сервер без рабочих — «Запустить»
+//                                   после этого блокирует гейт SH-91.
+const MOCK_WDTT_ALL_EXPIRED = process.env.MOCK_WDTT_ALL_EXPIRED === '1';
+//   MOCK_WDTT_SERVER_UNSUPPORTED=1 — арка роутера без серверной сборки:
+//     `serverSupported: false` (internal/wdtt/install.go:69), мастер не
+//     предлагает WDTT-раздачу.
+const MOCK_WDTT_SERVER_UNSUPPORTED = process.env.MOCK_WDTT_SERVER_UNSUPPORTED === '1';
 const MOCK_WDTT_WG_CONFIG =
 	'[Interface]\n' +
 	'PrivateKey = wG8kEXAMPLEprivKEYaaaaaaaaaaaaaaaaaaaaaaaa=\n' +
@@ -3223,6 +3391,16 @@ const MOCK_WDTT_WG_CONFIG =
 	'Endpoint = 127.0.0.1:9000\n' +
 	'AllowedIPs = 0.0.0.0/0\n' +
 	'PersistentKeepalive = 25';
+
+/** Часы роутера в формате бэкенда: «2006-01-02 15:04:05 ZONE». */
+function mockRouterClock() {
+	const d = new Date();
+	const p = (n) => String(n).padStart(2, '0');
+	return (
+		`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+		`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} MSK`
+	);
+}
 
 function createInitialMockWdtt() {
 	return {
@@ -3243,21 +3421,27 @@ function createInitialMockWdtt() {
 					workers: 24,
 					obfs: 'audio',
 					fingerprint: 'chrome',
-					deviceId: '',
+					// deviceId/sub не заданы намеренно: бэкенд их не сериализует
+					// (omitempty), и форма обязана переживать их отсутствие.
 					captchaMode: 'rjs',
 					vkAuthMode: 'auto',
-					sub: '',
 					debug: false,
 				},
 			},
 			{
+				// Упавший процесс: enabled (должен работать) + не работает даёт
+				// «не запускается» в списке (LS-06), в строке состояния (RB-02) и
+				// блок EX-01 в детали. Явный «Остановить» снимет enabled — и
+				// строка станет «Остановлен».
 				id: 'wdtt-2',
 				name: 'Резерв',
 				running: false,
 				pid: 15877,
 				startedAt: null,
+				lastError:
+					'dial udp backup.wdtt.example:56000: connect: connection refused\nexit status 1',
 				config: {
-					enabled: false,
+					enabled: true,
 					listen: '127.0.0.1:9001',
 					peer: 'backup.wdtt.example:56000',
 					password: 'reserve-password',
@@ -3272,15 +3456,308 @@ function createInitialMockWdtt() {
 					debug: false,
 				},
 			},
+			{
+				// Осиротевший процесс (orphanedPid): живой, но pid-файл унаследован —
+				// startedAt нет, надзор по нему слеп.
+				id: 'wdtt-3',
+				name: 'Унаследованный',
+				running: true,
+				orphaned: true,
+				pid: 15999,
+				startedAt: null,
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9002',
+					peer: 'old.wdtt.example:56000',
+					password: 'orphan-password',
+					vkHashes: '',
+					workers: 12,
+					obfs: 'audio',
+					fingerprint: 'chrome',
+					captchaMode: 'rjs',
+					vkAuthMode: 'auto',
+					debug: false,
+					connMode: 'raw',
+					ndmsIface: 'OpkgTun19',
+					rawIface: 'wdttraw1',
+					rawClientIp: '10.77.0.5/32',
+				},
+			},
 		],
-		clientSeq: 2,
+		servers: [
+			{
+				// Новый бинарь: raw-интерфейс зарегистрирован в NDMS (rawNdmsIface).
+				// MOCK_WDTT_OLD_BINARY=1 — старый: NDMS-имени у raw-интерфейса нет.
+				id: 'default',
+				name: 'Сервер',
+				running: true,
+				pid: 15901,
+				startedAt: new Date(Date.now() - 26 * 60000).toISOString(),
+				ndmsIface: 'OpkgTun17',
+				wgIface: 'opkgtun17',
+				rawNdmsIface: MOCK_WDTT_OLD_BINARY ? '' : 'OpkgTun18',
+				rawIface: MOCK_WDTT_OLD_BINARY ? 'wdttraw0' : 'opkgtun18',
+				// С каким exposeToPolicies стартовал живой процесс: у работающего
+				// сервера — значение конфига на момент старта.
+				appliedExposeToPolicies: false,
+				config: {
+					enabled: true,
+					listen: '0.0.0.0:56000',
+					// Дефолт бэкенда: при DTLS :56000 он совпадает с raw-портом
+					// (DTLS+1) — так мок ловит дубли в списке освобождения портов.
+					wgPort: 56001,
+					password: MOCK_WDTT_SERVER_PASSWORD,
+					configDir: '/opt/etc/awg-manager/wdtt/server/default',
+					adminId: '',
+					botToken: '',
+					debug: false,
+					natMode: 'full',
+					policy: 'none',
+					lanSegments: ['Home'],
+					natIface: '',
+					ndmsIface: 'OpkgTun17',
+					wgIface: 'opkgtun17',
+					openFirewall: true,
+					relayMode: 'wg',
+					rawListen: '0.0.0.0:56001',
+					directListen: '',
+					statsLog: 'ram',
+					// Тумблер «Использовать в политиках доступа»: поле конфига,
+					// применяется на старте сервера. Применённое значение отдаёт
+					// статус (appliedExposeToPolicies) — по нему деталь и считает
+					// пару «выбрано/применено».
+					exposeToPolicies: false,
+					linkPeer: '203.0.113.10:56000',
+					linkVkHashes: 'a1b2c3d4e5f6',
+					clients: [
+						...(MOCK_WDTT_LEGACY_MAIN_CLIENT
+							? [{ password: MOCK_WDTT_SERVER_PASSWORD, comment: 'Главный пароль' }]
+							: []),
+						{ password: 'c1a7f0e93b21', comment: 'Телефон Ивана', vkHash: 'a1b2c3d4e5f6' },
+						{ password: 'd2b8a1f04c32', comment: 'Ноутбук Ольги' },
+						{ password: 'e3c9b2a15d43', comment: 'Гостевой (просрочен)' },
+						{ password: 'f4d0c3b26e54', comment: 'Планшет (отключён)' },
+						{ password: 'a5e1d4c37f65', comment: 'Абонент 1' },
+					],
+				},
+				users: [
+					...(MOCK_WDTT_LEGACY_MAIN_CLIENT
+						? [
+								{
+									password: MOCK_WDTT_SERVER_PASSWORD,
+									comment: 'Главный пароль',
+									isDeactivated: false,
+									isExpired: false,
+									isMainPassword: true,
+									isAuto: false,
+								},
+							]
+						: []),
+					{
+						password: 'c1a7f0e93b21',
+						comment: 'Телефон Ивана',
+						vkHash: 'a1b2c3d4e5f6',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'd2b8a1f04c32',
+						comment: 'Ноутбук Ольги',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'e3c9b2a15d43',
+						comment: 'Гостевой (просрочен)',
+						isDeactivated: false,
+						isExpired: true,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'f4d0c3b26e54',
+						comment: 'Планшет (отключён)',
+						isDeactivated: true,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: false,
+					},
+					{
+						password: 'a5e1d4c37f65',
+						comment: 'Абонент 1',
+						isDeactivated: false,
+						isExpired: false,
+						isMainPassword: false,
+						isAuto: true,
+					},
+				],
+				// available=true: passwords.json уже есть — его пишет и старт, и
+				// любая мутация состава (writeServerClientsFile).
+				usersAvailable: true,
+			},
+		],
+		clientSeq: 3,
+		serverSeq: 1,
 	};
 }
 
-let mockWdtt = createInitialMockWdtt();
+/** Отбор состояния «все абоненты просрочены» — только под флагом мока. */
+function applyAllExpired(state) {
+	if (!MOCK_WDTT_ALL_EXPIRED) return state;
+	for (const srv of state.servers) {
+		srv.users = srv.users.filter((u) => u.isExpired || u.isMainPassword);
+		srv.config.clients = srv.config.clients.filter((c) =>
+			srv.users.some((u) => u.password === c.password),
+		);
+	}
+	return state;
+}
 
-function mockWdttFind(id) {
-	return mockWdtt.clients.find((i) => i.id === id) ?? null;
+let mockWdtt = applyAllExpired(createInitialMockWdtt());
+
+function mockWdttServerProcessStatus(inst) {
+	if (!inst) {
+		return {
+			running: false,
+			log: '',
+			binary: '/opt/bin/wdtt-server',
+			binaryPresent: mockWdtt.binaryPresent,
+		};
+	}
+	return {
+		running: inst.running,
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
+		...(inst.running
+			? {
+					log:
+						'10:02:11 [info] dtls listen 0.0.0.0:56000\n' +
+						`10:02:11 [info] wireguard listen :${inst.config.wgPort}\n` +
+						'10:02:19 [info] client connected · 2 sessions',
+					dtlsConnections: 2,
+				}
+			: { log: '09:40:02 [info] server stopped' }),
+		ndmsIface: inst.ndmsIface || undefined,
+		rawIface: inst.rawIface || undefined,
+		// Пусто на старом бинаре: raw-интерфейс в NDMS не заведён.
+		rawNdmsIface: inst.rawNdmsIface || undefined,
+		// Применённое значение тумблера живёт у процесса: нет процесса (или он
+		// усыновлён от прошлого демона) — нет и значения, поля в ответе не будет.
+		...(inst.running && !inst.orphaned && typeof inst.appliedExposeToPolicies === 'boolean'
+			? { appliedExposeToPolicies: inst.appliedExposeToPolicies }
+			: {}),
+		binary: '/opt/bin/wdtt-server',
+		binaryPresent: mockWdtt.binaryPresent,
+	};
+}
+
+/** Ответ ручек /wdtt/servers/{id}/users: состав + судьба SIGHUP этой мутации. */
+function mockWdttServerClients(inst, reload) {
+	return {
+		available: inst.usersAvailable,
+		users: inst.users,
+		...(reload ? { reload } : {}),
+	};
+}
+
+/**
+ * Рабочие абоненты — тот же предикат, что у бэкенда (UsableServerClients →
+ * ServerClientUnusableReason, passwords_json.go:206): пустой пароль, главный
+ * пароль, просрочка. isDeactivated в предикат НЕ входит.
+ */
+function mockWdttUsableUsers(users) {
+	return users.filter((u) => u.password && !u.isMainPassword && !u.isExpired);
+}
+
+/**
+ * Инвариант непустоты (ensureUsableServerClient, wdtt/server_clients.go): при
+ * заданном главном пароле и нуле рабочих абонентов заводит «Абонент 1». Стоит
+ * РОВНО на цикле старта — последняя линия для путей мимо UI. На путях UI
+ * (сохранение конфига, добавление, удаление) абонент за пользователя не
+ * заводится: Дополнение №5.
+ */
+function mockWdttEnsureUsable(inst) {
+	const main = String(inst.config.password ?? '').trim();
+	if (!main || mockWdttUsableUsers(inst.users).length > 0) return;
+	const password = `auto${Date.now().toString(16)}`;
+	inst.users.push({
+		password,
+		comment: 'Абонент 1',
+		isDeactivated: false,
+		isExpired: false,
+		isMainPassword: false,
+		isAuto: true,
+	});
+	inst.config.clients.push({ password, comment: 'Абонент 1', auto: true });
+}
+
+/** delivered — сигнал дошёл живому серверу; иначе файл ждёт следующего запуска. */
+function mockWdttReload(inst) {
+	return inst.running ? 'delivered' : 'serverStopped';
+}
+
+/** Первый свободный локальный порт 9000..9199 (wdtt/validate.go:87). */
+/** Занятый другим инстансом порт двигается вперёд — `ensureUniqueServerListenAddr`. */
+function mockUniqueServerListen(servers, inst) {
+	const want = String(inst.config?.listen ?? '');
+	const host = want.split(':')[0] || '0.0.0.0';
+	const port = Number(want.split(':').pop()) || 56000;
+	const used = new Set(
+		servers
+			.filter((i) => i !== inst)
+			.map((i) => Number(String(i.config?.listen ?? '').split(':').pop()))
+			.filter(Boolean),
+	);
+	if (!used.has(port)) return `${host}:${port}`;
+	for (let p = 56000; p < 56100; p++) {
+		if (!used.has(p)) return `${host}:${p}`;
+	}
+	return `${host}:${port}`;
+}
+
+/** Порт нового FreeTurn-сервера: 56000..56099, как `nextServerListen` бэкенда. */
+function mockNextServerListen(servers) {
+	const used = new Set(
+		servers.map((i) => Number(String(i.config?.listen ?? '').split(':').pop())).filter(Boolean),
+	);
+	for (let port = 56000; port < 56100; port++) {
+		if (!used.has(port)) return `0.0.0.0:${port}`;
+	}
+	return '0.0.0.0:56000';
+}
+
+function mockNextLocalListen(instances) {
+	const used = new Set(
+		instances.map((i) => Number(String(i.config?.listen ?? '').split(':').pop())).filter(Boolean),
+	);
+	for (let port = 9000; port < 9200; port++) {
+		if (!used.has(port)) return `127.0.0.1:${port}`;
+	}
+	return '127.0.0.1:9100';
+}
+
+/**
+ * Raw-клиент регистрирует свой интерфейс в роутере при старте: менеджер
+ * выдаёт индекс из 17..49 и кладёт имена в статус. Без этого мастер не знает,
+ * какой интерфейс заводить в политику доступа.
+ */
+function mockAssignRawIface(inst) {
+	if (inst.config.connMode !== 'raw' || inst.config.ndmsIface) return;
+	const busy = new Set(
+		[...mockWdtt.clients, ...mockWdtt.servers]
+			.map((i) => Number(String(i.config?.ndmsIface ?? '').replace(/\D+/g, '')))
+			.filter(Boolean),
+	);
+	let idx = 17;
+	while (idx < 50 && busy.has(idx)) idx += 1;
+	inst.config.ndmsIface = `OpkgTun${idx}`;
+	inst.config.rawIface = `opkgtun${idx}`;
+	inst.config.rawClientIp = `10.66.66.${idx}`;
 }
 
 function mockWdttProcessStatus(inst) {
@@ -3294,7 +3771,10 @@ function mockWdttProcessStatus(inst) {
 	}
 	return {
 		running: inst.running,
-		...(inst.running ? { pid: inst.pid, startedAt: inst.startedAt } : {}),
+		...(inst.running ? { pid: inst.pid } : {}),
+		// У осиротевшего процесса startedAt нет: запускал его прошлый демон.
+		...(inst.running && !inst.orphaned ? { startedAt: inst.startedAt } : {}),
+		...(inst.orphaned ? { orphanedPid: true } : {}),
 		...(inst.running
 			? {
 					log:
@@ -3306,9 +3786,278 @@ function mockWdttProcessStatus(inst) {
 					dtlsConnections: 3,
 				}
 			: { log: '08:51:30 [info] process stopped' }),
+		// Ошибка последнего запуска живёт, пока процесс не работает.
+		...(!inst.running && inst.lastError ? { lastError: inst.lastError } : {}),
+		ndmsIface: inst.config.ndmsIface || undefined,
+		rawIface: inst.config.rawIface || undefined,
+		rawClientIp: inst.config.rawClientIp || undefined,
 		binary: '/opt/bin/wdtt-client',
 		binaryPresent: mockWdtt.binaryPresent,
 	};
+}
+
+// ── proxyrt — вид новой поверхности (задача 13Б) ──────────────────────────
+// Переупаковка фикстур mockWdtt/mockFreeturn (выше) в DTO
+// internal/api/proxy_instances.go / internal/proxyapp/*: единый список
+// инстансов «роль:id», секреты — признаком Set, конфиг роли без полей,
+// уехавших на запись (sub/statsLog/linkPeer/linkVkHashes/peerWg/peerRaw).
+
+const PROXY_SECRET_FIELDS = {
+	'wdtt-client': ['password'],
+	'wdtt-server': ['password', 'botToken'],
+	'freeturn-client': ['obfKey'],
+	'freeturn-server': ['obfKey'],
+};
+
+/** Секреты наружу не уходят — только признак `<field>Set` (Н5). */
+function proxyMaskSecrets(kind, cfg) {
+	const out = { ...cfg };
+	for (const f of PROXY_SECRET_FIELDS[kind] ?? []) {
+		const val = out[f];
+		delete out[f];
+		out[`${f}Set`] = !!(val && String(val).trim());
+	}
+	return out;
+}
+
+/** Пустой секрет в теле PATCH — «не менять» (Н5): выбрасывается перед мержем. */
+function proxyPruneBlankSecrets(kind, cfg) {
+	const out = { ...cfg };
+	for (const f of PROXY_SECRET_FIELDS[kind] ?? []) {
+		if (f in out && !String(out[f] ?? '').trim()) delete out[f];
+	}
+	return out;
+}
+
+function proxyKey(kind, id) {
+	return `${kind}:${id}`;
+}
+
+function proxyParseKey(key) {
+	const i = String(key ?? '').indexOf(':');
+	if (i < 0) return null;
+	return { kind: key.slice(0, i), id: key.slice(i + 1) };
+}
+
+function proxyListFor(kind) {
+	switch (kind) {
+		case 'wdtt-client':
+			return mockWdtt.clients;
+		case 'wdtt-server':
+			return mockWdtt.servers;
+		case 'freeturn-client':
+			return mockFreeturn.clients;
+		case 'freeturn-server':
+			return mockFreeturn.servers;
+		default:
+			return null;
+	}
+}
+
+/** Запись по ключу «роль:id» — единственная адресация новой поверхности. */
+function proxyFindByKey(key) {
+	const parsed = proxyParseKey(key);
+	if (!parsed) return null;
+	const list = proxyListFor(parsed.kind);
+	if (!list) return null;
+	const inst = list.find((i) => i.id === parsed.id);
+	return inst ? { ...parsed, inst } : null;
+}
+
+/** «default», а занят — первый свободный «default2», «default3»… (proxy_instances.go:freeID). */
+function proxyFreeID(kind) {
+	const list = proxyListFor(kind) ?? [];
+	if (!list.some((i) => i.id === 'default')) return 'default';
+	for (let n = 2; ; n++) {
+		const id = `default${n}`;
+		if (!list.some((i) => i.id === id)) return id;
+	}
+}
+
+/** Дефолтный конфиг роли на создание — тот же, что раньше отдавали POST /wdtt|freeturn/... */
+function proxyDefaultConfig(kind) {
+	switch (kind) {
+		case 'wdtt-client':
+			return {
+				enabled: false,
+				listen: mockNextLocalListen(mockWdtt.clients),
+				peer: '',
+				password: '',
+				vkHashes: '',
+				workers: 24,
+				obfs: 'audio',
+				fingerprint: 'chrome',
+				captchaMode: 'rjs',
+				vkAuthMode: 'vkcalls',
+				connMode: 'wg',
+				debug: false,
+			};
+		case 'wdtt-server':
+			// Единственность сервера — старый мировой гейт (интерфейс wdtt0 общий).
+			// В gateCheck новой поверхности (proxy_instances.go) такого гейта нет:
+			// индексы OpkgTun выделяются на инстанс, а не на роль — не воспроизводим.
+			return {
+				enabled: false,
+				natMode: 'full',
+				policy: 'none',
+				relayMode: 'wg',
+				password: '',
+				listen: '0.0.0.0:56002',
+				wgPort: 56001,
+				openFirewall: true,
+			};
+		case 'freeturn-client':
+			return {
+				enabled: false,
+				listen: mockNextLocalListen(mockFreeturn.clients),
+				peer: '',
+				provider: 'vk',
+				streams: 10,
+				transport: 'tcp',
+				mode: 'udp',
+				bond: false,
+				obfProfile: 'none',
+				streamsPerCred: 10,
+				platform: 'desktop',
+				dnsMode: 'auto',
+				debug: false,
+			};
+		case 'freeturn-server':
+			return {
+				enabled: false,
+				listen: mockNextServerListen(mockFreeturn.servers),
+				connect: '',
+				mode: 'udp',
+				obfProfile: 'none',
+				debug: false,
+				openFirewall: true,
+			};
+		default:
+			return null;
+	}
+}
+
+/** Конфиг роли наружу: без полей, уехавших на запись (proxyRecordExtras). */
+function proxyRawConfig(kind, inst) {
+	// enabled — поле ЗАПИСИ (Record.Enabled), ни один из четырёх конфигов ролей
+	// (config.go) его не несёт; в мок-состоянии оно исторически дублируется
+	// внутрь config для старых ручек — наружу такое зеркало не отдаём.
+	if (kind === 'wdtt-client') {
+		// sub — поле ЗАПИСИ (v.sub), rawClientIp — наблюдение процесса
+		// (process.address); в форме конфига роли (WdttClientConfig) их нет.
+		const { sub, rawClientIp, enabled, ...rest } = inst.config;
+		return rest;
+	}
+	if (kind === 'wdtt-server') {
+		// linkPeer/linkVkHashes/statsLog — поля ЗАПИСИ; clients — абонентов
+		// отдаёт отдельная ручка /users, урезанный список здесь был бы приманкой
+		// (docstring ProxyRtInstanceView, proxy_instances.go).
+		const { linkPeer, linkVkHashes, statsLog, clients, enabled, ...rest } = inst.config;
+		return {
+			...rest,
+			...(inst.ndmsIface ? { ndmsIface: inst.ndmsIface } : {}),
+			...(inst.wgIface ? { wgIface: inst.wgIface } : {}),
+			...(inst.rawNdmsIface ? { rawNdmsIface: inst.rawNdmsIface } : {}),
+			...(inst.rawIface ? { rawIface: inst.rawIface } : {}),
+		};
+	}
+	const { enabled, ...rest } = inst.config;
+	return rest;
+}
+
+/** Поля ЗАПИСИ поверх конфига роли (ProxyRtInstanceView: sub/peerWg/peerRaw/linkPeer/…). */
+function proxyRecordExtras(kind, inst) {
+	if (kind === 'wdtt-client') {
+		const mode = inst.config.connMode === 'raw' ? 'raw' : 'wg';
+		return {
+			...(inst.config.sub ? { sub: inst.config.sub } : {}),
+			// Слот неактивного режима мок не персистит отдельно (нет своего
+			// мутатора) — показывает только активный peer текущего режима.
+			...(mode === 'wg' && inst.config.peer ? { peerWg: inst.config.peer } : {}),
+			...(mode === 'raw' && inst.config.peer ? { peerRaw: inst.config.peer } : {}),
+		};
+	}
+	if (kind === 'wdtt-server') {
+		return {
+			...(inst.config.linkPeer ? { linkPeer: inst.config.linkPeer } : {}),
+			...(inst.config.linkVkHashes ? { linkVkHashes: inst.config.linkVkHashes } : {}),
+			...(inst.config.statsLog ? { statsLog: inst.config.statsLog } : {}),
+		};
+	}
+	return {};
+}
+
+/** Старый снимок процесса (mockWdtt…/mockFreeturn…ProcessStatus) → api.ProcessView. */
+function proxyProcessView(kind, inst) {
+	const old =
+		kind === 'wdtt-client'
+			? mockWdttProcessStatus(inst)
+			: kind === 'wdtt-server'
+				? mockWdttServerProcessStatus(inst)
+				: kind === 'freeturn-client'
+					? mockFreeturnProcessStatus(inst, 'client')
+					: mockFreeturnProcessStatus(inst, 'server');
+	const out = { running: !!old.running, binary: old.binary, binaryPresent: !!old.binaryPresent };
+	if (old.pid !== undefined) out.pid = old.pid;
+	if (old.startedAt) {
+		out.uptimeS = Math.max(0, Math.floor((Date.now() - new Date(old.startedAt).getTime()) / 1000));
+	}
+	if (old.lastError) out.lastError = old.lastError;
+	if (old.log !== undefined) out.log = old.log;
+	if (old.dtlsConnections !== undefined) out.clients = old.dtlsConnections;
+	if (old.wgConfig !== undefined) out.wgConfig = old.wgConfig;
+	if (old.rawClientIp) out.address = old.rawClientIp;
+	// orphanedPid/appliedExposeToPolicies: новый ProcessView их не несёт вовсе
+	// (proxyInstances.ts:404-410) — усыновление сокет заменил, тумблер отдаёт
+	// движок реконсиляцией. Соответствующие ветки InstanceList/ShareDetail
+	// теперь не срабатывают никогда — решение волны, не находка мока.
+	return out;
+}
+
+/** ProxyRtInstanceView — вид одного инстанса новой поверхности. */
+function proxyInstanceView(kind, inst) {
+	return {
+		key: proxyKey(kind, inst.id),
+		id: inst.id,
+		kind,
+		name: inst.name,
+		enabled: !!inst.config.enabled,
+		...proxyRecordExtras(kind, inst),
+		config: proxyMaskSecrets(kind, proxyRawConfig(kind, inst)),
+		process: proxyProcessView(kind, inst),
+		// state (ProxyRtStateView) не заполняем: страница его не читает
+		// (row.state — производная от status/config во frontend, не от ответа
+		// реконсиляции), а «отсутствует, пока движок не публиковал» — законный
+		// снимок и для мока.
+	};
+}
+
+function proxyAllInstances() {
+	return [
+		...mockWdtt.clients.map((i) => proxyInstanceView('wdtt-client', i)),
+		...mockWdtt.servers.map((i) => proxyInstanceView('wdtt-server', i)),
+		...mockFreeturn.clients.map((i) => proxyInstanceView('freeturn-client', i)),
+		...mockFreeturn.servers.map((i) => proxyInstanceView('freeturn-server', i)),
+	].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+function proxyNotFound(res, key) {
+	sendBackendError(res, `инстанс ${key} не найден`, 'NOT_FOUND', 404);
+}
+
+/** Тумблер enabled: мок отражает эффект немедленно, не ждёт реконсиляцию движка. */
+function proxySetEnabled(kind, inst, on) {
+	inst.config.enabled = on;
+	inst.running = on;
+	inst.startedAt = on ? new Date().toISOString() : null;
+	if (on) {
+		inst.lastError = '';
+		if (kind === 'wdtt-client') mockAssignRawIface(inst);
+		if (kind === 'wdtt-server') {
+			mockWdttEnsureUsable(inst);
+			inst.usersAvailable = true;
+		}
+	}
 }
 
 const MOCK_KEENETIC_PROFILES = {
@@ -3590,6 +4339,15 @@ function sendData(res, data, status = 200) {
 	send(res, status, { success: true, data });
 }
 
+/**
+ * Конверт отказа как у бэкенда: {error:true, message, code} на верхнем уровне
+ * (internal/response/response.go:48). Вложенный {success:false,error:{…}} фронт
+ * читать не умеет — request() берёт data.message и err.body.code.
+ */
+function sendBackendError(res, message, code, status = 400) {
+	send(res, status, { error: true, message, code });
+}
+
 function sendInvalidRequest(res, error, status = 400) {
 	send(res, status, {
 		success: false,
@@ -3734,7 +4492,8 @@ function mergeMockDnsRoute(route, patch) {
 function mockPolicyInterfaceRef(id, order = 0) {
 	const tunnel = awgTunnelByID(id);
 	if (!tunnel) return { name: id, label: id, order };
-	return { name: tunnel.interfaceName, label: tunnel.name || tunnel.interfaceName, order };
+	const iface = tunnel.ndmsName || tunnel.interfaceName;
+	return { name: iface, label: tunnel.name || iface, order };
 }
 
 function getConnectionTunnel(index) {
@@ -4567,6 +5326,64 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Импорт .conf (internal/api/import.go:80). Мастер «Выхода» заводит им
+	// AWG-туннель клиента прокси; NDMS-имя выводится из id туннеля, как в
+	// tunnel.NewNames (awgN → OpkgTunN), поэтому доступно сразу после импорта.
+	if (req.method === 'POST' && path === '/import/conf') {
+		readRequestText(req).then((raw) => {
+			let body;
+			try {
+				body = JSON.parse(raw || '{}');
+			} catch (e) {
+				sendInvalidRequest(res, e);
+				return;
+			}
+			const content = String(body.content ?? '');
+			if (!content) {
+				sendBackendError(res, 'missing config content', 'MISSING_CONTENT');
+				return;
+			}
+			const link = {
+				freeTurnClientId: String(body.freeTurnClientId ?? '').trim(),
+				wdttClientId: String(body.wdttClientId ?? '').trim(),
+			};
+			// Повторный импорт для того же клиента заменяет его туннель.
+			const existing = MOCK_AWG_TUNNELS.find(
+				(t) =>
+					(link.wdttClientId && t.wdttClientId === link.wdttClientId) ||
+					(link.freeTurnClientId && t.freeTurnClientId === link.freeTurnClientId),
+			);
+			const name = String(body.name ?? '').trim();
+			const item = existing ?? mockImportKernelTunnel(name);
+			if (name) item.name = name;
+			item.endpoint = /Endpoint\s*=\s*(\S+)/i.exec(content)?.[1] ?? '';
+			item.address = /Address\s*=\s*(\S+)/i.exec(content)?.[1] ?? '10.0.0.2/32';
+			if (link.wdttClientId) item.wdttClientId = link.wdttClientId;
+			if (link.freeTurnClientId) item.freeTurnClientId = link.freeTurnClientId;
+			sendData(res, {
+				id: item.id,
+				name: item.name,
+				type: 'awg',
+				enabled: item.enabled,
+				defaultRoute: item.defaultRoute,
+				ispInterface: '',
+				interfaceName: item.interfaceName,
+				ndmsName: item.ndmsName,
+				configPreview: content.slice(0, 400),
+				state: 'stopped',
+				interface: buildTunnelInterface(item),
+				peer: {
+					publicKey: mockPubkey(1),
+					presharedKey: '',
+					endpoint: item.endpoint,
+					allowedIPs: ['0.0.0.0/0', '::/0'],
+					persistentKeepalive: 25,
+				},
+			});
+		});
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/pingcheck/status') {
 		send(res, 200, { success: true, data: buildPingCheckStatus() });
 		return;
@@ -5207,8 +6024,8 @@ const server = http.createServer(async (req, res) => {
 			data: {
 				installed: true,
 				version: '1.13.11',
-				running: true,
-				pid: 4242,
+				running: singboxRunning,
+				...(singboxRunning ? { pid: 4242 } : {}),
 				tunnelCount: MOCK_SINGBOX_TUNNELS.length,
 				proxyComponent: true,
 				features: ['with_gvisor', 'with_quic', 'with_naive_outbound'],
@@ -5454,6 +6271,18 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === 'POST' && path === '/__mock/singbox-running') {
+		try {
+			const body = await readJsonBody(req);
+			singboxRunning = body.running !== false;
+			send(res, 200, { ok: true, singboxRunning });
+			console.log(`[mock-proxy] singboxRunning → ${singboxRunning}`);
+		} catch (e) {
+			send(res, 400, { error: String(e) });
+		}
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
@@ -5621,7 +6450,12 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/routing/access-policies') {
+	// Один и тот же handler бэкенда зарегистрирован на два адреса
+	// (server_routes.go:604 и :627): страница «Прокси» читает короткий.
+	if (
+		req.method === 'GET' &&
+		(path === '/routing/access-policies' || path === '/access-policies')
+	) {
 		send(res, 200, { success: true, data: mockAccessPolicies });
 		return;
 	}
@@ -5807,6 +6641,47 @@ const server = http.createServer(async (req, res) => {
 			} catch (e) {
 				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
 			}
+		});
+		return;
+	}
+
+	// Заведение интерфейса в политику (accesspolicy.go:315). Мастер «Выхода»
+	// дописывает интерфейс в конец порядка политики; повторный permit того же
+	// интерфейса меняет только его order.
+	if (req.method === 'POST' && path === '/access-policies/permit') {
+		readRequestText(req).then((raw) => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch (e) {
+				sendInvalidRequest(res, e);
+				return;
+			}
+			const name = String(payload.name ?? '');
+			const iface = String(payload.interface ?? '');
+			if (!name) {
+				sendBackendError(res, 'missing name', 'MISSING_NAME');
+				return;
+			}
+			if (!iface) {
+				sendBackendError(res, 'missing interface', 'MISSING_INTERFACE');
+				return;
+			}
+			const policy = mockAccessPolicies.find((p) => p.name === name);
+			if (!policy) {
+				sendBackendError(res, `invalid policy name: ${name}`, 'PERMIT_FAILED', 500);
+				return;
+			}
+			const order = Number(payload.order ?? 0) || 0;
+			const existing = policy.interfaces.find((i) => i.name === iface);
+			if (existing) {
+				existing.order = order;
+				delete existing.denied;
+			} else {
+				policy.interfaces.push({ name: iface, label: iface, order });
+			}
+			policy.interfaces.sort((a, b) => a.order - b.order);
+			sendData(res, { ok: true });
 		});
 		return;
 	}
@@ -6877,6 +7752,12 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Внешний адрес роутера для кнопки «WAN IP» (internal/api/servers.go:617).
+	if (req.method === 'GET' && path === '/servers/wan-ip') {
+		sendData(res, { ip: '203.0.113.10' });
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/servers/marked') {
 		sendData(res, ['Wireguard9']);
 		return;
@@ -7437,445 +8318,410 @@ const server = http.createServer(async (req, res) => {
 
 	// ── end fakeip config CRUD ─────────────────────────────────────────────────
 
-	// ── FreeTurn ───────────────────────────────────────────────────────────────
+	// ── proxyrt — единая поверхность прокси-инстансов (задача 13Б) ─────────────
+	// Формы ответов взяты из internal/api/proxy_instances.go, internal/proxyapp/*
+	// (ftlink/install/captcha/subscription/wdttlink/wdttusers) и
+	// frontend/src/lib/api/proxyInstances.ts (задачи 7-12 плана волны). Мок
+	// переупаковывает фикстуры mockWdtt/mockFreeturn (см. выше) в новые DTO —
+	// сами данные и большая часть бизнес-логики (валидация абонентов, allowlist,
+	// генерация ссылок) заимствованы из старого блока без переписывания.
+	//
+	// Разбор адреса: /proxyrt/instances/{key}[/{action}[/{sub}]], где
+	// key = "роль:id" (двоеточие в сегменте пути законно — proxy_instances.go).
 
-	if (req.method === 'GET' && path === '/freeturn/config') {
+	if (req.method === 'GET' && path === '/proxyrt/instances') {
+		sendData(res, { seed: { seeded: true, certified: true }, instances: proxyAllInstances() });
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/proxyrt/instances') {
+		try {
+			const body = await readJsonBody(req);
+			const kind = String(body.kind ?? '');
+			const defaults = proxyDefaultConfig(kind);
+			if (!defaults) {
+				sendBackendError(res, `неизвестная роль ${kind}`, 'PROXY_CONFIG_INVALID', 422);
+				return;
+			}
+			// Инвариант хранилища, а не ворот: второй wdtt-server отвергает
+			// validateState (instancestore/store.go:312) — метки AWGM_WDTT, CIDR
+			// 10.70.0.0/16 и netfilter-хук не несут инстансного дискриминатора.
+			// Наверх он выходит как 422 PROXY_DECLARE_FAILED (api/proxy_instances.go:555).
+			if (kind === 'wdtt-server' && mockWdtt.servers.length > 0) {
+				sendBackendError(
+					res,
+					'wdtt-server может быть только один: правила AWGM_WDTT, CIDR 10.70.0.0/16 и netfilter-хук не несут инстансного дискриминатора (M-7 плана 3)',
+					'PROXY_DECLARE_FAILED',
+					422,
+				);
+				return;
+			}
+			const id = String(body.id ?? '').trim() || proxyFreeID(kind);
+			const inst = {
+				id,
+				name: String(body.name ?? '').trim() || id,
+				running: false,
+				pid: 20000 + Math.floor(rand() * 10000),
+				startedAt: null,
+				config: { ...defaults, ...(body.config ?? {}), enabled: !!body.enabled },
+			};
+			if (kind === 'wdtt-server') {
+				const n = mockWdtt.servers.length + 1;
+				inst.users = [];
+				inst.usersAvailable = false;
+				inst.ndmsIface = `OpkgTun${20 + n}`;
+				inst.wgIface = `opkgtun${20 + n}`;
+				inst.rawNdmsIface = `OpkgTun${30 + n}`;
+				inst.rawIface = `opkgtun${30 + n}`;
+				inst.config.clients = [];
+				inst.config.configDir = `/opt/etc/awg-manager/wdtt/server/${id}`;
+				inst.config.listen = mockUniqueServerListen(mockWdtt.servers, inst);
+			}
+			if (kind === 'freeturn-server') {
+				inst.config.listen = mockUniqueServerListen(mockFreeturn.servers, inst);
+			}
+			proxyListFor(kind).push(inst);
+			sendData(res, proxyInstanceView(kind, inst));
+		} catch (e) {
+			sendInvalidRequest(res, e);
+		}
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/proxyrt/install/status') {
+		const subsystem = url.searchParams.get('subsystem');
+		if (subsystem === 'wdtt') {
+			sendData(res, {
+				serverSupported: !MOCK_WDTT_SERVER_UNSUPPORTED,
+				installAvailable: true,
+				installVersion: '2.3.1',
+				installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
+				updateAvailable: false,
+				installing: false,
+				routerClock: mockRouterClock(),
+			});
+			return;
+		}
+		if (subsystem === 'freeturn') {
+			sendData(res, {
+				installAvailable: true,
+				installVersion: '1.8.0',
+				installedVersion: mockFreeturn.binaryPresent ? '1.8.0' : undefined,
+				updateAvailable: false,
+				installing: false,
+				routerClock: mockRouterClock(),
+			});
+			return;
+		}
+		sendBackendError(res, `subsystem "${subsystem}": ожидали wdtt|freeturn`, 'BAD_REQUEST');
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/proxyrt/install') {
+		try {
+			const body = await readJsonBody(req);
+			if (body.subsystem === 'wdtt') {
+				mockWdtt.binaryPresent = true;
+				sendData(res, { message: 'installed' });
+				return;
+			}
+			if (body.subsystem === 'freeturn') {
+				mockFreeturn.binaryPresent = true;
+				sendData(res, { message: 'freeturn installed' });
+				return;
+			}
+			sendBackendError(res, `subsystem "${body.subsystem}": ожидали wdtt|freeturn`, 'BAD_REQUEST');
+		} catch (e) {
+			sendInvalidRequest(res, e);
+		}
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/proxyrt/freeturn/captcha/status') {
+		const owner = mockFreeturn.clients[0];
 		sendData(res, {
-			version: 2,
-			clients: mockFreeturn.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
-			servers: mockFreeturn.servers.map((i) => ({ id: i.id, name: i.name, config: i.config })),
+			portOpen: true,
+			// clientId несёт ПОЛНЫЙ ключ инстанса (captcha/status.go) — фронт сам
+			// урезает его до голого id (toCaptchaOverview/bareId, proxyInstances.ts).
+			ownerClientId: owner ? proxyKey('freeturn-client', owner.id) : undefined,
+			ownerName: owner?.name,
+			clients: mockFreeturn.clients.map((i, idx) => ({
+				clientId: proxyKey('freeturn-client', i.id),
+				clientName: i.name,
+				waiting: idx === 0,
+				active: idx === 0,
+				queued: idx === 1,
+				canOpen: idx === 0,
+				url:
+					idx === 0
+						? `/api/proxyrt/instances/${encodeURIComponent(proxyKey('freeturn-client', i.id))}/captcha/`
+						: undefined,
+				pendingStreams: idx === 0 ? 2 : 1,
+				// Второй инстанс стоит в очереди: порт капчи занят соседом.
+				portContention: idx === 1,
+			})),
 		});
 		return;
 	}
 
-	// Легаси PUT дефолтного инстанса (v1 API) + PUT конкретного инстанса (v2).
-	{
-		const legacy =
-			req.method === 'PUT' &&
-			(path === '/freeturn/client/config' || path === '/freeturn/server/config');
-		const m = req.method === 'PUT' && /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
-		if (legacy || m) {
-			const kind = legacy
-				? path === '/freeturn/client/config'
-					? 'client'
-					: 'server'
-				: m[1] === 'clients'
-					? 'client'
-					: 'server';
-			const id = legacy ? 'default' : decodeURIComponent(m[2]);
-			const inst = mockFreeturnFind(kind, id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
+	if (req.method === 'POST' && path === '/proxyrt/wdtt/link/decode') {
+		try {
+			const { link } = await readJsonBody(req);
+			const text = String(link ?? '').trim();
+			// Подписочная ссылка (http/https) → превью со списком профилей.
+			if (/^https?:\/\//i.test(text)) {
+				sendData(res, {
+					subscription: {
+						name: 'WDTT demo subscription',
+						description: 'Мок-подписка для стенда',
+						trafficUsedMb: 1240,
+						trafficLimitMb: 51200,
+						updatedAt: new Date().toISOString(),
+						subUrl: text,
+						profiles: [
+							{
+								name: 'RU · Москва',
+								peer: 'ru.wdtt.example:56000',
+								password: 'sub-pass-ru',
+								vkHashes: ['aa11bb22'],
+								workers: 24,
+								listen: '127.0.0.1:9000',
+								subUrl: text,
+							},
+							{
+								name: 'DE · Франкфурт',
+								peer: 'de.wdtt.example:56000',
+								password: 'sub-pass-de',
+								vkHashes: ['cc33dd44'],
+								workers: 24,
+								listen: '127.0.0.1:9000',
+								subUrl: text,
+							},
+						],
+					},
 				});
 				return;
 			}
-			readRequestText(req).then((raw) => {
-				try {
-					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
-					sendData(res, inst.config);
-				} catch (e) {
-					sendInvalidRequest(res, e);
-				}
-			});
-			return;
+			// Одиночная ссылка wdtt:// или qwdtt:// → один профиль.
+			const m = /^q?wdtt:\/\/(.+)$/i.exec(text);
+			if (!m) throw new Error('ожидается ссылка вида wdtt://… или подписка https://…');
+			const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+			const decoded = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+			sendData(res, { profile: decoded });
+		} catch (e) {
+			sendInvalidRequest(res, e);
 		}
-	}
-
-	if (req.method === 'GET' && path === '/freeturn/status') {
-		const defClient = mockFreeturnFind('client', 'default') ?? mockFreeturn.clients[0];
-		const defServer = mockFreeturnFind('server', 'default') ?? mockFreeturn.servers[0];
-		sendData(res, {
-			clients: mockFreeturn.clients.map((i) => ({
-				id: i.id,
-				name: i.name,
-				status: mockFreeturnProcessStatus(i, 'client'),
-			})),
-			servers: mockFreeturn.servers.map((i) => ({
-				id: i.id,
-				name: i.name,
-				status: mockFreeturnProcessStatus(i, 'server'),
-			})),
-			// Легаси-зеркала дефолтного инстанса для старых читателей.
-			client: mockFreeturnProcessStatus(defClient, 'client'),
-			server: mockFreeturnProcessStatus(defServer, 'server'),
-			installAvailable: true,
-			installVersion: '1.8.0',
-			installedVersion: mockFreeturn.binaryPresent ? '1.8.0' : undefined,
-			updateAvailable: false,
-			installing: false,
-		});
 		return;
 	}
 
-	// Создание инстанса (v2): POST /freeturn/clients | /freeturn/servers
-	{
-		const m = req.method === 'POST' && /^\/freeturn\/(clients|servers)$/.exec(path);
-		if (m) {
-			const kind = m[1] === 'clients' ? 'client' : 'server';
-			readRequestText(req).then((raw) => {
+	if (req.method === 'POST' && path === '/proxyrt/freeturn/link/decode') {
+		try {
+			const { link } = await readJsonBody(req);
+			const m = /^freeturn:\/\/(.+)$/.exec(String(link ?? '').trim());
+			if (!m) throw new Error('ожидается ссылка вида freeturn://…');
+			const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+			sendData(res, JSON.parse(Buffer.from(b64, 'base64').toString('utf8')));
+		} catch (e) {
+			sendInvalidRequest(res, e);
+		}
+		return;
+	}
+
+	// ── /proxyrt/instances/{key}[/{action}] ─────────────────────────────────────
+	if (path.startsWith('/proxyrt/instances/')) {
+		const tail = path.slice('/proxyrt/instances/'.length);
+		const slashIdx = tail.indexOf('/');
+		const key = decodeURIComponent(slashIdx < 0 ? tail : tail.slice(0, slashIdx));
+		const action = slashIdx < 0 ? '' : tail.slice(slashIdx + 1);
+		const found = proxyFindByKey(key);
+
+		if (action === '') {
+			if (!found) {
+				proxyNotFound(res, key);
+				return;
+			}
+			const { kind, inst } = found;
+			if (req.method === 'GET') {
+				sendData(res, proxyInstanceView(kind, inst));
+				return;
+			}
+			if (req.method === 'PATCH') {
 				try {
-					const body = raw ? JSON.parse(raw) : {};
-					const seqKey = kind === 'client' ? 'clientSeq' : 'serverSeq';
-					mockFreeturn[seqKey] += 1;
-					const n = mockFreeturn[seqKey];
-					const template = mockFreeturnList(kind)[0]?.config ?? {};
-					const inst = {
-						id: `${kind}-${n}`,
-						name: body.name?.trim() || `${kind === 'client' ? 'Клиент' : 'Сервер'} ${n}`,
-						running: false,
-						pid: 20000 + n,
-						startedAt: null,
-						config: { ...structuredClone(template), enabled: false },
-					};
-					mockFreeturnList(kind).push(inst);
-					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
+					const body = await readJsonBody(req);
+					if (typeof body.name === 'string' && body.name.trim()) inst.name = body.name.trim();
+					if (typeof body.sub === 'string') inst.config.sub = body.sub;
+					if (typeof body.statsLog === 'string') inst.config.statsLog = body.statsLog;
+					if (body.config && typeof body.config === 'object') {
+						Object.assign(inst.config, proxyPruneBlankSecrets(kind, body.config));
+						if (kind === 'wdtt-server' && 'listen' in body.config) {
+							inst.config.listen = mockUniqueServerListen(mockWdtt.servers, inst);
+						}
+						if (kind === 'freeturn-server' && 'listen' in body.config) {
+							inst.config.listen = mockUniqueServerListen(mockFreeturn.servers, inst);
+						}
+					}
+					// Тумблер намерения — последним: он же двигает running/startedAt.
+					if (typeof body.enabled === 'boolean') proxySetEnabled(kind, inst, body.enabled);
+					sendData(res, proxyInstanceView(kind, inst));
 				} catch (e) {
 					sendInvalidRequest(res, e);
 				}
-			});
-			return;
-		}
-	}
-
-	// Rename (PATCH) / delete (DELETE) инстанса: /freeturn/clients|servers/{id}
-	{
-		const m = /^\/freeturn\/(clients|servers)\/([^/]+)$/.exec(path);
-		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
-			const kind = m[1] === 'clients' ? 'client' : 'server';
-			const id = decodeURIComponent(m[2]);
-			const list = mockFreeturnList(kind);
-			const inst = list.find((i) => i.id === id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
-				});
 				return;
 			}
 			if (req.method === 'DELETE') {
+				const list = proxyListFor(kind);
 				list.splice(list.indexOf(inst), 1);
-				if (kind === 'server') delete mockFreeturn.allowlists[id];
-				sendData(res, { message: `freeturn ${kind} ${id} удалён (mock)` });
+				if (kind === 'freeturn-server') delete mockFreeturn.allowlists[inst.id];
+				sendData(res, { ok: true });
 				return;
 			}
-			readRequestText(req).then((raw) => {
-				try {
-					const body = raw ? JSON.parse(raw) : {};
-					if (body.name?.trim()) inst.name = body.name.trim();
-					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
-				} catch (e) {
-					sendInvalidRequest(res, e);
+			send(res, 405, { error: true, message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+			return;
+		}
+
+		if (!found) {
+			proxyNotFound(res, key);
+			return;
+		}
+		const { kind, inst } = found;
+
+		// Ссылка абоненту: wdtt-server и freeturn-server (форма запроса общая,
+		// wdttlink.LinkRequest — proxy_instances.go/handler.go).
+		if (action === 'link' && req.method === 'POST') {
+			try {
+				const opts = await readJsonBody(req);
+				if (kind === 'wdtt-server') {
+					// Пароль ссылки — только абонентский и только рабочий
+					// (linkPasswordFor). Главный пароль сервера в ссылку не попадает.
+					const linkPassword = String(opts.password ?? '').trim();
+					const usable = mockWdttUsableUsers(inst.users);
+					if (usable.length === 0) {
+						sendBackendError(
+							res,
+							'у сервера нет ни одного рабочего абонента: заведите абонента и повторите',
+							'WDTT_LINK_NO_CLIENT',
+						);
+						return;
+					}
+					if (!linkPassword) {
+						sendBackendError(
+							res,
+							'выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера',
+							'WDTT_LINK_NO_CLIENT',
+						);
+						return;
+					}
+					if (!usable.some((u) => u.password === linkPassword)) {
+						const known = inst.users.find((u) => u.password === linkPassword);
+						let message = 'абонент непригоден для ссылки: заведите нового абонента';
+						if (linkPassword === String(inst.config.password ?? '').trim()) {
+							message =
+								'это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента';
+						} else if (!known) {
+							message = 'пароль не принадлежит ни одному абоненту сервера';
+						} else if (known.isExpired) {
+							message = 'абонент просрочен, ссылка не будет работать: заведите нового абонента';
+						}
+						sendBackendError(res, message, 'WDTT_LINK_NO_CLIENT');
+						return;
+					}
+					const peer = opts.peer?.trim() || inst.config.linkPeer || '203.0.113.10:56000';
+					const payload = {
+						name: opts.name || inst.name,
+						peer,
+						password: linkPassword,
+						vkHashes: opts.vkHashes ?? [],
+						workers: 27,
+						listen: '127.0.0.1:9000',
+					};
+					const b64 = Buffer.from(JSON.stringify(payload), 'utf8')
+						.toString('base64')
+						.replace(/\+/g, '-')
+						.replace(/\//g, '_');
+					// Выдача ссылки в конфиг ничего не пишет: peer сохраняет фронт
+					// отдельным PATCH, VK-хеши ссылки не персистятся вовсе.
+					sendData(res, { link: `wdtt://${b64}`, linkQwdtt: `qwdtt://${b64}`, peer });
+					return;
 				}
-			});
-			return;
-		}
-	}
-
-	// Start/stop — легаси дефолт (v1) + конкретный инстанс (v2).
-	{
-		const legacy = req.method === 'POST' && /^\/freeturn\/(client|server)\/(start|stop)$/.exec(path);
-		const m =
-			req.method === 'POST' &&
-			/^\/freeturn\/(clients|servers)\/([^/]+)\/(start|stop)$/.exec(path);
-		if (legacy || m) {
-			const kind = legacy ? legacy[1] : m[1] === 'clients' ? 'client' : 'server';
-			const id = legacy ? 'default' : decodeURIComponent(m[2]);
-			const action = legacy ? legacy[2] : m[3];
-			const inst = mockFreeturnFind(kind, id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `freeturn ${kind} ${id} not found` },
-				});
-				return;
-			}
-			inst.running = action === 'start';
-			inst.startedAt = inst.running ? new Date().toISOString() : null;
-			sendData(res, { message: `freeturn ${kind} ${id}: ${action} (mock)` });
-			return;
-		}
-	}
-
-	// Генерация ссылки — легаси дефолт (/server/link) + инстанс (/servers/{id}/link).
-	{
-		const legacy = req.method === 'POST' && path === '/freeturn/server/link';
-		const m = req.method === 'POST' && /^\/freeturn\/servers\/([^/]+)\/link$/.exec(path);
-		if (legacy || m) {
-			const id = legacy ? 'default' : decodeURIComponent(m[1]);
-			const inst = mockFreeturnFind('server', id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `freeturn server ${id} not found` },
-				});
-				return;
-			}
-			readRequestText(req).then((raw) => {
-				try {
-					const body = raw ? JSON.parse(raw) : {};
+				if (kind === 'freeturn-server') {
 					const srv = inst.config;
-					const port = Number(srv.listen.split(':').pop()) || 56000;
+					const port = Number(String(srv.listen ?? '').split(':').pop()) || 56000;
 					const peer = `203.0.113.10:${port}`;
 					const payload = {
 						v: 1,
-						provider: body.provider || 'vk',
+						provider: opts.provider || 'vk',
 						peer,
 						obf: srv.obfProfile,
 						...(srv.obfKey ? { key: srv.obfKey } : {}),
-						mtu: body.mtu || 1376,
-						...(body.clientId ? { cid: body.clientId } : {}),
-						...(body.name ? { name: body.name } : {}),
-						...(body.wg ? { wg: body.wg } : {}),
+						mtu: opts.mtu || 1376,
+						...(opts.clientId ? { cid: opts.clientId } : {}),
+						...(opts.name ? { name: opts.name } : {}),
+						...(opts.wg ? { wg: opts.wg } : {}),
 					};
 					const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
-					sendData(res, { link, peer, ...(body.clientId ? { clientId: body.clientId } : {}) });
-				} catch (e) {
-					sendInvalidRequest(res, e);
+					sendData(res, { link, peer, ...(opts.clientId ? { clientId: opts.clientId } : {}) });
+					return;
 				}
-			});
-			return;
-		}
-	}
-
-	// Allowlist сервера: GET/POST /freeturn/servers/{id}/allowlist,
-	// DELETE .../allowlist (disable), DELETE .../allowlist/{clientId} (remove).
-	{
-		const remove = /^\/freeturn\/servers\/([^/]+)\/allowlist\/([^/]+)$/.exec(path);
-		const base = /^\/freeturn\/servers\/([^/]+)\/allowlist$/.exec(path);
-		if (remove && req.method === 'DELETE') {
-			const serverId = decodeURIComponent(remove[1]);
-			const clientId = decodeURIComponent(remove[2]);
-			const al = mockFreeturnAllowlist(serverId);
-			al.clients = al.clients.filter((c) => c.clientId !== clientId);
-			sendData(res, { message: `client ${clientId} убран из allowlist (mock)` });
-			return;
-		}
-		if (base) {
-			const serverId = decodeURIComponent(base[1]);
-			const al = mockFreeturnAllowlist(serverId);
-			if (req.method === 'GET') {
-				sendData(res, al);
-				return;
-			}
-			if (req.method === 'DELETE') {
-				al.enabled = false;
-				sendData(res, { message: 'allowlist отключён (mock)' });
-				return;
-			}
-			if (req.method === 'POST') {
-				readRequestText(req).then((raw) => {
-					try {
-						const body = raw ? JSON.parse(raw) : {};
-						const clientId = String(body.clientId ?? '').trim();
-						if (!clientId) throw new Error('clientId обязателен');
-						al.enabled = true;
-						if (!al.clients.some((c) => c.clientId === clientId)) {
-							al.clients.push({ clientId, comment: body.comment?.trim() || undefined });
-						}
-						sendData(res, { ...al, needsRestart: true });
-					} catch (e) {
-						sendInvalidRequest(res, e);
-					}
-				});
-				return;
-			}
-		}
-	}
-
-	if (req.method === 'POST' && path === '/freeturn/link/decode') {
-		readRequestText(req).then((raw) => {
-			try {
-				const { link } = JSON.parse(raw || '{}');
-				const m = /^freeturn:\/\/(.+)$/.exec(String(link ?? '').trim());
-				if (!m) throw new Error('ожидается ссылка вида freeturn://…');
-				const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-				sendData(res, JSON.parse(Buffer.from(b64, 'base64').toString('utf8')));
+				sendBackendError(res, `инстанс ${key}: ссылки для роли ${kind} не выдаются`, 'BAD_REQUEST');
 			} catch (e) {
 				sendInvalidRequest(res, e);
 			}
-		});
-		return;
-	}
-
-	if (req.method === 'POST' && path === '/freeturn/install') {
-		mockFreeturn.binaryPresent = true;
-		sendData(res, { message: 'freeturn установлен (mock)' });
-		return;
-	}
-
-	// ── end FreeTurn ───────────────────────────────────────────────────────────
-
-	// ── WDTT — клиент-only мультиинстанс. ────────────────────────────────────────
-
-	if (req.method === 'GET' && path === '/wdtt/config') {
-		sendData(res, {
-			version: 2,
-			clients: mockWdtt.clients.map((i) => ({ id: i.id, name: i.name, config: i.config })),
-		});
-		return;
-	}
-
-	if (req.method === 'GET' && path === '/wdtt/status') {
-		const defClient = mockWdttFind('default') ?? mockWdtt.clients[0];
-		sendData(res, {
-			clients: mockWdtt.clients.map((i) => ({
-				id: i.id,
-				name: i.name,
-				status: mockWdttProcessStatus(i),
-			})),
-			// Легаси-зеркало дефолтного инстанса.
-			client: mockWdttProcessStatus(defClient),
-			installAvailable: true,
-			installVersion: '2.3.1',
-			installedVersion: mockWdtt.binaryPresent ? '2.3.1' : undefined,
-			updateAvailable: false,
-			installing: false,
-			routerClock: new Date().toISOString(),
-		});
-		return;
-	}
-
-	// Обновление конфига: легаси дефолт (PUT /wdtt/client/config) + инстанс (PUT /wdtt/clients/{id}).
-	{
-		const legacy = req.method === 'PUT' && path === '/wdtt/client/config';
-		const m = req.method === 'PUT' && /^\/wdtt\/clients\/([^/]+)$/.exec(path);
-		if (legacy || m) {
-			const id = legacy ? 'default' : decodeURIComponent(m[1]);
-			const inst = mockWdttFind(id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
-				});
-				return;
-			}
-			readRequestText(req).then((raw) => {
-				try {
-					inst.config = { ...inst.config, ...JSON.parse(raw || '{}') };
-					sendData(res, { config: inst.config });
-				} catch (e) {
-					sendInvalidRequest(res, e);
-				}
-			});
 			return;
 		}
-	}
 
-	// Создание инстанса: POST /wdtt/clients
-	if (req.method === 'POST' && path === '/wdtt/clients') {
-		readRequestText(req).then((raw) => {
-			try {
-				const body = raw ? JSON.parse(raw) : {};
-				mockWdtt.clientSeq += 1;
-				const n = mockWdtt.clientSeq;
-				const template = mockWdtt.clients[0]?.config ?? {};
-				const inst = {
-					id: `wdtt-${n}`,
-					name: body.name?.trim() || `Клиент ${n}`,
-					running: false,
-					pid: 20000 + n,
-					startedAt: null,
-					config: { ...structuredClone(template), enabled: false },
-				};
-				mockWdtt.clients.push(inst);
-				sendData(res, { id: inst.id, name: inst.name, config: inst.config });
-			} catch (e) {
-				sendInvalidRequest(res, e);
+		// AWG-туннель под WireGuard-конфиг клиента (только wdtt-client).
+		if (action === 'ensure-wg-tunnel' && req.method === 'POST') {
+			if (kind !== 'wdtt-client') {
+				sendBackendError(res, `инстанс ${key}: ensure-wg-tunnel есть только у wdtt-клиента`, 'BAD_REQUEST');
+				return;
 			}
-		});
-		return;
-	}
-
-	// Rename (PATCH) / delete (DELETE) инстанса: /wdtt/clients/{id}
-	{
-		const m = /^\/wdtt\/clients\/([^/]+)$/.exec(path);
-		if (m && (req.method === 'PATCH' || req.method === 'DELETE')) {
-			const id = decodeURIComponent(m[1]);
-			const inst = mockWdttFind(id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
+			// Туннель клиента ищется по связи wdttClientId; отдавать
+			// несуществующий id нельзя — клиент без туннеля становится непроходим.
+			const linked = MOCK_AWG_TUNNELS.find((t) => t.wdttClientId === inst.id);
+			if (linked) {
+				sendData(res, {
+					created: false,
+					tunnelId: linked.id,
+					tunnelName: linked.name,
+					message: 'Туннель уже привязан (mock)',
 				});
 				return;
 			}
-			if (req.method === 'DELETE') {
-				mockWdtt.clients.splice(mockWdtt.clients.indexOf(inst), 1);
-				sendData(res, { message: `wdtt client ${id} удалён (mock)` });
-				return;
-			}
-			readRequestText(req).then((raw) => {
-				try {
-					const body = raw ? JSON.parse(raw) : {};
-					if (body.name?.trim()) inst.name = body.name.trim();
-					sendData(res, { id: inst.id, name: inst.name, config: inst.config });
-				} catch (e) {
-					sendInvalidRequest(res, e);
-				}
-			});
-			return;
-		}
-	}
-
-	// Start/stop инстанса: POST /wdtt/clients/{id}/start|stop
-	{
-		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/(start|stop)$/.exec(path);
-		if (m) {
-			const id = decodeURIComponent(m[1]);
-			const action = m[2];
-			const inst = mockWdttFind(id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
-				});
-				return;
-			}
-			inst.running = action === 'start';
-			inst.startedAt = inst.running ? new Date().toISOString() : null;
-			sendData(res, { message: `wdtt client ${id}: ${action} (mock)` });
-			return;
-		}
-	}
-
-	// AWG-туннель из лога: POST /wdtt/clients/{id}/ensure-wg-tunnel
-	{
-		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/ensure-wg-tunnel$/.exec(path);
-		if (m) {
-			const id = decodeURIComponent(m[1]);
-			const inst = mockWdttFind(id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
-				});
-				return;
-			}
-			// Туннель считаем уже привязанным (created:false + tunnelId) — авто-поллинг
-			// помечает клиент settled и не долбит POST каждую секунду.
+			const created = mockImportKernelTunnel(`${inst.name} wdtt`, { wdttClientId: inst.id });
 			sendData(res, {
-				created: false,
-				tunnelId: `wdtt-tunnel-${id}`,
-				tunnelName: `${inst.name} wdtt`,
-				message: 'Туннель уже привязан (mock)',
+				created: true,
+				tunnelId: created.id,
+				tunnelName: created.name,
+				message: 'Туннель создан (mock)',
 			});
 			return;
 		}
-	}
 
-	// Обновление подписки: POST /wdtt/clients/{id}/subscription/refresh
-	{
-		const m = req.method === 'POST' && /^\/wdtt\/clients\/([^/]+)\/subscription\/refresh$/.exec(path);
-		if (m) {
-			const id = decodeURIComponent(m[1]);
-			const inst = mockWdttFind(id);
-			if (!inst) {
-				send(res, 404, {
-					success: false,
-					error: { code: 'NOT_FOUND', message: `wdtt client ${id} not found` },
-				});
+		// Снос связанных AWG-туннелей (только клиенты обеих подсистем).
+		if (action === 'linked-tunnels/clear' && req.method === 'POST') {
+			if (kind !== 'wdtt-client' && kind !== 'freeturn-client') {
+				sendBackendError(
+					res,
+					`инстанс ${key}: связанные AWG-туннели есть только у клиентов, роль ${kind} их не заводит`,
+					'BAD_REQUEST',
+				);
+				return;
+			}
+			const field = kind === 'wdtt-client' ? 'wdttClientId' : 'freeTurnClientId';
+			const matched = MOCK_AWG_TUNNELS.filter((t) => t[field] === inst.id);
+			for (const t of matched) MOCK_AWG_TUNNELS.splice(MOCK_AWG_TUNNELS.indexOf(t), 1);
+			sendData(res, {
+				deletedTunnels: matched.map((t) => t.name),
+				tunnelErrors: [],
+				message: 'linked AWG tunnels cleared',
+			});
+			return;
+		}
+
+		// Обновление подписки (только wdtt-client).
+		if (action === 'subscription/refresh' && req.method === 'POST') {
+			if (kind !== 'wdtt-client') {
+				sendBackendError(res, `инстанс ${key}: подписка есть только у wdtt-клиента`, 'BAD_REQUEST');
 				return;
 			}
 			const payload = {
@@ -7888,73 +8734,230 @@ const server = http.createServer(async (req, res) => {
 				subUrl: inst.config.sub || undefined,
 			};
 			sendData(res, {
-				instance: { id: inst.id, name: inst.name, config: inst.config },
+				key,
 				payload,
-				message: 'Подписка обновлена (mock)',
+				message: 'Подписка обновлена — проверьте пароль и VK-хеши, при необходимости перезапустите клиент',
 			});
 			return;
 		}
-	}
 
-	if (req.method === 'POST' && path === '/wdtt/link/decode') {
-		readRequestText(req).then((raw) => {
-			try {
-				const { link } = JSON.parse(raw || '{}');
-				const text = String(link ?? '').trim();
-				// Подписочная ссылка (http/https) → превью со списком профилей.
-				if (/^https?:\/\//i.test(text)) {
-					sendData(res, {
-						subscription: {
-							name: 'WDTT demo subscription',
-							description: 'Мок-подписка для стенда',
-							trafficUsedMb: 1240,
-							trafficLimitMb: 51200,
-							updatedAt: new Date().toISOString(),
-							subUrl: text,
-							profiles: [
-								{
-									name: 'RU · Москва',
-									peer: 'ru.wdtt.example:56000',
-									password: 'sub-pass-ru',
-									vkHashes: ['aa11bb22'],
-									workers: 24,
-									listen: '127.0.0.1:9000',
-									subUrl: text,
-								},
-								{
-									name: 'DE · Франкфурт',
-									peer: 'de.wdtt.example:56000',
-									password: 'sub-pass-de',
-									vkHashes: ['cc33dd44'],
-									workers: 24,
-									listen: '127.0.0.1:9000',
-									subUrl: text,
-								},
-							],
-						},
-					});
+		// Абоненты wdtt-сервера: GET/POST /users, PATCH/DELETE /users/{password}.
+		if (action === 'users' || action.startsWith('users/')) {
+			if (kind !== 'wdtt-server') {
+				sendBackendError(res, `инстанс ${key}: абоненты есть только у wdtt-сервера`, 'BAD_REQUEST');
+				return;
+			}
+			const password = action === 'users' ? null : decodeURIComponent(action.slice('users/'.length));
+			if (password === null) {
+				if (req.method === 'GET') {
+					sendData(res, mockWdttServerClients(inst));
 					return;
 				}
-				// Одиночная ссылка wdtt:// или qwdtt:// → один профиль.
-				const m = /^q?wdtt:\/\/(.+)$/i.exec(text);
-				if (!m) throw new Error('ожидается ссылка вида wdtt://… или подписка https://…');
-				const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-				const decoded = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-				sendData(res, { profile: decoded });
-			} catch (e) {
-				sendInvalidRequest(res, e);
+				if (req.method === 'POST') {
+					try {
+						const body = await readJsonBody(req);
+						const pw = body.password?.trim() || `gen${Date.now().toString(16)}`;
+						// Эффективный главный пароль: сохранённый, а при пустом —
+						// присланный формой.
+						const main =
+							String(inst.config.password ?? '').trim() || String(body.mainPassword ?? '').trim();
+						if (!main) {
+							sendBackendError(res, 'сначала задайте пароль сервера', 'WDTT_SERVER_CLIENT_ADD_FAILED');
+							return;
+						}
+						if (pw === main) {
+							sendBackendError(
+								res,
+								'пароль совпадает с главным паролем сервера — задайте абоненту другой пароль',
+								'WDTT_SERVER_CLIENT_ADD_FAILED',
+							);
+							return;
+						}
+						if (inst.users.some((u) => u.password === pw)) {
+							sendBackendError(res, 'пароль занят живым абонентом', 'WDTT_SERVER_CLIENT_ADD_FAILED');
+							return;
+						}
+						inst.users.push({
+							password: pw,
+							comment: body.comment?.trim() || '',
+							...(body.vkHash ? { vkHash: body.vkHash } : {}),
+							isDeactivated: false,
+							isExpired: false,
+							isMainPassword: pw === main,
+							isAuto: false,
+						});
+						inst.config.clients.push({
+							password: pw,
+							comment: body.comment?.trim() || '',
+							...(body.vkHash ? { vkHash: body.vkHash } : {}),
+						});
+						// Побочный эффект «дописать пароль сервера, если он пуст» —
+						// ПОСЛЕ абонента: иначе опора непустоты завела бы автоматического
+						// абонента рядом с заказанным.
+						if (!String(inst.config.password ?? '').trim()) inst.config.password = main;
+						inst.usersAvailable = true;
+						sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+					return;
+				}
+				send(res, 405, { error: true, message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+				return;
 			}
+			if (req.method === 'DELETE') {
+				const user = inst.users.find((u) => u.password === password);
+				if (!user) {
+					sendBackendError(res, `абонент ${password} не найден`, 'WDTT_SERVER_CLIENT_DELETE_FAILED');
+					return;
+				}
+				// Главный пароль одним ходом не удаляется.
+				if (user.isMainPassword) {
+					sendBackendError(res, 'нельзя удалить основной пароль сервера', 'WDTT_SERVER_CLIENT_DELETE_FAILED');
+					return;
+				}
+				// Страж последнего рабочего абонента: если рабочие были, а после
+				// удаления не останется — отказ.
+				if (
+					mockWdttUsableUsers(inst.users).length > 0 &&
+					mockWdttUsableUsers(inst.users.filter((u) => u.password !== password)).length === 0
+				) {
+					sendBackendError(
+						res,
+						'нельзя удалить последнего рабочего абонента: без единого пароля wdtt-server не запускается',
+						'WDTT_SERVER_CLIENT_DELETE_FAILED',
+					);
+					return;
+				}
+				inst.users.splice(inst.users.indexOf(user), 1);
+				inst.config.clients = inst.config.clients.filter((c) => c.password !== password);
+				inst.usersAvailable = true;
+				sendData(res, mockWdttServerClients(inst, mockWdttReload(inst)));
+				return;
+			}
+			if (req.method === 'PATCH') {
+				const user = inst.users.find((u) => u.password === password);
+				if (!user) {
+					sendBackendError(res, `абонент ${password} не найден`, 'WDTT_SERVER_CLIENT_RENAME_FAILED');
+					return;
+				}
+				try {
+					const body = await readJsonBody(req);
+					const name = String(body.name ?? '').trim();
+					// Пустое имя ОТКЛОНЯЕТСЯ, а не очищает.
+					if (!name) {
+						sendBackendError(res, 'имя абонента не задано', 'WDTT_SERVER_CLIENT_RENAME_FAILED');
+						return;
+					}
+					user.comment = name;
+					const cfgClient = inst.config.clients.find((c) => c.password === password);
+					if (cfgClient) cfgClient.comment = user.comment;
+					// Переименование passwords.json не переписывает: reload пуст.
+					sendData(res, mockWdttServerClients(inst));
+				} catch (e) {
+					sendInvalidRequest(res, e);
+				}
+				return;
+			}
+			send(res, 405, { error: true, message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+			return;
+		}
+
+		// Allowlist freeturn-сервера: GET/POST /allowlist, DELETE /allowlist
+		// (выключить), DELETE /allowlist/{clientId} (вычеркнуть один id).
+		if (action === 'allowlist' || action.startsWith('allowlist/')) {
+			if (kind !== 'freeturn-server') {
+				sendBackendError(res, `инстанс ${key}: allowlist есть только у freeturn-сервера`, 'BAD_REQUEST');
+				return;
+			}
+			const clientId = action === 'allowlist' ? null : decodeURIComponent(action.slice('allowlist/'.length));
+			const al = mockFreeturnAllowlist(inst.id);
+			if (clientId === null) {
+				if (req.method === 'GET') {
+					sendData(res, mockFreeturnAllowlistStatus(al));
+					return;
+				}
+				if (req.method === 'POST') {
+					try {
+						const body = await readJsonBody(req);
+						const cid = String(body.clientId ?? '').trim();
+						if (!cid) throw new Error('clientId обязателен');
+						// needsRestart — только когда список ВКЛЮЧАЕТСЯ этой записью:
+						// путь появляется в конфиге, подхватит его лишь новый процесс.
+						const needsRestart = !al.clientsFile;
+						if (needsRestart) {
+							al.clientsFile = `/opt/etc/awg-manager/freeturn/server/${inst.id}/clients.txt`;
+							inst.config.clientsFile = al.clientsFile;
+						}
+						if (!al.clients.some((c) => c.clientId === cid)) {
+							al.clients.push({ clientId: cid, comment: body.comment?.trim() || undefined });
+						}
+						sendData(res, { ...mockFreeturnAllowlistStatus(al), needsRestart });
+					} catch (e) {
+						sendInvalidRequest(res, e);
+					}
+					return;
+				}
+				if (req.method === 'DELETE') {
+					// Выключение стирает путь в конфиге сервера. needsRestart зеркален
+					// включению: true только когда путь реально был.
+					const needsRestart = !!al.clientsFile;
+					al.clientsFile = '';
+					inst.config.clientsFile = '';
+					sendData(res, { message: 'allowlist disabled', needsRestart });
+					return;
+				}
+				send(res, 405, { error: true, message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+				return;
+			}
+			if (req.method === 'DELETE') {
+				al.clients = al.clients.filter((c) => c.clientId !== clientId);
+				sendData(res, { message: 'removed' });
+				return;
+			}
+			send(res, 405, { error: true, message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+			return;
+		}
+
+		sendBackendError(res, 'неизвестный путь', 'NOT_FOUND', 404);
+		return;
+	}
+
+	// Кто слушает порт: GET /proxy/listener — секция «Освобождение порта».
+	// Занятым считаем порт работающего инстанса, остальные свободны. Путь вне
+	// /proxyrt: старая соседняя поверхность, формы не касались.
+	if (req.method === 'GET' && path === '/proxy/listener') {
+		const host = url.searchParams.get('host') ?? '127.0.0.1';
+		const port = Number(url.searchParams.get('port') ?? 0);
+		const proto = url.searchParams.get('proto') ?? 'udp';
+		const wdttOwner = mockWdtt.clients.find(
+			(i) => i.running && Number((i.config.listen ?? '').split(':').pop()) === port,
+		);
+		const ftOwner = mockFreeturn.clients.find(
+			(i) => i.running && Number((i.config.listen ?? '').split(':').pop()) === port,
+		);
+		const owner = wdttOwner ?? ftOwner;
+		sendData(res, {
+			open: !!owner,
+			...(owner ? { pid: owner.pid, comm: wdttOwner ? 'wdtt-client' : 'ft-client' } : {}),
+			proto,
+			host,
+			port,
 		});
 		return;
 	}
 
-	if (req.method === 'POST' && path === '/wdtt/install') {
-		mockWdtt.binaryPresent = true;
-		sendData(res, { message: 'wdtt-client установлен (mock)' });
+	if (req.method === 'POST' && path === '/proxy/kill-listener') {
+		try {
+			const body = await readJsonBody(req);
+			sendData(res, { message: `порт ${body.port} освобождён (mock)`, pid: 0 });
+		} catch (e) {
+			sendInvalidRequest(res, e);
+		}
 		return;
 	}
 
-	// ── end WDTT ─────────────────────────────────────────────────────────────────
+	// ── end proxyrt ──────────────────────────────────────────────────────────────
 
 	// Pass-through for everything else (including /events SSE).
 	const upstream = new URL(UPSTREAM);
@@ -7983,7 +8986,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
-	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/download-faults, POST /__mock/keenetic-os');
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });

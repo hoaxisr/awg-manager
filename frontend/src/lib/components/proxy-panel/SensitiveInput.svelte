@@ -18,14 +18,18 @@
 	}: Props = $props();
 
 	let revealed = $state(false);
+	// Подпись связывается с полем через for/id: обёртка <label> вокруг Input
+	// давала вложенные label и поле по подписи не находилось.
+	const fieldId = `sensitive-${Math.random().toString(36).slice(2, 8)}`;
 </script>
 
-<label class="sensitive-field">
+<div class="sensitive-field">
 	{#if label}
-		<span class="sensitive-label">{label}</span>
+		<label class="sensitive-label" for={fieldId}>{label}</label>
 	{/if}
 	<div class="sensitive-row">
 		<Input
+			id={fieldId}
 			type={revealed ? 'text' : 'password'}
 			bind:value
 			{placeholder}
@@ -39,7 +43,7 @@
 	{#if hint}
 		<p class="sensitive-hint">{hint}</p>
 	{/if}
-</label>
+</div>
 
 <style>
 	.sensitive-field {

@@ -26,6 +26,7 @@
 
 	const trimmed = $derived(wgConf.trim());
 
+	// TS-21 / TS-22 — тексты тостов панели (утверждены как есть, «Дополнение №1»).
 	async function copyConf() {
 		if (!trimmed) return;
 		if (await copyToClipboard(trimmed)) {

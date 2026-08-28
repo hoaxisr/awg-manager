@@ -11,7 +11,7 @@ func TestGetKernelIfaceName_NativeWG(t *testing.T) {
 	store := &mockStoreClient{entries: map[string]StoreEntry{
 		"awg10": {Backend: "nativewg", NWGIndex: 0},
 	}}
-	cat := NewCatalog(provider, nil, store, nil)
+	cat := NewCatalog(provider, nil, store, noExits(), nil)
 
 	got, err := cat.GetKernelIfaceName(context.Background(), "awg10")
 	if err != nil {
@@ -23,7 +23,7 @@ func TestGetKernelIfaceName_NativeWG(t *testing.T) {
 }
 
 func TestGetKernelIfaceName_WANPrefix(t *testing.T) {
-	cat := NewCatalog(&mockTunnelProvider{}, nil, &mockStoreClient{entries: map[string]StoreEntry{}}, nil)
+	cat := NewCatalog(&mockTunnelProvider{}, nil, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
 
 	got, err := cat.GetKernelIfaceName(context.Background(), "wan:ppp0")
 	if err != nil {
@@ -41,7 +41,7 @@ func TestGetKernelIfaceName_UnknownIDReturnsError(t *testing.T) {
 	// HydraRoute's domain.conf, breaking routing.
 	provider := &mockTunnelProvider{}
 	store := &mockStoreClient{entries: map[string]StoreEntry{}}
-	cat := NewCatalog(provider, nil, store, nil)
+	cat := NewCatalog(provider, nil, store, noExits(), nil)
 
 	got, err := cat.GetKernelIfaceName(context.Background(), "HydraRoute")
 	if err == nil {
@@ -59,7 +59,7 @@ func TestGetKernelIfaceName_ManagedKernelFromStore(t *testing.T) {
 	store := &mockStoreClient{entries: map[string]StoreEntry{
 		"awg5": {Backend: "userspace"},
 	}}
-	cat := NewCatalog(provider, nil, store, nil)
+	cat := NewCatalog(provider, nil, store, noExits(), nil)
 
 	got, err := cat.GetKernelIfaceName(context.Background(), "awg5")
 	if err != nil {

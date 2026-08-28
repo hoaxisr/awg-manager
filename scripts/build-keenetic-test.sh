@@ -1,5 +1,5 @@
 #!/bin/bash
-# Полная develop-сборка для Keenetic: rawtun client + raw server + IPK (+rN).
+# Полная develop-сборка IPK для Keenetic (+rN). Бинари wdtt сюда не входят.
 #
 # Windows: wsl -d Ubuntu bash -lc "cd /mnt/e/AWGM/awg-manager && ./scripts/build-keenetic-test.sh r19"
 # GOPROXY=https://goproxy.io,direct — если proxy.golang.org падает по TLS
@@ -7,7 +7,7 @@
 # Usage:
 #   ./scripts/build-keenetic-test.sh              # IPK 2.16.5+r19, aarch64
 #   ./scripts/build-keenetic-test.sh r20          # другая ревизия
-#   ./scripts/build-keenetic-test.sh r19 all      # все архы IPK (wdtt client на всех)
+#   ./scripts/build-keenetic-test.sh r19 all      # все архы IPK
 #
 set -euo pipefail
 
@@ -20,19 +20,11 @@ ARCH="${2:-aarch64-3.10}"
 BASE_VERSION="$(tr -d '[:space:]' < VERSION)"
 IPK_VERSION="${BASE_VERSION}+${REV}"
 
-echo "=== Keenetic test build: wdtt 1.4.2-awgm (rawtun) + awg-manager ${IPK_VERSION} ==="
+echo "=== Keenetic test build: awg-manager ${IPK_VERSION} ==="
 
-echo ">>> wt-client (rawtun patch)"
-"$SCRIPT_DIR/build-wdtt-client.sh"
-
-echo ">>> wdtt-server (arm64, listen-raw)"
-"$SCRIPT_DIR/build-wdtt-server.sh"
-
-echo ">>> update internal/wdtt/install.go pins"
-python3 "$SCRIPT_DIR/update-wdtt-pins.py"
-
-echo ">>> ВАЖНО: залейте build/wdtt/* на repo.hoaxisr.ru/wt/ до установки IPK —"
-echo "    в пакет бинари не кладутся, awg-manager скачает их по пину install.go."
+echo ">>> wdtt: бинари не собираются здесь — их выпускает CI форка по тегу,"
+echo "    релиз уезжает на repo.hoaxisr.ru сам, awg-manager качает по пину install.go."
+echo "    Пины после нового релиза: scripts/update-wdtt-pins.py --client-tag ... --server-tag ..."
 
 echo ">>> awg-manager IPK"
 if [[ "$ARCH" == "all" ]]; then
@@ -43,8 +35,7 @@ fi
 
 echo ""
 echo "Done."
-echo "  wdtt binaries: build/wdtt/"
-echo "  IPK:           dist/awg-manager_${IPK_VERSION}_*-kn.ipk"
+echo "  IPK: dist/awg-manager_${IPK_VERSION}_*-kn.ipk"
 echo ""
 echo "Keenetic (aarch64):"
 echo "  scp dist/awg-manager_${IPK_VERSION}_aarch64-3.10-kn.ipk router:/opt/tmp/"

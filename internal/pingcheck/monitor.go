@@ -111,8 +111,19 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 
 // doLinkToggle performs link down → re-resolve → link up → wait handshake → backoff.
 func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName string) {
-	s.logInfo(m.tunnelID, fmt.Sprintf("Connectivity lost (%d/%d fails), toggling link",
-		m.failCount, config.FailThreshold))
+	// Стор читается здесь и так (шаг 1) — гард лишнего похода не добавляет.
+	stored, _ := s.tunnels.Get(m.tunnelID)
+	// Зеркальная запись прокси-выхода: её интерфейсом владеет прокси-рантайм
+	// со своим циклом реконсиляции. Измеряем, но не лечим.
+	proxyOwned := stored != nil && stored.Backend == "wdtt-raw"
+
+	msg := fmt.Sprintf("Connectivity lost (%d/%d fails), toggling link",
+		m.failCount, config.FailThreshold)
+	if proxyOwned {
+		msg = fmt.Sprintf("Connectivity lost (%d/%d fails); интерфейс принадлежит прокси-рантайму — восстановление за ним, link toggle пропущен",
+			m.failCount, config.FailThreshold)
+	}
+	s.logInfo(m.tunnelID, msg)
 
 	if s.bus != nil {
 		s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
@@ -123,8 +134,15 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	}
 	publishInvalidatedBus(s.bus, "pingcheck", "state-change")
 
+	// Дальше идёт лечение, и оно не наше: `ip link set down` уронил бы живой
+	// tun чужого инстанса, `awg set` по не-wg устройству бессмысленен, а
+	// рукопожатия на tun не будет никогда — цикл ушёл бы в вечный backoff по
+	// чужому ресурсу. Публикация выше сохранена: измерение остаётся.
+	if proxyOwned {
+		return
+	}
+
 	// 1. Re-resolve DNS endpoint before link down (while DNS may still work)
-	stored, _ := s.tunnels.Get(m.tunnelID)
 	var newEndpoint string
 	if stored != nil {
 		newEndpoint = tryResolveEndpoint(stored.Peer.Endpoint)

@@ -2,9 +2,14 @@ package pingcheck
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/httpprobe"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
 
@@ -75,5 +80,91 @@ func TestWaitHandshake_DeadlineWithoutStop(t *testing.T) {
 	}
 	if elapsed > time.Second {
 		t.Errorf("waitHandshake took too long (%v) for configured timeout %v", elapsed, fastTimeout)
+	}
+}
+
+// spyWGClient считает обращения к wg. waitHandshake — последний шаг лечения:
+// добраться до него можно только через `ip link set down/up`, поэтому ноль
+// обращений и есть наблюдаемый признак «команд управления не было».
+type spyWGClient struct {
+	calls int
+}
+
+func (c *spyWGClient) Show(_ context.Context, _ string) (*wg.ShowResult, error) {
+	c.calls++
+	return &wg.ShowResult{HasPeer: true}, nil
+}
+
+// alwaysFailDoer роняет HTTP-проверку мгновенно и без сети.
+type alwaysFailDoer struct{}
+
+func (alwaysFailDoer) Do(_ context.Context, _ httpclient.CallConfig) (*httpclient.Result, error) {
+	return nil, errors.New("no route")
+}
+
+// Зеркальную запись прокси-выхода мы измеряем, но не лечим: три провала
+// подряд не должны выливаться ни в одну команду управления интерфейсом —
+// tun принадлежит прокси-рантайму, у него свой цикл реконсиляции.
+func TestSensorTick_WdttRawNeverTouchesInterface(t *testing.T) {
+	orig := httpprobe.Client
+	defer func() { httpprobe.Client = orig }()
+	httpprobe.Client = alwaysFailDoer{}
+
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Save(&storage.AWGTunnel{
+		ID:             "wdttraw-de",
+		Name:           "Германия",
+		Backend:        "wdtt-raw",
+		RawKernelIface: "opkgtun18",
+		PingCheck: &storage.TunnelPingCheck{
+			Enabled: true, Method: "http", Interval: 1, FailThreshold: 3,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lb := NewLogBuffer()
+	defer lb.Stop()
+	spy := &spyWGClient{}
+	// Порог рукопожатия выше частоты опроса (handshakePollFreq): если гард
+	// пропадёт, лечение реально дойдёт до wg.Show, и spy это увидит.
+	s := &Service{tunnels: store, wg: spy, logBuffer: lb, ctx: ctx, handshakeTimeout: 3 * time.Second}
+
+	config := s.getCheckConfig("wdttraw-de")
+	if config == nil || config.FailThreshold != 3 {
+		t.Fatalf("config = %+v, ожидали порог 3", config)
+	}
+	m := &tunnelMonitor{tunnelID: "wdttraw-de", tunnelName: "Германия"}
+	for i := 0; i < 3; i++ {
+		s.sensorTick(m, config)
+	}
+
+	// Улика «три провала действительно случились» берётся из журнала, а не из
+	// failCount: лечение обнуляет счётчик, и проверка по нему путала бы
+	// «проверки не падали» с «лечение отработало и сбросило счёт».
+	fails, transitions := 0, ""
+	for _, e := range lb.GetAll() {
+		if e.StateChange != "" {
+			transitions = e.StateChange
+			continue // запись самого лечения, а не сенсора
+		}
+		if !e.Success {
+			fails++
+		}
+	}
+	if fails != config.FailThreshold {
+		t.Fatalf("провалов в журнале = %d, ожидали %d: точка лечения не достигнута", fails, config.FailThreshold)
+	}
+	if spy.calls != 0 {
+		t.Fatalf("wg.Show вызван %d раз — значит link toggle отработал", spy.calls)
+	}
+	if m.restartCount != 0 {
+		t.Fatalf("restartCount = %d, ожидали 0: восстановление не наше", m.restartCount)
+	}
+	if transitions != "" {
+		t.Fatalf("в журнале есть переход %q — восстановление отработало", transitions)
 	}
 }

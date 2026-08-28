@@ -133,12 +133,3 @@ func (s *Service) resolveKernelName(ctx context.Context, ndmsName string) string
 	}
 	return s.queries.Interfaces.ResolveSystemName(ctx, ndmsName)
 }
-
-// ResolveKernelIfaceName maps an NDMS interface id to the kernel netdev (eth3,
-// ppp0, …). Falls back to the input when resolution is unavailable.
-func (s *Service) ResolveKernelIfaceName(ctx context.Context, ndmsName string) string {
-	if k := s.resolveKernelName(ctx, ndmsName); k != "" {
-		return k
-	}
-	return ndmsName
-}

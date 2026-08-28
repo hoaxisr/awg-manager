@@ -17,6 +17,8 @@ export interface FreeTurnClientConfig {
 	turnPort?: number;
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
+	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */
+	obfKeySet?: boolean;
 	streamsPerCred: number;
 	platform: 'desktop' | 'mobile';
 	dnsMode: 'plain' | 'doh' | 'auto';
@@ -33,6 +35,8 @@ export interface FreeTurnServerConfig {
 	mode: 'udp' | 'tcp';
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
+	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */
+	obfKeySet?: boolean;
 	clientsFile?: string;
 	debug: boolean;
 	/** Открыть listen-порт в firewall Keenetic (INPUT). undefined = true */
@@ -43,12 +47,16 @@ export interface FreeTurnClientInstance {
 	id: string;
 	name: string;
 	config: FreeTurnClientConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface FreeTurnServerInstance {
 	id: string;
 	name: string;
 	config: FreeTurnServerConfig;
+	/** Имя старого конфига, из которого запись перенёс посев; пусто у заведённых через UI. */
+	seededFrom?: string;
 }
 
 export interface FreeTurnConfig {
@@ -66,6 +74,11 @@ export interface FreeTurnProcessStatus {
 	dtlsConnections?: number;
 	binary: string;
 	binaryPresent: boolean;
+	/**
+	 * Процесс наш и живой, но pid-файл унаследован. Производителя больше нет:
+	 * усыновление по pid-файлу заменил управляющий сокет. Поле всегда пусто.
+	 */
+	orphanedPid?: boolean;
 }
 
 export interface FreeTurnInstanceStatus {
@@ -81,6 +94,8 @@ export interface FreeTurnStatus {
 	client: FreeTurnProcessStatus;
 	/** Legacy mirror of default server instance */
 	server: FreeTurnProcessStatus;
+	/** Бинари подсистемы на диске. Принадлежит ПОДСИСТЕМЕ, а не инстансу. */
+	binariesPresent?: boolean;
 	installAvailable: boolean;
 	installVersion?: string;
 	installedVersion?: string;

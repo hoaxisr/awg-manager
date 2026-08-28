@@ -30,14 +30,36 @@ func Run(ctx context.Context, args ...string) error {
 		ensureCommentModuleFn(ctx)
 	}
 	full := append([]string{"-w"}, args...)
-	res, err := exec.Run(ctx, Binary, full...)
-	if err != nil {
-		if comment && !commentModuleLoaded() {
-			return fmt.Errorf("%w (модуль ядра xt_comment не загружен)", exec.FormatError(res, err))
+	var res *exec.Result
+	var err error
+	for attempt := 0; attempt < MaxRestoreTries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * RetryBaseWait)
 		}
-		return exec.FormatError(res, err)
+		res, err = exec.Run(ctx, Binary, full...)
+		if err == nil {
+			return nil
+		}
+		if !lockBusy(res) {
+			break
+		}
+		// Занятый лок ретраибелен: NDM переписывает таблицы пачками (18-21 раз
+		// на flap интерфейса), и `-w` версии 1.4.21 ждёт не всегда —
+		// «Resource temporarily unavailable», exit 4 (стенд 2026-08-28).
 	}
-	return nil
+	if comment && !commentModuleLoaded() {
+		return fmt.Errorf("%w (модуль ядра xt_comment не загружен)", exec.FormatError(res, err))
+	}
+	return exec.FormatError(res, err)
+}
+
+// lockBusy — отказ из-за занятого xtables-лока, а не из-за спеки правила.
+func lockBusy(res *exec.Result) bool {
+	if res == nil {
+		return false
+	}
+	return strings.Contains(res.Stderr, "Resource temporarily unavailable") ||
+		strings.Contains(res.Stderr, "xtables lock")
 }
 
 // xt_comment грузится лениво здесь, в единственной точке, через которую

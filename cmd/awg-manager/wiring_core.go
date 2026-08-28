@@ -11,6 +11,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
@@ -50,6 +51,11 @@ func (a *app) setupCore() {
 	a.awgStore = storage.NewAWGTunnelStore(
 		filepath.Join(a.dataDir, "tunnels"),
 	)
+
+	// Хранилище прокси-инстансов строится здесь, а не в wireProxyrt: его
+	// читают фазы, идущие раньше рантайма (подбор listen-порта, импорт
+	// связанного туннеля), а владелец файла обязан быть один.
+	a.proxyStore = instancestore.New(a.dataDir)
 
 	// Logging service (created early — injected into tunnel service, pingcheck, dnsroute, operator, state, firewall, nwg)
 	a.loggingService = logging.NewService(a.settingsStore)

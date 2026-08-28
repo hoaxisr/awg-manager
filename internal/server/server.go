@@ -86,8 +86,7 @@ type Server struct {
 	settings                   *storage.SettingsStore
 	tunnels                    *storage.AWGTunnelStore
 	pingCheckService           api.PingCheckService
-	freeturnService            api.FreeTurnService
-	wdttService                api.WdttService
+	proxyRecords               api.ProxyRecordLister
 	loggingService             *logging.Service
 	kmodLoader                 *kmod.Loader
 	opkgTunOccupancy           storage.OpkgTunPins
@@ -153,7 +152,18 @@ type Server struct {
 
 	bootStatusFn func() bool // returns true if boot still in progress
 
-	proxyClientAutostart api.ProxyClientAutostart
+	proxyRuntimeNudge api.ProxyRuntimeNudge
+
+	// proxyRuntime — менеджер прокси-рантайма за узким срезом: тумблер
+	// намерения инстанса (карточка зеркальной записи wdtt-raw) и глушение
+	// детей на время бэкапа. Проводка ставит его ПОСЛЕ server.New — менеджер
+	// строится позже.
+	proxyRuntime ProxyRuntime
+
+	// proxyRt — ручки прокси-рантайма; собирает проводка (cmd/awg-manager).
+	// Нулевое значение означает «рантайм не проведён»: маршруты не
+	// регистрируются вовсе, а не отвечают пустотой.
+	proxyRt ProxyRtSurface
 
 	// Restart lifecycle
 	restartOnce   sync.Once // prevents multiple restart goroutines
@@ -177,8 +187,7 @@ type Deps struct {
 	Settings         *storage.SettingsStore
 	Tunnels          *storage.AWGTunnelStore
 	PingCheckService api.PingCheckService
-	FreeTurnService  api.FreeTurnService
-	WdttService      api.WdttService
+	ProxyRecords     api.ProxyRecordLister
 	LoggingService   *logging.Service
 	KmodLoader       *kmod.Loader
 	// OpkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
@@ -240,8 +249,7 @@ func New(cfg Config, deps Deps) *Server {
 		settings:               deps.Settings,
 		tunnels:                deps.Tunnels,
 		pingCheckService:       deps.PingCheckService,
-		freeturnService:        deps.FreeTurnService,
-		wdttService:            deps.WdttService,
+		proxyRecords:           deps.ProxyRecords,
 		loggingService:         deps.LoggingService,
 		kmodLoader:             deps.KmodLoader,
 		opkgTunOccupancy:       deps.OpkgTunOccupancy,
@@ -383,6 +391,32 @@ func (s *Server) SetSingboxProxiesHandler(h *api.SingboxProxiesHandler) {
 	s.singboxProxiesHandler = h
 }
 
+// ProxyRtSurface — поверхность прокси-рантайма под /api/proxyrt/*.
+//
+// Функциями, а не хендлерами: собирают её пакеты internal/proxyapp/* и
+// internal/api, и тянуть их сюда значило бы завести шестую зависимость ради
+// одной строки регистрации у каждой. Instances обслуживает ВЕСЬ подпуть
+// /api/proxyrt/instances[/...] — хвост разбирает диспетчер проводки, потому
+// что подпути инстанса (users, link, captcha, allowlist) в http.ServeMux без
+// wildcard-паттернов не выразимы.
+type ProxyRtSurface struct {
+	Instances http.HandlerFunc
+	// ListenMoves — снятие уведомлений о переезде listen-порта при посеве.
+	ListenMoves        http.HandlerFunc
+	WdttLinkDecode     http.HandlerFunc
+	WdttLinkImport     http.HandlerFunc
+	FreeTurnLinkDecode http.HandlerFunc
+	CaptchaStatus      http.HandlerFunc
+	InstallStatus      http.HandlerFunc
+	Install            http.HandlerFunc
+}
+
+// SetProxyRtSurface wires the proxy-runtime handlers so /api/proxyrt/*
+// routes can be registered.
+func (s *Server) SetProxyRtSurface(h ProxyRtSurface) {
+	s.proxyRt = h
+}
+
 // SetBypassSetHandler wires the geoip bypass-set handler so
 // /api/singbox/router/bypass-set/* routes can be registered.
 func (s *Server) SetBypassSetHandler(h *api.BypassSetHandler) {
@@ -454,9 +488,25 @@ func (s *Server) SetBootStatusFunc(fn func() bool) {
 	s.bootStatusFn = fn
 }
 
-// SetProxyClientAutostart wires WAN-up retry for FreeTurn/WDTT autostart.
-func (s *Server) SetProxyClientAutostart(fn api.ProxyClientAutostart) {
-	s.proxyClientAutostart = fn
+// SetProxyRuntimeNudge wires the WAN-up callback of the proxy runtime
+// (seed retry plus worker wake-up).
+func (s *Server) SetProxyRuntimeNudge(fn api.ProxyRuntimeNudge) {
+	s.proxyRuntimeNudge = fn
+}
+
+// ProxyRuntime — то, что серверу нужно от менеджера прокси-рантайма:
+// тумблер намерения одного инстанса и пара «погасить/поднять» для бэкапа.
+// *manager.Manager удовлетворяет как есть.
+type ProxyRuntime interface {
+	SetEnabled(ctx context.Context, key string, on bool) error
+	Boot(ctx context.Context) error
+	Shutdown()
+}
+
+// SetProxyRuntime wires the proxy-runtime manager. Called from the wiring
+// after the manager is built (server.New runs earlier).
+func (s *Server) SetProxyRuntime(rt ProxyRuntime) {
+	s.proxyRuntime = rt
 }
 
 // Start starts the HTTP server.
@@ -612,6 +662,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerDiagnosticsRoutes(mux, h)
 	s.wireCrossHandlers(mux, h)
 	s.registerSingboxRoutes(mux, h)
+	s.registerProxyRtRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
 

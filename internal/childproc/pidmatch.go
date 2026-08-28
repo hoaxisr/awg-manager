@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -21,8 +22,17 @@ func MatchesBinary(pid int, binary string) bool {
 	base, ok := cmdlineArgv0Base(pid)
 	if !ok {
 		// Личность не подтверждается: pid исчез между kill(0) и чтением либо
-		// cmdline недоступен, либо cmdline пуст (зомби). Fail-closed —
-		// считаем, что это не наш процесс.
+		// cmdline недоступен, либо cmdline пуст. Fail-closed — считаем, что
+		// это не наш процесс.
+		//
+		// Пустой cmdline — это НЕ только зомби. Те же несколько десятков
+		// микросекунд он пуст у процесса, который ТОЛЬКО ЧТО прошёл execve:
+		// ядро закрывает CLOEXEC-трубу (этим разблокируется fork/exec
+		// родителя) в begin_new_exec, а mm->arg_start выставляет позже, и
+		// всё это время /proc/<pid>/cmdline читается нулевой длины.
+		// Опознавать этой функцией СВОЕГО только что порождённого ребёнка
+		// поэтому нельзя — своего опознают по pid из Start, пока reaper его
+		// не схоронил (см. procres.Runner.AlivePID, wdtt.process.pidIsOurs).
 		return false
 	}
 	return base == filepath.Base(binary)
@@ -62,4 +72,41 @@ func cmdlineArgv0Base(pid int) (string, bool) {
 		return "", false
 	}
 	return filepath.Base(argv0), true
+}
+
+// StartTime — время старта процесса: поле 22 (starttime) из
+// /proc/<pid>/stat, в тиках с момента загрузки. Вместе с номером процесса
+// образует ОТПЕЧАТОК: номер сам по себе идентичностью не является — pid-файлы
+// прокси лежат на флешке, переживают перезагрузку, и номер система
+// переиспользует. Сверка по имени бинаря от этого не спасает, когда старое и
+// новое поколение — один и тот же бинарь.
+//
+// ok=false — /proc/<pid>/stat нечитаем (процесса уже нет) или форма строки
+// незнакома. Это не ошибка: добивать нечего.
+func StartTime(pid int) (uint64, bool) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	return parseStartTime(string(b))
+}
+
+// parseStartTime — разбор строки /proc/<pid>/stat от ПОСЛЕДНЕЙ закрывающей
+// скобки: поле 2 — имя бинаря в скобках, а в нём бывают и пробелы, и сами
+// скобки, поэтому разбиение всей строки по пробелам съезжает.
+func parseStartTime(stat string) (uint64, bool) {
+	end := strings.LastIndex(stat, ")")
+	if end < 0 {
+		return 0, false
+	}
+	// После имени идут поля 3 и далее: starttime — поле 22, то есть индекс 19.
+	fields := strings.Fields(stat[end+1:])
+	if len(fields) < 20 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }

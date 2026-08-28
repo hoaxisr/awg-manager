@@ -67,8 +67,11 @@ graphify-out/
 reference/
 
 # Not needed in remote
+# README.md заякорен на корень: без слэша правило ловило README.md ВНУТРИ
+# vendor/, и `go mod vendor` каждый раз клал три файла, которые git молча
+# выбрасывал — вендор переставал быть побайтово воспроизводимым.
 CHANGELOG.md
-README.md
+/README.md
 INSTALL.md
 package.json
 test-results/

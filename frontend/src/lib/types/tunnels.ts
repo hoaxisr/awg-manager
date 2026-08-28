@@ -95,7 +95,7 @@ export interface AWGTunnel {
 	pingCheck?: TunnelPingCheck;
 	connectivityCheck?: ConnectivityCheckConfig;
 	warnings?: string[];
-	backend?: 'nativewg' | 'kernel';
+	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
 	freeTurnClientId?: string;
 	wdttClientId?: string;
 }
@@ -124,6 +124,8 @@ export interface TunnelListItem {
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel';
 	connectivityCheck?: ConnectivityCheckConfig;
+	/** id WDTT-клиента, для которого создан туннель (пусто у прочих). */
+	wdttClientId?: string;
 	pingCheck: {
 		status: 'alive' | 'recovering' | 'disabled';
 		restartCount: number;

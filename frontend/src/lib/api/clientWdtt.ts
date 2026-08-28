@@ -5,14 +5,24 @@ import type {
 	WdttGenerateLinkResult,
 	WdttImportPayload,
 	WdttLinkDecodeResult,
+	WdttPanelUsersStatus,
 	WdttServerConfig,
 	WdttServerInstance,
 	WdttStatus
 } from '$lib/types';
 import { FreeturnClient } from './clientFreeturn';
+import {
+	instancePath,
+	toWdttClientConfig,
+	toWdttClientPatch,
+	toWdttConfig,
+	toWdttServerConfig,
+	toWdttServerPatch,
+	toWdttStatus
+} from './proxyInstances';
 
 export type WdttDeleteClientResult = {
-	message: string;
+	message?: string;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
 };
@@ -34,178 +44,205 @@ export type WdttSaveServerResult = {
 	config: WdttServerConfig;
 };
 
+/**
+ * Конфиг связанного WG-туннеля ещё не приехал от сервера: ручка отвечает
+ * КОДОМ отказа, а не успехом с признаком. Автоэффект детали зовёт её сам, и
+ * глушить надо именно этот код — «ошибка вообще» скрыла бы настоящие сбои.
+ */
+export const WDTT_WG_NOT_READY = 'WDTT_WG_NOT_READY';
+
 export class WdttClient extends FreeturnClient {
 	async getWdttConfig(): Promise<WdttConfig> {
-		return this.request<WdttConfig>('/wdtt/config');
+		return toWdttConfig(await this.proxyList());
 	}
 
-	async updateWdttClientConfig(config: WdttClientConfig): Promise<WdttSaveClientResult> {
-		return this.request<WdttSaveClientResult>('/wdtt/client/config', {
-			method: 'PUT',
-			body: JSON.stringify(config)
-		});
-	}
-
+	/**
+	 * `sub` едет ОТДЕЛЬНЫМ полем тела, а не внутри конфига: URL подписки живёт
+	 * на самой записи (у freeturn-клиента он поле роли, у wdtt — нет).
+	 */
 	async updateWdttClientInstance(id: string, config: WdttClientConfig): Promise<WdttSaveClientResult> {
-		return this.request<WdttSaveClientResult>(`/wdtt/clients/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			body: JSON.stringify(config)
+		const view = await this.proxyPatch('wdtt-client', id, {
+			enabled: config.enabled,
+			sub: config.sub ?? '',
+			config: toWdttClientPatch(config)
 		});
+		return { config: toWdttClientConfig(view) };
 	}
 
 	async createWdttClient(name?: string, config?: WdttClientConfig): Promise<WdttClientInstance> {
-		return this.request<WdttClientInstance>('/wdtt/clients', {
-			method: 'POST',
-			body: JSON.stringify({ name, config })
-		});
+		const view = await this.proxyCreate(
+			'wdtt-client',
+			name,
+			config ? toWdttClientPatch(config) : undefined
+		);
+		return { id: view.id, name: view.name, config: toWdttClientConfig(view) };
 	}
 
+	/**
+	 * Удаление клиента: связанные AWG-туннели сносит своя ручка, удаление
+	 * инстанса их не трогает. Порядок «сначала связи, потом инстанс» —
+	 * уборщик ищет туннели по id ЖИВОЙ записи.
+	 */
 	async deleteWdttClient(id: string): Promise<WdttDeleteClientResult> {
-		return this.request<WdttDeleteClientResult>(`/wdtt/clients/${encodeURIComponent(id)}`, {
-			method: 'DELETE'
-		});
+		const cleared = await this.proxyClearLinkedTunnels('wdtt-client', id);
+		await this.proxyDelete('wdtt-client', id);
+		return {
+			message: cleared.message,
+			deletedTunnels: cleared.deletedTunnels,
+			tunnelErrors: cleared.tunnelErrors
+		};
 	}
 
-	async renameWdttClient(id: string, name: string): Promise<{ message: string }> {
-		return this.request(`/wdtt/clients/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			body: JSON.stringify({ name })
-		});
+	async renameWdttClient(id: string, name: string): Promise<void> {
+		await this.proxyPatch('wdtt-client', id, { name });
 	}
 
 	async getWdttStatus(): Promise<WdttStatus> {
-		return this.request<WdttStatus>('/wdtt/status');
+		const [list, install] = await Promise.all([
+			this.proxyList(),
+			this.proxyInstallStatus('wdtt')
+		]);
+		return toWdttStatus(list, install);
 	}
 
 	async startWdttClientInstance(id: string): Promise<void> {
-		await this.request(`/wdtt/clients/${encodeURIComponent(id)}/start`, { method: 'POST' });
+		await this.proxyPatch('wdtt-client', id, { enabled: true });
 	}
 
 	async stopWdttClientInstance(id: string): Promise<void> {
-		await this.request(`/wdtt/clients/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+		await this.proxyPatch('wdtt-client', id, { enabled: false });
 	}
 
 	async decodeWdttLink(link: string): Promise<WdttLinkDecodeResult> {
-		return this.request<WdttLinkDecodeResult>('/wdtt/link/decode', {
+		return this.request<WdttLinkDecodeResult>('/proxyrt/wdtt/link/decode', {
 			method: 'POST',
 			body: JSON.stringify({ link })
 		});
 	}
 
 	async installWdttClient(): Promise<void> {
-		await this.request('/wdtt/install', { method: 'POST' });
+		await this.proxyInstall('wdtt');
 	}
 
 	async ensureWdttWgTunnel(id: string): Promise<WdttEnsureWgResult> {
-		return this.request<WdttEnsureWgResult>(`/wdtt/clients/${encodeURIComponent(id)}/ensure-wg-tunnel`, {
-			method: 'POST'
-		});
-	}
-
-	async ensureWdttRawTunnel(id: string): Promise<WdttEnsureWgResult> {
-		return this.request<WdttEnsureWgResult>(`/wdtt/clients/${encodeURIComponent(id)}/ensure-raw-tunnel`, {
-			method: 'POST'
-		});
+		return this.request<WdttEnsureWgResult>(
+			instancePath('wdtt-client', id, '/ensure-wg-tunnel'),
+			{ method: 'POST' }
+		);
 	}
 
 	async refreshWdttSubscription(id: string): Promise<{
-		instance: WdttClientInstance;
+		key: string;
 		payload: WdttImportPayload;
 		message: string;
 	}> {
-		return this.request(`/wdtt/clients/${encodeURIComponent(id)}/subscription/refresh`, {
+		return this.request(instancePath('wdtt-client', id, '/subscription/refresh'), {
 			method: 'POST'
 		});
 	}
 
+	/**
+	 * `statsLog` едет ОТДЕЛЬНЫМ полем тела, а не внутри конфига: режим журнала
+	 * статистики живёт на самой записи. Пустая строка — законное значение
+	 * (дефолт ram, журнал в tmpfs).
+	 */
 	async updateWdttServerInstance(id: string, config: WdttServerConfig): Promise<WdttSaveServerResult> {
-		const res = await this.request<{ config: WdttServerConfig }>(
-			`/wdtt/servers/${encodeURIComponent(id)}`,
-			{ method: 'PUT', body: JSON.stringify(config) }
-		);
-		return { config: res.config };
+		const view = await this.proxyPatch('wdtt-server', id, {
+			enabled: config.enabled,
+			statsLog: config.statsLog ?? '',
+			config: toWdttServerPatch(config)
+		});
+		return { config: toWdttServerConfig(view) };
 	}
 
+	/**
+	 * Режим NAT, политика и сегменты LAN правятся тем же PATCH, что и прочий
+	 * конфиг: своих ручек у них больше нет. Ответ — принятое НАМЕРЕНИЕ, а не
+	 * факт применения; применение доводит движок.
+	 */
 	async setWdttServerNATMode(id: string, mode: 'full' | 'internet-only' | 'none'): Promise<WdttSaveServerResult> {
-		const res = await this.request<{ config: WdttServerConfig }>(
-			`/wdtt/servers/${encodeURIComponent(id)}/nat`,
-			{ method: 'POST', body: JSON.stringify({ mode }) }
-		);
-		return { config: res.config };
+		const view = await this.proxyPatch('wdtt-server', id, { config: { natMode: mode } });
+		return { config: toWdttServerConfig(view) };
 	}
 
 	async setWdttServerPolicy(id: string, policy: string): Promise<WdttSaveServerResult> {
-		const res = await this.request<{ config: WdttServerConfig }>(
-			`/wdtt/servers/${encodeURIComponent(id)}/policy`,
-			{ method: 'POST', body: JSON.stringify({ policy }) }
-		);
-		return { config: res.config };
+		const view = await this.proxyPatch('wdtt-server', id, { config: { policy } });
+		return { config: toWdttServerConfig(view) };
 	}
 
 	async setWdttServerLANSegments(id: string, segments: string[]): Promise<WdttSaveServerResult> {
-		const res = await this.request<{ config: WdttServerConfig }>(
-			`/wdtt/servers/${encodeURIComponent(id)}/lan-segments`,
-			{ method: 'POST', body: JSON.stringify({ segments }) }
-		);
-		return { config: res.config };
+		const view = await this.proxyPatch('wdtt-server', id, { config: { lanSegments: segments } });
+		return { config: toWdttServerConfig(view) };
 	}
 
 	async createWdttServer(name?: string, config?: WdttServerConfig): Promise<WdttServerInstance> {
-		return this.request<WdttServerInstance>('/wdtt/servers', {
-			method: 'POST',
-			body: JSON.stringify({ name, config })
-		});
+		const view = await this.proxyCreate(
+			'wdtt-server',
+			name,
+			config ? toWdttServerPatch(config) : undefined
+		);
+		return { id: view.id, name: view.name, config: toWdttServerConfig(view) };
 	}
 
-	async deleteWdttServer(id: string): Promise<{ message: string }> {
-		return this.request(`/wdtt/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	async deleteWdttServer(id: string): Promise<void> {
+		await this.proxyDelete('wdtt-server', id);
 	}
 
-	async renameWdttServer(id: string, name: string): Promise<{ message: string }> {
-		return this.request(`/wdtt/servers/${encodeURIComponent(id)}`, {
-			method: 'PATCH',
-			body: JSON.stringify({ name })
-		});
+	async renameWdttServer(id: string, name: string): Promise<void> {
+		await this.proxyPatch('wdtt-server', id, { name });
 	}
 
 	async startWdttServerInstance(id: string): Promise<void> {
-		await this.request(`/wdtt/servers/${encodeURIComponent(id)}/start`, { method: 'POST' });
+		await this.proxyPatch('wdtt-server', id, { enabled: true });
 	}
 
 	async stopWdttServerInstance(id: string): Promise<void> {
-		await this.request(`/wdtt/servers/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+		await this.proxyPatch('wdtt-server', id, { enabled: false });
 	}
 
+	/** `mode` — режим ссылки (§11); пусто — режим записи (`relayMode`). */
 	async generateWdttServerLink(
 		id: string,
-		opts?: { peer?: string; vkHashes?: string[]; name?: string; password?: string }
+		opts?: { peer?: string; vkHashes?: string[]; name?: string; password?: string; mode?: 'wg' | 'raw' }
 	): Promise<WdttGenerateLinkResult> {
-		return this.request<WdttGenerateLinkResult>(`/wdtt/servers/${encodeURIComponent(id)}/link`, {
+		return this.request<WdttGenerateLinkResult>(instancePath('wdtt-server', id, '/link'), {
 			method: 'POST',
 			body: JSON.stringify(opts ?? {})
 		});
 	}
 
-	async getWdttServerPanelUsers(serverId: string): Promise<import('$lib/types').WdttPanelUsersStatus> {
-		return this.request(`/wdtt/servers/${encodeURIComponent(serverId)}/users`);
+	async getWdttServerPanelUsers(serverId: string): Promise<WdttPanelUsersStatus> {
+		return this.request(instancePath('wdtt-server', serverId, '/users'));
 	}
 
 	async addWdttServerPanelUser(
 		serverId: string,
 		opts: { password?: string; comment?: string; vkHash?: string; mainPassword?: string }
-	): Promise<import('$lib/types').WdttPanelUsersStatus> {
-		return this.request(`/wdtt/servers/${encodeURIComponent(serverId)}/users`, {
+	): Promise<WdttPanelUsersStatus> {
+		return this.request(instancePath('wdtt-server', serverId, '/users'), {
 			method: 'POST',
 			body: JSON.stringify(opts)
 		});
 	}
 
+	/** Переименование абонента: имя ложится в comment записи, состав не меняется. */
+	async renameWdttServerPanelUser(
+		serverId: string,
+		password: string,
+		name: string
+	): Promise<WdttPanelUsersStatus> {
+		return this.request(
+			instancePath('wdtt-server', serverId, `/users/${encodeURIComponent(password)}`),
+			{ method: 'PATCH', body: JSON.stringify({ name }) }
+		);
+	}
+
 	async removeWdttServerPanelUser(
 		serverId: string,
 		password: string
-	): Promise<import('$lib/types').WdttPanelUsersStatus> {
+	): Promise<WdttPanelUsersStatus> {
 		return this.request(
-			`/wdtt/servers/${encodeURIComponent(serverId)}/users/${encodeURIComponent(password)}`,
+			instancePath('wdtt-server', serverId, `/users/${encodeURIComponent(password)}`),
 			{ method: 'DELETE' }
 		);
 	}

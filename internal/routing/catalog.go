@@ -11,7 +11,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // TunnelEntry represents a tunnel or interface available for routing.
@@ -103,6 +102,40 @@ type StoreEntry struct {
 	RawNdmsIface   string
 }
 
+// ExitEntry — выход прокси-инстанса глазами каталога. Тип объявлен здесь, а
+// не берётся из рантайма, чтобы каталог не зависел от пакетов, которые
+// волна переставляет (кандидат №10: интерфейс — по потребителю).
+type ExitEntry struct {
+	NDMSName    string
+	KernelIface string
+	Ready       bool // можно ли направлять трафик сейчас (§5)
+}
+
+// ExitRegistry — реестр выходов прокси-рантайма (§5 спеки). Реализация —
+// internal/proxyrt/exitreg, подставляется композиционным корнем.
+type ExitRegistry interface {
+	LookupExit(id string) (ExitEntry, bool)
+}
+
+// СТРАХОВКА ОКНА ХОЛОДНОГО СТАРТА, не резидуал волны: реестр наполняет
+// manager.Boot (SetDeclared), а Boot идёт горутиной ПОСЛЕ старта HTTP
+// (cmd/awg-manager/wiring_proxyrt.go, комментарий «(9)») — на холодном
+// старте роутера RCI недоступен, и блокировать здесь значит не поднять
+// веб-морду вовсе. Пока Boot не отработал (до ~2 минут ожидания NDMS,
+// cmd/awg-manager/boot.go, Phase 1), реестр пуст и молчит для ЛЮБОГО
+// выхода, а зеркальные записи tunnel-store персистентны и переживают
+// перезапуск процесса — в этом окне это единственный источник имён.
+// Фолбэк остаётся насовсем; его смерть требует убрать само окно (не тема
+// этой задачи). backendWdttRaw — копия wdtt.BackendWdttRaw
+// (raw_tunnel_meta.go:11): импортировать умирающий пакет ради константы
+// незачем. exitIDPrefix запирает фолбэк на зеркало — без него резолвер читал
+// бы файл на каждом НЕ-выходе, а его зовут в цикле по всем туннелям и по всем
+// соединениям. ExitID побайтово wdttraw-<safe> (страж паритета — задача 7).
+const (
+	backendWdttRaw = "wdtt-raw"
+	exitIDPrefix   = "wdttraw-"
+)
+
 // SnapshotFunc returns one piece of routing data for a snapshot.
 // A non-nil error signals that the section could not be loaded — the caller
 // records this in RoutingSnapshot.Missing so the UI can surface a
@@ -114,6 +147,7 @@ type CatalogImpl struct {
 	provider TunnelProvider
 	ifaces   interfaceQueries
 	store    StoreClient
+	exits    ExitRegistry
 	appLog   *logging.ScopedLogger
 
 	// Snapshot providers (nil-safe). Set via SetSnapshotProvider.
@@ -127,13 +161,45 @@ type CatalogImpl struct {
 }
 
 // NewCatalog creates a new CatalogImpl.
-func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreClient, appLogger logging.AppLogger) *CatalogImpl {
+func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreClient,
+	exits ExitRegistry, appLogger logging.AppLogger) *CatalogImpl {
+	if exits == nil {
+		// Дефект проводки (G4/кандидат №9): без реестра каталог молча
+		// перестал бы разрешать выходы прокси и отдавал бы правила в никуда.
+		panic("routing.NewCatalog: реестр выходов обязателен")
+	}
 	return &CatalogImpl{
 		provider: provider,
 		ifaces:   ifaces,
 		store:    store,
+		exits:    exits,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubRoutingCatalog),
 	}
+}
+
+// lookupExit — единственная точка, где каталог узнаёт про выход прокси.
+//
+// mirror=true означает «ответ пришёл из зеркальной записи»: реестр молчит,
+// потому что Boot ещё не отработал (окно холодного старта, см. комментарий
+// у backendWdttRaw). У такого ответа готовность неизвестна, и её досматривает
+// вызывающий прежним способом.
+func (c *CatalogImpl) lookupExit(tunnelID string) (e ExitEntry, mirror, ok bool) {
+	// Реестр — карта в памяти под RLock: дёшево, спрашиваем всегда.
+	if e, found := c.exits.LookupExit(tunnelID); found {
+		return e, false, true
+	}
+	// А вот фолбэк — это os.ReadFile плюс json.Unmarshal, и его зовут в цикле
+	// по всем туннелям и по всем соединениям. Пускаем туда только id, который
+	// вообще может быть выходом. nil-стор — паритет с resolveNDMSName (:420),
+	// где тот же гард стоит сегодня.
+	if !strings.HasPrefix(tunnelID, exitIDPrefix) || c.store == nil {
+		return ExitEntry{}, false, false
+	}
+	entry, err := c.store.Get(tunnelID)
+	if err != nil || entry.Backend != backendWdttRaw {
+		return ExitEntry{}, false, false
+	}
+	return ExitEntry{NDMSName: entry.RawNdmsIface, KernelIface: entry.RawKernelIface}, true, true
 }
 
 // ListAll returns a deduplicated list of all tunnels and interfaces for UI dropdowns.
@@ -247,15 +313,16 @@ func (c *CatalogImpl) ResolveInterface(ctx context.Context, tunnelID string) (st
 		return tunnel.SystemTunnelName(tunnelID), nil
 	}
 
+	if e, _, ok := c.lookupExit(tunnelID); ok {
+		if e.NDMSName == "" {
+			return "", fmt.Errorf("выход %q: NDMS-интерфейс не выделен", tunnelID)
+		}
+		return e.NDMSName, nil
+	}
+
 	// Managed: check NativeWG first
 	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).NDMSName, nil
-	}
-	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == wdtt.BackendWdttRaw {
-		if entry.RawNdmsIface != "" {
-			return entry.RawNdmsIface, nil
-		}
-		return "", fmt.Errorf("wdtt raw tunnel %q: NDMS interface not ready", tunnelID)
 	}
 
 	// Kernel tunnel
@@ -278,6 +345,9 @@ func (c *CatalogImpl) Exists(ctx context.Context, tunnelID string) bool {
 		kernelName := c.ifaces.ResolveSystemName(ctx, ndmsName)
 		return kernelName != "" && kernelName != ndmsName
 	}
+	if _, ok := c.exits.LookupExit(tunnelID); ok {
+		return true
+	}
 	return c.store.Exists(tunnelID)
 }
 
@@ -293,6 +363,16 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 		return kernelName, true
 	}
 
+	if e, mirror, ok := c.lookupExit(tunnelID); ok {
+		if e.KernelIface == "" {
+			return "", false
+		}
+		if mirror {
+			return e.KernelIface, c.provider.GetState(ctx, tunnelID).State == tunnel.StateRunning
+		}
+		return e.KernelIface, e.Ready
+	}
+
 	si := c.provider.GetState(ctx, tunnelID)
 	if si.State != tunnel.StateRunning {
 		return "", false
@@ -300,12 +380,6 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 
 	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, true
-	}
-	if entry, err := c.store.Get(tunnelID); err == nil && entry.Backend == wdtt.BackendWdttRaw {
-		if entry.RawKernelIface != "" {
-			return entry.RawKernelIface, si.State == tunnel.StateRunning
-		}
-		return "", false
 	}
 	return tunnel.NewNames(tunnelID).IfaceName, true
 }
@@ -325,6 +399,12 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 	if tunnel.IsSystemTunnel(tunnelID) {
 		return tunnel.SystemTunnelName(tunnelID), nil
 	}
+	if e, _, ok := c.lookupExit(tunnelID); ok {
+		if e.KernelIface == "" {
+			return "", fmt.Errorf("выход %q: kernel-интерфейс не выделен", tunnelID)
+		}
+		return e.KernelIface, nil
+	}
 	// Managed tunnels must exist in our storage. This guards against stale
 	// rule references (e.g. a policy name leaking into TunnelID) that would
 	// otherwise be silently mis-resolved by tunnel.NewNames.
@@ -335,12 +415,6 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 	// NativeWG: kernel iface is "nwgX"
 	if entry.Backend == "nativewg" {
 		return nwg.NewNWGNames(entry.NWGIndex).IfaceName, nil
-	}
-	if entry.Backend == wdtt.BackendWdttRaw {
-		if entry.RawKernelIface != "" {
-			return entry.RawKernelIface, nil
-		}
-		return "", fmt.Errorf("wdtt raw tunnel %q: interface not ready", tunnelID)
 	}
 	// Managed kernel: OS4 "awgm0" → "awgm0", OS5 "awg10" → "opkgtun10"
 	return tunnel.NewNames(tunnelID).IfaceName, nil
@@ -416,11 +490,9 @@ func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFu
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.
 func (c *CatalogImpl) resolveNDMSName(t TunnelWithStatus) string {
-	if t.Backend == wdtt.BackendWdttRaw {
-		if c.store != nil {
-			if entry, err := c.store.Get(t.ID); err == nil && entry.RawNdmsIface != "" {
-				return entry.RawNdmsIface
-			}
+	if t.Backend == backendWdttRaw {
+		if e, _, ok := c.lookupExit(t.ID); ok {
+			return e.NDMSName
 		}
 		return ""
 	}

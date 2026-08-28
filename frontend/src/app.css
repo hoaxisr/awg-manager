@@ -1758,6 +1758,14 @@ label {
 	margin-top: 2px;
 }
 
+/* Row of buttons under a form/section body (proxy detail sections). */
+.btn-row {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+	margin-top: 0.75rem;
+}
+
 /* Traffic rate labels — same rx/tx colors as TrafficChart sparklines */
 .traffic-rate.rx {
 	color: var(--accent, #60a5fa);

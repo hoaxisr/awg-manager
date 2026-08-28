@@ -71,3 +71,17 @@ func TestInstaller_RewritesStaleContent(t *testing.T) {
 		t.Errorf("stale content not rewritten")
 	}
 }
+
+// Порядок доставки в хуке: curl первым. BusyBox 1.37.0 на прошивке роняет
+// апплет wget с SIGSEGV на ЛЮБОМ запросе (стенд 2026-08-28), и каждое событие
+// NDMS оставляло след в kernel-логе. Ошибка не наша, но зовём его мы.
+func TestHookScriptPrefersCurl(t *testing.T) {
+	curl := strings.Index(hookScriptContent, "/opt/bin/curl -s")
+	wget := strings.Index(hookScriptContent, "/bin/wget -q")
+	if curl < 0 || wget < 0 {
+		t.Fatalf("в хуке нет обеих утилит: curl=%d wget=%d", curl, wget)
+	}
+	if curl > wget {
+		t.Fatal("wget вызывается раньше curl — на прошивке он падает с SIGSEGV")
+	}
+}

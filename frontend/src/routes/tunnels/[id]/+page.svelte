@@ -111,6 +111,11 @@
 
 	let ispValue = $derived(tunnel?.ispInterface || 'auto');
 
+	// Зеркальная запись прокси-выхода: имя, WAN-подключение и маршрут по
+	// умолчанию ведёт прокси-рантайм, правка отсюда не применится (бэкенд
+	// отвечает на неё отказом).
+	let isMirror = $derived(tunnel?.backend === 'wdtt-raw');
+
 	let otherTunnels = $derived(allTunnels.filter(t => t.id !== tunnelId));
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -375,7 +380,17 @@
 						<SettingsSectionLabel label="Название" icon={Tag} tone="slate" header />
 						<div class="flex flex-col gap-1.5">
 							<label class="field-label" for="name">Название туннеля</label>
-							<input type="text" id="name" class="field-input" bind:value={$form.name} />
+							<input
+								type="text"
+								id="name"
+								class="field-input"
+								bind:value={$form.name}
+								disabled={isMirror}
+								title={isMirror ? 'Имя задаётся инстансом WDTT' : undefined}
+							/>
+							{#if isMirror}
+								<p class="field-hint">Имя задаётся инстансом WDTT и меняется в его настройках.</p>
+							{/if}
 							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
 						</div>
 					</section>
@@ -471,9 +486,12 @@
 							value={ispValue}
 							options={ispOpts}
 							onchange={updateIspInterface}
-							disabled={savingIsp}
+							disabled={savingIsp || isMirror}
 							fullWidth
 						/>
+						{#if isMirror}
+							<p class="field-hint">Подключение задаёт инстанс WDTT и меняется в его настройках.</p>
+						{/if}
 						<div class="setting-row toggle-inline-row advanced-toggle">
 							<div class="flex flex-col gap-1">
 								<span class="font-medium">Показать все интерфейсы</span>
@@ -490,20 +508,30 @@
 					{#if $usageLevel === 'expert'}
 						<section class="card tunnel-section">
 							<SettingsSectionLabel label="Маршрут по умолчанию" icon={Route} tone="green" header />
-							<div class="setting-row toggle-inline-row">
-								<div class="flex flex-col gap-1">
-									<span class="font-medium">NDMS Default Route</span>
-									<span class="setting-description">
-										В NDMS для OpkgTunX выполняется «ip route default», а не как full-tunnel на уровне Linux. <br>
-										Так туннель регистрируется среди интернет-выходов с метрикой (весом), по которому NDMS выбирает канал по умолчанию. 
-										Без этой записи туннель не участвует в политиках доступа. <br>
-										В большинстве случаев, данная опция должна быть включена, особенно, если интерфейс должен конкурировать за роль основного выхода.</span>
+							{#if isMirror}
+								<!-- У зеркальной записи тумблера НЕТ, а не «есть, но выключен»:
+								     кандидатурой в NDMS распоряжается прокси-рантайм по конфигу
+								     инстанса, а флаг записи к этому отношения не имеет — его
+								     проставляет миграция чтения (storage/awg_store.go:150-154),
+								     и любое показанное состояние было бы выдумкой. -->
+								<p class="setting-description">
+									Маршрутом по умолчанию распоряжается инстанс WDTT: он объявляет
+									свой интерфейс кандидатом в NDMS по своим настройкам. Здесь
+									менять нечего.
+								</p>
+							{:else}
+								<div class="setting-row toggle-inline-row">
+									<div class="flex flex-col gap-1">
+										<span class="font-medium">NDMS Default Route</span>
+										<span class="setting-description">
+											В NDMS для OpkgTunX выполняется «ip route default», а не как full-tunnel на уровне Linux. <br>
+											Так туннель регистрируется среди интернет-выходов с метрикой (весом), по которому NDMS выбирает канал по умолчанию. 
+											Без этой записи туннель не участвует в политиках доступа. <br>
+											В большинстве случаев, данная опция должна быть включена, особенно, если интерфейс должен конкурировать за роль основного выхода.</span>
+									</div>
+									<Toggle checked={tunnel.defaultRoute} onchange={() => toggleDefaultRoute()} />
 								</div>
-								<Toggle
-									checked={tunnel.defaultRoute}
-									onchange={() => toggleDefaultRoute()}
-								/>
-							</div>
+							{/if}
 						</section>
 					{/if}
 				</div>

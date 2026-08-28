@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
@@ -11,7 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // stateToStatus converts a tunnel State to the status string sent to the frontend.
@@ -209,6 +209,9 @@ type tunnelItem struct {
 	StartedAt                 string                           `json:"startedAt,omitempty"`
 	PingCheck                 pingcheck.TunnelPingInfo         `json:"pingCheck"`
 	ConnectivityCheck         *storage.ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
+	// WdttClientID links the tunnel to the WDTT client instance it was
+	// created from; empty for tunnels unrelated to WDTT.
+	WdttClientID string `json:"wdttClientId,omitempty"`
 }
 
 // listItems builds the tunnel list items for API response and SSE snapshots.
@@ -232,13 +235,9 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 	for _, t := range tunnels {
 		// Get stored tunnel for additional fields
 		stored, _ := h.store.Get(t.ID)
-		// WDTT Raw rows are appended below with live iface/status from wdtt.
-		if stored != nil && stored.Backend == wdtt.BackendWdttRaw {
-			continue
-		}
 
 		awgVersion := "wg"
-		var endpoint, address string
+		var endpoint, address, wdttClientID string
 		var ispInterface, ispInterfaceLabel string
 		var resolvedISPInterface, resolvedISPInterfaceLabel string
 		var mtu int
@@ -247,8 +246,15 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			address = stored.Interface.Address
 			mtu = stored.Interface.MTU
 			awgVersion = config.ClassifyAWGVersion(&stored.Interface)
+			if stored.Backend == backendWdttRaw {
+				// У зеркала прокси-выхода нет конфига интерфейса, по
+				// которому считается версия: классификатор вернул бы
+				// "wg" и карточка получила бы бейдж «WireGuard».
+				awgVersion = "raw"
+			}
 			ispInterface = stored.ISPInterface
 			ispInterfaceLabel = stored.ISPInterfaceLabel
+			wdttClientID = strings.TrimSpace(stored.WdttClientID)
 
 			// NativeWG stores NDMS IDs (e.g. "ISP"), but frontend uses kernel names (e.g. "eth3").
 			// Convert back so the dropdown can match the stored value.
@@ -299,8 +305,13 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 
 		backend := "kernel"
-		if stored != nil && stored.Backend == "nativewg" {
-			backend = "nativewg"
+		if stored != nil {
+			switch stored.Backend {
+			case "nativewg":
+				backend = "nativewg"
+			case backendWdttRaw:
+				backend = backendWdttRaw
+			}
 		}
 
 		var startedAt string
@@ -343,14 +354,13 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			MTU:                       mtu,
 			StartedAt:                 startedAt,
 			PingCheck:                 pcInfo,
+			WdttClientID:              wdttClientID,
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck
 		}
 		items = append(items, item)
 	}
-
-	items = h.appendWdttRawListItems(ctx, items)
 
 	return items, nil
 }

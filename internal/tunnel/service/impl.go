@@ -310,6 +310,22 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 	return nil
 }
 
+// storedIfaceNames resolves kernel and NDMS interface names for a stored
+// tunnel. Kernel tunnels do have an NDMS name (awgN -> OpkgTunN); only OS4
+// awgmN and raw clients without a live iface legitimately have none.
+func storedIfaceNames(t *storage.AWGTunnel) (ifaceName, ndmsName string) {
+	switch t.Backend {
+	case "nativewg":
+		names := nwg.NewNWGNames(t.NWGIndex)
+		return names.IfaceName, names.NDMSName
+	case "wdtt-raw":
+		return strings.TrimSpace(t.RawKernelIface), strings.TrimSpace(t.RawNdmsIface)
+	default:
+		names := tunnel.NewNames(t.ID)
+		return names.IfaceName, names.NDMSName
+	}
+}
+
 // Get returns a tunnel with its current state.
 func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStatus, error) {
 	stored, err := s.store.Get(tunnelID)
@@ -319,14 +335,7 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 
 	stateInfo := s.stateForStored(ctx, stored)
 
-	var ifaceName, ndmsName string
-	if stored.Backend == "nativewg" {
-		names := nwg.NewNWGNames(stored.NWGIndex)
-		ifaceName = names.IfaceName
-		ndmsName = names.NDMSName
-	} else {
-		ifaceName = tunnel.NewNames(tunnelID).IfaceName
-	}
+	ifaceName, ndmsName := storedIfaceNames(stored)
 
 	return &TunnelWithStatus{
 		ID:            stored.ID,
@@ -367,14 +376,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]TunnelWithStatus, error) {
 			t := stored[i]
 			stateInfo := s.stateForStored(ctx, &t)
 
-			var ifaceName, ndmsName string
-			if t.Backend == "nativewg" {
-				names := nwg.NewNWGNames(t.NWGIndex)
-				ifaceName = names.IfaceName
-				ndmsName = names.NDMSName
-			} else {
-				ifaceName = tunnel.NewNames(t.ID).IfaceName
-			}
+			ifaceName, ndmsName := storedIfaceNames(&t)
 			result[i] = TunnelWithStatus{
 				ID:            t.ID,
 				Name:          t.Name,
@@ -723,6 +725,14 @@ func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enab
 	stored, err := s.store.Get(tunnelID)
 	if err != nil {
 		return tunnel.ErrNotFound
+	}
+	// Зеркальная запись raw-выхода: её маршрутами распоряжается прокси-рантайм.
+	// Отказ здесь — не косметика: NewNames считает NDMS-имя из идентификатора,
+	// а у "wdttraw-*" цифр нет, и фолбэк даёт OpkgTun0 — ЧУЖОЙ интерфейс.
+	// Дальше по коду это ушло бы в legacyOperator.SetDefaultRoute и увело
+	// маршрут по умолчанию на посторонний объект роутера.
+	if stored.Backend == "wdtt-raw" {
+		return fmt.Errorf("маршрутом raw-выхода распоряжается инстанс WDTT — меняйте в его настройках")
 	}
 
 	oldValue := stored.DefaultRoute

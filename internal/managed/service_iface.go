@@ -21,14 +21,6 @@ func (s *Service) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, 
 	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments)
 }
 
-// DefaultGatewayNDMSInterface returns the NDMS id of the current default-route WAN.
-func (s *Service) DefaultGatewayNDMSInterface(ctx context.Context) (string, error) {
-	if s.queries == nil || s.queries.Routes == nil {
-		return "", fmt.Errorf("routes not wired")
-	}
-	return s.queries.Routes.GetDefaultGatewayInterface(ctx)
-}
-
 // ApplyPolicyToInterface sets or clears the ip hotspot policy on an interface.
 func (s *Service) ApplyPolicyToInterface(ctx context.Context, ifaceName, policy string) error {
 	if policy == "" {

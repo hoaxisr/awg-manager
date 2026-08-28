@@ -10,9 +10,15 @@
 		disabled?: boolean;
 		onchange: (policy: string) => void | Promise<void>;
 		extra?: Snippet;
+		/**
+		 * Без собственной подписи: строка формы уже дала метку и подсказку.
+		 * Заведено для детали «Прокси», где все поля живут в одной сетке
+		 * «метка — контрол»; на странице «Серверы» подпись остаётся своя.
+		 */
+		labelless?: boolean;
 	}
 
-	let { policy, disabled = false, onchange, extra }: Props = $props();
+	let { policy, disabled = false, onchange, extra, labelless = false }: Props = $props();
 
 	let policies = $state<{ id: string; description: string }[]>([]);
 	let selectedPolicy = $state('');
@@ -48,15 +54,20 @@
 	});
 </script>
 
-<div class="setting-row">
-	<div class="setting-copy">
-		<span class="setting-title">Политика доступа</span>
-		<span class="setting-description"
-			>Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span
-		>
-		{#if extra}{@render extra()}{/if}
+{#if labelless}
+	<Dropdown value={selectedPolicy} options={policyOptions} {disabled} {onchange} fullWidth />
+	{#if extra}{@render extra()}{/if}
+{:else}
+	<div class="setting-row">
+		<div class="setting-copy">
+			<span class="setting-title">Политика доступа</span>
+			<span class="setting-description"
+				>Регулирует выход в интернет для клиентов сервера. Применяется ко всем клиентам этого сервера.</span
+			>
+			{#if extra}{@render extra()}{/if}
+		</div>
+		<div class="setting-control">
+			<Dropdown value={selectedPolicy} options={policyOptions} {disabled} {onchange} fullWidth />
+		</div>
 	</div>
-	<div class="setting-control">
-		<Dropdown value={selectedPolicy} options={policyOptions} {disabled} {onchange} fullWidth />
-	</div>
-</div>
+{/if}

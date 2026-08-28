@@ -10,8 +10,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/freeturn"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -24,6 +24,9 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -48,7 +51,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // app is the composition root of the daemon: every subsystem constructed by
@@ -109,7 +111,13 @@ type app struct {
 	// может уже не быть.
 	opkgNDMSPins storage.OpkgTunPins
 	catalog      *routing.CatalogImpl
-	orch         *orchestrator.Orchestrator
+	exitRegistry *exitreg.Registry
+	// exitMirror — зеркальные записи tunnel-store реестра выходов. Держится
+	// полем, а не локальной: одноразовые шаги посева (обнуление протухших
+	// адресов) ходят в ту же ведомость, а второй экземпляр значил бы двух
+	// владельцев одного файла.
+	exitMirror *exitreg.StoreMirror
+	orch       *orchestrator.Orchestrator
 
 	// routing / aux services
 	hydraService        *hydraroute.Service
@@ -127,8 +135,6 @@ type app struct {
 	testService         *testing.Service
 	pingCheckService    *pingcheck.Service
 	pingCheckFacade     *pingcheck.Facade
-	freeturnService     *freeturn.Service
-	wdttService         *wdtt.Service
 	monitoringService   *monitoring.Service
 	keeneticClient      *auth.KeeneticClient
 	sessionStore        *auth.SessionStore
@@ -157,6 +163,16 @@ type app struct {
 	routerScheduler     *router.Scheduler
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service
+	downloadSvc         *downloader.Service
+
+	// прокси-рантайм
+	//
+	// proxyStore — ОДИН экземпляр владельца proxy-instances.json на процесс:
+	// читают его и потребители вне рантайма (подбор listen-порта старого
+	// мира, импорт связанного туннеля), а второй экземпляр развёл бы
+	// сериализацию записи по разным замкам.
+	proxyStore *instancestore.Store
+	proxyMgr   *manager.Manager
 
 	// HTTP
 	srv *server.Server

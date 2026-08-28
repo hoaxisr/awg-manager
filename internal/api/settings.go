@@ -791,6 +791,13 @@ func (h *SettingsHandler) enablePingCheckOnAllTunnels(settings *storage.Settings
 	defaults := settings.PingCheck.Defaults
 	for i := range tunnels {
 		tunnel := &tunnels[i]
+		// Зеркальные записи прокси-выходов — не наши туннели, а проекции
+		// инстансов: «включить на всех туннелях» не должно заводить измерение
+		// там, где пользователь его не выбирал. Своя настройка у них есть на
+		// карточке (tunnels_crud.go, ветка backendWdttRaw).
+		if tunnel.Backend == backendWdttRaw {
+			continue
+		}
 		if tunnel.PingCheck == nil {
 			tunnel.PingCheck = &storage.TunnelPingCheck{
 				Enabled:       true,
@@ -822,6 +829,10 @@ func (h *SettingsHandler) disablePingCheckOnAllTunnels() error {
 
 	for i := range tunnels {
 		tunnel := &tunnels[i]
+		// Симметрично включению: чужие записи не трогаем ни в одну сторону.
+		if tunnel.Backend == backendWdttRaw {
+			continue
+		}
 		if tunnel.PingCheck != nil {
 			tunnel.PingCheck.Enabled = false
 			if err := h.tunnels.Save(tunnel); err != nil {

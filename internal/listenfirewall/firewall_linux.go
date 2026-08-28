@@ -83,7 +83,8 @@ func Reconcile(ctx context.Context, desired []PortSpec) {
 	for _, spec := range desired {
 		want[portKey(spec.Port, spec.Proto)] = struct{}{}
 	}
-	for _, spec := range listManaged(ctx) {
+	managed, _ := ListManaged(ctx)
+	for _, spec := range managed {
 		key := portKey(spec.Port, spec.Proto)
 		if _, ok := want[key]; ok {
 			continue
@@ -130,12 +131,17 @@ func flush(ctx context.Context, port int, proto string) {
 	}
 }
 
-func listManaged(ctx context.Context) []PortSpec {
+// ListManaged — наши живые правила INPUT. Экспортирован ради адаптера
+// netres.FW прокси-рантайма: у ресурса input_port ведомость — сами правила,
+// а не память процесса. Ошибка листинга отдаётся наружу: «не смогли
+// посмотреть» и «наших правил нет» — разные вещи, и второе трактует первое
+// как повод переставить всё заново.
+func ListManaged(ctx context.Context) ([]PortSpec, error) {
 	out, err := iptables.RunOutput(ctx, "-S", "INPUT")
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return parseManaged(out)
+	return parseManaged(out), nil
 }
 
 // parseManaged выбирает из вывода `iptables -S INPUT` правила, которые ставили

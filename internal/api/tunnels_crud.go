@@ -21,7 +21,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
-	"github.com/hoaxisr/awg-manager/internal/wdtt"
 )
 
 // List returns all tunnels.
@@ -182,7 +181,7 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
 		response.Success(w, h.buildWdttRawResponse(stored))
 		return
 	}
@@ -370,7 +369,42 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if existing.Backend == wdtt.BackendWdttRaw {
+	if existing.Backend == backendWdttRaw {
+		if req.Name != "" && req.Name != existing.Name {
+			// Имя зеркальной записи — производная конфига инстанса: зеркало
+			// перезаписывает его на каждом объявлении (exitreg/mirror.go:105).
+			// Принять переименование здесь значит подтвердить правку, которую
+			// ближайшее объявление молча откатит.
+			response.Error(w, "имя raw-записи задаётся инстансом WDTT — переименуйте инстанс", "WDTT_RAW_NAME_READONLY")
+			return
+		}
+		// Маршрутизацией raw-выхода распоряжается прокси-рантайм: и маршрут
+		// по умолчанию, и WAN-подключение он выставляет сам по конфигу
+		// инстанса. Правка отсюда не применится никогда — отказ по образцу
+		// имени вместо молчаливой потери.
+		//
+		// Условия «поле прислали» обязательны: запрос парсится в полную
+		// AWGTunnel, и непришедшее поле приходит нулевым. Присылку булева
+		// маршрута видно только по компаньону DefaultRouteSet, строкового
+		// WAN — по непустоте. Без них частичный PATCH (форма связности шлёт
+		// один connectivityCheck) ловил бы ложный отказ, и это было бы хуже
+		// исходной потери.
+		if req.DefaultRouteSet && req.DefaultRoute != existing.DefaultRoute {
+			response.Error(w, "маршрут по умолчанию raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_ROUTING_READONLY")
+			return
+		}
+		if req.ISPInterface != "" {
+			// "auto" — это способ прислать пустое значение (нормализация
+			// обычной ветки, :425), а не отдельный интерфейс.
+			wantISP := req.ISPInterface
+			if wantISP == tunnel.ISPInterfaceAuto {
+				wantISP = ""
+			}
+			if wantISP != existing.ISPInterface {
+				response.Error(w, "WAN-подключение raw-записи ведёт прокси-рантайм — меняйте в настройках инстанса WDTT", "WDTT_RAW_WAN_READONLY")
+				return
+			}
+		}
 		updated := *existing
 		if req.ConnectivityCheck != nil {
 			updated.ConnectivityCheck = req.ConnectivityCheck
@@ -378,13 +412,29 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 				updated.ConnectivityCheck.Method = "http"
 			}
 		}
-		if req.Name != "" {
-			updated.Name = req.Name
+		// Измерение зеркальной записи разрешено — запрещено только автолечение
+		// (pingcheck/monitor.go:118), значит настройка измерения обязана
+		// сохраняться, а не теряться молча.
+		if req.PingCheck != nil {
+			updated.PingCheck = req.PingCheck
 		}
-		h.syncWdttRawLiveFields(&updated)
 		if err := h.store.Save(&updated); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
 			return
+		}
+		// Монитор поднимается ЗДЕСЬ, как и у обычных туннелей (:543-550):
+		// иначе включённая пользователем проверка легла бы на диск и молчала
+		// до перезапуска демона или постороннего события.
+		if h.pingCheck != nil {
+			oldOn := existing.PingCheck != nil && existing.PingCheck.Enabled
+			newOn := updated.PingCheck != nil && updated.PingCheck.Enabled
+			if oldOn != newOn {
+				if newOn && h.svc.GetState(r.Context(), id).State == tunnel.StateRunning {
+					h.pingCheck.StartMonitoring(id, updated.Name)
+				} else if !newOn {
+					h.pingCheck.StopMonitoring(id)
+				}
+			}
 		}
 		h.log.Info("update", updated.Name, "WDTT raw metadata updated")
 		h.publishTunnelList(r.Context())
@@ -573,6 +623,10 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete deletes a tunnel.
 //
 //	@Summary		Delete tunnel
+//	@Description	409 приходит в двух формах. tunnel_referenced (тело TunnelReferencedResponse) —
+//	@Description	туннель кем-то используется. Обычный конверт ошибки с кодом WDTT_RAW_OWNED или
+//	@Description	WDTT_RAW_OWNER_UNKNOWN — запись есть проекция прокси-инстанса и удаляется только
+//	@Description	вместе с ним.
 //	@Tags			tunnels
 //	@Produce		json
 //	@Security		CookieAuth
@@ -597,7 +651,24 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == wdtt.BackendWdttRaw {
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Backend == backendWdttRaw {
+		// Зеркальная запись — не самостоятельная сущность, а проекция
+		// прокси-инстанса: пока инстанс жив, удалять её отдельно нельзя.
+		// Ближайшее объявление создало бы её заново с дефолтами, и потеря
+		// настроек карточки прошла бы молча (амендмент F2).
+		owner, ownErr := h.mirrorOwnerKey(stored)
+		switch {
+		case ownErr != nil:
+			h.log.Warn("delete", stored.Name, "Refused: владелец raw-записи не проверен: "+ownErr.Error())
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"владелец raw-записи не проверен: "+ownErr.Error(), "WDTT_RAW_OWNER_UNKNOWN")
+			return
+		case owner != "":
+			h.log.Info("delete", stored.Name, "Refused: запись принадлежит инстансу "+owner)
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"запись принадлежит прокси-инстансу "+owner+"; удалите инстанс", "WDTT_RAW_OWNED")
+			return
+		}
 		tunnelName := stored.Name
 		if err := h.store.Delete(id); err != nil {
 			response.Error(w, err.Error(), "DELETE_FAILED")

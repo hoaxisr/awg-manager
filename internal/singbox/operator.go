@@ -130,7 +130,7 @@ type Operator struct {
 	// что и bootstrapDNS: пересоздание 00-base.json не должно терять настройку.
 	clashPort  func() int
 	configPath string
-	pidPath      string
+	pidPath    string
 
 	proc      *Process
 	validator *Validator

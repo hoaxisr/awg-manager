@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -512,5 +513,50 @@ func TestUpdate_ConnectivityCheckURLValidEmptyInvalid(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "INVALID_CONNECTIVITY_CHECK_URL") {
 		t.Fatalf("missing INVALID_CONNECTIVITY_CHECK_URL, body=%s", rec.Body.String())
+	}
+}
+
+// «Включить проверку на всех туннелях» не должно заводить измерение на
+// зеркальных записях прокси-выходов: пользователь их туннелями не заводил, и
+// своя настройка у них есть на карточке. Симметрично для выключения.
+func TestPingCheckOnAllTunnels_SkipsWdttRawMirrors(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	dir := t.TempDir()
+	tunnels := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	h.SetTunnelStore(tunnels)
+
+	own := &storage.AWGTunnel{ID: "awg10", Name: "Свой", Backend: "kernel",
+		DefaultRouteSet: true,
+		Interface:       storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420}}
+	mirror := &storage.AWGTunnel{ID: "wdttraw-de", Name: "Зеркало", Backend: "wdtt-raw",
+		DefaultRouteSet: true,
+		Interface:       storage.AWGInterface{Address: "10.70.0.2/32", MTU: 1420}}
+	for _, tun := range []*storage.AWGTunnel{own, mirror} {
+		if err := tunnels.Save(tun); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.enablePingCheckOnAllTunnels(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	gotOwn, err := tunnels.Get("awg10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOwn.PingCheck == nil || !gotOwn.PingCheck.Enabled {
+		t.Fatal("на своём туннеле проверка обязана включиться")
+	}
+	gotMirror, err := tunnels.Get("wdttraw-de")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMirror.PingCheck != nil && gotMirror.PingCheck.Enabled {
+		t.Fatal("на зеркальной записи проверка включена глобальным тумблером: пользователь её не выбирал")
 	}
 }

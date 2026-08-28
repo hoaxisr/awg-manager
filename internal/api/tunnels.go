@@ -77,10 +77,16 @@ type TunnelsHandler struct {
 	// NDMS interface. See tunnel.SelfCreateGater / api.HookHandler for
 	// the contract.
 	selfCreateGate tunnel.SelfCreateGater
+	// proxyRecords — записи прокси-инстансов: удаление зеркальной записи
+	// wdtt-raw обязано знать, жив ли инстанс, чьей проекцией она является
+	// (амендмент F2).
+	proxyRecords ProxyRecordLister
 
 	// opkgOccupancy — занятость номеров OpkgTun для выдачи идентификатора.
+	// wdttListSource из develop сюда не переехал: файлы, где он жил
+	// (wdtt_raw_tunnel*.go), унёс снос старого мира — их работу делает
+	// proxyRecords выше.
 	opkgOccupancy storage.OpkgTunPins
-	wdttSvc       wdttListSource
 	// buildTunnelsSnapshot (optional) assembles the composite
 	// {tunnels, external, system} payload used by GetAll and by
 	// mutation handlers that return fresh state. Injected by server.go
@@ -141,6 +147,12 @@ func (h *TunnelsHandler) SetTrafficHistory(th *traffic.History) {
 // SetOrchestrator sets the orchestrator for lifecycle operations.
 func (h *TunnelsHandler) SetOrchestrator(orch *orchestrator.Orchestrator) {
 	h.orch = orch
+}
+
+// SetProxyRecords wires the proxy instance store: удаление зеркальной записи
+// wdtt-raw сверяется с ним на владельца (амендмент F2).
+func (h *TunnelsHandler) SetProxyRecords(records ProxyRecordLister) {
+	h.proxyRecords = records
 }
 
 // SetPingCheckSnapshot sets the function that publishes a pingcheck snapshot.

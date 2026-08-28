@@ -1,7 +1,8 @@
 #!/bin/bash
 # Извлекает assets/server и assets/deploy.sh из APK qWDTT (VPS deploy).
 # Бинарник: linux amd64, статически слинкованный Go, с -listen-raw / -listen-direct / -dns.
-# В APK нет linux/arm64 — для Keenetic arm64 см. contrib/qwdtt-apk/README.md
+# В APK нет linux/arm64 — бинари для Keenetic выпускает CI форка
+# hoaxisr/proxy-turn-vk-android (релиз awgm-server-*), см. internal/wdtt/install.go.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

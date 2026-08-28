@@ -9,6 +9,9 @@ import (
 // filterBindable must offer egress interfaces (security-level "public") minus
 // our own auto-managed ones and minus interfaces already bound by an existing
 // direct outbound, while rescuing KeenOS-native proxies in the native set (#323).
+// Покрытие занятости OpkgTun (живая половина, пины NDMS, fail-closed на отказе
+// /sys) живёт в opkgtun_occupancy_test.go — туда его перенёс develop вместе с
+// переходом адаптера на поле listSys.
 func TestFilterBindable(t *testing.T) {
 	ifaces := []ndms.AllInterface{
 		{Name: "t2s0", SecurityLevel: "public", Type: "Proxy", Label: "My-Socks5"}, // native, free — keep

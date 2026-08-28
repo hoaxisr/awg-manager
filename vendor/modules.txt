@@ -1,7 +1,3 @@
-# github.com/BurntSushi/toml v1.6.0
-## explicit; go 1.18
-github.com/BurntSushi/toml
-github.com/BurntSushi/toml/internal
 # github.com/coder/websocket v1.8.14
 ## explicit; go 1.23
 github.com/coder/websocket
@@ -9,25 +5,13 @@ github.com/coder/websocket/internal/bpool
 github.com/coder/websocket/internal/errd
 github.com/coder/websocket/internal/util
 github.com/coder/websocket/internal/wsjs
-# github.com/dustin/go-humanize v1.0.1
-## explicit; go 1.16
-github.com/dustin/go-humanize
 # github.com/enfein/mieru/v3 v3.36.0
 ## explicit; go 1.20
 github.com/enfein/mieru/v3/pkg/appctl/appctlpb
 github.com/enfein/mieru/v3/pkg/metrics/metricspb
-# github.com/google/uuid v1.6.0
-## explicit
-github.com/google/uuid
-# github.com/mattn/go-isatty v0.0.20
-## explicit; go 1.15
-github.com/mattn/go-isatty
-# github.com/ncruces/go-strftime v0.1.9
-## explicit; go 1.17
-github.com/ncruces/go-strftime
-# github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec
-## explicit; go 1.12
-github.com/remyoudompheng/bigfft
+# github.com/hoaxisr/awg-manager/awgmproto v0.1.2
+## explicit; go 1.25.0
+github.com/hoaxisr/awg-manager/awgmproto
 # golang.org/x/net v0.55.0
 ## explicit; go 1.25.0
 golang.org/x/net/bpf
@@ -75,41 +59,3 @@ google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# modernc.org/libc v1.55.3
-## explicit; go 1.20
-modernc.org/libc
-modernc.org/libc/errno
-modernc.org/libc/fcntl
-modernc.org/libc/fts
-modernc.org/libc/grp
-modernc.org/libc/honnef.co/go/netdb
-modernc.org/libc/langinfo
-modernc.org/libc/limits
-modernc.org/libc/netdb
-modernc.org/libc/netinet/in
-modernc.org/libc/poll
-modernc.org/libc/pthread
-modernc.org/libc/pwd
-modernc.org/libc/signal
-modernc.org/libc/stdio
-modernc.org/libc/stdlib
-modernc.org/libc/sys/socket
-modernc.org/libc/sys/stat
-modernc.org/libc/sys/types
-modernc.org/libc/termios
-modernc.org/libc/time
-modernc.org/libc/unistd
-modernc.org/libc/utime
-modernc.org/libc/uuid
-modernc.org/libc/uuid/uuid
-modernc.org/libc/wctype
-# modernc.org/mathutil v1.6.0
-## explicit; go 1.18
-modernc.org/mathutil
-# modernc.org/memory v1.8.0
-## explicit; go 1.18
-modernc.org/memory
-# modernc.org/sqlite v1.34.5
-## explicit; go 1.21
-modernc.org/sqlite
-modernc.org/sqlite/lib

@@ -2,9 +2,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 
-	// FreeTurn живёт вкладкой на главной (раздел «Туннели»), а не отдельной
-	// страницей. Маршрут оставлен как redirect для старых закладок/ссылок.
+	// Прокси живёт страницей /proxy (ia.md §1.1). Маршрут оставлен как redirect
+	// для старых закладок и ссылок в документации.
 	onMount(() => {
-		goto('/?tab=freeturn', { replaceState: true });
+		goto('/proxy?tab=exit', { replaceState: true });
 	});
 </script>

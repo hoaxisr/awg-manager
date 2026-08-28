@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,12 +13,11 @@ import (
 
 // ProxyListenerHandler exposes port→PID lookup and kill for proxy clients.
 type ProxyListenerHandler struct {
-	freeturn FreeTurnService
-	wdtt     WdttService
+	records ProxyRecordLister
 }
 
-func NewProxyListenerHandler(ft FreeTurnService, wd WdttService) *ProxyListenerHandler {
-	return &ProxyListenerHandler{freeturn: ft, wdtt: wd}
+func NewProxyListenerHandler(records ProxyRecordLister) *ProxyListenerHandler {
+	return &ProxyListenerHandler{records: records}
 }
 
 type listenerKey struct {
@@ -37,30 +37,37 @@ func (h *ProxyListenerHandler) ownsListener(port int, proto procport.Proto) bool
 			owned[listenerKey{port: p, proto: proto}] = true
 		}
 	}
-	if h.freeturn != nil {
-		if cfg, err := h.freeturn.GetConfig(); err == nil {
-			for _, c := range cfg.Clients {
-				add(c.Config.Listen, procport.ProtoUDP)
-			}
-			for _, s := range cfg.Servers {
-				serverProto := procport.ProtoUDP
-				if strings.EqualFold(strings.TrimSpace(s.Config.Mode), "tcp") {
-					serverProto = procport.ProtoTCP
-				}
-				add(s.Config.Listen, serverProto)
-			}
-		}
+	if h.records == nil {
+		return false
 	}
-	if h.wdtt != nil {
-		if cfg, err := h.wdtt.GetConfig(); err == nil {
-			for _, c := range cfg.Clients {
-				add(c.Config.Listen, procport.ProtoUDP)
+	st, err := h.records.Load()
+	if err != nil {
+		return false
+	}
+	for _, rec := range st.Records {
+		switch {
+		case rec.WdttClient != nil:
+			add(rec.WdttClient.Listen, procport.ProtoUDP)
+		case rec.FreeTurnClient != nil:
+			add(rec.FreeTurnClient.Listen, procport.ProtoUDP)
+		case rec.WdttServer != nil:
+			// Паритет ServerListenAddrs старого мира: DTLS, raw (явный либо
+			// DTLS+1), direct (если отличается от DTLS) и внутренний WG на
+			// localhost.
+			add(rec.WdttServer.Listen, procport.ProtoUDP)
+			add(rec.WdttServer.EffectiveRawListen(), procport.ProtoUDP)
+			if d := strings.TrimSpace(rec.WdttServer.DirectListen); d != "" && d != rec.WdttServer.Listen {
+				add(d, procport.ProtoUDP)
 			}
-			for _, s := range cfg.Servers {
-				for _, addr := range s.Config.ServerListenAddrs() {
-					add(addr, procport.ProtoUDP)
-				}
+			if rec.WdttServer.WgPort > 0 {
+				add(net.JoinHostPort("127.0.0.1", strconv.Itoa(rec.WdttServer.WgPort)), procport.ProtoUDP)
 			}
+		case rec.FreeTurnServer != nil:
+			serverProto := procport.ProtoUDP
+			if strings.EqualFold(strings.TrimSpace(rec.FreeTurnServer.Mode), "tcp") {
+				serverProto = procport.ProtoTCP
+			}
+			add(rec.FreeTurnServer.Listen, serverProto)
 		}
 	}
 	return owned[listenerKey{port: port, proto: proto}]
@@ -142,7 +149,7 @@ func (h *ProxyListenerHandler) KillListener(w http.ResponseWriter, r *http.Reque
 	proto := procport.NormalizeProto(req.Proto)
 	if !h.ownsListener(req.Port, proto) {
 		response.ErrorWithStatus(w, http.StatusForbidden,
-			"порт не принадлежит ни одному инстансу FreeTurn/WDTT", "PROXY_LISTENER_NOT_OWNED")
+			"порт не принадлежит ни одному инстансу прокси-рантайма", "PROXY_LISTENER_NOT_OWNED")
 		return
 	}
 	info, err := procport.KillListener(host, req.Port, proto)
