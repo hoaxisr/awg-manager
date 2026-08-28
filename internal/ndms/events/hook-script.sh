@@ -12,11 +12,18 @@
 # tools (ip) and BusyBox-portable text extraction (sed/awk) — the
 # /bin/grep on Keenetic is BusyBox grep and does NOT support -P/\K.
 #
-# Prefers curl and falls back to BusyBox wget. Порядок именно такой, потому
-# что apple wget в BusyBox 1.37.0 на этой прошивке падает с SIGSEGV на ЛЮБОМ
+# Доставка через curl; wget — последняя попытка на сломанной установке.
+#
+# Апплет wget в BusyBox 1.37.0 на этой прошивке падает с SIGSEGV на ЛЮБОМ
 # запросе, включая обычный GET (стенд 2026-08-28): каждое событие NDMS
-# оставляло в kernel-логе «sending SIGSEGV to wget». Ошибка не наша, но звали
-# его мы. wget остаётся запасным — curl ставится не везде.
+# оставляло в kernel-логе «sending SIGSEGV to wget». Поэтому curl объявлен
+# зависимостью пакета — на исправной установке он есть всегда.
+#
+# nc из того же BusyBox сюда НЕ годится, хотя POST через него доходит: в этой
+# сборке у него нет ни одной опции («Usage: nc [IPADDR PORT]»), утилиты timeout
+# в системе тоже нет, и на недоступном адресе он висит — замерено, ≥20 секунд.
+# Повисший хук блокирует очередь событий NDMS, а это хуже потерянного события:
+# падающий wget хотя бы завершается мгновенно.
 #
 # Form values are passed raw inside --data/--post-data because all hook
 # parameters (interface names, layer strings, IPv4/IPv6 addresses) use

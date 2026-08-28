@@ -202,7 +202,7 @@ build_ipk_one() {
     cat > "$IPK_ROOT/CONTROL/control" << EOF
 Package: awg-manager
 Version: ${VERSION}
-Depends: iptables, ip-full, wireguard-tools, conntrack
+Depends: iptables, ip-full, wireguard-tools, conntrack, curl
 Section: net
 Architecture: ${PKG_ARCH}
 Maintainer: hoaxisr
