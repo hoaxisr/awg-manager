@@ -7,6 +7,7 @@ package instancestore
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -163,4 +164,26 @@ func (r Record) NDMSNamed() instance.NDMSNamed {
 		return c
 	}
 	return nil
+}
+
+// DataPath — путь данных инстанса, который переживает его удаление, если его
+// не убрать: у wdtt-сервера это каталог с абонентами и ключами, у
+// freeturn-сервера — файл списка разрешённых. Без инстанса они мертвы, а
+// убрать их из UI нечем (стенд 2026-08-28).
+//
+// Пусто у клиентских ролей: своих данных на диске у них нет.
+func (r Record) DataPath() string {
+	switch r.Kind {
+	case KindWdttServer:
+		if r.WdttServer == nil {
+			return ""
+		}
+		return strings.TrimSpace(r.WdttServer.ConfigDir)
+	case KindFreeTurnServer:
+		if r.FreeTurnServer == nil {
+			return ""
+		}
+		return strings.TrimSpace(r.FreeTurnServer.ClientsFile)
+	}
+	return ""
 }
