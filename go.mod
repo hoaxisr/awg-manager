@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.45.0
 )
 
-require github.com/hoaxisr/awg-manager/awgmproto v0.1.1
+require github.com/hoaxisr/awg-manager/awgmproto v0.1.2
