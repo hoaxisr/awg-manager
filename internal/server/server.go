@@ -409,6 +409,7 @@ type ProxyRtSurface struct {
 	CaptchaStatus      http.HandlerFunc
 	InstallStatus      http.HandlerFunc
 	Install            http.HandlerFunc
+	Uninstall          http.HandlerFunc
 }
 
 // SetProxyRtSurface wires the proxy-runtime handlers so /api/proxyrt/*

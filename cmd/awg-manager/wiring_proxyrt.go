@@ -529,6 +529,18 @@ func (t proxyTunnelImporter) PublishList(context.Context) {
 // нечем; ссылка проставляется сразу после manager.New и до первого Boot.
 type proxyManagerRef struct{ mgr *manager.Manager }
 
+// proxySubsystemOf — подсистема роли. Нужна гейту удаления бинарей: снимать
+// их можно, только если инстансов ЭТОЙ подсистемы не осталось.
+func proxySubsystemOf(kind instancestore.Kind) install.Subsystem {
+	switch kind {
+	case instancestore.KindWdttClient, instancestore.KindWdttServer:
+		return install.SubsystemWdtt
+	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
+		return install.SubsystemFreeTurn
+	}
+	return ""
+}
+
 // proxyRecords — wdttlink.RecordSource поверх менеджера.
 type proxyRecords struct{ ref *proxyManagerRef }
 
@@ -835,6 +847,20 @@ func (a *app) wireProxyrt() {
 		Downloader: proxyBinaryDownloader{svc: a.downloadSvc},
 		Warn:       func(msg string) { journal.Warn("install", "proxy", msg) },
 		Info:       func(msg string) { journal.Info("install", "proxy", msg) },
+		// Гейт удаления бинарей. Менеджер строится ниже, поэтому читается
+		// лениво через ref; до его появления инстансов нет по построению.
+		InstanceCount: func(name install.Subsystem) int {
+			if ref.mgr == nil {
+				return 0
+			}
+			n := 0
+			for _, rec := range ref.mgr.Records() {
+				if proxySubsystemOf(rec.Kind) == name {
+					n++
+				}
+			}
+			return n
+		},
 	})
 
 	records := proxyRecords{ref: ref}
@@ -925,6 +951,7 @@ func (a *app) wireProxyrt() {
 		CaptchaStatus:      captchaSvc.ServeStatus,
 		InstallStatus:      installSvc.ServeStatus,
 		Install:            installSvc.ServeInstall,
+		Uninstall:          installSvc.ServeUninstall,
 	})
 
 	// Тумблер намерения инстанса (карточка зеркальной записи wdtt-raw) и

@@ -183,6 +183,8 @@ export interface ProxyInstallStatus {
   updateAvailable?: boolean;
   installing?: boolean;
   routerClock?: string;
+  /** Сколько инстансов подсистемы существует, включая выключенные. */
+  instances?: number;
 }
 
 // #endregion

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,6 +54,10 @@ type InstallStatus struct {
 	Installing bool `json:"installing"`
 	// RouterClock — часы роутера для сверки с метками в журнале форка.
 	RouterClock string `json:"routerClock,omitempty"`
+	// Instances — сколько инстансов подсистемы существует сейчас, включая
+	// выключенные. Фронт гасит по нему «Удалить» и объясняет почему, не
+	// дожидаясь 409 от ручки.
+	Instances int `json:"instances"`
 	// BinariesPresent — нужные бинари лежат на диске. Признак принадлежит
 	// ПОДСИСТЕМЕ, а не инстансу: полоса установки судит по нему, и без него она
 	// брала `binaryPresent` первого клиентского инстанса — у подсистемы без
@@ -82,6 +87,9 @@ type Deps struct {
 	Info func(msg string)
 	// Clock — часы роутера; nil = routerclock.Get().
 	Clock func() (now time.Time, zone string)
+	// InstanceCount — сколько инстансов подсистемы существует сейчас, включая
+	// выключенные. Гейт удаления бинарей; nil = удаление недоступно.
+	InstanceCount func(Subsystem) int
 }
 
 // subsys — состояние одной подсистемы: где её бинари, какой у неё пин и не
@@ -224,8 +232,16 @@ func (s *Service) Status(subsystem string) (InstallStatus, error) {
 		UpdateAvailable:  updateAvailable,
 		Installing:       sub.isInstalling(),
 		RouterClock:      now.Format("2006-01-02 15:04:05") + " " + zone,
+		Instances:        s.instanceCount(sub.name),
 		BinariesPresent:  sub.binariesInstalled(),
 	}, nil
+}
+
+func (s *Service) instanceCount(name Subsystem) int {
+	if s.deps.InstanceCount == nil {
+		return 0
+	}
+	return s.deps.InstanceCount(name)
 }
 
 // Install скачивает, сверяет и активирует бинари подсистемы. Проверка — по
@@ -268,6 +284,56 @@ func (s *Service) Install(ctx context.Context, subsystem string) error {
 		s.warn(fmt.Sprintf("%s: version-file: %s", sub.name, err.Error()))
 	}
 	s.info(fmt.Sprintf("%s v%s установлен: %s, %s", sub.name, label, sub.clientBin, sub.serverBin))
+	return nil
+}
+
+// ErrInstancesExist — удаление бинарей отклонено: подсистемой ещё пользуются.
+var ErrInstancesExist = errors.New("сначала удалите инстансы подсистемы")
+
+// Uninstall удаляет бинари подсистемы (обе половины разом) и её version-файл.
+// Гранулярность подсистемой, а не половиной: версия и version-файл у них
+// общие, и раздельный снос сделал бы статус неоднозначным.
+//
+// Гейт: ни одного инстанса подсистемы, включая ВЫКЛЮЧЕННЫЕ — снятый из-под
+// живой записи бинарь оставил бы инстанс, который нечем запустить. Fail-closed:
+// без подключённого счётчика удаление не пускается вовсе.
+//
+// Каталоги данных не трогает: их уносит удаление самого инстанса
+// (manager.Delete), у каждой сущности свой мусор.
+//
+// Идемпотентно: отсутствующий файл не ошибка.
+func (s *Service) Uninstall(subsystem string) error {
+	sub, err := s.pick(subsystem)
+	if err != nil {
+		return err
+	}
+	if s.deps.InstanceCount == nil {
+		return fmt.Errorf("удаление недоступно: счётчик инстансов не подключён")
+	}
+	if n := s.deps.InstanceCount(sub.name); n > 0 {
+		return fmt.Errorf("%w: их %d", ErrInstancesExist, n)
+	}
+	sub.installMu.Lock()
+	if sub.installing {
+		sub.installMu.Unlock()
+		return errors.New("установка уже выполняется")
+	}
+	sub.installMu.Unlock()
+
+	var errs []error
+	for _, path := range []string{sub.clientBin, sub.serverBin, sub.versionPath} {
+		if path == "" {
+			continue
+		}
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			errs = append(errs, rmErr)
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	// Кеш сверки с пином ключуется по mtime+size бинарей и инвалидируется сам.
+	s.info(fmt.Sprintf("%s удалён: %s, %s", sub.name, sub.clientBin, sub.serverBin))
 	return nil
 }
 

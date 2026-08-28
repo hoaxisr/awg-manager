@@ -1027,6 +1027,9 @@ func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.proxyRt.Install != nil {
 		mux.HandleFunc("/api/proxyrt/install", h.guarded(s.proxyRt.Install))
 	}
+	if s.proxyRt.Uninstall != nil {
+		mux.HandleFunc("/api/proxyrt/install/uninstall", h.guarded(s.proxyRt.Uninstall))
+	}
 }
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).

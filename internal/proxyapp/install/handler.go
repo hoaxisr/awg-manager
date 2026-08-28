@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -108,4 +109,53 @@ func installedMessage(name Subsystem) string {
 		return "freeturn installed"
 	}
 	return "installed"
+}
+
+// ServeUninstall обслуживает POST /api/proxyrt/install/uninstall
+// (тело {"subsystem":...}). Удаляет бинари подсистемы и её version-файл;
+// данные инстансов не трогает — их уносит удаление самого инстанса.
+//
+//	@Summary		Удалить бинари подсистемы
+//	@Description	Отклоняется, пока существует хоть один инстанс подсистемы, включая выключенные.
+//	@Tags			proxyrt
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			request	body		installRequest	true	"Подсистема"
+//	@Success		200		{object}	InstallResponse
+//	@Failure		400		{object}	api.APIErrorEnvelope
+//	@Failure		409		{object}	api.APIErrorEnvelope
+//	@Router			/proxyrt/install/uninstall [post]
+func (s *Service) ServeUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+	var req installRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, "invalid request body", "BAD_REQUEST")
+		return
+	}
+	sub, err := s.pick(req.Subsystem)
+	if err != nil {
+		response.Error(w, err.Error(), "BAD_REQUEST")
+		return
+	}
+	if err := s.Uninstall(req.Subsystem); err != nil {
+		if errors.Is(err, ErrInstancesExist) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "PROXY_INSTANCES_EXIST")
+			return
+		}
+		response.Error(w, err.Error(), uninstallErrorCode(sub.name))
+		return
+	}
+	response.Success(w, map[string]string{"message": "uninstalled"})
+}
+
+// uninstallErrorCode — код отказа удаления, той же формы, что у установки.
+func uninstallErrorCode(name Subsystem) string {
+	if name == SubsystemFreeTurn {
+		return "FREETURN_UNINSTALL_FAILED"
+	}
+	return "WDTT_UNINSTALL_FAILED"
 }
