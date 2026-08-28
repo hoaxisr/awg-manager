@@ -225,10 +225,17 @@ func targetsOf(root string, paths ...string) []DataTarget {
 	seen := map[string]bool{}
 	for _, p := range paths {
 		p = strings.TrimSpace(p)
-		if p == "" || seen[p] {
+		if p == "" {
 			continue
 		}
-		seen[p] = true
+		// Дедуп по каноничному виду: у включённого списка, лежащего по
+		// умолчанию, оба пути указывают на один файл, и запись о сносе
+		// печаталась бы дважды.
+		key := filepath.Clean(p)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, DataTarget{Path: p, Root: root})
 	}
 	return out

@@ -29,8 +29,8 @@ describe('proxyInstallStatus', () => {
 		const afterFirst = proxyInstallStatusMock.mock.calls.length;
 
 		// Ровно то, что делает SSE-обработчик, получив resource:invalidated с
-		// ресурсом proxy.instances (бэкенд публикует его при create/delete).
-		invalidateResource('proxy.instances');
+		// ресурсом proxyrt.instances (его публикует менеджер при create/delete).
+		invalidateResource('proxyrt.instances');
 		await vi.waitFor(() =>
 			expect(proxyInstallStatusMock.mock.calls.length).toBeGreaterThan(afterFirst),
 		);

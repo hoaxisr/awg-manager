@@ -893,6 +893,9 @@ func (a *app) wireProxyrt() {
 		AllocListen:  allocListen,
 		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
 		WaitDisabled: proxyWaitDisabled(states),
+		RecordsChanged: func(reason string) {
+			api.PublishResourceInvalidated(a.eventBus, api.ResourceProxyInstances, reason)
+		},
 	})
 	ref.mgr = mgr
 	a.proxyMgr = mgr
@@ -934,7 +937,6 @@ func (a *app) wireProxyrt() {
 		Snapshot:         links.snapshot,
 		Log:              logTail,
 		BinaryInfo:       installSvc.Binary,
-		Bus:              a.eventBus,
 		OpkgTunSupported: opkgTunSupported,
 	})
 

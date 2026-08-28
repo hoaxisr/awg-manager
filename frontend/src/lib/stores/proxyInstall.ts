@@ -8,7 +8,7 @@ import { registerStore } from './storeRegistry';
  * Его читает карточка «Интеграции»: версия, наличие обновления и число
  * инстансов, по которому удаление бинарей заперто.
  *
- * Подписан на `proxy.instances`: создание и удаление инстанса меняет счётчик, а
+ * Подписан на `proxyrt.instances`: создание и удаление инстанса меняет счётчик, а
  * без инвалидации кнопка «Удалить» осталась бы в прежнем состоянии до
  * перезагрузки страницы. Сами бинари меняются только нашими же действиями,
  * поэтому опрос редкий.
@@ -20,7 +20,7 @@ function storeFor(subsystem: ProxySubsystem): PollingStore<ProxyInstallStatus> {
 		() => api.proxyInstallStatus(subsystem),
 		{ staleTime: 60_000, pollInterval: 60_000 },
 	);
-	registerStore('proxy.instances', store);
+	registerStore('proxyrt.instances', store);
 	return store;
 }
 

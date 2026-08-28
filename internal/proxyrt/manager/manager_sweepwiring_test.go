@@ -75,6 +75,8 @@ type liveEnv struct {
 	rm    *recRemover
 	alloc *proxyrt.Allocator
 	j     *recJournal
+	// changed — причины уведомлений о смене состава записей.
+	changed []string
 }
 
 func newLiveEnv(t *testing.T) *liveEnv {
@@ -115,7 +117,8 @@ func newLiveEnv(t *testing.T) *liveEnv {
 				alloc.Release(k)
 			}
 		},
-		WaitDisabled: func(string, time.Duration) bool { return true },
+		WaitDisabled:   func(string, time.Duration) bool { return true },
+		RecordsChanged: func(reason string) { e.changed = append(e.changed, reason) },
 	})
 	return e
 }
@@ -341,5 +344,133 @@ func TestDeleteKeepsDataPathOutsideOwnSubtree(t *testing.T) {
 	}
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("снесён чужой каталог внутри каталога данных: %v", err)
+	}
+}
+
+func TestDeleteKeepsDataClaimedByNeighbour(t *testing.T) {
+	// Имя файла по умолчанию строится из ID, где недопустимые символы
+	// заменяются подчёркиванием: «ft x» и «ft_x» дают ОДИН путь. Удаление
+	// первого не имеет права унести живой список второго.
+	e := newLiveEnv(t)
+	shared := instancestore.FreeTurnAllowlistPath(e.dir, "ft_x")
+	if err := os.MkdirAll(filepath.Dir(shared), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shared, []byte(`{"clients":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records,
+			instancestore.Record{ID: "ft x", Kind: instancestore.KindFreeTurnServer, Name: "A",
+				FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:7001"}},
+			instancestore.Record{ID: "ft_x", Kind: instancestore.KindFreeTurnServer, Name: "B",
+				FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:7002", ClientsFile: shared}})
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "freeturn-server:ft x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(shared); err != nil {
+		t.Fatalf("снесён список живого соседа: %v", err)
+	}
+}
+
+func TestDeleteSaysNothingAboutMissingData(t *testing.T) {
+	// Путь по умолчанию есть у КАЖДОГО freeturn-сервера, а список мог не
+	// включаться ни разу: RemoveAll на отсутствующем молчит, и «данные
+	// удалены» в журнале было бы неправдой.
+	e := newLiveEnv(t)
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "nofile", Kind: instancestore.KindFreeTurnServer, Name: "F",
+			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:7003"}})
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "freeturn-server:nofile"); err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range e.j.journalMsgs() {
+		if strings.Contains(msg, "данные удалены") {
+			t.Fatalf("журнал врёт про снос несуществующего: %q", msg)
+		}
+	}
+}
+
+func TestCreateAndDeleteNotifyRecordsChanged(t *testing.T) {
+	// Уведомление живёт в менеджере, а не в HTTP-обработчике: запись создаёт
+	// и импорт ссылки, идущий тем же путём мимо ручки инстансов.
+	e := newLiveEnv(t)
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.changed) != 0 {
+		t.Fatalf("боот не меняет состав записей: %v", e.changed)
+	}
+	if err := e.m.Create(context.Background(), rawRec("de", "OpkgTun18", "opkgtun18")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.changed) != 2 || e.changed[0] != "created" || e.changed[1] != "deleted" {
+		t.Fatalf("уведомления: %v (ждали [created deleted])", e.changed)
+	}
+}
+
+func TestDeleteRemovesEnabledAllowlistOnce(t *testing.T) {
+	// Самый частый случай: список включён и лежит по умолчанию — оба пути
+	// указывают на один файл. Снос обязан быть один, и запись в журнале одна.
+	e := newLiveEnv(t)
+	path := instancestore.FreeTurnAllowlistPath(e.dir, "ftlive")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"clients":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "ftlive", Kind: instancestore.KindFreeTurnServer, Name: "F",
+			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:7004", ClientsFile: path}})
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(context.Background(), "freeturn-server:ftlive"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("список не удалён: %v", err)
+	}
+	n := 0
+	for _, msg := range e.j.journalMsgs() {
+		if strings.Contains(msg, "данные удалены") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("записей о сносе %d, ждали 1: оба пути ведут в один файл", n)
 	}
 }

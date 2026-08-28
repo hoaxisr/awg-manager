@@ -104,6 +104,18 @@ type Deps struct {
 	// WaitDisabled — ограниченное ожидание teardown-прогона (Щ5): прод —
 	// опрос StateStore до фазы disabled/settled свежее момента вызова.
 	WaitDisabled func(key string, timeout time.Duration) bool
+	// RecordsChanged — состав записей изменился (создание, удаление). Живёт
+	// ЗДЕСЬ, а не в HTTP-обработчике: запись создаёт не только ручка
+	// инстансов, но и импорт ссылки через Mutator, и подсказка инвалидации
+	// его бы не заметила. nil — никого не уведомляем.
+	RecordsChanged func(reason string)
+}
+
+// recordsChanged — уведомление о смене состава записей; nil-безопасно.
+func (m *Manager) recordsChanged(reason string) {
+	if m.deps.RecordsChanged != nil {
+		m.deps.RecordsChanged(reason)
+	}
 }
 
 type managed struct {
@@ -563,6 +575,10 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		m.deps.ReleasePins(allocated...)
 		return err
 	}
+	// Уведомление ПОСЛЕ записи на диск и до сборки воркера: счётчик инстансов
+	// читает диск, и отказ фабрики (запись есть, воркера нет) его не отменяет.
+	m.recordsChanged("created")
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range st.Records {
@@ -828,7 +844,8 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 	} else {
 		m.deps.Journal.Info("delete", key, sweptMessage(removedNDMS))
 	}
-	m.deleteDataDir(key, removed)
+	m.deleteDataDir(key, removed, st.Records)
+	m.recordsChanged("deleted")
 	return nil
 }
 
@@ -849,13 +866,35 @@ func sweptMessage(removed []string) string {
 // только строго внутри: сверка с каталогом данных целиком пропускала бы и сам
 // dataDir (os.RemoveAll снёс бы данные всего приложения), и каталоги соседей.
 //
+// И только то, на что не ссылается никто из ОСТАВШИХСЯ записей. Поддерево
+// общее на всю подсистему, а путь может совпасть с чужим двумя способами:
+// clientsFile правится через API и его можно навести на файл соседа, а имя
+// файла по умолчанию строится из ID, где недопустимые символы заменяются
+// подчёркиванием — «a b» и «a_b» дают один и тот же путь.
+//
 // Отказ не отменяет удаления: инстанса уже нет, откатывать нечего.
-func (m *Manager) deleteDataDir(key string, removed instancestore.Record) {
+func (m *Manager) deleteDataDir(key string, removed instancestore.Record, left []instancestore.Record) {
 	dir := m.deps.Store.Dir()
+	claimed := map[string]bool{}
+	for _, rec := range left {
+		for _, t := range rec.DataTargets(dir) {
+			claimed[filepath.Clean(t.Path)] = true
+		}
+	}
 	for _, t := range removed.DataTargets(dir) {
+		if claimed[filepath.Clean(t.Path)] {
+			m.deps.Journal.Info("delete", key, "данные оставлены — ими владеет другой инстанс: "+t.Path)
+			continue
+		}
 		if !strictlyUnder(filepath.Join(dir, t.Root), t.Path) {
 			m.deps.Journal.Warn("delete", key,
 				"данные не убраны: путь вне "+t.Root+" в каталоге данных: "+t.Path)
+			continue
+		}
+		// Путь по умолчанию есть у каждого freeturn-сервера, а список мог не
+		// включаться ни разу: RemoveAll на отсутствующем пути молчит, и запись
+		// «данные удалены» в журнале была бы неправдой.
+		if _, err := os.Lstat(t.Path); os.IsNotExist(err) {
 			continue
 		}
 		if err := os.RemoveAll(t.Path); err != nil {
