@@ -743,6 +743,35 @@ func (s *SettingsStore) Save(settings *Settings) error {
 	return s.saveUnlocked(settings)
 }
 
+// Update атомарно правит настройки под локом стора: копия живого кэша →
+// мутатор → публикация копии. Ошибка мутатора отменяет запись.
+//
+// Зачем копия, а не запись по месту: Load/Get отдают ЖИВОЙ объект кэша, и
+// читатели держат этот указатель уже без лока. Публикуется новая запись, а
+// прежнюю они дочитывают сами. Копия берётся ЗДЕСЬ, в момент коммита, а не
+// на стороне вызывающего: так в неё попадает всё, что успели записать в кэш
+// узкие мутаторы (SetOpkgTunState и прочие), пока вызывающий делал свою
+// работу, — снимок, взятый раньше, затирал бы их записи.
+//
+// Копия МЕЛКАЯ: вложенные карты и слайсы (ServerPeerSecrets, ManagedServers,
+// QoSClasses…) остаются общими с прежним объектом. Мутатор не должен править
+// их элементы по месту — только присваивать новые.
+func (s *SettingsStore) Update(mut func(*Settings) error) error {
+	if _, err := s.Get(); err != nil { // гарантировать загрузку кэша
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	cp := *s.settings
+	if err := mut(&cp); err != nil {
+		return err
+	}
+	return s.saveUnlocked(&cp)
+}
+
 // saveUnlocked writes settings to disk without acquiring lock.
 // Caller must hold the lock.
 func (s *SettingsStore) saveUnlocked(settings *Settings) error {
