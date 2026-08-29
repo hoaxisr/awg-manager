@@ -18,9 +18,9 @@ import (
 // enablePingCheckOnAllTunnels). Обе стороны обязаны считать одно и то же —
 // поэтому код один, а не два похожих.
 //
-// Функции чистые относительно стора и сети: всё, что требует похода наружу,
-// приходит параметром (downloadKind). Это же делает их исполнимыми под локом
-// стора — см. докстринг SettingsStore.Update.
+// Функции чистые относительно стора, сети и файловой системы: всё, что
+// требует похода наружу, приходит параметром (settingsProbes). Это же делает
+// их исполнимыми под локом стора — см. докстринг SettingsStore.Update.
 //
 // Разрезаны на голову и хвост ровно там, где в середине стоит поход в
 // downloader: порядок проверок и, значит, приоритет ошибок при нескольких
@@ -51,6 +51,23 @@ func respondSettingsError(w http.ResponseWriter, err error) {
 // «менялось ли поле».
 type settingsPrev struct {
 	clashPort int
+}
+
+// settingsProbes — результаты проверок, которым нужно ходить наружу. Считаются
+// на черновике, ВНЕ лока стора, и отдаются хвосту готовыми: проверка маршрута
+// загрузок дёргает downloader, а проверка порта Clash API сканирует
+// /proc/net/* и обходит /proc/[pid]/fd — под локом стора такое держать нельзя,
+// оно заблокировало бы все чтения настроек, включая auth-middleware.
+//
+// Сами УСЛОВИЯ, при которых проверки применимы, остаются в хвосте: они
+// считаются по той записи, что уходит на диск.
+type settingsProbes struct {
+	// downloadKind — nil, когда в downloader не ходили; иначе канонический
+	// Kind, в том числе пустой (различие важно: прежний код писал результат
+	// безусловно, раз уж сходил).
+	downloadKind *string
+	// clashPortMsg — текст отказа по порту Clash API, пусто = порт годен.
+	clashPortMsg string
 }
 
 // deriveSettingsHead применяет патч и нормализует/проверяет всё, что стоит до
@@ -91,11 +108,11 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 	return prev, nil
 }
 
-// deriveSettingsTail дописывает результат проверки маршрута загрузок и
-// доводит остальные поля. downloadKind пуст, когда в сервис не ходили.
-func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *storage.SettingsPatch, prev settingsPrev, downloadKind string) error {
-	if downloadKind != "" {
-		cur.Download.RouteKind = downloadKind
+// deriveSettingsTail дописывает результаты внешних проверок и доводит
+// остальные поля.
+func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *storage.SettingsPatch, prev settingsPrev, probes settingsProbes) error {
+	if probes.downloadKind != nil {
+		cur.Download.RouteKind = *probes.downloadKind
 	}
 
 	// Время жизни сессии проверяем ТОЛЬКО когда клиент его прислал. Посторонняя
@@ -125,10 +142,8 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 	// момент слушает СТАРЫЙ порт, так что сверка «а не мы ли держим новый»
 	// не нужна — совпасть значения могут лишь при сохранении того же порта,
 	// а это не смена (issue #788).
-	if patch.SingboxClashPort != nil && prev.clashPort != cur.SingboxClashPort {
-		if msg := validateClashPort(cur.SingboxClashPort, cur.Server.Port, h.clashPorts); msg != "" {
-			return settingsErr(msg, "SINGBOX_CLASH_PORT_INVALID")
-		}
+	if patch.SingboxClashPort != nil && prev.clashPort != cur.SingboxClashPort && probes.clashPortMsg != "" {
+		return settingsErr(probes.clashPortMsg, "SINGBOX_CLASH_PORT_INVALID")
 	}
 
 	// usageLevel проверяем после merge. Пустым он быть не может — дефолты его

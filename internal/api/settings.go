@@ -330,11 +330,11 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Единственный шаг деривации, ходящий наружу. Держим его между головой и
-	// хвостом, чтобы приоритет ошибок при нескольких невалидных полях остался
-	// прежним; результат отдаём хвосту параметром — тогда хвост чист и его
-	// можно исполнить под локом стора.
-	downloadKind := ""
+	// Шаги деривации, ходящие наружу: проверка маршрута загрузок дёргает
+	// downloader, проверка порта Clash API сканирует /proc. Считаем их ЗДЕСЬ,
+	// между головой и хвостом — так и приоритет ошибок остаётся прежним, и
+	// хвост становится чистым, а значит исполнимым под локом стора.
+	var probes settingsProbes
 	if patch.Download != nil && want.Download.RouteTag != "direct" {
 		if h.downloadSvc == nil {
 			response.ErrorWithStatus(w, http.StatusBadRequest, "download service is not configured", "INVALID_DOWNLOAD_ROUTE")
@@ -348,10 +348,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, vErr.Error(), "INVALID_DOWNLOAD_ROUTE")
 			return
 		}
-		downloadKind = strings.TrimSpace(info.Kind)
+		kind := strings.TrimSpace(info.Kind)
+		probes.downloadKind = &kind
+	}
+	if patch.SingboxClashPort != nil && prev.clashPort != want.SingboxClashPort {
+		probes.clashPortMsg = validateClashPort(want.SingboxClashPort, want.Server.Port, h.clashPorts)
 	}
 
-	if dErr := h.deriveSettingsTail(&want, &patch, prev, downloadKind); dErr != nil {
+	if dErr := h.deriveSettingsTail(&want, &patch, prev, probes); dErr != nil {
 		respondSettingsError(w, dErr)
 		return
 	}
@@ -393,7 +397,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return h.deriveSettingsTail(cur, &patch, p, downloadKind)
+		return h.deriveSettingsTail(cur, &patch, p, probes)
 	}); err != nil {
 		h.log.Warn("settings", "", "save failed: "+err.Error())
 		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")

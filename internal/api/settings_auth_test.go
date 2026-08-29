@@ -125,7 +125,7 @@ func TestUpdate_CachedZeroTTL_OmittedPatchNotRejected(t *testing.T) {
 	seed, _ := store.Get()
 	cp := *seed
 	cp.SessionTtlHours = 0
-	if err := store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil { // Save persists 0 without healing
+	if err := store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil { // Update persists 0 without healing: лечит только Load
 		t.Fatalf("seed zero: %v", err)
 	}
 	rec := postSettingsUpdate(t, h, `{"authEnabled":true}`)
