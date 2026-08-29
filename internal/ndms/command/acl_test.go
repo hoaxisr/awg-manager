@@ -193,3 +193,33 @@ func TestRemovePermitAllACL_Sequence(t *testing.T) {
 		}
 	}
 }
+
+// Прошивки до 5.01 не знают v6-ACL: NDMS отвечает «no such command:
+// access-list» / «no such command: access-group» (issue #828, лог репортёра с
+// KeeneticOS 5.00.C.11.0-0). Разрешать там нечего — механизма нет, — поэтому
+// отказ обязан быть безобидным: иначе он валит всё включение fakeip/policy-tun.
+func TestSetPermitAllACLv6_UnsupportedFirmwareTolerated(t *testing.T) {
+	cmds, _ := newACLTestCommands(
+		nestedACLError("no such command: access-list."),
+		nestedACLError("no such command: access-group."),
+		nestedACLError("no such command: access-list."),
+	)
+	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("SetPermitAllACLv6 на прошивке без v6-ACL: %v", err)
+	}
+	cmds, _ = newACLTestCommands(
+		nestedACLError("no such command: access-group."),
+		nestedACLError("no such command: access-list."),
+	)
+	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("RemovePermitAllACLv6 на прошивке без v6-ACL: %v", err)
+	}
+}
+
+// Толерантность узкая: настоящий отказ v6-ACL по-прежнему всплывает.
+func TestSetPermitAllACLv6_RealErrorStillFails(t *testing.T) {
+	cmds, _ := newACLTestCommands(nestedACLError("argument parse error."))
+	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err == nil {
+		t.Fatal("ожидался отказ на argument parse error, получен nil")
+	}
+}

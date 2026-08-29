@@ -107,27 +107,34 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, name string) er
 // v4 («a duplicate was found for the rule being set», stand-verified
 // 2026-08-11), хотя ident другой (Network::Ip6::Acl) — поэтому IsACLDuplicate
 // годится на оба протокола и отдельного матчера не нужно.
+//
+// Дополнительная толерантность против v4: до KeeneticOS 5.01 команд
+// `ipv6 access-list`/`ipv6 access-group` не существует вовсе (isACLUnsupported).
+// Там разрешать нечего, и отказ не должен валить включение режима — issue #828.
 func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
-	err := postMutationChecked(ctx, c.poster, c.save,
+	err := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
 		"acl6 permit "+acl,
+		isACLUnsupported,
 		c.queries.RunningConfig.InvalidateAll,
 	)
 	if err != nil && !IsACLDuplicate(err) {
 		return err
 	}
-	if err := postMutationChecked(ctx, c.poster, c.save,
+	if err := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("interface %s ipv6 access-group %s in", name, acl)},
 		"acl6 bind "+acl,
+		isACLUnsupported,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll,
 	); err != nil {
 		return err
 	}
-	return postMutationChecked(ctx, c.poster, c.save,
+	return postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s auto-delete", acl)},
 		"acl6 auto-delete "+acl,
+		isACLUnsupported,
 		c.queries.RunningConfig.InvalidateAll,
 	)
 }
@@ -137,15 +144,17 @@ func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) 
 // каскадировать список.
 func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
-	unbindErr := postMutationChecked(ctx, c.poster, c.save,
+	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ipv6 access-group %s in", name, acl)},
 		"acl6 unbind "+acl,
+		isACLUnsupported,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll,
 	)
-	removeErr := postMutationChecked(ctx, c.poster, c.save,
+	removeErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": "no ipv6 access-list " + acl},
 		"acl6 remove "+acl,
+		isACLUnsupported,
 		c.queries.RunningConfig.InvalidateAll,
 	)
 	if unbindErr != nil {
