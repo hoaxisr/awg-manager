@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"strings"
 )
 
 // errProbeIPTables returns an IPTables whose probes always error — GetStatus
@@ -339,9 +340,10 @@ func TestReconcileFakeIPTun_NoMutationWhenNoDrift(t *testing.T) {
 	}
 	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
 
-	// Steady state: the pool route is PRESENT. Stub the seam → true so the
-	// drift-reconcile sees no route drift.
+	// Steady state: маршруты пула НА МЕСТЕ. Стабим ОБЕ пробы — у v6 своя
+	// (прежде re-add v6 висел на сигнале v4, и одной заглушки хватало).
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return true })
 
 	all, _ := h.store.Load()
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
@@ -381,6 +383,7 @@ func TestReconcileFakeIPTun_ReaddsRouteWhenMissing(t *testing.T) {
 
 	// Route drifted away.
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
+	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return false })
 
 	h.log.calls = nil
 
@@ -393,9 +396,10 @@ func TestReconcileFakeIPTun_ReaddsRouteWhenMissing(t *testing.T) {
 	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:OpkgTun0") {
 		t.Errorf("absent v4 route must be re-added, got %v", h.log.calls)
 	}
-	// v6 re-add is gated on the same v4-absence signal.
+	// У v6 своя проба, и здесь она застаблена в «отсутствует» явно: без стаба
+	// тест зависел бы от живого /proc/net/ipv6_route хоста, где opkgtun0 нет.
 	if !h.log.has("AddRoute6:fc00::/18:OpkgTun0") {
-		t.Errorf("v6 route must be re-added when v4 absent, got %v", h.log.calls)
+		t.Errorf("v6 route must be re-added when absent, got %v", h.log.calls)
 	}
 }
 
@@ -508,5 +512,41 @@ func TestReconcileFakeIPTun_ParkedSlotAliveEngine_RepromotesSlot(t *testing.T) {
 	st, ok := h.svc.slotSnapshot(orchestrator.SlotFakeIP)
 	if !ok || !st.Enabled {
 		t.Fatal("parked fakeip slot must be re-promoted by drift-heal while the engine is alive")
+	}
+}
+
+// F26: одиноко пропавший маршрут пула v6 лечится, даже когда v4 на месте.
+// Прежде re-add v6 висел на сигнале ОТСУТСТВИЯ v4 («ставим вместе на Enable,
+// значит и пропадают вместе» — v1-эвристика), и это давало fail-OPEN там, где
+// у v4 fail-closed: v6-трафик пула уходил в WAN мимо туннеля до тех пор, пока
+// не пропадёт заодно и v4.
+func TestReconcileFakeIPTun_PoolV6HealsWhenV4Present(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+	h.log.calls = nil
+
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return true })
+	stubFakeIPPoolRoute6Present(t, func(string, netip.Prefix) bool { return false })
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	var v6Added bool
+	for _, c := range h.log.calls {
+		if strings.HasPrefix(c, "AddRoute6:fc00::/18") {
+			v6Added = true
+		}
+		if strings.HasPrefix(c, "AddRoute:198.18") {
+			t.Fatalf("v4 на месте — переустанавливать его не должны: %v", h.log.calls)
+		}
+	}
+	if !v6Added {
+		t.Fatalf("пропавший маршрут пула v6 не восстановлен: %v", h.log.calls)
 	}
 }

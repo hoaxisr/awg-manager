@@ -73,6 +73,29 @@ func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, descri
 	return !slices.Contains(ids, ndmsName)
 }
 
+// needsReprovision — общий предикат обоих reconcile: провижининга нет, наш
+// интерфейс исчез, или на нашем номере доказанно ЧУЖОЙ живой интерфейс (иначе
+// drift-heal чинил бы чужой интерфейс).
+//
+// Ошибка пробы live не равна «интерфейс исчез»: иначе каждый сбойный тик уходил
+// бы в полный re-provision. Недоступный скан владения — тоже не повод: тут
+// работает provenForeignOpkgTun с его «не знаем ≠ чужой», и направление
+// fail-closed здесь ПРОТИВОПОЛОЖНО reuse-switch в enablePolicyTun. Подмена на
+// !ownsOpkgTun тихо гасит drift-heal: гард enableLocked схлопнется тем же
+// provenForeign, и тик не сделает вообще ничего.
+func (s *ServiceImpl) needsReprovision(ctx context.Context, st *storage.OpkgTunState, live map[int]bool, probeErr error, desc string) bool {
+	if st == nil || !st.Provisioned {
+		return true
+	}
+	if probeErr != nil {
+		return false
+	}
+	if !live[st.Index] {
+		return true
+	}
+	return s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), desc)
+}
+
 // skipForeignTeardown отвечает, надо ли ПРОПУСТИТЬ снос интерфейса, на который
 // указывает запись владения: индекс мог занять посторонний OpkgTun после смерти
 // нашего, и снос по имени убил бы чужое. Зеркало provenForeignOpkgTun-гарда на

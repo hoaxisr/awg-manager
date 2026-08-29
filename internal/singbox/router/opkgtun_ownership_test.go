@@ -624,3 +624,44 @@ func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 		})
 	}
 }
+
+// F23: скан владения ПОДКЛЮЧЁН, но упал с ошибкой — это не повод к
+// re-provision, тик обязан пойти в drift-heal.
+//
+// Гэп был именно здесь и только здесь. Ветку «скана нет вовсе» (nil) прочие
+// reconcile-тесты закрывают побочно: их харнессы OpkgTunScan не задают, и
+// подмена provenForeignOpkgTun на !ownsOpkgTun роняет их пачкой. А вот
+// подключённый-но-сбойный скан не проверял никто, хотя на проде это самый
+// вероятный случай: NDMS жив, ответ не пришёл.
+//
+// Цена ошибки — не лишний re-provision, а ПУСТОЙ тик: reconcile уходит в
+// enableLocked, чей гард схлопывается тем же provenForeign, и маршруты с ACL
+// молча перестают чиниться.
+func TestReconcile_ScanUnavailableHealsInsteadOfReprovision(t *testing.T) {
+	{
+		scanFails := func(context.Context, string) ([]string, error) {
+			return nil, errors.New("injected: scan")
+		}
+		h := newFakeIPEnableHarness(t, "")
+		if err := h.svc.Enable(context.Background()); err != nil {
+			t.Fatalf("Enable: %v", err)
+		}
+		h.log.calls = nil
+		h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+		h.svc.deps.OpkgTunScan = scanFails
+
+		all, _ := h.store.Load()
+		sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+		if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcileFakeIPTun: %v", err)
+		}
+		if len(h.log.calls) == 0 {
+			t.Fatal("тик не сделал ничего: drift-heal пропущен, re-provision схлопнулся гардом")
+		}
+		for _, c := range h.log.calls {
+			if strings.HasPrefix(c, "Create:") {
+				t.Fatalf("сбойный скан не должен вести к re-provision: %v", h.log.calls)
+			}
+		}
+	}
+}
