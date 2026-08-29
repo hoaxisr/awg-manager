@@ -57,10 +57,20 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 		}
 		defer s.transitionMu.Unlock()
 		// Проба бинаря — ДО лока стора: на промахе кэша она синхронно щупает
-		// кандидатов, и держать на этом лок стора нельзя. Сам переход
-		// «пусто → непусто» проверяется уже внутри, по той же записи, что
-		// уйдёт на диск. Тегов нет — пробы не делаем вовсе.
-		ipsetOK := len(normalized.BypassGeoIPTags) == 0 || bypassset.IsIPSetAvailable()
+		// кандидатов, и держать на этом лок стора нельзя. Щупаем ровно там,
+		// где щупал прежний код: только если переход «пусто → непусто»
+		// возможен. Авторитетную проверку перехода делает уже мутатор — по
+		// той самой записи, что уйдёт на диск.
+		ipsetOK := true
+		if len(normalized.BypassGeoIPTags) > 0 {
+			cur, err := s.deps.Settings.Get()
+			if err != nil {
+				return nil, err
+			}
+			if len(cur.SingboxRouter.BypassGeoIPTags) == 0 {
+				ipsetOK = bypassset.IsIPSetAvailable()
+			}
+		}
 		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
 			// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
 			// переходе: при уже выбранных тегах и сломанном ipset прочие правки
