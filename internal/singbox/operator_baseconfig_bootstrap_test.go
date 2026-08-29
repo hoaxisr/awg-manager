@@ -264,16 +264,52 @@ func TestSetBootstrapServer_ReportsChange(t *testing.T) {
 	}
 }
 
-// Рантайм-применение при отсутствующем 00-base.json: файла нет — молчим,
-// а не падаем (движок мог быть удалён вместе с каталогом).
-func TestOperator_ApplyBootstrapDNS_NoBaseFile(t *testing.T) {
+// Пропал только файл, каталог на месте — базу ВОССТАНАВЛИВАЕМ вместе с
+// применяемой настройкой. Прежде ApplyBootstrapDNS/ApplyClashPort здесь молча
+// выходили: настройка оставалась в settings.json, но до базы не доезжала до
+// следующего бута, — при том что ApplyLogLevel базу пересоздавал.
+func TestOperator_ApplyBootstrapDNS_NoBaseFile_RestoresIt(t *testing.T) {
 	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
-	if err := os.Remove(filepath.Join(dir, "config.d", "00-base.json")); err != nil {
+	op := NewOperator(OperatorDeps{Dir: dir, SingboxLogLevel: func() string { return "debug" }})
+	basePath := filepath.Join(dir, "config.d", "00-base.json")
+	if err := os.Remove(basePath); err != nil {
 		t.Fatal(err)
 	}
 	if err := op.ApplyBootstrapDNS("8.8.8.8"); err != nil {
-		t.Errorf("ApplyBootstrapDNS без файла = %v, want nil", err)
+		t.Fatalf("ApplyBootstrapDNS без файла = %v, want nil", err)
+	}
+	base := readBaseFixture(t, basePath)
+	if got := bootstrapServerOf(t, base); got != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8", got)
+	}
+	// Восстановленная база не должна терять прочие условно-свои скаляры.
+	logBlock, _ := base["log"].(map[string]any)
+	if lvl, _ := logBlock["level"].(string); lvl != "debug" {
+		t.Errorf("log.level = %q, want debug (настройка потеряна при восстановлении)", lvl)
+	}
+}
+
+// Нет самого config.d — движок удалён вместе с каталогом. Правка настройки не
+// должна его воскрешать: молчим и ничего не создаём. Прежде ApplyLogLevel
+// именно воскрешал.
+func TestOperator_ApplyBaseScalars_NoConfigDir_StaysSilent(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir})
+	configDir := filepath.Join(dir, "config.d")
+	if err := os.RemoveAll(configDir); err != nil {
+		t.Fatal(err)
+	}
+	for name, apply := range map[string]func() error{
+		"ApplyBootstrapDNS": func() error { return op.ApplyBootstrapDNS("8.8.8.8") },
+		"ApplyLogLevel":     func() error { return op.ApplyLogLevel("debug") },
+		"ApplyClashPort":    func() error { return op.ApplyClashPort(9091) },
+	} {
+		if err := apply(); err != nil {
+			t.Errorf("%s без каталога = %v, want nil", name, err)
+		}
+		if _, err := os.Stat(configDir); !os.IsNotExist(err) {
+			t.Fatalf("%s воскресил config.d", name)
+		}
 	}
 }
 

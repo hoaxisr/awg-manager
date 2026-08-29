@@ -128,9 +128,13 @@ type Operator struct {
 	bootstrapDNS func() string
 	// clashPort — живой доступ к Settings.SingboxClashPort, по той же причине,
 	// что и bootstrapDNS: пересоздание 00-base.json не должно терять настройку.
-	clashPort  func() int
-	configPath string
-	pidPath    string
+	clashPort func() int
+	// singboxLogLevel — то же для log.level. Раньше уровень знал только
+	// ApplyLogLevel (из аргумента), поэтому пересоздать базу умел лишь он, а
+	// mutateBase на пропавшем файле молча выходил.
+	singboxLogLevel func() string
+	configPath      string
+	pidPath         string
 
 	proc      *Process
 	validator *Validator
@@ -360,6 +364,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		log:               log,
 		bootstrapDNS:      d.BootstrapDNS,
 		clashPort:         d.ClashPort,
+		singboxLogLevel:   d.SingboxLogLevel,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,
