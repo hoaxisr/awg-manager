@@ -1132,11 +1132,18 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 }
 
 // mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
-// решить, менять ли (false — выходим без записи), записать. Запись через
-// оркестратор, когда он подключён: там валидация merged-конфига и
-// коалесцированный reload. Без оркестратора (ранний бут, тесты) — прямая
-// запись плюс reload живого процесса.
+// решить, менять ли (false — выходим без записи), записать через
+// оркестратор — там валидация merged-конфига и коалесцированный reload.
+//
+// Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP
+// (wiring_singbox.go), «раннего бута» без него не существует — все три
+// вызывающих (ApplyLogLevel/ApplyClashPort/ApplyBootstrapDNS) достижимы
+// только через HTTP-хуки (server_routes.go). Тесты поднимают оркестратор
+// сами (см. newOrchedOperator).
 func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
+	if o.orch == nil {
+		return fmt.Errorf("mutate base config: orchestrator not wired")
+	}
 	basePath := filepath.Join(o.configPath, "00-base.json")
 	var base map[string]any
 	restored := false
@@ -1180,24 +1187,12 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 		return nil
 	}
 
-	if o.orch != nil {
-		raw, err := json.MarshalIndent(base, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal 00-base.json: %w", err)
-		}
-		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-			return fmt.Errorf("save base slot: %w", err)
-		}
-		return nil
+	raw, err := json.MarshalIndent(base, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal 00-base.json: %w", err)
 	}
-
-	if err := writeJSONFile(basePath, base); err != nil {
-		return fmt.Errorf("write base file: %w", err)
-	}
-	if running, _ := o.proc.IsRunning(); running {
-		if err := o.proc.Reload(); err != nil {
-			return fmt.Errorf("reload sing-box: %w", err)
-		}
+	if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
+		return fmt.Errorf("save base slot: %w", err)
 	}
 	return nil
 }

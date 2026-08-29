@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -418,8 +419,7 @@ func TestPatchBaseLogLevel_AppliesDesiredLevel(t *testing.T) {
 }
 
 func TestOperatorApplyLogLevel_UpdatesBaseConfig(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op, _ := newOrchedOperator(t)
 	basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 	if err := op.ApplyLogLevel("warn"); err != nil {
 		t.Fatalf("ApplyLogLevel: %v", err)
@@ -439,8 +439,7 @@ func TestOperatorApplyLogLevel_UpdatesBaseConfig(t *testing.T) {
 }
 
 func TestOperatorApplyLogLevel_BrokenBaseJSONReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op, _ := newOrchedOperator(t)
 	basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 	if err := os.WriteFile(basePath, []byte("{broken"), 0o644); err != nil {
 		t.Fatal(err)
@@ -2192,5 +2191,17 @@ func TestParseTunnelLinksInput(t *testing.T) {
 	}
 	if len(res.Outbounds) != 2 {
 		t.Fatalf("outbounds=%d want 2", len(res.Outbounds))
+	}
+}
+
+func TestNewOperator_WiresEventBus(t *testing.T) {
+	// Проверяем, что конструктор корректно присваивает Bus из OperatorDeps.
+	bus := events.NewBus()
+	op := NewOperator(OperatorDeps{
+		Dir: t.TempDir(),
+		Bus: bus,
+	})
+	if op.bus != bus {
+		t.Fatalf("bus mismatch: got %p, want %p", op.bus, bus)
 	}
 }

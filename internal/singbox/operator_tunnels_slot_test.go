@@ -27,8 +27,17 @@ import (
 // зарегистрирован».
 func newOrchedOperator(t *testing.T) (*Operator, string) {
 	t.Helper()
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: t.TempDir()})
+	return op, filepath.Join(op.ConfigDir(), "10-tunnels.json")
+}
+
+// newOrchedOperatorWithDeps — как newOrchedOperator, но с произвольными
+// OperatorDeps: нужен тестам base-конфига (ApplyLogLevel/ApplyClashPort/
+// ApplyBootstrapDNS), которым важны колбэки настроек, а не значение,
+// возвращаемое хелпером-обёрткой.
+func newOrchedOperatorWithDeps(t *testing.T, deps OperatorDeps) *Operator {
+	t.Helper()
+	op := NewOperator(deps)
 	orch := singboxorch.New(op.ConfigDir(), op.Process())
 	for _, meta := range singboxorch.KnownSlots() {
 		switch meta.Slot {
@@ -44,7 +53,7 @@ func newOrchedOperator(t *testing.T) (*Operator, string) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	op.SetOrch(orch)
-	return op, filepath.Join(op.ConfigDir(), "10-tunnels.json")
+	return op
 }
 
 func TestApplyConfig_WritesSlotThroughOrchestrator(t *testing.T) {

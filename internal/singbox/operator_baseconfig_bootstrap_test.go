@@ -181,7 +181,7 @@ func TestOperator_BootstrapDNSReachesBaseConfig(t *testing.T) {
 func TestOperator_ApplyBootstrapDNS(t *testing.T) {
 	dir := t.TempDir()
 	path := baseWithServers(t, filepath.Join(dir, "config.d"), []any{bootstrapEntry("1.1.1.1")})
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir})
 
 	if err := op.ApplyBootstrapDNS("8.8.8.8"); err != nil {
 		t.Fatalf("ApplyBootstrapDNS: %v", err)
@@ -203,7 +203,7 @@ func TestOperator_ApplyBootstrapDNS(t *testing.T) {
 // адрес, а не подставлять исторический дефолт.
 func TestOperator_ApplyLogLevel_KeepsBootstrapDNS(t *testing.T) {
 	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir, BootstrapDNS: func() string { return "8.8.8.8" }})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir, BootstrapDNS: func() string { return "8.8.8.8" }})
 	basePath := filepath.Join(dir, "config.d", "00-base.json")
 	if err := os.Remove(basePath); err != nil {
 		t.Fatal(err)
@@ -270,7 +270,7 @@ func TestSetBootstrapServer_ReportsChange(t *testing.T) {
 // следующего бута, — при том что ApplyLogLevel базу пересоздавал.
 func TestOperator_ApplyBootstrapDNS_NoBaseFile_RestoresIt(t *testing.T) {
 	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir, SingboxLogLevel: func() string { return "debug" }})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir, SingboxLogLevel: func() string { return "debug" }})
 	basePath := filepath.Join(dir, "config.d", "00-base.json")
 	if err := os.Remove(basePath); err != nil {
 		t.Fatal(err)
@@ -294,7 +294,10 @@ func TestOperator_ApplyBootstrapDNS_NoBaseFile_RestoresIt(t *testing.T) {
 // именно воскрешал.
 func TestOperator_ApplyBaseScalars_NoConfigDir_StaysSilent(t *testing.T) {
 	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir})
+	// config.d сносим ПОСЛЕ подключения оркестратора: Bootstrap успевает
+	// увидеть каталог (иначе упал бы сам), проверяемое здесь молчание —
+	// про снос каталога в рантайме, уже после старта.
 	configDir := filepath.Join(dir, "config.d")
 	if err := os.RemoveAll(configDir); err != nil {
 		t.Fatal(err)
@@ -356,7 +359,7 @@ func TestOperator_BootstrapDNS_IgnoresNonIP(t *testing.T) {
 	for _, bad := range []string{"dns.google", "8.8.8.8:53", "не адрес"} {
 		t.Run(bad, func(t *testing.T) {
 			dir := t.TempDir()
-			op := NewOperator(OperatorDeps{Dir: dir, BootstrapDNS: func() string { return bad }})
+			op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir, BootstrapDNS: func() string { return bad }})
 			basePath := filepath.Join(dir, "config.d", "00-base.json")
 			if got := bootstrapServerOf(t, readBaseFixture(t, basePath)); got != "1.1.1.1" {
 				t.Errorf("свежая база: dns-bootstrap.server = %q, want 1.1.1.1", got)
@@ -378,7 +381,7 @@ func TestOperator_BootstrapDNS_IgnoresNonIP(t *testing.T) {
 func TestOperator_ApplyBootstrapDNS_DoesNotRewriteWhenUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	path := baseWithServers(t, filepath.Join(dir, "config.d"), []any{bootstrapEntry("8.8.8.8")})
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir})
 
 	before, err := os.Stat(path)
 	if err != nil {
@@ -414,7 +417,7 @@ func TestOperator_ApplyBootstrapDNS_DoesNotRewriteWhenUnchanged(t *testing.T) {
 // общему mutateBase он терялся; тест на старом коде падает паникой.
 func TestOperator_ApplyBaseScalars_NullBaseDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir})
 	basePath := filepath.Join(dir, "config.d", "00-base.json")
 	if err := os.WriteFile(basePath, []byte("null"), 0o644); err != nil {
 		t.Fatal(err)
@@ -426,5 +429,30 @@ func TestOperator_ApplyBaseScalars_NullBaseDoesNotPanic(t *testing.T) {
 	logBlock, _ := base["log"].(map[string]any)
 	if lvl, _ := logBlock["level"].(string); lvl != "debug" {
 		t.Errorf("log.level = %q, want debug", lvl)
+	}
+}
+
+// mutateBase больше не пишет 00-base.json напрямую мимо оркестратора: без
+// него правка отвергается ошибкой, а не молчаливой прямой записью плюс
+// reload (тот же класс дефекта, что уже снят в writeTunnelsSlot).
+func TestMutateBase_WithoutOrchestratorFails(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir})
+	basePath := filepath.Join(dir, "config.d", "00-base.json")
+	before, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := op.ApplyLogLevel("debug"); err == nil {
+		t.Fatal("ApplyLogLevel без оркестратора = nil, want ошибку")
+	}
+
+	after, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("00-base.json переписан без оркестратора: было %s, стало %s", before, after)
 	}
 }
