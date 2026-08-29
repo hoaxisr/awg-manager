@@ -16,10 +16,15 @@ type fakeNWGOp struct {
 	state    tunnel.StateInfo
 	starts   int
 	restores int
+
+	// Парковка Start: закрыть entered и ждать release. nil — не парковаться.
+	entered chan struct{}
+	release chan struct{}
 }
 
 func (f *fakeNWGOp) Start(context.Context, *storage.AWGTunnel) error {
 	f.starts++
+	park(f.entered, f.release)
 	return nil
 }
 func (f *fakeNWGOp) Stop(context.Context, *storage.AWGTunnel) error         { return nil }

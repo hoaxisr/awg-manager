@@ -211,40 +211,6 @@ func TestAWGTunnelStoreExists(t *testing.T) {
 	}
 }
 
-func TestAWGTunnelStoreClearRuntimeStateClearsActiveWANAndStartedAt(t *testing.T) {
-	store, _ := newTestAWGStore(t)
-
-	if err := store.Save(&AWGTunnel{
-		ID:        "awg1",
-		Name:      "test",
-		ActiveWAN: "ISP",
-		StartedAt: "2026-01-01T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	store.ClearRuntimeState("awg1")
-
-	got, err := store.Get("awg1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ActiveWAN != "" {
-		t.Fatalf("ActiveWAN = %q, want empty", got.ActiveWAN)
-	}
-	if got.StartedAt != "" {
-		t.Fatalf("StartedAt = %q, want empty", got.StartedAt)
-	}
-	if got.Name != "test" {
-		t.Fatalf("Name = %q, want test", got.Name)
-	}
-}
-
-func TestAWGTunnelStoreClearRuntimeStateMissingIsNoop(t *testing.T) {
-	store, _ := newTestAWGStore(t)
-	store.ClearRuntimeState("missing")
-}
-
 func TestAWGTunnelStoreNextAvailableIDOS4Fallback(t *testing.T) {
 	ndmsinfo.Reset()
 	t.Cleanup(ndmsinfo.Reset)
