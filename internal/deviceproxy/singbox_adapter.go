@@ -15,10 +15,10 @@ import (
 // deviceproxy, deviceproxy depends on singbox.
 //
 // Production wiring also injects the orchestrator: ApplyDeviceProxy
-// then writes its standalone fragment (30-deviceproxy.json) through
-// SlotDeviceProxy and toggles the slot via SetEnabled. When orch is
-// nil (legacy / tests), it falls back to embedding the device-proxy
-// blocks into 10-tunnels.json via Operator.ApplyConfig.
+// writes its standalone fragment (30-deviceproxy.json) through
+// SlotDeviceProxy and toggles the slot via SetEnabled. Прежний фолбэк без
+// оркестратора (device-proxy, встроенный в 10-tunnels.json) снят — без
+// оркестратора адаптер отказывает явно.
 type SingboxAdapter struct {
 	op   *singbox.Operator
 	orch *orchestrator.Orchestrator
@@ -35,8 +35,7 @@ func (a *SingboxAdapter) SetOrch(orch *orchestrator.Orchestrator) {
 	a.orch = orch
 }
 
-// ApplyDeviceProxy persists the device-proxy slot via the orchestrator
-// (production) or falls back to the legacy embedded-in-tunnels path.
+// ApplyDeviceProxy persists the device-proxy slot via the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error {
 	if a.orch != nil {
 		sbSpec := toSingboxSpec(spec)
@@ -90,7 +89,7 @@ func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec Exte
 }
 
 // ApplyDeviceProxyInstances persists multiple device-proxy instances via
-// the orchestrator (production) or falls back to the legacy embedded-in-tunnels path.
+// the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []ExternalInstanceSpec) error {
 	if a.orch != nil {
 		sbSpecs := make([]singbox.DeviceProxyInstanceSpec, 0, len(specs))

@@ -31,7 +31,9 @@ func newOrchedOperator(t *testing.T) (*Operator, string) {
 	op := NewOperator(OperatorDeps{Dir: dir})
 	orch := singboxorch.New(op.ConfigDir(), op.Process())
 	for _, meta := range singboxorch.KnownSlots() {
-		if meta.Slot != singboxorch.SlotBase && meta.Slot != singboxorch.SlotTunnels {
+		switch meta.Slot {
+		case singboxorch.SlotBase, singboxorch.SlotTunnels, singboxorch.SlotRouter:
+		default:
 			continue
 		}
 		if err := orch.Register(meta); err != nil {
@@ -70,9 +72,8 @@ func TestApplyConfig_WritesSlotThroughOrchestrator(t *testing.T) {
 // SlotTunnels не считается работой и демона не держит.
 //
 // Это НЕ проверка того, что RemoveTunnel перестал сам звать proc.Stop и
-// os.Remove: сам Operator.RemoveTunnel из теста недрайвится — o.proxyMgr
-// разыменовывает nil без NDMS-клиента (proxy.go:106), и внедрить его нечем.
-// Пока proxyMgr не станет внедряемым, эта половина правки покрытию недоступна.
+// os.Remove — её делает TestRemoveTunnel_LastOneLeavesEmptySlot ниже, через
+// шов ndmsProxies.
 func TestApplyConfig_EmptyConfigKeepsSlotFile(t *testing.T) {
 	op, slotPath := newOrchedOperator(t)
 
@@ -159,5 +160,71 @@ func TestRemoveTunnel_LastOneLeavesEmptySlot(t *testing.T) {
 	// Разбор NDMS идёт ПОСЛЕ записи конфига и не пропускается.
 	if len(proxies.removed) != 1 {
 		t.Errorf("RemoveProxy вызван %d раз, ожидался 1", len(proxies.removed))
+	}
+}
+
+// Битая ссылка в ЧУЖОМ слоте не должна запирать CRUD туннелей.
+// validateDraftLocked проверяет ссылки по всем слотам и считает
+// unknown-outbound жёсткой ошибкой, а прежний preflightConfigDir этого не
+// делал: на develop такая ссылка ломала только reload и показывалась в
+// lastReloadValidation, а туннели добавлялись и удалялись.
+//
+// Тест разборчивый: без ветки mergedAlreadyInvalid ApplyConfig возвращает
+// «validate: … unknown-outbound».
+func TestApplyConfig_ForeignDanglingRefDoesNotBlockCRUD(t *testing.T) {
+	op, slotPath := newOrchedOperator(t)
+
+	// Сосед с висячей ссылкой. Пишем через Save — он не валидирует, ровно так
+	// такой слот и заводится руками через эксперт-редактор.
+	broken := []byte(`{"route":{"rules":[{"inbound":["x"],"action":"route","outbound":"ghost"}]}}`)
+	if err := op.orch.Save(singboxorch.SlotRouter, broken); err != nil {
+		t.Fatalf("seed broken neighbour: %v", err)
+	}
+	// Валидация смотрит только на ВКЛЮЧЁННЫЕ слоты — выключенный сосед
+	// невидим, и тест был бы вакуумным.
+	if err := op.orch.SetEnabled(singboxorch.SlotRouter, true); err != nil {
+		t.Fatalf("enable neighbour slot: %v", err)
+	}
+
+	cfg := NewConfig()
+	cfg.AddTunnelWithListenPort("A", "vless", "h", 1, 0, json.RawMessage(`{"type":"vless","tag":"A"}`))
+	if err := op.ApplyConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("ApplyConfig заперт чужой висячей ссылкой: %v", err)
+	}
+	if !op.HasUserTunnels() {
+		t.Fatal("туннель не записан")
+	}
+	if _, err := os.Stat(slotPath); err != nil {
+		t.Fatalf("слот не записан: %v", err)
+	}
+}
+
+// Обратная сторона: СВОЯ поломка блокировать обязана, иначе ветка
+// mergedAlreadyInvalid вырождается в «никогда не валидировать».
+// Сосед ссылается на туннель A; пока A есть — merge валиден, и удаление A
+// ломает merge именно нашей записью.
+func TestApplyConfig_OwnBreakageStillBlocks(t *testing.T) {
+	op, _ := newOrchedOperator(t)
+
+	cfg := NewConfig()
+	cfg.AddTunnelWithListenPort("A", "vless", "h", 1, 0, json.RawMessage(`{"type":"vless","tag":"A"}`))
+	cfg.AddTunnelWithListenPort("B", "vless", "h", 2, 0, json.RawMessage(`{"type":"vless","tag":"B"}`))
+	if err := op.ApplyConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("ApplyConfig (seed): %v", err)
+	}
+
+	usesA := []byte(`{"route":{"rules":[{"inbound":["x"],"action":"route","outbound":"A"}]}}`)
+	if err := op.orch.Save(singboxorch.SlotRouter, usesA); err != nil {
+		t.Fatalf("seed neighbour: %v", err)
+	}
+	if err := op.orch.SetEnabled(singboxorch.SlotRouter, true); err != nil {
+		t.Fatalf("enable neighbour slot: %v", err)
+	}
+
+	if err := cfg.RemoveTunnel("A"); err != nil {
+		t.Fatalf("RemoveTunnel: %v", err)
+	}
+	if err := op.ApplyConfig(context.Background(), cfg); err == nil {
+		t.Fatal("ApplyConfig прошёл, хотя merge сломан НАШЕЙ записью")
 	}
 }

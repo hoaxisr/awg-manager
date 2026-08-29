@@ -633,10 +633,52 @@ func (o *Operator) writeTunnelsSlot(cfg *Config, validate bool) error {
 	if err != nil {
 		return err
 	}
-	if !res.Ok() {
-		return fmt.Errorf("validate: %s", res.Error())
+	if res.Ok() {
+		return nil
 	}
-	return nil
+	// Чужой поломкой не блокируем. validateDraftLocked проверяет ссылки
+	// ПО ВСЕМ слотам, чего прежний preflightConfigDir не делал: sing-box
+	// check висячих ссылок не видит (reload.go). Без этой ветки одна
+	// протухшая ссылка в 90-user.json — а их «мы намеренно не чиним
+	// автоматически» — заперла бы весь CRUD туннелей, хотя на develop она
+	// ломала лишь reload и показывалась в lastReloadValidation.
+	//
+	// Поэтому: невалиден ли merged-конфиг УЖЕ, без нашей записи? Если да —
+	// пишем и отдаём разбор reload'у, как раньше. Блокируем только когда
+	// сломали мы.
+	if o.mergedAlreadyInvalid() {
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Warn("apply-config", "", "merged config was already invalid before this write, saving anyway: "+res.Error())
+		}
+		return o.orch.Save(orchestrator.SlotTunnels, data)
+	}
+	return fmt.Errorf("validate: %s", res.Error())
+}
+
+// mergedAlreadyInvalid — не проходил ли merged-конфиг валидацию ещё ДО нашей
+// записи. Считается по ТЕКУЩЕМУ содержимому слота: SaveAndValidate на провале
+// активный файл не трогает, так что на диске всё ещё прежнее состояние.
+//
+// Любая неудача самой проверки — «нет, был валиден»: fail-closed, то есть
+// сомнение трактуем как «сломали мы» и отказываем вызывающему.
+func (o *Operator) mergedAlreadyInvalid() bool {
+	// Слота ещё нет (первое добавление) — спрашиваем про merge БЕЗ нашего
+	// вклада. Отсутствие нашего файла ничего не говорит о чужой поломке, и
+	// трактовать его как «сломали мы» значит запирать первое же добавление
+	// туннеля из-за протухшей ссылки соседа.
+	cur, err := o.loadConfig()
+	if err != nil {
+		cur = NewConfig()
+	}
+	data, err := json.MarshalIndent(cur, "", "  ")
+	if err != nil {
+		return false
+	}
+	res, err := o.orch.CheckMerged(orchestrator.SlotTunnels, data)
+	if err != nil {
+		return false
+	}
+	return !res.Ok()
 }
 
 // LoadCurrentConfig reads the on-disk config.json that sing-box is
