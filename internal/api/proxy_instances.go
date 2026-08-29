@@ -676,7 +676,13 @@ func (h *ProxyInstancesHandler) opkgTunSupported() bool {
 func (h *ProxyInstancesHandler) gateCheck(rec instancestore.Record) error {
 	if rec.Kind == instancestore.KindWdttServer && rec.WdttServer != nil {
 		c := rec.WdttServer
-		if strings.TrimSpace(c.NatMode) == "internet-only" && strings.TrimSpace(c.NatStaticWAN) == "" {
+		// Выход берётся через StaticNATList — тем же способом, что и
+		// roles.Validate. Читать одну legacy-одиночку нельзя: старый движок
+		// после PR #750 писал СПИСОК и явно чистил одиночку («источник правды
+		// теперь список», 722cda888), а посев переносит обе формы как есть,
+		// — такая запись валидна для рантайма, но здесь отбивалась 400 на
+		// любом PATCH, включая переименование (F59).
+		if strings.TrimSpace(c.NatMode) == "internet-only" && len(c.StaticNATList()) == 0 {
 			return &proxyGateError{code: proxyCodeConfigInvalid,
 				msg: "natMode internet-only: не выбран WAN (natStaticWan)"}
 		}
@@ -777,6 +783,18 @@ func proxyApplyConfig(rec *instancestore.Record, raw json.RawMessage) error {
 	proxyResetPresentSlices(proxyConfigPtr(rec), keys)
 	if err := json.Unmarshal(raw, proxyConfigPtr(rec)); err != nil {
 		return fmt.Errorf("невалидный конфиг роли %s: %w", rec.Kind, err)
+	}
+	// natStaticWan и natStaticWans — две формы одного поля, и присланная
+	// форма обязана стать источником правды целиком. Иначе выбор WAN в UI
+	// (фронт говорит ТОЛЬКО на одиночку) молча не вступал бы в силу:
+	// StaticNATList предпочитает список, а он остался бы от старого движка,
+	// который писал список и чистил одиночку (F59, коммит 722cda888).
+	if c := rec.WdttServer; c != nil {
+		_, sentOne := keys["natStaticWan"]
+		_, sentList := keys["natStaticWans"]
+		if sentOne && !sentList {
+			c.NatStaticWANs = nil
+		}
 	}
 	return nil
 }
