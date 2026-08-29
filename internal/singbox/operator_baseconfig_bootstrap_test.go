@@ -595,3 +595,43 @@ func TestMutateBase_WithoutOrchestratorFails(t *testing.T) {
 		t.Errorf("00-base.json переписан без оркестратора: было %s, стало %s", before, after)
 	}
 }
+
+// Не-объектный dns — чужое содержимое неизвестной формы: самолечение записи
+// НЕ должно подменять его нашей картой. Такой 00-base.json движок и так не
+// загрузит, но затирать пользовательское мы не вправе (F44, ревью ветки).
+// Литеральный null — не содержимое, а отсутствие: его достраиваем.
+//
+// Краснеет на мутации «убрать гарды has/hasServers» — dns:"user-string"
+// заменяется картой с нашей записью.
+func TestReconcileBootstrapServer_LeavesNonObjectDNSAlone(t *testing.T) {
+	t.Run("dns строкой", func(t *testing.T) {
+		base := map[string]any{"dns": "user-string"}
+		if reconcileBootstrapServer(base, "9.9.9.9") {
+			t.Fatal("не-объектный dns объявлен изменённым")
+		}
+		if base["dns"] != "user-string" {
+			t.Fatalf("чужое содержимое dns затёрто: %#v", base["dns"])
+		}
+	})
+	t.Run("servers строкой", func(t *testing.T) {
+		base := map[string]any{"dns": map[string]any{"servers": "oops"}}
+		if reconcileBootstrapServer(base, "9.9.9.9") {
+			t.Fatal("не-массивные servers объявлены изменёнными")
+		}
+		dns, _ := base["dns"].(map[string]any)
+		if dns["servers"] != "oops" {
+			t.Fatalf("чужое содержимое dns.servers затёрто: %#v", dns["servers"])
+		}
+	})
+	t.Run("dns null достраивается", func(t *testing.T) {
+		base := map[string]any{"dns": nil}
+		if !reconcileBootstrapServer(base, "9.9.9.9") {
+			t.Fatal("null-dns не достроен, ожидалось создание записи")
+		}
+		dns, _ := base["dns"].(map[string]any)
+		servers, _ := dns["servers"].([]any)
+		if len(servers) != 1 {
+			t.Fatalf("запись не создана: %#v", dns)
+		}
+	})
+}

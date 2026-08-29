@@ -585,12 +585,26 @@ func setBootstrapServer(m map[string]any, want string) bool {
 //
 // Возвращает true, если base изменена (нужна запись файла).
 func reconcileBootstrapServer(base map[string]any, want string) bool {
-	dns, _ := base["dns"].(map[string]any)
+	// Ключ есть, но это не объект (строка, число, массив) — чужое содержимое
+	// неизвестной формы. Такой 00-base.json движок не загрузит в любом случае,
+	// а подмена его нашей картой стёрла бы то, что пользователь туда положил:
+	// молча выходим, как выходил прежний setBootstrapServer. То же и для
+	// dns.servers не-массивом. Достраиваем только ОТСУТСТВУЮЩИЕ уровни;
+	// литеральный null считается отсутствием, а не чужим содержимым.
+	raw, has := base["dns"]
+	dns, _ := raw.(map[string]any)
+	if has && raw != nil && dns == nil {
+		return false
+	}
 	if dns == nil {
 		dns = map[string]any{}
 		base["dns"] = dns
 	}
-	servers, _ := dns["servers"].([]any)
+	rawServers, hasServers := dns["servers"]
+	servers, _ := rawServers.([]any)
+	if hasServers && rawServers != nil && servers == nil {
+		return false
+	}
 	for _, v := range servers {
 		s, _ := v.(map[string]any)
 		if s == nil || s["tag"] != "dns-bootstrap" {
