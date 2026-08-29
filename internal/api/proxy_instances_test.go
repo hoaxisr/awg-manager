@@ -1315,3 +1315,58 @@ func TestProxyListenMoves_Ack(t *testing.T) {
 		}
 	})
 }
+
+// F59: старый движок после PR #750 писал СПИСОК выходов static-NAT и явно
+// чистил legacy-одиночку («источник правды теперь список», 722cda888), а
+// посев переносит обе формы как есть. Такая запись валидна для рантайма
+// (roles.Validate читает StaticNATList), но gateCheck смотрел только на
+// одиночку — и любой PATCH, включая переименование, отбивался 422.
+//
+// Краснеет на мутации «вернуть в gateCheck проверку c.NatStaticWAN».
+func TestProxyInstancesPatch_GateAcceptsStaticNATList(t *testing.T) {
+	rec := fullServerRecord()
+	rec.WdttServer.NatMode = "internet-only"
+	rec.WdttServer.NatStaticWAN = ""                       // так его оставил старый движок
+	rec.WdttServer.NatStaticWANs = []string{"ISP", "ISP2"} // источник правды
+
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{rec},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default",
+		`{"name":"Новое имя"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// Продолжение F59: фронт говорит только на одиночку natStaticWan. Если при её
+// присылке оставить список от старого движка, StaticNATList продолжит
+// предпочитать список — выбор WAN в интерфейсе молча не вступит в силу.
+//
+// Краснеет на мутации «убрать обнуление NatStaticWANs в proxyApplyConfig».
+func TestProxyInstancesPatch_SingularStaticWANReplacesList(t *testing.T) {
+	rec := fullServerRecord()
+	rec.WdttServer.NatMode = "internet-only"
+	rec.WdttServer.NatStaticWAN = ""
+	rec.WdttServer.NatStaticWANs = []string{"ISP", "ISP2"}
+
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{rec},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default",
+		`{"config":{"natStaticWan":"ISP3"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+	}
+	if len(mgr.mutated) == 0 {
+		t.Fatal("запись не сохранена")
+	}
+	got := mgr.mutated[len(mgr.mutated)-1].WdttServer
+	if list := got.StaticNATList(); len(list) != 1 || list[0] != "ISP3" {
+		t.Fatalf("выбор WAN не вступил в силу: StaticNATList=%v (NatStaticWANs=%v)", list, got.NatStaticWANs)
+	}
+}
