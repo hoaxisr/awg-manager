@@ -19,8 +19,6 @@ import (
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/singbox"
-	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -54,7 +52,7 @@ func runCleanup(dataDir string) {
 	fmt.Println("awg-manager cleanup: removing all managed resources...")
 
 	settingsStore := storage.NewSettingsStore(dataDir)
-	settingsStore.Load()
+	cleanupSettings, _ := settingsStore.Load()
 
 	loggingService := logging.NewService(settingsStore)
 	defer loggingService.Stop()
@@ -143,40 +141,19 @@ func runCleanup(dataDir string) {
 	// short-circuits inside reconcile via ErrNotSupportedOnOS4).
 	dnsSvc := dnsroute.NewService(dnsStore, cleanupNDMSQueries, cleanupNDMSCommands, nil, nil)
 
-	singboxOp := singbox.NewOperator(singbox.OperatorDeps{
-		Log:                slog.Default().With("component", "singbox"),
-		Queries:            cleanupNDMSQueries,
-		Commands:           cleanupNDMSCommands,
-		SingboxLogLevel:    settingsStore.GetSingboxLogLevel,
-		IsNDMSProxyEnabled: settingsStore.IsSingboxNDMSProxyEnabled,
+	// Cleanup собирает то же sing-box-ядро тем же конструктором, что демон
+	// (buildSingboxCore); сам cleanup зовёт только singboxOp.Cleanup.
+	core := buildSingboxCore(singboxCoreDeps{
+		queries:                cleanupNDMSQueries,
+		commands:               cleanupNDMSCommands,
+		settings:               settingsStore,
+		appLog:                 loggingService,
+		bus:                    cleanupEventBus,
+		bootLog:                bootLog,
+		dataDir:                dataDir,
+		initialManuallyStopped: cleanupSettings != nil && cleanupSettings.SingboxManuallyStopped,
 	})
-
-	// Cleanup mode: bootstrap the orchestrator so any subsequent
-	// operator call that goes through ApplyConfig writes the slot
-	// file rather than the legacy in-place tunnels.json. Cleanup
-	// itself only invokes singboxOp.Cleanup, but we keep the wiring
-	// symmetrical to the daemon path so future cleanup steps have it
-	// available.
-	cleanupSingboxConfigDir := singboxOp.ConfigDir()
-	if err := singbox.MigrateDeviceProxyOutOfTunnels(cleanupSingboxConfigDir); err != nil {
-		bootLog.Warn("deviceproxy-migration", "", err.Error())
-	}
-	if _, err := singbox.MigrateRuleSetURLsToFork(cleanupSingboxConfigDir); err != nil {
-		bootLog.Warn("ruleset-fork-migration", "", err.Error())
-	}
-	if _, err := router.MigrateAddressOrRules(cleanupSingboxConfigDir); err != nil {
-		bootLog.Warn("address-or-migration", "", err.Error())
-	}
-	cleanupSbOrch := singboxorch.New(cleanupSingboxConfigDir, singboxOp.Process())
-	for _, meta := range singboxorch.KnownSlots() {
-		if err := cleanupSbOrch.Register(meta); err != nil {
-			bootLog.Error("singbox-orchestrator", string(meta.Slot), "register failed: "+err.Error())
-		}
-	}
-	if err := cleanupSbOrch.Bootstrap(); err != nil {
-		bootLog.Error("singbox-orchestrator", "bootstrap", err.Error())
-	}
-	singboxOp.SetOrch(cleanupSbOrch)
+	singboxOp := core.op
 
 	accessPolicySvc := accesspolicy.New(cleanupNDMSCommands.Policies, cleanupNDMSCommands.Interfaces, cleanupNDMSQueries, settingsStore, nil, ndmsquery.NewPolicyMarkStore(cleanupNDMSTransport, nil))
 
