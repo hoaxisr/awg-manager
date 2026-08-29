@@ -28,7 +28,7 @@ var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 // package decoupled from the operator's path layout (it just receives a string).
 func DefaultCacheDBPath() string { return defaultCacheDBPath }
 
-// ensureBaseConfigWithLogLevel writes a minimal 00-base.json if config.d is
+// ensureBaseConfig writes a minimal 00-base.json if config.d is
 // empty, so sing-box starts standalone (direct outbound + bootstrap DNS) before
 // any tunnels are added. Also surgically self-heals an older base config
 // that hard-coded the wrong Clash API port (9090 instead of ours), which
@@ -697,7 +697,7 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // FIRST-FILE-WINS across config.d (proven for route.final by
 // router_final_merge_test.go), so 00-base.json's dns.final / dns.strategy
 // always beat the user's 20-router.json values. This self-heal runs on every
-// operator init (right after ensureBaseConfigWithLogLevel) so existing on-disk
+// operator init (right after ensureBaseConfig) so existing on-disk
 // base files heal on reload. It is a boot self-heal, not a settings migration.
 // Mirrors removeFinalFromBase, which did the same for route.final.
 //
@@ -708,8 +708,8 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // (the only slot that then sets it) wins when enabled. Same observable
 // behavior as the old explicit "dns-bootstrap".
 //
-// dns.strategy сюда не относится — ею занимается отдельный шаг
-// reconcile-dns-strategy (reconcileBaseDNSStrategy): у strategy нет
+// dns.strategy сюда не относится — ею занимается reconcileDerivedDefaults:
+// у strategy нет
 // first-server fallback'а, поэтому её примирение симметрично (стрижка при
 // владении routing-слотом / восстановление дефолта без владельца).
 //

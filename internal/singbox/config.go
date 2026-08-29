@@ -26,7 +26,7 @@ type Config struct {
 
 // NewConfig returns the empty slot-shape skeleton for 10-tunnels.json:
 // inbounds + outbounds + route only. log/dns/experimental are intentionally
-// omitted — those keys belong to 00-base.json (owned by ensureBaseConfigWithLogLevel).
+// omitted — those keys belong to 00-base.json (owned by ensureBaseConfig).
 // Emitting them here used to pollute 10-tunnels.json on first tunnel-add
 // with dns-bootstrap/dns-doh tags that 00-base owns, tripping the
 // orchestrator's cross-slot duplicate-tag validator.
@@ -1153,7 +1153,7 @@ func MigrateLegacyConfigDir(dir string) error {
 }
 
 // writeJSONFile is the shared atomic JSON writer used by
-// MigrateLegacyConfigDir + ensureBaseConfigWithLogLevel. Marshals with indent for
+// MigrateLegacyConfigDir + ensureBaseConfig. Marshals with indent for
 // human-editable fragments. Uses the fsync'ed temp+rename writer so a power
 // loss mid-write cannot leave a truncated config fragment behind.
 func writeJSONFile(path string, data any) error {
