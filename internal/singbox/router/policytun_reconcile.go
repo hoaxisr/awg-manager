@@ -247,11 +247,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.deps.OpkgTunIndices != nil {
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
-	// Доказанно чужой живой индекс — тоже повод для re-provision: иначе
-	// drift-heal ниже чинил бы ЧУЖОЙ интерфейс.
-	if st == nil || !st.Provisioned || (probeErr == nil && !live[st.Index]) ||
-		(probeErr == nil && live[st.Index] &&
-			s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), policyTunDescription)) {
+	if s.needsReprovision(ctx, st, live, probeErr, policyTunDescription) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
