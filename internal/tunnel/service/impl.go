@@ -263,7 +263,7 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 		// Симметрично kernel-ветке: запись сохраняем здесь, иначе созданный
 		// в NDMS интерфейс осиротеет. Конфиг для nativewg не пишется — его
 		// никто не читает.
-		if err := s.store.Save(stored); err != nil {
+		if err := s.store.Create(stored); err != nil {
 			if derr := s.nwgOperator.Delete(ctx, stored); derr != nil {
 				s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
 			}
@@ -287,7 +287,7 @@ func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) err
 	// Никто уже не будет знать, что он наш, и никто его не уберёт: стартовый
 	// подметатель ходит только по записям, а полная уборка бывает лишь при
 	// удалении пакета.
-	if err := s.store.Save(stored); err != nil {
+	if err := s.store.Create(stored); err != nil {
 		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
 			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
 		}
@@ -700,14 +700,13 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, tunnelID string, enabled b
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
-	stored, err := s.store.Get(tunnelID)
-	if err != nil {
-		return tunnel.ErrNotFound
-	}
-
-	stored.Enabled = enabled
-
-	if err := s.store.Save(stored); err != nil {
+	if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+		t.Enabled = enabled
+		return nil
+	}); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return tunnel.ErrNotFound
+		}
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 
@@ -736,10 +735,15 @@ func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enab
 	}
 
 	oldValue := stored.DefaultRoute
-	stored.DefaultRoute = enabled
-	stored.DefaultRouteSet = true
 
-	if err := s.store.Save(stored); err != nil {
+	if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+		t.DefaultRoute = enabled
+		t.DefaultRouteSet = true
+		return nil
+	}); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return tunnel.ErrNotFound
+		}
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 
@@ -808,7 +812,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	parsed.Enabled = false
 
-	if err := s.store.Save(parsed); err != nil {
+	if err := s.store.Create(parsed); err != nil {
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
 	if err := config.WriteFile(parsed); err != nil {
@@ -860,7 +864,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 	parsed.NWGIndex = index
 
 	// Save to storage
-	if err := s.store.Save(parsed); err != nil {
+	if err := s.store.Create(parsed); err != nil {
 		_ = s.nwgOperator.Delete(ctx, parsed)
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
@@ -927,8 +931,21 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
 
-	// Save to storage
-	if err := s.store.Save(stored); err != nil {
+	// Save to storage. Мутатор присваивает уже вычисленные выше поля свежей
+	// записи под локом — сброс runtime-полей здесь осознанная часть замены
+	// конфига, а не затирание чужой параллельной правки.
+	if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+		t.Interface = stored.Interface
+		t.Peer = stored.Peer
+		t.Name = stored.Name
+		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
+		t.ActiveWAN = stored.ActiveWAN
+		t.StartedAt = stored.StartedAt
+		return nil
+	}); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return tunnel.ErrNotFound
+		}
 		return fmt.Errorf("save tunnel: %w", err)
 	}
 
@@ -1125,9 +1142,19 @@ func (s *ServiceImpl) MigrateISPInterfaceNone() {
 		return
 	}
 	for _, t := range tunnels {
-		if t.ISPInterface == "none" {
-			t.ISPInterface = ""
-			_ = s.store.Save(&t)
+		if t.ISPInterface != "none" {
+			continue
+		}
+		// Снимок List выбирает кандидатов; решение о записи мутатор
+		// принимает заново по свежей записи под локом.
+		err := s.store.Update(t.ID, func(fresh *storage.AWGTunnel) error {
+			if fresh.ISPInterface != "none" {
+				return storage.ErrNoChange
+			}
+			fresh.ISPInterface = ""
+			return nil
+		})
+		if err == nil {
 			s.logInfo("migrate", t.ID, "Migrated ISPInterface from 'none' to auto")
 		}
 	}
@@ -1141,10 +1168,16 @@ func (s *ServiceImpl) MigrateEmptyBackend() {
 		return
 	}
 	for _, t := range tunnels {
-		if t.Backend == "" {
-			t.Backend = "kernel"
-			_ = s.store.Save(&t)
+		if t.Backend != "" {
+			continue
 		}
+		_ = s.store.Update(t.ID, func(fresh *storage.AWGTunnel) error {
+			if fresh.Backend != "" {
+				return storage.ErrNoChange
+			}
+			fresh.Backend = "kernel"
+			return nil
+		})
 	}
 }
 
@@ -1164,25 +1197,39 @@ func (s *ServiceImpl) MigrateISPInterfaceToKernel() {
 		if t.Backend == "nativewg" {
 			continue
 		}
-		changed := false
-		// Migrate ISPInterface
-		if t.ISPInterface != "" && !tunnel.IsTunnelRoute(t.ISPInterface) {
-			if kernelName := s.wan.NameForID(t.ISPInterface); kernelName != "" {
-				s.logInfo("migrate", t.ID, fmt.Sprintf("ISPInterface: %s → %s", t.ISPInterface, kernelName))
-				t.ISPInterface = kernelName
-				changed = true
+		var ispFrom, ispTo, wanFrom, wanTo string
+		err := s.store.Update(t.ID, func(fresh *storage.AWGTunnel) error {
+			changed := false
+			// Migrate ISPInterface — условие и значение пересчитаны по
+			// свежей записи, а не по снимку List.
+			if fresh.ISPInterface != "" && !tunnel.IsTunnelRoute(fresh.ISPInterface) {
+				if kernelName := s.wan.NameForID(fresh.ISPInterface); kernelName != "" {
+					ispFrom, ispTo = fresh.ISPInterface, kernelName
+					fresh.ISPInterface = kernelName
+					changed = true
+				}
 			}
-		}
-		// Migrate ActiveWAN
-		if t.ActiveWAN != "" && !tunnel.IsTunnelRoute(t.ActiveWAN) {
-			if kernelName := s.wan.NameForID(t.ActiveWAN); kernelName != "" {
-				s.logInfo("migrate", t.ID, fmt.Sprintf("ActiveWAN: %s → %s", t.ActiveWAN, kernelName))
-				t.ActiveWAN = kernelName
-				changed = true
+			// Migrate ActiveWAN
+			if fresh.ActiveWAN != "" && !tunnel.IsTunnelRoute(fresh.ActiveWAN) {
+				if kernelName := s.wan.NameForID(fresh.ActiveWAN); kernelName != "" {
+					wanFrom, wanTo = fresh.ActiveWAN, kernelName
+					fresh.ActiveWAN = kernelName
+					changed = true
+				}
 			}
+			if !changed {
+				return storage.ErrNoChange
+			}
+			return nil
+		})
+		if err != nil {
+			continue
 		}
-		if changed {
-			_ = s.store.Save(&t)
+		if ispTo != "" {
+			s.logInfo("migrate", t.ID, fmt.Sprintf("ISPInterface: %s → %s", ispFrom, ispTo))
+		}
+		if wanTo != "" {
+			s.logInfo("migrate", t.ID, fmt.Sprintf("ActiveWAN: %s → %s", wanFrom, wanTo))
 		}
 	}
 }
@@ -1211,9 +1258,18 @@ func (s *ServiceImpl) HealStaleActiveWAN() {
 		if kernelIfaceExists(t.ActiveWAN) {
 			continue
 		}
-		s.logInfo("migrate", t.ID, fmt.Sprintf("Clearing stale ActiveWAN=%q (not a kernel interface)", t.ActiveWAN))
-		t.ActiveWAN = ""
-		_ = s.store.Save(&t)
+		var staleWAN string
+		err := s.store.Update(t.ID, func(fresh *storage.AWGTunnel) error {
+			if fresh.ActiveWAN == "" || tunnel.IsTunnelRoute(fresh.ActiveWAN) || kernelIfaceExists(fresh.ActiveWAN) {
+				return storage.ErrNoChange
+			}
+			staleWAN = fresh.ActiveWAN
+			fresh.ActiveWAN = ""
+			return nil
+		})
+		if err == nil {
+			s.logInfo("migrate", t.ID, fmt.Sprintf("Clearing stale ActiveWAN=%q (not a kernel interface)", staleWAN))
+		}
 	}
 }
 
