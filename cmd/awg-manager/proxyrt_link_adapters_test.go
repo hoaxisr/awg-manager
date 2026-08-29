@@ -665,13 +665,14 @@ type fakeSettings struct {
 	reconcile int
 }
 
-func (f *fakeSettings) Load() (*storage.Settings, error) {
+// Update повторяет контракт стора: мутатор правит копию, ошибка мутатора
+// отменяет запись.
+func (f *fakeSettings) Update(mut func(*storage.Settings) error) error {
 	s := &storage.Settings{}
 	s.SingboxRouter.IngressInterfaces = append([]string(nil), f.refs...)
-	return s, nil
-}
-
-func (f *fakeSettings) Save(s *storage.Settings) error {
+	if err := mut(s); err != nil {
+		return err
+	}
 	f.saved = append(f.saved, append([]string(nil), s.SingboxRouter.IngressInterfaces...))
 	f.refs = append([]string(nil), s.SingboxRouter.IngressInterfaces...)
 	return nil
