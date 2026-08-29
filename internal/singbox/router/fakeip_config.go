@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // cloneRouterConfig returns a deep copy of cfg via a JSON round-trip.
@@ -202,16 +203,14 @@ func (s *ServiceImpl) captureFakeIPRealServerEdit(before, after *RouterConfig) e
 	if err != nil {
 		return fmt.Errorf("fakeip real server: load settings: %w", err)
 	}
-	// Mutate a private copy: Load/Get hand out the store's live cache, which
-	// other goroutines read without a lock.
-	cp := *settings
-	settings = &cp
 	norm := addr.String()
 	if settings.SingboxRouter.FakeIPRealServer == norm {
 		return nil
 	}
-	settings.SingboxRouter.FakeIPRealServer = norm
-	if err := s.deps.Settings.Save(settings); err != nil {
+	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.FakeIPRealServer = norm
+		return nil
+	}); err != nil {
 		return fmt.Errorf("fakeip real server: save settings: %w", err)
 	}
 	s.appLog.Info("fakeip-dns", "real", "upstream resolver changed to "+norm)

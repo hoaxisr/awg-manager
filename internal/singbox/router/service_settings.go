@@ -56,44 +56,42 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 			return nil, ErrTransitionInProgress
 		}
 		defer s.transitionMu.Unlock()
-		settings, err := s.deps.Settings.Load()
-		if err != nil {
+		// Проба бинаря — ДО лока стора: на промахе кэша она синхронно щупает
+		// кандидатов, и держать на этом лок стора нельзя. Сам переход
+		// «пусто → непусто» проверяется уже внутри, по той же записи, что
+		// уйдёт на диск. Тегов нет — пробы не делаем вовсе.
+		ipsetOK := len(normalized.BypassGeoIPTags) == 0 || bypassset.IsIPSetAvailable()
+		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+			// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
+			// переходе: при уже выбранных тегах и сломанном ipset прочие правки
+			// настроек остаются проходимыми.
+			if len(normalized.BypassGeoIPTags) > 0 && len(cur.SingboxRouter.BypassGeoIPTags) == 0 && !ipsetOK {
+				return bypassset.ErrIPSetNotAvailable
+			}
+			// Port-slot stability: the UI contract carries no slot field, so incoming
+			// classes are re-associated with their persisted slots by DSCP before the
+			// save — otherwise every PUT would re-deal ports positionally and RST
+			// untouched classes' flows.
+			normalized.QoSClasses = reassociateQoSSlots(normalized.QoSClasses, cur.SingboxRouter.QoSClasses)
+
+			// Режим и Enabled через PUT настроек НЕ меняются: путь Save→Reconcile
+			// диспатчится по НОВОМУ режиму и не гасит ресурсы старого (см. шапку
+			// fakeip_transition.go) — принятый отсюда чужой режим оставил бы,
+			// например, tproxy-перехват жить под fakeip-tun навсегда. Смена
+			// режима — только SwitchRoutingMode (POST /mode). Поля из тела молча
+			// игнорируются (patch-семантика, как ApiKey в /settings/update).
+			normalized.RoutingMode = cur.SingboxRouter.RoutingMode
+			if normalized.RoutingMode == "" {
+				normalized.RoutingMode = stateTProxy // legacy-дефолт, как в currentState
+			}
+			normalized.Enabled = cur.SingboxRouter.Enabled
+
+			cur.SingboxRouter = normalized
+			return nil
+		}); err != nil {
 			return nil, err
 		}
-		// Мутируем локальную копию: Load/Get возвращают живой кэш стора,
-		// который параллельно читают другие горутины без лока.
-		cp := *settings
-		settings = &cp
-		// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
-		// переходе: при уже выбранных тегах и сломанном ipset прочие правки
-		// настроек остаются проходимыми.
-		if len(normalized.BypassGeoIPTags) > 0 && len(settings.SingboxRouter.BypassGeoIPTags) == 0 &&
-			!bypassset.IsIPSetAvailable() {
-			return nil, bypassset.ErrIPSetNotAvailable
-		}
-		// Port-slot stability: the UI contract carries no slot field, so incoming
-		// classes are re-associated with their persisted slots by DSCP before the
-		// save — otherwise every PUT would re-deal ports positionally and RST
-		// untouched classes' flows.
-		normalized.QoSClasses = reassociateQoSSlots(normalized.QoSClasses, settings.SingboxRouter.QoSClasses)
-
-		// Режим и Enabled через PUT настроек НЕ меняются: путь Save→Reconcile
-		// диспатчится по НОВОМУ режиму и не гасит ресурсы старого (см. шапку
-		// fakeip_transition.go) — принятый отсюда чужой режим оставил бы,
-		// например, tproxy-перехват жить под fakeip-tun навсегда. Смена
-		// режима — только SwitchRoutingMode (POST /mode). Поля из тела молча
-		// игнорируются (patch-семантика, как ApiKey в /settings/update).
-		normalized.RoutingMode = settings.SingboxRouter.RoutingMode
-		if normalized.RoutingMode == "" {
-			normalized.RoutingMode = stateTProxy // legacy-дефолт, как в currentState
-		}
-		normalized.Enabled = settings.SingboxRouter.Enabled
-
-		settings.SingboxRouter = normalized
-		if err := s.deps.Settings.Save(settings); err != nil {
-			return nil, err
-		}
-		return settings, nil
+		return s.deps.Settings.Get()
 	}()
 	if err != nil {
 		return err

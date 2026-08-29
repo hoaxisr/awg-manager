@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"sync/atomic"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -242,17 +244,11 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 // the persisted target before Enable (which dispatches by the persisted mode)
 // and to set the rollback's resting state.
 func (s *ServiceImpl) persistMode(mode string, enabled bool) error {
-	settings, err := s.deps.Settings.Load()
-	if err != nil {
-		return err
-	}
-	// Mutate a private copy: Load/Get hand out the store's live cache, which
-	// other goroutines read without a lock.
-	cp := *settings
-	settings = &cp
-	settings.SingboxRouter.RoutingMode = mode
-	settings.SingboxRouter.Enabled = enabled
-	return s.deps.Settings.Save(settings)
+	return s.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.RoutingMode = mode
+		cur.SingboxRouter.Enabled = enabled
+		return nil
+	})
 }
 
 // rollbackSwitch performs the directional fail-closed rollback (FE-spec §7.4)

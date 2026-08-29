@@ -827,14 +827,10 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// теперь набор выпиленного селектива можно снести (однократно).
 	s.destroyLegacySelectiveSetOnce(ctx)
 
-	// Mutate a private copy: `settings` still aliases the store's live cache,
-	// which other goroutines read without a lock. Copying here (and not right
-	// after Load) keeps what the narrow mutators wrote into the cache above —
-	// the copy is exactly what the old aliased Save would have persisted.
-	cp := *settings
-	settings = &cp
-	settings.SingboxRouter = sr
-	if err := s.deps.Settings.Save(settings); err != nil {
+	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter = sr
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -1407,16 +1403,10 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 		}
 	}
 
-	settings, err := s.deps.Settings.Load()
-	if err != nil {
-		return err
-	}
-	// Мутируем локальную копию: Load/Get возвращают живой кэш стора,
-	// который параллельно читают другие горутины без лока.
-	cp := *settings
-	settings = &cp
-	settings.SingboxRouter.Enabled = false
-	if err := s.deps.Settings.Save(settings); err != nil {
+	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.Enabled = false
+		return nil
+	}); err != nil {
 		return err
 	}
 
