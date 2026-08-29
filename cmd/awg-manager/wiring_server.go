@@ -139,7 +139,6 @@ func (a *app) setupServer() {
 	)
 
 	a.srv.SetSingboxOperator(a.singboxOp)
-	a.singboxOp.SetEventBus(a.eventBus)
 
 }
 

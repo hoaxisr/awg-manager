@@ -319,6 +319,9 @@ type OperatorDeps struct {
 	// (Settings.SingboxClashPort). Optional; 0 means DefaultClashPort.
 	// Issue #788, ADR 0001.
 	ClashPort func() int
+	// Bus is the event bus for publishing resource changes (SSE). Optional:
+	// every call site guards on nil (Bus.Publish itself would panic).
+	Bus *events.Bus
 }
 
 func NewOperator(d OperatorDeps) *Operator {
@@ -376,6 +379,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		processLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBProcess),
 		runtimeLogger:     logging.NewScopedLogger(d.AppLogger, logging.GroupSingbox, logging.SubSBRuntime),
 		persistManualStop: d.SetManuallyStopped,
+		bus:               d.Bus,
 	}
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
@@ -394,11 +398,6 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	return op
 }
-
-// SetEventBus wires the event bus so Operator can publish tunnel-set
-// change events consumed by deviceproxy.Service (and potentially
-// other subscribers in the future).
-func (o *Operator) SetEventBus(bus *events.Bus) { o.bus = bus }
 
 // Process exposes the underlying *Process so the orchestrator can
 // drive lifecycle (Start / Stop / Reload / IsRunning). The Process

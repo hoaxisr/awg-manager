@@ -64,6 +64,7 @@ func (a *app) setupSingbox() {
 		InitialManuallyStopped: a.settings.SingboxManuallyStopped,
 		SetManuallyStopped:     a.settingsStore.SetSingboxManuallyStopped,
 		IsNDMSProxyEnabled:     a.settingsStore.IsSingboxNDMSProxyEnabled,
+		Bus:                    a.eventBus,
 	})
 	// Если на старте флаг disabled — orphan-cleanup (после возможного
 	// обрыва прошлой MigrateOff в любой момент). Reconcile подберёт

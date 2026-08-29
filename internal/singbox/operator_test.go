@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -2190,5 +2191,17 @@ func TestParseTunnelLinksInput(t *testing.T) {
 	}
 	if len(res.Outbounds) != 2 {
 		t.Fatalf("outbounds=%d want 2", len(res.Outbounds))
+	}
+}
+
+func TestNewOperator_WiresEventBus(t *testing.T) {
+	// Проверяем, что конструктор корректно присваивает Bus из OperatorDeps.
+	bus := events.NewBus()
+	op := NewOperator(OperatorDeps{
+		Dir: t.TempDir(),
+		Bus: bus,
+	})
+	if op.bus != bus {
+		t.Fatalf("bus mismatch: got %p, want %p", op.bus, bus)
 	}
 }
