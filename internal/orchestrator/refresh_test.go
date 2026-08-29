@@ -18,8 +18,8 @@ func newTestStore(t *testing.T) *storage.AWGTunnelStore {
 		Backend:  "nativewg",
 		NWGIndex: 0,
 	}
-	if err := store.Save(tunnel); err != nil {
-		t.Fatalf("newTestStore: Save failed: %v", err)
+	if err := store.Create(tunnel); err != nil {
+		t.Fatalf("newTestStore: Create failed: %v", err)
 	}
 	return store
 }

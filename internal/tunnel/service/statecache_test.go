@@ -41,7 +41,7 @@ func newCacheTestService(t *testing.T, mgr *countingState, ttl time.Duration) *S
 		t.Fatal(err)
 	}
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, lockDir)
-	if err := store.Save(&storage.AWGTunnel{ID: "t1", Name: "t1", Enabled: true}); err != nil {
+	if err := store.Create(&storage.AWGTunnel{ID: "t1", Name: "t1", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	s := &ServiceImpl{store: store, state: mgr}
@@ -52,7 +52,7 @@ func newCacheTestService(t *testing.T, mgr *countingState, ttl time.Duration) *S
 func TestFetchRawStateByID_SkipsWdttRawBackend(t *testing.T) {
 	mgr := &countingState{}
 	s := newCacheTestService(t, mgr, 2*time.Second)
-	if err := s.store.Save(&storage.AWGTunnel{
+	if err := s.store.Create(&storage.AWGTunnel{
 		ID:      "wdttraw-default",
 		Name:    "WDTT Raw",
 		Backend: "wdtt-raw",

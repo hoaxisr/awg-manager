@@ -69,8 +69,11 @@ type LinkedCleaner interface {
 // теряется молча — осиротевшая история трафика и невидимый для фронта список.
 type TunnelImporter interface {
 	List() ([]storage.AWGTunnel, error)
-	Get(tunnelID string) (*storage.AWGTunnel, error)
-	Save(t *storage.AWGTunnel) error
+	// Update — единственная запись в существующий туннель: свежее чтение под
+	// локом хранилища → мутатор. Метода «сохранить запись целиком» здесь нет:
+	// снимок, снятый до Import и RCI, затирал бы всё, что записали в туннель
+	// тем временем.
+	Update(tunnelID string, mut func(*storage.AWGTunnel) error) error
 	Delete(ctx context.Context, tunnelID string) error
 	Import(ctx context.Context, conf, name string) (tunnelID, tunnelName string, err error)
 	Start(ctx context.Context, tunnelID string) error
@@ -499,29 +502,32 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 	}
 
 	if match := MatchingAWGTunnel(tunnels, patched); match != nil {
-		stored, err := h.deps.Tunnels.Get(match.ID)
+		changed := false
+		// Решение «менять или нет» принимается по свежей записи внутри
+		// мутатора: List выше — только выбор кандидата.
+		err := h.deps.Tunnels.Update(match.ID, func(stored *storage.AWGTunnel) error {
+			if strings.TrimSpace(stored.WdttClientID) != rec.ID {
+				stored.WdttClientID = rec.ID
+				changed = true
+			}
+			if wantName != "" && stored.Name != wantName {
+				stored.Name = wantName
+				changed = true
+			}
+			if strings.TrimSpace(stored.Peer.Endpoint) != wantEndpoint {
+				stored.Peer.Endpoint = wantEndpoint
+				changed = true
+			}
+			if !changed {
+				return storage.ErrNoChange
+			}
+			return nil
+		})
 		if err != nil {
 			response.InternalError(w, err.Error())
 			return
 		}
-		changed := false
-		if strings.TrimSpace(stored.WdttClientID) != rec.ID {
-			stored.WdttClientID = rec.ID
-			changed = true
-		}
-		if wantName != "" && stored.Name != wantName {
-			stored.Name = wantName
-			changed = true
-		}
-		if strings.TrimSpace(stored.Peer.Endpoint) != wantEndpoint {
-			stored.Peer.Endpoint = wantEndpoint
-			changed = true
-		}
 		if changed {
-			if err := h.deps.Tunnels.Save(stored); err != nil {
-				response.InternalError(w, err.Error())
-				return
-			}
 			mutated = true
 		}
 		if running {
@@ -545,13 +551,10 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 		response.Error(w, err.Error(), "WDTT_WG_IMPORT_FAILED")
 		return
 	}
-	stored, err := h.deps.Tunnels.Get(tunnelID)
-	if err != nil {
-		response.InternalError(w, err.Error())
-		return
-	}
-	stored.WdttClientID = rec.ID
-	if err := h.deps.Tunnels.Save(stored); err != nil {
+	if err := h.deps.Tunnels.Update(tunnelID, func(stored *storage.AWGTunnel) error {
+		stored.WdttClientID = rec.ID
+		return nil
+	}); err != nil {
 		response.InternalError(w, err.Error())
 		return
 	}

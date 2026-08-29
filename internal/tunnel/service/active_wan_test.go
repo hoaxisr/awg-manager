@@ -69,7 +69,7 @@ func saveTunnel(t *testing.T, store *storage.AWGTunnelStore, id string, opts ...
 	for _, fn := range opts {
 		fn(tun)
 	}
-	if err := store.Save(tun); err != nil {
+	if err := store.Create(tun); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -549,7 +549,7 @@ func TestSetDefaultRoute_RejectsWdttRawMirror(t *testing.T) {
 		DefaultRoute: false, DefaultRouteSet: true,
 		Interface: storage.AWGInterface{Address: "10.70.0.2/32", MTU: 1420},
 	}
-	if err := store.Save(mirror); err != nil {
+	if err := store.Create(mirror); err != nil {
 		t.Fatal(err)
 	}
 

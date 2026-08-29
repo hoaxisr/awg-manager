@@ -12,11 +12,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
-// seedTunnel кладёт запись прямо через Save — сидинг фикстуры, не предмет пина.
+// seedTunnel кладёт запись через Create — сидинг фикстуры, не предмет пина.
 func seedTunnel(t *testing.T, s *AWGTunnelStore, tun *AWGTunnel) {
 	t.Helper()
-	if err := s.Save(tun); err != nil {
-		t.Fatalf("seed Save: %v", err)
+	if err := s.Create(tun); err != nil {
+		t.Fatalf("seed Create: %v", err)
 	}
 }
 

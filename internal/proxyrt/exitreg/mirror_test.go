@@ -28,10 +28,7 @@ func (f *fakeStore) Get(id string) (*storage.AWGTunnel, error) {
 	}
 	t, ok := f.m[id]
 	if !ok {
-		// ФАКТ: настоящий AWGTunnelStore.Get отдаёт обычную ошибку без
-		// sentinel'а (awg_store.go:88-114). Фейк повторяет эту форму —
-		// именно она заставляет зеркало спрашивать Exists.
-		return nil, fmt.Errorf("tunnel not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, id)
 	}
 	cp := t
 	return &cp, nil
@@ -39,9 +36,35 @@ func (f *fakeStore) Get(id string) (*storage.AWGTunnel, error) {
 
 func (f *fakeStore) Exists(id string) bool { _, ok := f.m[id]; return ok }
 
-func (f *fakeStore) Save(t *storage.AWGTunnel) error {
+func (f *fakeStore) Create(t *storage.AWGTunnel) error {
+	if _, ok := f.m[t.ID]; ok {
+		return fmt.Errorf("%w: %s", storage.ErrAlreadyExists, t.ID)
+	}
 	f.saves++
 	f.m[t.ID] = *t
+	return nil
+}
+
+// Update повторяет форму настоящей транзакции: fail-closed на нечитаемой
+// записи (мутатор её не видит), ErrNoChange — nil без записи. Без этого фейк
+// разрешал бы зеркалу то, чего хранилище не разрешает.
+func (f *fakeStore) Update(id string, mut func(*storage.AWGTunnel) error) error {
+	if f.getErr != nil {
+		return f.getErr
+	}
+	t, ok := f.m[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", storage.ErrNotFound, id)
+	}
+	cp := t
+	if err := mut(&cp); err != nil {
+		if errors.Is(err, storage.ErrNoChange) {
+			return nil
+		}
+		return err
+	}
+	f.saves++
+	f.m[id] = cp
 	return nil
 }
 
@@ -193,7 +216,7 @@ func TestMirrorRefusesUnreadableRecord(t *testing.T) {
 		t.Fatalf("причина отказа обязана нести исходную ошибку: %v", err)
 	}
 	if st.saves != before {
-		t.Fatal("на нечитаемой записи писатель не имеет права на Save")
+		t.Fatal("на нечитаемой записи писатель не имеет права на запись")
 	}
 	if len(st.deleted) != 0 {
 		t.Fatal("нечитаемая запись не удаляется: она не осиротела, она не прочиталась")
@@ -291,11 +314,18 @@ func (f *failingStore) ListStrict() ([]storage.AWGTunnel, error) {
 	return f.fakeStore.ListStrict()
 }
 
-func (f *failingStore) Save(t *storage.AWGTunnel) error {
+func (f *failingStore) Create(t *storage.AWGTunnel) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
-	return f.fakeStore.Save(t)
+	return f.fakeStore.Create(t)
+}
+
+func (f *failingStore) Update(id string, mut func(*storage.AWGTunnel) error) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	return f.fakeStore.Update(id, mut)
 }
 
 func (f *failingStore) Delete(id string) error {
@@ -442,7 +472,7 @@ func newMirrorStore(t *testing.T) (*storage.AWGTunnelStore, string) {
 func TestOwnedFailsWhenAnyRecordUnreadable(t *testing.T) {
 	st, dir := newMirrorStore(t)
 	m := NewStoreMirror(st, nil)
-	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+	if err := st.Create(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{нет"), 0o644); err != nil {
@@ -456,7 +486,7 @@ func TestOwnedFailsWhenAnyRecordUnreadable(t *testing.T) {
 func TestSweepRemovesNothingWhenListingFails(t *testing.T) {
 	st, dir := newMirrorStore(t)
 	m := NewStoreMirror(st, nil)
-	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+	if err := st.Create(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{нет"), 0o644); err != nil {
@@ -499,7 +529,7 @@ func TestZeroStaleAddressesOnlyTouchesRawBackend(t *testing.T) {
 	awg := &storage.AWGTunnel{ID: "awg1", Type: "awg",
 		Interface: storage.AWGInterface{Address: "10.8.0.2/24"}}
 	for _, rec := range []*storage.AWGTunnel{raw, awg} {
-		if err := st.Save(rec); err != nil {
+		if err := st.Create(rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -520,7 +550,7 @@ func TestZeroStaleAddressesOnlyTouchesRawBackend(t *testing.T) {
 func TestZeroStaleAddressesSkipsAlreadyEmpty(t *testing.T) {
 	st, dir := newMirrorStore(t)
 	m := NewStoreMirror(st, nil)
-	if err := st.Save(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
+	if err := st.Create(&storage.AWGTunnel{ID: "wdttraw-de", Type: "awg", Backend: "wdtt-raw"}); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(filepath.Join(dir, "wdttraw-de.json"))

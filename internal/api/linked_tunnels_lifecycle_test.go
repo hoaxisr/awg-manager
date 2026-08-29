@@ -18,7 +18,7 @@ func TestSyncLinkedAwgTunnelEndpoints(t *testing.T) {
 		FreeTurnClientID: "client-a",
 		Peer:             storage.AWGPeer{Endpoint: "127.0.0.1:9000"},
 	}
-	if err := store.Save(tun); err != nil {
+	if err := store.Create(tun); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,7 +55,7 @@ func TestSyncLinkedAwgTunnelNames(t *testing.T) {
 		Name:             "Old FT",
 		FreeTurnClientID: "client-a",
 	}
-	if err := store.Save(tun); err != nil {
+	if err := store.Create(tun); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,7 +93,7 @@ func TestSyncLinkedProxyEndpointsByField(t *testing.T) {
 		{ID: "awgm1", Name: "FT", FreeTurnClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
 		{ID: "awgm2", Name: "WD", WdttClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
 	} {
-		if err := store.Save(tun); err != nil {
+		if err := store.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -197,7 +197,7 @@ func proxyStateStore(t *testing.T) *storage.AWGTunnelStore {
 		{ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a", Backend: backendWdttRaw},
 		{ID: "awgm-ft", Name: "FT", FreeTurnClientID: "client-a", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9001"}},
 	} {
-		if err := store.Save(tun); err != nil {
+		if err := store.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -295,12 +295,11 @@ func TestSetLinkedProxyTunnelsStateUnknownField(t *testing.T) {
 // linked_tunnels_lifecycle.go:253-254).
 func TestSyncLinkedProxyEndpointsSkipsMirror(t *testing.T) {
 	store := proxyStateStore(t)
-	mirror := &storage.AWGTunnel{
-		ID: "wdttraw-client-a", Name: "RAW", WdttClientID: "client-a",
-		Backend: backendWdttRaw,
-		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},
-	}
-	if err := store.Save(mirror); err != nil {
+	// Зеркало уже посеяно фикстурой — здесь ему дописывается адрес реле.
+	if err := store.Update("wdttraw-client-a", func(mirror *storage.AWGTunnel) error {
+		mirror.Peer.Endpoint = "vps.example:56003"
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -342,7 +341,7 @@ func TestTunnelLinkedToFreeTurnClient(t *testing.T) {
 func TestSyncLinkedAwgTunnelEndpoints_KeepsConcurrentRuntimeWrites(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID: "awgm1", Name: "FT", FreeTurnClientID: "client-a",
 		Enabled: true, ActiveWAN: "ISP", StartedAt: "2026-08-29T10:00:00Z",
 		Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"},

@@ -23,7 +23,7 @@ func TestGet_WdttRawCard(t *testing.T) {
 	// Ни одно поле фикстуры не совпадает с дефолтом ветки: Enabled=false дал
 	// бы "stopped" сам собой, пустой RawKernelIface — подстановку id, а
 	// заданный ConnectivityCheck отличает чтение записи от дефолта "http".
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:                "wdttraw-de",
 		Name:              "Германия",
 		Backend:           backendWdttRaw,
@@ -86,7 +86,7 @@ func rawUpdateStore(t *testing.T) *storage.AWGTunnelStore {
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        backendWdttRaw,
@@ -312,7 +312,7 @@ func rawDeleteEnv(t *testing.T, clientIDs ...string) (*TunnelsHandler, *storage.
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        backendWdttRaw,

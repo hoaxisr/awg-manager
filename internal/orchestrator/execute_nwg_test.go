@@ -49,7 +49,7 @@ func reconcileFixture(t *testing.T, info tunnel.StateInfo) (*Orchestrator, *fake
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{ID: "awg0", Name: "awg0", Backend: "nativewg"}); err != nil {
+	if err := store.Create(&storage.AWGTunnel{ID: "awg0", Name: "awg0", Backend: "nativewg"}); err != nil {
 		t.Fatalf("save tunnel: %v", err)
 	}
 	op := &fakeNWGOp{state: info}

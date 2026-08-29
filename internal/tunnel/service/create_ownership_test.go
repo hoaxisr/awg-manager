@@ -143,7 +143,7 @@ func TestCreateNoRollbackWhenResourceFails(t *testing.T) {
 func TestCreateRejectsDuplicate(t *testing.T) {
 	op := &createOp{}
 	s, _, _ := serviceForCreate(t, op)
-	if err := s.store.Save(kernelRecord()); err != nil {
+	if err := s.store.Create(kernelRecord()); err != nil {
 		t.Fatal(err)
 	}
 

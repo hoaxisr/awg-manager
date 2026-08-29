@@ -3,6 +3,7 @@ package wdttlink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -92,26 +93,25 @@ func (f *fakeTunnels) List() ([]storage.AWGTunnel, error) {
 	return out, nil
 }
 
-func (f *fakeTunnels) Get(id string) (*storage.AWGTunnel, error) {
+// Update повторяет форму настоящей транзакции: мутатор видит свежую копию,
+// ErrNoChange — nil без записи. saved копит ровно то, что легло бы на диск.
+func (f *fakeTunnels) Update(id string, mut func(*storage.AWGTunnel) error) error {
 	for i := range f.tunnels {
-		if f.tunnels[i].ID == id {
-			t := f.tunnels[i]
-			return &t, nil
+		if f.tunnels[i].ID != id {
+			continue
 		}
-	}
-	return nil, fmt.Errorf("туннель %s не найден", id)
-}
-
-func (f *fakeTunnels) Save(t *storage.AWGTunnel) error {
-	f.saved = append(f.saved, *t)
-	for i := range f.tunnels {
-		if f.tunnels[i].ID == t.ID {
-			f.tunnels[i] = *t
-			return nil
+		cp := f.tunnels[i]
+		if err := mut(&cp); err != nil {
+			if errors.Is(err, storage.ErrNoChange) {
+				return nil
+			}
+			return err
 		}
+		f.tunnels[i] = cp
+		f.saved = append(f.saved, cp)
+		return nil
 	}
-	f.tunnels = append(f.tunnels, *t)
-	return nil
+	return fmt.Errorf("%w: %s", storage.ErrNotFound, id)
 }
 
 func (f *fakeTunnels) Delete(_ context.Context, id string) error {

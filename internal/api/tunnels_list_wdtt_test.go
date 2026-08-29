@@ -55,7 +55,7 @@ func (s *listSvcStub) SetSelfCreateGate(tunnel.SelfCreateGater)                 
 func TestList_ExposesWdttClientID(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:           "awg-wd",
 		Name:         "WD",
 		WdttClientID: "client-a",
@@ -104,7 +104,7 @@ func TestList_ExposesWdttClientID(t *testing.T) {
 func TestList_IncludesWdttRawMirror(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        backendWdttRaw,

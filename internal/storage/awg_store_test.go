@@ -33,7 +33,7 @@ func TestAWGTunnelStoreListMissingDirReturnsEmptySlice(t *testing.T) {
 	}
 }
 
-func TestAWGTunnelStoreSaveDefaultsTypeAndDoesNotEscapeHTML(t *testing.T) {
+func TestAWGTunnelStoreCreateDefaultsTypeAndDoesNotEscapeHTML(t *testing.T) {
 	store, dataDir := newTestAWGStore(t)
 
 	tun := &AWGTunnel{
@@ -44,12 +44,12 @@ func TestAWGTunnelStoreSaveDefaultsTypeAndDoesNotEscapeHTML(t *testing.T) {
 		},
 	}
 
-	if err := store.Save(tun); err != nil {
-		t.Fatalf("Save() error = %v", err)
+	if err := store.Create(tun); err != nil {
+		t.Fatalf("Create() error = %v", err)
 	}
 
 	if tun.Type != "awg" {
-		t.Fatalf("Save() mutated Type = %q, want awg", tun.Type)
+		t.Fatalf("Create() mutated Type = %q, want awg", tun.Type)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(dataDir, "awg1.json"))
@@ -170,7 +170,7 @@ func TestAWGTunnelStoreListSkipsNonJSONDirsAndInvalidJSON(t *testing.T) {
 func TestAWGTunnelStoreDeleteRemovesFile(t *testing.T) {
 	store, dataDir := newTestAWGStore(t)
 
-	if err := store.Save(&AWGTunnel{ID: "awg1", Name: "test"}); err != nil {
+	if err := store.Create(&AWGTunnel{ID: "awg1", Name: "test"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,15 +199,15 @@ func TestAWGTunnelStoreExists(t *testing.T) {
 	store, _ := newTestAWGStore(t)
 
 	if store.Exists("awg1") {
-		t.Fatal("Exists() = true before Save, want false")
+		t.Fatal("Exists() = true before Create, want false")
 	}
 
-	if err := store.Save(&AWGTunnel{ID: "awg1", Name: "test"}); err != nil {
+	if err := store.Create(&AWGTunnel{ID: "awg1", Name: "test"}); err != nil {
 		t.Fatal(err)
 	}
 
 	if !store.Exists("awg1") {
-		t.Fatal("Exists() = false after Save, want true")
+		t.Fatal("Exists() = false after Create, want true")
 	}
 }
 
@@ -217,13 +217,13 @@ func TestAWGTunnelStoreNextAvailableIDOS4Fallback(t *testing.T) {
 
 	store, _ := newTestAWGStore(t)
 
-	if err := store.Save(&AWGTunnel{ID: "awgm0", Name: "zero"}); err != nil {
+	if err := store.Create(&AWGTunnel{ID: "awgm0", Name: "zero"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save(&AWGTunnel{ID: "awgm2", Name: "two"}); err != nil {
+	if err := store.Create(&AWGTunnel{ID: "awgm2", Name: "two"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save(&AWGTunnel{ID: "awg10", Name: "os5-style"}); err != nil {
+	if err := store.Create(&AWGTunnel{ID: "awg10", Name: "os5-style"}); err != nil {
 		t.Fatal(err)
 	}
 

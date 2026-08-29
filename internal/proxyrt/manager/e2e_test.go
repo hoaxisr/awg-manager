@@ -97,7 +97,7 @@ func keepPin(owner string, pinned int, havePin bool) (int, error) {
 
 func saveTunnel(t *testing.T, st *storage.AWGTunnelStore, rec *storage.AWGTunnel) {
 	t.Helper()
-	if err := st.Save(rec); err != nil {
+	if err := st.Create(rec); err != nil {
 		t.Fatal(err)
 	}
 }

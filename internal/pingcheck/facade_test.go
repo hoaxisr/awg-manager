@@ -60,7 +60,7 @@ func saveTunnel(t *testing.T, store *storage.AWGTunnelStore, id, name, backend s
 		Backend:   backend,
 		PingCheck: pc,
 	}
-	if err := store.Save(tun); err != nil {
+	if err := store.Create(tun); err != nil {
 		t.Fatalf("save tunnel %s: %v", id, err)
 	}
 }

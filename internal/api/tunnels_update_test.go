@@ -265,7 +265,7 @@ func TestMergePeerWhitelist_PSKCleared(t *testing.T) {
 
 // stubTunnelSvc — минимальный TunnelService для тестов Update-хэндлера.
 // Get возвращает ошибку: BuildTunnelResponse тогда отдаёт UPDATE_FAILED,
-// но это ПОСЛЕ store.Save — ассерты идут по стору, код ответа не важен.
+// но это ПОСЛЕ записи в стор — ассерты идут по стору, код ответа не важен.
 type stubTunnelSvc struct {
 	updateFn func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 	deleteFn func(ctx context.Context, tunnelID string) error
@@ -347,7 +347,7 @@ func newTunnelsUpdateHarness(t *testing.T, stub *stubTunnelSvc) (*TunnelsHandler
 
 func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {
 	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID: "awg10", Name: "t1", Enabled: true,
 		StartedAt: "2026-08-18T10:00:00Z", ActiveWAN: "ISP",
 		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
@@ -375,7 +375,7 @@ func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {
 func TestTunnelUpdate_KeepsConcurrentRuntimeWrites(t *testing.T) {
 	stub := &stubTunnelSvc{}
 	h, store := newTunnelsUpdateHarness(t, stub)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID: "awg10", Name: "t1", Enabled: true,
 		StartedAt: "2026-08-18T10:00:00Z", ActiveWAN: "ISP",
 		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
@@ -384,14 +384,12 @@ func TestTunnelUpdate_KeepsConcurrentRuntimeWrites(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	stub.updateFn = func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
-		fresh, err := store.Get("awg10")
-		if err != nil {
-			return err
-		}
-		fresh.ActiveWAN = "Wireguard2"           // WAN-failover в окне
-		fresh.StartedAt = "2026-08-18T11:00:00Z" // рестарт pingcheck'ом
-		fresh.Enabled = false                    // suspend оркестратором
-		return store.Save(fresh)
+		return store.Update("awg10", func(fresh *storage.AWGTunnel) error {
+			fresh.ActiveWAN = "Wireguard2"           // WAN-failover в окне
+			fresh.StartedAt = "2026-08-18T11:00:00Z" // рестарт pingcheck'ом
+			fresh.Enabled = false                    // suspend оркестратором
+			return nil
+		})
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
@@ -417,7 +415,7 @@ func TestTunnelDelete_OperationInProgressIs409(t *testing.T) {
 		return fmt.Errorf("%w (awg11)", tunnel.ErrOperationInProgress)
 	}}
 	h, store := newTunnelsUpdateHarness(t, stub)
-	if err := store.Save(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+	if err := store.Create(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -451,7 +449,7 @@ func TestTunnelReplaceConf_OperationInProgressIs409(t *testing.T) {
 		},
 	}
 	h, store := newTunnelsUpdateHarness(t, stub)
-	if err := store.Save(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+	if err := store.Create(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
