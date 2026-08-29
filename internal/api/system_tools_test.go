@@ -30,7 +30,7 @@ func newSystemToolsForTest(t *testing.T, level string) (*SystemToolsHandler, str
 		t.Fatalf("seed settings: %v", err)
 	}
 	st.UsageLevel = level
-	if err := store.Save(st); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *st; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 

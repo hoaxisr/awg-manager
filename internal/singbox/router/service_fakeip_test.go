@@ -193,7 +193,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	}
 	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: "fakeip-tun", WANAutoDetect: true,
 		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -479,7 +479,7 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 		t.Fatalf("normalize: %v", err)
 	}
 	all.SingboxRouter = normalized
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -1391,7 +1391,7 @@ func TestDisableFakeIPTun_NotProvisioned(t *testing.T) {
 	// flips it.
 	all, _ := h.store.Load()
 	all.SingboxRouter.Enabled = true
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	h.log.calls = nil
@@ -1464,7 +1464,7 @@ func TestDisableFakeIPTun_DispatchOnRawModeDespiteNormalizeError(t *testing.T) {
 	if _, err := NormalizeSingboxRouterSettings(all.SingboxRouter); err == nil {
 		t.Fatal("test precondition: DeviceMode bogus must make Normalize error")
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

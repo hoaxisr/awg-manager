@@ -175,13 +175,11 @@ func TestDatRuleSetFile_StaleFormatVersionRecompiles(t *testing.T) {
 
 func TestDatRuleSetURL_UsesLocalhostPortAndToken(t *testing.T) {
 	settings := newTestSettingsStore(t, storage.SingboxRouterSettings{})
-	all, err := settings.Get()
-	if err != nil {
-		t.Fatalf("settings.Get: %v", err)
-	}
-	all.Server.Port = 3456
-	if err := settings.Save(all); err != nil {
-		t.Fatalf("settings.Save: %v", err)
+	if err := settings.Update(func(cur *storage.Settings) error {
+		cur.Server.Port = 3456
+		return nil
+	}); err != nil {
+		t.Fatalf("settings.Update: %v", err)
 	}
 
 	svc := &ServiceImpl{deps: Deps{

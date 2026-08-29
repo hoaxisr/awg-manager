@@ -90,7 +90,7 @@ func TestUpdate_SingboxLogLevelPartialPreservesOtherLoggingFields(t *testing.T) 
 	seed.Logging.AppMaxEntries = 6000
 	seed.Logging.SingboxMaxEntries = 7000
 	seed.Logging.SingboxLogLevel = "trace"
-	if err := store.Save(&seed); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = seed; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestUpdate_SingboxLogLevelUnchanged_ApplyCallbackNotCalled(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 	current, _ := store.Get()
 	current.Logging.SingboxLogLevel = "trace"
-	if err := store.Save(current); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *current; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestUpdateUsageLevelEmptyPreserves(t *testing.T) {
 	current, _ := store.Get()
 	seed := *current
 	seed.UsageLevel = storage.UsageLevelExpert
-	if err := store.Save(&seed); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = seed; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestUpdate_PartialPayload_PreservesOmittedFields(t *testing.T) {
 	seed.ApiKey = "seeded-key"
 	seed.Server.Port = 3333
 	seed.UsageLevel = storage.UsageLevelExpert
-	if err := store.Save(&seed); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = seed; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -314,7 +314,7 @@ func TestUpdate_AuthEnabledFalse_NotReverted(t *testing.T) {
 	current, _ := store.Get()
 	seed := *current
 	seed.AuthEnabled = true
-	if err := store.Save(&seed); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = seed; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -375,7 +375,7 @@ func TestUpdate_ApiKeyExplicitEmpty_Preserved(t *testing.T) {
 	current, _ := store.Get()
 	seed := *current
 	seed.ApiKey = "preexisting-key"
-	if err := store.Save(&seed); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = seed; return nil }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

@@ -302,7 +302,7 @@ func TestReconcile_DispatchesPolicyTun(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	all, _ := h.store.Load()
 	all.SingboxRouter.IngressInterfaces = []string{"iface:nwg3"}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	provisionPolicyTunForReconcile(t, h)
@@ -440,7 +440,7 @@ func TestReconcilePolicyTun_EnsuresIngress(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	all, _ := h.store.Load()
 	all.SingboxRouter.IngressInterfaces = []string{"iface:nwg3"}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	sr := provisionPolicyTunForReconcile(t, h)
@@ -643,7 +643,7 @@ func TestReconcilePolicyTun_QoSClassesRemoved_Uninstalls(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
@@ -655,7 +655,7 @@ func TestReconcilePolicyTun_QoSClassesRemoved_Uninstalls(t *testing.T) {
 	// Пользователь удалил классы: сохраняем настройки без них и гоним reconcile.
 	all, _ = h.store.Load()
 	all.SingboxRouter.QoSClasses = nil
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
@@ -688,7 +688,7 @@ func TestReconcilePolicyTun_QoSClassesChanged_Reinstalls(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
@@ -701,7 +701,7 @@ func TestReconcilePolicyTun_QoSClassesChanged_Reinstalls(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 26, Name: "Video", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
@@ -748,7 +748,7 @@ func TestReconcilePolicyTun_QoSChainsWiped_Reinstalls(t *testing.T) {
 		all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 			{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 		}
-		if err := h.store.Save(all); err != nil {
+		if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
 		h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })
@@ -985,7 +985,7 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	// Выключенный движок не светит ни одного policy-tun поля (урок PE-G).
 	all, _ := h.store.Load()
 	all.SingboxRouter.Enabled = false
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	st3, err := h.svc.GetStatus(context.Background())
@@ -1201,7 +1201,7 @@ func policyTunQoSSpecInputHarness(t *testing.T) (*policyTunEnableHarness, *fakeW
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	wan := &fakeWANIPCollector{ips: []string{"203.0.113.1/32"}}
@@ -1238,7 +1238,7 @@ func TestReconcilePolicyTun_QoSBypassPortsChanged_Reinstalls(t *testing.T) {
 
 	all, _ := h.store.Load()
 	all.SingboxRouter.BypassExtraPorts = "5555 UDP"
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
@@ -1264,7 +1264,7 @@ func TestReconcilePolicyTun_QoSBypassSubnetsChanged_Reinstalls(t *testing.T) {
 
 	all, _ := h.store.Load()
 	all.SingboxRouter.BypassExtraSubnets = "10.9.9.0/24"
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)

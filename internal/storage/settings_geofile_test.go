@@ -14,7 +14,7 @@ func TestGeoFileSettings_RoundTrip(t *testing.T) {
 	}
 	cur, _ := s.Get()
 	cur.GeoFile = GeoFileSettings{AutoRefreshEnabled: true, RefreshIntervalHours: 6, RefreshMode: "interval"}
-	if err := s.Save(cur); err != nil {
+	if err := s.save(cur); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	s2 := NewSettingsStore(dir)

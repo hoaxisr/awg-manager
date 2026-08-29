@@ -96,7 +96,7 @@ func TestReconcileFakeIPTun_DisabledDisables(t *testing.T) {
 	// Flip persisted Enabled=false so reconcile takes the Disable arm.
 	all, _ := h.store.Load()
 	all.SingboxRouter.Enabled = false
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

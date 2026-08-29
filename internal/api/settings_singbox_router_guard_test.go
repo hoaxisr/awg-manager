@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Вторая дверь к смене режима: SettingsPatch.SingboxRouter копируется
@@ -25,8 +27,8 @@ func TestUpdate_SingboxRouterModeAndEnabledIgnored(t *testing.T) {
 	cp := *all
 	cp.SingboxRouter.RoutingMode = "tproxy"
 	cp.SingboxRouter.Enabled = true
-	if err := store.Save(&cp); err != nil {
-		t.Fatalf("seed Save: %v", err)
+	if err := store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil {
+		t.Fatalf("seed Update: %v", err)
 	}
 
 	body := []byte(`{"singboxRouter":{"routingMode":"fakeip-tun","enabled":false,"bypassExtraPorts":"8080 TCP"}}`)

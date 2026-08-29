@@ -72,7 +72,7 @@ func TestDownloadSettingsRouteProvider_UsesStoredTag(t *testing.T) {
 		t.Fatalf("load settings: %v", err)
 	}
 	st.Download.RouteTag = "awg-test"
-	if err := store.Save(st); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *st; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 	p := downloader.NewSettingsRouteProvider(store)
@@ -86,7 +86,7 @@ func TestDownloadSettingsRouteProvider_UsesStoredTag(t *testing.T) {
 
 	// Ensure empty value is normalized to direct.
 	st.Download.RouteTag = ""
-	if err := store.Save(st); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *st; return nil }); err != nil {
 		t.Fatalf("save empty routeTag: %v", err)
 	}
 	route, err = p.GetDownloadRoute(context.Background())

@@ -164,7 +164,7 @@ func setTestBypassTags(t *testing.T, store *storage.SettingsStore, tags []string
 		t.Fatalf("settingsStore.Load: %v", err)
 	}
 	all.SingboxRouter.BypassGeoIPTags = tags
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("settingsStore.Save: %v", err)
 	}
 }

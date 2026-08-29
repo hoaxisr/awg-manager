@@ -94,7 +94,7 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 	}
 	all.SingboxRouter = storage.SingboxRouterSettings{RoutingMode: statePolicyTun, WANAutoDetect: true,
 		FakeIPPool6: DefaultFakeIPTunParams().Inet6Range}
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -149,7 +149,7 @@ func (h *policyTunEnableHarness) withPolicy(t *testing.T, name string) *fakeAcce
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.PolicyName = name
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	pol := &fakeAccessPolicyProvider{}
@@ -459,7 +459,7 @@ func TestPolicyTunEnable_RollbackRestoresPreviousPersist(t *testing.T) {
 	}
 	all.SingboxRouter.PolicyTunSourcePreserve = true
 	all.SingboxRouter.PolicyTunNATSegments = []string{"Home"}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -525,7 +525,7 @@ func TestPolicyTunEnable_QoSInstallsDSCPOnlyChains(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	var restoreInput string
@@ -572,7 +572,7 @@ func TestPolicyTunEnable_QoSSkippedWhenTProxyUnavailable(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	installs := 0
@@ -720,7 +720,7 @@ func TestPolicyTunEnable_IngressWithoutDNAT(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.IngressInterfaces = []string{"iface:nwg3"}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -751,7 +751,7 @@ func TestPolicyTunEnable_PermitACLv6FollowsAddress(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.FakeIPPool6 = "fdfe:dcba:9876::/48"
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -775,7 +775,7 @@ func TestPolicyTunEnable_IgnoresFakeIPMTU(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.FakeIPMTU = 9000
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

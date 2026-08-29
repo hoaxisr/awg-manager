@@ -18,7 +18,7 @@ func singboxHandlerWithRouter(t *testing.T, mode string, enabled bool) *SingboxH
 	}
 	st.SingboxRouter.RoutingMode = mode
 	st.SingboxRouter.Enabled = enabled
-	if err := store.Save(st); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *st; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 	h := NewSingboxHandler(nil, nil, nil, nil)

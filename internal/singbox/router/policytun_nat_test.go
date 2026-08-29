@@ -467,7 +467,7 @@ func armSourcePreserve(t *testing.T, h *policyTunEnableHarness, segs []string) *
 	}
 	all.SingboxRouter.PolicyTunSourcePreserve = true
 	all.SingboxRouter.PolicyTunNATSegments = segs
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	state := &fakeNATState{nat: []query.NATEntry{{Interface: "Home"}}}
@@ -554,7 +554,7 @@ func setSourcePreserve(t *testing.T, h *policyTunEnableHarness, on bool, segs []
 	}
 	all.SingboxRouter.PolicyTunSourcePreserve = on
 	all.SingboxRouter.PolicyTunNATSegments = segs
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 }

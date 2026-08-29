@@ -736,8 +736,12 @@ func (s *SettingsStore) DeleteServerPeerSecret(serverID, pubkey string) error {
 	return s.saveUnlocked(s.settings)
 }
 
-// Save writes settings to disk.
-func (s *SettingsStore) Save(settings *Settings) error {
+// save публикует переданный объект как новый кэш и пишет его на диск.
+// НЕ экспортируется намеренно: писать настройки снаружи можно только через
+// Update (копия под локом) или через узкий мутатор. Публичный Save требовал от
+// каждого вызывающего помнить, что Load/Get отдают живой кэш и мутировать надо
+// копию — контракт, невидимый в сигнатуре и потому регулярно нарушавшийся.
+func (s *SettingsStore) save(settings *Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.saveUnlocked(settings)

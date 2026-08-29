@@ -594,7 +594,7 @@ func newAutoInstallTestSettings(t *testing.T, enabled bool) *storage.SettingsSto
 	settings.Updates.AutoInstallEnabled = enabled
 	settings.Updates.AutoInstallIntervalDays = 7
 	settings.Updates.AutoInstallTime = "05:00"
-	if err := store.Save(settings); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *settings; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return store

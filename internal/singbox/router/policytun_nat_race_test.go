@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // seedSourcePreserveCopy — как setSourcePreserve, но правит КОПИЮ настроек:
@@ -21,7 +22,7 @@ func seedSourcePreserveCopy(t *testing.T, h *policyTunEnableHarness, segs []stri
 	cp := *all
 	cp.SingboxRouter.PolicyTunSourcePreserve = true
 	cp.SingboxRouter.PolicyTunNATSegments = segs
-	if err := h.store.Save(&cp); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 }

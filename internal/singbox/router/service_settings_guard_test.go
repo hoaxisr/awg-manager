@@ -52,7 +52,7 @@ func TestUpdateSettings_EmptyModeKeepsPersisted(t *testing.T) {
 	cp := *all
 	cp.SingboxRouter.RoutingMode = "fakeip-tun"
 	cp.SingboxRouter.Enabled = true
-	if err := h.store.Save(&cp); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = cp; return nil }); err != nil {
 		t.Fatalf("seed Save: %v", err)
 	}
 

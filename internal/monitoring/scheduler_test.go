@@ -155,7 +155,7 @@ func TestScheduler_RunOnce_ExcludesConfiguredTunnels(t *testing.T) {
 		t.Fatalf("load settings: %v", err)
 	}
 	settings.MonitoringExcludedTunnels = []string{"tn-B"}
-	if err := settingsStore.Save(settings); err != nil {
+	if err := settingsStore.Update(func(cur *storage.Settings) error { *cur = *settings; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestScheduler_RunOnce_ExcludesConfiguredSystemAndSingboxTunnels(t *testing.
 	// sys-* ids are formed as "sys-"+SystemTunnelInfo.ID in collectTunnels;
 	// sing-box ids are raw outbound tags.
 	settings.MonitoringExcludedTunnels = []string{"sys-Wireguard2", "veesp"}
-	if err := settingsStore.Save(settings); err != nil {
+	if err := settingsStore.Update(func(cur *storage.Settings) error { *cur = *settings; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 

@@ -136,7 +136,7 @@ func TestSettingsStore_SaveAndLoad(t *testing.T) {
 	settings.PingCheck.Defaults.Interval = 60
 	settings.Server.Port = 3333
 
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -176,7 +176,7 @@ func TestSettingsStore_DisableMemorySaving(t *testing.T) {
 
 	// Toggle and save
 	settings.DisableMemorySaving = true
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -551,7 +551,7 @@ func TestSettingsStore_GetSingboxLogLevel_Normalized(t *testing.T) {
 	}
 
 	s.Logging.SingboxLogLevel = " WARN "
-	if err := store.Save(s); err != nil {
+	if err := store.save(s); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if got := store.GetSingboxLogLevel(); got != "warn" {
@@ -559,7 +559,7 @@ func TestSettingsStore_GetSingboxLogLevel_Normalized(t *testing.T) {
 	}
 
 	s.Logging.SingboxLogLevel = "verbose"
-	if err := store.Save(s); err != nil {
+	if err := store.save(s); err != nil {
 		t.Fatalf("save invalid: %v", err)
 	}
 	if got := store.GetSingboxLogLevel(); got != DefaultSingboxLogLevel {
@@ -818,7 +818,7 @@ func TestSettingsStore_GetSingboxBootstrapDNS(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	settings.SingboxBootstrapDNS = "8.8.8.8"
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if got := store.GetSingboxBootstrapDNS(); got != "8.8.8.8" {

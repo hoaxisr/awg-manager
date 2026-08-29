@@ -142,7 +142,7 @@ func TestGetSessionTTL(t *testing.T) {
 	}
 
 	settings.SessionTtlHours = 3
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 	if got := store.GetSessionTTL(); got != 3*time.Hour {
@@ -151,7 +151,7 @@ func TestGetSessionTTL(t *testing.T) {
 
 	// Zero/invalid stored value falls back to the default.
 	settings.SessionTtlHours = 0
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 	if got := store.GetSessionTTL(); got != 24*time.Hour {
@@ -169,7 +169,7 @@ func TestIsEntwareAuthEnabled(t *testing.T) {
 		t.Error("IsEntwareAuthEnabled() = true on defaults, want false")
 	}
 	settings.EntwareAuthEnabled = true
-	if err := store.Save(settings); err != nil {
+	if err := store.save(settings); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 	if !store.IsEntwareAuthEnabled() {

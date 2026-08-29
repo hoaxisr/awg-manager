@@ -129,7 +129,7 @@ func (h *transitionHarness) seedState(t *testing.T, mode string, enabled bool) {
 		WANAutoDetect: true,
 		FakeIPPool6:   DefaultFakeIPTunParams().Inet6Range,
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 }
