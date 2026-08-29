@@ -85,3 +85,16 @@ func isNoInput(msg string) bool {
 func toleratesMissingDNSRoute(msg string) bool {
 	return isMissingDNSRouteRule(msg) || isNoSuchInterface(msg)
 }
+
+// isACLUnsupported: `no such command: access-list.` / `no such command:
+// access-group.` — v6-ACL (`ipv6 access-list`/`ipv6 access-group`) появился
+// только в KeeneticOS 5.01; на 5.00 парсер этих команд не знает. Разрешать там
+// нечего — механизма фильтрации v6 на OpkgTun нет вовсе, — поэтому отказ
+// безобиден. Фатальным он валил ВСЁ включение fakeip/policy-tun на 5.00
+// (issue #828). Предикат применяется ТОЛЬКО к v6-композициям: у v4 те же
+// команды существуют на всех прошивках, и «нет такой команды» там означало бы
+// настоящую поломку.
+func isACLUnsupported(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "no such command: access-list") ||
+		strings.Contains(strings.ToLower(msg), "no such command: access-group")
+}
