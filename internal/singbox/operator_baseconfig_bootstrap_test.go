@@ -408,3 +408,23 @@ func TestOperator_ApplyBootstrapDNS_DoesNotRewriteWhenUnchanged(t *testing.T) {
 		t.Error("файл не переписан при смене адреса")
 	}
 }
+
+// 00-base.json с литеральным null — валидный JSON, дающий nil-карту. Запись в
+// неё паникует. У прежнего ApplyLogLevel был свой nil-guard, и при сведении к
+// общему mutateBase он терялся; тест на старом коде падает паникой.
+func TestOperator_ApplyBaseScalars_NullBaseDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	op := NewOperator(OperatorDeps{Dir: dir})
+	basePath := filepath.Join(dir, "config.d", "00-base.json")
+	if err := os.WriteFile(basePath, []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyLogLevel("debug"); err != nil {
+		t.Fatalf("ApplyLogLevel на null-базе: %v", err)
+	}
+	base := readBaseFixture(t, basePath)
+	logBlock, _ := base["log"].(map[string]any)
+	if lvl, _ := logBlock["level"].(string); lvl != "debug" {
+		t.Errorf("log.level = %q, want debug", lvl)
+	}
+}

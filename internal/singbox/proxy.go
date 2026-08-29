@@ -42,6 +42,22 @@ var ErrProxyComponentMissing = fmt.Errorf("NDMS 'proxy' component is not install
 // ProxyManager orchestrates NDMS Proxy interfaces for sing-box tunnels.
 // Reads go through queries.Interfaces (GetProxy helper); writes through
 // commands.Proxies.
+// ndmsProxies — то, что Operator знает про NDMS-прокси. Интерфейс, а не
+// *ProxyManager, ради шва: в проде за ним ProxyManager поверх RCI, в тестах —
+// фейк. Без него пути, трогающие прокси (RemoveTunnel, AddTunnels,
+// RenameTunnel), из теста не запускались вовсе: ProxyManager с нулевыми
+// Queries/Commands разыменовывает nil.
+type ndmsProxies interface {
+	EnsureProxy(ctx context.Context, index, port int, description string) error
+	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
+	RemoveProxy(ctx context.Context, index int) error
+	RemoveOrphanSingboxProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) error
+	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
+	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
+}
+
+var _ ndmsProxies = (*ProxyManager)(nil)
+
 type ProxyManager struct {
 	queries  *query.Queries
 	commands *command.Commands

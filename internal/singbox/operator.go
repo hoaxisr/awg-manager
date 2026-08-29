@@ -123,8 +123,8 @@ type Operator struct {
 	dir    string
 	binary string
 	// bootstrapDNS — живой доступ к Settings.SingboxBootstrapDNS. Нужен не
-	// только на буте: ApplyLogLevel пересоздаёт 00-base.json, если файла нет,
-	// и без этого поля подставил бы исторический дефолт, потеряв настройку.
+	// только на буте: mutateBase восстанавливает пропавший 00-base.json, и
+	// без этого поля подставил бы исторический дефолт, потеряв настройку.
 	bootstrapDNS func() string
 	// clashPort — живой доступ к Settings.SingboxClashPort, по той же причине,
 	// что и bootstrapDNS: пересоздание 00-base.json не должно терять настройку.
@@ -138,7 +138,7 @@ type Operator struct {
 
 	proc      *Process
 	validator *Validator
-	proxyMgr  *ProxyManager
+	proxyMgr  ndmsProxies
 	clash     *ClashClient
 	bus       *events.Bus
 

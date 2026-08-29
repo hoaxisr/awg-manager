@@ -476,8 +476,8 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	if s.d.Singbox != nil {
 		// No-reload path only makes sense when the daemon is actually up —
 		// otherwise there's no live selector.now to preserve, AND the
-		// reload path includes a cold-start safety net that ApplyConfigNoReload
-		// deliberately skips. Require both conditions.
+		// reload path includes a cold-start safety net that the no-reload
+		// path deliberately skips. Require both conditions.
 		if onlySelectedOutboundChanged(oldCfg, cfg) && s.d.Singbox.IsRunning() {
 			if err := s.d.Singbox.ApplyDeviceProxyNoReload(ctx, spec); err != nil {
 				return fmt.Errorf("apply to singbox (no-reload): %w", err)

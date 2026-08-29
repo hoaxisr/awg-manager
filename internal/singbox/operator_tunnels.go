@@ -15,7 +15,7 @@ import (
 )
 
 // tunnelsFile is the canonical path for the tunnels.json fragment
-// (config.d/10-tunnels.json). Used by applyConfig + RemoveTunnel.
+// (config.d/10-tunnels.json). Used by loadConfig + HasUserTunnels.
 func (o *Operator) tunnelsFile() string {
 	return filepath.Join(o.configPath, "10-tunnels.json")
 }
@@ -243,8 +243,8 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 	// NDMS proxy slots. Outbounds that require a missing sing-box build tag
 	// (e.g. naive needs with_naive_outbound) are rejected with a
 	// user-visible BatchError: adding them would just fail later at the
-	// applyConfig → preflightConfigDir step, but stopping early here keeps
-	// the rest of the batch intact and avoids partial side-effects.
+	// checkTunnelFeatures step inside ApplyConfig, but stopping early here
+	// keeps the rest of the batch intact and avoids partial side-effects.
 	//
 	// Пустой список = проба не удалась (бинарь ещё не установлен), а не
 	// «фич нет»: гейт в этом случае пропускает всё, решение остаётся за
@@ -394,12 +394,19 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 
 	// Commit config/process state BEFORE NDMS teardown so a mid-failure leaves
 	// a consistent recoverable state (sing-box config matches on-disk reality).
-	// Последний туннель — не особый случай: пишем опустевший слот тем же
-	// путём. Гасить ли демона, решает reload оркестратора по hasActiveWork —
-	// SlotTunnels считается работой только через HasContent, а пустой конфиг
-	// её не даёт. Прямые proc.Stop + os.Remove дублировали это решение,
-	// рвали чужие транзакции и оставляли applied-state протухшим.
-	if err := o.ApplyConfig(ctx, cfg); err != nil {
+	//
+	// Пишем опустевший слот, а не удаляем файл: гасить ли демона, решает
+	// reload оркестратора по hasActiveWork — SlotTunnels считается работой
+	// только через HasContent, а пустой конфиг её не даёт. Прямые proc.Stop +
+	// os.Remove дублировали это решение, рвали чужие транзакции и оставляли
+	// applied-state протухшим.
+	//
+	// Опустевший слот идёт БЕЗ merged-валидации: она и есть само удаление.
+	// Отказать здесь значило бы сделать туннель неудаляемым из-за ЧУЖОЙ
+	// поломки — соседнего селектора, для которого он был единственным членом,
+	// или отсутствующего бинаря sing-box. Прежний код удалял файл вообще без
+	// проверок, так что это паритет, а не послабление.
+	if err := o.writeTunnelsSlot(cfg, len(cfg.Tunnels()) > 0); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-remove", tag, "apply config failed: "+err.Error())
 		}
@@ -565,25 +572,62 @@ func (o *Operator) HasUserTunnels() bool {
 	return len(cfg.Tunnels()) > 0
 }
 
-// ApplyConfig — единственный рантайм-писатель 10-tunnels.json. Сериализует
-// конфиг и отдаёт оркестратору: тот валидирует merged-конфиг с этими байтами,
-// НЕ трогая активный файл, пишет атомарно и взводит debounced reload.
-//
-// Прежде рядом жил приватный applyConfig со своим протоколом — rename в .bak,
-// preflight по каталогу, restore на провале. Он существовал ради синхронной
-// валидации, которой не даёт orch.Save; SaveAndValidate даёт её же, но без
-// окна, когда битый файл уже лежит на диске, и под локом оркестратора, то
-// есть не наперегонки с записью других слотов.
-//
-// Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP, а
-// тесты поднимают его сами (см. newOrchedOperator).
+// ApplyConfig — рантайм-запись 10-tunnels.json с полной проверкой. Гейт по
+// build-фичам бинаря идёт до неё: sing-box на неподдерживаемом протоколе
+// говорит лишь «unknown outbound type», не называя недостающий тег сборки.
+// Прежде этот гейт давал preflightConfigDir, снятый вместе с ручным
+// протоколом; здесь он честнее — смотрит в КАНДИДАТА, а не в каталог.
 func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
+	if err := o.checkTunnelFeatures(cfg); err != nil {
+		return err
+	}
+	return o.writeTunnelsSlot(cfg, true)
+}
+
+// checkTunnelFeatures — тот же гейт, что в AddTunnels, но по готовому
+// конфигу: он покрывает и UpdateTunnel/RenameTunnel, у которых своего нет.
+func (o *Operator) checkTunnelFeatures(cfg *Config) error {
+	// Пустой список = проба не удалась (бинарь ещё не установлен), а не
+	// «фич нет»: резать конфиг по такой догадке нельзя.
+	features := o.singboxFeaturesCached()
+	if len(features) == 0 {
+		return nil
+	}
+	for _, t := range cfg.Tunnels() {
+		if t.Protocol == "" || OutboundSupportedByFeatures(features, t.Protocol) {
+			continue
+		}
+		required := OutboundTypeRequiresFeature(t.Protocol)
+		if required == "" {
+			required = "<unknown required tag>"
+		}
+		return fmt.Errorf("туннель %q: протокол %q не поддержан установленным sing-box (нужен тег сборки %s)", t.Tag, t.Protocol, required)
+	}
+	return nil
+}
+
+// writeTunnelsSlot — единственный рантайм-писатель слота. Оркестратор
+// валидирует merged-конфиг с этими байтами, НЕ трогая активный файл, пишет
+// атомарно и взводит debounced reload.
+//
+// validate=false остаётся ровно для одного случая — опустевшего слота, см.
+// RemoveTunnel. Прежде рядом жил приватный applyConfig со своим протоколом
+// (rename в .bak, preflight по каталогу, restore на провале): он существовал
+// ради синхронной валидации, которой не даёт orch.Save, а SaveAndValidate
+// даёт её же без окна, когда битый файл уже лежит на диске.
+//
+// Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP, тесты
+// поднимают его сами (см. newOrchedOperator).
+func (o *Operator) writeTunnelsSlot(cfg *Config, validate bool) error {
 	if o.orch == nil {
 		return fmt.Errorf("apply tunnels config: orchestrator not wired")
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal tunnels config: %w", err)
+	}
+	if !validate {
+		return o.orch.Save(orchestrator.SlotTunnels, data)
 	}
 	res, err := o.orch.SaveAndValidate(orchestrator.SlotTunnels, data)
 	if err != nil {

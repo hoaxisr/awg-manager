@@ -1154,8 +1154,10 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 		// Прежде этим различием не владел никто — ApplyLogLevel
 		// восстанавливал базу даже поверх снесённого каталога, а
 		// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
-		if _, statErr := os.Stat(o.configPath); statErr != nil {
+		if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
 			return nil
+		} else if statErr != nil {
+			return fmt.Errorf("stat config.d: %w", statErr)
 		}
 		base = freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
 		restored = true
@@ -1164,6 +1166,12 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	default:
 		if err := json.Unmarshal(data, &base); err != nil {
 			return fmt.Errorf("parse 00-base.json: %w", err)
+		}
+		// Файл с литеральным null — валидный JSON, дающий nil-карту; запись
+		// в неё паникует. Гард был у прежнего ApplyLogLevel и потерялся при
+		// сведении к общему транспорту.
+		if base == nil {
+			base = map[string]any{}
 		}
 	}
 	// Свежая база уже несёт желаемые значения, так что мутатор на ней обычно

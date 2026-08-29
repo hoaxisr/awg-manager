@@ -221,7 +221,7 @@ func (h *DeviceProxyHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := h.svc.SaveConfig(r.Context(), cfg); err != nil {
 		// The TOCTOU race between SaveConfig's IsRunning() guard and
-		// the underlying ApplyConfigNoReload can surface this sentinel
+		// the underlying no-reload path can surface this sentinel
 		// when sing-box dies mid-save. Map to 409 so API clients can
 		// retry without getting generic SAVE_FAILED — matches the
 		// contract SelectRuntime exposes for the same condition.

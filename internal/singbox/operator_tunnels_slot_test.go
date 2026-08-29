@@ -109,3 +109,55 @@ func TestApplyConfig_WithoutOrchestratorFails(t *testing.T) {
 		t.Errorf("слот записан мимо оркестратора: %v", statErr)
 	}
 }
+
+// fakeProxies — второй адаптер шва ndmsProxies. В проде за швом ProxyManager
+// поверх RCI; здесь — запись вызовов, чтобы пути, трогающие NDMS-прокси,
+// вообще запускались из теста.
+type fakeProxies struct{ removed []int }
+
+func (f *fakeProxies) EnsureProxy(context.Context, int, int, string) error { return nil }
+func (f *fakeProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) {
+	return 0, nil
+}
+func (f *fakeProxies) RemoveProxy(_ context.Context, index int) error {
+	f.removed = append(f.removed, index)
+	return nil
+}
+func (f *fakeProxies) RemoveOrphanSingboxProxies(context.Context, map[string]bool, map[int]bool, map[int]bool) error {
+	return nil
+}
+func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[int]bool, map[int]bool) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeProxies) SyncProxies(context.Context, []TunnelInfo) error { return nil }
+
+// Удаление ПОСЛЕДНЕГО туннеля: слот остаётся на месте пустым, а не удаляется.
+// Прежде RemoveTunnel на этой ветке сам звал proc.Stop и os.Remove(слот),
+// дублируя решение оркестратора, — на старом коде этот тест падает на первом
+// же Stat.
+func TestRemoveTunnel_LastOneLeavesEmptySlot(t *testing.T) {
+	op, slotPath := newOrchedOperator(t)
+	proxies := &fakeProxies{}
+	op.proxyMgr = proxies
+
+	cfg := NewConfig()
+	cfg.AddTunnelWithListenPort("A", "vless", "h", 1, 0, json.RawMessage(`{"type":"vless","tag":"A"}`))
+	if err := op.ApplyConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("ApplyConfig (seed): %v", err)
+	}
+
+	if err := op.RemoveTunnel(context.Background(), "A"); err != nil {
+		t.Fatalf("RemoveTunnel: %v", err)
+	}
+
+	if _, err := os.Stat(slotPath); err != nil {
+		t.Fatalf("слот удалён, ожидался пустой файл на месте: %v", err)
+	}
+	if op.HasUserTunnels() {
+		t.Fatal("HasUserTunnels=true после удаления единственного туннеля")
+	}
+	// Разбор NDMS идёт ПОСЛЕ записи конфига и не пропускается.
+	if len(proxies.removed) != 1 {
+		t.Errorf("RemoveProxy вызван %d раз, ожидался 1", len(proxies.removed))
+	}
+}
