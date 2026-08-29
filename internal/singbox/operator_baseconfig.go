@@ -463,23 +463,7 @@ func patchBaseLogLevel(basePath, desiredLevel string, loggers ...*slog.Logger) {
 	if !ok {
 		return
 	}
-	logBlock, _ := m["log"].(map[string]any)
-	if logBlock == nil {
-		logBlock = map[string]any{}
-		m["log"] = logBlock
-	}
-	desired := normalizeSingboxLogLevel(desiredLevel)
-	current, _ := logBlock["level"].(string)
-	changed := false
-	if current != desired {
-		logBlock["level"] = desired
-		changed = true
-	}
-	if _, ok := logBlock["timestamp"]; !ok {
-		logBlock["timestamp"] = true
-		changed = true
-	}
-	if !changed {
+	if !setLogLevel(m, desiredLevel) {
 		return
 	}
 	writeSlotJSON(stepPatchBaseLogLevel, basePath, m, log)
@@ -505,6 +489,29 @@ func patchBaseClashPort(basePath string, port int, loggers ...*slog.Logger) {
 		return
 	}
 	writeSlotJSON(stepPatchBaseClashPort, basePath, m, log)
+}
+
+// setLogLevel ставит log.level в нормализованный desired и добивает
+// log.timestamp, создавая недостающие уровни. Возвращает false, если менять
+// нечего. Общий для стартовой сверки (patchBaseLogLevel) и ApplyLogLevel —
+// иначе два места по-разному понимали бы «изменилось».
+func setLogLevel(m map[string]any, desiredLevel string) bool {
+	logBlock, _ := m["log"].(map[string]any)
+	if logBlock == nil {
+		logBlock = map[string]any{}
+		m["log"] = logBlock
+	}
+	desired := normalizeSingboxLogLevel(desiredLevel)
+	changed := false
+	if current, _ := logBlock["level"].(string); current != desired {
+		logBlock["level"] = desired
+		changed = true
+	}
+	if _, ok := logBlock["timestamp"]; !ok {
+		logBlock["timestamp"] = true
+		changed = true
+	}
+	return changed
 }
 
 // setClashController ставит experimental.clash_api.external_controller в want,
@@ -1054,59 +1061,9 @@ func (o *Operator) ValidateConfigDir(ctx context.Context) error {
 // validate+reload lifecycle stays centralized.
 func (o *Operator) ApplyLogLevel(level string) error {
 	desired := normalizeSingboxLogLevel(level)
-	basePath := filepath.Join(o.configPath, "00-base.json")
-
-	var base map[string]any
-	data, err := os.ReadFile(basePath)
-	switch {
-	case os.IsNotExist(err):
-		// Свежая база условно-своих скаляров больше не несёт: их дефолты
-		// живут в 99-defaults.json и перекрываются слотом-владельцем сами
-		// (см. reconcileDerivedDefaults) — уступать нечем и некому.
-		base = freshBaseConfig(desired, o.desiredBootstrapDNS(), o.desiredClashPort())
-	case err != nil:
-		return fmt.Errorf("read 00-base.json: %w", err)
-	default:
-		var parsed map[string]any
-		if err := json.Unmarshal(data, &parsed); err != nil {
-			return fmt.Errorf("parse 00-base.json: %w", err)
-		}
-		if parsed == nil {
-			parsed = map[string]any{}
-		}
-		logBlock, _ := parsed["log"].(map[string]any)
-		if logBlock == nil {
-			logBlock = map[string]any{}
-			parsed["log"] = logBlock
-		}
-		logBlock["level"] = desired
-		if _, ok := logBlock["timestamp"]; !ok {
-			logBlock["timestamp"] = true
-		}
-		base = parsed
-	}
-
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
-	}
-
-	if o.orch != nil {
-		if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-			return fmt.Errorf("save base slot: %w", err)
-		}
-		return nil
-	}
-
-	if err := writeJSONFile(basePath, base); err != nil {
-		return fmt.Errorf("write base file: %w", err)
-	}
-	if running, _ := o.proc.IsRunning(); running {
-		if err := o.proc.Reload(); err != nil {
-			return fmt.Errorf("reload sing-box: %w", err)
-		}
-	}
-	return nil
+	return o.mutateBase(func(base map[string]any) bool {
+		return setLogLevel(base, desired)
+	})
 }
 
 // desiredBootstrapDNS — текущая настройка адреса bootstrap-резолвера;
@@ -1116,6 +1073,15 @@ func (o *Operator) desiredBootstrapDNS() string {
 		return ""
 	}
 	return sanitizeBootstrapDNS(o.bootstrapDNS())
+}
+
+// desiredSingboxLogLevel — уровень журнала sing-box из настроек; без
+// замыкания (тестовые wiring'и) — исторический дефолт.
+func (o *Operator) desiredSingboxLogLevel() string {
+	if o.singboxLogLevel == nil {
+		return normalizeSingboxLogLevel("")
+	}
+	return normalizeSingboxLogLevel(o.singboxLogLevel())
 }
 
 // desiredClashPort — порт Clash API из настроек; 0 означает DefaultClashPort.
@@ -1172,18 +1138,45 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 // запись плюс reload живого процесса.
 func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	basePath := filepath.Join(o.configPath, "00-base.json")
-	data, err := os.ReadFile(basePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read 00-base.json: %w", err)
-	}
 	var base map[string]any
-	if err := json.Unmarshal(data, &base); err != nil {
-		return fmt.Errorf("parse 00-base.json: %w", err)
+	restored := false
+	data, err := os.ReadFile(basePath)
+	switch {
+	case os.IsNotExist(err):
+		// Пропал ТОЛЬКО файл, каталог на месте — ВОССТАНАВЛИВАЕМ, а не
+		// считаем намерением пользователя, симметрично трактовке
+		// отсутствующего блока clash_api в ADR-0001. Молчаливый выход
+		// оставлял настройку сохранённой в settings.json, но не доехавшей
+		// до базы до следующего бута.
+		//
+		// Нет самого config.d — движок удалён вместе с каталогом, и
+		// воскрешать его правкой настройки нельзя: молчим, как молчали.
+		// Прежде этим различием не владел никто — ApplyLogLevel
+		// восстанавливал базу даже поверх снесённого каталога, а
+		// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
+		if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
+			return nil
+		} else if statErr != nil {
+			return fmt.Errorf("stat config.d: %w", statErr)
+		}
+		base = freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
+		restored = true
+	case err != nil:
+		return fmt.Errorf("read 00-base.json: %w", err)
+	default:
+		if err := json.Unmarshal(data, &base); err != nil {
+			return fmt.Errorf("parse 00-base.json: %w", err)
+		}
+		// Файл с литеральным null — валидный JSON, дающий nil-карту; запись
+		// в неё паникует. Гард был у прежнего ApplyLogLevel и потерялся при
+		// сведении к общему транспорту.
+		if base == nil {
+			base = map[string]any{}
+		}
 	}
-	if !mutate(base) {
+	// Свежая база уже несёт желаемые значения, так что мутатор на ней обычно
+	// говорит «менять нечего»; писать всё равно надо — файла-то нет.
+	if !mutate(base) && !restored {
 		return nil
 	}
 

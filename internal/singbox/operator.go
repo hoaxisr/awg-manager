@@ -123,18 +123,22 @@ type Operator struct {
 	dir    string
 	binary string
 	// bootstrapDNS — живой доступ к Settings.SingboxBootstrapDNS. Нужен не
-	// только на буте: ApplyLogLevel пересоздаёт 00-base.json, если файла нет,
-	// и без этого поля подставил бы исторический дефолт, потеряв настройку.
+	// только на буте: mutateBase восстанавливает пропавший 00-base.json, и
+	// без этого поля подставил бы исторический дефолт, потеряв настройку.
 	bootstrapDNS func() string
 	// clashPort — живой доступ к Settings.SingboxClashPort, по той же причине,
 	// что и bootstrapDNS: пересоздание 00-base.json не должно терять настройку.
-	clashPort  func() int
-	configPath string
-	pidPath    string
+	clashPort func() int
+	// singboxLogLevel — то же для log.level. Раньше уровень знал только
+	// ApplyLogLevel (из аргумента), поэтому пересоздать базу умел лишь он, а
+	// mutateBase на пропавшем файле молча выходил.
+	singboxLogLevel func() string
+	configPath      string
+	pidPath         string
 
 	proc      *Process
 	validator *Validator
-	proxyMgr  *ProxyManager
+	proxyMgr  ndmsProxies
 	clash     *ClashClient
 	bus       *events.Bus
 
@@ -360,6 +364,7 @@ func NewOperator(d OperatorDeps) *Operator {
 		log:               log,
 		bootstrapDNS:      d.BootstrapDNS,
 		clashPort:         d.ClashPort,
+		singboxLogLevel:   d.SingboxLogLevel,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,

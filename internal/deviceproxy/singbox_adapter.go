@@ -15,10 +15,10 @@ import (
 // deviceproxy, deviceproxy depends on singbox.
 //
 // Production wiring also injects the orchestrator: ApplyDeviceProxy
-// then writes its standalone fragment (30-deviceproxy.json) through
-// SlotDeviceProxy and toggles the slot via SetEnabled. When orch is
-// nil (legacy / tests), it falls back to embedding the device-proxy
-// blocks into 10-tunnels.json via Operator.ApplyConfig.
+// writes its standalone fragment (30-deviceproxy.json) through
+// SlotDeviceProxy and toggles the slot via SetEnabled. Прежний фолбэк без
+// оркестратора (device-proxy, встроенный в 10-tunnels.json) снят — без
+// оркестратора адаптер отказывает явно.
 type SingboxAdapter struct {
 	op   *singbox.Operator
 	orch *orchestrator.Orchestrator
@@ -35,8 +35,7 @@ func (a *SingboxAdapter) SetOrch(orch *orchestrator.Orchestrator) {
 	a.orch = orch
 }
 
-// ApplyDeviceProxy persists the device-proxy slot via the orchestrator
-// (production) or falls back to the legacy embedded-in-tunnels path.
+// ApplyDeviceProxy persists the device-proxy slot via the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec) error {
 	if a.orch != nil {
 		sbSpec := toSingboxSpec(spec)
@@ -53,14 +52,10 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 		return nil
 	}
 
-	cfg, err := a.op.LoadCurrentConfig()
-	if err != nil {
-		return err
-	}
-	if err := cfg.EnsureDeviceProxy(toSingboxSpec(spec)); err != nil {
-		return err
-	}
-	return a.op.ApplyConfig(ctx, cfg)
+	// Легаси-путь (device-proxy, встроенный в 10-tunnels.json) снят вместе с
+	// эпохой orch == nil: в проде SetOrch зовётся до старта HTTP. Явная
+	// ошибка здесь, а не отказ где-то в глубине про «tunnels config».
+	return fmt.Errorf("apply deviceproxy: orchestrator not wired")
 }
 
 // ApplyDeviceProxyNoReload is the no-SIGHUP twin of ApplyDeviceProxy.
@@ -74,35 +69,27 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 // IS allowed to schedule a reload (toggling enabled is by definition
 // a config-content change, not a no-op selector-default tweak).
 func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec ExternalSpec) error {
-	if a.orch != nil {
-		sbSpec := toSingboxSpec(spec)
-		data, err := singbox.BuildDeviceProxyConfig(sbSpec)
-		if err != nil {
-			return fmt.Errorf("build deviceproxy config: %w", err)
-		}
-		if err := a.orch.SaveSilent(orchestrator.SlotDeviceProxy, data); err != nil {
-			return err
-		}
-		// SetEnabled is a no-op when the desired state already matches
-		// (no rename, no reload arming). Safe to call unconditionally.
-		if err := a.orch.SetEnabled(orchestrator.SlotDeviceProxy, sbSpec.Enabled); err != nil {
-			return err
-		}
-		return nil
+	if a.orch == nil {
+		// Прежде здесь был легаси-путь через Operator.ApplyConfigNoReload. Он
+		// был недостижим в проде (SetOrch зовётся до старта HTTP) и при этом
+		// неработоспособен: делал os.Rename файла поверх КАТАЛОГА config.d.
+		return fmt.Errorf("apply deviceproxy (no-reload): orchestrator not wired")
 	}
-
-	cfg, err := a.op.LoadCurrentConfig()
+	sbSpec := toSingboxSpec(spec)
+	data, err := singbox.BuildDeviceProxyConfig(sbSpec)
 	if err != nil {
+		return fmt.Errorf("build deviceproxy config: %w", err)
+	}
+	if err := a.orch.SaveSilent(orchestrator.SlotDeviceProxy, data); err != nil {
 		return err
 	}
-	if err := cfg.EnsureDeviceProxy(toSingboxSpec(spec)); err != nil {
-		return err
-	}
-	return a.op.ApplyConfigNoReload(ctx, cfg)
+	// SetEnabled is a no-op when the desired state already matches
+	// (no rename, no reload arming). Safe to call unconditionally.
+	return a.orch.SetEnabled(orchestrator.SlotDeviceProxy, sbSpec.Enabled)
 }
 
 // ApplyDeviceProxyInstances persists multiple device-proxy instances via
-// the orchestrator (production) or falls back to the legacy embedded-in-tunnels path.
+// the orchestrator.
 func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []ExternalInstanceSpec) error {
 	if a.orch != nil {
 		sbSpecs := make([]singbox.DeviceProxyInstanceSpec, 0, len(specs))
@@ -133,28 +120,8 @@ func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []
 		return nil
 	}
 
-	if len(specs) == 0 {
-		cfg, err := a.op.LoadCurrentConfig()
-		if err != nil {
-			return err
-		}
-		cfg.RemoveAllDeviceProxyInstances()
-		return a.op.ApplyConfig(ctx, cfg)
-	}
-
-	cfg, err := a.op.LoadCurrentConfig()
-	if err != nil {
-		return err
-	}
-	cfg.RemoveAllDeviceProxyInstances()
-
-	for _, spec := range specs {
-		if err := cfg.EnsureDeviceProxyInstance(toSingboxInstanceSpec(spec)); err != nil {
-			return err
-		}
-	}
-
-	return a.op.ApplyConfig(ctx, cfg)
+	// Легаси-путь снят — см. ApplyDeviceProxy.
+	return fmt.Errorf("apply deviceproxy instances: orchestrator not wired")
 }
 
 // AvailableOutboundTags returns the outbound tags declared by ENABLED

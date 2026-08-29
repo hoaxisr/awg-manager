@@ -270,11 +270,12 @@ func (a *app) setupDeviceProxy() {
 	a.srv.SetDownloadService(sharedDownloadSvc)
 	// Note: legacy awg-* outbound cleanup happens lazily on first
 	// deviceproxy CRUD via pruneAWGOutbounds(nil) inside EnsureDeviceProxy.
-	// We deliberately do NOT call ForceApply on boot because it triggers
-	// ApplyConfig → startAndWait, which spuriously starts sing-box even
-	// when both the deviceproxy and the router engine are disabled —
-	// once started, only an explicit Stop call (no UI today) brings it
-	// back down. Reconcile already handles cleanup on the next legitimate
+	// We deliberately do NOT call ForceApply on boot: it writes the slot
+	// and arms a reload, which spuriously starts sing-box even when both
+	// the deviceproxy and the router engine are disabled — once started,
+	// only an explicit Stop call (no UI today) brings it back down.
+	// (Прежде это шло через ApplyConfig → startAndWait; путь снят, но
+	// причина не звать ForceApply на буте осталась той же.) Reconcile already handles cleanup on the next legitimate
 	// trigger; the migration tax is at most one stale file fragment that
 	// gets stripped on the next Save/Enable.
 	a.srv.SetNDMSDispatcher(a.ndmsDispatcher)

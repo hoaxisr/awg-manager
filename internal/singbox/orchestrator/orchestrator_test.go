@@ -1096,48 +1096,6 @@ func TestReloadPrunesDanglingSelectorRefs(t *testing.T) {
 	}
 }
 
-// TestScheduleReload_ExternalRespectsHold: продюсер, который пишет свой слот
-// сам (легаси-путь туннелей), применяет через оркестратор — и обязан попасть
-// под hold, а не дёрнуть движок посреди чужого перехода режима.
-func TestScheduleReload_ExternalRespectsHold(t *testing.T) {
-	fp := &fakeProc{running: true}
-	dir := t.TempDir()
-	o := newFakeOrch(t, dir, fp)
-	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
-	if err := o.Bootstrap(); err != nil {
-		t.Fatal(err)
-	}
-	if err := o.SetEnabled(SlotRouter, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(3 * reloadDebounce) // даём начальному применению отработать
-	before := len(fp.calls())
-
-	// Легаси-путь пишет файл слота САМ (cfg.Save), минуя orch.Save, и лишь
-	// потом просит применить — воспроизводим именно это.
-	release := o.HoldReloads()
-	if err := os.WriteFile(filepath.Join(dir, "20-router.json"), []byte(altTunInboundConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	o.ScheduleReload()
-	time.Sleep(3 * reloadDebounce)
-	if got := fp.calls(); len(got) != before {
-		t.Fatalf("под hold внешний применитель не должен трогать процесс, получено %v", got[before:])
-	}
-
-	release()
-	deadline := time.Now().Add(2 * time.Second)
-	for len(fp.calls()) == before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if len(fp.calls()) == before {
-		t.Fatal("после release отложенное применение обязано доехать")
-	}
-}
-
 // TestScheduleReload_TimerForgetsItself: выстреливший debounce-таймер обязан
 // обнулить указатель. Иначе HoldReloads видит «таймер взведён» там, где взводить
 // нечего, помечает pendingReload и на release стреляет лишним reload'ом —
