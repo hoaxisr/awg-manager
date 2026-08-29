@@ -305,7 +305,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 		return nil, parseErrs, nil
 	}
 
-	if err := o.applyConfig(ctx, cfg); err != nil {
+	if err := o.ApplyConfig(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-add", "", "apply config failed: "+err.Error())
 		}
@@ -394,20 +394,16 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 
 	// Commit config/process state BEFORE NDMS teardown so a mid-failure leaves
 	// a consistent recoverable state (sing-box config matches on-disk reality).
-	if len(cfg.Tunnels()) == 0 {
-		if err := o.proc.Stop(); err != nil && o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("single-remove", tag, "failed to stop process after last tunnel removal: "+err.Error())
+	// Последний туннель — не особый случай: пишем опустевший слот тем же
+	// путём. Гасить ли демона, решает reload оркестратора по hasActiveWork —
+	// SlotTunnels считается работой только через HasContent, а пустой конфиг
+	// её не даёт. Прямые proc.Stop + os.Remove дублировали это решение,
+	// рвали чужие транзакции и оставляли applied-state протухшим.
+	if err := o.ApplyConfig(ctx, cfg); err != nil {
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Error("single-remove", tag, "apply config failed: "+err.Error())
 		}
-		if err := os.Remove(o.tunnelsFile()); err != nil && !os.IsNotExist(err) && o.runtimeLogger != nil {
-			o.runtimeLogger.Warn("single-remove", tag, "failed to remove tunnels file: "+err.Error())
-		}
-	} else {
-		if err := o.applyConfig(ctx, cfg); err != nil {
-			if o.runtimeLogger != nil {
-				o.runtimeLogger.Error("single-remove", tag, "apply config failed: "+err.Error())
-			}
-			return err
-		}
+		return err
 	}
 
 	// NDMS teardown last — if it fails, Reconcile/retry can clean up later.
@@ -443,7 +439,7 @@ func (o *Operator) UpdateTunnel(ctx context.Context, tag string, outbound json.R
 		}
 		return err
 	}
-	if err := o.applyConfig(ctx, cfg); err != nil {
+	if err := o.ApplyConfig(ctx, cfg); err != nil {
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Error("single-update", tag, "apply config failed: "+err.Error())
 		}
@@ -553,79 +549,6 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 	return nil
 }
 
-func (o *Operator) applyConfig(ctx context.Context, cfg *Config) error {
-	defer perftrace.LogDuration(o.runtimeLogger, "perf", "applyConfig", "total", time.Now())
-	stage := time.Now()
-	if o.runtimeLogger != nil {
-		o.runtimeLogger.Debug("apply-config", "", fmt.Sprintf("start tunnels=%d", len(cfg.Tunnels())))
-	}
-	tunnelsPath := o.tunnelsFile()
-	backupPath := tunnelsPath + ".bak"
-
-	_, hadExisting := os.Stat(tunnelsPath)
-	if hadExisting == nil {
-		if err := os.Rename(tunnelsPath, backupPath); err != nil {
-			return fmt.Errorf("backup tunnels: %w", err)
-		}
-	}
-
-	restore := func() {
-		_ = os.Remove(tunnelsPath)
-		if hadExisting == nil {
-			_ = os.Rename(backupPath, tunnelsPath)
-		}
-	}
-
-	if err := cfg.Save(tunnelsPath); err != nil {
-		restore()
-		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("apply-config", "", "save failed: "+err.Error())
-		}
-		return err
-	}
-	stage = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "cfg.Save", stage)
-	if err := o.preflightConfigDir(); err != nil {
-		restore()
-		if o.runtimeLogger != nil {
-			o.runtimeLogger.Error("apply-config", "", "validate failed: "+err.Error())
-		}
-		return fmt.Errorf("validate: %w", err)
-	}
-	stage = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "preflight (sing-box check)", stage)
-	var runErr error
-	if o.orch != nil {
-		// Применяет ОРКЕСТРАТОР, а не мы: он один знает про hold (переход
-		// режима), skip-gate по хешу и applied-state. Прямой proc.Reload при
-		// живом tun это полный Stop+Start — посреди чужой транзакции он её
-		// рвёт, а мимо skip-gate ещё и оставляет applied-state протухшим, чем
-		// дарит следующему чужому reload'у второй, уже пустой перезапуск.
-		// Цена — reload асинхронный: валидация выше синхронна и по-прежнему
-		// возвращает ошибку вызывающему, а вот отказ самого запуска доедет
-		// только в журнал.
-		o.orch.ScheduleReload()
-		_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "scheduled (orchestrator)", stage)
-	} else {
-		running, _ := o.proc.IsRunning()
-		if !running {
-			_, runErr = o.startAndWait(ctx)
-			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "startAndWait (cold start)", stage)
-		} else {
-			runErr = o.proc.Reload()
-			_ = perftrace.Mark(o.runtimeLogger, "perf", "applyConfig", "Reload (SIGHUP)", stage)
-		}
-	}
-	if hadExisting == nil {
-		_ = os.Remove(backupPath)
-	}
-	if runErr != nil && o.runtimeLogger != nil {
-		o.runtimeLogger.Error("apply-config", "", "run phase failed: "+runErr.Error())
-	}
-	if runErr == nil && o.runtimeLogger != nil {
-		o.runtimeLogger.Info("apply-config", "", "done")
-	}
-	return runErr
-}
-
 func (o *Operator) loadConfig() (*Config, error) {
 	return LoadConfig(o.tunnelsFile())
 }
@@ -642,62 +565,33 @@ func (o *Operator) HasUserTunnels() bool {
 	return len(cfg.Tunnels()) > 0
 }
 
-// ApplyConfig runs the full Save + Validate + Promote + Reload sequence
-// on an externally-mutated Config. deviceproxy.Service uses this after
-// it has inserted its inbound/outbound/rule into the current config.
+// ApplyConfig — единственный рантайм-писатель 10-tunnels.json. Сериализует
+// конфиг и отдаёт оркестратору: тот валидирует merged-конфиг с этими байтами,
+// НЕ трогая активный файл, пишет атомарно и взводит debounced reload.
 //
-// When the orchestrator is wired (production), the tunnels payload is
-// extracted and written through SlotTunnels — validation + reload are
-// handled by the orchestrator's debounced pipeline. When unwired
-// (tests / pre-bootstrap), falls back to the legacy direct-write path
-// that writes 10-tunnels.json + sing-box check + SIGHUP inline.
+// Прежде рядом жил приватный applyConfig со своим протоколом — rename в .bak,
+// preflight по каталогу, restore на провале. Он существовал ради синхронной
+// валидации, которой не даёт orch.Save; SaveAndValidate даёт её же, но без
+// окна, когда битый файл уже лежит на диске, и под локом оркестратора, то
+// есть не наперегонки с записью других слотов.
+//
+// Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP, а
+// тесты поднимают его сами (см. newOrchedOperator).
 func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
 	if o.orch == nil {
-		return o.applyConfig(ctx, cfg)
+		return fmt.Errorf("apply tunnels config: orchestrator not wired")
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal tunnels config: %w", err)
 	}
-	return o.orch.Save(orchestrator.SlotTunnels, data)
-}
-
-// ApplyConfigNoReload runs Save + Validate + Promote on an externally
-// mutated Config WITHOUT sending SIGHUP to sing-box. The on-disk
-// config.json is updated so any future cold-start picks up the new
-// state, but the running process keeps serving clients with its
-// current in-memory config — notably, the selector.now value set via
-// Clash API stays intact.
-//
-// deviceproxy.Service uses this on the "default-only change" save
-// path: rewriting config.json changes selector.default for next boot
-// without disturbing the live selector.
-//
-// Bypass orchestrator: this path intentionally avoids SIGHUP. The
-// orchestrator's debounced reload is normally desirable, but here the
-// caller has explicitly opted out to preserve live selector.now. We
-// take the legacy direct-write route even when orch is wired.
-func (o *Operator) ApplyConfigNoReload(ctx context.Context, cfg *Config) error {
-	// Defense-in-depth: no-reload assumes the running daemon will continue
-	// serving with its current in-memory config. If the process is down,
-	// there is no live state to preserve and the caller should have taken
-	// the full-apply path (startAndWait).
-	if running, _ := o.proc.IsRunning(); !running {
-		return ErrSingboxNotRunning
-	}
-	tmpPath := o.configPath + ".new"
-	if err := cfg.Save(tmpPath); err != nil {
+	res, err := o.orch.SaveAndValidate(orchestrator.SlotTunnels, data)
+	if err != nil {
 		return err
 	}
-	if err := o.validator.Validate(tmpPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("validate: %w", err)
+	if !res.Ok() {
+		return fmt.Errorf("validate: %s", res.Error())
 	}
-	if err := os.Rename(tmpPath, o.configPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("promote config: %w", err)
-	}
-	// Intentionally no reload — see doc comment.
 	return nil
 }
 

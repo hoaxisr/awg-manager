@@ -74,31 +74,23 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 // IS allowed to schedule a reload (toggling enabled is by definition
 // a config-content change, not a no-op selector-default tweak).
 func (a *SingboxAdapter) ApplyDeviceProxyNoReload(ctx context.Context, spec ExternalSpec) error {
-	if a.orch != nil {
-		sbSpec := toSingboxSpec(spec)
-		data, err := singbox.BuildDeviceProxyConfig(sbSpec)
-		if err != nil {
-			return fmt.Errorf("build deviceproxy config: %w", err)
-		}
-		if err := a.orch.SaveSilent(orchestrator.SlotDeviceProxy, data); err != nil {
-			return err
-		}
-		// SetEnabled is a no-op when the desired state already matches
-		// (no rename, no reload arming). Safe to call unconditionally.
-		if err := a.orch.SetEnabled(orchestrator.SlotDeviceProxy, sbSpec.Enabled); err != nil {
-			return err
-		}
-		return nil
+	if a.orch == nil {
+		// Прежде здесь был легаси-путь через Operator.ApplyConfigNoReload. Он
+		// был недостижим в проде (SetOrch зовётся до старта HTTP) и при этом
+		// неработоспособен: делал os.Rename файла поверх КАТАЛОГА config.d.
+		return fmt.Errorf("apply deviceproxy (no-reload): orchestrator not wired")
 	}
-
-	cfg, err := a.op.LoadCurrentConfig()
+	sbSpec := toSingboxSpec(spec)
+	data, err := singbox.BuildDeviceProxyConfig(sbSpec)
 	if err != nil {
+		return fmt.Errorf("build deviceproxy config: %w", err)
+	}
+	if err := a.orch.SaveSilent(orchestrator.SlotDeviceProxy, data); err != nil {
 		return err
 	}
-	if err := cfg.EnsureDeviceProxy(toSingboxSpec(spec)); err != nil {
-		return err
-	}
-	return a.op.ApplyConfigNoReload(ctx, cfg)
+	// SetEnabled is a no-op when the desired state already matches
+	// (no rename, no reload arming). Safe to call unconditionally.
+	return a.orch.SetEnabled(orchestrator.SlotDeviceProxy, sbSpec.Enabled)
 }
 
 // ApplyDeviceProxyInstances persists multiple device-proxy instances via

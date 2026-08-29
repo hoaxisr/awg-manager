@@ -438,16 +438,6 @@ func (o *Orchestrator) HoldReloads() func() {
 	}
 }
 
-// ScheduleReload планирует debounce-reload извне — для продюсеров, которые
-// пишут свой слот сами (легаси-путь туннелей пишет 10-tunnels.json напрямую,
-// со своей валидацией и откатом), но применять обязаны через оркестратор: он
-// один знает про hold, skip-gate по хешу и applied-state.
-func (o *Orchestrator) ScheduleReload() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.scheduleReload()
-}
-
 // SetEnabled toggles slot activity by renaming the file between
 // active and disabled locations. AlwaysOn slots reject disable.
 // Schedules a debounced reload.
