@@ -1135,6 +1135,10 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 // решить, менять ли (false — выходим без записи), записать через
 // оркестратор — там валидация merged-конфига и коалесцированный reload.
 //
+// Чтение и запись идут ОДНОЙ транзакцией оркестратора (Mutate): читать файл
+// самим, а потом звать Save, значило бы работать со снимком, взятым вне лока,
+// — параллельная правка другого скаляра терялась (дефект F41).
+//
 // Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP
 // (wiring_singbox.go), «раннего бута» без него не существует — все три
 // вызывающих (ApplyLogLevel/ApplyClashPort/ApplyBootstrapDNS) достижимы
@@ -1144,57 +1148,54 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	if o.orch == nil {
 		return fmt.Errorf("mutate base config: orchestrator not wired")
 	}
-	basePath := filepath.Join(o.configPath, "00-base.json")
-	var base map[string]any
-	restored := false
-	data, err := os.ReadFile(basePath)
-	switch {
-	case os.IsNotExist(err):
-		// Пропал ТОЛЬКО файл, каталог на месте — ВОССТАНАВЛИВАЕМ, а не
-		// считаем намерением пользователя, симметрично трактовке
-		// отсутствующего блока clash_api в ADR-0001. Молчаливый выход
-		// оставлял настройку сохранённой в settings.json, но не доехавшей
-		// до базы до следующего бута.
-		//
-		// Нет самого config.d — движок удалён вместе с каталогом, и
-		// воскрешать его правкой настройки нельзя: молчим, как молчали.
-		// Прежде этим различием не владел никто — ApplyLogLevel
-		// восстанавливал базу даже поверх снесённого каталога, а
-		// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
-		if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
-			return nil
-		} else if statErr != nil {
-			return fmt.Errorf("stat config.d: %w", statErr)
+	// Кандидат на восстановление считается ДО взятия лока оркестратора:
+	// desired* ходят в SettingsStore, а под чужим локом блокирующей работе
+	// делать нечего. Нужен он только в ветке «файла нет».
+	fresh := freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
+	return o.orch.Mutate(orchestrator.SlotBase, func(data []byte, exists bool) ([]byte, error) {
+		var base map[string]any
+		restored := false
+		if exists {
+			if err := json.Unmarshal(data, &base); err != nil {
+				return nil, fmt.Errorf("parse 00-base.json: %w", err)
+			}
+			// Файл с литеральным null — валидный JSON, дающий nil-карту;
+			// запись в неё паникует. Гард был у прежнего ApplyLogLevel и
+			// потерялся при сведении к общему транспорту.
+			if base == nil {
+				base = map[string]any{}
+			}
+		} else {
+			// Пропал ТОЛЬКО файл, каталог на месте — ВОССТАНАВЛИВАЕМ, а не
+			// считаем намерением пользователя, симметрично трактовке
+			// отсутствующего блока clash_api в ADR-0001. Молчаливый выход
+			// оставлял настройку сохранённой в settings.json, но не доехавшей
+			// до базы до следующего бута.
+			//
+			// Нет самого config.d — движок удалён вместе с каталогом, и
+			// воскрешать его правкой настройки нельзя: молчим, как молчали.
+			// Прежде этим различием не владел никто — ApplyLogLevel
+			// восстанавливал базу даже поверх снесённого каталога, а
+			// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
+			if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
+				return nil, nil
+			} else if statErr != nil {
+				return nil, fmt.Errorf("stat config.d: %w", statErr)
+			}
+			base = fresh
+			restored = true
 		}
-		base = freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
-		restored = true
-	case err != nil:
-		return fmt.Errorf("read 00-base.json: %w", err)
-	default:
-		if err := json.Unmarshal(data, &base); err != nil {
-			return fmt.Errorf("parse 00-base.json: %w", err)
+		// Свежая база уже несёт желаемые значения, так что мутатор на ней
+		// обычно говорит «менять нечего»; писать всё равно надо — файла-то нет.
+		if !mutate(base) && !restored {
+			return nil, nil
 		}
-		// Файл с литеральным null — валидный JSON, дающий nil-карту; запись
-		// в неё паникует. Гард был у прежнего ApplyLogLevel и потерялся при
-		// сведении к общему транспорту.
-		if base == nil {
-			base = map[string]any{}
+		raw, err := json.MarshalIndent(base, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal 00-base.json: %w", err)
 		}
-	}
-	// Свежая база уже несёт желаемые значения, так что мутатор на ней обычно
-	// говорит «менять нечего»; писать всё равно надо — файла-то нет.
-	if !mutate(base) && !restored {
-		return nil
-	}
-
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
-	}
-	if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-		return fmt.Errorf("save base slot: %w", err)
-	}
-	return nil
+		return raw, nil
+	})
 }
 
 // preflightConfigDir validates config.d/ before any action that would

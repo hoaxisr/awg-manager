@@ -374,6 +374,57 @@ func (o *Orchestrator) slotBytesUnchangedLocked(slot Slot, jsonBytes []byte) (bo
 	return bytes.Equal(old, jsonBytes), nil
 }
 
+// Mutate атомарно правит слот под локом: чтение с того же пути, куда пишет
+// saveLocked → мутатор → запись + debounce reload (unchanged-гейт как у Save).
+// Мутатор получает текущие байты слота и признак его наличия; nil в ответе —
+// «менять нечего», ни записи, ни reload. Ошибка мутатора отменяет запись.
+//
+// Зачем поверх Save: продюсер, читающий файл сам, а потом зовущий Save,
+// работает со снимком, взятым ВНЕ лока, — параллельная правка того же слота
+// теряется (дефект F41, 00-base.json). Приём тот же, что у
+// storage.SettingsStore.Update.
+//
+// Мутатор исполняется ПОД ЛОКОМ оркестратора: он обязан быть чистым и
+// быстрым. Любой метод оркестратора из него — дедлок (mu нерекурсивен),
+// любая блокирующая работа держит на себе всех продюсеров конфига.
+func (o *Orchestrator) Mutate(slot Slot, mut func(cur []byte, exists bool) ([]byte, error)) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	meta, ok := o.slots[slot]
+	if !ok {
+		return ErrUnknownSlot
+	}
+	path := o.disabledPath(meta)
+	if o.enabled[slot] {
+		path = o.activePath(meta)
+	}
+	cur, err := os.ReadFile(path)
+	exists := true
+	switch {
+	case os.IsNotExist(err):
+		cur, exists = nil, false
+	case err != nil:
+		// В отличие от байт-гейта Save, здесь ошибка чтения фатальна: отдать
+		// мутатору пустой cur значило бы дать ему затереть нечитаемый файл.
+		return fmt.Errorf("read %s: %w", meta.Filename, err)
+	}
+	next, err := mut(cur, exists)
+	if err != nil {
+		return err
+	}
+	if next == nil {
+		return nil
+	}
+	if err := o.saveLocked(slot, next); err != nil {
+		return err
+	}
+	if exists && bytes.Equal(cur, next) {
+		return nil
+	}
+	o.scheduleReload()
+	return nil
+}
+
 // SaveSilent is Save without the SIGHUP debounce. The slot file is
 // written but no reload is scheduled. Used by intentional "update on
 // disk only" paths (e.g. selector.default change that must not disturb
