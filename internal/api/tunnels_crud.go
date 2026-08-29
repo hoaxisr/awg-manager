@@ -418,7 +418,18 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if req.PingCheck != nil {
 			updated.PingCheck = req.PingCheck
 		}
-		if err := h.store.Save(&updated); err != nil {
+		// Ту же запись переписывает волна зеркала (exitreg/mirror.go): правка
+		// карточки ложится на свежую запись под локом стора, а не поверх
+		// снимка existing, снятого до всех проверок выше.
+		if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+			if req.ConnectivityCheck != nil {
+				t.ConnectivityCheck = updated.ConnectivityCheck
+			}
+			if req.PingCheck != nil {
+				t.PingCheck = updated.PingCheck
+			}
+			return nil
+		}); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
 			return
 		}
@@ -543,24 +554,30 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// svc.Update выше — секунды RCI-обменов; оркестратор и pingcheck за это
-	// время могли переписать runtime-поля. Переносим их из свежего чтения,
-	// а не из снапшота existing, снятого до svc.Update. Окно сужается до
-	// микросекунд; полный фикс (одна операция под локом стора) — отдельная
-	// задача.
-	if fresh, err := h.store.Get(id); err == nil {
-		req.Enabled = fresh.Enabled
-		req.ActiveWAN = fresh.ActiveWAN
-		req.StartedAt = fresh.StartedAt
+	// время могли переписать runtime-поля. Транзакция стора читает запись
+	// заново под локом, поэтому runtime-поля берутся свежими, а не из
+	// снапшота existing, снятого до svc.Update.
+	if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+		fresh := *t
+		// Пользовательская правка — это вся запись целиком: req уже слит с
+		// existing выше (:449-495), частичный PATCH ничего не теряет.
+		*t = req
+		t.Enabled = fresh.Enabled
+		t.ActiveWAN = fresh.ActiveWAN
+		t.StartedAt = fresh.StartedAt
 		// Кэш резолва валиден только для endpoint'а, под которым получен —
 		// то же условие, что при merge выше.
 		if req.Peer.Endpoint == fresh.Peer.Endpoint {
-			req.ResolvedEndpointIP = fresh.ResolvedEndpointIP
+			t.ResolvedEndpointIP = fresh.ResolvedEndpointIP
 		}
-	}
-
-	// Save updated tunnel
-	if err := h.store.Save(&req); err != nil {
+		return nil
+	}); err != nil {
 		h.log.Warn("update", req.Name, "Failed to update tunnel: "+err.Error())
+		if errors.Is(err, storage.ErrNotFound) {
+			// Туннель удалили, пока шёл RCI-обмен svc.Update.
+			response.Error(w, "tunnel not found", "NOT_FOUND")
+			return
+		}
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
 	}

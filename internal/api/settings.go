@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -719,30 +720,43 @@ func (h *SettingsHandler) enablePingCheckOnAllTunnels(settings *storage.Settings
 
 	defaults := settings.PingCheck.Defaults
 	for i := range tunnels {
-		tunnel := &tunnels[i]
-		// Зеркальные записи прокси-выходов — не наши туннели, а проекции
-		// инстансов: «включить на всех туннелях» не должно заводить измерение
-		// там, где пользователь его не выбирал. Своя настройка у них есть на
-		// карточке (tunnels_crud.go, ветка backendWdttRaw).
-		if tunnel.Backend == backendWdttRaw {
+		// Снимок List выбирает, по каким id идти; решение о записи каждый
+		// мутатор принимает заново по свежей записи под локом.
+		if tunnels[i].Backend == backendWdttRaw {
 			continue
 		}
-		if tunnel.PingCheck == nil {
-			tunnel.PingCheck = &storage.TunnelPingCheck{
-				Enabled:       true,
-				Method:        defaults.Method,
-				Target:        defaults.Target,
-				Interval:      defaults.Interval,
-				DeadInterval:  defaults.DeadInterval,
-				FailThreshold: defaults.FailThreshold,
-				MinSuccess:    1,
-				Timeout:       5,
-				Restart:       true,
+		err := h.tunnels.Update(tunnels[i].ID, func(t *storage.AWGTunnel) error {
+			// Зеркальные записи прокси-выходов — не наши туннели, а проекции
+			// инстансов: «включить на всех туннелях» не должно заводить
+			// измерение там, где пользователь его не выбирал. Своя настройка
+			// у них есть на карточке (tunnels_crud.go, ветка backendWdttRaw).
+			// Бэкенд перепроверяется здесь: снимок List снят вне лока, и
+			// запись могла стать зеркальной, пока шёл цикл.
+			if t.Backend == backendWdttRaw {
+				return storage.ErrNoChange
 			}
-		} else {
-			tunnel.PingCheck.Enabled = true
+			if t.PingCheck == nil {
+				t.PingCheck = &storage.TunnelPingCheck{
+					Enabled:       true,
+					Method:        defaults.Method,
+					Target:        defaults.Target,
+					Interval:      defaults.Interval,
+					DeadInterval:  defaults.DeadInterval,
+					FailThreshold: defaults.FailThreshold,
+					MinSuccess:    1,
+					Timeout:       5,
+					Restart:       true,
+				}
+			} else {
+				t.PingCheck.Enabled = true
+			}
+			return nil
+		})
+		// Туннель удалили между List и Update — включать нечего.
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
 		}
-		if err := h.tunnels.Save(tunnel); err != nil {
+		if err != nil {
 			return err
 		}
 	}
@@ -757,16 +771,24 @@ func (h *SettingsHandler) disablePingCheckOnAllTunnels() error {
 	}
 
 	for i := range tunnels {
-		tunnel := &tunnels[i]
-		// Симметрично включению: чужие записи не трогаем ни в одну сторону.
-		if tunnel.Backend == backendWdttRaw {
+		if tunnels[i].Backend == backendWdttRaw {
 			continue
 		}
-		if tunnel.PingCheck != nil {
-			tunnel.PingCheck.Enabled = false
-			if err := h.tunnels.Save(tunnel); err != nil {
-				return err
+		err := h.tunnels.Update(tunnels[i].ID, func(t *storage.AWGTunnel) error {
+			// Симметрично включению: чужие записи не трогаем ни в одну
+			// сторону, и бэкенд проверяем по свежей записи.
+			if t.Backend == backendWdttRaw || t.PingCheck == nil {
+				return storage.ErrNoChange
 			}
+			t.PingCheck.Enabled = false
+			return nil
+		})
+		// Туннель удалили между List и Update — выключать нечего.
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil

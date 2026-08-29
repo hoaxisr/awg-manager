@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -376,7 +377,7 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 	}
 
 	// Save config to storage after NDMS success
-	stored.PingCheck = &storage.TunnelPingCheck{
+	pc := &storage.TunnelPingCheck{
 		Enabled:       true,
 		Method:        cfg.Mode,
 		Target:        cfg.Host,
@@ -387,7 +388,10 @@ func (h *PingCheckHandler) ConfigureTunnelPingCheck(w http.ResponseWriter, r *ht
 		Port:          cfg.Port,
 		Restart:       cfg.Restart,
 	}
-	if err := h.tunnels.Save(stored); err != nil {
+	if err := h.tunnels.Update(id, func(t *storage.AWGTunnel) error {
+		t.PingCheck = pc
+		return nil
+	}); err != nil {
 		response.Error(w, "failed to save config", "SAVE_ERROR")
 		return
 	}
@@ -453,10 +457,26 @@ func (h *PingCheckHandler) RemoveTunnelPingCheck(w http.ResponseWriter, r *http.
 	h.service.StopMonitoring(id)
 
 	// Update storage
-	if stored.PingCheck != nil {
-		stored.PingCheck.Enabled = false
+	err = h.tunnels.Update(id, func(t *storage.AWGTunnel) error {
+		if t.PingCheck == nil {
+			return storage.ErrNoChange
+		}
+		t.PingCheck.Enabled = false
+		return nil
+	})
+	// Запись удалили, пока снимали профиль в NDMS, — писать больше некуда,
+	// и желаемое состояние (измерения нет) всё равно достигнуто.
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		// Профиль в NDMS уже снят, а на диске измерение осталось включённым:
+		// молчать здесь значит показать пользователю успех и оставить
+		// расхождение до следующей записи. Тот же отказ, что на включении.
+		// Теста на эту ветку нет: до неё не добраться без живого
+		// OperatorNativeWG (поля его структуры не экспортируются, а nil даёт
+		// 503 выше по обработчику).
+		h.log.Warn("ping-check-remove", id, "Failed to persist: "+err.Error())
+		response.Error(w, "failed to save config", "SAVE_ERROR")
+		return
 	}
-	_ = h.tunnels.Save(stored)
 
 	// Refresh orchestrator cache so the stale PingCheck.Enabled=true
 	// view doesn't drive phantom ActionRemovePingCheck on the next

@@ -117,7 +117,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Post-import defaults: PingCheck + optional freeturn link tag
-	if stored, err := h.store.Get(tunnel.ID); err == nil {
+	_ = h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
 			stored.PingCheck = &storage.TunnelPingCheck{
@@ -141,10 +141,11 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 			stored.WdttClientID = id
 			changed = true
 		}
-		if changed {
-			_ = h.store.Save(stored)
+		if !changed {
+			return storage.ErrNoChange
 		}
-	}
+		return nil
+	})
 
 	h.log.Info("import", tunnel.Name, "Tunnel imported")
 	var quiescent time.Time

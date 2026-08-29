@@ -150,13 +150,10 @@ func syncLinkedAwgTunnelNames(
 		if tun.Name == newName {
 			continue
 		}
-		stored, err := store.Get(tun.ID)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
-			continue
-		}
-		stored.Name = newName
-		if err := store.Save(stored); err != nil {
+		if err := store.Update(tun.ID, func(t *storage.AWGTunnel) error {
+			t.Name = newName
+			return nil
+		}); err != nil {
 			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
 			continue
 		}
@@ -352,7 +349,14 @@ func syncLinkedAwgTunnelEndpoints(
 				continue
 			}
 		}
-		if err := store.Save(&updatedStored); err != nil {
+		// svc.Update выше — RCI-обмен; за это время оркестратор мог переписать
+		// runtime-поля записи. Персистим только endpoint, ради которого сюда
+		// пришли: снимок existing, снятый до svc.Update, записью целиком
+		// откатывал бы чужие поля.
+		if err := store.Update(tun.ID, func(t *storage.AWGTunnel) error {
+			t.Peer.Endpoint = want
+			return nil
+		}); err != nil {
 			errs = append(errs, fmt.Sprintf("%s (%s): %v", tun.Name, tun.ID, err))
 			continue
 		}
