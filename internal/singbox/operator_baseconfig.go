@@ -430,10 +430,15 @@ func filterOutDeviceProxyRouteRules(in []any) []any {
 	return out
 }
 
-// filterOutOurDNSServers removes dns.servers entries whose tag is one of
-// the well-known tags 00-base.json owns ("dns-bootstrap", "dns-doh"). All
-// other entries — user-added custom resolvers — pass through so they end
-// up in 10-tunnels.json and survive the migration.
+// filterOutOurDNSServers removes dns.servers entries tagged with our two
+// historical tags, "dns-bootstrap" and "dns-doh". "dns-doh" is a legacy
+// phantom: the current 00-base.json (freshBaseConfig) does not emit it —
+// only pre-fix installs and old config.json snapshots still carry it — but
+// this owned-set exists precisely to strip that historical pollution out of
+// 10-tunnels.json, so the tag stays listed here on purpose (see F43,
+// docs/plans/2026-08-29-base-config-defects.md). All other entries —
+// user-added custom resolvers — pass through so they end up in
+// 10-tunnels.json and survive the migration.
 func filterOutOurDNSServers(in []any) []any {
 	owned := map[string]bool{
 		"dns-bootstrap": true,
@@ -535,7 +540,9 @@ func setClashController(m map[string]any, want string) bool {
 }
 
 // setBootstrapServer ставит адрес серверу с тегом dns-bootstrap. Возвращает
-// false, если менять нечего: записи нет или адрес уже такой.
+// false, если менять нечего: записи нет или адрес уже такой. Не создаёт
+// запись — этим занимается reconcileBootstrapServer, который решает, что
+// делать при отсутствующей записи.
 func setBootstrapServer(m map[string]any, want string) bool {
 	dns, _ := m["dns"].(map[string]any)
 	if dns == nil {
@@ -556,22 +563,71 @@ func setBootstrapServer(m map[string]any, want string) bool {
 	return false
 }
 
-// patchBaseBootstrapDNS приводит адрес сервера dns-bootstrap к заданному в
-// настройках (issue #770). Пустая настройка — no-op: до её появления адрес
-// правили руками прямо в 00-base.json, и такие правки обязаны выжить.
-// Записи с тегом dns-bootstrap нет — тоже no-op: патчер правит адрес, а не
-// проектирует структуру файла.
+// reconcileBootstrapServer владеет ФАКТОМ наличия записи dns-bootstrap
+// (F44): 99-defaults.json ссылается на этот тег безусловно
+// (reconcileDerivedDefaults), а наш же кросс-слотовый валидатор даёт
+// блокирующий unknown-dns-server на висячую ссылку — без записи ни один
+// reload/cold start не проходит. Адресом при непустой настройке продолжает
+// владеть менеджер, при пустой — пользователь (issue #770): до появления
+// настройки адрес правили руками прямо в 00-base.json, такие правки обязаны
+// выжить.
+//
+//   - записи нет → создаём {type:udp, tag:dns-bootstrap, server: want, а при
+//     пустой настройке — defaultBootstrapDNS}, достраивая недостающие уровни
+//     dns/servers;
+//   - запись есть, want == "" → не трогаем;
+//   - запись есть, want != "" → правим адрес через setBootstrapServer.
+//
+// Осознанная потеря: пользователь, перенёсший объявление тега dns-bootstrap
+// в свой слот (90-user.json) и удаливший запись из базы, получит после
+// самолечения блокирующий duplicate-dns с именами обоих файлов — явную
+// ошибку вместо тихого «ни один reload не проходит» (см. ADR-0002).
+//
+// Возвращает true, если base изменена (нужна запись файла).
+func reconcileBootstrapServer(base map[string]any, want string) bool {
+	dns, _ := base["dns"].(map[string]any)
+	if dns == nil {
+		dns = map[string]any{}
+		base["dns"] = dns
+	}
+	servers, _ := dns["servers"].([]any)
+	for _, v := range servers {
+		s, _ := v.(map[string]any)
+		if s == nil || s["tag"] != "dns-bootstrap" {
+			continue
+		}
+		if want == "" {
+			return false
+		}
+		return setBootstrapServer(base, want)
+	}
+	dns["servers"] = append(servers, map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapAddr(want)})
+	return true
+}
+
+// bootstrapAddr — адрес, который получит СОЗДАВАЕМАЯ запись dns-bootstrap:
+// настройка, а при пустой — исторический дефолт. Общий с логом
+// patchBaseBootstrapDNS: два вычисления «какой адрес мы применили»
+// разъехались бы, и лог начал бы врать.
+func bootstrapAddr(want string) string {
+	if want == "" {
+		return defaultBootstrapDNS
+	}
+	return want
+}
+
+// patchBaseBootstrapDNS приводит запись dns-bootstrap в 00-base.json к
+// желаемому состоянию через reconcileBootstrapServer: наличием записи
+// владеет менеджер, адресом при непустой настройке — тоже менеджер, при
+// пустой — пользователь.
 func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 	want = sanitizeBootstrapDNS(want)
-	if want == "" {
-		return
-	}
 	log := firstLogger(loggers)
 	m, ok := readSlotJSON(stepPatchBaseBootstrapDNS, basePath, log)
 	if !ok {
 		return
 	}
-	if !setBootstrapServer(m, want) {
+	if !reconcileBootstrapServer(m, want) {
 		return
 	}
 	if !writeSlotJSON(stepPatchBaseBootstrapDNS, basePath, m, log) {
@@ -580,7 +636,7 @@ func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 	logConfigPatchInfo(log, "singbox base config reconciled",
 		"patch", stepPatchBaseBootstrapDNS,
 		"path", basePath,
-		"newServer", want,
+		"newServer", bootstrapAddr(want),
 	)
 }
 
@@ -1118,16 +1174,16 @@ func (o *Operator) ApplyClashPort(port int) error {
 	return nil
 }
 
-// ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению
-// настройки без перезапуска демона (issue #770). Пустое значение — no-op:
-// настройка снята, файл остаётся как есть.
+// ApplyBootstrapDNS приводит запись dns-bootstrap в 00-base.json к значению
+// настройки без перезапуска демона (issue #770). Наличием записи владеет
+// менеджер (F44): отсутствующая запись самолечится даже при пустой
+// настройке — иначе unknown-dns-server валит следующий reload вместо
+// тихого no-op. Пустое значение при СУЩЕСТВУЮЩЕЙ записи — no-op (ручные
+// правки адреса обязаны выжить).
 func (o *Operator) ApplyBootstrapDNS(server string) error {
 	server = sanitizeBootstrapDNS(server)
-	if server == "" {
-		return nil
-	}
 	return o.mutateBase(func(base map[string]any) bool {
-		return setBootstrapServer(base, server)
+		return reconcileBootstrapServer(base, server)
 	})
 }
 

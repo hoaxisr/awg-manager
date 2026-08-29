@@ -1147,8 +1147,13 @@ func TestPatchTunnelsSlotStripBaseOwnedBlocks_StripsDanglingFinalReference(t *te
 
 // TestPatchTunnelsSlotStripBaseOwnedBlocks_PreservesUserDNSRules keeps the dns
 // block alive when servers got filtered to zero but the user has rules
-// pointing at base-owned tags (dns rules reference, but don't own,
-// server tags — sing-box merges across slots).
+// pointing at one of our owned tags. Nobody currently declares "dns-doh"
+// (legacy phantom, see F43) — the surviving rule below is a dangling
+// reference, but our cross-slot validator never inspects dns.rules[].server
+// (only dns.final and route.default_domain_resolver.server), and sing-box
+// resolves dns.rules servers per-query at runtime, logging and skipping a
+// missing transport rather than failing config load. So the orphaned rule
+// is harmless, not "merged across slots" by some owner.
 func TestPatchTunnelsSlotStripBaseOwnedBlocks_PreservesUserDNSRules(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "10-tunnels.json")

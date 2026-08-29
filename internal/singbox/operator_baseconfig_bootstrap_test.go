@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // bootstrapServerOf извлекает адрес сервера dns-bootstrap из базового конфига.
@@ -105,8 +107,26 @@ func TestPatchBaseBootstrapDNS(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			path := baseWithServers(t, t.TempDir(), c.servers)
+			var before time.Time
+			if c.want == "" {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before = info.ModTime()
+				time.Sleep(10 * time.Millisecond)
+			}
 			patchBaseBootstrapDNS(path, c.want)
 			patchBaseBootstrapDNS(path, c.want) // идемпотентность
+			if c.want == "" {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !info.ModTime().Equal(before) {
+					t.Errorf("файл переписан при пустой настройке и существующей записи: %v → %v", before, info.ModTime())
+				}
+			}
 			base := readBaseFixture(t, path)
 			if got := bootstrapServerOf(t, base); got != c.expect {
 				t.Errorf("dns-bootstrap.server = %q, want %q", got, c.expect)
@@ -120,8 +140,10 @@ func TestPatchBaseBootstrapDNS(t *testing.T) {
 	}
 }
 
-// Записи dns-bootstrap в базе нет (пользователь её удалил) — патчер не
-// выдумывает сервер: структуру файла он не проектирует, а только правит адрес.
+// Записи dns-bootstrap в базе нет (пользователь её удалил) — патчер её
+// ВОССТАНАВЛИВАЕТ (F44): 99-defaults.json ссылается на этот тег безусловно,
+// и без записи наш же валидатор блокирует каждый reload/cold start
+// unknown-dns-server. Соседний пользовательский сервер не задет.
 func TestPatchBaseBootstrapDNS_NoBootstrapEntry(t *testing.T) {
 	path := baseWithServers(t, t.TempDir(), []any{
 		map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"},
@@ -129,13 +151,54 @@ func TestPatchBaseBootstrapDNS_NoBootstrapEntry(t *testing.T) {
 	patchBaseBootstrapDNS(path, "8.8.8.8")
 
 	base := readBaseFixture(t, path)
+	if got := bootstrapServerOf(t, base); got != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8 (запись должна быть создана)", got)
+	}
 	dns, _ := base["dns"].(map[string]any)
 	servers, _ := dns["servers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("dns.servers = %#v, want the single custom entry untouched", servers)
+	if len(servers) != 2 {
+		t.Fatalf("dns.servers = %#v, want 2 entries (custom + созданный bootstrap)", servers)
 	}
-	if s, _ := servers[0].(map[string]any); s["tag"] != "dns-custom" || s["server"] != "192.168.0.1" {
-		t.Errorf("custom server changed: %#v", servers[0])
+	foundCustom := false
+	for _, v := range servers {
+		s, _ := v.(map[string]any)
+		if s["tag"] == "dns-custom" {
+			foundCustom = true
+			if s["server"] != "192.168.0.1" {
+				t.Errorf("custom server changed: %#v", s)
+			}
+		}
+	}
+	if !foundCustom {
+		t.Error("dns-custom server missing after self-heal")
+	}
+}
+
+// Записи нет и настройка пуста — создаём с историческим дефолтом, а не
+// оставляем движок без резолвера.
+func TestPatchBaseBootstrapDNS_NoBootstrapEntry_EmptySetting(t *testing.T) {
+	path := baseWithServers(t, t.TempDir(), []any{
+		map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"},
+	})
+	patchBaseBootstrapDNS(path, "")
+
+	base := readBaseFixture(t, path)
+	if got := bootstrapServerOf(t, base); got != defaultBootstrapDNS {
+		t.Errorf("dns-bootstrap.server = %q, want %q (исторический дефолт)", got, defaultBootstrapDNS)
+	}
+}
+
+// Блока dns вообще нет — недостающие уровни достраиваются, а не молчим.
+func TestPatchBaseBootstrapDNS_NoDNSBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "00-base.json")
+	writeFixtureJSON(t, path, map[string]any{"log": map[string]any{"level": "info"}})
+
+	patchBaseBootstrapDNS(path, "8.8.8.8")
+
+	base := readBaseFixture(t, path)
+	if got := bootstrapServerOf(t, base); got != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8", got)
 	}
 }
 
@@ -195,6 +258,45 @@ func TestOperator_ApplyBootstrapDNS(t *testing.T) {
 	}
 	if got := bootstrapServerOf(t, readBaseFixture(t, path)); got != "8.8.8.8" {
 		t.Errorf("снятие настройки переписало файл: %q, want 8.8.8.8", got)
+	}
+}
+
+// Запись dns-bootstrap удалена руками (файл при этом на месте) —
+// ApplyBootstrapDNS создаёт её заново: рантайм-путь обязан лечить тот же
+// дефект F44, что и бутовый патчер, а не только адрес существующей записи.
+func TestOperator_ApplyBootstrapDNS_NoBootstrapEntry_CreatesIt(t *testing.T) {
+	dir := t.TempDir()
+	op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: dir})
+	basePath := filepath.Join(dir, "config.d", "00-base.json")
+
+	base := readBaseFixture(t, basePath)
+	dns, _ := base["dns"].(map[string]any)
+	dns["servers"] = []any{map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"}}
+	raw, err := json.MarshalIndent(base, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(basePath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := op.ApplyBootstrapDNS("8.8.8.8"); err != nil {
+		t.Fatalf("ApplyBootstrapDNS: %v", err)
+	}
+	got := readBaseFixture(t, basePath)
+	if addr := bootstrapServerOf(t, got); addr != "8.8.8.8" {
+		t.Errorf("dns-bootstrap.server = %q, want 8.8.8.8 (запись должна быть создана заново)", addr)
+	}
+	servers, _ := got["dns"].(map[string]any)["servers"].([]any)
+	foundCustom := false
+	for _, v := range servers {
+		s, _ := v.(map[string]any)
+		if s["tag"] == "dns-custom" {
+			foundCustom = true
+		}
+	}
+	if !foundCustom {
+		t.Error("dns-custom server missing after self-heal")
 	}
 }
 
@@ -429,6 +531,43 @@ func TestOperator_ApplyBaseScalars_NullBaseDoesNotPanic(t *testing.T) {
 	logBlock, _ := base["log"].(map[string]any)
 	if lvl, _ := logBlock["level"].(string); lvl != "debug" {
 		t.Errorf("log.level = %q, want debug", lvl)
+	}
+}
+
+// Интеграционный пин F44: набор шагов бутового примирения самолечит
+// отсутствующую запись dns-bootstrap так, что merged-конфиг проходит НАШ
+// собственный кросс-слотовый валидатор. На старом коде (патчер не создаёт
+// отсутствующую запись) это репро факта §0 плана — валидатор давал бы
+// unknown-dns-server на ссылку 99-defaults.json → route.default_domain_resolver.
+func TestReconcileConfigSteps_HealsMissingBootstrapEntry(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	baseWithServers(t, configDir, []any{
+		map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"},
+	})
+
+	for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, nil) {
+		s.run()
+	}
+
+	proc := NewProcess("", configDir, filepath.Join(dir, "singbox.pid"))
+	orch := singboxorch.New(configDir, proc)
+	for _, meta := range singboxorch.KnownSlots() {
+		switch meta.Slot {
+		case singboxorch.SlotBase, singboxorch.SlotDefaults:
+		default:
+			continue
+		}
+		if err := orch.Register(meta); err != nil {
+			t.Fatalf("register %s: %v", meta.Slot, err)
+		}
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	res := orch.Validate()
+	if !res.Ok() {
+		t.Fatalf("merged config невалиден после самолечения: %s", res.Error())
 	}
 }
 
