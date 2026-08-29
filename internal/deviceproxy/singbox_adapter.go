@@ -53,14 +53,10 @@ func (a *SingboxAdapter) ApplyDeviceProxy(ctx context.Context, spec ExternalSpec
 		return nil
 	}
 
-	cfg, err := a.op.LoadCurrentConfig()
-	if err != nil {
-		return err
-	}
-	if err := cfg.EnsureDeviceProxy(toSingboxSpec(spec)); err != nil {
-		return err
-	}
-	return a.op.ApplyConfig(ctx, cfg)
+	// Легаси-путь (device-proxy, встроенный в 10-tunnels.json) снят вместе с
+	// эпохой orch == nil: в проде SetOrch зовётся до старта HTTP. Явная
+	// ошибка здесь, а не отказ где-то в глубине про «tunnels config».
+	return fmt.Errorf("apply deviceproxy: orchestrator not wired")
 }
 
 // ApplyDeviceProxyNoReload is the no-SIGHUP twin of ApplyDeviceProxy.
@@ -125,28 +121,8 @@ func (a *SingboxAdapter) ApplyDeviceProxyInstances(ctx context.Context, specs []
 		return nil
 	}
 
-	if len(specs) == 0 {
-		cfg, err := a.op.LoadCurrentConfig()
-		if err != nil {
-			return err
-		}
-		cfg.RemoveAllDeviceProxyInstances()
-		return a.op.ApplyConfig(ctx, cfg)
-	}
-
-	cfg, err := a.op.LoadCurrentConfig()
-	if err != nil {
-		return err
-	}
-	cfg.RemoveAllDeviceProxyInstances()
-
-	for _, spec := range specs {
-		if err := cfg.EnsureDeviceProxyInstance(toSingboxInstanceSpec(spec)); err != nil {
-			return err
-		}
-	}
-
-	return a.op.ApplyConfig(ctx, cfg)
+	// Легаси-путь снят — см. ApplyDeviceProxy.
+	return fmt.Errorf("apply deviceproxy instances: orchestrator not wired")
 }
 
 // AvailableOutboundTags returns the outbound tags declared by ENABLED
