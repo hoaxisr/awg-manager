@@ -227,9 +227,11 @@ func (a *app) setupSingboxRuntime() {
 	}
 
 	// Subscription service — owns 40-subscriptions.json in config.d.
-	// NewOperatorAdapter registers the slot into sbOrch (must happen before
-	// Bootstrap so Bootstrap can scan the file). LoadFromDisk reads any
-	// existing 40-subscriptions.json so the in-memory state is consistent.
+	// Слот регистрирует цикл KnownSlots внутри buildSingboxCore, до
+	// Bootstrap; Register внутри NewOperatorAdapter — no-op дубль с той же
+	// meta (ErrSlotAlreadyRegistered там глотается, см. его докстринг).
+	// А вот LoadFromDisk обязан идти ПОСЛЕ Bootstrap: он приводит память
+	// адаптера в соответствие с тем, что оказалось на диске.
 	subStorePath := filepath.Join(a.dataDir, "subscriptions.json")
 	a.subStore, err = subscription.NewStore(subStorePath)
 	if err != nil {
