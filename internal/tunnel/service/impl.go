@@ -937,7 +937,12 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
 		t.Interface = stored.Interface
 		t.Peer = stored.Peer
-		t.Name = stored.Name
+		// Имя — только если его действительно меняли: иначе сюда уехало бы
+		// имя из снимка, снятого до GetState (для nativewg это RCI-обмен), и
+		// параллельное переименование волной wdttlink молча откатилось бы.
+		if newName != "" {
+			t.Name = newName
+		}
 		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
 		t.ActiveWAN = stored.ActiveWAN
 		t.StartedAt = stored.StartedAt
@@ -1147,14 +1152,19 @@ func (s *ServiceImpl) MigrateISPInterfaceNone() {
 		}
 		// Снимок List выбирает кандидатов; решение о записи мутатор
 		// принимает заново по свежей записи под локом.
+		migrated := false
 		err := s.store.Update(t.ID, func(fresh *storage.AWGTunnel) error {
 			if fresh.ISPInterface != "none" {
 				return storage.ErrNoChange
 			}
 			fresh.ISPInterface = ""
+			migrated = true
 			return nil
 		})
-		if err == nil {
+		// Update отдаёт nil и на ErrNoChange, поэтому «мигрировали» решает
+		// флаг из мутатора, а не отсутствие ошибки: иначе строка печаталась бы
+		// и тогда, когда свежая запись кандидата не подтвердила.
+		if err == nil && migrated {
 			s.logInfo("migrate", t.ID, "Migrated ISPInterface from 'none' to auto")
 		}
 	}
@@ -1267,7 +1277,9 @@ func (s *ServiceImpl) HealStaleActiveWAN() {
 			fresh.ActiveWAN = ""
 			return nil
 		})
-		if err == nil {
+		// staleWAN непуст только когда мутатор реально чистил поле: на
+		// ErrNoChange Update тоже возвращает nil, и строка врала бы пустым %q.
+		if err == nil && staleWAN != "" {
 			s.logInfo("migrate", t.ID, fmt.Sprintf("Clearing stale ActiveWAN=%q (not a kernel interface)", staleWAN))
 		}
 	}
