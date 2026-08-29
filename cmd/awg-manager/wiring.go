@@ -83,6 +83,10 @@ type app struct {
 	settings      *storage.Settings
 	awgStore      *storage.AWGTunnelStore
 
+	// singboxDir — каталог sing-box для setupSingboxRuntime. В проде пустой
+	// (оператор берёт дефолт рядом с бинарём); существует ради подмены
+	// каталога во временный в пинах конструктора.
+	singboxDir     string
 	loggingService *logging.Service
 	bootLog        *logging.ScopedLogger
 
