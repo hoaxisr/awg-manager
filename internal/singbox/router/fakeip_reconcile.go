@@ -158,25 +158,33 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 						// а не рутинная проверка.
 						s.appLog.Info("fakeip-reconcile", iface, "pool route v4 was absent, re-added (drift-heal)")
 					}
-					// v6 re-add is gated on the SAME v4-absence signal: routes are added
-					// together at Enable, so v4-present ⇒ v6-present is a sound v1
-					// heuristic (a dedicated v6 presence probe against /proc/net/ipv6_route
-					// is a follow-up). When v4 was present we skip v6 too → zero POSTs.
-					if inet6Range != "" {
-						if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
-							V6: true, Network: inet6Range, Interface: ndmsName,
-						}); e != nil {
-							s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
-						} else {
-							s.appLog.Info("fakeip-reconcile", iface, "pool route v6 was absent, re-added (drift-heal)")
-						}
-					}
 				}
 			} else {
 				s.appLog.Warn("fakeip-reconcile", iface, "derive pool v4 mask: "+derr.Error())
 			}
 		} else if inet4Range != "" {
 			s.appLog.Warn("fakeip-reconcile", iface, "parse pool v4 range: "+perr.Error())
+		}
+
+		// Пул v6 — СВОЯ проба (/proc/net/ipv6_route), как у v6-циклов CIDR ниже.
+		// Прежде re-add v6 висел на сигнале отсутствия v4: маршруты ставятся
+		// вместе на Enable, поэтому «v4 есть ⇒ v6 есть» считалось достаточной
+		// v1-эвристикой. Она давала fail-OPEN там, где у v4 fail-closed: одиноко
+		// пропавший fc00::/18 не лечился, пока стоит v4, и v6-трафик пула уходил
+		// в WAN мимо туннеля. Steady state по-прежнему ноль POST'ов — проба
+		// гейтит так же, как v4.
+		if inet6Range != "" {
+			if pfx6, perr6 := netip.ParsePrefix(inet6Range); perr6 != nil {
+				s.appLog.Warn("fakeip-reconcile", iface, "parse pool v6 range: "+perr6.Error())
+			} else if !fakeIPPoolRoute6Present(iface, pfx6.Masked()) {
+				if e := s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+					V6: true, Network: inet6Range, Interface: ndmsName,
+				}); e != nil {
+					s.appLog.Warn("fakeip-reconcile", iface, "re-add pool route v6: "+e.Error())
+				} else {
+					s.appLog.Info("fakeip-reconcile", iface, "pool route v6 was absent, re-added (drift-heal)")
+				}
+			}
 		}
 	}
 
