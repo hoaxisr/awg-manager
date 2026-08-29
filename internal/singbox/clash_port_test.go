@@ -123,9 +123,8 @@ func TestOperator_ApplyClashPort(t *testing.T) {
 	}
 
 	t.Run("база и клиент переезжают вместе", func(t *testing.T) {
-		dir := t.TempDir()
-		op := NewOperator(OperatorDeps{Dir: dir})
-		basePath := filepath.Join(dir, "config.d", "00-base.json")
+		op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: t.TempDir()})
+		basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 
 		if err := op.ApplyClashPort(9500); err != nil {
 			t.Fatalf("ApplyClashPort: %v", err)
@@ -139,8 +138,7 @@ func TestOperator_ApplyClashPort(t *testing.T) {
 	})
 
 	t.Run("повторное применение того же порта — no-op без ошибки", func(t *testing.T) {
-		dir := t.TempDir()
-		op := NewOperator(OperatorDeps{Dir: dir, ClashPort: func() int { return 9500 }})
+		op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: t.TempDir(), ClashPort: func() int { return 9500 }})
 		if err := op.ApplyClashPort(9500); err != nil {
 			t.Fatalf("ApplyClashPort: %v", err)
 		}
@@ -157,9 +155,8 @@ func TestOperator_ApplyClashPort(t *testing.T) {
 	// прочими условно-своими скалярами. Симметрично трактовке отсутствующего
 	// блока clash_api в ADR-0001: отсутствие — не намерение пользователя.
 	t.Run("пропавшая база при живом каталоге — восстанавливается", func(t *testing.T) {
-		dir := t.TempDir()
-		op := NewOperator(OperatorDeps{Dir: dir})
-		basePath := filepath.Join(dir, "config.d", "00-base.json")
+		op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: t.TempDir()})
+		basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 		if err := os.Remove(basePath); err != nil {
 			t.Fatal(err)
 		}
@@ -177,9 +174,8 @@ func TestOperator_ApplyClashPort(t *testing.T) {
 	// Провалившаяся запись не должна оставлять клиент смотреть в порт,
 	// которого нет в конфиге: SetAddress зовётся строго после успеха.
 	t.Run("битая база — клиент остаётся на старом порту", func(t *testing.T) {
-		dir := t.TempDir()
-		op := NewOperator(OperatorDeps{Dir: dir})
-		basePath := filepath.Join(dir, "config.d", "00-base.json")
+		op := newOrchedOperatorWithDeps(t, OperatorDeps{Dir: t.TempDir()})
+		basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 		if err := os.WriteFile(basePath, []byte("{не json"), 0644); err != nil {
 			t.Fatal(err)
 		}

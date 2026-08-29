@@ -418,8 +418,7 @@ func TestPatchBaseLogLevel_AppliesDesiredLevel(t *testing.T) {
 }
 
 func TestOperatorApplyLogLevel_UpdatesBaseConfig(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op, _ := newOrchedOperator(t)
 	basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 	if err := op.ApplyLogLevel("warn"); err != nil {
 		t.Fatalf("ApplyLogLevel: %v", err)
@@ -439,8 +438,7 @@ func TestOperatorApplyLogLevel_UpdatesBaseConfig(t *testing.T) {
 }
 
 func TestOperatorApplyLogLevel_BrokenBaseJSONReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	op := NewOperator(OperatorDeps{Dir: dir})
+	op, _ := newOrchedOperator(t)
 	basePath := filepath.Join(op.ConfigDir(), "00-base.json")
 	if err := os.WriteFile(basePath, []byte("{broken"), 0o644); err != nil {
 		t.Fatal(err)
