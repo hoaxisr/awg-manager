@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 func writeLegacyConfig(t *testing.T, path string, body map[string]any) {
@@ -273,6 +275,73 @@ func TestEnsureLegacyConfigMigrated_NoCustomDNSOmitsBlock(t *testing.T) {
 	_ = json.Unmarshal(data, &got)
 	if _, has := got["dns"]; has {
 		t.Error("dns block must be absent when only our bootstrap remains")
+	}
+}
+
+// TestEnsureLegacyConfigMigrated_DanglingDNSDohRuleValidates — пин F43.
+// Легаси-конфиг несёт dns.rules со ссылкой на "dns-doh" и dns.final той же
+// ссылкой. dns-doh — легаси-фантом: сервер отфильтрован (owned-set), а
+// dns.final миграция НЕ копирует вовсе (dnsSlot несёт только servers+rules).
+// Сирота в dns.rules[].server доезжает до merged, но наш кросс-слотовый
+// валидатор его не проверяет (dnsRuleJSON собирает только rule_set), и
+// sing-box резолвит dns.rules per-query, мягко деградируя на ненайденный
+// транспорт — check проходит (docs/plans/2026-08-29-base-config-defects.md
+// §0). Пин защищает именно это: будущая правка миграции, которая начнёт
+// копировать dns.final, открыла бы жёсткую ссылку заново.
+func TestEnsureLegacyConfigMigrated_DanglingDNSDohRuleValidates(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config.d")
+	// config.d уже существует к моменту миграции — как в реальном буте,
+	// где ensureBaseConfig (шаг раньше в reconcileConfigSteps) успевает
+	// создать 00-base.json первым.
+	ensureBaseConfig(configDir, "info", "", 0)
+
+	writeLegacyConfig(t, filepath.Join(dir, "config.json"), map[string]any{
+		"dns": map[string]any{
+			"final": "dns-doh",
+			"servers": []any{
+				map[string]any{"tag": "dns-bootstrap", "type": "udp", "server": "1.1.1.1"},
+				map[string]any{"tag": "dns-doh", "type": "https", "server": "cloudflare-dns.com"},
+				map[string]any{"tag": "dns-custom", "type": "udp", "server": "8.8.8.8"},
+			},
+			"rules": []any{
+				map[string]any{"domain_suffix": ".example.com", "server": "dns-doh"},
+			},
+		},
+		"inbounds": []any{
+			map[string]any{"tag": "vless-1-in", "type": "mixed", "listen": "127.0.0.1", "listen_port": 1080},
+		},
+		"outbounds": []any{
+			map[string]any{"type": "direct", "tag": "direct"},
+			map[string]any{"type": "vless", "tag": "vless-1", "server": "x"},
+		},
+		"route": map[string]any{
+			"rules": []any{
+				map[string]any{"inbound": "vless-1-in", "outbound": "vless-1"},
+			},
+		},
+	})
+
+	ensureLegacyConfigMigrated(dir)
+
+	proc := NewProcess("", configDir, filepath.Join(dir, "singbox.pid"))
+	orch := singboxorch.New(configDir, proc)
+	for _, meta := range singboxorch.KnownSlots() {
+		switch meta.Slot {
+		case singboxorch.SlotBase, singboxorch.SlotTunnels:
+		default:
+			continue
+		}
+		if err := orch.Register(meta); err != nil {
+			t.Fatalf("register %s: %v", meta.Slot, err)
+		}
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	res := orch.Validate()
+	if !res.Ok() {
+		t.Fatalf("merged config должен быть валиден при сироте dns.rules[].server=dns-doh: %s", res.Error())
 	}
 }
 

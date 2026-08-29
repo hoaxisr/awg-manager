@@ -28,7 +28,7 @@ var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 // package decoupled from the operator's path layout (it just receives a string).
 func DefaultCacheDBPath() string { return defaultCacheDBPath }
 
-// ensureBaseConfigWithLogLevel writes a minimal 00-base.json if config.d is
+// ensureBaseConfig writes a minimal 00-base.json if config.d is
 // empty, so sing-box starts standalone (direct outbound + bootstrap DNS) before
 // any tunnels are added. Also surgically self-heals an older base config
 // that hard-coded the wrong Clash API port (9090 instead of ours), which
@@ -430,10 +430,15 @@ func filterOutDeviceProxyRouteRules(in []any) []any {
 	return out
 }
 
-// filterOutOurDNSServers removes dns.servers entries whose tag is one of
-// the well-known tags 00-base.json owns ("dns-bootstrap", "dns-doh"). All
-// other entries — user-added custom resolvers — pass through so they end
-// up in 10-tunnels.json and survive the migration.
+// filterOutOurDNSServers removes dns.servers entries tagged with our two
+// historical tags, "dns-bootstrap" and "dns-doh". "dns-doh" is a legacy
+// phantom: the current 00-base.json (freshBaseConfig) does not emit it —
+// only pre-fix installs and old config.json snapshots still carry it — but
+// this owned-set exists precisely to strip that historical pollution out of
+// 10-tunnels.json, so the tag stays listed here on purpose (see F43,
+// docs/plans/2026-08-29-base-config-defects.md). All other entries —
+// user-added custom resolvers — pass through so they end up in
+// 10-tunnels.json and survive the migration.
 func filterOutOurDNSServers(in []any) []any {
 	owned := map[string]bool{
 		"dns-bootstrap": true,
@@ -535,7 +540,9 @@ func setClashController(m map[string]any, want string) bool {
 }
 
 // setBootstrapServer ставит адрес серверу с тегом dns-bootstrap. Возвращает
-// false, если менять нечего: записи нет или адрес уже такой.
+// false, если менять нечего: записи нет или адрес уже такой. Не создаёт
+// запись — этим занимается reconcileBootstrapServer, который решает, что
+// делать при отсутствующей записи.
 func setBootstrapServer(m map[string]any, want string) bool {
 	dns, _ := m["dns"].(map[string]any)
 	if dns == nil {
@@ -556,22 +563,85 @@ func setBootstrapServer(m map[string]any, want string) bool {
 	return false
 }
 
-// patchBaseBootstrapDNS приводит адрес сервера dns-bootstrap к заданному в
-// настройках (issue #770). Пустая настройка — no-op: до её появления адрес
-// правили руками прямо в 00-base.json, и такие правки обязаны выжить.
-// Записи с тегом dns-bootstrap нет — тоже no-op: патчер правит адрес, а не
-// проектирует структуру файла.
+// reconcileBootstrapServer владеет ФАКТОМ наличия записи dns-bootstrap
+// (F44): 99-defaults.json ссылается на этот тег безусловно
+// (reconcileDerivedDefaults), а наш же кросс-слотовый валидатор даёт
+// блокирующий unknown-dns-server на висячую ссылку — без записи ни один
+// reload/cold start не проходит. Адресом при непустой настройке продолжает
+// владеть менеджер, при пустой — пользователь (issue #770): до появления
+// настройки адрес правили руками прямо в 00-base.json, такие правки обязаны
+// выжить.
+//
+//   - записи нет → создаём {type:udp, tag:dns-bootstrap, server: want, а при
+//     пустой настройке — defaultBootstrapDNS}, достраивая недостающие уровни
+//     dns/servers;
+//   - запись есть, want == "" → не трогаем;
+//   - запись есть, want != "" → правим адрес через setBootstrapServer.
+//
+// Осознанная потеря: пользователь, перенёсший объявление тега dns-bootstrap
+// в свой слот (90-user.json) и удаливший запись из базы, получит после
+// самолечения блокирующий duplicate-dns с именами обоих файлов — явную
+// ошибку вместо тихого «ни один reload не проходит» (см. ADR-0002).
+//
+// Возвращает true, если base изменена (нужна запись файла).
+func reconcileBootstrapServer(base map[string]any, want string) bool {
+	// Ключ есть, но это не объект (строка, число, массив) — чужое содержимое
+	// неизвестной формы. Такой 00-base.json движок не загрузит в любом случае,
+	// а подмена его нашей картой стёрла бы то, что пользователь туда положил:
+	// молча выходим, как выходил прежний setBootstrapServer. То же и для
+	// dns.servers не-массивом. Достраиваем только ОТСУТСТВУЮЩИЕ уровни;
+	// литеральный null считается отсутствием, а не чужим содержимым.
+	raw, has := base["dns"]
+	dns, _ := raw.(map[string]any)
+	if has && raw != nil && dns == nil {
+		return false
+	}
+	if dns == nil {
+		dns = map[string]any{}
+		base["dns"] = dns
+	}
+	rawServers, hasServers := dns["servers"]
+	servers, _ := rawServers.([]any)
+	if hasServers && rawServers != nil && servers == nil {
+		return false
+	}
+	for _, v := range servers {
+		s, _ := v.(map[string]any)
+		if s == nil || s["tag"] != "dns-bootstrap" {
+			continue
+		}
+		if want == "" {
+			return false
+		}
+		return setBootstrapServer(base, want)
+	}
+	dns["servers"] = append(servers, map[string]any{"type": "udp", "tag": "dns-bootstrap", "server": bootstrapAddr(want)})
+	return true
+}
+
+// bootstrapAddr — адрес, который получит СОЗДАВАЕМАЯ запись dns-bootstrap:
+// настройка, а при пустой — исторический дефолт. Общий с логом
+// patchBaseBootstrapDNS: два вычисления «какой адрес мы применили»
+// разъехались бы, и лог начал бы врать.
+func bootstrapAddr(want string) string {
+	if want == "" {
+		return defaultBootstrapDNS
+	}
+	return want
+}
+
+// patchBaseBootstrapDNS приводит запись dns-bootstrap в 00-base.json к
+// желаемому состоянию через reconcileBootstrapServer: наличием записи
+// владеет менеджер, адресом при непустой настройке — тоже менеджер, при
+// пустой — пользователь.
 func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 	want = sanitizeBootstrapDNS(want)
-	if want == "" {
-		return
-	}
 	log := firstLogger(loggers)
 	m, ok := readSlotJSON(stepPatchBaseBootstrapDNS, basePath, log)
 	if !ok {
 		return
 	}
-	if !setBootstrapServer(m, want) {
+	if !reconcileBootstrapServer(m, want) {
 		return
 	}
 	if !writeSlotJSON(stepPatchBaseBootstrapDNS, basePath, m, log) {
@@ -580,7 +650,7 @@ func patchBaseBootstrapDNS(basePath, want string, loggers ...*slog.Logger) {
 	logConfigPatchInfo(log, "singbox base config reconciled",
 		"patch", stepPatchBaseBootstrapDNS,
 		"path", basePath,
-		"newServer", want,
+		"newServer", bootstrapAddr(want),
 	)
 }
 
@@ -697,7 +767,7 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // FIRST-FILE-WINS across config.d (proven for route.final by
 // router_final_merge_test.go), so 00-base.json's dns.final / dns.strategy
 // always beat the user's 20-router.json values. This self-heal runs on every
-// operator init (right after ensureBaseConfigWithLogLevel) so existing on-disk
+// operator init (right after ensureBaseConfig) so existing on-disk
 // base files heal on reload. It is a boot self-heal, not a settings migration.
 // Mirrors removeFinalFromBase, which did the same for route.final.
 //
@@ -708,8 +778,8 @@ func removeFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // (the only slot that then sets it) wins when enabled. Same observable
 // behavior as the old explicit "dns-bootstrap".
 //
-// dns.strategy сюда не относится — ею занимается отдельный шаг
-// reconcile-dns-strategy (reconcileBaseDNSStrategy): у strategy нет
+// dns.strategy сюда не относится — ею занимается reconcileDerivedDefaults:
+// у strategy нет
 // first-server fallback'а, поэтому её примирение симметрично (стрижка при
 // владении routing-слотом / восстановление дефолта без владельца).
 //
@@ -1118,22 +1188,26 @@ func (o *Operator) ApplyClashPort(port int) error {
 	return nil
 }
 
-// ApplyBootstrapDNS приводит адрес dns-bootstrap в 00-base.json к значению
-// настройки без перезапуска демона (issue #770). Пустое значение — no-op:
-// настройка снята, файл остаётся как есть.
+// ApplyBootstrapDNS приводит запись dns-bootstrap в 00-base.json к значению
+// настройки без перезапуска демона (issue #770). Наличием записи владеет
+// менеджер (F44): отсутствующая запись самолечится даже при пустой
+// настройке — иначе unknown-dns-server валит следующий reload вместо
+// тихого no-op. Пустое значение при СУЩЕСТВУЮЩЕЙ записи — no-op (ручные
+// правки адреса обязаны выжить).
 func (o *Operator) ApplyBootstrapDNS(server string) error {
 	server = sanitizeBootstrapDNS(server)
-	if server == "" {
-		return nil
-	}
 	return o.mutateBase(func(base map[string]any) bool {
-		return setBootstrapServer(base, server)
+		return reconcileBootstrapServer(base, server)
 	})
 }
 
 // mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
 // решить, менять ли (false — выходим без записи), записать через
 // оркестратор — там валидация merged-конфига и коалесцированный reload.
+//
+// Чтение и запись идут ОДНОЙ транзакцией оркестратора (Mutate): читать файл
+// самим, а потом звать Save, значило бы работать со снимком, взятым вне лока,
+// — параллельная правка другого скаляра терялась (дефект F41).
 //
 // Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP
 // (wiring_singbox.go), «раннего бута» без него не существует — все три
@@ -1144,57 +1218,54 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	if o.orch == nil {
 		return fmt.Errorf("mutate base config: orchestrator not wired")
 	}
-	basePath := filepath.Join(o.configPath, "00-base.json")
-	var base map[string]any
-	restored := false
-	data, err := os.ReadFile(basePath)
-	switch {
-	case os.IsNotExist(err):
-		// Пропал ТОЛЬКО файл, каталог на месте — ВОССТАНАВЛИВАЕМ, а не
-		// считаем намерением пользователя, симметрично трактовке
-		// отсутствующего блока clash_api в ADR-0001. Молчаливый выход
-		// оставлял настройку сохранённой в settings.json, но не доехавшей
-		// до базы до следующего бута.
-		//
-		// Нет самого config.d — движок удалён вместе с каталогом, и
-		// воскрешать его правкой настройки нельзя: молчим, как молчали.
-		// Прежде этим различием не владел никто — ApplyLogLevel
-		// восстанавливал базу даже поверх снесённого каталога, а
-		// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
-		if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
-			return nil
-		} else if statErr != nil {
-			return fmt.Errorf("stat config.d: %w", statErr)
+	// Кандидат на восстановление считается ДО взятия лока оркестратора:
+	// desired* ходят в SettingsStore, а под чужим локом блокирующей работе
+	// делать нечего. Нужен он только в ветке «файла нет».
+	fresh := freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
+	return o.orch.Mutate(orchestrator.SlotBase, func(data []byte, exists bool) ([]byte, error) {
+		var base map[string]any
+		restored := false
+		if exists {
+			if err := json.Unmarshal(data, &base); err != nil {
+				return nil, fmt.Errorf("parse 00-base.json: %w", err)
+			}
+			// Файл с литеральным null — валидный JSON, дающий nil-карту;
+			// запись в неё паникует. Гард был у прежнего ApplyLogLevel и
+			// потерялся при сведении к общему транспорту.
+			if base == nil {
+				base = map[string]any{}
+			}
+		} else {
+			// Пропал ТОЛЬКО файл, каталог на месте — ВОССТАНАВЛИВАЕМ, а не
+			// считаем намерением пользователя, симметрично трактовке
+			// отсутствующего блока clash_api в ADR-0001. Молчаливый выход
+			// оставлял настройку сохранённой в settings.json, но не доехавшей
+			// до базы до следующего бута.
+			//
+			// Нет самого config.d — движок удалён вместе с каталогом, и
+			// воскрешать его правкой настройки нельзя: молчим, как молчали.
+			// Прежде этим различием не владел никто — ApplyLogLevel
+			// восстанавливал базу даже поверх снесённого каталога, а
+			// ApplyClashPort/ApplyBootstrapDNS не восстанавливали никогда.
+			if _, statErr := os.Stat(o.configPath); os.IsNotExist(statErr) {
+				return nil, nil
+			} else if statErr != nil {
+				return nil, fmt.Errorf("stat config.d: %w", statErr)
+			}
+			base = fresh
+			restored = true
 		}
-		base = freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort())
-		restored = true
-	case err != nil:
-		return fmt.Errorf("read 00-base.json: %w", err)
-	default:
-		if err := json.Unmarshal(data, &base); err != nil {
-			return fmt.Errorf("parse 00-base.json: %w", err)
+		// Свежая база уже несёт желаемые значения, так что мутатор на ней
+		// обычно говорит «менять нечего»; писать всё равно надо — файла-то нет.
+		if !mutate(base) && !restored {
+			return nil, nil
 		}
-		// Файл с литеральным null — валидный JSON, дающий nil-карту; запись
-		// в неё паникует. Гард был у прежнего ApplyLogLevel и потерялся при
-		// сведении к общему транспорту.
-		if base == nil {
-			base = map[string]any{}
+		raw, err := json.MarshalIndent(base, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal 00-base.json: %w", err)
 		}
-	}
-	// Свежая база уже несёт желаемые значения, так что мутатор на ней обычно
-	// говорит «менять нечего»; писать всё равно надо — файла-то нет.
-	if !mutate(base) && !restored {
-		return nil
-	}
-
-	raw, err := json.MarshalIndent(base, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal 00-base.json: %w", err)
-	}
-	if err := o.orch.Save(orchestrator.SlotBase, raw); err != nil {
-		return fmt.Errorf("save base slot: %w", err)
-	}
-	return nil
+		return raw, nil
+	})
 }
 
 // preflightConfigDir validates config.d/ before any action that would
