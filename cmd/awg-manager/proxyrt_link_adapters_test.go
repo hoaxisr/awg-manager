@@ -101,7 +101,7 @@ func linkedStore(t *testing.T) *storage.AWGTunnelStore {
 		{ID: "awgm1", Name: "WD", WdttClientID: "c1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
 		{ID: "awgm2", Name: "FT", FreeTurnClientID: "c1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
 	} {
-		if err := store.Save(tun); err != nil {
+		if err := store.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -477,7 +477,7 @@ func mirrorWithStaleAddress(t *testing.T) (*exitreg.StoreMirror, *storage.AWGTun
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID: "wdttraw-c1", Name: "raw", Backend: "wdtt-raw",
 		Interface: storage.AWGInterface{Address: "10.70.0.7/32"},
 	}); err != nil {
@@ -1298,7 +1298,7 @@ func mirrorStore(t *testing.T) *storage.AWGTunnelStore {
 		{ID: "awgm1", Name: "WD", WdttClientID: "c1", Peer: storage.AWGPeer{Endpoint: "127.0.0.1:9000"}},
 		{ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1", Backend: "wdtt-raw"},
 	} {
-		if err := store.Save(tun); err != nil {
+		if err := store.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1358,7 +1358,7 @@ func TestProxyEndpointSyncSetStateSkipsMirror(t *testing.T) {
 func TestRawMirrorSurvivesEnabledClientReconcile(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID: "wdttraw-c1", Name: "RAW", WdttClientID: "c1",
 		Backend: "wdtt-raw",
 		Peer:    storage.AWGPeer{Endpoint: "vps.example:56003"},

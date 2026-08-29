@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,29 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/sys/lock"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
+
+// ErrNotFound — записи туннеля нет. Им оборачивается отсутствие файла в Get,
+// и через Get он приходит наружу из Update: «туннель удалили, пока шла долгая
+// работа снаружи лока» — законный исход, который вызывающий отличает
+// errors.Is, а не сравнением строк.
+//
+// Это ТОТ ЖЕ объект, что tunnel.ErrNotFound, а не одноимённый двойник:
+// errors.Is работает под любым из двух имён, и слой, перепутавший пакет,
+// не получит молча ложное «не найдено» (тексты у них совпадали бы, а
+// идентичность — нет; компилятор такую путаницу не ловит).
+var ErrNotFound = tunnel.ErrNotFound
+
+// ErrAlreadyExists — ID занят: Create не перекрывает чужую запись. Тот же
+// объект, что tunnel.ErrAlreadyExists, по той же причине.
+var ErrAlreadyExists = tunnel.ErrAlreadyExists
+
+// ErrNoChange — условный ответ мутатора Update: «менять нечего». Update
+// возвращает nil и НЕ пишет файл. Нужен тем, кто сам решает по свежей записи,
+// изменилось ли что-нибудь (гейты DeepEqual и флаги changed): без него
+// «ничего не поменялось» пришлось бы кодировать записью-пустышкой.
+var ErrNoChange = errors.New("no change")
 
 // AWGTunnelStore provides directory-based storage for AmneziaWG tunnel metadata.
 type AWGTunnelStore struct {
@@ -142,7 +165,7 @@ func (s *AWGTunnelStore) Get(id string) (*AWGTunnel, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("tunnel not found: %s", id)
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
 		}
 		return nil, fmt.Errorf("read tunnel file: %w", err)
 	}
@@ -165,14 +188,16 @@ func (s *AWGTunnelStore) Get(id string) (*AWGTunnel, error) {
 	return &tunnel, nil
 }
 
-// Save writes tunnel to disk.
-func (s *AWGTunnelStore) Save(tunnel *AWGTunnel) error {
-	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
-	if err != nil {
-		return fmt.Errorf("acquire lock: %w", err)
-	}
-	defer lk.Unlock()
-
+// saveLocked — единственный путь записи туннеля на диск. Вызывающий ОБЯЗАН
+// держать лок "tunnels": лок нерекурсивен (mkdir), повторный захват изнутри —
+// не дедлок, а 5-секундный таймаут-отказ.
+//
+// Неэкспортируемый, и обёртки «просто записать запись целиком» у него нет:
+// снаружи туннель заводится только через Create, а правится только через
+// Update. Пока такая обёртка была экспортирована, любой владелец мог записать
+// снимок, снятый вне лока, и затереть чужую правку — путь, который K10
+// закрывает компилятором, а не договорённостью.
+func (s *AWGTunnelStore) saveLocked(tunnel *AWGTunnel) error {
 	if tunnel.Type == "" {
 		tunnel.Type = "awg"
 	}
@@ -195,6 +220,75 @@ func (s *AWGTunnelStore) Save(tunnel *AWGTunnel) error {
 	}
 
 	return nil
+}
+
+// Update атомарно правит запись туннеля: dir-lock → СВЕЖЕЕ чтение записи →
+// мутатор → запись. Единственный законный способ изменить существующий
+// туннель.
+//
+// Зачем транзакция: прежде запись целиком была экспортирована, и вызывающий,
+// прочитавший запись сам и потом её сохранивший, работал со снимком, снятым
+// ВНЕ лока (метода для этого больше нет). Всё, что записали в туннель,
+// пока он делал свою работу (секунды RCI у оркестратора), его снимок затирает
+// — классический lost update: правка пользователя молча откатывалась, а
+// запись расходилась с .conf. Мутатор Update стартует со свежей записи и
+// присваивает ТОЛЬКО свои поля, поэтому чужие переживают запись.
+//
+// Fail-closed: ошибка чтения (нет файла → ErrNotFound, битый JSON → ошибка
+// разбора) отменяет всё — мутатор пустую запись НЕ получает, иначе он затёр
+// бы нечитаемый файл дефолтами. Мутатор вернул ErrNoChange → nil, записи нет.
+// Иная ошибка мутатора → отказ, записи нет.
+//
+// Мутатор исполняется ПОД dir-lock: он обязан быть чистым и быстрым — только
+// присваивания заранее вычисленных значений. Любой метод стора изнутри
+// запрещён: лок нерекурсивен (mkdir), вложенный захват — 5-секундный
+// таймаут-отказ. RCI, exec, DNS-резолв, запись .conf делаются ДО вызова.
+// Затирать запись целиком (*t = снимок) запрещено — это ровно тот дефект,
+// ради которого транзакция и заведена.
+func (s *AWGTunnelStore) Update(id string, mut func(*AWGTunnel) error) error {
+	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
+	if err != nil {
+		return fmt.Errorf("acquire lock: %w", err)
+	}
+	defer lk.Unlock()
+
+	// Get лока не берёт (обычный ReadFile) — вложенного захвата здесь нет.
+	tunnel, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	if err := mut(tunnel); err != nil {
+		if errors.Is(err, ErrNoChange) {
+			return nil
+		}
+		return err
+	}
+	return s.saveLocked(tunnel)
+}
+
+// Create заводит НОВУЮ запись туннеля: dir-lock → проверка занятости ID →
+// запись. Занятый ID — ошибка: молчаливо перекрыть чужую запись (вместе с её
+// ключами) нельзя. Пустой ID тоже отказ — иначе на диск лёг бы файл ".json",
+// невидимый для List и неудаляемый обычными путями.
+//
+// Единственный законный способ создать туннель; существующий правится через
+// Update.
+func (s *AWGTunnelStore) Create(tunnel *AWGTunnel) error {
+	if tunnel.ID == "" {
+		return fmt.Errorf("create tunnel: empty ID")
+	}
+
+	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
+	if err != nil {
+		return fmt.Errorf("acquire lock: %w", err)
+	}
+	defer lk.Unlock()
+
+	// Exists лока не берёт (обычный Stat) — вложенного захвата здесь нет.
+	if s.Exists(tunnel.ID) {
+		return fmt.Errorf("%w: %s", ErrAlreadyExists, tunnel.ID)
+	}
+	return s.saveLocked(tunnel)
 }
 
 // Delete removes tunnel file.
@@ -225,27 +319,6 @@ func (s *AWGTunnelStore) Exists(id string) bool {
 	path := filepath.Join(s.dir, id+".json")
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// ClearRuntimeState clears volatile runtime fields (ActiveWAN, StartedAt)
-// for a tunnel. Called after Stop/Suspend when the tunnel is no longer active.
-func (s *AWGTunnelStore) ClearRuntimeState(id string) {
-	stored, err := s.Get(id)
-	if err != nil {
-		return
-	}
-	changed := false
-	if stored.ActiveWAN != "" {
-		stored.ActiveWAN = ""
-		changed = true
-	}
-	if stored.StartedAt != "" {
-		stored.StartedAt = ""
-		changed = true
-	}
-	if changed {
-		_ = s.Save(stored)
-	}
 }
 
 const (

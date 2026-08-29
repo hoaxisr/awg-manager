@@ -169,7 +169,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 	}
 
 	// Save to storage
-	if err := s.store.Save(t); err != nil {
+	if err := s.store.Create(t); err != nil {
 		return nil, fmt.Errorf("save tunnel: %w", err)
 	}
 

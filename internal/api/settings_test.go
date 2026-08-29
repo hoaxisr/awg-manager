@@ -532,7 +532,7 @@ func TestPingCheckOnAllTunnels_SkipsWdttRawMirrors(t *testing.T) {
 		DefaultRouteSet: true,
 		Interface:       storage.AWGInterface{Address: "10.70.0.2/32", MTU: 1420}}
 	for _, tun := range []*storage.AWGTunnel{own, mirror} {
-		if err := tunnels.Save(tun); err != nil {
+		if err := tunnels.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}

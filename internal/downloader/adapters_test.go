@@ -30,7 +30,7 @@ func TestAWGStoreEgressAdapter_DNSForTag(t *testing.T) {
 	dir := t.TempDir()
 	lockDir := filepath.Join(dir, ".locks")
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, lockDir)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:   "awg11",
 		Name: "Work",
 		Interface: storage.AWGInterface{

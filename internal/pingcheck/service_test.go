@@ -18,7 +18,7 @@ func newTunnelStore(t *testing.T) *storage.AWGTunnelStore {
 // чужой существующий интерфейс, а не безобидный промах.
 func TestResolveIfaceName_WdttRawUsesLiveIface(t *testing.T) {
 	store := newTunnelStore(t)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        "wdtt-raw",
@@ -37,7 +37,7 @@ func TestResolveIfaceName_WdttRawUsesLiveIface(t *testing.T) {
 // общем резолве — ветка не должна возвращать пустую строку.
 func TestResolveIfaceName_WdttRawWithoutLiveIface(t *testing.T) {
 	store := newTunnelStore(t)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:      "wdttraw-de",
 		Name:    "Германия",
 		Backend: "wdtt-raw",
@@ -54,7 +54,7 @@ func TestResolveIfaceName_WdttRawWithoutLiveIface(t *testing.T) {
 // Kernel-запись общий резолв не трогает.
 func TestResolveIfaceName_KernelUnchanged(t *testing.T) {
 	store := newTunnelStore(t)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:      "awg3",
 		Name:    "Kernel",
 		Backend: "kernel",
@@ -75,7 +75,7 @@ func TestResolveIfaceName_KernelUnchanged(t *testing.T) {
 // "kernel" врало о её природе.
 func TestGetStatus_ReportsRecordBackend(t *testing.T) {
 	store := newTunnelStore(t)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        "wdtt-raw",
@@ -102,7 +102,7 @@ func TestGetStatus_ReportsRecordBackend(t *testing.T) {
 // значения из записи сломала бы страницу мониторинга у старых туннелей.
 func TestGetStatus_LegacyRecordStaysKernel(t *testing.T) {
 	store := newTunnelStore(t)
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:        "awg3",
 		Name:      "Legacy",
 		PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3},

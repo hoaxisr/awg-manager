@@ -39,7 +39,7 @@ func serviceWithStore(t *testing.T) (*ServiceImpl, string) {
 func TestReplaceConfigSkipsConfForNativeWG(t *testing.T) {
 	s, confs := serviceWithStore(t)
 	stored := &storage.AWGTunnel{ID: "awg20", Name: "nwg", Backend: "nativewg"}
-	if err := s.store.Save(stored); err != nil {
+	if err := s.store.Create(stored); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,7 +55,7 @@ func TestReplaceConfigSkipsConfForNativeWG(t *testing.T) {
 func TestReplaceConfigWritesConfForKernel(t *testing.T) {
 	s, confs := serviceWithStore(t)
 	stored := &storage.AWGTunnel{ID: "awg10", Name: "k", Backend: "kernel"}
-	if err := s.store.Save(stored); err != nil {
+	if err := s.store.Create(stored); err != nil {
 		t.Fatal(err)
 	}
 

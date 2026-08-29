@@ -15,7 +15,7 @@ func newStrictStore(t *testing.T) (*AWGTunnelStore, string) {
 func TestListStrictReturnsAll(t *testing.T) {
 	s, _ := newStrictStore(t)
 	for _, id := range []string{"a", "wdttraw-de"} {
-		if err := s.Save(&AWGTunnel{ID: id, Type: "awg"}); err != nil {
+		if err := s.Create(&AWGTunnel{ID: id, Type: "awg"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,7 +30,7 @@ func TestListStrictReturnsAll(t *testing.T) {
 
 func TestListStrictFailsOnCorruptJSONWithoutQuarantine(t *testing.T) {
 	s, dir := newStrictStore(t)
-	if err := s.Save(&AWGTunnel{ID: "ok", Type: "awg"}); err != nil {
+	if err := s.Create(&AWGTunnel{ID: "ok", Type: "awg"}); err != nil {
 		t.Fatal(err)
 	}
 	bad := filepath.Join(dir, "broken.json")
@@ -88,7 +88,7 @@ func TestListStrictMissingDirIsEmptyNotError(t *testing.T) {
 // зеркальных записей навсегда.
 func TestListStrictSkipsNonRecords(t *testing.T) {
 	s, dir := newStrictStore(t)
-	if err := s.Save(&AWGTunnel{ID: "ok", Type: "awg"}); err != nil {
+	if err := s.Create(&AWGTunnel{ID: "ok", Type: "awg"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, "sub.json"), 0o755); err != nil {

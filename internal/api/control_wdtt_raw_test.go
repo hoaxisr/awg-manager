@@ -33,7 +33,7 @@ func controlWithRawTunnel(t *testing.T, en ProxyInstanceEnabler) *ControlHandler
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:           "wdttraw-nl",
 		Name:         "NL",
 		Backend:      backendWdttRaw,

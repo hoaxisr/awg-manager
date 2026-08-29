@@ -176,8 +176,8 @@ func TestAllocIndexWithoutPinDoesNotClaimZero(t *testing.T) {
 // интерфейс по номеру.
 func TestAllocIndexRespectsAwgRecordWithoutLiveInterface(t *testing.T) {
 	e := newOccEnv(t)
-	if err := e.awg.Save(&storage.AWGTunnel{ID: "awg12", Name: "vpn", Backend: "kernel"}); err != nil {
-		t.Fatalf("awg.Save: %v", err)
+	if err := e.awg.Create(&storage.AWGTunnel{ID: "awg12", Name: "vpn", Backend: "kernel"}); err != nil {
+		t.Fatalf("awg.Create: %v", err)
 	}
 	alloc := e.alloc(t, nil)
 
@@ -196,8 +196,8 @@ func TestAllocIndexRespectsAwgRecordWithoutLiveInterface(t *testing.T) {
 // пула номеров не отнимает.
 func TestAllocIndexIgnoresNativeWGRecord(t *testing.T) {
 	e := newOccEnv(t)
-	if err := e.awg.Save(&storage.AWGTunnel{ID: "awg5", Name: "nwg", Backend: "nativewg"}); err != nil {
-		t.Fatalf("awg.Save: %v", err)
+	if err := e.awg.Create(&storage.AWGTunnel{ID: "awg5", Name: "nwg", Backend: "nativewg"}); err != nil {
+		t.Fatalf("awg.Create: %v", err)
 	}
 	alloc := e.alloc(t, nil)
 
@@ -937,8 +937,8 @@ func TestProxyFactoryLinksTunnelsByRoleField(t *testing.T) {
 		{ID: "awg10", Name: "wdtt", WdttClientID: "de"},
 		{ID: "awg11", Name: "ft", FreeTurnClientID: "ft"},
 	} {
-		if err := a.awgStore.Save(tun); err != nil {
-			t.Fatalf("awg.Save: %v", err)
+		if err := a.awgStore.Create(tun); err != nil {
+			t.Fatalf("awg.Create: %v", err)
 		}
 	}
 
@@ -1026,8 +1026,8 @@ func TestProxyLinkedCleanersDeleteOwnFieldOnly(t *testing.T) {
 		{ID: "awg10", Name: "wdtt", WdttClientID: "same"},
 		{ID: "awg11", Name: "ft", FreeTurnClientID: "same"},
 	} {
-		if err := store.Save(tun); err != nil {
-			t.Fatalf("awg.Save: %v", err)
+		if err := store.Create(tun); err != nil {
+			t.Fatalf("awg.Create: %v", err)
 		}
 	}
 
@@ -1073,8 +1073,8 @@ func TestProxyLinkedCleanerSkipsMirrorRecord(t *testing.T) {
 		{ID: "awg10", Name: "wdtt", WdttClientID: "same"},
 		{ID: "wdttraw-same", Name: "Германия", Backend: proxyBackendWdttRaw, WdttClientID: "same"},
 	} {
-		if err := store.Save(tun); err != nil {
-			t.Fatalf("awg.Save: %v", err)
+		if err := store.Create(tun); err != nil {
+			t.Fatalf("awg.Create: %v", err)
 		}
 	}
 

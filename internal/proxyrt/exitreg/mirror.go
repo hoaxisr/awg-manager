@@ -28,13 +28,18 @@ const (
 // *storage.AWGTunnelStore удовлетворяет как есть: ни один метод под этот
 // интерфейс не дописывался.
 //
-// Exists здесь не роскошь: Get отдаёт неразличимую ошибку и на «файла нет», и
-// на «файл битый» (awg_store.go:88-114), а решения у этих случаев
-// противоположные — создать запись или отказаться её трогать.
+// Метода «записать запись целиком» здесь нет и быть не может: существующую
+// правит только Update (свежее чтение под локом → мутатор), новую заводит
+// только Create. Зеркало ходит в те же записи, что и карточка туннеля, и
+// запись снимком затирала бы правку пользователя, приехавшую во время волны.
+//
+// Exists здесь не роскошь: им выбирается ветка «создать» против «обновить»,
+// и он же отличает «записи нет» от «запись есть, но не читается» в Remove.
 type TunnelStore interface {
 	Get(id string) (*storage.AWGTunnel, error)
 	Exists(id string) bool
-	Save(t *storage.AWGTunnel) error
+	Create(t *storage.AWGTunnel) error
+	Update(id string, mut func(*storage.AWGTunnel) error) error
 	Delete(id string) error
 	ListStrict() ([]storage.AWGTunnel, error)
 }
@@ -59,35 +64,28 @@ func NewStoreMirror(st TunnelStore, pub proxyrt.Publisher) *StoreMirror {
 	return &StoreMirror{st: st, pub: pub}
 }
 
-// Ensure приводит зеркальную запись к объявлению. Read-modify-write:
-// пользовательские поля записи (PingCheck, ISPInterface*, Interface.Address и
-// прочее) переживают обновление — иначе каждый пин перетирал бы настройки
-// карточки.
+// Ensure приводит зеркальную запись к объявлению. Read-modify-write под
+// локом хранилища: пользовательские поля записи (PingCheck, ISPInterface*,
+// Interface.Address и прочее) переживают обновление — иначе каждый пин
+// перетирал бы настройки карточки.
 func (m *StoreMirror) Ensure(d ExitDecl) error {
-	prev, err := m.st.Get(d.ID)
+	// Поля владения зеркала — и ровно они (таблица в шапке задачи). Общее
+	// замыкание на обе ветки: разъехавшись, создание и обновление давали бы
+	// разную запись на один и тот же выход.
+	own := func(rec *storage.AWGTunnel) {
+		rec.ID = d.ID
+		rec.Type = "awg"
+		rec.Backend = backendWdttRaw
+		rec.WdttClientID = d.InstanceID
+		rec.Name = MirrorName(d.Name)
+		rec.RawNdmsIface = d.NDMSName
+		rec.RawKernelIface = d.KernelIface
+		rec.Peer.Endpoint = d.Peer
+		rec.Enabled = d.Enabled
+	}
 
-	var rec storage.AWGTunnel
-	created := false
-	switch {
-	case err == nil && prev != nil:
-		rec = *prev
-	case err != nil && m.st.Exists(d.ID):
-		// Запись ЕСТЬ, но не читается: битый JSON, ошибка чтения, права.
-		// Собрать её заново с дефолтами значит стереть настройки
-		// пользователя, а различить эти случаи нечем — Get отдаёт их
-		// одинаковой ошибкой без sentinel'а. Отказ: ни Save, ни удаления.
-		// Строгий контур exitreg записи НЕ карантинит; битую запись лечит
-		// только сторонний List() (UI списка туннелей) либо руки — до тех
-		// пор Ensure отказывает, и это правильная сторона: пересоздание с
-		// дефолтами стёрло бы настройки пользователя.
-		//
-		// err != nil в условии не украшение: без него ветка достижима при
-		// (nil, nil), и тогда %w свернулся бы в %!w(<nil>) — причина отказа
-		// исчезла бы ровно там, где её читают.
-		return fmt.Errorf("зеркальная запись %s есть, но не читается: %w", d.ID, err)
-	default:
-		created = true
-		rec = storage.AWGTunnel{
+	if !m.st.Exists(d.ID) {
+		rec := storage.AWGTunnel{
 			Type:      "awg",
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 			Interface: storage.AWGInterface{MTU: 1300},
@@ -96,26 +94,36 @@ func (m *StoreMirror) Ensure(d ExitDecl) error {
 			// (wdtt.DefaultRawConnectivityCheck, raw_tunnel_meta.go:13-15).
 			ConnectivityCheck: &storage.ConnectivityCheckConfig{Method: "http"},
 		}
+		own(&rec)
+		if err := m.st.Create(&rec); err != nil {
+			return fmt.Errorf("создать зеркальную запись %s: %w", d.ID, err)
+		}
+		m.invalidate()
+		return nil
 	}
 
-	// Поля владения зеркала — и ровно они (таблица в шапке задачи).
-	rec.ID = d.ID
-	rec.Type = "awg"
-	rec.Backend = backendWdttRaw
-	rec.WdttClientID = d.InstanceID
-	rec.Name = MirrorName(d.Name)
-	rec.RawNdmsIface = d.NDMSName
-	rec.RawKernelIface = d.KernelIface
-	rec.Peer.Endpoint = d.Peer
-	rec.Enabled = d.Enabled
-
-	if !created && reflect.DeepEqual(rec, *prev) {
-		return nil // ни файла, ни события: SetDeclared зовётся на любую правку
+	// Запись ЕСТЬ, но не читается (битый JSON, ошибка чтения, права) — отказ
+	// достаётся отсюда бесплатно: Update fail-closed, мутатор нечитаемой
+	// записи не видит и дефолтами её не перекрывает. Собрать её заново значит
+	// стереть настройки пользователя, а различить эти случаи нечем. Строгий
+	// контур exitreg записи НЕ карантинит: битую лечит только сторонний
+	// List() (UI списка туннелей) либо руки — до тех пор Ensure отказывает.
+	wrote := false
+	if err := m.st.Update(d.ID, func(t *storage.AWGTunnel) error {
+		prev := *t
+		own(t)
+		if reflect.DeepEqual(*t, prev) {
+			// Ни файла, ни события: SetDeclared зовётся на любую правку.
+			return storage.ErrNoChange
+		}
+		wrote = true
+		return nil
+	}); err != nil {
+		return fmt.Errorf("обновить зеркальную запись %s: %w", d.ID, err)
 	}
-	if err := m.st.Save(&rec); err != nil {
-		return fmt.Errorf("сохранить зеркальную запись %s: %w", d.ID, err)
+	if wrote {
+		m.invalidate()
 	}
-	m.invalidate()
 	return nil
 }
 
@@ -232,16 +240,31 @@ func (m *StoreMirror) ZeroStaleAddresses() (int, error) {
 	n := 0
 	var errs []error
 	for i := range all {
-		rec := all[i]
-		if rec.Backend != backendWdttRaw || rec.Interface.Address == "" {
+		// Перечисление — только выбор кандидатов: решение об обнулении
+		// принимается заново внутри мутатора, по свежей записи под локом.
+		if all[i].Backend != backendWdttRaw || all[i].Interface.Address == "" {
 			continue
 		}
-		rec.Interface.Address = ""
-		if err := m.st.Save(&rec); err != nil {
-			errs = append(errs, fmt.Errorf("обнулить адрес %s: %w", rec.ID, err))
+		id := all[i].ID
+		zeroed := false
+		err := m.st.Update(id, func(t *storage.AWGTunnel) error {
+			if t.Backend != backendWdttRaw || t.Interface.Address == "" {
+				return storage.ErrNoChange
+			}
+			t.Interface.Address = ""
+			zeroed = true
+			return nil
+		})
+		switch {
+		case errors.Is(err, storage.ErrNotFound):
+			continue // запись удалили между перечислением и правкой
+		case err != nil:
+			errs = append(errs, fmt.Errorf("обнулить адрес %s: %w", id, err))
 			continue
 		}
-		n++
+		if zeroed {
+			n++
+		}
 	}
 	if n > 0 {
 		m.invalidate()

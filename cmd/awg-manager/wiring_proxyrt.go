@@ -487,11 +487,9 @@ type proxyTunnelImporter struct {
 
 func (t proxyTunnelImporter) List() ([]storage.AWGTunnel, error) { return t.store.List() }
 
-func (t proxyTunnelImporter) Get(tunnelID string) (*storage.AWGTunnel, error) {
-	return t.store.Get(tunnelID)
+func (t proxyTunnelImporter) Update(tunnelID string, mut func(*storage.AWGTunnel) error) error {
+	return t.store.Update(tunnelID, mut)
 }
-
-func (t proxyTunnelImporter) Save(tun *storage.AWGTunnel) error { return t.store.Save(tun) }
 
 func (t proxyTunnelImporter) Delete(ctx context.Context, tunnelID string) error {
 	return t.svc.Delete(ctx, tunnelID)

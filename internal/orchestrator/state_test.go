@@ -20,7 +20,7 @@ func TestStateSkipsWdttRawMirrors(t *testing.T) {
 		{ID: "wdttraw-de", Name: "Зеркало", Backend: "wdtt-raw",
 			Interface: storage.AWGInterface{Address: "10.70.0.2/32", MTU: 1420}},
 	} {
-		if err := store.Save(tun); err != nil {
+		if err := store.Create(tun); err != nil {
 			t.Fatal(err)
 		}
 	}

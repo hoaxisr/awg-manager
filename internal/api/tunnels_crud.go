@@ -418,7 +418,18 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if req.PingCheck != nil {
 			updated.PingCheck = req.PingCheck
 		}
-		if err := h.store.Save(&updated); err != nil {
+		// Ту же запись переписывает волна зеркала (exitreg/mirror.go): правка
+		// карточки ложится на свежую запись под локом стора, а не поверх
+		// снимка existing, снятого до всех проверок выше.
+		if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+			if req.ConnectivityCheck != nil {
+				t.ConnectivityCheck = updated.ConnectivityCheck
+			}
+			if req.PingCheck != nil {
+				t.PingCheck = updated.PingCheck
+			}
+			return nil
+		}); err != nil {
 			response.Error(w, err.Error(), "UPDATE_FAILED")
 			return
 		}
@@ -442,56 +453,16 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect changes before merge
+	// Detect changes before applying the patch.
 	oldPingCheckEnabled := existing.PingCheck != nil && existing.PingCheck.Enabled
-	newPingCheckEnabled := req.PingCheck != nil && req.PingCheck.Enabled
 	oldISPInterface := existing.ISPInterface
 
-	// Merge changes — preserve fields not sent by partial updates (e.g. routing page).
-	req.ID = existing.ID
-	req.CreatedAt = existing.CreatedAt
-	req.Type = existing.Type
-	req.Enabled = existing.Enabled
-	req.ActiveWAN = existing.ActiveWAN
-	req.StartedAt = existing.StartedAt
-	req.Backend = existing.Backend
-	req.NWGIndex = existing.NWGIndex
-	if req.Name == "" {
-		req.Name = existing.Name
-	}
-	mergeInterfaceWhitelist(&req, existing)
-	mergePeerWhitelist(&req, existing)
-	if err := config.ValidateKeepaliveForBackend(req.Peer.PersistentKeepalive, req.Backend); err != nil {
-		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
-		return
-	}
-	if err := config.ValidateAWG3(&req.Interface.AWGObfuscation); err != nil {
-		response.Error(w, err.Error(), "INVALID_AWG3")
-		return
-	}
-	// Кэш резолва валиден только для endpoint'а, под которым был получен:
-	// перенос через смену endpoint'а подставлял бы DNS-фолбэкам адрес
-	// ПРЕЖНЕГО имени. Сравнение — после mergePeerWhitelist (partial-update
-	// без Peer наследует endpoint из existing).
-	if req.Peer.Endpoint == existing.Peer.Endpoint {
-		req.ResolvedEndpointIP = existing.ResolvedEndpointIP
-	}
-	if !req.DefaultRouteSet {
-		req.DefaultRoute = existing.DefaultRoute
-		req.DefaultRouteSet = existing.DefaultRouteSet
-	}
-	if req.ISPInterface == tunnel.ISPInterfaceAuto {
-		// Routing page explicitly set "auto-detect" — normalize to empty string.
-		req.ISPInterface = ""
-		req.ISPInterfaceLabel = ""
-	} else if req.ISPInterface == "" {
-		// Field not sent (partial update from edit page) — preserve existing.
-		req.ISPInterface = existing.ISPInterface
-		req.ISPInterfaceLabel = existing.ISPInterfaceLabel
-	}
 	// NativeWG: convert ISPInterface to NDMS name for "connect via".
 	// Frontend sends kernel names (from WAN model), but NDMS needs NDMS IDs.
-	if req.Backend == "nativewg" && req.ISPInterface != "" {
+	// Конверсия идёт ДО применения правки: она ходит в стор и в WAN-модель, а
+	// внутри мутатора стора это запрещено контрактом (dir-lock нерекурсивен).
+	// "auto" — сентинел очистки, конвертировать в нём нечего.
+	if existing.Backend == "nativewg" && req.ISPInterface != "" && req.ISPInterface != tunnel.ISPInterfaceAuto {
 		if tunnel.IsTunnelRoute(req.ISPInterface) {
 			// Tunnel chaining: resolve parent tunnel's NDMS interface name.
 			parentID := tunnel.TunnelRouteID(req.ISPInterface)
@@ -507,60 +478,62 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.PingCheck == nil {
-		req.PingCheck = existing.PingCheck
-		newPingCheckEnabled = oldPingCheckEnabled // no change
+	// Правка ложится на копию снимка — по ней идут валидации и diff для RCI.
+	// На СВЕЖУЮ запись та же функция ляжет внутри транзакции стора ниже.
+	merged := *existing
+	applyTunnelUpdate(&merged, &req)
+	newPingCheckEnabled := merged.PingCheck != nil && merged.PingCheck.Enabled
+
+	if err := config.ValidateKeepaliveForBackend(merged.Peer.PersistentKeepalive, merged.Backend); err != nil {
+		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
+		return
 	}
-	if req.ConnectivityCheck == nil {
-		req.ConnectivityCheck = existing.ConnectivityCheck
-	} else if req.ConnectivityCheck.Method == "" && (req.ConnectivityCheck.PingTarget == "" || req.ConnectivityCheck.Method != "ping") {
-		// Если поля пустые или метод не "ping", использовать существующие настройки
-		if existing.ConnectivityCheck != nil {
-			req.ConnectivityCheck = existing.ConnectivityCheck
-		}
+	if err := config.ValidateAWG3(&merged.Interface.AWGObfuscation); err != nil {
+		response.Error(w, err.Error(), "INVALID_AWG3")
+		return
 	}
 
 	// Validate endpoint resolves (only if changed)
-	if req.Peer.Endpoint != existing.Peer.Endpoint {
-		if _, _, err := netutil.ResolveEndpoint(req.Peer.Endpoint); err != nil {
+	if merged.Peer.Endpoint != existing.Peer.Endpoint {
+		if _, _, err := netutil.ResolveEndpoint(merged.Peer.Endpoint); err != nil {
 			response.Error(w, "endpoint не резолвится: "+err.Error(), "INVALID_ENDPOINT")
 			return
 		}
 	}
 
 	// Service handles runtime RCI based on the diff between existing
-	// (pre-merge snapshot) and req (post-merge state). Storage save
-	// happens AFTER service runs. The store has many writers besides this
-	// handler (orchestrator, pingcheck, cleanup), so runtime fields are
-	// re-read right before the save — see below. Fail-closed:
-	// if the service can't apply the change to the running interface,
-	// we don't persist it either, otherwise on-disk state would diverge
-	// from the live state.
-	if err := h.svc.Update(r.Context(), existing, &req); err != nil {
-		h.log.Warn("update", req.Name, "Service update failed: "+err.Error())
+	// (pre-patch snapshot) and merged (post-patch state). Storage save
+	// happens AFTER service runs. Fail-closed: if the service can't apply
+	// the change to the running interface, we don't persist it either,
+	// otherwise on-disk state would diverge from the live state.
+	if err := h.svc.Update(r.Context(), existing, &merged); err != nil {
+		h.log.Warn("update", merged.Name, "Service update failed: "+err.Error())
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
 	}
 
-	// svc.Update выше — секунды RCI-обменов; оркестратор и pingcheck за это
-	// время могли переписать runtime-поля. Переносим их из свежего чтения,
-	// а не из снапшота existing, снятого до svc.Update. Окно сужается до
-	// микросекунд; полный фикс (одна операция под локом стора) — отдельная
-	// задача.
-	if fresh, err := h.store.Get(id); err == nil {
-		req.Enabled = fresh.Enabled
-		req.ActiveWAN = fresh.ActiveWAN
-		req.StartedAt = fresh.StartedAt
-		// Кэш резолва валиден только для endpoint'а, под которым получен —
-		// то же условие, что при merge выше.
-		if req.Peer.Endpoint == fresh.Peer.Endpoint {
-			req.ResolvedEndpointIP = fresh.ResolvedEndpointIP
+	// svc.Update выше — секунды RCI-обменов; за это время запись могли
+	// переписать оркестратор, pingcheck, wdttlink. Транзакция читает её
+	// заново под локом, и та же функция кладёт на неё ТОЛЬКО присланные
+	// поля — всё остальное остаётся таким, каким его оставил сосед.
+	if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+		applyTunnelUpdate(t, &req)
+		// svc.Update, настраивая маршрут до нового endpoint'а, попутно
+		// резолвит его адрес и кладёт в merged. Это РЕЗУЛЬТАТ сервиса, а не
+		// поле запроса, поэтому applyTunnelUpdate его не переносит: без этой
+		// строки свежерезолвленный IP не доехал бы до записи, и ближайшему
+		// Delete пришлось бы резолвить заново (F55).
+		if merged.ResolvedEndpointIP != "" && merged.ResolvedEndpointIP != existing.ResolvedEndpointIP {
+			t.ResolvedEndpointIP = merged.ResolvedEndpointIP
 		}
-	}
-
-	// Save updated tunnel
-	if err := h.store.Save(&req); err != nil {
-		h.log.Warn("update", req.Name, "Failed to update tunnel: "+err.Error())
+		return nil
+	}); err != nil {
+		h.log.Warn("update", merged.Name, "Failed to update tunnel: "+err.Error())
+		if errors.Is(err, storage.ErrNotFound) {
+			// Туннель удалили, пока шёл RCI-обмен svc.Update.
+			response.Error(w, "tunnel not found", "NOT_FOUND")
+			return
+		}
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
 	}
@@ -581,7 +554,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if oldPingCheckEnabled != newPingCheckEnabled {
 			// Toggle: start or stop monitoring
 			if newPingCheckEnabled && isRunning {
-				h.pingCheck.StartMonitoring(id, req.Name)
+				h.pingCheck.StartMonitoring(id, merged.Name)
 			} else if !newPingCheckEnabled {
 				h.pingCheck.StopMonitoring(id)
 			}
@@ -592,21 +565,21 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Handle primary connection / ISP interface route changes for running tunnels.
 	// Routing is only applied during Start, so restart the tunnel to pick up changes.
-	routeChanged := req.ISPInterface != oldISPInterface
+	routeChanged := merged.ISPInterface != oldISPInterface
 	if routeChanged {
 		stateInfo := h.svc.GetState(r.Context(), id)
 		if stateInfo.State == tunnel.StateRunning {
 			if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
 				Type: orchestrator.EventRestart, Tunnel: id,
 			}); err != nil {
-				h.log.Warn("update", req.Name, "Restart for routing changes failed: "+err.Error())
+				h.log.Warn("update", merged.Name, "Restart for routing changes failed: "+err.Error())
 			} else {
-				h.log.Info("update", req.Name, "Tunnel restarted to apply routing changes")
+				h.log.Info("update", merged.Name, "Tunnel restarted to apply routing changes")
 			}
 		}
 	}
 
-	h.log.Info("update", req.Name, "Tunnel updated")
+	h.log.Info("update", merged.Name, "Tunnel updated")
 	h.publishTunnelList(r.Context())
 
 	resp, err := BuildTunnelResponse(r, h.svc, h.store, id, h.quiescentFor(id))
@@ -933,50 +906,92 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
-// mergeInterfaceWhitelist applies the edit-form whitelist on top of
-// existing.Interface. Address, MTU, DNS, and the AmneziaWG obfuscation
-// block (Qlen, Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5) are taken from req;
-// PrivateKey is taken from req only when non-empty so a save without a
-// fresh key keeps the existing one.
+// applyTunnelUpdate накладывает декодированное тело PATCH req на запись t.
 //
-// Partial-update safety net: when req.Interface.Address is empty the
-// entire Interface is treated as missing (routing-page calls that only
-// touch ispInterface) and fully preserved from existing. Callers that
-// send Address MUST send the rest of the interface body too, otherwise
-// the empty fields will overwrite existing values — the frontend's
-// buildUpdatePayload spreads ...tunnel.interface for that reason.
-func mergeInterfaceWhitelist(req *storage.AWGTunnel, existing *storage.AWGTunnel) {
-	if req.Interface.Address == "" {
-		req.Interface = existing.Interface
-		return
+// ЕДИНСТВЕННОЕ место, определяющее, что правится через /api/tunnels/update:
+// поле без присваивания здесь этим handler'ом не правится вовсе. Новое поле
+// AWGTunnel по умолчанию неправимо — отказ фейлится закрыто («моё поле не
+// сохраняется»), а не молчаливой потерей чужих данных. Классификацию всех
+// полей пинит TestTunnelUpdate_FieldInventoryComplete.
+//
+// Чистая: req не мутирует и в его указуемые объекты не пишет — функция
+// применяется дважды (к копии снимка для валидаций и diff, и к свежей записи
+// внутри мутатора стора, где по контракту K10 §1.1 позволены только
+// присваивания заранее вычисленных значений).
+func applyTunnelUpdate(t *storage.AWGTunnel, req *storage.AWGTunnel) {
+	if req.Name != "" {
+		// "" — и «ключ не прислали», и явная пустая строка: оба значат
+		// «имя не менять», различить их в этом контракте нечем.
+		t.Name = req.Name
 	}
-	preserved := existing.Interface
-	preserved.Address = req.Interface.Address
-	preserved.MTU = req.Interface.MTU
-	preserved.DNS = req.Interface.DNS
-	if req.Interface.PrivateKey != "" {
-		preserved.PrivateKey = req.Interface.PrivateKey
+	t.Interface = mergedInterface(t.Interface, req.Interface)
+	if req.Peer.PublicKey != "" && req.Peer.Endpoint != t.Peer.Endpoint {
+		// Кэш резолва валиден только для endpoint'а, под которым получен:
+		// перенос через смену endpoint'а подставлял бы DNS-фолбэкам адрес
+		// ПРЕЖНЕГО имени. Сравнение — с endpoint'ом самой записи t.
+		t.ResolvedEndpointIP = ""
+	}
+	t.Peer = mergedPeer(t.Peer, req.Peer)
+	if req.DefaultRouteSet {
+		// DefaultRouteSet — компаньон «поле прислали»: модалки эхо-шлют
+		// defaultRoute из GET-ответа, где компаньона нет, и без гарда
+		// протухшее эхо перебивало бы тумблер.
+		t.DefaultRoute, t.DefaultRouteSet = req.DefaultRoute, true
+	}
+	switch {
+	case req.ISPInterface == tunnel.ISPInterfaceAuto:
+		// Страница маршрутизации так шлёт «авто» — это очистка, не «не прислали».
+		t.ISPInterface, t.ISPInterfaceLabel = "", ""
+	case req.ISPInterface != "":
+		t.ISPInterface, t.ISPInterfaceLabel = req.ISPInterface, req.ISPInterfaceLabel
+	}
+	if req.PingCheck != nil {
+		t.PingCheck = req.PingCheck
+	}
+	if req.ConnectivityCheck != nil && req.ConnectivityCheck.Method != "" {
+		t.ConnectivityCheck = req.ConnectivityCheck
+	}
+}
+
+// mergedInterface applies the edit-form whitelist of req on top of base.
+// Address, MTU, DNS, and the AmneziaWG obfuscation block (Qlen, Jc, Jmin,
+// Jmax, S1-S4, H1-H4, I1-I5) are taken from req; PrivateKey is taken from req
+// only when non-empty so a save without a fresh key keeps the existing one.
+//
+// Partial-update safety net: when req.Address is empty the entire Interface is
+// treated as missing (routing-page calls that only touch ispInterface) and
+// base is returned untouched. Callers that send Address MUST send the rest of
+// the interface body too, otherwise the empty fields will overwrite existing
+// values — the frontend's buildUpdatePayload spreads ...tunnel.interface for
+// that reason.
+func mergedInterface(base, req storage.AWGInterface) storage.AWGInterface {
+	if req.Address == "" {
+		return base
+	}
+	base.Address = req.Address
+	base.MTU = req.MTU
+	base.DNS = req.DNS
+	if req.PrivateKey != "" {
+		base.PrivateKey = req.PrivateKey
 	}
 	// AWG obfuscation block (issue #131): editable in the full edit form,
 	// so req is the source of truth — including explicit clears (i1 -> "").
-	preserved.AWGObfuscation = req.Interface.AWGObfuscation
-	req.Interface = preserved
+	base.AWGObfuscation = req.AWGObfuscation
+	return base
 }
 
-// mergePeerWhitelist applies the edit-form whitelist on top of
-// existing.Peer. Five fields (PublicKey, PresharedKey, Endpoint,
-// AllowedIPs, PersistentKeepalive) are taken from req when PublicKey
-// is non-empty; otherwise the entire Peer preserves from existing.
-func mergePeerWhitelist(req *storage.AWGTunnel, existing *storage.AWGTunnel) {
-	if req.Peer.PublicKey == "" {
-		req.Peer = existing.Peer
-		return
+// mergedPeer applies the edit-form whitelist of req on top of base. Five
+// fields (PublicKey, PresharedKey, Endpoint, AllowedIPs, PersistentKeepalive)
+// are taken from req when PublicKey is non-empty; otherwise the entire Peer
+// preserves from base (partial update without peer).
+func mergedPeer(base, req storage.AWGPeer) storage.AWGPeer {
+	if req.PublicKey == "" {
+		return base
 	}
-	preserved := existing.Peer
-	preserved.PublicKey = req.Peer.PublicKey
-	preserved.PresharedKey = req.Peer.PresharedKey
-	preserved.Endpoint = req.Peer.Endpoint
-	preserved.AllowedIPs = req.Peer.AllowedIPs
-	preserved.PersistentKeepalive = req.Peer.PersistentKeepalive
-	req.Peer = preserved
+	base.PublicKey = req.PublicKey
+	base.PresharedKey = req.PresharedKey
+	base.Endpoint = req.Endpoint
+	base.AllowedIPs = req.AllowedIPs
+	base.PersistentKeepalive = req.PersistentKeepalive
+	return base
 }

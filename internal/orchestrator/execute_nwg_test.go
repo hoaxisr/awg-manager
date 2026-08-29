@@ -16,10 +16,15 @@ type fakeNWGOp struct {
 	state    tunnel.StateInfo
 	starts   int
 	restores int
+
+	// Парковка Start: закрыть entered и ждать release. nil — не парковаться.
+	entered chan struct{}
+	release chan struct{}
 }
 
 func (f *fakeNWGOp) Start(context.Context, *storage.AWGTunnel) error {
 	f.starts++
+	park(f.entered, f.release)
 	return nil
 }
 func (f *fakeNWGOp) Stop(context.Context, *storage.AWGTunnel) error         { return nil }
@@ -44,7 +49,7 @@ func reconcileFixture(t *testing.T, info tunnel.StateInfo) (*Orchestrator, *fake
 	t.Helper()
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{ID: "awg0", Name: "awg0", Backend: "nativewg"}); err != nil {
+	if err := store.Create(&storage.AWGTunnel{ID: "awg0", Name: "awg0", Backend: "nativewg"}); err != nil {
 		t.Fatalf("save tunnel: %v", err)
 	}
 	op := &fakeNWGOp{state: info}

@@ -112,7 +112,7 @@ func TestSensorTick_WdttRawNeverTouchesInterface(t *testing.T) {
 
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
-	if err := store.Save(&storage.AWGTunnel{
+	if err := store.Create(&storage.AWGTunnel{
 		ID:             "wdttraw-de",
 		Name:           "Германия",
 		Backend:        "wdtt-raw",
