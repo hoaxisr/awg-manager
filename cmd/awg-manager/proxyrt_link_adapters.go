@@ -564,9 +564,12 @@ var _ wdttserver.AccessApplier = proxyAccessApplier{}
 
 // ingressSettingsStore — срез *storage.SettingsStore.
 type ingressSettingsStore interface {
-	Load() (*storage.Settings, error)
-	Save(settings *storage.Settings) error
+	Update(mut func(*storage.Settings) error) error
 }
+
+// errIngressRefsUnchanged отменяет запись изнутри мутатора, когда набор
+// ingress-ссылок уже верен: ни Save, ни реконсиляции быть не должно.
+var errIngressRefsUnchanged = errors.New("ingress refs unchanged")
 
 // routerReconciler — срез реконсиляции конфига sing-box.
 type routerReconciler interface {
@@ -585,16 +588,18 @@ func (e proxyIngressEnsurer) EnsureWdttServerIngressRefs(ctx context.Context, wg
 	if e.settings == nil {
 		return nil
 	}
-	settings, err := e.settings.Load()
-	if err != nil {
-		return err
-	}
-	next, changed := EnsureWdttIngressRefs(settings.SingboxRouter.IngressInterfaces, wgKernelIface, rawKernelIface)
-	if !changed {
+	err := e.settings.Update(func(cur *storage.Settings) error {
+		next, changed := EnsureWdttIngressRefs(cur.SingboxRouter.IngressInterfaces, wgKernelIface, rawKernelIface)
+		if !changed {
+			return errIngressRefsUnchanged
+		}
+		cur.SingboxRouter.IngressInterfaces = next
+		return nil
+	})
+	if errors.Is(err, errIngressRefsUnchanged) {
 		return nil
 	}
-	settings.SingboxRouter.IngressInterfaces = next
-	if err := e.settings.Save(settings); err != nil {
+	if err != nil {
 		return err
 	}
 	if e.router != nil {

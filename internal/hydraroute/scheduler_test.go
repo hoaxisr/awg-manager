@@ -17,7 +17,7 @@ func schedFor(t *testing.T, gf storage.GeoFileSettings) *GeoRefreshScheduler {
 		t.Fatalf("load: %v", err)
 	}
 	cur.GeoFile = gf
-	if err := st.Save(cur); err != nil {
+	if err := st.Update(func(next *storage.Settings) error { *next = *cur; return nil }); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	resolve := func(_ context.Context) (*http.Client, string, func(), error) {

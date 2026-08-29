@@ -54,7 +54,7 @@ func newTestSettings(t *testing.T, ds storage.DNSRouteSettings) *storage.Setting
 		t.Fatal(err)
 	}
 	settings.DNSRoute = ds
-	if err := store.Save(settings); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *settings; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return store

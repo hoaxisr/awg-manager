@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // Issue #488: в fakeip-режиме инспектор маршрутов объяснял решения по
@@ -53,7 +54,7 @@ func setRoutingMode(t *testing.T, svc *ServiceImpl, mode string) {
 		t.Fatalf("settings load: %v", err)
 	}
 	all.SingboxRouter.RoutingMode = mode
-	if err := svc.deps.Settings.Save(all); err != nil {
+	if err := svc.deps.Settings.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("settings save: %v", err)
 	}
 }

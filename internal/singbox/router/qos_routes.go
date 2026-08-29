@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// errQoSClassesUnchanged отменяет запись настроек изнутри мутатора, когда
+// проходу по классам нечего менять: Save не должен происходить впустую.
+var errQoSClassesUnchanged = errors.New("qos classes unchanged")
 
 // qosReloadWait bounds the reconcile-path wait for sing-box to rebind its
 // inbounds after a QoS config heal, before Install moves the iptables
@@ -261,27 +266,27 @@ func (s *ServiceImpl) renameQoSClassOutbound(oldTag, newTag string) error {
 	if s.deps.Settings == nil || oldTag == "" || newTag == "" || oldTag == newTag {
 		return nil
 	}
-	settings, err := s.deps.Settings.Load()
-	if err != nil {
-		return err
-	}
-	// Mutate a private copy: Load/Get hand out the store's live cache, which
-	// other goroutines read without a lock. QoSClasses elements are edited in
-	// place below, so the slice needs its own backing array too.
-	cp := *settings
-	cp.SingboxRouter.QoSClasses = append([]storage.SingboxQoSClass(nil), cp.SingboxRouter.QoSClasses...)
-	settings = &cp
-	changed := false
-	for i := range settings.SingboxRouter.QoSClasses {
-		if strings.TrimSpace(settings.SingboxRouter.QoSClasses[i].Outbound) == oldTag {
-			settings.SingboxRouter.QoSClasses[i].Outbound = newTag
-			changed = true
+	// Элементы правятся по месту, поэтому слайсу нужен свой массив: копия
+	// внутри Update — мелкая, backing array общий с прежней записью кэша.
+	err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		classes := append([]storage.SingboxQoSClass(nil), cur.SingboxRouter.QoSClasses...)
+		changed := false
+		for i := range classes {
+			if strings.TrimSpace(classes[i].Outbound) == oldTag {
+				classes[i].Outbound = newTag
+				changed = true
+			}
 		}
-	}
-	if !changed {
+		if !changed {
+			return errQoSClassesUnchanged
+		}
+		cur.SingboxRouter.QoSClasses = classes
+		return nil
+	})
+	if errors.Is(err, errQoSClassesUnchanged) {
 		return nil
 	}
-	return s.deps.Settings.Save(settings)
+	return err
 }
 
 // disableQoSClassesForOutbound flips Enabled off on persisted QoS classes
@@ -295,28 +300,27 @@ func (s *ServiceImpl) disableQoSClassesForOutbound(tag string) error {
 	if s.deps.Settings == nil || tag == "" {
 		return nil
 	}
-	settings, err := s.deps.Settings.Load()
-	if err != nil {
-		return err
-	}
-	// Mutate a private copy: Load/Get hand out the store's live cache, which
-	// other goroutines read without a lock. QoSClasses elements are edited in
-	// place below, so the slice needs its own backing array too.
-	cp := *settings
-	cp.SingboxRouter.QoSClasses = append([]storage.SingboxQoSClass(nil), cp.SingboxRouter.QoSClasses...)
-	settings = &cp
-	changed := false
-	for i := range settings.SingboxRouter.QoSClasses {
-		c := &settings.SingboxRouter.QoSClasses[i]
-		if strings.TrimSpace(c.Outbound) == tag && c.Enabled {
-			c.Enabled = false
-			changed = true
+	// Элементы правятся по месту — см. renameQoSClassOutbound.
+	err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		classes := append([]storage.SingboxQoSClass(nil), cur.SingboxRouter.QoSClasses...)
+		changed := false
+		for i := range classes {
+			c := &classes[i]
+			if strings.TrimSpace(c.Outbound) == tag && c.Enabled {
+				c.Enabled = false
+				changed = true
+			}
 		}
-	}
-	if !changed {
+		if !changed {
+			return errQoSClassesUnchanged
+		}
+		cur.SingboxRouter.QoSClasses = classes
+		return nil
+	})
+	if errors.Is(err, errQoSClassesUnchanged) {
 		return nil
 	}
-	return s.deps.Settings.Save(settings)
+	return err
 }
 
 // healQoSConfig is the reconcile-path self-heal for the QoS sing-box side:

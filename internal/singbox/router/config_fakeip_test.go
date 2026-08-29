@@ -576,8 +576,8 @@ func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 		t.Fatalf("settingsStore.Load: %v", err)
 	}
 	all.OpkgTun = &storage.OpkgTunState{Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 0}
-	if err := settingsStore.Save(all); err != nil {
-		t.Fatalf("settingsStore.Save: %v", err)
+	if err := settingsStore.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
+		t.Fatalf("settingsStore.Update: %v", err)
 	}
 
 	params := DefaultFakeIPTunParams()

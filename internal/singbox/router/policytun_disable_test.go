@@ -284,7 +284,7 @@ func TestPolicyTunDisable_IdempotentWithoutPersist(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.Enabled = true
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -545,7 +545,7 @@ func TestDisablePolicyTunRemovesDNSHookWithoutPersist(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.Enabled = true
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -575,7 +575,7 @@ func TestDisablePolicyTun_ResetsAppliedNetfilterState(t *testing.T) {
 	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
 		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
 	}
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error { return nil })

@@ -51,7 +51,7 @@ func newUpdateHandlerForTest(t *testing.T, withMarker bool) *UpdateHandler {
 	settings.Updates.AutoInstallEnabled = true
 	settings.Updates.AutoInstallIntervalDays = 7
 	settings.Updates.AutoInstallTime = "05:00"
-	if err := settingsStore.Save(settings); err != nil {
+	if err := settingsStore.Update(func(cur *storage.Settings) error { *cur = *settings; return nil }); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 

@@ -73,7 +73,7 @@ func TestAuthStatus_AuthEnabled_NoCookie(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	s.AuthEnabled = true
-	if err := settings.Save(s); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	h := NewAuthHandler(nil, sessions, settings, silentAppLogger{})
@@ -103,7 +103,7 @@ func TestAuthStatus_ValidSession(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	s.AuthEnabled = true
-	if err := settings.Save(s); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	h := NewAuthHandler(nil, sessions, settings, silentAppLogger{})
@@ -234,7 +234,7 @@ func newLoginHandlerForTest(t *testing.T, entwareEnabled bool, ke *fakeKeenetic,
 	}
 	s.AuthEnabled = true
 	s.EntwareAuthEnabled = entwareEnabled
-	if err := settings.Save(s); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	sessions := auth.NewSessionStore(settings.GetSessionTTL)
@@ -466,7 +466,7 @@ func TestAuthLogin_CookieMaxAgeUsesConfiguredTTL(t *testing.T) {
 	h, settings := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
 	s, _ := settings.Get()
 	s.SessionTtlHours = 48
-	if err := settings.Save(s); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -498,7 +498,7 @@ func TestAuthStatus_ReportsEntwareAuthEnabled(t *testing.T) {
 	}
 	s.AuthEnabled = true
 	s.EntwareAuthEnabled = true
-	if err := settings.Save(s); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	h := NewAuthHandler(nil, sessions, settings, silentAppLogger{})

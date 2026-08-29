@@ -122,7 +122,7 @@ func enableRouterEngine(t *testing.T, store *storage.SettingsStore) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.Enabled = true
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 }
@@ -307,7 +307,7 @@ func TestFakeIPEnable_EmptyPool6DisablesV6(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.FakeIPPool6 = ""
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -341,7 +341,7 @@ func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.FakeIPStack = ""
-	if err := h.store.Save(all); err != nil {
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -564,7 +564,7 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 				Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 3,
 				FakeIP: &storage.OpkgTunFakeIPData{Inet4Range: "198.18.0.0/15"},
 			}
-			if err := svc.deps.Settings.Save(all); err != nil {
+			if err := svc.deps.Settings.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 				t.Fatalf("Settings.Save: %v", err)
 			}
 			log := &callLog{}

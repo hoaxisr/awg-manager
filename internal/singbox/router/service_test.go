@@ -116,7 +116,7 @@ func newTestSettingsStore(t *testing.T, sr storage.SingboxRouterSettings) *stora
 		t.Fatalf("settingsStore.Load: %v", err)
 	}
 	all.SingboxRouter = sr
-	if err := store.Save(all); err != nil {
+	if err := store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("settingsStore.Save: %v", err)
 	}
 	return store
@@ -1432,7 +1432,7 @@ func TestReapplyFakeIPOverlay_RegeneratesSlot(t *testing.T) {
 	}
 	st.SingboxRouter.Enabled = true
 	st.SingboxRouter.FakeIPRealServer = "9.9.9.9"
-	if err := s.deps.Settings.Save(st); err != nil {
+	if err := s.deps.Settings.Update(func(cur *storage.Settings) error { *cur = *st; return nil }); err != nil {
 		t.Fatalf("settings save: %v", err)
 	}
 	if err := s.reapplyFakeIPOverlay(context.Background(), st); err != nil {

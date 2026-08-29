@@ -548,8 +548,15 @@ func (a *app) setupListen() {
 	// Persist actual port in settings so postinst / status / hooks show the right URL.
 	if selectedPort != a.settings.Server.Port {
 		fmt.Fprintf(os.Stderr, "Warning: port %d occupied, using port %d\n", a.settings.Server.Port, selectedPort)
-		a.settings.Server.Port = selectedPort
-		_ = a.settingsStore.Save(a.settings)
+		_ = a.settingsStore.Update(func(cur *storage.Settings) error {
+			cur.Server.Port = selectedPort
+			return nil
+		})
+		// Update публикует новую запись — прежний указатель на неё уже не
+		// смотрит, а ниже по проводке настройки читают именно через него.
+		if refreshed, err := a.settingsStore.Get(); err == nil {
+			a.settings = refreshed
+		}
 	}
 
 	// Bind-адреса применяет мультилистенер-менеджер (server/listen.go):

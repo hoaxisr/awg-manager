@@ -141,10 +141,10 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// INVARIANT: persist FIRST, before creating the iface, so a crash in between
 	// leaves a persist the reap can find by index.
 	//
-	// ГОЧА: держим ОДИН объект состояния и подшиваем его в загруженные settings.
-	// SetOpkgTunState пишет в кэш стора, а промежуточные Load'ы (конфиг слота,
-	// статус) кэш подменяют — финальный Save(settings) отсюда откатил бы всё,
-	// что легло в персист после них (например NATSegments source-preserve).
+	// Держим ОДИН объект состояния: SetOpkgTunState пишет его в кэш стора, и
+	// всё, что легло в персист после (например NATSegments source-preserve),
+	// доживает до диска само — финальный Settings.Update снимает копию кэша
+	// в момент коммита, а не работает по снимку, взятому здесь.
 	ptState := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: idx}
 	// ГОЧА (re-provision): записи NAT-сегментов ОБЯЗАНЫ пережить повторный
 	// провижининг (heal «интерфейс пропал» → reconcile → enableLocked). Они —
@@ -159,13 +159,6 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	if err = s.deps.Settings.SetOpkgTunState(ptState); err != nil {
 		return fmt.Errorf("enable policy-tun: persist policy-tun state: %w", err)
 	}
-	// Мутируем локальную копию: `settings` всё ещё алиас живого кэша стора,
-	// который параллельно читают другие горутины без лока. Копия именно
-	// здесь, а не сразу после Load: так в неё попадает всё, что записали в
-	// кэш узкие мутаторы выше, — ровно то, что сохранил бы прежний Save.
-	cp := *settings
-	settings = &cp
-	settings.OpkgTun = ptState
 	push(func() {
 		// Откат ВОЗВРАЩАЕТ ПРЕЖНИЙ персист, а не обнуляет его.
 		//
@@ -351,8 +344,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// restoreRevokedPolicyTunNAT — иначе их static-NAT остался бы навсегда.
 		// Мутируем копию: ptState уже уходил в кэш стора (SetOpkgTunState
 		// выше кладёт туда сам указатель), и запись по месту гонялась бы с
-		// маршалом кэша. Копию публикуют мутатор ниже и финальный Save —
-		// поэтому её же подшиваем в settings.
+		// маршалом кэша. Копию публикует мутатор ниже.
 		next := *ptState
 		if merged := mergePolicyTunNATRecords(natSegmentsOf(ptState), recorded); len(merged) > 0 {
 			next.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: merged}
@@ -360,7 +352,6 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			next.PolicyTun = nil
 		}
 		ptState = &next
-		settings.OpkgTun = ptState
 		// Персист ДО проверки ошибки, как в сверке: откат выше может и сам упасть
 		// (RCI, уронивший apply, обычно роняет и его), и тогда запись — всё, что
 		// помнит исходный режим сегмента. Provisioned/Index уже в персисте (см.
@@ -475,8 +466,10 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	}
 
 	// Persist enabled LAST (success). From here we do NOT roll back.
-	settings.SingboxRouter = sr
-	if err = s.deps.Settings.Save(settings); err != nil {
+	if err = s.deps.Settings.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter = sr
+		return nil
+	}); err != nil {
 		return fmt.Errorf("enable policy-tun: save settings: %w", err)
 	}
 

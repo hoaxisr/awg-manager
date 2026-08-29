@@ -736,11 +736,49 @@ func (s *SettingsStore) DeleteServerPeerSecret(serverID, pubkey string) error {
 	return s.saveUnlocked(s.settings)
 }
 
-// Save writes settings to disk.
-func (s *SettingsStore) Save(settings *Settings) error {
+// save публикует переданный объект как новый кэш и пишет его на диск.
+// НЕ экспортируется намеренно: писать настройки снаружи можно только через
+// Update (копия под локом) или через узкий мутатор. Публичный Save требовал от
+// каждого вызывающего помнить, что Load/Get отдают живой кэш и мутировать надо
+// копию — контракт, невидимый в сигнатуре и потому регулярно нарушавшийся.
+func (s *SettingsStore) save(settings *Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.saveUnlocked(settings)
+}
+
+// Update атомарно правит настройки под локом стора: копия живого кэша →
+// мутатор → публикация копии. Ошибка мутатора отменяет запись.
+//
+// Зачем копия, а не запись по месту: Load/Get отдают ЖИВОЙ объект кэша, и
+// читатели держат этот указатель уже без лока. Публикуется новая запись, а
+// прежнюю они дочитывают сами. Копия берётся ЗДЕСЬ, в момент коммита, а не
+// на стороне вызывающего: так в неё попадает всё, что успели записать в кэш
+// узкие мутаторы (SetOpkgTunState и прочие), пока вызывающий делал свою
+// работу, — снимок, взятый раньше, затирал бы их записи.
+//
+// Копия МЕЛКАЯ: вложенные карты и слайсы (ServerPeerSecrets, ManagedServers,
+// QoSClasses…) остаются общими с прежним объектом. Мутатор не должен править
+// их элементы по месту — только присваивать новые.
+//
+// Мутатор исполняется ПОД ЛОКОМ стора: он обязан быть чистым и быстрым.
+// Любой метод стора из него — дедлок (RWMutex нерекурсивен), любая блокирующая
+// работа (exec, RCI, диск) держит на себе все чтения настроек. Проверки,
+// которым нужно ходить наружу, делаются ДО вызова.
+func (s *SettingsStore) Update(mut func(*Settings) error) error {
+	if _, err := s.Get(); err != nil { // гарантировать загрузку кэша
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	cp := *s.settings
+	if err := mut(&cp); err != nil {
+		return err
+	}
+	return s.saveUnlocked(&cp)
 }
 
 // saveUnlocked writes settings to disk without acquiring lock.

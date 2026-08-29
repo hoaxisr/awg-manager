@@ -5,6 +5,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // healerHarness — движок жив, слот активен, carrier управляется через carrier.
@@ -22,7 +23,7 @@ func healerHarness(t *testing.T) (svc *ServiceImpl, sb *fakeSingbox, carrier *bo
 		t.Fatal(err)
 	}
 	all.SingboxRouter.Enabled = true
-	if err := svc.deps.Settings.Save(all); err != nil {
+	if err := svc.deps.Settings.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); err != nil {
@@ -177,7 +178,7 @@ func TestHealDetachedTun_NoopWhenRouterDisabledMeanwhile(t *testing.T) {
 		t.Fatal(err)
 	}
 	all.SingboxRouter.Enabled = false
-	if err := svc.deps.Settings.Save(all); err != nil {
+	if err := svc.deps.Settings.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatal(err)
 	}
 

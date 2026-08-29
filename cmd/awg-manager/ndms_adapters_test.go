@@ -40,9 +40,12 @@ func (s *stubAWGStore) List() ([]storage.AWGTunnel, error) {
 func TestRunningInterfaces_FiltersDownServersAndIncludesSystemTunnels(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.NewSettingsStore(dir)
-	if err := settings.Save(&storage.Settings{
-		ServerInterfaces: []string{"Wireguard0", "Wireguard5"},
-		ManagedServer:    &storage.ManagedServer{InterfaceName: "Wireguard9"},
+	if err := settings.Update(func(cur *storage.Settings) error {
+		*cur = storage.Settings{
+			ServerInterfaces: []string{"Wireguard0", "Wireguard5"},
+			ManagedServer:    &storage.ManagedServer{InterfaceName: "Wireguard9"},
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
@@ -142,9 +145,12 @@ func TestDedupeRefs_ServerFlagWins(t *testing.T) {
 func TestRunningInterfaces_NilSystemTunnelsFallback(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.NewSettingsStore(dir)
-	if err := settings.Save(&storage.Settings{
-		ServerInterfaces: []string{"Wireguard0"},
-		ManagedServer:    &storage.ManagedServer{InterfaceName: "Wireguard9"},
+	if err := settings.Update(func(cur *storage.Settings) error {
+		*cur = storage.Settings{
+			ServerInterfaces: []string{"Wireguard0"},
+			ManagedServer:    &storage.ManagedServer{InterfaceName: "Wireguard9"},
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
@@ -176,7 +182,10 @@ func TestRunningInterfaces_NilSystemTunnelsFallback(t *testing.T) {
 func TestRunningInterfaces_SkipsManagedNWGNames(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.NewSettingsStore(dir)
-	if err := settings.Save(&storage.Settings{}); err != nil {
+	if err := settings.Update(func(cur *storage.Settings) error {
+		*cur = storage.Settings{}
+		return nil
+	}); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 
