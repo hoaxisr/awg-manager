@@ -41,17 +41,26 @@ func recordOfKind(t *testing.T, k Kind) Record {
 	return Record{}
 }
 
-// TestAllKinds_Inventory — новая константа Kind обязана попасть в AllKinds,
-// иначе тесты полноты её не увидят и молча пропустят. Читаем ВЕСЬ пакет:
-// константу можно объявить и в соседнем файле.
+// TestAllKinds_Inventory — новая роль обязана попасть в AllKinds, иначе тесты
+// полноты её не увидят и молча пропустят.
+//
+// Сверяются ЗНАЧЕНИЯ, а не имена констант, и берутся они с двух сторон
+// по-разному: слева — разбор исходника пакета, справа — сама переменная. Обход
+// через имя без префикса `Kind`, через форму `const X = Kind("…")` и через
+// перечисление в постороннем `[]Kind` того же пакета этим закрыт; сверка по
+// именам в тексте закрывала бы только первый попавшийся способ записи и
+// краснела бы на переформатировании.
 func TestAllKinds_Inventory(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("читаем пакет: %v", err)
 	}
-	declRe := regexp.MustCompile(`\b(Kind[A-Za-z0-9]+)\s+Kind\s*=`)
-	listRe := regexp.MustCompile(`(?m)^\t(Kind[A-Za-z0-9]+),$`)
-	declared, listed := map[string]bool{}, map[string]bool{}
+	// Обе формы объявления: в const-блоке с типом и через приведение.
+	res := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\s*(\w+)\s+Kind\s*=\s*"([^"]*)"`),
+		regexp.MustCompile(`(?m)^\s*(?:const\s+)?(\w+)\s*=\s*Kind\("([^"]*)"\)`),
+	}
+	declared := map[string]string{} // значение → имя константы
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
@@ -60,23 +69,31 @@ func TestAllKinds_Inventory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("читаем %s: %v", e.Name(), err)
 		}
-		for _, m := range declRe.FindAllStringSubmatch(string(src), -1) {
-			declared[m[1]] = true
-		}
-		for _, m := range listRe.FindAllStringSubmatch(string(src), -1) {
-			listed[m[1]] = true
+		for _, re := range res {
+			for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+				declared[m[2]] = m[1]
+			}
 		}
 	}
 	if len(declared) == 0 {
-		t.Fatal("не разобрано ни одной константы Kind* — сломан разбор пакета")
+		t.Fatal("не разобрано ни одной константы типа Kind — сломан разбор пакета")
 	}
-	for name := range declared {
-		if !listed[name] {
-			t.Errorf("роль %s объявлена, но не внесена в AllKinds — тесты полноты её не проверят", name)
+	listed := map[string]bool{}
+	for _, k := range AllKinds {
+		if listed[string(k)] {
+			t.Errorf("роль %q внесена в AllKinds дважды", k)
+		}
+		listed[string(k)] = true
+	}
+	for val, name := range declared {
+		if !listed[val] {
+			t.Errorf("роль %s (%q) объявлена, но не внесена в AllKinds — тесты полноты её не проверят", name, val)
 		}
 	}
-	if len(AllKinds) != len(declared) {
-		t.Errorf("AllKinds содержит %d ролей, объявлено %d", len(AllKinds), len(declared))
+	for _, k := range AllKinds {
+		if _, ok := declared[string(k)]; !ok {
+			t.Errorf("AllKinds содержит %q, которому не найдено объявления в пакете", k)
+		}
 	}
 }
 
@@ -135,25 +152,43 @@ func TestKinds_NDMSNamedCoversAll(t *testing.T) {
 
 // TestKinds_DataTargetsClassified — данные на диске переживут удаление
 // инстанса, если DataTargets про них не знает: ветка «прочее» отдаёт nil, и
-// новая роль осиротила бы свой каталог молча. Требуем классификации, а не
-// конкретных путей.
+// новая роль осиротила бы свой каталог молча.
+//
+// Сверяется СОСТАВ путей, а не их наличие: у freeturn-сервера путь списка по
+// умолчанию (FreeTurnAllowlistPath) добавляется безусловно, поэтому проверка
+// «вернулось непусто» держалась бы сама собой и не заметила бы потерю
+// ClientsFile — второй половины ветки.
 func TestKinds_DataTargetsClassified(t *testing.T) {
-	// Своих данных на диске нет у клиентских ролей (record.go:205).
-	hasData := map[Kind]bool{
-		KindWdttClient:     false,
-		KindWdttServer:     true,
-		KindFreeTurnClient: false,
-		KindFreeTurnServer: true,
+	const dataDir = "/data"
+	// Пусто у клиентских ролей: своих данных на диске у них нет
+	// (record.go, докстринг DataTargets).
+	want := map[Kind][]string{
+		KindWdttClient:     nil,
+		KindWdttServer:     {"/opt/etc/awg-manager/wdtt/s"},
+		KindFreeTurnClient: nil,
+		KindFreeTurnServer: {
+			"/opt/etc/awg-manager/freeturn/clients.json",
+			FreeTurnAllowlistPath(dataDir, "g"),
+		},
 	}
 	for _, k := range AllKinds {
-		want, ok := hasData[k]
+		exp, ok := want[k]
 		if !ok {
-			t.Errorf("роль %s не классифицирована: есть ли у неё данные на диске? см. DataTargets", k)
+			t.Errorf("роль %s не классифицирована: какие её данные переживут удаление инстанса? см. DataTargets", k)
 			continue
 		}
-		got := recordOfKind(t, k).DataTargets("/data")
-		if (len(got) > 0) != want {
-			t.Errorf("%s: DataTargets вернул %d путей, ожидали наличие=%v", k, len(got), want)
+		got := map[string]bool{}
+		for _, d := range recordOfKind(t, k).DataTargets(dataDir) {
+			got[d.Path] = true
+		}
+		if len(got) != len(exp) {
+			t.Errorf("%s: DataTargets вернул %v, ждали %v", k, got, exp)
+			continue
+		}
+		for _, p := range exp {
+			if !got[p] {
+				t.Errorf("%s: DataTargets не вернул %q — файл переживёт удаление инстанса, а убрать его из UI нечем", k, p)
+			}
 		}
 	}
 }
