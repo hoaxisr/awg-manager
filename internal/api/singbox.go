@@ -262,8 +262,9 @@ func (h *SingboxHandler) ToggleNDMSProxy(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "ndms-proxy-toggled")
-	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "ndms-proxy-toggled")
+	// Инвалидацию публикует сам мигратор (MigrateOn/MigrateOff) — тем же
+	// ключам здесь взяться неоткуда, а дубль будил бы подписчиков шины
+	// (deviceproxy.Reconcile, SyncAWGOutbounds) второй раз за одно нажатие.
 	response.Success(w, map[string]any{"enabled": req.Enabled, "migrated": true})
 }
 
