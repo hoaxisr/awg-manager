@@ -25,14 +25,9 @@ type Orchestrator interface {
 	SetEnabled(slot string, on bool) error
 }
 
-type EventBus interface {
-	Publish(eventType string, data any)
-}
-
 type Service struct {
 	store Store
 	orch  Orchestrator
-	bus   EventBus
 
 	// mu сериализует «прочитать список → изменить → пересобрать слот».
 	// Стор атомарен поштучно, но с приходом keendns-пресета у него два
@@ -52,8 +47,8 @@ type Service struct {
 	keenDNSExtra string
 }
 
-func NewService(store Store, orch Orchestrator, bus EventBus) *Service {
-	return &Service{store: store, orch: orch, bus: bus}
+func NewService(store Store, orch Orchestrator) *Service {
+	return &Service{store: store, orch: orch}
 }
 
 func (s *Service) List() ([]DNSRewrite, error) { return s.store.List() }
@@ -282,8 +277,5 @@ func (s *Service) flush() error {
 		return err
 	}
 	s.slotDirty = false
-	if s.bus != nil {
-		s.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.dns-rewrites"})
-	}
 	return nil
 }

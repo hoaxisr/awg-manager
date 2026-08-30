@@ -177,14 +177,14 @@ func (h *ServersHandler) SetCommands(commands *ndmscommand.Commands) { h.command
 // as a method on *ServersHandler because ndms/metrics.Poller calls it
 // through the ServerSnapshotPublisher interface.
 func (h *ServersHandler) PublishServerSnapshot(ctx context.Context) {
-	publishInvalidated(h.bus, ResourceServers, "metrics-tick")
+	h.bus.PublishInvalidated(events.ResourceServers, "metrics-tick")
 }
 
 // publishServerInvalidated broadcasts a resource:invalidated hint for
 // servers. Used by ManagedServerHandler after managed CRUD so its
 // subscribers refetch immediately.
 func (h *ServersHandler) publishServerInvalidated(reason string) {
-	publishInvalidated(h.bus, ResourceServers, reason)
+	h.bus.PublishInvalidated(events.ResourceServers, reason)
 }
 
 // NewServersHandler creates a new servers handler.
@@ -464,7 +464,7 @@ func (h *ServersHandler) Mark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	publishInvalidated(h.bus, ResourceServers, "mark-changed")
+	h.bus.PublishInvalidated(events.ResourceServers, "mark-changed")
 	h.writeAll(w, r)
 }
 
@@ -530,7 +530,7 @@ func (h *ServersHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	if h.queries != nil && h.queries.WGServers != nil {
 		h.queries.WGServers.Invalidate(name)
 	}
-	publishInvalidated(h.bus, ResourceServers, "server-enabled-changed")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-enabled-changed")
 	h.writeAll(w, r)
 }
 
@@ -594,7 +594,7 @@ func (h *ServersHandler) Restart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		publishInvalidated(h.bus, ResourceServers, "server-restart")
+		h.bus.PublishInvalidated(events.ResourceServers, "server-restart")
 	}()
 
 	response.Success(w, map[string]any{

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -121,9 +122,9 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	if h.bus == nil {
 		return
 	}
-	publishInvalidated(h.bus, ResourceTunnels, "list-changed")
+	h.bus.PublishInvalidated(events.ResourceTunnels, "list-changed")
 	if h.catalog != nil {
-		publishInvalidated(h.bus, ResourceRoutingTunnels, "list-changed")
+		h.bus.PublishInvalidated(events.ResourceRoutingTunnels, "list-changed")
 	}
 
 	// Also refresh pingcheck (new/deleted tunnels appear/disappear on monitoring page)

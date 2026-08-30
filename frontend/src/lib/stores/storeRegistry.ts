@@ -3,8 +3,9 @@ import type { PollingStore } from './polling';
 /**
  * Closed set of resource keys recognised by the invalidation pipeline.
  * Each value MUST match the corresponding Go constant (ResourceXxx) in
- * `internal/api/publish.go`. When adding a new state resource, update
- * BOTH sides in the same commit.
+ * `internal/events/resources.go`. When adding a new state resource, update
+ * BOTH sides in the same commit — TestResourceKeys_KnownToFrontend читает
+ * этот union и падает на ключе, который бэкенд публикует, а фронт не знает.
  */
 export type ResourceKey =
 	| 'awg3'                        // ResourceAwg3
@@ -26,7 +27,6 @@ export type ResourceKey =
 	| 'routing.tunnels'             // ResourceRoutingTunnels
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
-	| 'deviceproxy.outbounds'       // ResourceDeviceProxyOutbounds
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
 	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()

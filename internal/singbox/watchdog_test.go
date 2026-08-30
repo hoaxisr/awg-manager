@@ -3,17 +3,19 @@ package singbox
 import (
 	"sync"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 type fakePub struct {
 	mu   sync.Mutex
-	evts []map[string]any
+	evts []events.ResourceInvalidatedEvent
 }
 
 func (p *fakePub) Publish(_ string, data any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if m, ok := data.(map[string]any); ok {
+	if m, ok := data.(events.ResourceInvalidatedEvent); ok {
 		p.evts = append(p.evts, m)
 	}
 }
@@ -55,11 +57,11 @@ func TestWatchdog_PublishIfFlipped_FiresOnTransition(t *testing.T) {
 	if pub.count() != 2 {
 		t.Fatalf("expected 2 events (2 flips), got %d", pub.count())
 	}
-	if pub.evts[0]["resource"] != resourceSingboxStatus {
-		t.Errorf("event[0] resource = %v, want %s", pub.evts[0]["resource"], resourceSingboxStatus)
+	if pub.evts[0].Resource != string(events.ResourceSingboxStatus) {
+		t.Errorf("event[0] resource = %v, want %s", pub.evts[0].Resource, events.ResourceSingboxStatus)
 	}
-	if pub.evts[0]["reason"] != "watchdog" {
-		t.Errorf("event[0] reason = %v, want watchdog", pub.evts[0]["reason"])
+	if pub.evts[0].Reason != "watchdog" {
+		t.Errorf("event[0] reason = %v, want watchdog", pub.evts[0].Reason)
 	}
 }
 

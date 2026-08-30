@@ -747,7 +747,7 @@ func (o *Orchestrator) updateState(action Action) {
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "running", Backend: t.Backend,
 			})
-			publishInvalidatedBus(o.bus, "tunnels", "state-running")
+			o.bus.PublishInvalidated(events.ResourceTunnels, "state-running")
 			// Kernel tunnels: NDMS iflayerchanged hooks are unreliable for
 			// OpkgTun, so the cache invalidate done at InterfaceUp can snapshot
 			// a pre-"running" layer and then never get corrected — leaving
@@ -767,13 +767,13 @@ func (o *Orchestrator) updateState(action Action) {
 			o.bus.Publish("tunnel:state", events.TunnelStateEvent{
 				ID: t.ID, Name: t.Name, State: "stopped", Backend: t.Backend,
 			})
-			publishInvalidatedBus(o.bus, "tunnels", "state-stopped")
+			o.bus.PublishInvalidated(events.ResourceTunnels, "state-stopped")
 		case ActionDeleteKernel, ActionDeleteNativeWG:
 			// tunnel:deleted remains as a no-op SSE for any legacy
 			// subscriber; the frontend handler is removed so nobody
 			// reacts. Future cleanup can drop this publish.
 			o.bus.Publish("tunnel:deleted", events.TunnelDeletedEvent{ID: action.Tunnel})
-			publishInvalidatedBus(o.bus, "tunnels", "deleted")
+			o.bus.PublishInvalidated(events.ResourceTunnels, "deleted")
 		}
 	}
 }
@@ -791,22 +791,4 @@ func (o *Orchestrator) QuiescentUntil(tunnelID string) time.Time {
 		return t.quiescentUntil
 	}
 	return time.Time{}
-}
-
-// publishInvalidatedBus posts a resource:invalidated hint. Duplicated
-// here (from internal/api.publishInvalidated) to avoid an import cycle
-// between the orchestrator and the api package.
-//
-// TODO(tech-debt): consolidate publishInvalidatedBus helpers into
-// internal/events once the import-cycle with internal/api is resolved.
-// Currently duplicated in internal/orchestrator and internal/pingcheck
-// because those packages cannot import internal/api.
-func publishInvalidatedBus(bus *events.Bus, resource, reason string) {
-	if bus == nil {
-		return
-	}
-	bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-		Resource: resource,
-		Reason:   reason,
-	})
 }

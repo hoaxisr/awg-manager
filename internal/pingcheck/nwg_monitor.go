@@ -188,7 +188,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 				SuccessCount: successCount,
 			})
 		}
-		publishInvalidatedBus(m.bus, "pingcheck", "state-change")
+		m.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
 		return
 	}
 
@@ -338,7 +338,7 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 	// would trigger excessive refetches. Initial state is published from
 	// the !m.initialized branch above (which returns early).
 	if status != m.prevStatus {
-		publishInvalidatedBus(m.bus, "pingcheck", "state-change")
+		m.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
 	}
 
 	m.prevFail = failCount

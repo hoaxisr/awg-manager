@@ -362,7 +362,7 @@ func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "HYDRAROUTE_CONTROL_ERROR")
 		return
 	}
-	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "control-"+req.Action)
+	h.bus.PublishInvalidated(events.ResourceRoutingHydrarouteStatus, "control-"+req.Action)
 	response.Success(w, hydraRouteStatusData(h.hydra.RefreshStatus()))
 }
 

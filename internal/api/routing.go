@@ -112,12 +112,12 @@ func (h *RoutingHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	snap := h.catalog.SnapshotAll(r.Context())
 	// Notify every routing polling store to refetch.
-	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingStaticRoutes, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingAccessPolicies, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingPolicyDevices, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingPolicyInterfaces, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingClientRoutes, "refresh")
-	publishInvalidated(h.bus, ResourceRoutingTunnels, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingStaticRoutes, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingAccessPolicies, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingPolicyDevices, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingPolicyInterfaces, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingClientRoutes, "refresh")
+	h.bus.PublishInvalidated(events.ResourceRoutingTunnels, "refresh")
 	response.Success(w, map[string]any{"missing": snap.Missing})
 }

@@ -218,7 +218,7 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "sing-box отверг конфиг: "+err.Error())
 		return
 	}
-	publishInvalidated(h.bus, ResourceAwg3, "import")
+	h.bus.PublishInvalidated(events.ResourceAwg3, "import")
 	response.Success(w, h.listDTO())
 }
 
@@ -266,7 +266,7 @@ func (h *Awg3Handler) handleDelete(w http.ResponseWriter, r *http.Request, id st
 		response.InternalError(w, "sing-box отверг конфиг после удаления: "+err.Error())
 		return
 	}
-	publishInvalidated(h.bus, ResourceAwg3, "delete")
+	h.bus.PublishInvalidated(events.ResourceAwg3, "delete")
 	response.Success(w, h.listDTO())
 }
 
@@ -340,7 +340,7 @@ func (h *Awg3Handler) handleRename(w http.ResponseWriter, r *http.Request, id st
 		response.InternalError(w, "sing-box отверг конфиг после переименования: "+err.Error())
 		return
 	}
-	publishInvalidated(h.bus, ResourceAwg3, "rename")
+	h.bus.PublishInvalidated(events.ResourceAwg3, "rename")
 	response.Success(w, h.listDTO())
 }
 

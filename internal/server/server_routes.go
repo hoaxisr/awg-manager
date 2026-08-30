@@ -727,12 +727,7 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 				s.ndmsQueries.Interfaces.InvalidateAll()
 			}
 		}
-		if s.bus != nil {
-			s.bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-				Resource: api.ResourceTunnels,
-				Reason:   "ndms-hook",
-			})
-		}
+		s.bus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
 	}
 	h.hookHandler.SetTunnelRefresher(invalidateTunnelsOnHook)
 	// Injects the composite {tunnels, external, system} builder used by

@@ -1,7 +1,7 @@
 // Frontend polling stores for the device proxy feature:
 //   - config (30s poll): reflects persisted Config; SSE-invalidated by
 //     resource:invalidated{resource:"deviceproxy.config"}.
-//   - outbounds (15s poll): available outbound tags for the dropdowns.
+//   - outbounds (120s poll): available outbound tags for the dropdowns.
 //   - runtime (5s poll): live selector.now + persisted default for
 //     the "Активный туннель" card; SSE-invalidated by
 //     resource:invalidated{resource:"deviceproxy.runtime"}.
@@ -28,12 +28,12 @@ registerStore('deviceproxy.config', deviceProxyInstances);
 // show/interface), а содержимое меняется только при CRUD туннелей/подписок.
 // Панель Inbounds (DeviceProxyCompact) держит подписку постоянно, поэтому
 // длинный интервал важен: 15s-поллинг возвращал бы фоновую RCI-нагрузку
-// класса slow-RCI. Изменения имён доезжают за ≤2 мин или при перезаходе.
+// класса slow-RCI. Изменения имён доезжают за ≤2 мин или при перезаходе:
+// SSE-инвалидации у каталога НЕТ — бэкенд такого ключа не публикует.
 export const deviceProxyOutbounds: PollingStore<DeviceProxyOutbound[]> = createPollingStore<DeviceProxyOutbound[]>(
 	() => api.listDeviceProxyOutbounds(),
 	{ staleTime: 60_000, pollInterval: 120_000 },
 );
-registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
 	() => api.getDeviceProxyRuntime(),

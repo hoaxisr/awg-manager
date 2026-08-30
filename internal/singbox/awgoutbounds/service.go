@@ -92,7 +92,7 @@ func (s *ServiceImpl) SubscribeBus(ctx context.Context) func() {
 	_, ch, unsub := s.deps.Bus.Subscribe()
 	go func() {
 		for ev := range ch {
-			if ev.Type != "resource:invalidated" {
+			if ev.Type != events.EventResourceInvalidated {
 				continue
 			}
 			payload, ok := ev.Data.(events.ResourceInvalidatedEvent)

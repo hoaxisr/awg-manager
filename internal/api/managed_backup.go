@@ -322,7 +322,7 @@ func (h *ManagedServerBackupHandler) Import(w http.ResponseWriter, r *http.Reque
 	outcomes := h.svc.Restore(r.Context(), servers, restoreOptionsFromDTO(req.Options))
 	response.Success(w, ManagedServerRestoreResponse{Outcomes: outcomesToDTO(outcomes)})
 	if hasActionableMutation(outcomes) {
-		publishInvalidated(h.bus, ResourceServers, "managed-restore")
+		h.bus.PublishInvalidated(events.ResourceServers, "managed-restore")
 	}
 }
 
@@ -402,7 +402,7 @@ func (h *ManagedServerBackupHandler) RestoreDrift(w http.ResponseWriter, r *http
 	outcomes := h.svc.RestoreDrift(r.Context(), drift, restoreOptionsFromDTO(req.Options))
 	response.Success(w, ManagedServerRestoreResponse{Outcomes: outcomesToDTO(outcomes)})
 	if hasActionableMutation(outcomes) {
-		publishInvalidated(h.bus, ResourceServers, "managed-restore-drift")
+		h.bus.PublishInvalidated(events.ResourceServers, "managed-restore-drift")
 	}
 }
 

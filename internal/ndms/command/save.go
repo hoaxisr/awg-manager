@@ -205,12 +205,7 @@ func (s *SaveCoordinator) fire() {
 		if settleDelay > 0 && invalidator != nil {
 			time.Sleep(settleDelay)
 			invalidator.InvalidateAll()
-			if s.publisher != nil {
-				s.publisher.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-					Resource: "saveStatus",
-					Reason:   "save-settled",
-				})
-			}
+			events.PublishInvalidatedTo(s.publisher, events.ResourceSaveStatus, "save-settled")
 		}
 		return
 	}
@@ -287,12 +282,7 @@ func (s *SaveCoordinator) Flush(ctx context.Context) error {
 func (s *SaveCoordinator) setStateLocked(next SaveState, errMsg string) {
 	s.state = next
 	s.lastError = errMsg
-	if s.publisher != nil {
-		s.publisher.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-			Resource: "saveStatus",
-			Reason:   "state-change",
-		})
-	}
+	events.PublishInvalidatedTo(s.publisher, events.ResourceSaveStatus, "state-change")
 }
 
 // Status returns a snapshot of the current SaveStatus. Intended for

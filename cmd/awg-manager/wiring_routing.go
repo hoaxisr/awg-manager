@@ -8,7 +8,6 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
-	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -124,19 +123,16 @@ func (a *app) setupOrchestrator() {
 	// Each client's storeRegistry.invalidateResource() triggers a fresh
 	// REST GET for that section. No need to snapshot server-side anymore.
 	a.ndmsDispatcher.SetRoutingChanged(func() {
-		for _, key := range []string{
-			api.ResourceRoutingDnsRoutes,
-			api.ResourceRoutingStaticRoutes,
-			api.ResourceRoutingAccessPolicies,
-			api.ResourceRoutingPolicyDevices,
-			api.ResourceRoutingPolicyInterfaces,
-			api.ResourceRoutingClientRoutes,
-			api.ResourceRoutingTunnels,
+		for _, key := range []events.Resource{
+			events.ResourceRoutingDnsRoutes,
+			events.ResourceRoutingStaticRoutes,
+			events.ResourceRoutingAccessPolicies,
+			events.ResourceRoutingPolicyDevices,
+			events.ResourceRoutingPolicyInterfaces,
+			events.ResourceRoutingClientRoutes,
+			events.ResourceRoutingTunnels,
 		} {
-			a.eventBus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-				Resource: key,
-				Reason:   "ndms-change",
-			})
+			a.eventBus.PublishInvalidated(key, "ndms-change")
 		}
 	})
 

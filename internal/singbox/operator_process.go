@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
@@ -220,12 +221,7 @@ func (o *Operator) handleExit(err error, stderrTail string, deliberate bool) {
 		o.recordCrash(now, safeMsg)
 		o.restartBackoff.NoteCrash(now)
 	}
-	if o.bus != nil {
-		o.bus.Publish("resource:invalidated", map[string]any{
-			"resource": "singbox.status",
-			"reason":   "exit",
-		})
-	}
+	o.bus.PublishInvalidated(events.ResourceSingboxStatus, "exit")
 }
 
 // exitedBySIGKILL reports whether the cmd.Wait error says the process

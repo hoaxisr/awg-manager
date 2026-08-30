@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -94,8 +95,8 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 
 	m.op.MarkNeedsOrphanCleanup()
 	if m.op.bus != nil {
-		m.op.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.status"})
-		m.op.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.tunnels"})
+		m.op.bus.PublishInvalidated(events.ResourceSingboxStatus, "ndms-proxy-migration")
+		m.op.bus.PublishInvalidated(events.ResourceSingboxTunnels, "ndms-proxy-migration")
 	}
 	return nil
 }
@@ -146,8 +147,8 @@ func (m *Migrator) MigrateOn(ctx context.Context) error {
 	}
 
 	if m.op.bus != nil {
-		m.op.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.status"})
-		m.op.bus.Publish("resource:invalidated", map[string]any{"resource": "singbox.tunnels"})
+		m.op.bus.PublishInvalidated(events.ResourceSingboxStatus, "ndms-proxy-migration")
+		m.op.bus.PublishInvalidated(events.ResourceSingboxTunnels, "ndms-proxy-migration")
 	}
 	return nil
 }

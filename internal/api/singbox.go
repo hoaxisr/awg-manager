@@ -262,8 +262,8 @@ func (h *SingboxHandler) ToggleNDMSProxy(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	publishInvalidated(h.bus, ResourceSingboxStatus, "ndms-proxy-toggled")
-	publishInvalidated(h.bus, ResourceSingboxTunnels, "ndms-proxy-toggled")
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "ndms-proxy-toggled")
+	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "ndms-proxy-toggled")
 	response.Success(w, map[string]any{"enabled": req.Enabled, "migrated": true})
 }
 
@@ -346,12 +346,12 @@ func (h *SingboxHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := h.op.GetStatus(r.Context())
-	publishInvalidated(h.bus, ResourceSingboxStatus, "installed")
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "installed")
 	// sysInfo.singbox mirrors the installed flag on its own 30s cadence;
 	// invalidate it too so UI paths that still read SystemInfo.singbox
 	// (e.g. the tunnels-page tab guard) see the change immediately
 	// instead of waiting up to 30s for the next poll tick.
-	publishInvalidated(h.bus, ResourceSysInfo, "singbox-installed")
+	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-installed")
 	response.Success(w, singboxStatusData(s))
 }
 
@@ -397,8 +397,8 @@ func (h *SingboxHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := h.op.GetStatus(r.Context())
-	publishInvalidated(h.bus, ResourceSingboxStatus, "uninstalled")
-	publishInvalidated(h.bus, ResourceSysInfo, "singbox-uninstalled")
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "uninstalled")
+	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-uninstalled")
 	response.Success(w, singboxStatusData(s))
 }
 
@@ -445,8 +445,8 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := h.op.GetStatus(r.Context())
-	publishInvalidated(h.bus, ResourceSingboxStatus, "updated")
-	publishInvalidated(h.bus, ResourceSysInfo, "singbox-updated")
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "updated")
+	h.bus.PublishInvalidated(events.ResourceSysInfo, "singbox-updated")
 	response.Success(w, singboxStatusData(s))
 }
 
@@ -482,7 +482,7 @@ func (h *SingboxHandler) Control(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := h.op.GetStatus(r.Context())
-	publishInvalidated(h.bus, ResourceSingboxStatus, "control-"+req.Action)
+	h.bus.PublishInvalidated(events.ResourceSingboxStatus, "control-"+req.Action)
 	response.Success(w, singboxStatusData(s))
 }
 
@@ -590,7 +590,7 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 		added = []singbox.TunnelInfo{}
 	}
 	if len(added) > 0 {
-		publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-added")
+		h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-added")
 	}
 	fresh, ferr := h.enrichedTunnels(r.Context())
 	if ferr != nil {
@@ -720,7 +720,7 @@ func (h *SingboxHandler) UpdateTunnel(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-updated")
+	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-updated")
 	out, err := h.enrichedTunnels(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
@@ -777,7 +777,7 @@ func (h *SingboxHandler) RenameTunnel(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-renamed")
+	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-renamed")
 	out, err := h.enrichedTunnels(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
@@ -1108,7 +1108,7 @@ func (h *SingboxHandler) DeleteTunnel(w http.ResponseWriter, r *http.Request) {
 		response.InternalError(w, err.Error())
 		return
 	}
-	publishInvalidated(h.bus, ResourceSingboxTunnels, "tunnel-removed")
+	h.bus.PublishInvalidated(events.ResourceSingboxTunnels, "tunnel-removed")
 	out, err := h.enrichedTunnels(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())

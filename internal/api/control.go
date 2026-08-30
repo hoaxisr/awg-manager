@@ -128,7 +128,7 @@ func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, 
 // refetch the routing tunnel list after a start/stop that changed
 // which tunnels are available for routing dropdowns.
 func (h *ControlHandler) publishRoutingTunnels(_ context.Context) {
-	publishInvalidated(h.bus, ResourceRoutingTunnels, "state-changed")
+	h.bus.PublishInvalidated(events.ResourceRoutingTunnels, "state-changed")
 }
 
 func (h *ControlHandler) getStatus(r *http.Request, id string) string {

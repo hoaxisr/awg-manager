@@ -132,7 +132,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 			FailCount: m.failCount,
 		})
 	}
-	publishInvalidatedBus(s.bus, "pingcheck", "state-change")
+	s.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
 
 	// Дальше идёт лечение, и оно не наше: `ip link set down` уронил бы живой
 	// tun чужого инстанса, `awg set` по не-wg устройству бессмысленен, а
@@ -192,7 +192,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 				FailCount: 0,
 			})
 		}
-		publishInvalidatedBus(s.bus, "pingcheck", "state-change")
+		s.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
 	} else {
 		s.logWarn(m.tunnelID, fmt.Sprintf("Link toggle: no handshake, backoff #%d", restartCount))
 	}

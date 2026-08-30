@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -210,7 +211,7 @@ func (s *ServiceImpl) storeBypassSetOutcome(res bypassset.PopulateResult, err er
 		s.bypassLog.Warn("bypass-set", "", "geoip-обход: теги не найдены в .dat: "+strings.Join(res.MissingTags, ", "))
 	}
 	if s.deps.Bus != nil {
-		s.deps.Bus.Publish("resource:invalidated", map[string]any{"resource": "bypass-set"})
+		events.PublishInvalidatedTo(s.deps.Bus, events.ResourceBypassSet, "bypass-set-filled")
 	}
 }
 

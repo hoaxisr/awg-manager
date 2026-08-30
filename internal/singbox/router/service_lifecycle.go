@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/heavyop"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -1019,19 +1020,14 @@ func (s *ServiceImpl) emitStagingEvent(reason string) {
 	if s.deps.Bus == nil {
 		return
 	}
-	s.deps.Bus.Publish("resource:invalidated", map[string]any{
-		"resource": "singbox.router.staging",
-		"reason":   reason,
-	})
+	events.PublishInvalidatedTo(s.deps.Bus, events.ResourceSingboxRouterStaging, reason)
 }
 
 func (s *ServiceImpl) emitRulesEvent() {
 	if s.deps.Bus == nil {
 		return
 	}
-	s.deps.Bus.Publish("resource:invalidated", map[string]any{
-		"resource": "singbox.router.rules",
-	})
+	events.PublishInvalidatedTo(s.deps.Bus, events.ResourceSingboxRouterRules, "")
 }
 
 func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {

@@ -58,7 +58,7 @@ func TestServiceMoveRejectsManaged(t *testing.T) {
 		{Pattern: "a.lan", IPs: []string{"1.1.1.1"}},
 		{Pattern: "home.netcraze.pro", IPs: []string{"192.168.1.1"}, Managed: ManagedKeenDNS},
 	}}
-	svc := NewService(store, newFakeOrch(), nil)
+	svc := NewService(store, newFakeOrch())
 	if err := svc.Move(1, 0); err == nil {
 		t.Fatal("Move of managed rewrite must fail")
 	}
@@ -72,7 +72,7 @@ func TestServiceMoveRejectsManaged(t *testing.T) {
 
 func TestServiceAddFlushesCompiledRules(t *testing.T) {
 	orch := newFakeOrch()
-	svc := NewService(&fakeStore{}, orch, nil)
+	svc := NewService(&fakeStore{}, orch)
 
 	if err := svc.Add(DNSRewrite{Pattern: "*.discord.media", IPs: []string{"104.25.158.178"}}); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestServiceAddFlushesCompiledRules(t *testing.T) {
 
 func TestServiceAddRejectsInvalidPattern(t *testing.T) {
 	store := &fakeStore{}
-	svc := NewService(store, newFakeOrch(), nil)
+	svc := NewService(store, newFakeOrch())
 	if err := svc.Add(DNSRewrite{Pattern: "finland10*", IPs: []string{"1.2.3.4"}}); err == nil {
 		t.Error("invalid pattern must be rejected before store")
 	}
@@ -125,7 +125,7 @@ func TestServiceAddRejectsInvalidPattern(t *testing.T) {
 func TestServiceDeleteDisablesSlotWhenEmpty(t *testing.T) {
 	orch := newFakeOrch()
 	store := &fakeStore{items: []DNSRewrite{{Pattern: "a.lan", IPs: []string{"1.1.1.1"}}}}
-	svc := NewService(store, orch, nil)
+	svc := NewService(store, orch)
 	if err := svc.Delete(0); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func slotOf(t *testing.T, orch *fakeOrch) struct {
 func TestSetKeenDNSEnabled_AddsBlockFirstAndClears(t *testing.T) {
 	orch := newFakeOrch()
 	store := &fakeStore{items: []DNSRewrite{{Pattern: "*.pro", IPs: []string{"10.0.0.5"}}}}
-	svc := NewService(store, orch, nil)
+	svc := NewService(store, orch)
 
 	if err := svc.SetKeenDNSEnabled(true, "impod.netcraze.pro"); err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestSetKeenDNSEnabled_AddsBlockFirstAndClears(t *testing.T) {
 // зонами — иначе это дубль.
 func TestSetKeenDNSEnabled_ExtraDomain(t *testing.T) {
 	orch := newFakeOrch()
-	svc := NewService(&fakeStore{}, orch, nil)
+	svc := NewService(&fakeStore{}, orch)
 
 	if err := svc.SetKeenDNSEnabled(true, "Impod.Netcraze.Pro."); err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestSetKeenDNSEnabled_ExtraDomain(t *testing.T) {
 // SSE-инвалидация у фронта.
 func TestSetKeenDNSEnabled_IdempotentNoWrite(t *testing.T) {
 	orch := newFakeOrch()
-	svc := NewService(&fakeStore{}, orch, nil)
+	svc := NewService(&fakeStore{}, orch)
 
 	if err := svc.SetKeenDNSEnabled(true, ""); err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestSetKeenDNSEnabled_DropsLegacyManaged(t *testing.T) {
 		{Pattern: "impod.crazedns.ru", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
 		{Pattern: "my.keenetic.net", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
 	}}
-	svc := NewService(store, orch, nil)
+	svc := NewService(store, orch)
 
 	if err := svc.SetKeenDNSEnabled(false, ""); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestSetKeenDNSEnabled_DropsLegacyManaged(t *testing.T) {
 func TestSetKeenDNSEnabled_RetriesAfterFailedFlush(t *testing.T) {
 	orch := newFakeOrch()
 	orch.saveErr = errors.New("no space left on device")
-	svc := NewService(&fakeStore{}, orch, nil)
+	svc := NewService(&fakeStore{}, orch)
 
 	if err := svc.SetKeenDNSEnabled(true, ""); err == nil {
 		t.Fatal("сбой флеша обязан всплыть")

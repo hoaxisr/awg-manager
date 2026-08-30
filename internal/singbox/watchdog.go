@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 )
 
@@ -17,9 +18,7 @@ type StatusPublisher interface {
 }
 
 const (
-	defaultWatchdogInterval  = 30 * time.Second
-	eventResourceInvalidated = "resource:invalidated"
-	resourceSingboxStatus    = "singbox.status"
+	defaultWatchdogInterval = 30 * time.Second
 )
 
 // Watchdog periodically verifies that sing-box is running whenever the
@@ -145,8 +144,5 @@ func (w *Watchdog) publishIfFlipped(running bool) {
 	if w.pub == nil {
 		return
 	}
-	w.pub.Publish(eventResourceInvalidated, map[string]any{
-		"resource": resourceSingboxStatus,
-		"reason":   "watchdog",
-	})
+	events.PublishInvalidatedTo(w.pub, events.ResourceSingboxStatus, "watchdog")
 }

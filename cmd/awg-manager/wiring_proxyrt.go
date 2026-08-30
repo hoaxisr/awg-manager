@@ -468,10 +468,8 @@ func proxyPublishTunnels(pub proxyrt.Publisher, reason string) {
 	if pub == nil {
 		return
 	}
-	for _, res := range []string{api.ResourceTunnels, api.ResourceRoutingTunnels} {
-		pub.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-			Resource: res, Reason: reason,
-		})
+	for _, res := range []events.Resource{events.ResourceTunnels, events.ResourceRoutingTunnels} {
+		events.PublishInvalidatedTo(pub, res, reason)
 	}
 }
 
@@ -892,7 +890,7 @@ func (a *app) wireProxyrt() {
 		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
 		WaitDisabled: proxyWaitDisabled(states),
 		RecordsChanged: func(reason string) {
-			api.PublishResourceInvalidated(a.eventBus, api.ResourceProxyInstances, reason)
+			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
 	})
 	ref.mgr = mgr

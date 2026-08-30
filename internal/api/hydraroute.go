@@ -267,7 +267,7 @@ func (h *HydraRouteHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 
 	// WriteConfig schedules a neo restart that flips the running flag,
 	// so the cached hydraroute status becomes stale.
-	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "config-write")
+	h.bus.PublishInvalidated(events.ResourceRoutingHydrarouteStatus, "config-write")
 	response.Success(w, cfg)
 }
 
@@ -669,9 +669,9 @@ func (h *HydraRouteHandler) SetPolicyOrder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, "policy-order")
+	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, "policy-order")
 	// Policy-order changes trigger a neo restart too.
-	publishInvalidated(h.bus, ResourceRoutingHydrarouteStatus, "policy-order")
+	h.bus.PublishInvalidated(events.ResourceRoutingHydrarouteStatus, "policy-order")
 	response.Success(w, map[string][]string{"order": req.Order})
 }
 
