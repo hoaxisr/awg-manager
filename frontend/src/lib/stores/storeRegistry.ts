@@ -27,6 +27,7 @@ export type ResourceKey =
 	| 'routing.tunnels'             // ResourceRoutingTunnels
 	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner
+	| 'deviceproxy.outbounds'       // публикатора НЕТ: ключ живёт ради invalidateAll() при выходе из отказа
 	| 'deviceproxy.runtime'         // ResourceDeviceProxyRuntime
 	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()

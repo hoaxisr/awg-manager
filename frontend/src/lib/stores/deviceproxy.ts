@@ -28,12 +28,16 @@ registerStore('deviceproxy.config', deviceProxyInstances);
 // show/interface), а содержимое меняется только при CRUD туннелей/подписок.
 // Панель Inbounds (DeviceProxyCompact) держит подписку постоянно, поэтому
 // длинный интервал важен: 15s-поллинг возвращал бы фоновую RCI-нагрузку
-// класса slow-RCI. Изменения имён доезжают за ≤2 мин или при перезаходе:
-// SSE-инвалидации у каталога НЕТ — бэкенд такого ключа не публикует.
+// класса slow-RCI. Изменения имён доезжают за ≤2 мин или при перезаходе.
 export const deviceProxyOutbounds: PollingStore<DeviceProxyOutbound[]> = createPollingStore<DeviceProxyOutbound[]>(
 	() => api.listDeviceProxyOutbounds(),
 	{ staleTime: 60_000, pollInterval: 120_000 },
 );
+// Регистрация нужна НЕ ради SSE — точечной инвалидации у каталога нет и
+// бэкенд такого ключа не публикует (см. пометку у ключа в storeRegistry).
+// Она нужна ради invalidateAll(): при выходе из Tier-3 отказа каталог
+// обязан перечитаться сразу, а не через ≤2 мин поллинга.
+registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
 	() => api.getDeviceProxyRuntime(),

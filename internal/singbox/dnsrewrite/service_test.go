@@ -217,8 +217,7 @@ func TestSetKeenDNSEnabled_ExtraDomain(t *testing.T) {
 }
 
 // Reconcile зовёт синк каждые 30с. Повтор с теми же аргументами не должен
-// пересобирать слот: каждая пересборка — запись файла, SIGHUP sing-box и
-// SSE-инвалидация у фронта.
+// пересобирать слот: каждая пересборка — запись файла и SIGHUP sing-box.
 func TestSetKeenDNSEnabled_IdempotentNoWrite(t *testing.T) {
 	orch := newFakeOrch()
 	svc := NewService(&fakeStore{}, orch)

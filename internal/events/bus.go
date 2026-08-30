@@ -27,6 +27,9 @@ func NewBus() *Bus {
 // Publish sends an event to all subscribers.
 // Non-blocking: slow subscribers drop events.
 func (b *Bus) Publish(eventType string, data any) {
+	if b == nil {
+		return
+	}
 	id := b.lastID.Add(1)
 	event := Event{ID: id, Type: eventType, Data: data}
 

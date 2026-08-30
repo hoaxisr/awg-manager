@@ -95,7 +95,7 @@ func PublishInvalidatedTo(pub Publisher, res Resource, reason string) {
 		return
 	}
 	pub.Publish(EventResourceInvalidated, ResourceInvalidatedEvent{
-		Resource: string(res),
+		Resource: res,
 		Reason:   reason,
 	})
 }

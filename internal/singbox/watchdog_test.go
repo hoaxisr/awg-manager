@@ -57,7 +57,7 @@ func TestWatchdog_PublishIfFlipped_FiresOnTransition(t *testing.T) {
 	if pub.count() != 2 {
 		t.Fatalf("expected 2 events (2 flips), got %d", pub.count())
 	}
-	if pub.evts[0].Resource != string(events.ResourceSingboxStatus) {
+	if pub.evts[0].Resource != events.ResourceSingboxStatus {
 		t.Errorf("event[0] resource = %v, want %s", pub.evts[0].Resource, events.ResourceSingboxStatus)
 	}
 	if pub.evts[0].Reason != "watchdog" {

@@ -1052,7 +1052,7 @@ func (m *mockBus) Reset() {
 	m.events = nil
 }
 
-func (m *mockBus) HasEvent(resource string) bool {
+func (m *mockBus) HasEvent(resource events.Resource) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, e := range m.events {

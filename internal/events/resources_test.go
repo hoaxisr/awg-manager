@@ -49,24 +49,40 @@ func TestResourceKeys_KnownToFrontend(t *testing.T) {
 }
 
 // TestResourceKeys_Inventory — новый ключ обязан попасть в AllResources,
-// иначе сверка с фронтом его не увидит. Ловим по исходнику: все константы
-// Resource* объявлены в resources.go, перечень — там же.
+// иначе сверка с фронтом его не увидит. Читаем ВЕСЬ пакет, а не один файл:
+// константу можно объявить и в соседнем файле, и на верхнем уровне без
+// ведущего таба — оба обхода ловятся.
 func TestResourceKeys_Inventory(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal/events/resources.go"))
+	dir := filepath.Join(repoRoot(t), "internal/events")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("читаем resources.go: %v", err)
+		t.Fatalf("читаем %s: %v", dir, err)
 	}
-	declared := regexp.MustCompile(`(?m)^\t(Resource[A-Za-z0-9]+)\s+Resource\s+=`).FindAllStringSubmatch(string(src), -1)
-	if len(declared) == 0 {
-		t.Fatal("не разобрано ни одной константы Resource* — сломан разбор resources.go")
-	}
+	declRe := regexp.MustCompile(`\b(Resource[A-Za-z0-9]+)\s+Resource\s*=`)
+	listRe := regexp.MustCompile(`(?m)^\t(Resource[A-Za-z0-9]+),$`)
+	declared := map[string]bool{}
 	listed := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^\t(Resource[A-Za-z0-9]+),$`).FindAllStringSubmatch(string(src), -1) {
-		listed[m[1]] = true
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("читаем %s: %v", e.Name(), err)
+		}
+		for _, m := range declRe.FindAllStringSubmatch(string(src), -1) {
+			declared[m[1]] = true
+		}
+		for _, m := range listRe.FindAllStringSubmatch(string(src), -1) {
+			listed[m[1]] = true
+		}
 	}
-	for _, m := range declared {
-		if !listed[m[1]] {
-			t.Errorf("константа %s объявлена, но не внесена в AllResources — сверка с фронтом её не проверит", m[1])
+	if len(declared) == 0 {
+		t.Fatal("не разобрано ни одной константы Resource* — сломан разбор пакета")
+	}
+	for name := range declared {
+		if !listed[name] {
+			t.Errorf("константа %s объявлена, но не внесена в AllResources — сверка с фронтом её не проверит", name)
 		}
 	}
 }
@@ -75,6 +91,13 @@ func TestResourceKeys_Inventory(t *testing.T) {
 // можно только через PublishInvalidated/PublishInvalidatedTo. Литерал в
 // любом другом пакете означает ключ мимо закрытого набора: именно так
 // разъехались deviceproxy, ndms/command и singbox/router.
+//
+// Ловим три обхода сразу, потому что типа поля мало: нетипизированная
+// строковая константа приводится к Resource молча, так что и
+// `ResourceInvalidatedEvent{Resource: "опечатка"}`, и
+// `events.Resource("опечатка")` компилируются. Событие и ключ имеет право
+// конструировать только этот пакет; снаружи допустимо лишь читать их
+// (type assertion скобки `{` не содержит).
 func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string
@@ -82,9 +105,16 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		rel, _ := filepath.Rel(root, path)
 		if info.IsDir() {
 			switch info.Name() {
-			case "vendor", "node_modules", ".git", "frontend", "docs", "build":
+			case "vendor", "node_modules", ".git":
+				return filepath.SkipDir
+			}
+			// docs/, frontend/, build/ — не наш код, но только на верхнем
+			// уровне: пакет с таким именем внутри internal/ пропускать нельзя.
+			switch rel {
+			case "docs", "frontend", "build":
 				return filepath.SkipDir
 			}
 			return nil
@@ -92,7 +122,6 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
 		if strings.HasPrefix(rel, "internal/events/") {
 			return nil
 		}
@@ -101,8 +130,10 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 			return err
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, `"resource:invalidated"`) {
-				offenders = append(offenders, fmt.Sprintf("%s:%d", rel, i+1))
+			for _, bad := range []string{`"resource:invalidated"`, "ResourceInvalidatedEvent{", "events.Resource("} {
+				if strings.Contains(line, bad) {
+					offenders = append(offenders, fmt.Sprintf("%s:%d: %s", rel, i+1, bad))
+				}
 			}
 		}
 		return nil
@@ -111,6 +142,6 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 		t.Fatalf("обход дерева: %v", err)
 	}
 	for _, o := range offenders {
-		t.Errorf(`%s: литерал "resource:invalidated" — публиковать через events.PublishInvalidated(To), читать через events.EventResourceInvalidated`, o)
+		t.Errorf("%s — публиковать через events.PublishInvalidated(To) с константой events.Resource*; тип события и ключ конструирует только пакет events", o)
 	}
 }
