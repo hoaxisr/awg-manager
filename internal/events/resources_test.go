@@ -49,19 +49,27 @@ func TestResourceKeys_KnownToFrontend(t *testing.T) {
 }
 
 // TestResourceKeys_Inventory — новый ключ обязан попасть в AllResources,
-// иначе сверка с фронтом его не увидит. Читаем ВЕСЬ пакет, а не один файл:
-// константу можно объявить и в соседнем файле, и на верхнем уровне без
-// ведущего таба — оба обхода ловятся.
+// иначе сверка с фронтом его не увидит и публикация уйдёт в никуда.
+//
+// Сверяются ЗНАЧЕНИЯ, а не имена констант, и берутся они с двух сторон
+// по-разному: слева — разбор исходника пакета, справа — сама переменная.
+// Прежняя форма сверяла имена в тексте с именами в тексте же и самой
+// переменной не касалась, поэтому обходилась тремя способами
+// (`const ResourceX = Resource("x")`, имя без префикса `Resource`,
+// перечисление в постороннем `[]Resource`) и вдобавок краснела на
+// переформатировании списка в одну строку.
 func TestResourceKeys_Inventory(t *testing.T) {
 	dir := filepath.Join(repoRoot(t), "internal/events")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("читаем %s: %v", dir, err)
 	}
-	declRe := regexp.MustCompile(`\b(Resource[A-Za-z0-9]+)\s+Resource\s*=`)
-	listRe := regexp.MustCompile(`(?m)^\t(Resource[A-Za-z0-9]+),$`)
-	declared := map[string]bool{}
-	listed := map[string]bool{}
+	// Обе формы объявления: в const-блоке с типом и через приведение.
+	res := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\s*(\w+)\s+Resource\s*=\s*"([^"]*)"`),
+		regexp.MustCompile(`(?m)^\s*(?:const\s+)?(\w+)\s*=\s*Resource\("([^"]*)"\)`),
+	}
+	declared := map[string]string{} // значение → имя константы
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
 			continue
@@ -70,19 +78,30 @@ func TestResourceKeys_Inventory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("читаем %s: %v", e.Name(), err)
 		}
-		for _, m := range declRe.FindAllStringSubmatch(string(src), -1) {
-			declared[m[1]] = true
-		}
-		for _, m := range listRe.FindAllStringSubmatch(string(src), -1) {
-			listed[m[1]] = true
+		for _, re := range res {
+			for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+				declared[m[2]] = m[1]
+			}
 		}
 	}
 	if len(declared) == 0 {
-		t.Fatal("не разобрано ни одной константы Resource* — сломан разбор пакета")
+		t.Fatal("не разобрано ни одной константы типа Resource — сломан разбор пакета")
 	}
-	for name := range declared {
-		if !listed[name] {
-			t.Errorf("константа %s объявлена, но не внесена в AllResources — сверка с фронтом её не проверит", name)
+	listed := map[string]bool{}
+	for _, r := range events.AllResources {
+		if listed[string(r)] {
+			t.Errorf("ключ %q внесён в AllResources дважды", r)
+		}
+		listed[string(r)] = true
+	}
+	for val, name := range declared {
+		if !listed[val] {
+			t.Errorf("константа %s (%q) объявлена, но не внесена в AllResources — сверка с фронтом её не проверит", name, val)
+		}
+	}
+	for _, r := range events.AllResources {
+		if _, ok := declared[string(r)]; !ok {
+			t.Errorf("AllResources содержит %q, которому не найдено объявления в пакете", r)
 		}
 	}
 }
