@@ -1,7 +1,7 @@
 // Frontend polling stores for the device proxy feature:
 //   - config (30s poll): reflects persisted Config; SSE-invalidated by
 //     resource:invalidated{resource:"deviceproxy.config"}.
-//   - outbounds (15s poll): available outbound tags for the dropdowns.
+//   - outbounds (120s poll): available outbound tags for the dropdowns.
 //   - runtime (5s poll): live selector.now + persisted default for
 //     the "Активный туннель" card; SSE-invalidated by
 //     resource:invalidated{resource:"deviceproxy.runtime"}.
@@ -33,6 +33,10 @@ export const deviceProxyOutbounds: PollingStore<DeviceProxyOutbound[]> = createP
 	() => api.listDeviceProxyOutbounds(),
 	{ staleTime: 60_000, pollInterval: 120_000 },
 );
+// Регистрация нужна НЕ ради SSE — точечной инвалидации у каталога нет и
+// бэкенд такого ключа не публикует (см. пометку у ключа в storeRegistry).
+// Она нужна ради invalidateAll(): при выходе из Tier-3 отказа каталог
+// обязан перечитаться сразу, а не через ≤2 мин поллинга.
 registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(

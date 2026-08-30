@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -1220,5 +1221,86 @@ func TestSave_FirstWriteSchedulesReload(t *testing.T) {
 	o.mu.Unlock()
 	if !scheduled {
 		t.Error("первая запись слота обязана планировать reload")
+	}
+}
+
+// inodeOf — writeAtomic пишет через temp+rename, поэтому inode меняется на
+// каждой записи. Это и есть наблюдаемая улика «файл переписан».
+func inodeOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("inode недоступен на этой платформе")
+	}
+	return uint64(st.Ino)
+}
+
+// Повторный Save теми же байтами не обязан трогать флеш: на роутере это
+// лишний цикл записи, а на пути device-proxy такой Save случается на каждую
+// подсказку инвалидации, меняющую состав туннелей.
+func TestSave_UnchangedBytesDoNotRewriteFile(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true})
+	data := []byte("{\n  \"a\": 1\n}")
+	if err := o.Save(SlotTunnels, data); err != nil {
+		t.Fatalf("первый Save: %v", err)
+	}
+	path := filepath.Join(dir, "10-tunnels.json")
+	before := inodeOf(t, path)
+
+	if err := o.Save(SlotTunnels, data); err != nil {
+		t.Fatalf("повторный Save: %v", err)
+	}
+	if got := inodeOf(t, path); got != before {
+		t.Errorf("файл переписан теми же байтами: inode %d → %d", before, got)
+	}
+
+	// Изменение байтов обязано доехать — гейт не должен запирать запись.
+	if err := o.Save(SlotTunnels, []byte("{\n  \"a\": 2\n}")); err != nil {
+		t.Fatalf("Save с другими байтами: %v", err)
+	}
+	if got := inodeOf(t, path); got == before {
+		t.Error("изменённые байты не записаны")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "{\n  \"a\": 2\n}" {
+		t.Errorf("на диске %q (err=%v)", got, err)
+	}
+}
+
+// Тот же гейт у Mutate: мутатор вернул ровно то, что лежит на диске.
+func TestMutate_UnchangedBytesDoNotRewriteFile(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotTunnels, Filename: "10-tunnels.json", AlwaysOn: true})
+	data := []byte("{\n  \"a\": 1\n}")
+	if err := o.Save(SlotTunnels, data); err != nil {
+		t.Fatalf("первый Save: %v", err)
+	}
+	path := filepath.Join(dir, "10-tunnels.json")
+	before := inodeOf(t, path)
+
+	if err := o.Mutate(SlotTunnels, func(cur []byte, exists bool) ([]byte, error) {
+		if !exists {
+			t.Error("файл обязан существовать")
+		}
+		return append([]byte(nil), cur...), nil
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	if got := inodeOf(t, path); got != before {
+		t.Errorf("файл переписан теми же байтами: inode %d → %d", before, got)
+	}
+
+	if err := o.Mutate(SlotTunnels, func([]byte, bool) ([]byte, error) {
+		return []byte("{\n  \"a\": 3\n}"), nil
+	}); err != nil {
+		t.Fatalf("Mutate с другими байтами: %v", err)
+	}
+	if got := inodeOf(t, path); got == before {
+		t.Error("изменённые байты не записаны")
 	}
 }

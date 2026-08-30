@@ -343,11 +343,14 @@ func (o *Orchestrator) Save(slot Slot, jsonBytes []byte) error {
 	if err != nil {
 		return err
 	}
+	if unchanged {
+		// На диске уже ровно эти байты: ни записи, ни reload'а. Гейт истинен
+		// только когда файл прочитался и совпал побайтово — отсутствие файла
+		// и любая ошибка чтения дают «изменилось», то есть запись.
+		return nil
+	}
 	if err := o.saveLocked(slot, jsonBytes); err != nil {
 		return err
-	}
-	if unchanged {
-		return nil
 	}
 	o.scheduleReload()
 	return nil
@@ -415,11 +418,12 @@ func (o *Orchestrator) Mutate(slot Slot, mut func(cur []byte, exists bool) ([]by
 	if next == nil {
 		return nil
 	}
+	if exists && bytes.Equal(cur, next) {
+		// Мутатор вернул то же, что лежит на диске — см. гейт в Save.
+		return nil
+	}
 	if err := o.saveLocked(slot, next); err != nil {
 		return err
-	}
-	if exists && bytes.Equal(cur, next) {
-		return nil
 	}
 	o.scheduleReload()
 	return nil

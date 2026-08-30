@@ -17,13 +17,6 @@ import (
 // значило бы отложить его смерть.
 const backendWdttRaw = "wdtt-raw"
 
-// Ключи инвалидации — копия закрытого набора api (publish.go:8, :22).
-// Держать в синхроне с frontend/src/lib/stores/storeRegistry.ts.
-const (
-	resourceTunnels        = "tunnels"
-	resourceRoutingTunnels = "routing.tunnels"
-)
-
 // TunnelStore — то, что зеркалу нужно от хранилища туннелей.
 // *storage.AWGTunnelStore удовлетворяет как есть: ни один метод под этот
 // интерфейс не дописывался.
@@ -272,18 +265,12 @@ func (m *StoreMirror) ZeroStaleAddresses() (int, error) {
 	return n, errors.Join(errs...)
 }
 
-// invalidate — копия api.publishInvalidated (publish.go:33-41). Импортировать
-// internal/api нельзя: в плане 5 он начнёт импортировать proxyrt. Ровно так
-// же поступили internal/orchestrator (orchestrator.go:737) и
-// internal/pingcheck (events.go:13) — обе копии называются
-// publishInvalidatedBus; общий TODO о консолидации — там же.
+// invalidate — подсказка фронту, что список туннелей изменился.
 func (m *StoreMirror) invalidate() {
 	if m.pub == nil {
 		return
 	}
-	for _, res := range []string{resourceTunnels, resourceRoutingTunnels} {
-		m.pub.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-			Resource: res, Reason: "proxy-exit-mirror",
-		})
+	for _, res := range []events.Resource{events.ResourceTunnels, events.ResourceRoutingTunnels} {
+		events.PublishInvalidatedTo(m.pub, res, "proxy-exit-mirror")
 	}
 }

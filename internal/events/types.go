@@ -138,7 +138,7 @@ type SingboxInstallProgressEvent struct {
 // the single source of truth for data shape, and the client always
 // re-reads via REST.
 type ResourceInvalidatedEvent struct {
-	Resource string `json:"resource"`
+	Resource Resource `json:"resource"`
 	// Reason is optional and for backend logs / debug; the frontend
 	// does not key off it. Examples: "tunnel-toggled", "ndms-restart".
 	Reason string `json:"reason,omitempty"`

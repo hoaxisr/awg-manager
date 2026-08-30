@@ -58,7 +58,7 @@ func (h *StaticRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // the caller's store can applyMutationResponse without waiting for the
 // hint.
 func (h *StaticRouteHandler) publishStaticUpdated(reason string) {
-	publishInvalidated(h.bus, ResourceRoutingStaticRoutes, reason)
+	h.bus.PublishInvalidated(events.ResourceRoutingStaticRoutes, reason)
 }
 
 // NewStaticRouteHandler creates a new static route handler.

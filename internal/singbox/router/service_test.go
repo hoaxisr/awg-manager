@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -1032,16 +1033,16 @@ func TestReconcile_StateUnknown_ForcesInitialReinstall(t *testing.T) {
 
 type mockBus struct {
 	mu     sync.Mutex
-	events []map[string]any
+	events []events.ResourceInvalidatedEvent
 }
 
 func (m *mockBus) Publish(event string, data any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if event != "resource:invalidated" {
+	if event != events.EventResourceInvalidated {
 		return
 	}
-	d, _ := data.(map[string]any)
+	d, _ := data.(events.ResourceInvalidatedEvent)
 	m.events = append(m.events, d)
 }
 
@@ -1051,21 +1052,21 @@ func (m *mockBus) Reset() {
 	m.events = nil
 }
 
-func (m *mockBus) HasEvent(resource string) bool {
+func (m *mockBus) HasEvent(resource events.Resource) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, e := range m.events {
-		if r, _ := e["resource"].(string); r == resource {
+		if e.Resource == resource {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *mockBus) Events() []map[string]any {
+func (m *mockBus) Events() []events.ResourceInvalidatedEvent {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]map[string]any, len(m.events))
+	out := make([]events.ResourceInvalidatedEvent, len(m.events))
 	copy(out, m.events)
 	return out
 }

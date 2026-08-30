@@ -505,7 +505,7 @@ func (a *app) setupListen() {
 	// DNS Rewrites — sing-box slot 17-dns-rewrites.json.
 	dnsRewriteStorePath := filepath.Join(a.dataDir, "dns_rewrites.json")
 	dnsRewriteStore := storage.NewDNSRewriteStore(dnsRewriteStorePath)
-	dnsRewriteSvc := dnsrewrite.NewService(dnsRewriteStore, &dnsRewriteOrchAdapter{orch: a.sbOrch}, a.eventBus)
+	dnsRewriteSvc := dnsrewrite.NewService(dnsRewriteStore, &dnsRewriteOrchAdapter{orch: a.sbOrch})
 	if err := dnsRewriteSvc.Resync(); err != nil {
 		a.bootLog.Warn("dnsrewrite-resync", "", err.Error())
 	}

@@ -551,7 +551,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	} else {
 		response.Success(w, &want)
 	}
-	publishInvalidated(h.bus, ResourceSettings, "updated")
+	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с
 	// собственным контекстом: проверка ходит в NDMS, а контекст запроса
@@ -600,7 +600,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 
 	h.log.Info("api-key", "", "API key regenerated")
 	response.Success(w, settings)
-	publishInvalidated(h.bus, ResourceSettings, "api-key-rotated")
+	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
 }
 
 // generateUUIDv4 produces an RFC 4122 v4 UUID using crypto/rand.

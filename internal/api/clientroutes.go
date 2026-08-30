@@ -44,7 +44,7 @@ func (h *ClientRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // publishClientRoutesUpdated posts a resource:invalidated hint so
 // clients refetch the client-routes list.
 func (h *ClientRouteHandler) publishClientRoutesUpdated(reason string) {
-	publishInvalidated(h.bus, ResourceRoutingClientRoutes, reason)
+	h.bus.PublishInvalidated(events.ResourceRoutingClientRoutes, reason)
 }
 
 // NewClientRouteHandler creates a new client route handler.

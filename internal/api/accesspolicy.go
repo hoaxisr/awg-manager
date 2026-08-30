@@ -121,12 +121,12 @@ func (h *AccessPolicyHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // publishPoliciesUpdated posts a resource:invalidated hint for the access
 // policy list so clients refetch.
 func (h *AccessPolicyHandler) publishPoliciesUpdated(reason string) {
-	publishInvalidated(h.bus, ResourceRoutingAccessPolicies, reason)
+	h.bus.PublishInvalidated(events.ResourceRoutingAccessPolicies, reason)
 }
 
 // publishDevicesUpdated posts a resource:invalidated hint for the device list.
 func (h *AccessPolicyHandler) publishDevicesUpdated(reason string) {
-	publishInvalidated(h.bus, ResourceRoutingPolicyDevices, reason)
+	h.bus.PublishInvalidated(events.ResourceRoutingPolicyDevices, reason)
 }
 
 // NewAccessPolicyHandler creates a new access policy handler.
@@ -523,7 +523,7 @@ func (h *AccessPolicyHandler) SetInterfaceUp(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response.Success(w, map[string]bool{"ok": true})
-	publishInvalidated(h.bus, ResourceRoutingPolicyInterfaces, "set-interface-up")
-	publishInvalidated(h.bus, ResourceRoutingTunnels, "set-interface-up")
-	publishInvalidated(h.bus, ResourceTunnels, "set-interface-up")
+	h.bus.PublishInvalidated(events.ResourceRoutingPolicyInterfaces, "set-interface-up")
+	h.bus.PublishInvalidated(events.ResourceRoutingTunnels, "set-interface-up")
+	h.bus.PublishInvalidated(events.ResourceTunnels, "set-interface-up")
 }

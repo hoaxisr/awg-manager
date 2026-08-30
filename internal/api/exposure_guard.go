@@ -136,7 +136,7 @@ func (g *ExposureGuard) check(ctx context.Context) bool {
 		return true
 	}
 	g.log.Warn("auth", "", "Authentication enabled automatically: "+reason)
-	publishInvalidated(g.bus, ResourceSettings, "exposure-guard")
+	g.bus.PublishInvalidated(events.ResourceSettings, "exposure-guard")
 	return true
 }
 

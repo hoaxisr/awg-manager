@@ -56,10 +56,8 @@ func (s proxyEndpointSync) invalidateTunnels(changed int, reason string) {
 	if changed == 0 || s.pub == nil {
 		return
 	}
-	for _, res := range []string{api.ResourceTunnels, api.ResourceRoutingTunnels} {
-		s.pub.Publish("resource:invalidated", events.ResourceInvalidatedEvent{
-			Resource: res, Reason: reason,
-		})
+	for _, res := range []events.Resource{events.ResourceTunnels, events.ResourceRoutingTunnels} {
+		events.PublishInvalidatedTo(s.pub, res, reason)
 	}
 }
 

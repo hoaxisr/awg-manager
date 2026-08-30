@@ -263,8 +263,8 @@ func (s *Service) DeleteInstance(ctx context.Context, id string) (applied bool, 
 	if err := s.applyInstancesLocked(ctx); err != nil {
 		s.appLog.Warn("delete-instance", id, "apply after delete failed: "+err.Error())
 		if s.d.Bus != nil {
-			s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
-			s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+			s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyConfig, "")
+			s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 		}
 		return false, nil
 	}
@@ -327,8 +327,8 @@ func (s *Service) applyInstancesLocked(ctx context.Context) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyConfig, "")
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 	return nil
 }
@@ -505,10 +505,10 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyConfig, "")
 		// A default-only change also shifts what the runtime store would
 		// derive "temporarily" against, so invalidate both.
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 	return nil
 }
@@ -560,8 +560,8 @@ func (s *Service) ForceApply(ctx context.Context) error {
 	}
 
 	if s.d.Bus != nil {
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyConfig, "")
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 	return nil
 }
@@ -1087,7 +1087,7 @@ func (s *Service) SelectRuntimeOutbound(ctx context.Context, tag string) error {
 	// fast-path so the "Активный туннель" card updates sub-second,
 	// without waiting for the 5s runtime polling tick.
 	if bus != nil {
-		bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 	return nil
 }
@@ -1140,7 +1140,7 @@ func (s *Service) SelectInstanceRuntimeOutbound(ctx context.Context, id, tag str
 	s.appLog.Info("select-runtime", tag, fmt.Sprintf("Device proxy instance %s hot-switched outbound", id))
 
 	if bus != nil {
-		bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 	return nil
 }
@@ -1187,8 +1187,8 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		for _, wasTag := range missingTags {
 			s.d.Bus.Publish("deviceproxy:missing-target", map[string]string{"wasTag": wasTag})
 		}
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.config"})
-		s.d.Bus.Publish("resource:invalidated", events.ResourceInvalidatedEvent{Resource: "deviceproxy.runtime"})
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyConfig, "")
+		s.d.Bus.PublishInvalidated(events.ResourceDeviceProxyRuntime, "")
 	}
 
 	snap = s.d.Store.Snapshot()
@@ -1270,12 +1270,12 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 	_, ch, unsub := s.d.Bus.Subscribe()
 	go func() {
 		for ev := range ch {
-			if ev.Type != "resource:invalidated" &&
+			if ev.Type != events.EventResourceInvalidated &&
 				ev.Type != "singbox:tunnels-changed" &&
 				ev.Type != "singbox-router:outbounds" {
 				continue
 			}
-			if ev.Type == "resource:invalidated" {
+			if ev.Type == events.EventResourceInvalidated {
 				// Only react to invalidations that change our child list.
 				payload, ok := ev.Data.(events.ResourceInvalidatedEvent)
 				if !ok {

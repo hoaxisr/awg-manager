@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -186,7 +187,7 @@ func (h *ServersHandler) SetNAT(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	h.invalidateSystemServerCaches(name)
-	publishInvalidated(h.bus, ResourceServers, "server-nat-changed")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-nat-changed")
 	h.writeAll(w, r)
 }
 
@@ -238,7 +239,7 @@ func (h *ServersHandler) SetPolicy(w http.ResponseWriter, r *http.Request, name 
 	}
 
 	h.invalidateSystemServerCaches(name)
-	publishInvalidated(h.bus, ResourceServers, "server-policy-changed")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-policy-changed")
 	h.writeAll(w, r)
 }
 
@@ -290,6 +291,6 @@ func (h *ServersHandler) SetEndpoint(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	publishInvalidated(h.bus, ResourceServers, "server-endpoint-changed")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-endpoint-changed")
 	h.writeAll(w, r)
 }

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -203,7 +204,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
 	}
-	publishInvalidated(h.bus, ResourceServers, "server-peer-added")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-added")
 	h.writeAll(w, r)
 }
 
@@ -287,7 +288,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	publishInvalidated(h.bus, ResourceServers, "server-peer-updated")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-updated")
 	h.writeAll(w, r)
 }
 
@@ -322,7 +323,7 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = h.settings.DeleteServerPeerSecret(name, pubkey)
-	publishInvalidated(h.bus, ResourceServers, "server-peer-deleted")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-deleted")
 	h.writeAll(w, r)
 }
 
@@ -363,7 +364,7 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "TOGGLE_FAILED")
 		return
 	}
-	publishInvalidated(h.bus, ResourceServers, "server-peer-toggled")
+	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-toggled")
 	h.writeAll(w, r)
 }
 

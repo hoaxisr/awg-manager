@@ -119,7 +119,7 @@ func (h *DNSRouteHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // round-trip). The hint remains as a safety net for tabs subscribed on
 // different pages that did not issue the mutation themselves.
 func (h *DNSRouteHandler) publishDnsUpdated(reason string) {
-	publishInvalidated(h.bus, ResourceRoutingDnsRoutes, reason)
+	h.bus.PublishInvalidated(events.ResourceRoutingDnsRoutes, reason)
 }
 
 // NewDNSRouteHandler creates a new DNS route handler.

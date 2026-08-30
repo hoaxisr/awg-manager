@@ -6,21 +6,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
 )
 
 // StatusPublisher is the minimal SSE surface the watchdog needs. Satisfied
-// by *events.Bus — same pattern used by DelayChecker to keep the singbox
-// package independent of the events import.
+// by *events.Bus; тесты подставляют свой фейк.
 type StatusPublisher interface {
 	Publish(eventType string, data any)
 }
 
-const (
-	defaultWatchdogInterval  = 30 * time.Second
-	eventResourceInvalidated = "resource:invalidated"
-	resourceSingboxStatus    = "singbox.status"
-)
+const defaultWatchdogInterval = 30 * time.Second
 
 // Watchdog periodically verifies that sing-box is running whenever the
 // on-disk config expects at least one tunnel to be up, restarting the
@@ -145,8 +141,5 @@ func (w *Watchdog) publishIfFlipped(running bool) {
 	if w.pub == nil {
 		return
 	}
-	w.pub.Publish(eventResourceInvalidated, map[string]any{
-		"resource": resourceSingboxStatus,
-		"reason":   "watchdog",
-	})
+	events.PublishInvalidatedTo(w.pub, events.ResourceSingboxStatus, "watchdog")
 }

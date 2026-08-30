@@ -452,7 +452,7 @@ func TestInvalidationKeepsTheContractWithTheFrontend(t *testing.T) {
 		if e.ev.Reason == "" {
 			t.Fatalf("причина инвалидации обязана быть названа: %+v", e.ev)
 		}
-		keys = append(keys, e.ev.Resource)
+		keys = append(keys, string(e.ev.Resource))
 	}
 	sort.Strings(keys)
 	if !slices.Equal(keys, []string{"routing.tunnels", "tunnels"}) {

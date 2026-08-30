@@ -137,7 +137,7 @@ func (h *PingCheckHandler) SetOrchestrator(orch *orchestrator.Orchestrator) { h.
 // was removed (Task 12) — the frontend status list is now a polling store.
 // Logs are still pushed via `pingcheck:log` stream, untouched.
 func (h *PingCheckHandler) PublishSnapshot() {
-	publishInvalidated(h.bus, ResourcePingcheck, "snapshot")
+	h.bus.PublishInvalidated(events.ResourcePingcheck, "snapshot")
 }
 
 // GetStatus returns the current status of all monitored tunnels.
