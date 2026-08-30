@@ -23,6 +23,26 @@ const (
 	KindFreeTurnServer Kind = "freeturn-server"
 )
 
+// AllKinds — канонический перечень ролей. Существует ради тестов полноты:
+// диспатчи по Kind размазаны по дереву, у каждого есть ветка «прочее», и
+// молчаливо неверный ответ там дороже отказа — от осиротевших данных до
+// секретов, ушедших в выдачу API открытым текстом. Новая роль обязана попасть
+// СЮДА (пин TestAllKinds_Inventory) и быть классифицированной в каждом
+// TestKinds_*-тесте.
+//
+// Охват пинов НЕ полный и полным не заявляется: сегодня закрыты восемь
+// диспатчей в `instancestore`, `internal/api` и проводке. Незапиненными
+// остаются как минимум `install.Binary`/`PinnedSHA256`
+// (`proxyapp/install/install.go`), `Manager.ensurePins`
+// (`proxyrt/manager/manager.go`) и `proxyImplRole`
+// (`cmd/awg-manager/wiring_proxyrt.go`) — заводя роль, пройтись по ним руками.
+var AllKinds = []Kind{
+	KindWdttClient,
+	KindWdttServer,
+	KindFreeTurnClient,
+	KindFreeTurnServer,
+}
+
 // ServerUser — абонент wdtt-сервера. Источник правды ЗДЕСЬ (посеян из
 // ServerConfig.Clients старого wdtt.json — блокер B5 ревью); passwords.json
 // в ConfigDir — производная, её собирает proxyapp/wdttusers перед стартом.

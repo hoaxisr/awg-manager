@@ -283,24 +283,6 @@ func TestReplaceIsAtomicOnMutateError(t *testing.T) {
 	}
 }
 
-func TestRawExiterCoversAllKinds(t *testing.T) {
-	// Требование 16: ведомость по интерфейсу для ЛЮБОЙ роли; отсутствие
-	// выхода выражает сам RawExit()==false, а не выпадение из ведомости.
-	recs := []Record{rawClient("a", "A"), ftClient("b"), wdttServer("c"),
-		{ID: "d", Kind: KindFreeTurnServer, Name: "S",
-			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:56000"}}}
-	for _, r := range recs {
-		ex := r.RawExiter()
-		if ex == nil {
-			t.Fatalf("%s: RawExiter обязан отдаваться для любой роли", r.Key())
-		}
-		_, has := ex.RawExit()
-		if has != (r.Kind == KindWdttClient) {
-			t.Fatalf("%s: выход объявляет только raw-клиент, has=%v", r.Key(), has)
-		}
-	}
-}
-
 func TestPeerSlotsInvariant(t *testing.T) {
 	// Г-1 №1: слот неактивного режима переживает запись; Peer зеркалится в
 	// активный слот; пустой Peer восстанавливается из слота.
@@ -518,35 +500,6 @@ func TestPinsAreTrimmedOnWrite(t *testing.T) {
 	if sc.NdmsIface != "OpkgTun20" || sc.WgIface != "opkgtun20" ||
 		sc.RawNdmsIface != "OpkgTun21" || sc.RawIface != "opkgtun21" {
 		t.Fatalf("пины сервера не нормализованы: %+v", sc)
-	}
-}
-
-func TestNDMSNamedCoversAllKinds(t *testing.T) {
-	// Ведомость NDMS-имён уборщика собирается ПО ЭТОМУ вызову: роль, для
-	// которой он вернёт nil, отдала бы свой живой интерфейс уборке.
-	recs := []Record{rawClient("a", "A"), ftClient("b"), wdttServer("c"),
-		{ID: "d", Kind: KindFreeTurnServer, Name: "S",
-			FreeTurnServer: &roles.FreeTurnServerConfig{Listen: "0.0.0.0:56000"}}}
-	want := map[Kind][]string{
-		KindWdttClient:     {"OpkgTun18"},
-		KindWdttServer:     {"OpkgTun20", "OpkgTun21"},
-		KindFreeTurnClient: nil,
-		KindFreeTurnServer: nil,
-	}
-	for _, r := range recs {
-		n := r.NDMSNamed()
-		if n == nil {
-			t.Fatalf("%s: NDMSNamed обязан отдаваться для любой роли", r.Key())
-		}
-		got := n.NDMSNames()
-		if len(got) != len(want[r.Kind]) {
-			t.Fatalf("%s: имена %v, ждали %v", r.Key(), got, want[r.Kind])
-		}
-		for i := range got {
-			if got[i] != want[r.Kind][i] {
-				t.Fatalf("%s: имена %v, ждали %v", r.Key(), got, want[r.Kind])
-			}
-		}
 	}
 }
 
