@@ -7876,7 +7876,10 @@ definitions:
       comment:
         type: string
       isAuto:
-        description: IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
+        description: |-
+          IsAuto — абонент приехал посевом из старого wdtt.json, а не заведён в
+          панели (ServerUser.Auto): единственный, кто сегодня ставит признак, —
+          instancestore/seed.go. Фронт по нему подсказывает, откуда абонент взялся.
         type: boolean
       password:
         type: string
