@@ -11,15 +11,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
-
-// defaultUserName — имя абонента, которого заводит инвариант непустоты.
-const defaultUserName = "Абонент 1"
 
 // Reload — судьба SIGHUP после изменения состава абонентов: узнал ли живой
 // сервер об изменении ПРЯМО СЕЙЧАС. Пустое значение — сигнал не посылался
@@ -44,7 +40,9 @@ type UserEntry struct {
 	Password string `json:"password"`
 	Comment  string `json:"comment,omitempty"`
 	VkHash   string `json:"vkHash,omitempty"`
-	// IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
+	// IsAuto — абонент приехал посевом из старого wdtt.json, а не заведён в
+	// панели (ServerUser.Auto): единственный, кто сегодня ставит признак, —
+	// instancestore/seed.go. Фронт по нему подсказывает, откуда абонент взялся.
 	IsAuto bool `json:"isAuto"`
 }
 
@@ -65,11 +63,11 @@ var (
 	ErrInstanceNotFound = errors.New("инстанс не найден")
 
 	// ErrFileNotWritten — частичный успех добавления: абонент уже лежит в
-	// записи, а passwords.json записать не удалось. Отката нет намеренно
-	// (порядок «запись → файл» держит инвариант непустоты), и отличать этот
-	// исход от полного отказа обязана ручка: абонент существует, ссылку по
-	// нему выдавать можно, доступ появится при следующем запуске сервера — не
-	// «ничего не произошло».
+	// записи, а passwords.json записать не удалось. Отката нет намеренно:
+	// запись — источник правды, файл из неё материализуется заново на
+	// следующем запуске. Отличать этот исход от полного отказа обязана
+	// ручка: абонент существует, ссылку по нему выдавать можно, доступ
+	// появится при следующем запуске сервера — не «ничего не произошло».
 	ErrFileNotWritten = errors.New("абонент создан, но не записан в файл сервера")
 )
 
@@ -88,7 +86,6 @@ type Deps struct {
 	// Warn — app-журнал (необязателен). Сюда уходят исходы, которые не
 	// роняют операцию, но терять их молча нельзя.
 	Warn func(msg string)
-	Now  func() time.Time
 }
 
 // Service — абоненты сервера: материализация файла, путь старта и ручки.
@@ -109,13 +106,6 @@ type Service struct {
 
 func New(d Deps) *Service {
 	return &Service{deps: d, locks: map[string]*sync.Mutex{}}
-}
-
-func (s *Service) now() time.Time {
-	if s.deps.Now != nil {
-		return s.deps.Now()
-	}
-	return time.Now()
 }
 
 func (s *Service) warn(msg string) {
@@ -203,9 +193,8 @@ func (s *Service) materialize(rec instancestore.Record) error {
 
 // ── путь старта (Г-2) ────────────────────────────────────────────
 
-// SyncOnStart — цикл абонентов на пути старта, три ОБЯЗАТЕЛЬНЫХ шага:
-// усыновить чужие записи → удержать инвариант непустоты → переписать файл.
-// Зовёт фабрика процесса (задача 14).
+// SyncOnStart — цикл абонентов на пути старта, два ОБЯЗАТЕЛЬНЫХ шага:
+// усыновить чужие записи → переписать файл. Зовёт фабрика процесса (задача 14).
 func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	unlock := s.lock(key)
 	defer unlock()
@@ -364,14 +353,8 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash string
 }
 
 // addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал → дописать пароль сервера.
-//
-// Пароль сервера сохраняется ЗДЕСЬ, под тем же замком, а не у вызывающего
-// после его отпускания: между проверкой «главный пароль не совпадает с паролем
-// абонента» и записью параллельное добавление успевало завести абонента ровно
-// с этим паролем — то самое состояние, ради запрета которого проверка и
-// существует (форк берёт main_password для WRAP, и совпадение ломает
-// рукопожатия всем).
+// изменить запись → переписать файл → сигнал. Своего захвата здесь нет:
+// замок берёт Add, и повторный был бы взаимоблокировкой.
 func (s *Service) addLocked(ctx context.Context, key, password, comment, vkHash string) (UsersStatus, error) {
 	_, cfg, err := s.serverRecord(key)
 	if err != nil {

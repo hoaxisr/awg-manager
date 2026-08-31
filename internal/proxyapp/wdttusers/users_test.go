@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -115,8 +114,6 @@ func (f *fakeSignal) reload(key string) (bool, error) {
 
 // ── стенд ────────────────────────────────────────────────────────
 
-var fixedNow = func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
-
 const testKey = "wdtt-server:srv1"
 
 type stand struct {
@@ -146,7 +143,6 @@ func newStand(t *testing.T, cfg roles.WdttServerConfig, users ...instancestore.S
 	st.svc = New(Deps{
 		Records: src, Mutator: mut, SignalReload: sig.reload,
 		Warn: func(msg string) { st.warns = append(st.warns, msg) },
-		Now:  fixedNow,
 	})
 	return st
 }

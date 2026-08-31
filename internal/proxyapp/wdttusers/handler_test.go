@@ -52,7 +52,7 @@ func (s *stand) serve(t *testing.T, method, body string, sub ...string) (UsersSt
 func TestServe_ListForm(t *testing.T) {
 	st := newStand(t, baseCfg(),
 		instancestore.ServerUser{Password: "client1", Comment: "Иван", VkHash: "vk1"},
-		instancestore.ServerUser{Password: "auto1", Comment: defaultUserName, Auto: true},
+		instancestore.ServerUser{Password: "auto1", Comment: "Абонент 1", Auto: true},
 		instancestore.ServerUser{Password: "mainpass", Comment: "Он же главный"},
 	)
 	writePasswordsFixture(t, st.dir, passwordsJSON{
@@ -70,7 +70,7 @@ func TestServe_ListForm(t *testing.T) {
 		Available: true,
 		Users: []UserEntry{
 			{Password: "client1", Comment: "Иван", VkHash: "vk1"},
-			{Password: "auto1", Comment: defaultUserName, IsAuto: true},
+			{Password: "auto1", Comment: "Абонент 1", IsAuto: true},
 			{Password: "mainpass", Comment: "Он же главный"},
 		},
 	}

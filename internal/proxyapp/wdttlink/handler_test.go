@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -169,8 +168,6 @@ func (v fakeVetting) UsableUsers(users []instancestore.ServerUser) []instancesto
 
 // ── помощники ────────────────────────────────────────────────────
 
-var testNow = func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
-
 func decodeEnvelope(t *testing.T, rr *httptest.ResponseRecorder) (map[string]any, string, string) {
 	t.Helper()
 	var env struct {
@@ -233,7 +230,6 @@ func newTestHandler(t *testing.T, recs ...instancestore.Record) (*Handler, *fake
 		ExternalIP: func(context.Context) (string, error) {
 			return "203.0.113.7", nil
 		},
-		Now: testNow,
 	})
 	h := NewHandler(Deps{
 		Records: src, Mutator: mut, Tunnels: tunnels,
@@ -866,7 +862,7 @@ func TestFailClosed_MissingWiring(t *testing.T) {
 
 	t.Run("нет проверки абонентов", func(t *testing.T) {
 		h, _, _, _, _ := newTestHandler(t, server)
-		h.deps.Builders[instancestore.KindWdttServer] = NewBuilder(BuilderDeps{Now: testNow})
+		h.deps.Builders[instancestore.KindWdttServer] = NewBuilder(BuilderDeps{})
 		rr := httptest.NewRecorder()
 		h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), server.Key())
 		_, msg, code := decodeEnvelope(t, rr)

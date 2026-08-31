@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 )
@@ -85,20 +84,12 @@ type BuilderDeps struct {
 	// ExternalIP — внешний адрес роутера, когда peer не задан ни запросом,
 	// ни записью.
 	ExternalIP func(ctx context.Context) (string, error)
-	Now        func() time.Time
 }
 
 // Builder — ссылки wdtt-сервера (wdtt:// для роутера, qwdtt:// для телефона).
 type Builder struct{ deps BuilderDeps }
 
 func NewBuilder(d BuilderDeps) *Builder { return &Builder{deps: d} }
-
-func (b *Builder) now() time.Time {
-	if b.deps.Now != nil {
-		return b.deps.Now()
-	}
-	return time.Now()
-}
 
 // BuildLink собирает пару ссылок абоненту. Порядок и тексты отказов —
 // перенос generateLinkCore (api/wdtt_server.go:441-494).
@@ -107,14 +98,11 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_SERVER_NOT_FOUND", Msg: err.Error()}
 	}
-	// Пароля владельца ссылка не требует: она выдаётся на пароль АБОНЕНТА
-	// (linkPasswordFor), а владельческий в неё не попадает ни при каких
-	// условиях. Прежняя проверка на его непустоту осталась от старой модели и
-	// с уходом пароля из UI (решение владельца 2026-08-28) стала неснимаемым
-	// отказом: задать его негде, а ссылку не выдать. Пустое значение здесь
-	// безвредно — UnusableReason отбрасывает пустой пароль абонента ДО
-	// сравнения с владельческим, поэтому «это пароль владельца» на пустом не
-	// срабатывает.
+	// Пароля владельца сборка не спрашивает и не проверяет: ссылка выдаётся на
+	// пароль АБОНЕНТА (linkPasswordFor). Прежняя проверка на непустоту
+	// владельческого осталась от старой модели и с уходом пароля из UI
+	// (решение владельца 2026-08-28) стала неснимаемым отказом: задать его
+	// негде, а ссылку не выдать.
 	linkPassword, err := b.linkPasswordFor(req, rec)
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_NO_CLIENT", Msg: err.Error()}
