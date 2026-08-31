@@ -16,9 +16,15 @@ import (
 // a fresh 30-deviceproxy.json and rewrites 10-tunnels.json without
 // the device-proxy bits.
 //
-// Idempotent — if 10-tunnels.json has no device-proxy artefacts, or
-// 30-deviceproxy.json already exists, this is a no-op. Migration only
-// looks at the active layout: it does NOT recurse into disabled/.
+// Идемпотентность считается по СОДЕРЖИМОМУ 10-tunnels.json, а не по
+// существованию 30-deviceproxy.json: провал ВТОРОЙ записи (перезапись
+// 10-tunnels) оставлял device-proxy в обоих слотах, и stat-гард запирал
+// это состояние навсегда — дубль `device-proxy-in` валит preflight
+// холодного старта. Существующий 30-файл при доборе НЕ перезаписывается:
+// с момента раскола им владеет Reconcile device-proxy-сервиса (F73).
+//
+// Migration only looks at the active layout: it does NOT recurse into
+// disabled/.
 //
 // configDir is the sing-box config.d directory (typically
 // /opt/etc/sing-box/config.d).
@@ -29,11 +35,6 @@ import (
 func MigrateDeviceProxyOutOfTunnels(configDir string) (bool, error) {
 	tunnelsPath := filepath.Join(configDir, "10-tunnels.json")
 	deviceProxyPath := filepath.Join(configDir, "30-deviceproxy.json")
-
-	// Already split? Nothing to do.
-	if _, err := os.Stat(deviceProxyPath); err == nil {
-		return false, nil
-	}
 
 	data, err := os.ReadFile(tunnelsPath)
 	if err != nil {
@@ -48,19 +49,23 @@ func MigrateDeviceProxyOutOfTunnels(configDir string) (bool, error) {
 		return false, fmt.Errorf("parse tunnels: %w", err)
 	}
 
+	// Покрывает и «уже мигрировано»: чистый 10-tunnels — штатный no-op.
 	if !cfg.HasDeviceProxy() {
 		return false, nil
 	}
 
-	// Build the device-proxy slot by extracting it from the loaded cfg.
-	extracted := cfg.ExtractDeviceProxy()
+	// 10-tunnels ещё несёт device-proxy → раскол не доехал. Существование
+	// 30-файла этого не опровергает, но и переписывать его нельзя.
+	if _, err := os.Stat(deviceProxyPath); err != nil {
+		extracted := cfg.ExtractDeviceProxy()
 
-	extractedJSON, err := json.MarshalIndent(extracted, "", "  ")
-	if err != nil {
-		return false, fmt.Errorf("marshal extracted: %w", err)
-	}
-	if err := writeJSONAtomic(deviceProxyPath, extractedJSON); err != nil {
-		return false, fmt.Errorf("write deviceproxy: %w", err)
+		extractedJSON, err := json.MarshalIndent(extracted, "", "  ")
+		if err != nil {
+			return false, fmt.Errorf("marshal extracted: %w", err)
+		}
+		if err := writeJSONAtomic(deviceProxyPath, extractedJSON); err != nil {
+			return false, fmt.Errorf("write deviceproxy: %w", err)
+		}
 	}
 
 	// Persist tunnels stripped of device-proxy.
