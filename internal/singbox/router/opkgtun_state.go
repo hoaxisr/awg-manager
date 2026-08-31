@@ -11,6 +11,12 @@ import (
 // Provisioned НЕ проверяется намеренно: hold policy-tun
 // ({Provisioned:false, Index}) — валидное владение; нужен ли provisioned-гейт —
 // решает вызывающий по своей семантике.
+//
+// Отдаётся КОПИЯ записи: Load/Get отдают ЖИВОЙ кэш стора, который параллельно
+// маршалят читатели без нашего лока, и правка возвращённого объекта по месту
+// была бы гонкой. Раньше копию снимал каждый вызывающий сам — и снимал только
+// один из них (F24). Copy-on-write в SetOpkgTunState этого НЕ заменяет: он
+// изолирует объект писателя, а здесь речь про сторону чтения.
 func opkgTunOwned(settings *storage.Settings, mode string) (*storage.OpkgTunState, bool) {
 	if settings == nil {
 		return nil, false
@@ -19,7 +25,8 @@ func opkgTunOwned(settings *storage.Settings, mode string) (*storage.OpkgTunStat
 	if st == nil || st.Mode != mode {
 		return nil, false
 	}
-	return st, true
+	cp := *st
+	return &cp, true
 }
 
 // natSegmentsOf — nil-safe чтение policy-payload записи (в т.ч. чужого Mode:

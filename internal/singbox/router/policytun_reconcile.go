@@ -219,14 +219,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
+	// Копию снимает сам opkgTunOwned (F24) — здесь она уже наша.
 	st, _ := opkgTunOwned(settings, statePolicyTun)
-	if st != nil {
-		// Мутируем копию: запись — объект живого кэша стора, который
-		// параллельно маршалят читатели без нашего лока. Копию публикуют
-		// SetOpkgTunState/SetOpkgTunNATSegments — уже под локом стора.
-		cp := *st
-		st = &cp
-	}
 
 	if !sr.Enabled {
 		// Teardown только когда что-то реально поднято — иначе каждый
