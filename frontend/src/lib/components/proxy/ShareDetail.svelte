@@ -17,6 +17,7 @@
 		AccessPolicy,
 		FreeTurnProcessStatus,
 		FreeTurnServerConfig,
+		SingboxRouterSettings,
 		WdttProcessStatus,
 		WdttServerConfig,
 	} from '$lib/types';
@@ -110,6 +111,13 @@
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
 	// до ответа ручки статуса тумблер молчит, а не пугает.
 	let singboxRunning = $state(true);
+	// Режим устройств «все» в tproxy делает тумблер неотличимым от включённого:
+	// jump в цепочку sing-box эмитится в PREROUTING безусловно, а MARK-правила
+	// по входным интерфейсам в этом режиме не эмитятся вовсе
+	// (internal/singbox/router/iptables.go) — трафик абонентов с opkgtun
+	// перехватывается при любом его положении. Ссылка при этом сохраняется и
+	// заработает после возврата режима «по политике», поэтому тумблер живой.
+	let ingressForced = $state(false);
 
 	// Гейт старта WDTT-сервера (SH-91): «Абонент 1» на путях UI больше не
 	// рождается, и сервер без единого рабочего пароля просто не поднимется
@@ -201,6 +209,11 @@
 	// Отдельным эффектом, а не в onMount: асинхронный onMount отписку не вернёт.
 	$effect(() => servers.subscribe((st) => (peerSnap = st.data)));
 
+	/** Легаси-ответ без routingMode — это ещё одномодовый бэкенд, там был tproxy. */
+	function allDevicesTProxy(s: SingboxRouterSettings): boolean {
+		return (s.routingMode ?? 'tproxy') === 'tproxy' && s.deviceMode === 'all';
+	}
+
 	onMount(async () => {
 		try {
 			const segs = await api.listManagedLANSegments();
@@ -221,6 +234,7 @@
 		try {
 			const settings = await api.singboxRouterGetSettings();
 			ingress = ingressOn(settings.ingressInterfaces, wdttIngressRefs(wdttDraft, wdttStatus));
+			ingressForced = allDevicesTProxy(settings);
 		} catch {
 			/* нет ответа — тумблер остаётся выключенным */
 		}
@@ -278,6 +292,8 @@
 		void locked(async () => {
 			await withIngressLock(async () => {
 				const settings = await api.singboxRouterGetSettings();
+				// Режим могли сменить на другой странице — подсказка не должна врать.
+				ingressForced = allDevicesTProxy(settings);
 				const refs = wdttIngressRefs(wdttDraft as WdttServerConfig, wdttStatus);
 				await api.singboxRouterPutSettings({
 					...settings,
@@ -464,14 +480,20 @@
 	<div class="run-toggle">
 		<Toggle
 			label="Маршрутизация через sing-box"
-			hint={singboxRunning ? '' : 'sing-box не запущен — правило вступит в силу после его запуска'}
+			hint={!singboxRunning
+				? 'sing-box не запущен — правило вступит в силу после его запуска'
+				: ingressForced
+					? 'Режим устройств «все» — трафик абонентов и так идёт через sing-box'
+					: ''}
 			checked={ingress}
 			disabled={mutating}
 			onchange={toggleIngress}
 			spinner="before"
 		/>
 		<FieldHint
-			text="Трафик абонентов пойдёт по правилам sing-box — тем же, что у устройств сети. Выключено — абоненты выходят напрямую, минуя правила."
+			text={ingressForced
+				? 'В маршрутизации sing-box выбран режим устройств «все»: под правила попадает весь транзитный трафик роутера, включая трафик абонентов, — при любом положении этого тумблера. Положение всё равно сохраняется и вступит в силу, когда режим вернут на «по политике».'
+				: 'Трафик абонентов пойдёт по правилам sing-box — тем же, что у устройств сети. Выключено — абоненты выходят напрямую, минуя правила.'}
 			ariaLabel="Подсказка: маршрутизация через sing-box"
 		/>
 	</div>
