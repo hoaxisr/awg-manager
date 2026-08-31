@@ -920,3 +920,35 @@ func TestPolicyTunEnable_DoubleRCIFailureKeepsRecordedNAT(t *testing.T) {
 		}
 	})
 }
+
+// F20: провал Install на enable-пути тоже обязан пометить снимок netfilter
+// неизвестным — иначе следующий тик reconcile сочтёт состояние известным и не
+// переустановит частично закоммиченные правила.
+//
+// Мутация для пина: убрать `s.netfilterStateKnown = false` из ветки ошибки
+// Install в enablePolicyTun — тест краснеет.
+func TestPolicyTunEnable_FailedInstallMarksNetfilterUnknown(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	all, _ := h.store.Load()
+	all.SingboxRouter.QoSClasses = []storage.SingboxQoSClass{
+		{DSCP: 46, Name: "VoIP", Outbound: "direct", Enabled: true},
+	}
+	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	h.svc.deps.IPTables = newStubIPTables(func(context.Context, string) error {
+		return errors.New("injected: iptables-restore")
+	})
+	h.svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.7/32"}}
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	// Заранее «известное» состояние: именно оно обязано слететь на провале.
+	h.svc.netfilterStateKnown = true
+
+	if err := h.svc.Enable(context.Background()); err == nil {
+		t.Fatal("ожидался провал Install")
+	}
+	if h.svc.netfilterStateKnown {
+		t.Error("снимок netfilter остался известным после провала Install: следующий тик не переустановит")
+	}
+}
