@@ -4,6 +4,7 @@ package awgoutbounds
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -207,5 +208,53 @@ func TestSubscribeBus_WakesOnTunnelsNotOnDeadKey(t *testing.T) {
 	}
 	if store.calls.Load() == 0 {
 		t.Error("живой ключ tunnels не разбудил синк")
+	}
+}
+
+// F83: отказ NDMS при перечислении системных туннелей глотался, и enumerate
+// возвращала managed-only с nil-ошибкой — 15-awg.json переписывался БЕЗ всех
+// awg-sys-*, а «изменение» ещё и триггерило reload. Транзиентный сбой молча
+// выносил системные туннели из конфига движка.
+func TestSync_SystemStoreFailureKeepsFile(t *testing.T) {
+	sysStore := &fakeSystemStore{
+		tunnels: []SystemTunnelInfo{{ID: "sys1", InterfaceName: "nwg0", Description: "WG"}},
+	}
+	s, sb := newSvcWithIface(t,
+		&fakeAWGStore{tunnels: []AWGTunnelInfo{{ID: "a", Name: "A", BackendIface: "t2s0"}}},
+		sysStore,
+		"t2s0", "nwg0",
+	)
+
+	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
+		t.Fatalf("первый синк: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(sb.dir, "15-awg.json"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var seed fileShape
+	if err := json.Unmarshal(before, &seed); err != nil {
+		t.Fatal(err)
+	}
+	if len(seed.Outbounds) != 2 {
+		t.Fatalf("подготовка: ждём managed+system, получено %d", len(seed.Outbounds))
+	}
+	reloadsBefore := sb.reloadCalls
+
+	// NDMS отвалился.
+	sysStore.err = errors.New("ndms unavailable")
+	if err := s.SyncAWGOutbounds(context.Background()); err == nil {
+		t.Error("отказ NDMS проглочен: SyncAWGOutbounds вернул nil")
+	}
+
+	after, err := os.ReadFile(filepath.Join(sb.dir, "15-awg.json"))
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("15-awg.json переписан без системных записей:\nбыло: %s\nстало: %s", before, after)
+	}
+	if sb.reloadCalls != reloadsBefore {
+		t.Errorf("движок перезагружен на неполном конфиге: reload'ов %d → %d", reloadsBefore, sb.reloadCalls)
 	}
 }

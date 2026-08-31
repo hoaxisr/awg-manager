@@ -3,6 +3,7 @@ package awgoutbounds
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,9 +78,12 @@ func (s *ServiceImpl) enumerate(ctx context.Context) ([]AWGEntry, error) {
 	if s.deps.SystemTunnels != nil {
 		tuns, err := s.deps.SystemTunnels.List(ctx)
 		if err != nil {
-			// System failure is not fatal — managed-only output is still
-			// useful. Caller can log via app log; we don't have it here.
-			return out, nil
+			// Симметрично managed-ветке выше: отказ — это отказ, не пустой
+			// список. Прежде здесь возвращался managed-only с nil-ошибкой, и
+			// транзиентный сбой NDMS переписывал 15-awg.json БЕЗ всех
+			// awg-sys-*, да ещё и триггерил reload на усечённом конфиге (F83).
+			// writeFile логирует и прекращает запись — прежний файл цел.
+			return nil, fmt.Errorf("system tunnels: %w", err)
 		}
 
 		// Build a fast-lookup set of managed-server interface names so we can
