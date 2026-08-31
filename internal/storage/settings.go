@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -406,14 +408,16 @@ func (s *SettingsStore) AddManagedServer(server ManagedServer) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for _, existing := range s.settings.ManagedServers {
-		if existing.InterfaceName == server.InterfaceName {
-			return fmt.Errorf("server %q already exists", server.InterfaceName)
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		for _, existing := range cp.ManagedServers {
+			if existing.InterfaceName == server.InterfaceName {
+				return fmt.Errorf("server %q already exists", server.InterfaceName)
+			}
 		}
-	}
-	s.settings.ManagedServers = append(s.settings.ManagedServers, server)
-	return s.saveUnlocked(s.settings)
+		cp.ManagedServers = append(slices.Clone(cp.ManagedServers), server)
+		return nil
+	})
 }
 
 // UpdateManagedServer applies mut to the server with the given id and
@@ -429,16 +433,24 @@ func (s *SettingsStore) UpdateManagedServer(id string, mut func(*ManagedServer) 
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for i := range s.settings.ManagedServers {
-		if s.settings.ManagedServers[i].InterfaceName == id {
-			if err := mut(&s.settings.ManagedServers[i]); err != nil {
-				return err
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		servers := slices.Clone(cp.ManagedServers)
+		for i := range servers {
+			if servers[i].InterfaceName == id {
+				// Клон Peers обязателен: мутаторы правят элементы по месту
+				// (managed/service_peers.go), и без него правка утекла бы в
+				// живой кэш даже при провале записи.
+				servers[i].Peers = slices.Clone(servers[i].Peers)
+				if err := mut(&servers[i]); err != nil {
+					return err
+				}
+				cp.ManagedServers = servers
+				return nil
 			}
-			return s.saveUnlocked(s.settings)
 		}
-	}
-	return fmt.Errorf("server %q not found", id)
+		return fmt.Errorf("server %q not found", id)
+	})
 }
 
 // DeleteManagedServer removes the server with the given id.
@@ -448,17 +460,23 @@ func (s *SettingsStore) DeleteManagedServer(id string) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for i, existing := range s.settings.ManagedServers {
-		if existing.InterfaceName == id {
-			s.settings.ManagedServers = append(s.settings.ManagedServers[:i], s.settings.ManagedServers[i+1:]...)
-			// Снять ingress-ref удалённого сервера в той же транзакции —
-			// иначе он висит до перезапуска демона (#670).
-			pruneOrphanIngressRefs(s.settings)
-			return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		for i, existing := range cp.ManagedServers {
+			if existing.InterfaceName == id {
+				// Новый backing вместо сдвига по месту: прежний сдвигал
+				// разделяемый массив под читателями старого снимка.
+				cp.ManagedServers = append(
+					append([]ManagedServer(nil), cp.ManagedServers[:i]...),
+					cp.ManagedServers[i+1:]...)
+				// Снять ingress-ref удалённого сервера в той же транзакции —
+				// иначе он висит до перезапуска демона (#670).
+				pruneOrphanIngressRefs(cp)
+				return nil
+			}
 		}
-	}
-	return fmt.Errorf("server %q not found", id)
+		return fmt.Errorf("server %q not found", id)
+	})
 }
 
 // updateUnlocked — транзакция узкого мутатора: копия живого кэша → mut →
@@ -721,15 +739,19 @@ func (s *SettingsStore) UpdateServerInterfaceMeta(serverID string, fn func(*Serv
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	if s.settings.ServerInterfaceMeta == nil {
-		s.settings.ServerInterfaceMeta = map[string]ServerInterfaceMeta{}
-	}
-	meta := s.settings.ServerInterfaceMeta[serverID]
-	if err := fn(&meta); err != nil {
-		return err
-	}
-	s.settings.ServerInterfaceMeta[serverID] = meta
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		m := maps.Clone(cp.ServerInterfaceMeta)
+		if m == nil {
+			m = map[string]ServerInterfaceMeta{}
+		}
+		meta := m[serverID]
+		if err := fn(&meta); err != nil {
+			return err
+		}
+		m[serverID] = meta
+		cp.ServerInterfaceMeta = m
+		return nil
+	})
 }
 
 // GetServerPeerSecret returns stored key material for a system-server peer.
@@ -754,14 +776,20 @@ func (s *SettingsStore) SetServerPeerSecret(serverID, pubkey string, sec ServerP
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	if s.settings.ServerPeerSecrets == nil {
-		s.settings.ServerPeerSecrets = map[string]map[string]ServerPeerSecret{}
-	}
-	if s.settings.ServerPeerSecrets[serverID] == nil {
-		s.settings.ServerPeerSecrets[serverID] = map[string]ServerPeerSecret{}
-	}
-	s.settings.ServerPeerSecrets[serverID][pubkey] = sec
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		outer := maps.Clone(cp.ServerPeerSecrets)
+		if outer == nil {
+			outer = map[string]map[string]ServerPeerSecret{}
+		}
+		inner := maps.Clone(outer[serverID])
+		if inner == nil {
+			inner = map[string]ServerPeerSecret{}
+		}
+		inner[pubkey] = sec
+		outer[serverID] = inner
+		cp.ServerPeerSecrets = outer
+		return nil
+	})
 }
 
 // DeleteServerPeerSecret removes stored key material for a system-server peer.
@@ -771,15 +799,21 @@ func (s *SettingsStore) DeleteServerPeerSecret(serverID, pubkey string) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	peers, ok := s.settings.ServerPeerSecrets[serverID]
-	if !ok {
+	if _, ok := s.settings.ServerPeerSecrets[serverID]; !ok {
 		return nil
 	}
-	delete(peers, pubkey)
-	if len(peers) == 0 {
-		delete(s.settings.ServerPeerSecrets, serverID)
-	}
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		outer := maps.Clone(cp.ServerPeerSecrets)
+		inner := maps.Clone(outer[serverID])
+		delete(inner, pubkey)
+		if len(inner) == 0 {
+			delete(outer, serverID)
+		} else {
+			outer[serverID] = inner
+		}
+		cp.ServerPeerSecrets = outer
+		return nil
+	})
 }
 
 // save публикует переданный объект как новый кэш и пишет его на диск.

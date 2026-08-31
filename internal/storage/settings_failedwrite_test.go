@@ -238,3 +238,69 @@ func TestNarrowMutators_FailedWriteKeepsCache(t *testing.T) {
 		})
 	}
 }
+
+// F3-C: мутатор, правящий элементы контейнера ВГЛУБЬ, при провале записи тоже
+// не оставляет следа. Ключевой случай — Peers: managed/service_peers.go правит
+// элементы по месту, поэтому мелкой копии Settings мало, нужен клон Peers.
+func TestUpdateManagedServer_FailedWriteKeepsPeers(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := store.AddManagedServer(ManagedServer{
+		InterfaceName: "Wireguard3",
+		Peers:         []ManagedPeer{{PublicKey: "pub1", Description: "было"}},
+	}); err != nil {
+		t.Fatalf("AddManagedServer: %v", err)
+	}
+	failWrites(t, dir)
+
+	err := store.UpdateManagedServer("Wireguard3", func(sv *ManagedServer) error {
+		sv.Peers[0].Description = "стало" // правка ЭЛЕМЕНТА по месту
+		return nil
+	})
+	if err == nil {
+		t.Fatal("ожидался отказ записи")
+	}
+
+	got, gerr := store.Get()
+	if gerr != nil {
+		t.Fatalf("Get: %v", gerr)
+	}
+	if len(got.ManagedServers) != 1 || len(got.ManagedServers[0].Peers) != 1 {
+		t.Fatalf("ManagedServers = %+v", got.ManagedServers)
+	}
+	if d := got.ManagedServers[0].Peers[0].Description; d != "было" {
+		t.Errorf("Peers[0].Description = %q, want %q (правка по месту утекла в кэш)", d, "было")
+	}
+}
+
+// Тот же класс для карты секретов: провал записи не должен оставлять запись.
+func TestSetServerPeerSecret_FailedWriteKeepsMap(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Карта обязана быть НЕПУСТОЙ: на nil-карте мутатор создаёт новую и кладёт
+	// её в копию, поэтому отсутствие клона так не ловится.
+	if err := store.SetServerPeerSecret("Wireguard3", "pub1", ServerPeerSecret{PrivateKey: "k1"}); err != nil {
+		t.Fatalf("seed SetServerPeerSecret: %v", err)
+	}
+	failWrites(t, dir)
+
+	if err := store.SetServerPeerSecret("Wireguard3", "pub2", ServerPeerSecret{PrivateKey: "k2"}); err == nil {
+		t.Fatal("ожидался отказ записи")
+	}
+	got, err := store.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, ok := got.ServerPeerSecrets["Wireguard3"]["pub2"]; ok {
+		t.Errorf("ServerPeerSecrets = %+v, запись появилась при провале записи", got.ServerPeerSecrets)
+	}
+	if _, ok := got.ServerPeerSecrets["Wireguard3"]["pub1"]; !ok {
+		t.Error("прежний секрет пропал из кэша")
+	}
+}
