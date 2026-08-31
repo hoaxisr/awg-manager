@@ -19,6 +19,13 @@ import (
 // NDMS они не нужны, ровно как тестам internal/singbox (newOrchedOperator).
 func newTestCore(t *testing.T) singboxCore {
 	t.Helper()
+	return newTestCoreIn(t, t.TempDir())
+}
+
+// newTestCoreIn — то же, но над ЗАДАННЫМ каталогом config.d: нужен тестам,
+// которые заранее кладут туда легаси-раскладку под миграции.
+func newTestCoreIn(t *testing.T, dir string) singboxCore {
+	t.Helper()
 	dataDir := t.TempDir()
 	settingsStore := storage.NewSettingsStore(dataDir)
 	loggingService := logging.NewService(settingsStore)
@@ -29,7 +36,7 @@ func newTestCore(t *testing.T) singboxCore {
 		bus:      events.NewBus(),
 		bootLog:  logging.NewScopedLogger(loggingService, logging.GroupSystem, logging.SubCleanup),
 		dataDir:  dataDir,
-		dir:      t.TempDir(),
+		dir:      dir,
 	})
 }
 
@@ -133,5 +140,36 @@ func TestSetupSingboxRuntime_FieldsConstructed(t *testing.T) {
 	}
 	if a.subGroupStore == nil {
 		t.Error("subGroupStore не собран")
+	}
+}
+
+// F34: миграция device-proxy переписывает файлы мимо оркестратора, значит
+// переживший рестарт sing-box держит старый merged-конфиг до случайного
+// reload. Флаг миграций обязан её учитывать — по нему демон решает перечитать
+// конфиг живого процесса.
+//
+// Мутация для пина: убрать `|| deviceProxyMigrated` из сборки singboxCore —
+// компилируется (переменная остаётся читаемой в `_ = deviceProxyMigrated`),
+// тест краснеет.
+func TestBuildSingboxCore_DeviceProxyMigrationSetsMigratedFlag(t *testing.T) {
+	dir := t.TempDir()
+	configD := filepath.Join(dir, "config.d")
+	if err := os.MkdirAll(configD, 0755); err != nil {
+		t.Fatalf("mkdir config.d: %v", err)
+	}
+	// Легаси-раскладка: device-proxy сидит ВНУТРИ слота туннелей.
+	legacy := `{"inbounds":[{"type":"socks","tag":"device-proxy-in","listen":"127.0.0.1","listen_port":1080}],` +
+		`"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[]}}`
+	if err := os.WriteFile(filepath.Join(configD, "10-tunnels.json"), []byte(legacy), 0644); err != nil {
+		t.Fatalf("seed 10-tunnels.json: %v", err)
+	}
+
+	core := newTestCoreIn(t, dir)
+
+	if !core.migrated {
+		t.Error("core.migrated = false: миграция device-proxy не попала в reload-триггер")
+	}
+	if _, err := os.Stat(filepath.Join(configD, "30-deviceproxy.json")); err != nil {
+		t.Fatalf("миграция не отработала: %v", err)
 	}
 }

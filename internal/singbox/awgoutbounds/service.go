@@ -77,12 +77,15 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 }
 
 // SubscribeBus listens for events that change the AWG-tunnel set
-// and triggers SyncAWGOutbounds. Specifically: resource:invalidated
-// for "tunnels" (managed AWG CRUD) and "system-tunnels" (NDMS hooks
-// firing when a Keenetic-native WireGuard interface is added/removed
-// out-of-band from awg-manager). Without this, deleting a system
-// tunnel via NDMS UI would leave a stale awg-sys-{id} entry in
-// 15-awg.json with a now-missing bind_interface.
+// and triggers SyncAWGOutbounds: resource:invalidated для tunnels и
+// singbox.tunnels. Без этого удаление системного туннеля оставляло бы
+// протухшую запись awg-sys-{id} в 15-awg.json с несуществующим
+// bind_interface.
+//
+// Ключа "system-tunnels" здесь больше нет: его не публиковал НИКТО —
+// ни константы в events.AllResources, ни union'а на фронте (F81, класс
+// F66). NDMS-хук на out-of-band смену системного WG будит синк живым
+// ключом ResourceTunnels с reason "ndms-hook".
 //
 // Returns an unsubscribe function. Safe to call once at boot.
 func (s *ServiceImpl) SubscribeBus(ctx context.Context) func() {
@@ -101,7 +104,7 @@ func (s *ServiceImpl) SubscribeBus(ctx context.Context) func() {
 			}
 			// React only to events that change which tunnels exist.
 			switch payload.Resource {
-			case "tunnels", "singbox.tunnels", "system-tunnels":
+			case events.ResourceTunnels, events.ResourceSingboxTunnels:
 			default:
 				continue
 			}
@@ -121,7 +124,13 @@ func (s *ServiceImpl) SubscribeBus(ctx context.Context) func() {
 func (s *ServiceImpl) ListTags(ctx context.Context) ([]TagInfo, error) {
 	entries, err := s.enumerate(ctx)
 	if err != nil {
-		return nil, err
+		// Частичный каталог лучше пустого: отказ ОДНОГО из двух сторов не
+		// повод лишать вызывающего тегов второго. Пусто — значит ответить
+		// нечем, ошибка идёт наверх.
+		if len(entries) == 0 {
+			return nil, err
+		}
+		s.logWarn("list-tags", "", "каталог неполон: "+err.Error())
 	}
 	out := make([]TagInfo, 0, len(entries))
 	for _, e := range entries {

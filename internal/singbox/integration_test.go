@@ -84,7 +84,7 @@ func TestIntegration_ParseAddValidate(t *testing.T) {
 	// Validate with mock exec (real sing-box not available in CI)
 	v := &Validator{
 		binary: "sing-box",
-		exec: func(bin string, args ...string) ([]byte, error) {
+		exec: func(_ context.Context, bin string, args ...string) ([]byte, error) {
 			// Check that the last arg is the absolute path to our config
 			if len(args) != 3 {
 				t.Errorf("args len: %v", args)

@@ -423,3 +423,29 @@ func TestApplyDraft_ConcurrentSecondCallReturnsNoDraft(t *testing.T) {
 		t.Errorf("second call want ErrNoDraft, got %v (res=%v)", err, r2)
 	}
 }
+
+// F84: SaveAndValidate писал в active/ безусловно, а не выбирал путь по
+// enabled, как это делает saveLocked. Сегодня не стреляло — оба прод-слота
+// (10-tunnels, 16-awg3) AlwaysOn, — но первый же выключенный слот создал бы
+// файл в active/ при enabled=false, а Bootstrap считает «файл и там и там»
+// патологией.
+func TestSaveAndValidate_DisabledSlotWritesToDisabledDir(t *testing.T) {
+	o, dir := newTestOrch(t)
+	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := o.SetEnabled(SlotRouter, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	if _, err := o.SaveAndValidate(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatalf("SaveAndValidate: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "disabled", "20-router.json")); err != nil {
+		t.Errorf("выключенный слот не попал в disabled/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "20-router.json")); err == nil {
+		t.Error("выключенный слот записан в active/ — Bootstrap сочтёт это патологией")
+	}
+}

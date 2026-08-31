@@ -105,7 +105,7 @@ type ClashStateProvider interface {
 // outbound-failed responses. Optional — when nil, sing-box rows fall
 // back to the default Prober.
 type SingboxDelayProber interface {
-	TestDelay(outboundTag, testURL string, timeout time.Duration) (int, error)
+	TestDelay(ctx context.Context, outboundTag, testURL string, timeout time.Duration) (int, error)
 }
 
 // SchedulerDeps wires Scheduler against the rest of the system.
@@ -418,7 +418,7 @@ func (s *Scheduler) runProbeCell(ctx context.Context, t Target, tn Tunnel, isSel
 		if probeURL == "" {
 			return 0, false
 		}
-		d, err := s.deps.SingboxDelay.TestDelay(tn.SingboxTag, probeURL, s.probeTimeout)
+		d, err := s.deps.SingboxDelay.TestDelay(ctx, tn.SingboxTag, probeURL, s.probeTimeout)
 		if err != nil || d <= 0 {
 			return 0, false
 		}

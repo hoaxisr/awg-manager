@@ -13,7 +13,7 @@ type DelayPublisher interface {
 
 // clashAPI abstracts the subset of ClashClient we use (for testability).
 type clashAPI interface {
-	TestDelay(name, url string, timeout time.Duration) (int, error)
+	TestDelay(ctx context.Context, name, url string, timeout time.Duration) (int, error)
 }
 
 // tunnelLister returns current tunnel tags.
@@ -81,7 +81,7 @@ func (d *DelayChecker) CheckOne(ctx context.Context, tag string) (int, error) {
 	}()
 
 	delay := 0
-	if firstDelay, firstErr := d.clash.TestDelay(tag, d.testURL, d.timeout); firstErr == nil && firstDelay > 0 {
+	if firstDelay, firstErr := d.clash.TestDelay(ctx, tag, d.testURL, d.timeout); firstErr == nil && firstDelay > 0 {
 		delay = firstDelay
 	} else {
 		// Anti-flap: one transient Clash timeout/spike should not immediately
@@ -92,7 +92,7 @@ func (d *DelayChecker) CheckOne(ctx context.Context, tag string) (int, error) {
 			timer.Stop()
 			return 0, ctx.Err()
 		case <-timer.C:
-			retryDelay, retryErr := d.clash.TestDelay(tag, d.testURL, d.timeout)
+			retryDelay, retryErr := d.clash.TestDelay(ctx, tag, d.testURL, d.timeout)
 			if retryErr == nil && retryDelay > 0 {
 				delay = retryDelay
 			}

@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -85,12 +86,18 @@ func (c *ClashClient) HasOutbound(tag string) bool {
 }
 
 // TestDelay triggers a latency test for a proxy via Clash API.
-func (c *ClashClient) TestDelay(name, testURL string, timeout time.Duration) (int, error) {
+// ctx обрывает САМ запрос: без него отмена клиента гасила только ожидание
+// между попытками, а проба висела до таймаута (F39).
+func (c *ClashClient) TestDelay(ctx context.Context, name, testURL string, timeout time.Duration) (int, error) {
 	q := url.Values{}
 	q.Set("url", testURL)
 	q.Set("timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
 	u := fmt.Sprintf("http://%s/proxies/%s/delay?%s", c.Address(), url.PathEscape(name), q.Encode())
-	resp, err := c.http.Get(u)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -109,8 +116,19 @@ func (c *ClashClient) TestDelay(name, testURL string, timeout time.Duration) (in
 
 // IsHealthy checks Clash API availability (fast health probe).
 func (c *ClashClient) IsHealthy() bool {
-	cli := &http.Client{Timeout: 1 * time.Second}
-	resp, err := cli.Get(fmt.Sprintf("http://%s/version", c.Address()))
+	// Ходим общим c.http, как остальной клиент: своя копия http.Client на
+	// каждый вызов транспорт НЕ заводила (Transport == nil ⇒ общий
+	// DefaultTransport), так что правка чисто про единообразие — выгоды в
+	// соединениях у неё нет (F40).
+	// Секундная граница пробы сохранена контекстом — у c.http таймаут 5 с,
+	// а это быстрая проба живости.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/version", c.Address()), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return false
 	}

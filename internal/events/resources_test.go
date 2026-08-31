@@ -132,8 +132,11 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 			}
 			// docs/, frontend/, build/ — не наш код, но только на верхнем
 			// уровне: пакет с таким именем внутри internal/ пропускать нельзя.
+			// .claude/ — рабочие каталоги агентов: там лежат ПОЛНЫЕ копии
+			// дерева (git worktree), и без пропуска любой запущенный агент
+			// ронял этот тест ложно — на своей же копии resources.go.
 			switch rel {
-			case "docs", "frontend", "build":
+			case "docs", "frontend", "build", ".claude":
 				return filepath.SkipDir
 			}
 			return nil

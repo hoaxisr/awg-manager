@@ -47,6 +47,35 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		return s.Disable(ctx)
 	}
 
+	// Первотиковый свип чужого netfilter (зеркало policytun_reconcile.go и
+	// reconcileInstalled): после рестарта демона могли выжить AWGM-цепочки
+	// прежнего tproxy-режима — в fakeip они заворачивают policy-трафик в порт
+	// без слушателя, и не лечит их никто, потому что fakeip своего netfilter
+	// не ставит вовсе. Провал Uninstall внутри Disable этого не ловит: он
+	// проглатывается warn-and-continue, а сам Uninstall сегодня ВСЕГДА
+	// возвращает nil (F79) — то есть первый же тихий сбой невидим.
+	//
+	// Собственные ingress-ресурсы fakeip свип не задевает: у них свои теги
+	// (AWGM-FAKEIP-INGRESS), таблица 700 и приоритет 29000, а Uninstall
+	// снимает цепочки перехвата, теги DNS-RESCUE/NOPOLICY/INGRESS и table 100.
+	// Плюс ensureFakeIPIngress идёт в этом же тике ПОСЛЕ — реассерт.
+	if s.deps.IPTables != nil {
+		s.mu.Lock()
+		force := !s.netfilterStateKnown
+		s.mu.Unlock()
+		if force {
+			if err := s.deps.IPTables.Uninstall(ctx); err != nil {
+				// Сегодня недостижимо (F79) — ветка на будущее, когда шаги
+				// Uninstall станут честными. Зеркалит обоих вызывающих.
+				s.appLog.Warn("fakeip-reconcile", "", "iptables uninstall: "+err.Error())
+			} else {
+				s.mu.Lock()
+				s.netfilterStateKnown = true
+				s.mu.Unlock()
+			}
+		}
+	}
+
 	// LiveOpkgTunIndices probes which opkgtun ifaces actually exist on the box.
 	// Capture the error (Fix B4): a TRANSIENT probe failure (NDMS glitch mid-reload)
 	// must NOT be read as "the iface is gone" — that would trigger a full Enable
@@ -230,14 +259,26 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// edit-time Tier-1 diff cannot see them). Best-effort: add any remote CIDR not
 			// yet present. No removal here — Tier-1 diff-on-mutation owns removals; a remote
 			// set merely contributes additional desired routes.
+			// Потиковой сводки «remote cidrs: v4=N v6=M» здесь больше нет: она
+			// писалась на КАЖДОМ 30-секундном тике при живых наборах и держалась
+			// только на коалесценции журнала (F28). Логируем ФАКТ постановки
+			// маршрутов, а не наличие набора (F29).
+			//
+			// Строка одна на тик, а не на префикс: remote-CIDR ставит ТОЛЬКО
+			// reconcile (enable кладёт лишь desiredTunCIDRs), поэтому на первом
+			// же тике после включения отсутствуют ВСЕ префиксы набора — у
+			// декомпилированного .srs их сотни, и пер-префиксный Info выдавил
+			// бы из кольцевого журнала всю прочую диагностику. По той же причине
+			// не пишем «was absent, re-added»: для первичной установки это
+			// неправда, а отличить её от лечения дрейфа тут нечем.
 			rV4, rV6 := s.remoteTunCIDRs(ctx, cfg)
-			if len(rV4) > 0 || len(rV6) > 0 {
-				s.appLog.Info("fakeip-cidr-remote", ndmsName, fmt.Sprintf("remote cidrs: v4=%d v6=%d", len(rV4), len(rV6)))
-			}
+			added := 0
 			for _, c := range rV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
+					} else {
+						added++
 					}
 				}
 			}
@@ -248,8 +289,13 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
+					} else {
+						added++
 					}
 				}
+			}
+			if added > 0 {
+				s.appLog.Info("fakeip-reconcile", iface, fmt.Sprintf("remote cidr routes installed: %d", added))
 			}
 		}
 	}

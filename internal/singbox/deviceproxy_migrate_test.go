@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,8 +38,13 @@ func TestMigrateDeviceProxyOutOfTunnelsHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// F34: признак «файлы переписаны» — по нему демон решает про reload.
+	if !migrated {
+		t.Error("migrated = false, want true: файлы переписаны")
 	}
 
 	// 30-deviceproxy.json must exist with the device-proxy artefacts.
@@ -96,20 +102,32 @@ func TestMigrateDeviceProxyOutOfTunnelsHappyPath(t *testing.T) {
 	}
 }
 
-func TestMigrateNoOpWhenAlreadySplit(t *testing.T) {
+// Частичный провал миграции: 30-deviceproxy.json уже записан, а перезапись
+// 10-tunnels.json упала — device-proxy остался в ОБОИХ слотах (дубль
+// device-proxy-in валит preflight холодного старта). Следующий вызов обязан
+// долечить: гард смотрит на СОДЕРЖИМОЕ 10-tunnels, а не на существование
+// 30-файла (F73).
+func TestMigrateHealsPartialSplit(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), []byte(`{}`), 0644); err != nil {
+
+	// 30-файл-маркер: его владелец с момента раскола — Reconcile сервиса,
+	// добор миграции обязан оставить его нетронутым.
+	marker := []byte(`{"inbounds":[{"tag":"device-proxy-in","type":"mixed"}]}`)
+	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), marker, 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Even if 10-tunnels.json contains device-proxy, no migration runs
-	// because the destination already exists.
+
 	cfg := NewConfig()
+	cfg.upsertOutbound("vpn-tunnel-1", map[string]any{
+		"tag":  "vpn-tunnel-1",
+		"type": "wireguard",
+	})
 	spec := DeviceProxySpec{
 		Enabled:     true,
-		ListenAddr:  "1.2.3.4",
+		ListenAddr:  "192.168.1.1",
 		Port:        1080,
-		SelectedTag: "vpn",
-		SBTags:      []string{"vpn"},
+		SelectedTag: "vpn-tunnel-1",
+		SBTags:      []string{"vpn-tunnel-1"},
 	}
 	if err := cfg.EnsureDeviceProxy(spec); err != nil {
 		t.Fatalf("ensure: %v", err)
@@ -121,23 +139,86 @@ func TestMigrateNoOpWhenAlreadySplit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "10-tunnels.json"), legacy, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Error("migrated = false, want true: 10-tunnels ещё нёс device-proxy")
+	}
+
+	tunnelsData, err := os.ReadFile(filepath.Join(dir, "10-tunnels.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	// 30-deviceproxy.json should still be the empty marker we wrote.
+	stripped := NewConfig()
+	if err := json.Unmarshal(tunnelsData, stripped); err != nil {
+		t.Fatal(err)
+	}
+	if stripped.HasDeviceProxy() {
+		t.Errorf("device-proxy остался в 10-tunnels: %s", tunnelsData)
+	}
+	if !strings.Contains(string(tunnelsData), "vpn-tunnel-1") {
+		t.Errorf("пользовательский туннель потерян: %s", tunnelsData)
+	}
+
+	// 30-файл не перезаписан: им владеет Reconcile, наша копия протухла бы.
+	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(dpData) != string(marker) {
+		t.Errorf("30-deviceproxy.json перезаписан: %s", dpData)
+	}
+}
+
+// Штатный no-op: раскол уже завершён — 30-файл есть, 10-tunnels чист.
+//
+// Прежняя редакция этого теста («30 есть + 10-tunnels ЕЩЁ несёт device-proxy
+// → no-op») закрепляла дефект F73 и переписана.
+func TestMigrateNoOpWhenAlreadySplitAndTunnelsClean(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "30-deviceproxy.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := NewConfig()
+	cfg.upsertOutbound("vpn", map[string]any{
+		"tag":  "vpn",
+		"type": "wireguard",
+	})
+	clean, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "10-tunnels.json"), clean, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: раскол уже чист")
+	}
 	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(dpData) != `{}` {
-		t.Errorf("destination overwritten: %s", dpData)
+		t.Errorf("30-deviceproxy.json тронут: %s", dpData)
 	}
 }
 
 func TestMigrateNoOpWhenNoTunnelsFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Errorf("expected no error on missing tunnels file, got: %v", err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: мигрировать было нечего")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not exist")
@@ -155,8 +236,12 @@ func TestMigrateNoOpWhenTunnelsHasNoDeviceProxy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "10-tunnels.json"), legacy, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: device-proxy в источнике не было")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not be created when source had none")

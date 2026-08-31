@@ -54,7 +54,7 @@ type delayReply struct {
 	err   error
 }
 
-func (f *fakeClash) TestDelay(name, url string, timeout time.Duration) (int, error) {
+func (f *fakeClash) TestDelay(_ context.Context, name, url string, timeout time.Duration) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.calls == nil {

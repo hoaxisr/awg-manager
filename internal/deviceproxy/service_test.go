@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,6 +88,7 @@ func TestService_SaveConfig_AppliesToSingbox(t *testing.T) {
 type fakeSingboxOperator struct {
 	running             bool
 	tags                []string
+	tagsHook            func() // счётчик обращений: шов для пинов подписчика
 	tunnelInfos         []TunnelOutboundInfo
 	lastSpec            *ExternalSpec
 	lastSpecNR          *ExternalSpec // ApplyDeviceProxyNoReload call
@@ -111,7 +113,12 @@ func (f *fakeSingboxOperator) ApplyDeviceProxyNoReload(_ context.Context, spec E
 	f.lastSpecNR = &spec
 	return nil
 }
-func (f *fakeSingboxOperator) TunnelTags() []string { return f.tags }
+func (f *fakeSingboxOperator) TunnelTags() []string {
+	if f.tagsHook != nil {
+		f.tagsHook()
+	}
+	return f.tags
+}
 func (f *fakeSingboxOperator) TunnelOutbounds() []TunnelOutboundInfo {
 	return f.tunnelInfos
 }
@@ -730,4 +737,66 @@ func TestService_SubscribeBus_RouterOutboundsTriggersReconcile(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("reconcile не сработал на событие singbox-router:outbounds")
+}
+
+// F66: подписчик ждал ключ "singbox.subscriptions", которого не публиковал
+// никто — ветка фильтра была мертва. После сноса реконсиляция обязана
+// по-прежнему просыпаться на tunnels/singbox.tunnels и НЕ просыпаться на
+// снесённом ключе.
+func TestSubscribeBus_DeadSubscriptionsKeyDoesNotWake(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	var calls atomic.Int32
+	sb := &fakeSingboxOperator{tagsHook: func() { calls.Add(1) }}
+	bus := events.NewBus()
+	s := NewService(Deps{Store: store, Singbox: sb, Bus: bus})
+
+	unsub := s.SubscribeBus(context.Background())
+	defer unsub()
+
+	// Сначала ТОЛЬКО снесённый ключ. Счётчик считает обращения к TunnelTags
+	// (за один проход их несколько), поэтому проверяем не число проходов, а
+	// сам факт: разбудил или нет. Settle-окно обязательно — без него ассерт
+	// прошёл бы зелёным на старом коде, просто не дождавшись реконсиляции.
+	bus.PublishInvalidated(events.Resource("singbox.subscriptions"), "test")
+	time.Sleep(500 * time.Millisecond)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("снесённый ключ разбудил реконсиляцию (обращений: %d)", got)
+	}
+
+	// Теперь живой — он будить обязан.
+	bus.PublishInvalidated(events.ResourceSingboxTunnels, "test")
+	deadline := time.Now().Add(3 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if calls.Load() == 0 {
+		t.Error("живой ключ singbox.tunnels не разбудил реконсиляцию")
+	}
+}
+
+// F78: отказ Reconcile, разбуженного шиной, обязан быть виден в журнале —
+// прежде он глотался `_ = err` под комментарием, утверждавшим, что логгер
+// «ещё не подключён» (он подключён с конструктора, service.go:181).
+func TestSubscribeBus_ReconcileFailureLogged(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	sb := &fakeSingboxOperator{applyInstancesErr: errors.New("boom")}
+	rec := &recAppLogger{}
+	bus := events.NewBus()
+	s := NewService(Deps{Store: store, Singbox: sb, Bus: bus, AppLogger: rec})
+
+	unsub := s.SubscribeBus(context.Background())
+	defer unsub()
+
+	bus.PublishInvalidated(events.ResourceTunnels, "test")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for rec.count("boom") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := rec.count("boom"); n == 0 {
+		t.Fatal("отказ Reconcile не попал в журнал")
+	}
+	if n := rec.count("warn:reconcile:"); n == 0 {
+		t.Errorf("запись не warn-уровня группы reconcile: %v", rec.snapshot())
+	}
 }

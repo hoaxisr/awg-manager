@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -56,11 +58,12 @@ func (s *SettingsStore) Load() (*Settings, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return default settings with v2 schema
-			s.settings = s.defaultSettings()
+			def := s.defaultSettings()
 			// Try to migrate port from old port file
-			s.migratePortFile(s.settings)
-			// Save new settings
-			if saveErr := s.saveUnlocked(s.settings); saveErr != nil {
+			s.migratePortFile(def)
+			// Публикацию делает saveUnlocked на успехе; при провале кэш
+			// остаётся пустым и Get() не маскирует ошибку диска (F3).
+			if saveErr := s.saveUnlocked(def); saveErr != nil {
 				return nil, saveErr
 			}
 			return s.settings, nil
@@ -405,14 +408,16 @@ func (s *SettingsStore) AddManagedServer(server ManagedServer) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for _, existing := range s.settings.ManagedServers {
-		if existing.InterfaceName == server.InterfaceName {
-			return fmt.Errorf("server %q already exists", server.InterfaceName)
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		for _, existing := range cp.ManagedServers {
+			if existing.InterfaceName == server.InterfaceName {
+				return fmt.Errorf("server %q already exists", server.InterfaceName)
+			}
 		}
-	}
-	s.settings.ManagedServers = append(s.settings.ManagedServers, server)
-	return s.saveUnlocked(s.settings)
+		cp.ManagedServers = append(slices.Clone(cp.ManagedServers), server)
+		return nil
+	})
 }
 
 // UpdateManagedServer applies mut to the server with the given id and
@@ -428,16 +433,24 @@ func (s *SettingsStore) UpdateManagedServer(id string, mut func(*ManagedServer) 
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for i := range s.settings.ManagedServers {
-		if s.settings.ManagedServers[i].InterfaceName == id {
-			if err := mut(&s.settings.ManagedServers[i]); err != nil {
-				return err
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		servers := slices.Clone(cp.ManagedServers)
+		for i := range servers {
+			if servers[i].InterfaceName == id {
+				// Клон Peers обязателен: мутаторы правят элементы по месту
+				// (managed/service_peers.go), и без него правка утекла бы в
+				// живой кэш даже при провале записи.
+				servers[i].Peers = slices.Clone(servers[i].Peers)
+				if err := mut(&servers[i]); err != nil {
+					return err
+				}
+				cp.ManagedServers = servers
+				return nil
 			}
-			return s.saveUnlocked(s.settings)
 		}
-	}
-	return fmt.Errorf("server %q not found", id)
+		return fmt.Errorf("server %q not found", id)
+	})
 }
 
 // DeleteManagedServer removes the server with the given id.
@@ -447,17 +460,37 @@ func (s *SettingsStore) DeleteManagedServer(id string) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.migrateManagedServers()
-	for i, existing := range s.settings.ManagedServers {
-		if existing.InterfaceName == id {
-			s.settings.ManagedServers = append(s.settings.ManagedServers[:i], s.settings.ManagedServers[i+1:]...)
-			// Снять ingress-ref удалённого сервера в той же транзакции —
-			// иначе он висит до перезапуска демона (#670).
-			pruneOrphanIngressRefs(s.settings)
-			return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		migrateManagedServersIn(cp)
+		for i, existing := range cp.ManagedServers {
+			if existing.InterfaceName == id {
+				// Новый backing вместо сдвига по месту: прежний сдвигал
+				// разделяемый массив под читателями старого снимка.
+				cp.ManagedServers = append(
+					append([]ManagedServer(nil), cp.ManagedServers[:i]...),
+					cp.ManagedServers[i+1:]...)
+				// Снять ingress-ref удалённого сервера в той же транзакции —
+				// иначе он висит до перезапуска демона (#670).
+				pruneOrphanIngressRefs(cp)
+				return nil
+			}
 		}
+		return fmt.Errorf("server %q not found", id)
+	})
+}
+
+// updateUnlocked — транзакция узкого мутатора: копия живого кэша → mut →
+// запись; публикацию на успехе делает saveUnlocked (F3). Вызывающий уже держит
+// s.mu, поэтому лок здесь не берётся — форма зеркалит публичный Update.
+//
+// Копия МЕЛКАЯ: mut присваивает поля, а вложенные контейнеры правит только
+// через собственные клоны (та же конвенция, что у Update).
+func (s *SettingsStore) updateUnlocked(mut func(*Settings) error) error {
+	cp := *s.settings
+	if err := mut(&cp); err != nil {
+		return err
 	}
-	return fmt.Errorf("server %q not found", id)
+	return s.saveUnlocked(&cp)
 }
 
 // SaveManagedServers replaces the entire slice — used by migration tests
@@ -468,9 +501,11 @@ func (s *SettingsStore) SaveManagedServers(servers []ManagedServer) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.ManagedServers = servers
-	s.settings.ManagedServer = nil
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedServers = servers
+		cp.ManagedServer = nil
+		return nil
+	})
 }
 
 // SetSingboxManuallyStopped atomically updates the sing-box sticky-stop
@@ -483,8 +518,10 @@ func (s *SettingsStore) SetSingboxManuallyStopped(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.SingboxManuallyStopped = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.SingboxManuallyStopped = v
+		return nil
+	})
 }
 
 // SetAuthEnabled atomically turns authentication on/off under the store
@@ -500,8 +537,10 @@ func (s *SettingsStore) SetAuthEnabled(v bool) (bool, error) {
 	if s.settings.AuthEnabled == v {
 		return false, nil
 	}
-	s.settings.AuthEnabled = v
-	if err := s.saveUnlocked(s.settings); err != nil {
+	if err := s.updateUnlocked(func(cp *Settings) error {
+		cp.AuthEnabled = v
+		return nil
+	}); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -518,8 +557,10 @@ func (s *SettingsStore) SetSingboxCreateNDMSProxy(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.CreateNDMSProxyForSingbox = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.CreateNDMSProxyForSingbox = v
+		return nil
+	})
 }
 
 // IsSingboxNDMSProxyEnabled returns the current toggle value, or true
@@ -552,8 +593,10 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.ManagedPeerAllowIPsMigrated = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPeerAllowIPsMigrated = v
+		return nil
+	})
 }
 
 // SetOpkgTunState atomically persists the unified OpkgTun ownership record
@@ -575,8 +618,10 @@ func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 		cp := *st
 		st = &cp
 	}
-	s.settings.OpkgTun = st
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.OpkgTun = st
+		return nil
+	})
 }
 
 // SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая
@@ -594,14 +639,16 @@ func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error 
 	if s.settings.OpkgTun == nil {
 		return fmt.Errorf("no OpkgTun ownership record")
 	}
-	cp := *s.settings.OpkgTun
-	if len(segs) == 0 {
-		cp.PolicyTun = nil
-	} else {
-		cp.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
-	}
-	s.settings.OpkgTun = &cp
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cur *Settings) error {
+		rec := *cur.OpkgTun
+		if len(segs) == 0 {
+			rec.PolicyTun = nil
+		} else {
+			rec.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
+		}
+		cur.OpkgTun = &rec
+		return nil
+	})
 }
 
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
@@ -613,8 +660,10 @@ func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.DNSChainPreset = st
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.DNSChainPreset = st
+		return nil
+	})
 }
 
 // MarkServerInterface adds an interface ID to the server interfaces list.
@@ -631,8 +680,10 @@ func (s *SettingsStore) MarkServerInterface(id string) error {
 	if !added {
 		return nil
 	}
-	settings.ServerInterfaces = next
-	return s.saveUnlocked(settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ServerInterfaces = next
+		return nil
+	})
 }
 
 // UnmarkServerInterface removes an interface ID from the server interfaces list.
@@ -645,8 +696,11 @@ func (s *SettingsStore) UnmarkServerInterface(id string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	settings.ServerInterfaces = filterOut(settings.ServerInterfaces, id)
-	return s.saveUnlocked(settings)
+	next := filterOut(settings.ServerInterfaces, id)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ServerInterfaces = next
+		return nil
+	})
 }
 
 // GetServerInterfaces returns the list of server interface IDs.
@@ -685,15 +739,19 @@ func (s *SettingsStore) UpdateServerInterfaceMeta(serverID string, fn func(*Serv
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	if s.settings.ServerInterfaceMeta == nil {
-		s.settings.ServerInterfaceMeta = map[string]ServerInterfaceMeta{}
-	}
-	meta := s.settings.ServerInterfaceMeta[serverID]
-	if err := fn(&meta); err != nil {
-		return err
-	}
-	s.settings.ServerInterfaceMeta[serverID] = meta
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		m := maps.Clone(cp.ServerInterfaceMeta)
+		if m == nil {
+			m = map[string]ServerInterfaceMeta{}
+		}
+		meta := m[serverID]
+		if err := fn(&meta); err != nil {
+			return err
+		}
+		m[serverID] = meta
+		cp.ServerInterfaceMeta = m
+		return nil
+	})
 }
 
 // GetServerPeerSecret returns stored key material for a system-server peer.
@@ -718,14 +776,20 @@ func (s *SettingsStore) SetServerPeerSecret(serverID, pubkey string, sec ServerP
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	if s.settings.ServerPeerSecrets == nil {
-		s.settings.ServerPeerSecrets = map[string]map[string]ServerPeerSecret{}
-	}
-	if s.settings.ServerPeerSecrets[serverID] == nil {
-		s.settings.ServerPeerSecrets[serverID] = map[string]ServerPeerSecret{}
-	}
-	s.settings.ServerPeerSecrets[serverID][pubkey] = sec
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		outer := maps.Clone(cp.ServerPeerSecrets)
+		if outer == nil {
+			outer = map[string]map[string]ServerPeerSecret{}
+		}
+		inner := maps.Clone(outer[serverID])
+		if inner == nil {
+			inner = map[string]ServerPeerSecret{}
+		}
+		inner[pubkey] = sec
+		outer[serverID] = inner
+		cp.ServerPeerSecrets = outer
+		return nil
+	})
 }
 
 // DeleteServerPeerSecret removes stored key material for a system-server peer.
@@ -735,15 +799,21 @@ func (s *SettingsStore) DeleteServerPeerSecret(serverID, pubkey string) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	peers, ok := s.settings.ServerPeerSecrets[serverID]
-	if !ok {
+	if _, ok := s.settings.ServerPeerSecrets[serverID]; !ok {
 		return nil
 	}
-	delete(peers, pubkey)
-	if len(peers) == 0 {
-		delete(s.settings.ServerPeerSecrets, serverID)
-	}
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		outer := maps.Clone(cp.ServerPeerSecrets)
+		inner := maps.Clone(outer[serverID])
+		delete(inner, pubkey)
+		if len(inner) == 0 {
+			delete(outer, serverID)
+		} else {
+			outer[serverID] = inner
+		}
+		cp.ServerPeerSecrets = outer
+		return nil
+	})
 }
 
 // save публикует переданный объект как новый кэш и пишет его на диск.
@@ -804,8 +874,6 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 		return err
 	}
 
-	s.settings = settings
-
 	// Keep the previous good file as .bak (hardlink: no data copy, the old
 	// inode survives the rename below). Load() falls back to it if the main
 	// file is ever found corrupt after a power loss.
@@ -815,7 +883,15 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 		_ = os.Link(s.path, bakPath)
 	}
 
-	return AtomicWrite(s.path, buf.Bytes())
+	if err := AtomicWrite(s.path, buf.Bytes()); err != nil {
+		return err
+	}
+	// Публикация ТОЛЬКО после успешной записи: при провале кэш не должен нести
+	// незаписанное (F3). Для мутаторов, передающих сюда свежую копию, это и
+	// есть весь откат; мутаторы, правящие живой кэш по месту, откатываются
+	// собственной копией (см. updateUnlocked).
+	s.settings = settings
+	return nil
 }
 
 // Get returns cached settings or loads from disk.
@@ -1037,8 +1113,10 @@ func (s *SettingsStore) AddManagedPolicy(name string) error {
 	if !added {
 		return nil
 	}
-	settings.ManagedPolicies = next
-	return s.saveUnlocked(settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPolicies = next
+		return nil
+	})
 }
 
 // RemoveManagedPolicy removes a policy name from the managed policies list.
@@ -1051,8 +1129,11 @@ func (s *SettingsStore) RemoveManagedPolicy(name string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	settings.ManagedPolicies = filterOut(settings.ManagedPolicies, name)
-	return s.saveUnlocked(settings)
+	next := filterOut(settings.ManagedPolicies, name)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPolicies = next
+		return nil
+	})
 }
 
 // GetManagedPolicies returns the list of policy names created by AWG Manager.

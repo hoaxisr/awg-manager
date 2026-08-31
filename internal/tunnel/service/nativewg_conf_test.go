@@ -67,3 +67,36 @@ func TestReplaceConfigWritesConfForKernel(t *testing.T) {
 		t.Errorf("kernel-путь читает этот файл через awg setconf, он обязан быть: %v", err)
 	}
 }
+
+// Замена .conf и правка карточки — РАЗНАЯ семантика пира, и это намеренно.
+// Карточка идёт через mergedPeer, где пустой PresharedKey значит «оставить
+// прежний» (F70: GET ключ не отдаёт, и эхо трёх модалок шлёт пустоту).
+// Замена конфига присваивает пира ЦЕЛИКОМ: новый .conf без PSK обязан ключ
+// стереть, иначе от прежнего пира остался бы висячий секрет.
+//
+// Пин против «унификации»: если ReplaceConfig когда-нибудь переведут на
+// mergedPeer, замена конфига молча перестанет стирать PSK.
+func TestReplaceConfig_ClearsPresharedKeyAbsentInNewConf(t *testing.T) {
+	s, _ := serviceWithStore(t)
+	stored := &storage.AWGTunnel{
+		ID:   "awg10",
+		Name: "t",
+		Peer: storage.AWGPeer{PublicKey: "old", PresharedKey: "psk-из-старого-конфига"},
+	}
+	if err := s.store.Create(stored); err != nil {
+		t.Fatal(err)
+	}
+
+	// sampleConf секции PresharedKey не содержит.
+	if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, ""); err != nil {
+		t.Fatalf("ReplaceConfig: %v", err)
+	}
+
+	got, err := s.store.Get("awg10")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Peer.PresharedKey != "" {
+		t.Errorf("PresharedKey = %q, want пустой: новый .conf ключа не несёт", got.Peer.PresharedKey)
+	}
+}

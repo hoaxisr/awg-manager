@@ -622,6 +622,12 @@ func (o *Operator) writeTunnelsSlot(cfg *Config, validate bool) error {
 	if o.orch == nil {
 		return fmt.Errorf("apply tunnels config: orchestrator not wired")
 	}
+	// Маршал идёт через Config.MarshalJSON, а не через Config.Save, поэтому
+	// компат-фиксы Save (ensureNaiveUDPOverTCPOutbounds,
+	// ensureHysteria2ChromeParrotOutbounds) на этом пути НЕ применяются.
+	// Потери нет: те же фиксы стоят в точках мутации конфига и в бут-
+	// примирении (stepOutboundCompat), — но страховочного слоя тут больше нет,
+	// и добавлять его сюда значит чинить дважды (F17).
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal tunnels config: %w", err)
@@ -629,7 +635,13 @@ func (o *Operator) writeTunnelsSlot(cfg *Config, validate bool) error {
 	if !validate {
 		return o.orch.Save(orchestrator.SlotTunnels, data)
 	}
+	// Разметка стадии: на mipsel `sing-box check` внутри SaveAndValidate идёт
+	// секундами, а тотальные таймеры AddTunnels/RemoveTunnel этого не
+	// показывают — снятый applyConfig стадии метил, writeTunnelsSlot перестал
+	// (F18).
+	validateStart := time.Now()
 	res, err := o.orch.SaveAndValidate(orchestrator.SlotTunnels, data)
+	perftrace.Mark(o.runtimeLogger, "perf", "writeTunnelsSlot", "save+validate", validateStart)
 	if err != nil {
 		return err
 	}

@@ -249,9 +249,17 @@ func TestMergePeerWhitelist_AppliesAllFiveFields(t *testing.T) {
 	}
 }
 
-// TestMergePeerWhitelist_PSKCleared lets the user remove the preshared
-// key by explicitly sending empty PSK with non-empty PublicKey.
-func TestMergePeerWhitelist_PSKCleared(t *testing.T) {
+// F70 ИНВЕРТИРОВАЛ этот тест. Раньше пустой PSK при непустом PublicKey ОЧИЩАЛ
+// ключ, и это было намеренно («lets the user remove the preshared key»). Но с
+// тех пор GET перестал отдавать PSK наружу, а три модалки эхом шлют весь
+// объект туннеля обратно — то есть пустой PSK в теле теперь означает «модалка
+// его просто не видела», а не «пользователь просит стереть».
+//
+// ОСОЗНАННАЯ ПОТЕРЯ (решение владельца): очистить PSK через API больше нельзя.
+// Через UI её и не было никогда — редактор поля PSK не имеет, анализатор
+// применяет optionalStrOrCurrent. Понадобится очистка — нужен явный контракт
+// (компаньон-флаг по образцу DefaultRouteSet либо отдельная ручка).
+func TestMergePeerWhitelist_EmptyPSKKeepsExisting(t *testing.T) {
 	existing := &storage.AWGTunnel{
 		Peer: storage.AWGPeer{PublicKey: "k", PresharedKey: "psk"},
 	}
@@ -260,8 +268,8 @@ func TestMergePeerWhitelist_PSKCleared(t *testing.T) {
 	}
 	req.Peer = mergedPeer(existing.Peer, req.Peer)
 
-	if req.Peer.PresharedKey != "" {
-		t.Fatalf("PSK not cleared: got %q", req.Peer.PresharedKey)
+	if req.Peer.PresharedKey != "psk" {
+		t.Fatalf("PSK = %q, want прежний: пустое эхо модалки не должно стирать ключ", req.Peer.PresharedKey)
 	}
 }
 

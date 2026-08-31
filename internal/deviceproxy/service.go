@@ -1281,19 +1281,23 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 				if !ok {
 					continue
 				}
-				if payload.Resource != "tunnels" &&
-					payload.Resource != "singbox.tunnels" &&
-					payload.Resource != "singbox.subscriptions" {
+				// Ключа singbox.subscriptions здесь больше нет: его не публиковал
+				// НИКТО, ветка была мертва (F66). Прежний довод «оставить, чтобы
+				// не замаскировать будущего публикатора» обесценен закрытым
+				// набором ключей (F62): новый ключ теперь не пройдёт мимо
+				// events.AllResources и union фронта. CRUD подписок будит
+				// реконсиляцию через tunnels/singbox.tunnels, как и раньше.
+				if payload.Resource != events.ResourceTunnels &&
+					payload.Resource != events.ResourceSingboxTunnels {
 					continue
 				}
 			}
 			if err := s.Reconcile(ctx); err != nil {
-				// Reconcile failure is non-fatal at the subscriber level;
-				// the user-facing flow already has its own error path.
-				// No logger is wired on Service yet (would be added in a
-				// future task); silent swallow matches the project's other
-				// similar subscribers.
-				_ = err
+				// Отказ не фатален для подписчика — он обязан слушать
+				// дальше, — но обязан быть виден: прежде он глотался
+				// молча (F78). Своей дедупликации не нужно, журнал
+				// коалесцирует повторы сам.
+				s.appLog.Warn("reconcile", "", "bus-triggered reconcile failed: "+err.Error())
 			}
 		}
 	}()

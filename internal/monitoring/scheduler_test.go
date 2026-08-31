@@ -323,7 +323,7 @@ type fakeSingboxDelay struct {
 	err     error
 }
 
-func (f *fakeSingboxDelay) TestDelay(outboundTag, testURL string, _ time.Duration) (int, error) {
+func (f *fakeSingboxDelay) TestDelay(_ context.Context, outboundTag, testURL string, _ time.Duration) (int, error) {
 	f.calls.Add(1)
 	f.mu.Lock()
 	f.lastTag = outboundTag
