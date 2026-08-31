@@ -22,30 +22,34 @@ import (
 //
 // configDir is the sing-box config.d directory (typically
 // /opt/etc/sing-box/config.d).
-func MigrateDeviceProxyOutOfTunnels(configDir string) error {
+//
+// Возвращает признак «файлы переписаны» — по нему демон решает, надо ли
+// перечитать конфиг пережившего рестарт sing-box (F34): без него миграция
+// доезжала до живого процесса только со случайным reload по другому поводу.
+func MigrateDeviceProxyOutOfTunnels(configDir string) (bool, error) {
 	tunnelsPath := filepath.Join(configDir, "10-tunnels.json")
 	deviceProxyPath := filepath.Join(configDir, "30-deviceproxy.json")
 
 	// Already split? Nothing to do.
 	if _, err := os.Stat(deviceProxyPath); err == nil {
-		return nil
+		return false, nil
 	}
 
 	data, err := os.ReadFile(tunnelsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("read tunnels: %w", err)
+		return false, fmt.Errorf("read tunnels: %w", err)
 	}
 
 	cfg := NewConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("parse tunnels: %w", err)
+		return false, fmt.Errorf("parse tunnels: %w", err)
 	}
 
 	if !cfg.HasDeviceProxy() {
-		return nil
+		return false, nil
 	}
 
 	// Build the device-proxy slot by extracting it from the loaded cfg.
@@ -53,23 +57,23 @@ func MigrateDeviceProxyOutOfTunnels(configDir string) error {
 
 	extractedJSON, err := json.MarshalIndent(extracted, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal extracted: %w", err)
+		return false, fmt.Errorf("marshal extracted: %w", err)
 	}
 	if err := writeJSONAtomic(deviceProxyPath, extractedJSON); err != nil {
-		return fmt.Errorf("write deviceproxy: %w", err)
+		return false, fmt.Errorf("write deviceproxy: %w", err)
 	}
 
 	// Persist tunnels stripped of device-proxy.
 	cfg.RemoveDeviceProxy()
 	strippedJSON, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal tunnels: %w", err)
+		return false, fmt.Errorf("marshal tunnels: %w", err)
 	}
 	if err := writeJSONAtomic(tunnelsPath, strippedJSON); err != nil {
-		return fmt.Errorf("write tunnels: %w", err)
+		return false, fmt.Errorf("write tunnels: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // writeJSONAtomic writes data to path atomically (unique temp + rename) via

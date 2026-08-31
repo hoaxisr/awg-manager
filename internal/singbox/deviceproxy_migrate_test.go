@@ -37,8 +37,13 @@ func TestMigrateDeviceProxyOutOfTunnelsHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	// F34: признак «файлы переписаны» — по нему демон решает про reload.
+	if !migrated {
+		t.Error("migrated = false, want true: файлы переписаны")
 	}
 
 	// 30-deviceproxy.json must exist with the device-proxy artefacts.
@@ -121,8 +126,12 @@ func TestMigrateNoOpWhenAlreadySplit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "10-tunnels.json"), legacy, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: 30-deviceproxy.json уже был")
 	}
 	// 30-deviceproxy.json should still be the empty marker we wrote.
 	dpData, err := os.ReadFile(filepath.Join(dir, "30-deviceproxy.json"))
@@ -136,8 +145,12 @@ func TestMigrateNoOpWhenAlreadySplit(t *testing.T) {
 
 func TestMigrateNoOpWhenNoTunnelsFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Errorf("expected no error on missing tunnels file, got: %v", err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: мигрировать было нечего")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not exist")
@@ -155,8 +168,12 @@ func TestMigrateNoOpWhenTunnelsHasNoDeviceProxy(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "10-tunnels.json"), legacy, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateDeviceProxyOutOfTunnels(dir); err != nil {
+	migrated, err := MigrateDeviceProxyOutOfTunnels(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("migrated = true, want false: device-proxy в источнике не было")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "30-deviceproxy.json")); !os.IsNotExist(err) {
 		t.Errorf("deviceproxy file should not be created when source had none")
