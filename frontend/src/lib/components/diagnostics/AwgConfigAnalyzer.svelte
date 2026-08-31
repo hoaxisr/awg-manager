@@ -116,7 +116,9 @@
 		try {
 			const p = parseAWG(t);
 			const v = detectVersion(p.iface);
-			const c = runChecks(p.iface, p.peer, v);
+			const c = runChecks(p.iface, p.peer, v, {
+				privateKeyHidden: !!selectedTunnelId && !p.iface.privatekey,
+			});
 			const s = calcScores(c, p.iface, v);
 			const f = buildFixes(c, p.iface, p.peer, v);
 			const ver = getVerdict(s.total);
@@ -337,7 +339,9 @@
 			await tunnelsStore.update(selectedTunnelId, update);
 
 			const v = detectVersion(freshParsed.iface);
-			const c = runChecks(freshParsed.iface, freshParsed.peer, v);
+			const c = runChecks(freshParsed.iface, freshParsed.peer, v, {
+				privateKeyHidden: !!selectedTunnelId && !freshParsed.iface.privatekey,
+			});
 			const s = calcScores(c, freshParsed.iface, v);
 			const f = buildFixes(c, freshParsed.iface, freshParsed.peer, v);
 			version = v;
