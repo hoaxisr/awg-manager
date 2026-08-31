@@ -56,11 +56,12 @@ func (s *SettingsStore) Load() (*Settings, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return default settings with v2 schema
-			s.settings = s.defaultSettings()
+			def := s.defaultSettings()
 			// Try to migrate port from old port file
-			s.migratePortFile(s.settings)
-			// Save new settings
-			if saveErr := s.saveUnlocked(s.settings); saveErr != nil {
+			s.migratePortFile(def)
+			// Публикацию делает saveUnlocked на успехе; при провале кэш
+			// остаётся пустым и Get() не маскирует ошибку диска (F3).
+			if saveErr := s.saveUnlocked(def); saveErr != nil {
 				return nil, saveErr
 			}
 			return s.settings, nil
@@ -804,8 +805,6 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 		return err
 	}
 
-	s.settings = settings
-
 	// Keep the previous good file as .bak (hardlink: no data copy, the old
 	// inode survives the rename below). Load() falls back to it if the main
 	// file is ever found corrupt after a power loss.
@@ -815,7 +814,15 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 		_ = os.Link(s.path, bakPath)
 	}
 
-	return AtomicWrite(s.path, buf.Bytes())
+	if err := AtomicWrite(s.path, buf.Bytes()); err != nil {
+		return err
+	}
+	// Публикация ТОЛЬКО после успешной записи: при провале кэш не должен нести
+	// незаписанное (F3). Для мутаторов, передающих сюда свежую копию, это и
+	// есть весь откат; мутаторы, правящие живой кэш по месту, откатываются
+	// собственной копией (см. updateUnlocked).
+	s.settings = settings
+	return nil
 }
 
 // Get returns cached settings or loads from disk.
