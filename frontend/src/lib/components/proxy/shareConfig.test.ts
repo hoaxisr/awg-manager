@@ -177,3 +177,22 @@ describe('directListenValue', () => {
 		]);
 	});
 });
+
+describe('directListen, записанный до нормализации поля', () => {
+	it('голый порт превращается в адрес — иначе он уедет в освобождение портов как есть', () => {
+		const ports = wdttServerPorts(wdtt({ listen: '0.0.0.0:56002', directListen: '56005' }));
+		expect(ports.find((p) => p.label === 'Direct')?.listen).toBe('0.0.0.0:56005');
+	});
+
+	it('хост берётся от порта раздачи, как у строк DTLS и Raw', () => {
+		const ports = wdttServerPorts(wdtt({ listen: '127.0.0.1:56002', directListen: '56005' }));
+		expect(ports.find((p) => p.label === 'Direct')?.listen).toBe('127.0.0.1:56005');
+	});
+});
+
+describe('serverPortConflict: пустой порт раздачи', () => {
+	it('отвергается здесь, а не отказом бэкенда', () => {
+		expect(serverPortConflict(wdtt({ listen: '', wgPort: 56001 }))).toContain('порт раздачи');
+		expect(serverPortConflict(wdtt({ listen: '   ', wgPort: 56001 }))).toContain('порт раздачи');
+	});
+});

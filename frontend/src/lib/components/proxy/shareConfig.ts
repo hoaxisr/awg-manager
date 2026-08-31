@@ -100,7 +100,11 @@ export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
 	const direct = cfg.directListen?.trim();
 	if (direct && listenPortNumber(direct, 0) !== dtls) {
 		const port = listenPortNumber(direct, dtls);
-		ports.push({ listen: direct, label: 'Direct', port });
+		// Через setListenPort, как у соседних строк: до нормализации поля
+		// directListen мог быть голым портом, и такой адрес
+		// ListenPortKillButton отправит бэкенду как есть, а
+		// net.SplitHostPort его не разберёт.
+		ports.push({ listen: setListenPort(direct, port, host), label: 'Direct', port });
 	}
 	return ports;
 }
@@ -212,6 +216,11 @@ export async function saveShareInstance(
  * Direct, равный порту раздачи, — это «выключено», а не столкновение.
  */
 export function serverPortConflict(cfg: WdttServerConfig): string {
+	// Пустой listen бэкенд отвергает раньше всех сравнений портов
+	// (`WdttServerConfig.Validate`, internal/proxyrt/roles/config.go), а
+	// здесь он подменяется дефолтом и конфликта не даёт — отказ прилетал
+	// с сервера вместо того, чтобы не дать нажать «Сохранить».
+	if (!(cfg.listen ?? '').trim()) return 'Не задан порт раздачи.';
 	const seen = new Map<number, string>();
 	const add = (name: string, port: number): string => {
 		if (!Number.isInteger(port) || port <= 0) return '';
