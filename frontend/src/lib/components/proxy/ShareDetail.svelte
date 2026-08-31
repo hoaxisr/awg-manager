@@ -14,27 +14,22 @@
 	import { formatUptime } from '../freeturn/uptime';
 	import type { NatMode } from '$lib/utils/network';
 	import type {
-		AccessPolicy,
 		FreeTurnProcessStatus,
 		FreeTurnServerConfig,
 		SingboxRouterSettings,
 		WdttProcessStatus,
 		WdttServerConfig,
 	} from '$lib/types';
-	import DetailSection from './DetailSection.svelte';
 	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
-	import RunBar from './RunBar.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import ServerClients from './ServerClients.svelte';
 	import { CLIENT_TEXT } from './serverClients';
 	import ShareAdvancedSection from './ShareAdvancedSection.svelte';
 	import ShareNetworkSection from './ShareNetworkSection.svelte';
-	import Topology, { type TopologyInbound } from './Topology.svelte';
 	import { cloneConfig } from './exitConfig';
 	import {
 		freeTurnServerPorts,
-		natModeLabel,
 		wdttServerKillPorts,
 		wdttServerPorts,
 		type ShareConfig,
@@ -50,8 +45,6 @@
 		wdttServer?: WdttServerConfig;
 		ftServer?: FreeTurnServerConfig;
 		routerClock?: string;
-		/** Каталог политик роутера — для строки схемы «политика: …». */
-		policies: AccessPolicy[];
 		saving?: boolean;
 		busy?: boolean;
 		onstart: () => void;
@@ -70,7 +63,6 @@
 		wdttServer,
 		ftServer,
 		routerClock = '',
-		policies,
 		saving = false,
 		busy = false,
 		onstart,
@@ -149,55 +141,6 @@
 		usableClients === undefined ? '—' : `${usableClients} / ${totalClients ?? usableClients}`,
 	);
 	const portTiles = $derived(ports.slice(0, 2));
-
-	// Правило имён ia.md §1.0: на странице NDMS-имена, kernel-имена — под (i).
-	const ndmsIface = $derived(wdttStatus?.ndmsIface?.trim() || '');
-	const rawNdmsIface = $derived(wdttStatus?.rawNdmsIface?.trim() || '');
-	const ndmsNames = $derived([ndmsIface, rawNdmsIface].filter(Boolean).join(' · '));
-	// SH-19 рассказывает про обе половины: со старым бинарём NDMS-имя raw пусто,
-	// и рассказывать не о чем — (i) не показывается.
-	const ndmsHint = $derived(
-		ndmsIface && rawNdmsIface
-			? `Оба интерфейса сервера зарегистрированы в роутере: ${ndmsIface} — WireGuard-половина, ` +
-					`${rawNdmsIface} — Raw-половина. Kernel-имена: ${wdttDraft?.wgIface ?? ''} и ` +
-					`${wdttStatus?.rawIface ?? ''}.`
-			: '',
-	);
-
-	const policyName = $derived(wdttDraft?.policy?.trim() ?? '');
-	const policyLabel = $derived.by(() => {
-		if (!policyName || policyName === 'none') return '';
-		const p = policies.find((x) => x.name === policyName);
-		return p ? p.description || p.name : policyName;
-	});
-
-	const lanLabel = $derived(
-		(wdttDraft?.lanSegments ?? [])
-			.map((s) => lanOptions.find((o) => o.value === s)?.label || s)
-			.join(', '),
-	);
-
-	const inbound = $derived<TopologyInbound[]>(
-		wdttDraft
-			? ports
-					.filter((p) => p.label === 'DTLS' || p.label === 'Raw')
-					.map((p) => ({
-						who: p.label === 'DTLS' ? 'Приложение на телефоне' : 'Клиент на роутере',
-						how: `${p.label} :${p.port}`,
-					}))
-			: ports.map((p) => ({ who: 'FreeTurn-клиент', how: `:${p.port}` })),
-	);
-
-	const routerLines = $derived(
-		wdttDraft
-			? [
-					ndmsIface ? `${ndmsIface} · WireGuard` : '',
-					rawNdmsIface ? `${rawNdmsIface} · Raw` : '',
-					`NAT: ${natModeLabel(wdttDraft.natMode)}`,
-					lanLabel ? `LAN: ${lanLabel}` : '',
-				].filter(Boolean)
-			: [ftDraft?.connect ?? ''].filter(Boolean),
-	);
 
 	// Применённое значение exposeToPolicies — из статуса: тумблер применяется
 	// только на старте процесса, и с чем тот стартовал, знает один бэкенд.

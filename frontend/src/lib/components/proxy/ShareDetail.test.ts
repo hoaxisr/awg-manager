@@ -4,7 +4,7 @@
 // трафик абонентов идёт через sing-box при выключенном тумблере тоже. Прежняя
 // подсказка обещала обратное — «абоненты выходят напрямую, минуя правила».
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AccessPolicy, WdttServerConfig } from "$lib/types";
+import type { WdttServerConfig } from "$lib/types";
 
 vi.hoisted(() => {
   Object.defineProperty(globalThis, "matchMedia", {
@@ -76,7 +76,6 @@ async function mountAndOpenSettings() {
     props: {
       row,
       wdttServer,
-      policies: [] as AccessPolicy[],
       onstart: () => {},
       onstop: () => {},
       onrestart: async () => {},

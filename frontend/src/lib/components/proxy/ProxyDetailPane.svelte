@@ -269,7 +269,6 @@
 			wdttServer={shareWdttServer}
 			ftServer={shareFtServer}
 			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
-			{policies}
 			saving={savingShare}
 			busy={busyKeys.includes(shareRow.key)}
 			onstart={() => shareRow && ontoggle(shareRow, true)}

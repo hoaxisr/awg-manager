@@ -98,8 +98,6 @@
 		row.protocol === 'freeturn' ? 'FreeTurn' : draftRaw ? 'WDTT · Raw' : 'WDTT · WG',
 	);
 
-	// RB-06: локальный порт, аптайм, PID.
-
 	const uptime = $derived(formatUptime(row.startedAt) || '—');
 
 	// Настройки — одноразовые: уезжают в ящик, как у раздачи.
