@@ -989,7 +989,14 @@ func mergedPeer(base, req storage.AWGPeer) storage.AWGPeer {
 		return base
 	}
 	base.PublicKey = req.PublicKey
-	base.PresharedKey = req.PresharedKey
+	if req.PresharedKey != "" {
+		// Пусто = «оставить прежний», как у PrivateKey в mergedInterface: GET
+		// больше не отдаёт PSK, и эхо трёх модалок шлёт пустоту. ОСОЗНАННАЯ
+		// ПОТЕРЯ (решение владельца, F70): очистить PSK через API теперь
+		// нельзя — нужен явный контракт (компаньон-флаг вроде DefaultRouteSet
+		// или отдельная ручка), если очистка когда-нибудь понадобится.
+		base.PresharedKey = req.PresharedKey
+	}
 	base.Endpoint = req.Endpoint
 	base.AllowedIPs = req.AllowedIPs
 	base.PersistentKeepalive = req.PersistentKeepalive

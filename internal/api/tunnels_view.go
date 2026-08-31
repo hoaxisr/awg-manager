@@ -167,16 +167,17 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 	}
 
 	if stored != nil {
-		// Ключевой материал наружу не отдаём: GET читают три модалки, и каждая
-		// шлёт весь объект обратно в update. Сохранность ключа держится не на
-		// эхе, а на merge-семантике (mergedInterface: пустой PrivateKey в теле
-		// = «оставить прежний»), поэтому пустое значение здесь безопасно.
-		// PresharedKey в resp["peer"] НЕ редактируем: mergedPeer присваивает
-		// его безусловно, и пустое эхо стёрло бы PSK — отдельная находка.
+		// Ключевой материал наружу не отдаём НИ В КАКОМ виде: GET читают три
+		// модалки, и каждая шлёт весь объект обратно в update. Сохранность
+		// обоих ключей держится не на эхе, а на merge-семантике — пустое
+		// значение в теле значит «оставить прежний» (mergedInterface для
+		// PrivateKey, mergedPeer для PresharedKey, F56+F70).
 		iface := stored.Interface
 		iface.PrivateKey = ""
 		resp["interface"] = iface
-		resp["peer"] = stored.Peer
+		peer := stored.Peer
+		peer.PresharedKey = ""
+		resp["peer"] = peer
 		resp["pingCheck"] = stored.PingCheck
 		resp["connectivityCheck"] = stored.ConnectivityCheck
 		resp["ispInterfaceLabel"] = stored.ISPInterfaceLabel
@@ -397,4 +398,3 @@ func (h *TunnelsHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 		"system":   []interface{}{},
 	})
 }
-
