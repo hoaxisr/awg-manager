@@ -7875,16 +7875,6 @@ definitions:
       isAuto:
         description: IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
         type: boolean
-      isDeactivated:
-        description: IsDeactivated — признак из passwords.json (деактивацию ставит
-          форк).
-        type: boolean
-      isExpired:
-        description: |-
-          IsExpired — срок, назначенный сервером, истёк. Такой абонент в
-          passwords.json не пишется и подключиться не может; в списке он остаётся,
-          чтобы пользователь понимал, почему доступ пропал.
-        type: boolean
       isMainPassword:
         description: |-
           IsMainPassword — пароль абонента совпадает с главным паролем сервера.

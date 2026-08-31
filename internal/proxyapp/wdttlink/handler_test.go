@@ -156,8 +156,6 @@ func (fakeVetting) UnusableReason(u instancestore.ServerUser, main string, now t
 		return ReasonEmptyPassword
 	case strings.TrimSpace(u.Password) == strings.TrimSpace(main):
 		return ReasonMainPassword
-	case u.ExpiresAt > 0 && now.Unix() >= u.ExpiresAt:
-		return ReasonExpired
 	}
 	return ReasonUsable
 }
@@ -367,7 +365,9 @@ func TestLink_PeerFallbacks(t *testing.T) {
 func TestLink_PasswordRejections(t *testing.T) {
 	base := roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
 		Password: "main", RelayMode: ConnModeWG}
-	expired := instancestore.ServerUser{Password: "old", ExpiresAt: testNow().Unix() - 1}
+	// Пустой пароль — единственная непригодность, кроме главного: срока
+	// действия у абонента нет, назначить его нечем.
+	empty := instancestore.ServerUser{Password: ""}
 	good := instancestore.ServerUser{Password: "abonent"}
 
 	cases := []struct {
@@ -376,7 +376,7 @@ func TestLink_PasswordRejections(t *testing.T) {
 		body  string
 		want  string
 	}{
-		{"нет рабочих абонентов", []instancestore.ServerUser{expired}, `{"password":"old"}`,
+		{"нет рабочих абонентов", []instancestore.ServerUser{empty}, `{"password":"old"}`,
 			"у сервера нет ни одного рабочего абонента: заведите абонента и повторите"},
 		{"пароль не выбран", []instancestore.ServerUser{good}, `{}`,
 			"выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера"},
@@ -384,8 +384,6 @@ func TestLink_PasswordRejections(t *testing.T) {
 			"это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента"},
 		{"чужой пароль", []instancestore.ServerUser{good}, `{"password":"нетакой"}`,
 			"пароль не принадлежит ни одному абоненту сервера"},
-		{"просроченный абонент", []instancestore.ServerUser{good, expired}, `{"password":"old"}`,
-			"абонент просрочен, ссылка не будет работать: заведите нового абонента"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

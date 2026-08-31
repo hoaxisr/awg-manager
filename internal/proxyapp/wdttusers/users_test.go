@@ -207,7 +207,7 @@ func baseCfg() roles.WdttServerConfig {
 // существующий» роняет тест целиком.
 func TestMaterialize_MergesServerOwnedFields(t *testing.T) {
 	st := newStand(t, baseCfg(), instancestore.ServerUser{
-		Password: "client1", Comment: "Новое имя", VkHash: "vk-new", ExpiresAt: 1_700_009_999,
+		Password: "client1", Comment: "Новое имя", VkHash: "vk-new",
 	})
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "старый-главный",
@@ -238,9 +238,10 @@ func TestMaterialize_MergesServerOwnedFields(t *testing.T) {
 
 	want := map[string]passwordsJSONUser{
 		"client1": {
-			Label:         "Новое имя",   // наше
-			VkHash:        "vk-new",      // наше
-			ExpiresAt:     1_700_009_999, // наше
+			Label:  "Новое имя", // наше
+			VkHash: "vk-new",    // наше
+			// Срок — поле форка: мы его не задаём, но и не теряем.
+			ExpiresAt:     1_700_001_111,
 			DeviceID:      "legacy-dev",
 			DeviceIDs:     []string{"d1", "d2"},
 			MaxDevices:    5,
@@ -273,25 +274,6 @@ func TestMaterialize_MergesServerOwnedFields(t *testing.T) {
 }
 
 // ── (б) память о сроке ───────────────────────────────────────────
-
-func TestMaterialize_ExpiredUserDoesNotResurrect(t *testing.T) {
-	now := fixedNow()
-	st := newStand(t, baseCfg(),
-		instancestore.ServerUser{Password: "dead", ExpiresAt: now.Add(-time.Hour).Unix()},
-		instancestore.ServerUser{Password: "alive", ExpiresAt: now.Add(time.Hour).Unix()},
-	)
-	// Файла нет: истёкшую запись удалил янитор форка.
-	if err := st.svc.Materialize(st.rec(t)); err != nil {
-		t.Fatal(err)
-	}
-	got := st.file(t)
-	if _, ok := got.Passwords["dead"]; ok {
-		t.Fatalf("истёкший абонент воскрес: %#v", got.Passwords)
-	}
-	if e := got.Passwords["alive"]; e.ExpiresAt != now.Add(time.Hour).Unix() {
-		t.Fatalf("срок живого абонента = %d, ожидался запомненный (бессрочность вместо срока)", e.ExpiresAt)
-	}
-}
 
 // ── (ж) Г-3: журнал статистики ───────────────────────────────────
 
@@ -332,22 +314,19 @@ func TestMaterialize_StatsLogSymlink(t *testing.T) {
 
 // ── (в) усыновление ──────────────────────────────────────────────
 
-// TestSyncOnStart_AdoptsUsersFromFile: абонента завёл телеграм-бот или
-// admin-API форка — он лежит только в passwords.json. Без усыновления
-// следующая материализация отобрала бы у него доступ.
+// TestSyncOnStart_AdoptsUsersFromFile: запись, лежащая только в
+// passwords.json (например, от прежней версии панели), подхватывается. Без
+// усыновления следующая материализация отобрала бы у неё доступ.
 func TestSyncOnStart_AdoptsUsersFromFile(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(),
 		instancestore.ServerUser{Password: "known", Comment: "Наш"},
-		instancestore.ServerUser{Password: "renewed", Comment: "Продлённый", ExpiresAt: now.Add(time.Hour).Unix()},
 	)
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "mainpass",
 		Passwords: map[string]passwordsJSONUser{
-			"botuser":  {Label: "Из бота", VkHash: "vk-bot", ExpiresAt: now.Add(48 * time.Hour).Unix()},
+			"orphan":   {Label: "Только в файле", VkHash: "vk-orphan"},
 			"known":    {Label: "имя из файла"},
-			"renewed":  {ExpiresAt: now.Add(72 * time.Hour).Unix()},
-			"mainpass": {Label: "главный, заведён admin-API"},
+			"mainpass": {Label: "главный паролю абонента не равен"},
 		},
 	})
 
@@ -357,14 +336,13 @@ func TestSyncOnStart_AdoptsUsersFromFile(t *testing.T) {
 
 	want := []instancestore.ServerUser{
 		{Password: "known", Comment: "Наш"},
-		{Password: "renewed", Comment: "Продлённый", ExpiresAt: now.Add(72 * time.Hour).Unix()},
-		{Password: "botuser", Comment: "Из бота", VkHash: "vk-bot", ExpiresAt: now.Add(48 * time.Hour).Unix()},
+		{Password: "orphan", Comment: "Только в файле", VkHash: "vk-orphan"},
 	}
 	if got := st.rec(t).Users; !reflect.DeepEqual(got, want) {
 		t.Fatalf("усыновление:\n получено %#v\n ожидалось %#v", got, want)
 	}
-	// Абонент бота уехал в файл, а не потерялся при следующей материализации.
-	if _, ok := st.file(t).Passwords["botuser"]; !ok {
+	// Усыновлённый уехал в файл, а не потерялся при следующей материализации.
+	if _, ok := st.file(t).Passwords["orphan"]; !ok {
 		t.Fatalf("усыновлённый абонент не попал в passwords.json: %#v", st.file(t).Passwords)
 	}
 	// Главный пароль усыновлять нельзя: он не абонент.
@@ -636,38 +614,36 @@ func TestServe_RemoveAdoptsFirst(t *testing.T) {
 	}
 }
 
-// Снос всех БЕЗ усыновления обесценивает инвариант: живой бот-абонент не
+// Снос всех БЕЗ усыновления обесценивает инвариант: живой абонент из файла не
 // считается рабочим, и снос проходит, отбирая у него доступ.
 func TestServe_RemoveAllAdoptsFirst(t *testing.T) {
-	now := fixedNow()
-	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "  "})
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "mainpass",
-		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота"}},
+		Passwords:    map[string]passwordsJSONUser{"orphan": {Label: "Только в файле"}},
 	})
 	_, msg, code := st.serve(t, http.MethodDelete, "")
 	if code != "WDTT_SERVER_CLIENT_DELETE_FAILED" {
-		t.Fatalf("код = %q: снос прошёл мимо живого бот-абонента", code)
+		t.Fatalf("код = %q: снос прошёл мимо живого абонента из файла", code)
 	}
 	if !strings.Contains(msg, "нельзя удалить последнего рабочего абонента") {
 		t.Fatalf("сообщение = %q", msg)
 	}
-	if _, ok := st.file(t).Passwords["botuser"]; !ok {
-		t.Fatalf("бот-абонент потерял доступ: %#v", st.file(t).Passwords)
+	if _, ok := st.file(t).Passwords["orphan"]; !ok {
+		t.Fatalf("абонент из файла потерял доступ: %#v", st.file(t).Passwords)
 	}
 }
 
-// Добавление без усыновления заместило бы бот-абонента вместе с его сроком.
+// Добавление без усыновления заместило бы абонента, лежащего только в файле.
 func TestServe_AddAdoptsFirst(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "mainpass",
-		Passwords:    map[string]passwordsJSONUser{"botuser": {Label: "Из бота", ExpiresAt: now.Add(time.Hour).Unix()}},
+		Passwords:    map[string]passwordsJSONUser{"orphan": {Label: "Только в файле"}},
 	})
-	_, msg, code := st.serve(t, http.MethodPost, `{"password":"botuser","comment":"Мой"}`)
+	_, msg, code := st.serve(t, http.MethodPost, `{"password":"orphan","comment":"Мой"}`)
 	if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
-		t.Fatalf("код = %q: пароль бот-абонента перезаведён, его срок обнулён", code)
+		t.Fatalf("код = %q: пароль абонента из файла перезаведён", code)
 	}
 	if !strings.Contains(msg, "занят живым абонентом") {
 		t.Fatalf("сообщение = %q", msg)
@@ -819,8 +795,7 @@ func TestRemove_InvariantSeesConcurrentState(t *testing.T) {
 // Инвариант сноса ВСЕХ тоже считается по актуальному составу: если
 // параллельный запрос успел завести рабочего абонента, снос обязан отказать.
 func TestRemoveAll_InvariantSeesConcurrentState(t *testing.T) {
-	now := fixedNow()
-	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "  "})
 	st.hookOn(1, func(src *fakeSource) {
 		rec := src.recs[testKey]
 		rec.Users = append(slices.Clone(rec.Users), instancestore.ServerUser{Password: "newcomer"})

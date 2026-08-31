@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -51,17 +50,15 @@ func (s *stand) serve(t *testing.T, method, body string, sub ...string) (UsersSt
 // TestServe_ListForm сторожит ФОРМУ ответа целиком: фронт ветвится по каждому
 // признаку записи.
 func TestServe_ListForm(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(),
 		instancestore.ServerUser{Password: "client1", Comment: "Иван", VkHash: "vk1"},
-		instancestore.ServerUser{Password: "stale", Comment: "Просроченный", ExpiresAt: now.Add(-time.Hour).Unix()},
 		instancestore.ServerUser{Password: "auto1", Comment: defaultUserName, Auto: true},
 		instancestore.ServerUser{Password: "mainpass", Comment: "Он же главный"},
 	)
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "mainpass",
 		Passwords: map[string]passwordsJSONUser{
-			"client1": {IsDeactivated: true, Label: "имя из файла", VkHash: "vk-из-файла"},
+			"client1": {Label: "имя из файла", VkHash: "vk-из-файла"},
 		},
 	})
 
@@ -72,10 +69,9 @@ func TestServe_ListForm(t *testing.T) {
 	want := UsersStatus{
 		Available: true,
 		Users: []UserEntry{
-			{Password: "client1", Comment: "Иван", VkHash: "vk1", IsDeactivated: true},
-			{Password: "stale", Comment: "Просроченный", IsExpired: true},
+			{Password: "client1", Comment: "Иван", VkHash: "vk1"},
 			{Password: "auto1", Comment: defaultUserName, IsAuto: true},
-			{Password: "mainpass", Comment: "Он же главный", IsMainPassword: true, IsExpired: false},
+			{Password: "mainpass", Comment: "Он же главный", IsMainPassword: true},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -215,7 +211,6 @@ func TestServe_AddMainPasswordNotSaved(t *testing.T) {
 // ── (е) тексты отказов — часть контракта фронта ──────────────────
 
 func TestServe_AddRejectionTexts(t *testing.T) {
-	now := fixedNow()
 	cases := []struct {
 		name    string
 		cfgPass string
@@ -228,12 +223,6 @@ func TestServe_AddRejectionTexts(t *testing.T) {
 			users: []instancestore.ServerUser{{Password: "client1"}},
 			body:  `{"password":"client1"}`,
 			want:  "занят живым абонентом",
-		},
-		{
-			name: "пароль просроченного", cfgPass: "mainpass",
-			users: []instancestore.ServerUser{{Password: "client1", ExpiresAt: now.Add(-time.Hour).Unix()}},
-			body:  `{"password":"client1"}`,
-			want:  "просроченному абоненту",
 		},
 		{
 			name: "пароль совпадает с главным", cfgPass: "mainpass",
@@ -289,7 +278,6 @@ func TestServe_RemoveOne(t *testing.T) {
 }
 
 func TestServe_RemoveRejections(t *testing.T) {
-	now := fixedNow()
 	cases := []struct {
 		name  string
 		users []instancestore.ServerUser
@@ -300,7 +288,7 @@ func TestServe_RemoveRejections(t *testing.T) {
 		{"пустой пароль", []instancestore.ServerUser{{Password: "client1"}}, "  ", "пароль абонента не задан"},
 		{
 			"последний рабочий",
-			[]instancestore.ServerUser{{Password: "client1"}, {Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()}},
+			[]instancestore.ServerUser{{Password: "client1"}, {Password: "  "}},
 			"client1",
 			"нельзя удалить последнего рабочего абонента",
 		},
@@ -338,24 +326,12 @@ func TestServe_RemoveUnknownIsNoop(t *testing.T) {
 	}
 }
 
-// Выход из уже сломанного состояния разрешён: рабочих не было и до удаления.
-func TestServe_RemoveLastExpiredAllowed(t *testing.T) {
-	now := fixedNow()
-	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
-	_, msg, code := st.serve(t, http.MethodDelete, "", "stale")
-	if code != "" {
-		t.Fatalf("ответ = %s / %s", code, msg)
-	}
-	if u := st.rec(t).Users; len(u) != 0 {
-		t.Fatalf("абоненты = %#v", u)
-	}
-}
-
+// Снос ВСЕХ проходит, только когда рабочих и так нет: непригодность после
+// снятия срока — это пустой пароль либо совпадение с главным.
 func TestServe_RemoveAll(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(),
-		instancestore.ServerUser{Password: "stale1", ExpiresAt: now.Add(-time.Hour).Unix()},
-		instancestore.ServerUser{Password: "stale2", ExpiresAt: now.Add(-time.Hour).Unix()},
+		instancestore.ServerUser{Password: "  "},
+		instancestore.ServerUser{Password: "   "},
 	)
 	got, msg, code := st.serve(t, http.MethodDelete, "")
 	if code != "" {
@@ -407,17 +383,16 @@ func TestServe_Rename(t *testing.T) {
 	}
 }
 
-// Переименование правит РОВНО имя: срок и хеш абонента остаются на месте.
+// Переименование правит РОВНО имя: хеш и признак авто остаются на месте.
 func TestServe_RenameKeepsOtherFields(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(), instancestore.ServerUser{
-		Password: "client1", Comment: "Иван", VkHash: "vk1", ExpiresAt: now.Add(time.Hour).Unix(), Auto: true,
+		Password: "client1", Comment: "Иван", VkHash: "vk1", Auto: true,
 	})
 	if _, _, code := st.serve(t, http.MethodPatch, `{"name":"Пётр"}`, "client1"); code != "" {
 		t.Fatalf("код = %q", code)
 	}
 	want := instancestore.ServerUser{
-		Password: "client1", Comment: "Пётр", VkHash: "vk1", ExpiresAt: now.Add(time.Hour).Unix(), Auto: true,
+		Password: "client1", Comment: "Пётр", VkHash: "vk1", Auto: true,
 	}
 	if got := st.rec(t).Users[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("абонент:\n получено %#v\n ожидалось %#v", got, want)

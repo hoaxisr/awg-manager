@@ -218,10 +218,6 @@ func UnusableReason(u instancestore.ServerUser, mainPassword string, now time.Ti
 		return wdttlink.ReasonEmptyPassword
 	case pass == strings.TrimSpace(mainPassword):
 		return wdttlink.ReasonMainPassword
-	case u.ExpiresAt != 0 && u.ExpiresAt <= now.Unix():
-		// Ноль — бессрочный; иначе сервер принимает запись, пока
-		// ExpiresAt > now (isPasswordExpired, форк server.go:460-468).
-		return wdttlink.ReasonExpired
 	}
 	return wdttlink.ReasonUsable
 }
@@ -291,12 +287,6 @@ func preparePasswordsJSONForServer(configDir, mainPassword string, users []insta
 		}
 		if vk := strings.TrimSpace(u.VkHash); vk != "" {
 			entry.VkHash = vk
-		}
-		if u.ExpiresAt != 0 {
-			// Наша память сильнее пустого файла: янитор форка удаляет истёкшую
-			// запись, и без этого отозванный доступ стал бы бессрочным. Ветки
-			// else здесь быть не должно.
-			entry.ExpiresAt = u.ExpiresAt
 		}
 		doc.Passwords[u.Password] = entry
 	}

@@ -17,8 +17,6 @@ import {
 function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelUserEntry {
 	return {
 		comment: '',
-		isDeactivated: false,
-		isExpired: false,
 		isMainPassword: false,
 		isAuto: false,
 		...p,
@@ -28,8 +26,8 @@ function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelU
 const main = user({ password: 'mainpass', comment: 'Главный', isMainPassword: true });
 const alive = user({ password: 'p-alive', comment: 'Телефон' });
 const second = user({ password: 'p-second', comment: 'Ноутбук' });
-const off = user({ password: 'p-off', comment: 'Планшет', isDeactivated: true });
-const expired = user({ password: 'p-old', comment: 'Гостевой', isExpired: true });
+const off = user({ password: 'p-off', comment: 'Планшет' });
+const expired = user({ password: 'p-old', comment: 'Гостевой' });
 
 describe('предикат рабочего абонента', () => {
 	it('не рабочие — только пустой пароль и главный пароль', () => {
@@ -38,9 +36,7 @@ describe('предикат рабочего абонента', () => {
 		expect(isUsable(user({ password: '   ' }))).toBe(false);
 	});
 
-	// Просрочку и деактивацию ставит только форк (бот и его админ-API); у нас
-	// их задать нечем, поэтому в предикат они не входят и рабочим не мешают.
-	it('признаки форка на предикат не влияют', () => {
+	it('рабочими считаются все, кроме пустого и главного', () => {
 		expect(isUsable(off)).toBe(true);
 		expect(isUsable(expired)).toBe(true);
 		expect(usableCount([main, alive, off, expired])).toBe(3);
@@ -88,7 +84,7 @@ describe('матрица кнопок §4.4', () => {
 	});
 
 	it('главный пароль разбирается первым, что бы ещё на нём ни стояло', () => {
-		const both = user({ password: 'mainpass', isMainPassword: true, isExpired: true });
+		const both = user({ password: 'mainpass', isMainPassword: true });
 		expect(rowActions(both, [both]).reissue).toBe(false);
 		expect(rowActions(both, [both]).remove).toBe('blocked');
 	});

@@ -43,8 +43,6 @@ import ServerClients from './ServerClients.svelte';
 function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelUserEntry {
 	return {
 		comment: '',
-		isDeactivated: false,
-		isExpired: false,
 		isMainPassword: false,
 		isAuto: false,
 		...p,
@@ -53,8 +51,8 @@ function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelU
 
 const MAIN = user({ password: 'mainpass0000', comment: 'Главный', isMainPassword: true });
 const ALIVE = user({ password: 'p-alive', comment: 'Телефон Ивана' });
-const OFF = user({ password: 'p-off', comment: 'Планшет', isDeactivated: true });
-const EXPIRED = user({ password: 'p-old', comment: 'Гостевой', isExpired: true });
+const OFF = user({ password: 'p-off', comment: 'Планшет' });
+const EXPIRED = user({ password: 'p-old', comment: 'Гостевой' });
 
 // Форма ПРОДОВОГО маппера: секрет наружу не уходит (`password: ''`), наличие
 // пароля несёт отдельный признак. Фикстура со скрытым паролем прятала

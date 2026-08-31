@@ -33,7 +33,7 @@ func ftClient(id string) Record {
 
 func wdttServer(id string) Record {
 	return Record{ID: id, Kind: KindWdttServer, Name: "Сервер", Enabled: false,
-		Users:    []ServerUser{{Password: "u1", Comment: "Петя", ExpiresAt: 42}},
+		Users:    []ServerUser{{Password: "u1", Comment: "Петя"}},
 		LinkPeer: "1.2.3.4:56002", LinkVKHashes: "vh", StatsLog: "disk",
 		WdttServer: &roles.WdttServerConfig{
 			// 56002 — ДЕФОЛТ store: фикстура на нём не отличала бы чтение
@@ -100,7 +100,7 @@ func TestServerUsersRoundTrip(t *testing.T) {
 	}
 	st, _ := New(s.dir).Load()
 	r := st.Records[0]
-	if len(r.Users) != 1 || r.Users[0].ExpiresAt != 42 || r.Users[0].Comment != "Петя" {
+	if len(r.Users) != 1 || r.Users[0].Comment != "Петя" {
 		t.Fatalf("Users не доехали: %+v", r.Users)
 	}
 	if r.LinkPeer != "1.2.3.4:56002" || r.LinkVKHashes != "vh" || r.StatsLog != "disk" {
@@ -349,7 +349,7 @@ func TestRecordWireFormatCanary(t *testing.T) {
 	// Формат proxy-instances.json менять только с миграцией. Канарейка на
 	// конфигах ролей живёт в roles/config_test.go; ЭТИ ключи — оболочка
 	// записи и продуктовые данные, за ними до фикс-раунда не следило ничто:
-	// переименование linkVkHashes, peerRaw или expiresAt обнуляло бы на
+	// переименование linkVkHashes или peerRaw обнуляло бы на
 	// апгрейде параметры ссылки, адрес неактивного режима и срок абонента
 	// (отозванный доступ воскресал бы бессрочным).
 	cases := []struct {
@@ -370,8 +370,8 @@ func TestRecordWireFormatCanary(t *testing.T) {
 				"statsLog", "wdttClient", "wdttServer", "freeturnClient",
 				"freeturnServer"}},
 		{"server-user", ServerUser{Password: "p", Comment: "c", VkHash: "v",
-			ExpiresAt: 1, Auto: true},
-			[]string{"password", "comment", "vkHash", "expiresAt", "auto"}},
+			Auto: true},
+			[]string{"password", "comment", "vkHash", "auto"}},
 		{"file", fileFormat{Version: 1, SeededFrom: []string{"x"}, Instances: []Record{}},
 			[]string{"version", "seededFrom", "instances"}},
 	}

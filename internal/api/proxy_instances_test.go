@@ -157,7 +157,7 @@ func fullServerRecord() instancestore.Record {
 		PeerWg:    "wg.example:56000",
 		PeerRaw:   "raw.example:56001",
 		Users: []instancestore.ServerUser{{
-			Password: "u-secret", Comment: "Ноут", VkHash: "vh1", ExpiresAt: 1700000000, Auto: true,
+			Password: "u-secret", Comment: "Ноут", VkHash: "vh1", Auto: true,
 		}},
 		LinkPeer:     "link.example",
 		LinkVKHashes: "vk1,vk2",

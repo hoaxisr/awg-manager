@@ -44,12 +44,6 @@ type UserEntry struct {
 	Password string `json:"password"`
 	Comment  string `json:"comment,omitempty"`
 	VkHash   string `json:"vkHash,omitempty"`
-	// IsDeactivated — признак из passwords.json (деактивацию ставит форк).
-	IsDeactivated bool `json:"isDeactivated"`
-	// IsExpired — срок, назначенный сервером, истёк. Такой абонент в
-	// passwords.json не пишется и подключиться не может; в списке он остаётся,
-	// чтобы пользователь понимал, почему доступ пропал.
-	IsExpired bool `json:"isExpired"`
 	// IsMainPassword — пароль абонента совпадает с главным паролем сервера.
 	// Сам главный пароль наружу не уходит, сравнить на фронте нечем.
 	IsMainPassword bool `json:"isMainPassword"`
@@ -176,9 +170,9 @@ func (s *Service) serverRecord(key string) (instancestore.Record, roles.WdttServ
 // Materialize собирает passwords.json из записи и уводит журнал статистики.
 //
 // Это СЛИЯНИЕ, а не сборка: preparePasswordsJSONForServer читает существующий
-// файл и накладывает поверх ТОЛЬКО наши три поля (label, vk_hash, expires_at).
+// файл и накладывает поверх ТОЛЬКО наши два поля (label, vk_hash).
 // Всё остальное — привязка абонентов к адресам 10.66.0.x/10.70.0.x (devices),
-// счётчики трафика, max_devices, device_ids, ports, is_deactivated — принадлежит
+// счётчики трафика, max_devices, device_ids, ports — принадлежит
 // форку и обязано пережить запись. Наивная пересборка из Record.Users обнулила
 // бы всё это разом.
 func (s *Service) Materialize(rec instancestore.Record) error {
@@ -329,21 +323,14 @@ func adoptUsers(list []instancestore.ServerUser, file map[string]passwordsJSONUs
 		if pass == "" || pass == main {
 			continue
 		}
-		if i, ok := known[pass]; ok {
-			// У известного обновляем только срок и только ненулевой: админ
-			// мог продлить доступ через admin-API форка.
-			if entry.ExpiresAt != 0 && out[i].ExpiresAt != entry.ExpiresAt {
-				out[i].ExpiresAt = entry.ExpiresAt
-				changed = true
-			}
+		if _, ok := known[pass]; ok {
 			continue
 		}
 		known[pass] = len(out)
 		out = append(out, instancestore.ServerUser{
-			Password:  pass,
-			Comment:   strings.TrimSpace(entry.Label),
-			VkHash:    strings.TrimSpace(entry.VkHash),
-			ExpiresAt: entry.ExpiresAt,
+			Password: pass,
+			Comment:  strings.TrimSpace(entry.Label),
+			VkHash:   strings.TrimSpace(entry.VkHash),
 		})
 		changed = true
 	}
@@ -481,7 +468,7 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
 		// Проверки состава — ВНУТРИ колбэка, по актуальному списку: между
 		// чтением и записью пароль мог занять параллельный запрос.
-		if err := userPasswordFree(list, password, s.now()); err != nil {
+		if err := userPasswordFree(list, password); err != nil {
 			return nil, err
 		}
 		if err := validateMainPassword(main, list); err != nil {
@@ -723,8 +710,7 @@ func dropUser(list []instancestore.ServerUser, password string) []instancestore.
 }
 
 // setUserComment правит РОВНО Comment одной записи. Замещение записи целиком
-// тут не годится: оно стёрло бы ExpiresAt (нашу память об отозванном доступе)
-// вместе с VkHash и Auto.
+// тут не годится: оно стёрло бы VkHash и Auto.
 func setUserComment(list []instancestore.ServerUser, password, name string) ([]instancestore.ServerUser, bool) {
 	out := slices.Clone(list)
 	for i, u := range out {
@@ -793,16 +779,12 @@ func mergeUsers(users []instancestore.ServerUser, file map[string]passwordsJSONU
 			IsMainPassword: pass == main,
 		}
 		if live, ok := file[pass]; ok {
-			e.IsDeactivated = live.IsDeactivated
 			if e.Comment == "" {
 				e.Comment = strings.TrimSpace(live.Label)
 			}
 			if e.VkHash == "" {
 				e.VkHash = strings.TrimSpace(live.VkHash)
 			}
-		}
-		if _, ok := usable[pass]; !ok {
-			e.IsExpired = true
 		}
 		out.Users = append(out.Users, e)
 	}
@@ -834,21 +816,13 @@ func (s *Service) notifyChanged(key string) Reload {
 	return ReloadDelivered
 }
 
-// userPasswordFree отказывает на ЛЮБОМ уже занятом пароле, двумя текстами.
-// Занять пароль просроченного абонента нельзя: замещение записи обнулит нашу
-// память о сроке, а слияние всё равно запишет в файл старый expires_at — сервер
-// после SIGHUP отвергнет всех. Занять пароль живого нельзя по тому же классу,
-// но тише: перезаведение бот-пароля со сроком делает временный доступ
-// бессрочным.
-func userPasswordFree(users []instancestore.ServerUser, password string, now time.Time) error {
+// userPasswordFree отказывает на уже занятом пароле: два абонента с одним
+// паролем неразличимы для сервера.
+func userPasswordFree(users []instancestore.ServerUser, password string) error {
 	for _, u := range users {
-		if strings.TrimSpace(u.Password) != password {
-			continue
+		if strings.TrimSpace(u.Password) == password {
+			return errors.New("пароль занят живым абонентом")
 		}
-		if u.ExpiresAt != 0 && u.ExpiresAt <= now.Unix() {
-			return errors.New("пароль принадлежит просроченному абоненту, задайте новый")
-		}
-		return errors.New("пароль занят живым абонентом")
 	}
 	return nil
 }

@@ -757,8 +757,6 @@ describe('адреса новой поверхности', () => {
 				{
 					password: 'p1',
 					comment: 'Ноут',
-					isDeactivated: false,
-					isExpired: false,
 					isMainPassword: false,
 					isAuto: false
 				}

@@ -193,9 +193,6 @@ export interface WdttPanelUserEntry {
 	password: string;
 	comment?: string;
 	vkHash?: string;
-	isDeactivated: boolean;
-	/** Срок, назначенный сервером, истёк: в passwords.json не пишется */
-	isExpired: boolean;
 	/** Пароль абонента совпадает с главным паролем сервера */
 	isMainPassword: boolean;
 	/** Абонента завёл инвариант непустоты списка */

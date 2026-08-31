@@ -606,7 +606,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			LinkPeer: o.LinkPeer, LinkVKHashes: o.LinkVKHashes, StatsLog: o.StatsLog}
 		for _, u := range o.Clients {
 			rec.Users = append(rec.Users, ServerUser{Password: u.Password,
-				Comment: u.Comment, VkHash: u.VkHash, ExpiresAt: u.ExpiresAt, Auto: u.Auto})
+				Comment: u.Comment, VkHash: u.VkHash, Auto: u.Auto})
 		}
 		seeded = append(seeded, rec)
 	}

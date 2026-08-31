@@ -63,7 +63,6 @@ const (
 	ReasonUsable        UnusableReason = ""
 	ReasonEmptyPassword UnusableReason = "empty_password"
 	ReasonMainPassword  UnusableReason = "main_password"
-	ReasonExpired       UnusableReason = "expired"
 )
 
 // UserVetting — предикат пригодности абонента сервера. Прод-реализация живёт
@@ -265,8 +264,6 @@ func linkRejectMessage(reason UnusableReason, knownClient bool) string {
 		return "это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента"
 	case !knownClient:
 		return "пароль не принадлежит ни одному абоненту сервера"
-	case reason == ReasonExpired:
-		return "абонент просрочен, ссылка не будет работать: заведите нового абонента"
 	default:
 		// Причина, которой у текстов ещё нет: новое условие пригодности.
 		// Общий отказ честнее уверенного «просрочен».
