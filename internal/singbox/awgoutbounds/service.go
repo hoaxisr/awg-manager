@@ -124,7 +124,13 @@ func (s *ServiceImpl) SubscribeBus(ctx context.Context) func() {
 func (s *ServiceImpl) ListTags(ctx context.Context) ([]TagInfo, error) {
 	entries, err := s.enumerate(ctx)
 	if err != nil {
-		return nil, err
+		// Частичный каталог лучше пустого: отказ ОДНОГО из двух сторов не
+		// повод лишать вызывающего тегов второго. Пусто — значит ответить
+		// нечем, ошибка идёт наверх.
+		if len(entries) == 0 {
+			return nil, err
+		}
+		s.logWarn("list-tags", "", "каталог неполон: "+err.Error())
 	}
 	out := make([]TagInfo, 0, len(entries))
 	for _, e := range entries {

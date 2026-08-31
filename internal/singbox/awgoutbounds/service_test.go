@@ -258,3 +258,40 @@ func TestSync_SystemStoreFailureKeepsFile(t *testing.T) {
 		t.Errorf("движок перезагружен на неполном конфиге: reload'ов %d → %d", reloadsBefore, sb.reloadCalls)
 	}
 }
+
+// Регресс, внесённый первой редакцией фикса F83: `enumerate` стала
+// всё-или-ничего, и отказ ТОЛЬКО системного стора уносил из ListTags ещё и
+// managed-теги. Инстанс deviceproxy, приколотый к managed-туннелю, уходил в
+// fallback при флапе NDMS, хотя managed-стор не отказывал
+// (`deviceproxy/service.go:736,1025` идут по `err == nil` и пропускают ВСЁ).
+//
+// Требование раздвоенное: writeFile нужна ПОЛНОТА (см.
+// TestSync_SystemStoreFailureKeepsFile), ListTags — ЛУЧШЕЕ ИЗ ДОСТУПНОГО.
+func TestListTags_SystemStoreFailureKeepsManagedTags(t *testing.T) {
+	s, _ := newSvcWithIface(t,
+		&fakeAWGStore{tunnels: []AWGTunnelInfo{{ID: "a", Name: "A", BackendIface: "t2s0"}}},
+		&fakeSystemStore{err: errors.New("ndms unavailable")},
+		"t2s0",
+	)
+
+	tags, err := s.ListTags(context.Background())
+	if err != nil {
+		t.Fatalf("отказ системного стора не должен ронять весь каталог: %v", err)
+	}
+	if len(tags) != 1 || tags[0].Tag != "awg-a" {
+		t.Errorf("managed-тег не пережил флап NDMS: %+v", tags)
+	}
+}
+
+// Отказ managed-стора — другое дело: частичного ответа не существует,
+// каталог пуст, ошибка обязана дойти до вызывающего.
+func TestListTags_ManagedStoreFailurePropagates(t *testing.T) {
+	s, _ := newSvcWithIface(t,
+		&fakeAWGStore{err: errors.New("storage down")},
+		&fakeSystemStore{},
+		"t2s0",
+	)
+	if _, err := s.ListTags(context.Background()); err == nil {
+		t.Error("отказ managed-стора проглочен")
+	}
+}

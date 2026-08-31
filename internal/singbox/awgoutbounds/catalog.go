@@ -78,12 +78,15 @@ func (s *ServiceImpl) enumerate(ctx context.Context) ([]AWGEntry, error) {
 	if s.deps.SystemTunnels != nil {
 		tuns, err := s.deps.SystemTunnels.List(ctx)
 		if err != nil {
-			// Симметрично managed-ветке выше: отказ — это отказ, не пустой
-			// список. Прежде здесь возвращался managed-only с nil-ошибкой, и
-			// транзиентный сбой NDMS переписывал 15-awg.json БЕЗ всех
-			// awg-sys-*, да ещё и триггерил reload на усечённом конфиге (F83).
-			// writeFile логирует и прекращает запись — прежний файл цел.
-			return nil, fmt.Errorf("system tunnels: %w", err)
+			// Отказ системного стора возвращается ВМЕСТЕ с уже собранной
+			// managed-частью: у двух потребителей enumerate разные требования.
+			// writeFile нужна ПОЛНОТА — он на ошибке прекращает запись, иначе
+			// транзиентный сбой NDMS переписал бы 15-awg.json без всех
+			// awg-sys-* и триггернул reload на усечённом конфиге (F83).
+			// ListTags нужно ЛУЧШЕЕ ИЗ ДОСТУПНОГО — глухой отказ уносил бы и
+			// managed-теги, роняя в fallback инстансы deviceproxy, которые к
+			// системным туннелям вообще не привязаны.
+			return out, fmt.Errorf("system tunnels: %w", err)
 		}
 
 		// Build a fast-lookup set of managed-server interface names so we can
