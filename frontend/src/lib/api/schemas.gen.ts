@@ -2384,6 +2384,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	defaultRoute: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	endpoint: v.optional(v.nullable(v.string())),
+	freeTurnClientId: v.optional(v.nullable(v.string())),
 	hasAddressConflict: v.optional(v.nullable(v.boolean())),
 	id: v.optional(v.nullable(v.string())),
 	interfaceName: v.optional(v.nullable(v.string())),

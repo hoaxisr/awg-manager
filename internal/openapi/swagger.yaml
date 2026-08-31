@@ -6441,6 +6441,9 @@ definitions:
       endpoint:
         example: vpn.example.com:51820
         type: string
+      freeTurnClientId:
+        example: default
+        type: string
       hasAddressConflict:
         example: false
         type: boolean
