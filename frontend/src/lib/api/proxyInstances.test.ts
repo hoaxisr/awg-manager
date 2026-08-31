@@ -485,10 +485,12 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		expect('peerRaw' in body).toBe(false);
 	});
 
-	it('режим и адрес едут вместе: слот адреса заполняет хранилище', () => {
+	// listen в тело не попадает: локальный порт клиента — владение бэкенда
+	// (`ensurePins`), а фронт его больше не выбирает и не показывает. Слияние
+	// по месту (`proxyApplyConfig`) отсутствующий ключ сохраняет.
+	it('режим и адрес едут вместе, локальный порт — нет', () => {
 		expect(toWdttClientPatch(client)).toEqual({
 			connMode: 'raw',
-			listen: '127.0.0.1:9000',
 			peer: 'vps.example:56002',
 			vkHashes: 'h1',
 			workers: 9,
@@ -548,6 +550,8 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 			debug: false
 		};
 		expect('obfKey' in toFreeTurnClientPatch(ftClient)).toBe(false);
+		// Тот же владелец, что у wdtt-клиента: локальный порт выдаёт бэкенд.
+		expect('listen' in toFreeTurnClientPatch(ftClient)).toBe(false);
 		expect(toFreeTurnClientPatch({ ...ftClient, obfKey: 'k1' }).obfKey).toBe('k1');
 
 		const ftServer: FreeTurnServerConfig = {

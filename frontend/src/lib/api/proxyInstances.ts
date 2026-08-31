@@ -610,7 +610,6 @@ function putSecret(out: Cfg, key: string, value: string | undefined): void {
 export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
   const out: Cfg = {
     connMode: cfg.connMode === "raw" ? "raw" : "wg",
-    listen: cfg.listen ?? "",
     peer: cfg.peer ?? "",
     vkHashes: cfg.vkHashes ?? "",
     workers: cfg.workers ?? 0,
@@ -672,7 +671,6 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
 
 export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
   const out: Cfg = {
-    listen: cfg.listen ?? "",
     peer: cfg.peer ?? "",
     provider: cfg.provider ?? "",
     links: cfg.links ?? "",

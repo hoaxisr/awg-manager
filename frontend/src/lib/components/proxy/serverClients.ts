@@ -51,7 +51,7 @@ export interface RowActions {
 	/** Ссылка: доступна, заблокирована с причиной или её нет вовсе. */
 	link: 'yes' | 'blocked' | 'hidden';
 	linkHint: string;
-	/** «Перевыпустить» — только у просроченного. */
+	/** «Перевыпустить» — у любого абонента, кроме главного пароля. */
 	reissue: boolean;
 	remove: 'yes' | 'blocked';
 	removeHint: string;

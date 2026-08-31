@@ -194,7 +194,7 @@ type WdttServerConfig struct {
 	RawNdmsIface string `json:"rawNdmsIface,omitempty"` // OpkgTunM
 	RawListen    string `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
 	DirectListen string `json:"directListen,omitempty"`
-	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
+	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — только режим генерации ссылки; на процесс не влияет
 	NatMode      string `json:"natMode,omitempty"`      // full|internet-only|none
 	NatStaticWAN string `json:"natStaticWan,omitempty"` // legacy: одиночный WAN; читается через StaticNATList
 	// NatStaticWANs — выходы static-NAT для internet-only. Их несколько:
@@ -254,11 +254,11 @@ func (c WdttServerConfig) Validate() error {
 	default:
 		return fmt.Errorf("relayMode %q: ожидали wg|raw", c.RelayMode)
 	}
-	// Обе NDMS-половины обязательны: argv ставит -dns шлюзом OpkgTun-формы
-	// (10.66.0.1 / 10.70.66.1), а старый legacy-путь wdtt0 отвечал другим
-	// адресом (modes.go:72 → 10.66.66.1). Пустое имя означало бы legacy-мир,
-	// которого новый рантайм не строит: отказ конфига честнее, чем молча
-	// неверный резолвер у абонентов.
+	// Обе NDMS-половины обязательны: на каждой стоит DNAT :53 на её шлюз
+	// OpkgTun-формы (10.66.0.1 / 10.70.0.1), а старый legacy-путь wdtt0
+	// отвечал другим адресом (modes.go:72 → 10.66.66.1). Пустое имя означало
+	// бы legacy-мир, которого новый рантайм не строит: отказ конфига честнее,
+	// чем молча неверный резолвер у абонентов.
 	if strings.TrimSpace(c.NdmsIface) == "" || strings.TrimSpace(c.WgIface) == "" {
 		return fmt.Errorf("не заданы NDMS-имена WG-половины сервера (ndmsIface/wgIface)")
 	}
