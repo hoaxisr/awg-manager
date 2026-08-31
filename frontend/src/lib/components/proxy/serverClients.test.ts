@@ -50,12 +50,21 @@ describe('предикат рабочего абонента', () => {
 });
 
 describe('матрица кнопок §4.4', () => {
-	it('рабочий: ссылка есть, перевыпуска нет, удаление разрешено', () => {
+	it('рабочий: ссылка есть, перевыпуск есть, удаление разрешено', () => {
 		const a = rowActions(alive, [alive, second]);
 		expect(a.link).toBe('yes');
-		expect(a.reissue).toBe(false);
+		expect(a.reissue).toBe(true);
 		expect(a.remove).toBe('yes');
 		expect(a.removeHint).toBe('');
+	});
+
+	// Смена ключа живому абоненту — обычная нужда, а не только починка
+	// просрочки. Стража последнего рабочего перевыпуску не мешает: новый
+	// абонент заводится ДО удаления старого.
+	it('последний рабочий: удаление заблокировано, но перевыпуск доступен', () => {
+		const a = rowActions(alive, [main, alive, expired]);
+		expect(a.remove).toBe('blocked');
+		expect(a.reissue).toBe(true);
 	});
 
 	it('последний рабочий: удаление заблокировано с SH-37', () => {

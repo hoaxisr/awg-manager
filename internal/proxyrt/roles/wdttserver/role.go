@@ -27,7 +27,6 @@ const (
 	rawGatewayAddr = "10.70.0.1"
 	rawGatewayMask = "255.255.0.0"
 	rawPeerCIDR    = "10.70.0.0/16"
-	rawProcessAddr = "10.70.66.1" // адрес самого wdtt-server на raw-TUN
 	wgMTU          = 1280
 	rawMTU         = 1300
 )
@@ -252,11 +251,21 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 		}
 		groups := netres.MasqGroups(
 			[]netres.MasqPlan{{Iface: c.RawIface, CIDR: rawPeerCIDR}}, c.NatMode, wanDev)
-		dns := []netres.DNSHijack{{Iface: c.RawIface, Gateway: rawProcessAddr}}
-		if c.RelayMode == "wg" {
-			dns = append(dns, netres.DNSHijack{Iface: c.WgIface, Gateway: wgGatewayAddr})
-		}
-		groups = append(groups, netres.DNSGroups(dns)...)
+		// DNS-перехват — на ОБЕИХ половинах и независимо от режима связи:
+		// половины сервера работают одновременно (argv отдаёт и -listen, и
+		// -listen-raw), абонент вправе прийти по любой, и режим — лишь выбор
+		// порта по умолчанию в выдаваемой ссылке. Перехват на одной половине
+		// оставлял абонентов второй с чужим резолвером.
+		//
+		// Цель каждого правила — шлюз СВОЕЙ половины, тот самый адрес, что
+		// NDMS ставит на её интерфейс (SetDesired выше). Прежде raw метился
+		// на 10.70.66.1 — адрес, который форк присваивает TUN только когда
+		// поднимает его сам; под менеджером его на роутере нет, и DNAT уводил
+		// запрос в никуда.
+		groups = append(groups, netres.DNSGroups([]netres.DNSHijack{
+			{Iface: c.RawIface, Gateway: rawGatewayAddr},
+			{Iface: c.WgIface, Gateway: wgGatewayAddr},
+		})...)
 		if c.Policy != "" && c.Policy != "none" {
 			mark, err := r.deps.PolicyMark(ctx, c.Policy)
 			if err != nil {

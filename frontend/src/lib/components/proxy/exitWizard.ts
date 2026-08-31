@@ -121,11 +121,7 @@ export function exitConfigSetupComplete(
  * поля — порт назначает бэкенд, и он же отвергнет занятый.
  */
 export function nextLocalListen(listens: string[], protocol: ExitProtocol = 'wdtt'): string {
-	const used = new Set(
-		listens
-			.map((l) => Number(l?.trim().split(':').pop()))
-			.filter((p) => Number.isInteger(p) && p > 0),
-	);
+	const used = listenPortsOf(listens);
 	const limit = protocol === 'freeturn' ? 9100 : 9200;
 	for (let port = 9000; port < limit; port++) {
 		if (!used.has(port)) return `127.0.0.1:${port}`;
@@ -134,25 +130,42 @@ export function nextLocalListen(listens: string[], protocol: ExitProtocol = 'wdt
 }
 
 /**
- * Порт из подписки одинаков для всех стран — у каждого клиента он свой,
- * поэтому берётся подсказка, а не значение документа (оговорка унаследована из
- * старого импорта прокси-вкладки главной).
+ * Локальный порт клиента НЕ берётся из ссылки — только свободный кандидат.
+ *
+ * Ссылка несёт его четвёртым полем (`host:dtls:wg:clientListenPort:password`,
+ * wdttlink/link.go:110) не для нас: поле адресовано приложению qWDTT на
+ * телефоне, у которого своего выбора порта нет, и сервер диктует ему, что
+ * слушать на 127.0.0.1. У инстанса на роутере порт — его собственное дело:
+ * он локальный, наружу не виден и обязан лишь не совпасть с чужим.
+ *
+ * Бэкенд так и поступает: `recordFromPayload` (wdttlink/handler.go:263)
+ * `Listen` из payload не переносит вовсе, порт выделяет менеджер. Мастер же
+ * значение из ссылки подставлял — и две ссылки со штатным 9000 давали второму
+ * инстансу занятый порт. Подвинуть его бэкенд не может, он только ОТКАЖЕТ
+ * («порт занят другим инстансом или туннелем», linkres/listen.go:54).
+ *
+ * Поле шага 2 остаётся: порт по-прежнему правится руками.
  */
-function listenFromPayload(payloadListen: string | undefined, candidate: string, fromSub: boolean) {
-	if (fromSub) return candidate;
-	return payloadListen?.trim() || candidate;
+/** Порт из адреса `host:port`; NaN — разобрать не вышло. */
+function listenPortOf(listen: string): number {
+	return Number(listen.trim().split(':').pop());
+}
+
+function listenPortsOf(listens: string[]): Set<number> {
+	return new Set(
+		listens.map((l) => listenPortOf(l ?? '')).filter((p) => Number.isInteger(p) && p > 0),
+	);
 }
 
 export function fieldsFromWdttPayload(
 	p: WdttImportPayload,
 	candidateListen: string,
-	fromSub = false,
 ): ExitWizardFields {
 	return {
 		name: p.name?.trim() ?? '',
 		peer: p.peer ?? '',
 		password: p.password ?? '',
-		listen: listenFromPayload(p.listen, candidateListen, fromSub),
+		listen: candidateListen,
 		vkHashes: (p.vkHashes ?? []).join(','),
 		workers: p.workers && p.workers > 0 ? String(p.workers) : DEFAULT_WORKERS,
 	};
@@ -166,7 +179,7 @@ export function fieldsFromFtPayload(
 		name: p.name?.trim() ?? '',
 		peer: p.peer ?? '',
 		password: '',
-		listen: listenFromPayload(p.listen, candidateListen, false),
+		listen: candidateListen,
 		vkHashes: '',
 		workers: p.n && p.n > 0 ? String(p.n) : DEFAULT_FT_STREAMS,
 	};

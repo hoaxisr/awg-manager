@@ -88,7 +88,13 @@ export function rowActions(user: WdttPanelUserEntry, users: WdttPanelUserEntry[]
 	return {
 		link: 'yes',
 		linkHint: '',
-		reissue: false,
+		// Перевыпуск доступен и рабочему: смена скомпрометированного пароля —
+		// обычная нужда, а не только починка просрочки. Прежде кнопку давала
+		// одна ветка `isExpired`, и живому абоненту ключ было не сменить —
+		// оставалось снести сервер или завести дубль и удалить оригинал.
+		// Стража последнего рабочего перевыпуск не задевает: порядок шагов
+		// (добавить нового → удалить старого) держит рабочего всё время.
+		reissue: true,
 		remove: lastUsable ? 'blocked' : 'yes',
 		removeHint: lastUsable ? CLIENT_TEXT.removeLastUsable : '',
 	};

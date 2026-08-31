@@ -46,11 +46,9 @@ func WdttClientArgs(c WdttClientConfig) []string {
 	return args
 }
 
-// Адреса шлюзов — константы старого мира (internal/wdtt/types.go:174-195).
-const (
-	wdttServerGatewayAddr = "10.66.0.1"
-	rawServerProcessAddr  = "10.70.66.1"
-)
+// Адрес шлюза WG-половины — константа старого мира
+// (internal/wdtt/types.go:174-195).
+const wdttServerGatewayAddr = "10.66.0.1"
 
 func WdttServerArgs(c WdttServerConfig) []string {
 	var args []string
@@ -75,13 +73,24 @@ func WdttServerArgs(c WdttServerConfig) []string {
 	if d := c.DirectListen; d != "" && d != c.Listen {
 		str("-listen-direct", d)
 	}
-	// -dns: резолвер = шлюз, который видят клиенты; дефолт монолита 8.8.8.8
-	// уводит DNS мимо роутера (PR #697, F1).
-	if c.RelayMode == "wg" {
-		str("-dns", wdttServerGatewayAddr)
-	} else {
-		str("-dns", rawServerProcessAddr)
-	}
+	// -dns: резолвер, который сервер объявляет абонентам; дефолт монолита
+	// 8.8.8.8 уводит DNS мимо роутера (PR #697, F1).
+	//
+	// Флаг у форка ОДИН на обе половины: одно и то же значение уезжает и в
+	// `[Interface] DNS` конфига WG-абонента (buildClientConfig), и в
+	// `RAWCONF:ip|dns|mtu` raw-абонента (server.go форка) — выбрать разные
+	// нечем. Режим связи здесь больше не спрашивается: половины работают
+	// ОБЕ и всегда, а DNAT :53 стоит на обоих интерфейсах (wdttserver.Role
+	// natGroups) и переписывает запрос на шлюз ТОЙ половины, по которой
+	// абонент пришёл, независимо от объявленного адреса. Значение поэтому —
+	// адрес роутера, годный обеим: 10.66.0.1 и 10.70.0.1 — это он сам.
+	//
+	// Прежде здесь стоял `10.70.66.1` — адрес, который форк присваивает
+	// raw-TUN, когда поднимает его САМ. Под менеджером дескриптор приходит
+	// извне (`awgmTakeTun`, server.go:2182), свой `ip addr add` форк
+	// пропускает, и адреса этого на роутере не существует: абонент получал
+	// резолвер в никуда.
+	str("-dns", wdttServerGatewayAddr)
 	return args
 }
 

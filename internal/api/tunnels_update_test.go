@@ -80,7 +80,8 @@ func TestMergeInterfaceWhitelist_AppliesAWGParamsFromRequest(t *testing.T) {
 // applies them from the request. They ride along because the whitelist copies
 // AWGObfuscation wholesale — this test locks that so a future field-by-field
 // refactor can't silently drop them. Read (BuildTunnelResponse) returns the raw
-// storage.Interface, so persisting them is enough to surface them to the UI.
+// storage.Interface за вычетом PrivateKey (F56), так что персиста достаточно,
+// чтобы поля доехали до UI.
 func TestMergeInterfaceWhitelist_AppliesAWG3ParamsFromRequest(t *testing.T) {
 	existing := &storage.AWGTunnel{
 		Interface: storage.AWGInterface{

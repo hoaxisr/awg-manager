@@ -109,7 +109,11 @@ describe('матрица кнопок строки', () => {
 
 		const alive = within(rowOf('Телефон Ивана'));
 		expect(alive.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
-		expect(alive.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
+		// Живому абоненту ключ тоже меняется — прежде кнопку давала только
+		// ветка просрочки, и сменить пароль было нечем.
+		expect(alive.getByRole('button', { name: 'Перевыпустить' }).hasAttribute('disabled')).toBe(
+			false,
+		);
 		expect(alive.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
 		const expired = within(rowOf('Гостевой'));

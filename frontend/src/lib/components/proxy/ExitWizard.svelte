@@ -60,6 +60,16 @@
 	let { policies, usedListens, row = null, wdttClient, ftClient, onclose, ondone }: Props =
 		$props();
 
+	// Локальный порт ОБЩИЙ для обоих протоколов: wdtt-клиент и freeturn-клиент
+	// слушают один 127.0.0.1, и мастер, считавший занятость только по своему
+	// протоколу, подсказывал занятый порт — инстанс падал с «порт 9000 занят
+	// другим инстансом» (стенд 2026-08-28).
+	const allUsedListens = $derived([...usedListens.wdtt, ...usedListens.freeturn]);
+
+	function candidateListen(p: ExitProtocol): string {
+		return nextLocalListen(allUsedListens, p);
+	}
+
 	const STEPS = ['Источник', 'Параметры', 'Куда направить трафик'];
 
 	// Мастер существующего клиента начинается с параметров: источник у него уже
@@ -149,14 +159,6 @@
 	);
 	const step2Ready = $derived(exitStep2Ready({ protocol, ...fields }));
 
-	function candidateListen(p: ExitProtocol): string {
-		// Локальный порт ОБЩИЙ для обоих протоколов: wdtt-клиент и
-		// freeturn-клиент слушают один 127.0.0.1, и мастер, считавший занятость
-		// только по своему протоколу, подсказывал занятый порт — инстанс падал
-		// с «порт 9000 занят другим инстансом» (стенд 2026-08-28).
-		return nextLocalListen([...usedListens.wdtt, ...usedListens.freeturn], p);
-	}
-
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */
 	async function decode() {
 		const text = link.trim();
@@ -197,11 +199,11 @@
 				subscription = res.subscription;
 				wdttPayload = null;
 				profileIdx = '0';
-				applyProfile(res.subscription.profiles[0], true);
+				applyProfile(res.subscription.profiles[0]);
 			} else if (res.profile) {
 				subscription = null;
 				wdttPayload = res.profile;
-				applyProfile(res.profile, false);
+				applyProfile(res.profile);
 			}
 		} catch (e) {
 			pendingLinkError = errText(e);
@@ -215,9 +217,9 @@
 		pendingLinkError = '';
 	}
 
-	function applyProfile(payload: WdttImportPayload, fromSub: boolean) {
+	function applyProfile(payload: WdttImportPayload) {
 		mode = payload.connMode === 'raw' ? 'raw' : 'wg';
-		fields = fieldsFromWdttPayload(payload, candidateListen('wdtt'), fromSub);
+		fields = fieldsFromWdttPayload(payload, candidateListen('wdtt'));
 	}
 
 	function onLinkInput(v: string) {
@@ -350,7 +352,7 @@
 				onprofile={(idx) => {
 					profileIdx = idx;
 					const picked = subscription?.profiles[Number(idx)];
-					if (picked) applyProfile(picked, true);
+					if (picked) applyProfile(picked);
 				}}
 			/>
 		{:else if step === 1}

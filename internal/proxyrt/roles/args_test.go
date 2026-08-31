@@ -65,11 +65,20 @@ func TestWdttServerArgs(t *testing.T) {
 	}
 }
 
-func TestWdttServerArgsRawRelayDNS(t *testing.T) {
-	c := WdttServerConfig{Listen: "0.0.0.0:56000", WgPort: 51820, Password: "x", RelayMode: "raw"}
-	got := strings.Join(WdttServerArgs(c), " ")
-	if !strings.Contains(got, "-dns 10.70.66.1") {
-		t.Fatalf("raw-relay: dns обязан быть адресом raw-шлюза, got %q", got)
+// Флаг -dns у форка один на обе половины, и режим связи его не выбирает:
+// абонент любой половины получает адрес роутера, а DNAT на его интерфейсе
+// переписывает запрос на шлюз своей половины. Прежде raw-режим подставлял
+// 10.70.66.1 — адрес, которого под менеджером на роутере не существует.
+func TestWdttServerArgsDNSIsRouterRegardlessOfRelayMode(t *testing.T) {
+	for _, mode := range []string{"wg", "raw"} {
+		c := WdttServerConfig{Listen: "0.0.0.0:56000", WgPort: 51820, Password: "x", RelayMode: mode}
+		got := strings.Join(WdttServerArgs(c), " ")
+		if !strings.Contains(got, "-dns 10.66.0.1") {
+			t.Fatalf("режим %q: dns обязан быть адресом роутера, got %q", mode, got)
+		}
+		if strings.Contains(got, "10.70.66.1") {
+			t.Fatalf("режим %q: 10.70.66.1 под менеджером не существует, got %q", mode, got)
+		}
 	}
 }
 
