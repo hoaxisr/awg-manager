@@ -324,6 +324,20 @@ func listenAddrs(r Record) []string {
 // поэтому запись можно передавать значением). nil — роль неподвижна: у
 // серверов listen это WAN-порт, на который настроены проброс и внешние
 // клиенты, и пул 9000..9200 не про него.
+// ClientListen — указатель на локальный listen клиента внутри записи; nil у
+// серверных ролей. Экспортирован ради боота менеджера: тот сверяет порты с
+// занятостью и переселяет негодные, а второй копии развилки по ролям быть не
+// должно.
+func ClientListen(r *Record) *string {
+	switch {
+	case r.WdttClient != nil:
+		return &r.WdttClient.Listen
+	case r.FreeTurnClient != nil:
+		return &r.FreeTurnClient.Listen
+	}
+	return nil
+}
+
 func clientListen(r Record) *string {
 	switch {
 	case r.WdttClient != nil:

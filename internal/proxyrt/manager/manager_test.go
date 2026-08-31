@@ -183,8 +183,13 @@ type env struct {
 	waited       []string
 	waitHook     func() // срабатывает внутри WaitDisabled (нужен тесту воскрешения)
 	seedHook     func() // срабатывает ВНУТРИ посева (нужен тесту сериализации Boot)
-	released     [][]string
-	allocN       int
+	// listenTaken — подмена занятости: адрес → чем его заменит аллокатор.
+	listenTaken map[string]string
+	// factoryRecs — записи, С КОТОРЫМИ собирались воркеры: переезд порта на
+	// бооте обязан доехать до сборки, иначе процесс сядет на занятый порт.
+	factoryRecs map[string]instancestore.Record
+	released    [][]string
+	allocN      int
 }
 
 func newEnv(t *testing.T) *env {
@@ -192,7 +197,8 @@ func newEnv(t *testing.T) *env {
 	dir := t.TempDir()
 	e := &env{st: instancestore.New(dir), dir: dir, reg: &fakeRegistry{},
 		sw: &fakeSweeper{}, j: &recJournal{},
-		instances: map[string]*fakeInstance{}, factoryN: map[string]int{}}
+		instances: map[string]*fakeInstance{}, factoryN: map[string]int{},
+		factoryRecs: map[string]instancestore.Record{}}
 	e.m = New(Deps{
 		Store:    e.st,
 		Registry: e.reg,
@@ -204,6 +210,7 @@ func newEnv(t *testing.T) *env {
 			}
 			fi := &fakeInstance{}
 			e.instances[rec.Key()] = fi
+			e.factoryRecs[rec.Key()] = rec
 			e.factoryN[rec.Key()]++
 			return fi, nil
 		},
@@ -236,6 +243,9 @@ func newEnv(t *testing.T) *env {
 			return 30, nil
 		},
 		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+			if next, taken := e.listenTaken[current]; taken {
+				return next, nil
+			}
 			if current != "" {
 				return current, nil
 			}
@@ -306,6 +316,45 @@ func TestBootCertifiesTheSameListItDeclares(t *testing.T) {
 	}
 	if info := e.m.SeedInfo(); !info.Booted || !info.Certified {
 		t.Fatalf("SeedInfo после чистого боота: %+v", info)
+	}
+}
+
+// Занятый порт на бооте инстанс не убивает: посев разводит конфликты только
+// между записями, а занятость шире (localhost-endpoint AWG-туннеля). Прежде
+// ensurePins стоял лишь на путях Create/Update, и такой инстанс уходил в
+// blocked до ручного стоп/старта.
+func TestBootMovesInstanceOffTakenListen(t *testing.T) {
+	e := newEnv(t)
+	// Аллокатор говорит, что 9000 занят кем-то снаружи записей.
+	e.listenTaken = map[string]string{"127.0.0.1:9000": "127.0.0.1:9042"}
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), ftRec("ft"))
+	boot(t, e)
+
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range st.Records {
+		p := instancestore.ClientListen(&r)
+		if r.ID == "de" && *p != "127.0.0.1:9042" {
+			t.Fatalf("переезд не записан на диск: %s", *p)
+		}
+		if r.ID == "ft" && *p != "127.0.0.1:9001" {
+			t.Fatalf("годный порт тронут: %s", *p)
+		}
+	}
+	// Молча сменить порт нельзя: переезд обязан быть виден человеку.
+	if len(st.MovedListen) != 1 || st.MovedListen[0].From != "127.0.0.1:9000" ||
+		st.MovedListen[0].To != "127.0.0.1:9042" {
+		t.Fatalf("переезд не показан: %+v", st.MovedListen)
+	}
+	// Воркер обязан подняться уже с новым портом, иначе процесс сядет на занятый.
+	built, ok := e.factoryRecs["wdtt-client:de"]
+	if !ok {
+		t.Fatal("инстанс не создан")
+	}
+	if got := *instancestore.ClientListen(&built); got != "127.0.0.1:9042" {
+		t.Fatalf("воркер собран со старым портом: %s", got)
 	}
 }
 

@@ -268,6 +268,19 @@ func (m *Manager) Boot(ctx context.Context) error {
 		return err
 	}
 	list := res.State.Records
+	// Занятый listen на бооте — не приговор. Посев разводит претендентов на
+	// один порт ТОЛЬКО между записями (resolveListenConflicts), а занятость
+	// шире: в неё входят и localhost-endpoint'ы AWG-туннелей. Такой конфликт
+	// посев не видит, ресурс listen_port видит и отказывает — инстанс уходил
+	// в blocked и сам оттуда не выбирался, потому что ensurePins стоит только
+	// на путях Create и Update.
+	//
+	// Побочно закрывается вторая дыра: после рестарта демона held аллокатора
+	// пуст, и до первой мутации порты живых записей не были ни за кем
+	// закреплены. Здесь они закрепляются все.
+	if moved := m.reconcileBootListen(&list); len(moved) > 0 {
+		res.State.MovedListen = append(res.State.MovedListen, moved...)
+	}
 	declaredNDMS := instance.DeclaredNDMSNames(namedOf(list))
 
 	// Переезд listen-порта — не деталь реализации: снаружи мог быть настроен
@@ -524,6 +537,64 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 		c.Listen = l
 	}
 	return allocated, nil
+}
+
+// reconcileBootListen сверяет локальные порты клиентов с занятостью и
+// переселяет тех, чей порт негоден. Возвращает переезды; список записей
+// правится по месту, чтобы воркеры стартовали уже с новыми портами.
+//
+// Отказ аллокатора (пул исчерпан) переездом не считается: запись остаётся с
+// прежним портом и уйдёт в blocked ровно как раньше — это не хуже, чем было,
+// а ронять боот из-за одного инстанса нельзя.
+//
+// Endpoint связанного AWG-туннеля за переездом идёт сам: LinkedEndpoint видит
+// расхождение с listen и правит его ДО подъёма туннеля.
+func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancestore.ListenMove {
+	recs := *list
+	want := map[string]string{}
+	var moves []instancestore.ListenMove
+	for i := range recs {
+		cur := instancestore.ClientListen(&recs[i])
+		if cur == nil {
+			continue // серверные роли: их listen задаёт пользователь
+		}
+		key := recs[i].Key()
+		next, err := m.deps.AllocListen(key+"/listen", recs[i].Kind, recs[i].ID, *cur)
+		if err != nil {
+			m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
+				"инстанс %s: порт %s оставлен как есть — %v", key, *cur, err))
+			continue
+		}
+		if next == *cur {
+			continue
+		}
+		moves = append(moves, instancestore.ListenMove{
+			Instance: key, Name: recs[i].Name, From: *cur, To: next})
+		want[key] = next
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	next, err := m.deps.Store.Replace(func(st *instancestore.State) error {
+		for i := range st.Records {
+			if l, ok := want[st.Records[i].Key()]; ok {
+				if p := instancestore.ClientListen(&st.Records[i]); p != nil {
+					*p = l
+				}
+			}
+		}
+		// Молча сменить порт нельзя — тем же каналом, что и переезды посева.
+		st.MovedListen = append(st.MovedListen, moves...)
+		return nil
+	})
+	if err != nil {
+		// Диск не принял — воркеры пойдут со СТАРЫМИ портами: правка в памяти
+		// без записи означала бы, что после рестарта порт снова другой.
+		m.deps.Journal.Warn("boot", "proxy", "переезд listen-портов не записан: "+err.Error())
+		return nil
+	}
+	*list = next.Records
+	return moves
 }
 
 // mutateStore — общий каркас мутаций: кандидат → объявление → запись.
