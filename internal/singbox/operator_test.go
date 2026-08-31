@@ -1465,7 +1465,7 @@ func TestPreflightConfigDir_SurfacesCollisionWithBothFilenames(t *testing.T) {
 		configPath: configDir,
 		validator: &Validator{
 			binary: "/nonexistent",
-			exec:   func(string, ...string) ([]byte, error) { return nil, nil },
+			exec:   func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
 		},
 	}
 
@@ -1496,7 +1496,7 @@ func TestPreflightConfigDir_FallsThroughToValidator(t *testing.T) {
 		configPath: configDir,
 		validator: &Validator{
 			binary: "/nonexistent",
-			exec: func(string, ...string) ([]byte, error) {
+			exec: func(context.Context, string, ...string) ([]byte, error) {
 				validatorCalls++
 				return []byte("synthetic schema failure"), errSyntheticValidator
 			},
