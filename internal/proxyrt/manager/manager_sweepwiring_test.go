@@ -144,8 +144,7 @@ func TestDeleteSweepsInterfaceOfDeletedInstance(t *testing.T) {
 	// на момент уборки.
 	rec := instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
 		Name: "Имя", Enabled: true,
-		WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1",
-			Password: "pw", VKHashes: "h"}}
+		WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1", VKHashes: "h"}}
 	if err := e.m.Create(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +205,7 @@ func TestDeleteRemovesDataDirOfServer(t *testing.T) {
 	if _, err := e.st.Replace(func(st *instancestore.State) error {
 		st.Records = append(st.Records, instancestore.Record{
 			ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
-			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "pw",
-				ConfigDir: cfgDir, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", ConfigDir: cfgDir, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 				RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}})
 		st.SeededFrom = []string{"test"}
 		return nil
@@ -238,8 +236,7 @@ func TestDeleteKeepsDataDirItself(t *testing.T) {
 		if _, err := e.st.Replace(func(st *instancestore.State) error {
 			st.Records = []instancestore.Record{{
 				ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
-				WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "pw",
-					ConfigDir: dir, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+				WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", ConfigDir: dir, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 					RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}}}
 			st.SeededFrom = []string{"test"}
 			return nil
@@ -333,8 +330,7 @@ func TestDeleteKeepsDataPathOutsideOwnSubtree(t *testing.T) {
 	if _, err := e.st.Replace(func(st *instancestore.State) error {
 		st.Records = append(st.Records, instancestore.Record{
 			ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
-			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "pw",
-				ConfigDir: foreign, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", ConfigDir: foreign, NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 				RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}})
 		st.SeededFrom = []string{"test"}
 		return nil

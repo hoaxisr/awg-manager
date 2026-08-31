@@ -148,8 +148,6 @@ export function rawPortHint(port: string): string {
 
 /** Поля шага 2 — параметры сервера (WS-16..WS-28). */
 export interface ShareWizardFields {
-	/** WDTT: главный пароль сервера. */
-	password: string;
 	/** Порт сервера: DTLS у WDTT, listen у FreeTurn. */
 	port: string;
 	/** WDTT — три порта сервера, FreeTurn — один (SH-57/SH-57a). */
@@ -310,14 +308,12 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 				password: typed || undefined,
 				comment: client.name.trim() || undefined,
 				vkHash: client.vkHash.trim() || undefined,
-				mainPassword: fields.password.trim(),
 			});
 			// Сгенерированный пароль ищем как запись, которой до добавления не было.
 			password = typed || addedPassword(before, st.users ?? []);
 			input.onclientadded?.(password);
 		}
 
-		cfg.password = fields.password.trim();
 		cfg.listen = setListenPort(cfg.listen || `0.0.0.0:${DEFAULT_WDTT_PORT}`, port);
 		cfg.openFirewall = fields.firewall;
 		const saved = await api.updateWdttServerInstance(id, cfg);

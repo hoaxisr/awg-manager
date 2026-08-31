@@ -62,7 +62,6 @@ func WdttServerArgs(c WdttServerConfig) []string {
 		args = append(args, "-wg-port", strconv.Itoa(c.WgPort))
 	}
 	str("-config-dir", c.ConfigDir)
-	str("-password", c.Password)
 	args = append(args, "-no-nat") // NAT наш, безусловно (server.go:502)
 	str("-wg-iface", c.WgIface)
 	str("-raw-iface", c.RawIface)

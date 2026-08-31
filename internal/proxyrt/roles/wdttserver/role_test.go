@@ -119,8 +119,7 @@ func (n *nilIngress) EnsureWdttServerIngressRefs(context.Context, string, string
 
 func srvCfg() roles.WdttServerConfig {
 	return roles.WdttServerConfig{
-		Listen: "0.0.0.0:56000", WgPort: 51820, Password: "main",
-		WgIface: "opkgtun17", RawIface: "opkgtun19",
+		Listen: "0.0.0.0:56000", WgPort: 51820, WgIface: "opkgtun17", RawIface: "opkgtun19",
 		NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19",
 		RelayMode: "wg", NatMode: "full", Policy: "none", OpenFirewall: true,
 	}

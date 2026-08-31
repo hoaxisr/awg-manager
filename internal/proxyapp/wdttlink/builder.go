@@ -62,7 +62,6 @@ type UnusableReason string
 const (
 	ReasonUsable        UnusableReason = ""
 	ReasonEmptyPassword UnusableReason = "empty_password"
-	ReasonMainPassword  UnusableReason = "main_password"
 )
 
 // UserVetting — предикат пригодности абонента сервера. Прод-реализация живёт
@@ -72,8 +71,8 @@ const (
 // по всему списку была бы мягче, и ссылка на просроченного абонента
 // собралась бы без единой жалобы и молча не подключилась.
 type UserVetting interface {
-	UsableUsers(users []instancestore.ServerUser, mainPassword string, now time.Time) []instancestore.ServerUser
-	UnusableReason(u instancestore.ServerUser, mainPassword string, now time.Time) UnusableReason
+	UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser
+	UnusableReason(u instancestore.ServerUser) UnusableReason
 }
 
 // BuilderDeps — зависимости сборщика ссылок wdtt-сервера.
@@ -116,7 +115,7 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	// безвредно — UnusableReason отбрасывает пустой пароль абонента ДО
 	// сравнения с владельческим, поэтому «это пароль владельца» на пустом не
 	// срабатывает.
-	linkPassword, err := b.linkPasswordFor(req, rec, cfg.Password)
+	linkPassword, err := b.linkPasswordFor(req, rec)
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_NO_CLIENT", Msg: err.Error()}
 	}
@@ -217,21 +216,20 @@ func (b *Builder) persistPeer(ctx context.Context, rec instancestore.Record, pee
 // абоненты уезжают в passwords.json и по которому сервер собирает wrap-ключи.
 // Проверка по всему списку записи была бы мягче: ссылка на просроченного
 // абонента собралась бы без единой жалобы и молча не подключилась.
-func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record, mainPassword string) (string, error) {
+func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record) (string, error) {
 	if b.deps.Vetting == nil {
 		// Fail-closed: без предиката пригодность абонента не проверить, а
 		// выдать ссылку «на всякий пароль» хуже отказа.
 		return "", errors.New("проверка абонентов не подключена")
 	}
-	now := b.now()
-	usable := b.deps.Vetting.UsableUsers(rec.Users, mainPassword, now)
+	usable := b.deps.Vetting.UsableUsers(rec.Users)
 	if len(usable) == 0 {
 		return "", errors.New("у сервера нет ни одного рабочего абонента: заведите абонента и повторите")
 	}
 
 	pass := strings.TrimSpace(req.Password)
 	if pass == "" {
-		return "", errors.New("выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера")
+		return "", errors.New("выберите абонента: ссылка выдаётся на пароль абонента")
 	}
 	for _, u := range usable {
 		// Пароль из UsableUsers уже подрезан — трим тут не нужен.
@@ -241,9 +239,8 @@ func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record, mai
 	}
 
 	// Пароль не рабочий. Причину спрашиваем у классификатора — того же, на
-	// котором построен предикат. Выводить её исключением («не пустой, не
-	// главный, значит просрочен») нельзя: вычитание исчерпывающе только для
-	// сегодняшнего набора условий, а четвёртое дало бы уверенный ложный текст.
+	// котором построен предикат, а не выводим её исключением: набор условий
+	// пригодности живёт в одном месте и может пополниться.
 	known := false
 	target := instancestore.ServerUser{Password: pass}
 	for _, u := range rec.Users {
@@ -252,7 +249,7 @@ func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record, mai
 			break
 		}
 	}
-	return "", errors.New(linkRejectMessage(b.deps.Vetting.UnusableReason(target, mainPassword, now), known))
+	return "", errors.New(linkRejectMessage(b.deps.Vetting.UnusableReason(target), known))
 }
 
 // linkRejectMessage переводит причину непригодности в текст отказа.
@@ -260,8 +257,6 @@ func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record, mai
 // абонентов не лежит, а сказать про него надо именно про него.
 func linkRejectMessage(reason UnusableReason, knownClient bool) string {
 	switch {
-	case reason == ReasonMainPassword:
-		return "это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента"
 	case !knownClient:
 		return "пароль не принадлежит ни одному абоненту сервера"
 	default:

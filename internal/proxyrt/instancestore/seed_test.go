@@ -1258,7 +1258,6 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				Listen:           "0.0.0.0:56002",
 				WgPort:           56001,
 				ConfigDir:        "/opt/etc/awgm/wdtt-srv-1",
-				Password:         "pw-server",
 				WgIface:          "opkgtun20",
 				RawIface:         "opkgtun21",
 				NdmsIface:        "OpkgTun20",

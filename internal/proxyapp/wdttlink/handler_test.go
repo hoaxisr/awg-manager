@@ -150,20 +150,17 @@ func (f *fakeTunnels) PublishList(context.Context) { f.published++ }
 // перенесённого passwords_json.go (задача 9 даёт прод-реализацию).
 type fakeVetting struct{}
 
-func (fakeVetting) UnusableReason(u instancestore.ServerUser, main string, now time.Time) UnusableReason {
-	switch {
-	case strings.TrimSpace(u.Password) == "":
+func (fakeVetting) UnusableReason(u instancestore.ServerUser) UnusableReason {
+	if strings.TrimSpace(u.Password) == "" {
 		return ReasonEmptyPassword
-	case strings.TrimSpace(u.Password) == strings.TrimSpace(main):
-		return ReasonMainPassword
 	}
 	return ReasonUsable
 }
 
-func (v fakeVetting) UsableUsers(users []instancestore.ServerUser, main string, now time.Time) []instancestore.ServerUser {
+func (v fakeVetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	var out []instancestore.ServerUser
 	for _, u := range users {
-		if v.UnusableReason(u, main, now) == ReasonUsable {
+		if v.UnusableReason(u) == ReasonUsable {
 			out = append(out, u)
 		}
 	}
@@ -267,7 +264,7 @@ func TestLink_ModeDecidesPort(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serverRecord(roles.WdttServerConfig{
 				Listen: "0.0.0.0:56002", DirectListen: "0.0.0.0:56004",
-				WgPort: 56001, Password: "main", RelayMode: tc.relayMode,
+				WgPort: 56001, RelayMode: tc.relayMode,
 			}, user)
 			h, _, _, _, _ := newTestHandler(t, rec)
 			rr := httptest.NewRecorder()
@@ -304,7 +301,7 @@ func TestLink_ModeDecidesPort(t *testing.T) {
 
 func TestLink_PersistsPeerInPlace(t *testing.T) {
 	rec := serverRecord(roles.WdttServerConfig{
-		Listen: "0.0.0.0:56002", WgPort: 56001, Password: "main", RelayMode: ConnModeWG,
+		Listen: "0.0.0.0:56002", WgPort: 56001, RelayMode: ConnModeWG,
 	}, instancestore.ServerUser{Password: "abonent", Comment: "Абонент 1"})
 	rec.Sub = "https://sub.example/x"
 	rec.StatsLog = "disk"
@@ -328,7 +325,7 @@ func TestLink_PersistsPeerInPlace(t *testing.T) {
 
 func TestLink_PeerFallbacks(t *testing.T) {
 	base := roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
-		Password: "main", RelayMode: ConnModeWG}
+		RelayMode: ConnModeWG}
 	user := instancestore.ServerUser{Password: "abonent"}
 
 	t.Run("адрес из записи", func(t *testing.T) {
@@ -364,7 +361,7 @@ func TestLink_PeerFallbacks(t *testing.T) {
 // Тексты отказов — часть контракта: фронт показывает их пользователю дословно.
 func TestLink_PasswordRejections(t *testing.T) {
 	base := roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
-		Password: "main", RelayMode: ConnModeWG}
+		RelayMode: ConnModeWG}
 	// Пустой пароль — единственная непригодность, кроме главного: срока
 	// действия у абонента нет, назначить его нечем.
 	empty := instancestore.ServerUser{Password: ""}
@@ -379,9 +376,7 @@ func TestLink_PasswordRejections(t *testing.T) {
 		{"нет рабочих абонентов", []instancestore.ServerUser{empty}, `{"password":"old"}`,
 			"у сервера нет ни одного рабочего абонента: заведите абонента и повторите"},
 		{"пароль не выбран", []instancestore.ServerUser{good}, `{}`,
-			"выберите абонента: ссылка выдаётся на пароль абонента, а не на главный пароль сервера"},
-		{"главный пароль", []instancestore.ServerUser{good}, `{"password":"main"}`,
-			"это главный пароль сервера: он остаётся ключом администрирования, ссылка выдаётся на пароль абонента"},
+			"выберите абонента: ссылка выдаётся на пароль абонента"},
 		{"чужой пароль", []instancestore.ServerUser{good}, `{"password":"нетакой"}`,
 			"пароль не принадлежит ни одному абоненту сервера"},
 	}
@@ -480,7 +475,7 @@ func TestImport_CreatesRecord(t *testing.T) {
 
 func TestImport_FreeIDWhenDefaultTaken(t *testing.T) {
 	taken := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 	h, _, mut, _, _ := newTestHandler(t, taken)
 	rr := httptest.NewRecorder()
 	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h"}`))
@@ -526,7 +521,7 @@ func TestDecode_ReturnsProfile(t *testing.T) {
 
 func TestClearLinkedTunnels_Form(t *testing.T) {
 	rec := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 	h, _, _, cleaner, _ := newTestHandler(t, rec)
 	cleaner.deleted = []string{"t1", "t2"}
 	cleaner.errs = []string{"Германия wdtt (t3): занят"}
@@ -556,7 +551,7 @@ const wgConf = "[Interface]\nPrivateKey = priv\nAddress = 10.66.0.5/32\n\n[Peer]
 
 func wgClient() instancestore.Record {
 	return clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9100",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 }
 
 func TestEnsureWG_NoSnapshotIs409(t *testing.T) {
@@ -703,7 +698,7 @@ func TestEnsureWG_DropsStaleLinkedTunnel(t *testing.T) {
 
 func TestEnsureWG_RawModeIsNoop(t *testing.T) {
 	rec := clientRecord(roles.WdttClientConfig{Mode: ConnModeRaw, Listen: "127.0.0.1:9100",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h",
+		Peer: "1.1.1.1:56000", VKHashes: "h",
 		NdmsIface: "OpkgTun17", RawIface: "opkgtun17"})
 	h, _, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
@@ -754,9 +749,9 @@ func jsonString(s string) string {
 // СЕРВЕРУ не имеет права снести туннели КЛИЕНТА с тем же id.
 func TestClearLinkedTunnels_RejectsNonClientKind(t *testing.T) {
 	server := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002",
-		Password: "main", RelayMode: ConnModeWG})
+		RelayMode: ConnModeWG})
 	client := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 	h, _, _, cleaner, _ := newTestHandler(t, server, client)
 
 	rr := httptest.NewRecorder()
@@ -776,7 +771,7 @@ func TestClearLinkedTunnels_RejectsNonClientKind(t *testing.T) {
 // C1: поле связи у подсистем разное, поэтому уборщик выбирается ПО РОЛИ.
 func TestClearLinkedTunnels_CleanerPickedByKind(t *testing.T) {
 	wdttClient := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 	ftClient := instancestore.Record{ID: "default", Kind: instancestore.KindFreeTurnClient,
 		Name: "FT", FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "1.1.1.1:1"}}
 	h, _, _, wdttCleaner, _ := newTestHandler(t, wdttClient, ftClient)
@@ -865,9 +860,9 @@ func TestEnsureWG_ForgetsTrafficAndPublishes(t *testing.T) {
 // промахнётся, и обязаны называть причину, а не изображать успех.
 func TestFailClosed_MissingWiring(t *testing.T) {
 	client := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", Password: "p", VKHashes: "h"})
+		Peer: "1.1.1.1:56000", VKHashes: "h"})
 	server := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002",
-		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 
 	t.Run("нет проверки абонентов", func(t *testing.T) {
 		h, _, _, _, _ := newTestHandler(t, server)
@@ -927,7 +922,7 @@ func TestFailClosed_MissingWiring(t *testing.T) {
 // выходов реестру) на каждый показ панели.
 func TestLink_SamePeerNotRewritten(t *testing.T) {
 	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
-		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 	rec.LinkPeer = "1.2.3.4:56002"
 	h, _, mut, _, _ := newTestHandler(t, rec)
 
@@ -944,7 +939,7 @@ func TestLink_SamePeerNotRewritten(t *testing.T) {
 // Хеши из записи — единственный читатель LinkVKHashes.
 func TestLink_HashesFromRecord(t *testing.T) {
 	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
-		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 	rec.LinkVKHashes = "hash1,hash2"
 	h, _, _, _, _ := newTestHandler(t, rec)
 
@@ -983,7 +978,7 @@ func TestImport_NormalizesEmptyMode(t *testing.T) {
 // о поломке последнему, кто может её исправить, — самому абоненту.
 func TestLink_NoVKHashesRefused(t *testing.T) {
 	rec := serverRecordNoHashes(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
-		Password: "main", RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
+		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 	h, _, _, _, _ := newTestHandler(t, rec)
 
 	rr := httptest.NewRecorder()

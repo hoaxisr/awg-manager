@@ -121,7 +121,7 @@ describe('shareConfigSetupComplete: тот же критерий для сохр
 	it('WDTT-сервер настроен самим фактом конфига', () => {
 		// Работоспособным его делают абоненты, а их состав знает ручка
 		// абонентов, не конфиг. Пароль владельца форку не обязателен.
-		const cfg = { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } as WdttServerConfig;
+		const cfg = { listen: '0.0.0.0:56002', wgPort: 56001 } as WdttServerConfig;
 		expect(shareConfigSetupComplete(cfg)).toBe(true);
 	});
 
@@ -263,11 +263,10 @@ function fakeWdttBackend() {
 
 	apiMock.createWdttServer.mockImplementation(async () => {
 		state.calls.push('create');
-		return { id: 's1', name: 'Раздача', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } };
+		return { id: 's1', name: 'Раздача', config: { listen: '0.0.0.0:56002', wgPort: 56001 } };
 	});
 	apiMock.updateWdttServerInstance.mockImplementation(async (_id: string, cfg: WdttServerConfig) => {
 		state.calls.push('put');
-		state.password = (cfg.password ?? '').trim();
 		return { config: { ...cfg, clients: state.clients } };
 	});
 	apiMock.getWdttServerPanelUsers.mockImplementation(async () => {
@@ -275,16 +274,13 @@ function fakeWdttBackend() {
 		return { available: true, users: entries() };
 	});
 	apiMock.addWdttServerPanelUser.mockImplementation(
-		async (_id: string, opts: { password?: string; comment?: string; mainPassword?: string }) => {
+		async (_id: string, opts: { password?: string; comment?: string }) => {
 			state.calls.push('add');
-			const main = state.password || (opts.mainPassword ?? '').trim();
-			if (!main) throw new Error('сначала задайте пароль сервера');
 			state.clients.push({
 				password: opts.password || 'gen-1',
 				comment: opts.comment ?? '',
 				auto: false,
 			});
-			if (!state.password) state.password = main;
 			return { available: true, users: entries(), reload: 'delivered' as const };
 		},
 	);
@@ -326,7 +322,6 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 		expect(state.calls).toEqual(['create', 'users', 'add', 'put', 'start']);
 		expect(state.clients.map((c) => c.comment)).toEqual(['Ноутбук Пети']);
 		expect(apiMock.addWdttServerPanelUser.mock.calls[0][1]).toMatchObject({
-			mainPassword: 'mainpass0000',
 			comment: 'Ноутбук Пети',
 		});
 		// WS-29: ссылка собрана на пароль абонента шага 3.
@@ -356,7 +351,7 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 			client,
 			withLink: true,
 			peer: '',
-			existing: { id: 's1', config: { listen: '0.0.0.0:56002', wgPort: 56001, password: '' } },
+			existing: { id: 's1', config: { listen: '0.0.0.0:56002', wgPort: 56001 } },
 			addedClientPassword: 'gen-1',
 		});
 		expect(state.calls).toEqual(['put', 'start']);

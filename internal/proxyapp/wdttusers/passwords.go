@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -191,10 +190,10 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 // причина отказа и сам отбор не могут разойтись — а именно расхождением
 // получался ложный текст «просрочен» у абонента, непригодного по другой
 // причине.
-func UsableUsers(users []instancestore.ServerUser, mainPassword string, now time.Time) []instancestore.ServerUser {
+func UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	out := make([]instancestore.ServerUser, 0, len(users))
 	for _, u := range users {
-		if UnusableReason(u, mainPassword, now) != wdttlink.ReasonUsable {
+		if UnusableReason(u) != wdttlink.ReasonUsable {
 			continue
 		}
 		u.Password = strings.TrimSpace(u.Password)
@@ -205,19 +204,16 @@ func UsableUsers(users []instancestore.ServerUser, mainPassword string, now time
 
 // UnusableReason называет ПРИЧИНУ непригодности — ту же, по которой абонент не
 // попадает в passwords.json. Потребители причины (тексты отказов сборщика
-// ссылок) обязаны спрашивать её, а не выводить причину исключением: вычитание
-// исчерпывающе ровно для сегодняшнего набора условий, и четвёртое условие
-// сделало бы старый текст ложным, не сломав ни одного теста.
+// ссылок) обязаны спрашивать её, а не выводить причину исключением.
 //
-// Новое условие пригодности добавляется ЗДЕСЬ, и только здесь: предикат
-// UsableUsers построен на этой функции.
-func UnusableReason(u instancestore.ServerUser, mainPassword string, now time.Time) wdttlink.UnusableReason {
-	pass := strings.TrimSpace(u.Password)
-	switch {
-	case pass == "":
+// Условие сегодня ровно одно — пустой пароль. Срок действия и деактивацию
+// назначал только админ-путь форка, которого у нас нет; главный пароль
+// сервера снят как ненужный (он не участвовал ни в WRAP-ключах, ни в
+// аутентификации абонента — только в admin-API форка). Новое условие
+// пригодности добавляется ЗДЕСЬ, и только здесь.
+func UnusableReason(u instancestore.ServerUser) wdttlink.UnusableReason {
+	if strings.TrimSpace(u.Password) == "" {
 		return wdttlink.ReasonEmptyPassword
-	case pass == strings.TrimSpace(mainPassword):
-		return wdttlink.ReasonMainPassword
 	}
 	return wdttlink.ReasonUsable
 }
@@ -226,12 +222,12 @@ func UnusableReason(u instancestore.ServerUser, mainPassword string, now time.Ti
 // потребителей. Состояния у неё нет, поэтому проводке достаточно значения.
 type Vetting struct{}
 
-func (Vetting) UsableUsers(users []instancestore.ServerUser, mainPassword string, now time.Time) []instancestore.ServerUser {
-	return UsableUsers(users, mainPassword, now)
+func (Vetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
+	return UsableUsers(users)
 }
 
-func (Vetting) UnusableReason(u instancestore.ServerUser, mainPassword string, now time.Time) wdttlink.UnusableReason {
-	return UnusableReason(u, mainPassword, now)
+func (Vetting) UnusableReason(u instancestore.ServerUser) wdttlink.UnusableReason {
+	return UnusableReason(u)
 }
 
 // dropOrphanPasswordsDevices удаляет устройства, на которые не ссылается ни один
@@ -269,18 +265,17 @@ func dropOrphanPasswordsDevices(devices map[string]any, passwords map[string]pas
 // Записи абонентов МЕРЖАТСЯ поверх лежащих в файле: is_deactivated, device_ids,
 // max_devices, expires_at, счётчики трафика и ports принадлежат серверу, наши —
 // только label и vk_hash.
-func preparePasswordsJSONForServer(configDir, mainPassword string, users []instancestore.ServerUser, now time.Time) (passwordsJSON, bool, error) {
+func preparePasswordsJSONForServer(configDir string, users []instancestore.ServerUser) (passwordsJSON, bool, error) {
 	existing, err := loadPasswordsJSON(configDir)
 	if err != nil {
 		return passwordsJSON{}, false, err
 	}
 	devices, sanitized := sanitizePasswordsDevices(existing.Devices)
 	doc := passwordsJSON{
-		MainPassword: strings.TrimSpace(mainPassword),
-		Passwords:    map[string]passwordsJSONUser{},
-		Devices:      devices,
+		Passwords: map[string]passwordsJSONUser{},
+		Devices:   devices,
 	}
-	for _, u := range UsableUsers(users, doc.MainPassword, now) {
+	for _, u := range UsableUsers(users) {
 		entry := existing.Passwords[u.Password] // нулевая, если абонента ещё нет
 		if label := strings.TrimSpace(u.Comment); label != "" {
 			entry.Label = label
@@ -298,7 +293,7 @@ func preparePasswordsJSONForServer(configDir, mainPassword string, users []insta
 
 // syncPasswordsJSON writes passwords.json — the auth source of wdtt-server.
 // Второе значение — «вычищены устройства с IP шлюза», для журнала.
-func syncPasswordsJSON(configDir, mainPassword string, users []instancestore.ServerUser, now time.Time) (bool, error) {
+func syncPasswordsJSON(configDir string, users []instancestore.ServerUser) (bool, error) {
 	dir := strings.TrimSpace(configDir)
 	if dir == "" {
 		return false, nil
@@ -306,7 +301,7 @@ func syncPasswordsJSON(configDir, mainPassword string, users []instancestore.Ser
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return false, err
 	}
-	doc, sanitized, err := preparePasswordsJSONForServer(dir, mainPassword, users, now)
+	doc, sanitized, err := preparePasswordsJSONForServer(dir, users)
 	if err != nil {
 		return false, err
 	}

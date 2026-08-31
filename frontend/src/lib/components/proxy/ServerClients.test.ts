@@ -43,13 +43,12 @@ import ServerClients from './ServerClients.svelte';
 function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelUserEntry {
 	return {
 		comment: '',
-		isMainPassword: false,
 		isAuto: false,
 		...p,
 	};
 }
 
-const MAIN = user({ password: 'mainpass0000', comment: 'Главный', isMainPassword: true });
+const MAIN = user({ password: 'mainpass0000', comment: 'Главный' });
 const ALIVE = user({ password: 'p-alive', comment: 'Телефон Ивана' });
 const OFF = user({ password: 'p-off', comment: 'Планшет' });
 const EXPIRED = user({ password: 'p-old', comment: 'Гостевой' });
@@ -60,11 +59,9 @@ const EXPIRED = user({ password: 'p-old', comment: 'Гостевой' });
 const SERVER: WdttServerConfig = {
 	listen: '0.0.0.0:56000',
 	wgPort: 51820,
-	password: '',
-	passwordSet: true,
 };
 
-const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER, passwordSet: false };
+const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER };
 
 /** Хеши, сохранённые сервером: ровно их ссылка подставит абоненту без своего. */
 const SERVER_HASHES = 'srv-hash-aaa,srv-hash-bbb';
@@ -96,14 +93,9 @@ beforeEach(() => {
 });
 
 describe('матрица кнопок строки', () => {
-	it('рабочий и главный пароль получают разные наборы', async () => {
-		mount([MAIN, ALIVE, OFF, EXPIRED]);
+	it('у рабочего абонента полный набор действий', async () => {
+		mount([ALIVE, OFF, EXPIRED]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
-
-		const main = within(rowOf('Главный'));
-		expect(main.queryByRole('button', { name: 'Ссылка' })).toBeNull();
-		expect(main.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
-		expect(main.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(true);
 
 		const alive = within(rowOf('Телефон Ивана'));
 		expect(alive.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
@@ -121,11 +113,11 @@ describe('матрица кнопок строки', () => {
 		expect(guest.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
 		// Карандаш есть у всех состояний.
-		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(4);
+		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(3);
 	});
 
 	it('последнего рабочего удалить нельзя', async () => {
-		mount([MAIN, ALIVE]);
+		mount([ALIVE, user({ password: '  ', comment: 'Пустой' })]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		expect(
 			within(rowOf('Телефон Ивана'))

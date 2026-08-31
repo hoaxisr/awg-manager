@@ -42,7 +42,6 @@ const wdttClientView: ProxyInstanceView = {
 		connMode: 'wg',
 		listen: '127.0.0.1:9000',
 		peer: 'vps.example:56002',
-		passwordSet: true,
 		vkHashes: 'h1,h2',
 		workers: 9,
 		obfs: 'audio',
@@ -50,6 +49,7 @@ const wdttClientView: ProxyInstanceView = {
 		deviceId: 'dev-1',
 		captchaMode: 'auto',
 		vkAuthMode: 'vkcalls',
+		passwordSet: true,
 		policies: [{ name: 'Policy0', order: 0 }]
 	},
 	process: {
@@ -79,7 +79,6 @@ const wdttServerView: ProxyInstanceView = {
 	config: {
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
-		passwordSet: true,
 		natMode: 'full',
 		policy: 'Policy0',
 		lanSegments: ['Home'],
@@ -424,17 +423,17 @@ describe('режим подключения клиента и режим NAT с�
 		const read = toWdttConfig({ seed: list.seed, instances: [bare] }).servers[0].config;
 		expect(toWdttServerPatch(read).natMode).toBe('full');
 		// И у формы, где поля нет вовсе: запись не имеет права молча выключить NAT.
-		expect(toWdttServerPatch({ listen: '0.0.0.0:56002', wgPort: 0, password: '' }).natMode).toBe(
+		expect(toWdttServerPatch({ listen: '0.0.0.0:56002', wgPort: 0 }).natMode).toBe(
 			'full'
 		);
 	});
 
 	it('заданные режимы NAT доезжают как есть', () => {
-		expect(toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'none' }).natMode).toBe(
+		expect(toWdttServerPatch({ listen: '', wgPort: 0, natMode: 'none' }).natMode).toBe(
 			'none'
 		);
 		expect(
-			toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'internet-only' }).natMode
+			toWdttServerPatch({ listen: '', wgPort: 0, natMode: 'internet-only' }).natMode
 		).toBe('internet-only');
 	});
 });
@@ -445,7 +444,6 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		listen: '127.0.0.1:9000',
 		peer: 'vps.example:56002',
 		password: '',
-		passwordSet: true,
 		vkHashes: 'h1',
 		workers: 9,
 		obfs: 'audio',
@@ -500,8 +498,6 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		enabled: false,
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
-		password: '',
-		passwordSet: true,
 		lanSegments: ['Home'],
 		natMode: 'full',
 		relayMode: 'raw',
@@ -722,7 +718,6 @@ describe('адреса новой поверхности', () => {
 			enabled: true,
 			listen: '0.0.0.0:56002',
 			wgPort: 56001,
-			password: '',
 			statsLog: 'disk'
 		});
 		const body = calls[0].body as { statsLog?: string; config: Record<string, unknown> };
@@ -741,9 +736,7 @@ describe('адреса новой поверхности', () => {
 		await api.updateWdttServerInstance('default', {
 			enabled: true,
 			listen: '0.0.0.0:56002',
-			wgPort: 56001,
-			password: '',
-			passwordSet: true
+			wgPort: 56001
 		});
 		const body = calls[0].body as { enabled: boolean; config: Record<string, unknown> };
 		expect(body.enabled).toBe(true);
@@ -757,7 +750,6 @@ describe('адреса новой поверхности', () => {
 				{
 					password: 'p1',
 					comment: 'Ноут',
-					isMainPassword: false,
 					isAuto: false
 				}
 			],
@@ -876,7 +868,6 @@ describe('natStaticWans (F61)', () => {
 		const patch = toWdttServerPatch({
 			listen: '0.0.0.0:56000',
 			wgPort: 0,
-			password: '',
 			natMode: 'internet-only',
 			natStaticWans: ['ISP', 'Sfp0']
 		});
@@ -889,7 +880,6 @@ describe('natStaticWans (F61)', () => {
 		const patch = toWdttServerPatch({
 			listen: '0.0.0.0:56000',
 			wgPort: 0,
-			password: '',
 			natMode: 'internet-only',
 			natStaticWan: 'ISP'
 		});

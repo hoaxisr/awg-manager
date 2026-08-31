@@ -726,8 +726,6 @@ func proxySecretsOf(kind instancestore.Kind) []string {
 	switch kind {
 	case instancestore.KindWdttClient:
 		return []string{"password"}
-	case instancestore.KindWdttServer:
-		return []string{"password"}
 	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
 		return []string{"obfKey"}
 	}

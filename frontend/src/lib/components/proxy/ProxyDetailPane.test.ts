@@ -43,8 +43,6 @@ import type { ProxyInstanceRow } from './rows';
 const UNCONFIGURED: WdttServerConfig = {
 	listen: '0.0.0.0:56002',
 	wgPort: 56001,
-	password: '',
-	passwordSet: false,
 	natMode: 'full',
 	relayMode: 'wg',
 	openFirewall: true,

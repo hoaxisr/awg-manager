@@ -43,11 +43,7 @@ export interface WdttServerConfig {
 	enabled?: boolean;
 	listen: string;
 	wgPort: number;
-	password: string;
-	/** Пароль сервера задан на бэкенде — значение наружу не отдаётся (Н5). */
-	passwordSet?: boolean;
 	configDir?: string;
-	/** Токен бота задан на бэкенде — значение наружу не отдаётся (Н5). */
 	debug?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	natStaticWan?: string;
@@ -193,8 +189,6 @@ export interface WdttPanelUserEntry {
 	password: string;
 	comment?: string;
 	vkHash?: string;
-	/** Пароль абонента совпадает с главным паролем сервера */
-	isMainPassword: boolean;
 	/** Абонента завёл инвариант непустоты списка */
 	isAuto: boolean;
 }

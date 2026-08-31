@@ -166,7 +166,6 @@ func fullServerRecord() instancestore.Record {
 			Listen:       "0.0.0.0:56000",
 			WgPort:       51820,
 			ConfigDir:    "/opt/etc/wdtt",
-			Password:     "s-secret",
 			WgIface:      "opkgtun18",
 			RawIface:     "opkgtun19",
 			NdmsIface:    "OpkgTun18",
@@ -196,8 +195,8 @@ func fullClientRecord() instancestore.Record {
 		PeerWg:    "wg.example:56000",
 		PeerRaw:   "raw.example:56001",
 		WdttClient: &roles.WdttClientConfig{
-			Mode: "wg", Listen: "127.0.0.1:9000", Peer: "wg.example:56000",
-			Password: "c-secret", VKHashes: "vk", Workers: 9,
+			Mode: "wg", Listen: "127.0.0.1:9000", Peer: "wg.example:56000", VKHashes: "vk", Workers: 9,
+			Password: "c-secret",
 			Policies: []roles.PolicyPermit{{Name: "A", Order: &order}},
 		},
 	}
@@ -393,9 +392,6 @@ func TestProxyInstancesList_MasksSecrets(t *testing.T) {
 	if _, ok := cfg["password"]; ok {
 		t.Errorf("password присутствует в конфиге ответа")
 	}
-	if cfg["passwordSet"] != true {
-		t.Errorf("passwordSet = %v, ждали true", cfg["passwordSet"])
-	}
 	// Прочие поля конфига доезжают как есть.
 	if cfg["natMode"] != "full" || cfg["relayMode"] != "wg" {
 		t.Errorf("конфиг потерял поля: %+v", cfg)
@@ -403,8 +399,8 @@ func TestProxyInstancesList_MasksSecrets(t *testing.T) {
 }
 
 func TestProxyInstancesList_SecretFlagFalseWhenEmpty(t *testing.T) {
-	rec := fullServerRecord()
-	rec.WdttServer.Password = ""
+	rec := fullClientRecord()
+	rec.WdttClient.Password = ""
 	mgr := &fakeProxyManager{
 		records: []instancestore.Record{rec},
 		seed:    manager.SeedInfo{Booted: true, Certified: true},
@@ -711,26 +707,26 @@ func TestProxyInstancesPatch_SecretSemantics(t *testing.T) {
 		body     string
 		wantPass string
 	}{
-		{"поле не прислали", `{"config":{"natMode":"full"}}`, "s-secret"},
-		{"прислали пустое", `{"config":{"password":""}}`, "s-secret"},
-		{"прислали пробелы", `{"config":{"password":"   "}}`, "s-secret"},
+		{"поле не прислали", `{"config":{"workers":9}}`, "c-secret"},
+		{"прислали пустое", `{"config":{"password":""}}`, "c-secret"},
+		{"прислали пробелы", `{"config":{"password":"   "}}`, "c-secret"},
 		{"прислали новое", `{"config":{"password":"новый"}}`, "новый"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			mgr := &fakeProxyManager{
-				records: []instancestore.Record{fullServerRecord()},
+				records: []instancestore.Record{fullClientRecord()},
 				seed:    manager.SeedInfo{Booted: true, Certified: true},
 			}
 			h := newProxyHandler(t, mgr, fakeProxyStates{})
-			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-server:default", c.body)
+			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/wdtt-client:nl", c.body)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
 			}
 			if len(mgr.mutated) != 1 {
 				t.Fatalf("Update вызван %d раз", len(mgr.mutated))
 			}
-			got := mgr.mutated[0].WdttServer
+			got := mgr.mutated[0].WdttClient
 			if got.Password != c.wantPass {
 				t.Errorf("password = %q, ждали %q", got.Password, c.wantPass)
 			}
@@ -1011,8 +1007,8 @@ func TestProxyInstancesPatch_ResponseMasksSecrets(t *testing.T) {
 	if _, ok := got.Config["password"]; ok {
 		t.Errorf("password присутствует в конфиге ответа на правку")
 	}
-	if got.Config["passwordSet"] != true {
-		t.Errorf("признаки секретов потеряны: %+v", got.Config)
+	if _, ok := got.Config["passwordSet"]; ok {
+		t.Errorf("у wdtt-сервера секретов нет — признака быть не должно: %+v", got.Config)
 	}
 }
 

@@ -312,8 +312,6 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
     enabled: v.enabled,
     listen: str(c, "listen") ?? "",
     wgPort: num(c, "wgPort") ?? 0,
-    password: "",
-    passwordSet: bool(c, "passwordSet") === true,
     configDir: str(c, "configDir"),
     debug: bool(c, "debug"),
     natMode: natModeOf(str(c, "natMode")),
@@ -657,7 +655,6 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
   } else {
     out.natStaticWan = cfg.natStaticWan ?? "";
   }
-  putSecret(out, "password", cfg.password);
   return out;
 }
 

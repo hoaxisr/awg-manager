@@ -128,7 +128,6 @@ type oldWdttServer struct {
 	Listen       string `json:"listen"`
 	WgPort       int    `json:"wgPort"`
 	ConfigDir    string `json:"configDir"`
-	Password     string `json:"password"`
 	NatMode      string `json:"natMode"`
 	NatStaticWAN string `json:"natStaticWan"`
 	// NatStaticWANs — форма списка (develop, PR #750). Старые записи её не
@@ -563,8 +562,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		o := s.Config
 		cfg := roles.WdttServerConfig{
 			Listen: o.Listen, WgPort: o.WgPort, ConfigDir: o.ConfigDir,
-			Password: o.Password,
-			NatMode:  o.NatMode, NatStaticWAN: o.NatStaticWAN,
+			NatMode: o.NatMode, NatStaticWAN: o.NatStaticWAN,
 			NatStaticWANs: o.NatStaticWANs,
 			Policy:        o.Policy, LanSegments: o.LanSegments,
 			RelayMode: o.RelayMode, RawListen: o.RawListen, DirectListen: o.DirectListen,

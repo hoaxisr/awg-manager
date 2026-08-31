@@ -5,18 +5,10 @@ import type { WdttPanelUserEntry, WdttServerClientsReload } from '$lib/types';
 
 /** Тексты берутся по ID микрокопии; своих строк в блоке нет. */
 export const CLIENT_TEXT = {
-	/** SH-36 */
-	removeMainPassword:
-		'Пароль абонента совпадает с главным паролем сервера. Удаление в два хода: сначала смените главный пароль, потом удалите абонента.',
-	/** SH-37 */
 	removeLastUsable:
 		'Нельзя удалить последнего рабочего абонента: без единого рабочего пароля сервер не запустится.',
 	/** SH-91: гейт «Запустить» у WDTT-сервера без рабочих абонентов. */
 	startNoUsable: 'Сервер не запускается без единого рабочего пароля — добавьте абонента',
-	/** TS-14 */
-	passwordIsMain:
-		'Это главный пароль сервера — задайте абоненту другой или оставьте поле пустым, чтобы сгенерировать',
-	/** TS-16 */
 	passwordTaken: 'Пароль занят живым абонентом',
 	/** Подпись поля «VK-хеш» там, где подставить нечего: мастер и модалка. */
 	vkHashRequired: 'Обязательно — без него ссылка не заработает',
@@ -33,7 +25,7 @@ export const CLIENT_TEXT = {
  * чужое не теряем.
  */
 export function isUsable(user: WdttPanelUserEntry): boolean {
-	return !!user.password.trim() && !user.isMainPassword;
+	return !!user.password.trim();
 }
 
 export function usableCount(users: WdttPanelUserEntry[]): number {
@@ -55,21 +47,8 @@ export interface RowActions {
 	removeHint: string;
 }
 
-/**
- * Матрица кнопок строки — спека §4.4. Порядок веток важен: запись с главным
- * паролем разбирается первой, иначе просроченный главный пароль получил бы
- * кнопки просроченного абонента.
- */
+/** Матрица кнопок строки — спека §4.4. */
 export function rowActions(user: WdttPanelUserEntry, users: WdttPanelUserEntry[]): RowActions {
-	if (user.isMainPassword) {
-		return {
-			link: 'hidden',
-			linkHint: '',
-			reissue: false,
-			remove: 'blocked',
-			removeHint: CLIENT_TEXT.removeMainPassword,
-		};
-	}
 	// Рабочий: удаление запрещено, когда после него рабочих не останется —
 	// та же вторая линия, что у бэкенда (`refuseLastUsableServerClient`).
 	const lastUsable = isUsable(user) && usableCount(users) === 1;
@@ -144,9 +123,7 @@ export function addErrorText(code: string, message: string): string {
 		// SH-26
 		return `Абонент создан, но не записан в файл сервера: ${tail}. Сервер подхватит его при следующем запуске.`;
 	}
-	if (code === 'WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED') return msg;
 	const lower = msg.toLowerCase();
-	if (lower.includes('совпадает с главным паролем')) return CLIENT_TEXT.passwordIsMain;
 	if (lower.includes('занят живым абонентом')) return CLIENT_TEXT.passwordTaken;
 	return msg;
 }

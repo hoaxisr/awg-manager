@@ -2953,7 +2953,6 @@ const wdttusers_Reload: v.GenericSchema = v.string();
 const wdttusers_UserEntry: v.GenericSchema = v.looseObject({
 	comment: v.optional(v.nullable(v.string())),
 	isAuto: v.optional(v.nullable(v.boolean())),
-	isMainPassword: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	vkHash: v.optional(v.nullable(v.string())),
 });

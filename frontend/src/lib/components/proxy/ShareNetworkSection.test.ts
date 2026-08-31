@@ -28,8 +28,6 @@ function server(over: Partial<WdttServerConfig> = {}): WdttServerConfig {
   return {
     listen: "0.0.0.0:56002",
     wgPort: 56001,
-    password: "",
-    passwordSet: true,
     natMode: "full",
     relayMode: "wg",
     openFirewall: true,

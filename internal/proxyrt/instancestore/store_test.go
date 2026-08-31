@@ -19,8 +19,7 @@ func newStore(t *testing.T) *Store {
 func rawClient(id, name string) Record {
 	return Record{ID: id, Kind: KindWdttClient, Name: name, Enabled: true,
 		WdttClient: &roles.WdttClientConfig{
-			Mode: "raw", Listen: "127.0.0.1:9000", Peer: "1.2.3.4:56000",
-			Password: "pw", VKHashes: "h", Workers: 9,
+			Mode: "raw", Listen: "127.0.0.1:9000", Peer: "1.2.3.4:56000", VKHashes: "h", Workers: 9,
 			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
 		}}
 }
@@ -38,7 +37,7 @@ func wdttServer(id string) Record {
 		WdttServer: &roles.WdttServerConfig{
 			// 56002 — ДЕФОЛТ store: фикстура на нём не отличала бы чтение
 			// поля от подстановки дефолта.
-			Listen: "0.0.0.0:57002", Password: "pw", NatMode: "none", RelayMode: "wg",
+			Listen: "0.0.0.0:57002", NatMode: "none", RelayMode: "wg",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 			RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 		}}
@@ -223,7 +222,7 @@ func TestWorkersFloorIsNine(t *testing.T) {
 	s := newStore(t)
 	r := Record{ID: "w", Kind: KindWdttClient, Name: "W",
 		WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000",
-			Peer: "p:1", Password: "pw", VKHashes: "h", Workers: 4}}
+			Peer: "p:1", VKHashes: "h", Workers: 4}}
 	if _, err := s.Replace(func(st *State) error {
 		st.Records = append(st.Records, r)
 		return nil

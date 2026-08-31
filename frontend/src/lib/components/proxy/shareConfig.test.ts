@@ -13,7 +13,6 @@ function wdtt(extra: Partial<WdttServerConfig> = {}): WdttServerConfig {
 	return {
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
-		password: 'secret',
 		...extra,
 	};
 }

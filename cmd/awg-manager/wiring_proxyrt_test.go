@@ -113,7 +113,7 @@ func rawClientRecord(id, ndms, kernel string) instancestore.Record {
 
 func serverRecord(id, wgNDMS, wgKernel, rawNDMS, rawKernel string) instancestore.Record {
 	return instancestore.Record{ID: id, Kind: instancestore.KindWdttServer,
-		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 			NatMode: "full", RelayMode: "wg",
 			NdmsIface: wgNDMS, WgIface: wgKernel,
 			RawNdmsIface: rawNDMS, RawIface: rawKernel}}
@@ -623,7 +623,7 @@ func TestProxyFactoryServerRolesShareOneFWBook(t *testing.T) {
 		cfg any
 	}{
 		{serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"),
-			roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+			roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 				NatMode: "full", RelayMode: "wg",
 				NdmsIface: "OpkgTun4", WgIface: "opkgtun4",
 				RawNdmsIface: "OpkgTun5", RawIface: "opkgtun5", OpenFirewall: true}},
@@ -1169,7 +1169,7 @@ func TestProxyFactoryWdttServerBlockedUntilUsersAdopted(t *testing.T) {
 	book, _ := recordingBook(nil)
 	_, factory, _ := newFactoryApp(t, book)
 	rec := serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5")
-	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 		NatMode: "full", RelayMode: "wg",
 		NdmsIface: "OpkgTun4", WgIface: "opkgtun4",
 		RawNdmsIface: "OpkgTun5", RawIface: "opkgtun5", OpenFirewall: true}

@@ -59,9 +59,6 @@
 		{:else}
 			<span class="row-name">{user.comment || '—'}</span>
 			<code class="row-pass" title={user.password}>{shortPassword(user.password)}</code>
-			{#if user.isMainPassword}
-				<Badge size="xs" variant="accent">= главный пароль</Badge>
-			{/if}
 			{#if user.isAuto}
 				<span class="row-auto">
 					<Badge size="xs" variant="info">заведён автоматически</Badge>

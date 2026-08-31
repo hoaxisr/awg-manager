@@ -7875,11 +7875,6 @@ definitions:
       isAuto:
         description: IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
         type: boolean
-      isMainPassword:
-        description: |-
-          IsMainPassword — пароль абонента совпадает с главным паролем сервера.
-          Сам главный пароль наружу не уходит, сравнить на фронте нечем.
-        type: boolean
       password:
         type: string
       vkHash:

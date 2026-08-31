@@ -83,7 +83,7 @@ func TestStoreWireFormatCanary(t *testing.T) {
 		forbid []string // ключи, которых в формате быть не должно
 	}{
 		{"wdtt-client", WdttClientConfig{Mode: "raw", Name: "n", Listen: "l",
-			Peer: "p", Password: "pw", VKHashes: "h", Workers: 9, Obfs: "o",
+			Peer: "p", VKHashes: "h", Workers: 9, Obfs: "o",
 			Fingerprint: "f", DeviceID: "d", CaptchaMode: "auto", VKAuthMode: "v",
 			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
 			Policies: []PolicyPermit{{Name: "P", Order: orderPtr(0)}}},
@@ -111,12 +111,11 @@ func TestStoreWireFormatCanary(t *testing.T) {
 				"streamsPerCred", "platform", "dnsMode", "dnsServers", "clientId",
 				"sub", "debug"}, nil},
 		{"wdtt-server", WdttServerConfig{Listen: "l", WgPort: 1, ConfigDir: "c",
-			Password: "pw",
-			WgIface:  "wi", RawIface: "ri", NdmsIface: "n", RawNdmsIface: "rn",
+			WgIface: "wi", RawIface: "ri", NdmsIface: "n", RawNdmsIface: "rn",
 			RawListen: "rl", DirectListen: "dl", RelayMode: "wg", NatMode: "none",
 			NatStaticWAN: "w", Policy: "p", LanSegments: []string{"br0"},
 			ExposeToPolicies: true, OpenFirewall: true, Debug: true},
-			[]string{"listen", "wgPort", "configDir", "password",
+			[]string{"listen", "wgPort", "configDir",
 				"wgIface", "rawIface", "ndmsIface",
 				"rawNdmsIface", "rawListen", "directListen", "relayMode",
 				"natMode", "natStaticWan", "policy", "lanSegments",

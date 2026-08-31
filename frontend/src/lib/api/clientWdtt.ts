@@ -217,7 +217,7 @@ export class WdttClient extends FreeturnClient {
 
 	async addWdttServerPanelUser(
 		serverId: string,
-		opts: { password?: string; comment?: string; vkHash?: string; mainPassword?: string }
+		opts: { password?: string; comment?: string; vkHash?: string }
 	): Promise<WdttPanelUsersStatus> {
 		return this.request(instancePath('wdtt-server', serverId, '/users'), {
 			method: 'POST',

@@ -17,33 +17,29 @@ import {
 function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelUserEntry {
 	return {
 		comment: '',
-		isMainPassword: false,
 		isAuto: false,
 		...p,
 	};
 }
 
-const main = user({ password: 'mainpass', comment: 'Главный', isMainPassword: true });
 const alive = user({ password: 'p-alive', comment: 'Телефон' });
 const second = user({ password: 'p-second', comment: 'Ноутбук' });
 const off = user({ password: 'p-off', comment: 'Планшет' });
 const expired = user({ password: 'p-old', comment: 'Гостевой' });
 
 describe('предикат рабочего абонента', () => {
-	it('не рабочие — только пустой пароль и главный пароль', () => {
+	// Непригодность у абонента осталась одна — пустой пароль. Срок действия и
+	// деактивацию ставил только админ-путь форка, главный пароль сервера снят
+	// как ненужный: ни в WRAP-ключах, ни в аутентификации он не участвовал.
+	it('не рабочий — только пустой пароль', () => {
 		expect(isUsable(alive)).toBe(true);
-		expect(isUsable(main)).toBe(false);
 		expect(isUsable(user({ password: '   ' }))).toBe(false);
 	});
 
-	it('рабочими считаются все, кроме пустого и главного', () => {
-		expect(isUsable(off)).toBe(true);
-		expect(isUsable(expired)).toBe(true);
-		expect(usableCount([main, alive, off, expired])).toBe(3);
-	});
-
-	it('SH-38: счётчик печатает оба числа', () => {
-		expect(counterLabel([main, alive, off])).toBe('Абонентов: 3 · рабочих: 2');
+	it('счётчик печатает оба числа', () => {
+		expect(counterLabel([alive, off, user({ password: '  ' })])).toBe(
+			'Абонентов: 3 · рабочих: 2',
+		);
 	});
 });
 
@@ -60,13 +56,13 @@ describe('матрица кнопок §4.4', () => {
 	// просрочки. Стража последнего рабочего перевыпуску не мешает: новый
 	// абонент заводится ДО удаления старого.
 	it('последний рабочий: удаление заблокировано, но перевыпуск доступен', () => {
-		const a = rowActions(alive, [main, alive]);
+		const a = rowActions(alive, [alive, user({ password: '  ' })]);
 		expect(a.remove).toBe('blocked');
 		expect(a.reissue).toBe(true);
 	});
 
 	it('последний рабочий: удаление заблокировано с SH-37', () => {
-		const a = rowActions(alive, [main, alive]);
+		const a = rowActions(alive, [alive, user({ password: '  ' })]);
 		expect(a.remove).toBe('blocked');
 		expect(a.removeHint).toContain('Нельзя удалить последнего рабочего абонента');
 	});
@@ -74,26 +70,11 @@ describe('матрица кнопок §4.4', () => {
 	it('отключённый держит стража: рядом с ним удаление рабочего разрешено', () => {
 		expect(rowActions(alive, [alive, off]).remove).toBe('yes');
 	});
-
-	it('главный пароль: ссылки и перевыпуска нет, удаление заблокировано с SH-36', () => {
-		const a = rowActions(main, [main, alive]);
-		expect(a.link).toBe('hidden');
-		expect(a.reissue).toBe(false);
-		expect(a.remove).toBe('blocked');
-		expect(a.removeHint).toContain('Удаление в два хода');
-	});
-
-	it('главный пароль разбирается первым, что бы ещё на нём ни стояло', () => {
-		const both = user({ password: 'mainpass', isMainPassword: true });
-		expect(rowActions(both, [both]).reissue).toBe(false);
-		expect(rowActions(both, [both]).remove).toBe('blocked');
-	});
 });
 
 describe('SH-77: предупреждение «сервер нельзя будет запустить»', () => {
 	it('показывается, когда после удаления рабочих не остаётся', () => {
 		expect(noUsableAfterRemove(expired, [expired])).toBe(true);
-		expect(noUsableAfterRemove(expired, [main, expired])).toBe(true);
 	});
 
 	it('молчит, когда рабочие остаются', () => {
@@ -134,9 +115,6 @@ describe('тексты отказов добавления', () => {
 
 	it('прочие отказы раскладываются в TS-13..TS-16 по тексту', () => {
 		const code = 'WDTT_SERVER_CLIENT_ADD_FAILED';
-		expect(
-			addErrorText(code, 'пароль совпадает с главным паролем сервера — задайте абоненту другой пароль'),
-		).toContain('Это главный пароль сервера');
 		expect(addErrorText(code, 'пароль занят живым абонентом')).toBe('Пароль занят живым абонентом');
 	});
 

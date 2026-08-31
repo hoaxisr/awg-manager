@@ -184,7 +184,6 @@ type WdttServerConfig struct {
 	Listen       string `json:"listen"` // DTLS, 0.0.0.0:56000
 	WgPort       int    `json:"wgPort,omitempty"`
 	ConfigDir    string `json:"configDir,omitempty"`
-	Password     string `json:"password"`
 	WgIface      string `json:"wgIface,omitempty"`      // opkgtunN (пин)
 	RawIface     string `json:"rawIface,omitempty"`     // opkgtunM (пин)
 	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTunN

@@ -71,7 +71,7 @@ func TestServe_ListForm(t *testing.T) {
 		Users: []UserEntry{
 			{Password: "client1", Comment: "Иван", VkHash: "vk1"},
 			{Password: "auto1", Comment: defaultUserName, IsAuto: true},
-			{Password: "mainpass", Comment: "Он же главный", IsMainPassword: true},
+			{Password: "mainpass", Comment: "Он же главный"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -162,79 +162,25 @@ func TestServe_AddGeneratesPassword(t *testing.T) {
 	}
 }
 
-// Пароль сервера, присланный формой, сохраняется в запись — иначе следующий
-// старт откажет «укажите пароль подключения».
-func TestServe_AddSavesMainPasswordFromForm(t *testing.T) {
-	cfg := baseCfg()
-	cfg.Password = ""
-	st := newStand(t, cfg)
-	got, msg, code := st.serve(t, http.MethodPost, `{"password":"client1","mainPassword":"свежий-главный"}`)
-	if code != "" {
-		t.Fatalf("ответ = %s / %s", code, msg)
-	}
-	if got.Reload != ReloadDelivered {
-		t.Fatalf("reload = %q", got.Reload)
-	}
-	cfgAfter, err := st.rec(t).WdttServerConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfgAfter.Password != "свежий-главный" {
-		t.Fatalf("пароль сервера = %q, форма потеряна", cfgAfter.Password)
-	}
-	// Файл написан ЭФФЕКТИВНЫМ главным паролем, а не пустым.
-	if got := st.file(t).MainPassword; got != "свежий-главный" {
-		t.Fatalf("main_password файла = %q", got)
-	}
-}
-
-// Пароль сервера не сохранился — это ЧАСТИЧНЫЙ успех, у него свой код.
-func TestServe_AddMainPasswordNotSaved(t *testing.T) {
-	cfg := baseCfg()
-	cfg.Password = ""
-	st := newStand(t, cfg)
-	// Отказ ставим ПОСЛЕ добавления абонента: мутатор валится на любом Update,
-	// поэтому абонента кладём заранее.
-	st.svc.deps.Mutator = &failLastMutator{inner: st.mut, failFrom: 2}
-	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client1","mainPassword":"свежий-главный"}`)
-	if code != "WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED" {
-		t.Fatalf("код = %q, сообщение = %q", code, msg)
-	}
-	if !strings.Contains(msg, "пароль сервера не сохранён") {
-		t.Fatalf("сообщение = %q", msg)
-	}
-	if u := st.rec(t).Users; len(u) != 1 {
-		t.Fatalf("абонент не заведён при частичном успехе: %#v", u)
-	}
-}
-
 // ── (е) тексты отказов — часть контракта фронта ──────────────────
 
 func TestServe_AddRejectionTexts(t *testing.T) {
 	cases := []struct {
-		name    string
-		cfgPass string
-		users   []instancestore.ServerUser
-		body    string
-		want    string
+		name  string
+		users []instancestore.ServerUser
+		body  string
+		want  string
 	}{
 		{
-			name: "пароль занят живым абонентом", cfgPass: "mainpass",
+			name:  "пароль занят живым абонентом",
 			users: []instancestore.ServerUser{{Password: "client1"}},
 			body:  `{"password":"client1"}`,
 			want:  "занят живым абонентом",
 		},
-		{
-			name: "пароль совпадает с главным", cfgPass: "mainpass",
-			body: `{"password":"mainpass"}`,
-			want: "совпадает с главным паролем",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := baseCfg()
-			cfg.Password = tc.cfgPass
-			st := newStand(t, cfg, tc.users...)
+			st := newStand(t, baseCfg(), tc.users...)
 			_, msg, code := st.serve(t, http.MethodPost, tc.body)
 			if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
 				t.Fatalf("код = %q (сообщение %q)", code, msg)
@@ -284,7 +230,6 @@ func TestServe_RemoveRejections(t *testing.T) {
 		pass  string
 		want  string
 	}{
-		{"главный пароль", nil, "mainpass", "нельзя удалить основной пароль сервера"},
 		{"пустой пароль", []instancestore.ServerUser{{Password: "client1"}}, "  ", "пароль абонента не задан"},
 		{
 			"последний рабочий",
