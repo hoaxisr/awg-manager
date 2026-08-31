@@ -176,8 +176,13 @@ func TestBootSeedsDeclaresMirrorsAndDeleteRemoves(t *testing.T) {
 			_, err := mirror.ZeroStaleAddresses()
 			return err
 		},
-		AllocIndex:   keepPin,
-		AllocListen:  func(string) (string, error) { return "127.0.0.1:9100", nil },
+		AllocIndex: keepPin,
+		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+			if current != "" {
+				return current, nil
+			}
+			return "127.0.0.1:9100", nil
+		},
 		ReleasePins:  func(...string) {},
 		WaitDisabled: func(string, time.Duration) bool { return true },
 	})
@@ -325,8 +330,13 @@ func TestDeleteRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
 					return nil // добивание и снос правил ходят в kill(2) и iptables
 				},
-				AllocIndex:   keepPin,
-				AllocListen:  func(string) (string, error) { return "127.0.0.1:9100", nil },
+				AllocIndex: keepPin,
+				AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+					if current != "" {
+						return current, nil
+					}
+					return "127.0.0.1:9100", nil
+				},
 				ReleasePins:  func(...string) {},
 				WaitDisabled: func(string, time.Duration) bool { return true },
 			})
@@ -453,8 +463,13 @@ func TestModeSwitchRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
 					return nil // добивание и снос правил ходят в kill(2) и iptables
 				},
-				AllocIndex:   keepPin,
-				AllocListen:  func(string) (string, error) { return "127.0.0.1:9100", nil },
+				AllocIndex: keepPin,
+				AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+					if current != "" {
+						return current, nil
+					}
+					return "127.0.0.1:9100", nil
+				},
 				ReleasePins:  func(...string) {},
 				WaitDisabled: func(string, time.Duration) bool { return true },
 			})

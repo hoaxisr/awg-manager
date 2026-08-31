@@ -4,7 +4,7 @@
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
 	import { onMount, untrack } from 'svelte';
-	import { Badge, Card, Dropdown, FieldHint, Toggle } from '$lib/components/ui';
+	import { Badge, Button, Card, Dropdown, FieldHint, SideDrawer, Stat, StatStrip, Toggle } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
@@ -14,26 +14,22 @@
 	import { formatUptime } from '../freeturn/uptime';
 	import type { NatMode } from '$lib/utils/network';
 	import type {
-		AccessPolicy,
 		FreeTurnProcessStatus,
 		FreeTurnServerConfig,
+		SingboxRouterSettings,
 		WdttProcessStatus,
 		WdttServerConfig,
 	} from '$lib/types';
-	import DetailSection from './DetailSection.svelte';
 	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
-	import RunBar from './RunBar.svelte';
 	import ServerAllowlist from './ServerAllowlist.svelte';
 	import ServerClients from './ServerClients.svelte';
 	import { CLIENT_TEXT } from './serverClients';
 	import ShareAdvancedSection from './ShareAdvancedSection.svelte';
 	import ShareNetworkSection from './ShareNetworkSection.svelte';
-	import Topology, { type TopologyInbound } from './Topology.svelte';
 	import { cloneConfig } from './exitConfig';
 	import {
 		freeTurnServerPorts,
-		natModeLabel,
 		wdttServerKillPorts,
 		wdttServerPorts,
 		type ShareConfig,
@@ -49,8 +45,6 @@
 		wdttServer?: WdttServerConfig;
 		ftServer?: FreeTurnServerConfig;
 		routerClock?: string;
-		/** Каталог политик роутера — для строки схемы «политика: …». */
-		policies: AccessPolicy[];
 		saving?: boolean;
 		busy?: boolean;
 		onstart: () => void;
@@ -69,7 +63,6 @@
 		wdttServer,
 		ftServer,
 		routerClock = '',
-		policies,
 		saving = false,
 		busy = false,
 		onstart,
@@ -94,6 +87,10 @@
 
 	// .conf пира, выбранного виджетом «Сеть»: он уезжает в ссылку абоненту
 	// FreeTurn (ia.md §3.3 часть Б — конфиг пира попадает в ссылку).
+	// Настройки — одноразовые: живут в выдвижном ящике, а не занимают экран,
+	// на котором человек каждый день смотрит состояние и правит абонентов.
+	let settingsOpen = $state(false);
+
 	let peerConf = $state('');
 	// Выбранный пир живёт здесь: его показывают ДВА контрола — быстрый селект
 	// строки состояния (Дополнение №4 п.3) и виджет «Сети». Состояние одно,
@@ -106,12 +103,20 @@
 	// RB-11 показывается, только когда точно известно, что sing-box не работает:
 	// до ответа ручки статуса тумблер молчит, а не пугает.
 	let singboxRunning = $state(true);
+	// Режим устройств «все» в tproxy делает тумблер неотличимым от включённого:
+	// jump в цепочку sing-box эмитится в PREROUTING безусловно, а MARK-правила
+	// по входным интерфейсам в этом режиме не эмитятся вовсе
+	// (internal/singbox/router/iptables.go) — трафик абонентов с opkgtun
+	// перехватывается при любом его положении. Ссылка при этом сохраняется и
+	// заработает после возврата режима «по политике», поэтому тумблер живой.
+	let ingressForced = $state(false);
 
 	// Гейт старта WDTT-сервера (SH-91): «Абонент 1» на путях UI больше не
 	// рождается, и сервер без единого рабочего пароля просто не поднимется
 	// («[WRAP] нет активных паролей»). Число рабочих отдаёт блок «Абоненты»;
 	// `undefined` — состав ещё не пришёл, и блокировать нельзя.
 	let usableClients = $state<number | undefined>(undefined);
+	let totalClients = $state<number | undefined>(undefined);
 
 	const peerOptions = $derived(buildRunningServerPeerDropdownOptions(peerSnap));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
@@ -128,71 +133,14 @@
 	// WireGuard, а в мете строки состояния (RB-07) его не показывают.
 	const killPorts = $derived(wdttDraft ? wdttServerKillPorts(wdttDraft) : ports);
 
-	// RB-07: порты раздачи, аптайм, PID.
-	const runMeta = $derived(
-		[
-			...ports.map((p) => (p.label ? `${p.label} :${p.port}` : p.listen)),
-			formatUptime(row.startedAt),
-			row.pid ? `PID ${row.pid}` : '',
-		]
-			.filter(Boolean)
-			.join(' · '),
+	// Плитки состояния — то, ради чего на страницу заходят каждый день.
+	// Прежде это была одна строка через точки-разделители, где аптайм, PID и
+	// два порта стояли в ряд с кнопками и тумблером.
+	const uptimeValue = $derived(running ? formatUptime(row.startedAt) || '—' : '—');
+	const clientsValue = $derived(
+		usableClients === undefined ? '—' : `${usableClients} / ${totalClients ?? usableClients}`,
 	);
-
-	// Правило имён ia.md §1.0: на странице NDMS-имена, kernel-имена — под (i).
-	const ndmsIface = $derived(wdttStatus?.ndmsIface?.trim() || '');
-	const rawNdmsIface = $derived(wdttStatus?.rawNdmsIface?.trim() || '');
-	const ndmsNames = $derived([ndmsIface, rawNdmsIface].filter(Boolean).join(' · '));
-	// SH-19 рассказывает про обе половины: со старым бинарём NDMS-имя raw пусто,
-	// и рассказывать не о чем — (i) не показывается.
-	const ndmsHint = $derived(
-		ndmsIface && rawNdmsIface
-			? `Оба интерфейса сервера зарегистрированы в роутере: ${ndmsIface} — WireGuard-половина, ` +
-					`${rawNdmsIface} — Raw-половина. Kernel-имена: ${wdttDraft?.wgIface ?? ''} и ` +
-					`${wdttStatus?.rawIface ?? ''}.`
-			: '',
-	);
-
-	// Режим раздачи из ЧЕРНОВИКА: сегмент «Режим работы» правит его, и бейдж
-	// шапки обязан идти следом, а не ждать «Сохранить». У FreeTurn режима нет.
-	const draftRelayMode = $derived<'wg' | 'raw' | undefined>(
-		wdttDraft ? (wdttDraft.relayMode === 'raw' ? 'raw' : 'wg') : undefined,
-	);
-
-	const policyName = $derived(wdttDraft?.policy?.trim() ?? '');
-	const policyLabel = $derived.by(() => {
-		if (!policyName || policyName === 'none') return '';
-		const p = policies.find((x) => x.name === policyName);
-		return p ? p.description || p.name : policyName;
-	});
-
-	const lanLabel = $derived(
-		(wdttDraft?.lanSegments ?? [])
-			.map((s) => lanOptions.find((o) => o.value === s)?.label || s)
-			.join(', '),
-	);
-
-	const inbound = $derived<TopologyInbound[]>(
-		wdttDraft
-			? ports
-					.filter((p) => p.label === 'DTLS' || p.label === 'Raw')
-					.map((p) => ({
-						who: p.label === 'DTLS' ? 'Приложение на телефоне' : 'Клиент на роутере',
-						how: `${p.label} :${p.port}`,
-					}))
-			: ports.map((p) => ({ who: 'FreeTurn-клиент', how: `:${p.port}` })),
-	);
-
-	const routerLines = $derived(
-		wdttDraft
-			? [
-					ndmsIface ? `${ndmsIface} · WireGuard` : '',
-					rawNdmsIface ? `${rawNdmsIface} · Raw` : '',
-					`NAT: ${natModeLabel(wdttDraft.natMode)}`,
-					lanLabel ? `LAN: ${lanLabel}` : '',
-				].filter(Boolean)
-			: [ftDraft?.connect ?? ''].filter(Boolean),
-	);
+	const portTiles = $derived(ports.slice(0, 2));
 
 	// Применённое значение exposeToPolicies — из статуса: тумблер применяется
 	// только на старте процесса, и с чем тот стартовал, знает один бэкенд.
@@ -203,6 +151,11 @@
 	// Каталог пиров общий со «Сетью»: стор один, второго запроса не будет.
 	// Отдельным эффектом, а не в onMount: асинхронный onMount отписку не вернёт.
 	$effect(() => servers.subscribe((st) => (peerSnap = st.data)));
+
+	/** Легаси-ответ без routingMode — это ещё одномодовый бэкенд, там был tproxy. */
+	function allDevicesTProxy(s: SingboxRouterSettings): boolean {
+		return (s.routingMode ?? 'tproxy') === 'tproxy' && s.deviceMode === 'all';
+	}
 
 	onMount(async () => {
 		try {
@@ -224,6 +177,7 @@
 		try {
 			const settings = await api.singboxRouterGetSettings();
 			ingress = ingressOn(settings.ingressInterfaces, wdttIngressRefs(wdttDraft, wdttStatus));
+			ingressForced = allDevicesTProxy(settings);
 		} catch {
 			/* нет ответа — тумблер остаётся выключенным */
 		}
@@ -281,6 +235,8 @@
 		void locked(async () => {
 			await withIngressLock(async () => {
 				const settings = await api.singboxRouterGetSettings();
+				// Режим могли сменить на другой странице — подсказка не должна врать.
+				ingressForced = allDevicesTProxy(settings);
 				const refs = wdttIngressRefs(wdttDraft as WdttServerConfig, wdttStatus);
 				await api.singboxRouterPutSettings({
 					...settings,
@@ -322,55 +278,104 @@
 </script>
 
 <Card padding="lg">
+	<!-- Шапка: кто это и что с ним делают. Действия — справа группой, как на
+	     карточке WG-сервера; настройки уезжают в ящик. -->
 	<div class="head">
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
 			{row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
 		</Badge>
-		<InstanceBadges {row} mode={draftRelayMode} />
+		<InstanceBadges {row} />
+		<div class="head-actions">
+			{#if running}
+				<Button variant="secondary" size="sm" disabled={busy} onclick={onstop}>Остановить</Button>
+			{:else}
+				<Button
+					variant="primary"
+					size="sm"
+					disabled={busy || !!startBlockedHint}
+					onclick={onstart}
+				>
+					Запустить
+				</Button>
+				{#if startBlockedHint}
+					<FieldHint text={startBlockedHint} ariaLabel="Подсказка: сервер не запускается" />
+				{/if}
+			{/if}
+			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>Настройки</Button>
+			{#if onwizard}
+				<Button variant="ghost" size="sm" onclick={onwizard}>Мастер</Button>
+			{/if}
+		</div>
 	</div>
 
-	<RunBar
-		state={row.state}
-		meta={runMeta}
-		{busy}
-		{onstart}
-		{onstop}
-		{onwizard}
-		aside={wdttDraft ? ingressToggle : ftDraft ? peerSelect : undefined}
-		{startBlockedHint}
-	/>
+	<!-- Состояние: четыре числа, которые смотрят каждый день. -->
+	<StatStrip>
+		<Stat value={running ? 'Запущен' : 'Остановлен'} label="Состояние" sub={uptimeValue} />
+		<Stat value={clientsValue} label="Абоненты" sub="рабочих / всего" />
+		{#each portTiles as p (p.label)}
+			<Stat value={`:${p.port}`} label={p.label} />
+		{/each}
+	</StatStrip>
 
 	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
 	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
 
-	<!-- Свёрнута: карточка инстанса в списке несёт ту же схему коротко
-	     (решение по вёрстке 2026-08-27). Здесь она подробнее — с политикой,
-	     ingress и именами интерфейсов — и открывается по требованию. -->
-	<DetailSection title="Схема" collapsed>
-		<Topology
-			{inbound}
-			name={row.name}
-			{routerLines}
-			policyLine={policyLabel ? `политика: ${policyLabel}` : ''}
-			ingressLine={wdttDraft ? (ingress ? 'через sing-box' : 'напрямую') : ''}
-		/>
-		{#if ndmsNames}
-			<div class="line-row">
-				<span class="line-label">В роутере:</span>
-				<code>{ndmsNames}</code>
-				{#if ndmsHint}
-					<FieldHint text={ndmsHint} ariaLabel="Подсказка: интерфейсы сервера" />
-				{/if}
-			</div>
+	<!-- Абоненты — во всю ширину: ради них сюда и заходят. Прежде блок жил в
+	     правой колонке рядом с формой, и на 1440px ему доставалась половина
+	     экрана, а форма занимала вторую. -->
+	<div id="share-clients" class="clients-block">
+		{#if wdttServer}
+			<ServerClients
+				serverId={row.id}
+				serverName={row.name}
+				server={wdttServer}
+				{running}
+				busy={mutating}
+				{locked}
+				onusable={(count, total) => {
+					usableClients = count;
+					totalClients = total;
+				}}
+			/>
+		{:else if ftServer}
+			<ServerAllowlist
+				serverId={row.id}
+				serverName={row.name}
+				server={ftServer}
+				{peerConf}
+				busy={mutating}
+				{locked}
+			/>
 		{/if}
-	</DetailSection>
+	</div>
 
-	<!-- Две колонки: форма слева, абоненты и журнал справа. Раньше всё шло
-	     одной лентой, и до абонентов — главного, ради чего сюда заходят —
-	     нужно было прокручивать всю форму. -->
-	<div class="columns">
-	<div class="col">
+	<LogSection
+		log={status?.log}
+		{routerClock}
+		hint="Это вывод процесса, а не файл server.log."
+		showDebug={!!ftDraft}
+		debug={ftDraft?.debug ?? false}
+		debugHint="Применяется при старте процесса"
+		ondebug={(on) => {
+			if (ftDraft) ftDraft.debug = on;
+		}}
+	/>
+</Card>
+
+<!-- Настройки — одноразовые: сеть, NAT, политика, тумблеры. В ящике они не
+     мешают ежедневной работе, но остаются в один клик. -->
+<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title="Настройки раздачи">
+	{#if wdttDraft}
+		<div class="drawer-toggle">
+			{@render ingressToggle()}
+		</div>
+	{:else if ftDraft}
+		<div class="drawer-toggle">
+			{@render peerSelect()}
+		</div>
+	{/if}
+
 	<ShareNetworkSection
 		bind:wdttServer={wdttDraft}
 		bind:ftServer={ftDraft}
@@ -393,54 +398,7 @@
 		ports={killPorts}
 		{wanOptions}
 	/>
-	</div>
-
-	<div class="col">
-	<!-- Якорь возврата из мастера: «Готово» уводит в деталь, к абонентам. -->
-	<div id="share-clients">
-	<DetailSection
-		title="Абоненты"
-		hint={wdttDraft
-			? 'Абонент — пароль, по которому подключаются к серверу. Ссылка выдаётся на пароль абонента, а не на главный пароль сервера.'
-			: 'FreeTurn различает получателей по Client ID. Пока список выключен, сервер принимает любой ID; включённый список с пустым набором не пропустит никого. Новые записи сервер подхватывает сам, без перезапуска.'}
-	>
-		{#if wdttServer}
-			<ServerClients
-				serverId={row.id}
-				serverName={row.name}
-				server={wdttServer}
-				{running}
-				busy={mutating}
-				{locked}
-				onusable={(count) => (usableClients = count)}
-			/>
-		{:else if ftServer}
-			<ServerAllowlist
-				serverId={row.id}
-				serverName={row.name}
-				server={ftServer}
-				{peerConf}
-				busy={mutating}
-				{locked}
-			/>
-		{/if}
-	</DetailSection>
-	</div>
-
-	<LogSection
-		log={status?.log}
-		{routerClock}
-		hint="Это вывод процесса, а не файл server.log."
-		showDebug={!!ftDraft}
-		debug={ftDraft?.debug ?? false}
-		debugHint="Применяется при старте процесса"
-		ondebug={(on) => {
-			if (ftDraft) ftDraft.debug = on;
-		}}
-	/>
-	</div>
-	</div>
-</Card>
+</SideDrawer>
 
 <!-- RB-12: быстрый выбор пира зеркалит тумблер RB-09 у WDTT. Механика живёт
      в «Сети»; здесь — тот же выбор под рукой. -->
@@ -465,42 +423,26 @@
 	<div class="run-toggle">
 		<Toggle
 			label="Маршрутизация через sing-box"
-			hint={singboxRunning ? '' : 'sing-box не запущен — правило вступит в силу после его запуска'}
+			hint={!singboxRunning
+				? 'sing-box не запущен — правило вступит в силу после его запуска'
+				: ingressForced
+					? 'Режим устройств «все» — трафик абонентов и так идёт через sing-box'
+					: ''}
 			checked={ingress}
 			disabled={mutating}
 			onchange={toggleIngress}
 			spinner="before"
 		/>
 		<FieldHint
-			text="Трафик абонентов пойдёт по правилам sing-box — тем же, что у устройств сети. Выключено — абоненты выходят напрямую, минуя правила."
+			text={ingressForced
+				? 'В маршрутизации sing-box выбран режим устройств «все»: под правила попадает весь транзитный трафик роутера, включая трафик абонентов, — при любом положении этого тумблера. Положение всё равно сохраняется и вступит в силу, когда режим вернут на «по политике».'
+				: 'Трафик абонентов пойдёт по правилам sing-box — тем же, что у устройств сети. Выключено — абоненты выходят напрямую, минуя правила.'}
 			ariaLabel="Подсказка: маршрутизация через sing-box"
 		/>
 	</div>
 {/snippet}
 
 <style>
-	/* Две колонки детали: форма слева, абоненты и журнал справа. На узком
-	   экране складываются в одну ленту. */
-	.columns {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1rem;
-		align-items: start;
-	}
-
-	.col {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		min-width: 0;
-	}
-
-	@media (max-width: 1100px) {
-		.columns {
-			grid-template-columns: minmax(0, 1fr);
-		}
-	}
-
 	.head {
 		display: flex;
 		align-items: center;
@@ -510,34 +452,33 @@
 		margin-bottom: 0.75rem;
 	}
 
+	/* Действия — группой справа, как на карточке WG-сервера. На узком экране
+	   переносятся под имя, а не растягивают шапку. */
+	.head-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: auto;
+	}
+
+	.clients-block {
+		margin-top: 1rem;
+	}
+
+	/* Между плитками состояния и абонентами — воздух: это две разные вещи. */
+	.clients-block + :global(*) {
+		margin-top: 1rem;
+	}
+
+	.drawer-toggle {
+		margin-bottom: 1rem;
+	}
+
 	h2 {
 		margin: 0;
 		font-size: 1.125rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
-	}
-
-	.line-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.625rem;
-		font-size: 0.8125rem;
-		color: var(--color-text-secondary);
-	}
-
-	.line-label {
-		color: var(--color-text-muted);
-	}
-
-	code {
-		font-family: var(--font-mono);
-		font-size: 0.78em;
-		background: var(--color-bg-tertiary);
-		padding: 0.05rem 0.3rem;
-		border-radius: 4px;
-		word-break: break-all;
 	}
 
 	.run-toggle {

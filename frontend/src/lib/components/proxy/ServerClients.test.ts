@@ -43,18 +43,15 @@ import ServerClients from './ServerClients.svelte';
 function user(p: Partial<WdttPanelUserEntry> & { password: string }): WdttPanelUserEntry {
 	return {
 		comment: '',
-		isDeactivated: false,
-		isExpired: false,
-		isMainPassword: false,
 		isAuto: false,
 		...p,
 	};
 }
 
-const MAIN = user({ password: 'mainpass0000', comment: 'Главный', isMainPassword: true });
+const MAIN = user({ password: 'mainpass0000', comment: 'Главный' });
 const ALIVE = user({ password: 'p-alive', comment: 'Телефон Ивана' });
-const OFF = user({ password: 'p-off', comment: 'Планшет', isDeactivated: true });
-const EXPIRED = user({ password: 'p-old', comment: 'Гостевой', isExpired: true });
+const OFF = user({ password: 'p-off', comment: 'Планшет' });
+const EXPIRED = user({ password: 'p-old', comment: 'Гостевой' });
 
 // Форма ПРОДОВОГО маппера: секрет наружу не уходит (`password: ''`), наличие
 // пароля несёт отдельный признак. Фикстура со скрытым паролем прятала
@@ -62,11 +59,9 @@ const EXPIRED = user({ password: 'p-old', comment: 'Гостевой', isExpired
 const SERVER: WdttServerConfig = {
 	listen: '0.0.0.0:56000',
 	wgPort: 51820,
-	password: '',
-	passwordSet: true,
 };
 
-const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER, passwordSet: false };
+const SERVER_NO_PASSWORD: WdttServerConfig = { ...SERVER };
 
 /** Хеши, сохранённые сервером: ровно их ссылка подставит абоненту без своего. */
 const SERVER_HASHES = 'srv-hash-aaa,srv-hash-bbb';
@@ -98,41 +93,39 @@ beforeEach(() => {
 });
 
 describe('матрица кнопок строки', () => {
-	it('рабочий, просроченный и главный пароль получают разные наборы', async () => {
-		mount([MAIN, ALIVE, OFF, EXPIRED]);
+	it('у рабочего абонента полный набор действий', async () => {
+		mount([ALIVE, OFF, EXPIRED]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
-
-		const main = within(rowOf('Главный'));
-		expect(main.queryByRole('button', { name: 'Ссылка' })).toBeNull();
-		expect(main.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
-		expect(main.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(true);
 
 		const alive = within(rowOf('Телефон Ивана'));
 		expect(alive.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
-		expect(alive.queryByRole('button', { name: 'Перевыпустить' })).toBeNull();
-		expect(alive.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
-
-		const expired = within(rowOf('Гостевой'));
-		expect(expired.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(true);
-		expect(expired.getByRole('button', { name: 'Перевыпустить' }).hasAttribute('disabled')).toBe(
+		// Живому абоненту ключ тоже меняется — прежде кнопку давала только
+		// ветка просрочки, и сменить пароль было нечем.
+		expect(alive.getByRole('button', { name: 'Перевыпустить' }).hasAttribute('disabled')).toBe(
 			false,
 		);
-		expect(expired.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
+		expect(alive.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
-		// Карандаш есть у всех трёх состояний.
-		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(4);
+		// Просрочка и деактивация — состояния, которые ставит только форк; у нас
+		// их задать нечем, и отдельного набора кнопок под них больше нет.
+		const guest = within(rowOf('Гостевой'));
+		expect(guest.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
+		expect(guest.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
+
+		// Карандаш есть у всех состояний.
+		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(3);
 	});
 
-	it('последнего рабочего удалить нельзя, отключённый рабочим считается', async () => {
-		mount([MAIN, ALIVE, EXPIRED]);
+	it('последнего рабочего удалить нельзя', async () => {
+		mount([ALIVE, user({ password: '  ', comment: 'Пустой' })]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		expect(
 			within(rowOf('Телефон Ивана'))
 				.getByRole('button', { name: 'Удалить' })
 				.hasAttribute('disabled'),
 		).toBe(true);
-		// SH-38 считает отключённого рабочим (оговорка SH-28/38).
-		expect(screen.getByText('Абонентов: 3 · рабочих: 1')).toBeTruthy();
+		// Главный пароль рабочим не считается — рабочий тут ровно один.
+		expect(screen.getByText('Абонентов: 2 · рабочих: 1')).toBeTruthy();
 	});
 });
 

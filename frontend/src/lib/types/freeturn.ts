@@ -13,8 +13,6 @@ export interface FreeTurnClientConfig {
 	transport: 'tcp' | 'udp';
 	mode: 'udp' | 'tcp';
 	bond: boolean;
-	turnHost?: string;
-	turnPort?: number;
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */

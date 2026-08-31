@@ -48,7 +48,14 @@ func allocOccupancy(ctx context.Context, live map[int]bool, pins func(context.Co
 //
 //	0..9   — режимы роутера (здесь), maxFakeIPIndex
 //	10..16 — AWG-туннели, storage.os5MinIndex/os5MaxIndex
-//	17..49 — wdtt, wdttOpkgIndexMin/Max
+//	17..49 — прокси-инстансы на arm/arm64, roles.OpkgIndexMin/Max
+//
+// Раскладка статична ТОЛЬКО на arm/arm64. На mips/mipsel прошивка отвергает
+// индексы от 17 («index 17 is too large»; рабочий максимум — OpkgTun16,
+// стенд 25.08), поэтому статического поддиапазона под прокси там нет: они
+// берут ПЕРВЫЙ СВОБОДНЫЙ из 0..15 (roles.OpkgIndexRange, shared=true) и пул
+// пересекается с обоими диапазонами выше. Занятость поэтому считается по всем четырём
+// владельцам сразу — cmd/awg-manager.opkgOccupancyAllOwners (F16).
 //
 // NativeWG в этой нумерации не участвует — OpkgTun он не создаёт (его туннели
 // живут как Wireguard<N>), поэтому его собственная нумерация awg20+ сюда не

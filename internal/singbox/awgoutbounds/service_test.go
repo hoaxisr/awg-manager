@@ -4,9 +4,14 @@ package awgoutbounds
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 type fakeSingbox struct {
@@ -151,5 +156,142 @@ func TestSync_NilSingbox_DoesNotReload(t *testing.T) {
 	}
 	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
 		t.Fatalf("Sync with nil Singbox should be safe: %v", err)
+	}
+}
+
+// countingAWGStore считает обращения подписчика: enumerate дёргает List на
+// каждом SyncAWGOutbounds, поэтому ненулевой счётчик = «проснулся».
+// Атомарный, потому что пишет горутина подписчика, а читает тест.
+type countingAWGStore struct {
+	calls atomic.Int32
+}
+
+func (c *countingAWGStore) List(ctx context.Context) ([]AWGTunnelInfo, error) {
+	c.calls.Add(1)
+	return nil, nil
+}
+
+// F81: фильтр подписчика ждал ключ "system-tunnels", которого не публиковал
+// НИКТО — константы с таким значением нет в events.AllResources, во фронтовом
+// union нет, публикатора в прод-коде нет. Точный близнец F66. Ниша, ради
+// которой ключ заводился (NDMS-хук на out-of-band смену системного WG), уже
+// обслужена живым ключом: хук публикует ResourceTunnels с reason "ndms-hook"
+// (internal/server/server_routes.go).
+func TestSubscribeBus_WakesOnTunnelsNotOnDeadKey(t *testing.T) {
+	store := &countingAWGStore{}
+	bus := events.NewBus()
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels:    store,
+			SystemTunnels: &fakeSystemStore{},
+			Bus:           bus,
+		},
+		sysClassNet: t.TempDir(),
+	}
+
+	unsub := s.SubscribeBus(context.Background())
+	defer unsub()
+
+	// Снесённый ключ будить не должен. Settle-окно обязательно — без него
+	// ассерт прошёл бы зелёным и на старом коде, просто не дождавшись.
+	bus.PublishInvalidated(events.Resource("system-tunnels"), "test")
+	time.Sleep(500 * time.Millisecond)
+	if got := store.calls.Load(); got != 0 {
+		t.Fatalf("мёртвый ключ system-tunnels разбудил синк (обращений: %d)", got)
+	}
+
+	// Живой ключ будить обязан.
+	bus.PublishInvalidated(events.ResourceTunnels, "test")
+	deadline := time.Now().Add(3 * time.Second)
+	for store.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if store.calls.Load() == 0 {
+		t.Error("живой ключ tunnels не разбудил синк")
+	}
+}
+
+// F83: отказ NDMS при перечислении системных туннелей глотался, и enumerate
+// возвращала managed-only с nil-ошибкой — 15-awg.json переписывался БЕЗ всех
+// awg-sys-*, а «изменение» ещё и триггерило reload. Транзиентный сбой молча
+// выносил системные туннели из конфига движка.
+func TestSync_SystemStoreFailureKeepsFile(t *testing.T) {
+	sysStore := &fakeSystemStore{
+		tunnels: []SystemTunnelInfo{{ID: "sys1", InterfaceName: "nwg0", Description: "WG"}},
+	}
+	s, sb := newSvcWithIface(t,
+		&fakeAWGStore{tunnels: []AWGTunnelInfo{{ID: "a", Name: "A", BackendIface: "t2s0"}}},
+		sysStore,
+		"t2s0", "nwg0",
+	)
+
+	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
+		t.Fatalf("первый синк: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(sb.dir, "15-awg.json"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var seed fileShape
+	if err := json.Unmarshal(before, &seed); err != nil {
+		t.Fatal(err)
+	}
+	if len(seed.Outbounds) != 2 {
+		t.Fatalf("подготовка: ждём managed+system, получено %d", len(seed.Outbounds))
+	}
+	reloadsBefore := sb.reloadCalls
+
+	// NDMS отвалился.
+	sysStore.err = errors.New("ndms unavailable")
+	if err := s.SyncAWGOutbounds(context.Background()); err == nil {
+		t.Error("отказ NDMS проглочен: SyncAWGOutbounds вернул nil")
+	}
+
+	after, err := os.ReadFile(filepath.Join(sb.dir, "15-awg.json"))
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("15-awg.json переписан без системных записей:\nбыло: %s\nстало: %s", before, after)
+	}
+	if sb.reloadCalls != reloadsBefore {
+		t.Errorf("движок перезагружен на неполном конфиге: reload'ов %d → %d", reloadsBefore, sb.reloadCalls)
+	}
+}
+
+// Регресс, внесённый первой редакцией фикса F83: `enumerate` стала
+// всё-или-ничего, и отказ ТОЛЬКО системного стора уносил из ListTags ещё и
+// managed-теги. Инстанс deviceproxy, приколотый к managed-туннелю, уходил в
+// fallback при флапе NDMS, хотя managed-стор не отказывал
+// (`deviceproxy/service.go:736,1025` идут по `err == nil` и пропускают ВСЁ).
+//
+// Требование раздвоенное: writeFile нужна ПОЛНОТА (см.
+// TestSync_SystemStoreFailureKeepsFile), ListTags — ЛУЧШЕЕ ИЗ ДОСТУПНОГО.
+func TestListTags_SystemStoreFailureKeepsManagedTags(t *testing.T) {
+	s, _ := newSvcWithIface(t,
+		&fakeAWGStore{tunnels: []AWGTunnelInfo{{ID: "a", Name: "A", BackendIface: "t2s0"}}},
+		&fakeSystemStore{err: errors.New("ndms unavailable")},
+		"t2s0",
+	)
+
+	tags, err := s.ListTags(context.Background())
+	if err != nil {
+		t.Fatalf("отказ системного стора не должен ронять весь каталог: %v", err)
+	}
+	if len(tags) != 1 || tags[0].Tag != "awg-a" {
+		t.Errorf("managed-тег не пережил флап NDMS: %+v", tags)
+	}
+}
+
+// Отказ managed-стора — другое дело: частичного ответа не существует,
+// каталог пуст, ошибка обязана дойти до вызывающего.
+func TestListTags_ManagedStoreFailurePropagates(t *testing.T) {
+	s, _ := newSvcWithIface(t,
+		&fakeAWGStore{err: errors.New("storage down")},
+		&fakeSystemStore{},
+		"t2s0",
+	)
+	if _, err := s.ListTags(context.Background()); err == nil {
+		t.Error("отказ managed-стора проглочен")
 	}
 }

@@ -219,14 +219,8 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if err != nil {
 		return err
 	}
+	// Копию снимает сам opkgTunOwned (F24) — здесь она уже наша.
 	st, _ := opkgTunOwned(settings, statePolicyTun)
-	if st != nil {
-		// Мутируем копию: запись — объект живого кэша стора, который
-		// параллельно маршалят читатели без нашего лока. Копию публикуют
-		// SetOpkgTunState/SetOpkgTunNATSegments — уже под локом стора.
-		cp := *st
-		st = &cp
-	}
 
 	if !sr.Enabled {
 		// Teardown только когда что-то реально поднято — иначе каждый
@@ -525,6 +519,12 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 		// Uninstall снимает и blackhole прежнего режима — снимок обнуляем.
 		s.appliedBlackhole = nil
 		s.netfilterStateKnown = true
+		// Четвёртый член той же группы (см. policytun_disable.go): без него
+		// следующее включение не увидело бы изменения состава тегов и не
+		// пересобрало набор AWGM-BYPASS. Сегодня недостижимо как баг — теги к
+		// этому моменту уже обнулены, — но дисциплина «четыре поля сбрасываются
+		// вместе» была нарушена ровно здесь (F21).
+		s.currentBypassGeoIPTags = nil
 		s.mu.Unlock()
 		return
 	}
@@ -536,6 +536,12 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.deps.IPTables.Install(ctx, *want); err != nil {
+		// restore коммитит ПО ТАБЛИЦАМ: часть правил могла примениться, поэтому
+		// снимок больше не соответствует железу. Помечаем состояние неизвестным
+		// — следующий тик переустановит детерминированно (F20). appliedSpec НЕ
+		// обнуляем: nil значит «ничего нашего не установлено», а после
+		// частичного провала это было бы враньём.
+		s.netfilterStateKnown = false
 		s.appLog.Warn("policy-tun-reconcile", "qos", "iptables install: "+err.Error())
 		return
 	}

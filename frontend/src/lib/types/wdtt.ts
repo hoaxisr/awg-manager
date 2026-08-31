@@ -43,21 +43,17 @@ export interface WdttServerConfig {
 	enabled?: boolean;
 	listen: string;
 	wgPort: number;
-	password: string;
-	/** Пароль сервера задан на бэкенде — значение наружу не отдаётся (Н5). */
-	passwordSet?: boolean;
 	configDir?: string;
-	adminId?: string;
-	botToken?: string;
-	/** Токен бота задан на бэкенде — значение наружу не отдаётся (Н5). */
-	botTokenSet?: boolean;
 	debug?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	natStaticWan?: string;
+	/** Выходы static-NAT для internet-only. Источник правды бэкенда —
+	 *  StaticNATList(): список старше одиночки. Мигрированная с post-#750
+	 *  конфигом запись несёт ТОЛЬКО его. */
+	natStaticWans?: string[];
 	policy?: string;
 	lanSegments?: string[];
 	ingressEnabled?: boolean;
-	natIface?: string;
 	/** Kernel WG dev (opkgtunN); пусто → legacy wdtt0 */
 	wgIface?: string;
 	/** Kernel raw dev (opkgtunN); пусто → legacy wdttraw0 (`kernelRawIface`) */
@@ -70,7 +66,7 @@ export interface WdttServerConfig {
 	relayMode?: 'wg' | 'raw';
 	/** UDP-порт Raw (-listen-raw). Пусто → DTLS+1 */
 	rawListen?: string;
-	/** WG peer-порт (-listen-direct, WRAP без DTLS). Пусто → DTLS-порт */
+	/** Третий порт WG-половины без DTLS (-listen-direct). Пусто → выключено */
 	directListen?: string;
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
 	linkPeer?: string;
@@ -193,11 +189,6 @@ export interface WdttPanelUserEntry {
 	password: string;
 	comment?: string;
 	vkHash?: string;
-	isDeactivated: boolean;
-	/** Срок, назначенный сервером, истёк: в passwords.json не пишется */
-	isExpired: boolean;
-	/** Пароль абонента совпадает с главным паролем сервера */
-	isMainPassword: boolean;
 	/** Абонента завёл инвариант непустоты списка */
 	isAuto: boolean;
 }

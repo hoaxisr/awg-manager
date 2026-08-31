@@ -15,6 +15,7 @@ import {
 	toWdttClientConfig,
 	toWdttClientPatch,
 	toWdttConfig,
+	effectiveStaticWan,
 	toWdttServerConfig,
 	toWdttServerPatch,
 	toWdttStatus,
@@ -41,7 +42,6 @@ const wdttClientView: ProxyInstanceView = {
 		connMode: 'wg',
 		listen: '127.0.0.1:9000',
 		peer: 'vps.example:56002',
-		passwordSet: true,
 		vkHashes: 'h1,h2',
 		workers: 9,
 		obfs: 'audio',
@@ -49,6 +49,7 @@ const wdttClientView: ProxyInstanceView = {
 		deviceId: 'dev-1',
 		captchaMode: 'auto',
 		vkAuthMode: 'vkcalls',
+		passwordSet: true,
 		policies: [{ name: 'Policy0', order: 0 }]
 	},
 	process: {
@@ -78,8 +79,6 @@ const wdttServerView: ProxyInstanceView = {
 	config: {
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
-		passwordSet: true,
-		botTokenSet: false,
 		natMode: 'full',
 		policy: 'Policy0',
 		lanSegments: ['Home'],
@@ -109,8 +108,6 @@ const ftClientView: ProxyInstanceView = {
 		transport: 'tcp',
 		mode: 'udp',
 		bond: true,
-		turnHost: 'turn.example',
-		turnPort: 3478,
 		obfProfile: 'rtpopus',
 		obfKeySet: true,
 		streamsPerCred: 5,
@@ -299,7 +296,6 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.linkPeer).toBe('wan.example:56002');
 		expect(cfg.linkVkHashes).toBe('h9');
 		expect(cfg.statsLog).toBe('disk');
-		expect(cfg.botTokenSet).toBe(false);
 	});
 });
 
@@ -349,8 +345,6 @@ describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистем�
 			transport: 'tcp',
 			mode: 'udp',
 			bond: true,
-			turnHost: 'turn.example',
-			turnPort: 3478,
 			obfProfile: 'rtpopus',
 			obfKey: '',
 			obfKeySet: true,
@@ -429,17 +423,17 @@ describe('режим подключения клиента и режим NAT с�
 		const read = toWdttConfig({ seed: list.seed, instances: [bare] }).servers[0].config;
 		expect(toWdttServerPatch(read).natMode).toBe('full');
 		// И у формы, где поля нет вовсе: запись не имеет права молча выключить NAT.
-		expect(toWdttServerPatch({ listen: '0.0.0.0:56002', wgPort: 0, password: '' }).natMode).toBe(
+		expect(toWdttServerPatch({ listen: '0.0.0.0:56002', wgPort: 0 }).natMode).toBe(
 			'full'
 		);
 	});
 
 	it('заданные режимы NAT доезжают как есть', () => {
-		expect(toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'none' }).natMode).toBe(
+		expect(toWdttServerPatch({ listen: '', wgPort: 0, natMode: 'none' }).natMode).toBe(
 			'none'
 		);
 		expect(
-			toWdttServerPatch({ listen: '', wgPort: 0, password: '', natMode: 'internet-only' }).natMode
+			toWdttServerPatch({ listen: '', wgPort: 0, natMode: 'internet-only' }).natMode
 		).toBe('internet-only');
 	});
 });
@@ -450,7 +444,6 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		listen: '127.0.0.1:9000',
 		peer: 'vps.example:56002',
 		password: '',
-		passwordSet: true,
 		vkHashes: 'h1',
 		workers: 9,
 		obfs: 'audio',
@@ -484,10 +477,12 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		expect('peerRaw' in body).toBe(false);
 	});
 
-	it('режим и адрес едут вместе: слот адреса заполняет хранилище', () => {
+	// listen в тело не попадает: локальный порт клиента — владение бэкенда
+	// (`ensurePins`), а фронт его больше не выбирает и не показывает. Слияние
+	// по месту (`proxyApplyConfig`) отсутствующий ключ сохраняет.
+	it('режим и адрес едут вместе, локальный порт — нет', () => {
 		expect(toWdttClientPatch(client)).toEqual({
 			connMode: 'raw',
-			listen: '127.0.0.1:9000',
 			peer: 'vps.example:56002',
 			vkHashes: 'h1',
 			workers: 9,
@@ -503,9 +498,6 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		enabled: false,
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
-		password: '',
-		passwordSet: true,
-		botToken: '',
 		lanSegments: ['Home'],
 		natMode: 'full',
 		relayMode: 'raw',
@@ -516,16 +508,11 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 	it('пустые секреты сервера не едут, пины половин — тоже', () => {
 		const body = toWdttServerPatch(server);
 		expect('password' in body).toBe(false);
-		expect('botToken' in body).toBe(false);
 		expect('ndmsIface' in body).toBe(false);
 		expect('wgIface' in body).toBe(false);
 		expect(body.lanSegments).toEqual(['Home']);
 		expect(body.natMode).toBe('full');
 		expect(body.relayMode).toBe('raw');
-	});
-
-	it('токен бота едет, когда его ввели', () => {
-		expect(toWdttServerPatch({ ...server, botToken: '123:abc' }).botToken).toBe('123:abc');
 	});
 
 	it('ключ обфускации FreeTurn подчиняется тому же правилу', () => {
@@ -547,6 +534,8 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 			debug: false
 		};
 		expect('obfKey' in toFreeTurnClientPatch(ftClient)).toBe(false);
+		// Тот же владелец, что у wdtt-клиента: локальный порт выдаёт бэкенд.
+		expect('listen' in toFreeTurnClientPatch(ftClient)).toBe(false);
 		expect(toFreeTurnClientPatch({ ...ftClient, obfKey: 'k1' }).obfKey).toBe('k1');
 
 		const ftServer: FreeTurnServerConfig = {
@@ -729,7 +718,6 @@ describe('адреса новой поверхности', () => {
 			enabled: true,
 			listen: '0.0.0.0:56002',
 			wgPort: 56001,
-			password: '',
 			statsLog: 'disk'
 		});
 		const body = calls[0].body as { statsLog?: string; config: Record<string, unknown> };
@@ -748,14 +736,11 @@ describe('адреса новой поверхности', () => {
 		await api.updateWdttServerInstance('default', {
 			enabled: true,
 			listen: '0.0.0.0:56002',
-			wgPort: 56001,
-			password: '',
-			passwordSet: true
+			wgPort: 56001
 		});
 		const body = calls[0].body as { enabled: boolean; config: Record<string, unknown> };
 		expect(body.enabled).toBe(true);
 		expect('password' in body.config).toBe(false);
-		expect('botToken' in body.config).toBe(false);
 	});
 
 	it('состав абонентов адресуется ключом инстанса и доносит reload', async () => {
@@ -765,9 +750,6 @@ describe('адреса новой поверхности', () => {
 				{
 					password: 'p1',
 					comment: 'Ноут',
-					isDeactivated: false,
-					isExpired: false,
-					isMainPassword: false,
 					isAuto: false
 				}
 			],
@@ -855,5 +837,53 @@ describe('адреса новой поверхности', () => {
 		const calls = stubFetch(() => ({ link: 'freeturn://x', peer: 'p' }));
 		await api.generateFreeTurnLink({ name: 'Ноут' });
 		expect(calls[0].url).toBe('/api/proxyrt/instances/freeturn-server%3Adefault/link');
+	});
+});
+
+// F61: у wdtt-сервера, мигрированного с post-#750 конфигом, выход NAT лежит в
+// СПИСКЕ natStaticWans, а фронт знал только одиночку — селектор был пуст, гейт
+// говорил «не выбран WAN», а патч слал natStaticWan:"" и чистил список на
+// бэкенде, из-за чего несвязанные сохранения отбивались 422.
+describe('natStaticWans (F61)', () => {
+	it('парсит список выходов NAT', () => {
+		const cfg = toWdttServerConfig({
+			...wdttServerView,
+			config: {
+				...wdttServerView.config,
+				natMode: 'internet-only',
+				natStaticWans: ['ISP', 'Sfp0']
+			}
+		});
+		expect(cfg.natStaticWans).toEqual(['ISP', 'Sfp0']);
+	});
+
+	it('effectiveStaticWan: список старше одиночки, зеркало StaticNATList', () => {
+		expect(effectiveStaticWan({ natStaticWans: ['ISP', 'Sfp0'], natStaticWan: 'Old' })).toBe('ISP');
+		expect(effectiveStaticWan({ natStaticWans: [], natStaticWan: 'Old' })).toBe('Old');
+		expect(effectiveStaticWan({ natStaticWan: 'Old' })).toBe('Old');
+		expect(effectiveStaticWan({})).toBe('');
+	});
+
+	it('патч со списком шлёт список и НЕ шлёт одиночку', () => {
+		const patch = toWdttServerPatch({
+			listen: '0.0.0.0:56000',
+			wgPort: 0,
+			natMode: 'internet-only',
+			natStaticWans: ['ISP', 'Sfp0']
+		});
+		expect(patch.natStaticWans).toEqual(['ISP', 'Sfp0']);
+		expect('natStaticWan' in patch).toBe(false);
+	});
+
+	// Гвард новой ветки, не пин дефекта: на текущем коде тоже зелёный (M2).
+	it('патч без списка шлёт одиночку — выбор пользователя становится правдой', () => {
+		const patch = toWdttServerPatch({
+			listen: '0.0.0.0:56000',
+			wgPort: 0,
+			natMode: 'internet-only',
+			natStaticWan: 'ISP'
+		});
+		expect(patch.natStaticWan).toBe('ISP');
+		expect('natStaticWans' in patch).toBe(false);
 	});
 });

@@ -47,6 +47,14 @@ func NewAllocator(r IndexRange) *Allocator {
 // номер, потому что собственный захват не считается занятым. Без этого
 // закрепление работало бы наоборот — второй проход реконсиляции сменил бы имя
 // интерфейса и порвал permit'ы пользователя.
+//
+// За владельцем остаётся РОВНО ОДИН номер: выдавая новый, аллокатор снимает
+// прежние захваты того же владельца. Ключ владельца именно для этого и
+// дробится на `key`, `key/wg`, `key/raw`, `key/listen` — каждый держит свой
+// единственный ресурс. Без снятия номер, с которого владелец переехал
+// (например, listen-порт, занятый чужим туннелем), оставался бы за ним до
+// удаления инстанса или рестарта демона — то есть был бы недоступен другим,
+// уже никому не принадлежа.
 func (a *Allocator) AllocIndex(owner string, pinned int, taken map[int]bool) (int, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -55,15 +63,22 @@ func (a *Allocator) AllocIndex(owner string, pinned int, taken map[int]bool) (in
 		h, ok := a.held[i]
 		return (!ok || h == owner) && !taken[i]
 	}
+	grant := func(i int) int {
+		for idx, h := range a.held {
+			if h == owner && idx != i {
+				delete(a.held, idx)
+			}
+		}
+		a.held[i] = owner
+		return i
+	}
 
 	if pinned >= a.rng.Min && pinned <= a.rng.Max && free(pinned) {
-		a.held[pinned] = owner
-		return pinned, nil
+		return grant(pinned), nil
 	}
 	for i := a.rng.Min; i <= a.rng.Max; i++ {
 		if free(i) {
-			a.held[i] = owner
-			return i, nil
+			return grant(i), nil
 		}
 	}
 	return 0, ErrNoFreeIndex

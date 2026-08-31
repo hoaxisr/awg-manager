@@ -13,6 +13,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -202,15 +203,23 @@ func TestBuildSpec_UnavailableNonRouterTag_NoDefault(t *testing.T) {
 }
 
 // recAppLogger записывает уровни/сообщения для проверки дедупликации Warn'ов.
+//
+// Мьютекс нужен не деградационным тестам (они синхронны), а bus-подписчику:
+// он пишет из своей горутины, пока тест поллит count (F78).
 type recAppLogger struct {
+	mu      sync.Mutex
 	entries []string
 }
 
 func (r *recAppLogger) AppLog(level logging.Level, _, _, action, target, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.entries = append(r.entries, string(level)+":"+action+":"+target+":"+message)
 }
 
 func (r *recAppLogger) count(substr string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	n := 0
 	for _, e := range r.entries {
 		if strings.Contains(e, substr) {
@@ -218,6 +227,12 @@ func (r *recAppLogger) count(substr string) int {
 		}
 	}
 	return n
+}
+
+func (r *recAppLogger) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.entries...)
 }
 
 // Warn деградации не должен повторяться на каждую регенерацию: логируем

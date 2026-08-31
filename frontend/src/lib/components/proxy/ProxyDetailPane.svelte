@@ -152,12 +152,6 @@
 			s.config.wgPort ?? 0,
 		]),
 	]);
-	/** Занятые локальные порты: подсказка порта новому клиенту. */
-	const usedListens = $derived({
-		wdtt: (wdttConfig?.clients ?? []).map((c) => c.config.listen),
-		freeturn: (ftConfig?.clients ?? []).map((c) => c.config.listen),
-	});
-
 	/**
 	 * Сохранение параметров клиента: смена адреса сервера останавливает клиент
 	 * (W-27), работающему после сохранения — просьба перезапустить (TS-04).
@@ -222,7 +216,6 @@
 	{#key exitWizard === 'new' ? 'new' : exitKey}
 		<ExitWizard
 			{policies}
-			{usedListens}
 			row={exitWizard === 'new' ? null : exitRow}
 			wdttClient={exitWizard === 'new' ? undefined : exitWdttClient}
 			ftClient={exitWizard === 'new' ? undefined : exitFtClient}
@@ -276,7 +269,6 @@
 			wdttServer={shareWdttServer}
 			ftServer={shareFtServer}
 			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
-			{policies}
 			saving={savingShare}
 			busy={busyKeys.includes(shareRow.key)}
 			onstart={() => shareRow && ontoggle(shareRow, true)}

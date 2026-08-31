@@ -46,15 +46,15 @@ var AllKinds = []Kind{
 // ServerUser — абонент wdtt-сервера. Источник правды ЗДЕСЬ (посеян из
 // ServerConfig.Clients старого wdtt.json — блокер B5 ревью); passwords.json
 // в ConfigDir — производная, её собирает proxyapp/wdttusers перед стартом.
-// ExpiresAt хранится, чтобы не воскресить отозванный доступ (янитор форка
-// удаляет истёкших из passwords.json). Auto — абонента завёл инвариант, не
-// человек; вычислить нечем, поэтому хранится (паритет старого ServerClient).
+// Срока действия у абонента нет: назначить его может только админ-путь
+// форка (бот и его admin-API), которого у нас нет — конфиги пишем мы.
+// Auto — абонента завёл инвариант, не человек; вычислить нечем, поэтому
+// хранится (паритет старого ServerClient).
 type ServerUser struct {
-	Password  string `json:"password"`
-	Comment   string `json:"comment,omitempty"`
-	VkHash    string `json:"vkHash,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	Auto      bool   `json:"auto,omitempty"`
+	Password string `json:"password"`
+	Comment  string `json:"comment,omitempty"`
+	VkHash   string `json:"vkHash,omitempty"`
+	Auto     bool   `json:"auto,omitempty"`
 }
 
 // Record — запись инстанса. Поля экспортированы (сериализация напрямую, Р2);

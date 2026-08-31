@@ -11,15 +11,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
-
-// defaultUserName — имя абонента, которого заводит инвариант непустоты.
-const defaultUserName = "Абонент 1"
 
 // Reload — судьба SIGHUP после изменения состава абонентов: узнал ли живой
 // сервер об изменении ПРЯМО СЕЙЧАС. Пустое значение — сигнал не посылался
@@ -44,16 +40,9 @@ type UserEntry struct {
 	Password string `json:"password"`
 	Comment  string `json:"comment,omitempty"`
 	VkHash   string `json:"vkHash,omitempty"`
-	// IsDeactivated — признак из passwords.json (деактивацию ставит форк).
-	IsDeactivated bool `json:"isDeactivated"`
-	// IsExpired — срок, назначенный сервером, истёк. Такой абонент в
-	// passwords.json не пишется и подключиться не может; в списке он остаётся,
-	// чтобы пользователь понимал, почему доступ пропал.
-	IsExpired bool `json:"isExpired"`
-	// IsMainPassword — пароль абонента совпадает с главным паролем сервера.
-	// Сам главный пароль наружу не уходит, сравнить на фронте нечем.
-	IsMainPassword bool `json:"isMainPassword"`
-	// IsAuto — абонента завёл инвариант непустоты (ServerUser.Auto).
+	// IsAuto — абонент приехал посевом из старого wdtt.json, а не заведён в
+	// панели (ServerUser.Auto): единственный, кто сегодня ставит признак, —
+	// instancestore/seed.go. Фронт по нему подсказывает, откуда абонент взялся.
 	IsAuto bool `json:"isAuto"`
 }
 
@@ -74,19 +63,12 @@ var (
 	ErrInstanceNotFound = errors.New("инстанс не найден")
 
 	// ErrFileNotWritten — частичный успех добавления: абонент уже лежит в
-	// записи, а passwords.json записать не удалось. Отката нет намеренно
-	// (порядок «запись → файл» держит инвариант непустоты), и отличать этот
-	// исход от полного отказа обязана ручка: абонент существует, ссылку по
-	// нему выдавать можно, доступ появится при следующем запуске сервера — не
-	// «ничего не произошло».
+	// записи, а passwords.json записать не удалось. Отката нет намеренно:
+	// запись — источник правды, файл из неё материализуется заново на
+	// следующем запуске. Отличать этот исход от полного отказа обязана
+	// ручка: абонент существует, ссылку по нему выдавать можно, доступ
+	// появится при следующем запуске сервера — не «ничего не произошло».
 	ErrFileNotWritten = errors.New("абонент создан, но не записан в файл сервера")
-
-	// ErrMainPasswordNotSaved — второй частичный успех добавления: абонент
-	// заведён и применён целиком, а пароль сервера, пришедший той же формой,
-	// в запись не сохранился. Терять его молча нельзя (без пароля конфиг
-	// сервера не проходит валидацию), но и объявлять абонента несозданным —
-	// враньё: он в записи, в passwords.json и уже принят живым сервером.
-	ErrMainPasswordNotSaved = errors.New("абонент создан, но пароль сервера не сохранён — задайте его в настройках сервера")
 )
 
 // Deps — зависимости пакета. Формы RecordSource и Mutator предписаны задачей 8
@@ -104,7 +86,6 @@ type Deps struct {
 	// Warn — app-журнал (необязателен). Сюда уходят исходы, которые не
 	// роняют операцию, но терять их молча нельзя.
 	Warn func(msg string)
-	Now  func() time.Time
 }
 
 // Service — абоненты сервера: материализация файла, путь старта и ручки.
@@ -125,13 +106,6 @@ type Service struct {
 
 func New(d Deps) *Service {
 	return &Service{deps: d, locks: map[string]*sync.Mutex{}}
-}
-
-func (s *Service) now() time.Time {
-	if s.deps.Now != nil {
-		return s.deps.Now()
-	}
-	return time.Now()
 }
 
 func (s *Service) warn(msg string) {
@@ -176,26 +150,22 @@ func (s *Service) serverRecord(key string) (instancestore.Record, roles.WdttServ
 // Materialize собирает passwords.json из записи и уводит журнал статистики.
 //
 // Это СЛИЯНИЕ, а не сборка: preparePasswordsJSONForServer читает существующий
-// файл и накладывает поверх ТОЛЬКО наши три поля (label, vk_hash, expires_at).
+// файл и накладывает поверх ТОЛЬКО наши два поля (label, vk_hash).
 // Всё остальное — привязка абонентов к адресам 10.66.0.x/10.70.0.x (devices),
-// счётчики трафика, max_devices, device_ids, ports, is_deactivated — принадлежит
+// счётчики трафика, max_devices, device_ids, ports — принадлежит
 // форку и обязано пережить запись. Наивная пересборка из Record.Users обнулила
 // бы всё это разом.
 func (s *Service) Materialize(rec instancestore.Record) error {
-	return s.materialize(rec, "")
+	return s.materialize(rec)
 }
 
 // materialize — тот же путь с ЭФФЕКТИВНЫМ главным паролем: у добавления
 // пришедший формой пароль ещё не сохранён в запись, а предикат пригодности
 // сверяется именно с ним.
-func (s *Service) materialize(rec instancestore.Record, mainOverride string) error {
+func (s *Service) materialize(rec instancestore.Record) error {
 	cfg, err := rec.WdttServerConfig()
 	if err != nil {
 		return err
-	}
-	main := cfg.Password
-	if override := strings.TrimSpace(mainOverride); override != "" {
-		main = override
 	}
 	dir := strings.TrimSpace(cfg.ConfigDir)
 	if dir == "" {
@@ -204,7 +174,7 @@ func (s *Service) materialize(rec instancestore.Record, mainOverride string) err
 		// log.Fatalf, — а симлинк журнала лёг бы в текущий каталог демона.
 		return fmt.Errorf("инстанс %s: не задан configDir сервера — passwords.json писать некуда", rec.Key())
 	}
-	sanitized, err := syncPasswordsJSON(dir, main, cfg.AdminID, cfg.BotToken, rec.Users, s.now())
+	sanitized, err := syncPasswordsJSON(dir, rec.Users)
 	if err != nil {
 		return err
 	}
@@ -223,9 +193,8 @@ func (s *Service) materialize(rec instancestore.Record, mainOverride string) err
 
 // ── путь старта (Г-2) ────────────────────────────────────────────
 
-// SyncOnStart — цикл абонентов на пути старта, три ОБЯЗАТЕЛЬНЫХ шага:
-// усыновить чужие записи → удержать инвариант непустоты → переписать файл.
-// Зовёт фабрика процесса (задача 14).
+// SyncOnStart — цикл абонентов на пути старта, два ОБЯЗАТЕЛЬНЫХ шага:
+// усыновить чужие записи → переписать файл. Зовёт фабрика процесса (задача 14).
 func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	unlock := s.lock(key)
 	defer unlock()
@@ -233,19 +202,17 @@ func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	// (1) Усыновление — ПЕРВЫМ действием. Без него следующая же материализация
-	// отобрала бы доступ у абонентов, заведённых телеграм-ботом или admin-API
-	// форка: их нет в записи, значит их не будет и в файле.
-	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+	// (1) Усыновление — ПЕРВЫМ действием: запись, лежащая только в
+	// passwords.json (например, от прежней версии панели), иначе потеряла бы
+	// доступ на следующей же материализации.
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir); err != nil {
 		return err
 	}
-	// (2) Инвариант непустоты — ПОСЛЕ усыновления: наоборот он завёл бы
-	// «Абонент 1» рядом с живым абонентом бота, которого ещё не увидел.
-	rec, err := s.ensureUsable(ctx, key, cfg.Password)
+	rec, err := s.reread(key)
 	if err != nil {
 		return err
 	}
-	// (3) Файл — последним, по итоговому составу.
+	// (2) Файл — последним, по итоговому составу.
 	return s.Materialize(rec)
 }
 
@@ -280,7 +247,7 @@ func (s *Service) mutateUsers(ctx context.Context, key string, mutate func([]ins
 //
 // Работает по КЛЮЧУ, а не по переданной записи: запись читается здесь, уже под
 // замком вызывающего.
-func (s *Service) adopt(ctx context.Context, key, cfgDir, mainPassword string) (instancestore.Record, error) {
+func (s *Service) adopt(ctx context.Context, key, cfgDir string) (instancestore.Record, error) {
 	rec, err := s.reread(key)
 	if err != nil {
 		return rec, err
@@ -289,14 +256,14 @@ func (s *Service) adopt(ctx context.Context, key, cfgDir, mainPassword string) (
 	if err != nil {
 		return rec, err
 	}
-	if _, changed := adoptUsers(rec.Users, file, mainPassword); !changed {
+	if _, changed := adoptUsers(rec.Users, file); !changed {
 		// Пустая запись store на каждом чтении списка стоила бы полного цикла
 		// с объявлением выходов реестру. Решение «писать или нет» принимается
 		// по свежепрочитанной записи, а САМ состав всё равно считает колбэк.
 		return rec, nil
 	}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
-		next, _ := adoptUsers(list, file, mainPassword)
+		next, _ := adoptUsers(list, file)
 		return next, nil
 	}); err != nil {
 		return rec, err
@@ -308,11 +275,10 @@ func (s *Service) adopt(ctx context.Context, key, cfgDir, mainPassword string) (
 //
 // Порядок обхода фиксирован: карта отдаёт ключи вразнобой, а список абонентов
 // уезжает в запись и виден в UI.
-func adoptUsers(list []instancestore.ServerUser, file map[string]passwordsJSONUser, mainPassword string) ([]instancestore.ServerUser, bool) {
+func adoptUsers(list []instancestore.ServerUser, file map[string]passwordsJSONUser) ([]instancestore.ServerUser, bool) {
 	if len(file) == 0 {
 		return list, false
 	}
-	main := strings.TrimSpace(mainPassword)
 	out := slices.Clone(list)
 	known := make(map[string]int, len(out))
 	for i, u := range out {
@@ -322,68 +288,21 @@ func adoptUsers(list []instancestore.ServerUser, file map[string]passwordsJSONUs
 	for _, pass := range slices.Sorted(maps.Keys(file)) {
 		entry := file[pass]
 		pass = strings.TrimSpace(pass)
-		// Запись, равную главному паролю, создаёт admin-API форка. Усыновить
-		// её нельзя: главный пароль — ключ администрирования, а не абонент, и
-		// после усыновления проверка «пароль сервера не совпадает с паролем
-		// абонента» валила бы каждое сохранение конфига.
-		if pass == "" || pass == main {
+		if pass == "" {
 			continue
 		}
-		if i, ok := known[pass]; ok {
-			// У известного обновляем только срок и только ненулевой: админ
-			// мог продлить доступ через admin-API форка.
-			if entry.ExpiresAt != 0 && out[i].ExpiresAt != entry.ExpiresAt {
-				out[i].ExpiresAt = entry.ExpiresAt
-				changed = true
-			}
+		if _, ok := known[pass]; ok {
 			continue
 		}
 		known[pass] = len(out)
 		out = append(out, instancestore.ServerUser{
-			Password:  pass,
-			Comment:   strings.TrimSpace(entry.Label),
-			VkHash:    strings.TrimSpace(entry.VkHash),
-			ExpiresAt: entry.ExpiresAt,
+			Password: pass,
+			Comment:  strings.TrimSpace(entry.Label),
+			VkHash:   strings.TrimSpace(entry.VkHash),
 		})
 		changed = true
 	}
 	return out, changed
-}
-
-// ensureUsable — ЕДИНСТВЕННАЯ опора, которая заводит абонента, и стоит она на
-// пути старта, между усыновлением и записью файла: если пароль сервера задан, а
-// рабочих абонентов не осталось, заводит «Абонент 1».
-//
-// Это последняя линия для путей МИМО UI: лечение существующих установок (пароль
-// задан давно, абонентов нет), апгрейд, автостарт. Она же покрывает «все
-// абоненты просрочены». На путях UI абонента не заводит никто.
-func (s *Service) ensureUsable(ctx context.Context, key, mainPassword string) (instancestore.Record, error) {
-	rec, err := s.reread(key)
-	if err != nil {
-		return rec, err
-	}
-	main := strings.TrimSpace(mainPassword)
-	if main == "" || len(UsableUsers(rec.Users, main, s.now())) > 0 {
-		return rec, nil
-	}
-	pass, err := randomUserPassword()
-	if err != nil {
-		return rec, err
-	}
-	// Auto=true — поле записи задачи 2: вычислить признак нечем (пользователь
-	// переименовывает абонента), поэтому он ХРАНИТСЯ.
-	user := instancestore.ServerUser{Password: pass, Comment: defaultUserName, Auto: true}
-	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
-		// Условие перепроверяется по АКТУАЛЬНОМУ составу: между чтением и
-		// записью абонент мог появиться, и второй «Абонент 1» был бы лишним.
-		if len(UsableUsers(list, main, s.now())) > 0 {
-			return list, nil
-		}
-		return putUser(list, user), nil
-	}); err != nil {
-		return rec, err
-	}
-	return s.reread(key)
 }
 
 // ── ручки ────────────────────────────────────────────────────────
@@ -407,23 +326,22 @@ func (s *Service) List(ctx context.Context, key string) (UsersStatus, error) {
 	if err != nil {
 		return UsersStatus{}, err
 	}
-	if adopted, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+	if adopted, err := s.adopt(ctx, key, cfg.ConfigDir); err != nil {
 		s.warn("записи passwords.json не усыновлены: " + err.Error())
 	} else {
 		rec = adopted
 	}
-	return s.status(rec, cfg.ConfigDir, cfg.Password), nil
+	return s.status(rec, cfg.ConfigDir), nil
 }
 
 // Add заводит отдельного абонента сервера.
-func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainPassword string) (UsersStatus, error) {
+func (s *Service) Add(ctx context.Context, key, password, comment, vkHash string) (UsersStatus, error) {
 	// Нормализация входа — ПЕРВЫМ ДЕЛОМ, до всех проверок и любой записи:
 	// иначе " pass1 " обойдёт отказ на занятом пароле (в списке пароли уже
 	// подрезаны), а " <главный> " проскочит сравнение с главным.
 	password = strings.TrimSpace(password)
 	comment = strings.TrimSpace(comment)
 	vkHash = strings.TrimSpace(vkHash)
-	mainPassword = strings.TrimSpace(mainPassword)
 
 	if _, _, err := s.serverRecord(key); err != nil {
 		return UsersStatus{}, err
@@ -431,38 +349,18 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash, mainP
 
 	unlock := s.lock(key)
 	defer unlock()
-	return s.addLocked(ctx, key, mainPassword, password, comment, vkHash)
+	return s.addLocked(ctx, key, password, comment, vkHash)
 }
 
 // addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал → дописать пароль сервера.
-//
-// Пароль сервера сохраняется ЗДЕСЬ, под тем же замком, а не у вызывающего
-// после его отпускания: между проверкой «главный пароль не совпадает с паролем
-// абонента» и записью параллельное добавление успевало завести абонента ровно
-// с этим паролем — то самое состояние, ради запрета которого проверка и
-// существует (форк берёт main_password для WRAP, и совпадение ломает
-// рукопожатия всем).
-func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, comment, vkHash string) (UsersStatus, error) {
+// изменить запись → переписать файл → сигнал. Своего захвата здесь нет:
+// замок берёт Add, и повторный был бы взаимоблокировкой.
+func (s *Service) addLocked(ctx context.Context, key, password, comment, vkHash string) (UsersStatus, error) {
 	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
 	}
-	// Эффективный главный пароль: сохранённый, а при пустом — присланный
-	// формой. Сверять только с сохранённым нельзя: на пустом сервере проверка
-	// пропустила бы пароль абонента, равный тому, который мы через несколько
-	// строк сделаем главным.
-	stored := strings.TrimSpace(cfg.Password)
-	main := stored
-	if main == "" {
-		main = mainPassword
-	}
-	// Пустой главный пароль — законное состояние: форк требует не его, а
-	// НАЛИЧИЕ ХОТЯ БЫ ОДНОГО пароля (`serverWrapKeys.Count() == 0`), и
-	// абонентского ему достаточно. Прежний отказ здесь запирал единственный
-	// путь сделать сервер работоспособным после того, как пароль владельца
-	// ушёл из UI.
-	rec, err := s.adopt(ctx, key, cfg.ConfigDir, main)
+	rec, err := s.adopt(ctx, key, cfg.ConfigDir)
 	if err != nil {
 		return UsersStatus{}, err
 	}
@@ -471,20 +369,11 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 			return UsersStatus{}, err
 		}
 	}
-	// Проверка, не зависящая от состава, — здесь: она про запрос, а не про
-	// состояние. При пустом главном пароле сравнивать не с чем: совпасть с
-	// ним нельзя, и пустой `password` сюда не доходит (выше он сгенерирован).
-	if main != "" && password == main {
-		return UsersStatus{}, errors.New("пароль совпадает с главным паролем сервера — задайте абоненту другой пароль")
-	}
 	user := instancestore.ServerUser{Password: password, Comment: comment, VkHash: vkHash}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
 		// Проверки состава — ВНУТРИ колбэка, по актуальному списку: между
 		// чтением и записью пароль мог занять параллельный запрос.
-		if err := userPasswordFree(list, password, s.now()); err != nil {
-			return nil, err
-		}
-		if err := validateMainPassword(main, list); err != nil {
+		if err := userPasswordFree(list, password); err != nil {
 			return nil, err
 		}
 		return putUser(list, user), nil
@@ -494,50 +383,16 @@ func (s *Service) addLocked(ctx context.Context, key, mainPassword, password, co
 	if rec, err = s.reread(key); err != nil {
 		return UsersStatus{}, err
 	}
-	// Файл пишем с ЭФФЕКТИВНЫМ главным паролем: сохранить его в запись мы ещё
-	// не успели, а предикат пригодности сверяется именно с ним.
-	if err := s.materialize(rec, main); err != nil {
+	if err := s.materialize(rec); err != nil {
 		// Частичный успех: абонент уже в записи (строкой выше) и оттуда никуда
 		// не денется — старт сервера перепишет файл сам.
 		return UsersStatus{}, fmt.Errorf("%w: %w", ErrFileNotWritten, err)
 	}
 	// Сигнал — сразу после записи файла, до сбора ответа.
 	reload := s.notifyChanged(key)
-	st := s.status(rec, cfg.ConfigDir, main)
+	st := s.status(rec, cfg.ConfigDir)
 	st.Reload = reload
-	// Побочный эффект «дописать пароль сервера, если он пуст» идёт ПОСЛЕ
-	// абонента: на отказе добавления пароль остаётся несохранённым, и сервер
-	// не получает состояния «пароль есть, абонента нет».
-	if stored == "" {
-		if err := s.setMainPassword(ctx, key, main); err != nil {
-			// Частичный успех, а не отказ: абонент уже и в записи, и в
-			// passwords.json, и SIGHUP по нему ушёл — отката нет и быть не
-			// может. Не сохранился только пароль сервера.
-			return UsersStatus{}, fmt.Errorf("%w: %w", ErrMainPasswordNotSaved, err)
-		}
-	}
 	return st, nil
-}
-
-// setMainPassword дописывает пароль сервера в запись. Правка ПО МЕСТУ:
-// пересборка записи литералом потеряла бы абонентов и слоты адресов.
-func (s *Service) setMainPassword(ctx context.Context, key, main string) error {
-	if s.deps.Mutator == nil {
-		return errors.New("мутатор записей не подключён")
-	}
-	return s.deps.Mutator.Update(ctx, key, func(r *instancestore.Record) error {
-		if r.WdttServer == nil {
-			return fmt.Errorf("инстанс %s: конфиг сервера отсутствует", key)
-		}
-		// Второй барьер к замку: состав сверяется по АКТУАЛЬНОМУ списку прямо
-		// в момент записи. Пароль сервера, равный паролю абонента, ломает
-		// WRAP-рукопожатия всем — сохранять его нельзя ни при какой гонке.
-		if err := validateMainPassword(main, r.Users); err != nil {
-			return err
-		}
-		r.WdttServer.Password = main
-		return nil
-	})
 }
 
 // Remove удаляет одного абонента сервера.
@@ -557,20 +412,17 @@ func (s *Service) Remove(ctx context.Context, key, password string) (UsersStatus
 	if err != nil {
 		return UsersStatus{}, err
 	}
-	if password == strings.TrimSpace(cfg.Password) {
-		return UsersStatus{}, errors.New("нельзя удалить основной пароль сервера")
-	}
 	// Усыновление — ПЕРВЫМ действием. После вычёркивания оно вернуло бы
 	// удалённого абонента из ещё не переписанного файла, и удаление стало бы
 	// no-op.
-	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir); err != nil {
 		return UsersStatus{}, err
 	}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
 		remaining := dropUser(list, password)
 		// Страж инварианта считается по ТОМУ ЖЕ списку, что и записывается:
 		// проверка по снимку разошлась бы с записью.
-		if err := refuseLastUsable(list, remaining, cfg.Password, s.now()); err != nil {
+		if err := refuseLastUsable(list, remaining); err != nil {
 			return nil, err
 		}
 		return remaining, nil
@@ -597,11 +449,11 @@ func (s *Service) RemoveAll(ctx context.Context, key string) (UsersStatus, error
 	// Усыновление обязательно и здесь: без него живой абонент бота, лежащий
 	// только в файле, не будет сочтён рабочим — инвариант пропустит снос, и
 	// доступ у него отберёт следующая материализация.
-	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir); err != nil {
 		return UsersStatus{}, err
 	}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
-		if err := refuseLastUsable(list, nil, cfg.Password, s.now()); err != nil {
+		if err := refuseLastUsable(list, nil); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -622,7 +474,7 @@ func (s *Service) finishMutation(ctx context.Context, key string, cfg roles.Wdtt
 		return UsersStatus{}, err
 	}
 	reload := s.notifyChanged(key)
-	st := s.status(rec, cfg.ConfigDir, cfg.Password)
+	st := s.status(rec, cfg.ConfigDir)
 	st.Reload = reload
 	return st, nil
 }
@@ -662,7 +514,7 @@ func (s *Service) Rename(ctx context.Context, key, password, name string) (Users
 	// Усыновление — первым действием, как у соседей: без него абонент,
 	// заведённый телеграм-ботом и лежащий пока только в passwords.json, получил
 	// бы «не найден».
-	if _, err := s.adopt(ctx, key, cfg.ConfigDir, cfg.Password); err != nil {
+	if _, err := s.adopt(ctx, key, cfg.ConfigDir); err != nil {
 		return UsersStatus{}, err
 	}
 	if err := s.mutateUsers(ctx, key, func(list []instancestore.ServerUser) ([]instancestore.ServerUser, error) {
@@ -680,7 +532,7 @@ func (s *Service) Rename(ctx context.Context, key, password, name string) (Users
 	}
 	// Reload остаётся пустым: passwords.json здесь не переписывается,
 	// сигналить не о чем — «применено сейчас» было бы неправдой.
-	return s.status(rec, cfg.ConfigDir, cfg.Password), nil
+	return s.status(rec, cfg.ConfigDir), nil
 }
 
 // ── общее ────────────────────────────────────────────────────────
@@ -723,8 +575,7 @@ func dropUser(list []instancestore.ServerUser, password string) []instancestore.
 }
 
 // setUserComment правит РОВНО Comment одной записи. Замещение записи целиком
-// тут не годится: оно стёрло бы ExpiresAt (нашу память об отозванном доступе)
-// вместе с VkHash и Auto.
+// тут не годится: оно стёрло бы VkHash и Auto.
 func setUserComment(list []instancestore.ServerUser, password, name string) ([]instancestore.ServerUser, bool) {
 	out := slices.Clone(list)
 	for i, u := range out {
@@ -755,26 +606,17 @@ func loadUserEntries(configDir string) (map[string]passwordsJSONUser, bool, erro
 
 // status накладывает на состав записи живые признаки из passwords.json.
 // Зовётся под уже взятым замком; своего захвата здесь нет.
-func (s *Service) status(rec instancestore.Record, cfgDir, mainPassword string) UsersStatus {
+func (s *Service) status(rec instancestore.Record, cfgDir string) UsersStatus {
 	file, available, err := loadUserEntries(cfgDir)
 	if err != nil {
 		s.warn("passwords.json не прочитан: " + err.Error())
 	}
-	return mergeUsers(rec.Users, file, available, mainPassword, s.now())
+	return mergeUsers(rec.Users, file, available)
 }
 
-// mergeUsers собирает список для UI: состав из записи, признаки — из
-// passwords.json и из запомненного срока. mainPassword нужен ровно для признака
-// IsMainPassword: сам пароль наружу не уходит.
-func mergeUsers(users []instancestore.ServerUser, file map[string]passwordsJSONUser, available bool, mainPassword string, now time.Time) UsersStatus {
-	// Срок считается ТЕМ ЖЕ предикатом, что и запись файла: непросроченные —
-	// это ровно те, кого вернул UsableUsers. Главный пароль ему не передаём: по
-	// нему отсев исказил бы признак «истёк».
-	usable := make(map[string]struct{}, len(users))
-	for _, u := range UsableUsers(users, "", now) {
-		usable[u.Password] = struct{}{}
-	}
-	main := strings.TrimSpace(mainPassword)
+// mergeUsers собирает список для UI: состав из записи, имя и VK-хеш при
+// пустых наших значениях доподставляются из passwords.json.
+func mergeUsers(users []instancestore.ServerUser, file map[string]passwordsJSONUser, available bool) UsersStatus {
 	out := UsersStatus{Available: available, Users: []UserEntry{}}
 	for _, u := range users {
 		pass := strings.TrimSpace(u.Password)
@@ -788,21 +630,14 @@ func mergeUsers(users []instancestore.ServerUser, file map[string]passwordsJSONU
 			// Признак авто-создания хранится в записи: вычислять его по имени
 			// нечем — пользователь переименовывает абонента.
 			IsAuto: u.Auto,
-			// Пустой главный пароль совпадением не станет сам: абонента с
-			// пустым паролем цикл сюда не пускает.
-			IsMainPassword: pass == main,
 		}
 		if live, ok := file[pass]; ok {
-			e.IsDeactivated = live.IsDeactivated
 			if e.Comment == "" {
 				e.Comment = strings.TrimSpace(live.Label)
 			}
 			if e.VkHash == "" {
 				e.VkHash = strings.TrimSpace(live.VkHash)
 			}
-		}
-		if _, ok := usable[pass]; !ok {
-			e.IsExpired = true
 		}
 		out.Users = append(out.Users, e)
 	}
@@ -834,36 +669,12 @@ func (s *Service) notifyChanged(key string) Reload {
 	return ReloadDelivered
 }
 
-// userPasswordFree отказывает на ЛЮБОМ уже занятом пароле, двумя текстами.
-// Занять пароль просроченного абонента нельзя: замещение записи обнулит нашу
-// память о сроке, а слияние всё равно запишет в файл старый expires_at — сервер
-// после SIGHUP отвергнет всех. Занять пароль живого нельзя по тому же классу,
-// но тише: перезаведение бот-пароля со сроком делает временный доступ
-// бессрочным.
-func userPasswordFree(users []instancestore.ServerUser, password string, now time.Time) error {
+// userPasswordFree отказывает на уже занятом пароле: два абонента с одним
+// паролем неразличимы для сервера.
+func userPasswordFree(users []instancestore.ServerUser, password string) error {
 	for _, u := range users {
-		if strings.TrimSpace(u.Password) != password {
-			continue
-		}
-		if u.ExpiresAt != 0 && u.ExpiresAt <= now.Unix() {
-			return errors.New("пароль принадлежит просроченному абоненту, задайте новый")
-		}
-		return errors.New("пароль занят живым абонентом")
-	}
-	return nil
-}
-
-// validateMainPassword отвергает главный пароль, совпадающий с паролем
-// абонента: wdtt-server использует main_password для WRAP, и совпадение с
-// хешем абонента ломает DTLS/WG-рукопожатия.
-func validateMainPassword(main string, users []instancestore.ServerUser) error {
-	main = strings.TrimSpace(main)
-	if main == "" {
-		return nil
-	}
-	for _, u := range users {
-		if strings.TrimSpace(u.Password) == main {
-			return errors.New("пароль сервера не должен совпадать с паролем клиента")
+		if strings.TrimSpace(u.Password) == password {
+			return errors.New("пароль занят живым абонентом")
 		}
 	}
 	return nil
@@ -877,11 +688,11 @@ func validateMainPassword(main string, users []instancestore.ServerUser) error {
 // разрешена: запрещать выход из уже сломанного состояния бессмысленно.
 // Проверка живёт здесь, а не только в UI: инвариант обязан держаться и для
 // запросов мимо нашего фронта.
-func refuseLastUsable(before, after []instancestore.ServerUser, mainPassword string, now time.Time) error {
-	if len(UsableUsers(before, mainPassword, now)) == 0 {
+func refuseLastUsable(before, after []instancestore.ServerUser) error {
+	if len(UsableUsers(before)) == 0 {
 		return nil
 	}
-	if len(UsableUsers(after, mainPassword, now)) > 0 {
+	if len(UsableUsers(after)) > 0 {
 		return nil
 	}
 	return errors.New("нельзя удалить последнего рабочего абонента: без единого пароля wdtt-server не запускается")

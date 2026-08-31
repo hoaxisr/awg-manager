@@ -40,7 +40,7 @@ type singboxCore struct {
 	op        *singbox.Operator
 	orch      *singboxorch.Orchestrator
 	awg3Store *awg3endpoint.Store
-	migrated  bool // ruleset-URL/address-or переписали файлы — runtime решает про reload
+	migrated  bool // миграции (ruleset-URL, address-or, device-proxy) переписали файлы — runtime решает про reload
 }
 
 // buildSingboxCore собирает общую для демона и cleanup часть sing-box-рантайма:
@@ -80,7 +80,8 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	// actually moves the file out of sing-box's view (config.d/disabled/)
 	// instead of leaving stale content behind.
 	singboxConfigDir := op.ConfigDir()
-	if err := singbox.MigrateDeviceProxyOutOfTunnels(singboxConfigDir); err != nil {
+	deviceProxyMigrated, err := singbox.MigrateDeviceProxyOutOfTunnels(singboxConfigDir)
+	if err != nil {
 		d.bootLog.Warn("deviceproxy-migration", "", err.Error())
 	}
 	ruleSetURLsMigrated, err := singbox.MigrateRuleSetURLsToFork(singboxConfigDir)
@@ -148,7 +149,7 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		op:        op,
 		orch:      orch,
 		awg3Store: awg3Store,
-		migrated:  ruleSetURLsMigrated || addressOrMigrated,
+		migrated:  ruleSetURLsMigrated || addressOrMigrated || deviceProxyMigrated,
 	}
 }
 

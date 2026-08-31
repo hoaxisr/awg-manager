@@ -52,7 +52,14 @@ func runCleanup(dataDir string) {
 	fmt.Println("awg-manager cleanup: removing all managed resources...")
 
 	settingsStore := storage.NewSettingsStore(dataDir)
-	cleanupSettings, _ := settingsStore.Load()
+	// Настройки читаются ради SingboxManuallyStopped (см. ниже). Отказ не
+	// останавливает снос — но и не глотается: на битом settings.json cleanup
+	// молча уходил на дефолты, и понять это было нельзя (F37). Журнала здесь
+	// ещё нет — он строится строкой ниже от этого же стора.
+	cleanupSettings, err := settingsStore.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cleanup: settings load failed, using defaults: %v\n", err)
+	}
 
 	loggingService := logging.NewService(settingsStore)
 	defer loggingService.Stop()

@@ -119,8 +119,7 @@ func (n *nilIngress) EnsureWdttServerIngressRefs(context.Context, string, string
 
 func srvCfg() roles.WdttServerConfig {
 	return roles.WdttServerConfig{
-		Listen: "0.0.0.0:56000", WgPort: 51820, Password: "main",
-		WgIface: "opkgtun17", RawIface: "opkgtun19",
+		Listen: "0.0.0.0:56000", WgPort: 51820, WgIface: "opkgtun17", RawIface: "opkgtun19",
 		NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19",
 		RelayMode: "wg", NatMode: "full", Policy: "none", OpenFirewall: true,
 	}
@@ -258,27 +257,38 @@ func TestServerNatGroupsFollowMode(t *testing.T) {
 	}
 }
 
-func TestServerDNSFollowsRelayMode(t *testing.T) {
-	role, _, _, _ := newRole(t)
-	cfg := srvCfg() // wg
-	groups, _ := role.natGroups(cfg)(context.Background())
-	// wg-relay: DNAT на обоих интерфейсах (raw→10.70.66.1, wg→10.66.0.1).
-	guards := map[string]bool{}
-	for _, g := range groups {
-		guards[g.Guard] = true
-	}
-	if !guards["opkgtun17"] || !guards["opkgtun19"] {
-		t.Fatalf("wg-relay: DNS-перехват обязан крыть оба интерфейса: %v", guards)
-	}
-	cfg.RelayMode = "raw"
-	groups, _ = role.natGroups(cfg)(context.Background())
-	for _, g := range groups {
-		for _, r := range g.Rules {
-			for _, tok := range r.Spec {
-				if tok == "10.66.0.1:53" {
-					t.Fatal("raw-relay: DNAT на WG-шлюз не нужен")
+// Половины сервера работают ОБЕ и всегда, поэтому DNS-перехват не зависит от
+// режима связи: тот выбирает лишь порт по умолчанию в выдаваемой ссылке.
+// Цель каждого правила — шлюз своей половины; 10.70.66.1 (адрес, который форк
+// ставит на raw-TUN, только когда поднимает его сам) под менеджером не
+// существует, и DNAT на него уводил запросы в никуда.
+func TestServerDNSCoversBothHalvesInEveryRelayMode(t *testing.T) {
+	for _, mode := range []string{"wg", "raw"} {
+		role, _, _, _ := newRole(t)
+		cfg := srvCfg()
+		cfg.RelayMode = mode
+		groups, err := role.natGroups(cfg)(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		guards := map[string]bool{}
+		targets := map[string]bool{}
+		for _, g := range groups {
+			guards[g.Guard] = true
+			for _, r := range g.Rules {
+				for _, tok := range r.Spec {
+					targets[tok] = true
 				}
 			}
+		}
+		if !guards["opkgtun17"] || !guards["opkgtun19"] {
+			t.Fatalf("режим %q: DNS-перехват обязан крыть оба интерфейса: %v", mode, guards)
+		}
+		if !targets["10.66.0.1:53"] || !targets["10.70.0.1:53"] {
+			t.Fatalf("режим %q: DNAT обязан метить оба шлюза, got %v", mode, targets)
+		}
+		if targets["10.70.66.1:53"] {
+			t.Fatalf("режим %q: 10.70.66.1 под менеджером не существует", mode)
 		}
 	}
 }
@@ -349,7 +359,6 @@ func TestServerInputPortsOnlyWAN(t *testing.T) {
 	// Паритет serverFirewallPortSpecs (server_firewall.go:9-27): порт с
 	// 0.0.0.0 открывается, локальный — нет, дубли схлопываются.
 	cfg := srvCfg()
-	cfg.DirectListen = "127.0.0.1:9000"
 	got := inputPorts(cfg)
 	want := map[int]bool{56000: true, 56001: true}
 	if len(got) != len(want) {

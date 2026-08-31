@@ -58,7 +58,6 @@ const WDTT_OPTIONAL_STRINGS: readonly (keyof WdttClientConfig)[] = [
 
 const FT_OPTIONAL_STRINGS: readonly (keyof FreeTurnClientConfig)[] = [
 	'links',
-	'turnHost',
 	'obfKey',
 	'dnsServers',
 	'clientId',

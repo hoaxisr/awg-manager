@@ -5,11 +5,12 @@
 	// больше нет (решение Q7 ИА).
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
-	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
+	import { listenPortNumber } from '$lib/utils/listenPortUtils';
+	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
-	import type { SharePort } from './shareConfig';
+	import { directListenValue, type SharePort } from './shareConfig';
 
 	type StatsLogMode = 'ram' | 'off' | 'disk';
 
@@ -34,14 +35,27 @@
 		wanOptions = [],
 	}: Props = $props();
 
-	// Порт DTLS — главный порт раздачи и обязательное поле конфига
-	// (`WdttServerConfig.Validate`). Раньше правился только в мастере.
-	const dtlsPort = $derived(String(listenPortNumber(wdttServer?.listen ?? '', 0) || 56002));
+	// Внутренний WG-порт: наружу на него не приходят, снаружи не виден.
+	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
 
-	function applyDtlsPort(v: string) {
-		const port = Number(v);
-		if (!wdttServer || !Number.isFinite(port) || port <= 0) return;
-		wdttServer.listen = setListenPort(wdttServer.listen || '0.0.0.0:56002', port, '0.0.0.0');
+	function applyWgPort(v: string) {
+		if (!wdttServer) return;
+		wdttServer.wgPort = Math.max(1, Math.min(65535, Number(v) || 56001));
+	}
+
+	// Direct-порт — НОМЕР, а не адрес: хост наследуется от порта раздачи
+	// (`directListenValue`), иначе гарды фронта и бэкенда расходятся. Пусто —
+	// выключено.
+	const directPort = $derived(
+		wdttServer?.directListen?.trim()
+			? String(listenPortNumber(wdttServer.directListen, 0) || '')
+			: '',
+	);
+
+	function applyDirectPort(v: string) {
+		if (!wdttServer) return;
+		const next = directListenValue(wdttServer.listen, v);
+		if (next !== null) wdttServer.directListen = next;
 	}
 
 	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
@@ -57,24 +71,40 @@
 	{#if wdttServer}
 		<div class="grid">
 			<Input
-				label="Порт DTLS"
+				label="Внутренний WG-порт"
 				type="number"
-				value={dtlsPort}
-				hint="Главный порт раздачи; raw-половина займёт следующий. Смена перезапустит сервер"
-				onchange={applyDtlsPort}
+				value={wgPort}
+				hint="Порт userspace-WireGuard внутри сервера. Смена перезапустит сервер"
+				onchange={applyWgPort}
 				fullWidth
 			/>
 			<Dropdown
 				label="Выход в интернет"
-				value={wdttServer.natStaticWan ?? ''}
+				value={effectiveStaticWan(wdttServer)}
 				options={[{ value: '', label: 'Не выбран' }, ...wanOptions]}
 				onchange={(v) => {
-					if (wdttServer) wdttServer.natStaticWan = v;
+					if (!wdttServer) return;
+					// Выбор пользователя становится правдой целиком: одиночка
+					// уезжает, список снимается (бэкенд берёт присланную форму).
+					wdttServer.natStaticWan = v;
+					wdttServer.natStaticWans = undefined;
 				}}
 				fullWidth
 			/>
 		</div>
 		<div class="grid">
+			<!-- Третий порт WG-половины: WRAP-обфускация БЕЗ слоя DTLS. Меньше
+			     инкапсуляции — выше скорость, ценой потери маскировки под DTLS.
+			     Поле пропало при переписывании рантайма, хотя argv его слал. -->
+			<Input
+				label="Порт Direct (без DTLS)"
+				type="number"
+				value={directPort}
+				onchange={applyDirectPort}
+				placeholder="выключено"
+				hint="Быстрее DTLS, но трафик перестаёт маскироваться под него. Пусто — выключено"
+				fullWidth
+			/>
 			<Input label="Config dir" bind:value={wdttServer.configDir} fullWidth />
 		</div>
 

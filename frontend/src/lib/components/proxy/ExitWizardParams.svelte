@@ -3,18 +3,15 @@
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
 	import { Input } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
-	import type { ExitMode, ExitProtocol, ExitWizardFields } from './exitWizard';
+	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
 
 	interface Props {
 		protocol: ExitProtocol;
-		/** Режим WDTT: в Raw отдельного AWG-туннеля нет, и подсказка WE-34 врала бы.
-		 * У FreeTurn режима нет — туннель всегда WG. */
-		mode: ExitMode;
 		/** Поля мастера правятся здесь же: владелец значения — мастер. */
 		fields: ExitWizardFields;
 	}
 
-	let { protocol, mode, fields = $bindable() }: Props = $props();
+	let { protocol, fields = $bindable() }: Props = $props();
 </script>
 
 <p class="lead">Значения из ссылки — поправьте, если нужно.</p>
@@ -25,12 +22,6 @@
 	{#if protocol === 'wdtt'}
 		<SensitiveInput label="Пароль" bind:value={fields.password} />
 	{/if}
-	<Input
-		label="Локальный порт"
-		bind:value={fields.listen}
-		hint={protocol === 'wdtt' && mode === 'raw' ? '' : 'Сюда будет смотреть AWG-туннель'}
-		fullWidth
-	/>
 	<!-- WE-50/WE-51: поле обязательное у обоих протоколов (`exitStep2Ready`), и
 	     без подписи «Дальше» гасла бы молча. Значение у них разное: у WDTT это
 	     VK-хеши, у FreeTurn — ссылки VK Calls (`links`), отсюда две строки и две

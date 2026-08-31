@@ -350,7 +350,6 @@ func (s *ServiceImpl) Get(ctx context.Context, tunnelID string) (*TunnelWithStat
 		ISPInterface:  stored.ISPInterface,
 		InterfaceName: ifaceName,
 		NDMSName:      ndmsName,
-		ConfigPreview: config.Generate(stored),
 		Backend:       s.backendLabel(stored),
 	}, nil
 }

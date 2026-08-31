@@ -107,9 +107,13 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
-// proxyOpkgOccupancy — занятость пула OpkgTun: живое (только /sys) плюс пины
+// opkgOccupancyAllOwners — занятость пула OpkgTun: живое (только /sys) плюс пины
 // ЧЕТЫРЁХ владельцев — записи AWG-туннелей, удерживающая запись настроек,
 // записи NDMS и записи прокси-инстансов.
+//
+// Состав — контракт для ВСЕХ, кто выдаёт номера (прокси, туннели), а не только
+// для прокси: на mips/mipsel пул общий, и поставщик, выпавший у одного
+// вызывающего, отдаёт ему чужой занятый номер как свободный.
 //
 // Состав собран здесь, а не в месте вызова, потому что он и есть контракт:
 // выпавший поставщик не ломает ни сборку, ни один прогон — он просто отдаёт
@@ -119,7 +123,7 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 // Записи NDMS приходят ОТДЕЛЬНЫМ поставщиком, а не половиной живого: после
 // `ip link del opkgtunN` запись живёт дальше со state error, устройства нет.
 // Номер занят, интерфейс мёртв, и одна карта на оба вопроса врёт.
-func proxyOpkgOccupancy(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
+func opkgOccupancyAllOwners(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
 	awg *storage.AWGTunnelStore, settings *storage.SettingsStore, store *instancestore.Store,
 ) storage.OpkgTunPins {
 	return storage.OpkgTunOccupancy(live,
@@ -128,6 +132,16 @@ func proxyOpkgOccupancy(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTu
 		ndmsPins,
 		proxyRecordPins(store),
 	)
+}
+
+// routerForeignOpkgPins — пины ЧУЖИХ владельцев для режимов роутера: записи
+// туннелей, записи NDMS без живого устройства и записи прокси-инстансов. Своя
+// удерживающая запись сюда не входит намеренно — она приходит из настроек, и
+// подмешивание её перепинило бы роутер сам на себя (см. Deps.OpkgTunPins).
+func routerForeignOpkgPins(awg *storage.AWGTunnelStore, ndmsPins storage.OpkgTunPins,
+	store *instancestore.Store,
+) storage.OpkgTunPins {
+	return storage.MergeOpkgTunPins(awg.OpkgTunPinsOf, ndmsPins, proxyRecordPins(store))
 }
 
 // proxyRecordPins — четвёртый поставщик пинов пула OpkgTun: записи
@@ -242,20 +256,35 @@ func proxyAllocIndex(ctx context.Context, alloc *proxyrt.Allocator, min int,
 // занятых портов. Скан отдал бы двум параллельным Create ОДИН порт — запись
 // на диск и выделение не атомарны, а уникальность Listen хранилище не
 // проверяет.
+//
+// current — порт, который у записи уже стоит. Годный (в пуле и ничей) остаётся
+// за инстансом: смена listen тянет за собой переезд endpoint'а связанного
+// туннеля, и делать её без нужды нельзя. Негодный — мусор, вне пула или занятый
+// чужой записью — молча меняется на свободный. Прежде такой порт был приговором:
+// ресурс listen_port отказывал (linkres/listen.go), инстанс уходил в blocked и
+// сам оттуда не возвращался, а починить его было нечем — поле порта из UI ушло.
+//
+// Занятость считается БЕЗ собственной записи инстанса (selfKind/selfID): иначе
+// свой же порт читался бы как чужой и годный current не удержался бы никогда.
 func proxyAllocListen(ctx context.Context, alloc *proxyrt.Allocator,
 	store *instancestore.Store, tunnels *storage.AWGTunnelStore,
-) func(ownerKey string) (string, error) {
-	return func(ownerKey string) (string, error) {
-		// Занятость — порты ВСЕХ записей store и localhost-endpoint'ы
-		// связанных туннелей (паритет OccupiedLocalListenPorts старого мира).
-		// Своя запись не исключается: AllocListen зовётся только при пустом
-		// Listen, собственного порта у записи в этот момент нет.
-		occ := newProxyOccupancy(store, tunnels, "", "")
+) func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error) {
+	return func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error) {
+		// Занятость — порты ВСЕХ ОСТАЛЬНЫХ записей store и localhost-endpoint'ы
+		// чужих связанных туннелей (паритет OccupiedLocalListenPorts старого мира).
+		occ := newProxyOccupancy(store, tunnels, selfKind, selfID)
 		taken, err := occ.OccupiedLocalListenPorts(ctx)
 		if err != nil {
 			return "", fmt.Errorf("занятость портов: %w", err)
 		}
-		p, err := alloc.AllocIndex(ownerKey, roles.ListenPortMin-1, taken)
+		// Текущий порт идёт закреплением: AllocIndex вернёт его, если он в
+		// диапазоне и свободен, иначе выдаст первый свободный. Значение вне
+		// пула аллокатор игнорирует — им же гасится «порта нет вовсе».
+		pinned := roles.ListenPortMin - 1
+		if port, ok := localhostPort(current); ok {
+			pinned = port
+		}
+		p, err := alloc.AllocIndex(ownerKey, pinned, taken)
 		if err != nil {
 			return "", fmt.Errorf("нет свободного порта в %d..%d: %w",
 				roles.ListenPortMin, roles.ListenPortMax, err)
@@ -791,9 +820,9 @@ func (a *app) wireProxyrt() {
 	portAlloc := proxyrt.NewAllocator(proxyrt.IndexRange{
 		Min: roles.ListenPortMin, Max: roles.ListenPortMax})
 
-	// (2) Занятость пула OpkgTun (состав и его цена — proxyOpkgOccupancy).
+	// (2) Занятость пула OpkgTun (состав и его цена — opkgOccupancyAllOwners).
 	ndmsIfaces := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
-	occupancy := proxyOpkgOccupancy(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
+	occupancy := opkgOccupancyAllOwners(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
 		a.awgStore, a.settingsStore, store)
 	allocIndex := proxyAllocIndex(a.shutdownCtx, opkgAlloc, opkgMin, occupancy, store)
 	allocListen := proxyAllocListen(a.shutdownCtx, portAlloc, store, a.awgStore)

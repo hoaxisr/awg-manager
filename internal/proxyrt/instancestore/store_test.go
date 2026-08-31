@@ -19,8 +19,7 @@ func newStore(t *testing.T) *Store {
 func rawClient(id, name string) Record {
 	return Record{ID: id, Kind: KindWdttClient, Name: name, Enabled: true,
 		WdttClient: &roles.WdttClientConfig{
-			Mode: "raw", Listen: "127.0.0.1:9000", Peer: "1.2.3.4:56000",
-			Password: "pw", VKHashes: "h", Workers: 9,
+			Mode: "raw", Listen: "127.0.0.1:9000", Peer: "1.2.3.4:56000", VKHashes: "h", Workers: 9,
 			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
 		}}
 }
@@ -33,12 +32,12 @@ func ftClient(id string) Record {
 
 func wdttServer(id string) Record {
 	return Record{ID: id, Kind: KindWdttServer, Name: "Сервер", Enabled: false,
-		Users:    []ServerUser{{Password: "u1", Comment: "Петя", ExpiresAt: 42}},
+		Users:    []ServerUser{{Password: "u1", Comment: "Петя"}},
 		LinkPeer: "1.2.3.4:56002", LinkVKHashes: "vh", StatsLog: "disk",
 		WdttServer: &roles.WdttServerConfig{
 			// 56002 — ДЕФОЛТ store: фикстура на нём не отличала бы чтение
 			// поля от подстановки дефолта.
-			Listen: "0.0.0.0:57002", Password: "pw", NatMode: "none", RelayMode: "wg",
+			Listen: "0.0.0.0:57002", NatMode: "none", RelayMode: "wg",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 			RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 		}}
@@ -100,7 +99,7 @@ func TestServerUsersRoundTrip(t *testing.T) {
 	}
 	st, _ := New(s.dir).Load()
 	r := st.Records[0]
-	if len(r.Users) != 1 || r.Users[0].ExpiresAt != 42 || r.Users[0].Comment != "Петя" {
+	if len(r.Users) != 1 || r.Users[0].Comment != "Петя" {
 		t.Fatalf("Users не доехали: %+v", r.Users)
 	}
 	if r.LinkPeer != "1.2.3.4:56002" || r.LinkVKHashes != "vh" || r.StatsLog != "disk" {
@@ -223,7 +222,7 @@ func TestWorkersFloorIsNine(t *testing.T) {
 	s := newStore(t)
 	r := Record{ID: "w", Kind: KindWdttClient, Name: "W",
 		WdttClient: &roles.WdttClientConfig{Mode: "wg", Listen: "127.0.0.1:9000",
-			Peer: "p:1", Password: "pw", VKHashes: "h", Workers: 4}}
+			Peer: "p:1", VKHashes: "h", Workers: 4}}
 	if _, err := s.Replace(func(st *State) error {
 		st.Records = append(st.Records, r)
 		return nil
@@ -349,9 +348,9 @@ func TestRecordWireFormatCanary(t *testing.T) {
 	// Формат proxy-instances.json менять только с миграцией. Канарейка на
 	// конфигах ролей живёт в roles/config_test.go; ЭТИ ключи — оболочка
 	// записи и продуктовые данные, за ними до фикс-раунда не следило ничто:
-	// переименование linkVkHashes, peerRaw или expiresAt обнуляло бы на
-	// апгрейде параметры ссылки, адрес неактивного режима и срок абонента
-	// (отозванный доступ воскресал бы бессрочным).
+	// переименование linkVkHashes, peerRaw или password обнуляло бы на
+	// апгрейде параметры ссылки, адрес неактивного режима и весь список
+	// абонентов — доступ отвалился бы у всех разом и молча.
 	cases := []struct {
 		name string
 		v    any
@@ -370,8 +369,8 @@ func TestRecordWireFormatCanary(t *testing.T) {
 				"statsLog", "wdttClient", "wdttServer", "freeturnClient",
 				"freeturnServer"}},
 		{"server-user", ServerUser{Password: "p", Comment: "c", VkHash: "v",
-			ExpiresAt: 1, Auto: true},
-			[]string{"password", "comment", "vkHash", "expiresAt", "auto"}},
+			Auto: true},
+			[]string{"password", "comment", "vkHash", "auto"}},
 		{"file", fileFormat{Version: 1, SeededFrom: []string{"x"}, Instances: []Record{}},
 			[]string{"version", "seededFrom", "instances"}},
 	}

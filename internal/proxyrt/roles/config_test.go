@@ -2,6 +2,7 @@ package roles
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -82,7 +83,7 @@ func TestStoreWireFormatCanary(t *testing.T) {
 		forbid []string // ключи, которых в формате быть не должно
 	}{
 		{"wdtt-client", WdttClientConfig{Mode: "raw", Name: "n", Listen: "l",
-			Peer: "p", Password: "pw", VKHashes: "h", Workers: 9, Obfs: "o",
+			Peer: "p", VKHashes: "h", Workers: 9, Obfs: "o",
 			Fingerprint: "f", DeviceID: "d", CaptchaMode: "auto", VKAuthMode: "v",
 			NdmsIface: "OpkgTun18", RawIface: "opkgtun18",
 			Policies: []PolicyPermit{{Name: "P", Order: orderPtr(0)}}},
@@ -102,21 +103,20 @@ func TestStoreWireFormatCanary(t *testing.T) {
 			[]string{"name"}, []string{"order"}},
 		{"freeturn-client", FreeTurnClientConfig{Listen: "l", Peer: "p",
 			Provider: "vk", Links: "x", Streams: 1, Transport: "tcp", Mode: "udp",
-			Bond: true, TurnHost: "t", TurnPort: 1, ObfProfile: "none", ObfKey: "k",
+			Bond: true, ObfProfile: "none", ObfKey: "k",
 			StreamsPerCred: 1, Platform: "desktop", DNSMode: "auto",
 			DNSServers: "s", ClientID: "c", Sub: "https://s", Debug: true},
 			[]string{"listen", "peer", "provider", "links", "streams", "transport",
-				"mode", "bond", "turnHost", "turnPort", "obfProfile", "obfKey",
+				"mode", "bond", "obfProfile", "obfKey",
 				"streamsPerCred", "platform", "dnsMode", "dnsServers", "clientId",
 				"sub", "debug"}, nil},
 		{"wdtt-server", WdttServerConfig{Listen: "l", WgPort: 1, ConfigDir: "c",
-			Password: "pw", AdminID: "a", BotToken: "b", NatIface: "ni",
 			WgIface: "wi", RawIface: "ri", NdmsIface: "n", RawNdmsIface: "rn",
 			RawListen: "rl", DirectListen: "dl", RelayMode: "wg", NatMode: "none",
 			NatStaticWAN: "w", Policy: "p", LanSegments: []string{"br0"},
 			ExposeToPolicies: true, OpenFirewall: true, Debug: true},
-			[]string{"listen", "wgPort", "configDir", "password", "adminId",
-				"botToken", "natIface", "wgIface", "rawIface", "ndmsIface",
+			[]string{"listen", "wgPort", "configDir",
+				"wgIface", "rawIface", "ndmsIface",
 				"rawNdmsIface", "rawListen", "directListen", "relayMode",
 				"natMode", "natStaticWan", "policy", "lanSegments",
 				"exposeToPolicies", "openFirewall", "debug"}, nil},
@@ -155,3 +155,67 @@ func TestStoreWireFormatCanary(t *testing.T) {
 }
 
 func orderPtr(v int) *int { return &v }
+
+// Сервер поднимает четыре сокета: DTLS, raw (по умолчанию DTLS+1), direct и
+// userspace-WireGuard. Столкновение номеров валит один из них молча — в
+// журнале форка, — поэтому конфиг обязан отказывать ДО старта.
+func TestWdttServerValidateRejectsPortCollisions(t *testing.T) {
+	base := func() WdttServerConfig {
+		return WdttServerConfig{
+			Listen: "0.0.0.0:56002", WgPort: 56001, RelayMode: "wg", NatMode: "none",
+			NdmsIface: "OpkgTun17", WgIface: "opkgtun17",
+			RawNdmsIface: "OpkgTun18", RawIface: "opkgtun18",
+		}
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("дефолтная раскладка портов обязана проходить: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		mut  func(*WdttServerConfig)
+		want string
+	}{
+		// Ровно тот случай, ради которого проверка заведена: порт раздачи
+		// 56000 отдаёт raw-половине 56001, а там уже стоит дефолтный WG.
+		{"raw по умолчанию налетает на WG", func(c *WdttServerConfig) {
+			c.Listen = "0.0.0.0:56000"
+		}, "56001"},
+		{"явный raw равен порту раздачи", func(c *WdttServerConfig) {
+			c.RawListen = "0.0.0.0:56002"
+		}, "56002"},
+		{"WG равен порту раздачи", func(c *WdttServerConfig) {
+			c.WgPort = 56002
+		}, "56002"},
+		{"direct равен raw", func(c *WdttServerConfig) {
+			c.DirectListen = "0.0.0.0:56003"
+		}, "56003"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base()
+			tc.mut(&c)
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("столкновение портов обязано быть отказом конфига")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("в отказе нет спорного порта %s: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// DirectListen, равный Listen, — это «выключено» (та же трактовка в argv,
+// INPUT-портах и ведомости занятости), а не столкновение.
+func TestWdttServerValidateDirectEqualToListenIsOff(t *testing.T) {
+	c := WdttServerConfig{
+		Listen: "0.0.0.0:56002", DirectListen: "0.0.0.0:56002", WgPort: 56001,
+		RelayMode: "wg", NatMode: "none",
+		NdmsIface: "OpkgTun17", WgIface: "opkgtun17",
+		RawNdmsIface: "OpkgTun18", RawIface: "opkgtun18",
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("direct == listen означает «выключено»: %v", err)
+	}
+}

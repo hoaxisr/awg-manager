@@ -4,7 +4,7 @@
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
 	import { untrack } from 'svelte';
-	import { Badge, Button, Card, FieldHint } from '$lib/components/ui';
+	import { Badge, Button, Card, FieldHint, SideDrawer, Stat, StatStrip } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { WDTT_WG_NOT_READY } from '$lib/api/clientWdtt';
@@ -12,6 +12,7 @@
 	import { errText } from '$lib/utils/errorMessage';
 	import { findPolicyForInterface } from '$lib/utils/accessPolicy';
 	import { formatUptime } from '../freeturn/uptime';
+	import { formatBytes } from '$lib/utils/format';
 	import type {
 		AccessPolicy,
 		FreeTurnClientConfig,
@@ -26,7 +27,6 @@
 	import ExitParamsSection from './ExitParamsSection.svelte';
 	import LastErrorBox from './LastErrorBox.svelte';
 	import LogSection from './LogSection.svelte';
-	import RunBar from './RunBar.svelte';
 	import SubscriptionSection from './SubscriptionSection.svelte';
 	import { allowEnsure, markEnsured } from './ensureGuard';
 	import { cloneConfig, type ExitConfig } from './exitConfig';
@@ -98,20 +98,25 @@
 		row.protocol === 'freeturn' ? 'FreeTurn' : draftRaw ? 'WDTT · Raw' : 'WDTT · WG',
 	);
 
-	// RB-06: локальный порт, аптайм, PID.
-	const runMeta = $derived(
-		[listen, formatUptime(row.startedAt), row.pid ? `PID ${row.pid}` : '']
-			.filter(Boolean)
-			.join(' · '),
-	);
-
 	const uptime = $derived(formatUptime(row.startedAt) || '—');
+
+	// Настройки — одноразовые: уезжают в ящик, как у раздачи.
+	let settingsOpen = $state(false);
+
 
 	// Правило имён ia.md §1.0: на странице NDMS-имя, kernel-имя — под (i).
 	const rawNdms = $derived(wdttStatus?.ndmsIface?.trim() || wdttClient?.ndmsIface?.trim() || '');
 	const rawKernel = $derived(wdttStatus?.rawIface?.trim() || wdttClient?.rawIface?.trim() || '');
 	const tunnel = $derived(
 		raw ? null : findLinkedTunnel(tunnels, listen, row.protocol === 'wdtt' ? row.id : undefined),
+	);
+	// Трафик берётся у СВЯЗАННОГО туннеля: своей истории у прокси-процесса нет,
+	// а гонять человека за цифрами на другую страницу — ровно та причина, по
+	// которой «Выход» выглядел бледной копией карточки туннеля.
+	const trafficValue = $derived(
+		tunnel && (tunnel.rxBytes !== undefined || tunnel.txBytes !== undefined)
+			? `${formatBytes(tunnel.rxBytes ?? 0)} / ${formatBytes(tunnel.txBytes ?? 0)}`
+			: '—',
 	);
 
 	// Политика читается обратным поиском по составу политик: поля политики
@@ -230,73 +235,35 @@
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>{badge}</Badge>
 		<InstanceBadges {row} mode={draftRaw ? 'raw' : 'wg'} />
+		<div class="head-actions">
+			{#if running}
+				<Button variant="secondary" size="sm" disabled={busy} onclick={onstop}>Остановить</Button>
+			{:else}
+				<Button variant="primary" size="sm" disabled={busy || !!noPeerHint} onclick={onstart}>
+					Запустить
+				</Button>
+				{#if noPeerHint}
+					<FieldHint text={noPeerHint} ariaLabel="Подсказка: клиент не запускается" />
+				{/if}
+			{/if}
+			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>Настройки</Button>
+			{#if onwizard}
+				<Button variant="ghost" size="sm" onclick={onwizard}>Мастер</Button>
+			{/if}
+		</div>
 	</div>
 
-	<RunBar
-		state={row.state}
-		meta={runMeta}
-		{busy}
-		{onstart}
-		{onstop}
-		{onwizard}
-		startBlockedHint={noPeerHint}
-	/>
+	<!-- Состояние: то, что смотрят каждый день. Трафик — из связанного
+	     туннеля, чтобы за ним не ходить на другую страницу. -->
+	<StatStrip>
+		<Stat value={running ? 'Запущен' : 'Остановлен'} label="Состояние" sub={uptime} />
+		<Stat value={String(status?.dtlsConnections ?? 0)} label="Соединений" />
+		<Stat value={trafficValue} label="Трафик" sub="принято / отдано" />
+		<Stat value={listen || '—'} label="Локальный порт" />
+	</StatStrip>
 
 	<!-- EX-01: ошибка живёт, пока процесс не работает. -->
 	<LastErrorBox text={running ? '' : (status?.lastError ?? '')} />
-
-	<!-- Две колонки: параметры слева, «куда идёт трафик» и журнал справа.
-	     Раньше всё шло одной лентой, и до связанного туннеля надо было
-	     прокрутить всю форму (решение по вёрстке 2026-08-27). -->
-	<div class="columns">
-	<div class="col">
-	<ExitParamsSection
-		bind:wdttClient={wdttDraft}
-		bind:ftClient={ftDraft}
-		raw={draftRaw}
-		{saving}
-		saveBlockedHint={noPeerHint}
-		onsave={save}
-		onrevert={revert}
-	/>
-
-	{#if wdttDraft?.sub?.trim()}
-		<SubscriptionSection
-			instanceId={row.id}
-			bind:client={wdttDraft}
-			onsaveandstart={saveAndStart}
-			{onreload}
-		/>
-	{/if}
-
-	<AdvancedSection
-		bind:wdttClient={wdttDraft}
-		bind:ftClient={ftDraft}
-		{raw}
-		wgConf={wdttStatus?.wgConfig ?? ''}
-		ports={listen ? [{ listen }] : []}
-		onensuretunnel={() => ensureTunnel(true)}
-		onimportconf={importConf}
-		busyTunnel={tunnelBusy}
-	/>
-	</div>
-
-	<div class="col">
-	<DetailSection
-		title="Нагрузка"
-		hint="Истории трафика для прокси-процессов нет — менеджер её не собирает. Байты и скорость смотрите на карточке связанного AWG-туннеля."
-	>
-		<div class="stat-row">
-			<div class="stat">
-				<span class="stat-value">{status?.dtlsConnections ?? 0}</span>
-				<span class="stat-label">соединений</span>
-			</div>
-			<div class="stat">
-				<span class="stat-value">{uptime}</span>
-				<span class="stat-label">в работе</span>
-			</div>
-		</div>
-	</DetailSection>
 
 	<!-- Секции нет, пока интерфейс клиента неизвестен: пустой заголовок ничего
 	     не сообщает, а обещать «не заведён в политику» не о чем. -->
@@ -356,33 +323,42 @@
 			if (ftDraft) ftDraft.debug = on;
 		}}
 	/>
-	</div>
-	</div>
 </Card>
 
+<!-- Параметры выхода — одноразовая настройка: адрес, пароль, хеши, потоки,
+     капча. В ящике они не занимают экран, на котором смотрят состояние. -->
+<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title="Параметры выхода">
+	<ExitParamsSection
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
+		{saving}
+		saveBlockedHint={noPeerHint}
+		onsave={save}
+		onrevert={revert}
+	/>
+
+	{#if wdttDraft?.sub?.trim()}
+		<SubscriptionSection
+			instanceId={row.id}
+			bind:client={wdttDraft}
+			onsaveandstart={saveAndStart}
+			{onreload}
+		/>
+	{/if}
+
+	<AdvancedSection
+		bind:wdttClient={wdttDraft}
+		bind:ftClient={ftDraft}
+		{raw}
+		wgConf={wdttStatus?.wgConfig ?? ''}
+		ports={listen ? [{ listen }] : []}
+		onensuretunnel={() => ensureTunnel(true)}
+		onimportconf={importConf}
+		busyTunnel={tunnelBusy}
+	/>
+</SideDrawer>
+
 <style>
-	/* Две колонки детали: параметры слева, наблюдение справа. На узком экране
-	   складываются в одну ленту. */
-	.columns {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1rem;
-		align-items: start;
-	}
-
-	.col {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		min-width: 0;
-	}
-
-	@media (max-width: 1100px) {
-		.columns {
-			grid-template-columns: minmax(0, 1fr);
-		}
-	}
-
 	.head {
 		display: flex;
 		align-items: center;
@@ -399,27 +375,12 @@
 		color: var(--color-text-primary);
 	}
 
-	.stat-row {
+	/* Действия — группой справа, как у раздачи и карточки WG-сервера. */
+	.head-actions {
 		display: flex;
-		gap: 2rem;
-		flex-wrap: wrap;
-	}
-
-	.stat {
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-	}
-
-	.stat-value {
-		font-size: 1.25rem;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-
-	.stat-label {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: auto;
 	}
 
 	.line-row {

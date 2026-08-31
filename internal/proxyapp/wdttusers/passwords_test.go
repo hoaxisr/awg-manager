@@ -58,9 +58,9 @@ func TestPreparePasswordsJSONForServer_PreservesDevices(t *testing.T) {
 		},
 	}
 	writePasswordsFixture(t, dir, existing)
-	doc, sanitized, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, sanitized, err := preparePasswordsJSONForServer(dir, []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
-	}, time.Now())
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 			"bad": map[string]any{"ip": wdttServerGatewayAddr},
 		},
 	})
-	sanitized, err := syncPasswordsJSON(dir, "main", "", "", []instancestore.ServerUser{{Password: "client1"}}, time.Now())
+	sanitized, err := syncPasswordsJSON(dir, []instancestore.ServerUser{{Password: "client1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 // уже существующего файла не меняет.
 func TestSyncPasswordsJSON_CreatesOwnerOnlyFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cfg")
-	if _, err := syncPasswordsJSON(dir, "main", "", "", []instancestore.ServerUser{{Password: "client1"}}, time.Now()); err != nil {
+	if _, err := syncPasswordsJSON(dir, []instancestore.ServerUser{{Password: "client1"}}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(passwordsJSONPath(dir))
@@ -151,7 +151,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 	dir := t.TempDir()
 	users := []instancestore.ServerUser{{Password: "client1"}}
 
-	first, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+	first, err := syncPasswordsJSON(dir, users)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 		t.Fatal("первая запись: sanitized = true на пустом файле")
 	}
 	for i := 2; i <= 3; i++ {
-		got, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+		got, err := syncPasswordsJSON(dir, users)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +176,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 	}
 	doc.Devices["dev-abonenta"] = map[string]any{"ip": wdttServerGatewayAddr}
 	writePasswordsFixture(t, dir, doc)
-	got, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+	got, err := syncPasswordsJSON(dir, users)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,32 +203,26 @@ func writePasswordsFixture(t *testing.T, dir string, doc passwordsJSON) {
 // TestUsableUsers_FollowsReasonClassifier сторожит связь предиката и
 // классификатора: отбор обязан идти ТОЛЬКО через UnusableReason.
 func TestUsableUsers_FollowsReasonClassifier(t *testing.T) {
-	now := time.Unix(1700000000, 0)
-	const main = "adminpass"
 	users := []instancestore.ServerUser{
 		{Password: "abonent1"},
-		{Password: "botpass", ExpiresAt: now.Add(time.Hour).Unix()},
 		{Password: "  spaced  "},
 		{Password: "   "},
-		{Password: main},
-		{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()},
 	}
 
 	inUsable := map[string]bool{}
-	for _, u := range UsableUsers(users, main, now) {
+	for _, u := range UsableUsers(users) {
 		inUsable[u.Password] = true
 	}
 	for _, u := range users {
-		want := UnusableReason(u, main, now) == wdttlink.ReasonUsable
+		want := UnusableReason(u) == wdttlink.ReasonUsable
 		if got := inUsable[strings.TrimSpace(u.Password)]; got != want {
 			t.Fatalf("абонент %q: предикат = %v, классификатор = %v (%q) — отбор идёт мимо классификатора",
-				u.Password, got, want, UnusableReason(u, main, now))
+				u.Password, got, want, UnusableReason(u))
 		}
 	}
 }
 
 func TestUnusableReason_NamesEachCondition(t *testing.T) {
-	now := time.Unix(1700000000, 0)
 	cases := []struct {
 		name string
 		user instancestore.ServerUser
@@ -236,65 +230,19 @@ func TestUnusableReason_NamesEachCondition(t *testing.T) {
 	}{
 		{"рабочий", instancestore.ServerUser{Password: "abonent1"}, wdttlink.ReasonUsable},
 		{"пустой пароль", instancestore.ServerUser{Password: "   "}, wdttlink.ReasonEmptyPassword},
-		{"главный пароль", instancestore.ServerUser{Password: " adminpass "}, wdttlink.ReasonMainPassword},
-		{"просрочен", instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Second).Unix()}, wdttlink.ReasonExpired},
-		{"бессрочный", instancestore.ServerUser{Password: "forever", ExpiresAt: 0}, wdttlink.ReasonUsable},
 	}
 	for _, tc := range cases {
-		if got := UnusableReason(tc.user, "adminpass", now); got != tc.want {
+		if got := UnusableReason(tc.user); got != tc.want {
 			t.Fatalf("%s: причина = %q, ожидалась %q", tc.name, got, tc.want)
 		}
 	}
 	// Vetting обязана быть тем же предикатом, а не своей копией.
 	var v Vetting
-	if got := v.UnusableReason(instancestore.ServerUser{Password: " adminpass "}, "adminpass", now); got != wdttlink.ReasonMainPassword {
+	if got := v.UnusableReason(instancestore.ServerUser{Password: "   "}); got != wdttlink.ReasonEmptyPassword {
 		t.Fatalf("Vetting.UnusableReason = %q", got)
 	}
-	if got := v.UsableUsers([]instancestore.ServerUser{{Password: " forever "}}, "adminpass", now); len(got) != 1 || got[0].Password != "forever" {
+	if got := v.UsableUsers([]instancestore.ServerUser{{Password: " forever "}}); len(got) != 1 || got[0].Password != "forever" {
 		t.Fatalf("Vetting.UsableUsers = %#v", got)
-	}
-}
-
-func TestUsableUsers_SkipsEmptyMainAndExpired(t *testing.T) {
-	now := time.Unix(1700000000, 0)
-	got := UsableUsers([]instancestore.ServerUser{
-		{Password: ""},
-		{Password: "   "},
-		{Password: "  main  "},
-		{Password: "expired", ExpiresAt: now.Unix() - 1},
-		{Password: "edge", ExpiresAt: now.Unix()},
-		{Password: " forever "},
-		{Password: " timed ", ExpiresAt: now.Unix() + 1},
-	}, " main ", now)
-	if len(got) != 2 {
-		t.Fatalf("usable = %#v", got)
-	}
-	if got[0].Password != "forever" {
-		t.Fatalf("первый абонент = %q, ожидался подрезанный forever", got[0].Password)
-	}
-	if got[1].Password != "timed" {
-		t.Fatalf("второй абонент = %q, ожидался подрезанный timed", got[1].Password)
-	}
-}
-
-func TestPreparePasswordsJSON_SkipsExpiredUser(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	doc, _, err := preparePasswordsJSONForServer(dir, "  main  ", "", "", []instancestore.ServerUser{
-		{Password: "dead", ExpiresAt: now.Add(-time.Hour).Unix()},
-		{Password: "alive", ExpiresAt: now.Add(time.Hour).Unix()},
-	}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.MainPassword != "main" {
-		t.Fatalf("main_password = %q, ожидался подрезанный", doc.MainPassword)
-	}
-	if _, ok := doc.Passwords["dead"]; ok {
-		t.Fatalf("просроченный абонент попал в файл: %#v", doc.Passwords)
-	}
-	if _, ok := doc.Passwords["alive"]; !ok {
-		t.Fatalf("живой абонент потерян: %#v", doc.Passwords)
 	}
 }
 
@@ -320,10 +268,10 @@ func TestPreparePasswordsJSON_KeepsLiveFieldsOfExistingUser(t *testing.T) {
 			"client2": {Label: "имя из бота"},
 		},
 	})
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
 		{Password: "client2"},
-	}, time.Now())
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,9 +298,9 @@ func TestPreparePasswordsJSON_KeepsLiveFieldsOfExistingUser(t *testing.T) {
 
 func TestPreparePasswordsJSON_WritesLabelNotComment(t *testing.T) {
 	dir := t.TempDir()
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
-	}, time.Now())
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,9 +331,9 @@ func TestPreparePasswordsJSON_DropsOrphanDevices(t *testing.T) {
 			gatewayReserveDeviceID: map[string]any{"ip": wdttServerGatewayAddr},
 		},
 	})
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, []instancestore.ServerUser{
 		{Password: "client1"},
-	}, time.Now())
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,20 +348,5 @@ func TestPreparePasswordsJSON_DropsOrphanDevices(t *testing.T) {
 	}
 	if deviceIPFromPasswordsEntry(doc.Devices[gatewayReserveDeviceID]) != wdttServerGatewayAddr {
 		t.Fatalf("резерв шлюза снят прополкой: %#v", doc.Devices)
-	}
-}
-
-func TestPreparePasswordsJSON_RemembersExpiryOverEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	expires := time.Now().Add(time.Hour).Unix()
-	// Записи в файле нет: её удалил янитор сервера.
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
-		{Password: "client1", ExpiresAt: expires},
-	}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := doc.Passwords["client1"].ExpiresAt; got != expires {
-		t.Fatalf("expires_at = %d, ожидался запомненный срок %d", got, expires)
 	}
 }

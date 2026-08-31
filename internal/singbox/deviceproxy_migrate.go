@@ -16,60 +16,69 @@ import (
 // a fresh 30-deviceproxy.json and rewrites 10-tunnels.json without
 // the device-proxy bits.
 //
-// Idempotent — if 10-tunnels.json has no device-proxy artefacts, or
-// 30-deviceproxy.json already exists, this is a no-op. Migration only
-// looks at the active layout: it does NOT recurse into disabled/.
+// Идемпотентность считается по СОДЕРЖИМОМУ 10-tunnels.json, а не по
+// существованию 30-deviceproxy.json: провал ВТОРОЙ записи (перезапись
+// 10-tunnels) оставлял device-proxy в обоих слотах, и stat-гард запирал
+// это состояние навсегда — дубль `device-proxy-in` валит preflight
+// холодного старта. Существующий 30-файл при доборе НЕ перезаписывается:
+// с момента раскола им владеет Reconcile device-proxy-сервиса (F73).
+//
+// Migration only looks at the active layout: it does NOT recurse into
+// disabled/.
 //
 // configDir is the sing-box config.d directory (typically
 // /opt/etc/sing-box/config.d).
-func MigrateDeviceProxyOutOfTunnels(configDir string) error {
+//
+// Возвращает признак «файлы переписаны» — по нему демон решает, надо ли
+// перечитать конфиг пережившего рестарт sing-box (F34): без него миграция
+// доезжала до живого процесса только со случайным reload по другому поводу.
+func MigrateDeviceProxyOutOfTunnels(configDir string) (bool, error) {
 	tunnelsPath := filepath.Join(configDir, "10-tunnels.json")
 	deviceProxyPath := filepath.Join(configDir, "30-deviceproxy.json")
-
-	// Already split? Nothing to do.
-	if _, err := os.Stat(deviceProxyPath); err == nil {
-		return nil
-	}
 
 	data, err := os.ReadFile(tunnelsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("read tunnels: %w", err)
+		return false, fmt.Errorf("read tunnels: %w", err)
 	}
 
 	cfg := NewConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("parse tunnels: %w", err)
+		return false, fmt.Errorf("parse tunnels: %w", err)
 	}
 
+	// Покрывает и «уже мигрировано»: чистый 10-tunnels — штатный no-op.
 	if !cfg.HasDeviceProxy() {
-		return nil
+		return false, nil
 	}
 
-	// Build the device-proxy slot by extracting it from the loaded cfg.
-	extracted := cfg.ExtractDeviceProxy()
+	// 10-tunnels ещё несёт device-proxy → раскол не доехал. Существование
+	// 30-файла этого не опровергает, но и переписывать его нельзя.
+	if _, err := os.Stat(deviceProxyPath); err != nil {
+		extracted := cfg.ExtractDeviceProxy()
 
-	extractedJSON, err := json.MarshalIndent(extracted, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal extracted: %w", err)
-	}
-	if err := writeJSONAtomic(deviceProxyPath, extractedJSON); err != nil {
-		return fmt.Errorf("write deviceproxy: %w", err)
+		extractedJSON, err := json.MarshalIndent(extracted, "", "  ")
+		if err != nil {
+			return false, fmt.Errorf("marshal extracted: %w", err)
+		}
+		if err := writeJSONAtomic(deviceProxyPath, extractedJSON); err != nil {
+			return false, fmt.Errorf("write deviceproxy: %w", err)
+		}
 	}
 
 	// Persist tunnels stripped of device-proxy.
 	cfg.RemoveDeviceProxy()
 	strippedJSON, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal tunnels: %w", err)
+		return false, fmt.Errorf("marshal tunnels: %w", err)
 	}
 	if err := writeJSONAtomic(tunnelsPath, strippedJSON); err != nil {
-		return fmt.Errorf("write tunnels: %w", err)
+		return false, fmt.Errorf("write tunnels: %w", err)
 	}
 
-	return nil
+	return true, nil
 }
 
 // writeJSONAtomic writes data to path atomically (unique temp + rename) via

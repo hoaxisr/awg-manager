@@ -420,7 +420,7 @@ func (h *ProxyInstancesHandler) create(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Изменить прокси-инстанс
 //	@Description	Присланные поля применяются к существующей записи ПО МЕСТУ.
-//	@Description	Секретные поля (password/botToken/obfKey) без значения или с пустым
+//	@Description	Секретные поля (password/obfKey) без значения или с пустым
 //	@Description	значением означают «не менять».
 //	@Description	sub и statsLog — поля записи: отсутствие означает «не менять»,
 //	@Description	пустая строка — законное значение (снять подписку / дефолтный режим).
@@ -717,17 +717,15 @@ func proxyNeedsOpkgTun(rec instancestore.Record) bool {
 
 // proxySecretFields — секретные поля конфигов ролей (json-имена). Значения
 // наружу не уходят, а на входе пустое значение означает «не менять» (Н5).
-var proxySecretFields = []string{"password", "botToken", "obfKey"}
+var proxySecretFields = []string{"password", "obfKey"}
 
 // proxySecretsOf — секреты, объявленные конфигом роли. Список нужен ВЫДАЧЕ:
-// без него признак `botTokenSet` пропадал бы вместе с пустым значением
+// без него признак `passwordSet` пропадал бы вместе с пустым значением
 // (omitempty), и «секрет не задан» стало бы неотличимо от «поля нет».
 func proxySecretsOf(kind instancestore.Kind) []string {
 	switch kind {
 	case instancestore.KindWdttClient:
 		return []string{"password"}
-	case instancestore.KindWdttServer:
-		return []string{"password", "botToken"}
 	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
 		return []string{"obfKey"}
 	}

@@ -128,10 +128,6 @@ type oldWdttServer struct {
 	Listen       string `json:"listen"`
 	WgPort       int    `json:"wgPort"`
 	ConfigDir    string `json:"configDir"`
-	Password     string `json:"password"`
-	AdminID      string `json:"adminId"`
-	BotToken     string `json:"botToken"`
-	NatIface     string `json:"natIface"`
 	NatMode      string `json:"natMode"`
 	NatStaticWAN string `json:"natStaticWan"`
 	// NatStaticWANs — форма списка (develop, PR #750). Старые записи её не
@@ -187,8 +183,6 @@ type oldFreeturnClient struct {
 	Transport      string `json:"transport"`
 	Mode           string `json:"mode"`
 	Bond           bool   `json:"bond"`
-	TurnHost       string `json:"turnHost"`
-	TurnPort       int    `json:"turnPort"`
 	ObfProfile     string `json:"obfProfile"`
 	ObfKey         string `json:"obfKey"`
 	StreamsPerCred int    `json:"streamsPerCred"`
@@ -330,7 +324,13 @@ func listenAddrs(r Record) []string {
 // поэтому запись можно передавать значением). nil — роль неподвижна: у
 // серверов listen это WAN-порт, на который настроены проброс и внешние
 // клиенты, и пул 9000..9200 не про него.
-func clientListen(r Record) *string {
+// ClientListen — указатель на локальный listen клиента внутри записи; nil у
+// серверных ролей (их listen задаёт пользователь). Экспортирован ради боота
+// менеджера: тот сверяет порты с занятостью и переселяет негодные.
+//
+// Единственная развилка по ролям: вторая копия рано или поздно разъедется с
+// этой, и новая клиентская роль молча выпала бы из одного из двух путей.
+func ClientListen(r *Record) *string {
 	switch {
 	case r.WdttClient != nil:
 		return &r.WdttClient.Listen
@@ -339,6 +339,9 @@ func clientListen(r Record) *string {
 	}
 	return nil
 }
+
+// clientListen — та же развилка для значения записи (посев работает с копиями).
+func clientListen(r Record) *string { return ClientListen(&r) }
 
 // resolveListenConflicts — разведение претендентов на один порт (амендмент G2).
 //
@@ -559,8 +562,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		o := s.Config
 		cfg := roles.WdttServerConfig{
 			Listen: o.Listen, WgPort: o.WgPort, ConfigDir: o.ConfigDir,
-			Password: o.Password, AdminID: o.AdminID, BotToken: o.BotToken,
-			NatIface: o.NatIface, NatMode: o.NatMode, NatStaticWAN: o.NatStaticWAN,
+			NatMode: o.NatMode, NatStaticWAN: o.NatStaticWAN,
 			NatStaticWANs: o.NatStaticWANs,
 			Policy:        o.Policy, LanSegments: o.LanSegments,
 			RelayMode: o.RelayMode, RawListen: o.RawListen, DirectListen: o.DirectListen,
@@ -602,7 +604,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			LinkPeer: o.LinkPeer, LinkVKHashes: o.LinkVKHashes, StatsLog: o.StatsLog}
 		for _, u := range o.Clients {
 			rec.Users = append(rec.Users, ServerUser{Password: u.Password,
-				Comment: u.Comment, VkHash: u.VkHash, ExpiresAt: u.ExpiresAt, Auto: u.Auto})
+				Comment: u.Comment, VkHash: u.VkHash, Auto: u.Auto})
 		}
 		seeded = append(seeded, rec)
 	}
@@ -613,7 +615,6 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			Enabled: o.Enabled, SeededFrom: ftSrc, FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen: o.Listen, Peer: o.Peer, Provider: o.Provider, Links: o.Links,
 				Streams: o.Streams, Transport: o.Transport, Mode: o.Mode, Bond: o.Bond,
-				TurnHost: o.TurnHost, TurnPort: o.TurnPort,
 				ObfProfile: o.ObfProfile, ObfKey: o.ObfKey,
 				StreamsPerCred: o.StreamsPerCred, Platform: o.Platform,
 				DNSMode: o.DNSMode, DNSServers: o.DNSServers,

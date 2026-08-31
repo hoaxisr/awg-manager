@@ -357,16 +357,20 @@ func (s *SettingsStore) migrateToV33(settings *Settings) {
 
 // migrateManagedServers moves a legacy singular managedServer into the
 // new ManagedServers slice. Idempotent. Caller holds s.mu.
-func (s *SettingsStore) migrateManagedServers() {
-	if s.settings == nil || s.settings.ManagedServer == nil {
+func (s *SettingsStore) migrateManagedServers() { migrateManagedServersIn(s.settings) }
+
+// migrateManagedServersIn — та же миграция, но от произвольной записи: мутаторы
+// применяют её к КОПИИ настроек внутри updateUnlocked (F3), а не к живому кэшу.
+func migrateManagedServersIn(settings *Settings) {
+	if settings == nil || settings.ManagedServer == nil {
 		return
 	}
 	// Prepend so an existing slice (theoretically already migrated) keeps
 	// its order — but in practice mass migration only fires once, when
 	// the slice is empty.
-	migrated := append([]ManagedServer{*s.settings.ManagedServer}, s.settings.ManagedServers...)
-	s.settings.ManagedServers = migrated
-	s.settings.ManagedServer = nil
+	migrated := append([]ManagedServer{*settings.ManagedServer}, settings.ManagedServers...)
+	settings.ManagedServers = migrated
+	settings.ManagedServer = nil
 }
 
 // migratePortFile reads port from old port file and removes it.

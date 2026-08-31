@@ -391,8 +391,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Save settings BEFORE starting monitoring (so service reads new values)
 	// Выводим заново под локом стора: снимок, снятый выше, устарел на всё, что
 	// узкие мутаторы записали в кэш, пока мы ходили в downloader и по туннелям.
-	// Отказ валидации здесь невозможен — те же входы уже прошли её на черновике,
-	// — но ошибку не глотаем.
+	// Отказ деривации здесь МАЛОВЕРОЯТЕН (узкие мутаторы валидируемых полей не
+	// пишут, а конкурентный /settings/update сам прошёл валидацию), но не
+	// невозможен для будущих писателей — поэтому отдаётся кодом поля, а не
+	// глухим SETTINGS_SAVE_ERROR (F10).
 	if err := h.store.Update(func(cur *storage.Settings) error {
 		p, err := h.deriveSettingsHead(cur, &patch)
 		if err != nil {
@@ -401,7 +403,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return h.deriveSettingsTail(cur, &patch, p, probes)
 	}); err != nil {
 		h.log.Warn("settings", "", "save failed: "+err.Error())
-		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+		respondSettingsError(w, err)
 		return
 	}
 

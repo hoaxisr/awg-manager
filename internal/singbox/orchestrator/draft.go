@@ -488,9 +488,13 @@ func (o *Orchestrator) SaveAndValidate(slot Slot, jsonBytes []byte) (ValidationR
 		return res, nil
 	}
 
-	meta := o.slots[slot] // validated by checkMergedLocked
-	if err := writeAtomic(o.activePath(meta), jsonBytes); err != nil {
-		return ValidationResult{}, fmt.Errorf("SaveAndValidate write active: %w", err)
+	// Через saveLocked, а не своим writeAtomic в active/: путь обязан
+	// выбираться по enabled, как у всех прочих писателей. Своя копия писала
+	// в active/ безусловно — на выключенном слоте это дало бы файл и там и
+	// там, что Bootstrap считает патологией (F84). Сегодняшние вызывающие
+	// (10-tunnels, 16-awg3) AlwaysOn, так что поведение не меняется.
+	if err := o.saveLocked(slot, jsonBytes); err != nil {
+		return ValidationResult{}, err
 	}
 	o.scheduleReload()
 	return res, nil // res.Ok() == true; может содержать advisory-предупреждения

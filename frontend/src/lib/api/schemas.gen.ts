@@ -2384,6 +2384,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	defaultRoute: v.optional(v.nullable(v.boolean())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	endpoint: v.optional(v.nullable(v.string())),
+	freeTurnClientId: v.optional(v.nullable(v.string())),
 	hasAddressConflict: v.optional(v.nullable(v.boolean())),
 	id: v.optional(v.nullable(v.string())),
 	interfaceName: v.optional(v.nullable(v.string())),
@@ -2953,9 +2954,6 @@ const wdttusers_Reload: v.GenericSchema = v.string();
 const wdttusers_UserEntry: v.GenericSchema = v.looseObject({
 	comment: v.optional(v.nullable(v.string())),
 	isAuto: v.optional(v.nullable(v.boolean())),
-	isDeactivated: v.optional(v.nullable(v.boolean())),
-	isExpired: v.optional(v.nullable(v.boolean())),
-	isMainPassword: v.optional(v.nullable(v.boolean())),
 	password: v.optional(v.nullable(v.string())),
 	vkHash: v.optional(v.nullable(v.string())),
 });

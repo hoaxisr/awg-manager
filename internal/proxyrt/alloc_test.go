@@ -96,15 +96,16 @@ func TestAllocIndexDoesNotGiveOthersHeldNumber(t *testing.T) {
 	}
 }
 
-func TestAllocIndexReleaseFreesAllOwnerNumbers(t *testing.T) {
+func TestAllocIndexReleaseIsByOwnerNotByNumber(t *testing.T) {
 	// Release по владельцу, а не по номеру: иначе остаётся способ освободить
-	// чужой номер. Владелец мог удержать несколько номеров.
+	// чужой номер. Владельцы — РАЗНЫЕ ключи одного инстанса, как в проде
+	// (`key/wg`, `key/raw`, `key/listen`): за каждым ровно один номер.
 	a := NewAllocator(IndexRange{Min: 17, Max: 18})
 
-	if _, err := a.AllocIndex("inst1", 17, map[int]bool{}); err != nil {
+	if _, err := a.AllocIndex("inst1/wg", 17, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocIndex("inst1", 18, map[int]bool{}); err != nil {
+	if _, err := a.AllocIndex("inst1/raw", 18, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
 	a.Release("inst2") // чужой владелец ничего не освобождает
@@ -112,14 +113,35 @@ func TestAllocIndexReleaseFreesAllOwnerNumbers(t *testing.T) {
 		t.Fatal("Release чужого владельца не должен освобождать номера")
 	}
 
-	a.Release("inst1")
-	// Освободиться обязаны ОБА номера владельца, а не первый попавшийся:
-	// два разных новых владельца должны получить номер каждый.
+	a.Release("inst1/wg")
 	if _, err := a.AllocIndex("inst3", 17, map[int]bool{}); err != nil {
 		t.Fatalf("после освобождения владельца номер 17 обязан выдаваться: %v", err)
 	}
-	if _, err := a.AllocIndex("inst4", 18, map[int]bool{}); err != nil {
-		t.Fatalf("Release освободил только часть номеров владельца: 18 занят, %v", err)
+	// Освобождён ровно один владелец: номер второго остаётся за ним.
+	if _, err := a.AllocIndex("inst4", 18, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
+		t.Fatal("Release одного ключа не должен освобождать номер другого")
+	}
+}
+
+// За владельцем остаётся РОВНО ОДИН номер: переезжая, он отдаёт прежний.
+// Иначе номер, с которого владелец ушёл (listen-порт, занятый чужим
+// туннелем), висел бы за ним до удаления инстанса или рестарта демона —
+// недоступный другим и уже никому не нужный.
+func TestAllocIndexMoveReleasesPreviousNumber(t *testing.T) {
+	a := NewAllocator(IndexRange{Min: 17, Max: 18})
+
+	first, err := a.AllocIndex("inst1/listen", 17, map[int]bool{})
+	if err != nil || first != 17 {
+		t.Fatalf("первый номер: %d, %v", first, err)
+	}
+	// 17 занят снаружи — владелец переезжает на 18.
+	moved, err := a.AllocIndex("inst1/listen", 17, map[int]bool{17: true})
+	if err != nil || moved != 18 {
+		t.Fatalf("переезд: %d, %v", moved, err)
+	}
+	// 17 обязан снова выдаваться: прежний захват снят вместе с переездом.
+	if got, err := a.AllocIndex("inst2", 17, map[int]bool{}); err != nil || got != 17 {
+		t.Fatalf("прежний номер не освобождён: %d, %v", got, err)
 	}
 }
 

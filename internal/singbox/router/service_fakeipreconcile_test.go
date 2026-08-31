@@ -17,6 +17,11 @@ func errProbeIPTables() *IPTables {
 	return &IPTables{
 		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
 		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
+		// Швы ip: первотиковый свип (F22) зовёт Uninstall, а тот идёт в
+		// drainFwmarkRules — без них nil-deref. Ошибка, а не nil, обрывает
+		// слив на первом проходе вместо maxIPRuleDrainPasses холостых.
+		runIP:    func(context.Context, ...string) error { return errors.New("no rule") },
+		runIPOut: func(context.Context, ...string) (string, error) { return "", errors.New("no rule") },
 	}
 }
 
@@ -28,10 +33,7 @@ func errProbeIPTables() *IPTables {
 func TestReconcile_DispatchesFakeIPTun(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// IPTables that errors on every probe — exactly the fakeip-tun reality.
-	h.svc.deps.IPTables = &IPTables{
-		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
-		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
-	}
+	h.svc.deps.IPTables = errProbeIPTables()
 
 	// Provision first so Enabled=true + provisioned + live, then a Reconcile must
 	// take the drift-heal arm (NOT the tproxy switch, NOT Enable re-provision).
@@ -548,5 +550,44 @@ func TestReconcileFakeIPTun_PoolV6HealsWhenV4Present(t *testing.T) {
 	}
 	if !v6Added {
 		t.Fatalf("пропавший маршрут пула v6 не восстановлен: %v", h.log.calls)
+	}
+}
+
+// F22: после рестарта демона в fakeip-режиме могли выжить чужие AWGM-цепочки
+// прежнего tproxy-режима — они заворачивают policy-трафик в порт без
+// слушателя, и не лечит их никто: fakeip своего netfilter не ставит, а
+// провал Uninstall внутри Disable молча проглатывается (Uninstall всегда
+// возвращает nil, F79). Первый тик реконсиляции обязан свипнуть один раз,
+// второй — молчать.
+func TestReconcileFakeIPTun_FirstTickSweepsForeignNetfilter(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{0: true}}
+
+	// Шов записи — cleanupHook, первый оператор Uninstall (как в
+	// policytun_disable_test.go).
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	ipt.cleanupHook = func() { h.log.add("Uninstall") }
+	h.svc.deps.IPTables = ipt
+	// Свежий процесс: про установленное состояние ничего не известно.
+	h.svc.netfilterStateKnown = false
+	h.log.calls = nil
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("тик 1: %v", err)
+	}
+	if got := countCalls(h.log, "Uninstall"); got != 1 {
+		t.Fatalf("тик 1: Uninstall вызван %d раз, want 1 (свип чужих цепочек)", got)
+	}
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("тик 2: %v", err)
+	}
+	if got := countCalls(h.log, "Uninstall"); got != 1 {
+		t.Errorf("тик 2: Uninstall вызван ещё раз (всего %d) — свип обязан быть разовым", got)
 	}
 }

@@ -50,7 +50,6 @@ func proxyRecords(t *testing.T) *instancestore.Store {
 					RawListen:    "0.0.0.0:57013",
 					DirectListen: "0.0.0.0:57014",
 					WgPort:       57001,
-					Password:     "pw",
 					NdmsIface:    "OpkgTun20", WgIface: "opkgtun20",
 					RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 				}},

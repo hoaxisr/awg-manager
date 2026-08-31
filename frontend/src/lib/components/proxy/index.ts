@@ -13,7 +13,6 @@ export { default as LastErrorBox } from './LastErrorBox.svelte';
 export { default as LinkBox } from './LinkBox.svelte';
 export { default as LinkPanel } from './LinkPanel.svelte';
 export { default as LogSection } from './LogSection.svelte';
-export { default as RunBar } from './RunBar.svelte';
 export { default as ServerAllowlist } from './ServerAllowlist.svelte';
 export { default as ServerClientAddModal } from './ServerClientAddModal.svelte';
 export { default as ServerClientRow } from './ServerClientRow.svelte';
@@ -71,7 +70,7 @@ export {
 	toggleProxyInstance,
 } from './instanceOps';
 export { findLinkedTunnel, listenPort } from './linkedTunnel';
-export { exitRows, shareRows } from './rows';
+export { exitRows, rowKey, rowKeyFromInstanceKey, shareRows } from './rows';
 export type {
 	ProxyInstanceRow,
 	ProxyProtocol,

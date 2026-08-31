@@ -31,8 +31,6 @@ export type ShareInstance = WdttServerInstance | FreeTurnServerInstance;
 
 const WDTT_SERVER_OPTIONAL_STRINGS: readonly (keyof WdttServerConfig)[] = [
 	'configDir',
-	'adminId',
-	'botToken',
 ];
 
 const FT_SERVER_OPTIONAL_STRINGS: readonly (keyof FreeTurnServerConfig)[] = [
@@ -102,9 +100,37 @@ export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
 	const direct = cfg.directListen?.trim();
 	if (direct && listenPortNumber(direct, 0) !== dtls) {
 		const port = listenPortNumber(direct, dtls);
-		ports.push({ listen: direct, label: 'Direct', port });
+		// Через setListenPort, как у соседних строк: до нормализации поля
+		// directListen мог быть голым портом, и такой адрес
+		// ListenPortKillButton отправит бэкенду как есть, а
+		// net.SplitHostPort его не разберёт.
+		ports.push({ listen: setListenPort(direct, port, host), label: 'Direct', port });
 	}
 	return ports;
+}
+
+/**
+ * Значение `directListen` по введённому НОМЕРУ порта. Пусто — «выключено»,
+ * `null` — ввод не принят (поле остаётся прежним).
+ *
+ * Хост наследуется от порта раздачи, и это не косметика. Свободный текст в
+ * поле расходился с бэкендом дважды:
+ *   — «56005» без хоста здешний парсер принимал, а `net.SplitHostPort`
+ *     (`validatePorts`, internal/proxyrt/roles/config.go) отвергал; PATCH
+ *     конфига `Validate` не зовёт, поэтому приговор прилетал уже применением
+ *     и останавливал работающий сервер;
+ *   — «выключено» фронт считал по номеру порта, а бэкенд — по равенству
+ *     СТРОК адресов (`config.go`, `args.go`, INPUT-порты роли, ведомость
+ *     занятости), так что «127.0.0.1:56002» при listen «0.0.0.0:56002» для
+ *     фронта было «выключено», для бэкенда — столкновением.
+ * С общим хостом «порт равен порту раздачи» и «строка равна listen» — одно и
+ * то же, а адреса без хоста стали невыразимы.
+ */
+export function directListenValue(listen: string | undefined, value: string): string | null {
+	if (!value.trim()) return '';
+	const port = Number(value);
+	if (!Number.isFinite(port) || port <= 0) return null;
+	return setListenPort(listen || `0.0.0.0:${DEFAULT_DTLS}`, Math.min(65535, Math.trunc(port)), '0.0.0.0');
 }
 
 /**
@@ -177,4 +203,36 @@ export async function saveShareInstance(
 	);
 	(inst as FreeTurnServerInstance).config = saved;
 	return saved;
+}
+
+/**
+ * Столкновение портов сервера — та же проверка, что у бэкенда
+ * (`WdttServerConfig.validatePorts`, internal/proxyrt/roles/config.go).
+ *
+ * Здесь она нужна, чтобы коллизию нельзя было СОЗДАТЬ: бэкенд её отвергнет,
+ * но уже приговором конфига, и человек увидит отказ вместо подсказки. Пустая
+ * строка — конфликта нет.
+ *
+ * Direct, равный порту раздачи, — это «выключено», а не столкновение.
+ */
+export function serverPortConflict(cfg: WdttServerConfig): string {
+	// Пустой listen бэкенд отвергает раньше всех сравнений портов
+	// (`WdttServerConfig.Validate`, internal/proxyrt/roles/config.go), а
+	// здесь он подменяется дефолтом и конфликта не даёт — отказ прилетал
+	// с сервера вместо того, чтобы не дать нажать «Сохранить».
+	if (!(cfg.listen ?? '').trim()) return 'Не задан порт раздачи.';
+	const seen = new Map<number, string>();
+	const add = (name: string, port: number): string => {
+		if (!Number.isInteger(port) || port <= 0) return '';
+		const prev = seen.get(port);
+		if (prev) return `Порт ${port} занят дважды: ${prev} и ${name}. Задайте разные.`;
+		seen.set(port, name);
+		return '';
+	};
+	for (const p of wdttServerPorts(cfg)) {
+		const label = p.label === 'DTLS' ? 'порт раздачи' : `${p.label}-порт`;
+		const err = add(label, p.port);
+		if (err) return err;
+	}
+	return add('внутренний WG-порт', cfg.wgPort ?? 0);
 }

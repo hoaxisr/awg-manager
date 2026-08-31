@@ -93,7 +93,6 @@
 
 	let fields = $state<ShareWizardFields>(
 		untrack(() => ({
-			password: wdttServer?.password ?? '',
 			port: String(
 				wdttServer
 					? listenPortNumber(wdttServer.listen ?? '', DEFAULT_WDTT_PORT)

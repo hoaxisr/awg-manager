@@ -162,14 +162,22 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		"ispInterface":  ispIface,
 		"interfaceName": t.InterfaceName,
 		"ndmsName":      t.NDMSName,
-		"configPreview": t.ConfigPreview,
 		"state":         displayStatus(t.StateInfo, quiescentUntil, time.Now()),
 		"stateInfo":     t.StateInfo,
 	}
 
 	if stored != nil {
-		resp["interface"] = stored.Interface
-		resp["peer"] = stored.Peer
+		// Ключевой материал наружу не отдаём НИ В КАКОМ виде: GET читают три
+		// модалки, и каждая шлёт весь объект обратно в update. Сохранность
+		// обоих ключей держится не на эхе, а на merge-семантике — пустое
+		// значение в теле значит «оставить прежний» (mergedInterface для
+		// PrivateKey, mergedPeer для PresharedKey, F56+F70).
+		iface := stored.Interface
+		iface.PrivateKey = ""
+		resp["interface"] = iface
+		peer := stored.Peer
+		peer.PresharedKey = ""
+		resp["peer"] = peer
 		resp["pingCheck"] = stored.PingCheck
 		resp["connectivityCheck"] = stored.ConnectivityCheck
 		resp["ispInterfaceLabel"] = stored.ISPInterfaceLabel
@@ -213,6 +221,10 @@ type tunnelItem struct {
 	// WdttClientID links the tunnel to the WDTT client instance it was
 	// created from; empty for tunnels unrelated to WDTT.
 	WdttClientID string `json:"wdttClientId,omitempty"`
+	// FreeTurnClientID — то же для FreeTurn-клиента. Пара к WdttClientID:
+	// список помечает туннели, принадлежащие прокси-выходу, и без второго
+	// поля метки не было бы ровно у половины из них.
+	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
 }
 
 // listItems builds the tunnel list items for API response and SSE snapshots.
@@ -238,7 +250,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		stored, _ := h.store.Get(t.ID)
 
 		awgVersion := "wg"
-		var endpoint, address, wdttClientID string
+		var endpoint, address, wdttClientID, freeTurnClientID string
 		var ispInterface, ispInterfaceLabel string
 		var resolvedISPInterface, resolvedISPInterfaceLabel string
 		var mtu int
@@ -256,6 +268,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			ispInterface = stored.ISPInterface
 			ispInterfaceLabel = stored.ISPInterfaceLabel
 			wdttClientID = strings.TrimSpace(stored.WdttClientID)
+			freeTurnClientID = strings.TrimSpace(stored.FreeTurnClientID)
 
 			// NativeWG stores NDMS IDs (e.g. "ISP"), but frontend uses kernel names (e.g. "eth3").
 			// Convert back so the dropdown can match the stored value.
@@ -356,6 +369,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			StartedAt:                 startedAt,
 			PingCheck:                 pcInfo,
 			WdttClientID:              wdttClientID,
+			FreeTurnClientID:          freeTurnClientID,
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck

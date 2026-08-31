@@ -116,8 +116,11 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Post-import defaults: PingCheck + optional freeturn link tag
-	_ = h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
+	// Post-import defaults: PingCheck + optional freeturn link tag.
+	// Отказ записи НЕ отменяет импорт (туннель уже заведён, и IMPORT_FAILED
+	// спровоцировал бы повторный импорт дубликатом), но и не глотается —
+	// профиль F48, а не F47.
+	if err := h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
 			stored.PingCheck = &storage.TunnelPingCheck{
@@ -145,7 +148,9 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 			return storage.ErrNoChange
 		}
 		return nil
-	})
+	}); err != nil {
+		h.log.Warn("import", tunnel.Name, "persist post-import defaults: "+err.Error())
+	}
 
 	h.log.Info("import", tunnel.Name, "Tunnel imported")
 	var quiescent time.Time

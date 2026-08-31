@@ -99,8 +99,12 @@ type Deps struct {
 	PostSeed func(ctx context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error
 	// Выделение пинов — обязанность писателя конфига (план 3), то есть НАША
 	// (Щ1): без этого создание raw-клиента и сервера через API невозможно.
-	AllocIndex  func(owner string, pinned int, havePin bool) (int, error)
-	AllocListen func(ownerKey string) (string, error)
+	AllocIndex func(owner string, pinned int, havePin bool) (int, error)
+	// AllocListen выдаёт клиенту локальный listen. current — адрес, который уже
+	// стоит в записи: годный (в пуле и ничей) возвращается как есть, негодный
+	// заменяется свободным. Занятость считается без собственной записи
+	// инстанса, поэтому selfKind/selfID.
+	AllocListen func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error)
 	ReleasePins func(ownerKeys ...string)
 	// WaitDisabled — ограниченное ожидание teardown-прогона (Щ5): прод —
 	// опрос StateStore до фазы disabled/settled свежее момента вызова.
@@ -264,6 +268,19 @@ func (m *Manager) Boot(ctx context.Context) error {
 		return err
 	}
 	list := res.State.Records
+	// Занятый listen на бооте — не приговор. Посев разводит претендентов на
+	// один порт ТОЛЬКО между записями (resolveListenConflicts), а занятость
+	// шире: в неё входят и localhost-endpoint'ы AWG-туннелей. Такой конфликт
+	// посев не видит, ресурс listen_port видит и отказывает — инстанс уходил
+	// в blocked и сам оттуда не выбирался, потому что ensurePins стоит только
+	// на путях Create и Update.
+	//
+	// Побочно закрывается вторая дыра: после рестарта демона held аллокатора
+	// пуст, и до первой мутации порты живых записей не были ни за кем
+	// закреплены. Здесь они закрепляются все.
+	if moved := m.reconcileBootListen(&list); len(moved) > 0 {
+		res.State.MovedListen = append(res.State.MovedListen, moved...)
+	}
 	declaredNDMS := instance.DeclaredNDMSNames(namedOf(list))
 
 	// Переезд listen-порта — не деталь реализации: снаружи мог быть настроен
@@ -272,7 +289,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 	// перезапуска, должен увидеть причину чужого молчания на старом порту.
 	for _, mv := range res.State.MovedListen {
 		m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
-			"посев развёл конфликт listen-порта: %s (%s) переехал с %s на %s",
+			"listen-порт переехал: %s (%s) с %s на %s",
 			mv.Instance, mv.Name, mv.From, mv.To))
 	}
 
@@ -430,10 +447,20 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 }
 
 // ensurePins — выделение пинов и listen-порта писателем конфига (Щ1, план 3).
-// Идемпотентен: заполненные поля не трогает. Возвращает владельцев СВЕЖИХ
+// Пины OpkgTun идемпотентны: заполненные имена не трогает. Listen — особый,
+// см. ниже: он сверяется каждый раз. Возвращает владельцев СВЕЖИХ
 // аллокаций: если операция дальше сорвётся (отказ реестра/диска), вызывающий
 // обязан отдать их обратно через ReleasePins — иначе held аллокатора течёт до
 // рестарта (Н6 ревью).
+//
+// Listen спрашивается ВСЕГДА, а не только когда он пуст: годный порт
+// аллокатор возвращает как есть, а негодный (вне пула либо занятый чужой
+// записью) меняет на свободный. Прежде такой порт был приговором — ресурс
+// listen_port отказывал, инстанс уходил в blocked и сам оттуда не выбирался.
+// Момент подходящий: ensurePins стоит на пути и Create, и Update, а порт
+// значит что-то только у запускаемого инстанса — старт идёт через Update.
+// Endpoint связанного туннеля за переездом следует сам (linkres.LinkedEndpoint
+// правит его ДО подъёма).
 //
 // Listen идёт под СВОИМ ключом владельца — key+"/listen" (I-3 ревью, круг 2),
 // ровно как обе половины сервера (key+"/wg", key+"/raw"). Голый key брать
@@ -468,14 +495,12 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 			c.NdmsIface = fmt.Sprintf("OpkgTun%d", idx)
 			c.RawIface = fmt.Sprintf("opkgtun%d", idx)
 		}
-		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key + "/listen")
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-			}
-			allocated = append(allocated, key+"/listen")
-			c.Listen = l
+		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
+		if err != nil {
+			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 		}
+		allocated = append(allocated, key+"/listen")
+		c.Listen = l
 	case instancestore.KindWdttServer:
 		c := rec.WdttServer
 		if c == nil {
@@ -504,16 +529,72 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 		if c == nil {
 			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
-		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key + "/listen")
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-			}
-			allocated = append(allocated, key+"/listen")
-			c.Listen = l
+		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
+		if err != nil {
+			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 		}
+		allocated = append(allocated, key+"/listen")
+		c.Listen = l
 	}
 	return allocated, nil
+}
+
+// reconcileBootListen сверяет локальные порты клиентов с занятостью и
+// переселяет тех, чей порт негоден. Возвращает переезды; список записей
+// правится по месту, чтобы воркеры стартовали уже с новыми портами.
+//
+// Отказ аллокатора (пул исчерпан) переездом не считается: запись остаётся с
+// прежним портом и уйдёт в blocked ровно как раньше — это не хуже, чем было,
+// а ронять боот из-за одного инстанса нельзя.
+//
+// Endpoint связанного AWG-туннеля за переездом идёт сам: LinkedEndpoint видит
+// расхождение с listen и правит его ДО подъёма туннеля.
+func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancestore.ListenMove {
+	recs := *list
+	want := map[string]string{}
+	var moves []instancestore.ListenMove
+	for i := range recs {
+		cur := instancestore.ClientListen(&recs[i])
+		if cur == nil {
+			continue // серверные роли: их listen задаёт пользователь
+		}
+		key := recs[i].Key()
+		next, err := m.deps.AllocListen(key+"/listen", recs[i].Kind, recs[i].ID, *cur)
+		if err != nil {
+			m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
+				"инстанс %s: порт %s оставлен как есть — %v", key, *cur, err))
+			continue
+		}
+		if next == *cur {
+			continue
+		}
+		moves = append(moves, instancestore.ListenMove{
+			Instance: key, Name: recs[i].Name, From: *cur, To: next})
+		want[key] = next
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	next, err := m.deps.Store.Replace(func(st *instancestore.State) error {
+		for i := range st.Records {
+			if l, ok := want[st.Records[i].Key()]; ok {
+				if p := instancestore.ClientListen(&st.Records[i]); p != nil {
+					*p = l
+				}
+			}
+		}
+		// Молча сменить порт нельзя — тем же каналом, что и переезды посева.
+		st.MovedListen = append(st.MovedListen, moves...)
+		return nil
+	})
+	if err != nil {
+		// Диск не принял — воркеры пойдут со СТАРЫМИ портами: правка в памяти
+		// без записи означала бы, что после рестарта порт снова другой.
+		m.deps.Journal.Warn("boot", "proxy", "переезд listen-портов не записан: "+err.Error())
+		return nil
+	}
+	*list = next.Records
+	return moves
 }
 
 // mutateStore — общий каркас мутаций: кандидат → объявление → запись.

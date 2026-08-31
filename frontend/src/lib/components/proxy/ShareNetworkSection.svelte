@@ -5,19 +5,16 @@
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import ServerWgBind from '../freeturn/ServerWgBind.svelte';
+	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import { obfOptions } from '../freeturn/options';
-	import { setListenPort } from '$lib/utils/listenPortUtils';
+	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
 	import type { NatMode } from '$lib/utils/network';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
-	import { natModeOptions } from './shareConfig';
+	import { natModeOptions, serverPortConflict } from './shareConfig';
 
 	// Режим работы сервера. Раньше менялся только пересозданием инстанса: в
 	// списке бейдж режима был, а переключателя не было нигде.
-	const relayModeOptions = [
-		{ value: 'wg' as const, label: 'WG' },
-		{ value: 'raw' as const, label: 'Raw' },
-	];
 
 	interface Props {
 		/** Редактируемая копия конфига детали — правится на месте. */
@@ -70,10 +67,14 @@
 	 * Раньше кнопка была активна, поля WAN не было нигде, и сохранённый конфиг
 	 * молча становился невалидным: сервер не стартовал, исправить было негде.
 	 */
+	// Столкновение портов сервера: сохранять нельзя — бэкенд всё равно
+	// откажет, но уже приговором конфига.
+	const portConflict = $derived(wdttServer ? serverPortConflict(wdttServer) : '');
+
 	const wanMissing = $derived(
 		!!wdttServer &&
 			wdttServer.natMode === 'internet-only' &&
-			!(wdttServer.natStaticWan ?? '').trim(),
+			!effectiveStaticWan(wdttServer).trim(),
 	);
 	/** Показать, чего не хватает «Интернету»: клик по нему был отклонён. */
 	let natWanBlocked = $state(false);
@@ -84,7 +85,7 @@
 	 * на бэкенд немедленно, и сервер перестал бы стартовать.
 	 */
 	function changeNat(mode: NatMode) {
-		if (mode === 'internet-only' && !(wdttServer?.natStaticWan ?? '').trim()) {
+		if (mode === 'internet-only' && !(wdttServer ? effectiveStaticWan(wdttServer) : '').trim()) {
 			natWanBlocked = true;
 			return;
 		}
@@ -92,7 +93,6 @@
 		onnat(mode);
 	}
 
-	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
 	const ftPort = $derived(String(ftServer?.listen?.split(':').pop() ?? ''));
 	// SH-56 держится, пока выбранное не совпало с применённым. Применённое
 	// неизвестно — расхождения нет о чём заявлять, бейдж не показываем.
@@ -100,9 +100,15 @@
 		exposeApplied !== undefined && (wdttServer?.exposeToPolicies ?? false) !== exposeApplied,
 	);
 
-	function applyWgPort(value: string) {
-		if (!wdttServer) return;
-		wdttServer.wgPort = Math.max(1, Math.min(65535, Number(value) || 56001));
+
+	// Порт раздачи — главный внешний порт и обязательное поле конфига
+	// (`WdttServerConfig.Validate`: «не задан listen сервера»).
+	const dtlsPort = $derived(String(listenPortNumber(wdttServer?.listen ?? '', 0) || 56002));
+
+	function applyDtlsPort(value: string) {
+		const port = Number(value);
+		if (!wdttServer || !Number.isFinite(port) || port <= 0) return;
+		wdttServer.listen = setListenPort(wdttServer.listen || '0.0.0.0:56002', port, '0.0.0.0');
 	}
 
 	function applyFtPort(value: string) {
@@ -117,19 +123,23 @@
 		<!-- Одна сетка «метка — контрол» на всю секцию (решение по вёрстке
 		     2026-08-27): раньше здесь уживались три схемы сразу. -->
 		<div class="form">
+			<!-- Порт раздачи — обязательное поле конфига (`Validate`), и чинить
+			     его человек должен здесь, а не в «экспертном» разделе. Raw-
+			     половина занимает следующий порт автоматически. -->
 			<FormRow
-				label="Режим работы"
-				hint="WG — абоненты попадают в роутер через WireGuard-половину сервера, Raw — через raw-половину. Смена применяется при перезапуске"
+				label="Порт раздачи"
+				for="wdtt-dtls-port"
+				hint="Главный внешний порт; raw-половина займёт следующий. Смена перезапустит сервер"
 			>
-				<SegmentedControl
-					value={wdttServer.relayMode === 'raw' ? 'raw' : 'wg'}
-					options={relayModeOptions}
-					ariaLabel="Режим работы"
-					disabled={busy}
-					onchange={(v) => {
-						if (wdttServer) wdttServer.relayMode = v;
-					}}
-				/>
+				<div class="w-port">
+					<Input
+						id="wdtt-dtls-port"
+						type="number"
+						value={dtlsPort}
+						onchange={applyDtlsPort}
+						fullWidth
+					/>
+				</div>
 			</FormRow>
 
 			<FormRow label="Режим NAT">
@@ -168,15 +178,6 @@
 				/>
 			</FormRow>
 
-			<FormRow
-				label="Внутренний WG-порт"
-				for="wdtt-wg-port"
-				hint="Смена перезапустит сервер; занятый порт менеджер подберёт сам"
-			>
-				<div class="w-port">
-					<Input id="wdtt-wg-port" type="number" value={wgPort} onchange={applyWgPort} fullWidth />
-				</div>
-			</FormRow>
 		</div>
 
 		<div class="toggle-row">
@@ -256,6 +257,10 @@
 		</div>
 	{/if}
 
+	{#if portConflict}
+		<p class="save-block">{portConflict}</p>
+	{/if}
+
 	{#if wanMissing}
 		<p class="save-block">
 			Режиму NAT «Интернет» нужен выход в интернет — выберите его в разделе
@@ -264,7 +269,7 @@
 	{/if}
 
 	<div class="btn-row">
-		<Button variant="primary" loading={saving} disabled={busy || wanMissing} onclick={onsave}>
+		<Button variant="primary" loading={saving} disabled={busy || wanMissing || !!portConflict} onclick={onsave}>
 			Сохранить
 		</Button>
 		<Button variant="ghost" disabled={busy} onclick={onrevert}>Отменить</Button>

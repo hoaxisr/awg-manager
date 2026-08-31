@@ -317,11 +317,11 @@ func (a *app) setupRouter() {
 		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
 		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
 		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
-		// Пины ЧУЖИХ владельцев: записи туннелей и записи NDMS без живого
-		// устройства. Своя удерживающая запись сюда не входит — она приходит
-		// из настроек, и подмешивание её в занятость перепинило бы режим
-		// роутера сам на себя.
-		OpkgTunPins:   storage.MergeOpkgTunPins(a.awgStore.OpkgTunPinsOf, a.opkgNDMSPins),
+		// Пины ЧУЖИХ владельцев: записи туннелей, записи NDMS без живого
+		// устройства и записи прокси-инстансов. Своя удерживающая запись сюда
+		// не входит — она приходит из настроек, и подмешивание её в занятость
+		// перепинило бы режим роутера сам на себя.
+		OpkgTunPins:   routerForeignOpkgPins(a.awgStore, a.opkgNDMSPins, a.proxyStore),
 		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
 		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
 		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly

@@ -153,6 +153,10 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		return err
 	}
 	sr, _ := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+	// Пул берём ДЕЙСТВУЮЩИЙ, а не проводной дефолт: при кастомном пуле реап
+	// иначе адресовал бы 198.18.0.0/15 и оставлял протухший reject-маршрут
+	// висеть на настроенном префиксе до ручного удаления (F11).
+	cfgPool4 := s.resolveFakeIPParams(sr).Inet4Range
 	// Владелец — ОДНО чтение ОДНОЙ записи. owned/ownedPolicy нужны только для
 	// exclusion в description-сканах своего режима: у fakeip владение гейтится
 	// на Provisioned, у policy-tun НЕТ — выключение интерфейс не удаляет, а
@@ -184,7 +188,7 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 			if s.deps.StaticRoutes == nil {
 				return
 			}
-			if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
+			if poolNet, poolMask, derr := poolV4NetMask(cfgPool4); derr == nil {
 				if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 					Network: poolNet, Mask: poolMask, Interface: id, Comment: fakeIPDrainComment,
 				}); err != nil {
@@ -260,14 +264,21 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	// Safety net for the disable drain (Fix 1): the async drain goroutine that
 	// removes the v4 reject route does NOT survive a daemon restart (no
 	// persisted pending-drain). So in NON-fakeip mode best-effort remove a
-	// stale drain reject route for the CONFIGURED pool. Derive net/mask exactly
+	// stale drain reject route for the PERSISTED pool. Derive net/mask exactly
 	// as disableFakeIPTun does (Masked → splitCIDR). NDMS no:true on a
 	// non-existent route is idempotent. The reject route is a kill-switch FLAG
 	// on the pool→OpkgTun route (stand-verified), so its NDMS form is
 	// interface-bound and only addressable via the persisted name; persist-less
 	// orphans get their route swept inside the description scan instead.
 	if s.deps.StaticRoutes != nil && owned != "" {
-		if poolNet, poolMask, derr := poolV4NetMask(s.deps.FakeIPTun.Inet4Range); derr == nil {
+		// Пул — из ПЕРСИСТА (как в disableFakeIPTun): drain ставился теми
+		// значениями, что были на момент выключения. Фолбэк — действующие
+		// настройки, когда payload пуст.
+		pool4 := cfgPool4
+		if st != nil && st.FakeIP != nil && st.FakeIP.Inet4Range != "" {
+			pool4 = st.FakeIP.Inet4Range
+		}
+		if poolNet, poolMask, derr := poolV4NetMask(pool4); derr == nil {
 			if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 				Network: poolNet, Mask: poolMask, Interface: owned, Comment: fakeIPDrainComment,
 			}); err != nil {
@@ -357,7 +368,17 @@ func (s *ServiceImpl) fakeIPReadyInputs() (iface, dnsAddr string, fakeipNet neti
 	if err != nil {
 		return "", "", netip.Prefix{}, false
 	}
-	fakeipNet, err = netip.ParsePrefix(s.deps.FakeIPTun.Inet4Range)
+	// Пул — из ПЕРСИСТА (им поднят живой tun), фолбэк — действующие настройки.
+	// Проводной дефолт сверял бы статус с чужим префиксом (F11).
+	pool4 := ""
+	if st.FakeIP != nil {
+		pool4 = st.FakeIP.Inet4Range
+	}
+	if pool4 == "" {
+		sr, _ := NormalizeSingboxRouterSettings(settings.SingboxRouter)
+		pool4 = s.resolveFakeIPParams(sr).Inet4Range
+	}
+	fakeipNet, err = netip.ParsePrefix(pool4)
 	if err != nil || !fakeipNet.Addr().Is4() {
 		return "", "", netip.Prefix{}, false
 	}
@@ -433,10 +454,15 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 	defer heavyop.Default.Unlock()
 
 	// Свежая проверка намерения — КАК МОЖНО ПОЗЖЕ, уже под гейтом памяти:
-	// Disable ходит под s.mu мимо transitionMu (признано в service.go), и
 	// режим мог выключиться, пока мы копили такты и ждали гейт. Поднять
 	// движок в выключенном режиме хуже, чем пропустить такт: лечение
 	// повторится, а воскрешение придётся отменять пользователю.
+	//
+	// NB: прежняя редакция обосновывала эту проверку тем, что «Disable ходит
+	// мимо transitionMu (признано в service.go)» — это было НЕВЕРНО и в обе
+	// стороны: все вызовы Disable идут под transitionMu, а service.go прямо
+	// говорит, что третий путь мимо него вернул бы гонку и потому удалён.
+	// Сама проверка полезна (мы ждали гейт памяти), обоснование было ложным.
 	if s.deps.Settings != nil {
 		if settings, err := s.deps.Settings.Load(); err != nil || settings == nil || !settings.SingboxRouter.Enabled {
 			s.tunDownStrikes = 0
@@ -801,6 +827,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		s.appLog.Warn("discover-lan-bridges", "", "no NDMS hotspot LAN bridges, DNS fallback skipped")
 	}
 	if err := s.deps.IPTables.Install(ctx, spec); err != nil {
+		// См. F20: restore коммитит по таблицам — часть могла примениться,
+		// снимок больше не соответствует железу. appliedSpec не обнуляем.
+		s.netfilterStateKnown = false
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
 		// wired we just park the slot back under disabled/ — sing-box
@@ -1739,6 +1768,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, want); err != nil {
+			// См. F20: часть таблиц могла закоммититься — снимок неизвестен.
+			s.netfilterStateKnown = false
 			s.mu.Unlock()
 			return err
 		}

@@ -184,23 +184,27 @@ type WdttServerConfig struct {
 	Listen       string `json:"listen"` // DTLS, 0.0.0.0:56000
 	WgPort       int    `json:"wgPort,omitempty"`
 	ConfigDir    string `json:"configDir,omitempty"`
-	Password     string `json:"password"`
-	AdminID      string `json:"adminId,omitempty"`
-	BotToken     string `json:"botToken,omitempty"`
-	NatIface     string `json:"natIface,omitempty"`
 	WgIface      string `json:"wgIface,omitempty"`      // opkgtunN (пин)
 	RawIface     string `json:"rawIface,omitempty"`     // opkgtunM (пин)
 	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTunN
 	RawNdmsIface string `json:"rawNdmsIface,omitempty"` // OpkgTunM
 	RawListen    string `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
+	// DirectListen — третий порт WG-половины: WRAP-обфускация БЕЗ слоя DTLS
+	// (форк, `-listen-direct`). Меньше инкапсуляции — выше скорость, ценой
+	// потери маскировки под DTLS. Пусто = выключено.
 	DirectListen string `json:"directListen,omitempty"`
-	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — режим генерации ссылки; на процесс влияет только через -dns
+	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — только режим генерации ссылки; на процесс не влияет
 	NatMode      string `json:"natMode,omitempty"`      // full|internet-only|none
 	NatStaticWAN string `json:"natStaticWan,omitempty"` // legacy: одиночный WAN; читается через StaticNATList
 	// NatStaticWANs — выходы static-NAT для internet-only. Их несколько:
 	// при нескольких `ip global` static-NAT ставится на КАЖДЫЙ выход, иначе
 	// после переключения провайдера трафик абонентов упирается в мёртвый
-	// (PR #750). Пишет план 5 по факту применения.
+	// (PR #750).
+	//
+	// Кто пишет: миграционный посев (instancestore/seed.go) и тело PATCH —
+	// фронт шлёт список, когда пользователь его не трогал (F61). Роль список
+	// только читает, через StaticNATList. «По факту применения» его не пишет
+	// никто — прежняя редакция комментария обещала писателя, которого нет.
 	NatStaticWANs []string `json:"natStaticWans,omitempty"`
 	Policy        string   `json:"policy,omitempty"` // none|<имя>
 	LanSegments   []string `json:"lanSegments,omitempty"`
@@ -230,13 +234,14 @@ func (c WdttServerConfig) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("не задан listen сервера")
 	}
-	// Пароль владельца (-password) НЕ обязателен. Форк падает единственным
-	// условием — `serverWrapKeys.Count() == 0`, то есть когда нет НИ ОДНОГО
-	// пароля: главного или абонентского (server.go:1969). Абонентского
-	// достаточно. Требование главного было строже форка и запирало сервер,
-	// у которого абоненты есть, а «пароля владельца» никто не задавал;
-	// починить его из UI было нечем. Непустоту паролей держит гейт запуска
-	// по составу абонентов, а не эта проверка.
+	if err := c.validatePorts(); err != nil {
+		return err
+	}
+	// Пароля здесь не проверяем, и поля под него в конфиге нет: форк падает
+	// единственным условием — `serverWrapKeys.Count() == 0` (server.go:1969),
+	// а ключи он собирает из passwords.json, то есть из состава абонентов.
+	// Требование пароля в конфиге было строже форка и запирало сервер,
+	// у которого абоненты есть.
 	switch c.NatMode {
 	case "full", "none":
 	case "internet-only":
@@ -254,16 +259,75 @@ func (c WdttServerConfig) Validate() error {
 	default:
 		return fmt.Errorf("relayMode %q: ожидали wg|raw", c.RelayMode)
 	}
-	// Обе NDMS-половины обязательны: argv ставит -dns шлюзом OpkgTun-формы
-	// (10.66.0.1 / 10.70.66.1), а старый legacy-путь wdtt0 отвечал другим
-	// адресом (modes.go:72 → 10.66.66.1). Пустое имя означало бы legacy-мир,
-	// которого новый рантайм не строит: отказ конфига честнее, чем молча
-	// неверный резолвер у абонентов.
+	// Обе NDMS-половины обязательны: на каждой стоит DNAT :53 на её шлюз
+	// OpkgTun-формы (10.66.0.1 / 10.70.0.1), а старый legacy-путь wdtt0
+	// отвечал другим адресом (modes.go:72 → 10.66.66.1). Пустое имя означало
+	// бы legacy-мир, которого новый рантайм не строит: отказ конфига честнее,
+	// чем молча неверный резолвер у абонентов.
 	if strings.TrimSpace(c.NdmsIface) == "" || strings.TrimSpace(c.WgIface) == "" {
 		return fmt.Errorf("не заданы NDMS-имена WG-половины сервера (ndmsIface/wgIface)")
 	}
 	if strings.TrimSpace(c.RawNdmsIface) == "" || strings.TrimSpace(c.RawIface) == "" {
 		return fmt.Errorf("не заданы NDMS-имена raw-половины сервера (rawNdmsIface/rawIface)")
+	}
+	return nil
+}
+
+// validatePorts — четыре сокета сервера не должны биться друг о друга.
+//
+// Сервер поднимает: DTLS (`-listen`), raw (`-listen-raw`, по умолчанию DTLS+1),
+// direct (`-listen-direct`, если включён) и userspace-WireGuard (`-wg-port`).
+// Последний слушает на ВСЕХ адресах (wireguard-go, `listen_port` в UAPI),
+// поэтому сравниваются номера портов, а не пары адрес:порт — совпадение
+// номера значит столкновение даже при разных хостах в конфиге.
+//
+// Пример достижимой коллизии, ради которой проверка и заведена: порт раздачи
+// 56000 → raw получает 56001, а дефолт `-wg-port` — тоже 56001. Один из двух
+// сокетов не поднимется, и причину пришлось бы искать в журнале форка.
+//
+// DirectListen, равный Listen, — это «выключено» (та же трактовка, что в
+// argv, INPUT-портах и ведомости занятости), поэтому коллизией не считается.
+func (c WdttServerConfig) validatePorts() error {
+	type slot struct {
+		name string
+		port int
+	}
+	var slots []slot
+	add := func(name, addr string) error {
+		if strings.TrimSpace(addr) == "" {
+			return nil
+		}
+		_, portStr, err := net.SplitHostPort(strings.TrimSpace(addr))
+		if err != nil {
+			return fmt.Errorf("%s: некорректный адрес %q", name, addr)
+		}
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p <= 0 || p > 65535 {
+			return fmt.Errorf("%s: некорректный порт в %q", name, addr)
+		}
+		slots = append(slots, slot{name, p})
+		return nil
+	}
+	if err := add("порт раздачи", c.Listen); err != nil {
+		return err
+	}
+	if err := add("raw-порт", c.EffectiveRawListen()); err != nil {
+		return err
+	}
+	if d := strings.TrimSpace(c.DirectListen); d != "" && d != strings.TrimSpace(c.Listen) {
+		if err := add("direct-порт", d); err != nil {
+			return err
+		}
+	}
+	if c.WgPort > 0 {
+		slots = append(slots, slot{"внутренний WG-порт", c.WgPort})
+	}
+	seen := map[int]string{}
+	for _, s := range slots {
+		if prev, dup := seen[s.port]; dup {
+			return fmt.Errorf("порт %d занят дважды: %s и %s — задайте разные", s.port, prev, s.name)
+		}
+		seen[s.port] = s.name
 	}
 	return nil
 }
@@ -302,8 +366,6 @@ type FreeTurnClientConfig struct {
 	Transport      string `json:"transport,omitempty"`
 	Mode           string `json:"mode,omitempty"`
 	Bond           bool   `json:"bond,omitempty"`
-	TurnHost       string `json:"turnHost,omitempty"`
-	TurnPort       int    `json:"turnPort,omitempty"`
 	ObfProfile     string `json:"obfProfile,omitempty"`
 	ObfKey         string `json:"obfKey,omitempty"`
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`

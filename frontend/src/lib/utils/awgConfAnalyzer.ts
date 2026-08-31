@@ -477,7 +477,25 @@ export function buildUpgradeHints(iface: AwgIface, version: AwgVersionInfo): str
 	return hints;
 }
 
-export function runChecks(iface: AwgIface, peer: AwgIface, version: AwgVersionInfo): AwgCheck[] {
+/**
+ * Анализируемый текст — РОВНО тот conf, который мы построили из выбранного
+ * туннеля (не отредактированный и не подменённый чужим).
+ *
+ * Только в этом случае отсутствие строки PrivateKey означает «бэкенд скрыл
+ * ключ» (F56). Проверять `selectedTunnelId` недостаточно: textarea не
+ * сбрасывает выбор туннеля, поэтому вставленный туда чужой conf без ключа
+ * выдавался за скрытый (F82).
+ */
+export function isUnmodifiedTunnelConf(raw: string, loadedTunnelRaw: string): boolean {
+	return loadedTunnelRaw !== '' && raw.trim() === loadedTunnelRaw;
+}
+
+export function runChecks(
+	iface: AwgIface,
+	peer: AwgIface,
+	version: AwgVersionInfo,
+	opts?: { privateKeyHidden?: boolean },
+): AwgCheck[] {
 	const R: AwgCheck[] = [];
 	const addChk = (
 		cat: string,
@@ -513,15 +531,30 @@ export function runChecks(iface: AwgIface, peer: AwgIface, version: AwgVersionIn
 	const privkey = getStr(iface, 'privatekey');
 	const isBase64 = (s: string) => /^[A-Za-z0-9+/]{43}=?$/.test(s);
 	const pkOk = !!privkey && isBase64(privkey);
-	addChk(
-		'Ключи',
-		'PrivateKey',
-		pkOk ? 'pass' : 'fail',
-		pkOk ? `${privkey.slice(0, 12)}…` : '(отсутствует)',
-		pkOk ? 'Корректный base64 Curve25519 ключ' : 'Приватный ключ отсутствует или невалиден',
-		pkOk ? 10 : 0,
-		10,
-	);
+	if (!pkOk && opts?.privateKeyHidden) {
+		// Ключ не пропал — его не отдаёт API (F56), а при записи конфига
+		// merge оставит прежний. Полные баллы: паритет вердикта с до-F56
+		// временем, допущение — в хранимом туннеле ключ валиден.
+		addChk(
+			'Ключи',
+			'PrivateKey',
+			'info',
+			'(скрыт)',
+			'Ключ не отдаётся API из соображений безопасности; при записи конфига прежний ключ туннеля сохраняется',
+			10,
+			10,
+		);
+	} else {
+		addChk(
+			'Ключи',
+			'PrivateKey',
+			pkOk ? 'pass' : 'fail',
+			pkOk ? `${privkey.slice(0, 12)}…` : '(отсутствует)',
+			pkOk ? 'Корректный base64 Curve25519 ключ' : 'Приватный ключ отсутствует или невалиден',
+			pkOk ? 10 : 0,
+			10,
+		);
+	}
 
 	const pubkey = getStr(peer, 'publickey');
 	const pubOk = !!pubkey && isBase64(pubkey);

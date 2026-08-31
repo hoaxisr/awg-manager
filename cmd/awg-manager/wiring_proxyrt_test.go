@@ -90,7 +90,7 @@ func (e *occEnv) alloc(t *testing.T, live map[int]bool) func(string, int, bool) 
 func (e *occEnv) allocWithNDMS(t *testing.T, live map[int]bool, ndmsPins storage.OpkgTunPins) func(string, int, bool) (int, error) {
 	t.Helper()
 	min, max := mipsRange(t)
-	occ := proxyOpkgOccupancy(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
+	occ := opkgOccupancyAllOwners(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
 	return proxyAllocIndex(context.Background(),
 		proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store)
 }
@@ -113,7 +113,7 @@ func rawClientRecord(id, ndms, kernel string) instancestore.Record {
 
 func serverRecord(id, wgNDMS, wgKernel, rawNDMS, rawKernel string) instancestore.Record {
 	return instancestore.Record{ID: id, Kind: instancestore.KindWdttServer,
-		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 			NatMode: "full", RelayMode: "wg",
 			NdmsIface: wgNDMS, WgIface: wgKernel,
 			RawNdmsIface: rawNDMS, RawIface: rawKernel}}
@@ -283,11 +283,20 @@ func TestAllocIndexKeepsSiblingPinOfOwnRecord(t *testing.T) {
 
 // ── listen-порты ─────────────────────────────────────────────────
 
-func newListenAlloc(t *testing.T, e *occEnv) func(string) (string, error) {
+func newListenAllocFull(t *testing.T, e *occEnv) func(string, instancestore.Kind, string, string) (string, error) {
 	t.Helper()
 	return proxyAllocListen(context.Background(),
 		proxyrt.NewAllocator(proxyrt.IndexRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
 		e.store, e.awg)
+}
+
+// newListenAlloc — выдача НОВОМУ инстансу: своей записи ещё нет, порта тоже.
+func newListenAlloc(t *testing.T, e *occEnv) func(string) (string, error) {
+	t.Helper()
+	full := newListenAllocFull(t, e)
+	return func(owner string) (string, error) {
+		return full(owner, instancestore.KindWdttClient, "", "")
+	}
 }
 
 // Резерв, а не скан: два параллельных Create получают РАЗНЫЕ порты, хотя ни
@@ -323,6 +332,62 @@ func TestAllocListenSkipsPortsOfExistingRecords(t *testing.T) {
 	}
 	if got != "127.0.0.1:9002" {
 		t.Fatalf("AllocListen = %s, want 127.0.0.1:9002", got)
+	}
+}
+
+// Годный порт остаётся за инстансом: смена listen тянет переезд endpoint'а
+// связанного туннеля, и делать её без нужды нельзя. Собственная запись из
+// занятости исключается — иначе свой же порт читался бы как чужой.
+func TestAllocListenKeepsUsableCurrentPort(t *testing.T) {
+	e := newOccEnv(t)
+	e.putRecord(t, instancestore.Record{ID: "a", Kind: instancestore.KindWdttClient,
+		WdttClient: &roles.WdttClientConfig{Listen: "127.0.0.1:9007"}})
+	alloc := newListenAllocFull(t, e)
+
+	got, err := alloc("wdtt-client:a/listen", instancestore.KindWdttClient, "a", "127.0.0.1:9007")
+	if err != nil {
+		t.Fatalf("AllocListen: %v", err)
+	}
+	if got != "127.0.0.1:9007" {
+		t.Fatalf("годный порт обязан остаться, got %s", got)
+	}
+}
+
+// Занятый чужой записью порт — не приговор: инстанс переезжает на свободный.
+// Прежде такой порт валил ресурс listen_port, инстанс уходил в blocked и сам
+// оттуда не выбирался, а поле правки порта из UI ушло.
+func TestAllocListenMovesOffPortTakenByAnother(t *testing.T) {
+	e := newOccEnv(t)
+	e.putRecord(t, instancestore.Record{ID: "a", Kind: instancestore.KindWdttClient,
+		WdttClient: &roles.WdttClientConfig{Listen: "127.0.0.1:9000"}})
+	e.putRecord(t, instancestore.Record{ID: "b", Kind: instancestore.KindFreeTurnClient,
+		FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"}})
+	alloc := newListenAllocFull(t, e)
+
+	got, err := alloc("wdtt-client:a/listen", instancestore.KindWdttClient, "a", "127.0.0.1:9000")
+	if err != nil {
+		t.Fatalf("AllocListen: %v", err)
+	}
+	if got == "127.0.0.1:9000" {
+		t.Fatal("порт занят чужой записью — инстанс обязан переехать")
+	}
+	if got != "127.0.0.1:9001" {
+		t.Fatalf("ожидали первый свободный 9001, got %s", got)
+	}
+}
+
+// Мусор и порт вне пула гасятся тем же путём, что и пустое значение.
+func TestAllocListenReplacesUnusableCurrent(t *testing.T) {
+	for _, current := range []string{"", "ерунда", "127.0.0.1:1", "0.0.0.0:9000"} {
+		e := newOccEnv(t)
+		alloc := newListenAllocFull(t, e)
+		got, err := alloc("wdtt-client:a/listen", instancestore.KindWdttClient, "a", current)
+		if err != nil {
+			t.Fatalf("current %q: %v", current, err)
+		}
+		if got != "127.0.0.1:9000" {
+			t.Fatalf("current %q: ожидали первый свободный 9000, got %s", current, got)
+		}
 	}
 }
 
@@ -465,7 +530,9 @@ func newFactoryApp(t *testing.T, book *proxyFWBook) (*app, manager.Factory, *pro
 			}
 			return 0, errors.New("в тесте фабрики выделение не нужно")
 		},
-		AllocListen:  func(string) (string, error) { return "127.0.0.1:9000", nil },
+		AllocListen: func(string, instancestore.Kind, string, string) (string, error) {
+			return "127.0.0.1:9000", nil
+		},
 		ReleasePins:  func(...string) {},
 		WaitDisabled: func(string, time.Duration) bool { return true },
 	})
@@ -556,7 +623,7 @@ func TestProxyFactoryServerRolesShareOneFWBook(t *testing.T) {
 		cfg any
 	}{
 		{serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"),
-			roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+			roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 				NatMode: "full", RelayMode: "wg",
 				NdmsIface: "OpkgTun4", WgIface: "opkgtun4",
 				RawNdmsIface: "OpkgTun5", RawIface: "opkgtun5", OpenFirewall: true}},
@@ -764,7 +831,7 @@ func (fakeRunning) Stop()                       {}
 func newProdAllocManager(t *testing.T, e *occEnv) *manager.Manager {
 	t.Helper()
 	min, max := mipsRange(t)
-	occ := proxyOpkgOccupancy(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
+	occ := opkgOccupancyAllOwners(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
 		return nil, nil
 	}, e.awg, e.settings, e.store)
 	ctx := context.Background()
@@ -1102,7 +1169,7 @@ func TestProxyFactoryWdttServerBlockedUntilUsersAdopted(t *testing.T) {
 	book, _ := recordingBook(nil)
 	_, factory, _ := newFactoryApp(t, book)
 	rec := serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5")
-	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56000", Password: "p",
+	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56000",
 		NatMode: "full", RelayMode: "wg",
 		NdmsIface: "OpkgTun4", WgIface: "opkgtun4",
 		RawNdmsIface: "OpkgTun5", RawIface: "opkgtun5", OpenFirewall: true}

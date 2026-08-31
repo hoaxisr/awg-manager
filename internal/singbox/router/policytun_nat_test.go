@@ -39,9 +39,12 @@ type recSegmentNAT struct {
 	failAt string
 }
 
+// failAt — метка или несколько меток через запятую (двойной сбой RCI).
 func (r *recSegmentNAT) maybeFail(label string) error {
-	if r.failAt == label {
-		return errors.New("injected: " + label)
+	for _, want := range strings.Split(r.failAt, ",") {
+		if want == label {
+			return errors.New("injected: " + label)
+		}
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -51,17 +50,15 @@ func (s *stand) serve(t *testing.T, method, body string, sub ...string) (UsersSt
 // TestServe_ListForm сторожит ФОРМУ ответа целиком: фронт ветвится по каждому
 // признаку записи.
 func TestServe_ListForm(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(),
 		instancestore.ServerUser{Password: "client1", Comment: "Иван", VkHash: "vk1"},
-		instancestore.ServerUser{Password: "stale", Comment: "Просроченный", ExpiresAt: now.Add(-time.Hour).Unix()},
-		instancestore.ServerUser{Password: "auto1", Comment: defaultUserName, Auto: true},
+		instancestore.ServerUser{Password: "auto1", Comment: "Абонент 1", Auto: true},
 		instancestore.ServerUser{Password: "mainpass", Comment: "Он же главный"},
 	)
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "mainpass",
 		Passwords: map[string]passwordsJSONUser{
-			"client1": {IsDeactivated: true, Label: "имя из файла", VkHash: "vk-из-файла"},
+			"client1": {Label: "имя из файла", VkHash: "vk-из-файла"},
 		},
 	})
 
@@ -72,10 +69,9 @@ func TestServe_ListForm(t *testing.T) {
 	want := UsersStatus{
 		Available: true,
 		Users: []UserEntry{
-			{Password: "client1", Comment: "Иван", VkHash: "vk1", IsDeactivated: true},
-			{Password: "stale", Comment: "Просроченный", IsExpired: true},
-			{Password: "auto1", Comment: defaultUserName, IsAuto: true},
-			{Password: "mainpass", Comment: "Он же главный", IsMainPassword: true, IsExpired: false},
+			{Password: "client1", Comment: "Иван", VkHash: "vk1"},
+			{Password: "auto1", Comment: "Абонент 1", IsAuto: true},
+			{Password: "mainpass", Comment: "Он же главный"},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -166,86 +162,25 @@ func TestServe_AddGeneratesPassword(t *testing.T) {
 	}
 }
 
-// Пароль сервера, присланный формой, сохраняется в запись — иначе следующий
-// старт откажет «укажите пароль подключения».
-func TestServe_AddSavesMainPasswordFromForm(t *testing.T) {
-	cfg := baseCfg()
-	cfg.Password = ""
-	st := newStand(t, cfg)
-	got, msg, code := st.serve(t, http.MethodPost, `{"password":"client1","mainPassword":"свежий-главный"}`)
-	if code != "" {
-		t.Fatalf("ответ = %s / %s", code, msg)
-	}
-	if got.Reload != ReloadDelivered {
-		t.Fatalf("reload = %q", got.Reload)
-	}
-	cfgAfter, err := st.rec(t).WdttServerConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfgAfter.Password != "свежий-главный" {
-		t.Fatalf("пароль сервера = %q, форма потеряна", cfgAfter.Password)
-	}
-	// Файл написан ЭФФЕКТИВНЫМ главным паролем, а не пустым.
-	if got := st.file(t).MainPassword; got != "свежий-главный" {
-		t.Fatalf("main_password файла = %q", got)
-	}
-}
-
-// Пароль сервера не сохранился — это ЧАСТИЧНЫЙ успех, у него свой код.
-func TestServe_AddMainPasswordNotSaved(t *testing.T) {
-	cfg := baseCfg()
-	cfg.Password = ""
-	st := newStand(t, cfg)
-	// Отказ ставим ПОСЛЕ добавления абонента: мутатор валится на любом Update,
-	// поэтому абонента кладём заранее.
-	st.svc.deps.Mutator = &failLastMutator{inner: st.mut, failFrom: 2}
-	_, msg, code := st.serve(t, http.MethodPost, `{"password":"client1","mainPassword":"свежий-главный"}`)
-	if code != "WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED" {
-		t.Fatalf("код = %q, сообщение = %q", code, msg)
-	}
-	if !strings.Contains(msg, "пароль сервера не сохранён") {
-		t.Fatalf("сообщение = %q", msg)
-	}
-	if u := st.rec(t).Users; len(u) != 1 {
-		t.Fatalf("абонент не заведён при частичном успехе: %#v", u)
-	}
-}
-
 // ── (е) тексты отказов — часть контракта фронта ──────────────────
 
 func TestServe_AddRejectionTexts(t *testing.T) {
-	now := fixedNow()
 	cases := []struct {
-		name    string
-		cfgPass string
-		users   []instancestore.ServerUser
-		body    string
-		want    string
+		name  string
+		users []instancestore.ServerUser
+		body  string
+		want  string
 	}{
 		{
-			name: "пароль занят живым абонентом", cfgPass: "mainpass",
+			name:  "пароль занят живым абонентом",
 			users: []instancestore.ServerUser{{Password: "client1"}},
 			body:  `{"password":"client1"}`,
 			want:  "занят живым абонентом",
 		},
-		{
-			name: "пароль просроченного", cfgPass: "mainpass",
-			users: []instancestore.ServerUser{{Password: "client1", ExpiresAt: now.Add(-time.Hour).Unix()}},
-			body:  `{"password":"client1"}`,
-			want:  "просроченному абоненту",
-		},
-		{
-			name: "пароль совпадает с главным", cfgPass: "mainpass",
-			body: `{"password":"mainpass"}`,
-			want: "совпадает с главным паролем",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := baseCfg()
-			cfg.Password = tc.cfgPass
-			st := newStand(t, cfg, tc.users...)
+			st := newStand(t, baseCfg(), tc.users...)
 			_, msg, code := st.serve(t, http.MethodPost, tc.body)
 			if code != "WDTT_SERVER_CLIENT_ADD_FAILED" {
 				t.Fatalf("код = %q (сообщение %q)", code, msg)
@@ -289,18 +224,16 @@ func TestServe_RemoveOne(t *testing.T) {
 }
 
 func TestServe_RemoveRejections(t *testing.T) {
-	now := fixedNow()
 	cases := []struct {
 		name  string
 		users []instancestore.ServerUser
 		pass  string
 		want  string
 	}{
-		{"главный пароль", nil, "mainpass", "нельзя удалить основной пароль сервера"},
 		{"пустой пароль", []instancestore.ServerUser{{Password: "client1"}}, "  ", "пароль абонента не задан"},
 		{
 			"последний рабочий",
-			[]instancestore.ServerUser{{Password: "client1"}, {Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()}},
+			[]instancestore.ServerUser{{Password: "client1"}, {Password: "  "}},
 			"client1",
 			"нельзя удалить последнего рабочего абонента",
 		},
@@ -338,24 +271,12 @@ func TestServe_RemoveUnknownIsNoop(t *testing.T) {
 	}
 }
 
-// Выход из уже сломанного состояния разрешён: рабочих не было и до удаления.
-func TestServe_RemoveLastExpiredAllowed(t *testing.T) {
-	now := fixedNow()
-	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "stale", ExpiresAt: now.Add(-time.Hour).Unix()})
-	_, msg, code := st.serve(t, http.MethodDelete, "", "stale")
-	if code != "" {
-		t.Fatalf("ответ = %s / %s", code, msg)
-	}
-	if u := st.rec(t).Users; len(u) != 0 {
-		t.Fatalf("абоненты = %#v", u)
-	}
-}
-
+// Снос ВСЕХ проходит, только когда рабочих и так нет: непригодность после
+// снятия срока — это пустой пароль либо совпадение с главным.
 func TestServe_RemoveAll(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(),
-		instancestore.ServerUser{Password: "stale1", ExpiresAt: now.Add(-time.Hour).Unix()},
-		instancestore.ServerUser{Password: "stale2", ExpiresAt: now.Add(-time.Hour).Unix()},
+		instancestore.ServerUser{Password: "  "},
+		instancestore.ServerUser{Password: "   "},
 	)
 	got, msg, code := st.serve(t, http.MethodDelete, "")
 	if code != "" {
@@ -407,17 +328,16 @@ func TestServe_Rename(t *testing.T) {
 	}
 }
 
-// Переименование правит РОВНО имя: срок и хеш абонента остаются на месте.
+// Переименование правит РОВНО имя: хеш и признак авто остаются на месте.
 func TestServe_RenameKeepsOtherFields(t *testing.T) {
-	now := fixedNow()
 	st := newStand(t, baseCfg(), instancestore.ServerUser{
-		Password: "client1", Comment: "Иван", VkHash: "vk1", ExpiresAt: now.Add(time.Hour).Unix(), Auto: true,
+		Password: "client1", Comment: "Иван", VkHash: "vk1", Auto: true,
 	})
 	if _, _, code := st.serve(t, http.MethodPatch, `{"name":"Пётр"}`, "client1"); code != "" {
 		t.Fatalf("код = %q", code)
 	}
 	want := instancestore.ServerUser{
-		Password: "client1", Comment: "Пётр", VkHash: "vk1", ExpiresAt: now.Add(time.Hour).Unix(), Auto: true,
+		Password: "client1", Comment: "Пётр", VkHash: "vk1", Auto: true,
 	}
 	if got := st.rec(t).Users[0]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("абонент:\n получено %#v\n ожидалось %#v", got, want)

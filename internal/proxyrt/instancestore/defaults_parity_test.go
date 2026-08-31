@@ -167,7 +167,6 @@ func TestWdttClientConnModeCoercesUnknown(t *testing.T) {
 func TestWdttServerDefaultsMatchOldWorld(t *testing.T) {
 	r := Record{ID: "bare", Kind: KindWdttServer, Name: "S",
 		WdttServer: &roles.WdttServerConfig{
-			Password:  "  pw  ",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 			RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 		}}
@@ -193,10 +192,6 @@ func TestWdttServerDefaultsMatchOldWorld(t *testing.T) {
 	if c.RelayMode != "wg" {
 		t.Errorf("relayMode = %q, старый мир подставлял wg", c.RelayMode)
 	}
-	if c.Password != "pw" {
-		t.Errorf("password = %q, старый мир тримил его на каждой записи "+
-			"(пробел в WRAP-ключе молча ломает всех абонентов)", c.Password)
-	}
 	// Паритет serverConfigDir (wdtt/server.go:362-366). Пустой путь — не
 	// «дефолт бинаря», а отказ: писатель passwords.json fail-closed отвечает
 	// «писать некуда» (proxyapp/wdttusers/users.go:200-206), и сервер,
@@ -213,7 +208,6 @@ func TestWdttServerConfigDirMatchesSeedForm(t *testing.T) {
 	s := newStore(t)
 	r := Record{ID: "srv7", Kind: KindWdttServer, Name: "S",
 		WdttServer: &roles.WdttServerConfig{
-			Password:  "pw",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 			RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 		}}
@@ -234,7 +228,7 @@ func TestWdttServerConfigDirMatchesSeedForm(t *testing.T) {
 func TestWdttServerExplicitValuesSurvive(t *testing.T) {
 	r := Record{ID: "x", Kind: KindWdttServer, Name: "S",
 		WdttServer: &roles.WdttServerConfig{
-			Listen: "0.0.0.0:57002", WgPort: 57001, Password: "pw",
+			Listen: "0.0.0.0:57002", WgPort: 57001,
 			ConfigDir: "/opt/etc/awgm/custom",
 			NatMode:   "none", Policy: "Policy0", RelayMode: "raw",
 			NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
@@ -264,7 +258,7 @@ func TestWdttServerRelayModeCoercesUnknown(t *testing.T) {
 	} {
 		r := Record{ID: "rm", Kind: KindWdttServer, Name: "S",
 			WdttServer: &roles.WdttServerConfig{
-				Password: "pw", RelayMode: in,
+				RelayMode: in,
 				NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
 				RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 			}}

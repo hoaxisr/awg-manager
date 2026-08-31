@@ -47,7 +47,7 @@ func TestWdttClientArgsWgOmitsRawFlags(t *testing.T) {
 func TestWdttServerArgs(t *testing.T) {
 	c := WdttServerConfig{
 		Listen: "0.0.0.0:56000", WgPort: 51820, ConfigDir: "/opt/etc/wdtt",
-		Password: "main", NatIface: "", WgIface: "opkgtun17", RawIface: "opkgtun19",
+		WgIface: "opkgtun17", RawIface: "opkgtun19",
 		NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19",
 		RelayMode: "wg", NatMode: "full", Policy: "none",
 	}
@@ -56,7 +56,7 @@ func TestWdttServerArgs(t *testing.T) {
 	// безусловен (NAT наш), -dns = шлюз, который видят клиенты (PR #697, F1).
 	for _, want := range []string{
 		"-listen 0.0.0.0:56000", "-wg-port 51820", "-config-dir /opt/etc/wdtt",
-		"-password main", "-no-nat", "-wg-iface opkgtun17", "-raw-iface opkgtun19",
+		"-no-nat", "-wg-iface opkgtun17", "-raw-iface opkgtun19",
 		"-listen-raw 0.0.0.0:56001", "-dns 10.66.0.1",
 	} {
 		if !strings.Contains(got, want) {
@@ -65,11 +65,20 @@ func TestWdttServerArgs(t *testing.T) {
 	}
 }
 
-func TestWdttServerArgsRawRelayDNS(t *testing.T) {
-	c := WdttServerConfig{Listen: "0.0.0.0:56000", WgPort: 51820, Password: "x", RelayMode: "raw"}
-	got := strings.Join(WdttServerArgs(c), " ")
-	if !strings.Contains(got, "-dns 10.70.66.1") {
-		t.Fatalf("raw-relay: dns обязан быть адресом raw-шлюза, got %q", got)
+// Флаг -dns у форка один на обе половины, и режим связи его не выбирает:
+// абонент любой половины получает адрес роутера, а DNAT на его интерфейсе
+// переписывает запрос на шлюз своей половины. Прежде raw-режим подставлял
+// 10.70.66.1 — адрес, которого под менеджером на роутере не существует.
+func TestWdttServerArgsDNSIsRouterRegardlessOfRelayMode(t *testing.T) {
+	for _, mode := range []string{"wg", "raw"} {
+		c := WdttServerConfig{Listen: "0.0.0.0:56000", WgPort: 51820, RelayMode: mode}
+		got := strings.Join(WdttServerArgs(c), " ")
+		if !strings.Contains(got, "-dns 10.66.0.1") {
+			t.Fatalf("режим %q: dns обязан быть адресом роутера, got %q", mode, got)
+		}
+		if strings.Contains(got, "10.70.66.1") {
+			t.Fatalf("режим %q: 10.70.66.1 под менеджером не существует, got %q", mode, got)
+		}
 	}
 }
 
@@ -106,12 +115,12 @@ func TestValidateRejects(t *testing.T) {
 		{"клиент с нелокальным listen", "127.0.0.1", func() WdttClientConfig { c := rawClient(); c.Listen = "0.0.0.0:9000"; return c }()},
 		{"кривой режим не чинится молча", "mode", func() WdttClientConfig { c := rawClient(); c.Mode = "RAW"; return c }()},
 		{"internet-only без WAN", "natStaticWAN", WdttServerConfig{
-			Listen: "0.0.0.0:56000", Password: "x", NatMode: "internet-only", RelayMode: "wg"}},
+			Listen: "0.0.0.0:56000", NatMode: "internet-only", RelayMode: "wg"}},
 		{"сервер без WG-половины NDMS", "ndmsIface", WdttServerConfig{
-			Listen: "0.0.0.0:56000", Password: "x", NatMode: "full", RelayMode: "wg",
+			Listen: "0.0.0.0:56000", NatMode: "full", RelayMode: "wg",
 			RawIface: "opkgtun18", RawNdmsIface: "OpkgTun18"}},
 		{"сервер без raw-половины NDMS", "rawNdmsIface", WdttServerConfig{
-			Listen: "0.0.0.0:56000", Password: "x", NatMode: "full", RelayMode: "wg",
+			Listen: "0.0.0.0:56000", NatMode: "full", RelayMode: "wg",
 			WgIface: "opkgtun17", NdmsIface: "OpkgTun17"}},
 	}
 	for _, c := range cases {
@@ -159,12 +168,6 @@ func TestValidateServerWithoutOwnerPassword(t *testing.T) {
 		RawNdmsIface: "OpkgTun19", RawIface: "opkgtun19",
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("сервер без пароля владельца обязан быть валиден: %v", err)
-	}
-	// Заданный пароль тоже валиден: поле не удалено, просто перестало быть
-	// обязательным.
-	cfg.Password = "owner"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("сервер с паролем владельца: %v", err)
+		t.Fatalf("сервер обязан быть валиден: %v", err)
 	}
 }

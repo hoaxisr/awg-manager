@@ -108,7 +108,6 @@ function wdttClientCfg(over: Record<string, unknown> = {}) {
     listen: "127.0.0.1:9000",
     peer: "vps.example:56002",
     password: "",
-    passwordSet: true,
     vkHashes: "h1",
     workers: 9,
     obfs: "",
@@ -126,7 +125,6 @@ function wdttServerCfg(over: Record<string, unknown> = {}) {
     listen: "0.0.0.0:56002",
     wgPort: 56001,
     password: "",
-    passwordSet: true,
     natMode: "full",
     relayMode: "wg",
     openFirewall: true,
@@ -274,8 +272,10 @@ describe("Сценарий 2: инстанс без обязательного �
       await findByRole("heading", { name: "Сервер", level: 2 }),
     ).toBeTruthy();
 
-    await fireEvent.click(getByRole("button", { name: "Дополнительно" }));
-    const port = await findByLabelText("Порт DTLS");
+    // Настройки — в выдвижном ящике; обязательный порт лежит в основной его
+    // части, а не в «экспертном» разделе.
+    await fireEvent.click(getByRole("button", { name: "Настройки" }));
+    const port = await findByLabelText("Порт раздачи");
     await fireEvent.change(port, { target: { value: "56010" } });
     await fireEvent.click(getByRole("button", { name: "Сохранить" }));
 

@@ -317,9 +317,6 @@ func normalizeRecord(r *Record, dataDir string) {
 		if d.WgPort <= 0 {
 			d.WgPort = 56001
 		}
-		d.Password = strings.TrimSpace(d.Password)
-		d.AdminID = strings.TrimSpace(d.AdminID)
-		d.BotToken = strings.TrimSpace(d.BotToken)
 		// Паритет serverConfigDir (wdtt/server.go:362-366): пустой путь
 		// старый мир считал от каталога данных на каждом старте. Без дефолта
 		// сервер, созданный ручкой нового мира (конфиг приходит пустым),

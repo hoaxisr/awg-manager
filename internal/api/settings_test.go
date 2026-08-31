@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 )
 
 type testDownloadOutboundsProvider struct {
@@ -558,5 +559,38 @@ func TestPingCheckOnAllTunnels_SkipsWdttRawMirrors(t *testing.T) {
 	}
 	if gotMirror.PingCheck != nil && gotMirror.PingCheck.Enabled {
 		t.Fatal("на зеркальной записи проверка включена глобальным тумблером: пользователь её не выбирал")
+	}
+}
+
+// F10: отказ деривации ВНУТРИ мутатора store.Update должен отдаваться кодом
+// поля, а не глухим SETTINGS_SAVE_ERROR. Узкие мутаторы валидируемых полей не
+// пишут, поэтому отказ провоцируется конкурентной записью из фейка
+// порт-инспектора — он исполняется между черновой валидацией и записью.
+type corruptingInspector struct {
+	store *storage.SettingsStore
+}
+
+func (c corruptingInspector) InspectPort(int, string) ([]sysports.Binding, error) {
+	_ = c.store.Update(func(s *storage.Settings) error {
+		s.UsageLevel = "garbage" // мимо API такой не пройдёт — имитация будущего писателя
+		return nil
+	})
+	return nil, nil
+}
+
+func TestUpdate_MutatorDerivationFailureReportsFieldCode(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	h.SetClashPortInspector(corruptingInspector{store: store})
+
+	body := []byte(`{"singboxClashPort":9500}`)
+	req := httptest.NewRequest(http.MethodPost, "/settings/update", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INVALID_USAGE_LEVEL") {
+		t.Fatalf("ожидался код поля INVALID_USAGE_LEVEL, body=%s", rec.Body.String())
 	}
 }

@@ -4,6 +4,7 @@
 	import type { TunnelListItem } from '$lib/types';
 	import { Toggle, TrafficSparkline, TrafficChart, VersionBadge, StatusDot } from '$lib/components/ui';
 	import DefaultRouteBadge from './DefaultRouteBadge.svelte';
+	import ProxyOwnedBadge from './ProxyOwnedBadge.svelte';
 	import { TunnelListActions } from '$lib/components/ui';
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
@@ -297,6 +298,7 @@
 					{#if tunnel.backend}
 						<VersionBadge kind="backend" value={tunnel.backend} />
 					{/if}
+					<ProxyOwnedBadge {tunnel} />
 				</div>
 			</div>
 			<div class="dense-toolbar" title={statusHint || undefined}>
@@ -361,6 +363,7 @@
 						{#if tunnel.awgVersion}
 							<VersionBadge kind="awg" value={tunnel.awgVersion} />
 						{/if}
+						<ProxyOwnedBadge {tunnel} />
 					</div>
 					{#if view === 'compact' && headerStatusHint}
 						<span class="status-hint status-hint-left">{headerStatusHint}</span>

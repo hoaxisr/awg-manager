@@ -94,7 +94,7 @@ const oldWdttJSON = `{
     "enabled":false,"listen":"0.0.0.0:56002","password":"spw",
     "relayMode":"raw","natMode":"full","debug":true,
     "linkPeer":"77.1.2.3:56002","linkVkHashes":"lvh","statsLog":"disk",
-    "clients":[{"password":"u1","comment":"Петя","expiresAt":42,"auto":false},
+    "clients":[{"password":"u1","comment":"Петя","auto":false},
                {"password":"u2","comment":"","auto":true}],
     "ndmsIface":"OpkgTun20","wgIface":"opkgtun20",
     "rawNdmsIface":"OpkgTun21","rawIface":"opkgtun21"}}]
@@ -280,8 +280,8 @@ func TestSeedMigratesServerUsersAndLinkMeta(t *testing.T) {
 	if len(srv.Users) != 2 {
 		t.Fatalf("абоненты не посеяны: %+v", srv.Users)
 	}
-	if srv.Users[0].Password != "u1" || srv.Users[0].ExpiresAt != 42 || srv.Users[0].Comment != "Петя" {
-		t.Fatalf("поля абонента: %+v (ExpiresAt терять нельзя — воскресит отозванный доступ)", srv.Users[0])
+	if srv.Users[0].Password != "u1" || srv.Users[0].Comment != "Петя" {
+		t.Fatalf("поля абонента: %+v", srv.Users[0])
 	}
 	if !srv.Users[1].Auto {
 		t.Fatal("флаг auto обязан пережить посев (вычислить его нечем)")
@@ -1090,9 +1090,6 @@ const fullWdttJSON = `{
     "wgPort":56001,
     "configDir":"/opt/etc/awgm/wdtt-srv-1",
     "password":"pw-server",
-    "adminId":"admin-77",
-    "botToken":"bot-token-77",
-    "natIface":"ISP",
     "natMode":"internet-only",
     "natStaticWan":"ISP2","natStaticWans":["ISP2","ISP3"],
     "policy":"PolicyForServer",
@@ -1109,7 +1106,7 @@ const fullWdttJSON = `{
     "debug":true,
     "ingressEnabled":true,
     "clients":[{"password":"user-pw-1","comment":"Абонент один","vkHash":"vkhash-1",
-                "expiresAt":1700000001,"auto":true}],
+                "auto":true}],
     "linkPeer":"link.example:56002",
     "linkVkHashes":"link-vkh",
     "statsLog":"disk"}}]
@@ -1127,8 +1124,6 @@ const fullFreeturnJSON = `{
     "transport":"udp",
     "mode":"tcp",
     "bond":true,
-    "turnHost":"turn.example",
-    "turnPort":3478,
     "obfProfile":"rtpopus2",
     "obfKey":"ft-obf-key-client",
     "streamsPerCred":6,
@@ -1257,16 +1252,12 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 		"wdtt-server:srv-1": {
 			ID: "srv-1", Kind: KindWdttServer, Name: "Сервер раз", Enabled: true, SeededFrom: "wdtt.json",
 			Users: []ServerUser{{Password: "user-pw-1", Comment: "Абонент один",
-				VkHash: "vkhash-1", ExpiresAt: 1700000001, Auto: true}},
+				VkHash: "vkhash-1", Auto: true}},
 			LinkPeer: "link.example:56002", LinkVKHashes: "link-vkh", StatsLog: "disk",
 			WdttServer: &roles.WdttServerConfig{
 				Listen:           "0.0.0.0:56002",
 				WgPort:           56001,
 				ConfigDir:        "/opt/etc/awgm/wdtt-srv-1",
-				Password:         "pw-server",
-				AdminID:          "admin-77",
-				BotToken:         "bot-token-77",
-				NatIface:         "ISP",
 				WgIface:          "opkgtun20",
 				RawIface:         "opkgtun21",
 				NdmsIface:        "OpkgTun20",
@@ -1295,8 +1286,6 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				Transport:      "udp",
 				Mode:           "tcp",
 				Bond:           true,
-				TurnHost:       "turn.example",
-				TurnPort:       3478,
 				ObfProfile:     "rtpopus2",
 				ObfKey:         "ft-obf-key-client",
 				StreamsPerCred: 6,
