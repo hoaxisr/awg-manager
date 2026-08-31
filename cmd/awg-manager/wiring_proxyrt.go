@@ -107,9 +107,13 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
-// proxyOpkgOccupancy — занятость пула OpkgTun: живое (только /sys) плюс пины
+// opkgOccupancyAllOwners — занятость пула OpkgTun: живое (только /sys) плюс пины
 // ЧЕТЫРЁХ владельцев — записи AWG-туннелей, удерживающая запись настроек,
 // записи NDMS и записи прокси-инстансов.
+//
+// Состав — контракт для ВСЕХ, кто выдаёт номера (прокси, туннели), а не только
+// для прокси: на mips/mipsel пул общий, и поставщик, выпавший у одного
+// вызывающего, отдаёт ему чужой занятый номер как свободный.
 //
 // Состав собран здесь, а не в месте вызова, потому что он и есть контракт:
 // выпавший поставщик не ломает ни сборку, ни один прогон — он просто отдаёт
@@ -119,7 +123,7 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 // Записи NDMS приходят ОТДЕЛЬНЫМ поставщиком, а не половиной живого: после
 // `ip link del opkgtunN` запись живёт дальше со state error, устройства нет.
 // Номер занят, интерфейс мёртв, и одна карта на оба вопроса врёт.
-func proxyOpkgOccupancy(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
+func opkgOccupancyAllOwners(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
 	awg *storage.AWGTunnelStore, settings *storage.SettingsStore, store *instancestore.Store,
 ) storage.OpkgTunPins {
 	return storage.OpkgTunOccupancy(live,
@@ -128,6 +132,16 @@ func proxyOpkgOccupancy(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTu
 		ndmsPins,
 		proxyRecordPins(store),
 	)
+}
+
+// routerForeignOpkgPins — пины ЧУЖИХ владельцев для режимов роутера: записи
+// туннелей, записи NDMS без живого устройства и записи прокси-инстансов. Своя
+// удерживающая запись сюда не входит намеренно — она приходит из настроек, и
+// подмешивание её перепинило бы роутер сам на себя (см. Deps.OpkgTunPins).
+func routerForeignOpkgPins(awg *storage.AWGTunnelStore, ndmsPins storage.OpkgTunPins,
+	store *instancestore.Store,
+) storage.OpkgTunPins {
+	return storage.MergeOpkgTunPins(awg.OpkgTunPinsOf, ndmsPins, proxyRecordPins(store))
 }
 
 // proxyRecordPins — четвёртый поставщик пинов пула OpkgTun: записи
@@ -791,9 +805,9 @@ func (a *app) wireProxyrt() {
 	portAlloc := proxyrt.NewAllocator(proxyrt.IndexRange{
 		Min: roles.ListenPortMin, Max: roles.ListenPortMax})
 
-	// (2) Занятость пула OpkgTun (состав и его цена — proxyOpkgOccupancy).
+	// (2) Занятость пула OpkgTun (состав и его цена — opkgOccupancyAllOwners).
 	ndmsIfaces := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
-	occupancy := proxyOpkgOccupancy(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
+	occupancy := opkgOccupancyAllOwners(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
 		a.awgStore, a.settingsStore, store)
 	allocIndex := proxyAllocIndex(a.shutdownCtx, opkgAlloc, opkgMin, occupancy, store)
 	allocListen := proxyAllocListen(a.shutdownCtx, portAlloc, store, a.awgStore)

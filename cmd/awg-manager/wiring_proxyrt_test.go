@@ -90,7 +90,7 @@ func (e *occEnv) alloc(t *testing.T, live map[int]bool) func(string, int, bool) 
 func (e *occEnv) allocWithNDMS(t *testing.T, live map[int]bool, ndmsPins storage.OpkgTunPins) func(string, int, bool) (int, error) {
 	t.Helper()
 	min, max := mipsRange(t)
-	occ := proxyOpkgOccupancy(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
+	occ := opkgOccupancyAllOwners(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
 	return proxyAllocIndex(context.Background(),
 		proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store)
 }
@@ -764,7 +764,7 @@ func (fakeRunning) Stop()                       {}
 func newProdAllocManager(t *testing.T, e *occEnv) *manager.Manager {
 	t.Helper()
 	min, max := mipsRange(t)
-	occ := proxyOpkgOccupancy(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
+	occ := opkgOccupancyAllOwners(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
 		return nil, nil
 	}, e.awg, e.settings, e.store)
 	ctx := context.Background()

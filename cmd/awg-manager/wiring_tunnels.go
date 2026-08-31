@@ -90,19 +90,21 @@ func (a *app) setupTunnels() {
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
 
-	// Занятость номеров OpkgTun: живое (устройства в ядре) плюс пины трёх
-	// владельцев — записи туннелей, удерживающая запись настроек и записи
-	// NDMS. Последние отделены от живого намеренно: запись NDMS переживает
-	// удаление устройства (стенд 5.01.C.3.0-1), её номер занят, но интерфейс
-	// мёртв. Четвёртого владельца — записи инстансов прокси — добавит
-	// проводка нового рантайма, форма это допускает.
+	// Занятость номеров OpkgTun: живое (устройства в ядре) плюс пины ЧЕТЫРЁХ
+	// владельцев — записи туннелей, удерживающая запись настроек, записи NDMS
+	// и записи прокси-инстансов. Записи NDMS отделены от живого намеренно:
+	// запись NDMS переживает удаление устройства (стенд 5.01.C.3.0-1), её
+	// номер занят, но интерфейс мёртв. Состав — один на всех выдающих номера
+	// (opkgOccupancyAllOwners): на mips/mipsel пул общий, и выпавший
+	// поставщик отдал бы чужой занятый номер как свободный.
 	opkgIndices := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
 	a.opkgNDMSPins = opkgIndices.NDMSOpkgTunPins
-	a.opkgTunOccupancy = storage.OpkgTunOccupancy(
+	a.opkgTunOccupancy = opkgOccupancyAllOwners(
 		opkgIndices,
-		a.awgStore.OpkgTunPinsOf,
-		a.settingsStore.OpkgTunPinsOf,
 		opkgIndices.NDMSOpkgTunPins,
+		a.awgStore,
+		a.settingsStore,
+		a.proxyStore,
 	)
 	a.tunnelService.SetOpkgTunOccupancy(a.opkgTunOccupancy)
 
