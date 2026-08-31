@@ -1575,10 +1575,7 @@ func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled
 	// both false, exactly like the real fakeip-tun path (no chains installed).
-	h.svc.deps.IPTables = &IPTables{
-		runIPTables:    func(context.Context, ...string) error { return errors.New("no chain") },
-		runIPTablesOut: func(context.Context, ...string) (string, error) { return "", errors.New("no chain") },
-	}
+	h.svc.deps.IPTables = errProbeIPTables()
 
 	// First Reconcile: Enabled=false initially → nothing. We must first Enable so
 	// settings.Enabled flips true and the index is provisioned.

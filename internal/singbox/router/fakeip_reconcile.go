@@ -47,6 +47,35 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 		return s.Disable(ctx)
 	}
 
+	// Первотиковый свип чужого netfilter (зеркало policytun_reconcile.go и
+	// reconcileInstalled): после рестарта демона могли выжить AWGM-цепочки
+	// прежнего tproxy-режима — в fakeip они заворачивают policy-трафик в порт
+	// без слушателя, и не лечит их никто, потому что fakeip своего netfilter
+	// не ставит вовсе. Провал Uninstall внутри Disable этого не ловит: он
+	// проглатывается warn-and-continue, а сам Uninstall сегодня ВСЕГДА
+	// возвращает nil (F79) — то есть первый же тихий сбой невидим.
+	//
+	// Собственные ingress-ресурсы fakeip свип не задевает: у них свои теги
+	// (AWGM-FAKEIP-INGRESS), таблица 700 и приоритет 29000, а Uninstall
+	// снимает цепочки перехвата, теги DNS-RESCUE/NOPOLICY/INGRESS и table 100.
+	// Плюс ensureFakeIPIngress идёт в этом же тике ПОСЛЕ — реассерт.
+	if s.deps.IPTables != nil {
+		s.mu.Lock()
+		force := !s.netfilterStateKnown
+		s.mu.Unlock()
+		if force {
+			if err := s.deps.IPTables.Uninstall(ctx); err != nil {
+				// Сегодня недостижимо (F79) — ветка на будущее, когда шаги
+				// Uninstall станут честными. Зеркалит обоих вызывающих.
+				s.appLog.Warn("fakeip-reconcile", "", "iptables uninstall: "+err.Error())
+			} else {
+				s.mu.Lock()
+				s.netfilterStateKnown = true
+				s.mu.Unlock()
+			}
+		}
+	}
+
 	// LiveOpkgTunIndices probes which opkgtun ifaces actually exist on the box.
 	// Capture the error (Fix B4): a TRANSIENT probe failure (NDMS glitch mid-reload)
 	// must NOT be read as "the iface is gone" — that would trigger a full Enable
