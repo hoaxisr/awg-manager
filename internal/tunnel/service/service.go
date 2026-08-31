@@ -122,6 +122,5 @@ type TunnelWithStatus struct {
 	ISPInterface  string           `json:"ispInterface,omitempty"`
 	InterfaceName string           `json:"interfaceName"`           // Kernel interface name (opkgtun0 on OS5, awg0 on OS4, nwgN for NativeWG)
 	NDMSName      string           `json:"ndmsName,omitempty"`      // NDMS interface name (WireguardN), NativeWG only — how SSE events key per tunnel
-	ConfigPreview string           `json:"configPreview,omitempty"` // Generated .conf content for display
 	Backend       string           `json:"backend"`                 // "nativewg" | "kernel"
 }

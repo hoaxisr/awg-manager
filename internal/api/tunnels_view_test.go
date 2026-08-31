@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -22,8 +21,9 @@ func (s *viewStubSvc) Get(context.Context, string) (*service.TunnelWithStatus, e
 	return s.got, nil
 }
 
-// F56: GET-ответ туннеля не несёт ключевого материала — ни в interface, ни во
-// втором канале configPreview (тот же ключ печатает config.Generate).
+// F56: GET-ответ туннеля не несёт ключевого материала в interface.
+// F71: и самого поля configPreview в ответе больше нет — фронт его не читал,
+// а генерация .conf на каждый GET была мёртвой работой.
 func TestBuildTunnelResponse_RedactsSecrets(t *testing.T) {
 	const priv = "real-private-secret"
 	const psk = "real-preshared-secret"
@@ -45,7 +45,6 @@ func TestBuildTunnelResponse_RedactsSecrets(t *testing.T) {
 	}
 	svc := &viewStubSvc{got: &service.TunnelWithStatus{
 		ID: "awg1", Name: "t1",
-		ConfigPreview: "[Interface]\nPrivateKey = " + priv + "\nAddress = 10.0.0.2/32\n\n[Peer]\nPresharedKey = " + psk + "\n",
 	}}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/awg1", nil)
@@ -66,14 +65,7 @@ func TestBuildTunnelResponse_RedactsSecrets(t *testing.T) {
 		t.Errorf("interface = %+v, want адрес/MTU/обфускацию на месте", iface)
 	}
 
-	preview, _ := resp["configPreview"].(string)
-	if strings.Contains(preview, priv) {
-		t.Errorf("configPreview несёт приватный ключ: %q", preview)
-	}
-	if strings.Contains(preview, psk) {
-		t.Errorf("configPreview несёт preshared-ключ: %q", preview)
-	}
-	if !strings.Contains(preview, "Address = 10.0.0.2/32") {
-		t.Errorf("configPreview потерял несекретные строки: %q", preview)
+	if _, ok := resp["configPreview"]; ok {
+		t.Errorf("configPreview остался в ответе: %v", resp["configPreview"])
 	}
 }

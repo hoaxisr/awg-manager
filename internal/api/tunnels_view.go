@@ -162,7 +162,6 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		"ispInterface":  ispIface,
 		"interfaceName": t.InterfaceName,
 		"ndmsName":      t.NDMSName,
-		"configPreview": redactConfSecrets(t.ConfigPreview),
 		"state":         displayStatus(t.StateInfo, quiescentUntil, time.Now()),
 		"stateInfo":     t.StateInfo,
 	}
@@ -399,21 +398,3 @@ func (h *TunnelsHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// redactConfSecrets вырезает ключевой материал из .conf-превью: тот же ключ,
-// что и в interface.privateKey, печатает config.Generate вторым каналом.
-// Превью — только для показа, в merge оно не эхается, поэтому маскируется и
-// PresharedKey. Настоящий .conf отдаёт отдельная ручка скачивания.
-func redactConfSecrets(conf string) string {
-	if conf == "" {
-		return conf
-	}
-	lines := strings.Split(conf, "\n")
-	for i, line := range lines {
-		for _, key := range []string{"PrivateKey", "PresharedKey"} {
-			if strings.HasPrefix(strings.TrimSpace(line), key+" =") {
-				lines[i] = key + " = ***"
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
-}

@@ -87,7 +87,6 @@ export interface AWGTunnel {
 	ispInterface?: string;
 	ispInterfaceLabel?: string;
 	interfaceName?: string;
-	configPreview?: string;
 	state?: string;
 	stateInfo?: TunnelStateInfo;
 	interface: AWGInterface;
