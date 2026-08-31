@@ -6,7 +6,7 @@ import type {
 	WdttInstanceStatus,
 	WdttProcessStatus,
 } from '$lib/types';
-import { exitRows } from './rows';
+import { exitRows, rowKeyFromInstanceKey } from './rows';
 
 function instance(id: string, running: boolean, lastError?: string): WdttInstanceStatus {
 	const status: WdttProcessStatus = { running, lastError, binary: 'wdtt', binaryPresent: true };
@@ -57,5 +57,48 @@ describe('exitRows: состояние строки', () => {
 	it('остановлен без ошибки — «Остановлен»', () => {
 		const rows = exitRows(sources([instance('a', false)], [client('a', false)]));
 		expect(rows[0].state).toBe('stopped');
+	});
+});
+
+describe('rowKeyFromInstanceKey: ключ бэкенда → ключ строки', () => {
+	it('клиент wdtt', () => {
+		expect(rowKeyFromInstanceKey('wdtt-client:nl')).toEqual({
+			key: 'wdtt:client:nl',
+			role: 'client',
+		});
+	});
+
+	it('клиент freeturn', () => {
+		expect(rowKeyFromInstanceKey('freeturn-client:default')).toEqual({
+			key: 'freeturn:client:default',
+			role: 'client',
+		});
+	});
+
+	it('серверы обоих протоколов', () => {
+		expect(rowKeyFromInstanceKey('wdtt-server:default')).toEqual({
+			key: 'wdtt:server:default',
+			role: 'server',
+		});
+		expect(rowKeyFromInstanceKey('freeturn-server:s2')).toEqual({
+			key: 'freeturn:server:s2',
+			role: 'server',
+		});
+	});
+
+	it('ключ строки совпадает с тем, что собирает exitRows', () => {
+		const rows = exitRows(sources([instance('nl', true)], [client('nl', true)]));
+		expect(rowKeyFromInstanceKey('wdtt-client:nl')?.key).toBe(rows[0].key);
+	});
+
+	it('неизвестный вид, пустой id и мусор — null', () => {
+		expect(rowKeyFromInstanceKey('singbox-client:nl')).toBeNull();
+		expect(rowKeyFromInstanceKey('wdtt-client:')).toBeNull();
+		expect(rowKeyFromInstanceKey('wdtt-client')).toBeNull();
+		expect(rowKeyFromInstanceKey('')).toBeNull();
+	});
+
+	it('двоеточие в id ключ не рвёт', () => {
+		expect(rowKeyFromInstanceKey('wdtt-client:a:b')?.key).toBe('wdtt:client:a:b');
 	});
 });

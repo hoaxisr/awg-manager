@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { page } from '$app/stores';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { PageContainer, PageHeader, LoadingSpinner } from '$lib/components/layout';
@@ -15,6 +16,7 @@
 		normalizeShareConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
+		rowKeyFromInstanceKey,
 		seedGateWarning,
 		seedListenMoveNotice,
 		shareRows,
@@ -35,7 +37,13 @@
 
 	type TabId = 'exit' | 'share';
 
-	let activeTab = $state<TabId>('exit');
+	/**
+	 * Глубокая ссылка с карточки туннеля: `?instance=<ключ инстанса бэкенда>`.
+	 * Читаем один раз при инициализации — дальше выбором владеет страница.
+	 */
+	const deepLink = rowKeyFromInstanceKey($page.url.searchParams.get('instance') ?? '');
+
+	let activeTab = $state<TabId>(deepLink?.role === 'server' ? 'share' : 'exit');
 	let loading = $state(true);
 	let loadError = $state('');
 
@@ -52,8 +60,8 @@
 	 */
 	let seed = $state<ProxySeedView | null>(null);
 	let tunnels = $state<TunnelListItem[]>([]);
-	let selectedExitKey = $state<string | null>(null);
-	let selectedShareKey = $state<string | null>(null);
+	let selectedExitKey = $state<string | null>(deepLink?.role === 'client' ? deepLink.key : null);
+	let selectedShareKey = $state<string | null>(deepLink?.role === 'server' ? deepLink.key : null);
 	/** Мастер «Выхода», открытый явно: кнопкой списка (новый) или «Мастер». */
 	let exitWizard = $state<'new' | 'instance' | null>(null);
 	/** Мастер «Раздачи», открытый явно: кнопкой списка (новый) или «Мастер». */
@@ -72,6 +80,8 @@
 	const selectedShare = $derived(shares.find((r) => r.key === selectedShareKey) ?? null);
 
 	// Выбор не переживает удаление инстанса — уводим на первую строку вкладки.
+	// Предвыбор из глубокой ссылки эффект не трогает: пока такая строка в
+	// данных есть, условие ложно; если инстанс уже удалён — падаем на первую.
 	$effect(() => {
 		if (exits.length > 0 && !exits.some((r) => r.key === selectedExitKey)) {
 			selectedExitKey = exits[0].key;

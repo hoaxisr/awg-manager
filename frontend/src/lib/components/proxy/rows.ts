@@ -105,6 +105,36 @@ function toRow(
   };
 }
 
+/**
+ * Вид записи бэкенда → протокол и роль строки. Форматы ключей разошлись:
+ * бэкенд слил протокол с ролью через дефис (`Record.Key()` —
+ * `internal/proxyrt/instancestore/record.go:110`), у строки это отдельные
+ * звенья. Набор закрыт — `instancestore.AllKinds`.
+ */
+const INSTANCE_KINDS: Record<string, { protocol: ProxyProtocol; role: ProxyRole }> = {
+	'wdtt-client': { protocol: 'wdtt', role: 'client' },
+	'wdtt-server': { protocol: 'wdtt', role: 'server' },
+	'freeturn-client': { protocol: 'freeturn', role: 'client' },
+	'freeturn-server': { protocol: 'freeturn', role: 'server' },
+};
+
+/**
+ * Ключ строки списка по ключу инстанса бэкенда (`kind:id`) — им адресует
+ * глубокая ссылка с карточки туннеля (`ProxyOwnedBadge`). Роль отдаём
+ * вместе с ключом: по ней страница выбирает вкладку. null — вид роли
+ * неизвестен или id пуст.
+ */
+export function rowKeyFromInstanceKey(
+	instanceKey: string,
+): { key: string; role: ProxyRole } | null {
+	const sep = instanceKey.indexOf(':');
+	if (sep < 0) return null;
+	const kind = INSTANCE_KINDS[instanceKey.slice(0, sep)];
+	const id = instanceKey.slice(sep + 1);
+	if (!kind || !id) return null;
+	return { key: `${kind.protocol}:${kind.role}:${id}`, role: kind.role };
+}
+
 /** Порт из адреса `host:port`; пусто — адреса нет или он без порта. */
 function portOf(addr?: string): string {
 	const p = (addr ?? '').trim().split(':').pop() ?? '';
