@@ -204,7 +204,7 @@ func (s *Service) materialize(rec instancestore.Record, mainOverride string) err
 		// log.Fatalf, — а симлинк журнала лёг бы в текущий каталог демона.
 		return fmt.Errorf("инстанс %s: не задан configDir сервера — passwords.json писать некуда", rec.Key())
 	}
-	sanitized, err := syncPasswordsJSON(dir, main, cfg.AdminID, cfg.BotToken, rec.Users, s.now())
+	sanitized, err := syncPasswordsJSON(dir, main, rec.Users, s.now())
 	if err != nil {
 		return err
 	}

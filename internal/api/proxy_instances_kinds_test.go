@@ -24,7 +24,7 @@ import (
 func TestKinds_ProxySecretsClassified(t *testing.T) {
 	want := map[instancestore.Kind][]string{
 		instancestore.KindWdttClient:     {"password"},
-		instancestore.KindWdttServer:     {"password", "botToken"},
+		instancestore.KindWdttServer:     {"password"},
 		instancestore.KindFreeTurnClient: {"obfKey"},
 		instancestore.KindFreeTurnServer: {"obfKey"},
 	}

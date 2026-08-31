@@ -308,9 +308,6 @@ func inputPorts(c roles.WdttServerConfig) []netres.PortSpec {
 	}
 	add(c.Listen)
 	add(c.EffectiveRawListen())
-	if d := c.DirectListen; d != "" && d != c.Listen {
-		add(d)
-	}
 	return dedupePorts(out)
 }
 

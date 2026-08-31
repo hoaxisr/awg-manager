@@ -33,8 +33,6 @@ const (
 // passwordsJSON mirrors SpaceNeuroX monolith passwords.json (minimal headless subset).
 type passwordsJSON struct {
 	MainPassword string                       `json:"main_password"`
-	AdminID      string                       `json:"admin_id,omitempty"`
-	BotToken     string                       `json:"bot_token,omitempty"`
 	Passwords    map[string]passwordsJSONUser `json:"passwords"`
 	Devices      map[string]any               `json:"devices"`
 }
@@ -275,7 +273,7 @@ func dropOrphanPasswordsDevices(devices map[string]any, passwords map[string]pas
 // Записи абонентов МЕРЖАТСЯ поверх лежащих в файле: is_deactivated, device_ids,
 // max_devices, expires_at, счётчики трафика и ports принадлежат серверу, наши —
 // только label и vk_hash.
-func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken string, users []instancestore.ServerUser, now time.Time) (passwordsJSON, bool, error) {
+func preparePasswordsJSONForServer(configDir, mainPassword string, users []instancestore.ServerUser, now time.Time) (passwordsJSON, bool, error) {
 	existing, err := loadPasswordsJSON(configDir)
 	if err != nil {
 		return passwordsJSON{}, false, err
@@ -283,8 +281,6 @@ func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken st
 	devices, sanitized := sanitizePasswordsDevices(existing.Devices)
 	doc := passwordsJSON{
 		MainPassword: strings.TrimSpace(mainPassword),
-		AdminID:      strings.TrimSpace(adminID),
-		BotToken:     strings.TrimSpace(botToken),
 		Passwords:    map[string]passwordsJSONUser{},
 		Devices:      devices,
 	}
@@ -312,7 +308,7 @@ func preparePasswordsJSONForServer(configDir, mainPassword, adminID, botToken st
 
 // syncPasswordsJSON writes passwords.json — the auth source of wdtt-server.
 // Второе значение — «вычищены устройства с IP шлюза», для журнала.
-func syncPasswordsJSON(configDir, mainPassword, adminID, botToken string, users []instancestore.ServerUser, now time.Time) (bool, error) {
+func syncPasswordsJSON(configDir, mainPassword string, users []instancestore.ServerUser, now time.Time) (bool, error) {
 	dir := strings.TrimSpace(configDir)
 	if dir == "" {
 		return false, nil
@@ -320,7 +316,7 @@ func syncPasswordsJSON(configDir, mainPassword, adminID, botToken string, users 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return false, err
 	}
-	doc, sanitized, err := preparePasswordsJSONForServer(dir, mainPassword, adminID, botToken, users, now)
+	doc, sanitized, err := preparePasswordsJSONForServer(dir, mainPassword, users, now)
 	if err != nil {
 		return false, err
 	}

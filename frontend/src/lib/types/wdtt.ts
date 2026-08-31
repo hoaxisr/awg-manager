@@ -47,10 +47,7 @@ export interface WdttServerConfig {
 	/** Пароль сервера задан на бэкенде — значение наружу не отдаётся (Н5). */
 	passwordSet?: boolean;
 	configDir?: string;
-	adminId?: string;
-	botToken?: string;
 	/** Токен бота задан на бэкенде — значение наружу не отдаётся (Н5). */
-	botTokenSet?: boolean;
 	debug?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	natStaticWan?: string;
@@ -61,7 +58,6 @@ export interface WdttServerConfig {
 	policy?: string;
 	lanSegments?: string[];
 	ingressEnabled?: boolean;
-	natIface?: string;
 	/** Kernel WG dev (opkgtunN); пусто → legacy wdtt0 */
 	wgIface?: string;
 	/** Kernel raw dev (opkgtunN); пусто → legacy wdttraw0 (`kernelRawIface`) */
@@ -75,7 +71,6 @@ export interface WdttServerConfig {
 	/** UDP-порт Raw (-listen-raw). Пусто → DTLS+1 */
 	rawListen?: string;
 	/** WG peer-порт (-listen-direct, WRAP без DTLS). Пусто → DTLS-порт */
-	directListen?: string;
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
 	linkPeer?: string;
 	linkVkHashes?: string;

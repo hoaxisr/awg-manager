@@ -129,9 +129,6 @@ type oldWdttServer struct {
 	WgPort       int    `json:"wgPort"`
 	ConfigDir    string `json:"configDir"`
 	Password     string `json:"password"`
-	AdminID      string `json:"adminId"`
-	BotToken     string `json:"botToken"`
-	NatIface     string `json:"natIface"`
 	NatMode      string `json:"natMode"`
 	NatStaticWAN string `json:"natStaticWan"`
 	// NatStaticWANs — форма списка (develop, PR #750). Старые записи её не
@@ -146,7 +143,6 @@ type oldWdttServer struct {
 	OpenFirewall     *bool             `json:"openFirewall"`
 	RelayMode        string            `json:"relayMode"`
 	RawListen        string            `json:"rawListen"`
-	DirectListen     string            `json:"directListen"`
 	NdmsIface        string            `json:"ndmsIface"`
 	WgIface          string            `json:"wgIface"`
 	RawNdmsIface     string            `json:"rawNdmsIface"`
@@ -187,8 +183,6 @@ type oldFreeturnClient struct {
 	Transport      string `json:"transport"`
 	Mode           string `json:"mode"`
 	Bond           bool   `json:"bond"`
-	TurnHost       string `json:"turnHost"`
-	TurnPort       int    `json:"turnPort"`
 	ObfProfile     string `json:"obfProfile"`
 	ObfKey         string `json:"obfKey"`
 	StreamsPerCred int    `json:"streamsPerCred"`
@@ -309,9 +303,9 @@ func listenPortOf(addr string) (int, bool) {
 	return n, true
 }
 
-// listenAddrs — все адреса прослушивания записи. Серверные RawListen и
-// DirectListen тоже здесь: порт роутера они занимают наравне с остальными, и
-// выдать его переезжающему клиенту нельзя.
+// listenAddrs — все адреса прослушивания записи. Серверный RawListen тоже
+// здесь: порт роутера он занимает наравне с остальными, и выдать его
+// переезжающему клиенту нельзя.
 func listenAddrs(r Record) []string {
 	switch {
 	case r.WdttClient != nil:
@@ -319,7 +313,7 @@ func listenAddrs(r Record) []string {
 	case r.FreeTurnClient != nil:
 		return []string{r.FreeTurnClient.Listen}
 	case r.WdttServer != nil:
-		return []string{r.WdttServer.Listen, r.WdttServer.RawListen, r.WdttServer.DirectListen}
+		return []string{r.WdttServer.Listen, r.WdttServer.RawListen}
 	case r.FreeTurnServer != nil:
 		return []string{r.FreeTurnServer.Listen}
 	}
@@ -559,11 +553,11 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		o := s.Config
 		cfg := roles.WdttServerConfig{
 			Listen: o.Listen, WgPort: o.WgPort, ConfigDir: o.ConfigDir,
-			Password: o.Password, AdminID: o.AdminID, BotToken: o.BotToken,
-			NatIface: o.NatIface, NatMode: o.NatMode, NatStaticWAN: o.NatStaticWAN,
+			Password: o.Password,
+			NatMode:  o.NatMode, NatStaticWAN: o.NatStaticWAN,
 			NatStaticWANs: o.NatStaticWANs,
 			Policy:        o.Policy, LanSegments: o.LanSegments,
-			RelayMode: o.RelayMode, RawListen: o.RawListen, DirectListen: o.DirectListen,
+			RelayMode: o.RelayMode, RawListen: o.RawListen,
 			ExposeToPolicies: o.ExposeToPolicies,
 			Debug:            o.Debug, // Г-1 №3: тумблер пользователя
 			OpenFirewall:     openFirewall(o.OpenFirewall),
@@ -613,7 +607,6 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			Enabled: o.Enabled, SeededFrom: ftSrc, FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen: o.Listen, Peer: o.Peer, Provider: o.Provider, Links: o.Links,
 				Streams: o.Streams, Transport: o.Transport, Mode: o.Mode, Bond: o.Bond,
-				TurnHost: o.TurnHost, TurnPort: o.TurnPort,
 				ObfProfile: o.ObfProfile, ObfKey: o.ObfKey,
 				StreamsPerCred: o.StreamsPerCred, Platform: o.Platform,
 				DNSMode: o.DNSMode, DNSServers: o.DNSServers,

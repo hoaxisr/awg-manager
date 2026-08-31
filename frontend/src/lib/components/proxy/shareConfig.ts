@@ -31,8 +31,6 @@ export type ShareInstance = WdttServerInstance | FreeTurnServerInstance;
 
 const WDTT_SERVER_OPTIONAL_STRINGS: readonly (keyof WdttServerConfig)[] = [
 	'configDir',
-	'adminId',
-	'botToken',
 ];
 
 const FT_SERVER_OPTIONAL_STRINGS: readonly (keyof FreeTurnServerConfig)[] = [
@@ -99,11 +97,6 @@ export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
 		{ listen: setListenPort(cfg.listen || `${host}:${dtls}`, dtls, host), label: 'DTLS', port: dtls },
 		{ listen: setListenPort(`${rawHost}:${rawPort}`, rawPort, rawHost), label: 'Raw', port: rawPort },
 	];
-	const direct = cfg.directListen?.trim();
-	if (direct && listenPortNumber(direct, 0) !== dtls) {
-		const port = listenPortNumber(direct, dtls);
-		ports.push({ listen: direct, label: 'Direct', port });
-	}
 	return ports;
 }
 

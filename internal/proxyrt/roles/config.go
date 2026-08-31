@@ -185,15 +185,11 @@ type WdttServerConfig struct {
 	WgPort       int    `json:"wgPort,omitempty"`
 	ConfigDir    string `json:"configDir,omitempty"`
 	Password     string `json:"password"`
-	AdminID      string `json:"adminId,omitempty"`
-	BotToken     string `json:"botToken,omitempty"`
-	NatIface     string `json:"natIface,omitempty"`
 	WgIface      string `json:"wgIface,omitempty"`      // opkgtunN (пин)
 	RawIface     string `json:"rawIface,omitempty"`     // opkgtunM (пин)
 	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTunN
 	RawNdmsIface string `json:"rawNdmsIface,omitempty"` // OpkgTunM
 	RawListen    string `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
-	DirectListen string `json:"directListen,omitempty"`
 	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — только режим генерации ссылки; на процесс не влияет
 	NatMode      string `json:"natMode,omitempty"`      // full|internet-only|none
 	NatStaticWAN string `json:"natStaticWan,omitempty"` // legacy: одиночный WAN; читается через StaticNATList
@@ -302,8 +298,6 @@ type FreeTurnClientConfig struct {
 	Transport      string `json:"transport,omitempty"`
 	Mode           string `json:"mode,omitempty"`
 	Bond           bool   `json:"bond,omitempty"`
-	TurnHost       string `json:"turnHost,omitempty"`
-	TurnPort       int    `json:"turnPort,omitempty"`
 	ObfProfile     string `json:"obfProfile,omitempty"`
 	ObfKey         string `json:"obfKey,omitempty"`
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`

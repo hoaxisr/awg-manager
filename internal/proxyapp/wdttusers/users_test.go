@@ -192,7 +192,6 @@ func (s *stand) file(t *testing.T) passwordsJSON {
 func baseCfg() roles.WdttServerConfig {
 	return roles.WdttServerConfig{
 		Listen: "0.0.0.0:56000", WgPort: 56001, Password: "mainpass",
-		AdminID: "42", BotToken: "bot:token",
 		WgIface: "opkgtun17", NdmsIface: "OpkgTun17",
 		RawIface: "opkgtun18", RawNdmsIface: "OpkgTun18",
 		RelayMode: "wg", NatMode: "full",
@@ -212,8 +211,6 @@ func TestMaterialize_MergesServerOwnedFields(t *testing.T) {
 	})
 	writePasswordsFixture(t, st.dir, passwordsJSON{
 		MainPassword: "старый-главный",
-		AdminID:      "старый-админ",
-		BotToken:     "старый-бот",
 		Passwords: map[string]passwordsJSONUser{
 			"client1": {
 				Label:         "старое имя",
@@ -257,7 +254,7 @@ func TestMaterialize_MergesServerOwnedFields(t *testing.T) {
 		t.Fatalf("слияние потеряло серверные поля:\n получено %#v\n ожидалось %#v", got.Passwords, want)
 	}
 	// Заголовок файла — из записи, целиком.
-	if got.MainPassword != "mainpass" || got.AdminID != "42" || got.BotToken != "bot:token" {
+	if got.MainPassword != "mainpass" {
 		t.Fatalf("заголовок файла = %#v", got)
 	}
 	// Привязка абонента к адресам 10.66.0.x пережила материализацию.

@@ -21,8 +21,6 @@ describe('normalizeWdttServerConfig: поля с omitempty', () => {
 	it('заполняет строки, на которые смотрит bind:value', () => {
 		const cfg = normalizeWdttServerConfig(wdtt());
 		expect(cfg.configDir).toBe('');
-		expect(cfg.adminId).toBe('');
-		expect(cfg.botToken).toBe('');
 	});
 
 	it('не трогает union-поля: пустая строка сломала бы их семантику', () => {
@@ -47,14 +45,8 @@ describe('wdttServerPorts', () => {
 		expect(ports[1].listen).toBe('0.0.0.0:56010');
 	});
 
-	it('Direct не показывается, пока совпадает с DTLS', () => {
-		const ports = wdttServerPorts(wdtt({ directListen: '0.0.0.0:56002' }));
-		expect(ports.some((p) => p.label === 'Direct')).toBe(false);
-	});
-
-	it('отличный Direct-порт добавляет третью строку', () => {
-		const ports = wdttServerPorts(wdtt({ directListen: '0.0.0.0:56005' }));
-		expect(ports[2]).toMatchObject({ label: 'Direct', port: 56005 });
+	it('строк ровно две: DTLS и Raw', () => {
+		expect(wdttServerPorts(wdtt()).map((p) => p.label)).toEqual(['DTLS', 'Raw']);
 	});
 });
 

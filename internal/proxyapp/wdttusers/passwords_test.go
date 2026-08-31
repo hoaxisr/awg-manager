@@ -58,7 +58,7 @@ func TestPreparePasswordsJSONForServer_PreservesDevices(t *testing.T) {
 		},
 	}
 	writePasswordsFixture(t, dir, existing)
-	doc, sanitized, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, sanitized, err := preparePasswordsJSONForServer(dir, "main", []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
 	}, time.Now())
 	if err != nil {
@@ -106,7 +106,7 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 			"bad": map[string]any{"ip": wdttServerGatewayAddr},
 		},
 	})
-	sanitized, err := syncPasswordsJSON(dir, "main", "", "", []instancestore.ServerUser{{Password: "client1"}}, time.Now())
+	sanitized, err := syncPasswordsJSON(dir, "main", []instancestore.ServerUser{{Password: "client1"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSyncPasswordsJSON_DropsGatewayDevice(t *testing.T) {
 // уже существующего файла не меняет.
 func TestSyncPasswordsJSON_CreatesOwnerOnlyFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "cfg")
-	if _, err := syncPasswordsJSON(dir, "main", "", "", []instancestore.ServerUser{{Password: "client1"}}, time.Now()); err != nil {
+	if _, err := syncPasswordsJSON(dir, "main", []instancestore.ServerUser{{Password: "client1"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(passwordsJSONPath(dir))
@@ -151,7 +151,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 	dir := t.TempDir()
 	users := []instancestore.ServerUser{{Password: "client1"}}
 
-	first, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+	first, err := syncPasswordsJSON(dir, "main", users, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 		t.Fatal("первая запись: sanitized = true на пустом файле")
 	}
 	for i := 2; i <= 3; i++ {
-		got, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+		got, err := syncPasswordsJSON(dir, "main", users, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +176,7 @@ func TestSyncPasswordsJSON_SanitizedIgnoresOwnGatewayReservation(t *testing.T) {
 	}
 	doc.Devices["dev-abonenta"] = map[string]any{"ip": wdttServerGatewayAddr}
 	writePasswordsFixture(t, dir, doc)
-	got, err := syncPasswordsJSON(dir, "main", "", "", users, time.Now())
+	got, err := syncPasswordsJSON(dir, "main", users, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestUsableUsers_SkipsEmptyMainAndExpired(t *testing.T) {
 func TestPreparePasswordsJSON_SkipsExpiredUser(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	doc, _, err := preparePasswordsJSONForServer(dir, "  main  ", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, "  main  ", []instancestore.ServerUser{
 		{Password: "dead", ExpiresAt: now.Add(-time.Hour).Unix()},
 		{Password: "alive", ExpiresAt: now.Add(time.Hour).Unix()},
 	}, now)
@@ -320,7 +320,7 @@ func TestPreparePasswordsJSON_KeepsLiveFieldsOfExistingUser(t *testing.T) {
 			"client2": {Label: "имя из бота"},
 		},
 	})
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
 		{Password: "client2"},
 	}, time.Now())
@@ -350,7 +350,7 @@ func TestPreparePasswordsJSON_KeepsLiveFieldsOfExistingUser(t *testing.T) {
 
 func TestPreparePasswordsJSON_WritesLabelNotComment(t *testing.T) {
 	dir := t.TempDir()
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", []instancestore.ServerUser{
 		{Password: "client1", Comment: "Иван"},
 	}, time.Now())
 	if err != nil {
@@ -383,7 +383,7 @@ func TestPreparePasswordsJSON_DropsOrphanDevices(t *testing.T) {
 			gatewayReserveDeviceID: map[string]any{"ip": wdttServerGatewayAddr},
 		},
 	})
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", []instancestore.ServerUser{
 		{Password: "client1"},
 	}, time.Now())
 	if err != nil {
@@ -407,7 +407,7 @@ func TestPreparePasswordsJSON_RemembersExpiryOverEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	expires := time.Now().Add(time.Hour).Unix()
 	// Записи в файле нет: её удалил янитор сервера.
-	doc, _, err := preparePasswordsJSONForServer(dir, "main", "", "", []instancestore.ServerUser{
+	doc, _, err := preparePasswordsJSONForServer(dir, "main", []instancestore.ServerUser{
 		{Password: "client1", ExpiresAt: expires},
 	}, time.Now())
 	if err != nil {

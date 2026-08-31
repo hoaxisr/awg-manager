@@ -72,11 +72,7 @@ func LinkListenPortForMode(c roles.WdttServerConfig, mode string) int {
 		}
 		return 56003
 	}
-	addr := c.Listen
-	if direct := strings.TrimSpace(c.DirectListen); direct != "" {
-		addr = direct
-	}
-	if p, err := listenPort(addr); err == nil {
+	if p, err := listenPort(c.Listen); err == nil {
 		return p
 	}
 	return 56002

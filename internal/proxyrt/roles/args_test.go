@@ -47,7 +47,7 @@ func TestWdttClientArgsWgOmitsRawFlags(t *testing.T) {
 func TestWdttServerArgs(t *testing.T) {
 	c := WdttServerConfig{
 		Listen: "0.0.0.0:56000", WgPort: 51820, ConfigDir: "/opt/etc/wdtt",
-		Password: "main", NatIface: "", WgIface: "opkgtun17", RawIface: "opkgtun19",
+		Password: "main", WgIface: "opkgtun17", RawIface: "opkgtun19",
 		NdmsIface: "OpkgTun17", RawNdmsIface: "OpkgTun19",
 		RelayMode: "wg", NatMode: "full", Policy: "none",
 	}

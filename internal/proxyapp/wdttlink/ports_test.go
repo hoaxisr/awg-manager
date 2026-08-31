@@ -13,15 +13,6 @@ func TestLinkListenPort(t *testing.T) {
 	if p := LinkListenPort(wg); p != 56002 {
 		t.Fatalf("wg port: got %d", p)
 	}
-	wgDirect := roles.WdttServerConfig{
-		Listen:       "0.0.0.0:56010",
-		DirectListen: "0.0.0.0:56002",
-		WgPort:       56011,
-		RelayMode:    ConnModeWG,
-	}
-	if p := LinkListenPort(wgDirect); p != 56002 {
-		t.Fatalf("wg direct port: got %d", p)
-	}
 	raw := roles.WdttServerConfig{Listen: "0.0.0.0:56002", RelayMode: ConnModeRaw, RawListen: "0.0.0.0:56003"}
 	if p := LinkListenPort(raw); p != 56003 {
 		t.Fatalf("raw port: got %d", p)
@@ -34,7 +25,7 @@ func TestLinkListenPort(t *testing.T) {
 
 // Режим ссылки не обязан совпадать с RelayMode записи (§11).
 func TestLinkListenPortForMode_OverridesRelayMode(t *testing.T) {
-	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56002", DirectListen: "0.0.0.0:56004", RelayMode: ConnModeWG}
+	cfg := roles.WdttServerConfig{Listen: "0.0.0.0:56002", RelayMode: ConnModeWG}
 	if p := LinkListenPortForMode(cfg, ConnModeRaw); p != 56003 {
 		t.Fatalf("raw over wg-сервера: got %d", p)
 	}

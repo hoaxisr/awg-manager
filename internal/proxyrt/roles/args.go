@@ -63,16 +63,10 @@ func WdttServerArgs(c WdttServerConfig) []string {
 	}
 	str("-config-dir", c.ConfigDir)
 	str("-password", c.Password)
-	str("-admin", c.AdminID)
-	str("-bot-token", c.BotToken)
 	args = append(args, "-no-nat") // NAT наш, безусловно (server.go:502)
-	str("-nat-if", c.NatIface)
 	str("-wg-iface", c.WgIface)
 	str("-raw-iface", c.RawIface)
 	str("-listen-raw", c.EffectiveRawListen())
-	if d := c.DirectListen; d != "" && d != c.Listen {
-		str("-listen-direct", d)
-	}
 	// -dns: резолвер, который сервер объявляет абонентам; дефолт монолита
 	// 8.8.8.8 уводит DNS мимо роутера (PR #697, F1).
 	//
@@ -116,10 +110,6 @@ func FreeTurnClientArgs(c FreeTurnClientConfig) []string {
 	str("-transport", c.Transport)
 	str("-mode", c.Mode)
 	flag("-bond", c.Bond)
-	str("-turn", c.TurnHost)
-	if c.TurnPort > 0 {
-		args = append(args, "-port", strconv.Itoa(c.TurnPort))
-	}
 	str("-obf-profile", c.ObfProfile)
 	str("-obf-key", c.ObfKey)
 	if c.StreamsPerCred > 0 {

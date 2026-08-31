@@ -259,16 +259,16 @@ func TestLink_ModeDecidesPort(t *testing.T) {
 		wantPort  string
 	}{
 		// raw-порт считается от DTLS+1 (EffectiveRawListen), wg-порт — из
-		// -listen-direct, если он задан, иначе из -listen.
+		// -listen (DTLS).
 		{"явный raw поверх wg-сервера", ConnModeWG, ConnModeRaw, "56003"},
-		{"явный wg поверх raw-сервера", ConnModeRaw, ConnModeWG, "56004"},
+		{"явный wg поверх raw-сервера", ConnModeRaw, ConnModeWG, "56002"},
 		{"пустой режим — по RelayMode записи (raw)", ConnModeRaw, "", "56003"},
-		{"пустой режим — по RelayMode записи (wg)", ConnModeWG, "", "56004"},
+		{"пустой режим — по RelayMode записи (wg)", ConnModeWG, "", "56002"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serverRecord(roles.WdttServerConfig{
-				Listen: "0.0.0.0:56002", DirectListen: "0.0.0.0:56004",
+				Listen: "0.0.0.0:56002",
 				WgPort: 56001, Password: "main", RelayMode: tc.relayMode,
 			}, user)
 			h, _, _, _, _ := newTestHandler(t, rec)

@@ -34,7 +34,7 @@
 //   *      /freeturn/servers/{id}/allowlist[/{cid}] → * /proxyrt/instances/freeturn-server:{id}/allowlist[/{cid}]
 //   POST   /freeturn/server[s/{id}]/link    → POST /proxyrt/instances/freeturn-server:{id}/link
 //
-// Секреты (Н5): ответ отдаёт не значение, а признак `passwordSet`/`botTokenSet`/
+// Секреты (Н5): ответ отдаёт не значение, а признак `passwordSet`/
 // `obfKeySet`; пустое поле секрета в теле правки означает «не менять», поэтому
 // обратные мапперы пустой секрет НЕ шлют.
 //
@@ -315,23 +315,18 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
     password: "",
     passwordSet: bool(c, "passwordSet") === true,
     configDir: str(c, "configDir"),
-    adminId: str(c, "adminId"),
-    botToken: "",
-    botTokenSet: bool(c, "botTokenSet") === true,
     debug: bool(c, "debug"),
     natMode: natModeOf(str(c, "natMode")),
     natStaticWan: str(c, "natStaticWan"),
     natStaticWans: strArr(c, "natStaticWans"),
     policy: str(c, "policy"),
     lanSegments: strArr(c, "lanSegments"),
-    natIface: str(c, "natIface"),
     wgIface: str(c, "wgIface"),
     rawIface: str(c, "rawIface"),
     ndmsIface: str(c, "ndmsIface"),
     openFirewall: bool(c, "openFirewall"),
     relayMode: str(c, "relayMode") === "raw" ? "raw" : "wg",
     rawListen: str(c, "rawListen"),
-    directListen: str(c, "directListen"),
     linkPeer: v.linkPeer,
     linkVkHashes: v.linkVkHashes,
     statsLog: v.statsLog as WdttServerConfig["statsLog"],
@@ -354,8 +349,6 @@ export function toFreeTurnClientConfig(
       (str(c, "transport") as FreeTurnClientConfig["transport"]) ?? "tcp",
     mode: (str(c, "mode") as FreeTurnClientConfig["mode"]) ?? "udp",
     bond: bool(c, "bond") === true,
-    turnHost: str(c, "turnHost"),
-    turnPort: num(c, "turnPort"),
     obfProfile:
       (str(c, "obfProfile") as FreeTurnClientConfig["obfProfile"]) ?? "none",
     obfKey: "",
@@ -636,7 +629,7 @@ export function effectiveStaticWan(
 
 /**
  * Конфиг wdtt-сервера в тело PATCH. Пины половин (`wgIface`/`rawIface`/
- * `ndmsIface`/`natIface`) не шлются — их выделяет менеджер, а форма их не
+ * `ndmsIface`) не шлются — их выделяет менеджер, а форма их не
  * правит.
  */
 export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
@@ -644,9 +637,7 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
     listen: cfg.listen ?? "",
     wgPort: cfg.wgPort ?? 0,
     configDir: cfg.configDir ?? "",
-    adminId: cfg.adminId ?? "",
     rawListen: cfg.rawListen ?? "",
-    directListen: cfg.directListen ?? "",
     relayMode: cfg.relayMode === "raw" ? "raw" : "wg",
     natMode: natModeOf(cfg.natMode),
     policy: cfg.policy ?? "",
@@ -665,7 +656,6 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
     out.natStaticWan = cfg.natStaticWan ?? "";
   }
   putSecret(out, "password", cfg.password);
-  putSecret(out, "botToken", cfg.botToken);
   return out;
 }
 
@@ -678,8 +668,6 @@ export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
     transport: cfg.transport ?? "tcp",
     mode: cfg.mode ?? "udp",
     bond: cfg.bond === true,
-    turnHost: cfg.turnHost ?? "",
-    turnPort: cfg.turnPort ?? 0,
     obfProfile: cfg.obfProfile ?? "none",
     streamsPerCred: cfg.streamsPerCred ?? 0,
     platform: cfg.platform ?? "",

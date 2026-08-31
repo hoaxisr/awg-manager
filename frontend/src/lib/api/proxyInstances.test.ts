@@ -110,8 +110,6 @@ const ftClientView: ProxyInstanceView = {
 		transport: 'tcp',
 		mode: 'udp',
 		bond: true,
-		turnHost: 'turn.example',
-		turnPort: 3478,
 		obfProfile: 'rtpopus',
 		obfKeySet: true,
 		streamsPerCred: 5,
@@ -300,7 +298,6 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.linkPeer).toBe('wan.example:56002');
 		expect(cfg.linkVkHashes).toBe('h9');
 		expect(cfg.statsLog).toBe('disk');
-		expect(cfg.botTokenSet).toBe(false);
 	});
 });
 
@@ -350,9 +347,7 @@ describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистем�
 			transport: 'tcp',
 			mode: 'udp',
 			bond: true,
-			turnHost: 'turn.example',
-			turnPort: 3478,
-			obfProfile: 'rtpopus',
+					obfProfile: 'rtpopus',
 			obfKey: '',
 			obfKeySet: true,
 			streamsPerCred: 5,
@@ -508,7 +503,6 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		wgPort: 56001,
 		password: '',
 		passwordSet: true,
-		botToken: '',
 		lanSegments: ['Home'],
 		natMode: 'full',
 		relayMode: 'raw',
@@ -519,16 +513,11 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 	it('пустые секреты сервера не едут, пины половин — тоже', () => {
 		const body = toWdttServerPatch(server);
 		expect('password' in body).toBe(false);
-		expect('botToken' in body).toBe(false);
 		expect('ndmsIface' in body).toBe(false);
 		expect('wgIface' in body).toBe(false);
 		expect(body.lanSegments).toEqual(['Home']);
 		expect(body.natMode).toBe('full');
 		expect(body.relayMode).toBe('raw');
-	});
-
-	it('токен бота едет, когда его ввели', () => {
-		expect(toWdttServerPatch({ ...server, botToken: '123:abc' }).botToken).toBe('123:abc');
 	});
 
 	it('ключ обфускации FreeTurn подчиняется тому же правилу', () => {

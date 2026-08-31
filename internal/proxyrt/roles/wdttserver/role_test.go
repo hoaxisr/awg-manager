@@ -360,7 +360,6 @@ func TestServerInputPortsOnlyWAN(t *testing.T) {
 	// Паритет serverFirewallPortSpecs (server_firewall.go:9-27): порт с
 	// 0.0.0.0 открывается, локальный — нет, дубли схлопываются.
 	cfg := srvCfg()
-	cfg.DirectListen = "127.0.0.1:9000"
 	got := inputPorts(cfg)
 	want := map[int]bool{56000: true, 56001: true}
 	if len(got) != len(want) {
