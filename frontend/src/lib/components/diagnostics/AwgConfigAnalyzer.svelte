@@ -16,6 +16,7 @@
 		parseAWG,
 		detectVersion,
 		runChecks,
+		isUnmodifiedTunnelConf,
 		calcScores,
 		buildFixes,
 		buildConfigSummary,
@@ -117,7 +118,7 @@
 			const p = parseAWG(t);
 			const v = detectVersion(p.iface);
 			const c = runChecks(p.iface, p.peer, v, {
-				privateKeyHidden: !!selectedTunnelId && !p.iface.privatekey,
+				privateKeyHidden: isUnmodifiedTunnelConf(raw, loadedTunnelRaw),
 			});
 			const s = calcScores(c, p.iface, v);
 			const f = buildFixes(c, p.iface, p.peer, v);
@@ -337,10 +338,13 @@
 			const current = await api.getTunnel(selectedTunnelId);
 			const update = parsedToTunnelUpdate(current, freshParsed);
 			await tunnelsStore.update(selectedTunnelId, update);
+			// Текст только что записан в туннель, значит он и есть его conf:
+			// провенанс верен по построению, и предикат ниже это увидит.
+			loadedTunnelRaw = currentRaw;
 
 			const v = detectVersion(freshParsed.iface);
 			const c = runChecks(freshParsed.iface, freshParsed.peer, v, {
-				privateKeyHidden: !!selectedTunnelId && !freshParsed.iface.privatekey,
+				privateKeyHidden: isUnmodifiedTunnelConf(currentRaw, loadedTunnelRaw),
 			});
 			const s = calcScores(c, freshParsed.iface, v);
 			const f = buildFixes(c, freshParsed.iface, freshParsed.peer, v);
@@ -354,7 +358,6 @@
 			error = '';
 			tunnelLoadError = '';
 			lastAnalyzedRaw = currentRaw;
-			loadedTunnelRaw = currentRaw;
 
 			notifications.success('Конфиг записан в туннель');
 			onTunnelSaved?.();

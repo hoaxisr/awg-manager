@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { detectVersion, calcScores, mtuCeilingForProfile, runChecks, type AwgIface } from './awgConfAnalyzer';
+import {
+	detectVersion,
+	calcScores,
+	mtuCeilingForProfile,
+	runChecks,
+	isUnmodifiedTunnelConf,
+	type AwgIface,
+} from './awgConfAnalyzer';
 
 const baseH: AwgIface = { h1: '10', h2: '20', h3: '30', h4: '40' };
 
@@ -61,5 +68,29 @@ describe('runChecks — скрытый бэкендом PrivateKey', () => {
 		expect(c.status).toBe('info');
 		expect(c.value).toBe('(скрыт)');
 		expect(c.pts).toBe(10);
+	});
+});
+
+// F82: флаг «ключ скрыт» взводился по одному лишь факту выбранного туннеля,
+// а textarea выбор не сбрасывает — вставленный чужой conf без PrivateKey
+// выдавался за скрытый ключ с полными баллами.
+describe('isUnmodifiedTunnelConf — провенанс анализируемого текста', () => {
+	const loaded = '[Interface]\nAddress = 10.0.0.2/32';
+
+	it('текст совпадает с загруженным conf туннеля', () => {
+		expect(isUnmodifiedTunnelConf(loaded, loaded)).toBe(true);
+		expect(isUnmodifiedTunnelConf(`  ${loaded}\n`, loaded)).toBe(true);
+	});
+
+	it('чужой conf при выбранном туннеле скрытым не считается', () => {
+		expect(isUnmodifiedTunnelConf('[Interface]\nAddress = 192.168.9.2/32', loaded)).toBe(false);
+	});
+
+	it('отредактированный conf скрытым не считается', () => {
+		expect(isUnmodifiedTunnelConf(`${loaded}\nMTU = 1280`, loaded)).toBe(false);
+	});
+
+	it('туннель не загружен — провенанса нет', () => {
+		expect(isUnmodifiedTunnelConf(loaded, '')).toBe(false);
 	});
 });

@@ -477,6 +477,19 @@ export function buildUpgradeHints(iface: AwgIface, version: AwgVersionInfo): str
 	return hints;
 }
 
+/**
+ * Анализируемый текст — РОВНО тот conf, который мы построили из выбранного
+ * туннеля (не отредактированный и не подменённый чужим).
+ *
+ * Только в этом случае отсутствие строки PrivateKey означает «бэкенд скрыл
+ * ключ» (F56). Проверять `selectedTunnelId` недостаточно: textarea не
+ * сбрасывает выбор туннеля, поэтому вставленный туда чужой conf без ключа
+ * выдавался за скрытый (F82).
+ */
+export function isUnmodifiedTunnelConf(raw: string, loadedTunnelRaw: string): boolean {
+	return loadedTunnelRaw !== '' && raw.trim() === loadedTunnelRaw;
+}
+
 export function runChecks(
 	iface: AwgIface,
 	peer: AwgIface,
