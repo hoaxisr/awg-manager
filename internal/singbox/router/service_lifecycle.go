@@ -454,10 +454,15 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 	defer heavyop.Default.Unlock()
 
 	// Свежая проверка намерения — КАК МОЖНО ПОЗЖЕ, уже под гейтом памяти:
-	// Disable ходит под s.mu мимо transitionMu (признано в service.go), и
 	// режим мог выключиться, пока мы копили такты и ждали гейт. Поднять
 	// движок в выключенном режиме хуже, чем пропустить такт: лечение
 	// повторится, а воскрешение придётся отменять пользователю.
+	//
+	// NB: прежняя редакция обосновывала эту проверку тем, что «Disable ходит
+	// мимо transitionMu (признано в service.go)» — это было НЕВЕРНО и в обе
+	// стороны: все вызовы Disable идут под transitionMu, а service.go прямо
+	// говорит, что третий путь мимо него вернул бы гонку и потому удалён.
+	// Сама проверка полезна (мы ждали гейт памяти), обоснование было ложным.
 	if s.deps.Settings != nil {
 		if settings, err := s.deps.Settings.Load(); err != nil || settings == nil || !settings.SingboxRouter.Enabled {
 			s.tunDownStrikes = 0

@@ -477,23 +477,21 @@ func TestOperatorApplyLogLevel_UsesOrchestratorSlotBase(t *testing.T) {
 		t.Fatalf("ApplyLogLevel via orch: %v", err)
 	}
 
+	// Поллинга здесь быть не должно: Orchestrator.Mutate пишет файл СИНХРОННО,
+	// асинхронен только reload. Прежний вариант ждал до 2 с и давал лишний
+	// повод для флейка (F38).
 	basePath := filepath.Join(op.ConfigDir(), "00-base.json")
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		raw, err := os.ReadFile(basePath)
-		if err == nil {
-			var m map[string]any
-			if json.Unmarshal(raw, &m) == nil {
-				logBlock, _ := m["log"].(map[string]any)
-				if got, _ := logBlock["level"].(string); got == "error" {
-					return
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("00-base.json was not updated to error via orchestrator in time")
-		}
-		time.Sleep(50 * time.Millisecond)
+	raw, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatalf("read 00-base.json: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parse 00-base.json: %v", err)
+	}
+	logBlock, _ := m["log"].(map[string]any)
+	if got, _ := logBlock["level"].(string); got != "error" {
+		t.Fatalf("log.level = %q, want error (запись через оркестратор синхронна)", got)
 	}
 }
 

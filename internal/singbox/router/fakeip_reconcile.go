@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -230,14 +229,17 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// edit-time Tier-1 diff cannot see them). Best-effort: add any remote CIDR not
 			// yet present. No removal here — Tier-1 diff-on-mutation owns removals; a remote
 			// set merely contributes additional desired routes.
+			// Потиковой сводки «remote cidrs: v4=N v6=M» здесь больше нет: она
+			// писалась на КАЖДОМ 30-секундном тике при живых наборах и держалась
+			// только на коалесценции журнала (F28). Событие теперь одно и по делу
+			// — фактическое восстановление маршрута, симметрично Tier-1 (F29).
 			rV4, rV6 := s.remoteTunCIDRs(ctx, cfg)
-			if len(rV4) > 0 || len(rV6) > 0 {
-				s.appLog.Info("fakeip-cidr-remote", ndmsName, fmt.Sprintf("remote cidrs: v4=%d v6=%d", len(rV4), len(rV6)))
-			}
 			for _, c := range rV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
+					} else {
+						s.appLog.Info("fakeip-reconcile", iface, "remote cidr route "+c+" was absent, re-added (drift-heal)")
 					}
 				}
 			}
@@ -248,6 +250,8 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
+					} else {
+						s.appLog.Info("fakeip-reconcile", iface, "remote cidr route v6 "+c+" was absent, re-added (drift-heal)")
 					}
 				}
 			}

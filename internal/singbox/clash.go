@@ -116,8 +116,17 @@ func (c *ClashClient) TestDelay(ctx context.Context, name, testURL string, timeo
 
 // IsHealthy checks Clash API availability (fast health probe).
 func (c *ClashClient) IsHealthy() bool {
-	cli := &http.Client{Timeout: 1 * time.Second}
-	resp, err := cli.Get(fmt.Sprintf("http://%s/version", c.Address()))
+	// Транспорт общий (c.http), как у остального клиента: своя копия на каждый
+	// вызов заводила новый транспорт, а waitClashReady зовёт это в цикле (F40).
+	// Секундная граница пробы сохранена контекстом — у c.http таймаут 5 с,
+	// а это быстрая проба живости.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/version", c.Address()), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return false
 	}

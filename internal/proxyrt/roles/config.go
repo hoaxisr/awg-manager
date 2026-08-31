@@ -200,7 +200,12 @@ type WdttServerConfig struct {
 	// NatStaticWANs — выходы static-NAT для internet-only. Их несколько:
 	// при нескольких `ip global` static-NAT ставится на КАЖДЫЙ выход, иначе
 	// после переключения провайдера трафик абонентов упирается в мёртвый
-	// (PR #750). Пишет план 5 по факту применения.
+	// (PR #750).
+	//
+	// Кто пишет: миграционный посев (instancestore/seed.go) и тело PATCH —
+	// фронт шлёт список, когда пользователь его не трогал (F61). Роль список
+	// только читает, через StaticNATList. «По факту применения» его не пишет
+	// никто — прежняя редакция комментария обещала писателя, которого нет.
 	NatStaticWANs []string `json:"natStaticWans,omitempty"`
 	Policy        string   `json:"policy,omitempty"` // none|<имя>
 	LanSegments   []string `json:"lanSegments,omitempty"`

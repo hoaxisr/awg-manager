@@ -1511,3 +1511,46 @@ func TestReconcile_FailedInstallForcesReinstallOnRevertedSpec(t *testing.T) {
 		t.Fatalf("Install вызван %d раз всего, want 2 (снимок после провала обязан считаться неизвестным)", restoreCalls)
 	}
 }
+
+// F21: reconcilePolicyTunQoS, снимая netfilter при исчезнувших классах, сбрасывал
+// три поля группы из четырёх — состав geoip-тегов оставался. Как баг сегодня
+// недостижимо (теги к этому моменту уже пусты), но дисциплина «четыре поля
+// сбрасываются вместе», объявленная в policytun_disable.go, была нарушена
+// ровно здесь.
+//
+// Мутация для пина: убрать `s.currentBypassGeoIPTags = nil` из ветки want==nil —
+// тест краснеет.
+func TestReconcilePolicyTunQoS_UninstallResetsWholeGroup(t *testing.T) {
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	singbox := newTestSingbox(t)
+	singbox.isRunningFn = func() (bool, int) { return true, 1234 }
+	svc := &ServiceImpl{
+		deps: Deps{
+			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+			IPTables:           ipt,
+			WANIPCollector:     &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+			Singbox:            singbox,
+			NetfilterPreflight: func(context.Context) error { return nil },
+			XtDscpProbe:        func(context.Context) bool { return true },
+		},
+		appliedSpec:            &RestoreInputSpec{PolicyMark: "0xffffaaa"},
+		appliedBlackhole:       &RestoreInputSpec{},
+		currentBypassGeoIPTags: []string{"ru"},
+		netfilterStateKnown:    true,
+	}
+
+	// Классов QoS нет → want == nil → Uninstall и сброс группы.
+	svc.reconcilePolicyTunQoS(context.Background(), storage.SingboxRouterSettings{
+		Enabled: true, PolicyName: "Policy0", WANAutoDetect: true,
+	})
+
+	if svc.appliedSpec != nil {
+		t.Errorf("appliedSpec обязан обнулиться: %+v", svc.appliedSpec)
+	}
+	if svc.appliedBlackhole != nil {
+		t.Error("appliedBlackhole обязан обнулиться")
+	}
+	if svc.currentBypassGeoIPTags != nil {
+		t.Errorf("состав geoip-тегов — четвёртый член группы, обязан обнулиться: %v", svc.currentBypassGeoIPTags)
+	}
+}
