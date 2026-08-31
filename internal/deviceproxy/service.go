@@ -1281,9 +1281,14 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 				if !ok {
 					continue
 				}
+				// Ключа singbox.subscriptions здесь больше нет: его не публиковал
+				// НИКТО, ветка была мертва (F66). Прежний довод «оставить, чтобы
+				// не замаскировать будущего публикатора» обесценен закрытым
+				// набором ключей (F62): новый ключ теперь не пройдёт мимо
+				// events.AllResources и union фронта. CRUD подписок будит
+				// реконсиляцию через tunnels/singbox.tunnels, как и раньше.
 				if payload.Resource != "tunnels" &&
-					payload.Resource != "singbox.tunnels" &&
-					payload.Resource != "singbox.subscriptions" {
+					payload.Resource != "singbox.tunnels" {
 					continue
 				}
 			}
