@@ -5,12 +5,12 @@
 	// больше нет (решение Q7 ИА).
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
-	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
+	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
-	import type { SharePort } from './shareConfig';
+	import { directListenValue, type SharePort } from './shareConfig';
 
 	type StatsLogMode = 'ram' | 'off' | 'disk';
 
@@ -41,6 +41,21 @@
 	function applyWgPort(v: string) {
 		if (!wdttServer) return;
 		wdttServer.wgPort = Math.max(1, Math.min(65535, Number(v) || 56001));
+	}
+
+	// Direct-порт — НОМЕР, а не адрес: хост наследуется от порта раздачи
+	// (`directListenValue`), иначе гарды фронта и бэкенда расходятся. Пусто —
+	// выключено.
+	const directPort = $derived(
+		wdttServer?.directListen?.trim()
+			? String(listenPortNumber(wdttServer.directListen, 0) || '')
+			: '',
+	);
+
+	function applyDirectPort(v: string) {
+		if (!wdttServer) return;
+		const next = directListenValue(wdttServer.listen, v);
+		if (next !== null) wdttServer.directListen = next;
 	}
 
 	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
@@ -83,7 +98,9 @@
 			     Поле пропало при переписывании рантайма, хотя argv его слал. -->
 			<Input
 				label="Порт Direct (без DTLS)"
-				bind:value={wdttServer.directListen}
+				type="number"
+				value={directPort}
+				onchange={applyDirectPort}
 				placeholder="выключено"
 				hint="Быстрее DTLS, но трафик перестаёт маскироваться под него. Пусто — выключено"
 				fullWidth

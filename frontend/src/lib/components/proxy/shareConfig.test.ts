@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 import {
+	directListenValue,
 	freeTurnServerPorts,
 	natModeLabel,
 	serverPortConflict,
@@ -124,5 +125,55 @@ describe('serverPortConflict', () => {
 				wdtt({ listen: '0.0.0.0:56002', directListen: '0.0.0.0:56002', wgPort: 56001 }),
 			),
 		).toBe('');
+	});
+});
+
+// Поле «Порт Direct» принимает НОМЕР порта; адрес собирается здесь. Пока поле
+// было свободным текстом, из него уходили значения, которые бэкенд читал иначе
+// (`validatePorts`, internal/proxyrt/roles/config.go).
+describe('directListenValue', () => {
+	it('пусто — «выключено»', () => {
+		expect(directListenValue('0.0.0.0:56002', '')).toBe('');
+		expect(directListenValue('0.0.0.0:56002', '   ')).toBe('');
+	});
+
+	it('порт, равный порту раздачи, даёт строку, побайтово равную listen', () => {
+		// Именно это равенство читает бэкенд как «выключено» (`d != c.Listen`).
+		expect(directListenValue('0.0.0.0:56002', '56002')).toBe('0.0.0.0:56002');
+		expect(directListenValue('127.0.0.1:56002', '56002')).toBe('127.0.0.1:56002');
+	});
+
+	it('хост наследуется от порта раздачи — адрес без хоста невыразим', () => {
+		expect(directListenValue('10.1.2.3:56002', '56005')).toBe('10.1.2.3:56005');
+		expect(directListenValue('', '56005')).toBe('0.0.0.0:56005');
+		expect(directListenValue(undefined, '56005')).toBe('0.0.0.0:56005');
+	});
+
+	it('нечисло и неположительный порт ввод не принимают', () => {
+		expect(directListenValue('0.0.0.0:56002', 'abc')).toBeNull();
+		expect(directListenValue('0.0.0.0:56002', '0')).toBeNull();
+		expect(directListenValue('0.0.0.0:56002', '-1')).toBeNull();
+	});
+
+	it('порт зажат сверху потолком 65535', () => {
+		expect(directListenValue('0.0.0.0:56002', '99999')).toBe('0.0.0.0:65535');
+	});
+
+	it('нормализованный direct согласован с детектором конфликта', () => {
+		const listen = '0.0.0.0:56002';
+		// Свободный порт: конфликта нет ни у фронта, ни у validatePorts.
+		const free = directListenValue(listen, '56005');
+		expect(serverPortConflict(wdtt({ listen, directListen: free!, wgPort: 56001 }))).toBe('');
+		// Порт raw-половины (DTLS+1) занят — оба гарда видят столкновение.
+		const busy = directListenValue(listen, '56003');
+		const msg = serverPortConflict(wdtt({ listen, directListen: busy!, wgPort: 56001 }));
+		expect(msg).toContain('56003');
+		// Равный порту раздачи — «выключено», третьей строки портов нет.
+		const off = directListenValue(listen, '56002');
+		expect(off).toBe(listen);
+		expect(wdttServerPorts(wdtt({ listen, directListen: off! })).map((p) => p.label)).toEqual([
+			'DTLS',
+			'Raw',
+		]);
 	});
 });
