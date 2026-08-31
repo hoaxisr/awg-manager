@@ -26,7 +26,6 @@ export interface ExitWizardFields {
 	peer: string;
 	/** Только WDTT: у FreeTurn-клиента пароля нет. */
 	password: string;
-	listen: string;
 	/** WDTT — `-vk`, FreeTurn — `-links` (ссылки VK Calls). Подпись одна: WE-35. */
 	vkHashes: string;
 	/** Строкой из поля; в конфиг уезжает числом. */
@@ -115,57 +114,27 @@ export function exitConfigSetupComplete(
 // ─── Значения из ссылки.
 
 /**
- * Локальный порт нового клиента: первый свободный, как считает бэкенд —
- * 9000..9199 у WDTT (`nextClientListen`, internal/wdtt/validate.go:87) и
- * 9000..9099 у FreeTurn (internal/freeturn/validate.go:125). Это подсказка
- * поля — порт назначает бэкенд, и он же отвергнет занятый.
+ * Локальный порт клиента мастер НЕ выбирает и не показывает.
+ *
+ * Порт — внутренняя проводка: UDP-сокет процесса на 127.0.0.1 (`-listen`), на
+ * который смотрит `Endpoint` связанного AWG-туннеля. Наружу он не виден, и
+ * выбирать в нём человеку нечего. Владелец один — бэкенд: `ensurePins`
+ * (proxyrt/manager/manager.go) выдаёт свободный порт из пула, а
+ * `LinkedEndpoint` (proxyrt/roles/linkres/linked.go) правит endpoint туннеля
+ * следом, ДО его подъёма.
+ *
+ * Мастер это распределение прежде затирал: `createWdttClient` возвращал
+ * конфиг с уже выданным портом, а следующий запрос присваивал значение поля —
+ * и две ссылки со штатным 9000 (поле ссылки адресовано приложению qWDTT на
+ * телефоне, `wdttlink/link.go:110`) сажали второй инстанс на занятый порт.
  */
-export function nextLocalListen(listens: string[], protocol: ExitProtocol = 'wdtt'): string {
-	const used = listenPortsOf(listens);
-	const limit = protocol === 'freeturn' ? 9100 : 9200;
-	for (let port = 9000; port < limit; port++) {
-		if (!used.has(port)) return `127.0.0.1:${port}`;
-	}
-	return protocol === 'freeturn' ? '127.0.0.1:9000' : '127.0.0.1:9100';
-}
-
-/**
- * Локальный порт клиента НЕ берётся из ссылки — только свободный кандидат.
- *
- * Ссылка несёт его четвёртым полем (`host:dtls:wg:clientListenPort:password`,
- * wdttlink/link.go:110) не для нас: поле адресовано приложению qWDTT на
- * телефоне, у которого своего выбора порта нет, и сервер диктует ему, что
- * слушать на 127.0.0.1. У инстанса на роутере порт — его собственное дело:
- * он локальный, наружу не виден и обязан лишь не совпасть с чужим.
- *
- * Бэкенд так и поступает: `recordFromPayload` (wdttlink/handler.go:263)
- * `Listen` из payload не переносит вовсе, порт выделяет менеджер. Мастер же
- * значение из ссылки подставлял — и две ссылки со штатным 9000 давали второму
- * инстансу занятый порт. Подвинуть его бэкенд не может, он только ОТКАЖЕТ
- * («порт занят другим инстансом или туннелем», linkres/listen.go:54).
- *
- * Поле шага 2 остаётся: порт по-прежнему правится руками.
- */
-/** Порт из адреса `host:port`; NaN — разобрать не вышло. */
-function listenPortOf(listen: string): number {
-	return Number(listen.trim().split(':').pop());
-}
-
-function listenPortsOf(listens: string[]): Set<number> {
-	return new Set(
-		listens.map((l) => listenPortOf(l ?? '')).filter((p) => Number.isInteger(p) && p > 0),
-	);
-}
-
 export function fieldsFromWdttPayload(
 	p: WdttImportPayload,
-	candidateListen: string,
 ): ExitWizardFields {
 	return {
 		name: p.name?.trim() ?? '',
 		peer: p.peer ?? '',
 		password: p.password ?? '',
-		listen: candidateListen,
 		vkHashes: (p.vkHashes ?? []).join(','),
 		workers: p.workers && p.workers > 0 ? String(p.workers) : DEFAULT_WORKERS,
 	};
@@ -173,13 +142,11 @@ export function fieldsFromWdttPayload(
 
 export function fieldsFromFtPayload(
 	p: FreeTurnLinkPayload,
-	candidateListen: string,
 ): ExitWizardFields {
 	return {
 		name: p.name?.trim() ?? '',
 		peer: p.peer ?? '',
 		password: '',
-		listen: candidateListen,
 		vkHashes: '',
 		workers: p.n && p.n > 0 ? String(p.n) : DEFAULT_FT_STREAMS,
 	};
@@ -191,7 +158,6 @@ export function fieldsFromWdttConfig(cfg: WdttClientConfig, name: string): ExitW
 		name,
 		peer: cfg.peer ?? '',
 		password: cfg.password ?? '',
-		listen: cfg.listen ?? '',
 		vkHashes: cfg.vkHashes ?? '',
 		workers: cfg.workers > 0 ? String(cfg.workers) : DEFAULT_WORKERS,
 	};
@@ -202,19 +168,17 @@ export function fieldsFromFtConfig(cfg: FreeTurnClientConfig, name: string): Exi
 		name,
 		peer: cfg.peer ?? '',
 		password: '',
-		listen: cfg.listen ?? '',
 		vkHashes: cfg.links ?? '',
 		workers: cfg.streams > 0 ? String(cfg.streams) : DEFAULT_FT_STREAMS,
 	};
 }
 
 /** Пустые поля ручного создания (WE-10). */
-export function emptyFields(candidateListen: string, protocol: ExitProtocol = 'wdtt'): ExitWizardFields {
+export function emptyFields(protocol: ExitProtocol = 'wdtt'): ExitWizardFields {
 	return {
 		name: '',
 		peer: '',
 		password: '',
-		listen: candidateListen,
 		vkHashes: '',
 		workers: defaultWorkers(protocol),
 	};
@@ -253,7 +217,6 @@ export function applyWdttFields(
 	switchConnMode(cfg, mode);
 	setPeer(cfg, f.peer.trim());
 	cfg.password = f.password;
-	cfg.listen = f.listen.trim();
 	cfg.vkHashes = f.vkHashes.trim();
 	cfg.workers = Number(f.workers) || cfg.workers;
 	return cfg;
@@ -261,7 +224,6 @@ export function applyWdttFields(
 
 export function applyFtFields(cfg: FreeTurnClientConfig, f: ExitWizardFields): FreeTurnClientConfig {
 	cfg.peer = f.peer.trim();
-	cfg.listen = f.listen.trim();
 	cfg.links = f.vkHashes.trim();
 	cfg.streams = Number(f.workers) || cfg.streams;
 	return cfg;
@@ -305,6 +267,11 @@ export interface ExitCommitResult {
 	protocol: ExitProtocol;
 	/** Созданный AWG-туннель, если ссылка принесла конфиг. */
 	tunnelId?: string;
+	/**
+	 * Локальный порт, с которым инстанс сохранён. Его выдал бэкенд — мастер
+	 * его не спрашивает; поиск связанного туннеля ищет по нему.
+	 */
+	listen: string;
 }
 
 /**
@@ -338,7 +305,7 @@ export async function commitExitWizard(input: ExitCommitInput): Promise<ExitComm
 			wdttClientId: id,
 		});
 		await api.startWdttClientInstance(id);
-		return { id, protocol, tunnelId };
+		return { id, protocol, tunnelId, listen: cfg.listen };
 	}
 
 	let id = input.existing?.id ?? '';
@@ -359,7 +326,7 @@ export async function commitExitWizard(input: ExitCommitInput): Promise<ExitComm
 		freeTurnClientId: id,
 	});
 	await api.startFreeTurnClient(id);
-	return { id, protocol, tunnelId };
+	return { id, protocol, tunnelId, listen: cfg.listen };
 }
 
 async function importWgTunnel(

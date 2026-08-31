@@ -321,6 +321,7 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
     debug: bool(c, "debug"),
     natMode: natModeOf(str(c, "natMode")),
     natStaticWan: str(c, "natStaticWan"),
+    natStaticWans: strArr(c, "natStaticWans"),
     policy: str(c, "policy"),
     lanSegments: strArr(c, "lanSegments"),
     natIface: str(c, "natIface"),
@@ -624,6 +625,17 @@ export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
 }
 
 /**
+ * Действующий выход static-NAT: зеркало бэкендового StaticNATList() —
+ * список старше одиночки. Мигрированная запись несёт только список, поэтому
+ * без него селектор и гейт видели пустоту (F61).
+ */
+export function effectiveStaticWan(
+  cfg: Pick<WdttServerConfig, "natStaticWan" | "natStaticWans">,
+): string {
+  return cfg.natStaticWans?.[0] ?? cfg.natStaticWan ?? "";
+}
+
+/**
  * Конфиг wdtt-сервера в тело PATCH. Пины половин (`wgIface`/`rawIface`/
  * `ndmsIface`/`natIface`) не шлются — их выделяет менеджер, а форма их не
  * правит.
@@ -638,13 +650,21 @@ export function toWdttServerPatch(cfg: WdttServerConfig): Cfg {
     directListen: cfg.directListen ?? "",
     relayMode: cfg.relayMode === "raw" ? "raw" : "wg",
     natMode: natModeOf(cfg.natMode),
-    natStaticWan: cfg.natStaticWan ?? "",
     policy: cfg.policy ?? "",
     lanSegments: cfg.lanSegments ?? [],
     debug: cfg.debug === true,
     exposeToPolicies: cfg.exposeToPolicies === true,
     openFirewall: cfg.openFirewall !== false,
   };
+  // Формы выхода NAT НЕ смешиваются: бэкенд различает их по присутствию ключей
+  // и делает присланную источником правды (F59). Нетронутый список уезжает
+  // списком, поэтому несвязанное сохранение не схлопывает multi-exit NAT (#750);
+  // выбор пользователя в селекторе чистит список и шлёт одиночку.
+  if (cfg.natStaticWans?.length) {
+    out.natStaticWans = cfg.natStaticWans;
+  } else {
+    out.natStaticWan = cfg.natStaticWan ?? "";
+  }
   putSecret(out, "password", cfg.password);
   putSecret(out, "botToken", cfg.botToken);
   return out;

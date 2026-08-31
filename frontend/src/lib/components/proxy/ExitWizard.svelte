@@ -15,7 +15,6 @@
 	import ExitWizardParams from './ExitWizardParams.svelte';
 	import ExitWizardSource from './ExitWizardSource.svelte';
 	import { cloneConfig } from './exitConfig';
-	import { listenPort } from './linkedTunnel';
 	import {
 		commitExitWizard,
 		emptyFields,
@@ -25,7 +24,6 @@
 		fieldsFromFtPayload,
 		fieldsFromWdttConfig,
 		fieldsFromWdttPayload,
-		nextLocalListen,
 		policyPermitOrder,
 		proxyTunnelName,
 		resolveExitInterface,
@@ -45,8 +43,6 @@
 
 	interface Props {
 		policies: AccessPolicy[];
-		/** Занятые локальные порты по протоколам — подсказка порта нового клиента. */
-		usedListens: { wdtt: string[]; freeturn: string[] };
 		/** Инстанс, открытый кнопкой «Мастер»: мастер правит его, а не заводит новый. */
 		row?: ProxyInstanceRow | null;
 		wdttClient?: WdttClientConfig;
@@ -57,18 +53,7 @@
 		ondone: (protocol: ExitProtocol, id: string) => Promise<void> | void;
 	}
 
-	let { policies, usedListens, row = null, wdttClient, ftClient, onclose, ondone }: Props =
-		$props();
-
-	// Локальный порт ОБЩИЙ для обоих протоколов: wdtt-клиент и freeturn-клиент
-	// слушают один 127.0.0.1, и мастер, считавший занятость только по своему
-	// протоколу, подсказывал занятый порт — инстанс падал с «порт 9000 занят
-	// другим инстансом» (стенд 2026-08-28).
-	const allUsedListens = $derived([...usedListens.wdtt, ...usedListens.freeturn]);
-
-	function candidateListen(p: ExitProtocol): string {
-		return nextLocalListen(allUsedListens, p);
-	}
+	let { policies, row = null, wdttClient, ftClient, onclose, ondone }: Props = $props();
 
 	const STEPS = ['Источник', 'Параметры', 'Куда направить трафик'];
 
@@ -114,7 +99,7 @@
 				? fieldsFromWdttConfig(wdttClient, row?.name ?? '')
 				: ftClient
 					? fieldsFromFtConfig(ftClient, row?.name ?? '')
-					: emptyFields(candidateListen(protocol), protocol),
+					: emptyFields(protocol),
 		),
 	);
 
@@ -188,7 +173,7 @@
 				ftPayload = payload;
 				protocol = 'freeturn';
 				mode = 'wg';
-				fields = fieldsFromFtPayload(payload, candidateListen('freeturn'));
+				fields = fieldsFromFtPayload(payload);
 				return;
 			}
 			const res = await api.decodeWdttLink(text);
@@ -219,7 +204,7 @@
 
 	function applyProfile(payload: WdttImportPayload) {
 		mode = payload.connMode === 'raw' ? 'raw' : 'wg';
-		fields = fieldsFromWdttPayload(payload, candidateListen('wdtt'));
+		fields = fieldsFromWdttPayload(payload);
 	}
 
 	function onLinkInput(v: string) {
@@ -248,7 +233,7 @@
 		wdttPayload = null;
 		ftPayload = null;
 		subscription = null;
-		fields = emptyFields(candidateListen(protocol), protocol);
+		fields = emptyFields(protocol);
 	}
 
 	// ─── Шаг 3: политика и запуск.
@@ -261,7 +246,6 @@
 	]);
 
 	const tunnelName = $derived(proxyTunnelName(protocol, fields.name));
-	const port = $derived(listenPort(fields.listen) ?? '');
 	/** Интерфейс, который можно завести в политику: у Raw — свой, у WG — туннель. */
 	const willHaveIface = $derived(protocol === 'wdtt' || hasWg);
 
@@ -288,7 +272,7 @@
 					protocol,
 					id: res.id,
 					mode,
-					listen: fields.listen,
+					listen: res.listen,
 					tunnelId: res.tunnelId,
 				});
 				if (iface) {
@@ -343,10 +327,8 @@
 				onprotocol={(p) => {
 					protocol = p;
 					manualWg = '';
-					// Подсказки порта и потоков — правила выбранного протокола.
-					const blank = emptyFields(candidateListen(p), p);
-					fields.listen = blank.listen;
-					fields.workers = blank.workers;
+					// Дефолт потоков — правило выбранного протокола.
+					fields.workers = emptyFields(p).workers;
 				}}
 				onmode={(m) => (mode = m)}
 				onprofile={(idx) => {
@@ -356,7 +338,7 @@
 				}}
 			/>
 		{:else if step === 1}
-			<ExitWizardParams {protocol} {mode} bind:fields />
+			<ExitWizardParams {protocol} bind:fields />
 		{:else}
 			{#if needsManualWg}
 				<!-- WE-26 обещает вставку .conf именно здесь. -->
@@ -376,7 +358,7 @@
 						<p>
 							Будет создан AWG-туннель «{tunnelName}».
 							<FieldHint
-								text={`Режим WG: клиент получит WireGuard-конфиг, из него создастся AWG-туннель с Endpoint 127.0.0.1:${port}.`}
+								text="Режим WG: клиент получит WireGuard-конфиг, из него создастся AWG-туннель с Endpoint на локальный порт клиента."
 								ariaLabel="Подсказка: режим WG"
 							/>
 						</p>

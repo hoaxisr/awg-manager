@@ -6,6 +6,7 @@
 	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
+	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
 	import KillPortSection from './KillPortSection.svelte';
@@ -66,10 +67,14 @@
 			/>
 			<Dropdown
 				label="Выход в интернет"
-				value={wdttServer.natStaticWan ?? ''}
+				value={effectiveStaticWan(wdttServer)}
 				options={[{ value: '', label: 'Не выбран' }, ...wanOptions]}
 				onchange={(v) => {
-					if (wdttServer) wdttServer.natStaticWan = v;
+					if (!wdttServer) return;
+					// Выбор пользователя становится правдой целиком: одиночка
+					// уезжает, список снимается (бэкенд берёт присланную форму).
+					wdttServer.natStaticWan = v;
+					wdttServer.natStaticWans = undefined;
 				}}
 				fullWidth
 			/>

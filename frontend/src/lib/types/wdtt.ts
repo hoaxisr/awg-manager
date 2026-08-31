@@ -54,6 +54,10 @@ export interface WdttServerConfig {
 	debug?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	natStaticWan?: string;
+	/** Выходы static-NAT для internet-only. Источник правды бэкенда —
+	 *  StaticNATList(): список старше одиночки. Мигрированная с post-#750
+	 *  конфигом запись несёт ТОЛЬКО его. */
+	natStaticWans?: string[];
 	policy?: string;
 	lanSegments?: string[];
 	ingressEnabled?: boolean;

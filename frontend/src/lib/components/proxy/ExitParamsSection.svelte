@@ -13,8 +13,6 @@
 		/** Редактируемая копия конфига детали — правится на месте. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
-		/** Режим Raw: отдельного AWG-туннеля нет, и подсказка EX-20 врала бы. */
-		raw?: boolean;
 		saving?: boolean;
 		/** Непусто — сохранять нечего: конфиг заведомо не заработает. */
 		saveBlockedHint?: string;
@@ -25,7 +23,6 @@
 	let {
 		wdttClient = $bindable(),
 		ftClient = $bindable(),
-		raw = false,
 		saving = false,
 		saveBlockedHint = '',
 		onsave,
@@ -81,16 +78,6 @@
 
 			<FormRow label="Пароль" hint="Применяется при перезапуске">
 				<SensitiveInput bind:value={wdttClient.password} />
-			</FormRow>
-
-			<FormRow
-				label="Локальный порт"
-				for="exit-listen"
-				hint={raw ? '' : 'Сюда смотрит AWG-туннель'}
-			>
-				<div class="w-listen">
-					<Input id="exit-listen" bind:value={wdttClient.listen} fullWidth />
-				</div>
 			</FormRow>
 
 			<FormRow label="VK-хеши" for="exit-vk" hint="Применяется при перезапуске">
@@ -189,10 +176,6 @@
 
 	.form :global(.form-row-control > [role='group']) {
 		width: fit-content;
-	}
-
-	.w-listen {
-		width: 200px;
 	}
 
 	.w-num {

@@ -15,6 +15,7 @@ import {
 	toWdttClientConfig,
 	toWdttClientPatch,
 	toWdttConfig,
+	effectiveStaticWan,
 	toWdttServerConfig,
 	toWdttServerPatch,
 	toWdttStatus,
@@ -855,5 +856,55 @@ describe('адреса новой поверхности', () => {
 		const calls = stubFetch(() => ({ link: 'freeturn://x', peer: 'p' }));
 		await api.generateFreeTurnLink({ name: 'Ноут' });
 		expect(calls[0].url).toBe('/api/proxyrt/instances/freeturn-server%3Adefault/link');
+	});
+});
+
+// F61: у wdtt-сервера, мигрированного с post-#750 конфигом, выход NAT лежит в
+// СПИСКЕ natStaticWans, а фронт знал только одиночку — селектор был пуст, гейт
+// говорил «не выбран WAN», а патч слал natStaticWan:"" и чистил список на
+// бэкенде, из-за чего несвязанные сохранения отбивались 422.
+describe('natStaticWans (F61)', () => {
+	it('парсит список выходов NAT', () => {
+		const cfg = toWdttServerConfig({
+			...wdttServerView,
+			config: {
+				...wdttServerView.config,
+				natMode: 'internet-only',
+				natStaticWans: ['ISP', 'Sfp0']
+			}
+		});
+		expect(cfg.natStaticWans).toEqual(['ISP', 'Sfp0']);
+	});
+
+	it('effectiveStaticWan: список старше одиночки, зеркало StaticNATList', () => {
+		expect(effectiveStaticWan({ natStaticWans: ['ISP', 'Sfp0'], natStaticWan: 'Old' })).toBe('ISP');
+		expect(effectiveStaticWan({ natStaticWans: [], natStaticWan: 'Old' })).toBe('Old');
+		expect(effectiveStaticWan({ natStaticWan: 'Old' })).toBe('Old');
+		expect(effectiveStaticWan({})).toBe('');
+	});
+
+	it('патч со списком шлёт список и НЕ шлёт одиночку', () => {
+		const patch = toWdttServerPatch({
+			listen: '0.0.0.0:56000',
+			wgPort: 0,
+			password: '',
+			natMode: 'internet-only',
+			natStaticWans: ['ISP', 'Sfp0']
+		});
+		expect(patch.natStaticWans).toEqual(['ISP', 'Sfp0']);
+		expect('natStaticWan' in patch).toBe(false);
+	});
+
+	// Гвард новой ветки, не пин дефекта: на текущем коде тоже зелёный (M2).
+	it('патч без списка шлёт одиночку — выбор пользователя становится правдой', () => {
+		const patch = toWdttServerPatch({
+			listen: '0.0.0.0:56000',
+			wgPort: 0,
+			password: '',
+			natMode: 'internet-only',
+			natStaticWan: 'ISP'
+		});
+		expect(patch.natStaticWan).toBe('ISP');
+		expect('natStaticWans' in patch).toBe(false);
 	});
 });

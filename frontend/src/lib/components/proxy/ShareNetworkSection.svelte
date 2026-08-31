@@ -5,6 +5,7 @@
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import ServerWgBind from '../freeturn/ServerWgBind.svelte';
+	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import { obfOptions } from '../freeturn/options';
 	import { setListenPort } from '$lib/utils/listenPortUtils';
 	import type { NatMode } from '$lib/utils/network';
@@ -73,7 +74,7 @@
 	const wanMissing = $derived(
 		!!wdttServer &&
 			wdttServer.natMode === 'internet-only' &&
-			!(wdttServer.natStaticWan ?? '').trim(),
+			!effectiveStaticWan(wdttServer).trim(),
 	);
 	/** Показать, чего не хватает «Интернету»: клик по нему был отклонён. */
 	let natWanBlocked = $state(false);
@@ -84,7 +85,7 @@
 	 * на бэкенд немедленно, и сервер перестал бы стартовать.
 	 */
 	function changeNat(mode: NatMode) {
-		if (mode === 'internet-only' && !(wdttServer?.natStaticWan ?? '').trim()) {
+		if (mode === 'internet-only' && !(wdttServer ? effectiveStaticWan(wdttServer) : '').trim()) {
 			natWanBlocked = true;
 			return;
 		}

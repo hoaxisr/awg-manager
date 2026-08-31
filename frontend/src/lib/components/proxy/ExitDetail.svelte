@@ -253,7 +253,6 @@
 	<ExitParamsSection
 		bind:wdttClient={wdttDraft}
 		bind:ftClient={ftDraft}
-		raw={draftRaw}
 		{saving}
 		saveBlockedHint={noPeerHint}
 		onsave={save}
