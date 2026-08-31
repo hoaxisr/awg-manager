@@ -77,6 +77,15 @@ function runState(s: ProcessStatus, enabled: boolean): ProxyRunState {
   return enabled ? "error" : "stopped";
 }
 
+/**
+ * Ключ строки списка. Единственный владелец формата: его же собирают
+ * `rowKeyFromInstanceKey` и обработчики мастеров на странице прокси, а
+ * разъехавшись, они молча перестают находить строку.
+ */
+export function rowKey(protocol: ProxyProtocol, role: ProxyRole, id: string): string {
+  return `${protocol}:${role}:${id}`;
+}
+
 function toRow(
   protocol: ProxyProtocol,
   role: ProxyRole,
@@ -88,7 +97,7 @@ function toRow(
 ): ProxyInstanceRow {
   const s = inst.status;
   return {
-    key: `${protocol}:${role}:${inst.id}`,
+    key: rowKey(protocol, role, inst.id),
     id: inst.id,
     protocol,
     role,
@@ -132,7 +141,7 @@ export function rowKeyFromInstanceKey(
 	const kind = INSTANCE_KINDS[instanceKey.slice(0, sep)];
 	const id = instanceKey.slice(sep + 1);
 	if (!kind || !id) return null;
-	return { key: `${kind.protocol}:${kind.role}:${id}`, role: kind.role };
+	return { key: rowKey(kind.protocol, kind.role, id), role: kind.role };
 }
 
 /** Порт из адреса `host:port`; пусто — адреса нет или он без порта. */

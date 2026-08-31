@@ -16,6 +16,7 @@
 		normalizeShareConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
+		rowKey,
 		rowKeyFromInstanceKey,
 		seedGateWarning,
 		seedListenMoveNotice,
@@ -209,7 +210,7 @@
 	async function shareWizardDone(protocol: ExitProtocol, id: string) {
 		shareWizard = null;
 		await reloadAll();
-		selectedShareKey = `${protocol}:server:${id}`;
+		selectedShareKey = rowKey(protocol, 'server', id);
 		await tick();
 		document.getElementById('share-clients')?.scrollIntoView({ block: 'start' });
 	}
@@ -218,7 +219,7 @@
 	async function exitWizardDone(protocol: ExitProtocol, id: string) {
 		exitWizard = null;
 		await reloadAll();
-		selectedExitKey = `${protocol}:client:${id}`;
+		selectedExitKey = rowKey(protocol, 'client', id);
 	}
 
 	async function renameInstance(row: ProxyInstanceRow, name: string) {

@@ -71,7 +71,7 @@ export {
 	toggleProxyInstance,
 } from './instanceOps';
 export { findLinkedTunnel, listenPort } from './linkedTunnel';
-export { exitRows, rowKeyFromInstanceKey, shareRows } from './rows';
+export { exitRows, rowKey, rowKeyFromInstanceKey, shareRows } from './rows';
 export type {
 	ProxyInstanceRow,
 	ProxyProtocol,
