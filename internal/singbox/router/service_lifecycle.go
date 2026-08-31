@@ -822,6 +822,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		s.appLog.Warn("discover-lan-bridges", "", "no NDMS hotspot LAN bridges, DNS fallback skipped")
 	}
 	if err := s.deps.IPTables.Install(ctx, spec); err != nil {
+		// См. F20: restore коммитит по таблицам — часть могла примениться,
+		// снимок больше не соответствует железу. appliedSpec не обнуляем.
+		s.netfilterStateKnown = false
 		// Stop sing-box from listening on the now-orphan TPROXY port,
 		// but DO NOT corrupt the persisted user config. With orchestrator
 		// wired we just park the slot back under disabled/ — sing-box
@@ -1760,6 +1763,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 		}
 		s.mu.Lock()
 		if err := s.deps.IPTables.Install(ctx, want); err != nil {
+			// См. F20: часть таблиц могла закоммититься — снимок неизвестен.
+			s.netfilterStateKnown = false
 			s.mu.Unlock()
 			return err
 		}

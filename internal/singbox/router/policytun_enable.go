@@ -474,6 +474,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		}
 		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
 		if err = s.deps.IPTables.Install(ctx, spec); err != nil {
+			// См. F20: часть таблиц могла закоммититься — снимок неизвестен.
+			s.netfilterStateKnown = false
 			return fmt.Errorf("enable policy-tun: iptables install: %w", err)
 		}
 		// Применённое состояние netfilter — база сравнения для reconcile: без

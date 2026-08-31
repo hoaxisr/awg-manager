@@ -536,6 +536,12 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.deps.IPTables.Install(ctx, *want); err != nil {
+		// restore коммитит ПО ТАБЛИЦАМ: часть правил могла примениться, поэтому
+		// снимок больше не соответствует железу. Помечаем состояние неизвестным
+		// — следующий тик переустановит детерминированно (F20). appliedSpec НЕ
+		// обнуляем: nil значит «ничего нашего не установлено», а после
+		// частичного провала это было бы враньём.
+		s.netfilterStateKnown = false
 		s.appLog.Warn("policy-tun-reconcile", "qos", "iptables install: "+err.Error())
 		return
 	}
