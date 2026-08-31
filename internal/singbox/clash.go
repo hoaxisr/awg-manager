@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -85,12 +86,18 @@ func (c *ClashClient) HasOutbound(tag string) bool {
 }
 
 // TestDelay triggers a latency test for a proxy via Clash API.
-func (c *ClashClient) TestDelay(name, testURL string, timeout time.Duration) (int, error) {
+// ctx обрывает САМ запрос: без него отмена клиента гасила только ожидание
+// между попытками, а проба висела до таймаута (F39).
+func (c *ClashClient) TestDelay(ctx context.Context, name, testURL string, timeout time.Duration) (int, error) {
 	q := url.Values{}
 	q.Set("url", testURL)
 	q.Set("timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
 	u := fmt.Sprintf("http://%s/proxies/%s/delay?%s", c.Address(), url.PathEscape(name), q.Encode())
-	resp, err := c.http.Get(u)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, err
 	}

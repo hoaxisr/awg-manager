@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,7 +44,7 @@ func TestClashClient_DelayTest(t *testing.T) {
 	defer ts.Close()
 
 	c := NewClashClient(strings.TrimPrefix(ts.URL, "http://"))
-	delay, err := c.TestDelay("Germany", "https://www.gstatic.com/generate_204", 3*time.Second)
+	delay, err := c.TestDelay(context.Background(), "Germany", "https://www.gstatic.com/generate_204", 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,5 +83,39 @@ func TestClashClient_HasOutbound_ClashDown(t *testing.T) {
 	c := NewClashClient("127.0.0.1:1")
 	if c.HasOutbound("any-tag") {
 		t.Errorf("expected false when Clash is unreachable")
+	}
+}
+
+// F39: отмена контекста обязана обрывать САМ запрос пробы. Раньше ctx доезжал
+// только до backoff-селекта между попытками, а голый http.Get висел до
+// таймаута — ручка не отпускала клиента.
+//
+// Мутация для пина: вернуть `c.http.Get(u)` вместо NewRequestWithContext+Do —
+// компилируется, тест краснеет по таймауту.
+func TestClashClient_DelayTestHonorsContext(t *testing.T) {
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // сервер не отвечает, пока тест не разрешит
+	}))
+	defer ts.Close()
+	defer close(release)
+
+	c := NewClashClient(strings.TrimPrefix(ts.URL, "http://"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // отменён ДО вызова
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.TestDelay(ctx, "Germany", "https://www.gstatic.com/generate_204", 3*time.Second)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("проба вернулась без ошибки на отменённом контексте")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("проба не оборвалась по отмене контекста")
 	}
 }
