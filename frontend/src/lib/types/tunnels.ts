@@ -126,6 +126,8 @@ export interface TunnelListItem {
 	connectivityCheck?: ConnectivityCheckConfig;
 	/** id WDTT-клиента, для которого создан туннель (пусто у прочих). */
 	wdttClientId?: string;
+	/** То же для FreeTurn-клиента: пара к wdttClientId. */
+	freeTurnClientId?: string;
 	pingCheck: {
 		status: 'alive' | 'recovering' | 'disabled';
 		restartCount: number;

@@ -443,14 +443,15 @@ const MOCK_AWG_TUNNELS = [
 		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 0 },
 	},
 	{
-		// Туннель FreeTurn-клиента: id клиента бэкенд в списке не отдаёт, связь
-		// ищется по Endpoint (127.0.0.1:9005 = listen клиента) — фоллбэк.
+		// Туннель FreeTurn-клиента. Связь помнит бэкенд — freeTurnClientId в
+		// списке, пара к wdttClientId (internal/api/tunnels_view.go).
 		id: 'ft-tunnel-default',
 		name: 'Клиент FT',
 		type: 'amneziawg',
 		status: 'running',
 		enabled: true,
 		defaultRoute: false,
+		freeTurnClientId: 'default',
 		endpoint: '127.0.0.1:9005',
 		address: '10.55.0.2/32',
 		interfaceName: 'opkgtun9',

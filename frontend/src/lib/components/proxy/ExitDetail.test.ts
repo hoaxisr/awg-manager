@@ -133,8 +133,11 @@ describe('ExitDetail: режим подключения правится в де
 
 	// Режим приезжал только из импортируемой ссылки: в списке бейдж «WG/Raw»
 	// был, а сменить режим в UI было нечем — оставался переимпорт профиля.
+	// Параметры уехали в выдвижной ящик: экран детали занимает состояние и
+	// наблюдение, а одноразовая настройка открывается «Настройками».
 	it('переключатель WG/Raw есть в параметрах', async () => {
 		const { findByRole } = mount('mode-1', 'wg');
+		await fireEvent.click(await findByRole('button', { name: 'Настройки' }));
 		const group = await findByRole('group', { name: 'Режим подключения' });
 		expect(group).toBeTruthy();
 		expect(group.textContent).toContain('WG');
@@ -143,6 +146,7 @@ describe('ExitDetail: режим подключения правится в де
 
 	it('активен режим из конфига, а не первый попавшийся', async () => {
 		const { findByRole } = mount('mode-2', 'raw');
+		await fireEvent.click(await findByRole('button', { name: 'Настройки' }));
 		const raw = await findByRole('button', { name: 'Raw' });
 		expect(raw.getAttribute('aria-pressed')).toBe('true');
 	});
@@ -154,6 +158,7 @@ describe('ExitDetail: режим подключения правится в де
 		const { findByRole, findByText } = mount('mode-3', 'wg');
 		expect(await findByText('WDTT · WG')).toBeTruthy();
 
+		await fireEvent.click(await findByRole('button', { name: 'Настройки' }));
 		await fireEvent.click(await findByRole('button', { name: 'Raw' }));
 
 		expect(await findByText('WDTT · Raw')).toBeTruthy();
