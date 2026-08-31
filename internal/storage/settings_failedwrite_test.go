@@ -2,6 +2,7 @@ package storage
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
@@ -303,4 +304,93 @@ func TestSetServerPeerSecret_FailedWriteKeepsMap(t *testing.T) {
 	if _, ok := got.ServerPeerSecrets["Wireguard3"]["pub1"]; !ok {
 		t.Error("прежний секрет пропал из кэша")
 	}
+}
+
+// Остальные контейнерные мутаторы того же класса: без клона их правка уходит в
+// ЖИВОЙ кэш ещё до записи. Ловится только на НЕПУСТОМ контейнере — на nil/пустом
+// мутатор заводит новый и кладёт его в копию.
+func TestContainerMutators_FailedWriteKeepsCache(t *testing.T) {
+	t.Run("DeleteManagedServer не сдвигает разделяемый массив", func(t *testing.T) {
+		dir := t.TempDir()
+		store := NewSettingsStore(dir)
+		if _, err := store.Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		for _, name := range []string{"Wireguard1", "Wireguard2", "Wireguard3"} {
+			if err := store.AddManagedServer(ManagedServer{InterfaceName: name}); err != nil {
+				t.Fatalf("AddManagedServer %s: %v", name, err)
+			}
+		}
+		failWrites(t, dir)
+
+		if err := store.DeleteManagedServer("Wireguard2"); err == nil {
+			t.Fatal("ожидался отказ записи")
+		}
+		got, err := store.Get()
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		var names []string
+		for _, sv := range got.ManagedServers {
+			names = append(names, sv.InterfaceName)
+		}
+		want := []string{"Wireguard1", "Wireguard2", "Wireguard3"}
+		if !reflect.DeepEqual(names, want) {
+			t.Errorf("ManagedServers = %v, want %v (сдвиг по месту утёк в кэш)", names, want)
+		}
+	})
+
+	t.Run("UpdateServerInterfaceMeta не правит живую карту", func(t *testing.T) {
+		dir := t.TempDir()
+		store := NewSettingsStore(dir)
+		if _, err := store.Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if err := store.UpdateServerInterfaceMeta("Wireguard1", func(m *ServerInterfaceMeta) error {
+			m.Endpoint = "было"
+			return nil
+		}); err != nil {
+			t.Fatalf("seed UpdateServerInterfaceMeta: %v", err)
+		}
+		failWrites(t, dir)
+
+		if err := store.UpdateServerInterfaceMeta("Wireguard1", func(m *ServerInterfaceMeta) error {
+			m.Endpoint = "стало"
+			return nil
+		}); err == nil {
+			t.Fatal("ожидался отказ записи")
+		}
+		got, err := store.Get()
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if d := got.ServerInterfaceMeta["Wireguard1"].Endpoint; d != "было" {
+			t.Errorf("Endpoint = %q, want %q (правка карты утекла в кэш)", d, "было")
+		}
+	})
+
+	t.Run("DeleteServerPeerSecret не правит живую карту", func(t *testing.T) {
+		dir := t.TempDir()
+		store := NewSettingsStore(dir)
+		if _, err := store.Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		for _, pub := range []string{"pub1", "pub2"} {
+			if err := store.SetServerPeerSecret("Wireguard1", pub, ServerPeerSecret{PrivateKey: pub}); err != nil {
+				t.Fatalf("seed SetServerPeerSecret %s: %v", pub, err)
+			}
+		}
+		failWrites(t, dir)
+
+		if err := store.DeleteServerPeerSecret("Wireguard1", "pub2"); err == nil {
+			t.Fatal("ожидался отказ записи")
+		}
+		got, err := store.Get()
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if _, ok := got.ServerPeerSecrets["Wireguard1"]["pub2"]; !ok {
+			t.Errorf("ServerPeerSecrets = %+v, секрет пропал из кэша при провале записи", got.ServerPeerSecrets)
+		}
+	})
 }

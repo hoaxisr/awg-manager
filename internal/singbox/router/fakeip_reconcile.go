@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -231,15 +232,24 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// set merely contributes additional desired routes.
 			// Потиковой сводки «remote cidrs: v4=N v6=M» здесь больше нет: она
 			// писалась на КАЖДОМ 30-секундном тике при живых наборах и держалась
-			// только на коалесценции журнала (F28). Событие теперь одно и по делу
-			// — фактическое восстановление маршрута, симметрично Tier-1 (F29).
+			// только на коалесценции журнала (F28). Логируем ФАКТ постановки
+			// маршрутов, а не наличие набора (F29).
+			//
+			// Строка одна на тик, а не на префикс: remote-CIDR ставит ТОЛЬКО
+			// reconcile (enable кладёт лишь desiredTunCIDRs), поэтому на первом
+			// же тике после включения отсутствуют ВСЕ префиксы набора — у
+			// декомпилированного .srs их сотни, и пер-префиксный Info выдавил
+			// бы из кольцевого журнала всю прочую диагностику. По той же причине
+			// не пишем «was absent, re-added»: для первичной установки это
+			// неправда, а отличить её от лечения дрейфа тут нечем.
 			rV4, rV6 := s.remoteTunCIDRs(ctx, cfg)
+			added := 0
 			for _, c := range rV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
 					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
 					} else {
-						s.appLog.Info("fakeip-reconcile", iface, "remote cidr route "+c+" was absent, re-added (drift-heal)")
+						added++
 					}
 				}
 			}
@@ -251,9 +261,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
 					} else {
-						s.appLog.Info("fakeip-reconcile", iface, "remote cidr route v6 "+c+" was absent, re-added (drift-heal)")
+						added++
 					}
 				}
+			}
+			if added > 0 {
+				s.appLog.Info("fakeip-reconcile", iface, fmt.Sprintf("remote cidr routes installed: %d", added))
 			}
 		}
 	}

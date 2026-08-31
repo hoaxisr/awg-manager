@@ -40,7 +40,7 @@ type singboxCore struct {
 	op        *singbox.Operator
 	orch      *singboxorch.Orchestrator
 	awg3Store *awg3endpoint.Store
-	migrated  bool // ruleset-URL/address-or переписали файлы — runtime решает про reload
+	migrated  bool // миграции (ruleset-URL, address-or, device-proxy) переписали файлы — runtime решает про reload
 }
 
 // buildSingboxCore собирает общую для демона и cleanup часть sing-box-рантайма:
