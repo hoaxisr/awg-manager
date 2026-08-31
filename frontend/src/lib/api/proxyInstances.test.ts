@@ -80,7 +80,6 @@ const wdttServerView: ProxyInstanceView = {
 		listen: '0.0.0.0:56002',
 		wgPort: 56001,
 		passwordSet: true,
-		botTokenSet: false,
 		natMode: 'full',
 		policy: 'Policy0',
 		lanSegments: ['Home'],
@@ -347,7 +346,7 @@ describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистем�
 			transport: 'tcp',
 			mode: 'udp',
 			bond: true,
-					obfProfile: 'rtpopus',
+			obfProfile: 'rtpopus',
 			obfKey: '',
 			obfKeySet: true,
 			streamsPerCred: 5,
@@ -749,7 +748,6 @@ describe('адреса новой поверхности', () => {
 		const body = calls[0].body as { enabled: boolean; config: Record<string, unknown> };
 		expect(body.enabled).toBe(true);
 		expect('password' in body.config).toBe(false);
-		expect('botToken' in body.config).toBe(false);
 	});
 
 	it('состав абонентов адресуется ключом инстанса и доносит reload', async () => {

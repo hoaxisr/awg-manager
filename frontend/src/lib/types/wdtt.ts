@@ -70,7 +70,6 @@ export interface WdttServerConfig {
 	relayMode?: 'wg' | 'raw';
 	/** UDP-порт Raw (-listen-raw). Пусто → DTLS+1 */
 	rawListen?: string;
-	/** WG peer-порт (-listen-direct, WRAP без DTLS). Пусто → DTLS-порт */
 	/** peer и VK-хеши последней ссылки: чтобы wdtt:// восстанавливалась */
 	linkPeer?: string;
 	linkVkHashes?: string;
