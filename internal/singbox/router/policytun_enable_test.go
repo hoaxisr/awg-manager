@@ -952,3 +952,20 @@ func TestPolicyTunEnable_FailedInstallMarksNetfilterUnknown(t *testing.T) {
 		t.Error("снимок netfilter остался известным после провала Install: следующий тик не переустановит")
 	}
 }
+
+// F14: policy-tun идёт тем же валидирующим путём, что и fakeip, но страховки
+// против ложного «unknown-outbound» по протухшему каталогу AWG-тегов (#567) у
+// него не было — хотя фикс #567 старше самого policy-tun. Зеркало
+// TestEnableFakeIPTun_RefreshesAWGOutbounds.
+func TestEnablePolicyTun_RefreshesAWGOutbounds(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	called := 0
+	h.svc.deps.AWGOutboundsRefresh = func(context.Context) error { called++; return nil }
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun): %v", err)
+	}
+	if called == 0 {
+		t.Fatal("AWGOutboundsRefresh не вызван при enable policy-tun: каталог AWG-тегов может быть протухшим на валидирующем reload")
+	}
+}

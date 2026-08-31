@@ -324,6 +324,16 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		}
 	}
 
+	// Освежить 15-awg.json ДО валидирующего reload'а: протухший каталог
+	// AWG-тегов даёт ложный «unknown-outbound» по живому туннелю и откат всего
+	// enable — класс #567. Зеркалит страховку fakeip_enable.go; у policy-tun её
+	// не было, хотя фикс #567 старше самого режима (F14).
+	// Best-effort: ошибка каталога не должна блокировать enable сама по себе.
+	if s.deps.AWGOutboundsRefresh != nil {
+		if e := s.deps.AWGOutboundsRefresh(ctx); e != nil {
+			s.appLog.Warn("policy-tun-enable", iface, "refresh 15-awg.json: "+e.Error())
+		}
+	}
 	if err = s.persistConfigDirect(ctx, cfg); err != nil {
 		return fmt.Errorf("enable policy-tun: persist router config: %w", err)
 	}
