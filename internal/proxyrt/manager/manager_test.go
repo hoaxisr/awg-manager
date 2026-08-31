@@ -235,7 +235,12 @@ func newEnv(t *testing.T) *env {
 			e.allocN++
 			return 30, nil
 		},
-		AllocListen: func(string) (string, error) { return "127.0.0.1:9007", nil },
+		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+			if current != "" {
+				return current, nil
+			}
+			return "127.0.0.1:9007", nil
+		},
 		ReleasePins: func(keys ...string) { e.released = append(e.released, keys) },
 		WaitDisabled: func(key string, _ time.Duration) bool {
 			e.waited = append(e.waited, key)

@@ -256,20 +256,35 @@ func proxyAllocIndex(ctx context.Context, alloc *proxyrt.Allocator, min int,
 // занятых портов. Скан отдал бы двум параллельным Create ОДИН порт — запись
 // на диск и выделение не атомарны, а уникальность Listen хранилище не
 // проверяет.
+//
+// current — порт, который у записи уже стоит. Годный (в пуле и ничей) остаётся
+// за инстансом: смена listen тянет за собой переезд endpoint'а связанного
+// туннеля, и делать её без нужды нельзя. Негодный — мусор, вне пула или занятый
+// чужой записью — молча меняется на свободный. Прежде такой порт был приговором:
+// ресурс listen_port отказывал (linkres/listen.go), инстанс уходил в blocked и
+// сам оттуда не возвращался, а починить его было нечем — поле порта из UI ушло.
+//
+// Занятость считается БЕЗ собственной записи инстанса (selfKind/selfID): иначе
+// свой же порт читался бы как чужой и годный current не удержался бы никогда.
 func proxyAllocListen(ctx context.Context, alloc *proxyrt.Allocator,
 	store *instancestore.Store, tunnels *storage.AWGTunnelStore,
-) func(ownerKey string) (string, error) {
-	return func(ownerKey string) (string, error) {
-		// Занятость — порты ВСЕХ записей store и localhost-endpoint'ы
-		// связанных туннелей (паритет OccupiedLocalListenPorts старого мира).
-		// Своя запись не исключается: AllocListen зовётся только при пустом
-		// Listen, собственного порта у записи в этот момент нет.
-		occ := newProxyOccupancy(store, tunnels, "", "")
+) func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error) {
+	return func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error) {
+		// Занятость — порты ВСЕХ ОСТАЛЬНЫХ записей store и localhost-endpoint'ы
+		// чужих связанных туннелей (паритет OccupiedLocalListenPorts старого мира).
+		occ := newProxyOccupancy(store, tunnels, selfKind, selfID)
 		taken, err := occ.OccupiedLocalListenPorts(ctx)
 		if err != nil {
 			return "", fmt.Errorf("занятость портов: %w", err)
 		}
-		p, err := alloc.AllocIndex(ownerKey, roles.ListenPortMin-1, taken)
+		// Текущий порт идёт закреплением: AllocIndex вернёт его, если он в
+		// диапазоне и свободен, иначе выдаст первый свободный. Значение вне
+		// пула аллокатор игнорирует — им же гасится «порта нет вовсе».
+		pinned := roles.ListenPortMin - 1
+		if port, ok := localhostPort(current); ok {
+			pinned = port
+		}
+		p, err := alloc.AllocIndex(ownerKey, pinned, taken)
 		if err != nil {
 			return "", fmt.Errorf("нет свободного порта в %d..%d: %w",
 				roles.ListenPortMin, roles.ListenPortMax, err)

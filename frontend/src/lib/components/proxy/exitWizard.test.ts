@@ -8,7 +8,6 @@ import {
 	exitStep2Ready,
 	fieldsFromFtPayload,
 	fieldsFromWdttPayload,
-	nextLocalListen,
 	policyPermitOrder,
 	proxyTunnelName,
 } from './exitWizard';
@@ -83,32 +82,6 @@ describe('exitConfigSetupComplete', () => {
 	});
 });
 
-describe('nextLocalListen', () => {
-	// Локальный порт общий для обоих протоколов: wdtt- и freeturn-клиент
-	// слушают один 127.0.0.1, и мастер, считавший занятость по своему
-	// протоколу, подсказывал занятый — инстанс падал на «порт 9000 занят».
-	it('обходит порт, занятый клиентом другого протокола', () => {
-		expect(nextLocalListen(['127.0.0.1:9000'], 'wdtt')).toBe('127.0.0.1:9001');
-	});
-
-	it('первый свободный порт с 9000', () => {
-		expect(nextLocalListen([])).toBe('127.0.0.1:9000');
-		expect(nextLocalListen(['127.0.0.1:9000', '127.0.0.1:9001'])).toBe('127.0.0.1:9002');
-		expect(nextLocalListen(['127.0.0.1:9001'])).toBe('127.0.0.1:9000');
-	});
-
-	it('мусорные значения не занимают портов', () => {
-		expect(nextLocalListen(['', 'ерунда'])).toBe('127.0.0.1:9000');
-	});
-
-	it('диапазон и фоллбэк — по правилам протокола (Go: 9000..9199 / 9000..9099)', () => {
-		const wdttFull = Array.from({ length: 200 }, (_, i) => `127.0.0.1:${9000 + i}`);
-		expect(nextLocalListen(wdttFull.slice(0, 100), 'freeturn')).toBe('127.0.0.1:9000');
-		expect(nextLocalListen(wdttFull.slice(0, 100), 'wdtt')).toBe('127.0.0.1:9100');
-		expect(nextLocalListen(wdttFull, 'wdtt')).toBe('127.0.0.1:9100');
-	});
-});
-
 describe('поля из ссылки', () => {
 	it('WDTT-профиль: хеши через запятую, потоки из ссылки', () => {
 		const f = fieldsFromWdttPayload(
@@ -120,69 +93,39 @@ describe('поля из ссылки', () => {
 				workers: 18,
 				listen: '127.0.0.1:9005',
 			},
-			'127.0.0.1:9000',
 		);
+		// Порт из ссылки в поля не попадает вовсе: он адресован приложению
+		// qWDTT, а инстансу порт выдаёт бэкенд.
 		expect(f).toEqual({
 			name: 'Амстердам',
 			peer: 'nl:56000',
 			password: 'p',
-			listen: '127.0.0.1:9000',
 			vkHashes: 'aa,bb',
 			workers: '18',
 		});
 	});
 
-	// Порт в ссылке адресован приложению qWDTT на телефоне, у которого своего
-	// выбора нет. Инстансу на роутере порт локален и обязан лишь не совпасть с
-	// чужим, поэтому берётся свободный кандидат — так же, как поступает импорт
-	// на бэкенде (`recordFromPayload` Listen из payload не переносит).
-	it('локальный порт из ссылки игнорируется — берётся свободный кандидат', () => {
-		const f = fieldsFromWdttPayload(
-			{ peer: 'nl:56000', password: 'p', vkHashes: [], listen: '127.0.0.1:9000' },
-			'127.0.0.1:9001',
-		);
-		expect(f.listen).toBe('127.0.0.1:9001');
-	});
-
-	it('то же у FreeTurn: свой порт, а не порт автора ссылки', () => {
-		const f = fieldsFromFtPayload(
-			{ v: 1, peer: 'vps:56000', listen: '127.0.0.1:9000' },
-			'127.0.0.1:9002',
-		);
-		expect(f.listen).toBe('127.0.0.1:9002');
-	});
-
-	it('порт подписки одинаков для всех стран — берётся тот же кандидат', () => {
-		const f = fieldsFromWdttPayload(
-			{ peer: 'de:56000', password: 'p', vkHashes: [], listen: '127.0.0.1:9000' },
-			'127.0.0.1:9007',
-		);
-		expect(f.listen).toBe('127.0.0.1:9007');
-		expect(f.workers).toBe(DEFAULT_WORKERS);
-	});
-
 	it('FreeTurn: пароля нет, ссылки VK Calls заполняются руками', () => {
-		const f = fieldsFromFtPayload({ v: 1, name: 'FT', peer: 'vps:56000', n: 9 }, '127.0.0.1:9001');
+		const f = fieldsFromFtPayload({ v: 1, name: 'FT', peer: 'vps:56000', n: 9 });
 		expect(f.password).toBe('');
 		expect(f.vkHashes).toBe('');
 		expect(f.workers).toBe('9');
 	});
 
 	it('ручное создание — пустые поля и дефолт потоков', () => {
-		expect(emptyFields('127.0.0.1:9000')).toEqual({
+		expect(emptyFields()).toEqual({
 			name: '',
 			peer: '',
 			password: '',
-			listen: '127.0.0.1:9000',
 			vkHashes: '',
 			workers: DEFAULT_WORKERS,
 		});
 	});
 
 	it('дефолт потоков FreeTurn — дефолт бинаря, не wdtt-округление', () => {
-		expect(emptyFields('127.0.0.1:9000', 'freeturn').workers).toBe(DEFAULT_FT_STREAMS);
+		expect(emptyFields('freeturn').workers).toBe(DEFAULT_FT_STREAMS);
 		expect(DEFAULT_FT_STREAMS).toBe('10');
-		const f = fieldsFromFtPayload({ v: 1, peer: 'vps:56000' }, '127.0.0.1:9001');
+		const f = fieldsFromFtPayload({ v: 1, peer: 'vps:56000' });
 		expect(f.workers).toBe(DEFAULT_FT_STREAMS);
 	});
 });

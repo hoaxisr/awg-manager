@@ -59,7 +59,6 @@ function mount() {
 	return render(ExitWizard, {
 		props: {
 			policies: [],
-			usedListens: { wdtt: [], freeturn: [] },
 			onclose: () => {},
 			ondone: () => {},
 		},

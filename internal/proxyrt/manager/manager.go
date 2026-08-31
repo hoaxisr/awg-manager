@@ -99,8 +99,12 @@ type Deps struct {
 	PostSeed func(ctx context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error
 	// Выделение пинов — обязанность писателя конфига (план 3), то есть НАША
 	// (Щ1): без этого создание raw-клиента и сервера через API невозможно.
-	AllocIndex  func(owner string, pinned int, havePin bool) (int, error)
-	AllocListen func(ownerKey string) (string, error)
+	AllocIndex func(owner string, pinned int, havePin bool) (int, error)
+	// AllocListen выдаёт клиенту локальный listen. current — адрес, который уже
+	// стоит в записи: годный (в пуле и ничей) возвращается как есть, негодный
+	// заменяется свободным. Занятость считается без собственной записи
+	// инстанса, поэтому selfKind/selfID.
+	AllocListen func(ownerKey string, selfKind instancestore.Kind, selfID, current string) (string, error)
 	ReleasePins func(ownerKeys ...string)
 	// WaitDisabled — ограниченное ожидание teardown-прогона (Щ5): прод —
 	// опрос StateStore до фазы disabled/settled свежее момента вызова.
@@ -435,6 +439,15 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 // обязан отдать их обратно через ReleasePins — иначе held аллокатора течёт до
 // рестарта (Н6 ревью).
 //
+// Listen спрашивается ВСЕГДА, а не только когда он пуст: годный порт
+// аллокатор возвращает как есть, а негодный (вне пула либо занятый чужой
+// записью) меняет на свободный. Прежде такой порт был приговором — ресурс
+// listen_port отказывал, инстанс уходил в blocked и сам оттуда не выбирался.
+// Момент подходящий: ensurePins стоит на пути и Create, и Update, а порт
+// значит что-то только у запускаемого инстанса — старт идёт через Update.
+// Endpoint связанного туннеля за переездом следует сам (linkres.LinkedEndpoint
+// правит его ДО подъёма).
+//
 // Listen идёт под СВОИМ ключом владельца — key+"/listen" (I-3 ревью, круг 2),
 // ровно как обе половины сервера (key+"/wg", key+"/raw"). Голый key брать
 // нельзя: Allocator.Release (alloc.go:78-86) освобождает ВСЕ номера владельца,
@@ -468,14 +481,12 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 			c.NdmsIface = fmt.Sprintf("OpkgTun%d", idx)
 			c.RawIface = fmt.Sprintf("opkgtun%d", idx)
 		}
-		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key + "/listen")
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-			}
-			allocated = append(allocated, key+"/listen")
-			c.Listen = l
+		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
+		if err != nil {
+			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 		}
+		allocated = append(allocated, key+"/listen")
+		c.Listen = l
 	case instancestore.KindWdttServer:
 		c := rec.WdttServer
 		if c == nil {
@@ -504,14 +515,12 @@ func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err
 		if c == nil {
 			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
-		if c.Listen == "" {
-			l, err := m.deps.AllocListen(key + "/listen")
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-			}
-			allocated = append(allocated, key+"/listen")
-			c.Listen = l
+		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
+		if err != nil {
+			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
 		}
+		allocated = append(allocated, key+"/listen")
+		c.Listen = l
 	}
 	return allocated, nil
 }

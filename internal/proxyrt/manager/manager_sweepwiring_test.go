@@ -111,7 +111,12 @@ func newLiveEnv(t *testing.T) *liveEnv {
 			// здесь нет, а пины владельцев держит сам аллокатор.
 			return alloc.AllocIndex(owner, pinned, nil)
 		},
-		AllocListen: func(string) (string, error) { return "127.0.0.1:9007", nil },
+		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+			if current != "" {
+				return current, nil
+			}
+			return "127.0.0.1:9007", nil
+		},
 		ReleasePins: func(keys ...string) {
 			for _, k := range keys {
 				alloc.Release(k)
