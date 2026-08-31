@@ -176,3 +176,30 @@ export async function saveShareInstance(
 	(inst as FreeTurnServerInstance).config = saved;
 	return saved;
 }
+
+/**
+ * Столкновение портов сервера — та же проверка, что у бэкенда
+ * (`WdttServerConfig.validatePorts`, internal/proxyrt/roles/config.go).
+ *
+ * Здесь она нужна, чтобы коллизию нельзя было СОЗДАТЬ: бэкенд её отвергнет,
+ * но уже приговором конфига, и человек увидит отказ вместо подсказки. Пустая
+ * строка — конфликта нет.
+ *
+ * Direct, равный порту раздачи, — это «выключено», а не столкновение.
+ */
+export function serverPortConflict(cfg: WdttServerConfig): string {
+	const seen = new Map<number, string>();
+	const add = (name: string, port: number): string => {
+		if (!Number.isInteger(port) || port <= 0) return '';
+		const prev = seen.get(port);
+		if (prev) return `Порт ${port} занят дважды: ${prev} и ${name}. Задайте разные.`;
+		seen.set(port, name);
+		return '';
+	};
+	for (const p of wdttServerPorts(cfg)) {
+		const label = p.label === 'DTLS' ? 'порт раздачи' : `${p.label}-порт`;
+		const err = add(label, p.port);
+		if (err) return err;
+	}
+	return add('внутренний WG-порт', cfg.wgPort ?? 0);
+}

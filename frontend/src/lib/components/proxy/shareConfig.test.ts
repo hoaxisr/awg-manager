@@ -3,6 +3,7 @@ import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 import {
 	freeTurnServerPorts,
 	natModeLabel,
+	serverPortConflict,
 	normalizeWdttServerConfig,
 	wdttServerKillPorts,
 	wdttServerPorts,
@@ -95,5 +96,34 @@ describe('natModeLabel', () => {
 		expect(natModeLabel(undefined)).toBe('Полный');
 		expect(natModeLabel('internet-only')).toBe('Интернет');
 		expect(natModeLabel('none')).toBe('Без NAT');
+	});
+});
+
+// Та же проверка, что у бэкенда (`WdttServerConfig.validatePorts`): создать
+// столкновение из UI нельзя, а не «бэкенд потом откажет».
+describe('serverPortConflict', () => {
+	it('дефолтная раскладка конфликта не даёт', () => {
+		expect(serverPortConflict(wdtt({ wgPort: 56001 }))).toBe('');
+	});
+
+	it('ловит raw по умолчанию, налетевший на дефолтный WG', () => {
+		// Порт раздачи 56000 → raw получает 56001, там уже стоит WG.
+		const msg = serverPortConflict(wdtt({ listen: '0.0.0.0:56000', wgPort: 56001 }));
+		expect(msg).toContain('56001');
+	});
+
+	it('ловит явный raw, равный порту раздачи', () => {
+		const msg = serverPortConflict(
+			wdtt({ listen: '0.0.0.0:56002', rawListen: '0.0.0.0:56002', wgPort: 56001 }),
+		);
+		expect(msg).toContain('56002');
+	});
+
+	it('direct, равный порту раздачи, — это «выключено»', () => {
+		expect(
+			serverPortConflict(
+				wdtt({ listen: '0.0.0.0:56002', directListen: '0.0.0.0:56002', wgPort: 56001 }),
+			),
+		).toBe('');
 	});
 });

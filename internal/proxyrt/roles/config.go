@@ -230,6 +230,9 @@ func (c WdttServerConfig) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("не задан listen сервера")
 	}
+	if err := c.validatePorts(); err != nil {
+		return err
+	}
 	// Пароль владельца (-password) НЕ обязателен. Форк падает единственным
 	// условием — `serverWrapKeys.Count() == 0`, то есть когда нет НИ ОДНОГО
 	// пароля: главного или абонентского (server.go:1969). Абонентского
@@ -264,6 +267,65 @@ func (c WdttServerConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.RawNdmsIface) == "" || strings.TrimSpace(c.RawIface) == "" {
 		return fmt.Errorf("не заданы NDMS-имена raw-половины сервера (rawNdmsIface/rawIface)")
+	}
+	return nil
+}
+
+// validatePorts — четыре сокета сервера не должны биться друг о друга.
+//
+// Сервер поднимает: DTLS (`-listen`), raw (`-listen-raw`, по умолчанию DTLS+1),
+// direct (`-listen-direct`, если включён) и userspace-WireGuard (`-wg-port`).
+// Последний слушает на ВСЕХ адресах (wireguard-go, `listen_port` в UAPI),
+// поэтому сравниваются номера портов, а не пары адрес:порт — совпадение
+// номера значит столкновение даже при разных хостах в конфиге.
+//
+// Пример достижимой коллизии, ради которой проверка и заведена: порт раздачи
+// 56000 → raw получает 56001, а дефолт `-wg-port` — тоже 56001. Один из двух
+// сокетов не поднимется, и причину пришлось бы искать в журнале форка.
+//
+// DirectListen, равный Listen, — это «выключено» (та же трактовка, что в
+// argv, INPUT-портах и ведомости занятости), поэтому коллизией не считается.
+func (c WdttServerConfig) validatePorts() error {
+	type slot struct {
+		name string
+		port int
+	}
+	var slots []slot
+	add := func(name, addr string) error {
+		if strings.TrimSpace(addr) == "" {
+			return nil
+		}
+		_, portStr, err := net.SplitHostPort(strings.TrimSpace(addr))
+		if err != nil {
+			return fmt.Errorf("%s: некорректный адрес %q", name, addr)
+		}
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p <= 0 || p > 65535 {
+			return fmt.Errorf("%s: некорректный порт в %q", name, addr)
+		}
+		slots = append(slots, slot{name, p})
+		return nil
+	}
+	if err := add("порт раздачи", c.Listen); err != nil {
+		return err
+	}
+	if err := add("raw-порт", c.EffectiveRawListen()); err != nil {
+		return err
+	}
+	if d := strings.TrimSpace(c.DirectListen); d != "" && d != strings.TrimSpace(c.Listen) {
+		if err := add("direct-порт", d); err != nil {
+			return err
+		}
+	}
+	if c.WgPort > 0 {
+		slots = append(slots, slot{"внутренний WG-порт", c.WgPort})
+	}
+	seen := map[int]string{}
+	for _, s := range slots {
+		if prev, dup := seen[s.port]; dup {
+			return fmt.Errorf("порт %d занят дважды: %s и %s — задайте разные", s.port, prev, s.name)
+		}
+		seen[s.port] = s.name
 	}
 	return nil
 }

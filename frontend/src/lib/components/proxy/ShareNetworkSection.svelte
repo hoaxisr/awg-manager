@@ -11,7 +11,7 @@
 	import type { NatMode } from '$lib/utils/network';
 	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
 	import DetailSection from './DetailSection.svelte';
-	import { natModeOptions } from './shareConfig';
+	import { natModeOptions, serverPortConflict } from './shareConfig';
 
 	// Режим работы сервера. Раньше менялся только пересозданием инстанса: в
 	// списке бейдж режима был, а переключателя не было нигде.
@@ -67,6 +67,10 @@
 	 * Раньше кнопка была активна, поля WAN не было нигде, и сохранённый конфиг
 	 * молча становился невалидным: сервер не стартовал, исправить было негде.
 	 */
+	// Столкновение портов сервера: сохранять нельзя — бэкенд всё равно
+	// откажет, но уже приговором конфига.
+	const portConflict = $derived(wdttServer ? serverPortConflict(wdttServer) : '');
+
 	const wanMissing = $derived(
 		!!wdttServer &&
 			wdttServer.natMode === 'internet-only' &&
@@ -253,6 +257,10 @@
 		</div>
 	{/if}
 
+	{#if portConflict}
+		<p class="save-block">{portConflict}</p>
+	{/if}
+
 	{#if wanMissing}
 		<p class="save-block">
 			Режиму NAT «Интернет» нужен выход в интернет — выберите его в разделе
@@ -261,7 +269,7 @@
 	{/if}
 
 	<div class="btn-row">
-		<Button variant="primary" loading={saving} disabled={busy || wanMissing} onclick={onsave}>
+		<Button variant="primary" loading={saving} disabled={busy || wanMissing || !!portConflict} onclick={onsave}>
 			Сохранить
 		</Button>
 		<Button variant="ghost" disabled={busy} onclick={onrevert}>Отменить</Button>
