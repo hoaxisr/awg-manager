@@ -1287,8 +1287,8 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 				// набором ключей (F62): новый ключ теперь не пройдёт мимо
 				// events.AllResources и union фронта. CRUD подписок будит
 				// реконсиляцию через tunnels/singbox.tunnels, как и раньше.
-				if payload.Resource != "tunnels" &&
-					payload.Resource != "singbox.tunnels" {
+				if payload.Resource != events.ResourceTunnels &&
+					payload.Resource != events.ResourceSingboxTunnels {
 					continue
 				}
 			}
