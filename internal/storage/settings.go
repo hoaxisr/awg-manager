@@ -461,6 +461,20 @@ func (s *SettingsStore) DeleteManagedServer(id string) error {
 	return fmt.Errorf("server %q not found", id)
 }
 
+// updateUnlocked — транзакция узкого мутатора: копия живого кэша → mut →
+// запись; публикацию на успехе делает saveUnlocked (F3). Вызывающий уже держит
+// s.mu, поэтому лок здесь не берётся — форма зеркалит публичный Update.
+//
+// Копия МЕЛКАЯ: mut присваивает поля, а вложенные контейнеры правит только
+// через собственные клоны (та же конвенция, что у Update).
+func (s *SettingsStore) updateUnlocked(mut func(*Settings) error) error {
+	cp := *s.settings
+	if err := mut(&cp); err != nil {
+		return err
+	}
+	return s.saveUnlocked(&cp)
+}
+
 // SaveManagedServers replaces the entire slice — used by migration tests
 // and bulk-rewrite callers. Most code should use Add/Update/Delete.
 func (s *SettingsStore) SaveManagedServers(servers []ManagedServer) error {
@@ -469,9 +483,11 @@ func (s *SettingsStore) SaveManagedServers(servers []ManagedServer) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.ManagedServers = servers
-	s.settings.ManagedServer = nil
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedServers = servers
+		cp.ManagedServer = nil
+		return nil
+	})
 }
 
 // SetSingboxManuallyStopped atomically updates the sing-box sticky-stop
@@ -484,8 +500,10 @@ func (s *SettingsStore) SetSingboxManuallyStopped(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.SingboxManuallyStopped = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.SingboxManuallyStopped = v
+		return nil
+	})
 }
 
 // SetAuthEnabled atomically turns authentication on/off under the store
@@ -501,8 +519,10 @@ func (s *SettingsStore) SetAuthEnabled(v bool) (bool, error) {
 	if s.settings.AuthEnabled == v {
 		return false, nil
 	}
-	s.settings.AuthEnabled = v
-	if err := s.saveUnlocked(s.settings); err != nil {
+	if err := s.updateUnlocked(func(cp *Settings) error {
+		cp.AuthEnabled = v
+		return nil
+	}); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -519,8 +539,10 @@ func (s *SettingsStore) SetSingboxCreateNDMSProxy(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.CreateNDMSProxyForSingbox = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.CreateNDMSProxyForSingbox = v
+		return nil
+	})
 }
 
 // IsSingboxNDMSProxyEnabled returns the current toggle value, or true
@@ -553,8 +575,10 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.ManagedPeerAllowIPsMigrated = v
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPeerAllowIPsMigrated = v
+		return nil
+	})
 }
 
 // SetOpkgTunState atomically persists the unified OpkgTun ownership record
@@ -576,8 +600,10 @@ func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 		cp := *st
 		st = &cp
 	}
-	s.settings.OpkgTun = st
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.OpkgTun = st
+		return nil
+	})
 }
 
 // SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая
@@ -595,14 +621,16 @@ func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error 
 	if s.settings.OpkgTun == nil {
 		return fmt.Errorf("no OpkgTun ownership record")
 	}
-	cp := *s.settings.OpkgTun
-	if len(segs) == 0 {
-		cp.PolicyTun = nil
-	} else {
-		cp.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
-	}
-	s.settings.OpkgTun = &cp
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cur *Settings) error {
+		rec := *cur.OpkgTun
+		if len(segs) == 0 {
+			rec.PolicyTun = nil
+		} else {
+			rec.PolicyTun = &OpkgTunPolicyData{NATSegments: segs}
+		}
+		cur.OpkgTun = &rec
+		return nil
+	})
 }
 
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
@@ -614,8 +642,10 @@ func (s *SettingsStore) SetDNSChainPresetState(st *DNSChainPresetState) error {
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
 	}
-	s.settings.DNSChainPreset = st
-	return s.saveUnlocked(s.settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.DNSChainPreset = st
+		return nil
+	})
 }
 
 // MarkServerInterface adds an interface ID to the server interfaces list.
@@ -632,8 +662,10 @@ func (s *SettingsStore) MarkServerInterface(id string) error {
 	if !added {
 		return nil
 	}
-	settings.ServerInterfaces = next
-	return s.saveUnlocked(settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ServerInterfaces = next
+		return nil
+	})
 }
 
 // UnmarkServerInterface removes an interface ID from the server interfaces list.
@@ -646,8 +678,11 @@ func (s *SettingsStore) UnmarkServerInterface(id string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	settings.ServerInterfaces = filterOut(settings.ServerInterfaces, id)
-	return s.saveUnlocked(settings)
+	next := filterOut(settings.ServerInterfaces, id)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ServerInterfaces = next
+		return nil
+	})
 }
 
 // GetServerInterfaces returns the list of server interface IDs.
@@ -1044,8 +1079,10 @@ func (s *SettingsStore) AddManagedPolicy(name string) error {
 	if !added {
 		return nil
 	}
-	settings.ManagedPolicies = next
-	return s.saveUnlocked(settings)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPolicies = next
+		return nil
+	})
 }
 
 // RemoveManagedPolicy removes a policy name from the managed policies list.
@@ -1058,8 +1095,11 @@ func (s *SettingsStore) RemoveManagedPolicy(name string) error {
 		return fmt.Errorf("settings not loaded")
 	}
 
-	settings.ManagedPolicies = filterOut(settings.ManagedPolicies, name)
-	return s.saveUnlocked(settings)
+	next := filterOut(settings.ManagedPolicies, name)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ManagedPolicies = next
+		return nil
+	})
 }
 
 // GetManagedPolicies returns the list of policy names created by AWG Manager.
