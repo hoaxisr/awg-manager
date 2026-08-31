@@ -773,3 +773,30 @@ func TestSubscribeBus_DeadSubscriptionsKeyDoesNotWake(t *testing.T) {
 		t.Error("живой ключ singbox.tunnels не разбудил реконсиляцию")
 	}
 }
+
+// F78: отказ Reconcile, разбуженного шиной, обязан быть виден в журнале —
+// прежде он глотался `_ = err` под комментарием, утверждавшим, что логгер
+// «ещё не подключён» (он подключён с конструктора, service.go:181).
+func TestSubscribeBus_ReconcileFailureLogged(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "deviceproxy.json"))
+	sb := &fakeSingboxOperator{applyInstancesErr: errors.New("boom")}
+	rec := &recAppLogger{}
+	bus := events.NewBus()
+	s := NewService(Deps{Store: store, Singbox: sb, Bus: bus, AppLogger: rec})
+
+	unsub := s.SubscribeBus(context.Background())
+	defer unsub()
+
+	bus.PublishInvalidated(events.ResourceTunnels, "test")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for rec.count("boom") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := rec.count("boom"); n == 0 {
+		t.Fatal("отказ Reconcile не попал в журнал")
+	}
+	if n := rec.count("warn:reconcile:"); n == 0 {
+		t.Errorf("запись не warn-уровня группы reconcile: %v", rec.snapshot())
+	}
+}

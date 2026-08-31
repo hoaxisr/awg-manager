@@ -1293,12 +1293,11 @@ func (s *Service) SubscribeBus(ctx context.Context) func() {
 				}
 			}
 			if err := s.Reconcile(ctx); err != nil {
-				// Reconcile failure is non-fatal at the subscriber level;
-				// the user-facing flow already has its own error path.
-				// No logger is wired on Service yet (would be added in a
-				// future task); silent swallow matches the project's other
-				// similar subscribers.
-				_ = err
+				// Отказ не фатален для подписчика — он обязан слушать
+				// дальше, — но обязан быть виден: прежде он глотался
+				// молча (F78). Своей дедупликации не нужно, журнал
+				// коалесцирует повторы сам.
+				s.appLog.Warn("reconcile", "", "bus-triggered reconcile failed: "+err.Error())
 			}
 		}
 	}()
