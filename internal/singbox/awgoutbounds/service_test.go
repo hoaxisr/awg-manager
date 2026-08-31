@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/events"
 )
 
 type fakeSingbox struct {
@@ -151,5 +155,57 @@ func TestSync_NilSingbox_DoesNotReload(t *testing.T) {
 	}
 	if err := s.SyncAWGOutbounds(context.Background()); err != nil {
 		t.Fatalf("Sync with nil Singbox should be safe: %v", err)
+	}
+}
+
+// countingAWGStore считает обращения подписчика: enumerate дёргает List на
+// каждом SyncAWGOutbounds, поэтому ненулевой счётчик = «проснулся».
+// Атомарный, потому что пишет горутина подписчика, а читает тест.
+type countingAWGStore struct {
+	calls atomic.Int32
+}
+
+func (c *countingAWGStore) List(ctx context.Context) ([]AWGTunnelInfo, error) {
+	c.calls.Add(1)
+	return nil, nil
+}
+
+// F81: фильтр подписчика ждал ключ "system-tunnels", которого не публиковал
+// НИКТО — константы с таким значением нет в events.AllResources, во фронтовом
+// union нет, публикатора в прод-коде нет. Точный близнец F66. Ниша, ради
+// которой ключ заводился (NDMS-хук на out-of-band смену системного WG), уже
+// обслужена живым ключом: хук публикует ResourceTunnels с reason "ndms-hook"
+// (internal/server/server_routes.go).
+func TestSubscribeBus_WakesOnTunnelsNotOnDeadKey(t *testing.T) {
+	store := &countingAWGStore{}
+	bus := events.NewBus()
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels:    store,
+			SystemTunnels: &fakeSystemStore{},
+			Bus:           bus,
+		},
+		sysClassNet: t.TempDir(),
+	}
+
+	unsub := s.SubscribeBus(context.Background())
+	defer unsub()
+
+	// Снесённый ключ будить не должен. Settle-окно обязательно — без него
+	// ассерт прошёл бы зелёным и на старом коде, просто не дождавшись.
+	bus.PublishInvalidated(events.Resource("system-tunnels"), "test")
+	time.Sleep(500 * time.Millisecond)
+	if got := store.calls.Load(); got != 0 {
+		t.Fatalf("мёртвый ключ system-tunnels разбудил синк (обращений: %d)", got)
+	}
+
+	// Живой ключ будить обязан.
+	bus.PublishInvalidated(events.ResourceTunnels, "test")
+	deadline := time.Now().Add(3 * time.Second)
+	for store.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if store.calls.Load() == 0 {
+		t.Error("живой ключ tunnels не разбудил синк")
 	}
 }
