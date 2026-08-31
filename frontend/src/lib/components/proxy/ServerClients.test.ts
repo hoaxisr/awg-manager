@@ -98,7 +98,7 @@ beforeEach(() => {
 });
 
 describe('матрица кнопок строки', () => {
-	it('рабочий, просроченный и главный пароль получают разные наборы', async () => {
+	it('рабочий и главный пароль получают разные наборы', async () => {
 		mount([MAIN, ALIVE, OFF, EXPIRED]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 
@@ -116,27 +116,26 @@ describe('матрица кнопок строки', () => {
 		);
 		expect(alive.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
-		const expired = within(rowOf('Гостевой'));
-		expect(expired.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(true);
-		expect(expired.getByRole('button', { name: 'Перевыпустить' }).hasAttribute('disabled')).toBe(
-			false,
-		);
-		expect(expired.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
+		// Просрочка и деактивация — состояния, которые ставит только форк; у нас
+		// их задать нечем, и отдельного набора кнопок под них больше нет.
+		const guest = within(rowOf('Гостевой'));
+		expect(guest.getByRole('button', { name: 'Ссылка' }).hasAttribute('disabled')).toBe(false);
+		expect(guest.getByRole('button', { name: 'Удалить' }).hasAttribute('disabled')).toBe(false);
 
-		// Карандаш есть у всех трёх состояний.
+		// Карандаш есть у всех состояний.
 		expect(screen.getAllByRole('button', { name: 'Переименовать абонента' })).toHaveLength(4);
 	});
 
-	it('последнего рабочего удалить нельзя, отключённый рабочим считается', async () => {
-		mount([MAIN, ALIVE, EXPIRED]);
+	it('последнего рабочего удалить нельзя', async () => {
+		mount([MAIN, ALIVE]);
 		await waitFor(() => expect(screen.getByText('Телефон Ивана')).toBeTruthy());
 		expect(
 			within(rowOf('Телефон Ивана'))
 				.getByRole('button', { name: 'Удалить' })
 				.hasAttribute('disabled'),
 		).toBe(true);
-		// SH-38 считает отключённого рабочим (оговорка SH-28/38).
-		expect(screen.getByText('Абонентов: 3 · рабочих: 1')).toBeTruthy();
+		// Главный пароль рабочим не считается — рабочий тут ровно один.
+		expect(screen.getByText('Абонентов: 2 · рабочих: 1')).toBeTruthy();
 	});
 });
 

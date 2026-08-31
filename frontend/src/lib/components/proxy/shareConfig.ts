@@ -97,6 +97,11 @@ export function wdttServerPorts(cfg: WdttServerConfig): SharePort[] {
 		{ listen: setListenPort(cfg.listen || `${host}:${dtls}`, dtls, host), label: 'DTLS', port: dtls },
 		{ listen: setListenPort(`${rawHost}:${rawPort}`, rawPort, rawHost), label: 'Raw', port: rawPort },
 	];
+	const direct = cfg.directListen?.trim();
+	if (direct && listenPortNumber(direct, 0) !== dtls) {
+		const port = listenPortNumber(direct, dtls);
+		ports.push({ listen: direct, label: 'Direct', port });
+	}
 	return ports;
 }
 

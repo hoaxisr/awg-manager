@@ -35,14 +35,12 @@
 		wanOptions = [],
 	}: Props = $props();
 
-	// Порт DTLS — главный порт раздачи и обязательное поле конфига
-	// (`WdttServerConfig.Validate`). Раньше правился только в мастере.
-	const dtlsPort = $derived(String(listenPortNumber(wdttServer?.listen ?? '', 0) || 56002));
+	// Внутренний WG-порт: наружу на него не приходят, снаружи не виден.
+	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
 
-	function applyDtlsPort(v: string) {
-		const port = Number(v);
-		if (!wdttServer || !Number.isFinite(port) || port <= 0) return;
-		wdttServer.listen = setListenPort(wdttServer.listen || '0.0.0.0:56002', port, '0.0.0.0');
+	function applyWgPort(v: string) {
+		if (!wdttServer) return;
+		wdttServer.wgPort = Math.max(1, Math.min(65535, Number(v) || 56001));
 	}
 
 	const statsLogOptions: { value: StatsLogMode; label: string }[] = [
@@ -58,11 +56,11 @@
 	{#if wdttServer}
 		<div class="grid">
 			<Input
-				label="Порт DTLS"
+				label="Внутренний WG-порт"
 				type="number"
-				value={dtlsPort}
-				hint="Главный порт раздачи; raw-половина займёт следующий. Смена перезапустит сервер"
-				onchange={applyDtlsPort}
+				value={wgPort}
+				hint="Порт userspace-WireGuard внутри сервера. Смена перезапустит сервер"
+				onchange={applyWgPort}
 				fullWidth
 			/>
 			<Dropdown
@@ -80,6 +78,16 @@
 			/>
 		</div>
 		<div class="grid">
+			<!-- Третий порт WG-половины: WRAP-обфускация БЕЗ слоя DTLS. Меньше
+			     инкапсуляции — выше скорость, ценой потери маскировки под DTLS.
+			     Поле пропало при переписывании рантайма, хотя argv его слал. -->
+			<Input
+				label="Порт Direct (без DTLS)"
+				bind:value={wdttServer.directListen}
+				placeholder="выключено"
+				hint="Быстрее DTLS, но трафик перестаёт маскироваться под него. Пусто — выключено"
+				fullWidth
+			/>
 			<Input label="Config dir" bind:value={wdttServer.configDir} fullWidth />
 		</div>
 

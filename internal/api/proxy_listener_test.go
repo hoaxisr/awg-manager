@@ -46,11 +46,12 @@ func proxyRecords(t *testing.T) *instancestore.Store {
 					// RawListen задан ЯВНО и не равен конвенции DTLS+1
 					// (57003): совпадение не отличило бы чтение поля от
 					// вычисления по Listen.
-					Listen:    "0.0.0.0:57002",
-					RawListen: "0.0.0.0:57013",
-					WgPort:    57001,
-					Password:  "pw",
-					NdmsIface: "OpkgTun20", WgIface: "opkgtun20",
+					Listen:       "0.0.0.0:57002",
+					RawListen:    "0.0.0.0:57013",
+					DirectListen: "0.0.0.0:57014",
+					WgPort:       57001,
+					Password:     "pw",
+					NdmsIface:    "OpkgTun20", WgIface: "opkgtun20",
 					RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21",
 				}},
 		}
@@ -83,6 +84,9 @@ func TestProxyListenerOwnsOnlyConfiguredPorts(t *testing.T) {
 	}
 	if !h.ownsListener(57013, procport.ProtoUDP) {
 		t.Fatal("raw wdtt-сервера должен считаться своим")
+	}
+	if !h.ownsListener(57014, procport.ProtoUDP) {
+		t.Fatal("direct wdtt-сервера должен считаться своим")
 	}
 	if !h.ownsListener(57001, procport.ProtoUDP) {
 		t.Fatal("wg internal wdtt-сервера должен считаться своим")

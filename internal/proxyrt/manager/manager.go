@@ -289,7 +289,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 	// перезапуска, должен увидеть причину чужого молчания на старом порту.
 	for _, mv := range res.State.MovedListen {
 		m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
-			"посев развёл конфликт listen-порта: %s (%s) переехал с %s на %s",
+			"listen-порт переехал: %s (%s) с %s на %s",
 			mv.Instance, mv.Name, mv.From, mv.To))
 	}
 

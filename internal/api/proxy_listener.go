@@ -52,9 +52,13 @@ func (h *ProxyListenerHandler) ownsListener(port int, proto procport.Proto) bool
 			add(rec.FreeTurnClient.Listen, procport.ProtoUDP)
 		case rec.WdttServer != nil:
 			// Паритет ServerListenAddrs старого мира: DTLS, raw (явный либо
-			// DTLS+1) и внутренний WG на localhost.
+			// DTLS+1), direct (если отличается от DTLS) и внутренний WG на
+			// localhost.
 			add(rec.WdttServer.Listen, procport.ProtoUDP)
 			add(rec.WdttServer.EffectiveRawListen(), procport.ProtoUDP)
+			if d := strings.TrimSpace(rec.WdttServer.DirectListen); d != "" && d != rec.WdttServer.Listen {
+				add(d, procport.ProtoUDP)
+			}
 			if rec.WdttServer.WgPort > 0 {
 				add(net.JoinHostPort("127.0.0.1", strconv.Itoa(rec.WdttServer.WgPort)), procport.ProtoUDP)
 			}

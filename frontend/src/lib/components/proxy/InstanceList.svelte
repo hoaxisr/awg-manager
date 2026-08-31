@@ -87,9 +87,12 @@
 			: `Удалить инстанс «${row.name}»?`;
 	}
 
-	// LS-10..LS-12. У WDTT режим есть всегда: connMode клиента / relayMode сервера.
+	// LS-10..LS-12. Режим есть у КЛИЕНТА — он подключается ровно одним
+	// способом. У сервера режима нет: обе половины работают всегда, а выбор
+	// WG/Raw относится к выдаваемой ссылке (`row.mode` там пуст).
 	function protocolBadge(row: ProxyInstanceRow): string {
 		if (row.protocol === 'freeturn') return 'FreeTurn';
+		if (!row.mode) return 'WDTT';
 		return row.mode === 'raw' ? 'WDTT · Raw' : 'WDTT · WG';
 	}
 </script>

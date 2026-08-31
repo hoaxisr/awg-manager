@@ -96,10 +96,17 @@ describe("ShareNetworkSection: NAT «Интернет» без выбранно�
     ).toBe(false);
   });
 
-  it("переключатель режима работы WG/Raw есть в секции", () => {
-    const { getByRole } = mount(server());
-    const group = getByRole("group", { name: "Режим работы" });
-    expect(group.textContent).toContain("WG");
-    expect(group.textContent).toContain("Raw");
+  // Половины сервера работают ОБЕ и всегда — выбирать «режим работы» нечего.
+  // Режим относится к выдаваемой ссылке и живёт в панели ссылки абоненту.
+  it("переключателя режима работы в настройках нет", () => {
+    const { queryByRole } = mount(server());
+    expect(queryByRole("group", { name: "Режим работы" })).toBeNull();
+  });
+
+  // Порт раздачи — обязательное поле конфига, чинится здесь, а не в
+  // «экспертном» разделе.
+  it("порт раздачи правится в основной части настроек", () => {
+    const { getByLabelText } = mount(server());
+    expect(getByLabelText("Порт раздачи")).toBeTruthy();
   });
 });

@@ -32,16 +32,18 @@ const off = user({ password: 'p-off', comment: 'Планшет', isDeactivated: 
 const expired = user({ password: 'p-old', comment: 'Гостевой', isExpired: true });
 
 describe('предикат рабочего абонента', () => {
-	it('повторяет бэкенд: пустой пароль, главный пароль и просрочка — не рабочие', () => {
+	it('не рабочие — только пустой пароль и главный пароль', () => {
 		expect(isUsable(alive)).toBe(true);
 		expect(isUsable(main)).toBe(false);
-		expect(isUsable(expired)).toBe(false);
 		expect(isUsable(user({ password: '   ' }))).toBe(false);
 	});
 
-	it('отключённый абонент считается РАБОЧИМ (оговорка SH-28/38)', () => {
+	// Просрочку и деактивацию ставит только форк (бот и его админ-API); у нас
+	// их задать нечем, поэтому в предикат они не входят и рабочим не мешают.
+	it('признаки форка на предикат не влияют', () => {
 		expect(isUsable(off)).toBe(true);
-		expect(usableCount([main, alive, off, expired])).toBe(2);
+		expect(isUsable(expired)).toBe(true);
+		expect(usableCount([main, alive, off, expired])).toBe(3);
 	});
 
 	it('SH-38: счётчик печатает оба числа', () => {
@@ -62,31 +64,19 @@ describe('матрица кнопок §4.4', () => {
 	// просрочки. Стража последнего рабочего перевыпуску не мешает: новый
 	// абонент заводится ДО удаления старого.
 	it('последний рабочий: удаление заблокировано, но перевыпуск доступен', () => {
-		const a = rowActions(alive, [main, alive, expired]);
+		const a = rowActions(alive, [main, alive]);
 		expect(a.remove).toBe('blocked');
 		expect(a.reissue).toBe(true);
 	});
 
 	it('последний рабочий: удаление заблокировано с SH-37', () => {
-		const a = rowActions(alive, [main, alive, expired]);
+		const a = rowActions(alive, [main, alive]);
 		expect(a.remove).toBe('blocked');
 		expect(a.removeHint).toContain('Нельзя удалить последнего рабочего абонента');
 	});
 
 	it('отключённый держит стража: рядом с ним удаление рабочего разрешено', () => {
 		expect(rowActions(alive, [alive, off]).remove).toBe('yes');
-	});
-
-	it('просроченный: ссылка заблокирована с SH-33, есть перевыпуск, удаление разрешено', () => {
-		const a = rowActions(expired, [alive, expired]);
-		expect(a.link).toBe('blocked');
-		expect(a.linkHint).toContain('Абонент просрочен');
-		expect(a.reissue).toBe(true);
-		expect(a.remove).toBe('yes');
-	});
-
-	it('единственный просроченный удаляется — рабочих и так нет', () => {
-		expect(rowActions(expired, [expired]).remove).toBe('yes');
 	});
 
 	it('главный пароль: ссылки и перевыпуска нет, удаление заблокировано с SH-36', () => {
@@ -97,7 +87,7 @@ describe('матрица кнопок §4.4', () => {
 		expect(a.removeHint).toContain('Удаление в два хода');
 	});
 
-	it('просроченный главный пароль разбирается как главный', () => {
+	it('главный пароль разбирается первым, что бы ещё на нём ни стояло', () => {
 		const both = user({ password: 'mainpass', isMainPassword: true, isExpired: true });
 		expect(rowActions(both, [both]).reissue).toBe(false);
 		expect(rowActions(both, [both]).remove).toBe('blocked');
@@ -151,9 +141,6 @@ describe('тексты отказов добавления', () => {
 		expect(
 			addErrorText(code, 'пароль совпадает с главным паролем сервера — задайте абоненту другой пароль'),
 		).toContain('Это главный пароль сервера');
-		expect(addErrorText(code, 'пароль принадлежит просроченному абоненту, задайте новый')).toBe(
-			'Пароль принадлежит просроченному абоненту, задайте новый',
-		);
 		expect(addErrorText(code, 'пароль занят живым абонентом')).toBe('Пароль занят живым абонентом');
 	});
 

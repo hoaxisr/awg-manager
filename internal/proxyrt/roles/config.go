@@ -190,6 +190,10 @@ type WdttServerConfig struct {
 	NdmsIface    string `json:"ndmsIface,omitempty"`    // OpkgTunN
 	RawNdmsIface string `json:"rawNdmsIface,omitempty"` // OpkgTunM
 	RawListen    string `json:"rawListen,omitempty"`    // пусто = DTLS+1 (конвенция qWDTT 1.4)
+	// DirectListen — третий порт WG-половины: WRAP-обфускация БЕЗ слоя DTLS
+	// (форк, `-listen-direct`). Меньше инкапсуляции — выше скорость, ценой
+	// потери маскировки под DTLS. Пусто = выключено.
+	DirectListen string `json:"directListen,omitempty"`
 	RelayMode    string `json:"relayMode,omitempty"`    // wg|raw — только режим генерации ссылки; на процесс не влияет
 	NatMode      string `json:"natMode,omitempty"`      // full|internet-only|none
 	NatStaticWAN string `json:"natStaticWan,omitempty"` // legacy: одиночный WAN; читается через StaticNATList

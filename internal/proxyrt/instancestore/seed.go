@@ -143,6 +143,7 @@ type oldWdttServer struct {
 	OpenFirewall     *bool             `json:"openFirewall"`
 	RelayMode        string            `json:"relayMode"`
 	RawListen        string            `json:"rawListen"`
+	DirectListen     string            `json:"directListen"`
 	NdmsIface        string            `json:"ndmsIface"`
 	WgIface          string            `json:"wgIface"`
 	RawNdmsIface     string            `json:"rawNdmsIface"`
@@ -303,9 +304,9 @@ func listenPortOf(addr string) (int, bool) {
 	return n, true
 }
 
-// listenAddrs — все адреса прослушивания записи. Серверный RawListen тоже
-// здесь: порт роутера он занимает наравне с остальными, и выдать его
-// переезжающему клиенту нельзя.
+// listenAddrs — все адреса прослушивания записи. Серверные RawListen и
+// DirectListen тоже здесь: порт роутера они занимают наравне с остальными, и
+// выдать его переезжающему клиенту нельзя.
 func listenAddrs(r Record) []string {
 	switch {
 	case r.WdttClient != nil:
@@ -313,7 +314,7 @@ func listenAddrs(r Record) []string {
 	case r.FreeTurnClient != nil:
 		return []string{r.FreeTurnClient.Listen}
 	case r.WdttServer != nil:
-		return []string{r.WdttServer.Listen, r.WdttServer.RawListen}
+		return []string{r.WdttServer.Listen, r.WdttServer.RawListen, r.WdttServer.DirectListen}
 	case r.FreeTurnServer != nil:
 		return []string{r.FreeTurnServer.Listen}
 	}
@@ -325,9 +326,11 @@ func listenAddrs(r Record) []string {
 // серверов listen это WAN-порт, на который настроены проброс и внешние
 // клиенты, и пул 9000..9200 не про него.
 // ClientListen — указатель на локальный listen клиента внутри записи; nil у
-// серверных ролей. Экспортирован ради боота менеджера: тот сверяет порты с
-// занятостью и переселяет негодные, а второй копии развилки по ролям быть не
-// должно.
+// серверных ролей (их listen задаёт пользователь). Экспортирован ради боота
+// менеджера: тот сверяет порты с занятостью и переселяет негодные.
+//
+// Единственная развилка по ролям: вторая копия рано или поздно разъедется с
+// этой, и новая клиентская роль молча выпала бы из одного из двух путей.
 func ClientListen(r *Record) *string {
 	switch {
 	case r.WdttClient != nil:
@@ -338,15 +341,8 @@ func ClientListen(r *Record) *string {
 	return nil
 }
 
-func clientListen(r Record) *string {
-	switch {
-	case r.WdttClient != nil:
-		return &r.WdttClient.Listen
-	case r.FreeTurnClient != nil:
-		return &r.FreeTurnClient.Listen
-	}
-	return nil
-}
+// clientListen — та же развилка для значения записи (посев работает с копиями).
+func clientListen(r Record) *string { return ClientListen(&r) }
 
 // resolveListenConflicts — разведение претендентов на один порт (амендмент G2).
 //
@@ -571,7 +567,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			NatMode:  o.NatMode, NatStaticWAN: o.NatStaticWAN,
 			NatStaticWANs: o.NatStaticWANs,
 			Policy:        o.Policy, LanSegments: o.LanSegments,
-			RelayMode: o.RelayMode, RawListen: o.RawListen,
+			RelayMode: o.RelayMode, RawListen: o.RawListen, DirectListen: o.DirectListen,
 			ExposeToPolicies: o.ExposeToPolicies,
 			Debug:            o.Debug, // Г-1 №3: тумблер пользователя
 			OpenFirewall:     openFirewall(o.OpenFirewall),

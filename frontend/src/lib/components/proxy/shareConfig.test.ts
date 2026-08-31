@@ -45,8 +45,18 @@ describe('wdttServerPorts', () => {
 		expect(ports[1].listen).toBe('0.0.0.0:56010');
 	});
 
-	it('строк ровно две: DTLS и Raw', () => {
+	it('строк ровно две, пока Direct выключен', () => {
 		expect(wdttServerPorts(wdtt()).map((p) => p.label)).toEqual(['DTLS', 'Raw']);
+	});
+
+	it('Direct не показывается, пока совпадает с DTLS', () => {
+		const ports = wdttServerPorts(wdtt({ directListen: '0.0.0.0:56002' }));
+		expect(ports.some((p) => p.label === 'Direct')).toBe(false);
+	});
+
+	it('отличный Direct-порт добавляет третью строку', () => {
+		const ports = wdttServerPorts(wdtt({ directListen: '0.0.0.0:56005' }));
+		expect(ports[2]).toMatchObject({ label: 'Direct', port: 56005 });
 	});
 });
 

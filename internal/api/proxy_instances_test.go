@@ -172,6 +172,7 @@ func fullServerRecord() instancestore.Record {
 			NdmsIface:    "OpkgTun18",
 			RawNdmsIface: "OpkgTun19",
 			RawListen:    "0.0.0.0:56001",
+			DirectListen: "0.0.0.0:56002",
 			RelayMode:    "wg",
 			NatMode:      "full",
 			NatStaticWAN: "ISP",

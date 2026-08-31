@@ -274,8 +274,10 @@ describe("Сценарий 2: инстанс без обязательного �
       await findByRole("heading", { name: "Сервер", level: 2 }),
     ).toBeTruthy();
 
-    await fireEvent.click(getByRole("button", { name: "Дополнительно" }));
-    const port = await findByLabelText("Порт DTLS");
+    // Настройки — в выдвижном ящике; обязательный порт лежит в основной его
+    // части, а не в «экспертном» разделе.
+    await fireEvent.click(getByRole("button", { name: "Настройки" }));
+    const port = await findByLabelText("Порт раздачи");
     await fireEvent.change(port, { target: { value: "56010" } });
     await fireEvent.click(getByRole("button", { name: "Сохранить" }));
 

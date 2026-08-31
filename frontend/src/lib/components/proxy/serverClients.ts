@@ -5,9 +5,6 @@ import type { WdttPanelUserEntry, WdttServerClientsReload } from '$lib/types';
 
 /** Тексты берутся по ID микрокопии; своих строк в блоке нет. */
 export const CLIENT_TEXT = {
-	/** SH-33 */
-	linkExpired:
-		'Абонент просрочен — ссылка не будет работать. Выдайте новую кнопкой «Перевыпустить».',
 	/** SH-36 */
 	removeMainPassword:
 		'Пароль абонента совпадает с главным паролем сервера. Удаление в два хода: сначала смените главный пароль, потом удалите абонента.',
@@ -19,8 +16,6 @@ export const CLIENT_TEXT = {
 	/** TS-14 */
 	passwordIsMain:
 		'Это главный пароль сервера — задайте абоненту другой или оставьте поле пустым, чтобы сгенерировать',
-	/** TS-15 */
-	passwordExpiredOwner: 'Пароль принадлежит просроченному абоненту, задайте новый',
 	/** TS-16 */
 	passwordTaken: 'Пароль занят живым абонентом',
 	/** Подпись поля «VK-хеш» там, где подставить нечего: мастер и модалка. */
@@ -28,14 +23,17 @@ export const CLIENT_TEXT = {
 } as const;
 
 /**
- * Рабочий абонент — тот же предикат, что у бэкенда
- * (`ServerClientUnusableReason`, `passwords_json.go:206`): пустой пароль,
- * главный пароль, просрочка. `isDeactivated` в предикат НЕ входит — такая
- * запись пишется в `passwords.json` и держит стража последнего рабочего
- * (оговорка микрокопии SH-28/SH-38).
+ * Рабочий абонент: непустой пароль, не совпадающий с главным.
+ *
+ * Просрочка и деактивация в предикат не входят: оба признака ставит ТОЛЬКО
+ * форк — телеграм-бот (`/new`, server.go) и его админ-API
+ * (`admin_api.go`), а у нас нет ни поля ввода, ни ручки, чтобы назначить срок
+ * или отключить абонента. Состояния недостижимы, поэтому и веток под них нет.
+ * Сами поля продолжаем зеркалить и сохранять при слиянии passwords.json —
+ * чужое не теряем.
  */
 export function isUsable(user: WdttPanelUserEntry): boolean {
-	return !!user.password.trim() && !user.isMainPassword && !user.isExpired;
+	return !!user.password.trim() && !user.isMainPassword;
 }
 
 export function usableCount(users: WdttPanelUserEntry[]): number {
@@ -70,16 +68,6 @@ export function rowActions(user: WdttPanelUserEntry, users: WdttPanelUserEntry[]
 			reissue: false,
 			remove: 'blocked',
 			removeHint: CLIENT_TEXT.removeMainPassword,
-		};
-	}
-	if (user.isExpired) {
-		return {
-			link: 'blocked',
-			linkHint: CLIENT_TEXT.linkExpired,
-			reissue: true,
-			// Просроченный не рабочий: страж последнего рабочего его не держит.
-			remove: 'yes',
-			removeHint: '',
 		};
 	}
 	// Рабочий: удаление запрещено, когда после него рабочих не останется —
@@ -159,7 +147,6 @@ export function addErrorText(code: string, message: string): string {
 	if (code === 'WDTT_SERVER_MAIN_PASSWORD_NOT_SAVED') return msg;
 	const lower = msg.toLowerCase();
 	if (lower.includes('совпадает с главным паролем')) return CLIENT_TEXT.passwordIsMain;
-	if (lower.includes('просроченному абоненту')) return CLIENT_TEXT.passwordExpiredOwner;
 	if (lower.includes('занят живым абонентом')) return CLIENT_TEXT.passwordTaken;
 	return msg;
 }

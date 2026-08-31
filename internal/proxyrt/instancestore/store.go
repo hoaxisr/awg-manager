@@ -329,6 +329,7 @@ func normalizeRecord(r *Record, dataDir string) {
 			d.ConfigDir = filepath.Join(dataDir, "wdtt", "server", r.ID)
 		}
 		d.RawListen = strings.TrimSpace(d.RawListen)
+		d.DirectListen = strings.TrimSpace(d.DirectListen)
 		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
 		d.WgIface = strings.TrimSpace(d.WgIface)
 		d.RawNdmsIface = strings.TrimSpace(d.RawNdmsIface)

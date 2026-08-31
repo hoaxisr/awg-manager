@@ -60,8 +60,8 @@ func LinkListenPort(c roles.WdttServerConfig) int {
 // LinkListenPortForMode — тот же порт для ЯВНО заданного режима (§11: ссылку
 // на raw-порт можно выдать и с wg-сервера, и наоборот).
 //
-// mode: raw → -listen-raw (явный либо DTLS+1); wg → -listen (DTLS).
-// Фолбэки 56003/56002 — прежние (ports.go:50-63).
+// mode: raw → -listen-raw (явный либо DTLS+1); wg → -listen-direct, если задан,
+// иначе -listen (DTLS). Фолбэки 56003/56002 — прежние (ports.go:50-63).
 // EffectiveRawListen не копируется: он уже живёт на конфиге роли
 // (roles.WdttServerConfig.EffectiveRawListen, config.go) — второй копии
 // правила «пусто = DTLS+1» здесь быть не должно.
@@ -72,7 +72,11 @@ func LinkListenPortForMode(c roles.WdttServerConfig, mode string) int {
 		}
 		return 56003
 	}
-	if p, err := listenPort(c.Listen); err == nil {
+	addr := c.Listen
+	if direct := strings.TrimSpace(c.DirectListen); direct != "" {
+		addr = direct
+	}
+	if p, err := listenPort(addr); err == nil {
 		return p
 	}
 	return 56002

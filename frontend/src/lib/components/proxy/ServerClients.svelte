@@ -41,7 +41,7 @@
 		 * отдаём число рабочих наверх. `undefined` — состав ещё не известен, по
 		 * незнанию блокировать нельзя.
 		 */
-		onusable?: (count: number | undefined) => void;
+		onusable?: (count: number | undefined, total: number | undefined) => void;
 	}
 
 	let { serverId, serverName, server, running, busy = false, locked, onusable }: Props = $props();
@@ -142,7 +142,7 @@
 	// Отчёт наверх идёт и при неизвестном составе: иначе после перехода на
 	// другой сервер деталь держала бы гейт по чужому числу.
 	$effect(() => {
-		onusable?.(usersKnown ? usableCount(users) : undefined);
+		onusable?.(usersKnown ? usableCount(users) : undefined, usersKnown ? users.length : undefined);
 	});
 
 	function addUser(values: { comment: string; password: string; vkHash: string }) {

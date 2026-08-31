@@ -67,6 +67,9 @@ func WdttServerArgs(c WdttServerConfig) []string {
 	str("-wg-iface", c.WgIface)
 	str("-raw-iface", c.RawIface)
 	str("-listen-raw", c.EffectiveRawListen())
+	if d := c.DirectListen; d != "" && d != c.Listen {
+		str("-listen-direct", d)
+	}
 	// -dns: резолвер, который сервер объявляет абонентам; дефолт монолита
 	// 8.8.8.8 уводит DNS мимо роутера (PR #697, F1).
 	//

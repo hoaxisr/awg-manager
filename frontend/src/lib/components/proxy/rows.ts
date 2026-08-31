@@ -199,7 +199,9 @@ export function shareRows(src: ProxySources): ProxyInstanceRow[] {
         "server",
         i,
         c?.enabled === true,
-        c?.relayMode === "raw" ? "raw" : "wg",
+        // Режима у сервера нет: обе половины работают всегда, а выбор WG/Raw
+        // относится к выдаваемой ссылке (панель ссылки абоненту).
+        undefined,
         inst?.seededFrom,
         wdttServerFlow(c, i.status),
       );

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Строка абонента: имя, укороченный пароль, бейджи SH-27..SH-31 и действия
 	// по матрице спеки §4.4. Решает матрицу чистый модуль, строка её рисует.
-	import { Pencil } from 'lucide-svelte';
+	import { KeyRound, Link2, Pencil, Trash2 } from 'lucide-svelte';
 	import { Badge, Button, FieldHint } from '$lib/components/ui';
 	import type { WdttPanelUserEntry } from '$lib/types';
 	import { rowActions, shortPassword } from './serverClients';
@@ -59,12 +59,6 @@
 		{:else}
 			<span class="row-name">{user.comment || '—'}</span>
 			<code class="row-pass" title={user.password}>{shortPassword(user.password)}</code>
-			{#if user.isExpired}
-				<Badge size="xs" variant="warning">истёк</Badge>
-			{/if}
-			{#if user.isDeactivated}
-				<Badge size="xs" variant="muted">отключён</Badge>
-			{/if}
 			{#if user.isMainPassword}
 				<Badge size="xs" variant="accent">= главный пароль</Badge>
 			{/if}
@@ -82,31 +76,39 @@
 
 	<div class="row-actions">
 		{#if actions.link !== 'hidden'}
-			<Button
-				variant="ghost"
-				size="sm"
+			<button
+				type="button"
+				class="row-action"
 				disabled={busy || actions.link === 'blocked'}
+				aria-label="Ссылка"
+				title="Ссылка абоненту"
 				onclick={() => onlink(user)}
 			>
-				Ссылка
-			</Button>
-			{#if actions.linkHint}
-				<FieldHint text={actions.linkHint} ariaLabel="Подсказка: ссылка недоступна" />
-			{/if}
+				<Link2 size={14} />
+			</button>
 		{/if}
 		{#if actions.reissue}
-			<Button variant="ghost" size="sm" disabled={busy} onclick={() => onreissue(user)}>
-				Перевыпустить
-			</Button>
+			<button
+				type="button"
+				class="row-action"
+				disabled={busy}
+				aria-label="Перевыпустить"
+				title="Перевыпустить: новый пароль и новая ссылка"
+				onclick={() => onreissue(user)}
+			>
+				<KeyRound size={14} />
+			</button>
 		{/if}
-		<Button
-			variant="ghost"
-			size="sm"
+		<button
+			type="button"
+			class="row-action danger"
 			disabled={busy || actions.remove === 'blocked'}
+			aria-label="Удалить"
+			title="Удалить абонента"
 			onclick={() => onremove(user)}
 		>
-			Удалить
-		</Button>
+			<Trash2 size={14} />
+		</button>
 		{#if actions.removeHint}
 			<FieldHint text={actions.removeHint} ariaLabel="Подсказка: удаление недоступно" />
 		{/if}
@@ -204,6 +206,15 @@
 	.row-action.active {
 		background: var(--color-bg-tertiary);
 		color: var(--color-text-primary);
+	}
+
+	.row-action:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.row-action.danger:hover:not(:disabled) {
+		color: var(--color-error);
 	}
 
 	.row-action :global(svg) {
