@@ -192,8 +192,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		// детектора сброса кэша. Handover: возвращённая policy-запись
 		// самоисцеляется реапом (повторный release идемпотентен). Первый enable
 		// (prevRecord == nil) откатывается в nil — прежнее поведение.
-		// NB: prevRecord — указатель в кэш стора; вернуть его же безопасно
-		// (store публикует под своим локом), но НЕ мутировать.
+		// NB: prevRecord прочитан из живого кэша; вернуть его безопасно (стор
+		// снимет копию), но НЕ мутировать — его дочитывают держатели снимка.
 		if e := s.deps.Settings.SetOpkgTunState(prevRecord); e != nil {
 			s.appLog.Warn("fakeip-rollback", iface, "restore opkgtun persist: "+e.Error())
 		}
@@ -312,12 +312,30 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 				break
 			}
 		}
+		// Undo КАЖДОГО флипа пушится сразу за ним (симметрично policy-tun):
+		// один push на оба оставлял слот 21 активным, если первый флип прошёл,
+		// а второй упал.
 		if err = s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); err != nil {
 			return fmt.Errorf("enable fakeip-tun: orchestrator enable fakeip slot: %w", err)
 		}
+		push(func() {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "disable fakeip slot: "+e.Error())
+			}
+			// Из двух слот-пушей этот первый, значит по LIFO идёт последним:
+			// notify уходит один раз, после восстановления ОБОИХ слотов.
+			// Rollback вернул прежнюю разметку — device-proxy должен
+			// перегенерировать слот 30 под неё до следующего reload.
+			s.notifyRoutingSlotsChanged()
+		})
 		if err = s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
 			return fmt.Errorf("enable fakeip-tun: orchestrator disable router slot: %w", err)
 		}
+		push(func() {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, prevRouterEnabled); e != nil {
+				s.appLog.Warn("fakeip-rollback", iface, "restore router slot: "+e.Error())
+			}
+		})
 	} else {
 		if running, _ := s.deps.Singbox.IsRunning(); !running {
 			if err = s.deps.Singbox.Start(); err != nil {
@@ -325,19 +343,6 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			}
 		}
 	}
-	push(func() {
-		if s.deps.Orch != nil {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, false); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "disable fakeip slot: "+e.Error())
-			}
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, prevRouterEnabled); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "restore router slot: "+e.Error())
-			}
-			// Rollback вернул прежнюю разметку слотов — device-proxy должен
-			// перегенерировать слот 30 под неё до следующего reload.
-			s.notifyRoutingSlotsChanged()
-		}
-	})
 	// Освежить 15-awg.json ДО валидирующего reload'а: протухший каталог
 	// AWG-тегов (byte-кэш, пропущенная инвалидация) даёт ложный
 	// «unknown-outbound» по живому туннелю и откат всего enable (#567).

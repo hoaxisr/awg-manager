@@ -138,10 +138,15 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	}()
 	push := func(undo func()) { rollback = append(rollback, undo) }
 
+	// Записи сегментов, сделанные ЭТИМ enable. Живут дольше source-preserve
+	// блока: их обязан увидеть первый push (см. ниже). Обнуляются, когда откат
+	// NAT отработал — тогда беречь нечего.
+	var natRecorded []storage.PolicyTunNATSegment
+
 	// INVARIANT: persist FIRST, before creating the iface, so a crash in between
 	// leaves a persist the reap can find by index.
 	//
-	// Держим ОДИН объект состояния: SetOpkgTunState пишет его в кэш стора, и
+	// Держим ОДИН объект состояния: SetOpkgTunState пишет его копию в кэш, и
 	// всё, что легло в персист после (например NATSegments source-preserve),
 	// доживает до диска само — финальный Settings.Update снимает копию кэша
 	// в момент коммита, а не работает по снимку, взятому здесь.
@@ -176,13 +181,28 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		// enable молча взял бы другой OpkgTun и порвал permit'ы в политиках.
 		//
 		// Этот push стоит ПЕРВЫМ, значит по LIFO выполняется ПОСЛЕДНИМ — prev
-		// ложится поверх всех остальных откатов.
+		// ложится поверх всех остальных откатов. Поверх, но СЛИТЫЙ с записями
+		// этого enable, если их NAT вернуть не удалось (двойной сбой RCI: упал
+		// apply source-preserve И упал restore выше по стеку). Тогда запись —
+		// единственный след того, каким сегмент был до нас; потеряв её, мы
+		// оставили бы его на нашем static-NAT навсегда (ГОЧА выше).
 		//
 		// NB: prev.Provisioned=true при уже снесённом откатом ифейсе допустимо —
 		// в policy-tun следующий reconcile переподнимет его по ТОМУ ЖЕ индексу
 		// (желаемое поведение), а вне режима реап найдёт запись по индексу и
 		// приберёт её вместе с NAT-сегментами.
-		if e := s.deps.Settings.SetOpkgTunState(prevRecord); e != nil {
+		restore := prevRecord
+		if len(natRecorded) > 0 {
+			base := storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: idx}
+			if prevRecord != nil {
+				base = *prevRecord // копия: prevRecord мутировать нельзя
+			}
+			base.PolicyTun = &storage.OpkgTunPolicyData{
+				NATSegments: mergePolicyTunNATRecords(natSegmentsOf(prevRecord), natRecorded),
+			}
+			restore = &base
+		}
+		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
 	})
@@ -334,28 +354,31 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		recorded, err = s.applyPolicyTunSourcePreserve(ctx, sr.PolicyTunNATSegments, natSegmentsOf(ptState))
 		// Откат регистрируем ДО проверки ошибки: apply отдаёт записи и о
 		// сегментах, до которых успел дойти, а полуприменённые обязаны вернуться.
+		natRecorded = recorded
 		push(func() {
 			if e := s.restorePolicyTunNAT(rbCtx, recorded); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "restore segment NAT: "+e.Error())
+				return
 			}
+			// NAT вернулся — беречь записи незачем, первый push восстановит
+			// ровно prevRecord. При ЧАСТИЧНОМ провале храним всё: повторное
+			// восстановление идемпотентно.
+			natRecorded = nil
 		})
 		// Merge, а не присваивание: перенесённые из prev записи сегментов, уже
 		// выбывших из желаемого списка, обязаны дожить до восстановления в
 		// restoreRevokedPolicyTunNAT — иначе их static-NAT остался бы навсегда.
-		// Мутируем копию: ptState уже уходил в кэш стора (SetOpkgTunState
-		// выше кладёт туда сам указатель), и запись по месту гонялась бы с
-		// маршалом кэша. Копию публикует мутатор ниже.
-		next := *ptState
+		// ptState — наш объект: SetOpkgTunState публикует копию.
 		if merged := mergePolicyTunNATRecords(natSegmentsOf(ptState), recorded); len(merged) > 0 {
-			next.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: merged}
+			ptState.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: merged}
 		} else {
-			next.PolicyTun = nil
+			ptState.PolicyTun = nil
 		}
-		ptState = &next
 		// Персист ДО проверки ошибки, как в сверке: откат выше может и сам упасть
 		// (RCI, уронивший apply, обычно роняет и его), и тогда запись — всё, что
-		// помнит исходный режим сегмента. Provisioned/Index уже в персисте (см.
-		// выше), так что записями мы не утверждаем ничего нового о провижининге.
+		// помнит исходный режим сегмента — её же донесёт до диска первый push,
+		// слив с prevRecord. Provisioned/Index уже в персисте (см. выше), так
+		// что записями мы не утверждаем ничего нового о провижининге.
 		if perr := s.deps.Settings.SetOpkgTunState(ptState); perr != nil {
 			return fmt.Errorf("enable policy-tun: persist nat segments: %w", perr)
 		}

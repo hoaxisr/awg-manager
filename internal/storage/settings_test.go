@@ -825,3 +825,28 @@ func TestSettingsStore_GetSingboxBootstrapDNS(t *testing.T) {
 		t.Errorf("GetSingboxBootstrapDNS = %q, want 8.8.8.8", got)
 	}
 }
+
+// TestSetOpkgTunState_CopyOnWrite — стор публикует КОПИЮ записи владения, а не
+// указатель вызывающего: мутация объекта после вызова не должна доезжать до
+// кэша (его параллельно маршалят читатели без нашего лока).
+func TestSetOpkgTunState_CopyOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	st := &OpkgTunState{Mode: OpkgTunModePolicyTun, Index: 1}
+	if err := store.SetOpkgTunState(st); err != nil {
+		t.Fatal(err)
+	}
+	st.Index = 99
+	st.Provisioned = true
+
+	got, err := store.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OpkgTun == nil || got.OpkgTun.Index != 1 || got.OpkgTun.Provisioned {
+		t.Fatalf("cache = %+v, want Index=1 Provisioned=false (мутация вызывающего доехала до кэша)", got.OpkgTun)
+	}
+}

@@ -559,11 +559,21 @@ func (s *SettingsStore) SetManagedPeerAllowIPsMigrated(v bool) error {
 // SetOpkgTunState atomically persists the unified OpkgTun ownership record
 // under the store lock (single-writer: lifecycle only). nil очищает запись.
 // Mirrors SetSingboxManuallyStopped.
+//
+// Copy-on-write, как в SetOpkgTunNATSegments: в кэш публикуется КОПИЯ, старую
+// запись могут параллельно маршалить читатели без нашего лока, а объект
+// вызывающего остаётся его собственным. Копия ПОВЕРХНОСТНАЯ: payload
+// (FakeIP/PolicyTun) нигде не мутируется по месту — писатели присваивают
+// свежий объект (конвенция Update, см. ниже).
 func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
 		return fmt.Errorf("settings not loaded")
+	}
+	if st != nil {
+		cp := *st
+		st = &cp
 	}
 	s.settings.OpkgTun = st
 	return s.saveUnlocked(s.settings)

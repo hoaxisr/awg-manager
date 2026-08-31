@@ -1734,3 +1734,40 @@ func TestEnableFakeIPTun_RefreshesAWGOutbounds(t *testing.T) {
 		t.Fatal("AWGOutboundsRefresh must be invoked during fakeip enable")
 	}
 }
+
+// F12: провал ВТОРОГО флипа slot-XOR обязан откатить ПЕРВЫЙ. Пока undo обоих
+// слотов пушился одной записью после обоих SetEnabled, успешный
+// SetEnabled(SlotFakeIP,true) с упавшим SetEnabled(SlotRouter,false) оставлял
+// слот 21 активным при снесённом интерфейсе.
+//
+// Инъекция без фейка: Deps.Orch — конкретный тип, поэтому сбой даёт сам
+// оркестратор, в котором SlotRouter не зарегистрирован (ErrUnknownSlot).
+func TestEnableFakeIPTun_RollbackOnSlotRouterFlipFailure(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+
+	orch := orchestrator.New(h.dir, nil)
+	if err := orch.Register(orchestrator.SlotMeta{
+		Slot:     orchestrator.SlotFakeIP,
+		Filename: "21-fakeip.json",
+	}); err != nil {
+		t.Fatalf("orch.Register SlotFakeIP: %v", err)
+	}
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatalf("orch.Bootstrap: %v", err)
+	}
+	h.svc.deps.Orch = orch
+
+	if err := h.svc.Enable(context.Background()); err == nil {
+		t.Fatal("expected error when SlotRouter flip fails")
+	}
+
+	if slotEnabled(t, h.svc, orchestrator.SlotFakeIP) {
+		t.Error("откат не выключил SlotFakeIP: слот 21 активен при снесённом интерфейсе")
+	}
+	if st := h.loadFakeIP(t); st != nil {
+		t.Errorf("FakeIP persist = %+v, want nil after rollback", st)
+	}
+	if !h.log.has("Delete:OpkgTun0") {
+		t.Errorf("откат обязан снести интерфейс: %v", h.log.calls)
+	}
+}

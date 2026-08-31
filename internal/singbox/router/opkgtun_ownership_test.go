@@ -665,3 +665,54 @@ func TestReconcile_ScanUnavailableHealsInsteadOfReprovision(t *testing.T) {
 		}
 	}
 }
+
+// createPersistProbe снимает запись владения из НАСТОЯЩЕГО стора в момент
+// CreateOpkgTun. Так инвариант «persist ДО Create» становится наблюдаемым без
+// нового шва: Deps.Settings — конкретный тип, но тесты держат живой стор.
+type createPersistProbe struct {
+	OpkgTunProvisioner
+	store    *storage.SettingsStore
+	atCreate *storage.OpkgTunState
+}
+
+func (p *createPersistProbe) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, desc, level string) error {
+	if all, err := p.store.Load(); err == nil {
+		p.atCreate = all.OpkgTun
+	}
+	return p.OpkgTunProvisioner.CreateOpkgTunWithSecurityLevel(ctx, name, desc, level)
+}
+
+// Инвариант, на который опирается реап: крах между персистом и созданием
+// интерфейса обязан оставить запись, находимую по индексу. Значит к моменту
+// Create запись уже на диске.
+func TestEnableFakeIPTun_PersistsBeforeCreate(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	probe := &createPersistProbe{OpkgTunProvisioner: h.svc.deps.OpkgTun, store: h.store}
+	h.svc.deps.OpkgTun = probe
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if probe.atCreate == nil {
+		t.Fatal("запись владения отсутствовала в момент Create — инвариант persist-before-create нарушен")
+	}
+	if probe.atCreate.Mode != storage.OpkgTunModeFakeIP || !probe.atCreate.Provisioned || probe.atCreate.Index != 0 {
+		t.Errorf("запись в момент Create = %+v, want fakeip provisioned index 0", probe.atCreate)
+	}
+}
+
+func TestPolicyTunEnable_PersistsBeforeCreate(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	probe := &createPersistProbe{OpkgTunProvisioner: h.svc.deps.OpkgTun, store: h.store}
+	h.svc.deps.OpkgTun = probe
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if probe.atCreate == nil {
+		t.Fatal("запись владения отсутствовала в момент Create — инвариант persist-before-create нарушен")
+	}
+	if probe.atCreate.Mode != storage.OpkgTunModePolicyTun || !probe.atCreate.Provisioned || probe.atCreate.Index != 0 {
+		t.Errorf("запись в момент Create = %+v, want policy-tun provisioned index 0", probe.atCreate)
+	}
+}
