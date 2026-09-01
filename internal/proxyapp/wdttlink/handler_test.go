@@ -34,6 +34,33 @@ type updateCall struct {
 }
 
 // fakeMutator прогоняет мутатор по хранимой записи и сохраняет результат
+// целиком: тест сверяет СОСТАВ аргумента, а не факт вызова.
+type fakeMutator struct {
+	src     *fakeSource
+	created []instancestore.Record
+	updates []updateCall
+}
+
+func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
+	f.created = append(f.created, rec)
+	if f.src != nil {
+		f.src.recs[rec.Key()] = rec
+	}
+	return nil
+}
+
+func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instancestore.Record) error) error {
+	rec, ok := f.src.recs[key]
+	if !ok {
+		return fmt.Errorf("инстанс %s не найден", key)
+	}
+	if err := mutate(&rec); err != nil {
+		return err
+	}
+	f.src.recs[key] = rec
+	f.updates = append(f.updates, updateCall{Key: key, Rec: rec})
+	return nil
+}
 
 type importCall struct{ Conf, Name, ClientID string }
 
@@ -176,34 +203,6 @@ func serverRecordNoHashes(cfg roles.WdttServerConfig, users ...instancestore.Ser
 		ID: "default", Kind: instancestore.KindWdttServer, Name: "Сервер",
 		Enabled: true, Users: users, WdttServer: &cfg,
 	}
-}
-
-// целиком: тест сверяет СОСТАВ аргумента, а не факт вызова.
-type fakeMutator struct {
-	src     *fakeSource
-	created []instancestore.Record
-	updates []updateCall
-}
-
-func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
-	f.created = append(f.created, rec)
-	if f.src != nil {
-		f.src.recs[rec.Key()] = rec
-	}
-	return nil
-}
-
-func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instancestore.Record) error) error {
-	rec, ok := f.src.recs[key]
-	if !ok {
-		return fmt.Errorf("инстанс %s не найден", key)
-	}
-	if err := mutate(&rec); err != nil {
-		return err
-	}
-	f.src.recs[key] = rec
-	f.updates = append(f.updates, updateCall{Key: key, Rec: rec})
-	return nil
 }
 
 func clientRecord(cfg roles.WdttClientConfig) instancestore.Record {
@@ -714,8 +713,6 @@ func jsonString(s string) string {
 }
 
 // ── фикс-раунд 1 ─────────────────────────────────────────────────
-
-// C1: id уникален только внутри роли, «default» есть у всех четырёх. Запрос к
 
 // I2: штатный повтор (автоэффект открытой страницы) не имеет права
 // пересоздавать туннель — иначе на каждом тике теряются id и история трафика.

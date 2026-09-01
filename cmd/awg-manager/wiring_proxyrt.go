@@ -398,7 +398,7 @@ func readTail(path string, maxBytes int64, lines int) string {
 
 // ── связанные AWG-туннели ────────────────────────────────────────
 
-// proxyLinkedCleaner — wdttlink.LinkedCleaner для ОДНОЙ роли: поле связи у
+// proxyLinkedCleaner — api.LinkedTunnelCleaner для ОДНОЙ роли: поле связи у
 // подсистем разное, и один уборщик на обе выбрать его не может.
 type proxyLinkedCleaner struct {
 	store   *storage.AWGTunnelStore

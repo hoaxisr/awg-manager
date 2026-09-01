@@ -4,7 +4,7 @@ import { notifications } from '$lib/stores/notifications';
 
 /**
  * TS-03 просит имена туннелей, а бэкенд отдаёт строку «Имя (id): ошибка»
- * (`fmt.Sprintf("%s (%s): %v", …)`, `internal/api/wdtt_linked.go:95`) —
+ * (`fmt.Sprintf("%s (%s): %v", …)`, `cmd/awg-manager/wiring_proxyrt.go`, proxyLinkedCleaner) —
  * отрезаем хвост с id и текстом ошибки. Строка без этого хвоста (сбой чтения
  * хранилища) остаётся как есть.
  *

@@ -80,7 +80,7 @@ type Deps struct {
 	Builders map[instancestore.Kind]LinkBuilder
 }
 
-// Handler обслуживает ручки ссылок, импорта, ensure-wg и очистки связей.
+// Handler обслуживает ручки ссылок, импорта и ensure-wg.
 // Пути регистрирует проводка: у пакета нет своего мультиплексора, ключ
 // инстанса приходит аргументом.
 type Handler struct{ deps Deps }
@@ -310,8 +310,6 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	response.Success(w, data)
 }
-
-// ── очистка связей ───────────────────────────────────────────────
 
 // ── ensure-wg ────────────────────────────────────────────────────
 

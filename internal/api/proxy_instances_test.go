@@ -954,6 +954,39 @@ func TestProxyInstancesDelete_ServerHasNoLinkedTunnels(t *testing.T) {
 	}
 }
 
+// Уборщик выбирается ПО РОЛИ записи: id уникален только внутри роли, и
+// «default» есть у всех четырёх. Кросс-ролевой пин — вместо снесённого вместе
+// с ручкой очистки: без него «freeturn-клиент default» мог бы снести туннели
+// «wdtt-клиента default», и ни один тест бы этого не заметил.
+func TestProxyInstancesDelete_CleanerPickedByKind(t *testing.T) {
+	ft := fullClientRecord()
+	ft.Kind = instancestore.KindFreeTurnClient
+	ft.FreeTurnClient = &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9100"}
+	ft.WdttClient = nil
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{ft},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	wdttCleaner := &fakeLinkedCleaner{deleted: []string{"awg-wdtt"}, mgr: mgr}
+	ftCleaner := &fakeLinkedCleaner{deleted: []string{"awg-ft"}, mgr: mgr}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{
+			instancestore.KindWdttClient:     wdttCleaner,
+			instancestore.KindFreeTurnClient: ftCleaner,
+		})
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/freeturn-client:nl", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(ftCleaner.calls) != 1 {
+		t.Fatalf("уборщик своей роли не позван: %v", ftCleaner.calls)
+	}
+	if len(wdttCleaner.calls) != 0 {
+		t.Fatalf("позван уборщик ЧУЖОЙ роли: %v — туннели соседа с тем же id снесены", wdttCleaner.calls)
+	}
+}
+
 // Отказ уборки НЕ отменяет удаление инстанса (решение прежнее — запирать
 // удаление из-за туннелей пользователь не просил), но и молча не теряется:
 // иначе рассинхрон «инстанса нет, карточка есть» остался бы необъяснённым.
